@@ -11,6 +11,7 @@ import { getLeaderboardSource, getLeaderboardSourceMode } from "@/lib/leaderboar
 import { withModuleContributions } from "@/lib/leaderboard/module-contributions";
 import { withHintPenalties } from "@/lib/leaderboard/hint-penalties";
 import { withTeamStandings } from "@/lib/leaderboard/team-standings";
+import { withModuleSeries } from "@/lib/leaderboard/module-series";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { auth } from "@/lib/auth";
 import DisplayBoard from "@/components/display-board";
@@ -64,8 +65,21 @@ export default async function LeaderboardPage({
   // row whose points arrive later — a classic- or quiz-only contestant, or
   // an upstash-path team. Same story in docs/architecture.md, step 9 of the
   // score data flow.
+  //
+  // withModuleSeries runs after withTeamStandings because it needs the final
+  // team rows — it charts a team's roster, and a team the standings stage has
+  // not added yet has no line to draw. It reads the app-side modules' per-item
+  // timestamps to put their points on the chart at all (issue #415); before
+  // it, the chart plotted secure-development alone while the rows counted
+  // every module. It leaves `points` untouched, so it neither needs to run
+  // before the penalty fold nor disturbs it: the chart is gross, the row net.
   const [data, session, modules, enabledApps] = await Promise.all([
-    source.getLeaderboard().then(withModuleContributions).then(withTeamStandings).then(withHintPenalties),
+    source
+      .getLeaderboard()
+      .then(withModuleContributions)
+      .then(withTeamStandings)
+      .then(withModuleSeries)
+      .then(withHintPenalties),
     auth.api.getSession({ headers: await headers() }),
     getResolvedModules(),
     getEnabledApps(),

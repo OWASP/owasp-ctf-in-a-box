@@ -156,19 +156,24 @@ export default function Leaderboard({
    *  this checks both collections rather than just `entries`. */
   const boardIsEmpty = data.entries.length === 0 && data.teams.length === 0;
 
-  // The series is the SOURCE's history — secure-development scoring events
-  // from the scorer. Quiz and classic points are stamped on afterwards by
-  // withModuleContributions as aggregate totals with no timeline, so on a
-  // multi-module event the chart's ceiling and the rows' totals legitimately
-  // disagree (issue #200, 2.3). Until the app-side modules contribute series
-  // events of their own, the chart has to SAY what it plots — an unlabeled
-  // chart whose max is a tenth of the visible totals reads as broken.
-  const sdModule = modules.find((m) => m.id === "secure-development");
-  const appSideTitles = modules.filter((m) => m.id !== "secure-development").map((m) => m.title);
-  const chartNote =
-    sdModule && appSideTitles.length > 0
-      ? `Plots ${sdModule.title} scoring only — ${appSideTitles.join(" and ")} points count toward the totals below but are not charted.`
-      : undefined;
+  // The chart plots every enabled module now: the source supplies
+  // secure-development's history and `withModuleSeries` merges the app-side
+  // modules' per-item timestamps into it (issue #415). It used to plot the
+  // source alone while the rows counted everything, so its ceiling could be a
+  // tenth of the visible totals — the old caption existed to stop that reading
+  // as broken.
+  //
+  // One gap is left, and it is the one worth naming: hint spend is stored as
+  // points, not as timed reveals, so there is no instant to subtract it at.
+  // The line is GROSS and the row is net, reconciled by its "−N hints" marker
+  // — the same split every module block already uses. Said only when a penalty
+  // is actually on this board, so an event that sells no hints (or has sold
+  // none yet) carries no caption about them.
+  const anyHintPenalty =
+    data.entries.some((e) => (e.hintPenalty ?? 0) > 0) || data.teams.some((t) => (t.hintPenalty ?? 0) > 0);
+  const chartNote = anyHintPenalty
+    ? "Plots every module's points as they were earned. Hint costs are not charted — a row's −N hints marker is what reconciles its line with its total."
+    : undefined;
 
   return (
     <div className="flex flex-col gap-5">

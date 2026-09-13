@@ -1,10 +1,13 @@
-// Unit tests for the team-standings overlay. This is a FALLBACK for sources
-// with no per-flag data (upstash) — it cannot dedupe a flag two teammates
-// both solved, so it must never sum member totals into a fabricated team
-// score (that's the double-count bug this file guards against). It only
-// attaches membership so the row chip renders; real team points come from
-// the scorer/lambda path, which sets capabilities.teams = true up front and
-// is passed through untouched (no-op).
+// Unit tests for the team-standings overlay. It cannot dedupe a flag two
+// teammates both solved (no per-flag data), so it must never sum member
+// totals into a fabricated team score — that's the double-count bug this file
+// guards against. Real secure-development team points come from the
+// scorer/lambda path, whose rows are therefore KEPT as they arrive.
+//
+// What it must NOT do is stand aside entirely when that path reports teams:
+// the source knows the teams it scored, the team store knows the teams
+// contestants created, and one seeded team in the source used to hide every
+// real team on the board (issue #413).
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeaderboardData, LeaderboardEntry } from "../types";
@@ -84,11 +87,86 @@ describe("withTeamStandings", () => {
     expect(result.teams.map((t) => t.rank)).toEqual([1, 2]);
   });
 
-  it("no-ops when the source already provides deduped teams (mock/lambda/scorer path)", async () => {
-    const base = data({ capabilities: { apps: true, teams: true, challenges: true } });
+  // Issue #413, and the shape the live event actually failed in: the scorer
+  // reported seeded teams, so the organizer's own team of one — created in the
+  // app, with a captain and a join code — was dropped from the board entirely.
+  it("keeps the source's teams AND adds the ones only the team store knows", async () => {
+    const base = data({
+      capabilities: { apps: true, teams: true, challenges: true },
+      teams: [
+        { rank: 1, slug: "byte-me", name: "Byte Me", captain: "ada", members: ["ada"], points: 2108 },
+      ],
+    });
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "dcotelo", name: "dcotelo", members: ["dcotelo"] }]);
     const result = await withTeamStandings(base);
-    expect(result).toBe(base);
-    expect(mocks.listTeams).not.toHaveBeenCalled();
+    expect(result.teams.map((t) => t.slug).sort()).toEqual(["byte-me", "dcotelo"]);
+  });
+
+  it("does not recompute the source's team points, which are already deduped", async () => {
+    const base = data({
+      capabilities: { apps: true, teams: true, challenges: true },
+      teams: [
+        { rank: 1, slug: "byte-me", name: "Byte Me", captain: "ada", members: ["ada", "bob"], points: 2108 },
+      ],
+    });
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "solo", name: "Solo", members: ["cyd"] }]);
+    const result = await withTeamStandings(base);
+    expect(result.teams.find((t) => t.slug === "byte-me")?.points).toBe(2108);
+    // The appended row fabricates nothing, for the same reason as ever.
+    expect(result.teams.find((t) => t.slug === "solo")?.points).toBe(0);
+  });
+
+  // Review finding on #414. The overlays fold by each row's `members`, so a
+  // slug both records claim has to carry the union: keeping the source's
+  // roster verbatim would drop a member the scorer never scored, and with them
+  // every quiz/classic/ai item they alone hold — an undercount with nothing on
+  // screen to suggest it. Asserted on the returned row because that is the
+  // exact array the overlays were handed.
+  it("unions the rosters when both records claim the same slug", async () => {
+    const base = data({
+      capabilities: { apps: true, teams: true, challenges: true },
+      teams: [{ rank: 1, slug: "red", name: "Red Team", captain: "ada", members: ["ada"], points: 40 }],
+    });
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["bob", "cyd"] }]);
+    const result = await withTeamStandings(base);
+    expect(result.teams).toHaveLength(1);
+    expect(result.teams[0].members).toEqual(["ada", "bob", "cyd"]);
+    // The source's own figure is still the one reported.
+    expect(result.teams[0].points).toBe(40);
+  });
+
+  it("does not duplicate a member the two records spell differently", async () => {
+    const base = data({
+      capabilities: { apps: true, teams: true, challenges: true },
+      teams: [{ rank: 1, slug: "red", name: "Red Team", captain: "Ada", members: ["Ada"], points: 40 }],
+    });
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["ada"] }]);
+    const result = await withTeamStandings(base);
+    expect(result.teams[0].members).toEqual(["ada"]);
+  });
+
+  it("chips every member, whichever record placed them on a team", async () => {
+    const base = data({
+      capabilities: { apps: true, teams: true, challenges: true },
+      teams: [{ rank: 1, slug: "byte-me", name: "Byte Me", captain: "ada", members: ["ada"], points: 10 }],
+    });
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["bob"] }]);
+    const result = await withTeamStandings(base);
+    expect(result.entries.map((e) => [e.login, e.team])).toEqual([
+      ["ada", "byte-me"],
+      ["bob", "red"],
+      ["cyd", null],
+    ]);
+  });
+
+  it("prefers the team store when both records place the same login", async () => {
+    const base = data({
+      capabilities: { apps: true, teams: true, challenges: true },
+      teams: [{ rank: 1, slug: "stale", name: "Stale", captain: "bob", members: ["bob"], points: 5 }],
+    });
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "current", name: "Current", members: ["bob"] }]);
+    const result = await withTeamStandings(base);
+    expect(result.entries.find((e) => e.login === "bob")?.team).toBe("current");
   });
 
   it("no-ops when no teams exist", async () => {

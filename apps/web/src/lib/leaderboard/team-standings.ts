@@ -42,8 +42,6 @@ import type { LeaderboardData, TeamStanding } from "./types";
  * degrades to the team-less view rather than failing the whole leaderboard.
  */
 export async function withTeamStandings(data: LeaderboardData): Promise<LeaderboardData> {
-  if (data.capabilities.teams) return data;
-
   let teams;
   try {
     teams = await listTeams();
@@ -53,12 +51,57 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   }
   if (teams.length === 0) return data;
 
+  // A source that reports teams of its own (scorer/lambda) does NOT mean the
+  // team store has nothing to add. Those are two different records: the source
+  // knows the teams IT has scored, the team store knows the teams contestants
+  // actually created — with a captain, a join code and a roster. This function
+  // used to return early on `capabilities.teams`, so one team in the source was
+  // enough to drop every app-side team from the board and leave every entry
+  // team-less, including members of the source's own teams. A live event hit it
+  // through the DEMO_MODE seeder: three seeded teams in the scorer permanently
+  // hid the organizer's real team, silently, and a redeploy did not clear it
+  // because seeds are data (issue #413).
+  //
+  // So the source's rows are KEPT rather than recomputed — that is the part
+  // this function cannot do, per the note above: only the scorer has the
+  // per-flag data to dedupe a secure-development flag two teammates both
+  // solved, and re-synthesising those rows here would fabricate or double-count
+  // points. App-side teams the source does not know are appended beside them,
+  // starting at `points: 0` for exactly the same reason.
+  const storeBySlug = new Map(teams.map((team) => [team.slug, team]));
+  // A slug both records claim keeps the source's row — its points are the
+  // deduped ones — but takes the UNION of the two rosters. The overlays fold
+  // by `members` (`teams.map((team) => team.members)` in module-contributions),
+  // so a member the source has not heard of would otherwise have their quiz,
+  // classic and ai items left out of their own team's total: a roster short by
+  // one name silently undercounts, which is worse than the missing row this
+  // change set out to fix. Deduped case-insensitively, like every login join in
+  // this codebase, keeping the team store's spelling; sorted, as listTeams
+  // returns them.
+  const sourceTeams = (data.capabilities.teams ? data.teams : []).map((team) => {
+    const stored = storeBySlug.get(team.slug);
+    if (!stored) return team;
+    const byLower = new Map(team.members.map((member) => [member.toLowerCase(), member]));
+    for (const member of stored.members) byLower.set(member.toLowerCase(), member);
+    return { ...team, members: [...byLower.values()].sort() };
+  });
+  const sourceSlugs = new Set(sourceTeams.map((team) => team.slug));
+
   const teamByLogin = new Map<string, string>();
   for (const team of teams) {
     for (const member of team.members) teamByLogin.set(member.toLowerCase(), team.slug);
   }
+  // Source rows carry their own roster, and a login the team store does not
+  // place stays attributed to the source's team rather than losing its chip.
+  for (const team of sourceTeams) {
+    for (const member of team.members) {
+      const login = member.toLowerCase();
+      if (!teamByLogin.has(login)) teamByLogin.set(login, team.slug);
+    }
+  }
 
   const membershipOnly: TeamStanding[] = teams
+    .filter((team) => !sourceSlugs.has(team.slug))
     .map((team) => ({
       slug: team.slug,
       name: team.name,
@@ -77,7 +120,16 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((team, i) => ({ ...team, rank: i + 1 }));
 
-  const standings = await withTeamAiPoints(await withTeamClassicPoints(await withTeamQuizPoints(membershipOnly)));
+  // The overlays run over the UNION, not just the rows synthesised here. They
+  // attribute quiz, classic and ai points by ITEM — deduped across members with
+  // no per-flag scorer data involved — so they are as correct for a source's
+  // team as for an app-only one, and running them only on part of the board
+  // would rank teams on different point sets. On a scorer-sourced board this
+  // also fixes a matching gap: the team view listed secure-development points
+  // alone while the individual view counted every module.
+  const standings = await withTeamAiPoints(
+    await withTeamClassicPoints(await withTeamQuizPoints([...sourceTeams, ...membershipOnly])),
+  );
 
   return {
     ...data,

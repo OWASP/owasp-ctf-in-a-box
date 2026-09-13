@@ -68,7 +68,23 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   // solved, and re-synthesising those rows here would fabricate or double-count
   // points. App-side teams the source does not know are appended beside them,
   // starting at `points: 0` for exactly the same reason.
-  const sourceTeams = data.capabilities.teams ? data.teams : [];
+  const storeBySlug = new Map(teams.map((team) => [team.slug, team]));
+  // A slug both records claim keeps the source's row — its points are the
+  // deduped ones — but takes the UNION of the two rosters. The overlays fold
+  // by `members` (`teams.map((team) => team.members)` in module-contributions),
+  // so a member the source has not heard of would otherwise have their quiz,
+  // classic and ai items left out of their own team's total: a roster short by
+  // one name silently undercounts, which is worse than the missing row this
+  // change set out to fix. Deduped case-insensitively, like every login join in
+  // this codebase, keeping the team store's spelling; sorted, as listTeams
+  // returns them.
+  const sourceTeams = (data.capabilities.teams ? data.teams : []).map((team) => {
+    const stored = storeBySlug.get(team.slug);
+    if (!stored) return team;
+    const byLower = new Map(team.members.map((member) => [member.toLowerCase(), member]));
+    for (const member of stored.members) byLower.set(member.toLowerCase(), member);
+    return { ...team, members: [...byLower.values()].sort() };
+  });
   const sourceSlugs = new Set(sourceTeams.map((team) => team.slug));
 
   const teamByLogin = new Map<string, string>();

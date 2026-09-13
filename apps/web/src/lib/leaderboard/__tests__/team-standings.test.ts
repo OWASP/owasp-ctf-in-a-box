@@ -116,6 +116,35 @@ describe("withTeamStandings", () => {
     expect(result.teams.find((t) => t.slug === "solo")?.points).toBe(0);
   });
 
+  // Review finding on #414. The overlays fold by each row's `members`, so a
+  // slug both records claim has to carry the union: keeping the source's
+  // roster verbatim would drop a member the scorer never scored, and with them
+  // every quiz/classic/ai item they alone hold — an undercount with nothing on
+  // screen to suggest it. Asserted on the returned row because that is the
+  // exact array the overlays were handed.
+  it("unions the rosters when both records claim the same slug", async () => {
+    const base = data({
+      capabilities: { apps: true, teams: true, challenges: true },
+      teams: [{ rank: 1, slug: "red", name: "Red Team", captain: "ada", members: ["ada"], points: 40 }],
+    });
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["bob", "cyd"] }]);
+    const result = await withTeamStandings(base);
+    expect(result.teams).toHaveLength(1);
+    expect(result.teams[0].members).toEqual(["ada", "bob", "cyd"]);
+    // The source's own figure is still the one reported.
+    expect(result.teams[0].points).toBe(40);
+  });
+
+  it("does not duplicate a member the two records spell differently", async () => {
+    const base = data({
+      capabilities: { apps: true, teams: true, challenges: true },
+      teams: [{ rank: 1, slug: "red", name: "Red Team", captain: "Ada", members: ["Ada"], points: 40 }],
+    });
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["ada"] }]);
+    const result = await withTeamStandings(base);
+    expect(result.teams[0].members).toEqual(["ada"]);
+  });
+
   it("chips every member, whichever record placed them on a team", async () => {
     const base = data({
       capabilities: { apps: true, teams: true, challenges: true },

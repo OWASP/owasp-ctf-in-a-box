@@ -173,11 +173,12 @@ describe("Leaderboard", () => {
     expect(html).toMatch(/Top 2 contestants/);
   });
 
-  // The series is the scorer's history alone — quiz/classic points are
-  // stamped on as totals with no timeline — so on a multi-module event the
-  // chart's ceiling sits below the row totals. The chart must say so, or it
-  // reads as broken (issue #200, 2.3).
-  it("labels the chart with what it does not plot, on a multi-module event", () => {
+  // Issue #415 put every module on the chart, so the old caption — naming what
+  // the chart left out — describes behaviour that no longer exists. What is
+  // still true is narrower: hint spend has no timestamp to plot, so the line is
+  // gross and the row is net. The note now says only that, and only when a
+  // penalty is actually on the board.
+  it("says nothing about the chart when no hint penalty is on the board", () => {
     const board = data({
       series: [
         {
@@ -190,12 +191,15 @@ describe("Leaderboard", () => {
       ],
     });
     const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
-    expect(html).toContain("Plots Secure Development scoring only");
-    expect(html).toContain("Quiz points count toward the totals below but are not charted.");
+    // The claim that retired with #415 — it named modules as uncharted.
+    expect(html).not.toContain("are not charted.");
+    expect(html).not.toContain("scoring only");
   });
 
-  it("renders no chart note on a secure-development-only event", () => {
+  it("explains the one thing the chart still leaves out, once hints have been bought", () => {
+    const base = data();
     const board = data({
+      entries: [{ ...base.entries[0], hintPenalty: 15 }, ...base.entries.slice(1)],
       series: [
         {
           login: "alice",
@@ -206,11 +210,8 @@ describe("Leaderboard", () => {
         },
       ],
     });
-    const sdOnly: readonly ResolvedModule[] = [MODULES[0]];
-    const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={sdOnly} enabledApps={apps} />);
-    // On a one-module event the series IS the whole story — a note would
-    // qualify nothing.
-    expect(html).not.toContain("scoring only");
+    const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
+    expect(html).toContain("Hint costs are not charted");
   });
 
   // Rank is breadth-first (compareStanding), so the top row is not

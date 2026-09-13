@@ -30,8 +30,16 @@ import type { LeaderboardData, PlayerSeries, SeriesPoint, TeamSeries } from "./t
  * every module block already uses: gross in the parts, net on the row.
  */
 
-/** One scoring event, before it is folded into a cumulative series. */
-type Earned = { itemId: string; points: number; at: string };
+/** One scoring event, before it is folded into a cumulative series.
+ *
+ *  `moduleId` is part of the event's identity, not decoration. The three
+ *  modules key their hashes in separate namespaces and accept the same id
+ *  shape, so a quiz question and a classic challenge can both be called
+ *  `sqli-1` while being entirely different items. The team fold dedupes by
+ *  item, and the team TOTALS dedupe per module separately — so an id shared
+ *  across two modules has to count twice there and must count twice here, or
+ *  the line ends below the number in the team's own row. */
+type Earned = { moduleId: string; itemId: string; points: number; at: string };
 
 /** `{points, at}` as the three stores write it. Anything malformed is dropped
  *  rather than thrown on: a hand-edited hash, a half-written record or an
@@ -52,7 +60,7 @@ function parseEarned(raw: unknown): { points: number; at: string } | null {
 }
 
 /** HGETALL replies arrive flat: [field, value, field, value, …]. */
-function readEvents(reply: { result?: unknown; error?: string } | undefined): Earned[] {
+function readEvents(moduleId: string, reply: { result?: unknown; error?: string } | undefined): Earned[] {
   // `.error` is checked because upstashPipeline does NOT throw on a per-command
   // failure — it returns the error positionally, and reading `.result` past it
   // turns a NOAUTH into "this contestant scored nothing".
@@ -62,7 +70,7 @@ function readEvents(reply: { result?: unknown; error?: string } | undefined): Ea
   for (let i = 0; i < flat.length; i += 2) {
     const itemId = flat[i];
     const earned = parseEarned(flat[i + 1]);
-    if (typeof itemId === "string" && earned) events.push({ itemId, ...earned });
+    if (typeof itemId === "string" && earned) events.push({ moduleId, itemId, ...earned });
   }
   return events;
 }
@@ -75,13 +83,13 @@ async function readModuleEvents(logins: readonly string[]): Promise<Map<string, 
   if (logins.length === 0) return byLogin;
 
   const live = await getEnabledModuleIds();
-  const keyFns: ((login: string) => string)[] = [];
-  if (live.has("quiz")) keyFns.push(quizAnswersKey);
-  if (live.has("classic")) keyFns.push(classicSolvesKey);
-  if (live.has("ai")) keyFns.push(aiSolvesKey);
-  if (keyFns.length === 0) return byLogin;
+  const sources: { moduleId: string; keyFn: (login: string) => string }[] = [];
+  if (live.has("quiz")) sources.push({ moduleId: "quiz", keyFn: quizAnswersKey });
+  if (live.has("classic")) sources.push({ moduleId: "classic", keyFn: classicSolvesKey });
+  if (live.has("ai")) sources.push({ moduleId: "ai", keyFn: aiSolvesKey });
+  if (sources.length === 0) return byLogin;
 
-  const commands = keyFns.flatMap((keyFn) => logins.map((login) => ["HGETALL", keyFn(login)]));
+  const commands = sources.flatMap(({ keyFn }) => logins.map((login) => ["HGETALL", keyFn(login)]));
   let replies: { result?: unknown; error?: string }[];
   try {
     replies = await upstashPipeline(commands);
@@ -92,9 +100,9 @@ async function readModuleEvents(logins: readonly string[]): Promise<Map<string, 
     return byLogin;
   }
 
-  keyFns.forEach((_, moduleIndex) => {
+  sources.forEach(({ moduleId }, moduleIndex) => {
     logins.forEach((login, loginIndex) => {
-      const events = readEvents(replies[moduleIndex * logins.length + loginIndex]);
+      const events = readEvents(moduleId, replies[moduleIndex * logins.length + loginIndex]);
       if (events.length === 0) return;
       const existing = byLogin.get(login);
       if (existing) existing.push(...events);
@@ -149,8 +157,13 @@ function foldTeamEvents(members: readonly string[], byLogin: Map<string, Earned[
   const earliest = new Map<string, Earned>();
   for (const member of members) {
     for (const event of byLogin.get(member.toLowerCase()) ?? []) {
-      const held = earliest.get(event.itemId);
-      if (!held || Date.parse(event.at) < Date.parse(held.at)) earliest.set(event.itemId, event);
+      // Keyed by MODULE and item. Ids are unique within a module's namespace
+      // and nowhere else, so folding on the id alone would silently merge a
+      // quiz question with a same-named classic challenge and drop one of
+      // them from the team's line.
+      const key = `${event.moduleId}\u0000${event.itemId}`;
+      const held = earliest.get(key);
+      if (!held || Date.parse(event.at) < Date.parse(held.at)) earliest.set(key, event);
     }
   }
   return [...earliest.values()];

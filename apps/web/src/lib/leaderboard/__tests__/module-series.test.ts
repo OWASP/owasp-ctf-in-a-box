@@ -104,6 +104,27 @@ describe("withModuleSeries", () => {
     ]);
   });
 
+  // Review finding on #416. Ids are unique inside a module's namespace and
+  // nowhere else, and the team TOTALS dedupe per module separately — so the
+  // same id in two modules is two items, and folding on the id alone would
+  // drop one and end the line below the team's own row.
+  it("counts the same id in two modules as two items", async () => {
+    mocks.getEnabledModuleIds.mockResolvedValue(new Set(["quiz", "classic"]));
+    const base = data({
+      teams: [team("red", ["ada"])],
+      capabilities: { apps: true, teams: true, challenges: false },
+    });
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      hash(["sqli-1", 40, "2026-01-01T10:00:00.000Z"]), // quiz
+      hash(["sqli-1", 25, "2026-01-01T11:00:00.000Z"]), // classic, same id
+    ]);
+    const result = await withModuleSeries(base);
+    expect(result.teamSeries?.[0].points).toEqual([
+      { t: "2026-01-01T10:00:00.000Z", score: 40 },
+      { t: "2026-01-01T11:00:00.000Z", score: 65 },
+    ]);
+  });
+
   it("drops a malformed record instead of losing the whole line", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce([
       {

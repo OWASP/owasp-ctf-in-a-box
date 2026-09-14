@@ -203,7 +203,9 @@ push and every `review`/`full review` command consumes one review from an
 hourly OSS allowance (1–10 per developer, scoped per repository), so batch
 the fixes for a round into one push and never retry on a timer: after a
 `Review rate limited` reply, post `@coderabbitai rate limit`, which answers
-with when the next review is available, and trigger once then. Reply
+with when the next review is available — parse that wait, schedule one
+reminder for it, and let the session go idle rather than polling; when it
+fires, post exactly one `@coderabbitai review` and stop. Reply
 *inside* a thread only for a finding it left open that is actually fixed
 (name the commit and the file:line so its re-verify has something to check)
 or to decline with a reason — the exception, per the paragraph above. Two

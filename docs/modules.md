@@ -282,8 +282,8 @@ inside the app — see
 data flow and `docs/operations.md`'s "Quiz" section for the organizer-facing
 authoring/retry-knob guide), `classic` (a jeopardy-style flag board,
 also scored entirely inside the app — see
-[docs/architecture.md#classic-data-flow](architecture.md#classic-data-flow)
-for its data flow and `docs/operations.md`'s "Classic" section for the
+[docs/architecture.md#jeopardy-data-flow](architecture.md#jeopardy-data-flow)
+for its data flow and `docs/operations.md`'s "Jeopardy" section for the
 organizer-facing authoring/cooldown guide), and `ai` (challenges hosted on an
 external site, played there or graded by a typed flag back on `/ai/[id]`).
 Registered and selectable, and its contract, store layer, contestant surface
@@ -352,7 +352,7 @@ own tab (`app/(site)/admin/admin-secure-dev-tab.tsx`), the quiz's two retry-gate
 knobs plus its full
 question-authoring UI (`components/admin-quiz-controls.tsx`) in Quiz's,
 classic's submission-cooldown knob plus its full challenge/category
-authoring UI (`components/admin-classic-controls.tsx`) in Classic's, and
+authoring UI (`components/admin-classic-controls.tsx`) in Jeopardy's, and
 ai's submission-cooldown knob plus its own challenge/category authoring UI
 (`components/admin-ai-controls.tsx`) in AI's —
 so the generic "No settings for this module yet." fallback that a module
@@ -420,7 +420,7 @@ third module isn't mistaken for a fully general n-module platform:
   [ADR 36](decisions.md#adr-36-quiz-adopts-classics-bundle-format-rather-than-inventing-a-second-one)
   for why the two formats are deliberately the same, and
   [docs/operations.md](operations.md#quiz) /
-  [docs/operations.md](operations.md#classic) for the organizer-facing
+  [docs/operations.md](operations.md#jeopardy) for the organizer-facing
   contracts. Neither bundle carries its module's retry-gate settings: those
   are event policy, live-editable in `/admin`, and an import must never move
   them.

@@ -107,7 +107,7 @@ export function importFirstWarning(): { title: string; body: string; confirmLabe
   return {
     title: "This import is destructive",
     body:
-      "Importing this file REPLACES every Classic challenge, every Quiz question and every AI challenge with what's in it, " +
+      "Importing this file REPLACES every Jeopardy challenge, every Quiz question and every AI challenge with what's in it, " +
       "and WIPES all teams, solves, attempts and answers — the same reset the master reset performs. " +
       "There is no undo. The next step asks you to type a confirmation phrase.",
     confirmLabel: "I understand, continue",
@@ -119,7 +119,7 @@ export function importReplaceConfirm(): { title: string; body: string; requireTy
   return {
     title: "Replace ALL event content?",
     body:
-      "This replaces every Classic challenge, Quiz question and AI challenge with the file's content, and wipes all teams, " +
+      "This replaces every Jeopardy challenge, Quiz question and AI challenge with the file's content, and wipes all teams, " +
       "solves, attempts and answers. This cannot be undone.",
     requireType: IMPORT_CONFIRM_PHRASE,
     confirmLabel: "Replace everything",
@@ -141,7 +141,7 @@ export function importReplaceConfirm(): { title: string; body: string; requireTy
 export function formatImportSummary(summary: EventImportSummary): string {
   const parts: string[] = [];
   if (summary.classic) {
-    parts.push(`Classic: ${summary.classic.created} created, ${summary.classic.updated} updated`);
+    parts.push(`Jeopardy: ${summary.classic.created} created, ${summary.classic.updated} updated`);
   }
   if (summary.quiz) {
     parts.push(`Quiz: ${summary.quiz.created} created, ${summary.quiz.updated} updated`);
@@ -302,7 +302,7 @@ export default function AdminEventControls({ initialImportText = "", showHeading
         <>
           <h3 className="text-sm font-semibold text-white">Event archive</h3>
           <p className="text-sm text-muted">
-            Export the whole event — Classic, Quiz and AI content plus event policy settings — as one JSON file, or
+            Export the whole event — Jeopardy, Quiz and AI content plus event policy settings — as one JSON file, or
             replace it wholesale from a previously exported file.
           </p>
         </>
@@ -335,7 +335,7 @@ export default function AdminEventControls({ initialImportText = "", showHeading
         {/* The opposite of the siblings' "import never deletes" notice — see
             this component's header comment for why. */}
         <p className="text-sm text-muted">
-          This REPLACES every Classic challenge, Quiz question and AI challenge with the file&rsquo;s content, and
+          This REPLACES every Jeopardy challenge, Quiz question and AI challenge with the file&rsquo;s content, and
           wipes all teams, solves, attempts and answers. Refused outright while the event is live.
         </p>
 

@@ -72,7 +72,7 @@ describe("/faq with every module enabled", () => {
     expect(html).toContain("Start with whichever question looks approachable");
     expect(html).toContain("Start with whichever one looks approachable");
     // …and that a reader can tell whose answer is whose.
-    for (const title of ["Secure Development", "Quiz", "Classic CTF"]) {
+    for (const title of ["Secure Development", "Quiz", "Jeopardy"]) {
       expect(html).toContain(title);
     }
   });

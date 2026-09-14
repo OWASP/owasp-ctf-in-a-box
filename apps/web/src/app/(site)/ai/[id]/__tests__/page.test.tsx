@@ -138,7 +138,7 @@ beforeEach(() => {
   getAiSolveCounts.mockResolvedValue(new Map([["a1", 3]]));
   getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });
   getResolvedModules.mockResolvedValue([
-    { id: "ai", title: "AI Challenges", blurb: "Prompt-injection and guardrail challenges." },
+    { id: "ai", title: "AI", blurb: "Prompt-injection and guardrail challenges." },
   ]);
   mintLaunchUrl.mockResolvedValue(MINTED_URL);
   // The passing default: no pre-event gate is active (or it has been

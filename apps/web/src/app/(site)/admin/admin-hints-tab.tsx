@@ -53,7 +53,7 @@ export default function AdminHintsTab({
       <div>
         <h3 className="text-white">Hints</h3>
         <p className="text-sm text-muted">
-          Event-wide policy. Classic CTF and AI Challenges sell their hints through these four settings,
+          Event-wide policy. Jeopardy and AI sell their hints through these four settings,
           and each holds its own hint text on its own tab. Quiz and Secure Development have no hints —
           nothing authors hint text for a secure-development target, so no challenge on
           &#8288;/challenges&#8288; offers one (issue #334).
@@ -90,7 +90,7 @@ export default function AdminHintsTab({
       <AdminNumberField
         id="hints-min-solves"
         label="Hints: solves required"
-        help="Solves needed on a target (or across the Classic or AI board) before its hints can be bought. Blocks throwaway accounts from farming hint text for a team. 0 disables the gate."
+        help="Solves needed on a target (or across the Jeopardy or AI board) before its hints can be bought. Blocks throwaway accounts from farming hint text for a team. 0 disables the gate."
         value={minSolvesInput}
         placeholder={String(HINT_MIN_SOLVES)}
         disabled={pending}

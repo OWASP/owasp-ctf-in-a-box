@@ -69,7 +69,7 @@ describe("landing page in a classic-only event", () => {
   it("renders no patch/PR/fork copy", () => {
     expect(html).not.toContain("pull request");
     expect(html).not.toContain("fork");
-    expect(html).not.toContain("Secure Development CTF");
+    expect(html).not.toContain("Secure Development");
     expect(html).not.toContain("Browse targets");
     expect(html).not.toContain("patched");
   });
@@ -119,6 +119,6 @@ describe("landing page in a classic-only event", () => {
   });
 
   it("describes the event with the classic tagline, not secure-development's", () => {
-    expect(metadata.description).toBe("Flag Night — Classic CTF.");
+    expect(metadata.description).toBe("Flag Night — Jeopardy.");
   });
 });

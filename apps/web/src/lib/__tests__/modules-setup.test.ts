@@ -111,7 +111,7 @@ describe("module setup blocks", () => {
 
   it("links each module to its own section of the operations guide", () => {
     expect(resolved("quiz").docs.href).toBe(`${DOCS_URL}operations#quiz`);
-    expect(resolved("classic").docs.href).toBe(`${DOCS_URL}operations#classic`);
+    expect(resolved("classic").docs.href).toBe(`${DOCS_URL}operations#jeopardy`);
     expect(resolved("ai").docs.href).toBe(`${DOCS_URL}operations#ai`);
     expect(resolved("secure-development").docs.href).toBe(`${DOCS_URL}operations#organizer-admin-panel`);
   });

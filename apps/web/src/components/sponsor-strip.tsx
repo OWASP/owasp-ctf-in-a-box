@@ -32,9 +32,9 @@ export default async function SponsorStrip() {
             href={sponsor.url}
             target="_blank"
             rel="noopener noreferrer nofollow sponsored"
-            className="opacity-80 grayscale transition-all duration-150 hover:opacity-100 hover:grayscale-0"
+            className="group flex flex-col items-start gap-1"
           >
-            {sponsor.logo ? (
+            {sponsor.logo && (
               <img
                 src={`/api/sponsors/logo/${sponsor.id}`}
                 alt={`${sponsor.name} logo`}
@@ -42,11 +42,12 @@ export default async function SponsorStrip() {
                 height={sponsor.logo.h}
                 loading="lazy"
                 decoding="async"
-                className="h-6 w-auto max-w-[8rem] object-contain"
+                className="h-6 w-auto max-w-[8rem] object-contain opacity-80 grayscale transition-all duration-150 group-hover:opacity-100 group-hover:grayscale-0"
               />
-            ) : (
-              <span className="font-mono text-sm text-zinc-400">{sponsor.name}</span>
             )}
+            <span className="font-mono text-xs text-muted transition-colors group-hover:text-zinc-300">
+              {sponsor.name}
+            </span>
           </a>
         ))}
       </div>

@@ -86,11 +86,16 @@ function parseReorderPayload(body: unknown): string[] | null {
  *  understate. `requireAdmin` has already run by the time this is called, so
  *  the DoS surface here is an authenticated admin's own oversized request,
  *  not an anonymous one — but "authenticated" is not "trusted with unbounded
- *  memory". Returns `null` on any stream error too, mapped by the caller to
- *  the same "invalid request payload" 400 a malformed JSON body gets. */
-async function readBoundedBody(request: Request, maxBytes: number): Promise<string | null> {
+ *  memory". Distinguishes "too large" from "stream broke" so the caller can
+ *  return 413 for the former and 400 for the latter instead of conflating
+ *  them. */
+type BoundedBodyResult =
+  | { ok: true; body: string }
+  | { ok: false; reason: "too_large" | "stream_error" };
+
+async function readBoundedBody(request: Request, maxBytes: number): Promise<BoundedBodyResult> {
   const reader = request.body?.getReader();
-  if (!reader) return "";
+  if (!reader) return { ok: true, body: "" };
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
@@ -98,13 +103,13 @@ async function readBoundedBody(request: Request, maxBytes: number): Promise<stri
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > maxBytes) return null;
+      if (total > maxBytes) return { ok: false, reason: "too_large" };
       chunks.push(value);
     }
   } catch {
-    return null;
+    return { ok: false, reason: "stream_error" };
   }
-  return Buffer.concat(chunks).toString("utf-8");
+  return { ok: true, body: Buffer.concat(chunks).toString("utf-8") };
 }
 
 function errorResponse(err: unknown): Response {
@@ -132,10 +137,14 @@ export async function POST(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
 
-  const raw = await readBoundedBody(request, MAX_BODY_BYTES);
-  if (raw === null) {
-    return NextResponse.json({ error: "request body too large" }, { status: 413 });
+  const bounded = await readBoundedBody(request, MAX_BODY_BYTES);
+  if (!bounded.ok) {
+    if (bounded.reason === "too_large") {
+      return NextResponse.json({ error: "request body too large" }, { status: 413 });
+    }
+    return NextResponse.json({ error: "invalid request payload" }, { status: 400 });
   }
+  const raw = bounded.body;
   let body: unknown = null;
   try {
     if (raw !== "") body = JSON.parse(raw);

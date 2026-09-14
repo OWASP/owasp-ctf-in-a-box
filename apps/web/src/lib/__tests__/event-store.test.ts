@@ -8,6 +8,7 @@ import { DEFAULT_SECURE_DEV_TARGETS } from "@/lib/secure-dev-targets";
 
 const m = vi.hoisted(() => ({
   exportClassic: vi.fn(), exportQuiz: vi.fn(), exportAi: vi.fn(), exportSponsors: vi.fn(), importSponsors: vi.fn(),
+  validateBundleLogos: vi.fn(),
   getAdminSettings: vi.fn(), effectivePaused: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
@@ -18,7 +19,11 @@ vi.mock("@/lib/ai-store", () => ({ exportBundle: m.exportAi, clearAiChallenges: 
 // clear*() here because admin-store's resetEvent (mocked below) already
 // covers wiping ctf:sponsors* before an import (see event-store.ts's own
 // comment on the sponsors import branch).
-vi.mock("@/lib/sponsors-store", () => ({ exportBundle: m.exportSponsors, importBundle: m.importSponsors }));
+vi.mock("@/lib/sponsors-store", () => ({
+  exportBundle: m.exportSponsors,
+  importBundle: m.importSponsors,
+  validateBundleLogos: m.validateBundleLogos,
+}));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings: m.getAdminSettings, effectivePaused: m.effectivePaused, updateAdminSettings: vi.fn(), resetEvent: vi.fn() }));
 // event-store.ts's reconciliation (`reconcileEnabledModuleIds`) only needs
 // `isModuleId` from `@/lib/modules` now — module availability is decided by

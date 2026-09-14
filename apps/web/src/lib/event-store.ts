@@ -2,7 +2,11 @@ import "server-only";
 import { exportBundle as exportClassic, clearChallenges, importBundle as importClassic } from "@/lib/classic-store";
 import { exportBundle as exportQuiz, clearQuestions, importBundle as importQuiz } from "@/lib/quiz-store";
 import { exportBundle as exportAi, clearAiChallenges, importBundle as importAi } from "@/lib/ai-store";
-import { exportBundle as exportSponsors, importBundle as importSponsors } from "@/lib/sponsors-store";
+import {
+  exportBundle as exportSponsors,
+  importBundle as importSponsors,
+  validateBundleLogos,
+} from "@/lib/sponsors-store";
 import { effectivePaused, getAdminSettings, resetEvent, updateAdminSettings, type SettingsPatch } from "@/lib/admin-store";
 import { resolveSite } from "@/lib/site";
 import { EVENT_BUNDLE_VERSION, EVENT_POLICY_FIELDS, type EventBundle, type EventPolicySettings } from "@/lib/event-io";
@@ -206,6 +210,12 @@ export async function importEventBundle(
   if (!effectivePaused(settings, now.getTime())) {
     throw new EventLiveError("Refusing to import into a live event — pause scoring first.");
   }
+
+  // Same fail-fast discipline for sponsor logos: `importSponsors` below only
+  // sniffs bytes as it writes, which is AFTER `resetEvent`. Sniff them here,
+  // before anything destructive runs, so a bundle with a tampered/invalid
+  // logo throws with the current event still intact.
+  if (bundle.sponsors) validateBundleLogos(bundle.sponsors);
 
   // Apply (and validate) the settings patch BEFORE any destructive step. A
   // bad bundle throws `AdminValidationError` here, before `resetEvent` or any

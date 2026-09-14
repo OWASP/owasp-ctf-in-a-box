@@ -415,10 +415,25 @@ export async function reorderSponsors(ids: string[]): Promise<Sponsor[]> {
   return sponsors;
 }
 
+/** Sniffs every logo in the bundle without writing anything. `importEventBundle`
+ *  calls this BEFORE `resetEvent`, so a bundle carrying a tampered/invalid logo
+ *  (real bytes never sniffed anywhere but here and `importBundle` below) throws
+ *  while the box's current content is still intact, instead of surfacing the
+ *  same error after `resetEvent` and the other modules' clears have already
+ *  run. */
+export function validateBundleLogos(bundle: SponsorsBundle): void {
+  for (const s of bundle.sponsors) {
+    if (s.logo) decodeAndValidateLogo({ data: s.logo.data, declaredType: s.logo.type });
+  }
+}
+
 /** Full replace, for the event-archive import path (event-store.ts) ONLY.
  *  `admin-store.ts`'s master reset (RESET_PREFIXES) already clears both
  *  hashes before an archive import runs, so this only ever writes into an
- *  empty store — see event-store.ts's `importEventBundle`. */
+ *  empty store — see event-store.ts's `importEventBundle`. Re-sniffs each
+ *  logo again rather than trusting `validateBundleLogos` already ran: this
+ *  function has no way to know the caller called it, and the check is cheap
+ *  relative to the HSETs beside it. */
 export async function importBundle(bundle: SponsorsBundle): Promise<{ created: number }> {
   if (bundle.sponsors.length === 0) return { created: 0 };
   const commands: (string | number)[][] = [];

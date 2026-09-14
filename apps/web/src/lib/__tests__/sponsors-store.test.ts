@@ -19,12 +19,14 @@ vi.mock("@/lib/upstash", () => ({ upstashPipeline: mocks.upstashPipeline }));
 import {
   deleteSponsor,
   getSponsorLogo,
+  importBundle,
   listSponsors,
   reorderSponsors,
   SponsorValidationError,
   upsertSponsor,
   type Sponsor,
 } from "@/lib/sponsors-store";
+import { SPONSORS_BUNDLE_VERSION } from "@/lib/sponsors-io";
 
 const pipelineCalls = (): (string | number)[][][] =>
   mocks.upstashPipeline.mock.calls.map((call) => call[0] as (string | number)[][]);
@@ -223,5 +225,39 @@ describe("reorderSponsors", () => {
       { id: "b", order: 0 },
       { id: "a", order: 1 },
     ]);
+  });
+});
+
+describe("importBundle — re-validates logo bytes, never trusts a bundle's claimed metadata", () => {
+  it("re-derives dimensions/etag from the actual bytes rather than the bundle's claim", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }, { result: 1 }]);
+    await importBundle({
+      version: SPONSORS_BUNDLE_VERSION,
+      sponsors: [
+        {
+          ...validInput,
+          logo: { type: "image/png", data: toBase64(pngFixture(30, 20)), bytes: 999, w: 1, h: 1, etag: "f".repeat(16) },
+        },
+      ],
+    });
+    const [metaCmd] = pipelineCalls()[0]!;
+    const written = JSON.parse(metaCmd[3] as string) as Sponsor;
+    // The claimed w:1/h:1/etag in the bundle are ignored — the real PNG's
+    // 30x20 and its own sha256-derived etag are what get stored.
+    expect(written.logo).toMatchObject({ type: "image/png", w: 30, h: 20 });
+    expect(written.logo?.etag).not.toBe("f".repeat(16));
+  });
+
+  it("rejects a bundle entry whose logo claims PNG but is actually SVG bytes, before writing anything", async () => {
+    const svg = Buffer.from('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>');
+    await expect(
+      importBundle({
+        version: SPONSORS_BUNDLE_VERSION,
+        sponsors: [
+          { ...validInput, logo: { type: "image/png", data: toBase64(svg), bytes: 100, w: 10, h: 10, etag: "0".repeat(16) } },
+        ],
+      }),
+    ).rejects.toThrow(/SVG logos are not accepted/);
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 });

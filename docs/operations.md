@@ -145,7 +145,7 @@ controls sit behind a **left sidebar** in three groups (it collapses to a
   run a module never sees its settings at all.
 - **Setup** — **Event** (identity, modules, freeze, team registration, team
   size, the schedule, then demo seed and the master reset at the bottom),
-  **Hints**, **Admins**.
+  **Hints**, **Admins**, **Sponsors**.
 
 ![The admin panel's Event tab: the per-module switches, the freeze and team-registration toggles, the players-per-team cap, and the schedule fields with a live "right now: scoring is live" readout](assets/admin-event.jpg)
 

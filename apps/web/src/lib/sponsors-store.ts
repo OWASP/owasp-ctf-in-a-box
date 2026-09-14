@@ -144,13 +144,18 @@ function validateFields(input: SponsorInput): void {
  * someone opens the logo URL directly — nothing stops a browser address bar
  * from doing that, so "served from an `<img>` tag" is not a mitigation.
  */
+// `Buffer.from(str, "base64")` is lenient — it silently drops characters
+// outside the base64 alphabet rather than throwing, so a malformed string
+// decoded fine and only failed later (if at all) on the magic-byte sniff.
+// This rejects it explicitly, with the message that actually names the
+// problem, before any decoding is attempted.
+const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+
 function decodeAndValidateLogo(input: SponsorLogoInput): { bytes: Buffer; logo: SponsorLogo } {
-  let bytes: Buffer;
-  try {
-    bytes = Buffer.from(input.data, "base64");
-  } catch {
+  if (!BASE64_RE.test(input.data) || input.data.length % 4 !== 0) {
     throw new SponsorValidationError("logo", "logo data is not valid base64");
   }
+  const bytes = Buffer.from(input.data, "base64");
   if (bytes.length === 0) {
     throw new SponsorValidationError("logo", "logo data is empty");
   }
@@ -415,17 +420,22 @@ export async function importBundle(bundle: SponsorsBundle): Promise<{ created: n
   if (bundle.sponsors.length === 0) return { created: 0 };
   const commands: (string | number)[][] = [];
   for (const s of bundle.sponsors) {
-    const sponsor: Sponsor = {
-      id: s.id,
-      name: s.name,
-      url: s.url,
-      blurb: s.blurb,
-      tier: s.tier,
-      order: s.order,
-      logo: s.logo ? { type: s.logo.type, bytes: s.logo.bytes, w: s.logo.w, h: s.logo.h, etag: s.logo.etag } : null,
-    };
+    // SECURITY INVARIANT, same as upsertSponsor: re-derive the logo's
+    // metadata from its OWN bytes rather than trusting the bundle's claimed
+    // type/w/h/etag. A hand-edited (or tampered) archive file could otherwise
+    // pair `type: "image/png"` with actual SVG bytes and sail straight past
+    // every other check in this file, since a bundle's `data` is never
+    // sniffed anywhere else on the import path.
+    let logo: SponsorLogo | null = null;
+    let logoBytes: Buffer | null = null;
+    if (s.logo) {
+      const decoded = decodeAndValidateLogo({ data: s.logo.data, declaredType: s.logo.type });
+      logo = decoded.logo;
+      logoBytes = decoded.bytes;
+    }
+    const sponsor: Sponsor = { id: s.id, name: s.name, url: s.url, blurb: s.blurb, tier: s.tier, order: s.order, logo };
     commands.push(["HSET", SPONSORS_KEY, s.id, JSON.stringify(sponsor)]);
-    if (s.logo) commands.push(["HSET", SPONSORS_LOGO_KEY, s.id, s.logo.data]);
+    if (logoBytes) commands.push(["HSET", SPONSORS_LOGO_KEY, s.id, logoBytes.toString("base64")]);
   }
   const results = await upstashPipeline(commands);
   const failed = results.find((r) => r.error);

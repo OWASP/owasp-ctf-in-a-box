@@ -149,30 +149,42 @@ rebuild. The last three of those are machine-enforced as well: `.coderabbit.yaml
 carries path instructions for `bootstrap-env.ts` and the snapshot readers, and
 for `apps/web/src/**/*.tsx` (the client-bundle read and the prerendered `/`).
 
-**11. The public surface is a named list, not a shape.** Exactly five routes
+**11. The public surface is a named list, not a shape.** Exactly six routes
 under `/api` answer without a session or a verified launch token, and each is
-on the list for its own stated reason — a sixth does not inherit an exemption
-by resembling one that has it; it needs its own case. Three are read-only,
-policy out and never facts in, nothing secret in the response: `GET
-/api/public/scoring`, `GET /api/ai/launch-key` and `GET /api/board/items`.
-Two are POSTs that exist *before* identity: `POST /api/gate` (the pre-event
-password check — it runs before anyone can sign in, charges a per-IP attempt
-before comparing, and answers only pass/fail) and `POST /api/stats/visit`
-(the approximate, no-PII per-country reach counter, always `204`, whose own
-header comment documents that it is not a security boundary). `/api/auth/*`
-is better-auth's and is outside this list. Anything else under `/api` that
-answers without `getSession`, `requireAdmin` or a verified launch token is
-the finding. `board/items` (from the #207 redesign) serves the public leaderboard's
-row expansion: who solved what is already on the board as counts, the items
-are built only from the contestant-safe listers (ids, labels, banked points —
+on the list for its own stated reason — a seventh does not inherit an exemption
+by resembling one that has it; it needs its own case. Four are read-only,
+policy or public-by-design content out and never facts in, nothing secret in
+the response: `GET /api/public/scoring`, `GET /api/ai/launch-key`, `GET
+/api/board/items` and `GET /api/sponsors/logo/[id]`. Two are POSTs that exist
+*before* identity: `POST /api/gate` (the pre-event password check — it runs
+before anyone can sign in, charges a per-IP attempt before comparing, and
+answers only pass/fail) and `POST /api/stats/visit` (the approximate, no-PII
+per-country reach counter, always `204`, whose own header comment documents
+that it is not a security boundary). `/api/auth/*` is better-auth's and is
+outside this list. Anything else under `/api` that answers without
+`getSession`, `requireAdmin` or a verified launch token is the finding.
+`board/items` (from the #207 redesign) serves the public leaderboard's row
+expansion: who solved what is already on the board as counts, the items are
+built only from the contestant-safe listers (ids, labels, banked points —
 never a flag, hint, or key), and the login list is capped at a team roster's
-size so it reads like the board, not like a scrape. `launch-key`
-is the sharpest test of the "nothing secret" half: it exists to publish the
-launch token's public key, `kid`, and algorithm so an external integrator can
-verify a token without holding a credential, and the finding to watch for is
-the private half (or any per-challenge signing key) drifting into that same
+size so it reads like the board, not like a scrape. `launch-key` is the
+sharpest test of the "nothing secret" half: it exists to publish the launch
+token's public key, `kid`, and algorithm so an external integrator can verify
+a token without holding a credential, and the finding to watch for is the
+private half (or any per-challenge signing key) drifting into that same
 payload — the ai contract test's import ban is what makes that a compile-time
-impossibility rather than a promise.
+impossibility rather than a promise. `sponsors/logo/[id]` (issue #405, ADR 57)
+is the newest, and its own reason is a privacy one rather than a launch-time
+one: it exists so a contestant's browser NEVER fetches a sponsor's logo from
+the sponsor's own CDN, which would leak that contestant's IP to the sponsor on
+every page load. It validates `id` against `SPONSOR_ID_RE` before any Redis
+command, serves only PNG/WebP bytes that already passed the store's
+magic-byte sniff at upload (never SVG, which could execute script if opened
+directly), and carries nothing an organizer did not deliberately upload to be
+shown publicly — no flag, key, or contestant data has anywhere to ride in this
+payload. The finding to watch for here is the same shape as `launch-key`'s:
+anything beyond those bytes and their content-type metadata leaking into the
+response, or the id check moving after a Redis read.
 
 **12. `requireAdmin` gates per-contestant data by default; self-service reads
 are the one carve-out, and it's narrow.** A route returning points,

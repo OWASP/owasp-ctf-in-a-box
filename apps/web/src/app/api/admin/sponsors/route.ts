@@ -80,6 +80,33 @@ function parseReorderPayload(body: unknown): string[] | null {
   return body.reorder as string[];
 }
 
+/** Reads the request body up to `maxBytes`, returning `null` the moment that
+ *  cap is exceeded — checked against bytes actually read off the stream, not
+ *  the client-supplied `Content-Length` header, which a caller can omit or
+ *  understate. `requireAdmin` has already run by the time this is called, so
+ *  the DoS surface here is an authenticated admin's own oversized request,
+ *  not an anonymous one — but "authenticated" is not "trusted with unbounded
+ *  memory". Returns `null` on any stream error too, mapped by the caller to
+ *  the same "invalid request payload" 400 a malformed JSON body gets. */
+async function readBoundedBody(request: Request, maxBytes: number): Promise<string | null> {
+  const reader = request.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) return null;
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+  return Buffer.concat(chunks).toString("utf-8");
+}
+
 function errorResponse(err: unknown): Response {
   if (err instanceof SponsorValidationError) {
     return NextResponse.json({ error: err.message, field: err.field }, { status: 400 });
@@ -105,12 +132,16 @@ export async function POST(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
 
-  const contentLength = Number(request.headers.get("content-length") ?? "0");
-  if (contentLength > MAX_BODY_BYTES) {
+  const raw = await readBoundedBody(request, MAX_BODY_BYTES);
+  if (raw === null) {
     return NextResponse.json({ error: "request body too large" }, { status: 413 });
   }
-
-  const body = await request.json().catch(() => null);
+  let body: unknown = null;
+  try {
+    if (raw !== "") body = JSON.parse(raw);
+  } catch {
+    body = null;
+  }
 
   const reorderPayload = parseReorderPayload(body);
   if (reorderPayload) {

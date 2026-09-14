@@ -111,7 +111,7 @@ export default function AdminSponsorsTab() {
     setError(null);
     setNotice(null);
     try {
-      const id = editingId ?? draft.id ?? generateChallengeId(draft.name);
+      const id = editingId || draft.id || generateChallengeId(draft.name);
       const res = await fetch("/api/admin/sponsors", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

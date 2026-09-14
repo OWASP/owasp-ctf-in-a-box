@@ -784,4 +784,18 @@ describe("seedDemoData hands its category work to one atomic script", () => {
     );
     await expect(seedDemoData("alice")).rejects.toThrow(/over the limit of 50/);
   });
+
+  it("logs but does not throw when only the trailing audit LPUSH/LTRIM fail — the seed itself already succeeded", async () => {
+    // The describe's own beforeEach already queued the settings-read
+    // response (call 1: "classic,ai"); this Once value lines up with the
+    // SECOND pipeline call, the write batch.
+    mocks.upstashPipeline.mockImplementationOnce(async (cmds) =>
+      cmds.map((c, i) => (i >= cmds.length - 2 ? { error: "NOAUTH Authentication required." } : { result: "OK" })),
+    );
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await seedDemoData("alice");
+    expect(result.contestants).toBe(DEMO_CONTESTANTS.length);
+    expect(spy).toHaveBeenCalledWith("[admin] seed audit write failed:", expect.stringContaining("NOAUTH"));
+    spy.mockRestore();
+  });
 });

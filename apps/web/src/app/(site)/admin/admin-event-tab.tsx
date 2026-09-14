@@ -445,6 +445,7 @@ export default function AdminEventTab({
               setConfirm({
                 title: "Seed demo data?",
                 confirmLabel: "Seed",
+                requireType: "SEED",
                 // Names the authored content it touches, not just the
                 // leaderboard rows: the seed also writes demo questions and
                 // challenges and ADDS to the category lists, which the old
@@ -470,6 +471,7 @@ export default function AdminEventTab({
               setConfirm({
                 title: "Clear demo data?",
                 confirmLabel: "Clear",
+                requireType: "CLEAR DEMO DATA",
                 // Sets expectations the same way the Seed body above does:
                 // names exactly what this removes (the fake progress) and
                 // what it deliberately doesn't (the demo questions/

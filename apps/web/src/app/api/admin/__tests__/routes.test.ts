@@ -297,6 +297,12 @@ describe("POST /api/admin/seed", () => {
     expect(seedDemoData).not.toHaveBeenCalled();
   });
 
+  it("400, not a 500 crash, on a literal JSON null body", async () => {
+    const res = await seedPOST(new Request("http://x/api/admin/seed", { method: "POST", body: "null" }));
+    expect(res.status).toBe(400);
+    expect(seedDemoData).not.toHaveBeenCalled();
+  });
+
   it("403 for a non-admin, even with the right phrase", async () => {
     requireAdmin.mockResolvedValue({ ok: false, status: 403 });
     expect((await seedPOST(sreq("SEED"))).status).toBe(403);
@@ -324,6 +330,12 @@ describe("DELETE /api/admin/seed", () => {
   it("400 when the confirmation phrase is missing or wrong, without clearing", async () => {
     expect((await seedDELETE(dreq(undefined))).status).toBe(400);
     expect((await seedDELETE(dreq("CLEAR"))).status).toBe(400);
+    expect(clearDemoData).not.toHaveBeenCalled();
+  });
+
+  it("400, not a 500 crash, on a literal JSON null body", async () => {
+    const res = await seedDELETE(new Request("http://x/api/admin/seed", { method: "DELETE", body: "null" }));
+    expect(res.status).toBe(400);
     expect(clearDemoData).not.toHaveBeenCalled();
   });
 

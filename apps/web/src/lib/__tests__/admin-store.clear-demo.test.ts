@@ -117,4 +117,19 @@ describe("clearDemoData", () => {
     mocks.upstashPipeline.mockResolvedValue([{ error: "NOAUTH Authentication required." }]);
     await expect(clearDemoData("alice")).rejects.toThrow(/Clear demo data failed/);
   });
+
+  it("logs but does not throw when only the trailing audit LPUSH/LTRIM fail — cleanup already succeeded", async () => {
+    mocks.upstashPipeline.mockImplementation((c) =>
+      Promise.resolve(c.map((_, i) => (i >= c.length - 2 ? { error: "NOAUTH Authentication required." } : { result: "OK" }))),
+    );
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await clearDemoData("alice");
+    expect(result).toEqual({
+      contestants: DEMO_CONTESTANTS.length,
+      teams: DEMO_TEAMS.length,
+      sponsors: DEMO_SPONSORS.length,
+    });
+    expect(spy).toHaveBeenCalledWith("[admin] clear-demo audit write failed:", expect.stringContaining("NOAUTH"));
+    spy.mockRestore();
+  });
 });

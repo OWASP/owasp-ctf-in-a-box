@@ -1374,6 +1374,11 @@ export async function seedDemoData(
     ...(aiEnabled ? { aiChallenges: DEMO_AI_CHALLENGES.length, aiSolves: aiSolvesSeeded } : {}),
     sponsors: DEMO_SPONSORS.length,
   });
+  // Tracked BEFORE the two audit commands below, so their own failure is
+  // checked separately: writeAdminAudit's own doc comment states the rule
+  // this pipeline otherwise violates — "an audit-write failure is logged but
+  // never fails a request whose actual data write already succeeded."
+  const cleanupCommandCount = cmds.length;
   cmds.push(["LPUSH", ADMIN_AUDIT_KEY, audit]);
   cmds.push(["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1]);
 
@@ -1382,8 +1387,10 @@ export async function seedDemoData(
   // union — or any other command failing — would return a cheerful seed count
   // for a seed that did not fully happen. The route turns this into a 503.
   const results = await upstashPipeline(cmds);
-  const failed = results.find((r) => r.error);
+  const failed = results.slice(0, cleanupCommandCount).find((r) => r.error);
   if (failed) throw new Error(`Seed failed: ${failed.error}`);
+  const auditFailed = results.slice(cleanupCommandCount).find((r) => r.error);
+  if (auditFailed) console.error("[admin] seed audit write failed:", adminErrorLabel(new Error(auditFailed.error)));
   return {
     contestants: DEMO_CONTESTANTS.length,
     teams: DEMO_TEAMS.length,
@@ -1476,6 +1483,11 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
     teams: DEMO_TEAMS.length,
     sponsors: DEMO_SPONSORS.length,
   });
+  // Tracked BEFORE the two audit commands below — same reasoning as
+  // seedDemoData's own pipeline check: an audit-write failure must never
+  // mask (or falsely trigger) a report on whether the actual clear
+  // succeeded (writeAdminAudit's own doc comment states the rule).
+  const cleanupCommandCount = cmds.length;
   cmds.push(["LPUSH", ADMIN_AUDIT_KEY, audit]);
   cmds.push(["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1]);
 
@@ -1483,8 +1495,10 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
   // failure doesn't throw on its own (AGENTS.md), so an unchecked call would
   // report a cheerful "cleared" count for a clear that only partly happened.
   const results = await upstashPipeline(cmds);
-  const failed = results.find((r) => r.error);
+  const failed = results.slice(0, cleanupCommandCount).find((r) => r.error);
   if (failed) throw new Error(`Clear demo data failed: ${failed.error}`);
+  const auditFailed = results.slice(cleanupCommandCount).find((r) => r.error);
+  if (auditFailed) console.error("[admin] clear-demo audit write failed:", adminErrorLabel(new Error(auditFailed.error)));
   return { contestants: DEMO_CONTESTANTS.length, teams: DEMO_TEAMS.length, sponsors: DEMO_SPONSORS.length };
 }
 

@@ -13,6 +13,7 @@
 // `renderToStaticMarkup`, which is how this repo's landing-page tests render
 // the page.
 
+import Link from "next/link";
 import { listSponsors } from "@/lib/sponsors-store";
 
 export default async function SponsorStrip() {
@@ -23,7 +24,7 @@ export default async function SponsorStrip() {
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="font-mono text-xs uppercase tracking-[0.25em] text-[#8f8f9b]">Supported by</p>
+      <p className="font-mono text-xs uppercase tracking-[0.25em] text-[#8f8f9b]">Sponsored by</p>
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         {sponsors.map((sponsor) => (
           <a
@@ -49,6 +50,9 @@ export default async function SponsorStrip() {
           </a>
         ))}
       </div>
+      <Link href="/sponsors" className="font-mono text-xs text-[#8f8f9b] transition-colors hover:text-zinc-300">
+        About sponsors
+      </Link>
     </div>
   );
 }

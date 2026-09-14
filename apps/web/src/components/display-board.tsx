@@ -12,7 +12,6 @@
 // data, not motion; reduced-motion governs animation and this is neither.
 
 import { useEffect } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -68,17 +67,6 @@ export default function DisplayBoard({
     <div className="fixed inset-0 z-50 flex flex-col bg-[#1a1a2e] px-[4vw] py-[3vh]">
       <div className="flex items-baseline justify-between gap-6">
         <div className="flex min-w-0 items-baseline gap-[1.5vw]">
-          {/* OWASP brand mark, same asset and invert treatment as the
-              landing hero (app/page.tsx) — the room reading this off a
-              projector should know whose event it's watching, same as
-              anyone landing on the site cold. */}
-          <Image
-            src="/owasp-logo.png"
-            alt="OWASP"
-            width={200}
-            height={69}
-            className="h-[3vh] w-auto flex-none invert"
-          />
           <h1 className="truncate font-display text-[3.5vh] font-black tracking-tight text-white">
             {eventName}
           </h1>

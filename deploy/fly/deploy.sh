@@ -914,9 +914,9 @@ echo "== 2/5 images"
 
 if [ -n "$DRY_RUN" ]; then
   echo "DRY-RUN: fly auth docker"
-  echo "DRY-RUN: docker build --platform linux/amd64 -f apps/web/Dockerfile --build-arg APP_BUILD_REV=${APP_BUILD_REV:-<none>} --build-arg APP_BUILT_AT=$APP_BUILT_AT -t $APP_IMAGE ."
+  echo "DRY-RUN: docker build --platform linux/amd64 --provenance=false --sbom=false -f apps/web/Dockerfile --build-arg APP_BUILD_REV=${APP_BUILD_REV:-<none>} --build-arg APP_BUILT_AT=$APP_BUILT_AT -t $APP_IMAGE ."
   echo "DRY-RUN: docker push $APP_IMAGE"
-  echo "DRY-RUN: docker build --platform linux/amd64 -t $SYNC_IMAGE ./sync"
+  echo "DRY-RUN: docker build --platform linux/amd64 --provenance=false --sbom=false -t $SYNC_IMAGE ./sync"
   echo "DRY-RUN: docker push $SYNC_IMAGE"
   echo "DRY-RUN: docker buildx imagetools create --tag $SCORER_IMAGE $SCORE_IMAGE"
 elif [ -n "$SKIP_BUILD" ]; then
@@ -931,13 +931,22 @@ else
   fly auth docker >/dev/null || { echo "FAIL: fly auth docker failed" >&2; exit 1; }
 
   echo "   building app -> $APP_IMAGE"
-  docker build --platform linux/amd64 -f apps/web/Dockerfile \
+  # --provenance=false --sbom=false: a modern buildx build attaches a
+  # provenance/SBOM attestation by default, which makes it export a manifest
+  # LIST (the real image manifest plus a separate attestation-only manifest)
+  # instead of one plain manifest. registry.fly.io intermittently returns
+  # "error from registry: app repository not found" when that second,
+  # attestation manifest gets pushed right after the first — the image
+  # layers and manifest push fine, then this extra push races and fails.
+  # Turning attestations off removes the second manifest entirely, so there
+  # is nothing left for that race to hit.
+  docker build --platform linux/amd64 --provenance=false --sbom=false -f apps/web/Dockerfile \
     --build-arg "APP_BUILD_REV=$APP_BUILD_REV" \
     --build-arg "APP_BUILT_AT=$APP_BUILT_AT" -t "$APP_IMAGE" .
   docker push "$APP_IMAGE"
 
   echo "   building sync -> $SYNC_IMAGE"
-  docker build --platform linux/amd64 -t "$SYNC_IMAGE" ./sync
+  docker build --platform linux/amd64 --provenance=false --sbom=false -t "$SYNC_IMAGE" ./sync
   docker push "$SYNC_IMAGE"
 
   # MIRROR, DO NOT REBUILD. Fly cannot pull from a private third-party

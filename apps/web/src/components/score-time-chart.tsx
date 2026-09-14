@@ -17,7 +17,7 @@
 // eight slots clear the lightness/chroma/CVD/contrast gates in fixed order.
 // A 9th+ line is never a generated hue (the skill's #1 anti-pattern): ranks
 // 9-10 fold into a single shared muted "Other" entry instead.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PlayerSeries, SeriesPoint, TeamSeries } from "@/lib/leaderboard/types";
 
 const SERIES_COLORS = [
@@ -214,10 +214,28 @@ function InteractiveChart({
   // any chat/log view opens at the newest entry. Re-runs when the plotted
   // domain changes (a view toggle swaps `lines` for an entirely different
   // series) so a stale scroll position from the last dataset doesn't linger.
+  //
+  // `lines` is a fresh array every render (renderChart rebuilds it from
+  // scratch each call), so keying the effect on it directly reran this on
+  // every unrelated rerender — e.g. a live leaderboard poll — snapping a
+  // contestant who had scrolled left back to the right edge. Depend on a
+  // cheap content signature instead: stable across renders that don't
+  // actually change what's plotted, still distinct across a real view
+  // toggle even on the rare case minT/maxT happen to coincide.
+  const linesSignature = useMemo(
+    () =>
+      lines
+        .map((l) => {
+          const last = l.raw[l.raw.length - 1];
+          return `${l.key}:${l.raw.length}:${last?.t ?? ""}:${last?.score ?? ""}`;
+        })
+        .join("|"),
+    [lines],
+  );
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollLeft = el.scrollWidth;
-  }, [minT, maxT, lines]);
+  }, [minT, maxT, linesSignature]);
 
   const x = (ms: number) => MARGIN.left + ((ms - minT) / (maxT - minT)) * PLOT_W;
   const y = (score: number) => MARGIN.top + PLOT_H - (score / maxScore) * PLOT_H;

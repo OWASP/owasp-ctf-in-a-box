@@ -4,11 +4,11 @@
 // own magic number and structure decide accept/reject, and SVG is refused
 // with its own message rather than falling through to the generic one.
 //
-// The PNG/WebP fixtures below are minimal SYNTHETIC buffers shaped exactly
-// like `parsePngDimensions`/`parseWebpDimensions` expect (signature + the one
-// header chunk each format's dimensions live in) — they are not real,
-// fully-decodable images, only enough bytes for the structural parser this
-// file tests.
+// The PNG/WebP/JPEG fixtures below are minimal SYNTHETIC buffers shaped
+// exactly like `parsePngDimensions`/`parseWebpDimensions`/`parseJpegDimensions`
+// expect (signature + the one header chunk or marker each format's
+// dimensions live in) — they are not real, fully-decodable images, only
+// enough bytes for the structural parser this file tests.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -59,6 +59,23 @@ function webpLossyFixture(w: number, h: number): Buffer {
   return buf;
 }
 
+/** A minimal JPEG: SOI, then one SOF0 marker segment carrying just enough
+ *  payload (precision + height + width + a component count) for
+ *  `parseJpegDimensions` to read — not a real, fully-decodable image. */
+function jpegFixture(w: number, h: number): Buffer {
+  const buf = Buffer.alloc(12);
+  buf[0] = 0xff;
+  buf[1] = 0xd8; // SOI
+  buf[2] = 0xff;
+  buf[3] = 0xc0; // SOF0
+  buf.writeUInt16BE(8, 4); // segment length (includes itself; 6-byte payload)
+  buf[6] = 8; // precision
+  buf.writeUInt16BE(h, 7);
+  buf.writeUInt16BE(w, 9);
+  buf[11] = 1; // component count
+  return buf;
+}
+
 function toBase64(buf: Buffer): string {
   return buf.toString("base64");
 }
@@ -81,6 +98,20 @@ describe("upsertSponsor — logo validation", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }, { result: 1 }]);
     const sponsor = await upsertSponsor(validInput, { data: toBase64(webpLossyFixture(64, 64)) });
     expect(sponsor.logo).toMatchObject({ type: "image/webp", w: 64, h: 64 });
+  });
+
+  it("accepts a structurally valid JPEG and derives its dimensions/etag", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }, { result: 1 }]);
+    const sponsor = await upsertSponsor(validInput, { data: toBase64(jpegFixture(200, 80)) });
+    expect(sponsor.logo).toMatchObject({ type: "image/jpeg", w: 200, h: 80 });
+    expect(sponsor.logo?.etag).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("rejects a JPEG with no Start-Of-Frame marker before the bytes run out", async () => {
+    const noSof = Buffer.from([0xff, 0xd8, 0xff, 0xd9]); // SOI then straight to EOI
+    await expect(upsertSponsor(validInput, { data: toBase64(noSof) })).rejects.toThrow(
+      /not a structurally valid JPEG/,
+    );
   });
 
   it("rejects an SVG with its own message, regardless of the declared MIME type", async () => {
@@ -112,7 +143,7 @@ describe("upsertSponsor — logo validation", () => {
 
   it("rejects an unrecognized binary format", async () => {
     const junk = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
-    await expect(upsertSponsor(validInput, { data: toBase64(junk) })).rejects.toThrow(/must be a PNG or WebP/);
+    await expect(upsertSponsor(validInput, { data: toBase64(junk) })).rejects.toThrow(/must be a PNG, JPEG or WebP/);
   });
 
   it("rejects a PNG whose IHDR reports a zero dimension", async () => {

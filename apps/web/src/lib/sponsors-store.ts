@@ -51,7 +51,7 @@ export class SponsorValidationError extends Error {
 }
 
 export type SponsorLogo = {
-  type: "image/png" | "image/webp";
+  type: "image/png" | "image/webp" | "image/jpeg";
   bytes: number;
   w: number;
   h: number;
@@ -91,6 +91,7 @@ export type SponsorLogoInput = { data: string; declaredType?: string };
 const CONTROL_CHARS_RE = /[\x00-\x1f\x7f‪-‮⁦-⁩]/;
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
 
 function isValidSponsorUrl(url: string): boolean {
   if (url.length === 0 || url.length > SPONSOR_URL_MAX) return false;
@@ -175,20 +176,30 @@ function decodeAndValidateLogo(input: SponsorLogoInput): { bytes: Buffer; logo: 
     return { bytes, logo: buildLogoMeta("image/webp", bytes, dims) };
   }
 
+  if (bytes.subarray(0, 3).equals(JPEG_MAGIC)) {
+    const dims = parseJpegDimensions(bytes);
+    if (!dims) throw new SponsorValidationError("logo", "logo is not a structurally valid JPEG");
+    return { bytes, logo: buildLogoMeta("image/jpeg", bytes, dims) };
+  }
+
   // Cheap heuristic sniff for the one format organizers are likeliest to
   // reach for by habit: an SVG has no fixed magic number, but a real one
   // always carries its tag within the first kilobyte.
   if (/<svg[\s>]/i.test(bytes.subarray(0, 1024).toString("latin1")) || input.declaredType === "image/svg+xml") {
     throw new SponsorValidationError(
       "logo",
-      "SVG logos are not accepted — an SVG served from this origin can run script. Export the logo as PNG or WebP.",
+      "SVG logos are not accepted — an SVG served from this origin can run script. Export the logo as PNG, JPEG or WebP.",
     );
   }
 
-  throw new SponsorValidationError("logo", "logo must be a PNG or WebP image");
+  throw new SponsorValidationError("logo", "logo must be a PNG, JPEG or WebP image");
 }
 
-function buildLogoMeta(type: "image/png" | "image/webp", bytes: Buffer, dims: { w: number; h: number }): SponsorLogo {
+function buildLogoMeta(
+  type: "image/png" | "image/webp" | "image/jpeg",
+  bytes: Buffer,
+  dims: { w: number; h: number },
+): SponsorLogo {
   if (dims.w < 1 || dims.w > SPONSOR_LOGO_MAX_DIMENSION || dims.h < 1 || dims.h > SPONSOR_LOGO_MAX_DIMENSION) {
     throw new SponsorValidationError("logo", "logo dimensions must be between 1 and 4096 pixels");
   }
@@ -249,6 +260,39 @@ function parseWebpDimensions(bytes: Buffer): { w: number; h: number } | null {
   return null;
 }
 
+/** JPEG has no fixed-offset dimension field — after the FFD8 SOI it's a
+ *  chain of FF<marker><length><payload> segments (length counts itself but
+ *  not the FF/marker byte), and the dimensions live in whichever
+ *  Start-Of-Frame marker (FFC0-FFCF, excluding the DHT/JPG/DAC reserved
+ *  bytes C4/C8/CC) turns up first. Walk the chain until one does, or the
+ *  bytes run out — bounded by `bytes.length`, which SPONSOR_LOGO_MAX already
+ *  caps, so this can't loop past a well-formed length field. */
+function parseJpegDimensions(bytes: Buffer): { w: number; h: number } | null {
+  let offset = 2; // past the FFD8 SOI the magic check already matched
+  while (offset + 4 <= bytes.length) {
+    if (bytes[offset] !== 0xff) return null;
+    const marker = bytes[offset + 1]!;
+    // Standalone markers carry no length: SOI, EOI, TEM, and the RST0-RST7
+    // restart markers.
+    if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      offset += 2;
+      continue;
+    }
+    const length = bytes.readUInt16BE(offset + 2);
+    if (length < 2) return null;
+    const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isSof) {
+      if (offset + 9 > bytes.length) return null;
+      const h = bytes.readUInt16BE(offset + 5);
+      const w = bytes.readUInt16BE(offset + 7);
+      if (w === 0 || h === 0) return null;
+      return { w, h };
+    }
+    offset += 2 + length;
+  }
+  return null;
+}
+
 function parseSponsor(raw: string): Sponsor | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -264,7 +308,7 @@ function parseSponsor(raw: string): Sponsor | null {
     if (s.logo && typeof s.logo === "object") {
       const l = s.logo as Record<string, unknown>;
       if (
-        (l.type === "image/png" || l.type === "image/webp") &&
+        (l.type === "image/png" || l.type === "image/webp" || l.type === "image/jpeg") &&
         typeof l.bytes === "number" &&
         typeof l.w === "number" &&
         typeof l.h === "number" &&

@@ -30,6 +30,7 @@ import {
   DEMO_AI_CHALLENGES,
   DEMO_AI_CATEGORIES,
   DEMO_AI_SOLVES,
+  DEMO_SPONSORS,
 } from "@/lib/demo-fixture";
 import {
   QUIZ_QUESTIONS_KEY,
@@ -985,7 +986,9 @@ function raiseSolveCounts(cmds: (string | number)[][], key: string, counts: Map<
  * does not clear first. Gated by the route on DEMO_MODE + requireAdmin;
  * never a production path.
  */
-export async function seedDemoData(actor: string): Promise<{ contestants: number; teams: number; solves: number }> {
+export async function seedDemoData(
+  actor: string,
+): Promise<{ contestants: number; teams: number; solves: number; sponsors: number }> {
   const now = Date.now();
   const windowMs = 6 * 60 * 60 * 1000;
 
@@ -1330,6 +1333,20 @@ export async function seedDemoData(actor: string): Promise<{ contestants: number
     raiseSolveCounts(cmds, AI_SOLVECOUNT_KEY, aiSolveCounts);
   }
 
+  // Sponsors — a platform feature, not a module, so unlike quiz/classic/ai
+  // above this is never gated on `live`: an organizer previewing the demo
+  // with every module off still sees what the sponsors feature looks like.
+  // No `ctf:sponsors:logo` write: every demo sponsor has `logo: null` and
+  // renders as plain text (see demo-fixture.ts's header on that fixture).
+  for (const s of DEMO_SPONSORS) {
+    cmds.push([
+      "HSET",
+      SPONSORS_KEY,
+      s.id,
+      JSON.stringify({ id: s.id, name: s.name, url: s.url, blurb: s.blurb, tier: s.tier, order: s.order, logo: null }),
+    ]);
+  }
+
   const audit = JSON.stringify({
     at: new Date(now).toISOString(),
     by: actor,
@@ -1342,6 +1359,7 @@ export async function seedDemoData(actor: string): Promise<{ contestants: number
       ? { classicChallenges: DEMO_CHALLENGES.length, classicSolves: classicSolvesSeeded }
       : {}),
     ...(aiEnabled ? { aiChallenges: DEMO_AI_CHALLENGES.length, aiSolves: aiSolvesSeeded } : {}),
+    sponsors: DEMO_SPONSORS.length,
   });
   cmds.push(["LPUSH", ADMIN_AUDIT_KEY, audit]);
   cmds.push(["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1]);
@@ -1353,7 +1371,12 @@ export async function seedDemoData(actor: string): Promise<{ contestants: number
   const results = await upstashPipeline(cmds);
   const failed = results.find((r) => r.error);
   if (failed) throw new Error(`Seed failed: ${failed.error}`);
-  return { contestants: DEMO_CONTESTANTS.length, teams: DEMO_TEAMS.length, solves: total };
+  return {
+    contestants: DEMO_CONTESTANTS.length,
+    teams: DEMO_TEAMS.length,
+    solves: total,
+    sponsors: DEMO_SPONSORS.length,
+  };
 }
 
 // --- runtime admins (issue #147) ---------------------------------------------

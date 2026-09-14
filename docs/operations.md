@@ -618,7 +618,11 @@ The panel offers:
   can *only* be solved by an external arena reporting the solve, so seeding one
   put a challenge on the board that nobody could clear
   ([#355](https://github.com/dcotelo/owasp-ctf/issues/355)). See
-  [AI](#ai) below for what the modes mean. The seed also writes
+  [AI](#ai) below for what the modes mean. Sponsors are seeded too, always —
+  three placeholder ones, one per tier, so the landing-page strip, the
+  footer, and `/sponsors` all preview populated instead of empty. They carry
+  no logo (they render as plain text) and use the `.example` TLD, which
+  cannot resolve to anything real. The seed also writes
   **attempt** rows, including some for items that were tried and never
   earned, so the
   **Insights** tab previews a plausible event rather than one where

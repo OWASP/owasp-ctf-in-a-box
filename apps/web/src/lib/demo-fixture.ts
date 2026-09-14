@@ -612,3 +612,47 @@ export const DEMO_TEAMS: DemoTeam[] = [
     ]
   }
 ];
+
+// Sponsors (DEMO_MODE 'Seed demo data'). A platform feature, not a module —
+// seeded regardless of which modules are enabled, mirroring how sponsors
+// themselves carry no module gate anywhere else (issue #405). No logo: `logo:
+// null` renders as a plain-text name everywhere, which is enough to show the
+// feature exists without bundling binary image fixtures into this file.
+// Names/urls are placeholder — `.example` is the IANA-reserved TLD for
+// exactly this, so nothing here resolves to (or could be mistaken for) a real
+// organization.
+export type DemoSponsor = {
+  id: string;
+  name: string;
+  url: string;
+  blurb: string;
+  tier: "gold" | "silver" | "community";
+  order: number;
+};
+
+export const DEMO_SPONSORS: DemoSponsor[] = [
+  {
+    "id": "acme-security-demo",
+    "name": "Acme Security",
+    "url": "https://acme-security.example",
+    "blurb": "Placeholder gold sponsor for demo mode.",
+    "tier": "gold",
+    "order": 0
+  },
+  {
+    "id": "widgetsoft-labs-demo",
+    "name": "Widgetsoft Labs",
+    "url": "https://widgetsoft.example",
+    "blurb": "Placeholder silver sponsor for demo mode.",
+    "tier": "silver",
+    "order": 1
+  },
+  {
+    "id": "northwind-foundation-demo",
+    "name": "Northwind Foundation",
+    "url": "https://northwind.example",
+    "blurb": "Placeholder community sponsor for demo mode.",
+    "tier": "community",
+    "order": 2
+  }
+];

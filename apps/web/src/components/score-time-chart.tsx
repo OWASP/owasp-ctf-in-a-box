@@ -223,13 +223,7 @@ function InteractiveChart({
   // actually change what's plotted, still distinct across a real view
   // toggle even on the rare case minT/maxT happen to coincide.
   const linesSignature = useMemo(
-    () =>
-      lines
-        .map((l) => {
-          const last = l.raw[l.raw.length - 1];
-          return `${l.key}:${l.raw.length}:${last?.t ?? ""}:${last?.score ?? ""}`;
-        })
-        .join("|"),
+    () => lines.map((l) => `${l.key}:${l.raw.map((p) => `${p.t}:${p.score}`).join(",")}`).join("|"),
     [lines],
   );
   useEffect(() => {

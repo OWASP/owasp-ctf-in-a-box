@@ -67,7 +67,7 @@ beforeEach(() => {
   // event with only the classic module enabled and no organizer overrides.
   // Tests that care about an organizer-renamed title override this per-case.
   getResolvedModules.mockResolvedValue([
-    { id: "classic", title: "Classic CTF", blurb: "Find the flag, submit the string, take the points." },
+    { id: "classic", title: "Jeopardy", blurb: "Find the flag, submit the string, take the points." },
   ]);
   listCategories.mockResolvedValue(["Web", "Crypto"]);
   getSolveCounts.mockResolvedValue(new Map());
@@ -245,11 +245,11 @@ describe("flags page view model", () => {
 describe("flags page metadata", () => {
   it("falls back to the registry default title/description when there's no organizer override", async () => {
     getResolvedModules.mockResolvedValue([
-      { id: "classic", title: "Classic CTF", blurb: "Find the flag, submit the string, take the points." },
+      { id: "classic", title: "Jeopardy", blurb: "Find the flag, submit the string, take the points." },
     ]);
 
     await expect(generateMetadata()).resolves.toEqual({
-      title: "Classic CTF",
+      title: "Jeopardy",
       description: "Find the flag, submit the string, take the points.",
     });
   });

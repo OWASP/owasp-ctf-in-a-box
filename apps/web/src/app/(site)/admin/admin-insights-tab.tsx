@@ -282,7 +282,7 @@ export default function AdminInsightsTab({
             <h3 className="text-sm font-semibold text-white">Where attention went</h3>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               <Figure label="Quiz scorers" value={metrics.modules.quiz} />
-              <Figure label="Classic scorers" value={metrics.modules.classic} />
+              <Figure label="Jeopardy scorers" value={metrics.modules.classic} />
               <Figure label="AI scorers" value={metrics.modules.ai} />
               <Figure label="Secure Development scorers" value={metrics.modules.secureDevelopment} />
               <Figure label="Hint buyers" value={metrics.hints.buyers} />

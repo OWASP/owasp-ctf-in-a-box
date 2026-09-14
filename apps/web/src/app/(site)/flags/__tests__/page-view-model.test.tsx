@@ -91,7 +91,7 @@ beforeEach(() => {
   listCategories.mockResolvedValue(["Web"]);
   getSolveCounts.mockResolvedValue(new Map());
   getResolvedModules.mockResolvedValue([
-    { id: "classic", title: "Classic CTF", blurb: "Find the flag, submit the string, take the points." },
+    { id: "classic", title: "Jeopardy", blurb: "Find the flag, submit the string, take the points." },
   ]);
 });
 

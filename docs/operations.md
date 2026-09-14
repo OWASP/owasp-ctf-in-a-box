@@ -18,7 +18,7 @@ live-GitHub scoring. For standing the kit up in the first place, see
 [Admin panel](#organizer-admin-panel) ·
 [Archiving and replaying an event](#archiving-and-replaying-an-event) ·
 [Quiz](#quiz) ·
-[Classic](#classic) ·
+[Jeopardy](#jeopardy) ·
 [Verifying it works](#verifying-it-works) ·
 [Local dev-stack](#local-dev-stack) ·
 [Known limitations](#known-limitations) ·
@@ -181,7 +181,7 @@ screen shows "Saved" on both. The numeric fields do the same and no longer
 show a browser spinner: type the value, tab out, read the line under it.
 
 The hint policy has its own **Hints** destination because it is event-wide:
-Secure Development, Classic and AI all sell their hints through the same
+Secure Development, Jeopardy and AI all sell their hints through the same
 four settings. (It sat on the Secure Development tab for a while, which left
 a classic-only or ai-only event with no hint switch at all, then in a section
 of Event.) **Every move has been a UI relocation only** — the underlying
@@ -223,7 +223,7 @@ live on the next request; there is no rebuild and no cache to wait out.
 name in three places on every event: **the tab's own label**, **the nav link**
 (header and footer alike), and **the module's own page header and browser tab
 title** (`/challenges` for Secure Development, `/quiz` for Quiz, `/flags` for
-Classic). Two further
+Jeopardy). Two further
 surfaces exist but are **suppressed on a single-module event**, which is what
 most events are:
 
@@ -254,7 +254,7 @@ places:
   registry `home` block. All four modules that exist today have one, so
   today this
   is a fallback for a future module rather than something you can see —
-  Secure Development's, Quiz's, Classic's, and AI's landing copy all come
+  Secure Development's, Quiz's, Jeopardy's, and AI's landing copy all come
   from the
   registry and are
   not organizer-editable.
@@ -338,7 +338,7 @@ The panel offers:
 
   **What is on before you touch anything:** Secure Development, and only
   when the deployment has a scorer image (`SCORE_IMAGE` in `.env`); otherwise
-  nothing. Quiz, Classic and AI always start off. Nothing else influences
+  nothing. Quiz, Jeopardy and AI always start off. Nothing else influences
   enablement — there is no config file and no baked default (#386) — and
   which Secure Development targets run is a separate setting on that module's
   own tab; if the settings read fails the app falls back to that same "all
@@ -419,7 +419,7 @@ The panel offers:
   when its module is off (`hint-store.ts`'s `hintGate`). In practice only
   classic and ai ever reach it: **Secure Development has no hints**, because
   nothing in the kit authors hint text for a target, so no challenge on
-  `/challenges` offers one and that page shows no hint banner (issue #334). Classic and ai
+  `/challenges` offers one and that page shows no hint banner (issue #334). Jeopardy and ai
   count "solves required" across the whole board rather than per app, the
   same way secure-development counts per target — see [the AI
   section](#ai) for its own hint text/knobs. The quiz has no hints by
@@ -593,12 +593,12 @@ The panel offers:
   authoring: add, edit, reorder (drag, or Move up / Move down from the row's
   **⋯** menu), and delete (also in that menu). See [Quiz](#quiz) below for
   what these do and their defaults.
-- **Classic controls** (Classic tab, present only when the `classic` module
+- **Jeopardy controls** (Jeopardy tab, present only when the `classic` module
   is enabled) — the submission-cooldown knob (in **seconds**, not minutes)
   plus category management and full challenge authoring: add, edit, reorder
   (drag, or Move up / Move down from the row's **⋯** menu), and delete (also
   in that menu), with the list grouped by category the way contestants see
-  the board. See [Classic](#classic) below for what these do and their
+  the board. See [Jeopardy](#jeopardy) below for what these do and their
   defaults.
 - **Seed demo data** (demo mode only) — populates the leaderboard with fake
   contestants, teams, and real-challenge-id solves so you can preview the app
@@ -608,7 +608,7 @@ The panel offers:
   one module. When the `classic` module is enabled, it seeds a demo flag board
   the same way — categories, challenges (flags included), and a spread of
   solves — so a multi-module event previews as one combined board. See
-  [Classic](#classic) below. When the `ai` module is enabled, it seeds two
+  [Jeopardy](#jeopardy) below. When the `ai` module is enabled, it seeds two
   demo challenges and a spread of solves for them, plus the `AI` category to
   hold them. Their **launch URL templates deliberately point at a placeholder
   host that does not resolve**, because a demo dataset cannot ship an
@@ -713,7 +713,7 @@ points/solved/solve-count hashes the leaderboard reads) but deliberately
 **keeps your authored challenges, their flags, and your categories** — the
 same organizer content/contestant progress line the quiz reset draws. A
 rehearsal on the `classic` module wipes back to the challenge set you wrote,
-ready to run for real. See [Classic](#classic) below.
+ready to run for real. See [Jeopardy](#jeopardy) below.
 
 ### Targets
 
@@ -870,12 +870,12 @@ previously exported one — publishing a finished event's content, or
 stamping out a repeat run of the same CTF, without re-authoring anything by
 hand.
 
-**What a bundle carries.** Classic, Quiz and AI **content** — challenges,
+**What a bundle carries.** Jeopardy, Quiz and AI **content** — challenges,
 flags, hints and categories, quiz questions with their answer keys, and each
 AI challenge's mode, launch URL template and **per-challenge signing key**
 (so an external site configured against it keeps working after a restore) —
 plus **policy** settings: the hint controls (enabled, cost, and its two
-gating knobs), the quiz retry-gate knobs, Classic's and AI's submission
+gating knobs), the quiz retry-gate knobs, Jeopardy's and AI's submission
 cooldowns, the re-run cooldown, the team-size cap and registration switch,
 module title/blurb overrides, and which modules are enabled. It also carries an informational **event
 identity** block — `name`, `theme`, `dates`, `location` and `ctfStartsAt` —
@@ -885,7 +885,7 @@ read from the running box at export time.
 `"kind": "archive"` next to a numeric `version`, and import checks both
 before it looks at anything else: a file whose `kind` is not exactly
 `archive`, or whose `version` this box does not know, is refused with the
-field named. A per-module export — the Classic board's or the Quiz bank's
+field named. A per-module export — the Jeopardy board's or the Quiz bank's
 own **Export** — carries no `kind` at all (it is a bare `version` plus
 content) and is refused here for that reason; feed those to their own
 module's import box, not this one.
@@ -919,7 +919,7 @@ treat the file with the same care as `/admin` access itself.
 **Import is replace-all, and it is destructive.** Confirming an import first
 validates and applies the file's policy settings, then runs the same reset
 the master reset button does — wiping every team, solve, attempt, and hint
-purchase — and replaces the entire Classic board, Quiz bank and AI catalogue
+purchase — and replaces the entire Jeopardy board, Quiz bank and AI catalogue
 with exactly what the file contains (a section absent from the file leaves
 that module empty, not as it was — replace-all, not merge). Settings go first and fail-fast: a bad or
 cross-box-incompatible settings block is rejected before anything is wiped,
@@ -1091,7 +1091,7 @@ for how the board is built when there's no scoring backend behind it at all.
 Beyond the admin form's one-question-at-a-time editing, the Quiz tab's own
 panel has an **Export questions** button and an **Import a bundle** box
 (paste JSON, or choose a `.json` file) for authoring — or backing up — a
-whole bank in one pass. This is the same bundle format the Classic module
+whole bank in one pass. This is the same bundle format the Jeopardy module
 uses (see [ADR 36](decisions.md#adr-36-quiz-adopts-classics-bundle-format-rather-than-inventing-a-second-one)),
 so the rules below will look familiar if you have imported a flag board. A
 bundle is a single JSON object: a `version` and a `questions` array where
@@ -1167,13 +1167,13 @@ casually; treat it with the same care as `/admin` access itself.
 per-question attempt/cooldown overrides are all out of scope — the two
 retry knobs are global settings, not per-question ones.
 
-## Classic
+## Jeopardy
 
-Switch Classic on from `/admin` → Event → Modules and contestants get a
+Switch Jeopardy on from `/admin` → Event → Modules and contestants get a
 jeopardy-style flag board: a set of organizer-authored challenges, each
 hiding a flag, graded the instant a contestant submits a matching string.
 Like the quiz, it doesn't touch GitHub, the scorer, or `sync` at all — see
-[docs/architecture.md](architecture.md#classic-data-flow) for how it scores
+[docs/architecture.md](architecture.md#jeopardy-data-flow) for how it scores
 entirely inside the app.
 
 ![The classic flag board: each card shows its point value and solve count, a case-sensitive badge where casing matters, and instant solved/not-quite feedback under the submission box](assets/flags.jpg)
@@ -1182,8 +1182,8 @@ entirely inside the app.
 many people have solved it, a badge marks the flags where casing matters, and
 grading answers the instant you submit.</sup>
 
-**Authoring** happens in `/admin`, under the Classic module's tab (see
-"Classic controls" above). Before adding a challenge you need at least one
+**Authoring** happens in `/admin`, under the Jeopardy module's tab (see
+"Jeopardy controls" above). Before adding a challenge you need at least one
 **category** — categories are a row of chips in the order contestants see
 them (add; move a chip left or right, rename it, or remove it, with the
 controls that appear when you hover or focus it), and a category can only be
@@ -1203,7 +1203,7 @@ those categories, each heading carrying its count. A challenge itself has a titl
 category (picked from that list), a Markdown description (a live preview
 renders alongside the box as you type), a point value, and a flag.
 
-![The Classic module's admin tab: the module's title and blurb, the submission cooldown, the ordered categories as chips carrying move, rename and remove controls, and the challenge list grouped by category with drag-to-reorder, Edit, and a per-row menu for the rest](assets/admin-classic.jpg)
+![The Jeopardy module's admin tab: the module's title and blurb, the submission cooldown, the ordered categories as chips carrying move, rename and remove controls, and the challenge list grouped by category with drag-to-reorder, Edit, and a per-row menu for the rest](assets/admin-classic.jpg)
 
 <sup>The whole module is authored here — categories, challenges, cooldown,
 even the module's display name — live, with no rebuild.</sup>
@@ -1283,7 +1283,7 @@ already banked, the same rule the quiz follows.
 
 **Team totals dedupe by challenge**, the same rule already used for the quiz
 and for secure-development's shared flags: if two teammates both solve the
-same challenge, the team's board counts it once, not twice. Classic points
+same challenge, the team's board counts it once, not twice. Jeopardy points
 show up as an addition on top of a contestant's or team's other points,
 using the exact same union-and-add mechanism the quiz does — see the
 architecture doc for the details.
@@ -1301,7 +1301,7 @@ back to the challenges, flags, and categories you authored, which the reset
 keeps.
 
 **Bulk authoring: import and export the whole challenge set as one file.**
-Beyond the admin form's one-challenge-at-a-time editing, the Classic tab's
+Beyond the admin form's one-challenge-at-a-time editing, the Jeopardy tab's
 own panel has an **Export challenges** button and an **Import a bundle**
 box (paste JSON, or choose a `.json` file) for authoring — or backing up —
 many challenges in one pass. A bundle is a single JSON object: a
@@ -1378,7 +1378,7 @@ issue or chat, or otherwise share it casually; treat it with the same care
 as `/admin` access itself, since a saved copy of the file protects nothing
 on its own.
 
-**Classic has paid hints too** (#210, after the board itself shipped
+**Jeopardy has paid hints too** (#210, after the board itself shipped
 without them): a challenge can carry an optional `hint`, sold through the
 same paid-hint gate and knobs as secure-development targets — cost,
 minimum solves, unlock delay, and the penalty fold all work identically.
@@ -1458,7 +1458,7 @@ characters** each (`AI_CATEGORIES_MAX`/`AI_CATEGORY_MAX_LEN`, enforced in
 `setAiCategories`).
 
 
-**Renaming behaves exactly as it does on Classic**, and for the same reasons:
+**Renaming behaves exactly as it does on Jeopardy**, and for the same reasons:
 the rename rewrites every AI challenge filed under that category in the same
 operation, so a typo ten challenges share is one edit rather than eleven.
 Renaming onto a name another category already holds is **refused, not merged**

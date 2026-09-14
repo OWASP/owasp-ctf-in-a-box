@@ -100,7 +100,7 @@ vi.mock("@/lib/modules", () => ({
     ({
       "secure-development": { displayName: "Secure Development", description: "" },
       quiz: { displayName: "Quiz", description: "Answer security questions for points." },
-      classic: { displayName: "Classic CTF", description: "" },
+      classic: { displayName: "Jeopardy", description: "" },
     })[id],
   MODULE_TITLE_MAX: 60,
   MODULE_BLURB_MAX: 200,
@@ -298,11 +298,11 @@ describe("AdminControls panel contents", () => {
   it("says on the Hints panel which modules the hint policy reaches", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
     const hintsPanel = panelFor(html, "hints");
-    expect(hintsPanel).toMatch(/Classic CTF and AI Challenges sell their hints/);
+    expect(hintsPanel).toMatch(/Jeopardy and AI sell their hints/);
     // Secure Development is named as having none, and the wording that sent
     // organizers to a tab with no hint field must not survive (issue #334).
     expect(hintsPanel).toMatch(/Secure Development have no hints/);
-    expect(hintsPanel).not.toMatch(/Secure Development, Classic CTF and AI Challenges/);
+    expect(hintsPanel).not.toMatch(/Secure Development, Jeopardy and AI/);
     expect(hintsPanel).not.toMatch(/Each module.s own tab holds the hint text/);
   });
 
@@ -681,7 +681,7 @@ describe("numeric inputs advertise their default", () => {
   const allModules = [
     { id: "secure-development", title: "Secure Development", blurb: "" },
     { id: "quiz", title: "Quiz", blurb: "" },
-    { id: "classic", title: "Classic CTF", blurb: "" },
+    { id: "classic", title: "Jeopardy", blurb: "" },
   ] as unknown as ResolvedModule[];
 
   it("renders a placeholder equal to the server-side fallback", () => {
@@ -728,7 +728,7 @@ describe("module toggles", () => {
     // is currently off still needs a visible switch. Keying the list off the
     // enabled set would show only what is already running.
     const html = render({ enabledModuleIds: ["secure-development"] });
-    expect(html).toContain("Classic CTF");
+    expect(html).toContain("Jeopardy");
     expect(html).toContain("Quiz");
   });
 
@@ -775,12 +775,12 @@ describe("module toggles", () => {
 describe("AdminControls ai panel", () => {
   const withAi: readonly ResolvedModule[] = [
     ...twoModules,
-    { id: "ai", title: "AI Challenges", blurb: "Prompt-injection and jailbreak challenges hosted externally." },
+    { id: "ai", title: "AI", blurb: "Prompt-injection and jailbreak challenges hosted externally." },
   ];
 
   it("renders the ai module's tab with an eleventh destination and panel", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={withAi} />);
-    expect(html).toContain("AI Challenges");
+    expect(html).toContain("AI");
     expect(html.match(/href="\/admin\//g)?.length).toBe(11);
     expect(html.match(/role="region"/g)?.length).toBe(11);
   });

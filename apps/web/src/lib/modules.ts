@@ -341,7 +341,7 @@ const REGISTRY: Record<ModuleId, ModuleDef> = {
     // rendered bytes are unchanged. Retyping them as ASCII "'" would be a
     // silent copy change no test would notice.
     home: {
-      tagline: "Secure Development CTF",
+      tagline: "Secure Development",
       intro: (ctx) =>
         // "training apps", not "OWASP training apps": DVWA and VAmPI are
         // community projects, and the hero must not claim otherwise (the
@@ -1023,7 +1023,7 @@ git push -u origin fix/<short-description>`,
   },
   classic: {
     id: "classic",
-    displayName: "Classic CTF",
+    displayName: "Jeopardy",
     description: "Find the flag, submit the string, take the points.",
     nav: { href: "/flags", label: "Flags" },
     emptyBoard: {
@@ -1064,7 +1064,7 @@ git push -u origin fix/<short-description>`,
     // small subset — bold, italics, inline code, lists, code blocks and
     // links — never raw HTML.
     home: {
-      tagline: "Classic CTF",
+      tagline: "Jeopardy",
       intro: () =>
         "Find each flag and submit it for points. Every flag carries its own point value, grading happens the instant you submit, and matching ignores leading or trailing whitespace and — unless a flag is marked case-sensitive on its card — capitalisation too.",
       steps: () => [
@@ -1273,17 +1273,17 @@ git push -u origin fix/<short-description>`,
           "Removing a category that challenges still use. The panel refuses and names how many are blocking it.",
         ],
       },
-      docs: { href: `${DOCS_URL}operations#classic`, label: "Classic in the operations guide" },
+      docs: { href: `${DOCS_URL}operations#jeopardy`, label: "Jeopardy in the operations guide" },
     }),
   },
   ai: {
     id: "ai",
-    displayName: "AI Challenges",
+    displayName: "AI",
     description: "Prompt-injection and guardrail challenges hosted outside the box, scored inside it.",
     // /ai exists now (the pages PR), so the module gets its nav entry — which
     // also puts /ai in GATED_ROUTES (proxy.ts's matcher must carry it too;
     // proxy.test.ts asserts the two agree) and the 404's route directory.
-    nav: { href: "/ai", label: "AI Challenges" },
+    nav: { href: "/ai", label: "AI" },
     emptyBoard: {
       line: "No challenges solved yet. Every rank is unclaimed. Solve your first AI challenge and you’ll be the one everyone else is chasing.",
       cta: { href: "/ai", label: "$ open a challenge" },
@@ -1329,7 +1329,7 @@ git push -u origin fix/<short-description>`,
     //     that; this note just retires the "not yet" framing now that both are
     //     real.
     home: {
-      tagline: "AI Challenges",
+      tagline: "AI",
       intro: () =>
         "Each challenge is hosted on an external site. Open it from its page for a personal launch link, play it there, and a correct solve reports back to the leaderboard on its own — or, where a challenge also takes one, grade yourself by typing the flag on the page.",
       steps: () => [
@@ -1429,7 +1429,7 @@ git push -u origin fix/<short-description>`,
           q: "How do I play a challenge?",
           a: [
             "Sign in, open the ",
-            { route: { href: "/ai", label: "AI Challenges" } },
+            { route: { href: "/ai", label: "AI" } },
             " page, and open the one you want. That mints you a personal launch link into the external site — follow it and play there. A solve reports back on its own, or, where the challenge also takes one, paste the flag into the box on its page.",
           ],
         },

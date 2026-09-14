@@ -396,7 +396,7 @@ describe("profile per-module block content", () => {
   it("renders the ai block with its own noun and Show-N item list, never secure-development's", async () => {
     isModuleEnabled.mockImplementation((id: string) => id === "ai");
     getResolvedModules.mockResolvedValue([
-      { id: "ai", nav: { href: "/ai", label: "AI Challenges" }, targets: [], title: "AI Challenges", blurb: "" },
+      { id: "ai", nav: { href: "/ai", label: "AI" }, targets: [], title: "AI", blurb: "" },
     ]);
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue({ ...baseProfile, apps: [] });

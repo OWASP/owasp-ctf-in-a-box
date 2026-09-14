@@ -1,6 +1,6 @@
 "use client";
 
-// The Classic CTF module's admin section: the submission-cooldown knob plus
+// The Jeopardy module's admin section: the submission-cooldown knob plus
 // full challenge authoring (add/edit/reorder/delete) and category management,
 // rendered in place of admin-controls.tsx's old "No settings for this module
 // yet." placeholder for the classic module. Modeled directly on

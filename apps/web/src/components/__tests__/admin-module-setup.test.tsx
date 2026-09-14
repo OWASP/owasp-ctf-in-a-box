@@ -181,7 +181,7 @@ describe("challenges the board does not render", () => {
   });
 
   it("warns in the panel, in the amber it uses for unfinished work", () => {
-    const html = renderToStaticMarkup(<AdminModuleSetup title="AI Challenges" setup={setup} inventory={{ items: 5, categories: 1, unlisted: 3 }} />);
+    const html = renderToStaticMarkup(<AdminModuleSetup title="AI" setup={setup} inventory={{ items: 5, categories: 1, unlisted: 3 }} />);
     expect(html).toContain("3 challenges are in a category that is not in the list below");
     expect(html).toContain("contestants never see them");
     // The STATUS LINE is amber, not green: a green "setup complete" sitting
@@ -194,11 +194,11 @@ describe("challenges the board does not render", () => {
   });
 
   it("uses the singular, and stays silent at zero", () => {
-    const one = renderToStaticMarkup(<AdminModuleSetup title="Classic CTF" setup={setup} inventory={{ items: 5, categories: 1, unlisted: 1 }} />);
+    const one = renderToStaticMarkup(<AdminModuleSetup title="Jeopardy" setup={setup} inventory={{ items: 5, categories: 1, unlisted: 1 }} />);
     expect(one).toContain("1 challenge is in a category that is not in the list below");
     expect(one).toContain("contestants never see it");
 
-    const none = renderToStaticMarkup(<AdminModuleSetup title="Classic CTF" setup={setup} inventory={{ items: 5, categories: 1, unlisted: 0 }} />);
+    const none = renderToStaticMarkup(<AdminModuleSetup title="Jeopardy" setup={setup} inventory={{ items: 5, categories: 1, unlisted: 0 }} />);
     expect(none).not.toContain("not in the list below");
     expect(none).toContain("Setup complete");
   });

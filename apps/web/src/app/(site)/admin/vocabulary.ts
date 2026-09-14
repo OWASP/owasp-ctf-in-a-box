@@ -1,7 +1,7 @@
 // One name per module, for the panel's own text (audit F25).
 //
 // The panel had four names for the same two things: a classic solve was a
-// "flag solve" in Activity, under a tab called "Classic CTF", while the nav
+// "flag solve" in Activity, under a tab called "Jeopardy", while the nav
 // said "Flags"; Insights called Secure Development "Sec-dev" and printed the
 // raw registry ids `classic` and `ai` in a column headed Module. Same thing,
 // four names, on one screen — which costs nothing until an organizer has to
@@ -28,8 +28,8 @@ import type { ModuleId } from "@/lib/modules";
 export const MODULE_LABEL: Record<ModuleId, string> = {
   "secure-development": "Secure Development",
   quiz: "Quiz",
-  classic: "Classic CTF",
-  ai: "AI Challenges",
+  classic: "Jeopardy",
+  ai: "AI",
 };
 
 /** The module's name, or the id itself for one this build does not know — a

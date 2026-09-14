@@ -174,13 +174,13 @@ Stated plainly so it is not mistaken for an oversight:
   inherent to judging submitted code and predates every flag discussed here
   — see [ADR 37](decisions.md#adr-37-opting-in-to-the-guarded-fork-pr-checkout).
 - **Contestants can see each other's scores.** The leaderboard is the point.
-- **Classic flags and quiz answer keys are stored in plaintext** (Redis:
+- **Jeopardy flags and quiz answer keys are stored in plaintext** (Redis:
   `ctf:classic:flag`, `ctf:quiz:key`) and are readable by every `/admin`
   user — the admin edit forms return them verbatim, deliberately, so an
   organizer can fix a typo'd flag mid-event. `/admin` access (and Redis
   access) is the actual secrecy boundary; decide who gets admin
   accordingly. Contestant-facing paths never touch either key. See
-  [Operations → Classic](operations.md#classic).
+  [Operations → Jeopardy](operations.md#jeopardy).
 
 ## The operational half
 

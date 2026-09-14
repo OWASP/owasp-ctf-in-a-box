@@ -24,7 +24,7 @@ GitHub-mediated scoring, the worked example throughout this doc), `quiz`
 (a self-paced single/multi-select question bank, scored entirely inside the
 app — see [Quiz data flow](#quiz-data-flow) below), `classic` (a
 jeopardy-style flag board, also scored entirely inside the app — see
-[Classic data flow](#classic-data-flow) below), and `ai` (externally hosted
+[Jeopardy data flow](#jeopardy-data-flow) below), and `ai` (externally hosted
 AI/LLM challenges: the box mints a contestant's identity for the outside
 site and grades or accepts a solve back, also scored entirely inside the
 app — see [AI data flow](#ai-data-flow) below). See
@@ -196,7 +196,7 @@ state; everything else that touches scores goes through it.
    none of those modules' points are ever
    inside `entry.points` to begin with and all three are **added** on top instead
    (`entry.points += quizTotal.points + classicTotal.points + aiTotal.points`)
-   — see [Quiz data flow](#quiz-data-flow), [Classic data flow](#classic-data-flow),
+   — see [Quiz data flow](#quiz-data-flow), [Jeopardy data flow](#jeopardy-data-flow),
    and [AI data flow](#ai-data-flow)
    below. Hint penalties run **last**, netting the final all-module total
    exactly once — module blocks everywhere show their *gross* contribution and
@@ -258,8 +258,8 @@ row
 carrying every held block, never one row per module. A created row has every scorer-supplied field
 (`patched`/`failed`/`total`/`apps`) genuinely zero — there is no scoring
 entry behind it — and its only points are the modules', added rather than
-attributed (see [Quiz data flow](#quiz-data-flow), [Classic data
-flow](#classic-data-flow) and [AI data flow](#ai-data-flow) below for why
+attributed (see [Quiz data flow](#quiz-data-flow), [Jeopardy data
+flow](#jeopardy-data-flow) and [AI data flow](#ai-data-flow) below for why
 those are
 different verbs). `withTeamStandings` does the same one step later for
 teams: its membership-only rows (synthesised from live team records whenever
@@ -404,7 +404,7 @@ deliberately leaves `ctf:quiz:questions` and `ctf:quiz:key` untouched, the
 same way it leaves `ctf:admin:settings` untouched: both are organizer-
 authored content, not event-run state a reset should ever destroy.
 
-## Classic data flow
+## Jeopardy data flow
 
 <img src="assets/diagrams/classic-data-flow.svg" alt="Animated diagram. A contestant submits a flag; a cheap JS pre-check runs first, failing open on a paused or out-of-window read but closed on a cooldown-lookup error; the real authority is one atomic SUBMIT_SCRIPT that rechecks the already-solved guard and cooldown against fresh state, compares the flag's normalized form, and on a match writes the solve row and bumps the aggregates; classic points are ADDED to the leaderboard, never attributed, and a team's total is the union of its members' solved challenges, never their sum.">
 
@@ -518,7 +518,7 @@ parser produces a typed node tree, never an HTML string, and
 injected markup is structurally impossible rather than filtered out. See
 [decisions.md's ADR on the hand-rolled renderer](decisions.md#adr-28-a-hand-rolled-markdown-renderer-rather-than-a-library).
 
-**Classic points are ADDED to the leaderboard, never attributed** — the
+**Jeopardy points are ADDED to the leaderboard, never attributed** — the
 scorer never sees a flag, so there is nothing of classic's to attribute from
 (same reasoning as quiz's points; see [Quiz data flow](#quiz-data-flow)
 above). A team's classic total is the **union** of its members' solved
@@ -542,7 +542,7 @@ deliberately **not** assignable to `Challenge` — reaching the public half
 takes an explicit `.challenge`, so handing an admin record to a
 contestant-facing component is a compile error, not a leak someone has to
 notice in review. **A flag is genuinely stored in plaintext and visible to
-anyone with `/admin` access** — see `docs/operations.md`'s "Classic" section
+anyone with `/admin` access** — see `docs/operations.md`'s "Jeopardy" section
 for the organizer-facing statement of that trade-off.
 
 **Deleting a challenge retires it — contestant history and banked points are

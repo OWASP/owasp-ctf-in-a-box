@@ -30,7 +30,7 @@ import type { LeaderboardEntry, TeamStanding } from "@/lib/leaderboard/types";
 
 const CAPS = { apps: true, teams: true, challenges: true } as const;
 
-const AI_MODULE: ResolvedModule = { id: "ai", title: "AI Challenges", blurb: "" };
+const AI_MODULE: ResolvedModule = { id: "ai", title: "AI", blurb: "" };
 const SD_MODULE: ResolvedModule = { id: "secure-development", title: "Secure Development", blurb: "" };
 
 function aiOnlyEntry(): LeaderboardEntry {

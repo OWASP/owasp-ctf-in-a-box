@@ -18,7 +18,7 @@ OWASP CTF is a control plane, not a single game. It gives an event its
 shared spine — a GitHub org, team registration, a live leaderboard, an
 organizer admin panel, and the scoring pipeline that feeds it — and **modules**
 plug challenge content into that spine. Four modules ship today — **OWASP
-Secure Development CTF**, **Quiz**, **Classic CTF** and **AI** — and any
+Secure Development**, **Quiz**, **Jeopardy** and **AI** — and any
 subset can
 run alone or together; the box is built to host further modules on the same
 spine. The [module contract](modules.md) is the boundary between platform and
@@ -27,11 +27,11 @@ module.
 The **Secure Development** module teaches defence rather than attack: a
 contestant forks a deliberately vulnerable app, finds the flaw, **patches** it,
 and opens a pull request. The pipeline scores the patch and the score lands
-on a **team** leaderboard. **Quiz**, **Classic** and **AI** need none of that
+on a **team** leaderboard. **Quiz**, **Jeopardy** and **AI** need none of that
 machinery — no forks, no GitHub org, no scoring pipeline. They are graded
 inside the app, so an event running only those boots with a single compose
 profile. Their organizer guides are
-[Quiz](operations.md#quiz), [Classic](operations.md#classic) and
+[Quiz](operations.md#quiz), [Jeopardy](operations.md#jeopardy) and
 [AI](operations.md#ai) — AI additionally has its own external integrator
 contract, [ai-module.md](ai-module.md).
 
@@ -53,7 +53,7 @@ scoring code to write.
 | **Organizer admin panel** | `/admin`, allowlisted: freeze the leaderboard, schedule scoring and registration windows, toggle hints, set the team cap and score cooldown, grant admin to others, author each module's content, reset between rehearsals. |
 | **Live-event support** | Act on one contestant or one team without wiping the event: reset progress, delete a contestant, take over a captainless team. Every action audited with actor and target. |
 | **Engagement metrics** | Participation funnel, solves over time, per-challenge difficulty and hint usage — folded out of data the box already stores, with no telemetry from contestants' forks. |
-| **Scoring pipeline** | GitHub-Actions-fed poll transport, one audited score writer — for modules graded outside the app. Quiz, Classic and AI bank points directly and never touch it. |
+| **Scoring pipeline** | GitHub-Actions-fed poll transport, one audited score writer — for modules graded outside the app. Quiz, Jeopardy and AI bank points directly and never touch it. |
 | **Zero inbound surface** | Scores arrive by outbound polling, so nothing has to reach your box from the internet. |
 | **One box, no cloud** | Docker Compose plus one free GitHub org. Nothing billed, nothing phones home. |
 
@@ -72,7 +72,7 @@ scoring code to write.
 | **Authored from `/admin`** | Prompt, choices, answers, points, order — plus an attempt cap and retry cooldown. Live on the next request. |
 | **Bulk authoring** | Author one at a time, or import and export the whole bank as one JSON bundle — the same format the classic board uses. |
 
-**The Classic CTF module** (graded in the app):
+**The Jeopardy module** (graded in the app):
 
 | Feature | What it means for you |
 |---|---|
@@ -85,7 +85,7 @@ scoring code to write.
 |---|---|
 | ![A contestant's row expanded: per-module totals, then the per-target progress with each challenge's patched or open state](assets/hero.jpg) | ![The challenge browser: one card per vulnerable app, expandable to every challenge with its point value and OWASP category, searchable by challenge, app or OWASP code](assets/challenges.jpg) |
 
-| Classic flag board | Quiz |
+| Jeopardy flag board | Quiz |
 |---|---|
 | ![The classic board: challenges grouped by category as compact tiles — title, points, and a green check once solved — each opening the challenge's own page with the description and flag form](assets/flags.jpg) | ![The quiz: single- and multi-select questions, each showing its point value and remaining attempts, graded the moment you submit](assets/quiz.jpg) |
 
@@ -217,7 +217,7 @@ Pick the doc for what you're doing right now:
 - [Operations](operations.md) — teams, the admin panel, live-event support,
   verifying the kit, the local dev-stack, and teardown. It also carries the
   three app-side modules' organizer guides: [Quiz](operations.md#quiz),
-  [Classic](operations.md#classic) and [AI](operations.md#ai).
+  [Jeopardy](operations.md#jeopardy) and [AI](operations.md#ai).
 - [Troubleshooting](troubleshooting.md) — the mid-event runbook: symptom,
   diagnosis, fix.
 

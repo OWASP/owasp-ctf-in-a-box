@@ -506,7 +506,7 @@ export default function AdminEventTab({
           Event archive — export / import
         </summary>
         <p className="mt-2 text-sm text-muted">
-          Export the whole event — Classic, Quiz and AI content plus event policy settings — as one JSON file. Export
+          Export the whole event — Jeopardy, Quiz and AI content plus event policy settings — as one JSON file. Export
           changes nothing; it is worth running before any of the actions below. Import replaces the event wholesale
           from a previously exported file, which runs the same wipe as the master reset, and asks twice before it does.
         </p>

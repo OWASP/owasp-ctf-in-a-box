@@ -6,8 +6,8 @@
 // leaderboard team row, which could not reach the rule at all because it lived
 // in `profile/module-blocks.ts`). Each time the numbers looked like this:
 //
-//     /leaderboard → AI Challenges   5 / 5 cleared     870 pts
-//     /profile     → AI Challenges   5 / 7 cleared     870 / 1,520 pts
+//     /leaderboard → AI   5 / 5 cleared     870 pts
+//     /profile     → AI   5 / 7 cleared     870 / 1,520 pts
 //
 // The board says finished; the profile says five of seven. So the last
 // describe here is the real regression test: it drives BOTH forms from ONE

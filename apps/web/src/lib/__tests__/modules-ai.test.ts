@@ -9,11 +9,11 @@ describe("ai module registration", () => {
     const [mod] = resolveModules({}, new Set(["ai"]));
     expect(mod.id).toBe("ai");
     const def = moduleDefById("ai")!;
-    expect(def.displayName).toBe("AI Challenges");
+    expect(def.displayName).toBe("AI");
     expect(def.description).toBeTruthy();
   });
 
   it("gives ai its own nav entry now that /ai exists", () => {
-    expect(moduleDefById("ai")!.nav).toEqual({ href: "/ai", label: "AI Challenges" });
+    expect(moduleDefById("ai")!.nav).toEqual({ href: "/ai", label: "AI" });
   });
 });

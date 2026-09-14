@@ -186,8 +186,10 @@ export default function AdminSponsorsTab({
         <h3 className="font-mono text-sm text-white">Sponsors</h3>
         <p className="mt-1 text-sm text-zinc-400">
           Recognition only — name, logo, link, a short blurb. Renders on the landing page, the
-          footer, and /sponsors whenever this list is non-empty. Logos must be PNG or WebP; SVG is
-          rejected (it can run script when opened directly).
+          footer, and /sponsors whenever this list is non-empty. Logos must be PNG, JPEG or WebP;
+          SVG is rejected (it can run script when opened directly). PNG or WebP with a transparent
+          background is recommended — JPEG has none, so its own background shows as a solid
+          rectangle against the site&apos;s dark theme.
         </p>
 
         <div className="mt-4 rounded-md border border-white/10 bg-[#12121e] p-4">
@@ -273,10 +275,10 @@ export default function AdminSponsorsTab({
               />
             </label>
             <label className="flex flex-col gap-1 text-xs text-zinc-400">
-              Logo (PNG or WebP)
+              Logo (PNG, JPEG or WebP)
               <input
                 type="file"
-                accept="image/png,image/webp"
+                accept="image/png,image/jpeg,image/webp"
                 onChange={(e) => void onFileChange(e.target.files?.[0] ?? null)}
                 className="text-xs text-zinc-400"
               />

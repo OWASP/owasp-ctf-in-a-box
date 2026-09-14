@@ -36,6 +36,12 @@ export type DisplaySponsor = {
   logoSrc: string | null;
   w?: number;
   h?: number;
+  /** JPEG carries no alpha channel — the `brightness-0 invert` treatment
+   *  below assumes a transparent PNG/WebP and turns an opaque JPEG's own
+   *  background into an equally opaque white rectangle, erasing the logo
+   *  inside it. Skip the filter for that one format rather than silently
+   *  breaking it; see the render site below. */
+  logoType?: "image/png" | "image/webp" | "image/jpeg";
 };
 
 // Same podium vocabulary as the leaderboard rank chips — rank 3 is the
@@ -121,7 +127,11 @@ export default function DisplayBoard({
                   alt={`${sponsor.name} logo`}
                   width={sponsor.w}
                   height={sponsor.h}
-                  className="h-[2.2vh] w-auto object-contain brightness-0 invert"
+                  className={
+                    sponsor.logoType === "image/jpeg"
+                      ? "h-[2.2vh] w-auto object-contain"
+                      : "h-[2.2vh] w-auto object-contain brightness-0 invert"
+                  }
                 />
               ) : (
                 <span key={sponsor.key} className="font-mono text-[1.4vh] text-[#8f8f9b]">

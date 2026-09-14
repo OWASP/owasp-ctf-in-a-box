@@ -94,7 +94,7 @@ export default async function SiteFooter({ navLinks }: { navLinks: NavLink[] }) 
             it doesn't need; a name and a link cost nothing extra. */}
         {sponsors.length > 0 && (
           <p className="border-t border-white/[0.06] pt-5 text-xs text-muted">
-            Supported by{" "}
+            Sponsored by{" "}
             {sponsors.map((s, i) => (
               <span key={s.id}>
                 {i > 0 && " · "}

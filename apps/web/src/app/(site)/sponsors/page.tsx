@@ -73,7 +73,7 @@ export default async function SponsorsPage() {
                   rel="noopener noreferrer nofollow sponsored"
                   className="ds-card flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-[#16162a] p-6 transition-colors hover:border-[#2563eb]/45"
                 >
-                  {sponsor.logo ? (
+                  {sponsor.logo && (
                     <img
                       src={`/api/sponsors/logo/${sponsor.id}`}
                       alt={`${sponsor.name} logo`}
@@ -83,9 +83,8 @@ export default async function SponsorsPage() {
                       decoding="async"
                       className="h-10 w-auto max-w-[12rem] object-contain"
                     />
-                  ) : (
-                    <h3 className="text-lg font-bold text-white">{sponsor.name}</h3>
                   )}
+                  <h3 className="text-lg font-bold text-white">{sponsor.name}</h3>
                   {sponsor.blurb && <p className="text-sm leading-relaxed text-zinc-400">{sponsor.blurb}</p>}
                 </a>
               ))}

@@ -3401,8 +3401,12 @@ not a nice-to-have (issue #405).
   load), the dedicated `/sponsors` page (logo, name, blurb, link, grouped by
   tier), and — extending the original four-surface design the same session
   this ADR was written in — the leaderboard's projector display
-  (`?display=1`), alongside the OWASP mark, since that is the one screen a
-  sponsor's own booth signage points a room at during a live event.
+  (`?display=1`), since that is the one screen a sponsor's own booth signage
+  points a room at during a live event. (An early draft of this surface also
+  put the OWASP mark next to the event name in the display header; removed
+  the same session — the projector board already carries the org's identity
+  through the event name and theming, and a second logo there competed with
+  the sponsor credit row for the room's attention.)
 - **Logos stored in Redis, served from our own origin.** `ctf:sponsors` (JSON
   metadata) and `ctf:sponsors:logo` (base64 bytes) are two separate hashes so
   a metadata-only read (every page load) never drags a logo blob along. No

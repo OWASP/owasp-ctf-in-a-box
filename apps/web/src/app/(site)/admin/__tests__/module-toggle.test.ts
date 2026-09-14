@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { moduleChoices, moduleToggleConfirm, moduleToggleState } from "@/app/(site)/admin/module-toggle";
 
 const quiz = { id: "quiz", label: "Quiz", toggleable: true };
-const classic = { id: "classic", label: "Classic CTF", toggleable: true };
+const classic = { id: "classic", label: "Jeopardy", toggleable: true };
 const secdev = {
   id: "secure-development",
   label: "Secure Development",
@@ -66,7 +66,7 @@ describe("moduleToggleConfirm", () => {
   it("adds the module to the set on enable, with the enable copy", () => {
     const c = moduleToggleConfirm(classic, true, new Set(["quiz"]));
     expect(c.ids).toEqual(["quiz", "classic"]);
-    expect(c.title).toBe("Enable Classic CTF?");
+    expect(c.title).toBe("Enable Jeopardy?");
     expect(c.confirmLabel).toBe("Enable");
     expect(c.body).toMatch(/appears in the nav/);
   });

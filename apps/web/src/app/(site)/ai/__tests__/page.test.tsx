@@ -77,7 +77,7 @@ beforeEach(() => {
   getResolvedModules.mockResolvedValue([
     {
       id: "ai",
-      title: "AI Challenges",
+      title: "AI",
       blurb: "Prompt-injection and guardrail challenges hosted outside the box, scored inside it.",
     },
   ]);
@@ -331,13 +331,13 @@ describe("ai page metadata", () => {
     getResolvedModules.mockResolvedValue([
       {
         id: "ai",
-        title: "AI Challenges",
+        title: "AI",
         blurb: "Prompt-injection and guardrail challenges hosted outside the box, scored inside it.",
       },
     ]);
 
     await expect(generateMetadata()).resolves.toEqual({
-      title: "AI Challenges",
+      title: "AI",
       description: "Prompt-injection and guardrail challenges hosted outside the box, scored inside it.",
     });
   });

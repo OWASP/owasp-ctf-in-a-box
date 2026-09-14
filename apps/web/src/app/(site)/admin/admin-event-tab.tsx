@@ -506,7 +506,7 @@ export default function AdminEventTab({
           Event archive — export / import
         </summary>
         <p className="mt-2 text-sm text-muted">
-          Export the whole event — Classic, Quiz and AI content plus event policy settings — as one JSON file. Export
+          Export the whole event — Jeopardy, Quiz and AI content plus event policy settings — as one JSON file. Export
           changes nothing; it is worth running before any of the actions below. Import replaces the event wholesale
           from a previously exported file, which runs the same wipe as the master reset, and asks twice before it does.
         </p>
@@ -522,7 +522,7 @@ export default function AdminEventTab({
             Master reset wipes every contestant&apos;s <strong>progress</strong> —
             teams, points, solves, attempts and hint spend — freezes scoring, and
             cannot be undone. It <strong>keeps</strong> everything you authored:
-            quiz questions and their answer key, classic and AI challenges with
+            quiz questions and their answer key, Jeopardy and AI challenges with
             their flags, hints and categories, and every setting on this screen.
             It does rotate the AI launch key, so an external challenge site has to
             re-fetch it. Export the archive above first if you want a way back.

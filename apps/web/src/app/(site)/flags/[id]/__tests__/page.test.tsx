@@ -70,7 +70,7 @@ beforeEach(() => {
   getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
   getAdminSettings.mockResolvedValue({ classicCooldownSec: 300 });
   getResolvedModules.mockResolvedValue([
-    { id: "classic", title: "Classic CTF", blurb: "Find the flag, submit the string, take the points." },
+    { id: "classic", title: "Jeopardy", blurb: "Find the flag, submit the string, take the points." },
   ]);
   getClassicHintIds.mockResolvedValue([]);
   getHintNotice.mockResolvedValue({ active: false, cost: 10 });

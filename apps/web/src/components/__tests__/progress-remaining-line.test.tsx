@@ -11,10 +11,10 @@ describe("remainingSummary", () => {
     expect(
       remainingSummary([
         { title: "Secure Development", earned: 8, max: 668 },
-        { title: "Classic CTF", earned: 70, max: 2270 },
+        { title: "Jeopardy", earned: 70, max: 2270 },
         { title: "Quiz", earned: 200, max: 375 },
       ]),
-    ).toEqual({ remaining: 660 + 2200 + 175, leader: "Classic CTF" });
+    ).toEqual({ remaining: 660 + 2200 + 175, leader: "Jeopardy" });
   });
 
   it("names nobody when a single module holds everything left — the row above already says it", () => {
@@ -22,7 +22,7 @@ describe("remainingSummary", () => {
     expect(
       remainingSummary([
         { title: "Quiz", earned: 200, max: 375 },
-        { title: "AI Challenges", earned: 850, max: 850 },
+        { title: "AI", earned: 850, max: 850 },
       ]),
     ).toEqual({ remaining: 175, leader: null });
   });
@@ -39,7 +39,7 @@ describe("remainingSummary", () => {
     expect(
       remainingSummary([
         { title: "Quiz", earned: 400, max: 375 },
-        { title: "Classic CTF", earned: 0, max: 100 },
+        { title: "Jeopardy", earned: 0, max: 100 },
       ]),
     ).toEqual({ remaining: 100, leader: null });
   });
@@ -48,7 +48,7 @@ describe("remainingSummary", () => {
     expect(
       remainingSummary([
         { title: "Quiz", earned: 0, max: 100 },
-        { title: "Classic CTF", earned: 0, max: 100 },
+        { title: "Jeopardy", earned: 0, max: 100 },
       ]).leader,
     ).toBe("Quiz");
   });
@@ -59,14 +59,14 @@ describe("RemainingLine", () => {
     const html = renderToStaticMarkup(
       <RemainingLine
         modules={[
-          { title: "Classic CTF", earned: 70, max: 2070 },
+          { title: "Jeopardy", earned: 70, max: 2070 },
           { title: "Quiz", earned: 0, max: 100 },
         ]}
       />,
     );
     expect(html).toContain("2,100 pts");
     expect(html).toContain("still on the board");
-    expect(html).toContain("most in Classic CTF");
+    expect(html).toContain("most in Jeopardy");
   });
 
   it("says nothing at all once there is nothing left to win", () => {

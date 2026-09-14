@@ -32,7 +32,7 @@ describe("buildNavGroups", () => {
       {
         id: "classic",
         nav: { href: "/flags", label: "Flags" },
-        title: "Classic CTF",
+        title: "Jeopardy",
         titleOverride: undefined,
       } as never,
     ]);
@@ -42,7 +42,7 @@ describe("buildNavGroups", () => {
     expect(g.items).toEqual([
       { href: "/challenges", label: "Secure Development" },
       { href: "/quiz", label: "Quiz" },
-      { href: "/flags", label: "Classic CTF" },
+      { href: "/flags", label: "Jeopardy" },
     ]);
   });
 

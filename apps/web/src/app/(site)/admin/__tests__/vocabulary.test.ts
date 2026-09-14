@@ -23,7 +23,7 @@ describe("MODULE_LABEL", () => {
 
 describe("moduleLabel", () => {
   it("names a known module", () => {
-    expect(moduleLabel("classic")).toBe("Classic CTF");
+    expect(moduleLabel("classic")).toBe("Jeopardy");
     expect(moduleLabel("secure-development")).toBe("Secure Development");
   });
 
@@ -36,10 +36,10 @@ describe("moduleLabel", () => {
 
 describe("the activity log speaks the same vocabulary", () => {
   it("names each solve after its module's tab", () => {
-    // Before: "flag solve" under a tab called Classic CTF, and "ai solve" —
-    // the raw registry id — under one called AI Challenges.
-    expect(TYPE_LABELS["classic-solve"]).toBe("Classic CTF solve");
-    expect(TYPE_LABELS["ai-solve"]).toBe("AI Challenges solve");
+    // Before: "flag solve" under a tab called Jeopardy, and "ai solve" —
+    // the raw registry id — under one called AI.
+    expect(TYPE_LABELS["classic-solve"]).toBe("Jeopardy solve");
+    expect(TYPE_LABELS["ai-solve"]).toBe("AI solve");
     expect(TYPE_LABELS["quiz-solve"]).toBe("Quiz solve");
   });
 

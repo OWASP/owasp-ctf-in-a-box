@@ -58,14 +58,14 @@ describe("AdminHintsTab", () => {
     expect(html).toContain("Hint cost");
     expect(html).toContain("Hints: solves required");
     expect(html).toContain("Hints: unlock after (min)");
-    expect(html).toMatch(/Classic CTF and AI Challenges sell their hints/);
+    expect(html).toMatch(/Jeopardy and AI sell their hints/);
     // Secure Development is named as having NONE, not as a seller: nothing in
     // the kit authors hint text for a target (issue #334), and the old copy
     // sent organizers to a tab with no hint field.
     expect(html).toMatch(/Secure Development have no hints/);
     // and the removed wording must not come back alongside it — the positive
     // assertion alone would pass with both sentences on the panel.
-    expect(html).not.toMatch(/Secure Development, Classic CTF and AI Challenges/);
+    expect(html).not.toMatch(/Secure Development, Jeopardy and AI/);
     expect(html).not.toMatch(/Each module.s own tab holds the hint text/);
   });
 

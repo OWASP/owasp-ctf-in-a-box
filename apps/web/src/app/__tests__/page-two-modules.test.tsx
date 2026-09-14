@@ -61,7 +61,7 @@ const metadata = await generateMetadata();
 
 describe("landing page with two modules enabled", () => {
   it("joins both taglines under the event name", () => {
-    expect(html).toContain("Secure Development CTF · Quiz");
+    expect(html).toContain("Secure Development · Quiz");
   });
 
   it("renders both modules' hero intros", () => {
@@ -116,6 +116,6 @@ describe("landing page with two modules enabled", () => {
   });
 
   it("describes the event with both taglines", () => {
-    expect(metadata.description).toBe("Two-Track CTF — Secure Development CTF · Quiz.");
+    expect(metadata.description).toBe("Two-Track CTF — Secure Development · Quiz.");
   });
 });

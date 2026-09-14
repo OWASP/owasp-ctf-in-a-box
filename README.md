@@ -45,13 +45,13 @@ New modules start as an issue, not a PR — see
 spine — a GitHub org, team registration, a live leaderboard, an organizer
 admin panel, and the scoring pipeline that feeds it. **Modules** plug
 challenge content into that spine, and any subset can run alone or together:
-patch-to-score **Secure Development**, a **Quiz** bank, a jeopardy-style
-**Classic CTF** board, and externally hosted **AI** challenges. The [module
+patch-to-score **Secure Development**, a **Quiz** bank, a
+**Jeopardy** board, and externally hosted **AI** challenges. The [module
 contract](docs/modules.md) is the boundary
 between spine and content, so the box is built to host further modules —
 forensics, API-security, cloud — as they land.
 
-**Why it exists.** The Secure Development CTF teaches defence rather than
+**Why it exists.** The Secure Development module teaches defence rather than
 attack, and it is a genuinely good way to teach secure coding. Until now,
 running one meant standing up Vercel, Upstash, Lambda and DynamoDB, holding
 the cloud bill, and having access to a private scoring image. That is a
@@ -96,7 +96,7 @@ upstream dependencies](docs/operations.md#status-and-upstream-dependencies).
 - **Not a general CTF platform.** [CTFd](https://ctfd.io/) is mature,
   battle-tested, and has a large plugin ecosystem — if you want a
   conventional jeopardy or attack-defense event with maximum flexibility,
-  use CTFd. This kit's Classic module is deliberately smaller than CTFd.
+  use CTFd. This kit's Jeopardy module is deliberately smaller than CTFd.
 - **Not a hosted practice gym.** [picoCTF](https://picoctf.org/) gives you
   curriculum and challenges with zero operations — if you don't need to run
   your *own* event with your own content and roster, it's the better answer.
@@ -180,13 +180,13 @@ the moment they're answered (all-or-nothing on multi-select), with an attempt
 cap and retry cooldown. Authored from `/admin` one at a time or imported and
 exported as one JSON bundle. Needs no GitHub, no forks, no pipeline.
 
-**Classic CTF** — a jeopardy-style board of organizer-authored flags in
+**Jeopardy** — a board of organizer-authored flags in
 categories. Submissions are trimmed and normalised, casing forgiven unless a
 flag is marked case-sensitive (its card says so), with a submission cooldown
 and optional paid hints. Same `/admin` + JSON-bundle authoring as the quiz.
 Needs no GitHub either.
 
-**AI Challenges** — prompt-injection and guardrail challenges hosted outside
+**AI** — prompt-injection and guardrail challenges hosted outside
 the box. Each contestant's challenge page mints them a personal launch link
 to the external site; a solve reports back to the leaderboard, either
 through that site's own callback or a flag typed back into the app. Needs no
@@ -205,9 +205,9 @@ rebuild; and a capped audit log on every admin action.
 |---|---|
 | ![A contestant's row expanded: per-module totals, then per-target progress with each challenge's patched or open state](docs/assets/hero.jpg) | ![The challenge browser: one card per vulnerable app, expandable to every challenge with its point value and OWASP category, searchable by challenge, app or OWASP code](docs/assets/challenges.jpg) |
 
-| Classic flag board | Quiz |
+| Jeopardy flag board | Quiz |
 |---|---|
-| ![The classic board: challenges grouped by category as compact tiles — title, points, and a green check once solved — each opening the challenge's own page with the description and flag form](docs/assets/flags.jpg) | ![The quiz: single- and multi-select questions, each showing its point value and remaining attempts, graded on submit](docs/assets/quiz.jpg) |
+| ![The Jeopardy board: challenges grouped by category as compact tiles — title, points, and a green check once solved — each opening the challenge's own page with the description and flag form](docs/assets/flags.jpg) | ![The quiz: single- and multi-select questions, each showing its point value and remaining attempts, graded on submit](docs/assets/quiz.jpg) |
 
 <sup>Captured from the contestant app running locally via <code>scripts/dev-stack up</code>
 with seeded demo players. Targets and fork links are event-config driven; the
@@ -218,7 +218,7 @@ event name and the rest of its branding are admin-panel settings.</sup>
 One Docker Compose stack: Caddy terminates TLS in front of the Next.js app;
 the app talks to Redis only through srh (an Upstash-compatible REST proxy) —
 the network is split so nothing internet-facing has a route to `redis:6379`.
-Quiz, Classic and AI grade inside the app and bank points straight to Redis.
+Quiz, Jeopardy and AI grade inside the app and bank points straight to Redis.
 Secure Development is graded *outside* the box: the contestant's fork runs a
 GitHub Action that boots the target, runs the rubric against the patch, and
 posts a machine-readable score comment on the PR. The `sync` poller pulls
@@ -229,7 +229,7 @@ enters through a single audited writer:
 the scorer's bearer-authed `POST /score`, which validates and writes
 monotonically — solves are never un-solved by a later failing run.
 
-<img src="docs/assets/diagrams/score-ingest-overview.svg" alt="Animated diagram. A contestant answers quiz and classic challenges in the app, and opens a patch PR against a fork in the event org. The fork's Action runs the rubric and posts a score comment on the PR. Sync pulls that comment about every 30 seconds, needing no inbound network surface: polling is the one score transport, the push branch that once let the Action POST straight to the scorer having been removed in v0.6 per issue 377. The score enters through one audited writer, the scorer's bearer-authed POST /score, which validates and writes monotonically into redis, and the app renders the live leaderboard from it.">
+<img src="docs/assets/diagrams/score-ingest-overview.svg" alt="Animated diagram. A contestant answers quiz and Jeopardy challenges in the app, and opens a patch PR against a fork in the event org. The fork's Action runs the rubric and posts a score comment on the PR. Sync pulls that comment about every 30 seconds, needing no inbound network surface: polling is the one score transport, the push branch that once let the Action POST straight to the scorer having been removed in v0.6 per issue 377. The score enters through one audited writer, the scorer's bearer-authed POST /score, which validates and writes monotonically into redis, and the app renders the live leaderboard from it.">
 
 The full picture — components, the nine-step score data flow, the security
 model — is in [docs/architecture.md](docs/architecture.md).

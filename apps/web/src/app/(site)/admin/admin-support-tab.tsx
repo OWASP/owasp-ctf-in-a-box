@@ -42,10 +42,10 @@ export type UserDetail = {
 export function contestantStats(detail: UserDetail): { label: string; value: number }[] {
   return [
     { label: "Quiz pts", value: detail.quiz.points },
-    { label: "Classic pts", value: detail.classic.points },
+    { label: "Jeopardy pts", value: detail.classic.points },
     { label: "AI pts", value: detail.ai.points },
     { label: "Quiz answered", value: detail.quiz.answered },
-    { label: "Classic solved", value: detail.classic.solved },
+    { label: "Jeopardy solved", value: detail.classic.solved },
     { label: "AI solved", value: detail.ai.solved },
     { label: "Secure Development solves", value: detail.secureDev.solves },
     { label: "Attempts", value: detail.quiz.attempts + detail.classic.attempts + detail.ai.attempts },

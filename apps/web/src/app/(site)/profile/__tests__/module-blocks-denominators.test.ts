@@ -7,7 +7,7 @@
 // the challenge in it. So an organizer who deletes two solved AI challenges
 // mid-event hands every affected contestant:
 //
-//     AI Challenges   5 / 5 cleared   870 / 850 pts
+//     AI   5 / 5 cleared   870 / 850 pts
 //
 // with a bar filled past its own end, while the board they browse says 3 / 3.
 //
@@ -135,8 +135,8 @@ describe("the footer's remaining line counts the same union as the rows", () => 
 
   const modules = [
     { id: "quiz", title: "Quiz" },
-    { id: "classic", title: "Classic CTF" },
-    { id: "ai", title: "AI Challenges" },
+    { id: "classic", title: "Jeopardy" },
+    { id: "ai", title: "AI" },
   ] as unknown as ResolvedModule[];
 
   it("carries the union ceiling, not the live-only maxPoints", () => {
@@ -152,7 +152,7 @@ describe("the footer's remaining line counts the same union as the rows", () => 
     for (const [name, detail] of cases) {
       const row = moduleRow(progressFor(detail), withTotals);
       const footer = remainingFor(modules, withTotals).find((m) =>
-        m.title.toLowerCase().startsWith(name === "classic" ? "classic" : name),
+        m.title.toLowerCase().startsWith(name === "classic" ? "jeopardy" : name),
       );
       expect(footer, name).toBeDefined();
       expect(footer!.max, name).toBe(row.max);

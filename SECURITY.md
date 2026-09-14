@@ -57,7 +57,7 @@ concern in the kit's own build/CI pipeline.
 
 ## Known properties, stated so they are not re-reported
 
-- **Classic-module flags and quiz answer keys are stored in plaintext** in
+- **Jeopardy-module flags and quiz answer keys are stored in plaintext** in
   Redis (`ctf:classic:flag`, `ctf:quiz:key`) and are **readable by every
   `/admin` user** — the admin edit forms return them verbatim, deliberately,
   so an organizer can fix a typo'd flag mid-event. Contestant-facing code

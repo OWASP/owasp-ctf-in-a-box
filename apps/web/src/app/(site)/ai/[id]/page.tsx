@@ -47,7 +47,7 @@ import { redirectIfTeamless } from "@/lib/require-team";
 import TeamlessNotice from "@/components/teamless-notice";
 import { submitAiFlagAction } from "./actions";
 
-const DEFAULT_TITLE = "AI Challenges";
+const DEFAULT_TITLE = "AI";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   if (!(await isModuleLive("ai"))) return {};

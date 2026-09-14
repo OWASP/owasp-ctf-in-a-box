@@ -49,7 +49,7 @@ describe("contestantStats", () => {
     expect(labels).toContain("AI pts");
     expect(labels).toContain("AI solved");
     expect(labels).toContain("Quiz pts");
-    expect(labels).toContain("Classic pts");
+    expect(labels).toContain("Jeopardy pts");
   });
 
   it("counts AI attempts in the attempts total", () => {

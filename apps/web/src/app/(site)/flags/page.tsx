@@ -34,7 +34,7 @@ import { getClassicHintIds } from "@/lib/hint-store";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 
-const DEFAULT_TITLE = "Classic CTF";
+const DEFAULT_TITLE = "Jeopardy";
 const DEFAULT_BLURB = "Find the flag, submit the string, take the points.";
 
 // `metadata` is a static export and cannot await Redis for the organizer's

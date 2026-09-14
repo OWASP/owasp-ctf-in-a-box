@@ -70,7 +70,7 @@ describe("landing page in a quiz-only event", () => {
   it("renders no patch/PR/fork copy", () => {
     expect(html).not.toContain("pull request");
     expect(html).not.toContain("fork");
-    expect(html).not.toContain("Secure Development CTF");
+    expect(html).not.toContain("Secure Development");
     expect(html).not.toContain("Browse targets");
     // "patched" is the string that actually leaked: the platform frame's
     // progress card used to promise a "patched and non-patched count per app",

@@ -119,7 +119,7 @@ describe("landing page frame", () => {
 
 describe("landing page with secure-development enabled", () => {
   it("renders the module's tagline under the event name", () => {
-    expect(html).toContain("Secure Development CTF");
+    expect(html).toContain("Secure Development");
   });
 
   it("renders the module's hero intro with the live target count", () => {
@@ -394,7 +394,7 @@ describe("GitHub OAuth callback: retry destination", () => {
 
 describe("root metadata", () => {
   it("describes the event with the enabled modules' taglines", () => {
-    expect(metadata.description).toBe("OWASP CTF — Secure Development CTF.");
+    expect(metadata.description).toBe("OWASP CTF — Secure Development.");
   });
 
   it("no longer hardcodes secure-development copy onto every page", () => {

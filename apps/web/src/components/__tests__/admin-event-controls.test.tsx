@@ -129,7 +129,7 @@ describe("AdminEventControls", () => {
 describe("the double confirmation before an import POST fires", () => {
   it("the first-step warning names exactly what gets replaced/wiped", () => {
     const warn = importFirstWarning();
-    expect(warn.body).toMatch(/classic/i);
+    expect(warn.body).toMatch(/jeopardy/i);
     expect(warn.body).toMatch(/quiz/i);
     // #250: the ai catalogue is replaced too, and the copy has to say so.
     expect(warn.body).toMatch(/\bAI\b/);
@@ -137,10 +137,10 @@ describe("the double confirmation before an import POST fires", () => {
     expect(warn.body).toMatch(/solve/i);
   });
 
-  it("the second-step confirmation and the panel's own prose name AI alongside Classic and Quiz", () => {
+  it("the second-step confirmation and the panel's own prose name AI alongside Jeopardy and Quiz", () => {
     expect(importReplaceConfirm().body).toMatch(/\bAI\b/);
     const html = renderToStaticMarkup(<AdminEventControls />);
-    expect(html).toMatch(/Classic, Quiz and AI/);
+    expect(html).toMatch(/Jeopardy, Quiz and AI/);
   });
 
   it("the second-step confirmation requires typing a non-empty phrase", () => {
@@ -161,7 +161,7 @@ describe("the double confirmation before an import POST fires", () => {
 describe("formatImportSummary", () => {
   it("names each module's created/updated counts when both are present", () => {
     const text = formatImportSummary({ classic: { created: 2, updated: 1 }, quiz: { created: 0, updated: 3 } });
-    expect(text).toMatch(/classic/i);
+    expect(text).toMatch(/jeopardy/i);
     expect(text).toMatch(/quiz/i);
     expect(text).toContain("2");
     expect(text).toContain("3");
@@ -169,7 +169,7 @@ describe("formatImportSummary", () => {
 
   it("names only the module actually present in the summary", () => {
     const text = formatImportSummary({ quiz: { created: 1, updated: 0 } });
-    expect(text.toLowerCase()).not.toContain("classic");
+    expect(text.toLowerCase()).not.toContain("jeopardy");
     expect(text).not.toMatch(/\bAI\b/);
     expect(text).toMatch(/quiz/i);
   });
@@ -177,7 +177,7 @@ describe("formatImportSummary", () => {
   it("names the ai section's counts when the bundle carried one (#250)", () => {
     const text = formatImportSummary({ ai: { created: 4, updated: 1 } });
     expect(text).toMatch(/\bAI\b: 4 created, 1 updated/);
-    expect(text.toLowerCase()).not.toContain("classic");
+    expect(text.toLowerCase()).not.toContain("jeopardy");
   });
 });
 

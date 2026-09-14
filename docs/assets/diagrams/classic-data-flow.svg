@@ -1,6 +1,6 @@
 <svg viewBox="0 0 880 330" xmlns="http://www.w3.org/2000/svg" width="100%" role="img" aria-labelledby="ttl desc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
-  <title id="ttl">Classic data flow</title>
-  <desc id="desc">A contestant submits a flag; a cheap JS pre-check runs first, failing open on a paused or out-of-window read but closed on a cooldown-lookup error; the real authority is one atomic SUBMIT_SCRIPT that rechecks the already-solved guard and cooldown against fresh state, compares the flag's normalized form, and on a match writes the solve row and bumps the aggregates; classic points are ADDED to the leaderboard, never attributed, and a team's total is the union of its members' solved challenges, never their sum.</desc>
+  <title id="ttl">Jeopardy data flow</title>
+  <desc id="desc">A contestant submits a flag; a cheap JS pre-check runs first, failing open on a paused or out-of-window read but closed on a cooldown-lookup error; the real authority is one atomic SUBMIT_SCRIPT that rechecks the already-solved guard and cooldown against fresh state, compares the flag's normalized form, and on a match writes the solve row and bumps the aggregates; Jeopardy points are ADDED to the leaderboard, never attributed, and a team's total is the union of its members' solved challenges, never their sum.</desc>
   <style>
     :root {
       --bg: #ffffff; --surface: #f6f8fa; --surface-2: #eaeef2; --border: #d0d7de;

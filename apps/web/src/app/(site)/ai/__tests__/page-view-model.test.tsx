@@ -110,7 +110,7 @@ beforeEach(() => {
   getResolvedModules.mockResolvedValue([
     {
       id: "ai",
-      title: "AI Challenges",
+      title: "AI",
       blurb: "Prompt-injection and guardrail challenges hosted outside the box, scored inside it.",
     },
   ]);

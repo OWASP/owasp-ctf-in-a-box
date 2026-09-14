@@ -82,7 +82,7 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   const challenge = challenges.find((c) => c.id === challengeId);
   if (!challenge) notFound();
 
-  const moduleTitle = modules.find((m) => m.id === "classic")?.title ?? "Classic CTF";
+  const moduleTitle = modules.find((m) => m.id === "classic")?.title ?? "Jeopardy";
   const cooldownMs = (settings.classicCooldownSec ?? CLASSIC_COOLDOWN_SEC) * 1000;
 
   // Field by field, never a spread — a spread of the store record is how a

@@ -35,7 +35,7 @@ import { getAiHintIds } from "@/lib/hint-store";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 
-const DEFAULT_TITLE = "AI Challenges";
+const DEFAULT_TITLE = "AI";
 const DEFAULT_BLURB = "Prompt-injection and guardrail challenges hosted outside the box, scored inside it.";
 
 // `metadata` is a static export and cannot await Redis for the organizer's

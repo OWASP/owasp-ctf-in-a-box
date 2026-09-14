@@ -50,7 +50,7 @@ process.env.SCORE_IMAGE = "ghcr.io/x/score:latest";
 
 describe("a switched-off module's 404", () => {
   for (const [label, Component, name] of [
-    ["flags", FlagsNotFound, "Classic CTF"],
+    ["flags", FlagsNotFound, "Jeopardy"],
     ["quiz", QuizNotFound, "Quiz"],
     ["challenges", ChallengesNotFound, "Secure Development"],
   ] as const) {

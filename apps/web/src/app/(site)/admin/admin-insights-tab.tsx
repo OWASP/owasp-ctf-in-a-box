@@ -223,7 +223,7 @@ export default function AdminInsightsTab({
                 </div>
               )}
               <p className="text-sm text-muted">
-                Ten-minute buckets, quiz, classic and AI. Attempt rows carry a first and a last time but not
+                Ten-minute buckets, quiz, Jeopardy and AI. Attempt rows carry a first and a last time but not
                 one per try, so this is solves, not submissions.
               </p>
             </section>

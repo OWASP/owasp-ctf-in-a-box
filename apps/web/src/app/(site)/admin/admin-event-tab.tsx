@@ -522,7 +522,7 @@ export default function AdminEventTab({
             Master reset wipes every contestant&apos;s <strong>progress</strong> —
             teams, points, solves, attempts and hint spend — freezes scoring, and
             cannot be undone. It <strong>keeps</strong> everything you authored:
-            quiz questions and their answer key, classic and AI challenges with
+            quiz questions and their answer key, Jeopardy and AI challenges with
             their flags, hints and categories, and every setting on this screen.
             It does rotate the AI launch key, so an external challenge site has to
             re-fetch it. Export the archive above first if you want a way back.

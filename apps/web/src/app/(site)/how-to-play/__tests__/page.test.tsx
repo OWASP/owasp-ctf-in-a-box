@@ -115,7 +115,7 @@ describe("/how-to-play on a secure-development event", () => {
 
   it("describes the page with the module's meta description", () => {
     expect(metadata.description).toBe(
-      "Step-by-step guide to the OWASP secure development CTF: fork a target, patch a real vulnerability, open a PR, and get scored automatically.",
+      "Step-by-step guide to OWASP Secure Development: fork a target, patch a real vulnerability, open a PR, and get scored automatically.",
     );
   });
 });

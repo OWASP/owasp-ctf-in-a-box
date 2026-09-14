@@ -382,7 +382,7 @@ const REGISTRY: Record<ModuleId, ModuleDef> = {
     guide: {
       lede: "New to the competition? Here's everything you need to go from a GitHub sign-in to your first patched challenge.",
       metaDescription:
-        "Step-by-step guide to the OWASP secure development CTF: fork a target, patch a real vulnerability, open a PR, and get scored automatically.",
+        "Step-by-step guide to OWASP Secure Development: fork a target, patch a real vulnerability, open a PR, and get scored automatically.",
       loop: {
         kicker: "The loop",
         cycle: ["find the flaw", "patch it", "open a PR", "CI scores it"],
@@ -1351,7 +1351,7 @@ git push -u origin fix/<short-description>`,
     guide: {
       lede: "New to the board? Here's everything you need to go from a GitHub sign-in to your first solved challenge.",
       metaDescription:
-        "Step-by-step guide to the ai challenges: sign in with GitHub, open a challenge for your personal link, and get scored the moment it reports back or you submit a flag.",
+        "Step-by-step guide to the AI module: sign in with GitHub, open a challenge for your personal link, and get scored the moment it reports back or you submit a flag.",
       loop: {
         kicker: "The loop",
         cycle: ["open the challenge", "play it externally", "it reports back, or you submit the flag"],

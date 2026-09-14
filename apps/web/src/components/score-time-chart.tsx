@@ -17,7 +17,7 @@
 // eight slots clear the lightness/chroma/CVD/contrast gates in fixed order.
 // A 9th+ line is never a generated hue (the skill's #1 anti-pattern): ranks
 // 9-10 fold into a single shared muted "Other" entry instead.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PlayerSeries, SeriesPoint, TeamSeries } from "@/lib/leaderboard/types";
 
 const SERIES_COLORS = [
@@ -200,7 +200,24 @@ function InteractiveChart({
   note?: string;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
+
+  // The scroll container defaults to scrolled-left, i.e. the OLDEST end of
+  // the domain — and a series' oldest events are often long-dead history
+  // (this box's own first-ever solve, say) with everything that actually
+  // matters compressed into the last sliver of the width. On a viewport
+  // narrower than the SVG's `min-w` (mobile), that left the chart looking
+  // like a flat line at zero unless someone thought to scroll it — the
+  // "score over time" line was ending up "score over ancient history plus a
+  // pixel of today". Land on the right (most-recent) edge instead, same as
+  // any chat/log view opens at the newest entry. Re-runs when the plotted
+  // domain changes (a view toggle swaps `lines` for an entirely different
+  // series) so a stale scroll position from the last dataset doesn't linger.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [minT, maxT, lines]);
 
   const x = (ms: number) => MARGIN.left + ((ms - minT) / (maxT - minT)) * PLOT_W;
   const y = (score: number) => MARGIN.top + PLOT_H - (score / maxScore) * PLOT_H;
@@ -239,7 +256,7 @@ function InteractiveChart({
           rather than a narrower one. */}
       {note && <p className="text-xs leading-relaxed text-muted">{note}</p>}
 
-      <div className="relative w-full overflow-x-auto">
+      <div ref={scrollRef} className="relative w-full overflow-x-auto">
         <svg
           ref={svgRef}
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}

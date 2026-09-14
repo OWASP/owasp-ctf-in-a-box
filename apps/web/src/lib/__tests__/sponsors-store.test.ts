@@ -114,6 +114,22 @@ describe("upsertSponsor — logo validation", () => {
     );
   });
 
+  it("rejects an SOF segment whose declared length is too short to carry dimensions, even with plausible-looking trailing bytes", async () => {
+    // Same shape as jpegFixture(100, 100) except the segment claims a 2-byte
+    // (empty) payload — the trailing bytes are real width/height-shaped data
+    // that a length check alone (rather than trusting there happen to be
+    // enough bytes left in the buffer) must not read as the image's own.
+    const undersized = Buffer.from([
+      0xff, 0xd8, // SOI
+      0xff, 0xc0, // SOF0
+      0x00, 0x02, // declared length: 2 (no payload) — too short for dimensions
+      0x08, 0x00, 0x64, 0x00, 0x64, 0x01, // trailing bytes shaped like a valid payload
+    ]);
+    await expect(upsertSponsor(validInput, { data: toBase64(undersized) })).rejects.toThrow(
+      /not a structurally valid JPEG/,
+    );
+  });
+
   it("rejects an SVG with its own message, regardless of the declared MIME type", async () => {
     const svg = Buffer.from('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>');
     await expect(

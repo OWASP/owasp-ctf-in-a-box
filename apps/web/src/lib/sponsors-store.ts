@@ -279,10 +279,16 @@ function parseJpegDimensions(bytes: Buffer): { w: number; h: number } | null {
       continue;
     }
     const length = bytes.readUInt16BE(offset + 2);
-    if (length < 2) return null;
+    // `length` counts itself, so a segment's own declared end must reach at
+    // least 2; a segment claiming to run past the buffer is malformed too.
+    if (length < 2 || offset + 2 + length > bytes.length) return null;
     const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
     if (isSof) {
-      if (offset + 9 > bytes.length) return null;
+      // 8 = the 2 length bytes plus the minimum SOF payload (precision +
+      // height + width + a component count) — reject a segment that is
+      // structurally too short to actually carry the fields being read
+      // rather than trusting the buffer merely has enough bytes AFTER it.
+      if (length < 8) return null;
       const h = bytes.readUInt16BE(offset + 5);
       const w = bytes.readUInt16BE(offset + 7);
       if (w === 0 || h === 0) return null;

@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
-import { seedDemoData } from "@/lib/admin-store";
+import { clearDemoData, seedDemoData } from "@/lib/admin-store";
 
-// Populate a demo leaderboard. DEMO_MODE-only (404 otherwise, so it doesn't
-// exist in a real event) AND admin-gated. Injects fake scores/teams — never a
-// production operation.
+// Populate (POST) or remove (DELETE) demo leaderboard rows. No DEMO_MODE gate
+// (issue #419 — dropped everywhere, not just here): admin-gated + type-to-
+// confirm is the whole safety net now, same pattern as /api/admin/reset.
+// Injects/removes fake scores/teams — never a production operation, but no
+// longer impossible to reach on a real event's box either.
 export async function POST(request: Request) {
-  if (process.env.DEMO_MODE !== "1") {
-    return NextResponse.json({ error: "not available" }, { status: 404 });
-  }
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
+
+  const body = (await request.json().catch(() => ({}))) as { confirm?: string };
+  if (body.confirm !== "SEED") {
+    return NextResponse.json({ error: "confirmation phrase does not match" }, { status: 400 });
+  }
 
   try {
     const result = await seedDemoData(gate.login);
@@ -18,5 +22,23 @@ export async function POST(request: Request) {
   } catch (err) {
     console.error("[admin/seed] seed failed", err);
     return NextResponse.json({ error: "seed failed" }, { status: 503 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const gate = await requireAdmin(request.headers);
+  if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
+
+  const body = (await request.json().catch(() => ({}))) as { confirm?: string };
+  if (body.confirm !== "CLEAR DEMO DATA") {
+    return NextResponse.json({ error: "confirmation phrase does not match" }, { status: 400 });
+  }
+
+  try {
+    const result = await clearDemoData(gate.login);
+    return NextResponse.json(result);
+  } catch (err) {
+    console.error("[admin/seed] clear failed", err);
+    return NextResponse.json({ error: "clear failed" }, { status: 503 });
   }
 }

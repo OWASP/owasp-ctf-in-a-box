@@ -839,7 +839,6 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | `lib/auth.ts` | required | The sign-in OAuth app (not the poll GitHub App). |
 | `ALLOW_INSECURE_EVENT_URL` | `instrumentation.ts` | unset | `1` downgrades the `http://` non-loopback refusal to a start-up warning. TLS-less closed networks only. |
 | `CHALLENGES_GATE_ENABLED`, `CHALLENGES_GATE_PASSWORD` | `lib/gate.ts` | unset | Pre-event shared-password gate over the module pages: `true` plus a password. A half-configured gate stays *open*. |
-| `DEMO_MODE` | `/admin` page, `/api/admin/seed` | unset | `1` exposes the "Seed demo data" button and route. `scripts/dev-stack` sets it; never in a real event. |
 | `LEADERBOARD_SOURCE` | `lib/leaderboard/source.ts` | *fixed*: `lambda` | `mock` / `lambda` / `upstash`. With `secure-development` disabled the mode is forced to `empty` (no scorer read; the board is built from the module overlays alone); an unknown value falls back to `mock` with a warning. |
 | `LEADERBOARD_API_URL` | `lib/challenges.ts`, `lib/leaderboard/lambda.ts` | *fixed*: `http://scorer:4000` | Scorer base URL for the challenge catalogue and the board. |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | `lib/upstash.ts`; also `scorer/src/store.js`, `sync/src/redis.js` | *fixed*: `http://srh:80`, `SRH_TOKEN` | Redis-over-REST endpoint. Hints, teams, admin settings and module content live behind it. |

@@ -1,13 +1,14 @@
-// Bundled demo dataset for the DEMO_MODE 'Seed demo data' admin action.
+// Bundled demo dataset for the 'Seed demo data' admin action.
 // Challenge ids are real lowercased catalogue keys so the scorer awards points
 // (foreign ids are skipped by buildLeaderboard). Regenerate if those keys change.
-// NOT loaded in production paths — the seed route is DEMO_MODE + admin gated.
+// NOT loaded in production paths — the seed route is admin-gated (issue #419
+// dropped the DEMO_MODE env var this used to also require).
 
 export type DemoContestant = { login: string; solves: Record<string, string[]> };
 export type DemoTeam = { slug: string; name: string; captain: string; members: string[] };
 
-// ai (externally hosted AI/LLM challenge) demo data (DEMO_MODE 'Seed demo
-// data', ai module only). Mirrors the `AiChallenge` shape ai-store.ts expects
+// ai (externally hosted AI/LLM challenge) demo data ('Seed demo data', ai
+// module only). Mirrors the `AiChallenge` shape ai-store.ts expects
 // — see its header comment for the key layout and the four-hash secrecy
 // boundary. `flag` and `signingKey` are NOT part of that public shape; they
 // exist here only so seedDemoData can derive `ctf:ai:flag` / `ctf:ai:flagnorm`
@@ -93,7 +94,7 @@ export const DEMO_AI_SOLVES: DemoAiSolve[] = [
   { login: "grace-hopper", challengeId: "ai-jailbreak-arena" },
 ];
 
-// Classic (jeopardy-style flag) demo data (DEMO_MODE 'Seed demo data', classic
+// Classic (jeopardy-style flag) demo data ('Seed demo data', classic
 // module only). Mirrors the `Challenge` shape classic-store.ts expects — see
 // its header comment for the key layout. `flag` is NOT part of that public
 // shape; it exists here only so seedDemoData can derive `ctf:classic:flag`
@@ -277,7 +278,7 @@ export const DEMO_CLASSIC_SOLVES: DemoClassicSolve[] = [
   { login: "morpheus-z", challengeId: "web-robots-only" },
 ];
 
-// Quiz demo data (DEMO_MODE 'Seed demo data', quiz module only). Mirrors the
+// Quiz demo data ('Seed demo data', quiz module only). Mirrors the
 // shape quiz-store.ts's `Question`/correct-answer-key expects: `correct` is
 // NOT part of the public `Question` shape written to `ctf:quiz:questions` —
 // it is used only to derive `ctf:quiz:key`'s sorted, deduped array (the same
@@ -613,7 +614,7 @@ export const DEMO_TEAMS: DemoTeam[] = [
   }
 ];
 
-// Sponsors (DEMO_MODE 'Seed demo data'). A platform feature, not a module —
+// Sponsors ('Seed demo data'). A platform feature, not a module —
 // seeded regardless of which modules are enabled, mirroring how sponsors
 // themselves carry no module gate anywhere else (issue #405). Names/urls are
 // placeholder — `.example` is the IANA-reserved TLD for exactly this, so

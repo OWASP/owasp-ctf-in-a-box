@@ -164,7 +164,6 @@ function ScheduleField({
 export type AdminEventTabProps = {
   settings: AdminSettings;
   pending: boolean;
-  demoMode: boolean;
   resetInfo: string | null;
   /** The resolved runtime name — what the reset modal asks the organizer to
    *  type. Resolved server-side by getSite(); a client bundle cannot read
@@ -177,6 +176,7 @@ export type AdminEventTabProps = {
   setConfirm: (c: ConfirmState) => void;
   doReset: (confirmValue: string) => Promise<void>;
   doSeed: () => Promise<void>;
+  doClearDemo: () => Promise<void>;
   teamMaxMembersInput: string;
   setTeamMaxMembersInput: (v: string) => void;
   commitNumber: CommitNumber;
@@ -201,7 +201,6 @@ export type ModuleChoice = ModuleToggleChoice;
 export default function AdminEventTab({
   settings,
   pending,
-  demoMode,
   resetInfo,
   eventName,
   applyField,
@@ -209,6 +208,7 @@ export default function AdminEventTab({
   setConfirm,
   doReset,
   doSeed,
+  doClearDemo,
   teamMaxMembersInput,
   setTeamMaxMembersInput,
   commitNumber,
@@ -427,16 +427,17 @@ export default function AdminEventTab({
         />
       </div>
 
-      {demoMode && (
-        <div className="flex flex-col gap-3 rounded-md border border-[#2563eb]/30 bg-white/[0.04] p-4">
-          <div>
-            <span className="text-white">Demo mode</span>
-            <span className="block text-sm text-muted">
-              Populate the leaderboard with fake contestants, teams, and solves to
-              preview the app. Injects real-challenge-id scores so points render.
-              Only shown because <code>DEMO_MODE</code> is set — never in a real event.
-            </span>
-          </div>
+      <div className="flex flex-col gap-3 rounded-md border border-[#2563eb]/30 bg-white/[0.04] p-4">
+        <div>
+          <span className="text-white">Demo data</span>
+          <span className="block text-sm text-muted">
+            Populate the leaderboard with fake contestants, teams, and solves to
+            preview the app. Injects real-challenge-id scores so points render.
+            Admin-gated, like everything else on this screen — never turned on
+            by an env var, and safe to leave visible on a real event&apos;s box.
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             disabled={pending}
@@ -462,8 +463,31 @@ export default function AdminEventTab({
           >
             Seed demo data
           </button>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() =>
+              setConfirm({
+                title: "Clear demo data?",
+                confirmLabel: "Clear",
+                // Sets expectations the same way the Seed body above does:
+                // names exactly what this removes (the fake progress) and
+                // what it deliberately doesn't (the demo questions/
+                // challenges/categories Seed also wrote — those are authored
+                // content now, same as a master reset leaves them).
+                body:
+                  "Removes the fake contestants, teams, solves, and sponsors Seed added. Demo questions, " +
+                  "challenges, and categories are left in place — remove those by hand from their own admin tab " +
+                  "if you don't want them.",
+                onConfirm: doClearDemo,
+              })
+            }
+            className="self-start rounded-md border border-white/20 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/[0.06] disabled:opacity-50"
+          >
+            Clear demo data
+          </button>
         </div>
-      )}
+      </div>
 
       {/* The archive is NOT in the danger zone below, and that is the point
           (audit F13). Half of it — Export — is the safest control on this

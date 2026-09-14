@@ -178,7 +178,6 @@ export function nextEventNameAfterSave(
 
 export default function AdminControls({
   initial,
-  demoMode = false,
   defaultModuleIds,
   secureDevAvailable,
   modules,
@@ -189,7 +188,6 @@ export default function AdminControls({
   eventName,
 }: {
   initial: AdminSettings;
-  demoMode?: boolean;
   /** The module set this deployment starts with, when nothing is stored in
    *  ctf:admin:settings — computed server-side from SCORE_IMAGE (issue #386),
    *  since a client bundle has no access to that env var. */
@@ -414,11 +412,17 @@ export default function AdminControls({
     setResetInfo(`Wiped ${total} keys — scoring is now frozen. Unfreeze when you're ready.`);
   };
 
-  // DEMO_MODE only: populate a demo leaderboard (fake contestants + teams).
+  // No DEMO_MODE gate any more (issue #419): populate a demo leaderboard
+  // (fake contestants + teams). Type-to-confirm gated in the modal; the
+  // server re-checks the phrase and requires admin, same pattern as reset.
   const doSeed = async () => {
     setError(null);
     setResetInfo(null);
-    const res = await fetch("/api/admin/seed", { method: "POST" });
+    const res = await fetch("/api/admin/seed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: "SEED" }),
+    });
     const data = (await res.json().catch(() => ({}))) as {
       contestants?: number;
       teams?: number;
@@ -431,6 +435,32 @@ export default function AdminControls({
     }
     setResetInfo(
       `Seeded ${data.contestants} contestants, ${data.teams} teams, ${data.solves} solves. The board revalidates within ~30s.`,
+    );
+  };
+
+  // The inverse: removes exactly the rows doSeed above wrote (issue #419).
+  // Same type-to-confirm + admin gate; see clearDemoData's own doc comment
+  // for what it deliberately leaves behind (authored demo challenges).
+  const doClearDemo = async () => {
+    setError(null);
+    setResetInfo(null);
+    const res = await fetch("/api/admin/seed", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: "CLEAR DEMO DATA" }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      contestants?: number;
+      teams?: number;
+      sponsors?: number;
+      error?: string;
+    };
+    if (!res.ok) {
+      setError(data.error ?? "Clear failed");
+      return;
+    }
+    setResetInfo(
+      `Cleared demo rows for ${data.contestants} contestants, ${data.teams} teams, ${data.sponsors} sponsors. Demo questions/challenges/categories are left as authored content — remove those by hand if you don't want them.`,
     );
   };
 
@@ -607,7 +637,6 @@ export default function AdminControls({
                 <AdminEventTab
                   settings={settings}
                   pending={pending}
-                  demoMode={demoMode}
                   resetInfo={resetInfo}
                   eventName={currentEventName}
                   applyField={applyField}
@@ -615,6 +644,7 @@ export default function AdminControls({
                   setConfirm={setConfirm}
                   doReset={doReset}
                   doSeed={doSeed}
+                  doClearDemo={doClearDemo}
                   teamMaxMembersInput={teamMaxMembersInput}
                   setTeamMaxMembersInput={setTeamMaxMembersInput}
                   commitNumber={commitNumber}

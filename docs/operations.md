@@ -627,11 +627,16 @@ The panel offers:
   **attempt** rows, including some for items that were tried and never
   earned, so the
   **Insights** tab previews a plausible event rather than one where
-  every challenge was solved first try by everyone who looked at it. The
-  button and its route only exist when the app is
-  started with `DEMO_MODE=1` (the local `scripts/dev-stack up` sets it); they are
-  absent in a normal event build, so a real leaderboard can't be polluted by
-  accident. Clear the seeded data with the master reset.
+  every challenge was solved first try by everyone who looked at it. Seed
+  and its inverse, **Clear demo data**, are ordinary admin actions — no
+  `DEMO_MODE` env var gates them any more (issue #419); admin auth plus a
+  type-to-confirm click, same as every other destructive control on this
+  screen, is the whole safety net. Clear removes exactly the run-state rows
+  Seed added — the fake contestants, teams, solves, and sponsors — but
+  deliberately leaves the demo quiz/classic/ai questions, challenges, flags,
+  and categories in place: once written they're authored content, the same
+  way a master reset already treats real challenges, so remove those by
+  hand from their own admin tab if you don't want them.
 
 **Every destination has its own URL.** `/admin/overview`, `/admin/activity`,
 `/admin/insights`, `/admin/support`, `/admin/event`, `/admin/hints`,

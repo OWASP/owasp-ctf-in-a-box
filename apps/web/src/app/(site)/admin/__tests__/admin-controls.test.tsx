@@ -381,12 +381,11 @@ describe("AdminControls panel contents", () => {
     expect(() => panelFor(html, "secure-development")).toThrow();
   });
 
-  it("shows the demo seed section only when demoMode is set", () => {
-    const withoutDemo = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
-    expect(withoutDemo).not.toMatch(/seed demo data/i);
-
-    const withDemo = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} demoMode />);
-    expect(panelFor(withDemo, "event")).toMatch(/seed demo data/i);
+  it("always shows the demo seed/clear section — no DEMO_MODE gate (issue #419)", () => {
+    const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
+    const event = panelFor(html, "event");
+    expect(event).toMatch(/seed demo data/i);
+    expect(event).toMatch(/clear demo data/i);
   });
 });
 

@@ -307,6 +307,7 @@ export class AdminValidationError extends Error {
   }
 }
 
+
 function flatToObject(flat: unknown): Record<string, string> {
   const arr = Array.isArray(flat) ? (flat as string[]) : [];
   const obj: Record<string, string> = {};
@@ -792,7 +793,7 @@ export async function resetEvent(actor: string): Promise<{ cleared: Record<strin
   return { cleared, resetAt };
 }
 
-// --- demo seed (DEMO_MODE only) ----------------------------------------------
+// --- demo seed / clear (admin-gated dangerous settings, issue #419) ---------
 
 /**
  * One attempt row in the shape quiz-store's and classic-store's live attempt
@@ -1389,6 +1390,102 @@ export async function seedDemoData(
     solves: total,
     sponsors: DEMO_SPONSORS.length,
   };
+}
+
+/**
+ * The inverse of `seedDemoData`, for the same DEMO_MODE-free "dangerous
+ * setting" surface (issue #419) — admin-gated + type-to-confirm at the
+ * route, same as `resetEvent`. No live-event guard, also matching
+ * `resetEvent`: an admin who explicitly typed the confirmation phrase is
+ * trusted the same way here as there.
+ *
+ * Deliberately narrower than seeding's write set: it removes exactly the
+ * RUN-STATE rows seeding fabricates (fake solves/attempts, the aggregate
+ * points/solved/answered hashes, the demo teams and the membership fields
+ * stamped onto their members, the demo sponsors) but leaves the demo
+ * quiz/classic/ai QUESTIONS, CHALLENGES, FLAGS and CATEGORIES alone. That
+ * mirrors `resetEvent`'s own philosophy one section up: once written, a
+ * challenge record is authored content, not run state, and this function
+ * has no more business deleting it unprompted than a master reset does —
+ * remove it by hand from the module's admin tab, same as the category-union
+ * caveat above already tells an organizer to do. (Solvecount is similarly
+ * left alone: `raiseSolveCounts` raises it to a FLOOR, not an additive
+ * total, so there is no well-defined amount to subtract back out.)
+ *
+ * Removal is by EXACT fixture id/login match (`HDEL`/`DEL` on the specific
+ * keys and fields `seedDemoData` writes) — not a scan, not a full wipe. If
+ * an organizer has since created real content that happens to reuse one of
+ * the fixture's ids or its fake logins (e.g. a real login literally spelled
+ * "neo-anderson"), this removes that too. Accepted collision risk, same
+ * class seeding already carries going the other direction — not new, just
+ * the inverse.
+ */
+export async function clearDemoData(actor: string): Promise<{ contestants: number; teams: number; sponsors: number }> {
+  const now = Date.now();
+  const cmds: (string | number)[][] = [];
+
+  // Secure-development fake solves — not gated on the module being enabled
+  // NOW, unlike seeding: these rows may have been written under a different
+  // module set, and an HDEL on a field that was never there is a no-op.
+  for (const c of DEMO_CONTESTANTS) {
+    for (const [target, ids] of Object.entries(c.solves)) {
+      for (const id of ids) cmds.push(["HDEL", `ctf:solves:${target}`, `${c.login}:${id}`]);
+    }
+  }
+
+  // Teams, their member sets, and the membership fields seeding stamped onto
+  // each member's user hash (issue #169 / ADR 49) — never the whole user
+  // hash, which may carry fields this action didn't write.
+  for (const t of DEMO_TEAMS) {
+    cmds.push(["DEL", `ctf:team:${t.slug}`]);
+    cmds.push(["DEL", `ctf:team:${t.slug}:members`]);
+    for (const m of t.members) cmds.push(["HDEL", `ctf:user:${m}`, "team", "joinedAt", "firstTeamAt"]);
+  }
+
+  // Per-login solve/attempt/aggregate rows for all three content modules,
+  // same "attempt regardless of what's live now" reasoning as the
+  // secure-development block above.
+  for (const c of DEMO_CONTESTANTS) {
+    cmds.push(["DEL", quizAnswersKey(c.login)]);
+    cmds.push(["DEL", quizAttemptsKey(c.login)]);
+    cmds.push(["HDEL", QUIZ_POINTS_KEY, c.login]);
+    cmds.push(["HDEL", QUIZ_ANSWERED_KEY, c.login]);
+
+    cmds.push(["DEL", classicSolvesKey(c.login)]);
+    cmds.push(["DEL", classicAttemptsKey(c.login)]);
+    cmds.push(["HDEL", CLASSIC_POINTS_KEY, c.login]);
+    cmds.push(["HDEL", CLASSIC_SOLVED_KEY, c.login]);
+
+    cmds.push(["DEL", aiSolvesKey(c.login)]);
+    cmds.push(["DEL", aiAttemptsKey(c.login)]);
+    cmds.push(["HDEL", AI_POINTS_KEY, c.login]);
+    cmds.push(["HDEL", AI_SOLVED_KEY, c.login]);
+  }
+
+  // Sponsors — same platform-wide, never-module-gated reasoning seeding uses.
+  for (const s of DEMO_SPONSORS) {
+    cmds.push(["HDEL", SPONSORS_KEY, s.id]);
+    cmds.push(["HDEL", SPONSORS_LOGO_KEY, s.id]);
+  }
+
+  const audit = JSON.stringify({
+    at: new Date(now).toISOString(),
+    by: actor,
+    action: "clear-demo",
+    contestants: DEMO_CONTESTANTS.length,
+    teams: DEMO_TEAMS.length,
+    sponsors: DEMO_SPONSORS.length,
+  });
+  cmds.push(["LPUSH", ADMIN_AUDIT_KEY, audit]);
+  cmds.push(["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1]);
+
+  // Same reasoning as seedDemoData's own pipeline check: a per-command
+  // failure doesn't throw on its own (AGENTS.md), so an unchecked call would
+  // report a cheerful "cleared" count for a clear that only partly happened.
+  const results = await upstashPipeline(cmds);
+  const failed = results.find((r) => r.error);
+  if (failed) throw new Error(`Clear demo data failed: ${failed.error}`);
+  return { contestants: DEMO_CONTESTANTS.length, teams: DEMO_TEAMS.length, sponsors: DEMO_SPONSORS.length };
 }
 
 // --- runtime admins (issue #147) ---------------------------------------------

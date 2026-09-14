@@ -16,9 +16,14 @@
 
 import Link from "next/link";
 import { getSite, legalLinks, type NavLink } from "@/lib/site";
+import { listSponsors } from "@/lib/sponsors-store";
 
 export default async function SiteFooter({ navLinks }: { navLinks: NavLink[] }) {
-  const event = await getSite();
+  // The footer renders on every route, error pages included — a Redis blip
+  // on this cosmetic read must never take down a page whose actual content
+  // loaded fine. Same independent-catch discipline admin-panel.tsx applies
+  // to getAdminSettings().
+  const [event, sponsors] = await Promise.all([getSite(), listSponsors().catch(() => [])]);
   return (
     <footer className="relative mt-auto border-t border-white/[0.06]">
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#2563eb]/20 to-transparent" />
@@ -82,6 +87,33 @@ export default async function SiteFooter({ navLinks }: { navLinks: NavLink[] }) 
             </a>
           )}
         </nav>
+
+        {/* Text only, no logos — see sponsor-strip.tsx for the logo row on
+            the landing page. This renders on every route (the footer is
+            shared), so a logo image here would cost every page load a fetch
+            it doesn't need; a name and a link cost nothing extra. */}
+        {sponsors.length > 0 && (
+          <p className="border-t border-white/[0.06] pt-5 text-xs text-muted">
+            Supported by{" "}
+            {sponsors.map((s, i) => (
+              <span key={s.id}>
+                {i > 0 && " · "}
+                <a
+                  href={s.url}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow sponsored"
+                  className="transition-colors hover:text-zinc-300"
+                >
+                  {s.name}
+                </a>
+              </span>
+            ))}
+            {" · "}
+            <Link href="/sponsors" className="transition-colors hover:text-zinc-300">
+              About sponsors
+            </Link>
+          </p>
+        )}
       </div>
     </footer>
   );

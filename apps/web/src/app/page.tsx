@@ -21,6 +21,7 @@ import HeroCta from "@/components/hero-cta";
 import OAuthErrorNotice from "@/components/oauth-error-notice";
 import PhaseLine, { resolvePhase, type EventPhase } from "@/components/phase-line";
 import SiteFooter from "@/components/site-footer";
+import SponsorStrip from "@/components/sponsor-strip";
 import { auth } from "@/lib/auth";
 import { joinAppNames } from "@/lib/apps";
 import { getEnabledApps, getEnabledTotals } from "@/lib/enabled-apps";
@@ -179,6 +180,7 @@ export default async function Home({
   // `renderToStaticMarkup` — the same trap `(site)/layout.tsx` documents for
   // `PhaseLine`.
   const footer = await SiteFooter({ navLinks });
+  const sponsorStrip = await SponsorStrip();
   const login = (session?.user as { login?: string } | undefined)?.login ?? null;
   // hasTeam, not getViewerTeam truthiness: hasTeam is the SAME fail-open,
   // mock-mode-aware answer the submission gates use, so the hero can never
@@ -467,6 +469,8 @@ export default async function Home({
             </a>
           </div>
         </section>
+
+        {sponsorStrip}
       </div>
 
       {footer}

@@ -33,6 +33,7 @@
 import { parseBundle as parseAiBundle, type AiBundle } from "@/lib/ai-io";
 import { parseBundle as parseClassicBundle, type ClassicBundle } from "@/lib/classic-io";
 import { parseBundle as parseQuizBundle, type QuizBundle } from "@/lib/quiz-io";
+import { parseBundle as parseSponsorsBundle, type SponsorsBundle } from "@/lib/sponsors-io";
 
 // Bumped 1 -> 2 when `secureDevTargets` joined EVENT_POLICY_FIELDS (config
 // v2, issue #386 PR 3, CodeRabbit round 1): a box running the OLD code (the
@@ -44,7 +45,11 @@ import { parseBundle as parseQuizBundle, type QuizBundle } from "@/lib/quiz-io";
 // version; IMPORT accepts anything from `EVENT_BUNDLE_MIN_VERSION` through
 // `EVENT_BUNDLE_VERSION` — see `parseEventBundle`'s version check below and
 // its v1-bundle test in event-io.test.ts.
-export const EVENT_BUNDLE_VERSION = 2;
+// Bumped 2 -> 3 when the optional `sponsors` sub-bundle joined (issue #405):
+// sponsors are a platform feature, not a module, so there is no
+// `enabledModuleIds` gate on it — it rides along whenever the exporting box
+// has at least one sponsor configured (event-store.ts's exportEventBundle).
+export const EVENT_BUNDLE_VERSION = 3;
 /** Oldest bundle version `parseEventBundle` still accepts. A v1 bundle never
  *  carries `secureDevTargets` (the field did not exist yet) — its absence is
  *  handled the same way every other optional policy field's absence already
@@ -94,6 +99,10 @@ export type EventBundle = {
    *  per-challenge signing keys, plus categories. Never the launch keypair —
    *  see ai-io.ts. */
   ai?: AiBundle;
+  /** Sponsors (#405), present iff the exporting box has at least one
+   *  configured — a platform feature, so unlike classic/quiz/ai this is never
+   *  gated on `enabledModuleIds`. */
+  sponsors?: SponsorsBundle;
 };
 
 export type EventImportError = { where: string; message: string };
@@ -198,7 +207,12 @@ export function parseEventBundle(raw: string): EventParseResult {
     }
   }
 
-  if (parsed.classic === undefined && parsed.quiz === undefined && parsed.ai === undefined) {
+  if (
+    parsed.classic === undefined &&
+    parsed.quiz === undefined &&
+    parsed.ai === undefined &&
+    parsed.sponsors === undefined
+  ) {
     errors.push({ where: "(document)", message: "bundle carries no modules" });
   }
 
@@ -232,6 +246,16 @@ export function parseEventBundle(raw: string): EventParseResult {
     }
   }
 
+  let sponsors: SponsorsBundle | undefined;
+  if (parsed.sponsors !== undefined) {
+    const res = parseSponsorsBundle(JSON.stringify(parsed.sponsors));
+    if (!res.ok) {
+      for (const e of res.errors) errors.push({ where: "sponsors." + e.where, message: e.message });
+    } else {
+      sponsors = res.bundle;
+    }
+  }
+
   if (errors.length > 0) return { ok: false, errors };
 
   // Every check above passed (errors.length === 0), so `parsed.event` and
@@ -244,6 +268,7 @@ export function parseEventBundle(raw: string): EventParseResult {
     ...(classic !== undefined ? { classic } : {}),
     ...(quiz !== undefined ? { quiz } : {}),
     ...(ai !== undefined ? { ai } : {}),
+    ...(sponsors !== undefined ? { sponsors } : {}),
   };
   return { ok: true, bundle };
 }

@@ -2,6 +2,7 @@ import "server-only";
 import { exportBundle as exportClassic, clearChallenges, importBundle as importClassic } from "@/lib/classic-store";
 import { exportBundle as exportQuiz, clearQuestions, importBundle as importQuiz } from "@/lib/quiz-store";
 import { exportBundle as exportAi, clearAiChallenges, importBundle as importAi } from "@/lib/ai-store";
+import { exportBundle as exportSponsors, importBundle as importSponsors } from "@/lib/sponsors-store";
 import { effectivePaused, getAdminSettings, resetEvent, updateAdminSettings, type SettingsPatch } from "@/lib/admin-store";
 import { resolveSite } from "@/lib/site";
 import { EVENT_BUNDLE_VERSION, EVENT_POLICY_FIELDS, type EventBundle, type EventPolicySettings } from "@/lib/event-io";
@@ -126,6 +127,15 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
     ...(isEnabled("ai") ? { ai: await exportAi() } : {}),
   };
 
+  // Sponsors (#405) are a PLATFORM feature, not a module — there is no
+  // `isEnabled` gate for them. `exportBundle` itself returns null on an
+  // empty sponsor list, which is what actually decides whether this field
+  // appears; a box with no sponsors configured ships an archive with no
+  // `sponsors` key at all, same "render iff non-empty" rule the public
+  // surfaces follow.
+  const sponsorsBundle = await exportSponsors();
+  if (sponsorsBundle) bundle.sponsors = sponsorsBundle;
+
   return { bundle, warnings };
 }
 
@@ -138,6 +148,10 @@ export type EventImportSummary = {
   classic?: { created: number; updated: number };
   quiz?: { created: number; updated: number };
   ai?: { created: number; updated: number };
+  /** No `updated` — sponsors import is a full replace into an
+   *  already-cleared store (see `importEventBundle`'s sponsors branch), so
+   *  every row is a create. */
+  sponsors?: { created: number };
 };
 
 /** Replace-all import of a whole-EVENT archive bundle. Destructive: it wipes
@@ -236,6 +250,15 @@ export async function importEventBundle(
   if (bundle.ai) {
     const a = await importAi(bundle.ai);
     summary.ai = { created: a.created, updated: a.updated };
+  }
+
+  // No separate clear call needed before this: `resetEvent` above already
+  // wiped both sponsor hashes (admin-store.ts's RESET_PREFIXES), unlike
+  // classic/quiz/ai's clear*() calls, which exist because their CONTENT
+  // survives a plain reset and only an archive import should wipe it.
+  if (bundle.sponsors) {
+    const s = await importSponsors(bundle.sponsors);
+    summary.sponsors = { created: s.created };
   }
 
   const skipped: string[] = [...moduleSkipped];

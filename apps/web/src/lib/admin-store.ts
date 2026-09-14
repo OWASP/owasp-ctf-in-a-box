@@ -77,6 +77,7 @@ import {
   flagComparisonForm,
 } from "@/lib/ai-keys";
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
+import { SPONSORS_KEY, SPONSORS_LOGO_KEY } from "@/lib/sponsors-keys";
 
 export const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 export const ADMIN_AUDIT_KEY = "ctf:admin:audit";
@@ -717,6 +718,14 @@ const RESET_PREFIXES: readonly [string, string][] = [
   // solves — a record of what people did during the event — so a reset wipes
   // it. Leaving it would let a "fresh" event open with last event's sign-ins.
   ["activity", ACTIVITY_LOG_KEY],
+  // Sponsors are the one exception to the CONTENT/PROGRESS split every other
+  // entry above follows: unlike a challenge's flag/description, a sponsor
+  // configuration is scoped to ONE event run (sponsors funded last year's
+  // event are not implicitly this year's), and there is no `enabled` flag to
+  // turn them off with instead — deleting IS the off switch (see the sponsors
+  // ADR in docs/decisions.md). So a master reset wipes both hashes outright.
+  ["sponsors", SPONSORS_KEY],
+  ["sponsorsLogo", SPONSORS_LOGO_KEY],
 ];
 
 // SCAN (never KEYS — non-blocking) a prefix and DEL matches in batches until the

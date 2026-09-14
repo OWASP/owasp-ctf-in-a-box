@@ -1,7 +1,6 @@
-// Landing-page sponsor credit row (issue #405). Renders after the "run this
-// for your own group" card — the last section before the footer — and
-// returns null on an empty sponsor list, so a box with no sponsors ships
-// zero sponsor pixels anywhere.
+// Landing-page sponsor credit row (issue #405). Renders in the hero, just
+// below the event's dates/location line — and returns null on an empty
+// sponsor list, so a box with no sponsors ships zero sponsor pixels anywhere.
 //
 // Grayscale-by-default with a hover color reveal: this reads as a credit
 // row, not an ad rail, which is the whole design constraint the sponsors
@@ -23,9 +22,9 @@ export default async function SponsorStrip() {
   if (sponsors.length === 0) return null;
 
   return (
-    <section className="flex flex-col gap-4 border-t border-white/[0.06] pt-10">
+    <div className="flex flex-col gap-3">
       <p className="font-mono text-xs uppercase tracking-[0.25em] text-[#8f8f9b]">Supported by</p>
-      <div className="flex flex-wrap items-center gap-x-8 gap-y-5">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
         {sponsors.map((sponsor) => (
           <a
             key={sponsor.id}
@@ -42,7 +41,7 @@ export default async function SponsorStrip() {
                 height={sponsor.logo.h}
                 loading="lazy"
                 decoding="async"
-                className="h-8 w-auto max-w-[10rem] object-contain"
+                className="h-6 w-auto max-w-[8rem] object-contain"
               />
             ) : (
               <span className="font-mono text-sm text-zinc-400">{sponsor.name}</span>
@@ -50,6 +49,6 @@ export default async function SponsorStrip() {
           </a>
         ))}
       </div>
-    </section>
+    </div>
   );
 }

@@ -251,6 +251,9 @@ export default async function Home({
               {event.location}
             </p>
           )}
+
+          {sponsorStrip}
+
           {phaseInfo?.phase === "registration" && event.ctfStartsAt && (
             <EventCountdown startsAt={event.ctfStartsAt} />
           )}
@@ -469,8 +472,6 @@ export default async function Home({
             </a>
           </div>
         </section>
-
-        {sponsorStrip}
       </div>
 
       {footer}

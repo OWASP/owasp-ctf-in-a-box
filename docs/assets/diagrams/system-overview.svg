@@ -1,6 +1,6 @@
 <svg viewBox="0 0 880 512" xmlns="http://www.w3.org/2000/svg" width="100%" role="img" aria-labelledby="ttl desc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
   <title id="ttl">System overview</title>
-  <desc id="desc">One docker-compose box at runtime. The contestant browser reaches caddy over HTTPS; caddy proxies to the app; the app reads teams and hints from srh and the leaderboard from scorer; scorer is the one writer for secure-development score state, landing it in redis via srh; secure-development scores arrive one way, by sync polling GitHub and posting to scorer directly, the push tile where a scoring Action posted to /score having been removed in v0.6 per issue 377. Quiz, classic and ai score entirely app-side and never touch scorer.</desc>
+  <desc id="desc">One docker-compose box at runtime. The contestant browser reaches caddy over HTTPS; caddy proxies to the app; the app reads teams and hints from srh and the leaderboard from scorer; scorer is the one writer for secure-development score state, landing it in redis via srh; secure-development scores arrive one way, by sync polling GitHub and posting to scorer directly, the push tile where a scoring Action posted to /score having been removed in v0.6 per issue 377. Quiz, Jeopardy and AI score entirely app-side and never touch scorer.</desc>
   <style>
     :root {
       --bg: #ffffff; --surface: #f6f8fa; --surface-2: #eaeef2; --border: #d0d7de;
@@ -95,6 +95,6 @@
 
   <path class="dgm-ants" d="M713 416 L713 364" fill="none" stroke="var(--accent)" marker-end="url(#arR)"/>
 
-  <text x="64" y="484" font-size="10" fill="var(--text-muted)">quiz, classic and ai score entirely app-side</text>
+  <text x="64" y="484" font-size="10" fill="var(--text-muted)">quiz, Jeopardy and AI score entirely app-side</text>
   <text x="64" y="498" font-size="10" fill="var(--text-muted)">and never touch scorer</text>
 </svg>

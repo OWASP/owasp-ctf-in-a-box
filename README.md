@@ -207,7 +207,7 @@ rebuild; and a capped audit log on every admin action.
 
 | Jeopardy flag board | Quiz |
 |---|---|
-| ![The classic board: challenges grouped by category as compact tiles — title, points, and a green check once solved — each opening the challenge's own page with the description and flag form](docs/assets/flags.jpg) | ![The quiz: single- and multi-select questions, each showing its point value and remaining attempts, graded on submit](docs/assets/quiz.jpg) |
+| ![The Jeopardy board: challenges grouped by category as compact tiles — title, points, and a green check once solved — each opening the challenge's own page with the description and flag form](docs/assets/flags.jpg) | ![The quiz: single- and multi-select questions, each showing its point value and remaining attempts, graded on submit](docs/assets/quiz.jpg) |
 
 <sup>Captured from the contestant app running locally via <code>scripts/dev-stack up</code>
 with seeded demo players. Targets and fork links are event-config driven; the
@@ -229,7 +229,7 @@ enters through a single audited writer:
 the scorer's bearer-authed `POST /score`, which validates and writes
 monotonically — solves are never un-solved by a later failing run.
 
-<img src="docs/assets/diagrams/score-ingest-overview.svg" alt="Animated diagram. A contestant answers quiz and classic challenges in the app, and opens a patch PR against a fork in the event org. The fork's Action runs the rubric and posts a score comment on the PR. Sync pulls that comment about every 30 seconds, needing no inbound network surface: polling is the one score transport, the push branch that once let the Action POST straight to the scorer having been removed in v0.6 per issue 377. The score enters through one audited writer, the scorer's bearer-authed POST /score, which validates and writes monotonically into redis, and the app renders the live leaderboard from it.">
+<img src="docs/assets/diagrams/score-ingest-overview.svg" alt="Animated diagram. A contestant answers quiz and Jeopardy challenges in the app, and opens a patch PR against a fork in the event org. The fork's Action runs the rubric and posts a score comment on the PR. Sync pulls that comment about every 30 seconds, needing no inbound network surface: polling is the one score transport, the push branch that once let the Action POST straight to the scorer having been removed in v0.6 per issue 377. The score enters through one audited writer, the scorer's bearer-authed POST /score, which validates and writes monotonically into redis, and the app renders the live leaderboard from it.">
 
 The full picture — components, the nine-step score data flow, the security
 model — is in [docs/architecture.md](docs/architecture.md).

@@ -419,7 +419,7 @@ The panel offers:
   when its module is off (`hint-store.ts`'s `hintGate`). In practice only
   classic and ai ever reach it: **Secure Development has no hints**, because
   nothing in the kit authors hint text for a target, so no challenge on
-  `/challenges` offers one and that page shows no hint banner (issue #334). Jeopardy and ai
+  `/challenges` offers one and that page shows no hint banner (issue #334). Jeopardy and AI
   count "solves required" across the whole board rather than per app, the
   same way secure-development counts per target — see [the AI
   section](#ai) for its own hint text/knobs. The quiz has no hints by

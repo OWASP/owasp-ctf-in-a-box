@@ -55,7 +55,7 @@ Everything runs as one `docker-compose.yml` stack (see
 Two independent things happen in parallel: contestants browsing the app, and
 scores flowing in from GitHub.
 
-<img src="assets/diagrams/system-overview.svg" alt="Animated diagram. One docker-compose box at runtime. The contestant browser reaches caddy over HTTPS; caddy proxies to the app; the app reads teams and hints from srh and the leaderboard from scorer; scorer is the one writer for secure-development score state, landing it in redis via srh; secure-development scores arrive one way, by sync polling GitHub and posting to scorer directly, the push tile where a scoring Action posted to /score having been removed in v0.6 per issue 377. Quiz, classic and ai score entirely app-side and never touch scorer.">
+<img src="assets/diagrams/system-overview.svg" alt="Animated diagram. One docker-compose box at runtime. The contestant browser reaches caddy over HTTPS; caddy proxies to the app; the app reads teams and hints from srh and the leaderboard from scorer; scorer is the one writer for secure-development score state, landing it in redis via srh; secure-development scores arrive one way, by sync polling GitHub and posting to scorer directly, the push tile where a scoring Action posted to /score having been removed in v0.6 per issue 377. Quiz, Jeopardy and AI score entirely app-side and never touch scorer.">
 
 The plain-text shape, for anything that can't render the animation above:
 
@@ -406,7 +406,7 @@ authored content, not event-run state a reset should ever destroy.
 
 ## Jeopardy data flow
 
-<img src="assets/diagrams/classic-data-flow.svg" alt="Animated diagram. A contestant submits a flag; a cheap JS pre-check runs first, failing open on a paused or out-of-window read but closed on a cooldown-lookup error; the real authority is one atomic SUBMIT_SCRIPT that rechecks the already-solved guard and cooldown against fresh state, compares the flag's normalized form, and on a match writes the solve row and bumps the aggregates; classic points are ADDED to the leaderboard, never attributed, and a team's total is the union of its members' solved challenges, never their sum.">
+<img src="assets/diagrams/classic-data-flow.svg" alt="Animated diagram. A contestant submits a flag; a cheap JS pre-check runs first, failing open on a paused or out-of-window read but closed on a cooldown-lookup error; the real authority is one atomic SUBMIT_SCRIPT that rechecks the already-solved guard and cooldown against fresh state, compares the flag's normalized form, and on a match writes the solve row and bumps the aggregates; Jeopardy points are ADDED to the leaderboard, never attributed, and a team's total is the union of its members' solved challenges, never their sum.">
 
 The `classic` module is the jeopardy-style flag board: an organizer authors a
 set of challenges, each hiding a flag under a description; a contestant reads

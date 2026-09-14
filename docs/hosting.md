@@ -706,7 +706,7 @@ panel while the event is running, and covered in
   scoring closes, and the manual pause.
 - **Hints, teams and caps** — the hint switch and prices, the registration
   window, and players per team.
-- **Module content** — quiz questions, classic challenges and flags, AI
+- **Module content** — quiz questions, Jeopardy challenges and flags, AI
   challenges: all authored in the panel, all exportable through the event
   archive.
 

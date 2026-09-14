@@ -27,7 +27,7 @@ import {
 export const SPONSORS_BUNDLE_VERSION = 1;
 
 export type SponsorsBundleLogo = {
-  type: "image/png" | "image/webp";
+  type: "image/png" | "image/webp" | "image/jpeg";
   /** Base64-encoded raw bytes. */
   data: string;
   bytes: number;
@@ -85,8 +85,8 @@ function validateLogo(raw: unknown, where: string, errors: ImportError[]): Spons
     errors.push({ where, message: "logo must be an object or null" });
     return undefined;
   }
-  if (raw.type !== "image/png" && raw.type !== "image/webp") {
-    errors.push({ where: `${where}.type`, message: 'logo type must be "image/png" or "image/webp"' });
+  if (raw.type !== "image/png" && raw.type !== "image/webp" && raw.type !== "image/jpeg") {
+    errors.push({ where: `${where}.type`, message: 'logo type must be "image/png", "image/webp" or "image/jpeg"' });
     return undefined;
   }
   if (typeof raw.data !== "string" || raw.data.length === 0) {

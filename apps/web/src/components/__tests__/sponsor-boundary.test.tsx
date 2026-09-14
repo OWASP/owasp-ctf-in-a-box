@@ -84,6 +84,23 @@ describe("sponsor surfaces — positive case (anti-vacuous)", () => {
     );
     expect(html).toContain(SPONSOR_LOGO_SRC);
   });
+
+  it("a PNG/WebP logo on the display board gets the monochrome treatment; a JPEG (no alpha) does not", () => {
+    const withType = (logoType?: "image/png" | "image/webp" | "image/jpeg") =>
+      renderToStaticMarkup(
+        <DisplayBoard
+          rows={[]}
+          eventName="Fixture CTF"
+          phaseLabel={null}
+          sponsors={[{ key: SPONSOR_ID, name: SPONSOR_NAME, logoSrc: SPONSOR_LOGO_SRC, w: 40, h: 40, logoType }]}
+        />,
+      );
+    // brightness-0/invert assumes a transparent PNG/WebP; applying it to an
+    // opaque JPEG turns the whole rectangle white and erases the logo.
+    expect(withType("image/png")).toContain("brightness-0 invert");
+    expect(withType("image/webp")).toContain("brightness-0 invert");
+    expect(withType("image/jpeg")).not.toContain("brightness-0");
+  });
 });
 
 describe("sponsor surfaces — boundary", () => {

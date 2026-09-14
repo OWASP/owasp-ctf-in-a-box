@@ -831,14 +831,24 @@ every sponsor appears on every surface regardless of tier), and an order
 number (lower sorts first). A logo is optional — without one, the sponsor's
 name renders as plain text everywhere a logo would have gone.
 
-**The 64KB PNG/WebP-only rule, and why.** A logo must be a PNG or WebP under
-64KB, decoded. **SVG is rejected outright**, with its own error message
-explaining why: an SVG served from this box's own origin executes any script
-it carries the moment someone opens the logo's URL directly in a browser —
-being referenced only from an `<img>` tag elsewhere on the site does not stop
-that. Export the logo as PNG or WebP first; most design tools do this in one
-step. The declared file type and filename are ignored — only the file's own
-bytes decide, so renaming a `.svg` to `.png` does not get it past this check.
+**The 64KB PNG/JPEG/WebP-only rule, and why.** A logo must be a PNG, JPEG or
+WebP under 64KB, decoded. **SVG is rejected outright**, with its own error
+message explaining why: an SVG served from this box's own origin executes any
+script it carries the moment someone opens the logo's URL directly in a
+browser — being referenced only from an `<img>` tag elsewhere on the site does
+not stop that. Export the logo as PNG, JPEG or WebP first; most design tools
+do this in one step. The declared file type and filename are ignored — only
+the file's own bytes decide, so renaming a `.svg` to `.png` does not get it
+past this check.
+
+**Prefer PNG or WebP with a transparent background.** JPEG has no alpha
+channel, so its own background — usually white — renders as a solid rectangle
+against the site's dark theme everywhere the logo appears, and on the
+leaderboard's projector display (`?display=1`) it erases the logo entirely:
+that surface renders every PNG/WebP logo as a white silhouette
+(`brightness-0 invert`, meant for a transparent image), and an opaque JPEG's
+whole rectangle turns uniformly white under the same filter, so the display
+board skips it for JPEG and shows the logo in its real colors instead.
 
 **Replace or remove a logo.** Editing a sponsor and choosing a new file
 replaces the old logo immediately — the URL contestants already loaded stays

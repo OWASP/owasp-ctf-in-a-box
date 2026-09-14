@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
-import { isSponsorTier } from "@/lib/sponsors-keys";
+import { isSponsorTier, SPONSOR_ID_RE } from "@/lib/sponsors-keys";
 import {
   deleteSponsor,
   listSponsorsForAdmin,
@@ -178,7 +178,10 @@ export async function DELETE(request: Request) {
 
   const body = await request.json().catch(() => ({}));
   const id = typeof (body as { id?: unknown }).id === "string" ? (body as { id: string }).id : "";
-  if (!id) return NextResponse.json({ error: "invalid sponsor id" }, { status: 400 });
+  // Validated here (not just left to the store) because this id is also
+  // what gets written to ctf:admin:audit below — an unvalidated id would let
+  // an arbitrary string ride into that log under `sponsorId`.
+  if (!SPONSOR_ID_RE.test(id)) return NextResponse.json({ error: "invalid sponsor id" }, { status: 400 });
 
   try {
     await deleteSponsor(id);

@@ -212,6 +212,11 @@ describe("deleteSponsor", () => {
       ["HDEL", "ctf:sponsors:logo", "acme"],
     ]);
   });
+
+  it("validates the id before issuing any Redis command — the id also rides into ctf:admin:audit", async () => {
+    await expect(deleteSponsor("not a valid id!")).rejects.toThrow(SponsorValidationError);
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+  });
 });
 
 describe("reorderSponsors", () => {

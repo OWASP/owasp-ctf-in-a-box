@@ -376,6 +376,9 @@ export async function upsertSponsor(input: SponsorInput, logo?: SponsorLogoInput
 /** HDEL on both hashes in one pipeline — a sponsor and its logo always leave
  *  together, never one without the other. */
 export async function deleteSponsor(id: string): Promise<void> {
+  if (!SPONSOR_ID_RE.test(id)) {
+    throw new SponsorValidationError("id", "sponsor id must match /^[\\w-]{1,64}$/");
+  }
   const results = await upstashPipeline([
     ["HDEL", SPONSORS_KEY, id],
     ["HDEL", SPONSORS_LOGO_KEY, id],

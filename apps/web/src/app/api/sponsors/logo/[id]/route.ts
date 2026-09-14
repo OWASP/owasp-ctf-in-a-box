@@ -33,6 +33,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return new NextResponse(null, { status: 404 });
   }
 
+  // Fails CLOSED (503), unlike the page-level sponsor reads: this route's
+  // whole job is serving specific bytes, and a Redis failure means it has no
+  // bytes to serve — a 503 is the honest answer, not a 404 that would read
+  // as "this sponsor doesn't exist."
   let sponsors;
   let base64: string | null;
   try {

@@ -184,4 +184,11 @@ describe("DELETE /api/admin/sponsors", () => {
     expect(res.status).toBe(400);
     expect(deleteSponsor).not.toHaveBeenCalled();
   });
+
+  it("rejects an id that fails SPONSOR_ID_RE before it can reach the store or the audit log", async () => {
+    const res = await DELETE(adminReq("DELETE", { id: "not a valid id! (a flag-shaped string, say)" }));
+    expect(res.status).toBe(400);
+    expect(deleteSponsor).not.toHaveBeenCalled();
+    expect(writeAdminAudit).not.toHaveBeenCalled();
+  });
 });

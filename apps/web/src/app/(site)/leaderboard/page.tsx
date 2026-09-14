@@ -91,6 +91,10 @@ export default async function LeaderboardPage({
   const generatedAtMs = Date.parse(data.generatedAt);
 
   if (wantsDisplay) {
+    // Sponsor credits are cosmetic on this surface — a Redis blip on this
+    // read must never blank the projector board itself, so it fails OPEN to
+    // an empty list rather than throwing (same direction as sponsor-strip.tsx
+    // and site-footer.tsx's own sponsor reads).
     const [phaseInfo, sponsors] = await Promise.all([resolvePhase(), listSponsors().catch(() => [])]);
     // Teams when the event has them, individuals otherwise — the same
     // primary view the interactive board defaults to.

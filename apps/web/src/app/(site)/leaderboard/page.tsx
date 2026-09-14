@@ -124,6 +124,7 @@ export default async function LeaderboardPage({
           logoSrc: s.logo ? `/api/sponsors/logo/${s.id}` : null,
           w: s.logo?.w,
           h: s.logo?.h,
+          logoType: s.logo?.type,
         }))}
       />
     );

@@ -841,6 +841,15 @@ do this in one step. The declared file type and filename are ignored — only
 the file's own bytes decide, so renaming a `.svg` to `.png` does not get it
 past this check.
 
+**Prefer PNG or WebP with a transparent background.** JPEG has no alpha
+channel, so its own background — usually white — renders as a solid rectangle
+against the site's dark theme everywhere the logo appears, and on the
+leaderboard's projector display (`?display=1`) it erases the logo entirely:
+that surface renders every PNG/WebP logo as a white silhouette
+(`brightness-0 invert`, meant for a transparent image), and an opaque JPEG's
+whole rectangle turns uniformly white under the same filter, so the display
+board skips it for JPEG and shows the logo in its real colors instead.
+
 **Replace or remove a logo.** Editing a sponsor and choosing a new file
 replaces the old logo immediately — the URL contestants already loaded stays
 the same (`/api/sponsors/logo/<id>`), but its `ETag` changes, so a cached copy

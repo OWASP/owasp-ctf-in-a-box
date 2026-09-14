@@ -169,7 +169,9 @@ export default function AdminSponsorsTab() {
         <p className="mt-1 text-sm text-zinc-400">
           Recognition only — name, logo, link, a short blurb. Renders on the landing page, the
           footer, and /sponsors whenever this list is non-empty. Logos must be PNG, JPEG or WebP;
-          SVG is rejected (it can run script when opened directly).
+          SVG is rejected (it can run script when opened directly). PNG or WebP with a transparent
+          background is recommended — JPEG has none, so its own background shows as a solid
+          rectangle against the site&apos;s dark theme.
         </p>
 
         {error && (

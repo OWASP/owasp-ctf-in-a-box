@@ -14,7 +14,13 @@
 import { useEffect, useState } from "react";
 import ConfirmModal from "@/components/confirm-modal";
 import { generateChallengeId } from "@/lib/classic-keys";
-import { SPONSOR_LOGO_MAX, type SponsorTier } from "@/lib/sponsors-keys";
+import { SPONSOR_LOGO_MAX, SPONSOR_LOGO_SIZES, type SponsorLogoSize, type SponsorTier } from "@/lib/sponsors-keys";
+import type { AdminSettings } from "@/lib/admin-store";
+import AdminSelectField from "@/components/admin-select-field";
+import type { FieldStatus } from "@/components/admin-number-field";
+
+const LOGO_SIZE_LABEL: Record<SponsorLogoSize, string> = { sm: "Small", md: "Medium", lg: "Large" };
+const LOGO_SIZE_OPTIONS = SPONSOR_LOGO_SIZES.map((v) => ({ value: v, label: LOGO_SIZE_LABEL[v] }));
 
 type Sponsor = {
   id: string;
@@ -53,7 +59,19 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-export default function AdminSponsorsTab() {
+export default function AdminSponsorsTab({
+  settings,
+  settingsPending,
+  applyField,
+  statusOf,
+}: {
+  settings: AdminSettings;
+  /** Named apart from the CRUD form's own `pending` below — this gates only
+   *  the logo-size field, not the sponsor list's add/edit/delete flow. */
+  settingsPending: boolean;
+  applyField: (key: string, patch: Record<string, unknown>, label: string) => Promise<boolean>;
+  statusOf: (key: string) => FieldStatus;
+}) {
   const [rows, setRows] = useState<Sponsor[] | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -171,6 +189,19 @@ export default function AdminSponsorsTab() {
           footer, and /sponsors whenever this list is non-empty. Logos must be PNG or WebP; SVG is
           rejected (it can run script when opened directly).
         </p>
+
+        <div className="mt-4 rounded-md border border-white/10 bg-[#12121e] p-4">
+          <AdminSelectField
+            id="sponsor-logo-size"
+            label="Landing-page logo size"
+            help="How big sponsor logos render on the landing page's credit row, below the hero. /sponsors and the leaderboard display board keep their own fixed size."
+            value={settings.sponsorLogoSize ?? "md"}
+            options={LOGO_SIZE_OPTIONS}
+            disabled={settingsPending}
+            status={statusOf("sponsorLogoSize")}
+            onChange={(next) => void applyField("sponsorLogoSize", { sponsorLogoSize: next }, "Landing-page logo size")}
+          />
+        </div>
 
         {error && (
           <p role="alert" className="mt-3 text-sm text-[#e53e3e]">

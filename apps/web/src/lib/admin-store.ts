@@ -79,7 +79,7 @@ import {
   flagComparisonForm,
 } from "@/lib/ai-keys";
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
-import { SPONSORS_KEY, SPONSORS_LOGO_KEY } from "@/lib/sponsors-keys";
+import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSize } from "@/lib/sponsors-keys";
 
 export const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 export const ADMIN_AUDIT_KEY = "ctf:admin:audit";
@@ -222,6 +222,11 @@ export type AdminSettings = {
    *  nothing to show, so `normalizeSecureDevTargets` treats a stored empty
    *  (or all-unknown) list the same as absent. */
   secureDevTargets: AppId[] | null;
+  /** How big a sponsor's logo renders on the landing-page strip. Null = no
+   *  override, use the default ("md") — see SponsorLogoSize in
+   *  sponsors-keys.ts. Scoped to the strip alone; /sponsors and the
+   *  leaderboard display board keep their own fixed sizes. */
+  sponsorLogoSize: SponsorLogoSize | null;
 };
 
 // The window check itself lives in schedule-window.ts (a dependency-free
@@ -294,6 +299,9 @@ export type SettingsPatch = {
    *  #386, PR 2). Replaces the whole set, like `enabledModules`; never
    *  clears — see updateAdminSettings for why there is no empty state. */
   secureDevTargets?: string[];
+  /** null/"" clears back to the default ("md") — same contract as the
+   *  schedule fields. */
+  sponsorLogoSize?: SponsorLogoSize | null | "";
 } & Partial<Record<ModuleFieldKey, string>>;
 
 const SCHEDULE_FIELDS = ["scoringStartsAt", "scoringEndsAt", "registrationStartsAt", "registrationEndsAt"] as const;
@@ -370,6 +378,7 @@ function decodeSettings(h: Record<string, string>): AdminSettings {
     enabledModuleIds: decodeEnabledModuleIds(h.enabledModules),
     eventIdentity,
     secureDevTargets: normalizeSecureDevTargets(h.secureDevTargets),
+    sponsorLogoSize: isSponsorLogoSize(h.sponsorLogoSize) ? h.sponsorLogoSize : null,
   };
 }
 
@@ -518,6 +527,19 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       }
       fields.push(k, String(v));
       changed[k] = v;
+    } else if (k === "sponsorLogoSize") {
+      // null/"" clears back to the default ("md") — same two-state contract
+      // as the schedule fields below.
+      if (v === null || v === "") {
+        dels.push(k);
+        changed[k] = null as unknown as boolean;
+      } else {
+        if (!isSponsorLogoSize(v)) {
+          throw new AdminValidationError(k, 'sponsorLogoSize must be "sm", "md", "lg", or null');
+        }
+        fields.push(k, v);
+        changed[k] = v as unknown as boolean;
+      }
     } else if ((SCHEDULE_FIELDS as readonly string[]).includes(k)) {
       // Nullable ISO bound: null/"" clears it (HDEL); a value must parse as a
       // date and is stored normalised to its ISO-8601 UTC form.

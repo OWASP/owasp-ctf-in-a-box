@@ -20,6 +20,12 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("server-only", () => ({}));
+// SponsorStrip now reads getAdminSettingsSnapshot() for sponsorLogoSize; the
+// real one calls connection(), which throws outside a request scope. This
+// double (see its own header) fails open to null here (nothing else in this
+// file mocks @/lib/admin-store), which is exactly "no override" — the same
+// as an unconfigured box.
+vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
 vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ refresh: () => {} }) }));
 vi.mock("next/image", () => ({
   default: ({ src, alt, className }: { src: string; alt: string; className?: string }) => (

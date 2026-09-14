@@ -34,6 +34,7 @@ const settings: AdminSettings = {
   enabledModuleIds: null,
   eventIdentity: {},
   secureDevTargets: null,
+  sponsorLogoSize: null,
 };
 
 const modules: readonly ResolvedModule[] = [{ id: "quiz", title: "Quiz", blurb: "b", targets: [] } as never];

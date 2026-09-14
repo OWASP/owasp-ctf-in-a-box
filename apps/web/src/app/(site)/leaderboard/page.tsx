@@ -20,6 +20,7 @@ import { completedCount } from "@/lib/leaderboard/rank";
 import { getSite } from "@/lib/site";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { getEnabledApps } from "@/lib/enabled-apps";
+import { listSponsors } from "@/lib/sponsors-store";
 
 export async function generateMetadata(): Promise<Metadata> {
   const event = await getSite();
@@ -90,7 +91,11 @@ export default async function LeaderboardPage({
   const generatedAtMs = Date.parse(data.generatedAt);
 
   if (wantsDisplay) {
-    const phaseInfo = await resolvePhase();
+    // Sponsor credits are cosmetic on this surface — a Redis blip on this
+    // read must never blank the projector board itself, so it fails OPEN to
+    // an empty list rather than throwing (same direction as sponsor-strip.tsx
+    // and site-footer.tsx's own sponsor reads).
+    const [phaseInfo, sponsors] = await Promise.all([resolvePhase(), listSponsors().catch(() => [])]);
     // Teams when the event has them, individuals otherwise — the same
     // primary view the interactive board defaults to.
     const rows =
@@ -113,6 +118,13 @@ export default async function LeaderboardPage({
         rows={rows}
         eventName={event.name}
         phaseLabel={phaseInfo ? phaseInfo.phase : null}
+        sponsors={sponsors.map((s) => ({
+          key: s.id,
+          name: s.name,
+          logoSrc: s.logo ? `/api/sponsors/logo/${s.id}` : null,
+          w: s.logo?.w,
+          h: s.logo?.h,
+        }))}
       />
     );
   }

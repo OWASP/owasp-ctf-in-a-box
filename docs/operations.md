@@ -145,7 +145,7 @@ controls sit behind a **left sidebar** in three groups (it collapses to a
   run a module never sees its settings at all.
 - **Setup** — **Event** (identity, modules, freeze, team registration, team
   size, the schedule, then demo seed and the master reset at the bottom),
-  **Hints**, **Admins**.
+  **Hints**, **Admins**, **Sponsors**.
 
 ![The admin panel's Event tab: the per-module switches, the freeze and team-registration toggles, the players-per-team cap, and the schedule fields with a live "right now: scoring is live" readout](assets/admin-event.jpg)
 
@@ -618,7 +618,12 @@ The panel offers:
   can *only* be solved by an external arena reporting the solve, so seeding one
   put a challenge on the board that nobody could clear
   ([#355](https://github.com/dcotelo/owasp-ctf/issues/355)). See
-  [AI](#ai) below for what the modes mean. The seed also writes
+  [AI](#ai) below for what the modes mean. Sponsors are seeded too, always —
+  three placeholder ones, one per tier, so the landing-page strip, the
+  footer, and `/sponsors` all preview populated instead of empty. Each
+  carries a plain solid-color placeholder logo (nothing resembling a real
+  brand mark) and uses the `.example` TLD, which cannot resolve to anything
+  real. The seed also writes
   **attempt** rows, including some for items that were tried and never
   earned, so the
   **Insights** tab previews a plausible event rather than one where
@@ -803,6 +808,50 @@ get a 403 — the access check fails **closed**, deliberately, and deliberately
 unlike the freeze read, which fails *open* so a Redis blip cannot drop live
 submissions. A bootstrap admin still gets in, because that check never
 touches Redis at all — which is exactly when you most need the panel.
+
+## Sponsors
+
+The **Sponsors** tab (issue #405) is recognition-only: name, logo, link, a
+short blurb. Sponsors get no sponsored challenges, no prizes wired into
+scoring, no contestant data, and no lead capture — anything past that is out
+of scope for this tab entirely. It is a platform feature, not a module: there
+is no toggle to turn it off, and it renders on the landing page, the footer,
+`/sponsors`, and the leaderboard's projector display (`?display=1`) if and
+only if at least one sponsor is configured. An event with no sponsors ships
+zero sponsor pixels anywhere.
+
+**Add a sponsor.** Fill in name, an `https://` link, an optional one-line
+blurb, a tier (Gold/Silver/Community — display grouping and ordering only;
+every sponsor appears on every surface regardless of tier), and an order
+number (lower sorts first). A logo is optional — without one, the sponsor's
+name renders as plain text everywhere a logo would have gone.
+
+**The 64KB PNG/WebP-only rule, and why.** A logo must be a PNG or WebP under
+64KB, decoded. **SVG is rejected outright**, with its own error message
+explaining why: an SVG served from this box's own origin executes any script
+it carries the moment someone opens the logo's URL directly in a browser —
+being referenced only from an `<img>` tag elsewhere on the site does not stop
+that. Export the logo as PNG or WebP first; most design tools do this in one
+step. The declared file type and filename are ignored — only the file's own
+bytes decide, so renaming a `.svg` to `.png` does not get it past this check.
+
+**Replace or remove a logo.** Editing a sponsor and choosing a new file
+replaces the old logo immediately — the URL contestants already loaded stays
+the same (`/api/sponsors/logo/<id>`), but its `ETag` changes, so a cached copy
+refreshes within about five minutes. The "Remove logo" checkbox on the edit
+form clears it back to the plain-text name.
+
+**A master reset clears sponsors too** — unlike a challenge's flag or
+description, a sponsor list is scoped to one event run, and there is no
+"disabled" state to fall back to; deleting a sponsor (or resetting the event)
+is the only off switch. Re-add sponsors after a reset if the next run needs
+them.
+
+**In the event archive.** A sponsor-carrying export embeds each logo's bytes
+as base64 inside the JSON bundle — a sponsor-heavy archive is noticeably
+larger than one with none. Importing a bundle with a `sponsors` section
+replaces the box's sponsor list wholesale, like every other section of an
+archive import.
 
 ## Archiving and replaying an event
 

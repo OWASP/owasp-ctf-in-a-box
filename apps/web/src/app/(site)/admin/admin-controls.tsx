@@ -56,6 +56,7 @@ import AdminInsightsTab from "./admin-insights-tab";
 import AdminSupportTab from "./admin-support-tab";
 import AdminEventTab from "./admin-event-tab";
 import AdminHintsTab from "./admin-hints-tab";
+import AdminSponsorsTab from "./admin-sponsors-tab";
 import AdminSettingsCard from "@/components/admin/settings-card";
 import AdminSecureDevTab from "./admin-secure-dev-tab";
 import AdminModulePanel from "./admin-module-panel";
@@ -100,6 +101,9 @@ const HINTS_TAB = "hints";
 /** Runtime admin management (issue #147). Sits beside Event rather than
  *  inside it: it manages WHO may use the panel, not what the event does. */
 const ADMINS_TAB = "admins";
+// Sponsor recognition (issue #405) — a platform feature, not a module, so it
+// sits beside Event/Hints/Admins rather than in the module tab row.
+const SPONSORS_TAB = "sponsors";
 // Live-event support (issue #168). Sits after Admins and before the module
 // tabs: it is control-plane, not module-specific, and an organizer reaching
 // for it is mid-incident rather than mid-configuration.
@@ -315,6 +319,7 @@ export default function AdminControls({
     { id: EVENT_TAB, label: "Event" },
     { id: HINTS_TAB, label: "Hints" },
     { id: ADMINS_TAB, label: "Admins" },
+    { id: SPONSORS_TAB, label: "Sponsors" },
     { id: SUPPORT_TAB, label: "Support" },
     { id: ACTIVITY_TAB, label: "Activity" },
     { id: INSIGHTS_TAB, label: "Insights" },
@@ -368,6 +373,7 @@ export default function AdminControls({
         { id: EVENT_TAB, label: "Event" },
         { id: HINTS_TAB, label: "Hints" },
         { id: ADMINS_TAB, label: "Admins" },
+        { id: SPONSORS_TAB, label: "Sponsors" },
       ],
     },
   ];
@@ -632,6 +638,8 @@ export default function AdminControls({
                 />
               ) : tab.id === ADMINS_TAB ? (
                 <AdminAdminsTab viewerLogin={viewerLogin} />
+              ) : tab.id === SPONSORS_TAB ? (
+                <AdminSponsorsTab />
               ) : tab.id === SUPPORT_TAB ? (
                 <AdminSupportTab setConfirm={setConfirm} />
               ) : tab.id === ACTIVITY_TAB ? (

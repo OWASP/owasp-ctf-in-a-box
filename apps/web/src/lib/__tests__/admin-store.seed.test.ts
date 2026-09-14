@@ -22,6 +22,7 @@ import {
   DEMO_AI_CHALLENGES,
   DEMO_AI_CATEGORIES,
   DEMO_AI_SOLVES,
+  DEMO_SPONSORS,
 } from "@/lib/demo-fixture";
 
 /** The settings-read shape `getAdminSettings` decodes `enabledModules` from —
@@ -81,7 +82,12 @@ describe("seedDemoData", () => {
       (n, c) => n + Object.values(c.solves).reduce((m, ids) => m + ids.length, 0),
       0,
     );
-    expect(out).toEqual({ contestants: DEMO_CONTESTANTS.length, teams: DEMO_TEAMS.length, solves: expectedSolves });
+    expect(out).toEqual({
+      contestants: DEMO_CONTESTANTS.length,
+      teams: DEMO_TEAMS.length,
+      solves: expectedSolves,
+      sponsors: DEMO_SPONSORS.length,
+    });
 
     // Reads first — the schedule (for the timestamp clamp) and each enabled
     // module's category list (for the union) — then EVERY write in one batch.
@@ -111,6 +117,21 @@ describe("seedDemoData", () => {
     const lpush = cmds.find((c) => c[0] === "LPUSH");
     expect(lpush).toBeTruthy();
     expect(JSON.parse(String(lpush![2]))).toMatchObject({ by: "alice", action: "seed" });
+
+    // sponsors — a platform feature, so always seeded regardless of modules
+    const sponsorCmds = cmds.filter((c) => c[1] === "ctf:sponsors");
+    expect(sponsorCmds.length).toBe(DEMO_SPONSORS.length);
+    const firstSponsor = JSON.parse(String(sponsorCmds[0][3])) as {
+      logo: { type: string; bytes: number; w: number; h: number; etag: string } | null;
+    };
+    // Every demo sponsor carries a real logo now, with bytes/etag DERIVED
+    // from the fixture's own base64 data — never hand-carried, so the two
+    // cannot silently drift apart.
+    expect(firstSponsor.logo).toMatchObject({ type: "image/png", w: 160, h: 56 });
+    expect(firstSponsor.logo?.etag).toMatch(/^[0-9a-f]{16}$/);
+
+    const logoBlobCmds = cmds.filter((c) => c[1] === "ctf:sponsors:logo");
+    expect(logoBlobCmds.length).toBe(DEMO_SPONSORS.length);
   });
 
   // CodeRabbit round 2, finding F1: the settings read now also decides WHICH

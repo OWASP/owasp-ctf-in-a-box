@@ -7,13 +7,23 @@ import * as enabledModules from "@/lib/enabled-modules";
 import { DEFAULT_SECURE_DEV_TARGETS } from "@/lib/secure-dev-targets";
 
 const m = vi.hoisted(() => ({
-  exportClassic: vi.fn(), exportQuiz: vi.fn(), exportAi: vi.fn(),
+  exportClassic: vi.fn(), exportQuiz: vi.fn(), exportAi: vi.fn(), exportSponsors: vi.fn(), importSponsors: vi.fn(),
+  validateBundleLogos: vi.fn(),
   getAdminSettings: vi.fn(), effectivePaused: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/classic-store", () => ({ exportBundle: m.exportClassic, clearChallenges: vi.fn(), importBundle: vi.fn() }));
 vi.mock("@/lib/quiz-store", () => ({ exportBundle: m.exportQuiz, clearQuestions: vi.fn(), importBundle: vi.fn() }));
 vi.mock("@/lib/ai-store", () => ({ exportBundle: m.exportAi, clearAiChallenges: vi.fn(), importBundle: vi.fn() }));
+// Sponsors is a PLATFORM feature, not a content module — it has no
+// clear*() here because admin-store's resetEvent (mocked below) already
+// covers wiping ctf:sponsors* before an import (see event-store.ts's own
+// comment on the sponsors import branch).
+vi.mock("@/lib/sponsors-store", () => ({
+  exportBundle: m.exportSponsors,
+  importBundle: m.importSponsors,
+  validateBundleLogos: m.validateBundleLogos,
+}));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings: m.getAdminSettings, effectivePaused: m.effectivePaused, updateAdminSettings: vi.fn(), resetEvent: vi.fn() }));
 // event-store.ts's reconciliation (`reconcileEnabledModuleIds`) only needs
 // `isModuleId` from `@/lib/modules` now — module availability is decided by
@@ -60,6 +70,7 @@ beforeEach(() => {
   m.exportClassic.mockResolvedValue({ version: 1, categories: ["Web"], challenges: [{ id: "web-one-ab12cd", title: "One", category: "Web", description: "hi", points: 50, order: 0, flag: "ctfbox{One}" }] });
   m.exportQuiz.mockResolvedValue({ version: 1, questions: [] });
   m.exportAi.mockResolvedValue({ version: 1, categories: ["Prompt Injection"], challenges: [] });
+  m.exportSponsors.mockResolvedValue(null);
   m.getAdminSettings.mockResolvedValue({
     hintCost: 50, teamMaxMembers: 4, enabledModuleIds: ["classic", "quiz"],
     scoringStartsAt: "2026-01-01T00:00:00Z", paused: true, updatedBy: "alice", updatedAt: "x",
@@ -109,6 +120,23 @@ describe("exportEventBundle", () => {
     const withoutAi = await exportEventBundle(new Date());
     expect("ai" in withoutAi.bundle).toBe(false);
     expect(m.exportAi).not.toHaveBeenCalled();
+  });
+
+  // #405: sponsors are a PLATFORM feature, not gated on enabledModuleIds —
+  // whether the section appears is decided entirely by whether the store's
+  // own exportBundle() found any sponsors, mirroring the "render iff
+  // non-empty" rule the public surfaces follow.
+  it("carries a sponsors section iff the store has at least one sponsor, regardless of enabledModuleIds", async () => {
+    m.exportSponsors.mockResolvedValue({
+      version: 1,
+      sponsors: [{ id: "acme", name: "Acme", url: "https://acme.example", blurb: "", tier: "gold", order: 0, logo: null }],
+    });
+    const withSponsors = await exportEventBundle(new Date());
+    expect(withSponsors.bundle.sponsors?.sponsors).toHaveLength(1);
+
+    m.exportSponsors.mockResolvedValue(null);
+    const withoutSponsors = await exportEventBundle(new Date());
+    expect("sponsors" in withoutSponsors.bundle).toBe(false);
   });
 
   it("warns when the event is live", async () => {
@@ -359,6 +387,31 @@ describe("importEventBundle", () => {
     const importOrder = vi.mocked(aiStore.importBundle).mock.invocationCallOrder[0];
     expect(clearOrder).toBeLessThan(importOrder);
     expect(summary.ai).toEqual({ created: 2, updated: 0 });
+  });
+
+  // #405: sponsors ride the bundle like classic/quiz/ai, but with no
+  // clear*() call of their own — `resetEvent` (already asserted above to run
+  // before any import) covers wiping ctf:sponsors* for every import, not
+  // only a sponsor-carrying one.
+  it("imports the sponsors section and reports it in the summary, with no separate clear call", async () => {
+    m.importSponsors.mockResolvedValue({ created: 1 });
+    const withSponsors = {
+      ...bundleFixture(),
+      sponsors: {
+        version: 1 as const,
+        sponsors: [
+          { id: "acme", name: "Acme", url: "https://acme.example", blurb: "", tier: "gold" as const, order: 0, logo: null },
+        ],
+      },
+    };
+    const { summary } = await importEventBundle(withSponsors, "alice");
+    expect(m.importSponsors).toHaveBeenCalledWith(withSponsors.sponsors);
+    expect(summary.sponsors).toEqual({ created: 1 });
+  });
+
+  it("does not call importSponsors when the bundle carries no sponsors section", async () => {
+    await importEventBundle(bundleFixture(), "alice");
+    expect(m.importSponsors).not.toHaveBeenCalled();
   });
 
   it("applies only policy settings, never schedule fields", async () => {

@@ -166,10 +166,11 @@ describe("AdminControls tab shell", () => {
     expect(html).toContain("Insights");
     expect(html).toContain("Secure Development");
     expect(html).toContain("Quiz");
-    // Overview + Event + Hints + Admins + Support + Activity + Insights + the
-    // two modules. The seven control-plane destinations are not modules, so
-    // all seven are present regardless of what the event enables.
-    expect(html.match(/href="\/admin\//g)?.length).toBe(9);
+    // Overview + Event + Hints + Admins + Sponsors + Support + Activity +
+    // Insights + the two modules. The eight control-plane destinations are
+    // not modules, so all eight are present regardless of what the event
+    // enables.
+    expect(html.match(/href="\/admin\//g)?.length).toBe(10);
   });
 
   // Setup instructions are a registry contract (`ModuleDef.setup`), resolved
@@ -231,10 +232,10 @@ describe("AdminControls tab shell", () => {
 
   it("renders every tab panel so only visibility is conditional", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
-    // Overview + Event + Hints + Admins + Support + Activity + Insights + the two modules.
-    expect(html.match(/role="region"/g)?.length).toBe(9);
-    // Exactly the eight non-selected panels carry `hidden`.
-    expect(html.match(/hidden=""/g)?.length).toBe(8);
+    // Overview + Event + Hints + Admins + Sponsors + Support + Activity + Insights + the two modules.
+    expect(html.match(/role="region"/g)?.length).toBe(10);
+    // Exactly the nine non-selected panels carry `hidden`.
+    expect(html.match(/hidden=""/g)?.length).toBe(9);
   });
 
   it("names each panel for assistive tech and links the sidebar to it", () => {
@@ -370,10 +371,10 @@ describe("AdminControls panel contents", () => {
     const html = renderToStaticMarkup(
       <AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules.filter((m) => m.id !== "secure-development")} />,
     );
-    // Overview + Event + Hints + Admins + Support + Activity + Insights +
-    // quiz. The control-plane destinations survive a module being disabled,
-    // because none of them is a module tab.
-    expect(html.match(/role="region"/g)?.length).toBe(8);
+    // Overview + Event + Hints + Admins + Sponsors + Support + Activity +
+    // Insights + quiz. The control-plane destinations survive a module being
+    // disabled, because none of them is a module tab.
+    expect(html.match(/role="region"/g)?.length).toBe(9);
     // The hint policy stays reachable: quiz has no hints, but classic and ai
     // do, and this event can switch either on at runtime.
     expect(panelFor(html, "hints")).toContain("Hint cost");
@@ -733,11 +734,11 @@ describe("AdminControls ai panel", () => {
     { id: "ai", title: "AI Challenges", blurb: "Prompt-injection and jailbreak challenges hosted externally." },
   ];
 
-  it("renders the ai module's tab with a tenth destination and panel", () => {
+  it("renders the ai module's tab with an eleventh destination and panel", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={withAi} />);
     expect(html).toContain("AI Challenges");
-    expect(html.match(/href="\/admin\//g)?.length).toBe(10);
-    expect(html.match(/role="region"/g)?.length).toBe(10);
+    expect(html.match(/href="\/admin\//g)?.length).toBe(11);
+    expect(html.match(/role="region"/g)?.length).toBe(11);
   });
 
   it("renders AdminAiControls in the ai panel, not the fallback placeholder", () => {

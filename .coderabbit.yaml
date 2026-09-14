@@ -319,7 +319,14 @@ reviews:
 
         Reset scope — a prefix list that sweeps organizer-authored content
         (questions, key, challenges, flag hashes, categories, admin settings).
-        A reset clears event-run state only.
+        A reset clears event-run state only. Sponsors (ctf:sponsors,
+        ctf:sponsors:logo — issue #405, ADR 57) are the one documented
+        exception: unlike a challenge, a sponsor list has no `enabled` toggle
+        to fall back to and is scoped to ONE event run by design (last year's
+        sponsors are not implicitly this year's), so the master reset clears
+        both hashes outright. Do not flag that pair specifically; do flag any
+        OTHER content hash added to RESET_PREFIXES without the same kind of
+        stated reason.
 
         Cap removal — AUDIT_CAP, ACTIVITY_LOG_MAX, MAX_CONTESTANTS bound
         unbounded reads and writes. Flag removal, a large unjustified increase,
@@ -386,20 +393,28 @@ reviews:
         answer was correct. Refuse before the body is interpreted.
 
         Public surface growth — GET /api/public/scoring, GET
-        /api/ai/launch-key and GET /api/board/items are the ONLY sanctioned
-        unauthenticated GET routes, and POST /api/gate (the pre-event password
-        check: per-IP attempt budget charged before the compare, pass/fail
-        only) and POST /api/stats/visit (the no-PII per-country reach counter,
-        always 204) the ONLY sanctioned unauthenticated POSTs — the same five
+        /api/ai/launch-key, GET /api/board/items and GET
+        /api/sponsors/logo/[id] are the ONLY sanctioned unauthenticated GET
+        routes, and POST /api/gate (the pre-event password check: per-IP
+        attempt budget charged before the compare, pass/fail only) and POST
+        /api/stats/visit (the no-PII per-country reach counter, always 204)
+        the ONLY sanctioned unauthenticated POSTs — the same six
         docs/reviewing.md invariant 11 names. The GETs must stay read-only,
-        policy out and never facts in, with nothing secret in the payload: launch-key publishes the
-        launch PUBLIC key, its `kid` and the algorithm, with the private half
+        policy or public-by-design content out and never facts in, with
+        nothing secret in the payload: launch-key publishes the launch
+        PUBLIC key, its `kid` and the algorithm, with the private half
         import-forbidden by the ai contract test; board/items serves the
         public leaderboard's expansion (who solved what — already on the
         board as counts) built only from the contestant-safe listers, ids and
-        banked points, capped at a team roster's worth of logins per request.
+        banked points, capped at a team roster's worth of logins per request;
+        sponsors/logo/[id] (issue #405, ADR 57) serves only PNG/WebP bytes an
+        organizer explicitly uploaded to be shown publicly, already sniffed
+        by magic number at upload (never SVG), keyed by an id validated
+        against SPONSOR_ID_RE before any Redis command — it exists so a
+        contestant's browser never fetches a sponsor's logo from the
+        sponsor's own CDN and leaks that contestant's IP to the sponsor.
         Flag any OTHER new unauthenticated route, any secret appearing in any
-        of the three payloads, and anything letting a fork report facts to
+        of the four payloads, and anything letting a fork report facts to
         the box rather than only read policy from it.
 
         Origin assertion bypass — a mutating route opting out of the

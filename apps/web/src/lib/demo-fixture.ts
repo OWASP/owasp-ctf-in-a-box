@@ -612,3 +612,71 @@ export const DEMO_TEAMS: DemoTeam[] = [
     ]
   }
 ];
+
+// Sponsors (DEMO_MODE 'Seed demo data'). A platform feature, not a module —
+// seeded regardless of which modules are enabled, mirroring how sponsors
+// themselves carry no module gate anywhere else (issue #405). Names/urls are
+// placeholder — `.example` is the IANA-reserved TLD for exactly this, so
+// nothing here resolves to (or could be mistaken for) a real organization.
+//
+// Each carries a real, genuinely decodable 160x56 solid-color PNG (one flat
+// color per tier — gold/silver/teal), base64-inlined below. `admin-store.ts`'s
+// seedDemoData derives `bytes`/`etag` from these bytes itself (the same
+// sha256-of-decoded-bytes recipe sponsors-store.ts uses), so nothing here
+// needs to hand-carry a hash that could drift from the actual pixels.
+export type DemoSponsorLogo = { data: string; type: "image/png"; w: number; h: number };
+
+export type DemoSponsor = {
+  id: string;
+  name: string;
+  url: string;
+  blurb: string;
+  tier: "gold" | "silver" | "community";
+  order: number;
+  logo: DemoSponsorLogo;
+};
+
+export const DEMO_SPONSORS: DemoSponsor[] = [
+  {
+    "id": "acme-security-demo",
+    "name": "Acme Security",
+    "url": "https://acme-security.example",
+    "blurb": "Placeholder gold sponsor for demo mode.",
+    "tier": "gold",
+    "order": 0,
+    "logo": {
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAKAAAAA4CAIAAAD1mGRUAAAAnklEQVR4nO3RAQkAIBDAwG9hfUMZyBQijIMLMNicvQib7wU8ZXCcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEXYCsEK8s9uBQAAAAASUVORK5CYII=",
+      "type": "image/png",
+      "w": 160,
+      "h": 56
+    }
+  },
+  {
+    "id": "widgetsoft-labs-demo",
+    "name": "Widgetsoft Labs",
+    "url": "https://widgetsoft.example",
+    "blurb": "Placeholder silver sponsor for demo mode.",
+    "tier": "silver",
+    "order": 1,
+    "logo": {
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAKAAAAA4CAIAAAD1mGRUAAAAnklEQVR4nO3RQQkAMAzAwPp30e9UTsUYhIMTEMjsHsLmewFPGRxncJzBcQbHGRxncJzBcQbHGRxncJzBcQbHGRxncJzBcQbHGRxncJzBcQbHGRxncJzBcQbHGRxncJzBcQbHGRxncJzBcQbHGRxncJzBcQbHGRxncJzBcQbHGRxncJzBcQbHGRxncJzBcQbHGRxncNwFBFxH7qP0SzcAAAAASUVORK5CYII=",
+      "type": "image/png",
+      "w": 160,
+      "h": 56
+    }
+  },
+  {
+    "id": "northwind-foundation-demo",
+    "name": "Northwind Foundation",
+    "url": "https://northwind.example",
+    "blurb": "Placeholder community sponsor for demo mode.",
+    "tier": "community",
+    "order": 2,
+    "logo": {
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAKAAAAA4CAIAAAD1mGRUAAAAn0lEQVR4nO3RUQkAIBTAwBfC/p9mMJ4pRBgHF2CwWWcTNt8LeMrgOIPjDI4zOM7gOIPjDI4zOM7gOIPjDI4zOM7gOIPjDI4zOM7gOIPjDI4zOM7gOIPjDI4zOM7gOIPjDI4zOM7gOIPjDI4zOM7gOIPjDI4zOM7gOIPjDI4zOM7gOIPjDI4zOM7gOIPjDI4zOM7gOIPjLtKVmO/ETDLZAAAAAElFTkSuQmCC",
+      "type": "image/png",
+      "w": 160,
+      "h": 56
+    }
+  }
+];

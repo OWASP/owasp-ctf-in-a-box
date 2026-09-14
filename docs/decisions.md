@@ -3363,3 +3363,94 @@ say that in v0.6 as easily as a warning could, and a box whose `.env` still
 says `push` comes up exactly as before, now on the transport that works. *Make push the default and drop poll* — the inverse
 trade: it needs a public URL, inbound surface and org secrets for every
 event, including the laptop-behind-NAT case the kit is built for.
+
+## ADR 57. Sponsors are recognition-only, appear in four fixed surfaces, and
+the disclaimer is not configurable
+
+**Context.** An event needs to credit the organizations funding it. The kit
+had nowhere to put them, so the fallback was editing branding by hand — which
+is how a box stops reading as OWASP and starts reading as a vendor booth. A
+sponsor feature has to give real, visible recognition while keeping the
+platform's identity intact, and that second half is the design constraint,
+not a nice-to-have (issue #405).
+
+**Decision.**
+
+- **Recognition only.** Name, logo, link, a short blurb. Sponsors get no
+  sponsored challenges, no prizes wired into scoring, no contestant data, no
+  lead capture. Anything beyond recognition is a separate decision and a
+  separate issue.
+- **Platform feature, not a module.** No `MODULES` entry, no registry churn,
+  no module-contract obligations — the module contract is written around
+  *challenge* modules, and sponsors score nothing. A sponsor renders if and
+  only if the sponsor list is non-empty; an empty list is zero sponsor pixels
+  anywhere. The demo seed DOES include three sponsors with logos
+  (`DEMO_SPONSORS` in demo-fixture.ts, one per tier) — reversed from this
+  ADR's first draft, which kept the demo seed sponsor-free to avoid inventing
+  a fake organization. The fixture instead uses obviously-placeholder names
+  against the IANA-reserved `.example` TLD and a plain solid-color rectangle
+  as each logo — nothing resembling a real brand mark — which sidesteps the
+  actual identity risk — a real-looking vendor booth — while still showing an
+  evaluator what the feature looks like live, logo included, rather than
+  leaving it invisible on the one box
+  most people actually open.
+- **Exactly four render sites**, each reading `listSponsors()` and returning
+  nothing on an empty list: the landing page's credit strip (grayscale by
+  default, color on hover — a credit row, not an ad rail), the shared
+  footer's text-only line (no logos, since the footer renders on every page
+  load), the dedicated `/sponsors` page (logo, name, blurb, link, grouped by
+  tier), and — extending the original four-surface design the same session
+  this ADR was written in — the leaderboard's projector display
+  (`?display=1`), alongside the OWASP mark, since that is the one screen a
+  sponsor's own booth signage points a room at during a live event.
+- **Logos stored in Redis, served from our own origin.** `ctf:sponsors` (JSON
+  metadata) and `ctf:sponsors:logo` (base64 bytes) are two separate hashes so
+  a metadata-only read (every page load) never drags a logo blob along. No
+  third-party image fetch from a contestant's browser: that would leak the
+  contestant's IP to the sponsor on every page load, against the OWASP
+  privacy policy this site defers to. It also means no rebuild to change a
+  sponsor (config v2 moved deliberately away from that), and CSP stays
+  `img-src 'self'`.
+- **Raster only. SVG is rejected at the store boundary**, by decoded-byte
+  magic-number sniff — never by the declared MIME type or a filename, both of
+  which are attacker-controlled. An SVG served from our own origin executes
+  its embedded script the moment someone opens the logo URL directly; nothing
+  stops a browser address bar from doing that, so "only ever referenced from
+  an `<img>` tag" is not a mitigation. A sponsor always ends up with a PNG or
+  WebP.
+- **The disclaimer on `/sponsors` is not configurable.** It is hardcoded copy,
+  not an admin field: an organizer who could edit it could sell it. It reads
+  "OWASP does not endorse sponsors, their products, or their services.
+  Sponsors fund this event. They have no influence over challenge content,
+  scoring, or results." — the one thing this site says about the
+  relationship, on purpose the one thing a runtime setting cannot touch.
+- **No `enabled` flag.** Delete is the off switch. A master reset
+  (`admin-store.ts`'s `resetEvent`) wipes both sponsor hashes outright, unlike
+  a challenge's flag/description — sponsors are scoped to ONE event run
+  (last year's sponsors are not implicitly this year's), so there is no
+  CONTENT/PROGRESS split to preserve across a reset the way classic/quiz/ai's
+  catalogues get one.
+
+**Consequences.** A contestant never sees a sponsor logo fetched from a
+sponsor's own infrastructure, and an organizer changes a sponsor mid-event
+with no rebuild and no deploy. The cost is that sponsors are genuinely
+second-class relative to challenge modules: no bulk-import UI of their own
+(a sponsor bundle rides the whole-event archive instead), no drag-reorder
+widget in the admin panel (a plain `order` number field), and the projector
+display now needs a fourth "sponsors are allowed here" carve-out in the
+guardrail test (`sponsor-boundary.test.tsx`) alongside the original three —
+a boundary that will need to be re-stated, not just re-derived, the next time
+somebody proposes a fifth surface.
+
+**Alternatives rejected.** *A `sponsors:` block in a static config file* —
+config v2 (ADR 55) moved this whole kit away from build-time configuration
+specifically so a running box never needs a rebuild to change what it shows;
+reintroducing one field that way for sponsors alone would undo the point of
+that migration for the one piece of content most likely to change mid-season.
+*Fetch sponsor logos directly from the sponsor's own CDN* — the obvious
+zero-storage option, and the one this ADR exists to rule out: it puts every
+contestant's IP address in the sponsor's own access logs on every page load,
+which this site's privacy policy does not permit trading away for one field
+of an admin form. *Allow SVG logos, sanitized* — a sanitizer is one more
+dependency and one more place a bypass shows up later; rejecting SVG outright
+at the store boundary needs no library and cannot regress.

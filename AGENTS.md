@@ -201,9 +201,12 @@ the commits pushed since its last pass, re-verifies its open threads, and
 resolves the ones the push addressed; no reply is needed on those. Every
 push and every `review`/`full review` command consumes one review from an
 hourly OSS allowance (1–10 per developer, scoped per repository), so batch
-the fixes for a round into one push and never retry on a timer: after a
+the fixes for a round into one push and never poll on a timer: after a
 `Review rate limited` reply, post `@coderabbitai rate limit`, which answers
-with when the next review is available, and trigger once then. Reply
+with when the next review is available — parse that wait, schedule exactly
+one reminder for that moment (not a retry loop), and let the session go
+idle until it fires; when it does, post exactly one `@coderabbitai review`
+and stop. Reply
 *inside* a thread only for a finding it left open that is actually fixed
 (name the commit and the file:line so its re-verify has something to check)
 or to decline with a reason — the exception, per the paragraph above. Two

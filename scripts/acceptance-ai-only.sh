@@ -46,7 +46,7 @@
 #     poller reads its whole config from the environment now, so an empty
 #     org is a misconfiguration, not an ai-only event
 #
-# Seeding: no OAuth app exists in CI, and the DEMO_MODE 'Seed demo data'
+# Seeding: no OAuth app exists in CI, and the 'Seed demo data'
 # button is admin-session-gated (apps/web/src/app/api/admin/seed/route.ts) —
 # faking that session is out of scope and not something any script in this
 # repo does. This script writes the ai module's real Redis schema directly,

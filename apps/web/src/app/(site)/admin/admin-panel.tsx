@@ -101,7 +101,6 @@ export default async function AdminPanel({ tab }: { tab?: string }) {
       {settings ? (
         <AdminControls
           initial={settings}
-          demoMode={process.env.DEMO_MODE === "1"}
           defaultModuleIds={defaultModuleIds}
           secureDevAvailable={secureDevAvailable(process.env)}
           modules={modules}

@@ -381,12 +381,56 @@ describe("AdminControls panel contents", () => {
     expect(() => panelFor(html, "secure-development")).toThrow();
   });
 
-  it("shows the demo seed section only when demoMode is set", () => {
-    const withoutDemo = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
-    expect(withoutDemo).not.toMatch(/seed demo data/i);
+  it("always shows the demo seed/clear section — no DEMO_MODE gate (issue #419)", () => {
+    const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
+    const event = panelFor(html, "event");
+    expect(event).toMatch(/seed demo data/i);
+    expect(event).toMatch(/clear demo data/i);
+  });
 
-    const withDemo = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} demoMode />);
-    expect(panelFor(withDemo, "event")).toMatch(/seed demo data/i);
+  // Same captureTree/findElement approach as the reset-confirmation test
+  // above: reaches the real onClick closures to read what they hand
+  // setConfirm, since ConfirmModal itself never mounts under
+  // renderToStaticMarkup.
+  it("gates Seed and Clear demo data behind their own typed confirmation phrases (issue #419)", () => {
+    const tree = captureTree(AdminControls, {
+      viewerLogin: "organizer",
+      eventName: "OWASP CTF",
+      defaultModuleIds: ["secure-development"],
+      secureDevAvailable: true,
+      initial: settings,
+      modules: twoModules,
+    } as Parameters<typeof AdminControls>[0]);
+
+    const eventTabEl = findElement(tree, (el) => el.type === AdminEventTab);
+    expect(eventTabEl).not.toBeNull();
+    const eventTabProps = eventTabEl!.props as AdminEventTabProps;
+
+    const setConfirm = vi.fn();
+    const doSeed = vi.fn();
+    const doClearDemo = vi.fn();
+    const eventTabTree = AdminEventTab({ ...eventTabProps, setConfirm, doSeed, doClearDemo });
+
+    const seedButton = findElement(eventTabTree, (el) => {
+      const children = el.props?.children;
+      return el.type === "button" && typeof children === "string" && children === "Seed demo data";
+    });
+    expect(seedButton).not.toBeNull();
+    (seedButton!.props as { onClick: () => void }).onClick();
+    expect(setConfirm).toHaveBeenCalledWith(expect.objectContaining({ requireType: "SEED" }));
+    (setConfirm.mock.calls[0]![0] as { onConfirm: () => void }).onConfirm();
+    expect(doSeed).toHaveBeenCalled();
+
+    setConfirm.mockClear();
+    const clearButton = findElement(eventTabTree, (el) => {
+      const children = el.props?.children;
+      return el.type === "button" && typeof children === "string" && children === "Clear demo data";
+    });
+    expect(clearButton).not.toBeNull();
+    (clearButton!.props as { onClick: () => void }).onClick();
+    expect(setConfirm).toHaveBeenCalledWith(expect.objectContaining({ requireType: "CLEAR DEMO DATA" }));
+    (setConfirm.mock.calls[0]![0] as { onConfirm: () => void }).onConfirm();
+    expect(doClearDemo).toHaveBeenCalled();
   });
 });
 

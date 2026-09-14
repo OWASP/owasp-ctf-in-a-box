@@ -1033,7 +1033,7 @@ post-event wipe also needs the source PR comments gone (there is no way to
 un-post them from here). Every disruptive control prompts for confirmation
 (type-to-confirm for the reset; one-click for the freeze/registration toggles).
 
-**Demo seed (dev only).** `seedDemoData()` + `POST /api/admin/seed` populate a
+**Demo seed.** `seedDemoData()` + `POST /api/admin/seed` populate a
 demo leaderboard (bundled fixture of real challenge-ids so the scorer scores
 them, timestamps spread for a rising graph, plus teams). When the `quiz`
 module is enabled, the same seed also writes a small demo question bank
@@ -1041,10 +1041,13 @@ module is enabled, the same seed also writes a small demo question bank
 demo board shows a genuinely combined score — patch points and quiz points
 both contributing — instead of leaving the second module invisible. A
 disabled quiz module leaves the seed byte-for-byte identical to pre-quiz
-behavior. The route and its
-`/admin` button exist only when the app runs with `DEMO_MODE=1`
-(`scripts/dev-stack` sets it) — a real event build has neither, so a live
-leaderboard can't be polluted by accident.
+behavior. Its inverse, `clearDemoData()` + `DELETE /api/admin/seed`, removes
+exactly the run-state rows seeding added (fake contestants/teams/solves,
+sponsors) but leaves the demo questions/challenges/flags/categories as
+authored content, same as a master reset already treats real ones. Neither
+route sits behind a `DEMO_MODE` env var (issue #419 removed that gate
+everywhere): admin auth plus a type-to-confirm body is the whole safety net,
+the same pattern `/api/admin/reset` already used.
 
 **Known limitation: the hint toggle is only live at the reveal boundary.**
 `resolveHintConfig()` is the single answer to "are hints on right now",

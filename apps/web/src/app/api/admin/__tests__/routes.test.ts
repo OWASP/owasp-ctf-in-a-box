@@ -7,16 +7,25 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { requireAdmin, getAdminSettings, updateAdminSettings, getSyncStatus, getLeaderboardSource, resetEvent, seedDemoData } =
-  vi.hoisted(() => ({
-    requireAdmin: vi.fn(),
-    getAdminSettings: vi.fn(),
-    updateAdminSettings: vi.fn(),
-    getSyncStatus: vi.fn(),
-    getLeaderboardSource: vi.fn(),
-    resetEvent: vi.fn(),
-    seedDemoData: vi.fn(),
-  }));
+const {
+  requireAdmin,
+  getAdminSettings,
+  updateAdminSettings,
+  getSyncStatus,
+  getLeaderboardSource,
+  resetEvent,
+  seedDemoData,
+  clearDemoData,
+} = vi.hoisted(() => ({
+  requireAdmin: vi.fn(),
+  getAdminSettings: vi.fn(),
+  updateAdminSettings: vi.fn(),
+  getSyncStatus: vi.fn(),
+  getLeaderboardSource: vi.fn(),
+  resetEvent: vi.fn(),
+  seedDemoData: vi.fn(),
+  clearDemoData: vi.fn(),
+}));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
@@ -28,6 +37,7 @@ vi.mock("@/lib/admin-store", async (orig) => ({
   getSyncStatus,
   resetEvent,
   seedDemoData,
+  clearDemoData,
 }));
 vi.mock("@/lib/leaderboard/source", () => ({ getLeaderboardSource }));
 vi.mock("@/lib/modules", async (importOriginal) => ({
@@ -38,7 +48,7 @@ vi.mock("@/lib/modules", async (importOriginal) => ({
 import { GET } from "@/app/api/admin/status/route";
 import { POST } from "@/app/api/admin/settings/route";
 import { POST as resetPOST } from "@/app/api/admin/reset/route";
-import { POST as seedPOST } from "@/app/api/admin/seed/route";
+import { POST as seedPOST, DELETE as seedDELETE } from "@/app/api/admin/seed/route";
 import { adminErrorLabel } from "@/lib/admin-store";
 
 const req = (body?: unknown) =>
@@ -64,7 +74,7 @@ beforeEach(() => {
   getLeaderboardSource.mockReset();
   resetEvent.mockReset();
   seedDemoData.mockReset();
-  delete process.env.DEMO_MODE;
+  clearDemoData.mockReset();
   requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
   getAdminSettings.mockResolvedValue(SETTINGS);
   getSyncStatus.mockResolvedValue(null);
@@ -275,34 +285,76 @@ describe("POST /api/admin/reset", () => {
   });
 });
 
+// No DEMO_MODE gate any more (issue #419) — admin auth + a type-to-confirm
+// body are the whole gate, same pattern reset already uses.
 describe("POST /api/admin/seed", () => {
-  const sreq = () => new Request("http://x/api/admin/seed", { method: "POST" });
+  const sreq = (confirm?: string) =>
+    new Request("http://x/api/admin/seed", { method: "POST", body: JSON.stringify({ confirm }) });
 
-  it("404 when DEMO_MODE is off, without seeding — invisible in a real event", async () => {
-    const res = await seedPOST(sreq());
-    expect(res.status).toBe(404);
+  it("400 when the confirmation phrase is missing or wrong, without seeding", async () => {
+    expect((await seedPOST(sreq(undefined))).status).toBe(400);
+    expect((await seedPOST(sreq("seed"))).status).toBe(400);
     expect(seedDemoData).not.toHaveBeenCalled();
   });
 
-  it("403 for a non-admin even in demo mode", async () => {
-    process.env.DEMO_MODE = "1";
+  it("400, not a 500 crash, on a literal JSON null body", async () => {
+    const res = await seedPOST(new Request("http://x/api/admin/seed", { method: "POST", body: "null" }));
+    expect(res.status).toBe(400);
+    expect(seedDemoData).not.toHaveBeenCalled();
+  });
+
+  it("403 for a non-admin, even with the right phrase", async () => {
     requireAdmin.mockResolvedValue({ ok: false, status: 403 });
-    expect((await seedPOST(sreq())).status).toBe(403);
+    expect((await seedPOST(sreq("SEED"))).status).toBe(403);
     expect(seedDemoData).not.toHaveBeenCalled();
   });
 
-  it("seeds and returns counts for a demo-mode admin", async () => {
-    process.env.DEMO_MODE = "1";
+  it("seeds and returns counts for an admin with the right phrase", async () => {
     seedDemoData.mockResolvedValue({ contestants: 6, teams: 3, solves: 128 });
-    const res = await seedPOST(sreq());
+    const res = await seedPOST(sreq("SEED"));
     expect(res.status).toBe(200);
     expect(seedDemoData).toHaveBeenCalledWith("alice");
     expect(await res.json()).toMatchObject({ contestants: 6, solves: 128 });
   });
 
   it("503 on a seed failure", async () => {
-    process.env.DEMO_MODE = "1";
     seedDemoData.mockRejectedValue(new Error("upstash down"));
-    expect((await seedPOST(sreq())).status).toBe(503);
+    expect((await seedPOST(sreq("SEED"))).status).toBe(503);
+  });
+});
+
+describe("DELETE /api/admin/seed", () => {
+  const dreq = (confirm?: string) =>
+    new Request("http://x/api/admin/seed", { method: "DELETE", body: JSON.stringify({ confirm }) });
+
+  it("400 when the confirmation phrase is missing or wrong, without clearing", async () => {
+    expect((await seedDELETE(dreq(undefined))).status).toBe(400);
+    expect((await seedDELETE(dreq("CLEAR"))).status).toBe(400);
+    expect(clearDemoData).not.toHaveBeenCalled();
+  });
+
+  it("400, not a 500 crash, on a literal JSON null body", async () => {
+    const res = await seedDELETE(new Request("http://x/api/admin/seed", { method: "DELETE", body: "null" }));
+    expect(res.status).toBe(400);
+    expect(clearDemoData).not.toHaveBeenCalled();
+  });
+
+  it("403 for a non-admin, even with the right phrase", async () => {
+    requireAdmin.mockResolvedValue({ ok: false, status: 403 });
+    expect((await seedDELETE(dreq("CLEAR DEMO DATA"))).status).toBe(403);
+    expect(clearDemoData).not.toHaveBeenCalled();
+  });
+
+  it("clears and returns counts for an admin with the right phrase", async () => {
+    clearDemoData.mockResolvedValue({ contestants: 6, teams: 3, sponsors: 3 });
+    const res = await seedDELETE(dreq("CLEAR DEMO DATA"));
+    expect(res.status).toBe(200);
+    expect(clearDemoData).toHaveBeenCalledWith("alice");
+    expect(await res.json()).toMatchObject({ contestants: 6, sponsors: 3 });
+  });
+
+  it("503 on a clear failure", async () => {
+    clearDemoData.mockRejectedValue(new Error("upstash down"));
+    expect((await seedDELETE(dreq("CLEAR DEMO DATA"))).status).toBe(503);
   });
 });

@@ -3454,3 +3454,67 @@ which this site's privacy policy does not permit trading away for one field
 of an admin form. *Allow SVG logos, sanitized* — a sanitizer is one more
 dependency and one more place a bypass shows up later; rejecting SVG outright
 at the store boundary needs no library and cannot regress.
+
+## ADR 58. Demo seed/clear are admin-gated dangerous settings, not a `DEMO_MODE` env var
+
+**Context.** `seedDemoData()` + `POST /api/admin/seed` existed only when the
+box was started with `DEMO_MODE=1` — absent that, the route 404'd and the
+`/admin` button never rendered. There was no inverse: the only way to remove
+seeded rows was the master reset, which also wipes real progress. This bit a
+real box: `ctf.dcotelo.dev` had three demo sponsors seeded by hand for
+testing (issue #405's PR) with no `DEMO_MODE` secret set on Fly, so
+re-running "Seed demo data" through the UI silently did nothing — the button
+wasn't even reachable, and there was no way to clear the stale rows short of
+a full reset.
+
+**Decision.**
+
+- **No `DEMO_MODE` env var, on any deployment.** Seed and its new inverse,
+  Clear demo data, are ordinary admin actions: `requireAdmin` plus a
+  server-checked type-to-confirm body (`"SEED"` / `"CLEAR DEMO DATA"`),
+  exactly the pattern `/api/admin/reset` already used. Both are safe to
+  leave reachable on a real event's box the same way Reset already is.
+- **No live-event guard either — deliberately matching `resetEvent`, not
+  `importEventBundle`.** An early draft of this change added a check
+  refusing to seed/clear while the event was live (mirroring
+  `EventLiveError` on the archive-import path). That was wrong: a fresh or
+  never-explicitly-paused event defaults to `effectivePaused() === false`
+  (live), which would have made Seed/Clear refuse by default on exactly the
+  box this change was meant to fix. `resetEvent` itself has never had such a
+  guard — an admin who typed the confirmation phrase is trusted, full stop —
+  so Seed/Clear now follow that precedent instead of inventing a stricter
+  one only for themselves.
+- **`clearDemoData()` is narrower than seeding's write set, on purpose.** It
+  removes exactly the RUN-STATE rows `seedDemoData` fabricates — fake
+  solves/attempts, the points/solved/answered aggregate hashes, the demo
+  teams and the membership fields stamped onto their members, the demo
+  sponsors — but leaves the demo quiz/classic/ai questions, challenges,
+  flags, and categories in place. That mirrors `resetEvent`'s own
+  philosophy: once written, a challenge record is authored content, not run
+  state, and Clear has no more business deleting it unprompted than a
+  master reset does. Solvecount is left alone too: `raiseSolveCounts` raises
+  it to a floor, not an additive total, so there is no well-defined amount
+  to subtract back out on clear.
+- **Removal is by exact fixture id/login match**, not a scan or a full wipe —
+  `HDEL`/`DEL` on the specific keys and fields seeding writes. If an
+  organizer has since created real content that happens to reuse one of the
+  fixture's ids or its fake logins (a challenge literally titled
+  `web-robots-only`, a real login spelled `neo-anderson`), Clear removes
+  that too. Accepted collision risk, same class seeding already carries
+  going the other direction — not new, just the inverse.
+
+**Consequences.** Every deployment of this kit — not just a `scripts/
+dev-stack` box — can now seed and un-seed the demo leaderboard from
+`/admin` alone, with no environment variable to remember to set. The
+tradeoff is the one already priced into seeding itself: an id/login
+collision with real content is possible in either direction, and the fix is
+"don't title a real challenge `web-robots-only`," not a runtime check this
+code performs for you.
+
+**Alternatives rejected.** *Keep `DEMO_MODE` and only add a Clear route
+behind it* — leaves the exact failure mode that motivated this ADR
+unfixed: a box that never had the env var set (or lost it across a
+redeploy, since Redis data outlives the process but the env var does not)
+still cannot reach either action. *A live-event guard, as first drafted* —
+see above; rejected once it was clear it would refuse-by-default on a
+never-paused box, which is the common case, not the exception.

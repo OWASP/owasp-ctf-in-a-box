@@ -121,8 +121,17 @@ describe("seedDemoData", () => {
     // sponsors — a platform feature, so always seeded regardless of modules
     const sponsorCmds = cmds.filter((c) => c[1] === "ctf:sponsors");
     expect(sponsorCmds.length).toBe(DEMO_SPONSORS.length);
-    const firstSponsor = JSON.parse(String(sponsorCmds[0][3])) as { logo: unknown };
-    expect(firstSponsor.logo).toBeNull();
+    const firstSponsor = JSON.parse(String(sponsorCmds[0][3])) as {
+      logo: { type: string; bytes: number; w: number; h: number; etag: string } | null;
+    };
+    // Every demo sponsor carries a real logo now, with bytes/etag DERIVED
+    // from the fixture's own base64 data — never hand-carried, so the two
+    // cannot silently drift apart.
+    expect(firstSponsor.logo).toMatchObject({ type: "image/png", w: 160, h: 56 });
+    expect(firstSponsor.logo?.etag).toMatch(/^[0-9a-f]{16}$/);
+
+    const logoBlobCmds = cmds.filter((c) => c[1] === "ctf:sponsors:logo");
+    expect(logoBlobCmds.length).toBe(DEMO_SPONSORS.length);
   });
 
   // CodeRabbit round 2, finding F1: the settings read now also decides WHICH

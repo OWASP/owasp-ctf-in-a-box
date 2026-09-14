@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ADMIN_ADMINS_KEY, LOGIN_RE } from "@/lib/admin-admins";
 import { TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
@@ -1336,15 +1337,26 @@ export async function seedDemoData(
   // Sponsors — a platform feature, not a module, so unlike quiz/classic/ai
   // above this is never gated on `live`: an organizer previewing the demo
   // with every module off still sees what the sponsors feature looks like.
-  // No `ctf:sponsors:logo` write: every demo sponsor has `logo: null` and
-  // renders as plain text (see demo-fixture.ts's header on that fixture).
+  // The logo's `bytes`/`etag` are derived from the fixture's own base64 data
+  // here (same sha256-of-decoded-bytes recipe as sponsors-store.ts's
+  // decodeAndValidateLogo), never hand-carried in the fixture, so the two
+  // cannot silently drift apart.
   for (const s of DEMO_SPONSORS) {
+    const logoBytes = Buffer.from(s.logo.data, "base64");
+    const logo = {
+      type: s.logo.type,
+      bytes: logoBytes.length,
+      w: s.logo.w,
+      h: s.logo.h,
+      etag: createHash("sha256").update(logoBytes).digest("hex").slice(0, 16),
+    };
     cmds.push([
       "HSET",
       SPONSORS_KEY,
       s.id,
-      JSON.stringify({ id: s.id, name: s.name, url: s.url, blurb: s.blurb, tier: s.tier, order: s.order, logo: null }),
+      JSON.stringify({ id: s.id, name: s.name, url: s.url, blurb: s.blurb, tier: s.tier, order: s.order, logo }),
     ]);
+    cmds.push(["HSET", SPONSORS_LOGO_KEY, s.id, s.logo.data]);
   }
 
   const audit = JSON.stringify({

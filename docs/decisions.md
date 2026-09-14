@@ -3384,14 +3384,15 @@ not a nice-to-have (issue #405).
   no module-contract obligations — the module contract is written around
   *challenge* modules, and sponsors score nothing. A sponsor renders if and
   only if the sponsor list is non-empty; an empty list is zero sponsor pixels
-  anywhere. The demo seed DOES include three sponsors (`DEMO_SPONSORS` in
-  demo-fixture.ts, one per tier) — reversed from this ADR's first draft,
-  which kept the demo seed sponsor-free to avoid inventing a fake
-  organization. The fixture instead uses obviously-placeholder names against
-  the IANA-reserved `.example` TLD and carries no logo (a plain-text name
-  everywhere a logo would render), which sidesteps the actual identity risk
-  — a real-looking vendor booth — while still showing an evaluator what the
-  feature looks like live rather than leaving it invisible on the one box
+  anywhere. The demo seed DOES include three sponsors with logos
+  (`DEMO_SPONSORS` in demo-fixture.ts, one per tier) — reversed from this
+  ADR's first draft, which kept the demo seed sponsor-free to avoid inventing
+  a fake organization. The fixture instead uses obviously-placeholder names
+  against the IANA-reserved `.example` TLD and a plain solid-color rectangle
+  as each logo — nothing resembling a real brand mark — which sidesteps the
+  actual identity risk — a real-looking vendor booth — while still showing an
+  evaluator what the feature looks like live, logo included, rather than
+  leaving it invisible on the one box
   most people actually open.
 - **Exactly four render sites**, each reading `listSponsors()` and returning
   nothing on an empty list: the landing page's credit strip (grayscale by

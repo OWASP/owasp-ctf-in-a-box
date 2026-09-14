@@ -42,7 +42,7 @@ export default async function SponsorStrip() {
                 height={sponsor.logo.h}
                 loading="lazy"
                 decoding="async"
-                className="h-6 w-auto max-w-[8rem] object-contain opacity-80 grayscale transition-all duration-150 group-hover:opacity-100 group-hover:grayscale-0"
+                className="h-10 w-auto max-w-[12rem] object-contain opacity-80 grayscale transition-all duration-150 group-hover:opacity-100 group-hover:grayscale-0"
               />
             )}
             <span className="font-mono text-xs text-muted transition-colors group-hover:text-zinc-300">

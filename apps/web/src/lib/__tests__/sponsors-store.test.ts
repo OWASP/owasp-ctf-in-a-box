@@ -59,20 +59,24 @@ function webpLossyFixture(w: number, h: number): Buffer {
   return buf;
 }
 
-/** A minimal JPEG: SOI, then one SOF0 marker segment carrying just enough
- *  payload (precision + height + width + a component count) for
- *  `parseJpegDimensions` to read — not a real, fully-decodable image. */
+/** A minimal JPEG: SOI, then one SOF0 marker segment carrying a spec-shaped
+ *  payload (precision + height + width + a component count + one 3-byte
+ *  component record — Lf = 8 + 3*Nf, per ITU-T81) for `parseJpegDimensions`
+ *  to read — not a real, fully-decodable image. */
 function jpegFixture(w: number, h: number): Buffer {
-  const buf = Buffer.alloc(12);
+  const buf = Buffer.alloc(15);
   buf[0] = 0xff;
   buf[1] = 0xd8; // SOI
   buf[2] = 0xff;
   buf[3] = 0xc0; // SOF0
-  buf.writeUInt16BE(8, 4); // segment length (includes itself; 6-byte payload)
+  buf.writeUInt16BE(11, 4); // segment length (includes itself; 9-byte payload)
   buf[6] = 8; // precision
   buf.writeUInt16BE(h, 7);
   buf.writeUInt16BE(w, 9);
-  buf[11] = 1; // component count
+  buf[11] = 1; // component count (Nf)
+  buf[12] = 1; // component id
+  buf[13] = 0x11; // sampling factors
+  buf[14] = 0; // quant table selector
   return buf;
 }
 
@@ -126,6 +130,39 @@ describe("upsertSponsor — logo validation", () => {
       0x08, 0x00, 0x64, 0x00, 0x64, 0x01, // trailing bytes shaped like a valid payload
     ]);
     await expect(upsertSponsor(validInput, { data: toBase64(undersized) })).rejects.toThrow(
+      /not a structurally valid JPEG/,
+    );
+  });
+
+  it("rejects an SOF segment declaring Lf=8 (no room for the required component record)", async () => {
+    // Per spec (ITU-T81), Lf = 8 + 3*Nf, so a real SOF is never shorter than
+    // 11 (Nf=1, the minimum). Lf=8 has precision/height/width/Nf but no
+    // component record at all — CodeRabbit's finding: length>=8 alone let
+    // this through and misread the trailing bytes as valid dimensions.
+    const lf8 = Buffer.from([
+      0xff, 0xd8, // SOI
+      0xff, 0xc0, // SOF0
+      0x00, 0x08, // declared length: 8
+      0x08, 0x00, 0x64, 0x00, 0x64, 0x01, // precision, height=100, width=100, Nf=1 — no component record
+    ]);
+    await expect(upsertSponsor(validInput, { data: toBase64(lf8) })).rejects.toThrow(
+      /not a structurally valid JPEG/,
+    );
+  });
+
+  it("rejects an SOF segment whose length doesn't match 8 + 3*componentCount", async () => {
+    // Nf says 2 components (needs Lf=14) but the segment only declares 11 —
+    // the length/component-count pair must agree exactly, not just clear a
+    // floor.
+    const mismatched = Buffer.from([
+      0xff, 0xd8, // SOI
+      0xff, 0xc0, // SOF0
+      0x00, 0x0b, // declared length: 11 (only room for 1 component)
+      0x08, 0x00, 0x64, 0x00, 0x64, // precision, height=100, width=100
+      0x02, // Nf=2, but only one component record's worth of length was declared
+      0x01, 0x11, 0x00, // the one component record that fits
+    ]);
+    await expect(upsertSponsor(validInput, { data: toBase64(mismatched) })).rejects.toThrow(
       /not a structurally valid JPEG/,
     );
   });

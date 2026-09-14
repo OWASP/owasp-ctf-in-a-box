@@ -284,11 +284,15 @@ function parseJpegDimensions(bytes: Buffer): { w: number; h: number } | null {
     if (length < 2 || offset + 2 + length > bytes.length) return null;
     const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
     if (isSof) {
-      // 8 = the 2 length bytes plus the minimum SOF payload (precision +
-      // height + width + a component count) — reject a segment that is
-      // structurally too short to actually carry the fields being read
-      // rather than trusting the buffer merely has enough bytes AFTER it.
-      if (length < 8) return null;
+      // Per spec (ITU-T81), Lf = 8 + 3*Nf: the 2 length bytes, precision (1),
+      // height (2), width (2), a component count Nf (1), then a 3-byte record
+      // per component — at least one. length===8 alone (Nf absent/garbage)
+      // is structurally too short to be a real SOF even though the buffer
+      // has enough bytes after it to read width/height; requiring the exact
+      // equation, not just a floor, is what actually rejects it.
+      if (length < 11) return null;
+      const components = bytes[offset + 9]!;
+      if (length !== 8 + 3 * components) return null;
       const h = bytes.readUInt16BE(offset + 5);
       const w = bytes.readUInt16BE(offset + 7);
       if (w === 0 || h === 0) return null;

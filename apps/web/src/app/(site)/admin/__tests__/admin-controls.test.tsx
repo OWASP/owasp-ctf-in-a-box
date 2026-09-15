@@ -152,6 +152,7 @@ const settings: AdminSettings = {
   enabledModuleIds: null,
   eventIdentity: {},
   secureDevTargets: null,
+  sponsorLogoSize: null,
 };
 
 describe("AdminControls tab shell", () => {

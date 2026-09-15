@@ -31,6 +31,7 @@ const settings: AdminSettings = {
   enabledModuleIds: null,
   eventIdentity: {},
   secureDevTargets: null,
+  sponsorLogoSize: null,
 };
 
 function render(overrides: Partial<AdminSettings> = {}, inputs = { cost: "", minSolves: "", unlockAfter: "" }) {

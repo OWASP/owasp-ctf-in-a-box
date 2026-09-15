@@ -33,3 +33,17 @@ export function tierRank(tier: SponsorTier): number {
 export function isSponsorTier(value: unknown): value is SponsorTier {
   return typeof value === "string" && (SPONSOR_TIERS as readonly string[]).includes(value);
 }
+
+/** How big a sponsor's logo renders on the landing-page strip — the one
+ *  surface small enough that "too small to read" was a real complaint.
+ *  `/sponsors` and the leaderboard display board keep their own fixed
+ *  sizes; this setting is scoped to the strip alone (see ADR 57 in
+ *  docs/decisions.md for why the strip stays deliberately plain otherwise —
+ *  "a credit row, not an ad rail"). */
+export type SponsorLogoSize = "sm" | "md" | "lg";
+
+export const SPONSOR_LOGO_SIZES: readonly SponsorLogoSize[] = ["sm", "md", "lg"];
+
+export function isSponsorLogoSize(value: unknown): value is SponsorLogoSize {
+  return typeof value === "string" && (SPONSOR_LOGO_SIZES as readonly string[]).includes(value);
+}

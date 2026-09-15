@@ -15,12 +15,31 @@
 
 import Link from "next/link";
 import { listSponsors } from "@/lib/sponsors-store";
+import { getAdminSettingsSnapshot } from "@/lib/enabled-modules";
+import type { SponsorLogoSize } from "@/lib/sponsors-keys";
+
+/** Landing-strip-only sizing (issue: logos read as illegible flecks at the
+ *  original fixed size). "md" is this surface's long-standing default —
+ *  unchanged unless an organizer picks something else in /admin's Sponsors
+ *  tab. /sponsors and the leaderboard display board are untouched by this
+ *  setting; they keep their own fixed sizes on purpose. */
+const LOGO_SIZE_CLASSES: Record<SponsorLogoSize, string> = {
+  sm: "h-6 w-auto max-w-[8rem]",
+  md: "h-10 w-auto max-w-[12rem]",
+  lg: "h-14 w-auto max-w-[16rem]",
+};
 
 export default async function SponsorStrip() {
   // Fail open like SiteFooter's own sponsor read: a Redis blip on this
-  // cosmetic block must not break the landing page.
-  const sponsors = await listSponsors().catch(() => []);
+  // cosmetic block must not break the landing page. The settings snapshot
+  // already fails open to null internally (enabled-modules.ts); ?? "md"
+  // below covers both that and "nothing stored yet".
+  const [sponsors, settings] = await Promise.all([
+    listSponsors().catch(() => []),
+    getAdminSettingsSnapshot(),
+  ]);
   if (sponsors.length === 0) return null;
+  const logoClasses = LOGO_SIZE_CLASSES[settings?.sponsorLogoSize ?? "md"];
 
   return (
     <div className="flex flex-col gap-3">
@@ -42,7 +61,7 @@ export default async function SponsorStrip() {
                 height={sponsor.logo.h}
                 loading="lazy"
                 decoding="async"
-                className="h-10 w-auto max-w-[12rem] object-contain opacity-80 grayscale transition-all duration-150 group-hover:opacity-100 group-hover:grayscale-0"
+                className={`${logoClasses} object-contain opacity-80 grayscale transition-all duration-150 group-hover:opacity-100 group-hover:grayscale-0`}
               />
             )}
             <span className="font-mono text-xs text-muted transition-colors group-hover:text-zinc-300">

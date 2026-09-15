@@ -669,7 +669,12 @@ export default function AdminControls({
               ) : tab.id === ADMINS_TAB ? (
                 <AdminAdminsTab viewerLogin={viewerLogin} />
               ) : tab.id === SPONSORS_TAB ? (
-                <AdminSponsorsTab />
+                <AdminSponsorsTab
+                  settings={settings}
+                  settingsPending={pending}
+                  applyField={applyField}
+                  statusOf={statusOf}
+                />
               ) : tab.id === SUPPORT_TAB ? (
                 <AdminSupportTab setConfirm={setConfirm} />
               ) : tab.id === ACTIVITY_TAB ? (

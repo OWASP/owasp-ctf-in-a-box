@@ -34,7 +34,7 @@ describe("getAdminSettings", () => {
       quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
       scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
       updatedBy: null, updatedAt: null, moduleOverrides: {},
-  enabledModuleIds: null, eventIdentity: {}, secureDevTargets: null,
+  enabledModuleIds: null, eventIdentity: {}, secureDevTargets: null, sponsorLogoSize: null,
     });
   });
 
@@ -104,6 +104,7 @@ describe("getAdminSettings", () => {
       enabledModuleIds: null,
       eventIdentity: {},
       secureDevTargets: null,
+      sponsorLogoSize: null,
     });
   });
 
@@ -467,7 +468,7 @@ describe("scheduled windows", () => {
     quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
     scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
     updatedBy: null, updatedAt: null, moduleOverrides: {}, enabledModuleIds: null,
-    eventIdentity: {}, secureDevTargets: null,
+    eventIdentity: {}, secureDevTargets: null, sponsorLogoSize: null,
   };
   const T = (iso: string) => Date.parse(iso);
 
@@ -756,5 +757,35 @@ describe("teamMaxMembers", () => {
     // the cap.
     mocks.upstashPipeline.mockResolvedValue([{ result: ["teamMaxMembers", "6"] }]);
     expect((await getAdminSettings()).teamMaxMembers).toBe(6);
+  });
+});
+
+// --- sponsorLogoSize validation ---------------------------------------------
+
+describe("sponsorLogoSize", () => {
+  it("accepts each known size", async () => {
+    for (const v of ["sm", "md", "lg"] as const) {
+      await expect(updateAdminSettings({ sponsorLogoSize: v }, "alice")).resolves.toBeDefined();
+    }
+  });
+
+  it("rejects an unknown size", async () => {
+    // @ts-expect-error deliberately invalid at the runtime boundary
+    await expect(updateAdminSettings({ sponsorLogoSize: "xl" }, "alice")).rejects.toBeInstanceOf(
+      AdminValidationError,
+    );
+  });
+
+  it("null and empty string both clear back to the default", async () => {
+    await expect(updateAdminSettings({ sponsorLogoSize: null }, "alice")).resolves.toBeDefined();
+    await expect(updateAdminSettings({ sponsorLogoSize: "" }, "alice")).resolves.toBeDefined();
+  });
+
+  it("decodes a stored value, and ignores a stale/unknown one as absent", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["sponsorLogoSize", "lg"] }]);
+    expect((await getAdminSettings()).sponsorLogoSize).toBe("lg");
+
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["sponsorLogoSize", "xl"] }]);
+    expect((await getAdminSettings()).sponsorLogoSize).toBeNull();
   });
 });

@@ -327,6 +327,35 @@ describe("AdminControls panel contents", () => {
     expect(eventPanel).toContain("Danger zone");
   });
 
+  // Demo data writes fake contestants/teams/solves into the live event and
+  // its Clear half deletes rows again — the same class of action as the
+  // master reset, so it belongs INSIDE the Danger zone rather than in a card
+  // of its own above it. Slicing from the "Danger zone" heading is what makes
+  // this structural: a demo card that drifts back above the heading leaves
+  // the slice without its buttons and fails here.
+  it("keeps the demo-data controls inside the Danger zone, not in a card above it", () => {
+    const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
+    const eventPanel = panelFor(html, "event");
+    const dangerZone = eventPanel.slice(eventPanel.indexOf("Danger zone"));
+    expect(eventPanel).toContain("Danger zone");
+    expect(dangerZone).toContain("Seed demo data");
+    expect(dangerZone).toContain("Clear demo data");
+    expect(dangerZone).toContain("Reset event data");
+  });
+
+  // The archive stays OUT of the danger zone (audit F13): Export is the
+  // safest control on the screen and the one an organizer runs BEFORE
+  // anything risky. Moving demo data down must not drag it along.
+  it("leaves the event archive above the Danger zone", () => {
+    const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
+    const eventPanel = panelFor(html, "event");
+    const archiveAt = eventPanel.indexOf("Event archive");
+    const dangerAt = eventPanel.indexOf("Danger zone");
+    expect(archiveAt).toBeGreaterThan(-1);
+    expect(dangerAt).toBeGreaterThan(-1);
+    expect(archiveAt).toBeLessThan(dangerAt);
+  });
+
   // The schedule section states the EFFECTIVE state — toggle AND window,
   // through the shared outsideWindow — so the organizer never computes it in
   // their head from four datetime fields plus two toggles (issue #200, 3.3).

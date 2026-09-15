@@ -600,7 +600,7 @@ The panel offers:
   in that menu), with the list grouped by category the way contestants see
   the board. See [Jeopardy](#jeopardy) below for what these do and their
   defaults.
-- **Seed demo data** (demo mode only) — populates the leaderboard with fake
+- **Seed demo data** (danger zone) — populates the leaderboard with fake
   contestants, teams, and real-challenge-id solves so you can preview the app
   without running real PRs. When the `quiz` module is enabled, this also seeds
   a small demo question bank with some already answered, so the board shows a
@@ -631,7 +631,10 @@ The panel offers:
   and its inverse, **Clear demo data**, are ordinary admin actions — no
   `DEMO_MODE` env var gates them any more (issue #419); admin auth plus a
   type-to-confirm click, same as every other destructive control on this
-  screen, is the whole safety net. Clear removes exactly the run-state rows
+  screen, is the whole safety net. Both buttons live **inside the Event tab's
+  danger zone**, above the master reset: Seed writes fake rows into the live
+  event and Clear deletes rows again, which is the same class of action as a
+  wipe, not ordinary setup. Clear removes exactly the run-state rows
   Seed added — the fake contestants, teams, solves, and sponsors — but
   deliberately leaves the demo quiz/classic/ai questions, challenges, flags,
   and categories in place: once written they're authored content, the same
@@ -677,9 +680,10 @@ whether it was set or cleared, never the value — `eventDiscord` can carry an
 invite/join token and `eventContact` is personal data, so neither is fit for
 an admin-visible log. **Disruptive controls
 prompt for confirmation**: the freeze and team-registration toggles, each
-module's Enable/Disable switch, **removing an admin** on the Admins tab, and
-the demo-mode **Seed demo data** button ask a one-click "are you sure?"; the
-master reset requires type-to-confirm. Opening a different question or
+module's Enable/Disable switch, and **removing an admin** on the Admins tab
+ask a one-click "are you sure?"; every control in the Event tab's danger zone
+— **Seed demo data**, **Clear demo data** and the master reset — requires
+type-to-confirm. Opening a different question or
 challenge while an unsaved draft is open also asks before discarding it —
 the module forms sit below the list, so every list control stays clickable
 while you write.

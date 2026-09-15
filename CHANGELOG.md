@@ -8,6 +8,18 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Added: `/health/deep` and a Fly machine check (#437).** The box had no
+  health check and no monitor, and every read fails open by design — so a
+  dead Redis or scorer left the site rendering with nothing scoring, and the
+  first person to notice would have been a contestant. `/health` stays
+  liveness-only and is now Fly's `http_service` check; the new public
+  `GET /health/deep` probes Redis through srh and (when `SCORE_IMAGE` is set)
+  the scorer's `/healthz`, answering 503 with each dependency reported as
+  exactly `"ok"` or `"down"` and nothing more, reporting the poller's last
+  poll age without failing on it, and caching results for 10 s so an
+  unauthenticated URL cannot become a probe storm. `docs/hosting.md` gains a
+  Monitoring section for pointing a free uptime service at it.
+
 - **Fixed: Insights team points now include Secure Development (#432).**
   The Teams table on `/admin/insights` summed each member's Quiz, Jeopardy
   and AI points and nothing else, so on a secure-development event every

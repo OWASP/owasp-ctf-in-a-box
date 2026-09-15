@@ -152,6 +152,33 @@ is beyond repair on an old version: `docker compose down && docker volume rm
 losing the cursor is safe; the poller re-reads scores from the PR comments
 and the scorer's writes are idempotent on replay.
 
+## The monitor says `/health/deep` is 503 (but the site loads fine)
+
+That combination is the check doing its job. Every read in this kit fails
+open — a Redis blip must not stop contestants playing — so a dead dependency
+leaves the site rendering while nothing scores. `/health/deep` is the one
+place that failure is visible from outside. Read the body:
+
+- **`"redis": "down"`** — the app cannot reach Redis through srh. Nothing is
+  scoring in any module and admin settings reads are serving defaults. On
+  Fly: `fly ssh console --app <app> -C "redis-cli PING"`, then `fly logs`
+  for `srh` and `redis`; a `NOAUTH` there is the password mismatch described
+  above. On compose: `docker compose ps` and the `srh`/`redis` logs.
+- **`"scorer": "down"`** — Redis is fine but the scorer's `/healthz` did not
+  answer. Quiz, Jeopardy and AI keep scoring; Secure Development scores stop
+  landing and the board shows stale SD totals. Restart the scorer container;
+  `LEADERBOARD_API_URL` unset on a box with `SCORE_IMAGE` set also reports
+  this, since a scorer nothing can reach is as good as down.
+- **`"sync.ageSec"` growing while the check is 200** — not a failure of the
+  check (the poller is reported, never failed on), but it means no poll has
+  completed since that many seconds ago. Scored PR comments are accumulating
+  on GitHub; see "`sync` is crash-looping" above. If the machine is
+  idle-suspending (`FLY_AUTO_STOP` not `off`), that is the cause.
+
+The body never says *why* — no host, no error text; that is deliberate for a
+public URL. The reason is in the server log: `fly logs --app <app>` or
+`docker compose logs app`, lines tagged `[health/deep]`.
+
 ## A re-scored PR never updates ("it scored once and never again")
 
 **Diagnosis.** The scoring workflow posts **one comment per target and

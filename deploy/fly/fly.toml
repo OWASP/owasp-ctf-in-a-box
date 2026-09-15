@@ -83,6 +83,18 @@ primary_region = "iad"
   auto_start_machines = true
   min_machines_running = 1
 
+  # The machine check watches LIVENESS only (issue #437). /health answers 200
+  # whenever the Node process serves requests and depends on nothing else —
+  # Fly restarting the one machine because Redis blipped would be worse than
+  # the blip. Dependency health is /health/deep, watched by an external
+  # monitor, never by this block. grace_period covers the compose bring-up.
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"
+
 # ONE VOLUME, AND FLY PERMITS NO MORE THAN ONE PER MACHINE:
 #
 #   invalid config.mounts, only 1 volume supported

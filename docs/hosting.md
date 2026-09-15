@@ -638,6 +638,46 @@ register the OAuth app on your personal account rather than the org.
 > the public URL is still `https://`, so `EVENT_URL` should say `https://` and
 > the check passes on its own.
 
+## Monitoring
+
+The box exposes two health endpoints, for two different watchers. Both are
+public and unauthenticated (a free uptime tier cannot present a credential),
+and both live under the same disclosure rule: nothing in either payload that
+`git log` and the tag list do not already tell you.
+
+- **`GET /health`** — liveness plus the build stamp: `{status, version,
+  revision, builtAt}`. Answers 200 whenever the Node process is serving
+  requests and depends on nothing else. This is what Fly's machine check
+  watches (`deploy/fly/fly.toml`, `[[http_service.checks]]`), and it must stay
+  that way: a check that failed on a Redis blip would restart the one machine
+  over the blip.
+- **`GET /health/deep`** — can this box actually score? Probes Redis through
+  srh (`PING`) and, when `SCORE_IMAGE` is set, the scorer's own `/healthz`;
+  answers **200** when both are up and **503** the moment either is not, with
+  each dependency reported as exactly `"ok"` or `"down"` — never the reason,
+  host or URL (those go to the server log). It also reports the sync poller's
+  last poll time and its age in seconds, for information only: a quiet poller
+  never fails the check. A box with no scorer image omits `scorer` and `sync`
+  entirely rather than vouching for a service it does not run. Results are
+  cached in-process for 10 seconds, so the unauthenticated URL cannot be
+  turned into a probe storm.
+
+**Point an external monitor at `/health/deep`.** Any free uptime service
+works (UptimeRobot, Better Stack, Healthchecks.io — none of them needs a
+header): HTTP monitor on `https://<EVENT_URL>/health/deep`, every 1–5
+minutes, alert on any non-200, with a Discord webhook as the notification
+channel since the event already runs on Discord. Optionally match the keyword
+`"status":"ok"` so a 200 that somehow carries the wrong body still alerts.
+This is the one alarm for the failure this kit is designed to hide from
+contestants — every read fails open, so a dead Redis or scorer leaves the site
+rendering with nothing scoring — and without it the first person to notice is
+a contestant asking why the board stopped moving.
+
+The monitor's poll will also wake a machine that has idle-suspended. During
+an event that must not be a factor at all: set `FLY_AUTO_STOP=off` in
+`.env.fly` and redeploy before it starts (see
+[docs/fly.md](fly.md)); `deploy.sh` prints the same warning.
+
 ## Configuration
 
 **There is no configuration file.** Since #386 an event is configured in

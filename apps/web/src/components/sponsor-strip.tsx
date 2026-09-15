@@ -18,11 +18,12 @@ import { listSponsors } from "@/lib/sponsors-store";
 import { getAdminSettingsSnapshot } from "@/lib/enabled-modules";
 import type { SponsorLogoSize } from "@/lib/sponsors-keys";
 
-/** Landing-strip-only sizing (issue: logos read as illegible flecks at the
+/** Landing-strip sizing (issue: logos read as illegible flecks at the
  *  original fixed size). "md" is this surface's long-standing default —
  *  unchanged unless an organizer picks something else in /admin's Sponsors
- *  tab. /sponsors and the leaderboard display board are untouched by this
- *  setting; they keep their own fixed sizes on purpose. */
+ *  tab. The leaderboard's projector display reads the same setting with its
+ *  own viewport-scaled values (display-board.tsx); /sponsors is untouched by
+ *  it and keeps its fixed size on purpose. */
 const LOGO_SIZE_CLASSES: Record<SponsorLogoSize, string> = {
   sm: "h-6 w-auto max-w-[8rem]",
   md: "h-10 w-auto max-w-[12rem]",

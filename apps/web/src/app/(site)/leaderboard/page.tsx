@@ -21,6 +21,7 @@ import { getSite } from "@/lib/site";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { getEnabledApps } from "@/lib/enabled-apps";
 import { listSponsors } from "@/lib/sponsors-store";
+import { getAdminSettingsSnapshot } from "@/lib/enabled-modules";
 
 export async function generateMetadata(): Promise<Metadata> {
   const event = await getSite();
@@ -95,7 +96,16 @@ export default async function LeaderboardPage({
     // read must never blank the projector board itself, so it fails OPEN to
     // an empty list rather than throwing (same direction as sponsor-strip.tsx
     // and site-footer.tsx's own sponsor reads).
-    const [phaseInfo, sponsors] = await Promise.all([resolvePhase(), listSponsors().catch(() => [])]);
+    //
+    // The logo size is the organizer's `sponsorLogoSize` — the same setting
+    // the landing strip reads, so one /admin control sizes both surfaces.
+    // `getAdminSettingsSnapshot` already fails open to null internally, and
+    // DisplayBoard's own `?? "md"` covers "nothing stored yet".
+    const [phaseInfo, sponsors, settings] = await Promise.all([
+      resolvePhase(),
+      listSponsors().catch(() => []),
+      getAdminSettingsSnapshot(),
+    ]);
     // Teams when the event has them, individuals otherwise — the same
     // primary view the interactive board defaults to.
     const rows =
@@ -118,6 +128,7 @@ export default async function LeaderboardPage({
         rows={rows}
         eventName={event.name}
         phaseLabel={phaseInfo ? phaseInfo.phase : null}
+        logoSize={settings?.sponsorLogoSize ?? undefined}
         sponsors={sponsors.map((s) => ({
           key: s.id,
           name: s.name,

@@ -195,13 +195,13 @@ export default function AdminSponsorsTab({
         <div className="mt-4 rounded-md border border-white/10 bg-[#12121e] p-4">
           <AdminSelectField
             id="sponsor-logo-size"
-            label="Landing-page logo size"
-            help="How big sponsor logos render on the landing page's credit row, below the hero. /sponsors and the leaderboard display board keep their own fixed size."
+            label="Sponsor logo size"
+            help="How big sponsor logos render on the landing page's credit row and on the leaderboard's projector display (?display=1). The /sponsors page keeps its own fixed size."
             value={settings.sponsorLogoSize ?? "md"}
             options={LOGO_SIZE_OPTIONS}
             disabled={settingsPending}
             status={statusOf("sponsorLogoSize")}
-            onChange={(next) => void applyField("sponsorLogoSize", { sponsorLogoSize: next }, "Landing-page logo size")}
+            onChange={(next) => void applyField("sponsorLogoSize", { sponsorLogoSize: next }, "Sponsor logo size")}
           />
         </div>
 

@@ -427,70 +427,6 @@ export default function AdminEventTab({
         />
       </div>
 
-      <div className="flex flex-col gap-3 rounded-md border border-[#2563eb]/30 bg-white/[0.04] p-4">
-        <div>
-          <span className="text-white">Demo data</span>
-          <span className="block text-sm text-muted">
-            Populate the leaderboard with fake contestants, teams, and solves to
-            preview the app. Injects real-challenge-id scores so points render.
-            Admin-gated, like everything else on this screen — never turned on
-            by an env var, and safe to leave visible on a real event&apos;s box.
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() =>
-              setConfirm({
-                title: "Seed demo data?",
-                confirmLabel: "Seed",
-                requireType: "SEED",
-                // Names the authored content it touches, not just the
-                // leaderboard rows: the seed also writes demo questions and
-                // challenges and ADDS to the category lists, which the old
-                // copy left unsaid while a replace was quietly deleting them
-                // (#344). "Adds to" is now literally true — the lists are
-                // unioned — and a master reset genuinely cannot undo it,
-                // since it preserves authored categories on purpose.
-                body:
-                  "Adds fake contestants, teams, and solves to the leaderboard, plus demo questions and " +
-                  "challenges in the enabled modules. Demo categories are added to your category lists and " +
-                  "stay there after a master reset — remove those by hand.",
-                onConfirm: doSeed,
-              })
-            }
-            className="self-start rounded-md border border-[#2563eb]/45 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/[0.06] disabled:opacity-50"
-          >
-            Seed demo data
-          </button>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() =>
-              setConfirm({
-                title: "Clear demo data?",
-                confirmLabel: "Clear",
-                requireType: "CLEAR DEMO DATA",
-                // Sets expectations the same way the Seed body above does:
-                // names exactly what this removes (the fake progress) and
-                // what it deliberately doesn't (the demo questions/
-                // challenges/categories Seed also wrote — those are authored
-                // content now, same as a master reset leaves them).
-                body:
-                  "Removes the fake contestants, teams, solves, and sponsors Seed added. Demo questions, " +
-                  "challenges, and categories are left in place — remove those by hand from their own admin tab " +
-                  "if you don't want them.",
-                onConfirm: doClearDemo,
-              })
-            }
-            className="self-start rounded-md border border-white/20 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/[0.06] disabled:opacity-50"
-          >
-            Clear demo data
-          </button>
-        </div>
-      </div>
-
       {/* The archive is NOT in the danger zone below, and that is the point
           (audit F13). Half of it — Export — is the safest control on this
           screen: it reads, writes nothing, and is what an organizer runs
@@ -515,51 +451,128 @@ export default function AdminEventTab({
         </div>
       </details>
 
-      <div className="flex flex-col gap-3 rounded-md border border-[#e53e3e]/30 bg-[#e53e3e]/[0.04] p-4">
-        <div>
-          <span className="text-[#e53e3e]">Danger zone</span>
-          <span className="block text-sm text-muted">
-            Master reset wipes every contestant&apos;s <strong>progress</strong> —
-            teams, points, solves, attempts and hint spend — freezes scoring, and
-            cannot be undone. It <strong>keeps</strong> everything you authored:
-            quiz questions and their answer key, Jeopardy and AI challenges with
-            their flags, hints and categories, and every setting on this screen.
-            It does rotate the AI launch key, so an external challenge site has to
-            re-fetch it. Export the archive above first if you want a way back.
-          </span>
-          <span className="block text-sm text-muted">
-            Scores already ingested are gone, but their source is not: a scored PR
-            comment stays on GitHub, and the poller reads those comments again — so
-            close or clear the source PRs too, or the points come back when you
-            unfreeze.
-          </span>
+      {/* One section for every control that writes to or wipes the live
+          event: the demo seed/clear pair and the master reset. Demo data used
+          to sit in a card of its own ABOVE this one, which read as ordinary
+          setup — it is not: Seed writes fake contestants, teams and solves
+          into the running event, and Clear deletes rows again. The archive
+          above stays out of here on purpose (see its own note). */}
+      <div className="flex flex-col gap-4 rounded-md border border-[#e53e3e]/30 bg-[#e53e3e]/[0.04] p-4">
+        <span className="text-[#e53e3e]">Danger zone</span>
+
+        <div className="flex flex-col gap-3 border-b border-[#e53e3e]/20 pb-4">
+          <div>
+            <span className="text-white">Demo data</span>
+            <span className="block text-sm text-muted">
+              Populate the leaderboard with fake contestants, teams, and solves
+              to preview the app. Injects real-challenge-id scores so points
+              render. It writes to the live event like any other control here,
+              which is why it sits in this section — Clear removes the rows it
+              added, but the demo questions, challenges and categories Seed
+              also wrote stay behind as authored content.
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                setConfirm({
+                  title: "Seed demo data?",
+                  confirmLabel: "Seed",
+                  requireType: "SEED",
+                  // Names the authored content it touches, not just the
+                  // leaderboard rows: the seed also writes demo questions and
+                  // challenges and ADDS to the category lists, which the old
+                  // copy left unsaid while a replace was quietly deleting them
+                  // (#344). "Adds to" is now literally true — the lists are
+                  // unioned — and a master reset genuinely cannot undo it,
+                  // since it preserves authored categories on purpose.
+                  body:
+                    "Adds fake contestants, teams, and solves to the leaderboard, plus demo questions and " +
+                    "challenges in the enabled modules. Demo categories are added to your category lists and " +
+                    "stay there after a master reset — remove those by hand.",
+                  onConfirm: doSeed,
+                })
+              }
+              className="self-start rounded-md border border-[#e53e3e]/40 px-3 py-1.5 text-sm font-medium text-[#e53e3e] hover:bg-[#e53e3e]/10 disabled:opacity-50"
+            >
+              Seed demo data
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                setConfirm({
+                  title: "Clear demo data?",
+                  confirmLabel: "Clear",
+                  requireType: "CLEAR DEMO DATA",
+                  // Sets expectations the same way the Seed body above does:
+                  // names exactly what this removes (the fake progress) and
+                  // what it deliberately doesn't (the demo questions/
+                  // challenges/categories Seed also wrote — those are authored
+                  // content now, same as a master reset leaves them).
+                  body:
+                    "Removes the fake contestants, teams, solves, and sponsors Seed added. Demo questions, " +
+                    "challenges, and categories are left in place — remove those by hand from their own admin tab " +
+                    "if you don't want them.",
+                  onConfirm: doClearDemo,
+                })
+              }
+              className="self-start rounded-md border border-[#e53e3e]/40 px-3 py-1.5 text-sm font-medium text-[#e53e3e] hover:bg-[#e53e3e]/10 disabled:opacity-50"
+            >
+              Clear demo data
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() =>
-            setConfirm({
-              title: "Reset all event data?",
-              danger: true,
-              confirmLabel: "Wipe everything",
-              requireType: eventName,
-              body: (
-                <>
-                  This permanently deletes every team, score, player record, and
-                  hint purchase, and freezes scoring. Your authored content —
-                  questions, challenges, flags, hints, categories — and every
-                  setting are kept. The AI launch key is rotated, so an external
-                  challenge site must re-fetch it. This cannot be undone.
-                </>
-              ),
-              onConfirm: () => doReset(eventName),
-            })
-          }
-          className="self-start rounded-md border border-[#e53e3e]/40 px-3 py-1.5 text-sm font-medium text-[#e53e3e] hover:bg-[#e53e3e]/10 disabled:opacity-50"
-        >
-          Reset event data…
-        </button>
-        {resetInfo && <p className="text-sm text-[#22c55e]">{resetInfo}</p>}
+
+        <div className="flex flex-col gap-3">
+          <div>
+            <span className="text-white">Master reset</span>
+            <span className="block text-sm text-muted">
+              Wipes every contestant&apos;s <strong>progress</strong> — teams,
+              points, solves, attempts and hint spend — freezes scoring, and
+              cannot be undone. It <strong>keeps</strong> everything you
+              authored: quiz questions and their answer key, Jeopardy and AI
+              challenges with their flags, hints and categories, and every
+              setting on this screen. It does rotate the AI launch key, so an
+              external challenge site has to re-fetch it. Export the archive
+              above first if you want a way back.
+            </span>
+            <span className="block text-sm text-muted">
+              Scores already ingested are gone, but their source is not: a
+              scored PR comment stays on GitHub, and the poller reads those
+              comments again — so close or clear the source PRs too, or the
+              points come back when you unfreeze.
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() =>
+              setConfirm({
+                title: "Reset all event data?",
+                danger: true,
+                confirmLabel: "Wipe everything",
+                requireType: eventName,
+                body: (
+                  <>
+                    This permanently deletes every team, score, player record, and
+                    hint purchase, and freezes scoring. Your authored content —
+                    questions, challenges, flags, hints, categories — and every
+                    setting are kept. The AI launch key is rotated, so an external
+                    challenge site must re-fetch it. This cannot be undone.
+                  </>
+                ),
+                onConfirm: () => doReset(eventName),
+              })
+            }
+            className="self-start rounded-md border border-[#e53e3e]/40 px-3 py-1.5 text-sm font-medium text-[#e53e3e] hover:bg-[#e53e3e]/10 disabled:opacity-50"
+          >
+            Reset event data…
+          </button>
+          {resetInfo && <p className="text-sm text-[#22c55e]">{resetInfo}</p>}
+        </div>
       </div>
     </section>
   );

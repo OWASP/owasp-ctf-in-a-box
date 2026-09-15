@@ -850,9 +850,11 @@ claimed.
 
 **Order is the arrows, not a number.** Each row has ↑ and ↓ buttons that move
 the sponsor one place and save the new order straight away (the endpoint
-renumbers the whole list); the arrow at either end of the list is disabled. If
-the write is refused, the list snaps back to the order the box actually holds
-and says so — what you see is never ahead of what is stored.
+renumbers the whole list); the arrow at either end of the list is disabled.
+The row moves as soon as you click, while the write is still in flight, and
+the saved order replaces it when the box answers. If the write is refused,
+the list snaps back to the order the box actually holds and says why — so a
+move that looks like it stuck, stuck.
 
 **Sponsor logo size.** One control at the top of the tab — Small, Medium
 (the default) or Large — sizes sponsor logos on the two surfaces where they

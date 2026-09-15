@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useState } from "react";
 import ConfirmModal from "@/components/confirm-modal";
 import { generateChallengeId } from "@/lib/classic-keys";
-import { movedSponsorOrder, SPONSOR_LOGO_SIZES, type SponsorLogoSize } from "@/lib/sponsors-keys";
+import { movedSponsorOrder, nextSponsorOrder, SPONSOR_LOGO_SIZES, type SponsorLogoSize } from "@/lib/sponsors-keys";
 import type { AdminSettings } from "@/lib/admin-store";
 import AdminSelectField from "@/components/admin-select-field";
 import type { FieldStatus } from "@/components/admin-number-field";
@@ -89,7 +89,10 @@ export default function AdminSponsorsTab({
       // A new sponsor lands at the end of the list; an edited one keeps the
       // position it already has. Ordering is the arrows' job, never this
       // form's — the two would otherwise disagree about what "order" means.
-      const order = editor?.sponsor?.order ?? rows?.length ?? 0;
+      // "The end" is one past the highest stored order, not the row count:
+      // stored orders go sparse after a delete (and an imported archive brings
+      // its own), so counting rows can file a new sponsor mid-list.
+      const order = editor?.sponsor?.order ?? nextSponsorOrder(rows ?? []);
       const res = await fetch("/api/admin/sponsors", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

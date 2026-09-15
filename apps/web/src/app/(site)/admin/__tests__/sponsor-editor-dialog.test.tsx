@@ -162,6 +162,24 @@ describe("SponsorEditorDialog", () => {
     expect(code).toContain('canvas.toDataURL("image/png")');
   });
 
+  // Two overlapping picks: reading and decoding are both async and the picker
+  // stays enabled, so without a guard the SLOWER, older pick lands last and
+  // the draft saves a logo the organizer already replaced. Source-level, like
+  // the assertions above — there is no DOM here to race two real file picks
+  // through, and what must not be deleted is the guard.
+  it("lets the latest file pick win, and drops the previous one immediately", () => {
+    const src = readFileSync(fileURLToPath(new URL("../sponsor-editor-dialog.tsx", import.meta.url)), "utf8");
+    const code = src.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    // A pick claims the sequence before anything awaits…
+    expect(code).toMatch(/const seq = \+\+pickSeq\.current;/);
+    // …the previous pick's bytes and preview are cleared at that same moment,
+    // so a pick that is then rejected cannot leave them behind…
+    expect(code).toMatch(/const seq = \+\+pickSeq\.current;[\s\S]{0,200}clearPickedLogo\(\);/);
+    // …and every post-await write, success or failure, is gated on the pick
+    // still being the current one.
+    expect(code.match(/if \(stale\(\)\) return;/g) ?? []).toHaveLength(2);
+  });
+
   it("refuses a file the browser cannot decode as an image", () => {
     const src = readFileSync(fileURLToPath(new URL("../sponsor-editor-dialog.tsx", import.meta.url)), "utf8");
     // renderPreview returns null on a decode failure, and that is a rejection

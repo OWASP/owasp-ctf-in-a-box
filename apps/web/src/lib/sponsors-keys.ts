@@ -68,6 +68,22 @@ export function asSponsorLogoMime(value: unknown): SponsorLogoMime | null {
   return SPONSOR_LOGO_MIME_TYPES.find((t) => t === value) ?? null;
 }
 
+/** The `order` a newly added sponsor should carry: one past the highest one
+ *  in the list, so it lands at the end.
+ *
+ *  Not `rows.length`. Stored orders are not required to be dense — a delete
+ *  leaves a gap until the next reorder renumbers, and an imported archive
+ *  carries whatever numbers it was exported with — so counting rows can hand
+ *  a new sponsor a number that already sorts before existing ones, and the
+ *  sponsor an organizer just added appears in the middle of the list.
+ *
+ *  Seeded at -1, so the result is never negative: an all-negative list (only
+ *  reachable through an imported archive) yields 0, which still sorts last —
+ *  the requirement is "at the end", not "exactly one past the maximum". */
+export function nextSponsorOrder(rows: readonly { order: number }[]): number {
+  return rows.reduce((max, row) => (Number.isFinite(row.order) ? Math.max(max, row.order) : max), -1) + 1;
+}
+
 /** The id order that moving one sponsor up or down produces, for the reorder
  *  endpoint (`POST /api/admin/sponsors` with a `reorder` array).
  *

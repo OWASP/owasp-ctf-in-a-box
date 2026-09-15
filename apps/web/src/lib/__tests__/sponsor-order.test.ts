@@ -4,7 +4,12 @@
 // `renderToStaticMarkup` — this is the half worth pinning directly.
 
 import { describe, expect, it } from "vitest";
-import { asSponsorLogoMime, movedSponsorOrder, SPONSOR_LOGO_MIME_TYPES } from "@/lib/sponsors-keys";
+import {
+  asSponsorLogoMime,
+  movedSponsorOrder,
+  nextSponsorOrder,
+  SPONSOR_LOGO_MIME_TYPES,
+} from "@/lib/sponsors-keys";
 
 const IDS = ["a", "b", "c"];
 
@@ -71,5 +76,37 @@ describe("asSponsorLogoMime", () => {
     const matched = asSponsorLogoMime(claimed);
     expect(matched).toBe("image/png");
     expect(SPONSOR_LOGO_MIME_TYPES).toContain(matched);
+  });
+});
+
+// Where a newly added sponsor lands. The tab used to pass `rows.length`, which
+// is only correct while stored orders are dense — and they are not: a delete
+// leaves a gap until the next reorder renumbers, and an imported archive
+// carries whatever numbers it was exported with. A new sponsor filed into the
+// middle of the list is the visible symptom.
+describe("nextSponsorOrder", () => {
+  it("is one past the highest stored order, not the row count", () => {
+    expect(nextSponsorOrder([{ order: 0 }, { order: 5 }, { order: 9 }])).toBe(10);
+  });
+
+  it("starts at 0 for an empty list", () => {
+    expect(nextSponsorOrder([])).toBe(0);
+  });
+
+  it("does not care what order the rows are given in", () => {
+    expect(nextSponsorOrder([{ order: 7 }, { order: 1 }])).toBe(8);
+  });
+
+  // Seeded at -1, so an all-negative list yields 0 rather than a negative
+  // number. 0 still sorts after every row here, which is the actual
+  // requirement — "last", not "exactly one more than the maximum".
+  it("never goes negative, and still lands last", () => {
+    expect(nextSponsorOrder([{ order: -4 }, { order: -2 }])).toBe(0);
+  });
+
+  // A stored hash can hold anything; a NaN must not swallow the maximum and
+  // hand every later sponsor the same order.
+  it("ignores a non-finite order rather than propagating it", () => {
+    expect(nextSponsorOrder([{ order: 3 }, { order: Number.NaN }])).toBe(4);
   });
 });

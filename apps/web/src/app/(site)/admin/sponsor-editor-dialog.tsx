@@ -125,13 +125,27 @@ export default function SponsorEditorDialog({
   const [pickedPreview, setPickedPreview] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  // Which file pick is the current one. Reading a file and decoding it are
+  // both async and the picker stays enabled throughout, so two overlapping
+  // picks can finish out of order — and the slower, older one would win,
+  // saving a logo the organizer had already replaced. Every write below is
+  // gated on still being the latest pick.
+  const pickSeq = useRef(0);
 
   const hasStoredLogo = sponsor?.logo != null && draft.clearLogo !== true;
   const saveDisabled = pending || draft.name.trim() === "" || draft.url.trim() === "";
 
   async function onFileChange(file: File | null) {
     if (!file) return;
+    // Picking a file drops whatever the last pick left behind, before any
+    // await: a rejected pick must not leave the previous file's bytes sitting
+    // in the draft under the new file's name, and the preview must not show a
+    // logo that is no longer the one queued to save.
+    const seq = ++pickSeq.current;
+    const stale = () => seq !== pickSeq.current;
+    clearPickedLogo();
     setFileError(null);
+
     // Client-side pre-checks only — they mirror, but do not replace, the
     // store's own magic-byte sniff (sponsors-store.ts), which ignores the
     // claimed type entirely and reads the decoded bytes. These just save an
@@ -149,6 +163,11 @@ export default function SponsorEditorDialog({
     }
     try {
       const [data, preview] = await Promise.all([fileToBase64(file), renderPreview(file)]);
+      // A newer pick started while this one was decoding: it owns the draft
+      // and the preview now, and this result is thrown away rather than
+      // racing it — including its error, which would report on a file the
+      // organizer has already moved on from.
+      if (stale()) return;
       if (!preview) {
         setFileError("That file could not be decoded as an image — the box would refuse it too.");
         return;
@@ -160,6 +179,7 @@ export default function SponsorEditorDialog({
       // downstream of here has to wonder what it might contain.
       setDraft((d) => ({ ...d, logoBase64: data, logoType: mime, clearLogo: undefined }));
     } catch {
+      if (stale()) return;
       setFileError("Could not read that file — try choosing it again.");
     }
   }

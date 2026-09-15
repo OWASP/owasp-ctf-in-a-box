@@ -56,10 +56,15 @@ export const DEEP_HEALTH_CACHE_MS = 10_000;
 export const PROBE_TIMEOUT_MS = 2_000;
 
 let cached: { at: number; result: DeepHealth } | null = null;
+/** The probe currently running, if any. Concurrent callers that miss the
+ *  cache share it instead of each launching their own round: a monitor and a
+ *  room of refreshes landing in the same second is one probe, not N. */
+let inflight: Promise<DeepHealth> | null = null;
 
 /** Test seam. Module state is the whole point of the cache, so tests reset it. */
 export function resetDeepHealthCache(): void {
   cached = null;
+  inflight = null;
 }
 
 async function probeRedis(): Promise<DependencyState> {
@@ -126,7 +131,20 @@ export async function probeDeepHealth(
   env: Record<string, string | undefined> = process.env,
 ): Promise<DeepHealth> {
   if (cached && now - cached.at < DEEP_HEALTH_CACHE_MS) return cached.result;
+  if (inflight) return inflight;
 
+  inflight = probeAll(now, env)
+    .then((result) => {
+      cached = { at: now, result };
+      return result;
+    })
+    .finally(() => {
+      inflight = null;
+    });
+  return inflight;
+}
+
+async function probeAll(now: number, env: Record<string, string | undefined>): Promise<DeepHealth> {
   const hasScorer = secureDevAvailable(env);
   const [redis, scorer, sync] = await Promise.all([
     probeRedis(),
@@ -138,7 +156,5 @@ export async function probeDeepHealth(
   const result: DeepHealth = { status: healthy ? "ok" : "degraded", redis };
   if (scorer !== undefined) result.scorer = scorer;
   if (sync !== undefined) result.sync = sync;
-
-  cached = { at: now, result };
   return result;
 }

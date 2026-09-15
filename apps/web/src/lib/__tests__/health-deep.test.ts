@@ -143,6 +143,20 @@ describe("probeDeepHealth", () => {
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(2);
   });
 
+  // The cache only helps AFTER a probe completes. Callers arriving during the
+  // probe — a monitor and a room of refreshes in the same second — used to
+  // each launch their own round; they share the in-flight one instead.
+  it("coalesces concurrent cache misses into one probe", async () => {
+    let release!: (v: { result?: unknown }[]) => void;
+    mocks.upstashPipeline.mockImplementation(() => new Promise((r) => (release = r)));
+    const calls = [probeDeepHealth(NOW), probeDeepHealth(NOW + 1), probeDeepHealth(NOW + 2)];
+    release([{ result: "PONG" }]);
+    const results = await Promise.all(calls);
+    expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    expect(results[0]).toBe(results[2]);
+  });
+
   // A degraded answer is cached too: a monitor polling every 30 s and a room
   // refreshing must not turn a dead scorer into a probe storm against it.
   it("caches a degraded result the same as a healthy one", async () => {

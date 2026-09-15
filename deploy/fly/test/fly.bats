@@ -96,9 +96,11 @@ ENV
   # is exactly what a machine restart cannot fix — pointing Fly's check at it
   # would cycle the one machine over a dependency blip. The monitor watches
   # deep; Fly watches liveness.
-  uncommented "$FLY/fly.toml" | grep -qF '[[http_service.checks]]'
-  uncommented "$FLY/fly.toml" | grep -qE '^ *path *= *"/health"$'
-  [ -z "$(uncommented "$FLY/fly.toml" | grep -F '/health/deep')" ]
+  # One AND-list, so every clause gates the result (a non-final failed
+  # command is errexit-exempt in bats — see AGENTS.md).
+  uncommented "$FLY/fly.toml" | grep -qF '[[http_service.checks]]' &&
+    uncommented "$FLY/fly.toml" | grep -qE '^ *path *= *"/health"$' &&
+    [ -z "$(uncommented "$FLY/fly.toml" | grep -F '/health/deep')" ]
 }
 
 @test "deploy.sh renders to the path fly.toml will actually look in" {

@@ -8,6 +8,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Fixed: Insights team points now include Secure Development (#432).**
+  The Teams table on `/admin/insights` summed each member's Quiz, Jeopardy
+  and AI points and nothing else, so on a secure-development event every
+  team read lower than the leaderboard by exactly its SD points — under a
+  caveat that promised SD "contributes to participation and points". The
+  per-login SD total is read from the leaderboard source (the scorer's own
+  `points`, before the module overlays add theirs); a scorer that cannot be
+  reached costs the SD share and says so in the caveats, and `mock` mode's
+  placeholder scores are left out with the reason printed rather than folded
+  in as if real.
+
 - **Added: the setup wizard offers an optional fly.io deploy as its closing
   step (#371).** It used to end at the local `docker compose` bring-up,
   leaving an organizer to find `deploy/fly/deploy.sh init --from .env`, the

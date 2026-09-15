@@ -34,16 +34,40 @@ export function isSponsorTier(value: unknown): value is SponsorTier {
   return typeof value === "string" && (SPONSOR_TIERS as readonly string[]).includes(value);
 }
 
-/** How big a sponsor's logo renders on the landing-page strip — the one
- *  surface small enough that "too small to read" was a real complaint.
- *  `/sponsors` and the leaderboard display board keep their own fixed
- *  sizes; this setting is scoped to the strip alone (see ADR 57 in
- *  docs/decisions.md for why the strip stays deliberately plain otherwise —
- *  "a credit row, not an ad rail"). */
+/** How big a sponsor's logo renders on the two surfaces where it is a credit
+ *  row rather than the content: the landing-page strip and the leaderboard's
+ *  projector display. Each maps these three presets to its own values — a
+ *  projector is read from across a room, a landing page from a desk — so the
+ *  setting is a relative choice, not a pixel count. `/sponsors` keeps its own
+ *  fixed layout: it is the page that exists to show sponsors. See ADR 57 in
+ *  docs/decisions.md for why both credit surfaces stay deliberately plain
+ *  otherwise — "a credit row, not an ad rail". */
 export type SponsorLogoSize = "sm" | "md" | "lg";
 
 export const SPONSOR_LOGO_SIZES: readonly SponsorLogoSize[] = ["sm", "md", "lg"];
 
 export function isSponsorLogoSize(value: unknown): value is SponsorLogoSize {
   return typeof value === "string" && (SPONSOR_LOGO_SIZES as readonly string[]).includes(value);
+}
+
+/** The id order that moving one sponsor up or down produces, for the reorder
+ *  endpoint (`POST /api/admin/sponsors` with a `reorder` array).
+ *
+ *  Returns `null` — not a copy of the input — when the move is a no-op: an
+ *  unknown id, or an edge row asked to step off the end. A caller that
+ *  posted the unchanged array anyway would spend a write and an audit-log
+ *  line saying an organizer reordered nothing.
+ *
+ *  Order alone decides: the list an organizer sees is already sorted, and
+ *  tier is a label, so "up" means one position up in THAT list, never
+ *  "up within your tier". */
+export function movedSponsorOrder(ids: readonly string[], id: string, delta: -1 | 1): string[] | null {
+  const from = ids.indexOf(id);
+  if (from === -1) return null;
+  const to = from + delta;
+  if (to < 0 || to >= ids.length) return null;
+  const next = [...ids];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved!);
+  return next;
 }

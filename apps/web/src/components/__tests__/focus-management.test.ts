@@ -61,8 +61,11 @@ describe("focus follows a replaced control", () => {
     expect(src).toMatch(/justPurchased\.current = hintTextId\(app, id\)/);
   });
 
-  it("confirm-modal captures the opener before it focuses anything", () => {
-    const src = read("confirm-modal.tsx");
+  it("modal-dialog captures the opener before it focuses anything", () => {
+    // The trap moved out of confirm-modal.tsx when the sponsor editor needed
+    // a dialog too — one shell, so there is one place for this to rot. The
+    // assertions are unchanged; only the file they read is.
+    const src = read("modal-dialog.tsx");
     // The ordering IS the fix. React applies `autoFocus` during commit, before
     // a passive effect runs, so an autoFocused input would already be
     // document.activeElement by the time the opener is read — and the cleanup
@@ -78,5 +81,16 @@ describe("focus follows a replaced control", () => {
     expect(capture).toBeGreaterThanOrEqual(0);
     expect(focusCall).toBeGreaterThan(capture);
     expect(src).toMatch(/return \(\) => opener\?\.focus\?\.\(\)/);
+  });
+
+  it("confirm-modal delegates its dialog mechanics to that shell", () => {
+    // Pins the delegation itself: a ConfirmModal that grew its own overlay
+    // back would pass every assertion above while quietly reintroducing the
+    // second copy of the trap this consolidation removed.
+    const src = read("confirm-modal.tsx");
+    expect(src).toMatch(/from "@\/components\/modal-dialog"/);
+    expect(src).toMatch(/<ModalDialog/);
+    expect(src).not.toMatch(/aria-modal/);
+    expect(src.replace(/\/\/.*$/gm, "")).not.toMatch(/autoFocus/);
   });
 });

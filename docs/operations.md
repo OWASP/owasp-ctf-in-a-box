@@ -829,11 +829,27 @@ is no toggle to turn it off, and it renders on the landing page, the footer,
 only if at least one sponsor is configured. An event with no sponsors ships
 zero sponsor pixels anywhere.
 
-**Add a sponsor.** Fill in name, an `https://` link, an optional one-line
-blurb, a tier (Gold/Silver/Community — display grouping and ordering only;
-every sponsor appears on every surface regardless of tier), and an order
-number (lower sorts first). A logo is optional — without one, the sponsor's
-name renders as plain text everywhere a logo would have gone.
+**The tab is the list.** Each sponsor is a card showing its logo as it will
+actually appear — on the site's own dark background, untreated — next to its
+name, tier and link. That is the fastest answer to "did that upload work, and
+does this logo read against a dark theme?", which previously meant opening the
+public pages to check.
+
+**Add a sponsor.** **+ Add sponsor** opens a dialog: name, an `https://` link,
+an optional one-line blurb, a tier (Gold/Silver/Community — display grouping
+and a label only; every sponsor appears on every surface regardless of tier),
+and the logo. A logo is optional — without one, the sponsor's name renders as
+plain text everywhere a logo would have gone. **Edit** on a row opens the same
+dialog on that record, with the logo currently on file shown next to
+**Replace logo…**, so you can see what you are replacing before you replace
+it. Choosing a file previews it immediately; nothing is written until you
+save.
+
+**Order is the arrows, not a number.** Each row has ↑ and ↓ buttons that move
+the sponsor one place and save the new order straight away (the endpoint
+renumbers the whole list); the arrow at either end of the list is disabled. If
+the write is refused, the list snaps back to the order the box actually holds
+and says so — what you see is never ahead of what is stored.
 
 **Sponsor logo size.** One control at the top of the tab — Small, Medium
 (the default) or Large — sizes sponsor logos on the two surfaces where they
@@ -863,11 +879,11 @@ that surface renders every PNG/WebP logo as a white silhouette
 whole rectangle turns uniformly white under the same filter, so the display
 board skips it for JPEG and shows the logo in its real colors instead.
 
-**Replace or remove a logo.** Editing a sponsor and choosing a new file
-replaces the old logo immediately — the URL contestants already loaded stays
-the same (`/api/sponsors/logo/<id>`), but its `ETag` changes, so a cached copy
-refreshes within about five minutes. The "Remove logo" checkbox on the edit
-form clears it back to the plain-text name.
+**Replace or remove a logo.** Saving the edit dialog with a new file replaces
+the old logo immediately — the URL contestants already loaded stays the same
+(`/api/sponsors/logo/<id>`), but its `ETag` changes, so a cached copy refreshes
+within about five minutes. **Remove logo on save** clears it back to the
+plain-text name; it is offered only on a sponsor that actually has a logo.
 
 **A master reset clears sponsors too** — unlike a challenge's flag or
 description, a sponsor list is scoped to one event run, and there is no

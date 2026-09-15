@@ -6,6 +6,8 @@ import { CLASSIC_CHALLENGES_KEY, CLASSIC_POINTS_KEY, classicAttemptsKey, classic
 import { AI_CHALLENGES_KEY, AI_POINTS_KEY, aiAttemptsKey, aiSolvesKey } from "@/lib/ai-keys";
 import { listTeams } from "@/lib/team-store";
 import { parseAttemptRow } from "@/lib/attempt-row";
+import { getLeaderboardSource, getLeaderboardSourceMode } from "@/lib/leaderboard/source";
+import { errorLabel } from "@/lib/error-label";
 
 /**
  * Event engagement metrics (issue #169), computed ENTIRELY from data the box
@@ -16,6 +18,15 @@ import { parseAttemptRow } from "@/lib/attempt-row";
  * carry `{points, at}` per item per login, Secure Development solves are
  * timestamped in `ctf:solves:<target>`, attempts are counted per login, and
  * `firstTeamAt` (ADR 49) supplies the funnel's conversion moment.
+ *
+ * The one figure that is not a Redis key of this app's own: Secure
+ * Development POINTS. `ctf:solves:*` says who solved what and when, never for
+ * how much — points are a rubric property the scorer applies — so the
+ * per-login SD total is read from the leaderboard source (the scorer's own
+ * `GET /leaderboard`, or its ZSET), whose `entry.points` is exactly that
+ * number before the module overlays add theirs (module-contributions.ts).
+ * Issue #432: without it every team here read lower than the board by
+ * precisely its SD points, under a caveat promising SD was counted.
  *
  * WHY NOT COLLECT FROM FORKS. A fork could report far more — pages opened,
  * time on a challenge, when someone gave up. It cannot report it *credibly*.
@@ -268,6 +279,37 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   const aiPoints = new Map(hashEntries(aiPointsRes.result).map(([k, v]) => [k.toLowerCase(), Number(v) || 0]));
   const hintsSpent = hashEntries(hintsSpentRes.result).map(([k, v]) => [k.toLowerCase(), Number(v) || 0] as const);
 
+  // Secure Development points per login (issue #432), from the leaderboard
+  // source — see the file header for why no Redis key of ours holds them.
+  // Gated on the source MODE, not just on whether a fetch works:
+  //   - "empty" is the source's own answer when the module is off; there is
+  //     nothing to read and nothing to say.
+  //   - "mock" is placeholder data the board shows behind an amber banner.
+  //     Folding it in here would put invented points on a screen with no
+  //     banner, so it is left out and the reason is printed instead.
+  // The fail direction matches the solves sweep below: a scorer that cannot
+  // be reached costs the SD share of the totals and SAYS so, never the panel.
+  const sdPoints = new Map<string, number>();
+  const sourceMode = await getLeaderboardSourceMode();
+  if (sourceMode === "mock") {
+    caveats.push(
+      'LEADERBOARD_SOURCE is "mock" — the board\'s Secure Development scores are placeholder data, so they are left out of the team points below.',
+    );
+  } else if (sourceMode !== "empty") {
+    try {
+      const data = await (await getLeaderboardSource()).getLeaderboard();
+      for (const entry of data.entries) {
+        const points = Number(entry.points);
+        if (Number.isFinite(points)) sdPoints.set(entry.login.toLowerCase(), points);
+      }
+    } catch (err) {
+      console.error("secure-development points unavailable for metrics:", errorLabel(err));
+      caveats.push(
+        "Secure Development points could not be read — team points below hold Quiz, Jeopardy and AI points only.",
+      );
+    }
+  }
+
   // A SCAN page that cannot be read now throws (issue #358) instead of
   // silently truncating the walk. Caught here rather than failing the whole
   // panel: every other figure on it is still valid, and this module's own
@@ -278,7 +320,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   try {
     sdSolves = await readSecureDevSolves();
   } catch (err) {
-    console.error("secure-development solves unavailable for metrics:", err);
+    console.error("secure-development solves unavailable for metrics:", errorLabel(err));
     // Names the hint-order counts too, not just the obvious ones: the
     // per-slot `solvedAt` lookup below reads this same map, so a Secure
     // Development hint slot with no solve time contributes to NEITHER
@@ -311,6 +353,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     ...classicPoints.keys(),
     ...aiPoints.keys(),
     ...sdLogins,
+    ...sdPoints.keys(),
   ]);
   let logins = [...contestants].sort();
   if (logins.length > MAX_CONTESTANTS) {
@@ -413,14 +456,31 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       ["classic", classicSolves],
       ["ai", aiSolves],
     ];
-    const hasEarned = earnedRows.some(([, rows]) => rows.length > 0) || sdLogins.has(login);
+    // Secure Development counts as earned on EITHER record of it: a solve row
+    // in ctf:solves:*, or points on the leaderboard source. The two are
+    // written by different processes (the poller and the scorer) and can
+    // disagree for a login — a solves sweep that failed a page, an entry the
+    // scorer knows that the poller has not stored — and a contestant whose
+    // points are in the team total below must not read as never having
+    // scored in the funnel above it.
+    const hasEarned =
+      earnedRows.some(([, rows]) => rows.length > 0) || sdLogins.has(login) || (sdPoints.get(login) ?? 0) > 0;
 
     if (hasAttempt || hasEarned) attempted += 1;
     if (hasEarned) scored += 1;
 
+    // Every module the funnel above counts as scoring, including Secure
+    // Development (issue #432) — `hasEarned` and this sum must agree on what
+    // a point is, or a team of SD-only solvers reads as "scored" with 0.
+    // Gross points throughout: the module hashes hold pre-penalty totals and
+    // so does the source's `points`, so hint penalties are not applied here
+    // any more than they are to the other three.
     pointsByLogin.set(
       login,
-      (quizPoints.get(login) ?? 0) + (classicPoints.get(login) ?? 0) + (aiPoints.get(login) ?? 0),
+      (quizPoints.get(login) ?? 0) +
+        (classicPoints.get(login) ?? 0) +
+        (aiPoints.get(login) ?? 0) +
+        (sdPoints.get(login) ?? 0),
     );
 
     for (const [mod, rows] of earnedRows) {

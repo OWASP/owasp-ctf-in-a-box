@@ -11,6 +11,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   upstashPipeline: vi.fn<(commands: (string | number)[][]) => Promise<{ result?: unknown }[]>>(),
   listTeams: vi.fn<() => Promise<{ slug: string; name: string; members: string[] }[]>>(),
+  // Secure Development points come from the leaderboard SOURCE, not from a
+  // Redis hash this store reads itself (issue #432): `ctf:solves:*` carries
+  // timestamps only, and the per-login SD total is the scorer's `points` on
+  // each leaderboard entry. Mocked as the mode plus a fetch, which is exactly
+  // the surface the store consumes (`getLeaderboardSource().getLeaderboard()`).
+  getLeaderboardSourceMode: vi.fn<() => Promise<"mock" | "lambda" | "upstash" | "empty">>(),
+  getLeaderboard: vi.fn<() => Promise<{ entries: { login: string; points: number }[] }>>(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -21,6 +28,10 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
     parseScanPage: actual.parseScanPage, upstashPipeline: mocks.upstashPipeline };
 });
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
+vi.mock("@/lib/leaderboard/source", () => ({
+  getLeaderboardSourceMode: mocks.getLeaderboardSourceMode,
+  getLeaderboardSource: async () => ({ getLeaderboard: mocks.getLeaderboard }),
+}));
 
 import { challengesToCsv, computeEventMetrics, type EventMetrics } from "@/lib/metrics-store";
 
@@ -66,6 +77,15 @@ function mockStore(opts: {
   logins?: string[];
   /** Skip auto-registering the logins as a team. */
   noTeam?: boolean;
+  /** Per-login Secure Development points, as the leaderboard source reports
+   *  them (issue #432). Omitted, the source answers no entries — the shape of
+   *  an event whose scorer has nothing yet. `sourceMode` defaults to "lambda"
+   *  (a real scorer); "empty" is what the source itself returns when the
+   *  module is off, and "mock" is placeholder data the store must not fold. */
+  sdPoints?: Record<string, number>;
+  sourceMode?: "mock" | "lambda" | "upstash" | "empty";
+  /** The source read rejects — a scorer that is down. */
+  sourceFails?: boolean;
   /** The three catalogue hashes the title join reads, LAST in the read order.
    *  Omitted, the default mock answers empty and every row keeps its id —
    *  which is the fallback under test in "a challenge deleted since it was
@@ -78,6 +98,13 @@ function mockStore(opts: {
 }) {
   const sdKeys = opts.sdKeys ?? {};
   const keys = Object.keys(sdKeys);
+
+  mocks.getLeaderboardSourceMode.mockResolvedValue(opts.sourceMode ?? "lambda");
+  if (opts.sourceFails) mocks.getLeaderboard.mockRejectedValue(new Error("scorer unreachable"));
+  else
+    mocks.getLeaderboard.mockResolvedValue({
+      entries: Object.entries(opts.sdPoints ?? {}).map(([login, points]) => ({ login, points })),
+    });
 
   // Put every contestant on a team unless a test says otherwise. This is not
   // convenience — it is the realistic shape since ADR 47, and it is what makes
@@ -771,5 +798,114 @@ describe("challengesToCsv carries the ai module column", () => {
     } as EventMetrics;
     const lines = challengesToCsv(metrics).trim().split("\n");
     expect(lines[1]).toBe("ai,a1,Guardrail bypass,1,2,0.5000,2.00,30");
+  });
+});
+
+// --- Secure Development points in team totals (issue #432) ------------------
+//
+// Found on the live box: every team's points on the Insights tab read lower
+// than its members added up to on the leaderboard, and the shortfall was
+// exactly each team's Secure Development points — the fold summed quiz +
+// classic + ai and nothing else, while three lines earlier the funnel counted
+// an SD-only contestant as having scored, and the caveat under the table said
+// SD "contributes to participation and points". A team's row has to agree
+// with the sentence printed beneath it.
+describe("team points include Secure Development (issue #432)", () => {
+  it("reports a team whose only points are Secure Development, not 0", async () => {
+    mockStore({
+      sdKeys: { "ctf:solves:dvwa": { "alice:c1": "2026-08-22T10:00:00Z" } },
+      sdPoints: { alice: 25 },
+      logins: ["alice"],
+      perLogin: { alice: {} },
+    });
+    const m = await computeEventMetrics();
+    expect(m.teams).toEqual([{ slug: "all", name: "All", size: 1, points: 25 }]);
+  });
+
+  it("adds Secure Development to the module points, per member", async () => {
+    mockStore({
+      quizPoints: { alice: 100, bob: 50 },
+      classicPoints: { alice: 200 },
+      aiPoints: { bob: 75 },
+      sdPoints: { alice: 36, bob: 22 },
+      logins: ["alice", "bob"],
+      perLogin: { alice: {}, bob: {} },
+    });
+    const m = await computeEventMetrics();
+    // (100 + 200 + 36) + (50 + 75 + 22)
+    expect(m.teams[0].points).toBe(483);
+  });
+
+  // The scorer records the PR author's own spelling; the team roster holds
+  // the session's. Every login join in this repo lowercases both sides.
+  it("joins the source's login case-insensitively", async () => {
+    mockStore({
+      sdPoints: { Alice: 10 },
+      logins: ["alice"],
+      perLogin: { alice: {} },
+    });
+    const m = await computeEventMetrics();
+    expect(m.teams[0].points).toBe(10);
+  });
+
+  // Same direction as the solves sweep above it: a scorer that cannot be
+  // reached costs the SD share of the totals and SAYS so — it never costs the
+  // organizer the whole panel.
+  it("degrades to module points with a caveat when the source read fails", async () => {
+    mockStore({
+      quizPoints: { alice: 100 },
+      sourceFails: true,
+      logins: ["alice"],
+      perLogin: { alice: {} },
+    });
+    const m = await computeEventMetrics();
+    expect(m.teams[0].points).toBe(100);
+    expect(m.caveats.some((c) => /Secure Development points could not be read/.test(c))).toBe(true);
+  });
+
+  // "mock" is the board's placeholder data behind an amber banner. Folding it
+  // into team totals here would put invented points on a screen with no
+  // banner, so the store leaves them out and names the reason instead.
+  it("leaves placeholder scorer data out, with a caveat, in mock mode", async () => {
+    mockStore({
+      quizPoints: { alice: 100 },
+      sdPoints: { alice: 999 },
+      sourceMode: "mock",
+      logins: ["alice"],
+      perLogin: { alice: {} },
+    });
+    const m = await computeEventMetrics();
+    expect(m.teams[0].points).toBe(100);
+    expect(m.caveats.some((c) => /placeholder/.test(c))).toBe(true);
+  });
+
+  // The two records of an SD solve are written by different processes: the
+  // poller stores the ctf:solves:* row, the scorer reports the points. A login
+  // the scorer knows and the poller does not (a failed sweep page, a lagging
+  // poll) is in the team total — and so must be in the funnel, or the panel
+  // says "scored: 0" above a table that shows their points.
+  it("counts a login with source points but no solves row as attempted and scored", async () => {
+    mockStore({
+      sdPoints: { alice: 25 },
+      logins: ["alice"],
+      perLogin: { alice: {} },
+    });
+    const m = await computeEventMetrics();
+    expect(m.funnel.attempted).toBe(1);
+    expect(m.funnel.scored).toBe(1);
+    expect(m.funnel.stuck).toBe(0);
+    expect(m.teams[0].points).toBe(25);
+  });
+
+  it("reads nothing from the source when the module is off (empty mode)", async () => {
+    mockStore({
+      quizPoints: { alice: 100 },
+      sourceMode: "empty",
+      logins: ["alice"],
+      perLogin: { alice: {} },
+    });
+    const m = await computeEventMetrics();
+    expect(m.teams[0].points).toBe(100);
+    expect(mocks.getLeaderboard).not.toHaveBeenCalled();
   });
 });

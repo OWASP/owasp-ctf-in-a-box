@@ -879,6 +879,24 @@ describe("team points include Secure Development (issue #432)", () => {
     expect(m.caveats.some((c) => /placeholder/.test(c))).toBe(true);
   });
 
+  // The two records of an SD solve are written by different processes: the
+  // poller stores the ctf:solves:* row, the scorer reports the points. A login
+  // the scorer knows and the poller does not (a failed sweep page, a lagging
+  // poll) is in the team total — and so must be in the funnel, or the panel
+  // says "scored: 0" above a table that shows their points.
+  it("counts a login with source points but no solves row as attempted and scored", async () => {
+    mockStore({
+      sdPoints: { alice: 25 },
+      logins: ["alice"],
+      perLogin: { alice: {} },
+    });
+    const m = await computeEventMetrics();
+    expect(m.funnel.attempted).toBe(1);
+    expect(m.funnel.scored).toBe(1);
+    expect(m.funnel.stuck).toBe(0);
+    expect(m.teams[0].points).toBe(25);
+  });
+
   it("reads nothing from the source when the module is off (empty mode)", async () => {
     mockStore({
       quizPoints: { alice: 100 },

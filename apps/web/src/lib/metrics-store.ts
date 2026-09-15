@@ -7,6 +7,7 @@ import { AI_CHALLENGES_KEY, AI_POINTS_KEY, aiAttemptsKey, aiSolvesKey } from "@/
 import { listTeams } from "@/lib/team-store";
 import { parseAttemptRow } from "@/lib/attempt-row";
 import { getLeaderboardSource, getLeaderboardSourceMode } from "@/lib/leaderboard/source";
+import { errorLabel } from "@/lib/error-label";
 
 /**
  * Event engagement metrics (issue #169), computed ENTIRELY from data the box
@@ -302,7 +303,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         if (Number.isFinite(points)) sdPoints.set(entry.login.toLowerCase(), points);
       }
     } catch (err) {
-      console.error("secure-development points unavailable for metrics:", err);
+      console.error("secure-development points unavailable for metrics:", errorLabel(err));
       caveats.push(
         "Secure Development points could not be read — team points below hold Quiz, Jeopardy and AI points only.",
       );
@@ -319,7 +320,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   try {
     sdSolves = await readSecureDevSolves();
   } catch (err) {
-    console.error("secure-development solves unavailable for metrics:", err);
+    console.error("secure-development solves unavailable for metrics:", errorLabel(err));
     // Names the hint-order counts too, not just the obvious ones: the
     // per-slot `solvedAt` lookup below reads this same map, so a Secure
     // Development hint slot with no solve time contributes to NEITHER
@@ -455,7 +456,15 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       ["classic", classicSolves],
       ["ai", aiSolves],
     ];
-    const hasEarned = earnedRows.some(([, rows]) => rows.length > 0) || sdLogins.has(login);
+    // Secure Development counts as earned on EITHER record of it: a solve row
+    // in ctf:solves:*, or points on the leaderboard source. The two are
+    // written by different processes (the poller and the scorer) and can
+    // disagree for a login — a solves sweep that failed a page, an entry the
+    // scorer knows that the poller has not stored — and a contestant whose
+    // points are in the team total below must not read as never having
+    // scored in the funnel above it.
+    const hasEarned =
+      earnedRows.some(([, rows]) => rows.length > 0) || sdLogins.has(login) || (sdPoints.get(login) ?? 0) > 0;
 
     if (hasAttempt || hasEarned) attempted += 1;
     if (hasEarned) scored += 1;

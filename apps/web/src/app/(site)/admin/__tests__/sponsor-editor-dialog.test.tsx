@@ -147,15 +147,27 @@ describe("SponsorEditorDialog", () => {
   // browser-supplied MIME type into a URL that lands in an <img src>. The fix
   // is two-part and both halves are pinned here, at source level — there is
   // no DOM in this suite to fire a real file pick through (see the header).
-  it("never builds the preview URL out of the file's own MIME type", () => {
+  it("never derives the preview src from the uploaded file", () => {
     const src = readFileSync(fileURLToPath(new URL("../sponsor-editor-dialog.tsx", import.meta.url)), "utf8");
-    // Comments stripped first: the sink that was removed is quoted in one, and
-    // prose is not what this guards — the code coming back is.
-    const code = src.replace(/\/\/.*$/gm, "");
+    // Comments stripped first: both removed sinks are quoted in the prose that
+    // explains why they are gone, and prose is not what this guards.
+    const code = src.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    // Shape 1: a data: URL built around the browser's claimed MIME type.
     expect(code).not.toMatch(/data:\$\{/);
-    expect(src).toContain("URL.createObjectURL(file)");
-    // An object URL pins its blob until revoked.
-    expect(src).toContain("URL.revokeObjectURL");
+    // Shape 2: an object URL minted for the File itself.
+    expect(code).not.toContain("createObjectURL");
+    // What it is instead: pixels the browser decoded, re-drawn and read back
+    // off a canvas, so nothing file-derived reaches the DOM.
+    expect(code).toContain("createImageBitmap(file)");
+    expect(code).toContain('canvas.toDataURL("image/png")');
+  });
+
+  it("refuses a file the browser cannot decode as an image", () => {
+    const src = readFileSync(fileURLToPath(new URL("../sponsor-editor-dialog.tsx", import.meta.url)), "utf8");
+    // renderPreview returns null on a decode failure, and that is a rejection
+    // with a reason — not a save that silently carries unpreviewable bytes.
+    expect(src).toMatch(/if \(!preview\) \{/);
+    expect(src).toContain("could not be decoded as an image");
   });
 
   it("rejects a file whose type is not one of the three accepted images", () => {

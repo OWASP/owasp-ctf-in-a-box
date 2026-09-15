@@ -13,7 +13,7 @@
 // Owns the draft; hands the finished record to `onSubmit` and nothing else.
 // The tab keeps the network call, so this stays renderable with no DOM.
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import ModalDialog from "@/components/modal-dialog";
 import {
   asSponsorLogoMime,
@@ -38,6 +38,47 @@ export type SponsorDraft = {
 
 const FIELD_CLASS =
   "rounded-md border border-white/10 bg-[#1a1a2e] px-3 py-1.5 text-sm text-zinc-200 focus-visible:border-[#2563eb]/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]";
+
+/** How big the preview canvas may get. The preview exists to answer "is this
+ *  the right image, and does it read on a dark panel" — it is never the
+ *  stored asset, so a thumbnail's worth of pixels is the whole requirement. */
+const PREVIEW_MAX_W = 256;
+const PREVIEW_MAX_H = 128;
+
+/** Renders the chosen file to a canvas and returns THAT canvas's data URL, or
+ *  null if the bytes do not decode as an image.
+ *
+ *  The indirection is deliberate and is the fix for a CodeQL js/xss-through-dom
+ *  finding (high) on two earlier shapes of this preview: both a hand-built
+ *  `data:${file.type};base64,...` string and `URL.createObjectURL(file)` put a
+ *  URL derived from an uploaded file straight into an `<img src>`. Here the
+ *  src is produced by the canvas from pixels the browser already decoded, so
+ *  nothing about the file's own bytes or its claimed type reaches the DOM.
+ *
+ *  Decoding is also the strictest check available on this side of the wire: a
+ *  file the browser cannot decode as an image is one the store's magic-byte
+ *  sniff would reject anyway, and saying so here costs no round trip. */
+async function renderPreview(file: File): Promise<string | null> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    try {
+      const scale = Math.min(1, PREVIEW_MAX_W / bitmap.width, PREVIEW_MAX_H / bitmap.height);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      // Always PNG: the preview keeps transparency so a logo with an alpha
+      // channel is shown against the panel, which is the point of looking.
+      return canvas.toDataURL("image/png");
+    } finally {
+      bitmap.close();
+    }
+  } catch {
+    return null;
+  }
+}
 
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -77,26 +118,13 @@ export default function SponsorEditorDialog({
     tier: sponsor?.tier ?? "community",
   });
   // A preview of the file just chosen — an organizer should see the logo
-  // before saving it, not after reloading the tab.
-  //
-  // The preview src is an object URL the browser mints for the File itself,
-  // NOT a `data:${file.type};base64,...` string built here. Interpolating a
-  // browser-supplied MIME type into a URL that lands in `src` is a real
-  // sink (CodeQL js/xss-through-dom flagged exactly that), and there is no
-  // reason to hand-build a URL when createObjectURL exists. The base64 the
-  // POST needs is computed alongside it and never touches the DOM.
+  // before saving it, not after reloading the tab. It is a canvas rendering
+  // (see renderPreview), never a URL derived from the file itself. The base64
+  // the POST needs is computed alongside it and never touches the DOM.
   const [pickedName, setPickedName] = useState<string | null>(null);
   const [pickedPreview, setPickedPreview] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
-
-  // An object URL pins its blob until it is revoked, so every URL this dialog
-  // mints is released — when another file replaces it, and when the dialog
-  // closes. `pickedPreview` is the only holder, so revoking on change is safe.
-  useEffect(() => {
-    if (!pickedPreview) return;
-    return () => URL.revokeObjectURL(pickedPreview);
-  }, [pickedPreview]);
 
   const hasStoredLogo = sponsor?.logo != null && draft.clearLogo !== true;
   const saveDisabled = pending || draft.name.trim() === "" || draft.url.trim() === "";
@@ -120,9 +148,13 @@ export default function SponsorEditorDialog({
       return;
     }
     try {
-      const data = await fileToBase64(file);
+      const [data, preview] = await Promise.all([fileToBase64(file), renderPreview(file)]);
+      if (!preview) {
+        setFileError("That file could not be decoded as an image — the box would refuse it too.");
+        return;
+      }
       setPickedName(file.name);
-      setPickedPreview(URL.createObjectURL(file));
+      setPickedPreview(preview);
       // `mime` is one of three literals from SPONSOR_LOGO_MIME_TYPES, not the
       // browser's string — the server ignores it either way, but nothing
       // downstream of here has to wonder what it might contain.

@@ -50,6 +50,24 @@ export function isSponsorLogoSize(value: unknown): value is SponsorLogoSize {
   return typeof value === "string" && (SPONSOR_LOGO_SIZES as readonly string[]).includes(value);
 }
 
+/** The MIME types a logo upload may claim, which is also the file picker's
+ *  `accept` list. The SERVER decides accept/reject from the decoded bytes
+ *  alone and ignores this entirely (sponsors-store.ts) — nothing here is a
+ *  security control on the stored object. What it is good for is the admin
+ *  UI: rejecting an obvious SVG before a round trip, and giving the local
+ *  preview a MIME type that came from THIS list rather than from whatever
+ *  string the browser attached to the file. */
+export const SPONSOR_LOGO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+
+export type SponsorLogoMime = (typeof SPONSOR_LOGO_MIME_TYPES)[number];
+
+/** The matching constant from the list above, or null — never the caller's
+ *  own string back, so a value that passes this check is one of three
+ *  literals and cannot carry anything else with it. */
+export function asSponsorLogoMime(value: unknown): SponsorLogoMime | null {
+  return SPONSOR_LOGO_MIME_TYPES.find((t) => t === value) ?? null;
+}
+
 /** The id order that moving one sponsor up or down produces, for the reorder
  *  endpoint (`POST /api/admin/sponsors` with a `reorder` array).
  *

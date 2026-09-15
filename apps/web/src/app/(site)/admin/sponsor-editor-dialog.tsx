@@ -13,9 +13,16 @@
 // Owns the draft; hands the finished record to `onSubmit` and nothing else.
 // The tab keeps the network call, so this stays renderable with no DOM.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ModalDialog from "@/components/modal-dialog";
-import { SPONSOR_BLURB_MAX, SPONSOR_LOGO_MAX, SPONSOR_NAME_MAX, type SponsorTier } from "@/lib/sponsors-keys";
+import {
+  asSponsorLogoMime,
+  SPONSOR_BLURB_MAX,
+  SPONSOR_LOGO_MAX,
+  SPONSOR_LOGO_MIME_TYPES,
+  SPONSOR_NAME_MAX,
+  type SponsorTier,
+} from "@/lib/sponsors-keys";
 import type { SponsorRecord } from "./sponsor-list";
 
 export type SponsorDraft = {
@@ -69,13 +76,27 @@ export default function SponsorEditorDialog({
     blurb: sponsor?.blurb ?? "",
     tier: sponsor?.tier ?? "community",
   });
-  // A preview of the file just chosen, and the reason this dialog does the
-  // base64 conversion itself: an organizer should see the logo before saving
-  // it, not after reloading the tab.
+  // A preview of the file just chosen — an organizer should see the logo
+  // before saving it, not after reloading the tab.
+  //
+  // The preview src is an object URL the browser mints for the File itself,
+  // NOT a `data:${file.type};base64,...` string built here. Interpolating a
+  // browser-supplied MIME type into a URL that lands in `src` is a real
+  // sink (CodeQL js/xss-through-dom flagged exactly that), and there is no
+  // reason to hand-build a URL when createObjectURL exists. The base64 the
+  // POST needs is computed alongside it and never touches the DOM.
   const [pickedName, setPickedName] = useState<string | null>(null);
   const [pickedPreview, setPickedPreview] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+
+  // An object URL pins its blob until it is revoked, so every URL this dialog
+  // mints is released — when another file replaces it, and when the dialog
+  // closes. `pickedPreview` is the only holder, so revoking on change is safe.
+  useEffect(() => {
+    if (!pickedPreview) return;
+    return () => URL.revokeObjectURL(pickedPreview);
+  }, [pickedPreview]);
 
   const hasStoredLogo = sponsor?.logo != null && draft.clearLogo !== true;
   const saveDisabled = pending || draft.name.trim() === "" || draft.url.trim() === "";
@@ -83,18 +104,29 @@ export default function SponsorEditorDialog({
   async function onFileChange(file: File | null) {
     if (!file) return;
     setFileError(null);
-    // Client-side pre-check only — it mirrors, but does not replace, the
-    // store's own magic-byte sniff (sponsors-store.ts). This just saves an
-    // organizer a round trip on an obviously oversized file.
+    // Client-side pre-checks only — they mirror, but do not replace, the
+    // store's own magic-byte sniff (sponsors-store.ts), which ignores the
+    // claimed type entirely and reads the decoded bytes. These just save an
+    // organizer a round trip on a file that was never going to be accepted.
     if (file.size > SPONSOR_LOGO_MAX) {
       setFileError(`Logo must be at most ${SPONSOR_LOGO_MAX} bytes — this file is ${file.size}.`);
+      return;
+    }
+    const mime = asSponsorLogoMime(file.type);
+    if (!mime) {
+      setFileError(
+        "Logo must be a PNG, JPEG or WebP image. SVG is rejected — it can run script when its URL is opened directly.",
+      );
       return;
     }
     try {
       const data = await fileToBase64(file);
       setPickedName(file.name);
-      setPickedPreview(`data:${file.type};base64,${data}`);
-      setDraft((d) => ({ ...d, logoBase64: data, logoType: file.type, clearLogo: undefined }));
+      setPickedPreview(URL.createObjectURL(file));
+      // `mime` is one of three literals from SPONSOR_LOGO_MIME_TYPES, not the
+      // browser's string — the server ignores it either way, but nothing
+      // downstream of here has to wonder what it might contain.
+      setDraft((d) => ({ ...d, logoBase64: data, logoType: mime, clearLogo: undefined }));
     } catch {
       setFileError("Could not read that file — try choosing it again.");
     }
@@ -196,7 +228,7 @@ export default function SponsorEditorDialog({
                 {hasStoredLogo || pickedPreview ? "Replace logo…" : "Choose logo…"}
                 <input
                   type="file"
-                  accept="image/png,image/jpeg,image/webp"
+                  accept={SPONSOR_LOGO_MIME_TYPES.join(",")}
                   disabled={pending}
                   onChange={(e) => void onFileChange(e.target.files?.[0] ?? null)}
                   className="sr-only"

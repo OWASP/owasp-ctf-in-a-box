@@ -12,6 +12,8 @@
 // behaviour is exercised by calling the real handlers off the element tree.
 
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
 import SponsorEditorDialog, { type SponsorDraft } from "../sponsor-editor-dialog";
@@ -140,6 +142,34 @@ describe("SponsorEditorDialog", () => {
     expect(html).toContain("disabled");
   });
 
+  // CodeQL js/xss-through-dom, high, on the first cut of this dialog: the
+  // preview src was `data:${file.type};base64,...`, which interpolates a
+  // browser-supplied MIME type into a URL that lands in an <img src>. The fix
+  // is two-part and both halves are pinned here, at source level — there is
+  // no DOM in this suite to fire a real file pick through (see the header).
+  it("never builds the preview URL out of the file's own MIME type", () => {
+    const src = readFileSync(fileURLToPath(new URL("../sponsor-editor-dialog.tsx", import.meta.url)), "utf8");
+    // Comments stripped first: the sink that was removed is quoted in one, and
+    // prose is not what this guards — the code coming back is.
+    const code = src.replace(/\/\/.*$/gm, "");
+    expect(code).not.toMatch(/data:\$\{/);
+    expect(src).toContain("URL.createObjectURL(file)");
+    // An object URL pins its blob until revoked.
+    expect(src).toContain("URL.revokeObjectURL");
+  });
+
+  it("rejects a file whose type is not one of the three accepted images", () => {
+    const src = readFileSync(fileURLToPath(new URL("../sponsor-editor-dialog.tsx", import.meta.url)), "utf8");
+    // The draft's logoType is the allowlist's own constant, never file.type.
+    expect(src).toContain("asSponsorLogoMime(file.type)");
+    expect(src).toMatch(/logoType: mime/);
+    expect(src).not.toMatch(/logoType: file\.type/);
+  });
+
+  it("offers the picker only the accepted types", () => {
+    expect(render(null)).toContain("image/png,image/jpeg,image/webp");
+  });
+
   // The file input is a real <input type="file"> kept visually hidden behind
   // its label, NOT hidden from assistive tech or the keyboard: `hidden` or
   // `display:none` would take it out of the tab order entirely.
@@ -147,6 +177,5 @@ describe("SponsorEditorDialog", () => {
     const html = render(null);
     expect(html).toContain('type="file"');
     expect(html).toContain("sr-only");
-    expect(html).toContain("image/png,image/jpeg,image/webp");
   });
 });

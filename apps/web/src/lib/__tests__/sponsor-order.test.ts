@@ -4,7 +4,7 @@
 // `renderToStaticMarkup` — this is the half worth pinning directly.
 
 import { describe, expect, it } from "vitest";
-import { movedSponsorOrder } from "@/lib/sponsors-keys";
+import { asSponsorLogoMime, movedSponsorOrder, SPONSOR_LOGO_MIME_TYPES } from "@/lib/sponsors-keys";
 
 const IDS = ["a", "b", "c"];
 
@@ -42,5 +42,34 @@ describe("movedSponsorOrder", () => {
   it("keeps every id exactly once", () => {
     const moved = movedSponsorOrder(IDS, "c", -1)!;
     expect([...moved].sort()).toEqual([...IDS].sort());
+  });
+});
+
+// The logo MIME allowlist the admin dialog pre-checks against. The SERVER
+// ignores a claimed type entirely (sponsors-store.ts sniffs the decoded
+// bytes), so this is not a security control on what gets stored — it is what
+// keeps a browser-supplied string from reaching the dialog's preview URL, and
+// what turns an obvious SVG into an explanation instead of a round trip.
+describe("asSponsorLogoMime", () => {
+  it("accepts the three raster types the store can store", () => {
+    expect(asSponsorLogoMime("image/png")).toBe("image/png");
+    expect(asSponsorLogoMime("image/jpeg")).toBe("image/jpeg");
+    expect(asSponsorLogoMime("image/webp")).toBe("image/webp");
+  });
+
+  it("rejects SVG, an unknown type, and a missing one", () => {
+    expect(asSponsorLogoMime("image/svg+xml")).toBeNull();
+    expect(asSponsorLogoMime("text/html")).toBeNull();
+    expect(asSponsorLogoMime("")).toBeNull();
+    expect(asSponsorLogoMime(undefined)).toBeNull();
+  });
+
+  // The point of returning the constant rather than the argument: whatever a
+  // caller passes, what comes back is one of three literals from this module.
+  it("returns its own constant, not the caller's string", () => {
+    const claimed = ["image", "/png"].join("");
+    const matched = asSponsorLogoMime(claimed);
+    expect(matched).toBe("image/png");
+    expect(SPONSOR_LOGO_MIME_TYPES).toContain(matched);
   });
 });

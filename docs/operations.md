@@ -843,7 +843,10 @@ plain text everywhere a logo would have gone. **Edit** on a row opens the same
 dialog on that record, with the logo currently on file shown next to
 **Replace logo…**, so you can see what you are replacing before you replace
 it. Choosing a file previews it immediately; nothing is written until you
-save.
+save. A file that is not a PNG, JPEG or WebP is refused in the dialog with
+the reason, rather than after a round trip — though the box still decides for
+itself from the uploaded bytes, and ignores whatever type your browser
+claimed.
 
 **Order is the arrows, not a number.** Each row has ↑ and ↓ buttons that move
 the sponsor one place and save the new order straight away (the endpoint

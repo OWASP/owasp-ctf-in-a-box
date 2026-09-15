@@ -831,6 +831,15 @@ every sponsor appears on every surface regardless of tier), and an order
 number (lower sorts first). A logo is optional — without one, the sponsor's
 name renders as plain text everywhere a logo would have gone.
 
+**Sponsor logo size.** One control at the top of the tab — Small, Medium
+(the default) or Large — sizes sponsor logos on the two surfaces where they
+are a credit row rather than the content: the landing page's strip below the
+hero, and the leaderboard's projector display (`?display=1`). Each surface
+scales it for its own viewing distance, so Large on a projector is much
+bigger than Large on the landing page. The `/sponsors` page is deliberately
+not affected: it is the page that exists to show sponsors, and it keeps its
+own layout.
+
 **The 64KB PNG/JPEG/WebP-only rule, and why.** A logo must be a PNG, JPEG or
 WebP under 64KB, decoded. **SVG is rejected outright**, with its own error
 message explaining why: an SVG served from this box's own origin executes any

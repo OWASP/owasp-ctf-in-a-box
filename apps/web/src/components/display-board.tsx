@@ -14,6 +14,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import type { SponsorLogoSize } from "@/lib/sponsors-keys";
 
 export type DisplayRow = {
   key: string;
@@ -49,11 +50,33 @@ export type DisplaySponsor = {
 // contestant checks on their phone agree on what third place looks like.
 const PODIUM: Record<number, string> = { 1: "#d4a017", 2: "#a1a1aa", 3: "#14b8a6" };
 
+/** Projector-scale sizing for the sponsor credit row, keyed by the SAME
+ *  organizer setting the landing strip reads (`sponsorLogoSize`) — one knob,
+ *  so a logo an organizer sized up in /admin is sized up on the wall too.
+ *  The values are not the strip's: this surface is metres from its audience,
+ *  and the old fixed 2.2vh (~24px on a 1080p projector) read as a fleck.
+ *  `/sponsors` is deliberately still untouched by the setting — it is a page
+ *  you read at arm's length with its own layout. */
+const LOGO_SIZE_CLASSES: Record<SponsorLogoSize, string> = {
+  sm: "h-[4vh]",
+  md: "h-[5.5vh]",
+  lg: "h-[7vh]",
+};
+
+/** The name-only fallback (a sponsor with no logo) tracks the same setting,
+ *  so a credit row mixing logos and names stays visually level. */
+const LOGO_FALLBACK_TEXT_CLASSES: Record<SponsorLogoSize, string> = {
+  sm: "text-[1.4vh]",
+  md: "text-[1.8vh]",
+  lg: "text-[2.2vh]",
+};
+
 export default function DisplayBoard({
   rows,
   eventName,
   phaseLabel,
   sponsors = [],
+  logoSize,
 }: {
   rows: DisplayRow[];
   eventName: string;
@@ -62,8 +85,14 @@ export default function DisplayBoard({
    *  nothing at all in that case, same "render iff non-empty" rule the other
    *  three sponsor surfaces follow. */
   sponsors?: DisplaySponsor[];
+  /** The organizer's `sponsorLogoSize`. Absent (an older caller, or a box
+   *  with nothing stored) means the medium preset, matching the strip's own
+   *  fallback direction. */
+  logoSize?: SponsorLogoSize;
 }) {
   const router = useRouter();
+  const logoClasses = LOGO_SIZE_CLASSES[logoSize ?? "md"];
+  const fallbackTextClasses = LOGO_FALLBACK_TEXT_CLASSES[logoSize ?? "md"];
   useEffect(() => {
     const id = setInterval(() => router.refresh(), 30_000);
     return () => clearInterval(id);
@@ -118,9 +147,9 @@ export default function DisplayBoard({
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-[1.5vw] opacity-70">
             {sponsors.map((sponsor) =>
               sponsor.logoSrc ? (
-                // Native <img>, not next/image: this is a fixed-size logo
-                // credit row on a self-contained overlay, not a page asset
-                // worth Next's optimizer — same call sponsor-strip.tsx makes.
+                // Native <img>, not next/image: this is a logo credit row on
+                // a self-contained overlay, not a page asset worth Next's
+                // optimizer — the same call sponsor-strip.tsx makes.
                 <img
                   key={sponsor.key}
                   src={sponsor.logoSrc}
@@ -129,12 +158,12 @@ export default function DisplayBoard({
                   height={sponsor.h}
                   className={
                     sponsor.logoType === "image/jpeg"
-                      ? "h-[2.2vh] w-auto object-contain"
-                      : "h-[2.2vh] w-auto object-contain brightness-0 invert"
+                      ? `${logoClasses} w-auto object-contain`
+                      : `${logoClasses} w-auto object-contain brightness-0 invert`
                   }
                 />
               ) : (
-                <span key={sponsor.key} className="font-mono text-[1.4vh] text-[#8f8f9b]">
+                <span key={sponsor.key} className={`font-mono ${fallbackTextClasses} text-[#8f8f9b]`}>
                   {sponsor.name}
                 </span>
               ),

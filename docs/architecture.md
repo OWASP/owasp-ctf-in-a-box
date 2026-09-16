@@ -189,8 +189,13 @@ state; everything else that touches scores goes through it.
    fixed pipeline (`src/lib/leaderboard/folded.ts`, memoized across requests
    for 10 s and shared by every concurrent viewer — the result has no
    per-viewer input; a fold that throws is never cached):
-   `withModuleContributions` → `withTeamStandings` → `withHintPenalties`
-   (`src/lib/leaderboard/{module-contributions,team-standings,hint-penalties}.ts`).
+   `withModuleContributions` → `withTeamStandings` → `withModuleSeries` →
+   `withHintPenalties`
+   (`src/lib/leaderboard/{module-contributions,team-standings,module-series,hint-penalties}.ts`).
+   `withModuleSeries` sits third because it charts each team's roster and
+   needs the team rows the standings stage has just built; it reads the
+   app-side modules' per-item timestamps to put their points on the chart
+   and leaves `points` untouched, so the penalty stage still nets last.
    `withModuleContributions` attributes each row's points into a
    per-module `ModuleProgress` for every *enabled* module — `secure-development`
    is **attributed**, not added, since its points already came from the

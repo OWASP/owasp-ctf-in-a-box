@@ -1724,15 +1724,19 @@ Before content authoring, not after — the harness seeds synthetic contestants
 and a master reset is already on the plan between the two. It runs
 `scripts/load-seed.mjs` **inside the Fly machine's `app` container** (srh is on
 the private network; the container already holds the URL and token the app
-writes through) to create N `load-XXXX` contestants on teams of 2–4 with a
+writes through) to create N `load-XXXX` contestants (N at least 2) on teams
+of 2–4 with a
 realistic spread of Secure Development, quiz and flag solves attached to the
 catalogue the box already has; then drives `/leaderboard` at 10 req/s and
 `?display=1` at 2 req/s with autocannon while sampling machine memory, and
-writes one Markdown report. `--clean` needs no `--count`: the seeder scans
-the store for every key and hash field in its own `load-NNNN` /
-`load-team-NN` shape and deletes exactly those — so a challenge removed or a
-module switched off after seeding cannot strand a row, and a real login that
-merely starts with `load-` is never touched.
+writes one Markdown report. Ownership is a **manifest, not a name**:
+`load-0001` is a legal GitHub login and nothing reserves it, so the seed
+records every key and every shared-hash field it writes in
+`ctf:load-seed:manifest`, and refuses to run if any of them already exists
+and is not in its previous manifest (a real contestant may own that login).
+`--clean` needs no `--count`: it deletes exactly the manifest's entries and
+the manifest — so a challenge removed or a module switched off after seeding
+cannot strand a row, and no row the harness did not write can be touched.
 
 ```sh
 scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev --count 200
@@ -1750,8 +1754,10 @@ from a logged-in tab.
 
 Fail directions: the **seed fails closed** — a settings hash whose module
 list it cannot parse, or Secure Development live with no `LEADERBOARD_API_URL`
-in the container, aborts before a single write, because a seed that guessed
-would attach points to a board that does not show them. The **run fails** if
+in the container, or a key or field it is about to write that already exists
+outside its own manifest, aborts before a single write, because a seed that
+guessed would attach points to a board that does not show them or write over
+a contestant. The **run fails** if
 the seed did not report success or the memory sampler produced no sample at
 all (the report is still written, and says so). The seeder's own error line
 is a redacted label — never the token or a URL. Not seeded on purpose:

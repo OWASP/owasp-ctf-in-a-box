@@ -25,18 +25,30 @@
 // clean could not lower it back safely. Hint purchases are omitted too (no
 // penalty path on a load run). Both are noted in the report.
 //
-// FAIL DIRECTIONS. The SEED fails CLOSED: a settings hash it cannot parse, or
+// OWNERSHIP IS THE MANIFEST, NOT A NAME PATTERN. `load-0001` is a legal
+// GitHub login and nothing in the app reserves it, so the harness cannot
+// infer "ours" from the shape of a key. Instead every seed writes an exact
+// manifest — every key and every shared-hash field it wrote — to
+// ctf:load-seed:manifest, and:
+//   - the SEED first checks every key and field it is about to write and
+//     ABORTS if any already exists and is not in the previous manifest (a
+//     real contestant, or someone else's rows, would otherwise be overwritten
+//     or merged into);
+//   - the CLEAN deletes exactly the manifest's entries and the manifest, and
+//     reads no catalogue, no --count and no pattern — a challenge removed or a
+//     module disabled after seeding cannot strand a field, and no real row
+//     can be touched. No manifest means nothing to clean.
+//
+// FAIL DIRECTIONS. The seed fails CLOSED: a settings hash it cannot parse, or
 // Secure Development live with no scorer address, aborts before a single
 // write — a seed that guessed which modules are live would attach points to
 // a board that does not show them and the load test would measure the wrong
-// page. The CLEAN reads no catalogue at all: it enumerates every key and hash
-// field that carries the harness's own `load-NNNN` / `load-team-NN` shape and
-// deletes exactly those, so a challenge removed or a module disabled after
-// seeding cannot strand a field, and a stale --count cannot leak one.
+// page. A collision (above) aborts the same way.
 //
-// IDEMPOTENT AND REVERSIBLE. Logins are `load-0001`…, teams `load-team-01`…;
-// the same --count regenerates the same set, so a re-run rewrites. Master
-// reset also removes them; --clean is so the box does not depend on that.
+// IDEMPOTENT AND REVERSIBLE. Logins are `load-0001`…, teams `load-team-01`…
+// (teams of 2–4, so --count is at least 2); the same --count regenerates the
+// same set, so a re-run rewrites its own rows. Master reset also removes
+// them; --clean is so the box does not depend on that.
 
 import { parseArgs } from "node:util";
 
@@ -45,16 +57,10 @@ const TEAM_PREFIX = "load-team-";
 const BATCH = 200;
 const WINDOW_MS = 2 * 60 * 60 * 1000;
 
-/** A seeded login, and nothing a real GitHub login could collide with. */
-export const SEEDED_LOGIN = /^load-\d{4}$/;
-/** A seeded team key or its members set. */
-export const SEEDED_TEAM_KEY = /^ctf:team:load-team-\d{2,}(:members)?$/;
-/** A seeded Secure Development solve field, `<login>:<challengeId>`. */
-export const SEEDED_SOLVE_FIELD = /^load-\d{4}:/;
-/** The per-login key families the seed writes; the clean scans each. */
-export const PER_LOGIN_PREFIXES = ["ctf:user:", "ctf:quiz:answers:", "ctf:quiz:attempts:", "ctf:classic:solves:", "ctf:classic:attempts:"];
-/** The shared aggregate hashes keyed by login; the clean HDELs our logins. */
-export const AGGREGATE_KEYS = ["ctf:quiz:points", "ctf:quiz:answered", "ctf:classic:points", "ctf:classic:solved"];
+/** Where the seed records exactly what it wrote; the clean's only input. */
+export const MANIFEST_KEY = "ctf:load-seed:manifest";
+/** The shared hashes keyed by login or `<login>:<id>` that the seed writes fields INTO (everything else it writes is a whole key of its own). */
+export const SHARED_HASHES = ["ctf:quiz:points", "ctf:quiz:answered", "ctf:classic:points", "ctf:classic:solved"];
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for scripts/test/load-seed.test.mjs)
@@ -72,7 +78,7 @@ export function rng(seed) {
   };
 }
 
-/** The i-th seeded login, zero-padded so SEEDED_LOGIN matches it. */
+/** The i-th seeded login (`load-0001`…): a stable name, not an ownership claim — the manifest is. */
 export function loginFor(i) {
   return `${LOGIN_PREFIX}${String(i).padStart(4, "0")}`;
 }
@@ -235,37 +241,58 @@ export function buildCommands({ count, catalogue, now = Date.now(), seed = 439 }
   return { cmds, logins, teams, stats: { contestants: count, teams: teams.length, sdSolves, quizAnswers, classicSolves } };
 }
 
-/** True for a whole key the seed owns: a team key or a per-login key of ours. */
-export function isSeededKey(key) {
-  if (SEEDED_TEAM_KEY.test(key)) return true;
-  return PER_LOGIN_PREFIXES.some((p) => key.startsWith(p) && SEEDED_LOGIN.test(key.slice(p.length)));
-}
-
-/** True for a hash field the seed owns inside a shared hash (aggregate or ctf:solves:*). */
-export function isSeededField(key, field) {
-  if (key.startsWith("ctf:solves:")) return SEEDED_SOLVE_FIELD.test(field);
-  if (AGGREGATE_KEYS.includes(key)) return SEEDED_LOGIN.test(field);
-  return false;
+/** True when `key` is a shared hash the seed writes fields into rather than a key it owns whole. */
+export function isSharedHash(key) {
+  return SHARED_HASHES.includes(key) || key.startsWith("ctf:solves:");
 }
 
 /**
- * The clean, from what the store actually holds: `keys` are candidate whole
- * keys (from SCAN), `hashFields` maps a shared hash to its field names (from
- * HKEYS). Only what isSeededKey/isSeededField recognise is touched, so this
- * never depends on the catalogue of the day or on a matching --count, and
- * never reaches a real contestant's rows — the pattern is the contract.
+ * The exact record of what a seed writes: every whole key and, for the shared
+ * hashes, every field. Derived from the commands, so it cannot drift from
+ * the writes. This is what ownership means to the harness.
  */
-export function cleanCommands({ keys = [], hashFields = {} }) {
-  const cmds = [];
-  const ours = [...new Set(keys.filter(isSeededKey))];
-  for (let i = 0; i < ours.length; i += 100) cmds.push(["DEL", ...ours.slice(i, i + 100)]);
-  let fields = 0;
-  for (const [key, names] of Object.entries(hashFields)) {
-    const mine = [...new Set((names || []).filter((f) => isSeededField(key, f)))];
-    for (let i = 0; i < mine.length; i += 100) cmds.push(["HDEL", key, ...mine.slice(i, i + 100)]);
-    fields += mine.length;
+export function manifestFor(cmds) {
+  const keys = new Set();
+  const fields = {};
+  for (const c of cmds) {
+    if (isSharedHash(c[1])) (fields[c[1]] ||= new Set()).add(c[2]);
+    else keys.add(c[1]);
   }
-  return { cmds, keys: ours.length, fields };
+  return { keys: [...keys].sort(), fields: Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, [...v].sort()])) };
+}
+
+/**
+ * What a seed must NOT write over: every key or field in `manifest` that
+ * `existing` says is already in the store and the previous manifest does not
+ * claim. `existing` is { keys: Set<string>, fields: { key: Set<field> } } as
+ * the probe found them. Empty means the seed may proceed.
+ */
+export function collisions(manifest, existing, previous = null) {
+  const prevKeys = new Set(previous ? previous.keys : []);
+  const prevFields = previous ? previous.fields : {};
+  const out = [];
+  for (const k of manifest.keys) if (existing.keys.has(k) && !prevKeys.has(k)) out.push(k);
+  for (const [k, fs] of Object.entries(manifest.fields)) {
+    const have = existing.fields[k];
+    if (!have) continue;
+    const prev = new Set(prevFields[k] || []);
+    for (const f of fs) if (have.has(f) && !prev.has(f)) out.push(`${k}#${f}`);
+  }
+  return out;
+}
+
+/** The exact inverse of a manifest: DEL its keys, HDEL its fields, then DEL the manifest itself. */
+export function cleanCommands(manifest) {
+  const cmds = [];
+  const keys = manifest.keys || [];
+  for (let i = 0; i < keys.length; i += 100) cmds.push(["DEL", ...keys.slice(i, i + 100)]);
+  let fields = 0;
+  for (const [key, names] of Object.entries(manifest.fields || {})) {
+    for (let i = 0; i < names.length; i += 100) cmds.push(["HDEL", key, ...names.slice(i, i + 100)]);
+    fields += names.length;
+  }
+  cmds.push(["DEL", MANIFEST_KEY]);
+  return { cmds, keys: keys.length, fields };
 }
 
 /** Only https, or http to a private/local endpoint (the compose `srh` service, loopback, Fly's `.internal`); the token rides in the Authorization header. */
@@ -323,16 +350,31 @@ const flat = (arr) => {
   return o;
 };
 
-/** Every key matching a glob, via SCAN (never KEYS) so a big box is not blocked. */
-async function scanKeys(pattern) {
-  let cursor = "0";
-  const keys = [];
-  do {
-    const [r] = await pipeline([["SCAN", cursor, "MATCH", pattern, "COUNT", "1000"]]);
-    cursor = String(r.result[0]);
-    keys.push(...(r.result[1] || []));
-  } while (cursor !== "0");
-  return keys;
+/** The previous run's manifest, or null when this harness has nothing on the box. */
+async function readManifest() {
+  const [r] = await pipeline([["GET", MANIFEST_KEY]]);
+  if (!r.result) return null;
+  const m = JSON.parse(r.result);
+  if (!Array.isArray(m.keys) || typeof m.fields !== "object") throw new Error("ctf:load-seed:manifest is not in the shape this seeder writes — refusing to guess; clean it by hand");
+  return m;
+}
+
+/** Which of the manifest's keys and fields already exist in the store (EXISTS / HEXISTS, batched). */
+async function probeExisting(manifest) {
+  const keys = new Set();
+  for (let i = 0; i < manifest.keys.length; i += BATCH) {
+    const slice = manifest.keys.slice(i, i + BATCH);
+    const replies = await pipeline(slice.map((k) => ["EXISTS", k]));
+    slice.forEach((k, j) => { if (Number(replies[j].result) > 0) keys.add(k); });
+  }
+  const fields = {};
+  const pairs = Object.entries(manifest.fields).flatMap(([k, fs]) => fs.map((f) => [k, f]));
+  for (let i = 0; i < pairs.length; i += BATCH) {
+    const slice = pairs.slice(i, i + BATCH);
+    const replies = await pipeline(slice.map(([k, f]) => ["HEXISTS", k, f]));
+    slice.forEach(([k, f], j) => { if (Number(replies[j].result) > 0) (fields[k] ||= new Set()).add(f); });
+  }
+  return { keys, fields };
 }
 
 /** The store rows the seed attaches to, resolved fail-closed by resolveCatalogue. */
@@ -354,42 +396,34 @@ async function readCatalogue() {
   return resolveCatalogue({ enabled, quizRows: flat(quizRes.result), classicRows: flat(classicRes.result), sdChallenges, scorerUrl });
 }
 
-/** What the store holds that the clean may own: candidate keys and the shared hashes' field names. */
-async function enumerateSeeded() {
-  const keys = [...(await scanKeys("ctf:team:load-team-*"))];
-  for (const p of PER_LOGIN_PREFIXES) keys.push(...(await scanKeys(`${p}load-*`)));
-  const solveKeys = await scanKeys("ctf:solves:*");
-  const hashKeys = [...AGGREGATE_KEYS, ...solveKeys];
-  const hashFields = {};
-  for (let i = 0; i < hashKeys.length; i += 50) {
-    const slice = hashKeys.slice(i, i + 50);
-    const replies = await pipeline(slice.map((k) => ["HKEYS", k]));
-    slice.forEach((k, j) => { hashFields[k] = replies[j].result || []; });
-  }
-  return { keys, hashFields };
-}
-
-/** CLI entry: --count N [--dry-run] seeds; --clean [--dry-run] removes every seeded row the store holds. */
+/** CLI entry: --count N [--dry-run] seeds and records a manifest; --clean [--dry-run] removes exactly what the manifest lists. */
 async function main() {
   const { values } = parseArgs({
     options: { count: { type: "string", default: "200" }, clean: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false } },
   });
   const count = Number(values.count);
-  if (!Number.isInteger(count) || count < 1 || count > 5000) throw new Error("--count must be an integer in 1..5000");
+  if (!Number.isInteger(count) || count < 2 || count > 5000) throw new Error("--count must be an integer in 2..5000 (teams are 2–4)");
 
-  let plan;
+  const previous = await readManifest();
+  let cmds;
   let summary;
   if (values.clean) {
-    plan = cleanCommands(await enumerateSeeded());
-    summary = { mode: "clean", keys: plan.keys, fields: plan.fields, commands: plan.cmds.length };
+    if (!previous) { console.log(JSON.stringify({ mode: "clean", keys: 0, fields: 0, commands: 0, note: "no manifest — nothing seeded by this harness is on the box" })); return; }
+    const plan = cleanCommands(previous);
+    cmds = plan.cmds;
+    summary = { mode: "clean", keys: plan.keys, fields: plan.fields, commands: cmds.length };
   } else {
     const catalogue = await readCatalogue();
-    plan = buildCommands({ count, catalogue });
-    summary = { mode: "seed", ...plan.stats, commands: plan.cmds.length, catalogue: { quiz: catalogue.quiz.length, classic: catalogue.classic.length, sdTargets: Object.keys(catalogue.sd).length, sdChallenges: Object.values(catalogue.sd).reduce((s, a) => s + a.length, 0) } };
+    const plan = buildCommands({ count, catalogue });
+    const manifest = manifestFor(plan.cmds);
+    const clash = collisions(manifest, await probeExisting(manifest), previous);
+    if (clash.length) throw new Error(`refusing to seed: ${clash.length} key(s)/field(s) already exist and are not this harness's (first: ${clash[0]}) — a contestant may own that login`);
+    cmds = [...plan.cmds, ["SET", MANIFEST_KEY, JSON.stringify(manifest)]];
+    summary = { mode: "seed", ...plan.stats, commands: cmds.length, manifest: { keys: manifest.keys.length, fields: Object.values(manifest.fields).reduce((n, a) => n + a.length, 0) }, catalogue: { quiz: catalogue.quiz.length, classic: catalogue.classic.length, sdTargets: Object.keys(catalogue.sd).length, sdChallenges: Object.values(catalogue.sd).reduce((n, a) => n + a.length, 0) } };
   }
   if (values["dry-run"]) { console.log(JSON.stringify({ ...summary, dryRun: true })); return; }
 
-  for (let i = 0; i < plan.cmds.length; i += BATCH) await pipeline(plan.cmds.slice(i, i + BATCH));
+  for (let i = 0; i < cmds.length; i += BATCH) await pipeline(cmds.slice(i, i + BATCH));
   console.log(JSON.stringify(summary));
 }
 

@@ -4,9 +4,8 @@
 # Seeds N contestants INSIDE the Fly machine's app container (srh is on the
 # private network; the container already holds the URL/token), then drives
 # the two hot public reads with autocannon at fixed rates while sampling
-# machine memory, and writes one Markdown report. --clean removes every
-# synthetic row the box holds (it needs no --count: the seeder enumerates its
-# own `load-` keys).
+# machine memory, and writes one Markdown report. --clean removes exactly what
+# the seed recorded in its manifest (it needs no --count).
 #
 #   scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev [--count 200]
 #                        [--report docs/superpowers/load-2026-09-16.md]
@@ -40,7 +39,10 @@ done
 if [ -z "$APP" ]; then echo "FAIL: --app is required" >&2; exit 2; fi
 if [ -z "$CLEAN" ] && [ -z "$URL" ]; then echo "FAIL: --url is required unless --clean" >&2; exit 2; fi
 command -v fly >/dev/null || { echo "FAIL: fly CLI not found" >&2; exit 1; }
-command -v npx >/dev/null || { echo "FAIL: npx (node) not found" >&2; exit 1; }
+command -v node >/dev/null || { echo "FAIL: node not found" >&2; exit 1; }
+if [ -z "$CLEAN" ]; then
+  command -v npx >/dev/null || { echo "FAIL: npx not found (autocannon runs through it)" >&2; exit 1; }
+fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 MACHINE="$(fly machines list --app "$APP" --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);process.stdout.write(m[0].id)})')"

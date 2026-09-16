@@ -1,20 +1,23 @@
 // The pure half of scripts/load-seed.mjs (issue #439): what a run writes,
-// that --clean removes exactly the harness's own rows from whatever the store
-// holds (no catalogue, no --count), and the fail-closed / log-safety seams.
+// that the manifest records every write and --clean removes exactly the
+// manifest (no catalogue, no --count, no name pattern), that a seed refuses
+// to write over rows it does not own, and the fail-closed / log-safety seams.
 // Run: node --test scripts/test/
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  AGGREGATE_KEYS,
+  MANIFEST_KEY,
+  SHARED_HASHES,
   assertRedisUrl,
   attemptRow,
   buildCommands,
   cleanCommands,
+  collisions,
   errorLabel,
-  isSeededField,
-  isSeededKey,
+  isSharedHash,
   liveModules,
   loginFor,
+  manifestFor,
   partitionTeams,
   pickSubset,
   resolveCatalogue,
@@ -27,15 +30,15 @@ const catalogue = {
   sd: { dvwa: ["ch-1", "ch-2", "ch-3"], webgoat: ["w-1"] },
 };
 
-/** What SCAN + HKEYS would hand the clean after these seed commands ran on an otherwise-empty store. */
-function storeAfter(cmds, extra = { keys: [], hashFields: {} }) {
+/** A pretend store: what EXISTS / HEXISTS would answer after `cmds` ran on top of `extra`. */
+function storeAfter(cmds, extra = { keys: [], fields: {} }) {
   const keys = new Set(extra.keys);
-  const hashFields = Object.fromEntries(Object.entries(extra.hashFields).map(([k, v]) => [k, [...v]]));
+  const fields = Object.fromEntries(Object.entries(extra.fields).map(([k, v]) => [k, new Set(v)]));
   for (const c of cmds) {
-    if (AGGREGATE_KEYS.includes(c[1]) || c[1].startsWith("ctf:solves:")) (hashFields[c[1]] ||= []).push(c[2]);
+    if (isSharedHash(c[1])) (fields[c[1]] ||= new Set()).add(c[2]);
     else keys.add(c[1]);
   }
-  return { keys: [...keys], hashFields };
+  return { keys, fields };
 }
 
 test("logins are zero-padded and prefixed so a clean can find them", () => {
@@ -104,62 +107,69 @@ test("writes only the seed's key families, and the aggregates match the per-logi
   assert.deepEqual(points, answers);
 });
 
-test("clean is the inverse: every key/field the seed wrote is deleted, and nothing outside the harness's shape", () => {
+test("the manifest records every key and shared-hash field the seed writes, and nothing else", () => {
   const seed = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
-  // A real contestant's rows sit beside ours in every family; none may go.
-  const real = {
-    keys: ["ctf:user:octocat", "ctf:user:load-master", "ctf:team:load-team", "ctf:team:blue:members", "ctf:quiz:answers:load-dev"],
-    hashFields: { "ctf:quiz:points": ["octocat", "load-master"], "ctf:solves:dvwa": ["octocat:ch-1", "load-master:ch-2"] },
-  };
-  const clean = cleanCommands(storeAfter(seed.cmds, real));
+  const m = manifestFor(seed.cmds);
   const written = new Set();
-  for (const c of seed.cmds) {
-    if (c[0] === "SADD") written.add(c[1]);
-    else if (AGGREGATE_KEYS.includes(c[1]) || c[1].startsWith("ctf:solves:")) written.add(`${c[1]}#${c[2]}`);
-    else written.add(c[1]);
-  }
+  for (const c of seed.cmds) written.add(isSharedHash(c[1]) ? `${c[1]}#${c[2]}` : c[1]);
+  const recorded = new Set([...m.keys, ...Object.entries(m.fields).flatMap(([k, fs]) => fs.map((f) => `${k}#${f}`))]);
+  assert.deepEqual(recorded, written);
+  for (const k of Object.keys(m.fields)) assert.ok(SHARED_HASHES.includes(k) || k.startsWith("ctf:solves:"), `whole key recorded as fields: ${k}`);
+  assert.ok(!m.keys.includes(MANIFEST_KEY));
+});
+
+test("clean is the exact inverse of the manifest and touches nothing outside it — not even a real login shaped like ours", () => {
+  const seed = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
+  const m = manifestFor(seed.cmds);
+  const clean = cleanCommands(m);
   const deleted = new Set();
   for (const c of clean.cmds) {
     if (c[0] === "DEL") for (const k of c.slice(1)) deleted.add(k);
     if (c[0] === "HDEL") for (const f of c.slice(2)) deleted.add(`${c[1]}#${f}`);
   }
-  for (const w of written) assert.ok(deleted.has(w), `not cleaned: ${w}`);
-  for (const d of deleted) assert.match(d, /load-\d{4}|load-team-\d{2}/, `clean touches a non-harness key: ${d}`);
-  for (const k of real.keys) assert.ok(!deleted.has(k), `clean deleted a real key: ${k}`);
-  for (const [k, fs] of Object.entries(real.hashFields)) for (const f of fs) assert.ok(!deleted.has(`${k}#${f}`), `clean deleted a real field: ${k}#${f}`);
+  for (const c of seed.cmds) assert.ok(deleted.has(isSharedHash(c[1]) ? `${c[1]}#${c[2]}` : c[1]), `not cleaned: ${c[1]}`);
+  assert.ok(deleted.has(MANIFEST_KEY), "the manifest itself goes last");
+  // Rows the manifest never listed are invisible to the clean, whatever they are called.
+  for (const k of ["ctf:user:octocat", "ctf:user:load-0999", "ctf:team:load-team-99", "ctf:quiz:points#load-0999", "ctf:solves:dvwa#load-0999:ch-1"]) assert.ok(!deleted.has(k), `clean touched an unlisted row: ${k}`);
+  assert.equal(clean.keys, m.keys.length);
+  assert.equal(clean.fields, Object.values(m.fields).reduce((n, a) => n + a.length, 0));
 });
 
 // The Major from review: a challenge dropped from the catalogue, or a module
-// switched off, after seeding must not strand a field. The clean reads the
-// store, not the catalogue, so it does not know or care what changed.
-test("clean removes seeded solves for a challenge no longer in the catalogue, and a stale --count is irrelevant", () => {
+// switched off, after seeding must not strand a field — the clean reads the
+// manifest, not the catalogue of the day, so it cannot know or care.
+test("clean removes seeded solves for a challenge no longer in the catalogue", () => {
   const seed = buildCommands({ count: 30, catalogue, now: 1_000_000_000_000 });
-  const store = storeAfter(seed.cmds);
-  // Pretend dvwa was removed and a target the seed never saw carries an old field of ours.
-  store.hashFields["ctf:solves:retired-target"] = ["load-0007:gone-1", "octocat:gone-1"];
-  const clean = cleanCommands(store);
-  const hdels = clean.cmds.filter((c) => c[0] === "HDEL");
-  const dvwaFields = hdels.filter((c) => c[1] === "ctf:solves:dvwa").flatMap((c) => c.slice(2));
-  const seededDvwa = seed.cmds.filter((c) => c[1] === "ctf:solves:dvwa").map((c) => c[2]);
-  for (const f of seededDvwa) assert.ok(dvwaFields.includes(f), `stranded: ${f}`);
-  const retired = hdels.find((c) => c[1] === "ctf:solves:retired-target");
-  assert.deepEqual(retired.slice(2), ["load-0007:gone-1"]);
-  assert.equal(clean.fields, seededDvwa.length + seed.cmds.filter((c) => c[1] === "ctf:solves:webgoat").length + 1 + seed.cmds.filter((c) => AGGREGATE_KEYS.includes(c[1])).length);
+  const m = manifestFor(seed.cmds);
+  const clean = cleanCommands(m); // no catalogue argument exists any more
+  const dvwa = clean.cmds.filter((c) => c[0] === "HDEL" && c[1] === "ctf:solves:dvwa").flatMap((c) => c.slice(2));
+  for (const c of seed.cmds.filter((c) => c[1] === "ctf:solves:dvwa")) assert.ok(dvwa.includes(c[2]), `stranded: ${c[2]}`);
 });
 
-test("the ownership predicates accept exactly the harness's shape", () => {
-  assert.ok(isSeededKey("ctf:user:load-0001"));
-  assert.ok(isSeededKey("ctf:team:load-team-07"));
-  assert.ok(isSeededKey("ctf:team:load-team-107:members"));
-  assert.ok(!isSeededKey("ctf:user:load-master"), "a real login that happens to start with load-");
-  assert.ok(!isSeededKey("ctf:user:load-00001"), "five digits is not ours");
-  assert.ok(!isSeededKey("ctf:team:load-team"));
-  assert.ok(!isSeededKey("ctf:quiz:questions"));
-  assert.ok(isSeededField("ctf:solves:dvwa", "load-0042:ch-9"));
-  assert.ok(!isSeededField("ctf:solves:dvwa", "load-dev:ch-9"));
-  assert.ok(isSeededField("ctf:quiz:points", "load-0042"));
-  assert.ok(!isSeededField("ctf:quiz:points", "load-0042:x"));
-  assert.ok(!isSeededField("ctf:quiz:questions", "load-0042"), "not a hash the seed writes");
+// The other Major: `load-0001` is a legal GitHub login. Ownership is the
+// manifest, so a seed must refuse to write over a row it did not record.
+test("a seed refuses to write over an existing key or field it does not own, and re-runs over its own rows", () => {
+  const seed = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
+  const m = manifestFor(seed.cmds);
+  // First run on an empty store: nothing collides.
+  assert.deepEqual(collisions(m, { keys: new Set(), fields: {} }, null), []);
+  // A real contestant whose login the seed would also use already has a user
+  // hash and a quiz score (pick a login the seed gives quiz points to, so the
+  // field is one the seed would write).
+  const victim = m.fields["ctf:quiz:points"][0];
+  const real = { keys: new Set([`ctf:user:${victim}`]), fields: { "ctf:quiz:points": new Set([victim]) } };
+  const clash = collisions(m, real, null);
+  assert.ok(clash.includes(`ctf:user:${victim}`), clash.join(","));
+  assert.ok(clash.includes(`ctf:quiz:points#${victim}`), clash.join(","));
+  assert.equal(clash.length, 2);
+  // Re-run: everything from the previous run exists, but the previous manifest claims it.
+  const after = storeAfter(seed.cmds);
+  assert.deepEqual(collisions(m, after, m), []);
+  // ...and a real row that appeared since is still caught.
+  after.keys.add("ctf:team:load-team-01"); // already ours — claimed
+  after.fields["ctf:solves:dvwa"].add(`${loginFor(2)}:ch-1`); // maybe ours, maybe not: only a collision if the manifest lacks it
+  const extra = collisions(m, after, m);
+  assert.ok(extra.every((x) => !m.keys.includes(x)), "claimed keys never collide");
 });
 
 // Fail closed: the seed refuses to guess which modules are live.

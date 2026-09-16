@@ -20,15 +20,23 @@
 // classic challenges, the scorer's /challenges) so titles resolve and the
 // leaderboard/metrics folds see real ids. It writes NO catalogue of its own.
 //
-// Deliberately not written: ctf:classic:solvecount (the seed RAISES it and a
-// clean could not un-raise it exactly); hint purchases (no penalty path on a
-// load run). Both are noted in the report.
+// Deliberately not written: ctf:classic:solvecount — a shared per-challenge
+// counter that real solves raise; the harness omits it because an exact
+// clean could not lower it back safely. Hint purchases are omitted too (no
+// penalty path on a load run). Both are noted in the report.
+//
+// FAIL DIRECTIONS. The SEED fails CLOSED: a settings hash it cannot parse, or
+// Secure Development live with no scorer address, aborts before a single
+// write — a seed that guessed which modules are live would attach points to
+// a board that does not show them and the load test would measure the wrong
+// page. The CLEAN reads no catalogue at all: it enumerates every key and hash
+// field that carries the harness's own `load-NNNN` / `load-team-NN` shape and
+// deletes exactly those, so a challenge removed or a module disabled after
+// seeding cannot strand a field, and a stale --count cannot leak one.
 //
 // IDEMPOTENT AND REVERSIBLE. Logins are `load-0001`…, teams `load-team-01`…;
-// the same --count regenerates the same set, so a re-run rewrites, and
-// --clean with the same --count deletes exactly those keys/fields and nothing
-// else. Master reset also removes them; --clean is so the box does not depend
-// on that.
+// the same --count regenerates the same set, so a re-run rewrites. Master
+// reset also removes them; --clean is so the box does not depend on that.
 
 import { parseArgs } from "node:util";
 
@@ -36,6 +44,17 @@ const LOGIN_PREFIX = "load-";
 const TEAM_PREFIX = "load-team-";
 const BATCH = 200;
 const WINDOW_MS = 2 * 60 * 60 * 1000;
+
+/** A seeded login, and nothing a real GitHub login could collide with. */
+export const SEEDED_LOGIN = /^load-\d{4}$/;
+/** A seeded team key or its members set. */
+export const SEEDED_TEAM_KEY = /^ctf:team:load-team-\d{2,}(:members)?$/;
+/** A seeded Secure Development solve field, `<login>:<challengeId>`. */
+export const SEEDED_SOLVE_FIELD = /^load-\d{4}:/;
+/** The per-login key families the seed writes; the clean scans each. */
+export const PER_LOGIN_PREFIXES = ["ctf:user:", "ctf:quiz:answers:", "ctf:quiz:attempts:", "ctf:classic:solves:", "ctf:classic:attempts:"];
+/** The shared aggregate hashes keyed by login; the clean HDELs our logins. */
+export const AGGREGATE_KEYS = ["ctf:quiz:points", "ctf:quiz:answered", "ctf:classic:points", "ctf:classic:solved"];
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for scripts/test/load-seed.test.mjs)
@@ -53,6 +72,7 @@ export function rng(seed) {
   };
 }
 
+/** The i-th seeded login, zero-padded so SEEDED_LOGIN matches it. */
 export function loginFor(i) {
   return `${LOGIN_PREFIX}${String(i).padStart(4, "0")}`;
 }
@@ -92,6 +112,7 @@ export function pickSubset(ids, min, max, rand) {
   return out;
 }
 
+/** One attempts-hash row in the shape the app's parser reads, firstAt clamped to the window. */
 export function attemptRow(tries, earnedAtMs, gapMinutes, floorMs) {
   const firstAtMs = Math.max(earnedAtMs - (5 + (tries - 1) * gapMinutes) * 60_000, floorMs);
   return JSON.stringify({
@@ -100,6 +121,49 @@ export function attemptRow(tries, earnedAtMs, gapMinutes, floorMs) {
     lastAt: new Date(earnedAtMs).toISOString(),
     lastAtMs: earnedAtMs,
   });
+}
+
+/**
+ * Which modules the settings hash says are live, or null for "no list stored"
+ * (every module counts as live then). FAILS CLOSED on a list it cannot read:
+ * guessing here would seed points onto a board that does not show them.
+ */
+export function liveModules(settings) {
+  const raw = settings && settings.enabledModuleIds;
+  if (raw === undefined || raw === null || raw === "") return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("ctf:admin:settings enabledModuleIds is not valid JSON — refusing to guess which modules are live");
+  }
+  if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === "string")) {
+    throw new Error("ctf:admin:settings enabledModuleIds is not a list of module ids — refusing to guess which modules are live");
+  }
+  return parsed;
+}
+
+/**
+ * The catalogue a seed attaches to, from the raw store rows. Pure so the
+ * error paths are testable: a live Secure Development module with no scorer
+ * address, or no scorer catalogue, aborts the seed (fail closed).
+ */
+export function resolveCatalogue({ enabled, quizRows, classicRows, sdChallenges, scorerUrl }) {
+  const live = (id) => enabled === null || enabled.includes(id);
+  const parseRows = (rows) => Object.values(rows || {}).map((v) => { try { return JSON.parse(v); } catch { return null; } }).filter(Boolean);
+  const quiz = live("quiz")
+    ? parseRows(quizRows).map((q) => ({ id: q.id, points: Number(q.points) || 0, choices: Array.isArray(q.correct) ? q.correct : [] }))
+    : [];
+  const classic = live("classic")
+    ? parseRows(classicRows).map((c) => ({ id: c.id, points: Number(c.points) || 0 }))
+    : [];
+  const sd = {};
+  if (live("secure-development")) {
+    if (!scorerUrl) throw new Error("Secure Development is live but LEADERBOARD_API_URL is not set — refusing to seed a board with no scorer catalogue");
+    if (!Array.isArray(sdChallenges)) throw new Error("Secure Development is live but the scorer's /challenges did not answer — refusing to seed");
+    for (const c of sdChallenges) (sd[c.app] ||= []).push(c.id);
+  }
+  return { quiz, classic, sd };
 }
 
 /** Everything one run writes, as pipeline commands, from a resolved catalogue. */
@@ -171,36 +235,76 @@ export function buildCommands({ count, catalogue, now = Date.now(), seed = 439 }
   return { cmds, logins, teams, stats: { contestants: count, teams: teams.length, sdSolves, quizAnswers, classicSolves } };
 }
 
-/** The exact inverse of buildCommands for the same --count. */
-export function cleanCommands({ count, catalogue }) {
-  const rand = rng(439 + count);
-  const logins = Array.from({ length: count }, (_, i) => loginFor(i + 1));
-  const teams = partitionTeams(logins, rand);
+/** True for a whole key the seed owns: a team key or a per-login key of ours. */
+export function isSeededKey(key) {
+  if (SEEDED_TEAM_KEY.test(key)) return true;
+  return PER_LOGIN_PREFIXES.some((p) => key.startsWith(p) && SEEDED_LOGIN.test(key.slice(p.length)));
+}
+
+/** True for a hash field the seed owns inside a shared hash (aggregate or ctf:solves:*). */
+export function isSeededField(key, field) {
+  if (key.startsWith("ctf:solves:")) return SEEDED_SOLVE_FIELD.test(field);
+  if (AGGREGATE_KEYS.includes(key)) return SEEDED_LOGIN.test(field);
+  return false;
+}
+
+/**
+ * The clean, from what the store actually holds: `keys` are candidate whole
+ * keys (from SCAN), `hashFields` maps a shared hash to its field names (from
+ * HKEYS). Only what isSeededKey/isSeededField recognise is touched, so this
+ * never depends on the catalogue of the day or on a matching --count, and
+ * never reaches a real contestant's rows — the pattern is the contract.
+ */
+export function cleanCommands({ keys = [], hashFields = {} }) {
   const cmds = [];
-  for (const t of teams) cmds.push(["DEL", `ctf:team:${t.slug}`, `ctf:team:${t.slug}:members`]);
-  for (const login of logins) {
-    cmds.push(["DEL", `ctf:user:${login}`, `ctf:quiz:answers:${login}`, `ctf:quiz:attempts:${login}`, `ctf:classic:solves:${login}`, `ctf:classic:attempts:${login}`]);
-    cmds.push(["HDEL", "ctf:quiz:points", login], ["HDEL", "ctf:quiz:answered", login], ["HDEL", "ctf:classic:points", login], ["HDEL", "ctf:classic:solved", login]);
+  const ours = [...new Set(keys.filter(isSeededKey))];
+  for (let i = 0; i < ours.length; i += 100) cmds.push(["DEL", ...ours.slice(i, i + 100)]);
+  let fields = 0;
+  for (const [key, names] of Object.entries(hashFields)) {
+    const mine = [...new Set((names || []).filter((f) => isSeededField(key, f)))];
+    for (let i = 0; i < mine.length; i += 100) cmds.push(["HDEL", key, ...mine.slice(i, i + 100)]);
+    fields += mine.length;
   }
-  // SD solves are fields of ctf:solves:<target>; delete every field of ours,
-  // whether or not this run wrote it (a stale --count would otherwise leak).
-  for (const [target, ids] of Object.entries(catalogue.sd)) {
-    for (const login of logins) {
-      for (let i = 0; i < ids.length; i += 100) cmds.push(["HDEL", `ctf:solves:${target}`, ...ids.slice(i, i + 100).map((id) => `${login}:${id}`)]);
-    }
+  return { cmds, keys: ours.length, fields };
+}
+
+/** Only https, or http to a private/local endpoint (the compose `srh` service, loopback, Fly's `.internal`); the token rides in the Authorization header. */
+export function assertRedisUrl(raw) {
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error("UPSTASH_REDIS_REST_URL is not a URL");
   }
-  return { cmds, logins, teams };
+  if (u.protocol === "https:") return u;
+  if (u.protocol !== "http:") throw new Error(`UPSTASH_REDIS_REST_URL must be https:// or a private http:// endpoint, got ${u.protocol}`);
+  const h = u.hostname.toLowerCase();
+  const privateHost = h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1" || h.endsWith(".internal") || !h.includes(".");
+  if (!privateHost) throw new Error("UPSTASH_REDIS_REST_URL is plain http:// to a public host — the token would travel in cleartext; use https://");
+  return u;
+}
+
+/** A log-safe label for a failure: name + capped message for an Error, a fixed string otherwise; any bearer token or URL in the message is redacted. */
+export function errorLabel(err) {
+  if (!(err instanceof Error)) return "failed (non-Error throw)";
+  const msg = String(err.message || "")
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[url redacted]")
+    .slice(0, 200);
+  return `${err.name || "Error"}: ${msg}`;
 }
 
 // ---------------------------------------------------------------------------
 // I/O
 // ---------------------------------------------------------------------------
 
+/** One srh pipeline call; throws on HTTP failure and on the first per-command error (the app's client does not — this one must). */
 async function pipeline(commands) {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) throw new Error("UPSTASH_REDIS_REST_URL/TOKEN are not set — run this inside the app container");
-  const res = await fetch(`${url.replace(/\/$/, "")}/pipeline`, {
+  const base = assertRedisUrl(url);
+  const res = await fetch(`${base.href.replace(/\/$/, "")}/pipeline`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(commands),
@@ -208,47 +312,64 @@ async function pipeline(commands) {
   if (!res.ok) throw new Error(`pipeline HTTP ${res.status}`);
   const replies = await res.json();
   const bad = replies.find((r) => r && r.error);
-  if (bad) throw new Error(`pipeline command error: ${bad.error}`);
+  if (bad) throw new Error(`pipeline command error: ${String(bad.error).slice(0, 120)}`);
   return replies;
 }
 
+/** HGETALL's flat [k, v, k, v] reply as an object. */
 const flat = (arr) => {
   const o = {};
   for (let i = 0; i + 1 < (arr || []).length; i += 2) o[arr[i]] = arr[i + 1];
   return o;
 };
 
+/** Every key matching a glob, via SCAN (never KEYS) so a big box is not blocked. */
+async function scanKeys(pattern) {
+  let cursor = "0";
+  const keys = [];
+  do {
+    const [r] = await pipeline([["SCAN", cursor, "MATCH", pattern, "COUNT", "1000"]]);
+    cursor = String(r.result[0]);
+    keys.push(...(r.result[1] || []));
+  } while (cursor !== "0");
+  return keys;
+}
+
+/** The store rows the seed attaches to, resolved fail-closed by resolveCatalogue. */
 async function readCatalogue() {
   const [settingsRes, quizRes, classicRes] = await pipeline([
     ["HGETALL", "ctf:admin:settings"],
     ["HGETALL", "ctf:quiz:questions"],
     ["HGETALL", "ctf:classic:challenges"],
   ]);
-  const settings = flat(settingsRes.result);
-  let enabled = null;
-  try { enabled = settings.enabledModuleIds ? JSON.parse(settings.enabledModuleIds) : null; } catch { enabled = null; }
-  const live = (id) => enabled === null || enabled.includes(id);
-
-  const quiz = live("quiz")
-    ? Object.values(flat(quizRes.result)).map((v) => { try { return JSON.parse(v); } catch { return null; } }).filter(Boolean)
-        .map((q) => ({ id: q.id, points: Number(q.points) || 0, choices: Array.isArray(q.correct) ? q.correct : [] }))
-    : [];
-  const classic = live("classic")
-    ? Object.values(flat(classicRes.result)).map((v) => { try { return JSON.parse(v); } catch { return null; } }).filter(Boolean)
-        .map((c) => ({ id: c.id, points: Number(c.points) || 0 }))
-    : [];
-
-  const sd = {};
-  const base = process.env.LEADERBOARD_API_URL;
-  if (live("secure-development") && base) {
-    const res = await fetch(`${base.replace(/\/$/, "")}/challenges`);
+  const enabled = liveModules(flat(settingsRes.result));
+  const scorerUrl = process.env.LEADERBOARD_API_URL || "";
+  let sdChallenges = null;
+  if ((enabled === null || enabled.includes("secure-development")) && scorerUrl) {
+    const res = await fetch(`${scorerUrl.replace(/\/$/, "")}/challenges`);
     if (!res.ok) throw new Error(`scorer /challenges HTTP ${res.status}`);
     const data = await res.json();
-    for (const c of data.challenges || []) (sd[c.app] ||= []).push(c.id);
+    sdChallenges = data.challenges || [];
   }
-  return { quiz, classic, sd };
+  return resolveCatalogue({ enabled, quizRows: flat(quizRes.result), classicRows: flat(classicRes.result), sdChallenges, scorerUrl });
 }
 
+/** What the store holds that the clean may own: candidate keys and the shared hashes' field names. */
+async function enumerateSeeded() {
+  const keys = [...(await scanKeys("ctf:team:load-team-*"))];
+  for (const p of PER_LOGIN_PREFIXES) keys.push(...(await scanKeys(`${p}load-*`)));
+  const solveKeys = await scanKeys("ctf:solves:*");
+  const hashKeys = [...AGGREGATE_KEYS, ...solveKeys];
+  const hashFields = {};
+  for (let i = 0; i < hashKeys.length; i += 50) {
+    const slice = hashKeys.slice(i, i + 50);
+    const replies = await pipeline(slice.map((k) => ["HKEYS", k]));
+    slice.forEach((k, j) => { hashFields[k] = replies[j].result || []; });
+  }
+  return { keys, hashFields };
+}
+
+/** CLI entry: --count N [--dry-run] seeds; --clean [--dry-run] removes every seeded row the store holds. */
 async function main() {
   const { values } = parseArgs({
     options: { count: { type: "string", default: "200" }, clean: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false } },
@@ -256,11 +377,16 @@ async function main() {
   const count = Number(values.count);
   if (!Number.isInteger(count) || count < 1 || count > 5000) throw new Error("--count must be an integer in 1..5000");
 
-  const catalogue = await readCatalogue();
-  const plan = values.clean ? cleanCommands({ count, catalogue }) : buildCommands({ count, catalogue });
-  const summary = values.clean
-    ? { mode: "clean", contestants: count, teams: plan.teams.length, commands: plan.cmds.length }
-    : { mode: "seed", ...plan.stats, commands: plan.cmds.length, catalogue: { quiz: catalogue.quiz.length, classic: catalogue.classic.length, sdTargets: Object.keys(catalogue.sd).length, sdChallenges: Object.values(catalogue.sd).reduce((s, a) => s + a.length, 0) } };
+  let plan;
+  let summary;
+  if (values.clean) {
+    plan = cleanCommands(await enumerateSeeded());
+    summary = { mode: "clean", keys: plan.keys, fields: plan.fields, commands: plan.cmds.length };
+  } else {
+    const catalogue = await readCatalogue();
+    plan = buildCommands({ count, catalogue });
+    summary = { mode: "seed", ...plan.stats, commands: plan.cmds.length, catalogue: { quiz: catalogue.quiz.length, classic: catalogue.classic.length, sdTargets: Object.keys(catalogue.sd).length, sdChallenges: Object.values(catalogue.sd).reduce((s, a) => s + a.length, 0) } };
+  }
   if (values["dry-run"]) { console.log(JSON.stringify({ ...summary, dryRun: true })); return; }
 
   for (let i = 0; i < plan.cmds.length; i += BATCH) await pipeline(plan.cmds.slice(i, i + BATCH));
@@ -268,5 +394,5 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  main().catch((err) => { console.error(String(err && err.message || err)); process.exit(1); });
+  main().catch((err) => { console.error(errorLabel(err)); process.exit(1); });
 }

@@ -34,10 +34,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 - **Added: a load-test harness (#439).** `scripts/load-seed.mjs` writes N
   synthetic contestants on teams — the demo seed's exact key families,
-  attached to the box's own catalogue, reversible with `--clean` — from
-  inside the Fly machine; `scripts/load-test.sh` ships it there, drives the
-  hot pages with autocannon at fixed rates, samples machine memory and writes
-  one report. Its first run on the live box at 200 contestants measured
+  attached to the box's own catalogue — from inside the Fly machine, failing
+  closed when it cannot tell which modules are live; `--clean` scans the
+  store for the harness's own `load-NNNN` rows and removes exactly those, with
+  no catalogue and no `--count`. `scripts/load-test.sh` ships it there, drives
+  the two public hot pages with autocannon at fixed rates, samples machine
+  memory (and fails the run if it could not) and writes one report on
+  autocannon's p97.5. Its first run on the live box at 200 contestants measured
   `/leaderboard` at 13 MB and 0.3 req/s against 10 demanded, which is what
   promoted #434 to pre-event work.
 

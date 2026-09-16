@@ -1728,21 +1728,36 @@ writes through) to create N `load-XXXX` contestants on teams of 2–4 with a
 realistic spread of Secure Development, quiz and flag solves attached to the
 catalogue the box already has; then drives `/leaderboard` at 10 req/s and
 `?display=1` at 2 req/s with autocannon while sampling machine memory, and
-writes one Markdown report. `--clean` with the same `--count` deletes exactly
-what it wrote.
+writes one Markdown report. `--clean` needs no `--count`: the seeder scans
+the store for every key and hash field in its own `load-NNNN` /
+`load-team-NN` shape and deletes exactly those — so a challenge removed or a
+module switched off after seeding cannot strand a row, and a real login that
+merely starts with `load-` is never touched.
 
 ```sh
 scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev --count 200
-scripts/load-test.sh --app owasp-ctf --count 200 --clean
+scripts/load-test.sh --app owasp-ctf --clean
 ```
 
-Pass bar for a ~100-player event: `/leaderboard` p95 under 1.5 s at 10 req/s,
-`?display=1` under 1 s, zero 5xx, machine memory under 80 %. A miss on memory
-means `fly scale vm`; a miss on `/leaderboard` alone means the payload is the
-problem (see #434). `/api/admin/metrics` needs an admin session the script
-cannot carry — time it from a logged-in tab. Not seeded on purpose:
-`ctf:classic:solvecount` (the seed raises it and a clean could not un-raise it
-exactly) and hint purchases.
+Pass bar for a ~100-player event, on the percentile autocannon reports
+(p97.5 — it has no p95, so the bar is the stricter one): `/leaderboard` p97.5
+under 1.5 s at 10 req/s, `?display=1` under 1 s, zero 5xx, machine memory
+under 80 %. A miss on memory means `fly scale vm`; a miss on `/leaderboard`
+alone means the page's own cost is the problem (see #434, #444, #446).
+`/api/admin/metrics` needs an admin session the script deliberately does not
+carry (a cookie in a command line is readable by every local user) — time it
+from a logged-in tab.
+
+Fail directions: the **seed fails closed** — a settings hash whose module
+list it cannot parse, or Secure Development live with no `LEADERBOARD_API_URL`
+in the container, aborts before a single write, because a seed that guessed
+would attach points to a board that does not show them. The **run fails** if
+the seed did not report success or the memory sampler produced no sample at
+all (the report is still written, and says so). The seeder's own error line
+is a redacted label — never the token or a URL. Not seeded on purpose:
+`ctf:classic:solvecount` — a shared per-challenge counter that real solves
+raise; the harness omits it because an exact clean could not lower it back
+safely — and hint purchases.
 
 Before an event, three checks in this order: `FLY_AUTO_STOP=off` is set and
 deployed (an idle-suspended machine takes Redis and the poller down with it);

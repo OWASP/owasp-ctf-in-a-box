@@ -179,6 +179,22 @@ The body never says *why* — no host, no error text; that is deliberate for a
 public URL. The reason is in the server log: `fly logs --app <app>` or
 `docker compose logs app`, lines tagged `[health/deep]`.
 
+**What a dead container actually does on Fly (measured, not assumed).** The
+rendered compose file carries no `restart:` — `render-compose.sh` drops it —
+so every container inherits the *machine's* policy, which `deploy.sh` leaves
+at Fly's default `on-failure`, ten retries. Killing PID 1 in the `app`
+container on the live box (2026-09-16, `fly ssh console --machine <id>
+--container app -C "kill 1"`) produced: exit 143 → Fly rescheduled the
+container in 200 ms → `next start` ready in 251 ms → **one failed request and
+a 5–7 second blackout** from outside, the machine never restarted, Redis,
+scorer and poller untouched, the Fly check on `/health` stayed passing. So a
+crashing `app` heals itself and needs no runbook. Two things do: a container
+that crash-loops **ten times** stays down (the retry ceiling), and a machine
+whose HTTP check fails is **not replaced** — Fly's check is a signal, not a
+supervisor. Both are what the external monitor on `/health/deep` is for; when
+it fires and `fly logs` shows `restart count is 10/10`, `fly machine restart
+<id> --app <app>` is the fix.
+
 ## A re-scored PR never updates ("it scored once and never again")
 
 **Diagnosis.** The scoring workflow posts **one comment per target and

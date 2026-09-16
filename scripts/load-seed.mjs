@@ -34,10 +34,21 @@
 //     ABORTS if any already exists and is not in the previous manifest (a
 //     real contestant, or someone else's rows, would otherwise be overwritten
 //     or merged into);
+//   - the manifest is written INCREMENTALLY: every batch of writes ends with
+//     a SET of the manifest covering the previous run plus every batch that
+//     has completed, so a seed that dies half-way leaves a manifest naming
+//     exactly the rows it managed to write (and `--clean` removes them). The
+//     planned-but-unwritten rows are never listed — a clean cannot reach a
+//     key some other owner creates later. The one residual window is a batch
+//     whose writes landed but whose own SET failed; the abort message says
+//     which batch, and a re-run's collision probe will refuse until it is
+//     cleaned by hand;
 //   - the CLEAN deletes exactly the manifest's entries and the manifest, and
 //     reads no catalogue, no --count and no pattern — a challenge removed or a
 //     module disabled after seeding cannot strand a field, and no real row
-//     can be touched. No manifest means nothing to clean.
+//     can be touched. No manifest means nothing to clean. A manifest from a
+//     larger earlier --count stays merged in, so a smaller re-run still owns
+//     — and later cleans — the rows the earlier run wrote.
 //
 // FAIL DIRECTIONS. The seed fails CLOSED: a settings hash it cannot parse, or
 // Secure Development live with no scorer address, aborts before a single
@@ -281,6 +292,33 @@ export function collisions(manifest, existing, previous = null) {
   return out;
 }
 
+/** The union of two manifests: a re-run keeps owning every row an earlier run wrote. */
+export function mergeManifests(a, b) {
+  const keys = new Set([...(a ? a.keys : []), ...(b ? b.keys : [])]);
+  const fields = {};
+  for (const m of [a, b]) {
+    if (!m) continue;
+    for (const [k, fs] of Object.entries(m.fields || {})) (fields[k] ||= new Set()) && fs.forEach((f) => fields[k].add(f));
+  }
+  return { keys: [...keys].sort(), fields: Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, [...v].sort()])) };
+}
+
+/**
+ * The seed's writes cut into pipelines, each ending with a SET of the
+ * manifest as it stands once THAT batch has landed: the previous manifest
+ * merged with every command up to and including this batch. The last batch's
+ * manifest carries `complete: true`. Only committed writes are ever recorded.
+ */
+export function planBatches(cmds, previous, batchSize = BATCH) {
+  const batches = [];
+  for (let i = 0; i < cmds.length; i += batchSize) {
+    const upto = Math.min(cmds.length, i + batchSize);
+    const soFar = mergeManifests(previous, manifestFor(cmds.slice(0, upto)));
+    batches.push([...cmds.slice(i, upto), ["SET", MANIFEST_KEY, JSON.stringify({ ...soFar, complete: upto === cmds.length })]]);
+  }
+  return batches;
+}
+
 /** The exact inverse of a manifest: DEL its keys, HDEL its fields, then DEL the manifest itself. */
 export function cleanCommands(manifest) {
   const cmds = [];
@@ -355,8 +393,8 @@ async function readManifest() {
   const [r] = await pipeline([["GET", MANIFEST_KEY]]);
   if (!r.result) return null;
   const m = JSON.parse(r.result);
-  if (!Array.isArray(m.keys) || typeof m.fields !== "object") throw new Error("ctf:load-seed:manifest is not in the shape this seeder writes — refusing to guess; clean it by hand");
-  return m;
+  if (!Array.isArray(m.keys) || !m.fields || typeof m.fields !== "object") throw new Error("ctf:load-seed:manifest is not in the shape this seeder writes — refusing to guess; clean it by hand");
+  return { keys: m.keys, fields: m.fields, complete: m.complete !== false };
 }
 
 /** Which of the manifest's keys and fields already exist in the store (EXISTS / HEXISTS, batched). */
@@ -405,25 +443,33 @@ async function main() {
   if (!Number.isInteger(count) || count < 2 || count > 5000) throw new Error("--count must be an integer in 2..5000 (teams are 2–4)");
 
   const previous = await readManifest();
-  let cmds;
-  let summary;
   if (values.clean) {
     if (!previous) { console.log(JSON.stringify({ mode: "clean", keys: 0, fields: 0, commands: 0, note: "no manifest — nothing seeded by this harness is on the box" })); return; }
     const plan = cleanCommands(previous);
-    cmds = plan.cmds;
-    summary = { mode: "clean", keys: plan.keys, fields: plan.fields, commands: cmds.length };
-  } else {
-    const catalogue = await readCatalogue();
-    const plan = buildCommands({ count, catalogue });
-    const manifest = manifestFor(plan.cmds);
-    const clash = collisions(manifest, await probeExisting(manifest), previous);
-    if (clash.length) throw new Error(`refusing to seed: ${clash.length} key(s)/field(s) already exist and are not this harness's (first: ${clash[0]}) — a contestant may own that login`);
-    cmds = [...plan.cmds, ["SET", MANIFEST_KEY, JSON.stringify(manifest)]];
-    summary = { mode: "seed", ...plan.stats, commands: cmds.length, manifest: { keys: manifest.keys.length, fields: Object.values(manifest.fields).reduce((n, a) => n + a.length, 0) }, catalogue: { quiz: catalogue.quiz.length, classic: catalogue.classic.length, sdTargets: Object.keys(catalogue.sd).length, sdChallenges: Object.values(catalogue.sd).reduce((n, a) => n + a.length, 0) } };
+    const summary = { mode: "clean", keys: plan.keys, fields: plan.fields, commands: plan.cmds.length, previousComplete: previous.complete };
+    if (values["dry-run"]) { console.log(JSON.stringify({ ...summary, dryRun: true })); return; }
+    for (let i = 0; i < plan.cmds.length; i += BATCH) await pipeline(plan.cmds.slice(i, i + BATCH));
+    console.log(JSON.stringify(summary));
+    return;
   }
+
+  if (previous && !previous.complete) throw new Error("the previous seed did not finish (its manifest is marked incomplete) — run --clean first, then seed again");
+  const catalogue = await readCatalogue();
+  const plan = buildCommands({ count, catalogue });
+  const manifest = manifestFor(plan.cmds);
+  const clash = collisions(manifest, await probeExisting(manifest), previous);
+  if (clash.length) throw new Error(`refusing to seed: ${clash.length} key(s)/field(s) already exist and are not this harness's (first: ${clash[0]}) — a contestant may own that login`);
+  const batches = planBatches(plan.cmds, previous);
+  const summary = { mode: "seed", ...plan.stats, commands: plan.cmds.length, batches: batches.length, manifest: { keys: manifest.keys.length, fields: Object.values(manifest.fields).reduce((n, a) => n + a.length, 0) }, catalogue: { quiz: catalogue.quiz.length, classic: catalogue.classic.length, sdTargets: Object.keys(catalogue.sd).length, sdChallenges: Object.values(catalogue.sd).reduce((n, a) => n + a.length, 0) } };
   if (values["dry-run"]) { console.log(JSON.stringify({ ...summary, dryRun: true })); return; }
 
-  for (let i = 0; i < cmds.length; i += BATCH) await pipeline(cmds.slice(i, i + BATCH));
+  for (let i = 0; i < batches.length; i++) {
+    try {
+      await pipeline(batches[i]);
+    } catch (err) {
+      throw new Error(`seed aborted in batch ${i + 1} of ${batches.length} (${errorLabel(err)}); the manifest records the batches that completed — run --clean, then seed again`);
+    }
+  }
   console.log(JSON.stringify(summary));
 }
 

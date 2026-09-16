@@ -1734,9 +1734,13 @@ writes one Markdown report. Ownership is a **manifest, not a name**:
 records every key and every shared-hash field it writes in
 `ctf:load-seed:manifest`, and refuses to run if any of them already exists
 and is not in its previous manifest (a real contestant may own that login).
-`--clean` needs no `--count`: it deletes exactly the manifest's entries and
-the manifest — so a challenge removed or a module switched off after seeding
-cannot strand a row, and no row the harness did not write can be touched.
+The manifest is written incrementally — each batch of writes ends by
+recording what has landed so far — so a seed that dies half-way leaves a
+manifest naming exactly the rows it wrote, marked incomplete, and the next
+seed refuses to run until `--clean` has removed them. `--clean` needs no
+`--count`: it deletes exactly the manifest's entries and the manifest — so a
+challenge removed or a module switched off after seeding cannot strand a
+row, and no row the harness did not write can be touched.
 
 ```sh
 scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev --count 200
@@ -1758,8 +1762,10 @@ in the container, or a key or field it is about to write that already exists
 outside its own manifest, aborts before a single write, because a seed that
 guessed would attach points to a board that does not show them or write over
 a contestant. The **run fails** if
-the seed did not report success or the memory sampler produced no sample at
-all (the report is still written, and says so). The seeder's own error line
+the seed did not report success, if a phase failed to run at all (autocannon
+missing, a DNS failure — ordinary 5xx responses are counted in the table, not
+this), or if the memory sampler produced no sample; in every case after the
+seed the report is still written, and says so. The seeder's own error line
 is a redacted label — never the token or a URL. Not seeded on purpose:
 `ctf:classic:solvecount` — a shared per-challenge counter that real solves
 raise; the harness omits it because an exact clean could not lower it back

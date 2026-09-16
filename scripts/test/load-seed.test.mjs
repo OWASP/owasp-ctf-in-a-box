@@ -18,8 +18,10 @@ import {
   liveModules,
   loginFor,
   manifestFor,
+  mergeManifests,
   partitionTeams,
   pickSubset,
+  planBatches,
   resolveCatalogue,
   rng,
 } from "../load-seed.mjs";
@@ -170,6 +172,43 @@ test("a seed refuses to write over an existing key or field it does not own, and
   after.fields["ctf:solves:dvwa"].add(`${loginFor(2)}:ch-1`); // maybe ours, maybe not: only a collision if the manifest lacks it
   const extra = collisions(m, after, m);
   assert.ok(extra.every((x) => !m.keys.includes(x)), "claimed keys never collide");
+});
+
+// The third Major: a seed that dies half-way must leave a manifest naming
+// exactly what it wrote so far — never the plan.
+test("every batch ends by recording the manifest of what has landed so far, and only the last is complete", () => {
+  const seed = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
+  const previous = { keys: ["ctf:user:load-0099"], fields: { "ctf:quiz:points": ["load-0099"] } };
+  const B = 50;
+  const batches = planBatches(seed.cmds, previous, B);
+  assert.equal(batches.length, Math.ceil(seed.cmds.length / B));
+  let written = 0;
+  batches.forEach((batch, i) => {
+    const set = batch[batch.length - 1];
+    assert.equal(set[0], "SET");
+    assert.equal(set[1], MANIFEST_KEY);
+    assert.ok(batch.length <= B + 1);
+    written += batch.length - 1;
+    const recorded = JSON.parse(set[2]);
+    const expected = mergeManifests(previous, manifestFor(seed.cmds.slice(0, written)));
+    assert.deepEqual({ keys: recorded.keys, fields: recorded.fields }, expected, `batch ${i} records exactly what has landed`);
+    assert.equal(recorded.complete, i === batches.length - 1);
+    // Nothing from a later batch is recorded yet.
+    const later = manifestFor(seed.cmds.slice(written));
+    for (const k of later.keys) if (!expected.keys.includes(k)) assert.ok(!recorded.keys.includes(k), `planned-not-written key recorded: ${k}`);
+  });
+  assert.equal(written, seed.cmds.length);
+  // The previous run's rows stay owned.
+  const final = JSON.parse(batches[batches.length - 1][batches[batches.length - 1].length - 1][2]);
+  assert.ok(final.keys.includes("ctf:user:load-0099"));
+  assert.ok(final.fields["ctf:quiz:points"].includes("load-0099"));
+});
+
+test("mergeManifests is a union with no duplicates", () => {
+  const a = { keys: ["k1", "k2"], fields: { h: ["f1"] } };
+  const b = { keys: ["k2", "k3"], fields: { h: ["f1", "f2"], g: ["x"] } };
+  assert.deepEqual(mergeManifests(a, b), { keys: ["k1", "k2", "k3"], fields: { g: ["x"], h: ["f1", "f2"] } });
+  assert.deepEqual(mergeManifests(null, b), { keys: ["k2", "k3"], fields: { g: ["x"], h: ["f1", "f2"] } });
 });
 
 // Fail closed: the seed refuses to guess which modules are live.

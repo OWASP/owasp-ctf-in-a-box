@@ -18,9 +18,12 @@
 # carry (a cookie in an argument vector is readable by every local user) —
 # time it from a logged-in tab. This script REPORTS; the human decides.
 #
-# Fail direction: the run itself must not lie. A seed that did not report
-# success, or a memory sampler that produced no sample, exits non-zero after
-# writing what it has — a report with no memory line cannot pass the bar.
+# Fail direction: the run itself must not lie, and it writes ONE report no
+# matter what. A seed that did not report success stops before anything is
+# driven; a phase that fails to launch, or a memory sampler that produced no
+# sample, is written into the report and the script exits non-zero AFTER the
+# report — a report with a missing phase or no memory line cannot pass the
+# bar, but it still says what happened.
 set -euo pipefail
 
 APP=""; URL=""; COUNT=200; REPORT=""; CLEAN=""; DURATION=60
@@ -93,19 +96,31 @@ sample_mem() {
 sample_mem & MEM_PID=$!
 
 # One autocannon phase at a fixed rate; its JSON lands in $TMP/<name>.json.
+# A phase that fails to LAUNCH (autocannon missing, DNS, a nonzero exit) is
+# recorded in $TMP/phase.err and never aborts the script: the report still
+# gets written, and the run fails at the end. Ordinary 5xx responses are not
+# this path — autocannon records them in the JSON and summarize prints them.
+PHASE_FAILURES=0
 run_phase() { # name path rate duration
-  local name="$1" path="$2" rate="$3" dur="$4"
+  local name="$1" path="$2" rate="$3" dur="$4" status=0
   echo "== phase $name: $path @ ${rate} rps for ${dur}s"
-  npx --yes autocannon -d "$dur" -R "$rate" -c 10 --json "$URL$path" > "$TMP/$name.json" 2>/dev/null
+  npx --yes autocannon -d "$dur" -R "$rate" -c 10 --json "$URL$path" > "$TMP/$name.json" 2> "$TMP/$name.stderr" || status=$?
+  if [ "$status" -ne 0 ] || [ ! -s "$TMP/$name.json" ]; then
+    PHASE_FAILURES=$((PHASE_FAILURES + 1))
+    echo "$name: autocannon exit $status — $(tail -1 "$TMP/$name.stderr" 2>/dev/null | cut -c1-160)" >> "$TMP/phase.err"
+    echo "   phase $name FAILED to run (exit $status); continuing so the report is written" >&2
+  fi
 }
 # One Markdown table row from a phase's JSON. autocannon's latency summary
 # carries p50 / p97.5 / p99 (no p95), which is why the bar is stated on p97.5.
+# A phase with no usable JSON prints a "did not run" row instead of dying.
 summarize() { # name label
+  if [ ! -s "$TMP/$1.json" ]; then echo "| $2 | did not run | — | — | — | — | — |"; return 0; fi
   # shellcheck disable=SC2016  # the ${} below is JS template syntax, not shell
   node -e '
-    const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-    const p = r.latency, non2xx = r.non2xx || 0, e5 = (r.statusCodeStats && Object.entries(r.statusCodeStats).filter(([c]) => c >= "500").reduce((s, [, v]) => s + (v.count || v), 0)) || 0;
-    console.log(`| ${process.argv[2]} | ${r.requests.average.toFixed(1)} | ${p.p50} ms | ${p.p97_5} ms | ${p.p99} ms | ${non2xx} | ${e5} |`);
+    let r; try { r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); } catch { console.log(`| ${process.argv[2]} | unreadable result | — | — | — | — | — |`); process.exit(0); }
+    const p = r.latency || {}, non2xx = r.non2xx || 0, e5 = (r.statusCodeStats && Object.entries(r.statusCodeStats).filter(([c]) => c >= "500").reduce((s, [, v]) => s + (v.count || v), 0)) || 0;
+    console.log(`| ${process.argv[2]} | ${(r.requests && r.requests.average || 0).toFixed(1)} | ${p.p50} ms | ${p.p97_5} ms | ${p.p99} ms | ${non2xx} | ${e5} |`);
   ' "$TMP/$1.json" "$2"
 }
 
@@ -131,6 +146,13 @@ if [ -s "$TMP/mem.err" ]; then MEM_FAILURES="$(wc -l < "$TMP/mem.err" | tr -d ' 
   echo
   echo "Pass bar (p97.5 — autocannon's nearest percentile above the issue's p95): /leaderboard < 1500 ms; display < 1000 ms; zero 5xx; memory < 80 %. /api/admin/metrics is timed by hand from a logged-in tab."
   echo
+  if [ -s "$TMP/phase.err" ]; then
+    echo "## Phases that did not run (the run FAILS on this)"
+    echo '```'
+    cat "$TMP/phase.err"
+    echo '```'
+    echo
+  fi
   echo "## Machine memory (every 15 s; $MEM_SAMPLES samples, $MEM_FAILURES failed)"
   echo '```'
   if [ -s "$TMP/mem.log" ]; then cat "$TMP/mem.log"; else echo "(no samples — the run FAILS on this)"; fi
@@ -140,7 +162,13 @@ if [ -s "$TMP/mem.err" ]; then MEM_FAILURES="$(wc -l < "$TMP/mem.err" | tr -d ' 
 } > "$REPORT"
 echo "== report: $REPORT"
 cat "$REPORT"
+RC=0
+if [ "$PHASE_FAILURES" -ne 0 ]; then
+  echo "FAIL: $PHASE_FAILURES phase(s) did not run — see the report's 'Phases that did not run'" >&2
+  RC=1
+fi
 if [ "$MEM_SAMPLES" = 0 ]; then
   echo "FAIL: the memory sampler took no sample ($MEM_FAILURES attempts failed) — the memory criterion cannot be judged" >&2
-  exit 1
+  RC=1
 fi
+exit "$RC"

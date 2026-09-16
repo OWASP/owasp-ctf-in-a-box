@@ -8,6 +8,19 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Fixed: the leaderboard fold runs once per 10 s, not once per viewer
+  (#444).** Composing the board — the scorer read, every module's points,
+  team standings, the chart series and hint penalties — cost roughly 500
+  Redis commands per page view at 200 contestants, and the result was the
+  same for everyone (the "you" highlight is applied on the client). The load
+  test (#439) measured 2.7 req/s served against 10 demanded after the payload
+  fix (#434). `/leaderboard`, `?display=1` and the landing page's live strip
+  now read one memoized fold, refreshed every 10 s; concurrent viewers share
+  the fold in flight, and a fold that throws is never cached. An app-side
+  solve (quiz, flag, AI) reaches the board within 10 s; a Secure Development
+  score within about 40 s, since the scorer read underneath was already
+  cached for 30 s; a contestant's own pages still read live.
+
 - **Fixed: the leaderboard no longer ships a copy of the Secure Development
   catalogue in every row (#434).** Each contestant and team row carried the
   full per-challenge list — name, points, OWASP code — when only which ids

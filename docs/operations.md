@@ -1691,6 +1691,26 @@ flag-submission form classic uses, right below the launcher.
 
 ## Verifying it works
 
+### The box, from outside: `/health` and `/health/deep`
+
+Two URLs answer the two questions an organizer asks before doors open, from
+any browser or phone, no login:
+
+- `https://<EVENT_URL>/health` — is the app up, and is it the build you just
+  deployed? Compare `revision` to the commit you expect.
+- `https://<EVENT_URL>/health/deep` — can it score? `200` with every
+  dependency `"ok"` is the answer you want; `503` names which of `redis` or
+  `scorer` is `"down"`. `sync.ageSec` is how long since the poller last
+  polled — if that number keeps growing while Secure Development is live,
+  score comments are piling up on GitHub and the leaderboard is not moving.
+
+Before an event, three checks in this order: `FLY_AUTO_STOP=off` is set and
+deployed (an idle-suspended machine takes Redis and the poller down with it);
+`/health/deep` is 200; the external monitor described in
+[docs/hosting.md](hosting.md#monitoring) is enabled and posting to the
+organizers' channel. See [docs/troubleshooting.md](troubleshooting.md) for
+what a 503 means and what to do.
+
 ### The org and the bootstrap keys: `ctf-setup.sh doctor`
 
 Read-only, no `--dry-run` needed, and the first thing to run when something

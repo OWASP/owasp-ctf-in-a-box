@@ -90,6 +90,19 @@ ENV
   uncommented "$FLY/fly.toml" | grep -qE '^ *file *= *"compose\.fly\.yml"'
 }
 
+@test "fly.toml's machine check watches /health, and only /health" {
+  # Liveness only (issue #437): /health depends on nothing but the Node
+  # process. /health/deep answers 503 when Redis or the scorer is down, which
+  # is exactly what a machine restart cannot fix — pointing Fly's check at it
+  # would cycle the one machine over a dependency blip. The monitor watches
+  # deep; Fly watches liveness.
+  # One AND-list, so every clause gates the result (a non-final failed
+  # command is errexit-exempt in bats — see AGENTS.md).
+  uncommented "$FLY/fly.toml" | grep -qF '[[http_service.checks]]' &&
+    uncommented "$FLY/fly.toml" | grep -qE '^ *path *= *"/health"$' &&
+    [ -z "$(uncommented "$FLY/fly.toml" | grep -F '/health/deep')" ]
+}
+
 @test "deploy.sh renders to the path fly.toml will actually look in" {
   # The pair above and below only agree if deploy.sh writes the file where
   # flyctl reads it. Asserting each half separately is what let them disagree.

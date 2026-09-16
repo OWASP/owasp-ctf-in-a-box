@@ -1734,6 +1734,11 @@ writes one Markdown report. Ownership is a **manifest, not a name**:
 records every key and every shared-hash field it writes in
 `ctf:load-seed:manifest`, and refuses to run if any of them already exists
 and is not in its previous manifest (a real contestant may own that login).
+The check and the write are one Redis-side script per batch, so a
+contestant registering such a login *between* the two cannot be written
+over — there is no between. Still, run the harness before registration
+opens (or with it closed): a contestant who registers `load-0042` *after*
+the seed would be sharing rows the next `--clean` removes.
 The manifest is written incrementally — each batch of writes ends by
 recording what has landed so far — so a seed that dies half-way leaves a
 manifest naming exactly the rows it wrote, marked incomplete, and the next
@@ -1762,7 +1767,9 @@ in the container, or a key or field it is about to write that already exists
 outside its own manifest, aborts before a single write, because a seed that
 guessed would attach points to a board that does not show them or write over
 a contestant. A quiz or classic row the seeder cannot read, or a scorer answer without a
-`challenges` list, is the same refusal — never a partial seed. The **run
+`challenges` list, is the same refusal — never a partial seed. The report's directory is
+created and its path checked writable *before* the seed, so a run that could
+not write its report never leaves rows behind. The **run
 fails** if the seed did not report success, if a phase failed to run or left
 no parseable result (autocannon missing, a DNS failure — ordinary 5xx
 responses are counted in the table, not this), or if the memory sampler

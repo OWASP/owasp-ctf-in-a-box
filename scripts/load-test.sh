@@ -48,6 +48,17 @@ if [ -z "$CLEAN" ]; then
 fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+
+# The report destination is prepared BEFORE anything is seeded: a run that
+# cannot write its one report must not leave synthetic rows behind for the
+# operator to discover. Default under docs/superpowers/ (gitignored).
+if [ -z "$CLEAN" ]; then
+  if [ -z "$REPORT" ]; then REPORT="$HERE/../docs/superpowers/load-$(date -u +%Y-%m-%d-%H%M).md"; fi
+  REPORT_DIR="$(dirname "$REPORT")"
+  if ! mkdir -p "$REPORT_DIR"; then echo "FAIL: cannot create the report directory $REPORT_DIR" >&2; exit 1; fi
+  if ! : >> "$REPORT"; then echo "FAIL: cannot write the report at $REPORT" >&2; exit 1; fi
+fi
+
 MACHINE="$(fly machines list --app "$APP" --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);process.stdout.write(m[0].id)})')"
 if [ -z "$MACHINE" ]; then echo "FAIL: no machine found for $APP" >&2; exit 1; fi
 echo "== app=$APP machine=$MACHINE"
@@ -70,10 +81,6 @@ SEED_OUT="$(fly ssh console --app "$APP" --machine "$MACHINE" --container app -C
 echo "   $SEED_OUT"
 if ! grep -q '"mode":"seed"' <<< "$SEED_OUT"; then echo "FAIL: seed did not report success" >&2; exit 1; fi
 
-if [ -z "$REPORT" ]; then
-  mkdir -p "$HERE/../docs/superpowers"
-  REPORT="$HERE/../docs/superpowers/load-$(date -u +%Y-%m-%d-%H%M).md"
-fi
 TMP="$(mktemp -d)"
 MEM_PID=""
 trap 'rm -rf "$TMP"; if [ -n "$MEM_PID" ]; then kill "$MEM_PID" 2>/dev/null || true; fi' EXIT

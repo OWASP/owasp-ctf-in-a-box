@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   MANIFEST_KEY,
+  SEED_SCRIPT,
   SHARED_HASHES,
   assertRedisUrl,
   attemptRow,
@@ -178,7 +179,7 @@ test("a seed refuses to write over an existing key or field it does not own, and
 
 // The third Major: a seed that dies half-way must leave a manifest naming
 // exactly what it wrote so far — never the plan.
-test("every batch ends by recording the manifest of what has landed so far, and only the last is complete", () => {
+test("every batch carries the manifest of what has landed once it runs, and only the last is complete", () => {
   const seed = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
   const previous = { keys: ["ctf:user:load-0099"], fields: { "ctf:quiz:points": ["load-0099"] } };
   const B = 50;
@@ -186,24 +187,58 @@ test("every batch ends by recording the manifest of what has landed so far, and 
   assert.equal(batches.length, Math.ceil(seed.cmds.length / B));
   let written = 0;
   batches.forEach((batch, i) => {
-    const set = batch[batch.length - 1];
-    assert.equal(set[0], "SET");
-    assert.equal(set[1], MANIFEST_KEY);
-    assert.ok(batch.length <= B + 1);
-    written += batch.length - 1;
-    const recorded = JSON.parse(set[2]);
+    assert.ok(batch.ops.length <= B);
+    written += batch.ops.length;
     const expected = mergeManifests(previous, manifestFor(seed.cmds.slice(0, written)));
-    assert.deepEqual({ keys: recorded.keys, fields: recorded.fields }, expected, `batch ${i} records exactly what has landed`);
-    assert.equal(recorded.complete, i === batches.length - 1);
+    assert.deepEqual({ keys: batch.manifest.keys, fields: batch.manifest.fields }, expected, `batch ${i} records exactly what has landed`);
+    assert.equal(batch.manifest.complete, i === batches.length - 1);
     // Nothing from a later batch is recorded yet.
     const later = manifestFor(seed.cmds.slice(written));
-    for (const k of later.keys) if (!expected.keys.includes(k)) assert.ok(!recorded.keys.includes(k), `planned-not-written key recorded: ${k}`);
+    for (const k of later.keys) if (!expected.keys.includes(k)) assert.ok(!batch.manifest.keys.includes(k), `planned-not-written key recorded: ${k}`);
   });
   assert.equal(written, seed.cmds.length);
   // The previous run's rows stay owned.
-  const final = JSON.parse(batches[batches.length - 1][batches[batches.length - 1].length - 1][2]);
+  const final = batches[batches.length - 1].manifest;
   assert.ok(final.keys.includes("ctf:user:load-0099"));
   assert.ok(final.fields["ctf:quiz:points"].includes("load-0099"));
+});
+
+// The Lua script checks before it writes; `claimed` is what lets a key the
+// seed itself wrote in an earlier batch (or an earlier run) pass the check.
+test("ops are shaped for the seed script, and claimed exactly when an earlier batch or run already owns the row", () => {
+  const seed = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
+  const previous = { keys: ["ctf:user:load-0001"], fields: { "ctf:quiz:points": ["load-0001"] } };
+  const batches = planBatches(seed.cmds, previous, 7); // small batches so logins straddle boundaries
+  const seenKeys = new Set(previous.keys);
+  const seenFields = new Set(["ctf:quiz:points#load-0001"]);
+  for (const batch of batches) {
+    const thisBatchKeys = new Set();
+    const thisBatchFields = new Set();
+    for (const op of batch.ops) {
+      assert.ok(["HSET", "SADD"].includes(op.cmd));
+      assert.ok(op.args.every((a) => typeof a === "string"), "args are strings for the script");
+      if (op.field !== undefined) {
+        assert.ok(isSharedHash(op.key));
+        assert.equal(op.claimed, seenFields.has(`${op.key}#${op.field}`), `${op.key}#${op.field}`);
+        thisBatchFields.add(`${op.key}#${op.field}`);
+      } else {
+        assert.ok(!isSharedHash(op.key));
+        assert.equal(op.claimed, seenKeys.has(op.key), op.key);
+        thisBatchKeys.add(op.key);
+      }
+    }
+    for (const k of thisBatchKeys) seenKeys.add(k);
+    for (const f of thisBatchFields) seenFields.add(f);
+  }
+  // At least one whole key is written in two different batches (a login's rows straddle), and its second op is claimed.
+  const firstBatchOf = new Map();
+  let straddled = false;
+  batches.forEach((b, i) => b.ops.forEach((op) => { if (op.field === undefined) { if (firstBatchOf.has(op.key) && firstBatchOf.get(op.key) !== i) { straddled = true; assert.ok(op.claimed); } else firstBatchOf.set(op.key, i); } }));
+  assert.ok(straddled, "fixture should straddle a batch boundary");
+  // The script itself: checks precede writes, returns collision without writing, records the manifest last.
+  assert.ok(SEED_SCRIPT.indexOf("HEXISTS") < SEED_SCRIPT.indexOf("redis.call(op.cmd"));
+  assert.ok(SEED_SCRIPT.indexOf("return 'collision:") < SEED_SCRIPT.indexOf("redis.call(op.cmd"));
+  assert.ok(SEED_SCRIPT.indexOf("redis.call(op.cmd") < SEED_SCRIPT.indexOf("redis.call('SET', ARGV[2]"));
 });
 
 test("mergeManifests is a union with no duplicates", () => {

@@ -30,10 +30,15 @@
 // infer "ours" from the shape of a key. Instead every seed writes an exact
 // manifest — every key and every shared-hash field it wrote — to
 // ctf:load-seed:manifest, and:
-//   - the SEED first checks every key and field it is about to write and
-//     ABORTS if any already exists and is not in the previous manifest (a
-//     real contestant, or someone else's rows, would otherwise be overwritten
-//     or merged into);
+//   - the SEED writes each batch through ONE Lua script (EVAL, atomic on the
+//     Redis side, the same road the app's grading scripts take through srh):
+//     the script checks every key and field the batch is about to write and
+//     returns a collision — writing nothing — if any already exists and is not
+//     claimed by the manifest so far; only then does it write, and it SETs the
+//     manifest in the same script. So a contestant registering a legal
+//     `load-0042` between a check and a write cannot be overwritten: there is
+//     no "between". A JS-side probe still runs first, purely to report every
+//     collision at once before the first batch; the script is the authority;
 //   - the manifest is written INCREMENTALLY: every batch of writes ends with
 //     a SET of the manifest covering the previous run plus every batch that
 //     has completed, so a seed that dies half-way leaves a manifest naming
@@ -315,17 +320,55 @@ export function mergeManifests(a, b) {
 }
 
 /**
- * The seed's writes cut into pipelines, each ending with a SET of the
- * manifest as it stands once THAT batch has landed: the previous manifest
- * merged with every command up to and including this batch. The last batch's
- * manifest carries `complete: true`. Only committed writes are ever recorded.
+ * The Lua the seed runs per batch. ARGV[1] is the batch's ops as JSON
+ * (`{cmd, key, field?, args, claimed}`), ARGV[2] the manifest key, ARGV[3]
+ * the manifest JSON to record once the batch has landed. Every check runs
+ * before any write, so the batch either lands whole with its manifest or
+ * returns the first collision having written nothing. Atomic because Redis
+ * runs a script without interleaving other clients' commands.
+ */
+export const SEED_SCRIPT = `
+local ops = cjson.decode(ARGV[1])
+for _, op in ipairs(ops) do
+  if not op.claimed then
+    if op.field then
+      if redis.call('HEXISTS', op.key, op.field) == 1 then return 'collision:' .. op.key .. '#' .. op.field end
+    else
+      if redis.call('EXISTS', op.key) == 1 then return 'collision:' .. op.key end
+    end
+  end
+end
+for _, op in ipairs(ops) do
+  redis.call(op.cmd, op.key, unpack(op.args))
+end
+redis.call('SET', ARGV[2], ARGV[3])
+return 'ok:' .. #ops
+`;
+
+/**
+ * The seed's writes cut into batches for SEED_SCRIPT. Each batch carries its
+ * ops — every op marked `claimed` when the manifest SO FAR (the previous run
+ * merged with every batch before this one) already owns that key or field,
+ * so a login's rows split across two batches are not a self-collision — and
+ * the manifest to record once it has landed: previous plus every command up
+ * to and including this batch, `complete: true` only on the last. Only
+ * committed writes are ever recorded.
  */
 export function planBatches(cmds, previous, batchSize = BATCH) {
   const batches = [];
   for (let i = 0; i < cmds.length; i += batchSize) {
     const upto = Math.min(cmds.length, i + batchSize);
+    const before = mergeManifests(previous, manifestFor(cmds.slice(0, i)));
+    const beforeKeys = new Set(before.keys);
+    const ops = cmds.slice(i, upto).map((c) => {
+      const key = c[1];
+      const shared = isSharedHash(key);
+      const field = shared ? String(c[2]) : undefined;
+      const claimed = shared ? (before.fields[key] || []).includes(field) : beforeKeys.has(key);
+      return { cmd: c[0], key, ...(shared ? { field } : {}), args: c.slice(2).map(String), claimed };
+    });
     const soFar = mergeManifests(previous, manifestFor(cmds.slice(0, upto)));
-    batches.push([...cmds.slice(i, upto), ["SET", MANIFEST_KEY, JSON.stringify({ ...soFar, complete: upto === cmds.length })]]);
+    batches.push({ ops, manifest: { ...soFar, complete: upto === cmds.length } });
   }
   return batches;
 }
@@ -485,11 +528,17 @@ async function main() {
   if (values["dry-run"]) { console.log(JSON.stringify({ ...summary, dryRun: true })); return; }
 
   for (let i = 0; i < batches.length; i++) {
+    let reply;
     try {
-      await pipeline(batches[i]);
+      [reply] = await pipeline([["EVAL", SEED_SCRIPT, "0", JSON.stringify(batches[i].ops), MANIFEST_KEY, JSON.stringify(batches[i].manifest)]]);
     } catch (err) {
       throw new Error(`seed aborted in batch ${i + 1} of ${batches.length} (${errorLabel(err)}); the manifest records the batches that completed — run --clean, then seed again`);
     }
+    const out = String(reply && reply.result);
+    if (out.startsWith("collision:")) {
+      throw new Error(`refusing to seed: ${out.slice("collision:".length)} was written by someone else between the probe and batch ${i + 1} of ${batches.length} — nothing from that batch was written; the manifest records the batches before it — run --clean, then seed again`);
+    }
+    if (!out.startsWith("ok:")) throw new Error(`seed script answered unexpectedly in batch ${i + 1}: ${out.slice(0, 60)}`);
   }
   console.log(JSON.stringify(summary));
 }

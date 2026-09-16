@@ -162,23 +162,34 @@ export function liveModules(settings) {
 
 /**
  * The catalogue a seed attaches to, from the raw store rows. Pure so the
- * error paths are testable: a live Secure Development module with no scorer
- * address, or no scorer catalogue, aborts the seed (fail closed).
+ * error paths are testable, and FAIL CLOSED throughout: a quiz or classic row
+ * that is not the JSON the app writes, a live Secure Development module with
+ * no scorer address, or a scorer answer without a `challenges` list, each
+ * abort the seed before any write. A partial catalogue would seed a board
+ * whose titles do not resolve and measure the wrong page.
  */
 export function resolveCatalogue({ enabled, quizRows, classicRows, sdChallenges, scorerUrl }) {
   const live = (id) => enabled === null || enabled.includes(id);
-  const parseRows = (rows) => Object.values(rows || {}).map((v) => { try { return JSON.parse(v); } catch { return null; } }).filter(Boolean);
+  const parseRows = (rows, what) => Object.entries(rows || {}).map(([id, v]) => {
+    let row;
+    try { row = JSON.parse(v); } catch { throw new Error(`${what} row ${id} is not valid JSON — refusing to seed against a catalogue this seeder cannot read`); }
+    if (!row || typeof row !== "object" || typeof row.id !== "string") throw new Error(`${what} row ${id} has no id — refusing to seed against a catalogue this seeder cannot read`);
+    return row;
+  });
   const quiz = live("quiz")
-    ? parseRows(quizRows).map((q) => ({ id: q.id, points: Number(q.points) || 0, choices: Array.isArray(q.correct) ? q.correct : [] }))
+    ? parseRows(quizRows, "ctf:quiz:questions").map((q) => ({ id: q.id, points: Number(q.points) || 0, choices: Array.isArray(q.correct) ? q.correct : [] }))
     : [];
   const classic = live("classic")
-    ? parseRows(classicRows).map((c) => ({ id: c.id, points: Number(c.points) || 0 }))
+    ? parseRows(classicRows, "ctf:classic:challenges").map((c) => ({ id: c.id, points: Number(c.points) || 0 }))
     : [];
   const sd = {};
   if (live("secure-development")) {
     if (!scorerUrl) throw new Error("Secure Development is live but LEADERBOARD_API_URL is not set — refusing to seed a board with no scorer catalogue");
-    if (!Array.isArray(sdChallenges)) throw new Error("Secure Development is live but the scorer's /challenges did not answer — refusing to seed");
-    for (const c of sdChallenges) (sd[c.app] ||= []).push(c.id);
+    if (!Array.isArray(sdChallenges)) throw new Error("Secure Development is live but the scorer's /challenges did not answer with a challenges list — refusing to seed");
+    for (const c of sdChallenges) {
+      if (!c || typeof c.app !== "string" || typeof c.id !== "string") throw new Error("the scorer's /challenges carries an entry without app/id — refusing to seed");
+      (sd[c.app] ||= []).push(c.id);
+    }
   }
   return { quiz, classic, sd };
 }
@@ -319,7 +330,12 @@ export function planBatches(cmds, previous, batchSize = BATCH) {
   return batches;
 }
 
-/** The exact inverse of a manifest: DEL its keys, HDEL its fields, then DEL the manifest itself. */
+/**
+ * The exact inverse of a manifest: DEL its keys, HDEL its fields. The
+ * manifest itself is NOT in this list — the caller deletes it in a separate
+ * call only after every one of these succeeded, so a failed deletion can
+ * never leave seeded rows behind with no manifest to find them by.
+ */
 export function cleanCommands(manifest) {
   const cmds = [];
   const keys = manifest.keys || [];
@@ -329,7 +345,6 @@ export function cleanCommands(manifest) {
     for (let i = 0; i < names.length; i += 100) cmds.push(["HDEL", key, ...names.slice(i, i + 100)]);
     fields += names.length;
   }
-  cmds.push(["DEL", MANIFEST_KEY]);
   return { cmds, keys: keys.length, fields };
 }
 
@@ -429,7 +444,9 @@ async function readCatalogue() {
     const res = await fetch(`${scorerUrl.replace(/\/$/, "")}/challenges`);
     if (!res.ok) throw new Error(`scorer /challenges HTTP ${res.status}`);
     const data = await res.json();
-    sdChallenges = data.challenges || [];
+    // Handed through as-is: resolveCatalogue is the one place that decides a
+    // missing or malformed list is a refusal, and it is the tested seam.
+    sdChallenges = data && data.challenges;
   }
   return resolveCatalogue({ enabled, quizRows: flat(quizRes.result), classicRows: flat(classicRes.result), sdChallenges, scorerUrl });
 }
@@ -448,7 +465,11 @@ async function main() {
     const plan = cleanCommands(previous);
     const summary = { mode: "clean", keys: plan.keys, fields: plan.fields, commands: plan.cmds.length, previousComplete: previous.complete };
     if (values["dry-run"]) { console.log(JSON.stringify({ ...summary, dryRun: true })); return; }
+    // Data first, in batches; the manifest goes only once every deletion has
+    // succeeded, in its own call — a failed batch throws before it and the
+    // manifest stays to find the remaining rows by on the next --clean.
     for (let i = 0; i < plan.cmds.length; i += BATCH) await pipeline(plan.cmds.slice(i, i + BATCH));
+    await pipeline([["DEL", MANIFEST_KEY]]);
     console.log(JSON.stringify(summary));
     return;
   }

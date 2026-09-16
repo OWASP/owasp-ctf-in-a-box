@@ -130,7 +130,9 @@ test("clean is the exact inverse of the manifest and touches nothing outside it 
     if (c[0] === "HDEL") for (const f of c.slice(2)) deleted.add(`${c[1]}#${f}`);
   }
   for (const c of seed.cmds) assert.ok(deleted.has(isSharedHash(c[1]) ? `${c[1]}#${c[2]}` : c[1]), `not cleaned: ${c[1]}`);
-  assert.ok(deleted.has(MANIFEST_KEY), "the manifest itself goes last");
+  // The manifest is deliberately NOT among the data deletions: main() deletes
+  // it in a separate call only after every batch here succeeded.
+  assert.ok(!deleted.has(MANIFEST_KEY), "the manifest must not ride in the data batches");
   // Rows the manifest never listed are invisible to the clean, whatever they are called.
   for (const k of ["ctf:user:octocat", "ctf:user:load-0999", "ctf:team:load-team-99", "ctf:quiz:points#load-0999", "ctf:solves:dvwa#load-0999:ch-1"]) assert.ok(!deleted.has(k), `clean touched an unlisted row: ${k}`);
   assert.equal(clean.keys, m.keys.length);
@@ -222,7 +224,7 @@ test("liveModules parses the stored list and throws on anything it cannot read",
 });
 
 test("resolveCatalogue attaches only live modules and aborts when Secure Development has no scorer", () => {
-  const quizRows = { q1: JSON.stringify({ id: "q1", points: 10, correct: ["a"] }), bad: "{" };
+  const quizRows = { q1: JSON.stringify({ id: "q1", points: 10, correct: ["a"] }) };
   const classicRows = { c1: JSON.stringify({ id: "c1", points: 100 }) };
   const sdChallenges = [{ app: "dvwa", id: "ch-1" }, { app: "dvwa", id: "ch-2" }];
   const all = resolveCatalogue({ enabled: null, quizRows, classicRows, sdChallenges, scorerUrl: "http://scorer:8080" });
@@ -232,6 +234,21 @@ test("resolveCatalogue attaches only live modules and aborts when Secure Develop
   assert.deepEqual(quizOnly.sd, {});
   assert.throws(() => resolveCatalogue({ enabled: ["secure-development"], quizRows, classicRows, sdChallenges, scorerUrl: "" }), /LEADERBOARD_API_URL is not set/);
   assert.throws(() => resolveCatalogue({ enabled: null, quizRows, classicRows, sdChallenges: null, scorerUrl: "http://scorer:8080" }), /did not answer/);
+});
+
+// Fail closed on the catalogue itself: a row this seeder cannot read, or a
+// scorer answer without a list, is a refusal — never a partial seed.
+test("resolveCatalogue refuses a malformed quiz/classic row or a scorer answer without a challenges list", () => {
+  const good = { q1: JSON.stringify({ id: "q1", points: 10, correct: ["a"] }) };
+  const classicRows = { c1: JSON.stringify({ id: "c1", points: 100 }) };
+  assert.throws(() => resolveCatalogue({ enabled: ["quiz"], quizRows: { ...good, bad: "{" }, classicRows, sdChallenges: null, scorerUrl: "" }), /ctf:quiz:questions row bad is not valid JSON/);
+  assert.throws(() => resolveCatalogue({ enabled: ["quiz"], quizRows: { ...good, noid: JSON.stringify({ points: 5 }) }, classicRows, sdChallenges: null, scorerUrl: "" }), /row noid has no id/);
+  assert.throws(() => resolveCatalogue({ enabled: ["classic"], quizRows: good, classicRows: { c9: "nope" }, sdChallenges: null, scorerUrl: "" }), /ctf:classic:challenges row c9 is not valid JSON/);
+  // A scorer body of {} used to become [] and pass; now undefined reaches the check and is refused.
+  assert.throws(() => resolveCatalogue({ enabled: null, quizRows: good, classicRows, sdChallenges: undefined, scorerUrl: "http://scorer:8080" }), /did not answer/);
+  assert.throws(() => resolveCatalogue({ enabled: null, quizRows: good, classicRows, sdChallenges: [{ app: "dvwa" }], scorerUrl: "http://scorer:8080" }), /without app\/id/);
+  // A quiz-only box never reads the malformed classic rows at all.
+  assert.deepEqual(resolveCatalogue({ enabled: ["quiz"], quizRows: good, classicRows: { c9: "nope" }, sdChallenges: null, scorerUrl: "" }).classic, []);
 });
 
 test("the Redis URL must be https, or http only to a private endpoint", () => {

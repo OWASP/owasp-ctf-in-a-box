@@ -96,29 +96,38 @@ sample_mem() {
 sample_mem & MEM_PID=$!
 
 # One autocannon phase at a fixed rate; its JSON lands in $TMP/<name>.json.
-# A phase that fails to LAUNCH (autocannon missing, DNS, a nonzero exit) is
-# recorded in $TMP/phase.err and never aborts the script: the report still
-# gets written, and the run fails at the end. Ordinary 5xx responses are not
-# this path — autocannon records them in the JSON and summarize prints them.
+# A phase that fails to LAUNCH (autocannon missing, DNS, a nonzero exit) or
+# leaves no PARSEABLE result is recorded in $TMP/phase.err and never aborts
+# the script: the report still gets written, and the run fails at the end.
+# Only the phase name and exit status are recorded — autocannon's own stderr
+# can echo the target URL and is kept out of the report (it stays in $TMP for
+# the operator's terminal and is removed with it). Ordinary 5xx responses are
+# not this path — autocannon records them in the JSON and summarize prints
+# them.
 PHASE_FAILURES=0
 run_phase() { # name path rate duration
-  local name="$1" path="$2" rate="$3" dur="$4" status=0
+  local name="$1" path="$2" rate="$3" dur="$4" status=0 reason=""
   echo "== phase $name: $path @ ${rate} rps for ${dur}s"
   npx --yes autocannon -d "$dur" -R "$rate" -c 10 --json "$URL$path" > "$TMP/$name.json" 2> "$TMP/$name.stderr" || status=$?
-  if [ "$status" -ne 0 ] || [ ! -s "$TMP/$name.json" ]; then
+  if [ "$status" -ne 0 ]; then reason="autocannon exit $status"
+  elif [ ! -s "$TMP/$name.json" ]; then reason="no result written"
+  elif ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP/$name.json" >/dev/null 2>&1; then reason="result is not JSON"
+  fi
+  if [ -n "$reason" ]; then
     PHASE_FAILURES=$((PHASE_FAILURES + 1))
-    echo "$name: autocannon exit $status — $(tail -1 "$TMP/$name.stderr" 2>/dev/null | cut -c1-160)" >> "$TMP/phase.err"
-    echo "   phase $name FAILED to run (exit $status); continuing so the report is written" >&2
+    echo "$name: $reason" >> "$TMP/phase.err"
+    echo "   phase $name FAILED to run ($reason); continuing so the report is written" >&2
   fi
 }
 # One Markdown table row from a phase's JSON. autocannon's latency summary
 # carries p50 / p97.5 / p99 (no p95), which is why the bar is stated on p97.5.
-# A phase with no usable JSON prints a "did not run" row instead of dying.
+# A phase run_phase already marked failed prints a "did not run" row; the
+# failure itself was counted there, so this never decides pass/fail.
 summarize() { # name label
-  if [ ! -s "$TMP/$1.json" ]; then echo "| $2 | did not run | — | — | — | — | — |"; return 0; fi
+  if grep -q "^$1: " "$TMP/phase.err" 2>/dev/null; then echo "| $2 | did not run | — | — | — | — | — |"; return 0; fi
   # shellcheck disable=SC2016  # the ${} below is JS template syntax, not shell
   node -e '
-    let r; try { r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); } catch { console.log(`| ${process.argv[2]} | unreadable result | — | — | — | — | — |`); process.exit(0); }
+    const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
     const p = r.latency || {}, non2xx = r.non2xx || 0, e5 = (r.statusCodeStats && Object.entries(r.statusCodeStats).filter(([c]) => c >= "500").reduce((s, [, v]) => s + (v.count || v), 0)) || 0;
     console.log(`| ${process.argv[2]} | ${(r.requests && r.requests.average || 0).toFixed(1)} | ${p.p50} ms | ${p.p97_5} ms | ${p.p99} ms | ${non2xx} | ${e5} |`);
   ' "$TMP/$1.json" "$2"

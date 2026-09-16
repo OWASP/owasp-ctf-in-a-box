@@ -1761,11 +1761,16 @@ list it cannot parse, or Secure Development live with no `LEADERBOARD_API_URL`
 in the container, or a key or field it is about to write that already exists
 outside its own manifest, aborts before a single write, because a seed that
 guessed would attach points to a board that does not show them or write over
-a contestant. The **run fails** if
-the seed did not report success, if a phase failed to run at all (autocannon
-missing, a DNS failure — ordinary 5xx responses are counted in the table, not
-this), or if the memory sampler produced no sample; in every case after the
-seed the report is still written, and says so. The seeder's own error line
+a contestant. A quiz or classic row the seeder cannot read, or a scorer answer without a
+`challenges` list, is the same refusal — never a partial seed. The **run
+fails** if the seed did not report success, if a phase failed to run or left
+no parseable result (autocannon missing, a DNS failure — ordinary 5xx
+responses are counted in the table, not this), or if the memory sampler
+produced no sample; in every case after the seed the report is still written
+and says so, naming only the phase and its exit status (autocannon's own
+error text can echo the target URL, so it stays out of the report). `--clean`
+deletes the data first and the manifest only once every deletion succeeded,
+so an interrupted clean can always be re-run. The seeder's own error line
 is a redacted label — never the token or a URL. Not seeded on purpose:
 `ctf:classic:solvecount` — a shared per-challenge counter that real solves
 raise; the harness omits it because an exact clean could not lower it back

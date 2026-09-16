@@ -408,7 +408,7 @@ export default async function ProfilePage() {
               <div key={m.id} data-testid="module-block" className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] p-4">
                 <ProgressRow label={m.title} level="module" {...summary}>
                   {isSecureDev ? (
-                    <AppBreakdown entry={moduleEntry} showPoints enabledApps={enabledApps} />
+                    <AppBreakdown entry={moduleEntry} showPoints enabledApps={enabledApps} catalog={profile?.catalog} />
                   ) : list ? (
                     <ChallengeList items={list.items} unit={summary.unit} doneWord={list.doneWord} />
                   ) : undefined}

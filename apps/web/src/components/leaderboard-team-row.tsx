@@ -15,7 +15,7 @@ import BoardItemLists from "@/components/board-item-lists";
 import ProgressRow, { moduleUnit } from "@/components/progress/progress-row";
 import { Avatar, RankChip } from "@/components/leaderboard-chrome";
 import { fillStyle } from "@/components/progress/progress-bar";
-import type { LeaderboardEntry, ModuleProgress, TeamStanding } from "@/lib/leaderboard/types";
+import type { LeaderboardEntry, ModuleProgress, TeamStanding, LeaderboardData } from "@/lib/leaderboard/types";
 
 
 /** One team module's numbers in the shared row's vocabulary. The team board
@@ -73,7 +73,27 @@ const TEAM_ENTRY_STUB: Omit<LeaderboardEntry, "login" | "apps"> = {
   updatedAt: null,
 };
 
-export function TeamRow({ team, topPoints, pointsByLogin, isOpen, onToggle, modules = [], enabledApps }: { team: TeamStanding; topPoints: number; pointsByLogin?: Map<string, number>; isOpen: boolean; onToggle: () => void; modules?: readonly ResolvedModule[]; enabledApps: readonly AppMeta[] }) {
+export function TeamRow({
+  team,
+  topPoints,
+  pointsByLogin,
+  isOpen,
+  onToggle,
+  modules = [],
+  enabledApps,
+  catalog,
+}: {
+  team: TeamStanding;
+  topPoints: number;
+  pointsByLogin?: Map<string, number>;
+  isOpen: boolean;
+  onToggle: () => void;
+  modules?: readonly ResolvedModule[];
+  enabledApps: readonly AppMeta[];
+  /** `LeaderboardData.catalog` — joined against `team.apps[].solvedIds` when
+   *  the row is open (issue #434); see EntryRow. */
+  catalog?: LeaderboardData["catalog"];
+}) {
   const moduleRows = modules.filter((m) => team.modules?.[m.id]);
   return (
     <li className="ds-card group rounded-lg border border-white/[0.06] bg-[#16162a] transition-all hover:border-[#2563eb]/40 hover:bg-[#1a1a30]">
@@ -163,7 +183,7 @@ export function TeamRow({ team, topPoints, pointsByLogin, isOpen, onToggle, modu
             // an expansion with nothing in it.
             <div className="mt-4 border-t border-white/[0.06] pt-4">
               <p className="mb-3 text-xs uppercase tracking-wider text-muted">Target breakdown</p>
-              <AppBreakdown entry={{ ...TEAM_ENTRY_STUB, login: team.slug, apps: team.apps }} showPoints enabledApps={enabledApps} />
+              <AppBreakdown entry={{ ...TEAM_ENTRY_STUB, login: team.slug, apps: team.apps }} showPoints enabledApps={enabledApps} catalog={catalog} />
             </div>
           )}
           {moduleRows.length > 0 && (
@@ -173,7 +193,7 @@ export function TeamRow({ team, topPoints, pointsByLogin, isOpen, onToggle, modu
                   return (
                     <ProgressRow key={m.id} label={m.title} level="module" {...teamModuleRow(m.id, progress, team)}>
                       {progress.detail.kind === "secure-development" && team.apps ? (
-                        <AppBreakdown entry={{ ...TEAM_ENTRY_STUB, login: team.slug, apps: team.apps }} showPoints enabledApps={enabledApps} />
+                        <AppBreakdown entry={{ ...TEAM_ENTRY_STUB, login: team.slug, apps: team.apps }} showPoints enabledApps={enabledApps} catalog={catalog} />
                       ) : undefined}
                     </ProgressRow>
                   );

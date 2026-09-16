@@ -21,14 +21,27 @@ export type ChallengeResult = {
   owasp: string | null;
 };
 
+/** One catalogue row: the per-challenge metadata that is IDENTICAL for every
+ *  contestant and team. It travels once per response, on
+ *  `LeaderboardData.catalog`, and rows carry only the ids they solved
+ *  (`AppProgress.solvedIds`); the renderer joins the two (issue #434). The
+ *  previous shape put a `ChallengeResult[]` on every row — its own comment
+ *  said "only populated on profile views, never in lists", and the lambda
+ *  source populated it for every list row anyway: 11 copies of the catalogue
+ *  at 7 contestants, 268 copies and a 13 MB page at 200. */
+export type ChallengeCatalogEntry = { key: string; name: string; points: number; owasp: string | null };
+
+export type ChallengeCatalog = Partial<Record<AppId, ChallengeCatalogEntry[]>>;
+
 export type AppProgress = {
   app: AppId;
   points: number;
   maxPoints: number;
   patched: number;
   total: number;
-  /** Per-challenge detail — only populated on profile views, never in lists. */
-  challenges?: ChallengeResult[];
+  /** Catalogue keys this row has solved. Present iff the source carries a
+   *  catalogue; absent means "no per-challenge view", not "solved nothing". */
+  solvedIds?: string[];
 };
 
 /** secure-development's detail block: today's per-target progress map. */
@@ -141,6 +154,8 @@ export type LeaderboardData = {
   teams: TeamStanding[];
   generatedAt: string;
   capabilities: SourceCapabilities;
+  /** Per-target challenge metadata, once. Rows point into it by `solvedIds`. */
+  catalog?: ChallengeCatalog;
   /** Top-10 players' cumulative score over time, for the leaderboard line
    *  chart. Undefined/empty when the source can't build it (upstash) or the
    *  scorer has no rubric to derive history from — the chart hides itself. */
@@ -174,5 +189,8 @@ export type UserProfile = {
   failed: number;
   total: number;
   apps: AppProgress[];
+  /** Same catalogue the board carries, so /profile renders the same
+   *  per-challenge breakdown from the same `solvedIds`. */
+  catalog?: ChallengeCatalog;
   updatedAt: string | null;
 };

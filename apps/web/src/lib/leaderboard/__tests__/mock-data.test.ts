@@ -4,7 +4,7 @@
 // members instead of summing each member's individual point total.
 
 import { describe, expect, it } from "vitest";
-import { buildMockEntries, buildMockTeams } from "../mock-data";
+import { buildMockEntries, buildMockTeams , buildMockCatalog } from "../mock-data";
 
 describe("buildMockTeams", () => {
   it("counts a flag shared by two teammates once, not per-solver", () => {
@@ -24,16 +24,16 @@ describe("buildMockTeams", () => {
     expect(segFault.points).toBeLessThan(octocat.points + mona.points);
     // Exact expected total: union of patched (app,key) pairs across both
     // members' challenge lists.
+    const catalog = buildMockCatalog();
     const seen = new Set<string>();
     let expected = 0;
     for (const entry of [octocat, mona]) {
       for (const [app, progress] of Object.entries(entry.apps)) {
-        for (const c of progress?.challenges ?? []) {
-          if (c.status !== "patched") continue;
-          const dedupeKey = `${app}:${c.key}`;
+        for (const id of progress?.solvedIds ?? []) {
+          const dedupeKey = `${app}:${id}`;
           if (seen.has(dedupeKey)) continue;
           seen.add(dedupeKey);
-          expected += c.points;
+          expected += catalog[app as keyof typeof catalog]?.find((c) => c.key === id)?.points ?? 0;
         }
       }
     }

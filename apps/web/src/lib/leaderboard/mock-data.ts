@@ -6,7 +6,7 @@
 
 import type { AppId } from "@/lib/apps";
 import { rankByStanding } from "./rank";
-import type { ChallengeResult, LeaderboardEntry, TeamStanding } from "./types";
+import type { ChallengeCatalog, ChallengeResult, LeaderboardEntry, TeamStanding } from "./types";
 
 type Sample = {
   login: string;
@@ -170,18 +170,34 @@ const TEAM_CAPTAINS: Record<string, string> = {
 function teamPoints(members: LeaderboardEntry[]): number {
   const seen = new Set<string>();
   let points = 0;
+  const catalog = buildMockCatalog();
   for (const entry of members) {
     for (const [app, progress] of Object.entries(entry.apps) as [AppId, LeaderboardEntry["apps"][AppId]][]) {
-      for (const c of progress?.challenges ?? []) {
-        if (c.status !== "patched") continue;
-        const dedupeKey = `${app}:${c.key}`;
+      for (const id of progress?.solvedIds ?? []) {
+        const dedupeKey = `${app}:${id}`;
         if (seen.has(dedupeKey)) continue;
         seen.add(dedupeKey);
-        points += c.points;
+        points += catalog[app]?.find((c) => c.key === id)?.points ?? 0;
       }
     }
   }
   return points;
+}
+
+/** The catalogue every mock row's `solvedIds` point into: the union of each
+ *  sample's fixture rows per target, deduped by key. Built from the same
+ *  fixtures so the two can never disagree. */
+export function buildMockCatalog(): ChallengeCatalog {
+  const out: ChallengeCatalog = {};
+  for (const sample of SAMPLES) {
+    for (const [app, challenges] of Object.entries(sample.apps) as [AppId, ChallengeResult[]][]) {
+      const list = (out[app] ??= []);
+      for (const c of challenges) {
+        if (!list.some((k) => k.key === c.key)) list.push({ key: c.key, name: c.name, points: c.points, owasp: c.owasp });
+      }
+    }
+  }
+  return out;
 }
 
 function summarize(sample: Sample) {
@@ -205,7 +221,10 @@ function summarize(sample: Sample) {
       maxPoints: appMax,
       patched: appPatched.length,
       total: challenges.length,
-      challenges,
+      // The fixtures are authored as full ChallengeResult rows for readability;
+      // what ships is the same shape the lambda source produces — ids only,
+      // joined against buildMockCatalog() at render (issue #434).
+      solvedIds: appPatched.map((c) => c.key),
     };
   }
   return { points, patched, failed, total, apps };

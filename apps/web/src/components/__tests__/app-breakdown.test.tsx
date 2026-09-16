@@ -8,7 +8,16 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import AppBreakdown from "@/components/app-breakdown";
 import { apps, appsById } from "@/lib/apps";
-import type { LeaderboardEntry } from "@/lib/leaderboard/types";
+import type { ChallengeCatalog, LeaderboardEntry } from "@/lib/leaderboard/types";
+
+// The catalogue the rows join against (issue #434): names live here once,
+// rows carry only the ids they solved.
+const catalog: ChallengeCatalog = {
+  dvwa: [
+    { key: "sqli-low", name: "SQL Injection (Low)", points: 10, owasp: "A05" },
+    { key: "xss-low", name: "XSS (Low)", points: 20, owasp: "A05" },
+  ],
+};
 
 function entry(overrides: Partial<LeaderboardEntry>): LeaderboardEntry {
   return {
@@ -45,13 +54,11 @@ describe("AppBreakdown", () => {
               maxPoints: 60,
               patched: 1,
               total: 2,
-              challenges: [
-                { key: "sqli-low", name: "SQL Injection (Low)", points: 10, status: "patched", owasp: "A05" },
-                { key: "xss-low", name: "XSS (Low)", points: 20, status: "open", owasp: "A05" },
-              ],
+              solvedIds: ["sqli-low"],
             },
           },
         })}
+        catalog={catalog}
       />,
     );
     // The duplication this replaces rendered the name in the grid AND above
@@ -94,5 +101,47 @@ describe("AppBreakdown", () => {
     );
     expect(html).toContain("No app breakdown reported yet.");
     expect(html).not.toContain("DVWA");
+  });
+});
+
+describe("AppBreakdown — catalogue join (issue #434)", () => {
+  it("names a solved challenge Patched and an unsolved one Open, from ids + catalogue", () => {
+    const html = renderToStaticMarkup(
+      <AppBreakdown
+        showPoints
+        enabledApps={apps}
+        catalog={catalog}
+        entry={entry({ apps: { dvwa: { app: "dvwa", points: 10, maxPoints: 30, patched: 1, total: 2, solvedIds: ["sqli-low"] } } })}
+      />,
+    );
+    expect(html).toContain("SQL Injection (Low)");
+    expect(html).toContain("XSS (Low)");
+    expect(html).toContain("Patched");
+    expect(html).toContain("Open");
+  });
+
+  it("renders the target row without a list when no catalogue was supplied", () => {
+    const html = renderToStaticMarkup(
+      <AppBreakdown
+        enabledApps={apps}
+        entry={entry({ apps: { dvwa: { app: "dvwa", points: 0, maxPoints: 0, patched: 1, total: 2, solvedIds: ["sqli-low"] } } })}
+      />,
+    );
+    expect(html).toContain(appsById.dvwa.name);
+    expect(html).not.toContain("SQL Injection (Low)");
+  });
+
+  // An id the catalogue no longer has (a challenge removed from the rubric
+  // after it was solved) must not render as a nameless row or throw.
+  it("ignores a solved id that is no longer in the catalogue", () => {
+    const html = renderToStaticMarkup(
+      <AppBreakdown
+        enabledApps={apps}
+        catalog={catalog}
+        entry={entry({ apps: { dvwa: { app: "dvwa", points: 10, maxPoints: 30, patched: 1, total: 2, solvedIds: ["sqli-low", "gone"] } } })}
+      />,
+    );
+    expect(html).not.toContain("gone");
+    expect(html).toContain("SQL Injection (Low)");
   });
 });

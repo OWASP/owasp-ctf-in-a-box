@@ -1,6 +1,6 @@
 import type { ModuleId } from "@/lib/modules";
 import type { AppMeta } from "@/lib/apps";
-import type { LeaderboardEntry, ModuleProgress } from "@/lib/leaderboard/types";
+import type { ChallengeCatalog, LeaderboardEntry, ModuleProgress } from "@/lib/leaderboard/types";
 import AppBreakdown from "@/components/app-breakdown";
 
 /** Renders one module's detail block. Deliberately a switch over the known
@@ -16,6 +16,7 @@ export default function ModuleDetail({
   entry,
   showPoints,
   enabledApps,
+  catalog,
 }: {
   moduleId: ModuleId;
   progress: ModuleProgress;
@@ -27,10 +28,14 @@ export default function ModuleDetail({
    *  Only read on the secure-development branch, but required regardless so
    *  a caller cannot forget it and only find out on that branch at runtime. */
   enabledApps: readonly AppMeta[];
+  /** `LeaderboardData.catalog`, forwarded to `AppBreakdown` (issue #434). */
+  catalog?: ChallengeCatalog;
 }) {
   const { detail } = progress;
   if (detail.kind === "secure-development") {
-    return <AppBreakdown entry={{ ...entry, apps: detail.apps }} showPoints={showPoints} enabledApps={enabledApps} />;
+    return (
+      <AppBreakdown entry={{ ...entry, apps: detail.apps }} showPoints={showPoints} enabledApps={enabledApps} catalog={catalog} />
+    );
   }
   // Every variant gets its OWN explicit narrow — no unguarded fallthrough. The
   // quiz branch used to BE the fallthrough, which silently rendered any new

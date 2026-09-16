@@ -1704,6 +1704,32 @@ any browser or phone, no login:
   polled — if that number keeps growing while Secure Development is live,
   score comments are piling up on GitHub and the leaderboard is not moving.
 
+### The box under load: `scripts/load-test.sh`
+
+Before content authoring, not after — the harness seeds synthetic contestants
+and a master reset is already on the plan between the two. It runs
+`scripts/load-seed.mjs` **inside the Fly machine's `app` container** (srh is on
+the private network; the container already holds the URL and token the app
+writes through) to create N `load-XXXX` contestants on teams of 2–4 with a
+realistic spread of Secure Development, quiz and flag solves attached to the
+catalogue the box already has; then drives `/leaderboard` at 10 req/s and
+`?display=1` at 2 req/s with autocannon while sampling machine memory, and
+writes one Markdown report. `--clean` with the same `--count` deletes exactly
+what it wrote.
+
+```sh
+scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev --count 200
+scripts/load-test.sh --app owasp-ctf --count 200 --clean
+```
+
+Pass bar for a ~100-player event: `/leaderboard` p95 under 1.5 s at 10 req/s,
+`?display=1` under 1 s, zero 5xx, machine memory under 80 %. A miss on memory
+means `fly scale vm`; a miss on `/leaderboard` alone means the payload is the
+problem (see #434). `/api/admin/metrics` needs an admin session the script
+cannot carry — time it from a logged-in tab. Not seeded on purpose:
+`ctf:classic:solvecount` (the seed raises it and a clean could not un-raise it
+exactly) and hint purchases.
+
 Before an event, three checks in this order: `FLY_AUTO_STOP=off` is set and
 deployed (an idle-suspended machine takes Redis and the poller down with it);
 `/health/deep` is 200; the external monitor described in

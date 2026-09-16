@@ -1,7 +1,7 @@
 import type { AppMeta } from "@/lib/apps";
 import ProgressRow, { moduleUnit } from "@/components/progress/progress-row";
 import ChallengeList, { type ProgressItem } from "@/components/progress/challenge-list";
-import type { ChallengeResult, LeaderboardEntry } from "@/lib/leaderboard/types";
+import type { ChallengeCatalog, ChallengeCatalogEntry, ChallengeResult, LeaderboardEntry } from "@/lib/leaderboard/types";
 
 /** Scorer semantics in the words a contestant reads. "missing" is the one
  *  that needs saying out loud: the test never ran, which is not the same
@@ -15,6 +15,26 @@ const STATUS: Record<ChallengeResult["status"], { label: string; tone: ProgressI
 /** Field by field from the public catalogue record — the grouping key is the
  *  OWASP code the data already carries, which is what turns a 110-row target
  *  into ten readable groups. */
+/** The join that used to happen on the server for every row (issue #434):
+ *  catalogue (once per response) × this row's solved ids → the per-challenge
+ *  list, at render time, for the one row that is open. An id the catalogue no
+ *  longer holds is simply not a row. No catalogue → no list, and the target
+ *  row still renders its counts. */
+export function resolveChallenges(
+  catalog: readonly ChallengeCatalogEntry[] | undefined,
+  solvedIds: readonly string[] | undefined,
+): ChallengeResult[] {
+  if (!catalog || catalog.length === 0) return [];
+  const solved = new Set(solvedIds ?? []);
+  return catalog.map((c) => ({
+    key: c.key,
+    name: c.name,
+    points: c.points,
+    owasp: c.owasp,
+    status: solved.has(c.key) ? "patched" : "open",
+  }));
+}
+
 export function challengeItems(challenges: ChallengeResult[]): ProgressItem[] {
   return challenges.map((c) => ({
     key: c.key,
@@ -46,10 +66,14 @@ export default function AppBreakdown({
   entry,
   showPoints,
   enabledApps,
+  catalog,
 }: {
   entry: LeaderboardEntry;
   showPoints?: boolean;
   enabledApps: readonly AppMeta[];
+  /** `LeaderboardData.catalog` (or `UserProfile.catalog`). Absent → target
+   *  rows render their counts with no per-challenge list. */
+  catalog?: ChallengeCatalog;
 }) {
   const attempted = enabledApps.filter((app) => entry.apps[app.id]);
   if (attempted.length === 0) {
@@ -60,7 +84,7 @@ export default function AppBreakdown({
     <div className="flex flex-col gap-1">
       {attempted.map((app) => {
         const progress = entry.apps[app.id]!;
-        const items = challengeItems(progress.challenges ?? []);
+        const items = challengeItems(resolveChallenges(catalog?.[app.id], progress.solvedIds));
         return (
           <ProgressRow
             key={app.id}

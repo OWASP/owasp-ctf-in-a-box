@@ -257,19 +257,61 @@ describe("lambdaSource.getLeaderboard catalog (per-challenge)", () => {
     },
   };
 
-  it("joins catalog + solvedIds into per-challenge results and flips the challenges capability", async () => {
+  it("hoists the catalogue once and leaves each row its solvedIds; flips the challenges capability", async () => {
     vi.stubEnv("LEADERBOARD_API_URL", "https://scorer.example");
     stubFetch(WITH_CATALOG);
     const data = await lambdaSource.getLeaderboard();
     expect(data.capabilities.challenges).toBe(true);
+    // The catalogue travels ONCE, on the data, in the public shape the
+    // renderer joins against (issue #434).
+    expect(data.catalog).toEqual({
+      "juice-shop": [
+        { key: "xss", name: "Reflected XSS", points: 10, owasp: "A03" },
+        { key: "sqli", name: "SQL injection", points: 5, owasp: null },
+      ],
+    });
     const app = data.entries[0].apps["juice-shop"]!;
-    expect(app.challenges).toEqual([
-      { key: "xss", name: "Reflected XSS", points: 10, owasp: "A03", status: "patched" },
-      { key: "sqli", name: "SQL injection", points: 5, owasp: null, status: "open" },
-    ]);
-    // Points/max are derived from the catalogue for the solved subset.
+    // A row carries only what varies per row: which ids it solved.
+    expect(app.solvedIds).toEqual(["xss"]);
+    expect(app).not.toHaveProperty("challenges");
+    // Points/max are still derived server-side from the catalogue.
     expect(app.points).toBe(10);
     expect(app.maxPoints).toBe(15);
+    // The team row is the same shape — a union of solved ids, no expansion.
+    expect(data.teams[0].apps!["juice-shop"]!.solvedIds).toEqual(["xss", "sqli"]);
+  });
+
+  // The measurement behind #434/#439: at 200 contestants + 68 teams the page
+  // was 13 MB because every row carried a private copy of the 321-challenge
+  // catalogue. The property that prevents it coming back is that a challenge's
+  // NAME is serialized exactly once no matter how many rows solved it.
+  it("serializes each challenge name once regardless of how many rows exist", async () => {
+    vi.stubEnv("LEADERBOARD_API_URL", "https://scorer.example");
+    const many = {
+      ...WITH_CATALOG,
+      leaderboard: Array.from({ length: 25 }, (_, i) => ({
+        rank: i + 1,
+        author: `p${i}`,
+        points: 15,
+        lastSolveAt: "2026-08-14T11:00:00.000Z",
+        apps: { "juice-shop": { solved: 2, total: 2, solvedIds: ["xss", "sqli"] } },
+      })),
+      teams: Array.from({ length: 8 }, (_, i) => ({
+        rank: i + 1,
+        slug: `t${i}`,
+        name: `Team ${i}`,
+        captain: `p${i}`,
+        members: [`p${i}`, `p${i + 1}`],
+        points: 15,
+        apps: { "juice-shop": { solved: 2, total: 2, solvedIds: ["xss", "sqli"] } },
+      })),
+    };
+    stubFetch(many);
+    const json = JSON.stringify(await lambdaSource.getLeaderboard());
+    expect(json.split("Reflected XSS").length - 1).toBe(1);
+    expect(json.split("SQL injection").length - 1).toBe(1);
+    // …while every row still says what it solved.
+    expect(json.split('"solvedIds":["xss","sqli"]').length - 1).toBe(25 + 8);
   });
 
   it("aggregates a profile's maxPoints as the sum of its targets', not a hardcoded 0", async () => {
@@ -282,6 +324,9 @@ describe("lambdaSource.getLeaderboard catalog (per-challenge)", () => {
     const profile = await lambdaSource.getUser("neo");
     expect(profile).toMatchObject({ login: "neo", points: 15, maxPoints: 15 });
     expect(profile!.apps.reduce((n, a) => n + a.maxPoints, 0)).toBe(profile!.maxPoints);
+    // /profile renders the same breakdown as the board, so it needs the same
+    // catalogue to join solvedIds against.
+    expect(profile!.catalog).toEqual((await lambdaSource.getLeaderboard()).catalog);
   });
 
   it("still reports 0 when no catalogue means no target carries points at all", async () => {
@@ -299,8 +344,8 @@ describe("lambdaSource.getLeaderboard catalog (per-challenge)", () => {
     stubFetch(WITH_CATALOG);
     const data = await lambdaSource.getLeaderboard();
     const teamApp = data.teams[0].apps?.["juice-shop"];
-    expect(teamApp?.challenges?.every((c) => c.status === "patched")).toBe(true);
-    expect(teamApp?.challenges?.map((c) => c.key)).toEqual(["xss", "sqli"]);
+    expect(teamApp?.solvedIds).toEqual(["xss", "sqli"]);
+    expect(teamApp?.points).toBe(15);
   });
 
   it("leaves the challenges capability off and attaches no challenges when there is no catalog", async () => {
@@ -308,7 +353,8 @@ describe("lambdaSource.getLeaderboard catalog (per-challenge)", () => {
     stubFetch(RESPONSE); // no catalog field
     const data = await lambdaSource.getLeaderboard();
     expect(data.capabilities.challenges).toBe(false);
-    expect(data.entries[0].apps["juice-shop"]?.challenges).toBeUndefined();
+    expect(data.entries[0].apps["juice-shop"]?.solvedIds).toBeUndefined();
+    expect(data.catalog).toBeUndefined();
     expect(data.teams[0]?.apps).toBeUndefined();
   });
 
@@ -328,6 +374,9 @@ describe("lambdaSource.getLeaderboard catalog (per-challenge)", () => {
     });
     const data = await lambdaSource.getLeaderboard();
     expect(data.capabilities.challenges).toBe(true);
-    expect(data.entries[0].apps["juice-shop"]?.challenges?.map((c) => c.key)).toEqual(["ok"]);
+    expect(data.catalog?.["juice-shop"]?.map((c) => c.key)).toEqual(["ok"]);
+    // The entry solved "xss", which this catalogue does not know — the id is
+    // dropped rather than carried into a row nothing can name.
+    expect(data.entries[0].apps["juice-shop"]?.solvedIds).toEqual([]);
   });
 });

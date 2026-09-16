@@ -292,6 +292,7 @@ export default function Leaderboard({
                 modules={modules}
                 completable={data.completable}
                 enabledApps={enabledApps}
+                catalog={data.catalog}
               />
             ))}
           </ul>

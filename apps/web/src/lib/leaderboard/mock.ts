@@ -1,7 +1,7 @@
 import "server-only";
 import type { LeaderboardSource } from "./source";
 import type { LeaderboardData, LeaderboardEntry, PlayerSeries, TeamSeries, TeamStanding, UserProfile } from "./types";
-import { buildMockEntries, buildMockTeams, findMockSample } from "./mock-data";
+import { buildMockEntries, buildMockTeams, findMockSample, buildMockCatalog } from "./mock-data";
 
 /** Small deterministic string hash — used only to vary each mock player's
  *  "solving history" (step count, stagger, curve shape) without adding a
@@ -117,6 +117,7 @@ export const mockSource: LeaderboardSource = {
       teams,
       generatedAt,
       capabilities: { apps: true, teams: true, challenges: true },
+      catalog: buildMockCatalog(),
       series: synthesizeSeries(entries, generatedAt),
       teamSeries: synthesizeTeamSeries(teams, entries, generatedAt),
     };
@@ -139,6 +140,7 @@ export const mockSource: LeaderboardSource = {
       failed: entry.failed,
       total: entry.total,
       apps: Object.values(entry.apps).filter(Boolean) as UserProfile["apps"],
+      catalog: buildMockCatalog(),
       updatedAt: entry.updatedAt,
     };
   },

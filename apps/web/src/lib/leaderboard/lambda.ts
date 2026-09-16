@@ -4,7 +4,7 @@ import { rankByStanding } from "./rank";
 import type { LeaderboardSource } from "./source";
 import type {
   AppProgress,
-  ChallengeResult,
+  ChallengeCatalog,
   LeaderboardData,
   LeaderboardEntry,
   PlayerSeries,
@@ -175,15 +175,15 @@ function toCatalog(raw: unknown): LambdaCatalog {
 /** Joins a target's catalogue against an entry/team's solved ids into the
  *  per-challenge `ChallengeResult[]` the UI renders — solved ids become
  *  "patched", everything else "open" (this source has no failing-run data). */
-function toChallenges(catalog: LambdaCatalogEntry[], solvedIds: string[] | undefined): ChallengeResult[] {
-  const solved = new Set(solvedIds ?? []);
-  return catalog.map((c) => ({
-    key: c.id,
-    name: c.name,
-    points: c.points,
-    owasp: c.owasp,
-    status: solved.has(c.id) ? "patched" : "open",
-  }));
+/** The catalogue in its public shape (`key`, not the Lambda's `id`), sent
+ *  once per response. Empty → undefined, so a source with no per-challenge
+ *  view carries no field rather than an empty object. */
+function toPublicCatalog(catalog: LambdaCatalog): ChallengeCatalog | undefined {
+  const out: ChallengeCatalog = {};
+  for (const [app, list] of Object.entries(catalog) as [AppId, LambdaCatalogEntry[]][]) {
+    out[app] = list.map((c) => ({ key: c.id, name: c.name, points: c.points, owasp: c.owasp }));
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** Builds the normalized per-app progress, enriching it with per-challenge
@@ -195,10 +195,16 @@ function toAppProgress(app: AppId, progress: LambdaAppProgress, catalog: LambdaC
   if (!cat) {
     return { app, points: 0, maxPoints: 0, patched: progress.solved, total: progress.total };
   }
-  const challenges = toChallenges(cat, progress.solvedIds);
+  // Only ids the catalogue still knows: a challenge removed from the rubric
+  // after it was solved must not become a nameless row downstream.
+  const known = new Set(cat.map((c) => c.id));
+  const solvedIds = (progress.solvedIds ?? []).filter((id) => known.has(id));
+  const solved = new Set(solvedIds);
   const maxPoints = cat.reduce((sum, c) => sum + c.points, 0);
-  const points = challenges.filter((c) => c.status === "patched").reduce((sum, c) => sum + c.points, 0);
-  return { app, points, maxPoints, patched: progress.solved, total: progress.total, challenges };
+  const points = cat.filter((c) => solved.has(c.id)).reduce((sum, c) => sum + c.points, 0);
+  // The row carries the ids, never the expanded catalogue (issue #434) —
+  // app-breakdown.tsx joins them against LeaderboardData.catalog at render.
+  return { app, points, maxPoints, patched: progress.solved, total: progress.total, solvedIds };
 }
 
 function toEntry(raw: LambdaEntry, catalog: LambdaCatalog): LeaderboardEntry {
@@ -248,6 +254,7 @@ export const lambdaSource: LeaderboardSource = {
       teams,
       generatedAt: new Date().toISOString(),
       capabilities: { apps: true, teams: teams.length > 0, challenges: Object.keys(catalog).length > 0 },
+      catalog: toPublicCatalog(catalog),
       series: toSeries(data.series),
       teamSeries: toTeamSeries(data.teamSeries),
     };
@@ -272,6 +279,7 @@ export const lambdaSource: LeaderboardSource = {
       failed: entry.failed,
       total: entry.total,
       apps: Object.values(entry.apps).filter(Boolean) as UserProfile["apps"],
+      catalog: data.catalog,
       updatedAt: entry.updatedAt,
     };
   },

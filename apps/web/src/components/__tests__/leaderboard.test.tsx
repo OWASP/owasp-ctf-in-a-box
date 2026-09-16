@@ -17,7 +17,7 @@ vi.mock("next/image", () => ({
 import Leaderboard, { EntryRow, TeamRow } from "@/components/leaderboard";
 import type { ResolvedModule } from "@/lib/modules";
 import { apps } from "@/lib/apps";
-import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "@/lib/leaderboard/types";
+import type { LeaderboardData, LeaderboardEntry, TeamStanding, ChallengeCatalog } from "@/lib/leaderboard/types";
 
 const CAPS = { apps: true, teams: true, challenges: true } as const;
 
@@ -229,6 +229,15 @@ describe("Leaderboard", () => {
   });
 });
 
+// Rows carry ids; names come from the catalogue the board passes down (#434).
+const CATALOG: ChallengeCatalog = {
+  "juice-shop": [
+    { key: "xss", name: "Reflected XSS", points: 10, owasp: "A03" },
+    { key: "sqli", name: "SQL injection", points: 5, owasp: null },
+    { key: "csrf", name: "CSRF token", points: 5, owasp: "A01" },
+  ],
+};
+
 describe("per-challenge catalog", () => {
   it("lists an entry's challenges (solved + open) in the expanded breakdown", () => {
     const withChallenges = entry({
@@ -239,15 +248,12 @@ describe("per-challenge catalog", () => {
           maxPoints: 15,
           patched: 1,
           total: 2,
-          challenges: [
-            { key: "xss", name: "Reflected XSS", points: 10, owasp: "A03", status: "patched" },
-            { key: "sqli", name: "SQL injection", points: 5, owasp: null, status: "open" },
-          ],
+          solvedIds: ["xss"],
         },
       },
     });
     const html = renderToStaticMarkup(
-      <EntryRow entry={withChallenges} topPoints={100} isOwn={false} isOpen onToggle={() => {}} capabilities={CAPS} modules={MODULES} enabledApps={apps} />,
+      <EntryRow entry={withChallenges} topPoints={100} isOwn={false} isOpen onToggle={() => {}} capabilities={CAPS} modules={MODULES} enabledApps={apps} catalog={CATALOG} />,
     );
     // The per-target challenge list is still collapsed by default (some
     // targets have 100+ challenges), but the target's own ProgressRow is the
@@ -267,15 +273,11 @@ describe("per-challenge catalog", () => {
           maxPoints: 20,
           patched: 2,
           total: 3,
-          challenges: [
-            { key: "xss", name: "Reflected XSS", points: 10, owasp: "A03", status: "patched" },
-            { key: "sqli", name: "SQL injection", points: 5, owasp: null, status: "patched" },
-            { key: "csrf", name: "CSRF token", points: 5, owasp: "A01", status: "open" },
-          ],
+          solvedIds: ["xss", "sqli"],
         },
       },
     });
-    const html = renderToStaticMarkup(<TeamRow team={withFlags} topPoints={150} isOpen onToggle={() => {}} enabledApps={apps} />);
+    const html = renderToStaticMarkup(<TeamRow team={withFlags} topPoints={150} isOpen onToggle={() => {}} enabledApps={apps} catalog={CATALOG} />);
     expect(html).toContain(">Target breakdown<");
     // Reuses the same ProgressRow tree as the individual view, so each target
     // is a collapsed disclosure under its own name — and the count covers

@@ -40,6 +40,7 @@ export function EntryRow({
   modules,
   completable,
   enabledApps,
+  catalog,
 }: {
   entry: LeaderboardEntry;
   topPoints: number;
@@ -55,6 +56,9 @@ export function EntryRow({
    *  denominator. Undefined when nothing stamped it — the column then shows a
    *  bare count rather than inventing a total. */
   completable?: number;
+  /** `LeaderboardData.catalog`, joined against this row's `solvedIds` only
+   *  when the row is open (issue #434). */
+  catalog?: LeaderboardData["catalog"];
 }) {
   // A single-module event has nothing to disambiguate: the row's own points
   // ARE that module's, so a per-module heading would just restate the header
@@ -188,11 +192,17 @@ export function EntryRow({
                       <span className="ml-2 font-mono text-zinc-300">{entry.modules![m.id]!.points} pts</span>
                     </p>
                   )}
-                  <ModuleDetail moduleId={m.id} progress={entry.modules![m.id]!} entry={entry} enabledApps={enabledApps} />
+                  <ModuleDetail
+                    moduleId={m.id}
+                    progress={entry.modules![m.id]!}
+                    entry={entry}
+                    enabledApps={enabledApps}
+                    catalog={catalog}
+                  />
                 </div>
               ))
           ) : capabilities.apps ? (
-            <AppBreakdown entry={entry} enabledApps={enabledApps} />
+            <AppBreakdown entry={entry} enabledApps={enabledApps} catalog={catalog} />
           ) : (
             <LegacyBreakdown entry={entry} />
           )}

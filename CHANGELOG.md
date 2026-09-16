@@ -8,6 +8,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Fixed: the leaderboard no longer ships a copy of the Secure Development
+  catalogue in every row (#434).** Each contestant and team row carried the
+  full per-challenge list — name, points, OWASP code — when only which ids
+  were solved differed between rows. The load test (#439) measured it: at 200
+  contestants the page was 13 MB and served 0.3 requests a second against 10
+  demanded. The catalogue now travels once, on `LeaderboardData.catalog`;
+  rows carry `apps[].solvedIds` (narrowed to ids the catalogue still holds);
+  `AppBreakdown` joins the two at render, for the one row that is open.
+  `/profile` and `/challenges` read the same shape. The scorer's own
+  response was already built this way — the expansion happened in the app.
+
 - **Added: `/health/deep` and a Fly machine check (#437).** The box had no
   health check and no monitor, and every read fails open by design — so a
   dead Redis or scorer left the site rendering with nothing scoring, and the

@@ -72,7 +72,10 @@ export default async function ChallengesPage() {
       const source = await getLeaderboardSource();
       const profile = await source.getUser(login);
       for (const app of profile?.apps ?? []) {
-        const patched = (app.challenges ?? []).filter((c) => c.status === "patched").map((c) => c.key);
+        // `solvedIds` is exactly the patched set, already narrowed to ids the
+        // catalogue still holds (issue #434 — rows no longer carry the
+        // expanded challenge list; the ids are the whole per-row fact).
+        const patched = app.solvedIds ?? [];
         if (patched.length > 0) solved[app.app] = patched;
       }
     } catch {

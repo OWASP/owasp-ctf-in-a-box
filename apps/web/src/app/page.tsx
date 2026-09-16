@@ -28,10 +28,7 @@ import { getEnabledApps, getEnabledTotals } from "@/lib/enabled-apps";
 import { getChallengeCatalog } from "@/lib/challenges";
 import { listChallenges } from "@/lib/classic-store";
 import { listQuestions } from "@/lib/quiz-store";
-import { getLeaderboardSource } from "@/lib/leaderboard/source";
-import { withHintPenalties } from "@/lib/leaderboard/hint-penalties";
-import { withModuleContributions } from "@/lib/leaderboard/module-contributions";
-import { withTeamStandings } from "@/lib/leaderboard/team-standings";
+import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { DOCS_URL, type HomeContext } from "@/lib/modules";
 import { getEnabledModuleIds } from "@/lib/enabled-modules";
 import { getModuleHome, getNavLinks, getResolvedModules } from "@/lib/resolved-modules";
@@ -190,7 +187,10 @@ export default async function Home({
   const firstBoard = sections.find((s) => s.cta)?.cta ?? null;
   const action = primaryAction(phaseInfo?.phase ?? null, Boolean(login), team, firstBoard);
 
-  // The live strip: the top of the same standings the leaderboard shows.
+  // The live strip: the top of the same standings the leaderboard shows —
+  // literally the same fold, read through the 10 s cross-request memo the
+  // leaderboard page uses (issue #444), so a room refreshing the landing page
+  // and the board together costs one fold, not two per viewer.
   // Only once there could be something to show, and a failed read hides the
   // strip — the pitch must not 500 because Redis blinked.
   let topRows: { key: string; name: string; points: number }[] = [];
@@ -199,12 +199,7 @@ export default async function Home({
   let topRowsAreTeams = false;
   if (phaseInfo && phaseInfo.phase !== "registration") {
     try {
-      const source = await getLeaderboardSource();
-      const data = await source
-        .getLeaderboard()
-        .then(withModuleContributions)
-        .then(withTeamStandings)
-        .then(withHintPenalties);
+      const data = await getFoldedLeaderboard();
       topRowsAreTeams = data.teams.length > 0;
       topRows = topRowsAreTeams
         ? data.teams.slice(0, 3).map((t) => ({ key: t.slug, name: t.name, points: t.points }))

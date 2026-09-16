@@ -29,6 +29,15 @@ live-GitHub scoring. For standing the kit up in the first place, see
 **During:**
 
 - The leaderboard and app live at the `EVENT_URL` you configured in `.env`.
+- **How fresh the board is.** The folded standings — every module's points,
+  team totals, the chart, hint penalties — are computed once and shared by
+  every viewer for **10 seconds**, then recomputed on the next request
+  (`apps/web/src/lib/leaderboard/folded.ts`); the projector board's own 30 s
+  refresh and the app's 30 s scorer cache sit above that. So a contestant's
+  solve shows on `/leaderboard` and the landing strip within 10 s rather than
+  on their very next page load; their own `/profile`, `/quiz`, `/flags` and
+  `/challenges` read live and show it at once. A read that fails is never
+  cached — the next request retries.
 - Poller logs: `docker compose logs -f sync`.
 - All state lives in named Docker volumes, so a box reboot loses nothing.
 

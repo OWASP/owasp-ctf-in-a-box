@@ -186,7 +186,9 @@ state; everything else that touches scores goes through it.
    additive; an older scorer that omits them simply falls back to the
    solved/total counts.
 9. Before rendering, the app composes the fetched `LeaderboardData` through a
-   fixed pipeline (`app/(site)/leaderboard/page.tsx`):
+   fixed pipeline (`src/lib/leaderboard/folded.ts`, memoized across requests
+   for 10 s and shared by every concurrent viewer — the result has no
+   per-viewer input; a fold that throws is never cached):
    `withModuleContributions` → `withTeamStandings` → `withHintPenalties`
    (`src/lib/leaderboard/{module-contributions,team-standings,hint-penalties}.ts`).
    `withModuleContributions` attributes each row's points into a

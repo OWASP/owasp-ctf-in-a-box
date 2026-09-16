@@ -7,11 +7,8 @@ import { headers } from "next/headers";
 import PageHeader from "@/components/page-header";
 import Leaderboard from "@/components/leaderboard";
 import MockDataNotice from "@/components/mock-data-notice";
-import { getLeaderboardSource, getLeaderboardSourceMode } from "@/lib/leaderboard/source";
-import { withModuleContributions } from "@/lib/leaderboard/module-contributions";
-import { withHintPenalties } from "@/lib/leaderboard/hint-penalties";
-import { withTeamStandings } from "@/lib/leaderboard/team-standings";
-import { withModuleSeries } from "@/lib/leaderboard/module-series";
+import { getLeaderboardSourceMode } from "@/lib/leaderboard/source";
+import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { auth } from "@/lib/auth";
 import DisplayBoard from "@/components/display-board";
@@ -56,32 +53,15 @@ export default async function LeaderboardPage({
   // render can skip nothing it needs and everything it doesn't.
   const wantsDisplay = (await searchParams)?.display === "1";
   const event = await getSite();
-  const source = await getLeaderboardSource();
-  // Penalties fold LAST: withModuleContributions attributes (and, for the
-  // app-side modules, adds) each row's gross per-module points, and
-  // withTeamStandings folds rows into teams — only then does
-  // withHintPenalties net the final all-module total, exactly once. Module
-  // blocks everywhere show their gross contribution; the row's "−N hints"
-  // marker is what reconciles them against the netted header. Running the
-  // fold earlier netted scorer points alone, which made hints free for any
-  // row whose points arrive later — a classic- or quiz-only contestant, or
-  // an upstash-path team. Same story in docs/architecture.md, step 9 of the
-  // score data flow.
-  //
-  // withModuleSeries runs after withTeamStandings because it needs the final
-  // team rows — it charts a team's roster, and a team the standings stage has
-  // not added yet has no line to draw. It reads the app-side modules' per-item
-  // timestamps to put their points on the chart at all (issue #415); before
-  // it, the chart plotted secure-development alone while the rows counted
-  // every module. It leaves `points` untouched, so it neither needs to run
-  // before the penalty fold nor disturbs it: the chart is gross, the row net.
+  // The folded board — source → module contributions → team standings →
+  // module series → hint penalties — is identical for every viewer, so it is
+  // memoized across requests for 10 s in folded.ts (issue #444), which also
+  // owns the stage-order commentary. The one per-viewer input on this page
+  // is the "you" highlight, and <Leaderboard> applies that from viewerLogin.
+  // `data` is shared with every concurrent request: read it, never mutate it
+  // — the spreads below build new objects.
   const [data, session, modules, enabledApps] = await Promise.all([
-    source
-      .getLeaderboard()
-      .then(withModuleContributions)
-      .then(withTeamStandings)
-      .then(withModuleSeries)
-      .then(withHintPenalties),
+    getFoldedLeaderboard(),
     auth.api.getSession({ headers: await headers() }),
     getResolvedModules(),
     getEnabledApps(),

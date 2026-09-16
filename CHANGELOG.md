@@ -16,8 +16,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   test (#439) measured 2.7 req/s served against 10 demanded after the payload
   fix (#434). `/leaderboard`, `?display=1` and the landing page's live strip
   now read one memoized fold, refreshed every 10 s; concurrent viewers share
-  the fold in flight, and a fold that throws is never cached. A contestant's
-  solve reaches the board within 10 s; their own pages still read live.
+  the fold in flight, and a fold that throws is never cached. An app-side
+  solve (quiz, flag, AI) reaches the board within 10 s; a Secure Development
+  score within about 40 s, since the scorer read underneath was already
+  cached for 30 s; a contestant's own pages still read live.
 
 - **Fixed: the leaderboard no longer ships a copy of the Secure Development
   catalogue in every row (#434).** Each contestant and team row carried the

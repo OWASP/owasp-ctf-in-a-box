@@ -67,6 +67,11 @@ function firstOf(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+/**
+ * The landing page: the event pitch, the module sections, the viewer's next
+ * action, and — once scoring could have started — the top of the live board
+ * read from the shared 10 s fold memo.
+ */
 export default async function Home({
   searchParams,
 }: {

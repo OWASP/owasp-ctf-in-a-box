@@ -31,12 +31,20 @@ import type { LeaderboardData } from "./types";
  * Concurrent callers during a fold share the in-flight promise (the #440
  * lesson) — a room landing in the same second is one fold, not N.
  *
- * `now` and `fold` are parameters for the tests; production calls pass none.
+ * THE TTL STARTS WHEN THE FOLD FINISHES, not when it was asked for. A fold
+ * that takes longer than the TTL (a slow scorer, a Redis stall) would
+ * otherwise be stored already expired, and the next request would start
+ * another one at once — the memo would turn into a queue of back-to-back
+ * folds exactly when the box is slowest. The clock is read again on success.
+ *
+ * `now` (a clock) and `fold` are parameters for the tests; production calls
+ * pass none.
  */
 
 export const LEADERBOARD_FOLD_TTL_MS = 10_000;
 
 type Fold = () => Promise<LeaderboardData>;
+type Clock = () => number;
 
 // Stage order is load-bearing (this commentary moved here from the page with
 // the fold itself). Penalties fold LAST: withModuleContributions attributes
@@ -56,6 +64,7 @@ type Fold = () => Promise<LeaderboardData>;
 // timestamps to put their points on the chart at all (issue #415). It leaves
 // `points` untouched, so it neither needs to run before the penalty fold nor
 // disturbs it: the chart is gross, the row net.
+/** The production fold: the leaderboard source through every overlay stage. */
 const defaultFold: Fold = async () =>
   (await getLeaderboardSource())
     .getLeaderboard()
@@ -73,15 +82,25 @@ export function resetFoldedLeaderboardCache(): void {
   inflight = null;
 }
 
+/**
+ * The folded board, shared by every request that asks within
+ * `LEADERBOARD_FOLD_TTL_MS` of the last fold finishing. Concurrent callers
+ * during a fold share it; a rejected fold is not cached and rejects every
+ * caller sharing it, so the next request retries.
+ *
+ * Callers must treat the result as read-only — it is the same object handed
+ * to every concurrent request.
+ */
 export async function getFoldedLeaderboard({
-  now = Date.now(),
+  now = Date.now,
   fold = defaultFold,
-}: { now?: number; fold?: Fold } = {}): Promise<LeaderboardData> {
-  if (cached && now - cached.at < LEADERBOARD_FOLD_TTL_MS) return cached.data;
+}: { now?: Clock; fold?: Fold } = {}): Promise<LeaderboardData> {
+  if (cached && now() - cached.at < LEADERBOARD_FOLD_TTL_MS) return cached.data;
   if (inflight) return inflight;
   inflight = fold()
     .then((data) => {
-      cached = { at: now, data };
+      // Stamped on completion, not on request — see the header.
+      cached = { at: now(), data };
       return data;
     })
     .finally(() => {

@@ -43,6 +43,11 @@ export async function generateMetadata(): Promise<Metadata> {
 const BASE_DESCRIPTION = "Live contestant rankings from every enabled challenge board.";
 const SIGNED_OUT_CLAUSE = " Sign in with GitHub to highlight your own row and unlock your profile.";
 
+/**
+ * The public standings page — the interactive board by default, the
+ * chrome-free projector board with `?display=1`. Reads the shared 10 s fold
+ * memo plus this viewer's session, modules and enabled apps.
+ */
 export default async function LeaderboardPage({
   searchParams,
 }: {

@@ -19,6 +19,8 @@ const board = (tag: string): LeaderboardData => ({
 });
 
 const NOW = 1_800_000_000_000;
+/** A fixed clock for the tests that do not move time during the fold. */
+const at = (ms: number) => () => ms;
 
 beforeEach(() => {
   resetFoldedLeaderboardCache();
@@ -27,16 +29,16 @@ beforeEach(() => {
 describe("getFoldedLeaderboard", () => {
   it("runs the fold once inside the TTL and hands every caller the same data", async () => {
     const fold = vi.fn(async () => board("a"));
-    const first = await getFoldedLeaderboard({ now: NOW, fold });
-    const second = await getFoldedLeaderboard({ now: NOW + LEADERBOARD_FOLD_TTL_MS - 1, fold });
+    const first = await getFoldedLeaderboard({ now: at(NOW), fold });
+    const second = await getFoldedLeaderboard({ now: at(NOW + LEADERBOARD_FOLD_TTL_MS - 1), fold });
     expect(fold).toHaveBeenCalledTimes(1);
     expect(second).toBe(first);
   });
 
   it("re-runs the fold once the TTL has passed", async () => {
     const fold = vi.fn().mockResolvedValueOnce(board("a")).mockResolvedValueOnce(board("b"));
-    await getFoldedLeaderboard({ now: NOW, fold });
-    const later = await getFoldedLeaderboard({ now: NOW + LEADERBOARD_FOLD_TTL_MS, fold });
+    await getFoldedLeaderboard({ now: at(NOW), fold });
+    const later = await getFoldedLeaderboard({ now: at(NOW + LEADERBOARD_FOLD_TTL_MS), fold });
     expect(fold).toHaveBeenCalledTimes(2);
     expect(later.generatedAt).toBe("b");
   });
@@ -46,7 +48,7 @@ describe("getFoldedLeaderboard", () => {
   it("coalesces concurrent callers onto one in-flight fold", async () => {
     let release!: (b: LeaderboardData) => void;
     const fold = vi.fn(() => new Promise<LeaderboardData>((r) => (release = r)));
-    const calls = [getFoldedLeaderboard({ now: NOW, fold }), getFoldedLeaderboard({ now: NOW + 1, fold }), getFoldedLeaderboard({ now: NOW + 2, fold })];
+    const calls = [getFoldedLeaderboard({ now: at(NOW), fold }), getFoldedLeaderboard({ now: at(NOW + 1), fold }), getFoldedLeaderboard({ now: at(NOW + 2), fold })];
     release(board("shared"));
     const results = await Promise.all(calls);
     expect(fold).toHaveBeenCalledTimes(1);
@@ -56,8 +58,8 @@ describe("getFoldedLeaderboard", () => {
   // Fail-open, never cache a failure: the next caller retries immediately.
   it("does not cache a fold that threw, and retries on the next call", async () => {
     const fold = vi.fn().mockRejectedValueOnce(new Error("redis blip")).mockResolvedValueOnce(board("ok"));
-    await expect(getFoldedLeaderboard({ now: NOW, fold })).rejects.toThrow("redis blip");
-    const next = await getFoldedLeaderboard({ now: NOW + 1, fold });
+    await expect(getFoldedLeaderboard({ now: at(NOW), fold })).rejects.toThrow("redis blip");
+    const next = await getFoldedLeaderboard({ now: at(NOW + 1), fold });
     expect(next.generatedAt).toBe("ok");
     expect(fold).toHaveBeenCalledTimes(2);
   });
@@ -65,12 +67,29 @@ describe("getFoldedLeaderboard", () => {
   it("a rejected in-flight fold rejects every caller sharing it, then clears", async () => {
     let reject!: (e: Error) => void;
     const fold = vi.fn().mockImplementationOnce(() => new Promise<LeaderboardData>((_, rj) => (reject = rj))).mockResolvedValueOnce(board("after"));
-    const a = getFoldedLeaderboard({ now: NOW, fold });
-    const b = getFoldedLeaderboard({ now: NOW + 1, fold });
+    const a = getFoldedLeaderboard({ now: at(NOW), fold });
+    const b = getFoldedLeaderboard({ now: at(NOW + 1), fold });
     reject(new Error("boom"));
     await expect(a).rejects.toThrow("boom");
     await expect(b).rejects.toThrow("boom");
-    expect((await getFoldedLeaderboard({ now: NOW + 2, fold })).generatedAt).toBe("after");
+    expect((await getFoldedLeaderboard({ now: at(NOW + 2), fold })).generatedAt).toBe("after");
+  });
+
+  // A fold slower than the TTL used to be stored already expired: `at` was
+  // stamped when the fold was requested, so the next request folded again at
+  // once, and a slow box became a queue of back-to-back folds.
+  it("starts the TTL when the fold finishes, so a slow fold is still served", async () => {
+    let clock = NOW;
+    const now = () => clock;
+    const fold = vi.fn(async () => {
+      clock += LEADERBOARD_FOLD_TTL_MS + 5_000; // the fold itself outlives the TTL
+      return board("slow");
+    });
+    const first = await getFoldedLeaderboard({ now, fold });
+    clock += LEADERBOARD_FOLD_TTL_MS - 1; // just inside the TTL from COMPLETION
+    const second = await getFoldedLeaderboard({ now, fold });
+    expect(fold).toHaveBeenCalledTimes(1);
+    expect(second).toBe(first);
   });
 
   it("keeps the TTL short enough that no viewer sees older data than the display board already refreshes at", () => {

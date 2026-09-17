@@ -7,7 +7,7 @@
 # machine memory, and writes one Markdown report. --clean removes exactly what
 # the seed recorded in its manifest (it needs no --count).
 #
-#   scripts/load-test.sh --app <fly-app> --url https://<EVENT_URL> [--count 200]
+#   scripts/load-test.sh --app <fly-app> --url <EVENT_URL> [--count 200]
 #                        [--report docs/superpowers/load-2026-09-16.md]
 #   scripts/load-test.sh --app <fly-app> --clean
 #   scripts/load-test.sh --app <fly-app> --break-lock   # after a crashed run only

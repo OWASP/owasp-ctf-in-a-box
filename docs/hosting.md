@@ -664,7 +664,7 @@ and both live under the same disclosure rule: nothing in either payload that
 
 **Point an external monitor at `/health/deep`.** Any free uptime service
 works (UptimeRobot, Better Stack, Healthchecks.io — none of them needs a
-header): HTTP monitor on `https://<EVENT_URL>/health/deep`, every 1–5
+header): HTTP monitor on `<EVENT_URL>/health/deep`, every 1–5
 minutes, alert on any non-200, with a Discord webhook as the notification
 channel since the event already runs on Discord. Optionally match the keyword
 `"status":"ok"` so a 200 that somehow carries the wrong body still alerts.

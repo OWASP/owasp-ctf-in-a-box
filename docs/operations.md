@@ -1710,9 +1710,9 @@ flag-submission form classic uses, right below the launcher.
 Two URLs answer the two questions an organizer asks before doors open, from
 any browser or phone, no login:
 
-- `https://<EVENT_URL>/health` — is the app up, and is it the build you just
+- `<EVENT_URL>/health` — is the app up, and is it the build you just
   deployed? Compare `revision` to the commit you expect.
-- `https://<EVENT_URL>/health/deep` — can it score? `200` with every
+- `<EVENT_URL>/health/deep` — can it score? `200` with every
   dependency `"ok"` is the answer you want; `503` names which of `redis` or
   `scorer` is `"down"`. `sync.ageSec` is how long since the poller last
   polled — if that number keeps growing while Secure Development is live,
@@ -1764,7 +1764,7 @@ not in the app image — the script uploads it the same way a run does, then
 calls its `--break-lock`, which refuses if the lock changed hands meanwhile).
 
 ```sh
-scripts/load-test.sh --app <fly-app> --url https://<EVENT_URL> --count 200
+scripts/load-test.sh --app <fly-app> --url <EVENT_URL> --count 200
 scripts/load-test.sh --app <fly-app> --clean
 ```
 

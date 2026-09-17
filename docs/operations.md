@@ -1710,9 +1710,9 @@ flag-submission form classic uses, right below the launcher.
 Two URLs answer the two questions an organizer asks before doors open, from
 any browser or phone, no login:
 
-- `https://<EVENT_URL>/health` — is the app up, and is it the build you just
+- `<EVENT_URL>/health` — is the app up, and is it the build you just
   deployed? Compare `revision` to the commit you expect.
-- `https://<EVENT_URL>/health/deep` — can it score? `200` with every
+- `<EVENT_URL>/health/deep` — can it score? `200` with every
   dependency `"ok"` is the answer you want; `503` names which of `redis` or
   `scorer` is `"down"`. `sync.ageSec` is how long since the poller last
   polled — if that number keeps growing while Secure Development is live,
@@ -1758,14 +1758,14 @@ harness before registration opens. One seed or clean runs at a time — both
 hold a Redis lock (`ctf:load-seed:lock`) for the whole operation, so a clean
 cannot race a seed and orphan its rows; a run that finds the lock held
 refuses and prints who has held it since when. The lock never expires by
-itself: after a crashed run, `scripts/load-test.sh --app owasp-ctf
+itself: after a crashed run, `scripts/load-test.sh --app <fly-app>
 --break-lock` clears it once you are sure nothing is running (the seeder is
 not in the app image — the script uploads it the same way a run does, then
 calls its `--break-lock`, which refuses if the lock changed hands meanwhile).
 
 ```sh
-scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev --count 200
-scripts/load-test.sh --app owasp-ctf --clean
+scripts/load-test.sh --app <fly-app> --url <EVENT_URL> --count 200
+scripts/load-test.sh --app <fly-app> --clean
 ```
 
 Pass bar for a ~100-player event, on the percentile autocannon reports
@@ -1807,12 +1807,20 @@ is a redacted label — never the token or a URL. Not seeded on purpose:
 raise; the harness omits it because an exact clean could not lower it back
 safely — and hint purchases.
 
-Before an event, three checks in this order: `FLY_AUTO_STOP=off` is set and
+Before an event, four checks in this order: `FLY_AUTO_STOP=off` is set and
 deployed (an idle-suspended machine takes Redis and the poller down with it);
 `/health/deep` is 200; the external monitor described in
 [docs/hosting.md](hosting.md#monitoring) is enabled and posting to the
-organizers' channel. See [docs/troubleshooting.md](troubleshooting.md) for
-what a 503 means and what to do.
+organizers' channel; the Cloudflare rate-limiting rule on `/api/*` described
+in [docs/hosting.md](hosting.md#cloudflare-in-front-of-the-box) is present
+and enabled (the zone's Security rules page lists it; to prove it, first
+`GET` a deliberately nonexistent path such as `/api/rate-probe` once and see
+the normal 404, then burst the same `GET` about 130 times in a few seconds
+from one address — it answers `429` after about a hundred. Use only a
+nonexistent `GET` path, never a `POST` to a submit, answer, hint or gate
+route, which would spend real cooldowns and attempt caps). See
+[docs/troubleshooting.md](troubleshooting.md) for what a 503 means and what
+to do.
 
 ### The org and the bootstrap keys: `ctf-setup.sh doctor`
 

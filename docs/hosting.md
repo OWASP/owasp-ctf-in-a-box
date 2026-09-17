@@ -664,7 +664,7 @@ and both live under the same disclosure rule: nothing in either payload that
 
 **Point an external monitor at `/health/deep`.** Any free uptime service
 works (UptimeRobot, Better Stack, Healthchecks.io — none of them needs a
-header): HTTP monitor on `https://<EVENT_URL>/health/deep`, every 1–5
+header): HTTP monitor on `<EVENT_URL>/health/deep`, every 1–5
 minutes, alert on any non-200, with a Discord webhook as the notification
 channel since the event already runs on Discord. Optionally match the keyword
 `"status":"ok"` so a 200 that somehow carries the wrong body still alerts.
@@ -677,6 +677,52 @@ The monitor's poll will also wake a machine that has idle-suspended. During
 an event that must not be a factor at all: set `FLY_AUTO_STOP=off` in
 `.env.fly` and redeploy before it starts (see
 [docs/fly.md](fly.md)); `deploy.sh` prints the same warning.
+
+## Cloudflare in front of the box
+
+The reference deployment's domain is on Cloudflare DNS with the proxy on
+("orange cloud"), so every request reaches Fly through Cloudflare's edge — a
+`cf-ray` header on any response is how you can tell. That is the only place
+a **trustworthy** per-IP control can live: the app never sees a client
+address it can rely on (Fly sees Cloudflare's, and the `x-forwarded-for`
+value a caller can set is appended to, not replaced), and the app's own
+rate limiter is per login, which starts only after sign-in. An
+unauthenticated `curl` loop against `/api/*` therefore still costs the box a
+session lookup per hit unless the edge stops it.
+
+**One rate-limiting rule, on the Free plan.** Cloudflare's Free plan includes
+exactly one rate-limiting rule, counted by IP over a 10-second window with a
+Block action. Create it at the **zone** level (pick the domain, then
+Security → Security rules → Create rule → Rate limiting rule — not the
+account-level WAF page, which is a paid add-on):
+
+| field | value |
+|---|---|
+| When incoming requests match | URI Path · starts with · `/api/` |
+| Same characteristics | IP |
+| Rate | 100 requests per 10 seconds |
+| Action | Block, 10 seconds |
+
+`/leaderboard` and `?display=1` are **not** under `/api/`, so the projector
+board's 30 s refresh and a room full of people reloading the standings are
+never counted; sign-in goes through `/api/auth/*`, and no person clicks that
+ten times a second. Verified on the reference box with a side-effect-free
+probe — `GET` on a deliberately nonexistent path such as
+`/api/rate-probe`, which answers 404 and touches no store; never a `POST`
+to a submit, answer, hint or gate route, which would spend cooldowns,
+attempt caps or hint budgets — from one address: 130 requests in about three
+seconds let 115 through and blocked 15 with `429`, the block lifted after
+ten seconds, and `/leaderboard` answered 200 throughout.
+
+This is the layer above the app's own controls, not a replacement for them:
+per-item cooldowns and the quiz attempt cap stop *guessing* (they run inside
+the grading scripts); the per-login limiter stops one account hammering team
+join and hint reveal; the pre-event password gate (`POST /api/gate`) has its
+own best-effort throttle keyed on the first `x-forwarded-for` value, which a
+caller can spoof for a fresh bucket — it slows a casual guesser, and that is
+all it claims; Cloudflare stops gross floods before they reach the box.
+Issue #438 tracks the per-login buckets still missing on the two submit
+routes and an Insights view of throttled logins.
 
 ## Configuration
 

@@ -46,6 +46,15 @@ while [ $# -gt 0 ]; do
 done
 if [ -z "$APP" ]; then echo "FAIL: --app is required" >&2; exit 2; fi
 if [ -z "$CLEAN" ] && [ -z "$URL" ]; then echo "FAIL: --url is required unless --clean" >&2; exit 2; fi
+# COUNT and DURATION are interpolated into command lines (COUNT into the
+# remote `-C` shell string), so they are validated as plain decimal numbers
+# HERE, before anything reaches `fly ssh console` — the seeder's own range
+# check runs too late to stop a value like `200; <anything>` from executing
+# in the container.
+case "$COUNT" in ''|*[!0-9]*) echo "FAIL: --count must be a whole number (2..5000), got '$COUNT'" >&2; exit 2 ;; esac
+if [ "$COUNT" -lt 2 ] || [ "$COUNT" -gt 5000 ]; then echo "FAIL: --count must be in 2..5000, got $COUNT" >&2; exit 2; fi
+case "$DURATION" in ''|*[!0-9]*) echo "FAIL: --duration must be a whole number of seconds, got '$DURATION'" >&2; exit 2 ;; esac
+if [ "$DURATION" -lt 5 ] || [ "$DURATION" -gt 3600 ]; then echo "FAIL: --duration must be in 5..3600 seconds, got $DURATION" >&2; exit 2; fi
 command -v fly >/dev/null || { echo "FAIL: fly CLI not found" >&2; exit 1; }
 command -v node >/dev/null || { echo "FAIL: node not found" >&2; exit 1; }
 if [ -z "$CLEAN" ]; then

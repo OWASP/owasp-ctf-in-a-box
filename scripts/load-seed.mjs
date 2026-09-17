@@ -81,6 +81,8 @@ const LOGIN_PREFIX = "load-";
 const TEAM_PREFIX = "load-team-";
 const BATCH = 200;
 const WINDOW_MS = 2 * 60 * 60 * 1000;
+/** Every network wait is bounded: the seed holds a non-expiring lock, and Node's fetch would otherwise sit on a stalled socket for minutes. */
+const FETCH_TIMEOUT_MS = 15_000;
 
 /** Where the seed records exactly what it wrote; the clean's only input. */
 export const MANIFEST_KEY = "ctf:load-seed:manifest";
@@ -426,6 +428,12 @@ export function assertRedisUrl(raw) {
   return u;
 }
 
+/** Compare-and-delete for --break-lock: removes the lock only if it still holds exactly the value the operator was shown, so a lock re-taken by a new run in between is left alone. */
+export const LOCK_BREAK_SCRIPT = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0
+`;
+
 /** Token-checked release: deletes the lock only if it still holds OUR token, so a run can never release a lock another run took over. */
 export const LOCK_RELEASE_SCRIPT = `
 local raw = redis.call('GET', KEYS[1])
@@ -465,13 +473,28 @@ export function errorLabel(err) {
 // I/O
 // ---------------------------------------------------------------------------
 
+/** fetch with a hard deadline; the timer is unref'd so it never keeps the process alive (the #256 lesson). */
+async function boundedFetch(url, init = {}, ms = FETCH_TIMEOUT_MS) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error(`request exceeded ${ms} ms`)), ms);
+  if (typeof timer.unref === "function") timer.unref();
+  try {
+    return await fetch(url, { ...init, signal: ac.signal });
+  } catch (err) {
+    if (ac.signal.aborted) throw new Error(`request timed out after ${ms} ms`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** One srh pipeline call; throws on HTTP failure and on the first per-command error (the app's client does not — this one must). */
 async function pipeline(commands) {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) throw new Error("UPSTASH_REDIS_REST_URL/TOKEN are not set — run this inside the app container");
   const base = assertRedisUrl(url);
-  const res = await fetch(`${base.href.replace(/\/$/, "")}/pipeline`, {
+  const res = await boundedFetch(`${base.href.replace(/\/$/, "")}/pipeline`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(commands),
@@ -528,7 +551,7 @@ async function readCatalogue() {
   const scorerUrl = process.env.LEADERBOARD_API_URL || "";
   let sdChallenges = null;
   if ((enabled === null || enabled.includes("secure-development")) && scorerUrl) {
-    const res = await fetch(`${scorerUrl.replace(/\/$/, "")}/challenges`);
+    const res = await boundedFetch(`${scorerUrl.replace(/\/$/, "")}/challenges`);
     if (!res.ok) throw new Error(`scorer /challenges HTTP ${res.status}`);
     const data = await res.json();
     // Handed through as-is: resolveCatalogue is the one place that decides a
@@ -562,7 +585,10 @@ async function main() {
   if (values["break-lock"]) {
     const [cur] = await pipeline([["GET", LOCK_KEY]]);
     if (!cur.result) { console.log(JSON.stringify({ mode: "break-lock", note: "no lock was held" })); return; }
-    await pipeline([["DEL", LOCK_KEY]]);
+    // Compare-and-delete: only the lock the operator was shown goes; a lock
+    // a new run took in between stays, and the operator is told to look again.
+    const [broke] = await pipeline([["EVAL", LOCK_BREAK_SCRIPT, "1", LOCK_KEY, cur.result]]);
+    if (Number(broke.result) !== 1) throw new Error("the lock changed hands while you looked — another run holds it now; re-check before breaking it");
     console.log(JSON.stringify({ mode: "break-lock", broke: describeLock(cur.result) }));
     return;
   }

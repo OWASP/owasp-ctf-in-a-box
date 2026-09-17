@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  LOCK_BREAK_SCRIPT,
   LOCK_RELEASE_SCRIPT,
   MANIFEST_KEY,
   SEED_SCRIPT,
@@ -314,6 +315,9 @@ test("the lock value carries the release token and is described with its age; th
   assert.equal(describeLock("garbage", now), "held (unreadable lock value)");
   assert.ok(LOCK_RELEASE_SCRIPT.includes("v.token == ARGV[1]"), "compares the stored token, not the whole value");
   assert.ok(LOCK_RELEASE_SCRIPT.indexOf("v.token == ARGV[1]") < LOCK_RELEASE_SCRIPT.indexOf("redis.call('DEL'"));
+  // --break-lock compares the whole stored value the operator was shown, and deletes only on a match.
+  assert.ok(LOCK_BREAK_SCRIPT.includes("redis.call('GET', KEYS[1]) == ARGV[1]"));
+  assert.ok(LOCK_BREAK_SCRIPT.indexOf("== ARGV[1]") < LOCK_BREAK_SCRIPT.indexOf("redis.call('DEL'"));
 });
 
 test("errorLabel never carries a token, a URL, a stack, or an arbitrary thrown value", () => {

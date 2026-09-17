@@ -120,7 +120,9 @@ echo "== app=$APP machine=$MACHINE"
 REMOTE_SEEDER="/tmp/load-seed-$(date -u +%Y%m%d%H%M%S)-$$.mjs"
 echo "== uploading scripts/load-seed.mjs"
 if ! fly ssh sftp put "$HERE/load-seed.mjs" "$REMOTE_SEEDER" --app "$APP" --machine "$MACHINE" --container app >/dev/null 2>&1; then
-  if ! fly ssh sftp put "$HERE/load-seed.mjs" "$REMOTE_SEEDER" --app "$APP" >/dev/null 2>&1; then fail_setup "uploading the seeder to the app container"; fi
+  # Same machine on the fallback (an older flyctl may not take --container);
+  # the seed, clean and lock commands below all target $MACHINE.
+  if ! fly ssh sftp put "$HERE/load-seed.mjs" "$REMOTE_SEEDER" --app "$APP" --machine "$MACHINE" >/dev/null 2>&1; then fail_setup "uploading the seeder to the app container"; fi
 fi
 
 if [ -n "$BREAK_LOCK" ]; then
@@ -228,12 +230,14 @@ kill "$MEM_PID" 2>/dev/null || true
 wait "$MEM_PID" 2>/dev/null || true
 MEM_PID=""
 
-# Connection errors and timeouts across the phases that ran: a request that
-# never got an answer is not a measurement, so any of them fails the run.
+# Connection errors across the phases that ran (autocannon's `errors` already
+# includes its `timeouts`, so only `errors` is summed — the table still shows
+# both): a request that never got an answer is not a measurement, so any of
+# them fails the run.
 PROBE_ERRORS=0
 for f in "$TMP"/leaderboard.json "$TMP"/display.json; do
   if [ -s "$f" ] && ! grep -q "^$(basename "$f" .json): " "$TMP/phase.err" 2>/dev/null; then
-    n="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String((r.errors||0)+(r.timeouts||0)))' "$f" 2>/dev/null || echo 0)"
+    n="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String(r.errors||0))' "$f" 2>/dev/null || echo 0)"
     PROBE_ERRORS=$((PROBE_ERRORS + n))
   fi
 done
@@ -303,7 +307,7 @@ if [ "$BAR_MISSES" -ne 0 ]; then
   RC=1
 fi
 if [ "$PROBE_ERRORS" -ne 0 ]; then
-  echo "FAIL: $PROBE_ERRORS connection error(s)/timeout(s) across the phases — those requests were never answered, so the latency columns understate the truth" >&2
+  echo "FAIL: $PROBE_ERRORS connection error(s) (timeouts included) across the phases — those requests were never answered, so the latency columns understate the truth" >&2
   RC=1
 fi
 if [ "$PHASE_FAILURES" -ne 0 ]; then

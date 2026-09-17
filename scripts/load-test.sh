@@ -10,6 +10,12 @@
 #   scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev [--count 200]
 #                        [--report docs/superpowers/load-2026-09-16.md]
 #   scripts/load-test.sh --app owasp-ctf --clean
+#   scripts/load-test.sh --app owasp-ctf --break-lock   # after a crashed run only
+#
+# Exit code: 0 only when the run was valid AND every criterion of the pass bar
+# below was met; 1 when the run could not be trusted (setup, seed, a phase, or
+# the sampler failed; connection errors or timeouts) OR the bar was missed
+# (latency, a 5xx, memory). The report says which. 2 for a usage error.
 #
 # Pass bar (from the issue, restated on autocannon's percentiles — it reports
 # p97.5, not p95, so the stricter one is used): /leaderboard p97.5 < 1.5 s at
@@ -19,7 +25,8 @@
 # the bar), machine memory < 80 %.
 # /api/admin/metrics needs an admin session this script deliberately does not
 # carry (a cookie in an argument vector is readable by every local user) —
-# time it from a logged-in tab. This script REPORTS; the human decides.
+# time it from a logged-in tab. The report carries every number; the exit
+# code applies the bar so a run in CI or a shell loop cannot pass by accident.
 #
 # Fail direction: the run itself must not lie, and it writes ONE report no
 # matter what. A setup step that fails (machine lookup, seeder upload) or a
@@ -31,7 +38,8 @@
 # happened.
 set -euo pipefail
 
-APP=""; URL=""; COUNT=200; REPORT=""; CLEAN=""; DURATION=60
+APP=""; URL=""; COUNT=200; REPORT=""; CLEAN=""; BREAK_LOCK=""; DURATION=60
+LEADERBOARD_P975_MAX_MS=1500; DISPLAY_P975_MAX_MS=1000; MEM_USED_MAX_PCT=80
 while [ $# -gt 0 ]; do
   case "$1" in
     --app) APP="$2"; shift 2 ;;
@@ -40,6 +48,7 @@ while [ $# -gt 0 ]; do
     --report) REPORT="$2"; shift 2 ;;
     --duration) DURATION="$2"; shift 2 ;;
     --clean) CLEAN=1; shift ;;
+    --break-lock) BREAK_LOCK=1; CLEAN=1; shift ;;  # CLEAN=1: same no-report, no-URL path
     -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -112,6 +121,17 @@ REMOTE_SEEDER="/tmp/load-seed-$(date -u +%Y%m%d%H%M%S)-$$.mjs"
 echo "== uploading scripts/load-seed.mjs"
 if ! fly ssh sftp put "$HERE/load-seed.mjs" "$REMOTE_SEEDER" --app "$APP" --machine "$MACHINE" --container app >/dev/null 2>&1; then
   if ! fly ssh sftp put "$HERE/load-seed.mjs" "$REMOTE_SEEDER" --app "$APP" >/dev/null 2>&1; then fail_setup "uploading the seeder to the app container"; fi
+fi
+
+if [ -n "$BREAK_LOCK" ]; then
+  # Stale-lock recovery after a crashed run. The seeder is not in the app
+  # image, so this is the one stable way to reach its --break-lock: the same
+  # upload as a run, then the flag. Refuses if the lock changed hands.
+  echo "== breaking a stale seed/clean lock (only do this when nothing is running)"
+  BREAK_OUT="$(fly ssh console --app "$APP" --machine "$MACHINE" --container app -C "node $REMOTE_SEEDER --break-lock" 2>&1 | tail -1)"
+  echo "   $BREAK_OUT"
+  if ! grep -q '"mode":"break-lock"' <<< "$BREAK_OUT"; then echo "FAIL: break-lock did not report success" >&2; exit 1; fi
+  exit 0
 fi
 
 if [ -n "$CLEAN" ]; then
@@ -251,7 +271,37 @@ if [ -s "$TMP/mem.err" ]; then MEM_FAILURES="$(wc -l < "$TMP/mem.err" | tr -d ' 
 } > "$REPORT"
 echo "== report: $REPORT"
 cat "$REPORT"
+# The bar itself, applied at the exit boundary so a run cannot pass by
+# accident: p97.5 per phase, any 5xx, any memory sample at or over the cap.
+# Each miss is named on stderr; the report above already carries the numbers.
+BAR_MISSES=0
+bar_phase() { # name p975-max
+  if [ ! -s "$TMP/$1.json" ] || grep -q "^$1: " "$TMP/phase.err" 2>/dev/null; then return 0; fi # counted as a phase failure already
+  local out
+  # shellcheck disable=SC2016  # the ${} below is JS template syntax, not shell
+  out="$(node -e '
+    const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    const p975 = (r.latency && r.latency.p97_5) || 0;
+    const e5 = (r.statusCodeStats && Object.entries(r.statusCodeStats).filter(([c]) => c >= "500").reduce((s, [, v]) => s + (v.count || v), 0)) || 0;
+    const miss = [];
+    if (p975 >= Number(process.argv[2])) miss.push(`p97.5 ${p975} ms >= ${process.argv[2]} ms`);
+    if (e5 > 0) miss.push(`${e5} 5xx`);
+    process.stdout.write(miss.join("; "));
+  ' "$TMP/$1.json" "$2" 2>/dev/null || echo "result unreadable")"
+  if [ -n "$out" ]; then echo "BAR MISSED: $1 — $out" >&2; BAR_MISSES=$((BAR_MISSES + 1)); fi
+}
+bar_phase leaderboard "$LEADERBOARD_P975_MAX_MS"
+bar_phase display "$DISPLAY_P975_MAX_MS"
+if [ -s "$TMP/mem.log" ]; then
+  MEM_PEAK="$(sed -n 's/.*used=\([0-9]*\)%.*/\1/p' "$TMP/mem.log" | sort -n | tail -1)"
+  if [ -n "$MEM_PEAK" ] && [ "$MEM_PEAK" -ge "$MEM_USED_MAX_PCT" ]; then echo "BAR MISSED: memory peaked at ${MEM_PEAK}% (cap ${MEM_USED_MAX_PCT}%)" >&2; BAR_MISSES=$((BAR_MISSES + 1)); fi
+fi
+
 RC=0
+if [ "$BAR_MISSES" -ne 0 ]; then
+  echo "FAIL: the pass bar was missed on $BAR_MISSES criterion/criteria (see BAR MISSED above and the report)" >&2
+  RC=1
+fi
 if [ "$PROBE_ERRORS" -ne 0 ]; then
   echo "FAIL: $PROBE_ERRORS connection error(s)/timeout(s) across the phases — those requests were never answered, so the latency columns understate the truth" >&2
   RC=1

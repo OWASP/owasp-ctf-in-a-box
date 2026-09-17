@@ -1756,8 +1756,10 @@ harness before registration opens. One seed or clean runs at a time — both
 hold a Redis lock (`ctf:load-seed:lock`) for the whole operation, so a clean
 cannot race a seed and orphan its rows; a run that finds the lock held
 refuses and prints who has held it since when. The lock never expires by
-itself: after a crashed run, `node load-seed.mjs --break-lock` (inside the
-app container) clears it once you are sure nothing is running.
+itself: after a crashed run, `scripts/load-test.sh --app owasp-ctf
+--break-lock` clears it once you are sure nothing is running (the seeder is
+not in the app image — the script uploads it the same way a run does, then
+calls its `--break-lock`, which refuses if the lock changed hands meanwhile).
 
 ```sh
 scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev --count 200
@@ -1769,7 +1771,12 @@ Pass bar for a ~100-player event, on the percentile autocannon reports
 under 1.5 s at 10 req/s, `?display=1` under 1 s, zero 5xx, zero connection
 errors and zero timeouts (both are columns in the report; any of them fails
 the run outright, because a request that never got an answer is not a
-latency measurement), machine memory under 80 %. A miss on memory means `fly scale vm`; a miss on `/leaderboard`
+latency measurement), machine memory under 80 %. The script applies that bar
+at exit: it returns 0 only when the run was valid *and* every criterion was
+met, 1 when the run could not be trusted or the bar was missed (each miss is
+named on stderr as `BAR MISSED: …`), 2 on a usage error — so a run inside a
+shell loop or CI cannot pass by accident. The report carries every number
+either way. A miss on memory means `fly scale vm`; a miss on `/leaderboard`
 alone means the page's own cost is the problem (see #434, #444, #446).
 `/api/admin/metrics` needs an admin session the script deliberately does not
 carry (a cookie in a command line is readable by every local user) — time it

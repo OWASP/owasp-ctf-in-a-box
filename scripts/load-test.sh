@@ -63,9 +63,11 @@ if [ -z "$CLEAN" ] && [ -z "$URL" ]; then echo "FAIL: --url is required unless -
 # HERE, before anything reaches `fly ssh console` — the seeder's own range
 # check runs too late to stop a value like `200; <anything>` from executing
 # in the container.
-case "$COUNT" in ''|*[!0-9]*) echo "FAIL: --count must be a whole number (2..5000), got '$COUNT'" >&2; exit 2 ;; esac
+# Length-capped in the case pattern too: a digit-only value past bash's
+# integer range would make both `-lt`/`-gt` tests error out and fall through.
+case "$COUNT" in ''|*[!0-9]*|?????*) echo "FAIL: --count must be a whole number (2..5000), got '$COUNT'" >&2; exit 2 ;; esac
 if [ "$COUNT" -lt 2 ] || [ "$COUNT" -gt 5000 ]; then echo "FAIL: --count must be in 2..5000, got $COUNT" >&2; exit 2; fi
-case "$DURATION" in ''|*[!0-9]*) echo "FAIL: --duration must be a whole number of seconds, got '$DURATION'" >&2; exit 2 ;; esac
+case "$DURATION" in ''|*[!0-9]*|?????*) echo "FAIL: --duration must be a whole number of seconds, got '$DURATION'" >&2; exit 2 ;; esac
 if [ "$DURATION" -lt 5 ] || [ "$DURATION" -gt 3600 ]; then echo "FAIL: --duration must be in 5..3600 seconds, got $DURATION" >&2; exit 2; fi
 command -v fly >/dev/null || { echo "FAIL: fly CLI not found" >&2; exit 1; }
 command -v node >/dev/null || { echo "FAIL: node not found" >&2; exit 1; }
@@ -199,7 +201,7 @@ PHASE_FAILURES=0
 run_phase() { # name path rate duration
   local name="$1" path="$2" rate="$3" dur="$4" status=0 reason=""
   echo "== phase $name: $path @ ${rate} rps for ${dur}s"
-  npx --yes autocannon -d "$dur" -R "$rate" -c 10 --json "$URL$path" > "$TMP/$name.json" 2>/dev/null || status=$?
+  npx --yes autocannon -d "$dur" -R "$rate" -c 10 --json "${URL%/}$path" > "$TMP/$name.json" 2>/dev/null || status=$?
   if [ "$status" -ne 0 ]; then reason="autocannon exit $status"
   elif [ ! -s "$TMP/$name.json" ]; then reason="no result written"
   elif ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP/$name.json" >/dev/null 2>&1; then reason="result is not JSON"

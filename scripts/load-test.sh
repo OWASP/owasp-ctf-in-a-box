@@ -40,13 +40,16 @@ set -euo pipefail
 
 APP=""; URL=""; COUNT=200; REPORT=""; CLEAN=""; BREAK_LOCK=""; DURATION=60
 LEADERBOARD_P975_MAX_MS=1500; DISPLAY_P975_MAX_MS=1000; MEM_USED_MAX_PCT=80
+# A value-taking option with no value is a usage error (exit 2), not a
+# `set -u` death with status 1.
+need_value() { if [ "$#" -lt 2 ] || [ -z "$2" ]; then echo "FAIL: $1 needs a value" >&2; exit 2; fi; }
 while [ $# -gt 0 ]; do
   case "$1" in
-    --app) APP="$2"; shift 2 ;;
-    --url) URL="$2"; shift 2 ;;
-    --count) COUNT="$2"; shift 2 ;;
-    --report) REPORT="$2"; shift 2 ;;
-    --duration) DURATION="$2"; shift 2 ;;
+    --app) need_value "$@"; APP="$2"; shift 2 ;;
+    --url) need_value "$@"; URL="$2"; shift 2 ;;
+    --count) need_value "$@"; COUNT="$2"; shift 2 ;;
+    --report) need_value "$@"; REPORT="$2"; shift 2 ;;
+    --duration) need_value "$@"; DURATION="$2"; shift 2 ;;
     --clean) CLEAN=1; shift ;;
     --break-lock) BREAK_LOCK=1; CLEAN=1; shift ;;  # CLEAN=1: same no-report, no-URL path
     -h|--help) sed -n '2,24p' "$0"; exit 0 ;;

@@ -275,6 +275,23 @@ test("resolveCatalogue attaches only live modules and aborts when Secure Develop
   assert.throws(() => resolveCatalogue({ enabled: null, quizRows, classicRows, sdChallenges: null, scorerUrl: "http://scorer:8080" }), /did not answer/);
 });
 
+// Determinism does not stop at the PRNG seed: the catalogue's ORDER feeds the
+// PRNG too, so the same rows in a different HGETALL / response order must
+// still resolve to the same catalogue and the same commands.
+test("resolveCatalogue is order-independent, so permuted store rows yield identical commands", () => {
+  const quizRows = { q2: JSON.stringify({ id: "q2", points: 20, correct: ["b"] }), q1: JSON.stringify({ id: "q1", points: 10, correct: ["a"] }), q3: JSON.stringify({ id: "q3", points: 30, correct: ["c"] }) };
+  const classicRows = { c2: JSON.stringify({ id: "c2", points: 200 }), c1: JSON.stringify({ id: "c1", points: 100 }) };
+  const sdChallenges = [{ app: "webgoat", id: "w-1" }, { app: "dvwa", id: "ch-3" }, { app: "dvwa", id: "ch-1" }, { app: "dvwa", id: "ch-2" }];
+  const permute = (o) => Object.fromEntries(Object.entries(o).reverse());
+  const a = resolveCatalogue({ enabled: null, quizRows, classicRows, sdChallenges, scorerUrl: "http://scorer:8080" });
+  const b = resolveCatalogue({ enabled: null, quizRows: permute(quizRows), classicRows: permute(classicRows), sdChallenges: [...sdChallenges].reverse(), scorerUrl: "http://scorer:8080" });
+  assert.deepEqual(a, b);
+  assert.deepEqual(a.quiz.map((q) => q.id), ["q1", "q2", "q3"]);
+  assert.deepEqual(Object.keys(a.sd), ["dvwa", "webgoat"]);
+  assert.deepEqual(a.sd.dvwa, ["ch-1", "ch-2", "ch-3"]);
+  assert.deepEqual(buildCommands({ count: 30, catalogue: a, now: 1_000_000_000_000 }).cmds, buildCommands({ count: 30, catalogue: b, now: 1_000_000_000_000 }).cmds);
+});
+
 // Fail closed on the catalogue itself: a row this seeder cannot read, or a
 // scorer answer without a list, is a refusal — never a partial seed.
 test("resolveCatalogue refuses a malformed quiz/classic row or a scorer answer without a challenges list", () => {

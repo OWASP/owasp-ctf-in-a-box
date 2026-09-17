@@ -180,7 +180,11 @@ export function liveModules(settings) {
 
 /**
  * The catalogue a seed attaches to, from the raw store rows. Pure so the
- * error paths are testable, and FAIL CLOSED throughout: a quiz or classic row
+ * error paths are testable. CANONICAL ORDER: quiz and classic rows are sorted
+ * by id and scorer entries by app then id before anything consumes the PRNG,
+ * so the same catalogue in a different HGETALL or response order yields the
+ * same commands — a re-run must rewrite exactly its own rows, not a different
+ * random selection. FAIL CLOSED throughout: a quiz or classic row
  * that is not the JSON the app writes, a live Secure Development module with
  * no scorer address, or a scorer answer without a `challenges` list, each
  * abort the seed before any write. A partial catalogue would seed a board
@@ -194,11 +198,12 @@ export function resolveCatalogue({ enabled, quizRows, classicRows, sdChallenges,
     if (!row || typeof row !== "object" || typeof row.id !== "string") throw new Error(`${what} row ${id} has no id — refusing to seed against a catalogue this seeder cannot read`);
     return row;
   });
+  const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   const quiz = live("quiz")
-    ? parseRows(quizRows, "ctf:quiz:questions").map((q) => ({ id: q.id, points: Number(q.points) || 0, choices: Array.isArray(q.correct) ? q.correct : [] }))
+    ? parseRows(quizRows, "ctf:quiz:questions").map((q) => ({ id: q.id, points: Number(q.points) || 0, choices: Array.isArray(q.correct) ? q.correct : [] })).sort(byId)
     : [];
   const classic = live("classic")
-    ? parseRows(classicRows, "ctf:classic:challenges").map((c) => ({ id: c.id, points: Number(c.points) || 0 }))
+    ? parseRows(classicRows, "ctf:classic:challenges").map((c) => ({ id: c.id, points: Number(c.points) || 0 })).sort(byId)
     : [];
   const sd = {};
   if (live("secure-development")) {
@@ -206,8 +211,9 @@ export function resolveCatalogue({ enabled, quizRows, classicRows, sdChallenges,
     if (!Array.isArray(sdChallenges)) throw new Error("Secure Development is live but the scorer's /challenges did not answer with a challenges list — refusing to seed");
     for (const c of sdChallenges) {
       if (!c || typeof c.app !== "string" || typeof c.id !== "string") throw new Error("the scorer's /challenges carries an entry without app/id — refusing to seed");
-      (sd[c.app] ||= []).push(c.id);
     }
+    const ordered = [...sdChallenges].sort((a, b) => (a.app < b.app ? -1 : a.app > b.app ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    for (const c of ordered) (sd[c.app] ||= []).push(c.id); // insertion order of sd's keys is now app-sorted too
   }
   return { quiz, classic, sd };
 }

@@ -1807,12 +1807,16 @@ is a redacted label — never the token or a URL. Not seeded on purpose:
 raise; the harness omits it because an exact clean could not lower it back
 safely — and hint purchases.
 
-Before an event, three checks in this order: `FLY_AUTO_STOP=off` is set and
+Before an event, four checks in this order: `FLY_AUTO_STOP=off` is set and
 deployed (an idle-suspended machine takes Redis and the poller down with it);
 `/health/deep` is 200; the external monitor described in
 [docs/hosting.md](hosting.md#monitoring) is enabled and posting to the
-organizers' channel. See [docs/troubleshooting.md](troubleshooting.md) for
-what a 503 means and what to do.
+organizers' channel; the Cloudflare rate-limiting rule on `/api/*` described
+in [docs/hosting.md](hosting.md#cloudflare-in-front-of-the-box) is present
+and enabled (the zone's Security rules page lists it; a burst of requests to
+any `/api/` path from one address answers `429` after about a hundred). See
+[docs/troubleshooting.md](troubleshooting.md) for what a 503 means and what
+to do.
 
 ### The org and the bootstrap keys: `ctf-setup.sh doctor`
 

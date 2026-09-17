@@ -8,6 +8,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Docs: the Cloudflare rate-limiting rule in front of the box (#438, edge
+  layer).** The reference domain has always been proxied by Cloudflare and
+  the repo never said so. `docs/hosting.md` gains a section on why the edge
+  is the only place a per-IP control can live, the one Free-plan rule to
+  create (`/api/*`, 100 requests per 10 s per IP, block 10 s, zone-level not
+  account-level) and its verification; the pre-event checklist in
+  `docs/operations.md` grows from three checks to four.
+
 - **Fixed: the leaderboard fold runs once per 10 s, not once per viewer
   (#444).** Composing the board — the scorer read, every module's points,
   team standings, the chart series and hint penalties — cost roughly 500

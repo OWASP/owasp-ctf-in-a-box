@@ -1813,8 +1813,12 @@ deployed (an idle-suspended machine takes Redis and the poller down with it);
 [docs/hosting.md](hosting.md#monitoring) is enabled and posting to the
 organizers' channel; the Cloudflare rate-limiting rule on `/api/*` described
 in [docs/hosting.md](hosting.md#cloudflare-in-front-of-the-box) is present
-and enabled (the zone's Security rules page lists it; a burst of requests to
-any `/api/` path from one address answers `429` after about a hundred). See
+and enabled (the zone's Security rules page lists it; to prove it, first
+`GET` a deliberately nonexistent path such as `/api/rate-probe` once and see
+the normal 404, then burst the same `GET` about 130 times in a few seconds
+from one address — it answers `429` after about a hundred. Use only a
+nonexistent `GET` path, never a `POST` to a submit, answer, hint or gate
+route, which would spend real cooldowns and attempt caps). See
 [docs/troubleshooting.md](troubleshooting.md) for what a 503 means and what
 to do.
 

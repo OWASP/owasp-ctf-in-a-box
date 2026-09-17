@@ -484,6 +484,11 @@ export function describeLock(raw, now = Date.now()) {
   }
 }
 
+/** A Redis command error without the argument echo Redis appends ("… with args beginning with: …"): the args of a seed HSET include a quiz row's answer key. Capped. */
+export function redisErrorText(raw) {
+  return String(raw ?? "").replace(/,?\s*with args beginning with:[\s\S]*$/i, "").slice(0, 120);
+}
+
 /** A log-safe label for a failure: name + capped message for an Error, a fixed string otherwise; any bearer token or URL in the message is redacted. */
 export function errorLabel(err) {
   if (!(err instanceof Error)) return "failed (non-Error throw)";
@@ -527,7 +532,7 @@ async function pipeline(commands) {
   if (!res.ok) throw new Error(`pipeline HTTP ${res.status}`);
   const replies = await res.json();
   const bad = replies.find((r) => r && r.error);
-  if (bad) throw new Error(`pipeline command error: ${String(bad.error).slice(0, 120)}`);
+  if (bad) throw new Error(`pipeline command error: ${redisErrorText(bad.error)}`);
   return replies;
 }
 
@@ -631,11 +636,21 @@ async function main() {
 
   const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   await acquireLock(token);
+  // The run's own error wins; but a release that fails after a SUCCESSFUL
+  // run is an error too — the non-expiring lock would otherwise stay behind
+  // with an exit code of 0, and every later seed or clean would refuse.
+  let failure = null;
   try {
     await run(values, count);
-  } finally {
-    await releaseLock(token).catch(() => {}); // a failed release leaves the lock for --break-lock; the run's own error wins
+  } catch (err) {
+    failure = err;
   }
+  try {
+    await releaseLock(token);
+  } catch (err) {
+    if (!failure) failure = new Error(`the run completed but the lock could not be released (${errorLabel(err)}) — run --break-lock before the next seed or clean`);
+  }
+  if (failure) throw failure;
 }
 
 /** The seed or clean proper, run under the lock. */

@@ -191,7 +191,9 @@ sample_mem & MEM_PID=$!
 
 # One autocannon phase at a fixed rate; its JSON lands in $TMP/<name>.json.
 # A phase that fails to LAUNCH (autocannon missing, DNS, a nonzero exit) or
-# leaves no PARSEABLE result is recorded in $TMP/phase.err and never aborts
+# leaves no result in autocannon's SHAPE (every field the table and the bar
+# read must be a finite number — `{}` is not a measurement) is recorded in
+# $TMP/phase.err and never aborts
 # the script: the report still gets written, and the run fails at the end.
 # Only the phase name and exit status are recorded — autocannon's own stderr
 # can echo the target URL, so it is not persisted anywhere, not even in $TMP:
@@ -204,7 +206,16 @@ run_phase() { # name path rate duration
   npx --yes autocannon -d "$dur" -R "$rate" -c 10 --json "${URL%/}$path" > "$TMP/$name.json" 2>/dev/null || status=$?
   if [ "$status" -ne 0 ]; then reason="autocannon exit $status"
   elif [ ! -s "$TMP/$name.json" ]; then reason="no result written"
-  elif ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP/$name.json" >/dev/null 2>&1; then reason="result is not JSON"
+  elif ! node -e '
+      const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      const num = (v) => typeof v === "number" && Number.isFinite(v);
+      const ok = r && typeof r === "object"
+        && r.requests && num(r.requests.average)
+        && r.latency && num(r.latency.p50) && num(r.latency.p97_5) && num(r.latency.p99)
+        && num(r.errors) && num(r.timeouts) && num(r.non2xx)
+        && r.statusCodeStats && typeof r.statusCodeStats === "object";
+      process.exit(ok ? 0 : 1);
+    ' "$TMP/$name.json" >/dev/null 2>&1; then reason="result is not an autocannon summary (missing or non-numeric requests/latency/errors/timeouts/non2xx/statusCodeStats)"
   fi
   if [ -n "$reason" ]; then
     PHASE_FAILURES=$((PHASE_FAILURES + 1))

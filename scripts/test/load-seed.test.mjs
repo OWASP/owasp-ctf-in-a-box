@@ -27,6 +27,7 @@ import {
   partitionTeams,
   pickSubset,
   planBatches,
+  redisErrorText,
   resolveCatalogue,
   rng,
 } from "../load-seed.mjs";
@@ -349,6 +350,14 @@ test("the lock value carries the release token and is described with its age; th
   // --break-lock compares the whole stored value the operator was shown, and deletes only on a match.
   assert.ok(LOCK_BREAK_SCRIPT.includes("redis.call('GET', KEYS[1]) == ARGV[1]"));
   assert.ok(LOCK_BREAK_SCRIPT.indexOf("== ARGV[1]") < LOCK_BREAK_SCRIPT.indexOf("redis.call('DEL'"));
+});
+
+test("redisErrorText drops the argument echo Redis appends to a command error (it can carry a quiz answer key)", () => {
+  assert.equal(redisErrorText("WRONGTYPE Operation against a key holding the wrong kind of value, with args beginning with: ctf:quiz:answers:load-0001 q1 {\"choices\":[\"b\"]}"), "WRONGTYPE Operation against a key holding the wrong kind of value");
+  assert.equal(redisErrorText("ERR syntax error"), "ERR syntax error");
+  assert.equal(redisErrorText(null), "");
+  assert.ok(redisErrorText("E".repeat(500)).length <= 120);
+  assert.ok(!redisErrorText("NOAUTH with args beginning with: secret\nmore\nlines").includes("secret"));
 });
 
 test("errorLabel never carries a token, a URL, a stack, or an arbitrary thrown value", () => {

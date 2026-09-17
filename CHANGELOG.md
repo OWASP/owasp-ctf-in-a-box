@@ -32,6 +32,19 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   `/profile` and `/challenges` read the same shape. The scorer's own
   response was already built this way — the expansion happened in the app.
 
+- **Added: a load-test harness (#439).** `scripts/load-seed.mjs` writes N
+  synthetic contestants on teams — the demo seed's exact key families,
+  attached to the box's own catalogue — from inside the Fly machine, failing
+  closed when it cannot tell which modules are live or when a row it is about
+  to write already exists outside its own manifest; `--clean` removes exactly
+  what that manifest lists, with no catalogue, no `--count` and no name
+  pattern. `scripts/load-test.sh` ships it there, drives
+  the two public hot pages with autocannon at fixed rates, samples machine
+  memory (and fails the run if it could not) and writes one report on
+  autocannon's p97.5. Its first run on the live box at 200 contestants measured
+  `/leaderboard` at 13 MB and 0.3 req/s against 10 demanded, which is what
+  promoted #434 to pre-event work.
+
 - **Added: `/health/deep` and a Fly machine check (#437).** The box had no
   health check and no monitor, and every read fails open by design — so a
   dead Redis or scorer left the site rendering with nothing scoring, and the

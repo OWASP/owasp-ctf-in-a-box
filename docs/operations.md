@@ -1718,6 +1718,95 @@ any browser or phone, no login:
   polled — if that number keeps growing while Secure Development is live,
   score comments are piling up on GitHub and the leaderboard is not moving.
 
+### The box under load: `scripts/load-test.sh`
+
+Before content authoring, not after — the harness seeds synthetic contestants
+and a master reset is already on the plan between the two. It runs
+`scripts/load-seed.mjs` **inside the Fly machine's `app` container** (srh is on
+the private network; the container already holds the URL and token the app
+writes through) to create N `load-XXXX` contestants (N at least 2) on teams
+of 2–4 with a
+realistic spread of Secure Development, quiz and flag solves attached to the
+catalogue the box already has; then drives `/leaderboard` at 10 req/s and
+`?display=1` at 2 req/s with autocannon while sampling machine memory, and
+writes one Markdown report. Ownership is a **manifest, not a name**:
+`load-0001` is a legal GitHub login and nothing reserves it, so the seed
+records every key and every shared-hash field it writes in a manifest
+(`ctf:load-seed:manifest` plus two sets of keys and fields, each batch adding
+only its own delta, so a large seed stays linear), and refuses to run if any
+of them already exists
+and is not in its previous manifest (a real contestant may own that login).
+The check and the write are one Redis-side script per batch, so a
+contestant registering such a login *between* the two cannot be written
+over — there is no between. A collision aborts *that batch* before it writes
+anything; batches before it are already committed and recorded in the
+manifest (marked incomplete), so the seed can be partial and the next seed
+refuses to run until `--clean` has removed it. Still, run the harness before
+registration opens (or with it closed): a contestant who registers
+`load-0042` *after* the seed would be sharing rows the next `--clean`
+removes.
+The manifest is written incrementally — each batch of writes ends by
+recording what has landed so far — so a seed that dies half-way leaves a
+manifest naming exactly the rows it wrote, marked incomplete, and the next
+seed refuses to run until `--clean` has removed them. `--clean` needs no
+`--count`: it deletes exactly the manifest's entries and the manifest — so a
+challenge removed or a module switched off after seeding cannot strand a
+row, and nothing absent from the manifest is ever targeted. What *is*
+listed is deleted whole, later writes included: that is the
+`load-0042`-registers-after-the-seed case above, and the reason to run the
+harness before registration opens. One seed or clean runs at a time — both
+hold a Redis lock (`ctf:load-seed:lock`) for the whole operation, so a clean
+cannot race a seed and orphan its rows; a run that finds the lock held
+refuses and prints who has held it since when. The lock never expires by
+itself: after a crashed run, `scripts/load-test.sh --app owasp-ctf
+--break-lock` clears it once you are sure nothing is running (the seeder is
+not in the app image — the script uploads it the same way a run does, then
+calls its `--break-lock`, which refuses if the lock changed hands meanwhile).
+
+```sh
+scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev --count 200
+scripts/load-test.sh --app owasp-ctf --clean
+```
+
+Pass bar for a ~100-player event, on the percentile autocannon reports
+(p97.5 — it has no p95, so the bar is the stricter one): `/leaderboard` p97.5
+under 1.5 s at 10 req/s, `?display=1` under 1 s, zero 5xx, zero connection
+errors and zero timeouts (both are columns in the report; any of them fails
+the run outright, because a request that never got an answer is not a
+latency measurement), machine memory under 80 %. The script applies that bar
+at exit: it returns 0 only when the run was valid *and* every criterion was
+met, 1 when the run could not be trusted or the bar was missed (each miss is
+named on stderr as `BAR MISSED: …`), 2 on a usage error — so a run inside a
+shell loop or CI cannot pass by accident. The report carries every number
+either way. A miss on memory means `fly scale vm`; a miss on `/leaderboard`
+alone means the page's own cost is the problem (see #434, #444, #446).
+`/api/admin/metrics` needs an admin session the script deliberately does not
+carry (a cookie in a command line is readable by every local user) — time it
+from a logged-in tab.
+
+Fail directions: the **seed fails closed** — a settings hash whose module
+list it cannot parse, or Secure Development live with no `LEADERBOARD_API_URL`
+in the container, or a key or field it is about to write that already exists
+outside its own manifest, aborts before a single write, because a seed that
+guessed would attach points to a board that does not show them or write over
+a contestant. A quiz or classic row the seeder cannot read, or a scorer answer without a
+`challenges` list, is the same refusal — never a partial seed. The report's directory is
+created and its path checked writable *before* the seed, so a run that could
+not write its report never leaves rows behind. The **run
+fails** if a setup step failed (finding the machine, uploading the seeder) or
+the seed did not report success (the report then says so and nothing is
+driven), if a phase failed to run or left no parseable result
+(autocannon missing, a DNS failure — ordinary 5xx responses are counted in
+the table, not this), or if the memory sampler produced no sample; in every
+case the report is still written and says so, naming only the phase and its exit status (autocannon's own
+error text can echo the target URL, so it stays out of the report). `--clean`
+deletes the data first and the manifest only once every deletion succeeded,
+so an interrupted clean can always be re-run. The seeder's own error line
+is a redacted label — never the token or a URL. Not seeded on purpose:
+`ctf:classic:solvecount` — a shared per-challenge counter that real solves
+raise; the harness omits it because an exact clean could not lower it back
+safely — and hint purchases.
+
 Before an event, three checks in this order: `FLY_AUTO_STOP=off` is set and
 deployed (an idle-suspended machine takes Redis and the poller down with it);
 `/health/deep` is 200; the external monitor described in

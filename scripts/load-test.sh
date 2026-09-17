@@ -185,7 +185,10 @@ summarize() { # name label
 
 run_phase leaderboard "/leaderboard" 10 "$DURATION"
 run_phase display "/leaderboard?display=1" 2 "$DURATION"
+# Stop the sampler and WAIT for it, so a sample in flight lands in mem.log
+# before the counts below read it.
 kill "$MEM_PID" 2>/dev/null || true
+wait "$MEM_PID" 2>/dev/null || true
 MEM_PID=""
 
 MEM_SAMPLES=0

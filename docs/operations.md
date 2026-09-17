@@ -1749,7 +1749,15 @@ manifest naming exactly the rows it wrote, marked incomplete, and the next
 seed refuses to run until `--clean` has removed them. `--clean` needs no
 `--count`: it deletes exactly the manifest's entries and the manifest — so a
 challenge removed or a module switched off after seeding cannot strand a
-row, and no row the harness did not write can be touched.
+row, and nothing absent from the manifest is ever targeted. What *is*
+listed is deleted whole, later writes included: that is the
+`load-0042`-registers-after-the-seed case above, and the reason to run the
+harness before registration opens. One seed or clean runs at a time — both
+hold a Redis lock (`ctf:load-seed:lock`) for the whole operation, so a clean
+cannot race a seed and orphan its rows; a run that finds the lock held
+refuses and prints who has held it since when. The lock never expires by
+itself: after a crashed run, `node load-seed.mjs --break-lock` (inside the
+app container) clears it once you are sure nothing is running.
 
 ```sh
 scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev --count 200

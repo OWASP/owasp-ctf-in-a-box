@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  LOCK_RELEASE_SCRIPT,
   MANIFEST_KEY,
   SEED_SCRIPT,
   SHARED_HASHES,
@@ -14,9 +15,11 @@ import {
   buildCommands,
   cleanCommands,
   collisions,
+  describeLock,
   errorLabel,
   isSharedHash,
   liveModules,
+  lockValue,
   loginFor,
   manifestFor,
   mergeManifests,
@@ -293,8 +296,24 @@ test("the Redis URL must be https, or http only to a private endpoint", () => {
   assert.equal(assertRedisUrl("https://eu1-xyz.upstash.io").protocol, "https:");
   assert.throws(() => assertRedisUrl("http://eu1-xyz.upstash.io"), /cleartext/);
   assert.throws(() => assertRedisUrl("http://203.0.113.9:80"), /cleartext/);
+  // IPv6 literals: loopback, link-local and unique-local pass; a public address does not.
+  assert.equal(assertRedisUrl("http://[::1]:8079").hostname, "[::1]");
+  assert.equal(assertRedisUrl("http://[fe80::1]:80").hostname, "[fe80::1]");
+  assert.equal(assertRedisUrl("http://[fd12:3456::1]").hostname, "[fd12:3456::1]");
+  assert.throws(() => assertRedisUrl("http://[2606:4700:4700::1111]"), /cleartext/);
+  assert.throws(() => assertRedisUrl("http://[2001:db8::1]:80"), /cleartext/);
   assert.throws(() => assertRedisUrl("ftp://srh"), /must be https/);
   assert.throws(() => assertRedisUrl("not a url"), /not a URL/);
+});
+
+test("the lock value carries the release token and is described with its age; the release script is token-checked", () => {
+  const now = Date.parse("2026-09-17T02:30:00Z");
+  const raw = lockValue("tok-1", now - 7 * 60_000, 4242);
+  assert.deepEqual(JSON.parse(raw), { token: "tok-1", startedAt: "2026-09-17T02:23:00.000Z", pid: 4242 });
+  assert.equal(describeLock(raw, now), "held since 2026-09-17T02:23:00.000Z (7 min ago, pid 4242)");
+  assert.equal(describeLock("garbage", now), "held (unreadable lock value)");
+  assert.ok(LOCK_RELEASE_SCRIPT.includes("v.token == ARGV[1]"), "compares the stored token, not the whole value");
+  assert.ok(LOCK_RELEASE_SCRIPT.indexOf("v.token == ARGV[1]") < LOCK_RELEASE_SCRIPT.indexOf("redis.call('DEL'"));
 });
 
 test("errorLabel never carries a token, a URL, a stack, or an arbitrary thrown value", () => {

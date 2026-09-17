@@ -50,10 +50,19 @@
 //     cleaned by hand;
 //   - the CLEAN deletes exactly the manifest's entries and the manifest, and
 //     reads no catalogue, no --count and no pattern — a challenge removed or a
-//     module disabled after seeding cannot strand a field, and no real row
-//     can be touched. No manifest means nothing to clean. A manifest from a
-//     larger earlier --count stays merged in, so a smaller re-run still owns
-//     — and later cleans — the rows the earlier run wrote.
+//     module disabled after seeding cannot strand a field, and nothing absent
+//     from the manifest is ever targeted. (What IS listed is deleted whole:
+//     a contestant who registers `load-0042` AFTER the seed shares a listed
+//     key and loses it with the clean — which is why the harness runs before
+//     registration opens.) No manifest means nothing to clean. A manifest
+//     from a larger earlier --count stays merged in, so a smaller re-run
+//     still owns — and later cleans — the rows the earlier run wrote;
+//   - seed and clean are SERIALIZED by a token lock (ctf:load-seed:lock, SET
+//     NX, held for the whole operation, released by a token-checked script):
+//     a clean racing a seed could otherwise delete the new manifest under it
+//     and orphan the seed's rows. The lock does not expire on its own — a
+//     crashed run leaves it, the next run refuses and prints its age, and
+//     the operator clears it with --break-lock once sure nothing is running.
 //
 // FAIL DIRECTIONS. The seed fails CLOSED: a settings hash it cannot parse, or
 // Secure Development live with no scorer address, aborts before a single
@@ -75,6 +84,8 @@ const WINDOW_MS = 2 * 60 * 60 * 1000;
 
 /** Where the seed records exactly what it wrote; the clean's only input. */
 export const MANIFEST_KEY = "ctf:load-seed:manifest";
+/** One seed or clean at a time: a token lock held for the whole operation. */
+export const LOCK_KEY = "ctf:load-seed:lock";
 /** The shared hashes keyed by login or `<login>:<id>` that the seed writes fields INTO (everything else it writes is a whole key of its own). */
 export const SHARED_HASHES = ["ctf:quiz:points", "ctf:quiz:answered", "ctf:classic:points", "ctf:classic:solved"];
 
@@ -402,9 +413,42 @@ export function assertRedisUrl(raw) {
   if (u.protocol === "https:") return u;
   if (u.protocol !== "http:") throw new Error(`UPSTASH_REDIS_REST_URL must be https:// or a private http:// endpoint, got ${u.protocol}`);
   const h = u.hostname.toLowerCase();
-  const privateHost = h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1" || h.endsWith(".internal") || !h.includes(".");
+  let privateHost;
+  if (h.startsWith("[")) {
+    // An IPv6 literal: only loopback, link-local (fe80::/10) and unique-local
+    // (fc00::/7) may carry the token in cleartext; a public address may not.
+    const v6 = h.slice(1, -1);
+    privateHost = v6 === "::1" || /^fe[89ab][0-9a-f]?:/.test(v6) || /^f[cd][0-9a-f]{2}:/.test(v6);
+  } else {
+    privateHost = h === "localhost" || h === "127.0.0.1" || h.endsWith(".internal") || !h.includes(".");
+  }
   if (!privateHost) throw new Error("UPSTASH_REDIS_REST_URL is plain http:// to a public host — the token would travel in cleartext; use https://");
   return u;
+}
+
+/** Token-checked release: deletes the lock only if it still holds OUR token, so a run can never release a lock another run took over. */
+export const LOCK_RELEASE_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local ok, v = pcall(cjson.decode, raw)
+if ok and type(v) == 'table' and v.token == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0
+`;
+
+/** What the lock holds: the token that releases it, and who/when for the operator who finds it stale. */
+export function lockValue(token, now = Date.now(), pid = process.pid) {
+  return JSON.stringify({ token, startedAt: new Date(now).toISOString(), pid });
+}
+
+/** The operator-facing description of a lock someone else holds. */
+export function describeLock(raw, now = Date.now()) {
+  try {
+    const v = JSON.parse(raw);
+    const ageMin = Math.max(0, Math.round((now - Date.parse(v.startedAt)) / 60_000));
+    return `held since ${v.startedAt} (${ageMin} min ago, pid ${v.pid})`;
+  } catch {
+    return "held (unreadable lock value)";
+  }
 }
 
 /** A log-safe label for a failure: name + capped message for an Error, a fixed string otherwise; any bearer token or URL in the message is redacted. */
@@ -494,14 +538,46 @@ async function readCatalogue() {
   return resolveCatalogue({ enabled, quizRows: flat(quizRes.result), classicRows: flat(classicRes.result), sdChallenges, scorerUrl });
 }
 
-/** CLI entry: --count N [--dry-run] seeds and records a manifest; --clean [--dry-run] removes exactly what the manifest lists. */
+/** Take the lock or refuse: SET NX with our token; a held lock is reported with its age. */
+async function acquireLock(token) {
+  const [r] = await pipeline([["SET", LOCK_KEY, lockValue(token), "NX"]]);
+  if (r.result === "OK") return;
+  const [cur] = await pipeline([["GET", LOCK_KEY]]);
+  throw new Error(`another seed or clean is ${describeLock(cur.result)} — wait for it, or run --break-lock once you are sure nothing is running`);
+}
+
+/** Release only our own lock (token-checked in Redis). */
+async function releaseLock(token) {
+  await pipeline([["EVAL", LOCK_RELEASE_SCRIPT, "1", LOCK_KEY, token]]);
+}
+
+/** CLI entry: --count N [--dry-run] seeds and records a manifest; --clean [--dry-run] removes exactly what the manifest lists; --break-lock clears a stale lock. Seed and clean hold the lock end to end. */
 async function main() {
   const { values } = parseArgs({
-    options: { count: { type: "string", default: "200" }, clean: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false } },
+    options: { count: { type: "string", default: "200" }, clean: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, "break-lock": { type: "boolean", default: false } },
   });
   const count = Number(values.count);
   if (!Number.isInteger(count) || count < 2 || count > 5000) throw new Error("--count must be an integer in 2..5000 (teams are 2–4)");
 
+  if (values["break-lock"]) {
+    const [cur] = await pipeline([["GET", LOCK_KEY]]);
+    if (!cur.result) { console.log(JSON.stringify({ mode: "break-lock", note: "no lock was held" })); return; }
+    await pipeline([["DEL", LOCK_KEY]]);
+    console.log(JSON.stringify({ mode: "break-lock", broke: describeLock(cur.result) }));
+    return;
+  }
+
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  await acquireLock(token);
+  try {
+    await run(values, count);
+  } finally {
+    await releaseLock(token).catch(() => {}); // a failed release leaves the lock for --break-lock; the run's own error wins
+  }
+}
+
+/** The seed or clean proper, run under the lock. */
+async function run(values, count) {
   const previous = await readManifest();
   if (values.clean) {
     if (!previous) { console.log(JSON.stringify({ mode: "clean", keys: 0, fields: 0, commands: 0, note: "no manifest — nothing seeded by this harness is on the box" })); return; }

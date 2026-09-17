@@ -7,10 +7,10 @@
 # machine memory, and writes one Markdown report. --clean removes exactly what
 # the seed recorded in its manifest (it needs no --count).
 #
-#   scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev [--count 200]
+#   scripts/load-test.sh --app <fly-app> --url https://<EVENT_URL> [--count 200]
 #                        [--report docs/superpowers/load-2026-09-16.md]
-#   scripts/load-test.sh --app owasp-ctf --clean
-#   scripts/load-test.sh --app owasp-ctf --break-lock   # after a crashed run only
+#   scripts/load-test.sh --app <fly-app> --clean
+#   scripts/load-test.sh --app <fly-app> --break-lock   # after a crashed run only
 #
 # Exit code: 0 only when the run was valid AND every criterion of the pass bar
 # below was met; 1 when the run could not be trusted (setup, seed, a phase, or

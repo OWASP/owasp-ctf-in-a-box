@@ -1758,14 +1758,14 @@ harness before registration opens. One seed or clean runs at a time — both
 hold a Redis lock (`ctf:load-seed:lock`) for the whole operation, so a clean
 cannot race a seed and orphan its rows; a run that finds the lock held
 refuses and prints who has held it since when. The lock never expires by
-itself: after a crashed run, `scripts/load-test.sh --app owasp-ctf
+itself: after a crashed run, `scripts/load-test.sh --app <fly-app>
 --break-lock` clears it once you are sure nothing is running (the seeder is
 not in the app image — the script uploads it the same way a run does, then
 calls its `--break-lock`, which refuses if the lock changed hands meanwhile).
 
 ```sh
-scripts/load-test.sh --app owasp-ctf --url https://ctf.dcotelo.dev --count 200
-scripts/load-test.sh --app owasp-ctf --clean
+scripts/load-test.sh --app <fly-app> --url https://<EVENT_URL> --count 200
+scripts/load-test.sh --app <fly-app> --clean
 ```
 
 Pass bar for a ~100-player event, on the percentile autocannon reports

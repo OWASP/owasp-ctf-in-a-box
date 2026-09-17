@@ -40,7 +40,7 @@ const CHALLENGE: AiChallenge = {
 };
 
 const REAL_KEY = "aik_" + "z".repeat(43);
-const ORIGIN = "https://ctf.dcotelo.dev";
+const ORIGIN = "https://ctf.example.org";
 
 const noop = () => {};
 

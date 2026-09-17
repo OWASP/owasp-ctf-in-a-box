@@ -1766,8 +1766,10 @@ scripts/load-test.sh --app owasp-ctf --clean
 
 Pass bar for a ~100-player event, on the percentile autocannon reports
 (p97.5 — it has no p95, so the bar is the stricter one): `/leaderboard` p97.5
-under 1.5 s at 10 req/s, `?display=1` under 1 s, zero 5xx, machine memory
-under 80 %. A miss on memory means `fly scale vm`; a miss on `/leaderboard`
+under 1.5 s at 10 req/s, `?display=1` under 1 s, zero 5xx, zero connection
+errors and zero timeouts (both are columns in the report; any of them fails
+the run outright, because a request that never got an answer is not a
+latency measurement), machine memory under 80 %. A miss on memory means `fly scale vm`; a miss on `/leaderboard`
 alone means the page's own cost is the problem (see #434, #444, #446).
 `/api/admin/metrics` needs an admin session the script deliberately does not
 carry (a cookie in a command line is readable by every local user) — time it

@@ -13,7 +13,10 @@
 #
 # Pass bar (from the issue, restated on autocannon's percentiles — it reports
 # p97.5, not p95, so the stricter one is used): /leaderboard p97.5 < 1.5 s at
-# 10 rps, ?display=1 p97.5 < 1 s at 2 rps, zero 5xx, machine memory < 80 %.
+# 10 rps, ?display=1 p97.5 < 1 s at 2 rps, zero 5xx, zero connection errors
+# and zero timeouts (autocannon's `errors`/`timeouts`: a request that never
+# got an answer is not a measurement, so any of them fails the RUN, not just
+# the bar), machine memory < 80 %.
 # /api/admin/metrics needs an admin session this script deliberately does not
 # carry (a cookie in an argument vector is readable by every local user) —
 # time it from a logged-in tab. This script REPORTS; the human decides.
@@ -179,12 +182,12 @@ run_phase() { # name path rate duration
 # A phase run_phase already marked failed prints a "did not run" row; the
 # failure itself was counted there, so this never decides pass/fail.
 summarize() { # name label
-  if grep -q "^$1: " "$TMP/phase.err" 2>/dev/null; then echo "| $2 | did not run | — | — | — | — | — |"; return 0; fi
+  if grep -q "^$1: " "$TMP/phase.err" 2>/dev/null; then echo "| $2 | did not run | — | — | — | — | — | — | — |"; return 0; fi
   # shellcheck disable=SC2016  # the ${} below is JS template syntax, not shell
   node -e '
     const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
     const p = r.latency || {}, non2xx = r.non2xx || 0, e5 = (r.statusCodeStats && Object.entries(r.statusCodeStats).filter(([c]) => c >= "500").reduce((s, [, v]) => s + (v.count || v), 0)) || 0;
-    console.log(`| ${process.argv[2]} | ${(r.requests && r.requests.average || 0).toFixed(1)} | ${p.p50} ms | ${p.p97_5} ms | ${p.p99} ms | ${non2xx} | ${e5} |`);
+    console.log(`| ${process.argv[2]} | ${(r.requests && r.requests.average || 0).toFixed(1)} | ${p.p50} ms | ${p.p97_5} ms | ${p.p99} ms | ${non2xx} | ${e5} | ${r.errors || 0} | ${r.timeouts || 0} |`);
   ' "$TMP/$1.json" "$2"
 }
 
@@ -196,6 +199,16 @@ kill "$MEM_PID" 2>/dev/null || true
 wait "$MEM_PID" 2>/dev/null || true
 MEM_PID=""
 
+# Connection errors and timeouts across the phases that ran: a request that
+# never got an answer is not a measurement, so any of them fails the run.
+PROBE_ERRORS=0
+for f in "$TMP"/leaderboard.json "$TMP"/display.json; do
+  if [ -s "$f" ] && ! grep -q "^$(basename "$f" .json): " "$TMP/phase.err" 2>/dev/null; then
+    n="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(String((r.errors||0)+(r.timeouts||0)))' "$f" 2>/dev/null || echo 0)"
+    PROBE_ERRORS=$((PROBE_ERRORS + n))
+  fi
+done
+
 MEM_SAMPLES=0
 if [ -s "$TMP/mem.log" ]; then MEM_SAMPLES="$(wc -l < "$TMP/mem.log" | tr -d ' ')"; fi
 MEM_FAILURES=0
@@ -206,12 +219,12 @@ if [ -s "$TMP/mem.err" ]; then MEM_FAILURES="$(wc -l < "$TMP/mem.err" | tr -d ' 
   echo
   echo "Seed: \`$SEED_OUT\`"
   echo
-  echo "| phase | rps achieved | p50 | p97.5 | p99 | non-2xx | 5xx |"
-  echo "|---|---|---|---|---|---|---|"
+  echo "| phase | rps achieved | p50 | p97.5 | p99 | non-2xx | 5xx | conn errors | timeouts |"
+  echo "|---|---|---|---|---|---|---|---|---|"
   summarize leaderboard "/leaderboard @10rps"
   summarize display "/leaderboard?display=1 @2rps"
   echo
-  echo "Pass bar (p97.5 — autocannon's nearest percentile above the issue's p95): /leaderboard < 1500 ms; display < 1000 ms; zero 5xx; memory < 80 %. /api/admin/metrics is timed by hand from a logged-in tab."
+  echo "Pass bar (p97.5 — autocannon's nearest percentile above the issue's p95): /leaderboard < 1500 ms; display < 1000 ms; zero 5xx; zero connection errors and timeouts (any fails the run: an unanswered request is not a measurement); memory < 80 %. /api/admin/metrics is timed by hand from a logged-in tab."
   echo
   if [ -s "$TMP/phase.err" ]; then
     echo "## Phases that did not run (the run FAILS on this)"
@@ -230,6 +243,10 @@ if [ -s "$TMP/mem.err" ]; then MEM_FAILURES="$(wc -l < "$TMP/mem.err" | tr -d ' 
 echo "== report: $REPORT"
 cat "$REPORT"
 RC=0
+if [ "$PROBE_ERRORS" -ne 0 ]; then
+  echo "FAIL: $PROBE_ERRORS connection error(s)/timeout(s) across the phases — those requests were never answered, so the latency columns understate the truth" >&2
+  RC=1
+fi
 if [ "$PHASE_FAILURES" -ne 0 ]; then
   echo "FAIL: $PHASE_FAILURES phase(s) did not run — see the report's 'Phases that did not run'" >&2
   RC=1

@@ -19,11 +19,12 @@
 # time it from a logged-in tab. This script REPORTS; the human decides.
 #
 # Fail direction: the run itself must not lie, and it writes ONE report no
-# matter what. A seed that did not report success stops before anything is
-# driven; a phase that fails to launch, or a memory sampler that produced no
-# sample, is written into the report and the script exits non-zero AFTER the
-# report — a report with a missing phase or no memory line cannot pass the
-# bar, but it still says what happened.
+# matter what. A seed that did not report success drives nothing and writes
+# a report saying so; a phase that fails to launch, or a memory sampler that
+# produced no sample, is written into the report too; in every case the
+# script exits non-zero AFTER the report — a report with a failed seed, a
+# missing phase or no memory line cannot pass the bar, but it still says what
+# happened.
 set -euo pipefail
 
 APP=""; URL=""; COUNT=200; REPORT=""; CLEAN=""; DURATION=60
@@ -76,10 +77,28 @@ if [ -n "$CLEAN" ]; then
   exit 0
 fi
 
+# The seed's status is captured, never allowed to end the script under
+# `set -e`: a failed seed still gets its report (below), then exit 1. Its
+# last output line is the seeder's own JSON summary or its redacted error
+# label — nothing else the seeder prints reaches the report.
 echo "== seeding $COUNT synthetic contestants"
-SEED_OUT="$(fly ssh console --app "$APP" --machine "$MACHINE" --container app -C "node /tmp/load-seed.mjs --count $COUNT" 2>&1 | tail -1)"
+SEED_STATUS=0
+SEED_OUT="$(fly ssh console --app "$APP" --machine "$MACHINE" --container app -C "node /tmp/load-seed.mjs --count $COUNT" 2>&1 | tail -1)" || SEED_STATUS=$?
 echo "   $SEED_OUT"
-if ! grep -q '"mode":"seed"' <<< "$SEED_OUT"; then echo "FAIL: seed did not report success" >&2; exit 1; fi
+if [ "$SEED_STATUS" -ne 0 ] || ! grep -q '"mode":"seed"' <<< "$SEED_OUT"; then
+  {
+    echo "# Load test — $APP — $(date -u +%Y-%m-%dT%H:%MZ)"
+    echo
+    echo "## Seed FAILED (exit $SEED_STATUS) — nothing was driven; the run FAILS"
+    echo
+    echo "Seeder said: \`$SEED_OUT\`"
+    echo
+    echo "If the seeder wrote any batch before failing, its manifest records them: run \`scripts/load-test.sh --app $APP --clean\` before seeding again."
+  } > "$REPORT"
+  echo "== report: $REPORT"
+  echo "FAIL: seed did not report success (exit $SEED_STATUS)" >&2
+  exit 1
+fi
 
 TMP="$(mktemp -d)"
 MEM_PID=""

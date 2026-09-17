@@ -1736,9 +1736,13 @@ records every key and every shared-hash field it writes in
 and is not in its previous manifest (a real contestant may own that login).
 The check and the write are one Redis-side script per batch, so a
 contestant registering such a login *between* the two cannot be written
-over — there is no between. Still, run the harness before registration
-opens (or with it closed): a contestant who registers `load-0042` *after*
-the seed would be sharing rows the next `--clean` removes.
+over — there is no between. A collision aborts *that batch* before it writes
+anything; batches before it are already committed and recorded in the
+manifest (marked incomplete), so the seed can be partial and the next seed
+refuses to run until `--clean` has removed it. Still, run the harness before
+registration opens (or with it closed): a contestant who registers
+`load-0042` *after* the seed would be sharing rows the next `--clean`
+removes.
 The manifest is written incrementally — each batch of writes ends by
 recording what has landed so far — so a seed that dies half-way leaves a
 manifest naming exactly the rows it wrote, marked incomplete, and the next
@@ -1770,11 +1774,11 @@ a contestant. A quiz or classic row the seeder cannot read, or a scorer answer w
 `challenges` list, is the same refusal — never a partial seed. The report's directory is
 created and its path checked writable *before* the seed, so a run that could
 not write its report never leaves rows behind. The **run
-fails** if the seed did not report success, if a phase failed to run or left
-no parseable result (autocannon missing, a DNS failure — ordinary 5xx
-responses are counted in the table, not this), or if the memory sampler
-produced no sample; in every case after the seed the report is still written
-and says so, naming only the phase and its exit status (autocannon's own
+fails** if the seed did not report success (the report then says so and
+nothing is driven), if a phase failed to run or left no parseable result
+(autocannon missing, a DNS failure — ordinary 5xx responses are counted in
+the table, not this), or if the memory sampler produced no sample; in every
+case the report is still written and says so, naming only the phase and its exit status (autocannon's own
 error text can echo the target URL, so it stays out of the report). `--clean`
 deletes the data first and the manifest only once every deletion succeeded,
 so an interrupted clean can always be re-run. The seeder's own error line

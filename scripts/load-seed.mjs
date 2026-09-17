@@ -39,15 +39,16 @@
 //     `load-0042` between a check and a write cannot be overwritten: there is
 //     no "between". A JS-side probe still runs first, purely to report every
 //     collision at once before the first batch; the script is the authority;
-//   - the manifest is written INCREMENTALLY: every batch of writes ends with
-//     a SET of the manifest covering the previous run plus every batch that
-//     has completed, so a seed that dies half-way leaves a manifest naming
+//   - the manifest is written INCREMENTALLY AS DELTAS: it is a header
+//     (ctf:load-seed:manifest, `{version, complete}`) plus two Redis SETs of
+//     the keys and the shared-hash fields the seed owns; each batch's script
+//     SADDs only what THAT batch wrote, so a seed of any size costs O(batch)
+//     per batch and a seed that dies half-way leaves a manifest naming
 //     exactly the rows it managed to write (and `--clean` removes them). The
 //     planned-but-unwritten rows are never listed — a clean cannot reach a
-//     key some other owner creates later. The one residual window is a batch
-//     whose writes landed but whose own SET failed; the abort message says
-//     which batch, and a re-run's collision probe will refuse until it is
-//     cleaned by hand;
+//     key some other owner creates later. Nothing cumulative is serialized or
+//     kept in memory: `planBatches` is a generator consumed one batch at a
+//     time, and --count 5000 (~100k commands) stays linear;
 //   - the CLEAN deletes exactly the manifest's entries and the manifest, and
 //     reads no catalogue, no --count and no pattern — a challenge removed or a
 //     module disabled after seeding cannot strand a field, and nothing absent
@@ -84,8 +85,14 @@ const WINDOW_MS = 2 * 60 * 60 * 1000;
 /** Every network wait is bounded: the seed holds a non-expiring lock, and Node's fetch would otherwise sit on a stalled socket for minutes. */
 const FETCH_TIMEOUT_MS = 15_000;
 
-/** Where the seed records exactly what it wrote; the clean's only input. */
+/** Where the seed records exactly what it wrote; the clean's only input. A small header plus two sets, written as DELTAS per batch. */
 export const MANIFEST_KEY = "ctf:load-seed:manifest";
+/** SET of every whole key the seed owns. */
+export const MANIFEST_KEYS_KEY = "ctf:load-seed:manifest:keys";
+/** SET of every shared-hash field the seed owns, encoded `${hash}\u0001${field}`. */
+export const MANIFEST_FIELDS_KEY = "ctf:load-seed:manifest:fields";
+/** Separator inside a manifest field entry; never appears in a key or a login. */
+export const FIELD_SEP = "\u0001";
 /** One seed or clean at a time: a token lock held for the whole operation. */
 export const LOCK_KEY = "ctf:load-seed:lock";
 /** The shared hashes keyed by login or `<login>:<id>` that the seed writes fields INTO (everything else it writes is a whole key of its own). */
@@ -327,24 +334,15 @@ export function collisions(manifest, existing, previous = null) {
   return out;
 }
 
-/** The union of two manifests: a re-run keeps owning every row an earlier run wrote. */
-export function mergeManifests(a, b) {
-  const keys = new Set([...(a ? a.keys : []), ...(b ? b.keys : [])]);
-  const fields = {};
-  for (const m of [a, b]) {
-    if (!m) continue;
-    for (const [k, fs] of Object.entries(m.fields || {})) (fields[k] ||= new Set()) && fs.forEach((f) => fields[k].add(f));
-  }
-  return { keys: [...keys].sort(), fields: Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, [...v].sort()])) };
-}
-
 /**
- * The Lua the seed runs per batch. ARGV[1] is the batch's ops as JSON
- * (`{cmd, key, field?, args, claimed}`), ARGV[2] the manifest key, ARGV[3]
- * the manifest JSON to record once the batch has landed. Every check runs
- * before any write, so the batch either lands whole with its manifest or
- * returns the first collision having written nothing. Atomic because Redis
- * runs a script without interleaving other clients' commands.
+ * The Lua the seed runs per batch. KEYS: [1] manifest header, [2] the keys
+ * set, [3] the fields set. ARGV: [1] the batch's ops as JSON
+ * (`{cmd, key, field?, args, claimed}`), [2] the whole keys this batch adds
+ * (JSON array), [3] the shared-hash fields it adds (JSON array of
+ * `hash\u0001field`), [4] "1" on the last batch. Every check runs before any
+ * write, so the batch either lands whole — writes AND its manifest delta —
+ * or returns the first collision having written nothing. Atomic because
+ * Redis runs a script without interleaving other clients' commands.
  */
 export const SEED_SCRIPT = `
 local ops = cjson.decode(ARGV[1])
@@ -360,36 +358,54 @@ end
 for _, op in ipairs(ops) do
   redis.call(op.cmd, op.key, unpack(op.args))
 end
-redis.call('SET', ARGV[2], ARGV[3])
+local keys = cjson.decode(ARGV[2])
+if #keys > 0 then redis.call('SADD', KEYS[2], unpack(keys)) end
+local fields = cjson.decode(ARGV[3])
+if #fields > 0 then redis.call('SADD', KEYS[3], unpack(fields)) end
+redis.call('SET', KEYS[1], cjson.encode({ version = 2, complete = (ARGV[4] == '1') }))
 return 'ok:' .. #ops
 `;
 
 /**
- * The seed's writes cut into batches for SEED_SCRIPT. Each batch carries its
- * ops — every op marked `claimed` when the manifest SO FAR (the previous run
- * merged with every batch before this one) already owns that key or field,
- * so a login's rows split across two batches are not a self-collision — and
- * the manifest to record once it has landed: previous plus every command up
- * to and including this batch, `complete: true` only on the last. Only
- * committed writes are ever recorded.
+ * The seed's writes as a stream of batches for SEED_SCRIPT — a generator, so
+ * the caller executes each batch before the next is built and nothing
+ * cumulative is retained. Each batch carries its ops (`claimed` when the
+ * previous run or an earlier batch already owns that key or field, so a
+ * login's rows split across two batches are not a self-collision), the
+ * DELTA of whole keys and shared-hash fields it adds to the manifest, and
+ * `complete` on the last. Ownership is two Sets grown as batches are
+ * yielded: O(total) work overall, not O(total²).
  */
-export function planBatches(cmds, previous, batchSize = BATCH) {
-  const batches = [];
+export function* planBatches(cmds, previous, batchSize = BATCH) {
+  const ownedKeys = new Set(previous ? previous.keys : []);
+  const ownedFields = new Set();
+  for (const [k, fs] of Object.entries(previous ? previous.fields : {})) for (const f of fs) ownedFields.add(`${k}${FIELD_SEP}${f}`);
   for (let i = 0; i < cmds.length; i += batchSize) {
     const upto = Math.min(cmds.length, i + batchSize);
-    const before = mergeManifests(previous, manifestFor(cmds.slice(0, i)));
-    const beforeKeys = new Set(before.keys);
-    const ops = cmds.slice(i, upto).map((c) => {
+    const ops = [];
+    const deltaKeys = new Set();
+    const deltaFields = new Set();
+    for (const c of cmds.slice(i, upto)) {
       const key = c[1];
-      const shared = isSharedHash(key);
-      const field = shared ? String(c[2]) : undefined;
-      const claimed = shared ? (before.fields[key] || []).includes(field) : beforeKeys.has(key);
-      return { cmd: c[0], key, ...(shared ? { field } : {}), args: c.slice(2).map(String), claimed };
-    });
-    const soFar = mergeManifests(previous, manifestFor(cmds.slice(0, upto)));
-    batches.push({ ops, manifest: { ...soFar, complete: upto === cmds.length } });
+      if (isSharedHash(key)) {
+        const field = String(c[2]);
+        const entry = `${key}${FIELD_SEP}${field}`;
+        const claimed = ownedFields.has(entry);
+        ops.push({ cmd: c[0], key, field, args: c.slice(2).map(String), claimed });
+        if (!claimed) deltaFields.add(entry);
+      } else {
+        const claimed = ownedKeys.has(key);
+        ops.push({ cmd: c[0], key, args: c.slice(2).map(String), claimed });
+        if (!claimed) deltaKeys.add(key);
+      }
+    }
+    // Two ops on one new key inside the same batch are both unclaimed and
+    // that is right: the script checks before any write, when the key is
+    // still absent. The delta sets dedupe them for the manifest.
+    for (const k of deltaKeys) ownedKeys.add(k);
+    for (const f of deltaFields) ownedFields.add(f);
+    yield { ops, deltaKeys: [...deltaKeys], deltaFields: [...deltaFields], complete: upto === cmds.length };
   }
-  return batches;
 }
 
 /**
@@ -519,13 +535,24 @@ const flat = (arr) => {
   return o;
 };
 
-/** The previous run's manifest, or null when this harness has nothing on the box. */
+/** The previous run's manifest, or null when this harness has nothing on the box: the header plus the two ownership sets, in the shape cleanCommands/collisions consume. */
 async function readManifest() {
-  const [r] = await pipeline([["GET", MANIFEST_KEY]]);
-  if (!r.result) return null;
-  const m = JSON.parse(r.result);
-  if (!Array.isArray(m.keys) || !m.fields || typeof m.fields !== "object") throw new Error("ctf:load-seed:manifest is not in the shape this seeder writes — refusing to guess; clean it by hand");
-  return { keys: m.keys, fields: m.fields, complete: m.complete !== false };
+  const [h, k, f] = await pipeline([["GET", MANIFEST_KEY], ["SMEMBERS", MANIFEST_KEYS_KEY], ["SMEMBERS", MANIFEST_FIELDS_KEY]]);
+  const keys = k.result || [];
+  const entries = f.result || [];
+  if (!h.result && keys.length === 0 && entries.length === 0) return null;
+  let header = { version: 2, complete: false };
+  if (h.result) {
+    try { header = JSON.parse(h.result); } catch { throw new Error("ctf:load-seed:manifest is not in the shape this seeder writes — refusing to guess; clean it by hand"); }
+    if (header.version !== 2) throw new Error(`ctf:load-seed:manifest is version ${header.version}, this seeder writes version 2 — clean it by hand`);
+  }
+  const fields = {};
+  for (const e of entries) {
+    const i = e.indexOf(FIELD_SEP);
+    if (i < 0) throw new Error("ctf:load-seed:manifest:fields holds an entry this seeder did not write — refusing to guess; clean it by hand");
+    (fields[e.slice(0, i)] ||= []).push(e.slice(i + 1));
+  }
+  return { keys: [...keys].sort(), fields: Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, v.sort()])), complete: header.complete === true };
 }
 
 /** Which of the manifest's keys and fields already exist in the store (EXISTS / HEXISTS, batched). */
@@ -620,7 +647,7 @@ async function run(values, count) {
     // succeeded, in its own call — a failed batch throws before it and the
     // manifest stays to find the remaining rows by on the next --clean.
     for (let i = 0; i < plan.cmds.length; i += BATCH) await pipeline(plan.cmds.slice(i, i + BATCH));
-    await pipeline([["DEL", MANIFEST_KEY]]);
+    await pipeline([["DEL", MANIFEST_KEY, MANIFEST_KEYS_KEY, MANIFEST_FIELDS_KEY]]);
     console.log(JSON.stringify(summary));
     return;
   }
@@ -631,22 +658,25 @@ async function run(values, count) {
   const manifest = manifestFor(plan.cmds);
   const clash = collisions(manifest, await probeExisting(manifest), previous);
   if (clash.length) throw new Error(`refusing to seed: ${clash.length} key(s)/field(s) already exist and are not this harness's (first: ${clash[0]}) — a contestant may own that login`);
-  const batches = planBatches(plan.cmds, previous);
-  const summary = { mode: "seed", ...plan.stats, commands: plan.cmds.length, batches: batches.length, manifest: { keys: manifest.keys.length, fields: Object.values(manifest.fields).reduce((n, a) => n + a.length, 0) }, catalogue: { quiz: catalogue.quiz.length, classic: catalogue.classic.length, sdTargets: Object.keys(catalogue.sd).length, sdChallenges: Object.values(catalogue.sd).reduce((n, a) => n + a.length, 0) } };
+  const totalBatches = Math.ceil(plan.cmds.length / BATCH);
+  const summary = { mode: "seed", ...plan.stats, commands: plan.cmds.length, batches: totalBatches, manifest: { keys: manifest.keys.length, fields: Object.values(manifest.fields).reduce((n, a) => n + a.length, 0) }, catalogue: { quiz: catalogue.quiz.length, classic: catalogue.classic.length, sdTargets: Object.keys(catalogue.sd).length, sdChallenges: Object.values(catalogue.sd).reduce((n, a) => n + a.length, 0) } };
   if (values["dry-run"]) { console.log(JSON.stringify({ ...summary, dryRun: true })); return; }
 
-  for (let i = 0; i < batches.length; i++) {
+  // Streamed: each batch is built, run and forgotten before the next exists.
+  let i = 0;
+  for (const batch of planBatches(plan.cmds, previous)) {
+    i += 1;
     let reply;
     try {
-      [reply] = await pipeline([["EVAL", SEED_SCRIPT, "0", JSON.stringify(batches[i].ops), MANIFEST_KEY, JSON.stringify(batches[i].manifest)]]);
+      [reply] = await pipeline([["EVAL", SEED_SCRIPT, "3", MANIFEST_KEY, MANIFEST_KEYS_KEY, MANIFEST_FIELDS_KEY, JSON.stringify(batch.ops), JSON.stringify(batch.deltaKeys), JSON.stringify(batch.deltaFields), batch.complete ? "1" : "0"]]);
     } catch (err) {
-      throw new Error(`seed aborted in batch ${i + 1} of ${batches.length} (${errorLabel(err)}); the manifest records the batches that completed — run --clean, then seed again`);
+      throw new Error(`seed aborted in batch ${i} of ${totalBatches} (${errorLabel(err)}); the manifest records the batches that completed — run --clean, then seed again`);
     }
     const out = String(reply && reply.result);
     if (out.startsWith("collision:")) {
-      throw new Error(`refusing to seed: ${out.slice("collision:".length)} was written by someone else between the probe and batch ${i + 1} of ${batches.length} — nothing from that batch was written; the manifest records the batches before it — run --clean, then seed again`);
+      throw new Error(`refusing to seed: ${out.slice("collision:".length)} was written by someone else between the probe and batch ${i} of ${totalBatches} — nothing from that batch was written; the manifest records the batches before it — run --clean, then seed again`);
     }
-    if (!out.startsWith("ok:")) throw new Error(`seed script answered unexpectedly in batch ${i + 1}: ${out.slice(0, 60)}`);
+    if (!out.startsWith("ok:")) throw new Error(`seed script answered unexpectedly in batch ${i}: ${out.slice(0, 60)}`);
   }
   console.log(JSON.stringify(summary));
 }

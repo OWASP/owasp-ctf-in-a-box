@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import {
   LOCK_BREAK_SCRIPT,
   LOCK_RELEASE_SCRIPT,
+  FIELD_SEP,
   MANIFEST_KEY,
   SEED_SCRIPT,
   SHARED_HASHES,
@@ -23,7 +24,6 @@ import {
   lockValue,
   loginFor,
   manifestFor,
-  mergeManifests,
   partitionTeams,
   pickSubset,
   planBatches,
@@ -183,28 +183,44 @@ test("a seed refuses to write over an existing key or field it does not own, and
 
 // The third Major: a seed that dies half-way must leave a manifest naming
 // exactly what it wrote so far — never the plan.
-test("every batch carries the manifest of what has landed once it runs, and only the last is complete", () => {
+// The manifest is written as DELTAS: each batch names only what it adds, the
+// union of all deltas is exactly the full manifest, and nothing is
+// serialized cumulatively — so the work is linear in the seed's size.
+test("planBatches yields one delta per batch whose union is exactly the manifest, complete only on the last", () => {
   const seed = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
   const previous = { keys: ["ctf:user:load-0099"], fields: { "ctf:quiz:points": ["load-0099"] } };
   const B = 50;
-  const batches = planBatches(seed.cmds, previous, B);
+  const batches = [...planBatches(seed.cmds, previous, B)];
   assert.equal(batches.length, Math.ceil(seed.cmds.length / B));
-  let written = 0;
+  const keys = new Set();
+  const fields = new Set();
+  let ops = 0;
   batches.forEach((batch, i) => {
     assert.ok(batch.ops.length <= B);
-    written += batch.ops.length;
-    const expected = mergeManifests(previous, manifestFor(seed.cmds.slice(0, written)));
-    assert.deepEqual({ keys: batch.manifest.keys, fields: batch.manifest.fields }, expected, `batch ${i} records exactly what has landed`);
-    assert.equal(batch.manifest.complete, i === batches.length - 1);
-    // Nothing from a later batch is recorded yet.
-    const later = manifestFor(seed.cmds.slice(written));
-    for (const k of later.keys) if (!expected.keys.includes(k)) assert.ok(!batch.manifest.keys.includes(k), `planned-not-written key recorded: ${k}`);
+    ops += batch.ops.length;
+    for (const k of batch.deltaKeys) { assert.ok(!keys.has(k), `key ${k} recorded twice`); keys.add(k); }
+    for (const f of batch.deltaFields) { assert.ok(!fields.has(f), `field ${f} recorded twice`); fields.add(f); }
+    assert.equal(batch.complete, i === batches.length - 1);
   });
-  assert.equal(written, seed.cmds.length);
-  // The previous run's rows stay owned.
-  const final = batches[batches.length - 1].manifest;
-  assert.ok(final.keys.includes("ctf:user:load-0099"));
-  assert.ok(final.fields["ctf:quiz:points"].includes("load-0099"));
+  assert.equal(ops, seed.cmds.length);
+  const m = manifestFor(seed.cmds);
+  assert.deepEqual([...keys].sort(), m.keys, "union of key deltas is the manifest's keys");
+  const expectedFields = Object.entries(m.fields).flatMap(([k, fs]) => fs.map((f) => `${k}${FIELD_SEP}${f}`)).sort();
+  assert.deepEqual([...fields].sort(), expectedFields, "union of field deltas is the manifest's fields");
+  // Rows the previous run owns are claimed, never re-added to the delta.
+  assert.ok(!keys.has("ctf:user:load-0099"));
+  assert.ok(!fields.has(`ctf:quiz:points${FIELD_SEP}load-0099`));
+});
+
+test("planBatches is linear: 100k commands plan in well under the time a quadratic rescan would take", () => {
+  const cmds = [];
+  for (let i = 0; i < 100_000; i++) cmds.push(i % 3 === 0 ? ["HSET", "ctf:quiz:points", `load-${String(i).padStart(6, "0")}`, "1"] : ["HSET", `ctf:user:load-${String(i).padStart(6, "0")}`, "team", "t"]);
+  const t0 = performance.now();
+  let n = 0;
+  for (const b of planBatches(cmds, null, 200)) n += b.ops.length; // consumed one at a time, nothing retained
+  const ms = performance.now() - t0;
+  assert.equal(n, 100_000);
+  assert.ok(ms < 3_000, `planned 100k commands in ${Math.round(ms)} ms — the quadratic version took ~10 s at 72k`);
 });
 
 // The Lua script checks before it writes; `claimed` is what lets a key the
@@ -212,7 +228,7 @@ test("every batch carries the manifest of what has landed once it runs, and only
 test("ops are shaped for the seed script, and claimed exactly when an earlier batch or run already owns the row", () => {
   const seed = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
   const previous = { keys: ["ctf:user:load-0001"], fields: { "ctf:quiz:points": ["load-0001"] } };
-  const batches = planBatches(seed.cmds, previous, 7); // small batches so logins straddle boundaries
+  const batches = [...planBatches(seed.cmds, previous, 7)]; // small batches so logins straddle boundaries
   const seenKeys = new Set(previous.keys);
   const seenFields = new Set(["ctf:quiz:points#load-0001"]);
   for (const batch of batches) {
@@ -239,17 +255,11 @@ test("ops are shaped for the seed script, and claimed exactly when an earlier ba
   let straddled = false;
   batches.forEach((b, i) => b.ops.forEach((op) => { if (op.field === undefined) { if (firstBatchOf.has(op.key) && firstBatchOf.get(op.key) !== i) { straddled = true; assert.ok(op.claimed); } else firstBatchOf.set(op.key, i); } }));
   assert.ok(straddled, "fixture should straddle a batch boundary");
-  // The script itself: checks precede writes, returns collision without writing, records the manifest last.
+  // The script itself: checks precede writes, returns collision without writing, records the delta and header last.
   assert.ok(SEED_SCRIPT.indexOf("HEXISTS") < SEED_SCRIPT.indexOf("redis.call(op.cmd"));
   assert.ok(SEED_SCRIPT.indexOf("return 'collision:") < SEED_SCRIPT.indexOf("redis.call(op.cmd"));
-  assert.ok(SEED_SCRIPT.indexOf("redis.call(op.cmd") < SEED_SCRIPT.indexOf("redis.call('SET', ARGV[2]"));
-});
-
-test("mergeManifests is a union with no duplicates", () => {
-  const a = { keys: ["k1", "k2"], fields: { h: ["f1"] } };
-  const b = { keys: ["k2", "k3"], fields: { h: ["f1", "f2"], g: ["x"] } };
-  assert.deepEqual(mergeManifests(a, b), { keys: ["k1", "k2", "k3"], fields: { g: ["x"], h: ["f1", "f2"] } });
-  assert.deepEqual(mergeManifests(null, b), { keys: ["k2", "k3"], fields: { g: ["x"], h: ["f1", "f2"] } });
+  assert.ok(SEED_SCRIPT.indexOf("redis.call(op.cmd") < SEED_SCRIPT.indexOf("redis.call('SADD', KEYS[2]"));
+  assert.ok(SEED_SCRIPT.indexOf("redis.call('SADD', KEYS[3]") < SEED_SCRIPT.indexOf("redis.call('SET', KEYS[1]"));
 });
 
 // Fail closed: the seed refuses to guess which modules are live.

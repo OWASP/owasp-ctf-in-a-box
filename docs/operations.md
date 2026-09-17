@@ -1731,8 +1731,10 @@ catalogue the box already has; then drives `/leaderboard` at 10 req/s and
 `?display=1` at 2 req/s with autocannon while sampling machine memory, and
 writes one Markdown report. Ownership is a **manifest, not a name**:
 `load-0001` is a legal GitHub login and nothing reserves it, so the seed
-records every key and every shared-hash field it writes in
-`ctf:load-seed:manifest`, and refuses to run if any of them already exists
+records every key and every shared-hash field it writes in a manifest
+(`ctf:load-seed:manifest` plus two sets of keys and fields, each batch adding
+only its own delta, so a large seed stays linear), and refuses to run if any
+of them already exists
 and is not in its previous manifest (a real contestant may own that login).
 The check and the write are one Redis-side script per batch, so a
 contestant registering such a login *between* the two cannot be written

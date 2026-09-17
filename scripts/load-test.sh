@@ -79,6 +79,15 @@ fail_setup() { # step
   exit 1
 }
 
+# The scratch directory is made here, BEFORE the seed, for the same reason as
+# the report path: a run that cannot hold its own results must not seed.
+TMP=""
+MEM_PID=""
+if [ -z "$CLEAN" ]; then
+  if ! TMP="$(mktemp -d)"; then fail_setup "creating a temporary directory (mktemp -d)"; fi
+  trap 'rm -rf "$TMP"; if [ -n "$MEM_PID" ]; then kill "$MEM_PID" 2>/dev/null || true; fi' EXIT
+fi
+
 MACHINE=""
 if ! MACHINES_JSON="$(fly machines list --app "$APP" --json 2>/dev/null)"; then fail_setup "fly machines list failed for $APP"; fi
 MACHINE="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const m=JSON.parse(s);process.stdout.write((m[0]&&m[0].id)||"")}catch{process.stdout.write("")}})' <<< "$MACHINES_JSON")"
@@ -123,10 +132,6 @@ if [ "$SEED_STATUS" -ne 0 ] || ! grep -q '"mode":"seed"' <<< "$SEED_OUT"; then
   echo "FAIL: seed did not report success (exit $SEED_STATUS)" >&2
   exit 1
 fi
-
-TMP="$(mktemp -d)"
-MEM_PID=""
-trap 'rm -rf "$TMP"; if [ -n "$MEM_PID" ]; then kill "$MEM_PID" 2>/dev/null || true; fi' EXIT
 
 # Memory sampler: MemAvailable from inside the machine every 15 s. A sample
 # that fails is COUNTED (mem.err), never silently dropped — the run fails at

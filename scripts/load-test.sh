@@ -19,8 +19,9 @@
 # time it from a logged-in tab. This script REPORTS; the human decides.
 #
 # Fail direction: the run itself must not lie, and it writes ONE report no
-# matter what. A seed that did not report success drives nothing and writes
-# a report saying so; a phase that fails to launch, or a memory sampler that
+# matter what. A setup step that fails (machine lookup, seeder upload) or a
+# seed that did not report success drives nothing and writes a report saying
+# so; a phase that fails to launch, or a memory sampler that
 # produced no sample, is written into the report too; in every case the
 # script exits non-zero AFTER the report — a report with a failed seed, a
 # missing phase or no memory line cannot pass the bar, but it still says what
@@ -60,18 +61,41 @@ if [ -z "$CLEAN" ]; then
   if ! : >> "$REPORT"; then echo "FAIL: cannot write the report at $REPORT" >&2; exit 1; fi
 fi
 
-MACHINE="$(fly machines list --app "$APP" --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);process.stdout.write(m[0].id)})')"
-if [ -z "$MACHINE" ]; then echo "FAIL: no machine found for $APP" >&2; exit 1; fi
+# Setup (machine lookup, seeder upload) can fail before anything is seeded.
+# On a load run that still owes the one report: write a setup-failure report
+# naming the step, then exit 1. On --clean there is no report to owe.
+fail_setup() { # step
+  if [ -z "$CLEAN" ]; then
+    {
+      echo "# Load test — $APP — $(date -u +%Y-%m-%dT%H:%MZ)"
+      echo
+      echo "## Setup FAILED at: $1 — nothing was seeded or driven; the run FAILS"
+      echo
+      echo "Check \`fly status --app $APP\` and \`fly ssh console --app $APP\` by hand, then re-run."
+    } > "$REPORT"
+    echo "== report: $REPORT"
+  fi
+  echo "FAIL: $1" >&2
+  exit 1
+}
+
+MACHINE=""
+if ! MACHINES_JSON="$(fly machines list --app "$APP" --json 2>/dev/null)"; then fail_setup "fly machines list failed for $APP"; fi
+MACHINE="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const m=JSON.parse(s);process.stdout.write((m[0]&&m[0].id)||"")}catch{process.stdout.write("")}})' <<< "$MACHINES_JSON")"
+if [ -z "$MACHINE" ]; then fail_setup "no machine found for $APP"; fi
 echo "== app=$APP machine=$MACHINE"
 
-# Ship the seeder and run it where srh is reachable.
+# Ship the seeder to a per-run path inside the container (not a fixed name a
+# stale copy could shadow) and run it where srh is reachable.
+REMOTE_SEEDER="/tmp/load-seed-$(date -u +%Y%m%d%H%M%S)-$$.mjs"
 echo "== uploading scripts/load-seed.mjs"
-fly ssh sftp put "$HERE/load-seed.mjs" /tmp/load-seed.mjs --app "$APP" --machine "$MACHINE" --container app >/dev/null 2>&1 || \
-  fly ssh sftp put "$HERE/load-seed.mjs" /tmp/load-seed.mjs --app "$APP" >/dev/null
+if ! fly ssh sftp put "$HERE/load-seed.mjs" "$REMOTE_SEEDER" --app "$APP" --machine "$MACHINE" --container app >/dev/null 2>&1; then
+  if ! fly ssh sftp put "$HERE/load-seed.mjs" "$REMOTE_SEEDER" --app "$APP" >/dev/null 2>&1; then fail_setup "uploading the seeder to the app container"; fi
+fi
 
 if [ -n "$CLEAN" ]; then
   echo "== cleaning every synthetic contestant the box holds"
-  CLEAN_OUT="$(fly ssh console --app "$APP" --machine "$MACHINE" --container app -C "node /tmp/load-seed.mjs --clean" 2>&1 | tail -1)"
+  CLEAN_OUT="$(fly ssh console --app "$APP" --machine "$MACHINE" --container app -C "node $REMOTE_SEEDER --clean" 2>&1 | tail -1)"
   echo "   $CLEAN_OUT"
   if ! grep -q '"mode":"clean"' <<< "$CLEAN_OUT"; then echo "FAIL: clean did not report success" >&2; exit 1; fi
   exit 0
@@ -83,7 +107,7 @@ fi
 # label — nothing else the seeder prints reaches the report.
 echo "== seeding $COUNT synthetic contestants"
 SEED_STATUS=0
-SEED_OUT="$(fly ssh console --app "$APP" --machine "$MACHINE" --container app -C "node /tmp/load-seed.mjs --count $COUNT" 2>&1 | tail -1)" || SEED_STATUS=$?
+SEED_OUT="$(fly ssh console --app "$APP" --machine "$MACHINE" --container app -C "node $REMOTE_SEEDER --count $COUNT" 2>&1 | tail -1)" || SEED_STATUS=$?
 echo "   $SEED_OUT"
 if [ "$SEED_STATUS" -ne 0 ] || ! grep -q '"mode":"seed"' <<< "$SEED_OUT"; then
   {

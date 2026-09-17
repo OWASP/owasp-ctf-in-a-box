@@ -1774,8 +1774,9 @@ a contestant. A quiz or classic row the seeder cannot read, or a scorer answer w
 `challenges` list, is the same refusal — never a partial seed. The report's directory is
 created and its path checked writable *before* the seed, so a run that could
 not write its report never leaves rows behind. The **run
-fails** if the seed did not report success (the report then says so and
-nothing is driven), if a phase failed to run or left no parseable result
+fails** if a setup step failed (finding the machine, uploading the seeder) or
+the seed did not report success (the report then says so and nothing is
+driven), if a phase failed to run or left no parseable result
 (autocannon missing, a DNS failure — ordinary 5xx responses are counted in
 the table, not this), or if the memory sampler produced no sample; in every
 case the report is still written and says so, naming only the phase and its exit status (autocannon's own

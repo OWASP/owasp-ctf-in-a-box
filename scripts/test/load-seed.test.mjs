@@ -324,6 +324,10 @@ test("the Redis URL must be https, or http only to a private endpoint", () => {
   assert.equal(assertRedisUrl("https://eu1-xyz.upstash.io").protocol, "https:");
   assert.throws(() => assertRedisUrl("http://eu1-xyz.upstash.io"), /cleartext/);
   assert.throws(() => assertRedisUrl("http://203.0.113.9:80"), /cleartext/);
+  // A single-label name is not trusted by shape: only the compose service `srh` is.
+  assert.throws(() => assertRedisUrl("http://redis-proxy:80"), /cleartext/);
+  assert.throws(() => assertRedisUrl("http://shr:80"), /cleartext/, "a typo of srh resolves through DNS like any other name");
+  assert.throws(() => assertRedisUrl("http://10.0.0.5:80"), /cleartext/, "private IPv4 is not on the allowlist either — use https or the srh service name");
   // IPv6 literals: loopback, link-local and unique-local pass; a public address does not.
   assert.equal(assertRedisUrl("http://[::1]:8079").hostname, "[::1]");
   assert.equal(assertRedisUrl("http://[fe80::1]:80").hostname, "[fe80::1]");

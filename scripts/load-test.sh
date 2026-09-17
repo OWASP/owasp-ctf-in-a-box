@@ -192,15 +192,14 @@ sample_mem & MEM_PID=$!
 # leaves no PARSEABLE result is recorded in $TMP/phase.err and never aborts
 # the script: the report still gets written, and the run fails at the end.
 # Only the phase name and exit status are recorded — autocannon's own stderr
-# can echo the target URL and is kept out of the report (it stays in $TMP for
-# the operator's terminal and is removed with it). Ordinary 5xx responses are
-# not this path — autocannon records them in the JSON and summarize prints
-# them.
+# can echo the target URL, so it is not persisted anywhere, not even in $TMP:
+# its exit status is the whole diagnostic. Ordinary 5xx responses are not this
+# path — autocannon records them in the JSON and summarize prints them.
 PHASE_FAILURES=0
 run_phase() { # name path rate duration
   local name="$1" path="$2" rate="$3" dur="$4" status=0 reason=""
   echo "== phase $name: $path @ ${rate} rps for ${dur}s"
-  npx --yes autocannon -d "$dur" -R "$rate" -c 10 --json "$URL$path" > "$TMP/$name.json" 2> "$TMP/$name.stderr" || status=$?
+  npx --yes autocannon -d "$dur" -R "$rate" -c 10 --json "$URL$path" > "$TMP/$name.json" 2>/dev/null || status=$?
   if [ "$status" -ne 0 ]; then reason="autocannon exit $status"
   elif [ ! -s "$TMP/$name.json" ]; then reason="no result written"
   elif ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$TMP/$name.json" >/dev/null 2>&1; then reason="result is not JSON"

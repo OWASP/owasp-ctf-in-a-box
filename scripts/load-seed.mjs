@@ -426,7 +426,10 @@ export function cleanCommands(manifest) {
   return { cmds, keys: keys.length, fields };
 }
 
-/** Only https, or http to a private/local endpoint (the compose `srh` service, loopback, Fly's `.internal`); the token rides in the Authorization header. */
+/** The one compose service the token may reach over plain http: srh, the Redis HTTP proxy on the private network. */
+export const TRUSTED_HTTP_HOSTS = ["srh", "localhost", "127.0.0.1"];
+
+/** Only https, or http to an explicitly trusted destination — the compose `srh` service, loopback, Fly's `.internal`, a private IPv6 literal. Any other DNS name, single-label or not, needs https: the token rides in the Authorization header. */
 export function assertRedisUrl(raw) {
   let u;
   try {
@@ -444,7 +447,7 @@ export function assertRedisUrl(raw) {
     const v6 = h.slice(1, -1);
     privateHost = v6 === "::1" || /^fe[89ab][0-9a-f]?:/.test(v6) || /^f[cd][0-9a-f]{2}:/.test(v6);
   } else {
-    privateHost = h === "localhost" || h === "127.0.0.1" || h.endsWith(".internal") || !h.includes(".");
+    privateHost = TRUSTED_HTTP_HOSTS.includes(h) || h.endsWith(".internal");
   }
   if (!privateHost) throw new Error("UPSTASH_REDIS_REST_URL is plain http:// to a public host — the token would travel in cleartext; use https://");
   return u;

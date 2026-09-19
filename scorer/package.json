@@ -4,5 +4,5 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": { "test": "node --test test/*.test.js", "start": "node src/index.js serve" },
-  "dependencies": { "yaml": "^2.5.0" }
+  "dependencies": { "yaml": "^2.9.1" }
 }

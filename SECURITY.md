@@ -10,7 +10,7 @@ against the latest commit on `main`.
 ## Before you run an event
 
 If you are standing this kit up rather than reporting an issue with it, walk
-the [organizer security checklist](https://dcotelo.github.io/owasp-ctf/security-checklist.html)
+the [organizer security checklist](https://owasp.github.io/owasp-ctf-in-a-box/security-checklist.html)
 first. Every item on it is a deployment decision the kit cannot make for you,
 and most have no visible symptom when they are wrong.
 

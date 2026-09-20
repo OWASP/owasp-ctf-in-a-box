@@ -44,7 +44,7 @@ polling — `sync` reads GitHub and submits over the machine's internal network
 That fit was the argument for keeping Fly poll-only rather than giving it a
 `/score` route (issue #373, closed), and the question settled itself when push
 ingest was removed in v0.6
-([#377](https://github.com/dcotelo/owasp-ctf/issues/377)). A `SCORE_INGEST`
+([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377)). A `SCORE_INGEST`
 line left over in `.env` or `.env.fly` is inert: nothing here reads it, and
 `deploy.sh` has nothing left to refuse.
 

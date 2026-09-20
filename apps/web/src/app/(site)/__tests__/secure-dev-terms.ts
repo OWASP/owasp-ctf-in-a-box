@@ -116,9 +116,12 @@ export const SECURE_DEV_TERMS = [
   "secure agent playbook",
   "please use ai",
   // The fork-org path (`OWASP-CTF/juice-shop`) was a bare substring here
-  // until the kit itself was renamed owasp-ctf: the landing page's docs link
-  // is now `dcotelo.github.io/owasp-ctf/`, which the substring cannot tell
-  // from the org. It is the `(?<!\/)` pattern in the LIVE list instead.
+  // until the kit itself was renamed owasp-ctf and the landing page's docs
+  // link became `dcotelo.github.io/owasp-ctf/`, which the substring could not
+  // tell from the org. It is the `(?<!\/)` pattern in the LIVE list instead.
+  // The kit has since moved to `owasp.github.io/owasp-ctf-in-a-box/`, so that
+  // particular collision is gone; the lookbehind still earns its place on
+  // `github.com/OWASP-CTF/<target>` links.
   "/challenges",
   // Every target this kit ships. A page that names one is describing
   // secure-development's game whatever else it says, and the app names were
@@ -161,14 +164,15 @@ export const SECURE_DEV_LIVE_PATTERNS = [
   /\bclon(e|ed|es|ing)\b/i,
   // The GitHub org the targets are forked into, as it appears in the guide's
   // shell commands and prose: `gh repo fork OWASP-CTF/juice-shop`, "the base
-  // repo is OWASP-CTF/juice-shop". The kit's own name is the same slug, so
-  // the docs link `https://dcotelo.github.io/owasp-ctf/` and the repo link
-  // `https://github.com/dcotelo/owasp-ctf` render on every event. The
-  // lookbehind drops the one shape that is a URL path segment — preceded by
-  // `/` — and keeps the org shape, which never is. Bounded: a bare
-  // `https://github.com/OWASP-CTF/` link would slip past this pattern, but
-  // every target name is its own term, so the fork of any shipped target is
-  // still caught by that.
+  // repo is OWASP-CTF/juice-shop". The lookbehind drops the one shape that is
+  // a URL path segment — preceded by `/` — and keeps the org shape, which
+  // never is. It was added because the kit's own name was the same slug and
+  // its two links rendered on every event; the move to
+  // `OWASP/owasp-ctf-in-a-box` retired that case, and what the lookbehind
+  // still covers is a link into the fork org itself. Bounded, and the same
+  // boundary as before: a bare `https://github.com/OWASP-CTF/` link slips
+  // past this pattern, but every target name is its own term, so the fork of
+  // any shipped target is still caught by that.
   /(?<!\/)owasp-ctf\//i,
 ];
 

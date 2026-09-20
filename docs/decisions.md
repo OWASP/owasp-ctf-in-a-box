@@ -181,7 +181,7 @@ failure it un-marks the comment as seen and retries next tick
 (`sync/src/index.js`, `tick()`: `rs.seen = rs.seen.filter((k) => k !==
 seenKey(c.id, c.updated_at));` — the seen list is keyed on comment
 revision, `id@updated_at`, not bare id, since
-[#131](https://github.com/dcotelo/owasp-ctf/issues/131)), which means
+[#131](https://github.com/OWASP/owasp-ctf-in-a-box/issues/131)), which means
 the same comment can be submitted more than once. That's fine because a replay of an already-applied score
 is required to be a no-op on the scorer side, not a double-count. A module
 implementer MUST NOT invent a second write path (`docs/modules.md §2.1`).
@@ -344,7 +344,7 @@ step rather than widening this one. `docs/modules.md` is explicit that the
 single-scored-module state is a v1 constraint, not a permanent architectural
 stance.
 
-*Amended 2026-09-11 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386): `yaml_targets` no longer exists — config v2 PR 2 deleted target extraction from `ctf-setup.sh`'s reader entirely and replaced it with `all_targets()`, which forks all six `targets.tsv` targets unconditionally, regardless of `event.yaml`. Which of the six an event actually **serves** is a runtime `/admin` → Secure Development → Targets setting now (`secureDevTargets` in `ctf:admin:settings`), not a module config-block field. The two-enumeration reasoning above is otherwise unchanged.*
+*Amended 2026-09-11 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): `yaml_targets` no longer exists — config v2 PR 2 deleted target extraction from `ctf-setup.sh`'s reader entirely and replaced it with `all_targets()`, which forks all six `targets.tsv` targets unconditionally, regardless of `event.yaml`. Which of the six an event actually **serves** is a runtime `/admin` → Secure Development → Targets setting now (`secureDevTargets` in `ctf:admin:settings`), not a module config-block field. The two-enumeration reasoning above is otherwise unchanged.*
 
 ## ADR 11. Vendor the contestant app into `apps/web/`; upstream stays read-only
 
@@ -386,9 +386,9 @@ fork org and admins allowlist from it at build time (see the 2026-09-10
 amendment below for the event's identity fields, which no longer take this
 path).
 
-*Amended 2026-09-10 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386): `lib/site.ts`'s `getSite()` reads the event's name, tagline, location, contact e-mail and Discord invite from `ctf:admin:settings` at request time instead, failing open to the spec defaults ("OWASP CTF" / empty) when Redis has none stored. The generated module still carries those same field names (nothing reads them there any more) and still carries dates, the enabled-target subset, the fork org and the admins allowlist, which remain build-time as this decision describes.*
+*Amended 2026-09-10 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): `lib/site.ts`'s `getSite()` reads the event's name, tagline, location, contact e-mail and Discord invite from `ctf:admin:settings` at request time instead, failing open to the spec defaults ("OWASP CTF" / empty) when Redis has none stored. The generated module still carries those same field names (nothing reads them there any more) and still carries dates, the enabled-target subset, the fork org and the admins allowlist, which remain build-time as this decision describes.*
 
-*Amended 2026-09-11 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386) (config v2 PR 2): the enabled-target subset is no longer part of this bake either. `generate-event-config.mjs` still emits a `targets` field, but it is always `[]` now — `secure-development.targets` is not read from `event.yaml` or any `EVENT_*` env var as an authoritative source any more. Which of the six targets an event serves is `lib/enabled-apps.ts`'s job instead: a per-request filter reading `secureDevTargets` from `ctf:admin:settings`, defaulting to all six, exactly parallel to how identity moved to `getSite()` above. Only dates, the fork org and the admins allowlist are still generated at build time.*
+*Amended 2026-09-11 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386) (config v2 PR 2): the enabled-target subset is no longer part of this bake either. `generate-event-config.mjs` still emits a `targets` field, but it is always `[]` now — `secure-development.targets` is not read from `event.yaml` or any `EVENT_*` env var as an authoritative source any more. Which of the six targets an event serves is `lib/enabled-apps.ts`'s job instead: a per-request filter reading `secureDevTargets` from `ctf:admin:settings`, defaulting to all six, exactly parallel to how identity moved to `getSite()` above. Only dates, the fork org and the admins allowlist are still generated at build time.*
 
 **Consequences.** For the fields that remain build-time — dates, targets,
 fork org and admins — static generation and `metadata` exports keep working
@@ -425,7 +425,7 @@ config load — one contract, enforced twice, in the two places that read
 ∩ config, so nav, challenge list, and leaderboard columns for a disabled
 target vanish with no per-page conditional logic.
 
-*Amended 2026-09-11 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386): `event.yaml` no longer selects the subset, and neither `generate-event-config.mjs` nor `sync/src/config.js` validates a target name against the union any more — `secure-development.targets` is accepted in any shape (absent, empty, a scalar, an unknown id) and ignored by both. The closed `AppId` union itself is untouched (still the same six ids, still the type every reader and the catalogue share); what moved is where a subset is CHOSEN — `ctf:admin:settings`'s `secureDevTargets`, validated by `apps/web/src/lib/secure-dev-targets.ts`'s `normalizeSecureDevTargets`/`checkSecureDevTargets` against that same union, not by a build-time reader. `apps.ts`'s `enabledApps` filter is gone with it: `src/lib/enabled-apps.ts`'s `getEnabledApps` does catalogue ∩ live-set instead, resolved per request (or per sync tick) from Redis rather than once at build time.*
+*Amended 2026-09-11 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): `event.yaml` no longer selects the subset, and neither `generate-event-config.mjs` nor `sync/src/config.js` validates a target name against the union any more — `secure-development.targets` is accepted in any shape (absent, empty, a scalar, an unknown id) and ignored by both. The closed `AppId` union itself is untouched (still the same six ids, still the type every reader and the catalogue share); what moved is where a subset is CHOSEN — `ctf:admin:settings`'s `secureDevTargets`, validated by `apps/web/src/lib/secure-dev-targets.ts`'s `normalizeSecureDevTargets`/`checkSecureDevTargets` against that same union, not by a build-time reader. `apps.ts`'s `enabledApps` filter is gone with it: `src/lib/enabled-apps.ts`'s `getEnabledApps` does catalogue ∩ live-set instead, resolved per request (or per sync tick) from Redis rather than once at build time.*
 
 ## ADR 14. Neutral defaults; no DEF CON 34 in the platform
 
@@ -588,7 +588,7 @@ is accepted as a trade-off rather than treated as a blocker.
 **Consequences.** All six targets score out of the box; `event.yaml` can
 name any subset.
 
-*Amended 2026-09-11 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386): `event.yaml` no longer names the subset — config v2 PR 2 made `modules.secure-development.targets` inert in every reader. Provisioning (`ctf-setup.sh org`) forks all six unconditionally, and which of the six an event actually serves is a runtime `/admin` → Secure Development → Targets setting instead, defaulting to all six. What this decision settles is unaffected: all six targets score `0 / N` unpatched, and the rubric ships public.*
+*Amended 2026-09-11 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): `event.yaml` no longer names the subset — config v2 PR 2 made `modules.secure-development.targets` inert in every reader. Provisioning (`ctf-setup.sh org`) forks all six unconditionally, and which of the six an event actually serves is a runtime `/admin` → Secure Development → Targets setting instead, defaulting to all six. What this decision settles is unaffected: all six targets score `0 / N` unpatched, and the rubric ships public.*
 
 Points come from `catalogue.<target>.json`'s `difficulty`
 rather than a YAML `points:` field, so the price list has one source.
@@ -727,7 +727,7 @@ implied to be complete.
 
 ## ADR 20. Landing-page frame is code; module content is contributed, not organizer-authored
 
-**Status.** Accepted; amended by [#386](https://github.com/dcotelo/owasp-ctf/issues/386): the event name (and tagline, location, contact e-mail, Discord invite) is a runtime `/admin` setting now, not baked — the frame's dates/countdown, logo, and the module `home` content stay exactly as this decision describes.
+**Status.** Accepted; amended by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): the event name (and tagline, location, contact e-mail, Discord invite) is a runtime `/admin` setting now, not baked — the frame's dates/countdown, logo, and the module `home` content stay exactly as this decision describes.
 
 **Context.** The landing page hardcoded `secure-development`'s own pitch — a
 tagline, a hero paragraph, four "how it works" steps, a "please use AI"
@@ -752,7 +752,7 @@ and 14) handles what the event is called, and the per-module title/blurb
 override (`docs/modules.md §5.1`) handles what each module is called. There
 was no remaining gap to justify taking on HTML sanitisation for.
 
-*Amended 2026-09-10 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386): the event name, tagline, location, contact e-mail and Discord invite are runtime `/admin` → Event → Identity settings, not part of this build-time frame — each is validated server-side (length caps, `https://` for Discord) rather than needing HTML sanitisation, the same reasoning this decision already applied to reject a rich-text field.*
+*Amended 2026-09-10 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): the event name, tagline, location, contact e-mail and Discord invite are runtime `/admin` → Event → Identity settings, not part of this build-time frame — each is validated server-side (length caps, `https://` for Discord) rather than needing HTML sanitisation, the same reasoning this decision already applied to reject a rich-text field.*
 
 **Consequences.** An event's homepage always looks and functions like the
 kit — frame, countdown, nav, CTAs — and only the module-specific pitch
@@ -1004,7 +1004,7 @@ enabled. That asymmetry is safe in the direction it points — the strict
 reader fails loudly at build time, it does not silently provision less — but
 it is the known gap to close if the corpus is ever extended to all three.
 
-*Amended 2026-09-11 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386) (config v2 PR 2): the corpus WAS extended to all three, and the reader lineup changed shape on the way. `apps/web/scripts/__tests__/generate-event-config.test.ts` now runs this same corpus through the app's reader, in its own differential suite, with a `KNOWN_DIVERGENCES` set for exactly the one asymmetry this paragraph names (the empty-`modules:` case) — so "not in that corpus" is no longer true. `sync/test/module-readers.differential.test.js`, on the other hand, is GONE: it existed to pin that `sync`'s reader extracted the same `secure-development.targets` list as bash's, and once neither reader treated that key as authoritative any more there was nothing left for it to differentially assert (`sync`'s module-KEY accept/reject logic is unchanged and still agrees with the other two, just no longer proven against this corpus by name). Net effect: two test files, not three, still cover three readers.*
+*Amended 2026-09-11 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386) (config v2 PR 2): the corpus WAS extended to all three, and the reader lineup changed shape on the way. `apps/web/scripts/__tests__/generate-event-config.test.ts` now runs this same corpus through the app's reader, in its own differential suite, with a `KNOWN_DIVERGENCES` set for exactly the one asymmetry this paragraph names (the empty-`modules:` case) — so "not in that corpus" is no longer true. `sync/test/module-readers.differential.test.js`, on the other hand, is GONE: it existed to pin that `sync`'s reader extracted the same `secure-development.targets` list as bash's, and once neither reader treated that key as authoritative any more there was nothing left for it to differentially assert (`sync`'s module-KEY accept/reject logic is unchanged and still agrees with the other two, just no longer proven against this corpus by name). Net effect: two test files, not three, still cover three readers.*
 
 ## ADR 25. Building a leaderboard with no scoring backend
 
@@ -1776,7 +1776,7 @@ report `❌ v1 — stale` in `doctor` and take it with
 all, which is at least loud.
 
 Pinning `actions/checkout` by SHA would have prevented the surprise and is
-worth doing ([#49](https://github.com/dcotelo/owasp-ctf/issues/49) covers
+worth doing ([#49](https://github.com/OWASP/owasp-ctf-in-a-box/issues/49) covers
 digest-pinning first-party images); it would also have meant not receiving the
 guard, so it trades a loud break for a silent divergence from upstream's
 current advice.
@@ -1787,7 +1787,7 @@ current advice.
 
 **Context.** Two scoring bugs were found in one evening by running a single
 real PR end to end — the upserted-comment dedupe collision (ADR-adjacent, see
-[#130](https://github.com/dcotelo/owasp-ctf/issues/130)/#131) and the
+[#130](https://github.com/OWASP/owasp-ctf-in-a-box/issues/130)/#131) and the
 `pull_request_target` checkout guard (ADR 37). They had **nothing in common
 technically and everything in common operationally**: the poller consumed a
 comment, submitted no score, and wrote nothing down. In `tick()`'s ingest
@@ -1898,7 +1898,7 @@ and failing shut on it would take an event down for the wrong reason. The
 check cannot see past its own process — an organizer who fronts the box with a
 plain-HTTP proxy while `EVENT_URL` says `https://` still ships sniffable
 cookies, and nothing in the app can detect that. That case belongs to the
-organizer hardening checklist ([#44](https://github.com/dcotelo/owasp-ctf/issues/44)).
+organizer hardening checklist ([#44](https://github.com/OWASP/owasp-ctf-in-a-box/issues/44)).
 
 ## ADR 40. CSRF assertion in the proxy, rate limits keyed on the login
 
@@ -2633,7 +2633,7 @@ drift apart.
 
 **Status.** Accepted.
 
-**Context.** The engagement funnel ([#169](https://github.com/dcotelo/owasp-ctf/issues/169))
+**Context.** The engagement funnel ([#169](https://github.com/OWASP/owasp-ctf-in-a-box/issues/169))
 is *signed in → got on a team → first solve*. Solves and answers already carry
 timestamps per item per login, so the tail of that funnel was always
 derivable. The middle step was not: `ctf:user:<login>` stored a `team` slug and
@@ -2675,7 +2675,7 @@ path, which is a bigger decision than this one.
 
 **Status.** Accepted.
 
-**Context.** Engagement metrics ([#169](https://github.com/dcotelo/owasp-ctf/issues/169))
+**Context.** Engagement metrics ([#169](https://github.com/OWASP/owasp-ctf-in-a-box/issues/169))
 raised a design question worth settling once: what may a fork tell the box, and
 what may the box tell a fork?
 
@@ -2784,11 +2784,11 @@ a silently truncated metric reads as a complete one.
 
 **Context.** The Dockerfiles and compose services named their bases by mutable
 tag — `node:22-alpine`, `redis:7-alpine` (since bumped to `redis:8-alpine`,
-[#181](https://github.com/dcotelo/owasp-ctf/pull/181)), `caddy:2-alpine`. A tag is a pointer
+[#181](https://github.com/OWASP/owasp-ctf-in-a-box/pull/181)), `caddy:2-alpine`. A tag is a pointer
 the publisher can move, so two builds of the same commit could sit on different
 underlying images and neither would say so. The third-party SRH image was
 digest-pinned in v0.1.0; this finishes the job for the first-party ones
-([#49](https://github.com/dcotelo/owasp-ctf/issues/49)).
+([#49](https://github.com/OWASP/owasp-ctf-in-a-box/issues/49)).
 
 **Decision.** Every base carries `tag@sha256:<digest>`. The tag stays in front
 of the digest: it is inert to the resolver, and it is the only thing that tells
@@ -2835,9 +2835,9 @@ landed, but module *enablement* was baked: `event.yaml`'s `modules:` compiled
 into `event-config.generated.ts` at build time via `EVENT_CONFIG_B64`, and
 roughly twenty consumers read it as a module-load constant. An organizer who
 wanted to add the quiz mid-event needed a rebuild
-([#175](https://github.com/dcotelo/owasp-ctf/issues/175)).
+([#175](https://github.com/OWASP/owasp-ctf-in-a-box/issues/175)).
 
-*Superseded 2026-09-10 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386): the fallback is the `SCORE_IMAGE`-derived default now (secure-development alone when a scorer image exists, otherwise nothing), not `event.yaml`.*
+*Superseded 2026-09-10 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): the fallback is the `SCORE_IMAGE`-derived default now (secure-development alone when a scorer image exists, otherwise nothing), not `event.yaml`.*
 
 **Decision.** The live set lives in `ctf:admin:settings`, and **`event.yaml`
 becomes the seed and the outage fallback rather than the truth**. That
@@ -2864,7 +2864,7 @@ either way, and pre-event the lock screen is what a visitor should see
 regardless. It also stops the gate leaking which modules an event runs before
 it opens.
 
-*Superseded 2026-09-10 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386): an empty module set is legal now — an organizer may switch every board off, and nothing refuses that write.*
+*Superseded 2026-09-10 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): an empty module set is legal now — an organizer may switch every board off, and nothing refuses that write.*
 
 **Refusing the last module.** ADR 24 already refuses a present-but-empty
 `modules: {}` at build time. The runtime control refuses the equivalent, so
@@ -2872,7 +2872,7 @@ the same configuration is not legal through one door and illegal through the
 other. An event serving nothing is a contestant-facing site with no content
 and no explanation.
 
-*Superseded 2026-09-10 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386): Secure Development now toggles at runtime like every other module, refused only when the deployment has no scorer image (`SCORE_IMAGE` unset) — and disabling it is no longer refused.*
+*Superseded 2026-09-10 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): Secure Development now toggles at runtime like every other module, refused only when the deployment has no scorer image (`SCORE_IMAGE` unset) — and disabling it is no longer refused.*
 
 **Secure Development is excluded, in both directions.** It is not a flag:
 
@@ -2886,7 +2886,7 @@ and no explanation.
   ingesting scores for a module contestants can no longer see, which is worse
   than either end state.
 
-*Amended 2026-09-11 by [#386](https://github.com/dcotelo/owasp-ctf/issues/386) (config v2 PR 2): the second bullet's "provisioning input" is no longer accurate either — `ctf-setup.sh org` forks all six `targets.tsv` targets unconditionally now, reading nothing from `event.yaml` to decide which. Which of the six an event actually serves to contestants (and which the sync poller reads) is a THIRD thing, alongside module enablement and target provisioning, that moved to a runtime `/admin` → Secure Development → Targets setting (`secureDevTargets`) — see [docs/operations.md](operations.md#targets). The first and third bullets are otherwise unaffected: the module still has no services running when disabled, and disabling is still refused.*
+*Amended 2026-09-11 by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386) (config v2 PR 2): the second bullet's "provisioning input" is no longer accurate either — `ctf-setup.sh org` forks all six `targets.tsv` targets unconditionally now, reading nothing from `event.yaml` to decide which. Which of the six an event actually serves to contestants (and which the sync poller reads) is a THIRD thing, alongside module enablement and target provisioning, that moved to a runtime `/admin` → Secure Development → Targets setting (`secureDevTargets`) — see [docs/operations.md](operations.md#targets). The first and third bullets are otherwise unaffected: the module still has no services running when disabled, and disabling is still refused.*
 
 The panel shows its row with the reason on it rather than hiding the control or
 leaving one that always errors.
@@ -2940,7 +2940,7 @@ an organizer's third-party integration, which is exactly the party the design
 says identity is withheld from. The module's own threat notes claimed a leaked
 key "cannot invent users"; as built, that was backwards.
 
-Found by review on [#241](https://github.com/dcotelo/owasp-ctf/pull/241),
+Found by review on [#241](https://github.com/OWASP/owasp-ctf-in-a-box/pull/241),
 before any route existed to exploit it.
 
 **Decision.** **Split the two by key type, not by key count.**
@@ -3136,7 +3136,7 @@ and mounting a CA into the container does nothing.
 
 ## ADR 55. Configuration v2: `.env` bootstrap, `/admin` runtime, no event.yaml
 
-**Status.** Accepted. Supersedes [ADR 10](#adr-10-eventyamls-module-namespace-deliberate-not-dynamic-registration), [ADR 12](#adr-12-build-time-config-generation-over-runtime-config), [ADR 26](#adr-26-compose-profiles-follow-the-enabled-modules), [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 52](#adr-52-modules-are-switched-at-runtime-secure-development-is-configured-at-setup); amends [ADR 13](#adr-13-closed-appid-union-config-selects-a-subset-unknown-values-fail-the-build). Implements issue [#386](https://github.com/dcotelo/owasp-ctf/issues/386); [ADR 43](#adr-43-one-url-and-it-lives-in-env-not-eventyaml) is the precedent.
+**Status.** Accepted. Supersedes [ADR 10](#adr-10-eventyamls-module-namespace-deliberate-not-dynamic-registration), [ADR 12](#adr-12-build-time-config-generation-over-runtime-config), [ADR 26](#adr-26-compose-profiles-follow-the-enabled-modules), [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 52](#adr-52-modules-are-switched-at-runtime-secure-development-is-configured-at-setup); amends [ADR 13](#adr-13-closed-appid-union-config-selects-a-subset-unknown-values-fail-the-build). Implements issue [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386); [ADR 43](#adr-43-one-url-and-it-lives-in-env-not-eventyaml) is the precedent.
 
 **Context.** Event configuration lived in three places at once: a committed
 `event.yaml` baked into the `app` image through the `EVENT_CONFIG_B64`
@@ -3230,7 +3230,7 @@ value. Concretely —
   service the profile-less treatment; never add a `depends_on` from `app` to a
   profiled service); only the profile's *name* and its *source* changed.
   `push` is untouched here — its deprecation is
-  [#377](https://github.com/dcotelo/owasp-ctf/issues/377)'s decision to make.
+  [#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377)'s decision to make.
 - **Both deploy paths carry the two keys as runtime environment and bake
   nothing.** Fly's `deploy.sh init --refresh` refreshes `GITHUB_ORG` and
   `ADMIN_LOGINS` alongside the other external credentials (#381), and AWS's
@@ -3274,7 +3274,7 @@ the admin allowlist cannot be stored behind the thing it guards access to.
 
 **Status.** Accepted 2026-09-12. Supersedes
 [ADR 3](#adr-3-score-transport-poll-by-default-push-optional). Implements
-issue [#377](https://github.com/dcotelo/owasp-ctf/issues/377). Originally
+issue [#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377). Originally
 written as a two-release plan — deprecate in v0.6, remove in v0.7 — and
 revised the same day, before v0.6 was cut, to remove push in v0.6 outright.
 The revision is recorded under *Alternatives rejected* below, which is where

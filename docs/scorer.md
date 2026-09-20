@@ -144,7 +144,7 @@ patch under `patches/<target>/` — one challenge each (VAmPI and Security
 Shepherd have two), enough to prove the mechanism and, across each pair, that
 the assertion discriminates.
 That is **not** full per-challenge coverage; see
-[patches/README.md](https://github.com/dcotelo/owasp-ctf/blob/main/patches/README.md) for the per-target status table, the
+[patches/README.md](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/patches/README.md) for the per-target status table, the
 convention, and the anti-vacuous discipline that keeps a broken-app "pass" from
 counting.
 
@@ -413,7 +413,7 @@ talks to your box not at all: it writes `ctf-score.md`, the workflow posts it
 as the PR comment, and `sync` reads the marker out of that comment. The
 `LEADERBOARD_URL` / `LEADERBOARD_TOKEN` secrets that used to point a judge at
 a public `/score` on your box went with push ingest in v0.6
-([#377](https://github.com/dcotelo/owasp-ctf/issues/377),
+([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
 [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed)),
 together with the judge's `SCORE_API`/`SCORE_TOKEN` hook. If your event org
 still holds those two secrets, delete them: nothing reads them, and until they

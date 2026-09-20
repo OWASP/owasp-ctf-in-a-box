@@ -1,6 +1,6 @@
 # Docs
 
-Published at [dcotelo.github.io/owasp-ctf](https://dcotelo.github.io/owasp-ctf/)
+Published at [owasp.github.io/owasp-ctf-in-a-box](https://owasp.github.io/owasp-ctf-in-a-box/)
 (this file is the GitHub directory landing; [index.md](index.md) is the site
 home). Start where your task is:
 

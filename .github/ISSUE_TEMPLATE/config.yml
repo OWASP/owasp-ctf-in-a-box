@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
-    url: https://github.com/dcotelo/owasp-ctf/security/advisories/new
+    url: https://github.com/OWASP/owasp-ctf-in-a-box/security/advisories/new
     about: Please report vulnerabilities in the kit's own infrastructure via GitHub private vulnerability reporting — see SECURITY.md. Do not open a public issue.

@@ -251,6 +251,6 @@ known limits, stated in the open, are in
 
 ---
 
-[Source on GitHub](https://github.com/dcotelo/owasp-ctf) ·
+[Source on GitHub](https://github.com/OWASP/owasp-ctf-in-a-box) ·
 [OWASP-CTF/dc34-owasp-secure-development-ctf](https://github.com/OWASP-CTF/dc34-owasp-secure-development-ctf)
 (underlying spec and target apps)

@@ -58,7 +58,7 @@ credentials or delete secrets — do that yourself: uninstall the GitHub App,
 and delete any Actions secrets the org still carries. `LEADERBOARD_URL` /
 `LEADERBOARD_TOKEN` are the ones to look for on an org that has hosted an
 event before: push ingest was removed in v0.6
-([#377](https://github.com/dcotelo/owasp-ctf/issues/377)), so nothing reads
+([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377)), so nothing reads
 them and they are just credentials every contestant-triggered run can read.
 `ctf-setup.sh doctor` reports whether they are still set.
 
@@ -631,7 +631,7 @@ The panel offers:
   clearable end to end. Neither is seeded as `event`-mode on purpose: that mode
   can *only* be solved by an external arena reporting the solve, so seeding one
   put a challenge on the board that nobody could clear
-  ([#355](https://github.com/dcotelo/owasp-ctf/issues/355)). See
+  ([#355](https://github.com/OWASP/owasp-ctf-in-a-box/issues/355)). See
   [AI](#ai) below for what the modes mean. Sponsors are seeded too, always —
   three placeholder ones, one per tier, so the landing-page strip, the
   footer, and `/sponsors` all preview populated instead of empty. Each
@@ -1906,7 +1906,7 @@ does, and asserts the leaderboard then shows rubric-derived points. It also
 runs the judge twice, once with `SCORE_API`/`SCORE_TOKEN` set and once with
 neither, and requires the two reports to be byte-identical — that environment
 is dead since push ingest was removed
-([#377](https://github.com/dcotelo/owasp-ctf/issues/377)), and this is the
+([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377)), and this is the
 assertion that keeps it dead.
 `acceptance-target.sh` is the **stock-scores-zero gate**: it boots the real,
 unpatched upstream image and asserts every challenge fails against it. Any

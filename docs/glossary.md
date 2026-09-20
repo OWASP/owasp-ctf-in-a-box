@@ -54,7 +54,7 @@ workflow writes it only from the judge's own output. See
 score comments from GitHub every ~30 s, so nothing has to reach the box from
 the internet and an event runs behind NAT or on venue wifi. **Push** — the
 fork's Action POSTing the score straight at the box — was removed in v0.6
-([#377](https://github.com/dcotelo/owasp-ctf/issues/377),
+([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
 [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed)).
 How it fits together: [hosting.md](hosting.md#how-scores-reach-the-box).
 
@@ -116,7 +116,7 @@ Five names orbit "the project"; they are not interchangeable:
 
 | Name | What it is |
 |---|---|
-| **OWASP CTF** | The product / brand (README, `dcotelo.github.io/owasp-ctf`) **and** the default event name every deployment shows until an organizer renames it. The two are deliberately the same string since the rebrand; real events override it from `/admin` → Event → Identity (a runtime setting since #386). One consequence to know: since the name is never baked, a misconfigured box does not betray itself by its name — check for an empty `ADMIN_LOGINS` and a 403 on `/admin` instead. |
+| **OWASP CTF** | The product / brand (README, `owasp.github.io/owasp-ctf-in-a-box`) **and** the default event name every deployment shows until an organizer renames it. The two are deliberately the same string since the rebrand; real events override it from `/admin` → Event → Identity (a runtime setting since #386). One consequence to know: since the name is never baked, a misconfigured box does not betray itself by its name — check for an empty `ADMIN_LOGINS` and a 403 on `/admin` instead. |
 | `owasp-ctf` | The local repo directory and the lowercase image namespace. |
 | `OWASP-CTF` | The GitHub **org** the canonical targets are forked into (`GITHUB_ORG` in `.env`). |
 | `ghcr.io/owasp-ctf/score` | The scorer image path. The lowercase `owasp-ctf` here is a registry-namespace convenience, not the `OWASP-CTF` org; override `SCORE_IMAGE` to your own org's GHCR. |

@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 #
-# CodeRabbit config for dcotelo/owasp-ctf.
+# CodeRabbit config for OWASP/owasp-ctf-in-a-box.
 # Tuned for a PUBLIC, single-maintainer repo: high signal, low volume.
 #
 # Tuning principles applied here:

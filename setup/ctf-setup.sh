@@ -1143,7 +1143,7 @@ cmd_app_manifest() {
 == the form is PRE-FILLED from the manifest. If it opened BLANK (auto-submit
    blocked), enter these values by hand — they are the whole manifest:
      GitHub App name:   OWASP CTF sync   (rename if the name is taken)
-     Homepage URL:      https://github.com/dcotelo/owasp-ctf
+     Homepage URL:      https://github.com/OWASP/owasp-ctf-in-a-box
      Webhook:           UNCHECK "Active"  (no webhook — else GitHub demands a URL)
      Repository permissions:  Issues → Read-only
                               Pull requests → Read-only

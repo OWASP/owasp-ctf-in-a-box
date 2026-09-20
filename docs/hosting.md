@@ -9,7 +9,7 @@ title: Hosting
 Everything you need to stand the kit up: prerequisites,
 [how scores reach the box](#how-scores-reach-the-box), the GitHub
 OAuth app contestants sign in with, and how event config reaches the app. For the happy-path command sequence see the
-[README Quickstart](https://github.com/dcotelo/owasp-ctf#quickstart); for
+[README Quickstart](https://github.com/OWASP/owasp-ctf-in-a-box#quickstart); for
 running the event once it is up see [docs/operations.md](operations.md).
 
 ## Quickstart: zero to a scored event
@@ -149,7 +149,7 @@ you'd rather drive it yourself or script it. Each step is either a
 ./setup/ctf-setup.sh check
 
 # 1. Clone the repo and work from its root.
-git clone https://github.com/dcotelo/owasp-ctf && cd owasp-ctf
+git clone https://github.com/OWASP/owasp-ctf-in-a-box && cd owasp-ctf-in-a-box
 
 # 2. Generate .env — BETTER_AUTH_SECRET, SRH_TOKEN, SCORER_TOKEN, REDIS_PASSWORD,
 #    EVENT_URL, and empty App/OAuth/SCORE_IMAGE fields to fill later.

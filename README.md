@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/OWASP/owasp-ctf-in-a-box/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/OWASP/owasp-ctf-in-a-box/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://dcotelo.github.io/owasp-ctf/"><img alt="docs" src="https://img.shields.io/badge/docs-github%20pages-blue"></a>
+  <a href="https://owasp.github.io/owasp-ctf-in-a-box/"><img alt="docs" src="https://img.shields.io/badge/docs-github%20pages-blue"></a>
   <a href="LICENSE"><img alt="license MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
 
@@ -118,8 +118,8 @@ Security Shepherd, VulnerableApp); DVWA and VAmPI are community projects.
 configure. You need **Docker with Compose v2** and **`openssl`**:
 
 ```sh
-git clone https://github.com/dcotelo/owasp-ctf
-cd owasp-ctf
+git clone https://github.com/OWASP/owasp-ctf-in-a-box
+cd owasp-ctf-in-a-box
 ./scripts/dev-stack up
 ```
 
@@ -339,7 +339,7 @@ in [docs/decisions.md](docs/decisions.md).
 | Building a new module | [docs/modules.md](docs/modules.md) — the platform/module contract |
 | Asking "why is it like this?" | [docs/decisions.md](docs/decisions.md) — numbered ADRs |
 
-Rendered at **[dcotelo.github.io/owasp-ctf](https://dcotelo.github.io/owasp-ctf/)**.
+Rendered at **[owasp.github.io/owasp-ctf-in-a-box](https://owasp.github.io/owasp-ctf-in-a-box/)**.
 
 ## Contributing and security
 

@@ -6,7 +6,49 @@ commit-level notes, and this file keeps the human summary. The version is
 repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 `sync` deliberately carry no version field.
 
-## Unreleased
+## v0.6.0 — 2026-09-20
+
+### Breaking changes
+
+Five of them, and one chore that is not optional. Each has a full entry below
+with the reasoning; this is the index an upgrader reads first.
+
+- **`event.yaml` is deleted** — `.env` bootstraps the box and `/admin` runs the
+  event ([ADR 55](docs/decisions.md)). Migration steps are under *Migrating a
+  running event* in the configuration v2 entry.
+- **Push score ingest is removed** — poll is the one score transport
+  ([ADR 56](docs/decisions.md)). A hand-rolled `--profile push` bring-up now
+  starts the app with **no scorer and no poller**; use `--profile secdev
+  --profile app`.
+- **The kit is renamed OWASP CTF** — new repo, docs and image paths.
+- **The repo moved to the OWASP org** — `OWASP/owasp-ctf-in-a-box`. Git
+  remotes and `github.com` links redirect, so a clone keeps working. **The
+  docs site does not redirect**: `dcotelo.github.io/owasp-ctf/` is gone and
+  the site is now at `owasp.github.io/owasp-ctf-in-a-box/`. Update any
+  bookmark or link of your own that points at the old Pages host.
+- **The AWS module is ECS Fargate + ElastiCache + ALB** — an existing EC2
+  deploy does not upgrade in place.
+- **Revoke the old leaderboard credentials.** If your event org still carries
+  `LEADERBOARD_URL` and `LEADERBOARD_TOKEN` from a push-era setup, delete them
+  now. Nothing reads them any more and they authorize nothing — but they are
+  readable by the Actions run that a contestant's own pull request triggers,
+  which is the worst place for a credential to sit. `ctf-setup.sh doctor`
+  reports them fail-closed: a `gh` error reads "not verified", never "absent".
+
+- **Changed: the kit lives in the OWASP org now (#454).** The repository is
+  `OWASP/owasp-ctf-in-a-box` and the documentation site is
+  `owasp.github.io/owasp-ctf-in-a-box/`. Every reference the kit ships moved
+  with it: the README and its CI badge, `SECURITY.md`, the issue-template
+  config, every `docs/` page, the setup wizard's closing links, the `sync`
+  GitHub App manifest, and the two the app serves at runtime — the landing
+  page's repo button and `DOCS_URL` in `modules.ts`, which every module's
+  setup checklist links through.
+
+  GitHub 301-redirects the repo itself, so an existing clone, a `gh` command
+  and any `github.com/dcotelo/owasp-ctf` link all keep working. **GitHub
+  Pages does not redirect after a transfer** — the old docs host returns 404,
+  which is why this is a fix rather than a rename: a box running an earlier
+  build links its contestants and organizers to a dead site.
 
 - **Docs: the Cloudflare rate-limiting rule in front of the box (#438, edge
   layer).** The reference domain has always been proxied by Cloudflare and
@@ -75,6 +117,59 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   reached costs the SD share and says so in the caveats, and `mock` mode's
   placeholder scores are left out with the reason printed rather than folded
   in as if real.
+
+- **Added: recognition-only sponsor support (#417, #421, #423, #425, #426,
+  #427, #428, #429, #431).** An event can credit the organizations funding it
+  without any of that touching scoring: a `/sponsors` page, a strip on the
+  landing page, and a row on the projector board, all driven from an `/admin`
+  Sponsors tab built around the list rather than a single editor. Logos are
+  uploaded as PNG, WebP or JPEG and served from the box, never hotlinked. How
+  large they render is one organizer setting (`sponsorLogoSize`, small/medium/
+  large) applied to both the strip and the board — the board's logos were a
+  fixed 2.2vh, which read as an illegible fleck from the back of a room, which
+  is the whole point of that surface. A sponsor's name renders beside its logo
+  and stands in for it when there is none. The `/sponsors` page carries a
+  standing notice that sponsors fund the event and have no influence over
+  challenge content, scoring or results.
+
+- **Changed: Classic CTF is now called Jeopardy (#424).** The module keeps its
+  id (`classic`) and every Redis key it has ever written — this is the label
+  contestants and organizers read, nothing else. The "CTF" and "Challenges"
+  suffixes are dropped from the other module names for the same reason: the
+  nav said "Classic CTF Challenges" inside a CTF.
+
+- **Changed: demo data is an admin control, not a build-time gate (#419,
+  #430).** `DEMO_MODE` is gone. **Seed demo data** and the new **Clear demo
+  data** both live in the Event tab's danger zone, behind the same
+  type-to-confirm every destructive control there uses. A rehearsal can now be
+  set up and torn down from the panel without a redeploy — which is what made
+  it possible to rehearse on the box at all.
+
+- **Added: the leaderboard chart plots every enabled module (#415).** It
+  charted Secure Development alone, so a quiz-only or Jeopardy event watched a
+  flat line sit under a visibly rising board. **Fixed (#418):** on mobile the
+  same chart read stale or flat when the time domain was mostly dead time —
+  the series was there, compressed into the last few pixels.
+
+- **Fixed: a leaderboard source's teams no longer hide the ones contestants
+  created (#413).** **Fixed: the profile trigger opens a menu, so it now looks
+  like one (#411)** — it was styled as a plain link, so nobody found sign-out.
+
+- **Fixed: four findings from the live e2e audit (#379, #380, #383, #384).**
+  The progress sliver, the profile page's ceiling, the OAuth error copy, and
+  the `ctf` branch instructions on `/challenges`.
+
+- **Fixed: two deploy failures (#365, #422).** Redis is handed its data dir
+  before it drops privileges, so a fresh volume no longer comes up read-only.
+  Fly build attestations are disabled — they raced the registry and failed the
+  push, intermittently and with an error that named neither cause.
+
+- **Docs and internals.** Every diagram is one animated-SVG system sharing a
+  palette, a reduced-motion block and a `<desc>` that is the embedding page's
+  alt text (#361). The demo seed's AI challenges, and the fact that event mode
+  has no in-box fallback, are documented (#356). The stale references the ECS
+  revamp and the rebrand left behind are gone (#366). `AGENTS.md` records how
+  to talk to CodeRabbit through PR comments (#388).
 
 - **Added: the setup wizard offers an optional fly.io deploy as its closing
   step (#371).** It used to end at the local `docker compose` bring-up,
@@ -409,6 +504,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   second page failing. Asserting only that an all-failing walk returns nothing
   would have passed against the bug, since a first-page failure returned empty
   under the old code too.
+
+- **Dependencies.** `next` and `eslint-config-next` 16.3.4 → 16.3.5 (#450,
+  backported fixes only, including CSP nonces on `loading`/`template` script
+  tags and two `next/image` disk-cache corrections); `better-auth` 1.7.2 →
+  1.7.5 (#401, #452); `@types/node` 26.4.1 → 26.6.1 (#400, #451);
+  `@types/react-dom` and the react group (#399, #409); `yaml` 2.9.0 → 2.9.1 in
+  `scorer` (#449). Dependabot now keeps the node base image on its current
+  line, patches only, rather than proposing a major it cannot test (#408).
 
 ## v0.5.0 — 2026-09-07
 

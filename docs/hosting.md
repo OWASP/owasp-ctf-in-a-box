@@ -275,7 +275,7 @@ build that [`stock-scores-zero`](operations.md#verifying-it-works) proves scores
 `0 / N`:
 
 > The per-target upstream repo and pinned ref below are sourced from
-> [`setup/targets.tsv`](https://github.com/dcotelo/owasp-ctf/blob/main/setup/targets.tsv),
+> [`setup/targets.tsv`](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/setup/targets.tsv),
 > which `ctf-setup org` reads to fork each target. Keep this table in sync with that file.
 
 | Target | Upstream repo | Source ref | Scoring baseline (pinned image) |
@@ -491,7 +491,7 @@ event org's target repos for those comments and submits what it finds to the
 scorer. A score lands on the leaderboard roughly 30 seconds after the Action
 finishes. There is nothing to configure and nothing to choose: push ingest —
 the Action POSTing the score straight at a `/score` route on your box — was
-removed in v0.6 ([#377](https://github.com/dcotelo/owasp-ctf/issues/377),
+removed in v0.6 ([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
 [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed)),
 along with the `SCORE_INGEST` key that used to select between them. An `.env`
 carried over from an earlier release may still carry that line; nothing reads
@@ -564,7 +564,7 @@ single-EC2 deploy, so an existing box upgrades by migration rather than by
 `sync` needs a token to read the event org's target repos, and a GitHub App
 is the only supported poll auth: org-scoped, auto-expiring, revocable, and not
 tied to a person. Each organizer creates their **own** App from
-[`sync/app-manifest.json`](https://github.com/dcotelo/owasp-ctf/blob/main/sync/app-manifest.json)
+[`sync/app-manifest.json`](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/sync/app-manifest.json)
 and installs it on their event org — there is no shared, central App, so the
 private key stays yours.
 
@@ -883,7 +883,7 @@ provisioning — is documented in [docs/modules.md](modules.md).
 | The app's own code (a kit upgrade) | `docker compose --profile app build app`, then `up -d`. |
 
 The contestant app (`apps/web/`, vendored — see
-[`apps/web/VENDORED.md`](https://github.com/dcotelo/owasp-ctf/blob/main/apps/web/VENDORED.md))
+[`apps/web/VENDORED.md`](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/apps/web/VENDORED.md))
 reads **no build-time configuration at all**, and no image in the kit takes a
 config build-arg. That is the point of #386: an image is the same image on
 every box, and a build that forgot a variable can no longer ship an event with

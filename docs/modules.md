@@ -201,7 +201,7 @@ the sections below are the enforceable contract behind it.
 > There is one transport and nothing selects it. A module reaching the
 > platform from outside copies the shape below. Push ingest — the scoring
 > workflow POSTing straight at a public `/score` on the box — was removed in
-> v0.6 ([#377](https://github.com/dcotelo/owasp-ctf/issues/377),
+> v0.6 ([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
 > [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed)),
 > along with `caddy/Caddyfile.push`, the `push` profile and the judge's
 > `SCORE_API`/`SCORE_TOKEN` hook, so a module MUST NOT expect an inbound

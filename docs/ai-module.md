@@ -384,8 +384,8 @@ Honestly, as shipped:
   immediate (§9), there's no way to roll your backend to a new key without
   a gap in which either the old key still verifies briefly or your posts
   fail until redeployed.
-  ([#251](https://github.com/dcotelo/owasp-ctf/issues/251))
+  ([#251](https://github.com/OWASP/owasp-ctf-in-a-box/issues/251))
 - **No per-challenge attempt cap.** The graded (flag) path only throttles
   with the cooldown in §7/§8 — there is no ceiling on total attempts, only
   on how fast they can come in.
-  ([#252](https://github.com/dcotelo/owasp-ctf/issues/252))
+  ([#252](https://github.com/OWASP/owasp-ctf-in-a-box/issues/252))

@@ -131,7 +131,7 @@ state; everything else that touches scores goes through it.
    `<!-- ctf-score: {...} -->` (`sync/src/parse.js`'s `MARKER`). Nothing in
    the workflow talks to the box at all — push ingest, where the Action POSTed
    the score straight at a public `/score`, was removed in v0.6
-   ([#377](https://github.com/dcotelo/owasp-ctf/issues/377),
+   ([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
    [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed))
    together with the judge's `SCORE_API`/`SCORE_TOKEN` hook and the
    `LEADERBOARD_URL`/`LEADERBOARD_TOKEN` org secrets that addressed it. An

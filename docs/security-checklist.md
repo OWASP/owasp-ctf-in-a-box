@@ -10,7 +10,7 @@ One page to walk before an event. Everything here is a **deployment**
 decision — the kit cannot make any of these calls for you, and most of them
 have no visible symptom when they are wrong.
 
-Read it alongside [SECURITY.md](https://github.com/dcotelo/owasp-ctf/blob/main/SECURITY.md),
+Read it alongside [SECURITY.md](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/SECURITY.md),
 which covers what to report and the one trust boundary that is deliberate:
 the scorer builds and runs contestant-submitted code, because judging
 submitted code is the product.
@@ -121,7 +121,7 @@ nothing reaches in.
 
 What is worth checking is what an earlier event may have left behind in the
 org. Push ingest — the fork's Action POSTing the score straight at the box —
-was removed in v0.6 ([#377](https://github.com/dcotelo/owasp-ctf/issues/377),
+was removed in v0.6 ([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
 [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed)),
 and it needed `LEADERBOARD_URL`/`LEADERBOARD_TOKEN` as **org** Actions
 secrets. Org secrets are readable by the `pull_request_target` runs a

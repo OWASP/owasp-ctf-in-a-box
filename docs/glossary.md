@@ -54,7 +54,7 @@ workflow writes it only from the judge's own output. See
 score comments from GitHub every ~30 s, so nothing has to reach the box from
 the internet and an event runs behind NAT or on venue wifi. **Push** — the
 fork's Action POSTing the score straight at the box — was removed in v0.6
-([#377](https://github.com/dcotelo/owasp-ctf/issues/377),
+([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
 [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed)).
 How it fits together: [hosting.md](hosting.md#how-scores-reach-the-box).
 

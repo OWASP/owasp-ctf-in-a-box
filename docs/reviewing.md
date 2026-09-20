@@ -18,7 +18,7 @@ failure scenario ("inputs/state → wrong output"), not a vibe. Prefer the
 smallest fix that closes the failure. A reviewer finding you disagree with
 is answered on the thread with the reason, never ignored — a reasoned
 decline on the record is a valid outcome (see
-[CONTRIBUTING](https://github.com/dcotelo/owasp-ctf/blob/main/CONTRIBUTING.md) and `AGENTS.md`'s CodeRabbit gate).
+[CONTRIBUTING](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/CONTRIBUTING.md) and `AGENTS.md`'s CodeRabbit gate).
 
 ## Section 1. The invariants a review protects
 
@@ -59,7 +59,7 @@ diff that flips one silently is a bug even when it looks like hardening:
 
 Every row carries its anchors so the claim is checkable against the code —
 a row whose direction cannot be traced to an implementation and a test is a
-row to distrust. [Issue #232](https://github.com/dcotelo/owasp-ctf/issues/232)
+row to distrust. [Issue #232](https://github.com/OWASP/owasp-ctf-in-a-box/issues/232)
 tracked the rows below until each gained a test anchor; the boundary-instant
 row's shared corpus (`test/fixtures/window-corpus.json`) is what closed it.
 
@@ -279,7 +279,7 @@ ADR, not the code.
   code was fine. CodeRabbit review is a required merge gate; the workflow rules —
   wait for the re-review after every push, resolve every actionable thread,
   decline on the record — are in `AGENTS.md` and
-  [CONTRIBUTING](https://github.com/dcotelo/owasp-ctf/blob/main/CONTRIBUTING.md).
+  [CONTRIBUTING](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/CONTRIBUTING.md).
 - CI (`.github/workflows/ci.yml`) — the per-area jobs, the vacuous-sweep
   gate, and the acceptance scripts, which are the strongest anti-vacuous
   layer in the repo.

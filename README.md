@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/dcotelo/owasp-ctf/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/dcotelo/owasp-ctf/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/OWASP/owasp-ctf-in-a-box/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/OWASP/owasp-ctf-in-a-box/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://dcotelo.github.io/owasp-ctf/"><img alt="docs" src="https://img.shields.io/badge/docs-github%20pages-blue"></a>
   <a href="LICENSE"><img alt="license MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
@@ -35,7 +35,7 @@ thread on the latest commit is resolved (or declined on the record).
 Commits follow Conventional Commits and carry no AI attribution.
 
 Small, well-specified work is tagged
-[`good first issue`](https://github.com/dcotelo/owasp-ctf/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+[`good first issue`](https://github.com/OWASP/owasp-ctf-in-a-box/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 New modules start as an issue, not a PR — see
 [CONTRIBUTING.md](CONTRIBUTING.md#proposing-a-new-module).
 
@@ -224,7 +224,7 @@ GitHub Action that boots the target, runs the rubric against the patch, and
 posts a machine-readable score comment on the PR. The `sync` poller pulls
 those comments — zero inbound network surface, so the box works behind NAT and
 on venue wifi (that is the only transport: push ingest was removed in v0.6,
-see [#377](https://github.com/dcotelo/owasp-ctf/issues/377)). The score
+see [#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377)). The score
 enters through a single audited writer:
 the scorer's bearer-authed `POST /score`, which validates and writes
 monotonically — solves are never un-solved by a later failing run.

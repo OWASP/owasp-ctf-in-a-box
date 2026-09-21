@@ -6,7 +6,7 @@ title: Decisions
 
 # Decisions
 
-Numbered architecture decision records for OWASP CTF. Each entry is
+Numbered architecture decision records for OWASP CTF in a Box. Each entry is
 Context / Decision / Consequences. For how these decisions fit together as
 a running system, see [docs/architecture.md](architecture.md). For the
 contract a new CTF module must satisfy, see
@@ -447,6 +447,17 @@ nor leftover DC34 branding, and must show "OWASP CTF." The platform is
 event-agnostic by construction — DC34 was one event that happened to be
 the app's original deployment, and its specifics are not baked in as
 "the" default anywhere in the generator or the catalogue.
+
+*Amended September 2026 (the OWASP Foundation rename): the neutral default
+name is now **"OWASP CTF in a Box"**, not "OWASP CTF", so that is the string
+`scripts/acceptance-app.sh` and `scripts/acceptance-quiz-only.sh` assert in
+the page `<title>`, and the string `DEFAULT_EVENT_IDENTITY.eventName`
+(`apps/web/src/lib/event-identity.ts`) carries — `generate-event-config.mjs`
+and its `DEFAULTS` are themselves gone, retired with `event.yaml` by ADR 55.
+What this ADR decided is unchanged: the default is neutral, carries no one
+event's branding, and is asserted rather than assumed. Only the string moved.
+Which other names deliberately did NOT move with it is in
+[the project's names](glossary.md#the-projects-names).*
 
 ## ADR 15. Timezone-independent date display
 

@@ -19,9 +19,9 @@ const { default: SiteHeader } = await import("@/components/site-header");
 describe("SiteHeader", () => {
   it("renders the runtime event name in the wordmark", () => {
     const html = renderToStaticMarkup(
-      <SiteHeader navLinks={[]} discordUrl="" eventName="OWASP CTF" />,
+      <SiteHeader navLinks={[]} discordUrl="" eventName="OWASP CTF in a Box" />,
     );
-    expect(html).toContain("OWASP CTF");
+    expect(html).toContain("OWASP CTF in a Box");
   });
 
   it("shows an organizer-renamed event, not a hardcoded name", () => {

@@ -1,6 +1,6 @@
 # AWS deploy: ECS Fargate + ElastiCache + ALB (Terraform)
 
-Stand the OWASP CTF control plane up as a **managed AWS stack** for the
+Stand the OWASP CTF in a Box control plane up as a **managed AWS stack** for the
 duration of an event, then tear it down. `terraform apply` up, `terraform
 destroy` down.
 

@@ -49,8 +49,8 @@ longer bakes an admins list at build time — it reads the comma-separated
 entry failing the GitHub-login shape check) refuses every login, including
 one that used to work. (The event's name and the rest of its branding, the
 fork org, and which Secure Development targets run are separate runtime
-settings — the name and targets default to "OWASP CTF" / all six either way,
-so a stock-looking name or a full target list is not a symptom of this
+settings — the name and targets default to "OWASP CTF in a Box" / all six
+either way, so a stock-looking name or a full target list is not a symptom of this
 problem on its own.)
 
 **Fix.** Set `ADMIN_LOGINS` in `.env` to a comma-separated list of GitHub

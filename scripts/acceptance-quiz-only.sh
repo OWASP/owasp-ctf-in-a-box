@@ -315,7 +315,7 @@ if ! grep -qF -- "Acceptance CTF" <<< "$RENAMED_HTML"; then
   echo "FAIL: landing page does not show the runtime event name"
   exit 1
 fi
-if grep -qF -- "<title>OWASP CTF</title>" <<< "$RENAMED_HTML"; then
+if grep -qF -- "<title>OWASP CTF in a Box</title>" <<< "$RENAMED_HTML"; then
   echo "FAIL: landing page title still shows the default after a rename"
   exit 1
 fi

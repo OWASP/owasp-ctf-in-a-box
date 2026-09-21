@@ -31,8 +31,8 @@ pull requests.
 
 ## What to report here
 
-**OWASP CTF is a deliberately-vulnerable-by-design *training* kit.** The
-target applications it hosts (Juice Shop, DVWA, WebGoat, Security Shepherd,
+**OWASP CTF in a Box is a deliberately-vulnerable-by-design *training*
+kit.** The target applications it hosts (Juice Shop, DVWA, WebGoat, Security Shepherd,
 VulnerableApp, VAmPI, and any future module targets) are **intentionally
 vulnerable** — finding and patching their flaws is the point of the exercise.
 Please do **not** report vulnerabilities in the target apps themselves here;

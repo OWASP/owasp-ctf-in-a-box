@@ -40,6 +40,16 @@ export type Site = {
   // here so pages keep reading it off `Site`, as they always have.
   secureAgentPlaybookUrl: string;
 
+  // OWASP attribution for the box's own domain. The Project Policy asks that
+  // OWASP branding — links back to owasp.org, to the project home page and to
+  // the repo — be prominent on any domain a project maintains, and an event
+  // box on an organizer's own hostname is exactly that. Constants, not
+  // organizer overrides: an organizer renames their event, never the
+  // Foundation.
+  owaspUrl: string;
+  owaspProjectUrl: string;
+  sourceUrl: string;
+
   // Governing policies. This site publishes short, specific notices and defers
   // to these as the authoritative documents — we don't restate them.
   owaspPrivacyUrl: string;
@@ -77,6 +87,9 @@ export function resolveSite(
     dates: formatDateRange(schedule?.scoringStartsAt ?? null, schedule?.scoringEndsAt ?? null),
     ctfStartsAt: schedule?.scoringStartsAt ?? null,
     secureAgentPlaybookUrl: SECURE_AGENT_PLAYBOOK_URL,
+    owaspUrl: "https://owasp.org/",
+    owaspProjectUrl: "https://owasp.org/projects/ctf-in-a-box",
+    sourceUrl: "https://github.com/OWASP/owasp-ctf-in-a-box",
     owaspPrivacyUrl: "https://policy.owasp.org/operational/privacy",
     owaspCodeOfConductUrl: "https://policy.owasp.org/operational/code-of-conduct",
     owaspDisclaimerUrl: "https://policy.owasp.org/operational/general-disclaimer",

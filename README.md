@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<h1 align="center">OWASP CTF</h1>
+<h1 align="center">OWASP CTF in a Box</h1>
 
 <p align="center">
   <em>A self-hosted control plane for security-learning events — one box, one free GitHub org.<br>
@@ -15,7 +15,9 @@
 <p align="center">
   <a href="https://github.com/OWASP/owasp-ctf-in-a-box/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/OWASP/owasp-ctf-in-a-box/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://owasp.github.io/owasp-ctf-in-a-box/"><img alt="docs" src="https://img.shields.io/badge/docs-github%20pages-blue"></a>
-  <a href="LICENSE"><img alt="license MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <a href="LICENSE"><img alt="code license MIT" src="https://img.shields.io/badge/code-MIT-green"></a>
+  <a href="docs/LICENSE"><img alt="docs license CC BY-SA 4.0" src="https://img.shields.io/badge/docs-CC%20BY--SA%204.0-green"></a>
+  <a href="https://owasp.org/projects/ctf-in-a-box"><img alt="OWASP incubator project" src="https://img.shields.io/badge/OWASP-incubator%20project-0072c6"></a>
 </p>
 
 <p align="center">
@@ -108,9 +110,14 @@ GitHub pull requests, a module contract for mixing game types on one
 leaderboard, and a control plane you own end to end — one box, one free org,
 no cloud bill, no telemetry.
 
-This project is **not affiliated with or endorsed by the OWASP Foundation**.
+This is an **OWASP Foundation project** — an incubator-level tool project;
+its home page is
+[owasp.org/projects/ctf-in-a-box](https://owasp.org/projects/ctf-in-a-box).
 Four of the six vulnerable targets are OWASP projects (Juice Shop, WebGoat,
 Security Shepherd, VulnerableApp); DVWA and VAmPI are community projects.
+OWASP does not endorse or recommend any product or service, including the
+targets this kit hosts — they are training material, chosen for what they
+teach.
 
 ## Quickstart
 
@@ -345,7 +352,10 @@ Rendered at **[owasp.github.io/owasp-ctf-in-a-box](https://owasp.github.io/owasp
 
 Contributions welcome — [CONTRIBUTING.md](CONTRIBUTING.md) covers the dev
 environment, the CI gates, and how to propose a module;
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies.
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies. As an OWASP project this
+repo uses the [Developer Certificate of Origin](https://developercertificate.org/)
+as its contributor agreement, so **sign off every commit** with
+`git commit -s`.
 
 Agents should follow [AGENTS.md](AGENTS.md). The commands below match CI;
 `make help` lists the same targets.
@@ -365,7 +375,14 @@ targets' vulnerabilities are intentional and out of scope.
 
 ## License and credits
 
-MIT — see [LICENSE](LICENSE). The rubric content under `scorer/rubric.owasp/`
+Code and build artifacts are **MIT** — see [LICENSE](LICENSE). The
+documentation source under `docs/` is **CC BY-SA 4.0** — see
+[docs/LICENSE](docs/LICENSE). The split is what the
+[OWASP Project Policy](https://owasp.org/www-policy/operational/projects)
+requires: source under an OSI-approved licence, documentation under a
+Creative Commons one.
+
+The rubric content under `scorer/rubric.owasp/`
 is vendored from the upstream
 [OWASP-CTF](https://github.com/OWASP-CTF/dc34-owasp-secure-development-ctf)
 event, pinned to the commit in `scorer/rubric.owasp/PROVENANCE.md` — this kit
@@ -377,5 +394,7 @@ targets are not vendored: events fork them from their own upstreams
 [Security Shepherd](https://github.com/OWASP/SecurityShepherd),
 [VulnerableApp](https://github.com/SasanLabs/VulnerableApp),
 [VAmPI](https://github.com/erev0s/VAmPI)), and each keeps its own license.
-OWASP® is a registered trademark of the OWASP Foundation; this project is not
-affiliated with or endorsed by it.
+OWASP® is a registered trademark of the OWASP Foundation. OWASP does not
+endorse or recommend any product or service; nothing here should be read as
+the Foundation endorsing the targets, tools or services this kit integrates
+with.

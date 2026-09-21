@@ -448,7 +448,7 @@ export default async function Home({
           <div className="max-w-xl">
             <h3 className="text-lg font-semibold text-white">Run this for your own group</h3>
             <p className="mt-1 text-sm leading-relaxed text-zinc-400">
-              This event runs on OWASP CTF: one machine, one free GitHub org, no cloud account,
+              This event runs on OWASP CTF in a Box: one machine, one free GitHub org, no cloud account,
               scoring rubrics included. A university course, a chapter night or a weekend workshop
               can stand it up in an afternoon.
             </p>

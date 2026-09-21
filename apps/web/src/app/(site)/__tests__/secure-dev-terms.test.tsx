@@ -143,7 +143,7 @@ describe("the secure-development term list", () => {
     expect("The base repo is OWASP-CTF/juice-shop and the base branch is main.").toMatch(org);
     expect("Fork it under OWASP-CTF/&lt;target&gt; on GitHub.").toMatch(org);
     expect('<a href="https://github.com/OWASP-CTF/juice-shop">the fork</a>').not.toMatch(org);
-    expect("This event runs on OWASP CTF: one machine, one free GitHub org.").not.toMatch(org);
+    expect("This event runs on OWASP CTF in a Box: one machine, one free GitHub org.").not.toMatch(org);
   });
 });
 

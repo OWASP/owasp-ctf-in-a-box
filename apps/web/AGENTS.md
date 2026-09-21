@@ -1,6 +1,6 @@
 # apps/web
 
-This app is vendored into the OWASP CTF kit, and the kit's operating
+This app is vendored into the OWASP CTF in a Box kit, and the kit's operating
 manual is [`../../AGENTS.md`](../../AGENTS.md) — read it first. It has the
 build/test commands (`corepack pnpm`, the grading-Lua suites against a real
 Redis, the `/`-is-never-prerendered assertion), the CI gates, and the failure

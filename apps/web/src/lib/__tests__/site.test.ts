@@ -10,7 +10,7 @@ beforeEach(() => mocks.getAdminSettingsSnapshot.mockReset());
 describe("resolveSite", () => {
   it("serves the spec defaults when nothing is stored", () => {
     const s = resolveSite(null, null);
-    expect(s.name).toBe("OWASP CTF");
+    expect(s.name).toBe("OWASP CTF in a Box");
     expect(s.theme).toBe("");
     expect(s.location).toBe("");
     expect(s.contactEmail).toBe("");
@@ -48,7 +48,7 @@ describe("resolveSite", () => {
   // semantics — pinned here with eventTheme so a future edit can't collapse
   // `||` onto every field by mistake.
   it("falls back to the default name on an empty stored eventName, but leaves the other fields' blank-is-valid semantics alone", () => {
-    expect(resolveSite({ eventName: "" }, null).name).toBe("OWASP CTF");
+    expect(resolveSite({ eventName: "" }, null).name).toBe("OWASP CTF in a Box");
     expect(resolveSite({ eventTheme: "" }, null).theme).toBe("");
   });
 });
@@ -61,7 +61,7 @@ describe("getSite", () => {
   });
   it("fails open to the defaults when the snapshot is null", async () => {
     mocks.getAdminSettingsSnapshot.mockResolvedValue(null);
-    expect((await getSite()).name).toBe("OWASP CTF");
+    expect((await getSite()).name).toBe("OWASP CTF in a Box");
   });
   // The schedule fields flow through the SAME snapshot read as the identity
   // fields — no second HGETALL — and getSite() passes both into resolveSite.

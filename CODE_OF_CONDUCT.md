@@ -1,4 +1,10 @@
-# Contributor Covenant Code of Conduct
+# Code of Conduct
+
+This is an OWASP Foundation project. The
+[OWASP Code of Conduct](https://policy.owasp.org/operational/code-of-conduct)
+governs every OWASP space and applies here in full; the Contributor Covenant
+text below is how this repository puts it into practice day to day. Where the
+two differ, the OWASP Code of Conduct is authoritative.
 
 ## Our Pledge
 
@@ -68,6 +74,23 @@ repository maintainers.
 
 All community leaders are obligated to respect the privacy and security of
 the reporter of any incident.
+
+### Escalating to the OWASP Foundation
+
+If a report concerns the project leaders themselves, or you would rather not
+route it through this repository at all, take it straight to the Foundation —
+you do not need the project's permission, and the project is not told who
+reported what:
+
+- [compliance@owasp.org](mailto:compliance@owasp.org) — Code of Conduct
+  breaches and policy violations.
+- [Conflict resolution policy](https://policy.owasp.org/operational/conflict-resolution)
+  — disputes between participants.
+- [Whistleblower and anti-retaliation policy](https://policy.owasp.org/operational/whistleblower)
+  — severe violations of policy, or financial or fiduciary misconduct.
+
+The OWASP Project Committee is the first point of escalation, then the
+Executive Director, then the [Global Board](https://owasp.org/www-board/).
 
 ## Enforcement Guidelines
 

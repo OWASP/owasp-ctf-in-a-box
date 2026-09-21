@@ -6,6 +6,54 @@ commit-level notes, and this file keeps the human summary. The version is
 repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 `sync` deliberately carry no version field.
 
+## Unreleased
+
+- **Renamed: the kit is now called OWASP CTF in a Box.** This is the name the
+  OWASP Foundation approved when the project was transferred into the org; the
+  repo had been carrying the pre-transfer name throughout. The rename reaches
+  the brand — the README, the docs site title, the ADR index, `CONTRIBUTING.md`,
+  `SECURITY.md`, the design system, the `LICENSE` copyright line — **and the
+  default event name**, which the glossary has always kept deliberately equal
+  to the brand. One behaviour change follows from that: a box whose organizer
+  never set an event name now shows "OWASP CTF in a Box" where it showed
+  "OWASP CTF" (`DEFAULT_EVENT_IDENTITY.eventName`, and with it the page
+  `<title>`, the header and the leaderboard). That is a rename of the default,
+  not of anything stored — a box with a name set in `/admin` → Event →
+  Identity is untouched. What deliberately did **not** move: the `owasp-ctf`
+  image namespace and repo directory (renaming it breaks every `SCORE_IMAGE`
+  already sitting in a `.env`), the `OWASP-CTF` fork org,
+  `ghcr.io/owasp-ctf/score`, and the `OWASP CTF sync` GitHub App, whose name
+  belongs to an app already installed in someone's account.
+  `docs/glossary.md`'s names table is the authority on that split and now runs
+  to seven names plus the two retained strings; ADR 14 carries an amendment
+  for the changed default; and the entries below that use the old name are
+  history, left as written.
+
+- **The repo now meets the OWASP Project Policy's requirements for a project
+  under the Foundation.** The kit was transferred into the OWASP org, and the
+  governance files still described an unaffiliated project. Five things
+  changed. The README, `docs/index.md` and `docs/glossary.md` said "not
+  affiliated with or endorsed by the OWASP Foundation" — the policy requires
+  the opposite ("Projects must identify as an OWASP project in their
+  branding"), so they now identify the project and link its home page at
+  `owasp.org/projects/ctf-in-a-box`, and carry the Branding Guidelines' own
+  Statement of Non-Endorsement instead, which is what that sentence was
+  actually reaching for. `CONTRIBUTING.md` gains a DCO section: the policy
+  names the Developer Certificate of Origin as the contributor agreement
+  every OWASP project must use, so every commit needs `git commit -s`.
+  Documentation is relicensed **CC BY-SA 4.0** (`docs/LICENSE`) — the policy
+  splits the two, OSI-approved for source and Creative Commons for
+  documentation; code stays MIT and the root `LICENSE` is untouched.
+  `CODE_OF_CONDUCT.md` names the OWASP Code of Conduct as authoritative over
+  its Contributor Covenant text and adds the Foundation escalation path
+  (compliance@owasp.org, the conflict-resolution and whistleblower policies,
+  the Project Committee) for a report that concerns the project's own
+  leaders. And the app footer now carries the OWASP attribution — links to
+  owasp.org, the project page and the repo, plus the trademark and
+  non-endorsement notices — because the policy asks for that branding on any
+  domain the project maintains, and an event box runs on the organizer's own
+  hostname.
+
 ## v0.6.0 — 2026-09-20
 
 ### Breaking changes

@@ -1,4 +1,4 @@
-# Contributing to OWASP CTF
+# Contributing to OWASP CTF in a Box
 
 Thanks for your interest in contributing. This document covers the dev
 environment, how to build and test each piece, what CI will hold you to, the
@@ -163,12 +163,54 @@ are path-scoped to judge-relevant scorer inputs plus `patches/`.
 - **Docs ship with the change.** A behavior change that leaves
   `docs/` describing the old behavior is not done.
 
+## Developer Certificate of Origin (DCO)
+
+This is an OWASP Foundation project, and the
+[OWASP Project Policy](https://policy.owasp.org/operational/projects)
+names the [Developer Certificate of Origin](https://developercertificate.org/)
+as the contributor agreement every OWASP project must use. There is no CLA to
+sign and no copyright to assign — you sign off each commit instead,
+certifying that you wrote the contribution or otherwise have the right to
+submit it under this repo's licences.
+
+Sign off as you commit:
+
+```sh
+git commit -s -m "fix: whatever you fixed"
+```
+
+`-s` appends a trailer built from your `user.name` and `user.email`:
+
+```
+Signed-off-by: Your Name <you@example.com>
+```
+
+The name and email must be real and must match what git is configured with —
+a sign-off is a statement, not a formality.
+
+Forgot it on the last commit:
+
+```sh
+git commit --amend -s --no-edit
+```
+
+Forgot it across a branch:
+
+```sh
+git rebase --signoff origin/main   # then force-push the branch
+```
+
+`Signed-off-by:` is required, and is unrelated to the trailers this repo
+forbids: no `Generated with`, and no `Co-authored-by:` naming an AI tool or
+agent (see [AI-assisted contributions](#ai-assisted-contributions)).
+
 ## Pull request flow
 
 1. Branch off `main`.
 2. Make your change. Keep commits scoped and use
    [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`,
-   `fix:`, `docs:`, `test:`, `chore:`, `ci:`, ...).
+   `fix:`, `docs:`, `test:`, `chore:`, `ci:`, ...). Sign off every commit
+   (`git commit -s`) — see [DCO](#developer-certificate-of-origin-dco).
 3. Run the relevant tests locally (above).
 4. Open a pull request against `main`. Fill in the PR template.
 5. CI must be green before merge. Only the jobs for areas your PR touches
@@ -186,6 +228,7 @@ A PR is ready when all of these are true:
 - New tests can fail: the summary names the single-token mutation
   each new/changed test would catch.
 - Invariants in docs/reviewing.md that this diff touches were checked.
+- Every commit carries a `Signed-off-by:` trailer (`git commit -s`).
 - No `Generated with` / AI `Co-authored-by:` trailers.
 - Breaking-change box in the PR template is filled in (`None` is fine).
 - Latest commit has a CodeRabbit "Review completed" and no open

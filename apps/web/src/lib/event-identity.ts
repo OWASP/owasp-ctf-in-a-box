@@ -25,7 +25,7 @@ export const EVENT_IDENTITY_MAX: Record<EventIdentityKey, number> = {
 /** Spec §2 defaults. Empty means "hide" for every field but the name — pages
  *  drop their tagline, location line, mailto and Discord links when unset. */
 export const DEFAULT_EVENT_IDENTITY: Record<EventIdentityKey, string> = {
-  eventName: "OWASP CTF",
+  eventName: "OWASP CTF in a Box",
   eventTheme: "",
   eventLocation: "",
   eventContact: "",

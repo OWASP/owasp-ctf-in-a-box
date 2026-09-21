@@ -75,7 +75,7 @@ expect_in() { # haystack needle what
 echo "--- identity fails open to the default name (no Redis behind this run)"
 # Identity fails OPEN to the spec default when there is no Redis to read
 # (issue #386): the title must be the default name, not empty, not an error.
-expect_in "$HOME_HTML" "<title>OWASP CTF</title>" "landing page title is not the default event name without settings"
+expect_in "$HOME_HTML" "<title>OWASP CTF in a Box</title>" "landing page title is not the default event name without settings"
 echo "--- no DC34 branding"
 if echo "$HOME_HTML$CHALLENGES_HTML" | grep -qi "DEF CON"; then echo "FAIL: DC34 leaked"; exit 1; fi
 echo "--- all six targets render; no Redis behind this run means no admin-chosen subset"
@@ -177,7 +177,7 @@ expect_in "$NOSCORER_HTML" "An organizer switches them on in the admin panel." "
 code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3102/challenges)
 if [ "$code" != "404" ]; then echo "FAIL: /challenges returned $code without a scorer image, want 404"; exit 1; fi
 
-echo "--- default run (no GITHUB_ORG) is neutral (no DEF CON, name OWASP CTF)"
+echo "--- default run (no GITHUB_ORG) is neutral (no DEF CON, name OWASP CTF in a Box)"
 # SAME image as web-acceptance — this is a runtime env difference, not a
 # rebuild: config v2 has nothing left for a second build to bake.
 docker run -d --name web-default -p 3101:3000 \
@@ -186,11 +186,11 @@ docker run -d --name web-default -p 3101:3000 \
 DEFAULT_HTML=$(wait_for_html http://localhost:3101/)
 DEFAULT_CHALLENGES_HTML=$(wait_for_html http://localhost:3101/challenges)
 if echo "$DEFAULT_HTML" | grep -qi "DEF CON"; then echo "FAIL: default run carries DC34"; exit 1; fi
-# "OWASP CTF" alone is vacuous: the landing page's evaluator card hardcodes
+# "OWASP CTF in a Box" alone is vacuous: the landing page's evaluator card hardcodes
 # that string in prose regardless of the event's runtime identity. Assert the
 # actual title tag, like the identity-fails-open check near the top of this
 # script does.
-expect_in "$DEFAULT_HTML" "<title>OWASP CTF</title>" "default run does not carry the neutral name in the page title"
+expect_in "$DEFAULT_HTML" "<title>OWASP CTF in a Box</title>" "default run does not carry the neutral name in the page title"
 
 echo "--- with no GITHUB_ORG, /challenges renders bare repo names and no fork link"
 # forkUrl(org, id) returns null for an empty org (apps.ts) — no OWASP-CTF

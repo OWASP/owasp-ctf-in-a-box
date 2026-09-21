@@ -112,15 +112,27 @@ to select from. `/admin` then owns both live choices: `enabledModules`, and the
 
 ## The project's names
 
-Five names orbit "the project"; they are not interchangeable:
+Seven names orbit "the project"; they are not interchangeable. Only the first
+is the brand — **the rest are identifiers and did not change when the project
+was renamed**, which is most of the reason this table exists:
 
 | Name | What it is |
 |---|---|
-| **OWASP CTF** | The product / brand (README, `owasp.github.io/owasp-ctf-in-a-box`) **and** the default event name every deployment shows until an organizer renames it. The two are deliberately the same string since the rebrand; real events override it from `/admin` → Event → Identity (a runtime setting since #386). One consequence to know: since the name is never baked, a misconfigured box does not betray itself by its name — check for an empty `ADMIN_LOGINS` and a 403 on `/admin` instead. |
-| `owasp-ctf` | The local repo directory and the lowercase image namespace. |
-| `OWASP-CTF` | The GitHub **org** the canonical targets are forked into (`GITHUB_ORG` in `.env`). |
+| **OWASP CTF in a Box** | The product / brand, as approved by the OWASP Foundation, **and** the default event name every deployment shows until an organizer renames it. The two are deliberately the same string; real events override the event name from `/admin` → Event → Identity (a runtime setting since #386). One consequence to know: since the name is never baked, a misconfigured box does not betray itself by its name — check for an empty `ADMIN_LOGINS` and a 403 on `/admin` instead. The project was called **OWASP CTF** until September 2026; that name is retired, and the earlier `CHANGELOG.md` entries using it are history rather than current usage. |
+| `owasp-ctf-in-a-box` | The **repo** (`OWASP/owasp-ctf-in-a-box`) and the docs site (`owasp.github.io/owasp-ctf-in-a-box`). |
+| `ctf-in-a-box` | The slug of the project's home page on the Foundation's site, [owasp.org/projects/ctf-in-a-box](https://owasp.org/projects/ctf-in-a-box) — shorter than the repo name, and not derived from it. |
+| `owasp-ctf` | The local repo directory and the lowercase image namespace. Deliberately unchanged by the rename: renaming an image namespace breaks every `SCORE_IMAGE` already sitting in someone's `.env`. |
+| `OWASP-CTF` | The GitHub **org** the canonical targets are forked into (`GITHUB_ORG` in `.env`). Not the `OWASP` org the kit itself lives in. |
 | `ghcr.io/owasp-ctf/score` | The scorer image path. The lowercase `owasp-ctf` here is a registry-namespace convenience, not the `OWASP-CTF` org; override `SCORE_IMAGE` to your own org's GHCR. |
 | `dc34-owasp-secure-development-ctf` | The upstream repo the rubrics are vendored from (see `scorer/rubric.owasp/PROVENANCE.md`). |
 
-This project is not affiliated with or endorsed by the OWASP Foundation;
-OWASP® is a registered trademark of the OWASP Foundation.
+Two further strings keep the old brand on purpose, because they name things
+that already exist in somebody's GitHub account — renaming the string here
+would not rename those: the **GitHub App** the poller runs as (`OWASP CTF
+sync`, in `sync/app-manifest.json` and the wizard's instructions) and the
+wizard's own banner in `setup/ctf-setup.sh`.
+
+This is an OWASP Foundation project; its home page is
+[owasp.org/projects/ctf-in-a-box](https://owasp.org/projects/ctf-in-a-box).
+OWASP® is a registered trademark of the OWASP Foundation, and OWASP does not
+endorse or recommend any product or service.

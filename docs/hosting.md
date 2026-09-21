@@ -786,8 +786,8 @@ panel while the event is running, and covered in
 - **Which Secure Development targets run** — Secure Development → Targets. The
   setup script forks and provisions all six; the panel picks the live subset,
   and `sync` re-reads it every tick.
-- **The event's identity** — Event → Identity: name (default `OWASP CTF`),
-  tagline, location, contact e-mail, Discord invite.
+- **The event's identity** — Event → Identity: name (default
+  `OWASP CTF in a Box`), tagline, location, contact e-mail, Discord invite.
 - **The scoring schedule and the freeze** — Event → Schedule: scoring opens,
   scoring closes, and the manual pause.
 - **Hints, teams and caps** — the hint switch and prices, the registration

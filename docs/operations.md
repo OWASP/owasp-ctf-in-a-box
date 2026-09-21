@@ -283,8 +283,8 @@ The panel offers:
   runtime `/admin` setting (issue #386). It is the only place these five
   fields exist: there is no config file to set them in and nothing is baked
   into the image. Each restores its default when left blank: **Event name** (≤80
-  characters; blank restores "OWASP CTF"; shown in page titles, the header,
-  the leaderboard, and this panel's own master-reset confirmation),
+  characters; blank restores "OWASP CTF in a Box"; shown in page titles,
+  the header, the leaderboard, and this panel's own master-reset confirmation),
   **Tagline** (≤160; one line under the event name on the landing page;
   blank hides it), **Location** (≤160; shown beside the dates on the landing
   page and in the page description; blank hides it), **Contact e-mail**
@@ -703,8 +703,8 @@ the module forms sit below the list, so every list control stays clickable
 while you write.
 **The panel accepts only the event's name** as that phrase — exactly the
 **Event name** currently set on the Event tab's Identity section (or its
-default, `OWASP CTF`, if you have not changed it). The route behind the button,
-`POST /api/admin/reset`, additionally accepts the literal `RESET` as its
+default, `OWASP CTF in a Box`, if you have not changed it). The route behind
+the button, `POST /api/admin/reset`, additionally accepts the literal `RESET` as its
 `confirm` value; that is a raw-API fallback for a scripted reset, and the
 panel never offers it.
 

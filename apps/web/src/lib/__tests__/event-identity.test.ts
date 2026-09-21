@@ -8,8 +8,8 @@ describe("event identity contract", () => {
   it("names exactly the five spec fields, in order", () => {
     expect([...EVENT_IDENTITY_KEYS]).toEqual(["eventName", "eventTheme", "eventLocation", "eventContact", "eventDiscord"]);
   });
-  it("defaults to OWASP CTF and nothing else", () => {
-    expect(DEFAULT_EVENT_IDENTITY).toEqual({ eventName: "OWASP CTF", eventTheme: "", eventLocation: "", eventContact: "", eventDiscord: "" });
+  it("defaults to OWASP CTF in a Box and nothing else", () => {
+    expect(DEFAULT_EVENT_IDENTITY).toEqual({ eventName: "OWASP CTF in a Box", eventTheme: "", eventLocation: "", eventContact: "", eventDiscord: "" });
   });
   it("pins the spec limits", () => {
     expect([EVENT_NAME_MAX, EVENT_THEME_MAX, EVENT_LOCATION_MAX, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX]).toEqual([80, 160, 160, 254, 200]);

@@ -55,7 +55,19 @@ vi.mock("@/lib/sponsors-store", () => ({
   tierRank: (t: string) => ({ gold: 0, silver: 1, community: 2 })[t] ?? 3,
 }));
 vi.mock("@/lib/site", () => ({
-  getSite: vi.fn(async () => ({ name: "Fixture CTF", dates: "", location: "", discordUrl: "", contactEmail: "" })),
+  getSite: vi.fn(async () => ({
+    name: "Fixture CTF",
+    dates: "",
+    location: "",
+    discordUrl: "",
+    contactEmail: "",
+    // The footer's OWASP attribution row reads these. They are constants in
+    // the real `site.ts`, never organizer overrides; they get their own
+    // coverage in site-footer-owasp.test.tsx, which uses the real module.
+    owaspUrl: "https://owasp.org/",
+    owaspProjectUrl: "https://owasp.org/projects/ctf-in-a-box",
+    sourceUrl: "https://github.com/OWASP/owasp-ctf-in-a-box",
+  })),
   legalLinks: [],
 }));
 

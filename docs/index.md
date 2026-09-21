@@ -1,8 +1,19 @@
 ---
-title: OWASP CTF
+title: OWASP CTF in a Box
 ---
 
-# OWASP CTF
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/owasp-logo-dark.png">
+    <img alt="OWASP" src="assets/owasp-logo.png" width="220">
+  </picture>
+</p>
+
+# OWASP CTF in a Box
+
+**An [OWASP Foundation](https://owasp.org/) project** — incubator-level tool
+project, home page
+[owasp.org/projects/ctf-in-a-box](https://owasp.org/projects/ctf-in-a-box).
 
 **A self-hosted control plane for security-learning events** — run at a
 university, a high school, an OWASP chapter, a meetup, from one box and one
@@ -14,7 +25,7 @@ free GitHub org.
 every team's score at that moment; expand a team for its roster, what each
 module contributed, and its per-target breakdown.</sup>
 
-OWASP CTF is a control plane, not a single game. It gives an event its
+OWASP CTF in a Box is a control plane, not a single game. It gives an event its
 shared spine — a GitHub org, team registration, a live leaderboard, an
 organizer admin panel, and the scoring pipeline that feeds it — and **modules**
 plug challenge content into that spine. Four modules ship today — **OWASP
@@ -235,7 +246,7 @@ Pick the doc for what you're doing right now:
 - [Reviewing](reviewing.md) — the review guideline: the invariants a PR
   review here must verify, and the deliberate decisions not to re-flag.
 - [Glossary](glossary.md) — the terms an outsider trips on (target, module,
-  rubric, marker, the poll transport, …) and the project's six names.
+  rubric, marker, the poll transport, …) and the project's seven names.
 
 ## Status
 
@@ -252,5 +263,12 @@ known limits, stated in the open, are in
 ---
 
 [Source on GitHub](https://github.com/OWASP/owasp-ctf-in-a-box) ·
+[OWASP project page](https://owasp.org/projects/ctf-in-a-box) ·
+[owasp.org](https://owasp.org/) ·
 [OWASP-CTF/dc34-owasp-secure-development-ctf](https://github.com/OWASP-CTF/dc34-owasp-secure-development-ctf)
 (underlying spec and target apps)
+
+Code is MIT; this documentation is
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). OWASP® is a
+registered trademark of the OWASP Foundation. OWASP does not endorse or
+recommend any product or service.

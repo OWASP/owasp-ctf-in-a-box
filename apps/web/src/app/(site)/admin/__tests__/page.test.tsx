@@ -68,7 +68,7 @@ vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules, getModuleSetup })
 // store (see lib/__tests__/site.test.ts and app/__tests__/page.test.tsx for
 // where that IS exercised).
 //
-// The name is DELIBERATELY distinct from the spec default ("OWASP CTF") and
+// The name is DELIBERATELY distinct from the spec default ("OWASP CTF in a Box") and
 // from every settings fixture below: a regression that stops threading this
 // value through to AdminHeader (e.g. reverting to the baked event.yaml name)
 // would make the assertion below fail loudly instead of the test happening

@@ -1,4 +1,4 @@
-# OWASP CTF — Design System
+# OWASP CTF in a Box — Design System
 
 A dark, cyberpunk-terminal aesthetic for the OWASP Capture The Flag site.
 The look is "security operations console" — deep navy canvas, neon accents,

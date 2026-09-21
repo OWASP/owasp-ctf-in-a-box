@@ -97,7 +97,7 @@ describe("landing page frame", () => {
   // `getSite()` has no event.yaml bake to fall back to any more — the
   // default is the spec constant, full stop). Anchored to the <h1> rather
   // than a bare `toContain`, same reason as the "Renamed CTF" test below:
-  // the evaluator-pitch card's own copy also says "OWASP CTF".
+  // the evaluator-pitch card's own copy also says "OWASP CTF in a Box".
   it("renders the default event name in the headline when no identity is stored", () => {
     const headline = html.match(/<h1[^>]*>([^<]*)<\/h1>/)?.[1];
     expect(headline).toBe(DEFAULT_EVENT_IDENTITY.eventName);
@@ -215,8 +215,8 @@ describe("event identity reaches the landing page", () => {
       const renamed = await Home().then(renderToStaticMarkup);
       // Anchored to the <h1> specifically, not a bare `toContain`: the
       // evaluator pitch card's own copy names the kit ("This event runs on
-      // OWASP CTF: one machine, …") regardless of the organizer's identity,
-      // so a page-wide check for "OWASP CTF" would fail even on a correctly
+      // OWASP CTF in a Box: one machine, …") regardless of the organizer's identity,
+      // so a page-wide check for "OWASP CTF in a Box" would fail even on a correctly
       // renamed event.
       const headline = renamed.match(/<h1[^>]*>([^<]*)<\/h1>/)?.[1];
       expect(headline).toBe("Renamed CTF");
@@ -394,7 +394,7 @@ describe("GitHub OAuth callback: retry destination", () => {
 
 describe("root metadata", () => {
   it("describes the event with the enabled modules' taglines", () => {
-    expect(metadata.description).toBe("OWASP CTF — Secure Development.");
+    expect(metadata.description).toBe("OWASP CTF in a Box — Secure Development.");
   });
 
   it("no longer hardcodes secure-development copy onto every page", () => {

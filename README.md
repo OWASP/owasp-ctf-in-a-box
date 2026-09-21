@@ -378,7 +378,7 @@ targets' vulnerabilities are intentional and out of scope.
 Code and build artifacts are **MIT** — see [LICENSE](LICENSE). The
 documentation source under `docs/` is **CC BY-SA 4.0** — see
 [docs/LICENSE](docs/LICENSE). The split is what the
-[OWASP Project Policy](https://owasp.org/www-policy/operational/projects)
+[OWASP Project Policy](https://policy.owasp.org/operational/projects)
 requires: source under an OSI-approved licence, documentation under a
 Creative Commons one.
 

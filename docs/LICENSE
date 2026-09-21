@@ -13,7 +13,7 @@ root. Where a file under `docs/` is itself source code (a snippet quoted
 from the repo, a configuration example), that snippet stays under MIT.
 
 The split is required by the OWASP Project Policy
-(https://owasp.org/www-policy/operational/projects): source code and build
+(https://policy.owasp.org/operational/projects): source code and build
 artifacts must use an OSI-approved open source licence, and documentation
 source and artifacts must use a Creative Commons licence.
 
@@ -39,7 +39,7 @@ under the following terms:
 
 Attribution does not extend to the OWASP name or logo: OWASP(R) is a
 registered trademark of the OWASP Foundation and its use is governed by the
-OWASP Branding Guidelines (https://owasp.org/www-policy/operational/branding),
+OWASP Branding Guidelines (https://policy.owasp.org/operational/branding),
 not by this licence.
 
 Full licence text (the legally operative document):

@@ -166,7 +166,7 @@ are path-scoped to judge-relevant scorer inputs plus `patches/`.
 ## Developer Certificate of Origin (DCO)
 
 This is an OWASP Foundation project, and the
-[OWASP Project Policy](https://owasp.org/www-policy/operational/projects)
+[OWASP Project Policy](https://policy.owasp.org/operational/projects)
 names the [Developer Certificate of Origin](https://developercertificate.org/)
 as the contributor agreement every OWASP project must use. There is no CLA to
 sign and no copyright to assign — you sign off each commit instead,

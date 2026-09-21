@@ -89,9 +89,8 @@ reported what:
 - [Whistleblower and anti-retaliation policy](https://policy.owasp.org/operational/whistleblower)
   — severe violations of policy, or financial or fiduciary misconduct.
 
-The [OWASP Project Committee](https://owasp.org/www-committee-project/) is the
-first point of escalation, then the Executive Director, then the
-[Global Board](https://owasp.org/www-board/).
+The OWASP Project Committee is the first point of escalation, then the
+Executive Director, then the [Global Board](https://owasp.org/www-board/).
 
 ## Enforcement Guidelines
 

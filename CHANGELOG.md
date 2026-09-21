@@ -6,49 +6,7 @@ commit-level notes, and this file keeps the human summary. The version is
 repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 `sync` deliberately carry no version field.
 
-## v0.6.0 — 2026-09-20
-
-### Breaking changes
-
-Five of them, and one chore that is not optional. Each has a full entry below
-with the reasoning; this is the index an upgrader reads first.
-
-- **`event.yaml` is deleted** — `.env` bootstraps the box and `/admin` runs the
-  event ([ADR 55](docs/decisions.md)). Migration steps are under *Migrating a
-  running event* in the configuration v2 entry.
-- **Push score ingest is removed** — poll is the one score transport
-  ([ADR 56](docs/decisions.md)). A hand-rolled `--profile push` bring-up now
-  starts the app with **no scorer and no poller**; use `--profile secdev
-  --profile app`.
-- **The kit is renamed OWASP CTF** — new repo, docs and image paths.
-- **The repo moved to the OWASP org** — `OWASP/owasp-ctf-in-a-box`. Git
-  remotes and `github.com` links redirect, so a clone keeps working. **The
-  docs site does not redirect**: `dcotelo.github.io/owasp-ctf/` is gone and
-  the site is now at `owasp.github.io/owasp-ctf-in-a-box/`. Update any
-  bookmark or link of your own that points at the old Pages host.
-- **The AWS module is ECS Fargate + ElastiCache + ALB** — an existing EC2
-  deploy does not upgrade in place.
-- **Revoke the old leaderboard credentials.** If your event org still carries
-  `LEADERBOARD_URL` and `LEADERBOARD_TOKEN` from a push-era setup, delete them
-  now. Nothing reads them any more and they authorize nothing — but they are
-  readable by the Actions run that a contestant's own pull request triggers,
-  which is the worst place for a credential to sit. `ctf-setup.sh doctor`
-  reports them fail-closed: a `gh` error reads "not verified", never "absent".
-
-- **Changed: the kit lives in the OWASP org now (#454).** The repository is
-  `OWASP/owasp-ctf-in-a-box` and the documentation site is
-  `owasp.github.io/owasp-ctf-in-a-box/`. Every reference the kit ships moved
-  with it: the README and its CI badge, `SECURITY.md`, the issue-template
-  config, every `docs/` page, the setup wizard's closing links, the `sync`
-  GitHub App manifest, and the two the app serves at runtime — the landing
-  page's repo button and `DOCS_URL` in `modules.ts`, which every module's
-  setup checklist links through.
-
-  GitHub 301-redirects the repo itself, so an existing clone, a `gh` command
-  and any `github.com/dcotelo/owasp-ctf` link all keep working. **GitHub
-  Pages does not redirect after a transfer** — the old docs host returns 404,
-  which is why this is a fix rather than a rename: a box running an earlier
-  build links its contestants and organizers to a dead site.
+## Unreleased
 
 - **Renamed: the kit is now called OWASP CTF in a Box.** This is the name the
   OWASP Foundation approved when the project was transferred into the org; the
@@ -95,6 +53,50 @@ with the reasoning; this is the index an upgrader reads first.
   non-endorsement notices — because the policy asks for that branding on any
   domain the project maintains, and an event box runs on the organizer's own
   hostname.
+
+## v0.6.0 — 2026-09-20
+
+### Breaking changes
+
+Five of them, and one chore that is not optional. Each has a full entry below
+with the reasoning; this is the index an upgrader reads first.
+
+- **`event.yaml` is deleted** — `.env` bootstraps the box and `/admin` runs the
+  event ([ADR 55](docs/decisions.md)). Migration steps are under *Migrating a
+  running event* in the configuration v2 entry.
+- **Push score ingest is removed** — poll is the one score transport
+  ([ADR 56](docs/decisions.md)). A hand-rolled `--profile push` bring-up now
+  starts the app with **no scorer and no poller**; use `--profile secdev
+  --profile app`.
+- **The kit is renamed OWASP CTF** — new repo, docs and image paths.
+- **The repo moved to the OWASP org** — `OWASP/owasp-ctf-in-a-box`. Git
+  remotes and `github.com` links redirect, so a clone keeps working. **The
+  docs site does not redirect**: `dcotelo.github.io/owasp-ctf/` is gone and
+  the site is now at `owasp.github.io/owasp-ctf-in-a-box/`. Update any
+  bookmark or link of your own that points at the old Pages host.
+- **The AWS module is ECS Fargate + ElastiCache + ALB** — an existing EC2
+  deploy does not upgrade in place.
+- **Revoke the old leaderboard credentials.** If your event org still carries
+  `LEADERBOARD_URL` and `LEADERBOARD_TOKEN` from a push-era setup, delete them
+  now. Nothing reads them any more and they authorize nothing — but they are
+  readable by the Actions run that a contestant's own pull request triggers,
+  which is the worst place for a credential to sit. `ctf-setup.sh doctor`
+  reports them fail-closed: a `gh` error reads "not verified", never "absent".
+
+- **Changed: the kit lives in the OWASP org now (#454).** The repository is
+  `OWASP/owasp-ctf-in-a-box` and the documentation site is
+  `owasp.github.io/owasp-ctf-in-a-box/`. Every reference the kit ships moved
+  with it: the README and its CI badge, `SECURITY.md`, the issue-template
+  config, every `docs/` page, the setup wizard's closing links, the `sync`
+  GitHub App manifest, and the two the app serves at runtime — the landing
+  page's repo button and `DOCS_URL` in `modules.ts`, which every module's
+  setup checklist links through.
+
+  GitHub 301-redirects the repo itself, so an existing clone, a `gh` command
+  and any `github.com/dcotelo/owasp-ctf` link all keep working. **GitHub
+  Pages does not redirect after a transfer** — the old docs host returns 404,
+  which is why this is a fix rather than a rename: a box running an earlier
+  build links its contestants and organizers to a dead site.
 
 - **Docs: the Cloudflare rate-limiting rule in front of the box (#438, edge
   layer).** The reference domain has always been proxied by Cloudflare and

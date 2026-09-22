@@ -147,7 +147,7 @@ All animations are slow, infinite loops. Defined as keyframes; applied inline.
 
 ## 7. Voice & Content
 
-- Use **terminal/CLI phrasing** for utility text: `owasp-ctf init --theme <event-theme>`.
+- Use **terminal/CLI phrasing** for utility text: `ctf init --theme <event-theme>`. The pretend program is `ctf`, never the brand or the event name — a command with spaces in it reads as garbage, and the brand is a wordmark, which the header and footer already carry as `$ <event name>`.
 - Dates as ranges with en-dashes: `Month D–D, YYYY`.
 - Separate meta items with a muted middle-dot `·` (zinc-600).
 - Security-domain iconography: clock, shield, lock, people.

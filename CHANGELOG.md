@@ -32,6 +32,31 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   brand string, and `ai-board.jpg`, a signed-out shot whose footer shows the
   hardcoded `$ owasp-ctf` wordmark — that string is a code change, not a
   recapture, and gets its own PR.
+- **The footer's wordmark is the runtime event name, like the header's.**
+  `site-footer.tsx` rendered a hardcoded `$ owasp-ctf` under every page while
+  the header rendered `$ <event name>` — so an organizer's rename reached one
+  end of the page and not the other, and after the September 2026 rename the
+  retired slug sat under the new brand on every route. The header already had
+  a test forbidding that slug (`site-header.test.tsx`); nothing forbade it in
+  the footer. The footer now reads `event.name` from the same `getSite()` it
+  already awaited, and `site-footer-wordmark.test.tsx` pins it, scoped to the
+  prompt so the repo link's legitimate `owasp-ctf-in-a-box` href does not
+  trip it. The 404 and error pages' terminal flourishes drop the slug too —
+  `$ owasp-ctf goto …` and `$ owasp-ctf render …` become `$ ctf goto …` and
+  `$ ctf render …`. Those lines are pretend CLI *commands*, so the event name
+  is the wrong thing to put there (a program with spaces in its name reads as
+  garbage); `ctf` is the identifier family the glossary already keeps, carries
+  no brand, and is what `DESIGN_SYSTEM.md` §7 now uses as its example. The
+  glossary's `ctf-*` row records it, so the next sweep does not rediscover
+  it as an inconsistency.
+
+- **The wizard banner is one line again.** The two-line logotype #457
+  introduced (`OWASP CTF` over `IN A BOX`, ten rows) is replaced by the whole
+  name on one line in figlet's `small` font — 76 columns, four rows, one row
+  shorter than the original `OWASP CTF` banner, in the brand's own casing.
+  All caps in that font lands on exactly 80 columns, one wrap away from
+  garbage on the terminal the wizard targets; `in a Box` is what fits.
+  `docs/assets/wizard.jpg` is recaptured from the new output.
 
 - **The AWS module's provider lock file is now committed.** It had been
   gitignored since the module was written, grouped with `*.tfstate` and

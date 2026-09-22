@@ -8,6 +8,31 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Every screenshot and the demo GIF now show the current brand.** The
+  rename in #456 reached every string a `grep` can see and none of the
+  pictures: all fourteen raster assets under `docs/assets/` predated it, and
+  the audit of them turned up two that were wrong rather than merely stale.
+  `wizard.jpg` spelled the retired name in its ASCII banner and its title line
+  **and** still showed a `3/9 Event config (event.yaml)` step — a file ADR 55
+  retired — so it was wrong about the architecture too; `admin-event.jpg`
+  showed the retired name as the default event name. Both are recaptured, the
+  wizard from the script's real dry-run output via `vhs`. The other eleven
+  contestant and admin shots, and the seven-frame `demo.gif`, are recaptured
+  from the live box on the default event name, so the header wordmark reads
+  `$ OWASP CTF in a Box` throughout — the old ones read `$ owasp-ctf`, which
+  was that box's custom event name at the time, not a hardcoded string, but
+  looked exactly like the retired slug. Three captions moved to match what
+  their image now shows: `docs/hosting.md`'s wizard caption (the dry run
+  ticks secrets and event basics, and the scorer-image check is the first
+  pending step), `docs/operations.md`'s flag-board caption (it described a
+  challenge detail page with a submission box, which no board shot has ever
+  shown), and the README's `demo.gif` caption (the team view no longer
+  expands a target down to its challenge rows; the GIF ends on the team's
+  open flags instead). Untouched on purpose: `doctor.jpg`, which carries no
+  brand string, and `ai-board.jpg`, a signed-out shot whose footer shows the
+  hardcoded `$ owasp-ctf` wordmark — that string is a code change, not a
+  recapture, and gets its own PR.
+
 - **The AWS module's provider lock file is now committed.** It had been
   gitignored since the module was written, grouped with `*.tfstate` and
   `*.tfplan` under "never commit these" — but a dependency lock is not state,

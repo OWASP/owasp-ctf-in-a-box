@@ -1234,7 +1234,7 @@ Like the quiz, it doesn't touch GitHub, the scorer, or `sync` at all — see
 [docs/architecture.md](architecture.md#jeopardy-data-flow) for how it scores
 entirely inside the app.
 
-![The classic flag board: each card shows its point value and solve count, a case-sensitive badge where casing matters, and instant solved/not-quite feedback under the submission box](assets/flags.jpg)
+![The Jeopardy board as a contestant sees it: challenges grouped by category as compact tiles — title, points, and a green check once solved — with the solved-count and points progress bar above them](assets/flags.jpg)
 
 <sup>The board as a contestant sees it: every card says what it's worth and how
 many people have solved it, a badge marks the flags where casing matters, and

@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Walkthrough of the contestant leaderboard: sweeping the score-over-time graph to read every team's points at that instant, then expanding the leading team to its members and its per-target flags, each marked patched or open and linked to its OWASP category" src="docs/assets/demo.gif" width="820">
+  <img alt="Walkthrough of the contestant leaderboard: sweeping the score-over-time graph to read every team's points at that instant, then expanding the leading team to its members, its per-module totals, its per-target breakdown and the list of flags it has open" src="docs/assets/demo.gif" width="820">
 </p>
 
 ### Working on the kit (humans and agents)

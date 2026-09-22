@@ -142,8 +142,9 @@ ASCII art in `wiz_banner()` and the `… setup wizard` line under it — is a
 moves whenever the brand moves. So does the OAuth App name the wizard dictates
 (`OWASP CTF in a Box (<org>)`): unlike the GitHub App, a fresh OAuth App is
 registered per event, so there is nothing already-named to stay compatible
-with. The `setup/test/ctf_setup.bats` assertion on the wizard banner is what
-keeps the two in step.
+with. `setup/test/ctf_setup.bats` pins both independently — one assertion on
+the wizard banner, one on the `Application name:` line `oauth-app` prints —
+so neither can drift back without a test going red.
 
 This is an OWASP Foundation project; its home page is
 [owasp.org/projects/ctf-in-a-box](https://owasp.org/projects/ctf-in-a-box).

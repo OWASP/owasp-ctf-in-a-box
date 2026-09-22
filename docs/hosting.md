@@ -36,7 +36,7 @@ mutating commands instead of running them) and `--out <path>` (default
 sequence below names each one where it's used; `teardown` is covered in
 [operations.md](operations.md#running-an-event).
 
-![The guided setup wizard in a terminal: an ASCII banner, then numbered steps — a resumed run, where the secrets, event config and scorer image already in place are ticked off and the wizard continues from the first step still to do](assets/wizard.jpg)
+![The guided setup wizard in a terminal: an ASCII banner, then numbered steps — a dry run, where the secrets and event basics already in place are ticked off and the wizard reaches the scorer-image check as its first step still to do](assets/wizard.jpg)
 
 <sup>The wizard on a resumed run: every step already done is ticked and
 skipped, and it continues from the first one still to do. On a first run each

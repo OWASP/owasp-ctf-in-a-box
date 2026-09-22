@@ -225,6 +225,28 @@ this module is that `destroy` ends the event.
 - **`srh_image` is digest-pinned and the module refuses a floating tag.** That
   container sits between the app and every byte of event data; `:latest` there
   is a supply-chain decision, so it has to be made deliberately.
+- **`.terraform.lock.hcl` is committed, and Dependabot will narrow it.** The
+  providers are the other half of that supply-chain decision: `versions.tf`
+  constrains them with `~>`, which floats, so the lock file is what actually
+  pins a version *and* a checksum. It is tracked (a dependency lock is not
+  state — this is the module's `pnpm-lock.yaml`), and it carries hashes for
+  four platforms: `linux_amd64`, which CI runs, plus `linux_arm64`,
+  `darwin_amd64` and `darwin_arm64`, which operators apply from. **A platform
+  with no recorded hash fails `terraform init` there**, which is the trap:
+  Dependabot watches this directory (`.github/dependabot.yml`) and its provider
+  bumps re-lock for its own platform only, quietly dropping the other three. So
+  on any PR that changes a provider version, regenerate the full set before
+  merging:
+
+  ```sh
+  cd deploy/aws-terraform
+  terraform providers lock \
+    -platform=linux_amd64 -platform=linux_arm64 \
+    -platform=darwin_amd64 -platform=darwin_arm64
+  ```
+
+  CI will not catch a narrowed lock — `ubuntu-latest` is the one platform such
+  a bump keeps working.
 - **State is reconstructible in poll mode.** `sync` re-reads scores from the
   GitHub PR comments, so a replaced task repopulates the leaderboard. The
   poller's cursor lives in Redis, not on disk, so Fargate's ephemeral storage

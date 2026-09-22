@@ -1,6 +1,14 @@
 # Terraform local state, plans, and vars — never commit these.
+#
+# NOT in this list, deliberately: `.terraform.lock.hcl`. It was, and that was a
+# mistake — a dependency lock is not state. It is this module's `pnpm-lock.yaml`,
+# and HashiCorp's own guidance is to commit it. Without it `versions.tf`'s `~>`
+# constraints float, so CI resolved a different provider build on every run with
+# nothing verifying the download. It is committed, and regenerated with
+# `terraform providers lock -platform=...` for the four platforms README.md's
+# "Notes and gotchas" lists. Read that note before changing the platform list —
+# what the list buys is not that `init` fails without it, because it does not.
 .terraform/
-.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfplan

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ctf-setup — provision a disposable GitHub org for a self-hosted OWASP CTF event.
+# ctf-setup — provision a disposable GitHub org for a self-hosted OWASP CTF in a Box event.
 #
 # Subcommands (run with NO subcommand, or `wizard`, for the guided setup):
 #   wizard    DEFAULT — step-by-step zero-to-scored: inspects state and only
@@ -1131,7 +1131,7 @@ cmd_app_manifest() {
 
   local html; html="$(mktemp -t ctf-app-manifest).html"
   {
-    echo '<!doctype html><meta charset="utf-8"><title>Create the OWASP CTF GitHub App</title>'
+    echo '<!doctype html><meta charset="utf-8"><title>Create the OWASP CTF in a Box GitHub App</title>'
     echo "<form action=\"${action}\" method=\"post\">"
     printf '<input type="hidden" name="manifest" value='"'"'%s'"'"'>' "$(printf '%s' "$manifest_json" | sed "s/'/\&#39;/g")"
     echo '</form><p>Submitting to GitHub…</p><script>document.forms[0].submit()</script>'
@@ -1215,7 +1215,7 @@ cmd_oauth_app() {
   open_url "$url"
   cat <<EOF
 == fill these fields (OAuth App creation is UI-only — copy/paste):
-   Application name:            OWASP CTF ($org)
+   Application name:            OWASP CTF in a Box ($org)
    Homepage URL:                $(event_url)
    Authorization callback URL:  $callback
    Then: "Register application" -> copy the Client ID -> "Generate a new
@@ -1247,7 +1247,14 @@ cmd_oauth_config() {
 # --- wizard -----------------------------------------------------------------
 wiz_step() { echo; printf '%s── %s%s\n' "$C_BOLD$C_CYAN" "$1" "$C_RESET"; }
 
-# ASCII banner shown at the top of the wizard.
+# ASCII banner shown at the top of the wizard. It is a LOGOTYPE — it spells the
+# project's brand, "OWASP CTF in a Box", so it moves whenever the brand does. It
+# names nothing in anyone's GitHub account, unlike the `OWASP CTF sync` App name
+# below, which is why that one keeps the pre-September-2026 brand and this one
+# does not. Two stacked words rather than one line: the whole name in one run of
+# this font is ~128 columns and the wizard has to read on an 80-column terminal.
+# The second word is right-aligned under the first, so the block is 54 columns
+# wide either way. Quoted heredoc — every backslash below is art, not an escape.
 wiz_banner() {
   printf '%s' "$C_CYAN"
   cat <<'BANNER'
@@ -1256,6 +1263,11 @@ wiz_banner() {
 | | | \ \ /\ / / _ \ \___ \| |_) | | |     | | | |_
 | |_| |\ V  V / ___ \ ___) |  __/  | |___  | | |  _|
  \___/  \_/\_/_/   \_\____/|_|      \____| |_| |_|
+         ___  _   _        _       ____    ___  __  __
+        |_ _|| \ | |      / \     | __ )  / _ \ \ \/ /
+         | | |  \| |     / _ \    |  _ \ | | | | \  /
+         | | | |\  |    / ___ \   | |_) || |_| | /  \
+        |___||_| \_|   /_/   \_\  |____/  \___/ /_/\_\
 BANNER
   printf '%s' "$C_RESET"
 }
@@ -1677,7 +1689,7 @@ cmd_wizard() {
   # there is nothing written to read it back from (--dry-run).
   WIZ_SCORE_IMAGE=""
   wiz_banner
-  printf '%sOWASP CTF setup wizard%s — walks you to a running, scored event. Safe to re-run — it resumes.\n' "$C_BOLD" "$C_RESET"
+  printf '%sOWASP CTF in a Box setup wizard%s — walks you to a running, scored event. Safe to re-run — it resumes.\n' "$C_BOLD" "$C_RESET"
   [ "$DRY_RUN" -eq 1 ] && echo "(dry-run: nothing will be changed)"
 
   # 1. Prerequisites (subshelled so cmd_check's exit doesn't kill the wizard).

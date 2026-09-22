@@ -788,7 +788,7 @@ _stub_prereqs() {
 @test "bare invocation runs the wizard (the default), not a usage error" {
   _stub_prereqs
   run env CTF_NO_BROWSER=1 PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT"
-  echo "$output" | grep -q "OWASP CTF setup wizard"
+  echo "$output" | grep -q "OWASP CTF in a Box setup wizard"
   [ -z "$(echo "$output" | grep -F 'usage: ctf-setup.sh')" ]
 }
 
@@ -1347,6 +1347,23 @@ EOF2
   chmod +x stubs/open stubs/gh
   PATH="$(pwd)/stubs:$PATH" CTF_NO_BROWSER=1 run bash "$SCRIPT" oauth-app
   printf '%s' "$output" | grep -qF 'open this manually:'
+}
+
+# An OAuth App has no manifest and no create API, so this printed block IS the
+# interface: whatever it says is what the organizer types into GitHub. That
+# makes it a brand surface with no compile-time check behind it, and it drifted
+# once already — it kept the pre-September-2026 name through the rename that
+# moved everything around it, because nothing here was watching. The --dry-run
+# path returns before the block, so this has to run `oauth-app` for real with
+# the browser suppressed. Assertion last, so a miss fails the test.
+@test "oauth-app dictates the current brand as the OAuth App name" {
+  mkdir -p stubs
+  printf '#!/bin/sh\necho "STUB-OPEN $*"\n' > stubs/open
+  printf '#!/bin/sh\nexit 0\n' > stubs/gh
+  chmod +x stubs/open stubs/gh
+  PATH="$(pwd)/stubs:$PATH" CTF_NO_BROWSER=1 run bash "$SCRIPT" oauth-app
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -qF 'Application name:            OWASP CTF in a Box (test-event-org)'
 }
 
 # --- doctor: per-fork package Read grant, verified by observation -----------

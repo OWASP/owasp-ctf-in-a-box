@@ -60,7 +60,7 @@ export default function AppError({
         {/* The terminal flourish the 404 uses, carrying the one piece of
             information an organizer can act on. */}
         <div className="overflow-x-auto rounded-lg border border-white/[0.06] bg-[#12121e] px-6 py-3.5 font-mono text-sm text-muted">
-          <span className="text-[#e53e3e]">$</span> owasp-ctf render{" "}
+          <span className="text-[#e53e3e]">$</span> ctf render{" "}
           <span className="text-zinc-400">--digest</span>{" "}
           <span>{error.digest ?? "unavailable"}</span>
         </div>

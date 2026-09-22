@@ -30,8 +30,13 @@ export default async function SiteFooter({ navLinks }: { navLinks: NavLink[] }) 
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-10 sm:px-6">
         <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div>
+            {/* The same terminal-prompt wordmark the header renders, from the
+                same runtime event name — an organizer's rename must land in
+                both or the two ends of every page disagree. This used to be
+                the hardcoded `owasp-ctf` slug, which site-header.test.tsx
+                forbids in the header and nothing forbade here. */}
             <p className="font-mono text-sm text-white">
-              <span className="text-[#22c55e]">$</span> owasp-ctf
+              <span className="text-[#22c55e]">$</span> {event.name}
             </p>
             {(event.dates || event.location) && (
               <p className="mt-1 text-sm text-muted">

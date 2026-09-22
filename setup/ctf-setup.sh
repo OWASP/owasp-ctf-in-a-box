@@ -1251,23 +1251,19 @@ wiz_step() { echo; printf '%s── %s%s\n' "$C_BOLD$C_CYAN" "$1" "$C_RESET"; }
 # project's brand, "OWASP CTF in a Box", so it moves whenever the brand does. It
 # names nothing in anyone's GitHub account, unlike the `OWASP CTF sync` App name
 # below, which is why that one keeps the pre-September-2026 brand and this one
-# does not. Two stacked words rather than one line: the whole name in one run of
-# this font is ~128 columns and the wizard has to read on an 80-column terminal.
-# The second word is right-aligned under the first, so the block is 54 columns
-# wide either way. Quoted heredoc — every backslash below is art, not an escape.
+# does not. One line, in figlet's `small` font: the full name in the `standard`
+# font the old "OWASP CTF" banner used runs ~91 columns, and the wizard has to
+# read on an 80-column terminal; `small` fits it in 76 at four rows, one row
+# shorter than before. The brand's own casing ("in a Box"), which is also what
+# keeps it under 80 — all caps lands on exactly 80, one wrap away from garbage.
+# Quoted heredoc — every backslash and backtick below is art, not an escape.
 wiz_banner() {
   printf '%s' "$C_CYAN"
   cat <<'BANNER'
-  _____        ___    ____  ____     ____ _____ _____
- / _ \ \      / / \  / ___||  _ \   / ___|_   _|  ___|
-| | | \ \ /\ / / _ \ \___ \| |_) | | |     | | | |_
-| |_| |\ V  V / ___ \ ___) |  __/  | |___  | | |  _|
- \___/  \_/\_/_/   \_\____/|_|      \____| |_| |_|
-         ___  _   _        _       ____    ___  __  __
-        |_ _|| \ | |      / \     | __ )  / _ \ \ \/ /
-         | | |  \| |     / _ \    |  _ \ | | | | \  /
-         | | | |\  |    / ___ \   | |_) || |_| | /  \
-        |___||_| \_|   /_/   \_\  |____/  \___/ /_/\_\
+   _____      ___   ___ ___    ___ _____ ___   _               ___
+  / _ \ \    / /_\ / __| _ \  / __|_   _| __| (_)_ _    __ _  | _ ) _____ __
+ | (_) \ \/\/ / _ \\__ \  _/ | (__  | | | _|  | | ' \  / _` | | _ \/ _ \ \ /
+  \___/ \_/\_/_/ \_\___/_|    \___| |_| |_|   |_|_||_| \__,_| |___/\___/_\_\
 BANNER
   printf '%s' "$C_RESET"
 }

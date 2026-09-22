@@ -84,7 +84,7 @@ export default function NotFoundBody({
       <PageHeader eyebrow={eyebrow} title={title} description={description} />
 
       <div className="rounded-lg border border-white/[0.06] bg-[#12121e] px-6 py-3.5 font-mono text-sm text-muted">
-        <span className="text-[#22c55e]">$</span> owasp-ctf goto{" "}
+        <span className="text-[#22c55e]">$</span> ctf goto{" "}
         <span className="text-zinc-400">--route</span> <span>not_found</span>
       </div>
 

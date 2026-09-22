@@ -112,7 +112,7 @@ to select from. `/admin` then owns both live choices: `enabledModules`, and the
 
 ## The project's names
 
-Seven names orbit "the project"; they are not interchangeable. Only the first
+Eight names orbit "the project"; they are not interchangeable. Only the first
 is the brand — **the rest are identifiers and did not change when the project
 was renamed**, which is most of the reason this table exists:
 
@@ -121,16 +121,29 @@ was renamed**, which is most of the reason this table exists:
 | **OWASP CTF in a Box** | The product / brand, as approved by the OWASP Foundation, **and** the default event name every deployment shows until an organizer renames it. The two are deliberately the same string; real events override the event name from `/admin` → Event → Identity (a runtime setting since #386). One consequence to know: since the name is never baked, a misconfigured box does not betray itself by its name — check for an empty `ADMIN_LOGINS` and a 403 on `/admin` instead. The project was called **OWASP CTF** until September 2026; that name is retired, and the earlier `CHANGELOG.md` entries using it are history rather than current usage. |
 | `owasp-ctf-in-a-box` | The **repo** (`OWASP/owasp-ctf-in-a-box`) and the docs site (`owasp.github.io/owasp-ctf-in-a-box`). |
 | `ctf-in-a-box` | The slug of the project's home page on the Foundation's site, [owasp.org/projects/ctf-in-a-box](https://owasp.org/projects/ctf-in-a-box) — shorter than the repo name, and not derived from it. |
-| `owasp-ctf` | The local repo directory and the lowercase image namespace. Deliberately unchanged by the rename: renaming an image namespace breaks every `SCORE_IMAGE` already sitting in someone's `.env`. |
+| `owasp-ctf` | The local repo directory, the lowercase image namespace, and the Fly app (`app = "owasp-ctf"` in `deploy/fly/fly.toml`). Deliberately unchanged by the rename: renaming an image namespace breaks every `SCORE_IMAGE` already sitting in someone's `.env`, and renaming a Fly app moves its `*.fly.dev` hostname. |
+| `ctf-*` | The lowercase service identifiers, which are also the runtime log prefixes they are pinned to: `ctf-sync` (`sync/package.json`, and the `ctf-sync:` every poller line starts with), `ctf-score-engine` (`scorer/package.json` and `scorer/src/*.js`'s `ctf-score-engine:`), `ctf-setup`, the `ctf:` Redis key namespace and the `CTF_*` environment variables. Deliberately unchanged: these are read out of logs and `redis-cli` by whoever is debugging a live box, and the package name and the log prefix have to keep matching. |
 | `OWASP-CTF` | The GitHub **org** the canonical targets are forked into (`GITHUB_ORG` in `.env`). Not the `OWASP` org the kit itself lives in. |
 | `ghcr.io/owasp-ctf/score` | The scorer image path. The lowercase `owasp-ctf` here is a registry-namespace convenience, not the `OWASP-CTF` org; override `SCORE_IMAGE` to your own org's GHCR. |
 | `dc34-owasp-secure-development-ctf` | The upstream repo the rubrics are vendored from (see `scorer/rubric.owasp/PROVENANCE.md`). |
 
-Two further strings keep the old brand on purpose, because they name things
-that already exist in somebody's GitHub account — renaming the string here
-would not rename those: the **GitHub App** the poller runs as (`OWASP CTF
-sync`, in `sync/app-manifest.json` and the wizard's instructions) and the
-wizard's own banner in `setup/ctf-setup.sh`.
+One further string keeps the old brand on purpose, because it names a thing
+that already exists in somebody's GitHub account — renaming the string here
+would not rename that: the **GitHub App** the poller runs as, `OWASP CTF sync`
+(`sync/app-manifest.json`, and the name `setup/ctf-setup.sh` tells an organizer
+to type when the pre-filled manifest form opens blank). An organizer who
+installed that App before September 2026 still has it under the old name, and
+the manifest has to keep matching what GitHub already holds.
+
+That rationale reaches exactly one string, and nothing else in
+`setup/ctf-setup.sh` inherits it. In particular the wizard's banner — both the
+ASCII art in `wiz_banner()` and the `… setup wizard` line under it — is a
+**logotype**, not a name GitHub stores, so it spells the current brand and
+moves whenever the brand moves. So does the OAuth App name the wizard dictates
+(`OWASP CTF in a Box (<org>)`): unlike the GitHub App, a fresh OAuth App is
+registered per event, so there is nothing already-named to stay compatible
+with. The `setup/test/ctf_setup.bats` assertion on the wizard banner is what
+keeps the two in step.
 
 This is an OWASP Foundation project; its home page is
 [owasp.org/projects/ctf-in-a-box](https://owasp.org/projects/ctf-in-a-box).

@@ -8,6 +8,39 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **The rename's leftovers: the setup wizard, the AWS stack and the names
+  table.** A sweep for the retired brand across the whole tree found six live
+  strings the rename had not reached, all outside the areas its own diff
+  touched. The biggest is the **wizard's ASCII banner**, the first thing an
+  organizer sees — it still spelled `OWASP CTF`, having been rebranded *to*
+  that name in #368. It is now a two-line logotype (the whole name in one run
+  of that font is ~128 columns; the wizard has to read at 80), with the second
+  word right-aligned under the first so the block stays 54 columns wide. Also
+  renamed: the **OAuth App name the wizard dictates** — organizers were being
+  told to register a fresh app under the retired brand — the wizard's `… setup
+  wizard` line and its bats assertion, the App-creation page's `<title>`, the
+  script's header comment, and the two `description` strings in
+  `deploy/aws-terraform` (`elasticache.tf`, `kms.tf`) whose own README had been
+  renamed without them. Those are in-place attribute updates; no AWS resource
+  is replaced. **No identifier moved** — see below for why, and note that the
+  `<title>` and event-name assertions in `scripts/acceptance-app.sh` and
+  `scripts/acceptance-quiz-only.sh` were already correct and are untouched.
+
+- **`docs/glossary.md`'s names table now explains the split it asserts.** The
+  table said two strings keep the old brand "because they name things that
+  already exist in somebody's GitHub account". That is true of the `OWASP CTF
+  sync` GitHub App and only of it; it was never true of the wizard banner,
+  which names nothing GitHub stores — so the banner was being held back by a
+  reason that did not apply to it, and the entry did not say which of the
+  wizard's two banners it meant. The paragraph now claims the exception for the
+  one string it fits and says explicitly that the banner and the per-event
+  OAuth App name follow the brand instead. The table also gains a `ctf-*` row
+  for the service identifiers that are *also* runtime log prefixes — `ctf-sync`
+  and `ctf-score-engine` are each both a `package.json` name and the string
+  every line that service logs begins with, which is why renaming them is a
+  worse trade than the inconsistency — and the `owasp-ctf` row now names the
+  Fly app as its third use.
+
 - **Renamed: the kit is now called OWASP CTF in a Box.** This is the name the
   OWASP Foundation approved when the project was transferred into the org; the
   repo had been carrying the pre-transfer name throughout. The rename reaches
@@ -24,10 +57,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   already sitting in a `.env`), the `OWASP-CTF` fork org,
   `ghcr.io/owasp-ctf/score`, and the `OWASP CTF sync` GitHub App, whose name
   belongs to an app already installed in someone's account.
-  `docs/glossary.md`'s names table is the authority on that split and now runs
-  to seven names plus the two retained strings; ADR 14 carries an amendment
-  for the changed default; and the entries below that use the old name are
-  history, left as written.
+  `docs/glossary.md`'s names table is the authority on that split; ADR 14
+  carries an amendment for the changed default; and the entries below that use
+  the old name are history, left as written.
 
 - **The repo now meets the OWASP Project Policy's requirements for a project
   under the Foundation.** The kit was transferred into the OWASP org, and the

@@ -104,7 +104,7 @@ resource "aws_ssm_parameter" "redis_url" {
 
 resource "aws_elasticache_replication_group" "main" {
   replication_group_id = "${var.name}-redis"
-  description          = "OWASP CTF event store for ${var.name}"
+  description          = "OWASP CTF in a Box event store for ${var.name}"
 
   engine         = "redis"
   engine_version = "7.1"

@@ -788,7 +788,7 @@ _stub_prereqs() {
 @test "bare invocation runs the wizard (the default), not a usage error" {
   _stub_prereqs
   run env CTF_NO_BROWSER=1 PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT"
-  echo "$output" | grep -q "OWASP CTF setup wizard"
+  echo "$output" | grep -q "OWASP CTF in a Box setup wizard"
   [ -z "$(echo "$output" | grep -F 'usage: ctf-setup.sh')" ]
 }
 

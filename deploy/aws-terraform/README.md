@@ -228,15 +228,29 @@ this module is that `destroy` ends the event.
 - **`.terraform.lock.hcl` is committed, and Dependabot will narrow it.** The
   providers are the other half of that supply-chain decision: `versions.tf`
   constrains them with `~>`, which floats, so the lock file is what actually
-  pins a version *and* a checksum. It is tracked (a dependency lock is not
-  state — this is the module's `pnpm-lock.yaml`), and it carries hashes for
-  four platforms: `linux_amd64`, which CI runs, plus `linux_arm64`,
-  `darwin_amd64` and `darwin_arm64`, which operators apply from. **A platform
-  with no recorded hash fails `terraform init` there**, which is the trap:
-  Dependabot watches this directory (`.github/dependabot.yml`) and its provider
-  bumps re-lock for its own platform only, quietly dropping the other three. So
-  on any PR that changes a provider version, regenerate the full set before
-  merging:
+  pins a version *and* a checksum. It is tracked — a dependency lock is not
+  state, this is the module's `pnpm-lock.yaml` — and it carries `h1:` hashes
+  for the four platforms that run `init` against this module: `linux_amd64`,
+  which CI runs, plus `linux_arm64`, `darwin_amd64` and `darwin_arm64`, which
+  operators apply from.
+
+  Be precise about what that list buys, because it is easy to overstate. **A
+  missing platform `h1:` does not break `terraform init`.** A registry-sourced
+  lock also carries `zh:` hashes, which cover every platform, so a writable
+  `init` on an unlocked platform validates against those, succeeds, and appends
+  the `h1:` itself; `-lockfile=readonly` also succeeds and only warns
+  (`Provider lock file not updated`). `init` fails when *no* recorded checksum
+  matches the package — a lock carrying `h1:` hashes alone, which is what an
+  `init` against a pre-populated plugin cache writes, or a filesystem/network
+  mirror serving a package the recorded hashes do not cover.
+
+  What the four-platform list buys is that the checksums are reviewed once,
+  here, rather than appended on each operator's first `init` — which otherwise
+  leaves everyone with a dirty worktree and a lock diff nobody intended — and
+  that a mirror can be verified against official registry checksums, the case
+  `terraform providers lock` exists for. Dependabot watches this directory
+  (`.github/dependabot.yml`) and re-locks for its own platform only, so
+  regenerate the full set on any PR that moves a provider version:
 
   ```sh
   cd deploy/aws-terraform
@@ -244,9 +258,6 @@ this module is that `destroy` ends the event.
     -platform=linux_amd64 -platform=linux_arm64 \
     -platform=darwin_amd64 -platform=darwin_arm64
   ```
-
-  CI will not catch a narrowed lock — `ubuntu-latest` is the one platform such
-  a bump keeps working.
 - **State is reconstructible in poll mode.** `sync` re-reads scores from the
   GitHub PR comments, so a replaced task repopulates the leaderboard. The
   poller's cursor lives in Redis, not on disk, so Fargate's ephemeral storage

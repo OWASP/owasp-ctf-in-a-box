@@ -8,6 +8,25 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **The AWS module's provider lock file is now committed.** It had been
+  gitignored since the module was written, grouped with `*.tfstate` and
+  `*.tfplan` under "never commit these" — but a dependency lock is not state,
+  it is this module's `pnpm-lock.yaml`. The consequence was that `versions.tf`'s
+  `~> 6.0` / `~> 3.6` constraints floated: every `terraform init`, including
+  each CI run, resolved whatever provider build the registry served that day,
+  with nothing verifying the download. `.terraform.lock.hcl` now pins
+  `hashicorp/aws` and `hashicorp/random` to a version and a checksum, with
+  `h1:` hashes for the four platforms that run `init` against this module —
+  `linux_amd64` (CI) plus `linux_arm64`, `darwin_amd64` and `darwin_arm64`
+  (operators). That platform list is about review and reproducibility, not
+  availability: a missing platform hash does **not** break `terraform init`,
+  because the `zh:` hashes in a registry-sourced lock cover every platform and
+  a writable `init` appends the `h1:` it needs. What the list avoids is every
+  operator's first `init` rewriting the lock under them.
+  `deploy/aws-terraform/README.md` spells out both that and the Dependabot
+  gotcha: it re-locks for its own platform only, so regenerate the full set
+  with `terraform providers lock -platform=...` on any provider-bump PR.
+
 - **The rename's leftovers: the setup wizard, the AWS stack and the names
   table.** A sweep for the retired brand across the whole tree found six live
   strings the rename had not reached, all outside the areas its own diff

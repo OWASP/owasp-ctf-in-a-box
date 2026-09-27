@@ -8,6 +8,19 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **A Launch block in `/admin`.** The Event tab now shows **Not launched**,
+  **Scheduled for …** or **Live since …**.
+  - **Launch now** (with a confirmation) writes `scoringStartsAt: "now"`, and
+    the server resolves that on its own clock.
+  - **Un-launch** (a confirmed, dangerous action) clears the start. Solves
+    already banked are kept.
+  - **A master reset now returns the event to not launched.** Its script
+    clears the scoring start in the same atomic step that freezes and
+    audits.
+  - **`/health/deep` reports `launched`**, and `ctf-setup.sh doctor` warns
+    while the box is not launched.
+  - This is the last PR of #464.
+
 - **Admins preview the event before launch, with dry-run grading.** An admin
   who opens a module page before launch sees a **Preview — event not
   launched** banner, with a link to view the event as a contestant.

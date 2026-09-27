@@ -657,7 +657,9 @@ and both live under the same disclosure rule: nothing in either payload that
   each dependency reported as exactly `"ok"` or `"down"` — never the reason,
   host or URL (those go to the server log). It also reports the sync poller's
   last poll time and its age in seconds, for information only: a quiet poller
-  never fails the check. A box with no scorer image omits `scorer` and `sync`
+  never fails the check. `launched` (`true`, `false`, or `null` when the
+  settings could not be read) says whether the event has launched — public
+  anyway, since the landing page shows it, and informational only. A box with no scorer image omits `scorer` and `sync`
   entirely rather than vouching for a service it does not run. Results are
   cached in-process for 10 seconds, so the unauthenticated URL cannot be
   turned into a probe storm.

@@ -108,3 +108,10 @@ describe("buildLaunchClaims", () => {
     expect(verified.ok).toBe(true);
   });
 });
+
+describe("the preview claim (#464)", () => {
+  it("is present only on a token minted for an admin preview", () => {
+    expect(claims({ preview: true }).ctf.preview).toBe(true);
+    expect("preview" in claims().ctf).toBe(false);
+  });
+});

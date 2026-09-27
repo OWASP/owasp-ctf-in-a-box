@@ -212,7 +212,9 @@ const REFUSAL_STATUS: Record<Extract<AiSubmitResult, { ok: false }>["reason"], n
  *  never has to treat a missing key as "false" itself. */
 export function aiAwardResponse(result: AiSubmitResult): Response {
   if (result.ok) {
-    if (!result.correct) return aiJson({ correct: false });
+    // `dryRun` (#464 admin preview): graded, nothing recorded — the external
+    // side must not treat either answer as a real solve.
+    if (!result.correct) return aiJson(result.dryRun ? { correct: false, dryRun: true } : { correct: false });
     const body: Record<string, unknown> = {
       correct: true,
       points: result.points,

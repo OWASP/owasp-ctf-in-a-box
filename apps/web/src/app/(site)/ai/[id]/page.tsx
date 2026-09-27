@@ -80,7 +80,7 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
   // token mint, which is only safe to hand out once this check has passed
   // (the AI API routes trust a token in hand). ./actions.ts checks again: it
   // is the other way in.
-  await redirectIfNotLaunched(login);
+  const launch = await redirectIfNotLaunched(login);
   const viewerIsAdmin = await isAdminLogin(login);
 
   // Same order as /ai and /flags/[id]: the team redirect fires before the
@@ -130,7 +130,7 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
   // this one); `challenge` and `viewerAi` are exactly what was just built
   // above, nothing re-fetched or reshaped for the mint.
   const launchUrl = login
-    ? await mintLaunchUrl({ origin: resolveOrigin(), login, challenge, challenges, viewer: viewerAi })
+    ? await mintLaunchUrl({ origin: resolveOrigin(), login, challenge, challenges, viewer: viewerAi, preview: launch.preview })
     : null;
 
   return (

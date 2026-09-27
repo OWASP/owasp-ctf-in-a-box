@@ -811,8 +811,11 @@ async function evaluateGate(
   login: string,
   challengeId: string,
   cooldownSec: number,
+  preview = false,
 ): Promise<AiGate> {
-  if (settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
+  // A preview (#464: an admin before launch) is graded exactly while scoring
+  // is closed, so the pause is what is being previewed, not a refusal.
+  if (!preview && settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
 
   let solve: Solve | null;
   let attempt: Attempt | null;
@@ -832,7 +835,8 @@ async function evaluateGate(
 
   if (solve) return { allowed: false, reason: "solved" };
 
-  if (cooldownSec > 0 && attempt) {
+  // Nothing a preview does is recorded, so there is nothing for it to cool.
+  if (!preview && cooldownSec > 0 && attempt) {
     const lastMs = Date.parse(attempt.lastAt);
     if (Number.isFinite(lastMs)) {
       const retryAtMs = lastMs + cooldownSec * 1000;
@@ -889,6 +893,11 @@ if string.match(cRaw, '"caseSensitive":true[,}]') then caseSensitive = true end
 
 if ARGV[8] == '0' and string.match(cRaw, '"mode":"flag"[,}]') then return {'mode'} end
 
+-- DRY RUN (ARGV[10] == '1', #464 admin preview, flag path): grade as normal,
+-- skip the cooldown refusal, and write NOTHING — no attempts row, no solve,
+-- no counters. The verdict carries a trailing 'dry'.
+local dry = ARGV[10] == '1'
+
 if ARGV[8] == '1' then
   local target = redis.call('HGET', KEYS[3], ARGV[1])
   if not target then return {'missing'} end
@@ -907,18 +916,25 @@ if ARGV[8] == '1' then
     firstAt = string.match(attemptsRaw, '"firstAt":"([^"]*)"')
   end
 
-  if cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
+  if not dry and cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
     return {'cooldown', tostring(lastAtMs + cooldownMs)}
   end
 
   attempts = attempts + 1
   if not firstAt then firstAt = ARGV[3] end
-  redis.call('HSET', KEYS[1], ARGV[1], '{"attempts":' .. attempts .. ',"firstAt":"' .. firstAt .. '","lastAt":"' .. ARGV[3] .. '","lastAtMs":' .. ARGV[6] .. '}')
+  if not dry then
+    redis.call('HSET', KEYS[1], ARGV[1], '{"attempts":' .. attempts .. ',"firstAt":"' .. firstAt .. '","lastAt":"' .. ARGV[3] .. '","lastAtMs":' .. ARGV[6] .. '}')
+  end
 
   local submitted = ARGV[2]
   if caseSensitive then submitted = ARGV[7] end
-  if target ~= submitted then return {'incorrect', tostring(attempts)} end
+  if target ~= submitted then
+    if dry then return {'incorrect', '0', 'dry'} end
+    return {'incorrect', tostring(attempts)}
+  end
 end
+
+if dry then return {'correct', tostring(points), 'dry'} end
 
 redis.call('HSET', KEYS[2], ARGV[1], '{"points":' .. points .. ',"at":"' .. ARGV[3] .. '","source":"' .. ARGV[9] .. '"}')
 redis.call('HINCRBY', KEYS[5], ARGV[4], points)
@@ -931,7 +947,7 @@ export type AiSubmitResult =
   // because this call banked nothing, NOT because the challenge is worthless.
   // Callers must render the two apart.
   | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
-  | { ok: true; correct: false }
+  | { ok: true; correct: false; dryRun?: true }
   | { ok: false; reason: "paused" | "solved" | "cooldown"; retryAt?: string }
   // `wrong-mode`: a signed event was asserted against a challenge the organizer
   // authored as `mode: "flag"`. Refused by AWARD_SCRIPT itself, so it holds
@@ -960,8 +976,14 @@ function gateToResult(gate: Exclude<AiGate, { allowed: true }>): AiSubmitResult 
 }
 
 function readVerdict(verdict: unknown): AiSubmitResult {
-  const [status, value] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
+  const [status, value, marker] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") return { ok: false, reason: "invalid" };
+  // A dry verdict carries a trailing 'dry' from the script itself (#464).
+  if (marker === "dry") {
+    if (status === "correct") return { ok: true, correct: true, points: Number(value) || 0, dryRun: true };
+    if (status === "incorrect") return { ok: true, correct: false, dryRun: true };
+    return { ok: false, reason: "error" };
+  }
   if (status === "mode") return { ok: false, reason: "wrong-mode" };
   if (status === "cooldown") {
     return { ok: false, reason: "cooldown", retryAt: new Date(Number(value)).toISOString() };
@@ -981,6 +1003,7 @@ async function runAward(
   cooldownSec: number,
   grade: boolean,
   source: AiSolveSource,
+  dryRun = false,
 ): Promise<AiSubmitResult> {
   const now = new Date();
   try {
@@ -1006,6 +1029,7 @@ async function runAward(
         grade ? caseSensitiveFlagForm(flag) : "", // ARGV[7] — case preserved
         grade ? "1" : "0", // ARGV[8]
         source, // ARGV[9] — literal, never caller input
+        dryRun ? "1" : "0", // ARGV[10] — dry run: grade, write nothing (#464)
       ],
     );
     return readVerdict(verdict);
@@ -1018,15 +1042,23 @@ async function runAward(
 /** Grades `flag` against an ai challenge and, on success, records the solve
  *  and every total atomically. Never returns the flag itself — `AiSubmitResult`
  *  has no field for one. */
-export async function submitAiFlag(login: string, challengeId: string, flag: string): Promise<AiSubmitResult> {
+export async function submitAiFlag(
+  login: string,
+  challengeId: string,
+  flag: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<AiSubmitResult> {
   if (!AI_ID_RE.test(challengeId)) return { ok: false, reason: "invalid" };
   if (typeof flag !== "string" || !flag.trim()) return { ok: false, reason: "invalid" };
+  // `dryRun` here is ONLY ever an admin preview (#464): the callers derive it
+  // from the launch lock or a signed preview token, never from a request field.
+  const dryRun = opts.dryRun === true;
 
   const { settings, cooldownSec } = await resolveSettings();
-  const gate = await evaluateGate(settings, login, challengeId, cooldownSec);
+  const gate = await evaluateGate(settings, login, challengeId, cooldownSec, dryRun);
   if (!gate.allowed) return gateToResult(gate);
 
-  return runAward(login, challengeId, flag, cooldownSec, true, "flag");
+  return runAward(login, challengeId, flag, cooldownSec, true, "flag", dryRun);
 }
 
 /** Records a solve asserted by the external side. The CALLER (the route) is
@@ -1046,18 +1078,22 @@ export async function submitAiFlag(login: string, challengeId: string, flag: str
 export async function awardAiEvent(
   login: string,
   challengeId: string,
-  opts: { dryRun?: boolean } = {},
+  opts: { dryRun?: boolean; preview?: boolean } = {},
 ): Promise<AiSubmitResult> {
   if (!AI_ID_RE.test(challengeId)) return { ok: false, reason: "invalid" };
+  // `preview` (#464: a token minted for an admin before launch) is always a
+  // dry run AND is graded while scoring is closed. A plain `dryRun` (the
+  // external side's Send test) still honours the schedule, as documented.
+  const preview = opts.preview === true;
 
   const { settings, cooldownSec } = await resolveSettings();
   // A signed event has no wrong answer, so the cooldown never applies to it —
   // passing 0 keeps a contestant's flag-path cooldown from blocking a solve
   // the external system already granted.
-  const gate = await evaluateGate(settings, login, challengeId, 0);
+  const gate = await evaluateGate(settings, login, challengeId, 0, preview);
   if (!gate.allowed) return gateToResult(gate);
 
-  if (opts.dryRun) return { ok: true, correct: true, points: 0, dryRun: true };
+  if (opts.dryRun || preview) return { ok: true, correct: true, points: 0, dryRun: true };
 
   return runAward(login, challengeId, "", cooldownSec, false, "event");
 }

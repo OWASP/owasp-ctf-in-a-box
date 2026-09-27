@@ -67,7 +67,7 @@ describe("POST /api/ai/submit", () => {
     expect(await res.json()).toEqual({ correct: true, points: 300, already: false });
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
     // Identity came from the token, never the body.
-    expect(mocks.submitAiFlag).toHaveBeenCalledWith("alice", CHAL, "CTF{x}");
+    expect(mocks.submitAiFlag).toHaveBeenCalledWith("alice", CHAL, "CTF{x}", { dryRun: false });
   });
 
   it("logs a fresh correct solve to the activity log, naming the flag path", async () => {
@@ -128,7 +128,7 @@ describe("POST /api/ai/submit", () => {
 
     await POST(post({ token: "t", flag: "CTF{x}", login: "mallory", sub: "mallory" }));
 
-    expect(mocks.submitAiFlag).toHaveBeenCalledWith("alice", CHAL, "CTF{x}");
+    expect(mocks.submitAiFlag).toHaveBeenCalledWith("alice", CHAL, "CTF{x}", { dryRun: false });
   });
 
   it("never reads a session cookie", async () => {
@@ -140,7 +140,7 @@ describe("POST /api/ai/submit", () => {
     const res = await POST(post({ token: "t", flag: "CTF{x}" }, { cookie: "better-auth.session=zzz" }));
 
     expect(res.status).toBe(200);
-    expect(mocks.submitAiFlag).toHaveBeenCalledWith("alice", CHAL, "CTF{x}");
+    expect(mocks.submitAiFlag).toHaveBeenCalledWith("alice", CHAL, "CTF{x}", { dryRun: false });
   });
 
   it("reports a wrong flag without awarding", async () => {
@@ -277,5 +277,17 @@ describe("POST /api/ai/submit", () => {
     mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: false });
     const res = await POST(post({ token: "t", flag: "CTF{secret}" }));
     expect(await res.text()).not.toContain("CTF{secret}");
+  });
+});
+
+describe("POST /api/ai/submit with a preview token (#464)", () => {
+  it("grades a preview admin's flag as a dry run and says so in the answer", async () => {
+    tokenIsGood();
+    mocks.verifyLaunchToken.mockReturnValue({ ok: true, claims: { sub: "alice", aud: CHAL, jti: "n1", ctf: { preview: true } } });
+    mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 300, dryRun: true });
+    const res = await POST(post({ token: "t", flag: "CTF{x}" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ correct: true, points: 300, already: false, dryRun: true });
+    expect(mocks.submitAiFlag).toHaveBeenCalledWith("alice", CHAL, "CTF{x}", { dryRun: true });
   });
 });

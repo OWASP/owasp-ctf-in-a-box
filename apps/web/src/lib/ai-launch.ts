@@ -31,6 +31,8 @@ export type LaunchClaimInputs = {
   challenges: readonly AiChallenge[];
   viewer: ViewerAi;
   nowSec?: number;
+  /** An admin preview mint (#464) — sets `ctf.preview`. */
+  preview?: boolean;
 };
 
 /** Pure claim shaping, split out so tests reach it without touching crypto or
@@ -71,6 +73,7 @@ export function buildLaunchClaims(inputs: LaunchClaimInputs): AiTokenClaims {
       points,
       progress,
       ...(truncated ? { truncated: true as const } : {}),
+      ...(inputs.preview ? { preview: true as const } : {}),
     },
   };
 }

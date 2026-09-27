@@ -85,6 +85,10 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
     return aiJson({ error: verified.error === "expired" ? "expired" : "invalid-token" }, 401);
   }
   const login = verified.claims.sub;
+  // A token minted for an admin preview (#464) is always a dry run — even when
+  // the body asks for a real award — and is graded while scoring is closed.
+  const preview = verified.claims.ctf?.preview === true;
+  const dry = dryRun || preview;
 
   // 6. Budget, charged before any write.
   const { bucket, limit, windowSeconds } = RATE_LIMITS.aiEvent;
@@ -104,14 +108,14 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   //    any later would let a replayed request award twice under a race.
   //    Skipped entirely for a dry run, because a claimed nonce is a write and
   //    would burn the organizer's jti.
-  if (!dryRun && !(await claimAiNonce(verified.claims.jti))) {
+  if (!dry && !(await claimAiNonce(verified.claims.jti))) {
     return aiJson({ error: "replay" }, 409);
   }
 
   // 9. The award itself, atomic in the store.
-  const result = await awardAiEvent(login, challengeId, { dryRun });
+  const result = await awardAiEvent(login, challengeId, { dryRun, preview });
 
-  if (dryRun) {
+  if (dry) {
     const wouldAward = result.ok && result.correct === true;
     return aiJson({
       dryRun: true,

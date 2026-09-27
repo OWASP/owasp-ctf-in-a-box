@@ -91,6 +91,11 @@ export type AiTokenClaims = {
     progress: AiTokenProgress[];
     /** Present only when `progress` was capped at AI_PROGRESS_MAX. */
     truncated?: true;
+    /** Present only on a token minted for an admin PREVIEW (#464: before
+     *  launch). The box grades anything it carries as a dry run; an external
+     *  site must not treat it as a real player. Signed like every claim, so it
+     *  cannot be added to a contestant's token. */
+    preview?: true;
   };
 };
 

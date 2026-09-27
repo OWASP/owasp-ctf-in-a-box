@@ -114,7 +114,10 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
     return aiJson({ error: "no-team" }, 403);
   }
 
-  const result = await submitAiFlag(claims.sub, aud, flag);
+  // A token minted for an admin preview (#464) is graded as a dry run: the
+  // same script, writing nothing. The claim is signed, so a contestant cannot
+  // add it to their own token.
+  const result = await submitAiFlag(claims.sub, aud, flag, { dryRun: claims.ctf?.preview === true });
   // Activity log (issue #212): fresh solves only — an idempotent
   // re-submission banked nothing and would double-count the event. The id
   // and the path, never the flag; logActivity is fail-open, so it cannot

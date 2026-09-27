@@ -426,3 +426,40 @@ describe("grading failures never reach the log with the request attached", () =>
     }
   });
 });
+
+describe("dry run (#464 admin preview)", () => {
+  it("submitAiFlag grades before launch through the script with ARGV[10] = \"1\"", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: null }));
+    cleanGateReply();
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "40", "dry"]);
+    expect(await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}", { dryRun: true })).toEqual({
+      ok: true,
+      correct: true,
+      points: 40,
+      dryRun: true,
+    });
+    const [, , argv] = mocks.upstashEval.mock.calls.at(-1)!;
+    expect(argv[9]).toBe("1");
+  });
+
+  it("a normal flag passes ARGV[10] = \"0\"", async () => {
+    cleanGateReply();
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "40"]);
+    await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}");
+    const [, , argv] = mocks.upstashEval.mock.calls.at(-1)!;
+    expect(argv[9]).toBe("0");
+  });
+
+  it("awardAiEvent for a PREVIEW grades before launch as a dry run (the Send test's paused verdict otherwise stands)", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: null }));
+    expect(await awardAiEvent("alice", "prompt-leak-ab12cd", { dryRun: true })).toEqual({ ok: false, reason: "paused" });
+    cleanGateReply();
+    expect(await awardAiEvent("alice", "prompt-leak-ab12cd", { preview: true })).toEqual({
+      ok: true,
+      correct: true,
+      points: 0,
+      dryRun: true,
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+});

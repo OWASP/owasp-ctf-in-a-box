@@ -63,7 +63,7 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
   const KEYS = () => [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved];
 
   /** The typed-flag path (`submitAiFlag` → runAward with grade=true). */
-  async function submitFlag(id: string, flag: string, { nowMs = T0, cooldownMs = 5_000, login = LOGIN } = {}) {
+  async function submitFlag(id: string, flag: string, { nowMs = T0, cooldownMs = 5_000, login = LOGIN, dry = false } = {}) {
     await load();
     return upstashEval(script, KEYS(), [
       id,
@@ -75,7 +75,21 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
       keys.caseSensitiveFlagForm(flag),
       "1",
       "flag",
+      dry ? "1" : "0", // ARGV[10] — #464 admin preview dry run
     ]);
+  }
+
+  /** Every key the script can touch, as sorted field maps (HGETALL's field
+   *  ORDER is not stable across a hash's re-encoding, only its contents). */
+  async function snapshot() {
+    await load();
+    const replies = await pipeline(KEYS().map((k) => ["HGETALL", k]));
+    return replies.map(({ result }) => {
+      const flat = (result as string[] | null) ?? [];
+      const pairs: [string, string][] = [];
+      for (let i = 0; i < flat.length; i += 2) pairs.push([flat[i], flat[i + 1]]);
+      return Object.fromEntries(pairs.sort(([a], [b]) => a.localeCompare(b)));
+    });
   }
 
   /** The signed-event path (`recordAiEvent` → runAward with grade=false). */
@@ -145,5 +159,33 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
     expect(await submitFlag(id, "flag{both}", { nowMs: T0 + 2 })).toEqual(["already"]);
     expect(await pipeline([["HGET", K.points, LOGIN], ["HGET", K.solved, LOGIN], ["HGET", K.solvecount, id]])).toEqual(before);
     expect(await hget(K.attempts, id)).toBeNull();
+  });
+
+  // #464 admin preview: the flag path's SAME script grades and writes nothing.
+  it("dry run (flag path): grades right and wrong flags and writes nothing at all", async () => {
+    const id = freshId("dry");
+    await seed(id, "flag", 30, "ctf{right}");
+    const before = await snapshot();
+    expect(await submitFlag(id, "ctf{right}", { dry: true })).toEqual(["correct", "30", "dry"]);
+    expect(await submitFlag(id, "ctf{nope}", { dry: true })).toEqual(["incorrect", "0", "dry"]);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("dry run (flag path): ignores the cooldown, still refuses unknown and already-solved", async () => {
+    const id = freshId("dry-guards");
+    expect(await submitFlag(id, "x", { dry: true })).toEqual(["missing"]);
+    await seed(id, "flag", 30, "ctf{right}");
+    expect(await submitFlag(id, "ctf{nope}", { cooldownMs: 60_000 })).toEqual(["incorrect", "1"]);
+    expect(await submitFlag(id, "ctf{right}", { nowMs: T0 + 1, cooldownMs: 60_000, dry: true })).toEqual(["correct", "30", "dry"]);
+    expect(await submitFlag(id, "ctf{right}", { nowMs: T0 + 120_000 })).toEqual(["correct", "30"]);
+    expect(await submitFlag(id, "ctf{right}", { nowMs: T0 + 130_000, dry: true })).toEqual(["already"]);
+  });
+
+  it("anti-vacuous: the SAME flag without dry run does write", async () => {
+    const id = freshId("dry-anti");
+    await seed(id, "flag", 30, "ctf{right}");
+    const before = await snapshot();
+    expect(await submitFlag(id, "ctf{right}")).toEqual(["correct", "30"]);
+    expect(await snapshot()).not.toEqual(before);
   });
 });

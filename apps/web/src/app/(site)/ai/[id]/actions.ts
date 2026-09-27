@@ -85,7 +85,8 @@ export async function submitAiFlagAction(challengeId: string, flag: string): Pro
   // #464 pre-launch lock, CLOSED on uncertainty (getLaunchAccess never
   // throws: a failed read counts as "not launched"), and the opposite
   // direction from the team check below. Admins pass as a preview.
-  if (!(await getLaunchAccess(login)).allowed) return { error: "not-launched" };
+  const launch = await getLaunchAccess(login);
+  if (!launch.allowed) return { error: "not-launched" };
 
   // Fails OPEN — same doctrine as the manual-freeze read, and the opposite
   // direction from the launch lock above: a team-store error must not drop a solve a
@@ -105,7 +106,7 @@ export async function submitAiFlagAction(challengeId: string, flag: string): Pro
   if (typeof challengeId !== "string" || !AI_ID_RE.test(challengeId)) return { error: "invalid" };
   if (typeof flag !== "string" || !flag.trim() || flag.length > FLAG_MAX_LEN) return { error: "invalid" };
 
-  const result = await submitAiFlag(login, challengeId, flag);
+  const result = await submitAiFlag(login, challengeId, flag, { dryRun: launch.preview });
   // Activity log (issue #212): fresh solves only — an idempotent
   // re-submission banked nothing and would double-count the event. The id
   // and the path, never the flag; logActivity is fail-open, so it cannot

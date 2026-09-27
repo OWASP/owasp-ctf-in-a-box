@@ -100,7 +100,7 @@ describe("submitAiFlagAction gates", () => {
       points: 40,
       already: false,
     });
-    expect(submitAiFlag).toHaveBeenCalledWith("alice", "a1", "CTF{x}");
+    expect(submitAiFlag).toHaveBeenCalledWith("alice", "a1", "CTF{x}", { dryRun: false });
   });
 
   it("refuses an id that does not match AI_ID_RE before the store sees it", async () => {
@@ -131,7 +131,7 @@ describe("submitAiFlagAction results", () => {
       points: 40,
       already: false,
     });
-    expect(submitAiFlag).toHaveBeenCalledWith("alice", "a1", "CTF{x}");
+    expect(submitAiFlag).toHaveBeenCalledWith("alice", "a1", "CTF{x}", { dryRun: false });
   });
 
   it("keeps an already-banked solve distinguishable from a fresh one", async () => {
@@ -204,5 +204,14 @@ describe("submitAiFlagAction activity log", () => {
     await submitAiFlagAction("a1", "CTF{x}");
     expect(submitAiFlag).not.toHaveBeenCalled();
     expect(logActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe("submitAiFlagAction admin preview (#464)", () => {
+  it("grades a preview admin's flag as a dry run", async () => {
+    getLaunchAccess.mockResolvedValue({ allowed: true, preview: true });
+    submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40, dryRun: true });
+    await submitAiFlagAction("a1", "CTF{x}");
+    expect(submitAiFlag).toHaveBeenCalledWith("alice", "a1", "CTF{x}", { dryRun: true });
   });
 });

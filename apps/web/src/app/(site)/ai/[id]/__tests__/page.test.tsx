@@ -234,6 +234,7 @@ describe("ai challenge page launcher", () => {
       challenge: flagChallenge,
       challenges: [flagChallenge, eventChallenge],
       viewer: { solved: {}, attempts: {} },
+      preview: false,
     });
 
     expect(html).toContain(`href="${MINTED_URL}"`);
@@ -489,5 +490,13 @@ describe("generateMetadata before launch (#464)", () => {
     launchLock.getLaunchAccess.mockResolvedValueOnce({ allowed: false, preview: false });
     expect(await generateMetadata(params("x"))).toEqual({});
     expect(listAiChallenges).not.toHaveBeenCalled();
+  });
+});
+
+describe("the launch token for an admin preview (#464)", () => {
+  it("is minted with the preview claim, so the box grades the admin dry", async () => {
+    launchLock.redirectIfNotLaunched.mockResolvedValueOnce({ allowed: true, preview: true });
+    await AiChallengePage(params("a1"));
+    expect(mintLaunchUrl).toHaveBeenCalledWith(expect.objectContaining({ preview: true }));
   });
 });

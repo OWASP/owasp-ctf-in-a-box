@@ -37,6 +37,15 @@ export function outsideScoringWindow(nowMs: number, startsAt: string | null, end
   return outsideWindow(nowMs, startsAt, endsAt);
 }
 
+/** Whether the event has LAUNCHED (#464): the scoring start parses and has
+ *  passed. Unlike `outsideScoringWindow`, a passed END does not un-launch —
+ *  results stay browsable after scoring closes. App-only (the pre-launch
+ *  page/API lock); the scorer and sync only care about scoring itself. */
+export function isLaunched(nowMs: number, startsAt: string | null): boolean {
+  const s = startsAt ? Date.parse(startsAt) : NaN;
+  return Number.isFinite(s) && nowMs >= s;
+}
+
 /** The next instant strictly after `nowMs` at which `outsideWindow` flips for
  *  any of `windows`, or null when no bound lies ahead. A start bound flips at
  *  the bound itself (`now < s` stops holding); an end bound flips one ms

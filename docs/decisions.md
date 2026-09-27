@@ -3586,3 +3586,47 @@ from forming before launch.
 **Status.** Accepted (#464). The password gate is superseded: it was
 removed in #464's page-lock PR, which replaced it with the launch lock.
 
+## ADR 60. Stories: first-class objects, a derived unlock, and team scope
+
+**Context.** Issue #463 asks for classic challenges grouped into a
+**story**: a narrative chain such as *Operation CTF* that a team unlocks
+step by step while the free-pick board stays as it is.
+
+**Decision.**
+- **Stories are first-class.** A story is a `{id, title, intro, steps}`
+  object, and the list lives in `ctf:classic:stories`, like the category
+  list.
+  - This was chosen over per-challenge `story` and `step` fields, which could
+    produce duplicate or missing step numbers and leave nowhere to put the
+    story's title or intro.
+  - It was also chosen over a generic `requires` DAG, which asks for more
+    than anyone needs and has no "step 3 of 5".
+  - A challenge belongs to at most one story.
+- **The unlock is derived, never stored.** A step is locked while its
+  immediate predecessor is unsolved by the team, computed from current solves
+  on every read.
+  - A reorder in the middle of the event recomputes the locks.
+  - A player who leaves a team takes the unlocks their solves gave with them.
+  - Deleting a step shrinks the story.
+- **The unlock is per team.** "Solved by the team" is the union of every
+  current teammate's classic solves, which is the same fold the leaderboard
+  uses, so a story and a team's score never disagree. A solo player is a
+  team of one.
+- **The lock lives in the scripts.** `SUBMIT_SCRIPT` and `REVEAL_SCRIPT`
+  receive the prerequisite and the teammates' solves hashes, and answer
+  `locked` before any write. A locked step therefore costs no attempt and
+  can't be used as a flag oracle.
+- **A locked step is invisible.** It never leaves the server: not in the
+  board, not on its own page (a 404, like an unknown id), not in metadata,
+  and not in `/api/board/items`. That includes its id, which is derived from
+  the title.
+- **Fails closed.** An admin preview (ADR 59) skips the lock, because nothing
+  is recorded. A stories read that fails errors the request rather than
+  opening every step.
+
+**Consequences.** The scripts gain arguments. Every grading path already
+resolves the team, so the extra keys cost one pipeline. Story authoring (the
+editor and bundle v2) follows in #463's second PR.
+
+**Status.** Accepted (#463).
+

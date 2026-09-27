@@ -8,6 +8,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Classic stories (#463, part 1).** A story is an ordered chain of classic
+  challenges that a team unlocks one step at a time.
+  - Step N+1 opens once any teammate solves step N.
+  - The board shows a lane per story above the categories, and a locked step
+    appears only as "??? — step N of M".
+  - Grading and hint reveal enforce the lock inside their Lua scripts (a
+    locked step answers `locked` and costs nothing).
+  - A locked step's page, metadata and board-items entry reveal nothing.
+  - The authoring UI and the bundle come next. See ADR 60.
+
 - **A Launch block in `/admin`.** The Event tab now shows **Not launched**,
   **Scheduled for …** or **Live since …**.
   - **Launch now** (with a confirmation) writes `scoringStartsAt: "now"`, and

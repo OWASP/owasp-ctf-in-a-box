@@ -428,6 +428,23 @@ third module isn't mistaken for a fully general n-module platform:
   A challenge's `description` is Markdown text only, with nowhere to attach
   a downloadable file (an image, a pcap, a binary) for a contestant to pull
   down. Attachments are scoped to a later PR in this same series (#186).
+- **`classic` has stories (issue #463).** A story is `{id, title, intro,
+  steps}` in `ctf:classic:stories`, an ordered chain of challenges drawn from
+  any category. Step N+1 **unlocks for the whole team** once any current
+  teammate has solved step N, and step 1 is always open.
+  - **Derived, never stored.** The lock is computed from current solves on
+    every read (`lib/story-lock.ts`, `lib/classic-team.ts`).
+  - **Enforced in Lua.** It is enforced **inside the grading and hint
+    scripts**: `SUBMIT_SCRIPT` ARGV[9] and `REVEAL_SCRIPT` ARGV[7] carry the
+    prerequisite, and the teammates' solves hashes come in as the extra KEYS.
+    A locked step answers `locked` before any write.
+  - **Redacted everywhere.** A locked step shows only "??? — step N of M" on
+    the board, is a 404 on its own page, has no metadata, and is redacted
+    (label, points and id) in `/api/board/items`.
+  - **Fails closed.** A stories read that fails errors the request instead of
+    guessing.
+  - **Authoring** (the `/admin` editor and the bundle) arrives with #463's
+    second PR.
 - **`classic` HAS paid hints (issue #190).** An organizer attaches optional
   hint text in the admin classic form (or a bundle's `hint` field); the text
   is secret until purchased — its own hash, `ctf:classic:hints`, exactly the

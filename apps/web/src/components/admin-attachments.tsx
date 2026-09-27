@@ -151,9 +151,33 @@ export default function AdminAttachments({
                     {formatBytes(a.size ?? 0)} · sha256 <span className="break-all font-mono">{a.sha256}</span>
                   </span>
                   {a.missing && (
-                    <span className="text-xs text-[#d4a017]">
-                      Missing on this box — re-upload {a.name} (sha256 {a.sha256}). Contestants don&rsquo;t see it until then.
-                    </span>
+                    <>
+                      <span className="text-xs text-[#d4a017]">
+                        Missing on this box — re-upload {a.name} (sha256 {a.sha256}). Contestants don&rsquo;t see it until then.
+                      </span>
+                      <input
+                        type="file"
+                        aria-label={`Re-upload ${a.name}`}
+                        disabled={pending}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = "";
+                          if (!file) return;
+                          void run(
+                            () =>
+                              fetch(`${ENDPOINT}?reupload=${a.id}`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/octet-stream" },
+                                body: file,
+                              }),
+                            (data) =>
+                              data.attachment &&
+                              setItems((cur) => (cur ?? []).map((x) => (x.id === a.id ? (data.attachment as Item) : x))),
+                          );
+                        }}
+                        className="text-xs text-zinc-300"
+                      />
+                    </>
                   )}
                 </>
               ) : (

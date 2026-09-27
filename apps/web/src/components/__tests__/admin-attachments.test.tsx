@@ -41,6 +41,8 @@ describe("AdminAttachments", () => {
     );
     expect(html).toMatch(/re-upload/i);
     expect(html).toContain(`capture.pcap`);
+    // A control to give it the bytes, per missing file.
+    expect(html).toContain('aria-label="Re-upload capture.pcap"');
   });
 
   it("states the caps", () => {

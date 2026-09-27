@@ -11,6 +11,7 @@ const m = vi.hoisted(() => ({
   addLink: vi.fn(),
   removeAttachment: vi.fn(),
   listAttachments: vi.fn(),
+  fillMissingUpload: vi.fn(),
   audit: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
@@ -30,6 +31,7 @@ vi.mock("@/lib/attachments-store", async () => {
     addLink: m.addLink,
     removeAttachment: m.removeAttachment,
     listAttachments: m.listAttachments,
+    fillMissingUpload: m.fillMissingUpload,
   };
 });
 
@@ -109,6 +111,20 @@ describe("/api/admin/attachments", () => {
     const res = await json({ module: "classic", item: "web-one", link: { name: "x", url: "https://e.org/" + "a".repeat(20_000) } });
     expect(res.status).toBe(413);
     expect(m.addLink).not.toHaveBeenCalled();
+  });
+
+  // #186 PR3: bytes for a missing upload (named by an imported bundle).
+  it("re-uploads a missing file by id, and maps a sha mismatch to a 400", async () => {
+    m.fillMissingUpload.mockResolvedValueOnce({ id: "a0123456789abcdef", kind: "upload", name: "cap.pcap", size: 3, sha256: "f".repeat(64), chunks: 1 });
+    const ok = await upload(new Uint8Array([1, 2, 3]), "reupload=a0123456789abcdef");
+    expect(ok.status).toBe(200);
+    expect(m.fillMissingUpload).toHaveBeenCalledWith("a0123456789abcdef", new Uint8Array([1, 2, 3]));
+    expect(m.addUpload).not.toHaveBeenCalled();
+    expect(m.audit).toHaveBeenCalledWith("boss", "attachment-reupload", { id: "a0123456789abcdef", size: 3 });
+    m.fillMissingUpload.mockRejectedValueOnce(new AttachmentError("sha256 mismatch: cap.pcap was recorded as …"));
+    const bad = await upload(new Uint8Array([9]), "reupload=a0123456789abcdef");
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toMatch(/sha256 mismatch/);
   });
 
   it("adds a link from an exact JSON shape", async () => {

@@ -2,7 +2,14 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
 import { ATTACHMENT_MAX_BYTES, type Attachment, type AttachmentModule } from "@/lib/attachments-keys";
-import { AttachmentError, addLink, addUpload, listAttachments, removeAttachment } from "@/lib/attachments-store";
+import {
+  AttachmentError,
+  addLink,
+  addUpload,
+  fillMissingUpload,
+  listAttachments,
+  removeAttachment,
+} from "@/lib/attachments-store";
 import { readBoundedBody, readBoundedBytes } from "@/lib/bounded-body";
 import { listChallengeIds } from "@/lib/classic-store";
 
@@ -17,6 +24,8 @@ import { listChallengeIds } from "@/lib/classic-store";
  *   reading); size and sha256 are computed by the store from the bytes read.
  * - `POST` `application/json` exactly `{ module, item, link: { name, url } }`
  *   — an external link.
+ * - `POST ?reupload=<attachmentId>` raw body — bytes for a missing upload
+ *   (named by an imported bundle); refused unless the sha256 matches.
  * - `DELETE ?id=<attachmentId>` — removes one.
  *
  * Only `classic` adopts attachments today; the item must exist. A cap or
@@ -105,12 +114,28 @@ export async function POST(request: Request) {
     return bad("upload the file as application/octet-stream, or a link as application/json", 415);
   }
   const q = new URL(request.url).searchParams;
+  const tooLarge = () => bad(`A file can be at most ${ATTACHMENT_MAX_BYTES / (1024 * 1024)} MB`, 413);
+  if (Number(request.headers.get("content-length") ?? 0) > ATTACHMENT_MAX_BYTES) return tooLarge();
+
+  // Bytes for a missing upload (#186): the store refuses them unless their
+  // sha256 is the one the imported bundle recorded.
+  const reupload = q.get("reupload");
+  if (reupload !== null) {
+    const read = await readBoundedBytes(request, ATTACHMENT_MAX_BYTES);
+    if (!read.ok) return read.reason === "too_large" ? tooLarge() : bad("could not read the upload");
+    try {
+      const att = await fillMissingUpload(reupload, read.bytes);
+      await writeAdminAudit(gate.login, "attachment-reupload", { id: reupload, size: att.size });
+      return NextResponse.json({ attachment: view(att) });
+    } catch (err) {
+      return failure(err);
+    }
+  }
+
   const owner = q.get("module") as AttachmentModule;
   const item = q.get("item") ?? "";
   const name = q.get("name") ?? "";
   if (!MODULES.has(owner) || !item || !name) return bad("module, item and name are required");
-  const tooLarge = () => bad(`A file can be at most ${ATTACHMENT_MAX_BYTES / (1024 * 1024)} MB`, 413);
-  if (Number(request.headers.get("content-length") ?? 0) > ATTACHMENT_MAX_BYTES) return tooLarge();
   try {
     if (!(await itemExists(owner, item))) return bad(`No challenge with id ${item}`);
   } catch (err) {

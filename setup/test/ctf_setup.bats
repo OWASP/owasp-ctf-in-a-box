@@ -476,6 +476,46 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# #464: doctor reads the box's launch state from /health/deep (public). A
+# stubbed curl stands in for the box; gh fails so nothing org-scoped runs.
+doctor_with_box() {
+  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nEVENT_URL=https://box.example\n' > .env
+  mkdir -p stubs
+  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
+  printf '#!/usr/bin/env bash\n%s\n' "$1" > stubs/curl
+  chmod +x stubs/gh stubs/curl
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
+}
+
+@test "doctor warns when the box reports it is not launched (#464)" {
+  doctor_with_box 'printf "%s" "{\"status\":\"ok\",\"redis\":\"ok\",\"launched\":false}"'
+  printf '%s' "$output" | grep -qF -- 'not launched'
+  printf '%s' "$output" | grep -qF -- 'press Launch in /admin'
+  [ "$status" -eq 0 ]
+}
+
+@test "doctor says nothing about the launch once the box reports launched" {
+  doctor_with_box 'printf "%s" "{\"status\":\"ok\",\"redis\":\"ok\",\"launched\":true}"'
+  [ "$status" -eq 0 ]
+  [ -z "$(printf '%s' "$output" | grep -F -- 'not launched')" ]
+}
+
+@test "doctor names an unreachable box once, neutrally, and does not fail" {
+  doctor_with_box 'exit 7'
+  printf '%s' "$output" | grep -qF -- "could not read the launch state"
+  [ "$status" -eq 0 ]
+}
+
+@test "doctor makes no box call without an EVENT_URL" {
+  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\n' > .env
+  mkdir -p stubs
+  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
+  printf '#!/usr/bin/env bash\necho CURL-CALLED\n' > stubs/curl
+  chmod +x stubs/gh stubs/curl
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
+  [ -z "$(printf '%s' "$output" | grep -F -- 'CURL-CALLED')" ]
+}
+
 @test "doctor says nothing about the gate when no CHALLENGES_GATE_* key is set" {
   printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\n#CHALLENGES_GATE_ENABLED=true\n' > .env
   mkdir -p stubs

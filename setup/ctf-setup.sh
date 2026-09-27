@@ -432,6 +432,27 @@ cmd_doctor() {
     printf '    The event is locked until you launch it: set Scoring opens on the Event\n'
     printf '    tab in /admin. Delete both lines.\n\n'
   fi
+  # Every event needs an official launch (#464): until then contestants see
+  # the landing page only and nothing scores. Asked of the box itself (the
+  # public /health/deep carries `launched`), and only when this .env names the
+  # box. Advisory like the notices above: a box that is not launched YET is
+  # the normal state before kickoff, and an unreachable one is named once,
+  # neutrally — doctor is not a monitor.
+  local event_url; event_url="$(env_val EVENT_URL)"
+  if [ -n "$event_url" ]; then
+    local deep
+    if deep="$(curl -fsS --max-time 5 "${event_url%/}/health/deep" 2>/dev/null)"; then
+      case "$deep" in
+        *'"launched":false'*)
+          printf '%s⚠️  %s is not launched — contestants see the landing page only and nothing scores.%s\n' "$C_YELLOW" "$event_url" "$C_RESET"
+          printf '    When you are ready: press Launch in /admin → Event (or set Scoring opens).\n\n'
+          ;;
+      esac
+    else
+      printf 'ℹ️  could not read the launch state from %s/health/deep (box down, or not deployed yet).\n\n' "${event_url%/}"
+    fi
+  fi
+
   # Nothing org-scoped left to inspect without an org: SD-on already failed
   # loudly above; SD-off simply has nothing further to check here.
   [ -n "$org" ] || return $rc

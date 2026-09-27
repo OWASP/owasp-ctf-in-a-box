@@ -1438,12 +1438,65 @@ lists them, after the categories already there — the existing order is
 left exactly as it was. Importing a bundle can only grow the category
 list, never reorder or drop anything from it.
 
+**Bundles carry stories as version 2** (#463). An export is now stamped
+`"version": 2` and has a `stories` list beside `categories`. Each story has
+exactly `id`, `title`, `intro` and `steps`, where `steps` lists challenge
+ids in order:
+
+```json
+"stories": [
+  { "id": "op-red-dawn", "title": "Operation Red Dawn", "intro": "It starts with a leak.", "steps": ["web-warmup-x7k2", "crypto-basics-q9pm"] }
+]
+```
+
+A version 1 file still imports unchanged, but it cannot carry `stories`.
+Every step must name a challenge **in the same file**, the same
+self-contained rule that applies to categories. Stories merge by id, the
+same way challenges do:
+
+- A story whose id is already on the board is replaced.
+- A story with a new id is appended.
+- A story on the board that the file does not mention is kept.
+
+If the merge would put one challenge in two stories, the whole import is
+refused and nothing is written.
+
 **The exported file contains every flag in plaintext.** Export is the
 event's entire answer key in one JSON file — every challenge's flag,
 unmasked. Do not commit it to a public repository, paste it into a public
 issue or chat, or otherwise share it casually; treat it with the same care
 as `/admin` access itself, since a saved copy of the file protects nothing
 on its own.
+
+**Stories: challenges a team unlocks in order** (#463). A story is an
+ordered chain of challenges, such as an "Operation Red Dawn" that runs from
+recon to loot. Step 1 is always open. Each later step opens for a team once
+any member of that team solves the step before it. The board shows one lane
+per story above the categories. A locked step appears there only as
+"??? — step N of M", and its page, hint and flag answer as if it did not
+exist. Points are plain: a step is worth what its challenge says, and a
+story adds no bonus. See [ADR 60](decisions.md#adr-60-stories-first-class-objects-a-derived-unlock-and-team-scope)
+for why the unlock is derived from solves and never stored.
+
+You author stories in the **Stories** block, below Categories on the
+Jeopardy tab:
+
+- **New story** takes a title. The story's id is made from that title once
+  and does not change when you rename it later, so a re-imported bundle
+  still finds the story it replaces.
+- **Add step** offers only challenges that are in no story yet, because a
+  challenge belongs to at most one story.
+- **↑ / ↓** reorder the steps and **✕** removes one. **Remove story** drops
+  the chain, and its challenges become ordinary board tiles again.
+- **Save stories** writes the whole list at once. The server refuses a step
+  that names a missing challenge, or a challenge placed in two stories, and
+  the refusal is shown in the block.
+
+Reordering during a live event is safe, because the unlock is recomputed
+from each team's current solves. A step that a team could see before the
+reorder can lock again if its new predecessor is unsolved. Deleting a
+challenge also removes it from its story, and the chain closes up around
+the gap.
 
 **Jeopardy has paid hints too** (#210, after the board itself shipped
 without them): a challenge can carry an optional `hint`, sold through the

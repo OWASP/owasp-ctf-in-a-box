@@ -284,7 +284,8 @@ authoring/retry-knob guide), `classic` (a jeopardy-style flag board,
 also scored entirely inside the app — see
 [docs/architecture.md#jeopardy-data-flow](architecture.md#jeopardy-data-flow)
 for its data flow and `docs/operations.md`'s "Jeopardy" section for the
-organizer-facing authoring/cooldown guide), and `ai` (challenges hosted on an
+organizer-facing authoring/cooldown guide, including stories — chains of
+challenges a team unlocks in order, #463), and `ai` (challenges hosted on an
 external site, played there or graded by a typed flag back on `/ai/[id]`).
 Registered and selectable, and its contract, store layer, contestant surface
 **and** admin section have all shipped: the nav entry, the `/ai` board and

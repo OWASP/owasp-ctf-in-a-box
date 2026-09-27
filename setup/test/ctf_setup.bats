@@ -2133,3 +2133,197 @@ _fly_step_no_flyctl() {
   [ -n "$verify_at" ] && [ -n "$fly_at" ]
   [ "$verify_at" -lt "$fly_at" ]
 }
+
+# --- #465: forks private until launch; `ctf-setup.sh launch` -----------------
+#
+# A stateful gh stub: fork visibility lives in state/vis_<repo> (default
+# public), an attached fork is marked by state/attached_<repo>, every call is
+# logged to state/gh.log. The box is a stubbed curl answering /health/deep
+# from state/launched (true|false; absent = unreachable).
+vis_env() {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nEVENT_URL=https://box.example\n' > .env
+  mkdir -p stubs state
+  cat > stubs/gh <<'GH'
+#!/usr/bin/env bash
+S="$BATS_TEST_TMPDIR/state"
+echo "$*" >> "$S/gh.log"
+[ -f "$S/gh-broken" ] && exit 1
+repo="$(printf '%s' "$*" | sed -n 's|.*repos/test-event-org/\([^ /?]*\).*|\1|p')"
+case "$*" in
+  *"-X PATCH"*visibility=*) [ -f "$S/patch-fails" ] && exit 1; printf '%s' "$*" | sed 's/.*visibility=//' > "$S/vis_$repo"; exit 0 ;;
+  *packages/container/score*) cat "$S/package" 2>/dev/null || echo private ;;
+  *actions/workflows/ctf-score.yml/runs*) exit 1 ;;
+  *".fork"*) if [ -f "$S/attached_$repo" ]; then echo true; else echo false; fi ;;
+  *".visibility"*) cat "$S/vis_$repo" 2>/dev/null || echo public ;;
+  *) exit 1 ;;
+esac
+GH
+  cat > stubs/curl <<'CURL'
+#!/usr/bin/env bash
+S="$BATS_TEST_TMPDIR/state"
+echo "curl $*" >> "$S/curl.log"
+[ -f "$S/launched" ] || exit 7
+printf '{"status":"ok","launched":%s}' "$(cat "$S/launched")"
+CURL
+  cat > stubs/docker <<'DOCKER'
+#!/usr/bin/env bash
+echo "docker $*" >> "$BATS_TEST_TMPDIR/state/docker.log"
+exit 1
+DOCKER
+  chmod +x stubs/gh stubs/curl stubs/docker
+}
+run_vis() {
+  run env BATS_TEST_TMPDIR="$BATS_TEST_TMPDIR" PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 \
+    LAUNCH_POLL_SECS=0 LAUNCH_WAIT_SECS=0 bash "$SCRIPT" "$@" < /dev/null
+}
+patched() {
+  if [ -f state/gh.log ]; then grep -c -- "-X PATCH" state/gh.log || true; else echo 0; fi
+}
+
+@test "private sets each detached fork private before launch, and names an attached one it skipped" {
+  vis_env
+  echo false > state/launched
+  touch state/attached_WebGoat
+  run_vis private
+  [ "$(cat state/vis_DVWA)" = private ]
+  [ ! -f state/vis_WebGoat ]
+  printf '%s' "$output" | grep -qF -- 'WebGoat is still in its fork network'
+  [ "$status" -eq 0 ]
+}
+
+@test "private makes no call for a fork that is already private" {
+  vis_env
+  echo false > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  run_vis private
+  [ "$status" -eq 0 ]
+  [ "$(patched)" -eq 0 ]
+}
+
+@test "private never hides the forks of a launched event" {
+  vis_env
+  echo true > state/launched
+  run_vis private
+  printf '%s' "$output" | grep -qF -- 'launched'
+  [ "$(patched)" -eq 0 ]
+}
+
+@test "private changes nothing when it cannot confirm the event is not launched" {
+  vis_env
+  run_vis private
+  printf '%s' "$output" | grep -qF -- 'could not confirm'
+  [ "$(patched)" -eq 0 ]
+}
+
+@test "org --dry-run plans the private step and makes no calls" {
+  vis_env
+  run_vis org --dry-run
+  printf '%s' "$output" | grep -qF -- 'DRY-RUN: gh api -X PATCH repos/test-event-org/DVWA -f visibility=private'
+  [ ! -f state/gh.log ]
+  [ ! -f state/curl.log ]
+  [ ! -f state/docker.log ]
+}
+
+@test "launch refuses before any change while a fork is attached" {
+  vis_env
+  echo false > state/launched
+  touch state/attached_DVWA
+  run_vis launch
+  printf '%s' "$output" | grep -qF -- 'DVWA'
+  [ "$(patched)" -eq 0 ]
+  [ ! -f state/curl.log ]
+  [ "$status" -ne 0 ]
+}
+
+@test "launch refuses when the scorer package is not private" {
+  vis_env
+  echo public > state/package
+  run_vis launch
+  printf '%s' "$output" | grep -qF -- 'scorer package'
+  [ "$(patched)" -eq 0 ]
+  [ "$status" -ne 0 ]
+}
+
+@test "launch fails closed when gh cannot answer" {
+  vis_env
+  touch state/gh-broken
+  run_vis launch
+  [ "$(patched)" -eq 0 ]
+  [ "$status" -ne 0 ]
+}
+
+@test "launch flips every fork public, waits for Launch, and reports it" {
+  vis_env
+  echo true > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  run_vis launch
+  [ "$(cat state/vis_DVWA)" = public ]
+  [ "$(cat state/vis_VulnerableApp)" = public ]
+  printf '%s' "$output" | grep -qF -- 'https://box.example'
+  printf '%s' "$output" | grep -qF -- 'launched'
+  [ "$status" -eq 0 ]
+}
+
+@test "a re-run of launch is a no-op" {
+  vis_env
+  echo true > state/launched
+  run_vis launch
+  [ "$status" -eq 0 ]
+  [ "$(patched)" -eq 0 ]
+}
+
+@test "launch reports the exact state when a flip fails partway, and a re-run completes it" {
+  vis_env
+  echo true > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  touch state/patch-fails
+  run_vis launch
+  printf '%s' "$output" | grep -qF -- 're-run'
+  [ "$status" -ne 0 ]
+  rm state/patch-fails
+  run_vis launch
+  [ "$(cat state/vis_VulnerableApp)" = public ]
+  [ "$status" -eq 0 ]
+}
+
+@test "launch waits for the Launch press and says so when it does not come" {
+  vis_env
+  echo false > state/launched
+  run_vis launch
+  printf '%s' "$output" | grep -qF -- 'press Launch in /admin'
+  [ "$status" -ne 0 ]
+}
+
+@test "launch --dry-run narrates every action and makes zero gh, docker or box calls" {
+  vis_env
+  run_vis launch --dry-run
+  printf '%s' "$output" | grep -qF -- 'DRY-RUN: gh api -X PATCH repos/test-event-org/DVWA -f visibility=public'
+  printf '%s' "$output" | grep -qF -- 'DRY-RUN: would wait for'
+  [ ! -f state/gh.log ]
+  [ ! -f state/curl.log ]
+  [ ! -f state/docker.log ]
+}
+
+@test "launch on an event without Secure Development points at the Launch button" {
+  vis_env
+  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nEVENT_URL=https://box.example\n' > .env
+  run_vis launch
+  printf '%s' "$output" | grep -qF -- 'press Launch in /admin'
+  [ ! -f state/gh.log ]
+  [ "$status" -eq 0 ]
+}
+
+@test "doctor warns about a public fork before launch" {
+  vis_env
+  echo false > state/launched
+  run_vis doctor
+  printf '%s' "$output" | grep -qF -- 'DVWA is public before launch'
+}
+
+@test "doctor warns about a private fork after launch" {
+  vis_env
+  echo true > state/launched
+  echo private > state/vis_DVWA
+  run_vis doctor
+  printf '%s' "$output" | grep -qF -- 'DVWA is still private after launch'
+}

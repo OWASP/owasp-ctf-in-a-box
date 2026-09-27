@@ -190,4 +190,26 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
   // where neither module is on, so a live assertion would only ever exercise
   // the module gate — a skip dressed as a check. Their reads are covered by the
   // mocked suite and by the classic/ai store suites that do enable them.
+
+  // #463: a locked story step's hint is refused INSIDE the reveal script —
+  // before any charge — unless a teammate (a solves hash handed in as
+  // KEYS[5..]) holds the prerequisite. Run on throwaway keys.
+  it("REVEAL_SCRIPT refuses a locked story step's hint, charging nothing, and reveals it once a teammate solved the prerequisite", async () => {
+    const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const k = (n: string) => `ctf-test:hint-lock:${RUN}:${n}`;
+    const [set, spent, hints, at, teammate] = ["set", "spent", "hints", "at", "bob"].map(k);
+    await pipeline([["HSET", hints, "web", "look at the cookie"]]);
+    const reveal = () =>
+      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, teammate], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon"]);
+
+    expect(await reveal()).toEqual(["locked"]);
+    const [s1, sp1] = await pipeline([["SCARD", set], ["HGET", spent, "alice"]]);
+    expect(s1.result).toBe(0);
+    expect(sp1.result).toBeNull();
+
+    await pipeline([["HSET", teammate, "recon", '{"points":1,"at":"x"}']]);
+    expect(await reveal()).toEqual(["charged", "look at the cookie", 10]);
+    await pipeline([["DEL", set, spent, hints, at, teammate]]);
+  });
 });

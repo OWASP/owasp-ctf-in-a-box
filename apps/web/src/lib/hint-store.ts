@@ -12,6 +12,9 @@ import { CLASSIC_HINTS_KEY, classicSolvesKey } from "@/lib/classic-keys";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { userHintTimesKey } from "@/lib/team-keys";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { listStories } from "@/lib/classic-store";
+import { teamSolveKeys } from "@/lib/classic-team";
+import { storyPositions } from "@/lib/story-lock";
 
 /**
  * Paid hints — for `classic` and `ai`. **Secure Development has none**, and
@@ -110,9 +113,19 @@ export function isHintTarget(value: string): value is HintTarget {
 // ARGV: [1]=challengeId [2]=<app>/<id> [3]=login [4]=cost [5]=now (ISO)
 //       [6]="1" for a DRY RUN (#464 admin preview): read the text, write
 //       nothing — no SADD, no charge, no purchase time.
-const REVEAL_SCRIPT = `
+//       [7]=story prerequisite (#463), "" when none — open only if a TEAMMATE
+//       (a solves hash in KEYS[5..]) holds it; checked before any charge.
+// Exported for the live suite only.
+export const REVEAL_SCRIPT = `
 local hint = redis.call('HGET', KEYS[3], ARGV[1])
 if not hint then return {'missing'} end
+if ARGV[6] ~= '1' and ARGV[7] and ARGV[7] ~= '' then
+  local open = false
+  for i = 5, #KEYS do
+    if redis.call('HEXISTS', KEYS[i], ARGV[7]) == 1 then open = true break end
+  end
+  if not open then return {'locked'} end
+end
 if ARGV[6] == '1' then return {'preview', hint, '0'} end
 if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
   local spent = redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
@@ -286,12 +299,30 @@ export async function revealHint(
     return { ok: false, error: "Hints are not enabled" };
   }
 
+  // STORY LOCK (#463): a classic hint for a later story step is refused by
+  // the script unless a teammate solved the step before it. Resolved here,
+  // enforced there; a stories/team read failure refuses (closed).
+  let prereq = "";
+  let lockKeys: string[] = [];
+  if (target === "classic") {
+    try {
+      const pos = storyPositions(await listStories()).get(id);
+      if (pos?.prereq) {
+        prereq = pos.prereq;
+        lockKeys = await teamSolveKeys(login);
+      }
+    } catch (err) {
+      console.error("Hint reveal: story lock lookup failed (failing closed):", err instanceof Error ? err.message : err);
+      return { ok: false, error: "Hint reveal failed. Try again" };
+    }
+  }
+
   let verdict: unknown;
   try {
     verdict = await upstashEval(
       REVEAL_SCRIPT,
-      [userHintsKey(login), SPENT_KEY, hintHashKey(target), userHintTimesKey(login)],
-      [id, `${target}/${id}`, login, cost, new Date().toISOString(), dryRun ? "1" : "0"],
+      [userHintsKey(login), SPENT_KEY, hintHashKey(target), userHintTimesKey(login), ...lockKeys],
+      [id, `${target}/${id}`, login, cost, new Date().toISOString(), dryRun ? "1" : "0", prereq],
     );
   } catch (err) {
     console.error("Hint reveal failed:", err);
@@ -301,6 +332,9 @@ export async function revealHint(
   const [status, hint, spent] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") {
     return { ok: false, missing: true, error: "No hint available for this challenge" };
+  }
+  if (status === "locked") {
+    return { ok: false, forbidden: true, error: "Solve the previous step in the story first" };
   }
   if (status === "preview" && typeof hint === "string") {
     return { ok: true, hint, alreadyOwned: false, spent: 0, dryRun: true };

@@ -269,6 +269,16 @@ docker run -d --name co-app --network "$NET" -p "$APP_PORT:3000" \
   ctf-web:classic-only-acceptance >/dev/null
 
 APP_URL="http://localhost:$APP_PORT"
+echo "--- before launch, /flags redirects to the landing page (#464)"
+acc_wait_http "$APP_URL" 90 / || {
+  echo "FAIL: the landing page never returned 200"
+  docker logs co-app 2>&1 | tail -80
+  exit 1
+}
+acc_assert_prelaunch_redirect "$APP_URL" /flags || exit 1
+echo "--- launch the event (the field /admin's Launch writes)"
+acc_launch co-redis
+
 echo "--- waiting for /flags to serve (also waits out srh's startup lag — a"
 echo "    classic read that hits srh before it's bound would 500, not hang)"
 acc_wait_http "$APP_URL" 90 /flags || {

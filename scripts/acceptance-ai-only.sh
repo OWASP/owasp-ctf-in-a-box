@@ -305,6 +305,16 @@ docker run -d --name ao-app --network "$NET" -p "$APP_PORT:3000" \
   ctf-web:ai-only-acceptance >/dev/null
 
 APP_URL="http://localhost:$APP_PORT"
+echo "--- before launch, /ai redirects to the landing page (#464)"
+acc_wait_http "$APP_URL" 90 / || {
+  echo "FAIL: the landing page never returned 200"
+  docker logs ao-app 2>&1 | tail -80
+  exit 1
+}
+acc_assert_prelaunch_redirect "$APP_URL" /ai || exit 1
+echo "--- launch the event (the field /admin's Launch writes)"
+acc_launch ao-redis
+
 echo "--- waiting for /ai to serve (also waits out srh's startup lag — an"
 echo "    ai read that hits srh before it's bound would 500, not hang)"
 acc_wait_http "$APP_URL" 90 /ai || {

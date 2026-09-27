@@ -159,3 +159,24 @@ acc_wait_http() {
   done
   return 1
 }
+
+# The pre-launch lock (#464): before launch a module page answers with a
+# redirect to the landing page. Asserts that for "$base$path", naming exactly
+# what it got when it fails. Anti-vacuous by pairing: the caller launches
+# (acc_launch) and then waits for the SAME page to answer 200, so the redirect
+# seen here was the lock, not a broken page.
+acc_assert_prelaunch_redirect() {
+  base="$1"; path="$2"
+  got="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$base$path" 2>/dev/null || true)"
+  case "$got" in
+    30[1278]" $base/"|30[1278]" $base") return 0 ;;
+  esac
+  echo "FAIL: before launch $path should redirect to $base/ (the launch lock), got: $got"
+  return 1
+}
+
+# Launch the event on a test box: write the field /admin's Launch writes.
+# A past instant, so "launched" holds whatever the container clock says.
+acc_launch() {
+  docker exec "$1" redis-cli HSET ctf:admin:settings scoringStartsAt "2000-01-01T00:00:00Z" >/dev/null
+}

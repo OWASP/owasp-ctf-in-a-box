@@ -1,0 +1,15 @@
+{
+  "_comment": "Differential corpus for outsideScoringWindow(nowMs, startsAt, endsAt): the SCORING window, where a start is REQUIRED (issue #464: every event needs an official launch). Duplicated verbatim in apps/web/src/lib/schedule-window.ts, scorer/src/store.js and sync/src/redis.js; each reader's suite runs every row here against its own copy. The generic outsideWindow corpus (window-corpus.json) still covers the registration window, where an absent bound means open. S/E below are fixed instants: S = 2023-11-14T22:13:20.000Z, E = S + 1h.",
+  "cases": [
+    { "description": "no start, no end: not launched", "nowMs": 1700000000000, "startsAt": null, "endsAt": null, "expected": true },
+    { "description": "empty-string start: not launched", "nowMs": 1700000000000, "startsAt": "", "endsAt": null, "expected": true },
+    { "description": "unparseable start: not launched", "nowMs": 1700000000000, "startsAt": "nope", "endsAt": null, "expected": true },
+    { "description": "no start, future end: still not launched", "nowMs": 1700000000000, "startsAt": null, "endsAt": "2023-11-14T23:13:20.000Z", "expected": true },
+    { "description": "one ms before start: outside", "nowMs": 1699999999999, "startsAt": "2023-11-14T22:13:20.000Z", "endsAt": null, "expected": true },
+    { "description": "exactly at start: inside", "nowMs": 1700000000000, "startsAt": "2023-11-14T22:13:20.000Z", "endsAt": null, "expected": false },
+    { "description": "started, no end: inside", "nowMs": 1700003600000, "startsAt": "2023-11-14T22:13:20.000Z", "endsAt": null, "expected": false },
+    { "description": "exactly at end: inside", "nowMs": 1700003600000, "startsAt": "2023-11-14T22:13:20.000Z", "endsAt": "2023-11-14T23:13:20.000Z", "expected": false },
+    { "description": "one ms after end: outside", "nowMs": 1700003600001, "startsAt": "2023-11-14T22:13:20.000Z", "endsAt": "2023-11-14T23:13:20.000Z", "expected": true },
+    { "description": "started, unparseable end: end ignored, inside", "nowMs": 1700003600001, "startsAt": "2023-11-14T22:13:20.000Z", "endsAt": "bad", "expected": false }
+  ]
+}

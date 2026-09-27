@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { nextScheduleBoundary, outsideWindow } from "@/lib/schedule-window";
+import { nextScheduleBoundary, outsideScoringWindow, outsideWindow } from "@/lib/schedule-window";
 
 // Shared differential corpus (issue #232): the same cases run verbatim in
 // scorer/test/store.test.js and sync/test/redis.test.js against their own
@@ -24,6 +24,25 @@ describe("outsideWindow: shared boundary-instant corpus", () => {
   for (const { description, nowMs, startsAt, endsAt, expected } of windowCorpus) {
     it(description, () => {
       expect(outsideWindow(nowMs, startsAt, endsAt)).toBe(expected);
+    });
+  }
+});
+
+// The scoring window's own corpus (#464): same differential idea, but a start
+// is REQUIRED — an absent or unparseable scoringStartsAt means the event has
+// not launched. Runs verbatim in scorer/test/store.test.js and
+// sync/test/redis.test.js too.
+const SCORING_CORPUS_PATH = fileURLToPath(
+  new URL("../../../../../test/fixtures/scoring-window-corpus.json", import.meta.url),
+);
+const { cases: scoringCorpus } = JSON.parse(readFileSync(SCORING_CORPUS_PATH, "utf8")) as {
+  cases: { description: string; nowMs: number; startsAt: string | null; endsAt: string | null; expected: boolean }[];
+};
+
+describe("outsideScoringWindow: shared scoring-window corpus (#464)", () => {
+  for (const { description, nowMs, startsAt, endsAt, expected } of scoringCorpus) {
+    it(description, () => {
+      expect(outsideScoringWindow(nowMs, startsAt, endsAt)).toBe(expected);
     });
   }
 });

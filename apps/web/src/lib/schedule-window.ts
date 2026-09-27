@@ -1,6 +1,9 @@
-// The scheduled-window check, in a dependency-free leaf.
+// The scheduled-window checks, in a dependency-free leaf.
 //
 // This is the app's copy of the pause/schedule contract's window logic —
+// `outsideWindow` (generic: absent bound = open, used by the registration
+// window) and `outsideScoringWindow` (a start is REQUIRED: no start = not
+// launched, issue #464) —
 // kept IDENTICAL in scorer/src/store.js and sync/src/redis.js; change all
 // three together (AGENTS.md: "the pause/schedule contract lives in THREE
 // readers"). It lives here rather than in admin-store.ts because admin-store
@@ -19,6 +22,19 @@ export function outsideWindow(nowMs: number, startsAt: string | null, endsAt: st
   if (Number.isFinite(s) && nowMs < s) return true;
   if (Number.isFinite(e) && nowMs > e) return true;
   return false;
+}
+
+/** The SCORING window: `outsideWindow` plus a REQUIRED start (issue #464 —
+ *  every event needs an official launch). An absent or unparseable
+ *  `scoringStartsAt` means "not launched", so scoring is closed; Launch in
+ *  /admin writes it. Deliberately a separate function: the registration
+ *  window keeps `outsideWindow`'s "absent bound = open" meaning. Kept
+ *  IDENTICAL in scorer/src/store.js and sync/src/redis.js, pinned by
+ *  test/fixtures/scoring-window-corpus.json. */
+export function outsideScoringWindow(nowMs: number, startsAt: string | null, endsAt: string | null): boolean {
+  const s = startsAt ? Date.parse(startsAt) : NaN;
+  if (!Number.isFinite(s)) return true;
+  return outsideWindow(nowMs, startsAt, endsAt);
 }
 
 /** The next instant strictly after `nowMs` at which `outsideWindow` flips for

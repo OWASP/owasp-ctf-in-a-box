@@ -42,6 +42,7 @@ import {
   ATTACHMENT_MAX_BYTES,
   ATTACHMENT_NAME_MAX,
   ATTACHMENT_URL_MAX,
+  type AttachmentMeta,
 } from "@/lib/attachments-keys";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { Story } from "@/lib/story-lock";
@@ -52,7 +53,7 @@ const SUPPORTED_VERSIONS = new Set([1, 2]);
 const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
 
-export type BundleAttachment = { name: string; size: number; sha256: string } | { name: string; url: string };
+export type BundleAttachment = AttachmentMeta;
 
 export type ClassicBundleChallenge = {
   id: string;

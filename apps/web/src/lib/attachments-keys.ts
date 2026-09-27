@@ -97,3 +97,11 @@ export function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** What a classic bundle carries for an attachment (#186): metadata only —
+ *  never bytes, ids or chunk bookkeeping. */
+export type AttachmentMeta = { name: string; size: number; sha256: string } | { name: string; url: string };
+
+export function attachmentMeta(a: Attachment): AttachmentMeta {
+  return a.kind === "link" ? { name: a.name, url: a.url ?? "" } : { name: a.name, size: a.size ?? 0, sha256: a.sha256 ?? "" };
+}

@@ -8,6 +8,7 @@
 
 import type { AdminChallenge, Challenge, ImportSummary } from "@/lib/classic-store";
 import type { Story } from "@/lib/story-lock";
+import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
 import { CLASSIC_BUNDLE_VERSION, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
@@ -316,6 +317,7 @@ export function exportBundleFrom(
   rows: readonly AdminChallenge[],
   categories: readonly string[],
   stories: readonly Story[] = [],
+  attachments: Readonly<Record<string, readonly AttachmentMeta[]>> = {},
 ): ClassicBundle {
   // A step must name a challenge in the same file, or parseBundle refuses
   // the file this function just wrote (#463). The store drops a deleted
@@ -339,6 +341,8 @@ export function exportBundleFrom(
       // re-import of such a bundle downgrades grading and deletes hints.
       ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
       ...(hint ? { hint } : {}),
+      // #186: metadata only, and only when present — the server export's rule.
+      ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
     })),
   };
 }

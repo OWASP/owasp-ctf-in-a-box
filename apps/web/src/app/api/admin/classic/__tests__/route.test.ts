@@ -59,6 +59,9 @@ const {
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
+// #186: the panel's own Export needs each challenge's attachment metadata.
+const attachmentStore = vi.hoisted(() => ({ listAllAttachments: vi.fn(async () => new Map()) }));
+vi.mock("@/lib/attachments-store", () => attachmentStore);
 vi.mock("@/lib/classic-store", () => ({
   listChallengesForAdmin,
   listCategories,
@@ -170,7 +173,7 @@ describe("GET /api/admin/classic", () => {
   it("returns challenges (with flags) and categories for an admin", async () => {
     const res = await GET(adminReq("GET"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [] });
+    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [], attachments: {} });
   });
 
   // Finding B: the store reads were not wrapped in a try/catch, so a
@@ -229,6 +232,16 @@ describe("GET /api/admin/classic", () => {
 // `sets` list below, rather than a second bespoke assertion — a hardcoded
 // pairwise copy would silently miss it. The fourth shape arrived with #304 and
 // did exactly that.
+describe("GET /api/admin/classic — attachments (#186)", () => {
+  it("returns each challenge's attachment metadata, never ids or chunk counts", async () => {
+    attachmentStore.listAllAttachments.mockResolvedValueOnce(
+      new Map([["c-1", [{ id: "a1", kind: "upload", name: "cap.pcap", size: 10, sha256: "ab".repeat(32), chunks: 1 }]]]),
+    );
+    const body = await (await GET(adminReq("GET"))).json();
+    expect(body.attachments).toEqual({ "c-1": [{ name: "cap.pcap", size: 10, sha256: "ab".repeat(32) }] });
+  });
+});
+
 describe("POST /api/admin/classic — dispatch key sets", () => {
   it("keeps every payload key set pairwise disjoint", () => {
     const sets = [

@@ -101,6 +101,7 @@ import { CLASSIC_COOLDOWN_SEC } from "@/lib/classic-defaults";
 // client bundle. Never change this to a value import.
 import type { AdminChallenge, Challenge, ImportSummary } from "@/lib/classic-store";
 import type { Story } from "@/lib/story-lock";
+import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { parseBundle, serializeBundle } from "@/lib/classic-io";
 import ConfirmDelete from "@/components/admin/confirm-delete";
 import DiscardDraftConfirm from "@/components/admin/discard-draft-confirm";
@@ -187,6 +188,8 @@ export default function AdminClassicControls({
   // stale draft on screen.
   const [stories, setStories] = useState<Story[]>(initialStories);
   const [storiesRev, setStoriesRev] = useState(0);
+  // #186: attachment metadata, for the Export button — same GET, same capture.
+  const [attachmentMetaById, setAttachmentMetaById] = useState<Record<string, AttachmentMeta[]>>({});
   function takeStories(next: Story[]) {
     setStories(next);
     setStoriesRev((n) => n + 1);
@@ -198,6 +201,9 @@ export default function AdminClassicControls({
     rows: CHALLENGE_ROWS,
     parseList: (data) => {
       if (Array.isArray(data.stories)) takeStories(data.stories as Story[]);
+      if (data.attachments && typeof data.attachments === "object") {
+        setAttachmentMetaById(data.attachments as Record<string, AttachmentMeta[]>);
+      }
       return {
         rows: Array.isArray(data.challenges) ? (data.challenges as AdminChallenge[]) : [],
         categories: Array.isArray(data.categories) ? (data.categories as string[]) : [],
@@ -367,7 +373,7 @@ export default function AdminClassicControls({
         exportDescription="Downloads every challenge currently on the board as one JSON file, flags included."
         exportLabel="Export challenges"
         exportDisabled={challenges.length === 0}
-        onExport={() => downloadJson(serializeBundle(exportBundleFrom(challenges, categories, stories)), "classic-challenges.json")}
+        onExport={() => downloadJson(serializeBundle(exportBundleFrom(challenges, categories, stories, attachmentMetaById)), "classic-challenges.json")}
         notice={
           <>
             Import never deletes existing challenges — anything already on the board that isn&rsquo;t in the file

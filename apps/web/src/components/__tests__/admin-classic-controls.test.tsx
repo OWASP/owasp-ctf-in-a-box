@@ -410,6 +410,16 @@ describe("exportBundleFrom — stories (#463)", () => {
   });
 });
 
+describe("exportBundleFrom — attachments (#186)", () => {
+  it("carries each challenge's attachment metadata, and parses", () => {
+    const meta = [{ name: "cap.pcap", size: 10, sha256: "ab".repeat(32) }];
+    const bundle = exportBundleFrom([row1], ["Web"], [], { [c1.id]: meta });
+    expect(bundle.challenges[0].attachments).toEqual(meta);
+    expect(parseBundle(serializeBundle(bundle)).ok).toBe(true);
+    expect(exportBundleFrom([row1], ["Web"]).challenges[0]).not.toHaveProperty("attachments");
+  });
+});
+
 describe("formatImportSummary — stories (#463)", () => {
   it("names the stories a v2 file carried, and stays silent for a v1 file", () => {
     expect(formatImportSummary({ created: 1, updated: 0, categories: 1, stories: 2 })).toBe(

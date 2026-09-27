@@ -9,7 +9,7 @@ import {
   listAllAttachments,
   listAttachments,
 } from "@/lib/attachments-store";
-import { ATTACHMENTS_PER_ITEM_MAX, type Attachment } from "@/lib/attachments-keys";
+import { ATTACHMENTS_PER_ITEM_MAX, type Attachment, attachmentMeta } from "@/lib/attachments-keys";
 import type { BundleAttachment } from "@/lib/classic-io";
 // Re-exported, not redeclared — the admin UI cannot import a server-only
 // module, so the value lives in the dependency-free defaults file.
@@ -720,10 +720,6 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
  *  AUTHORED — never the normalized form) and the category list; every row
  *  comes back with its flag alongside the public fields, matching
  *  `ClassicBundleChallenge`. */
-function bundleMeta(a: Attachment): BundleAttachment {
-  return a.kind === "link" ? { name: a.name, url: a.url ?? "" } : { name: a.name, size: a.size ?? 0, sha256: a.sha256 ?? "" };
-}
-
 export async function exportBundle(): Promise<ClassicBundle> {
   const [rows, categories, stories, files] = await Promise.all([
     listChallengesForAdmin(),
@@ -749,7 +745,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
     ...(hint ? { hint } : {}),
     // #186: metadata only (the bytes ride the event archive), and only when
     // there is some — the same byte-identical rule as hint.
-    ...(files.get(challenge.id)?.length ? { attachments: files.get(challenge.id)!.map(bundleMeta) } : {}),
+    ...(files.get(challenge.id)?.length ? { attachments: files.get(challenge.id)!.map(attachmentMeta) } : {}),
   }));
   // A stored step can outlive its challenge (deleteChallenge updates the story
   // in a second call; read paths already drop such a step via storyPositions).

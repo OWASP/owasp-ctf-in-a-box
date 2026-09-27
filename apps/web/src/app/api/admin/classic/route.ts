@@ -18,6 +18,8 @@ import {
   type Challenge,
 } from "@/lib/classic-store";
 import type { Story } from "@/lib/story-lock";
+import { type Attachment, attachmentMeta } from "@/lib/attachments-keys";
+import { listAllAttachments } from "@/lib/attachments-store";
 
 /**
  * Organizer authoring surface for the classic (flag) module: list (GET),
@@ -236,12 +238,21 @@ export async function GET(request: Request) {
   let challenges: AdminChallenge[];
   let categories: string[];
   let stories: Story[];
+  let files: Map<string, Attachment[]>;
   try {
-    [challenges, categories, stories] = await Promise.all([listChallengesForAdmin(), listCategories(), listStories()]);
+    [challenges, categories, stories, files] = await Promise.all([
+      listChallengesForAdmin(),
+      listCategories(),
+      listStories(),
+      listAllAttachments("classic"),
+    ]);
   } catch (err) {
     return errorResponse(err);
   }
-  return NextResponse.json({ challenges, categories, stories });
+  // #186: each challenge's attachment METADATA, for the panel's own Export —
+  // the same shape the server export writes, no ids or chunk counts.
+  const attachments = Object.fromEntries([...files].map(([id, list]) => [id, list.map(attachmentMeta)]));
+  return NextResponse.json({ challenges, categories, stories, attachments });
 }
 
 export async function POST(request: Request) {

@@ -25,7 +25,7 @@ import { deriveStatus } from "@/lib/derive-status";
 import { isAdminLogin } from "@/lib/admin-auth";
 import { auth } from "@/lib/auth";
 import { getAdminSettings } from "@/lib/admin-store";
-import {
+import { listStories,
   CLASSIC_COOLDOWN_SEC,
   getSolveCounts,
   getViewerClassic,
@@ -34,10 +34,21 @@ import {
 } from "@/lib/classic-store";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { getLaunchAccess, redirectIfNotLaunched } from "@/lib/launch";
+import { getTeamClassicSolvedIds } from "@/lib/classic-team";
+import { isLocked, storyPositions } from "@/lib/story-lock";
 import { getClassicHintIds, getHintNotice, getViewerHints } from "@/lib/hint-store";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 import TeamlessNotice from "@/components/teamless-notice";
+
+/** Whether `id` is a story step still locked for `login`'s team (#463). A
+ *  stories or team read that fails THROWS — the page errors rather than
+ *  showing a step it cannot prove is open. */
+async function storyLockedFor(id: string, login: string | undefined): Promise<boolean> {
+  const pos = storyPositions(await listStories()).get(id);
+  if (!pos?.prereq) return false;
+  return isLocked(pos, login ? await getTeamClassicSolvedIds(login) : new Set());
+}
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   if (!(await isModuleLive("classic"))) return {};
@@ -47,6 +58,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const session = await auth.api.getSession({ headers: await headers() });
   if (!(await getLaunchAccess((session?.user as { login?: string } | undefined)?.login)).allowed) return {};
   const { id } = await params;
+  const login = (session?.user as { login?: string } | undefined)?.login;
+  if (await storyLockedFor(decodeURIComponent(id), login)) return {}; // #463: nothing about a locked step
   const challenge = (await listChallenges()).find((c) => c.id === decodeURIComponent(id));
   if (!challenge) return {};
   return {
@@ -91,6 +104,10 @@ export default async function ClassicChallengePage({ params }: { params: Promise
 
   const challenge = challenges.find((c) => c.id === challengeId);
   if (!challenge) notFound();
+  // #463: a locked story step is a 404, the same as an unknown id — its page
+  // must reveal nothing, not even that it exists. An admin preview (#464) may
+  // open it, to test the whole story before launch.
+  if (!launch.preview && (await storyLockedFor(challengeId, login))) notFound();
 
   const moduleTitle = modules.find((m) => m.id === "classic")?.title ?? "Jeopardy";
   const cooldownMs = (settings.classicCooldownSec ?? CLASSIC_COOLDOWN_SEC) * 1000;

@@ -53,7 +53,9 @@ vi.mock("@/lib/modules", () => ({ isModuleEnabled }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
+vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: async () => new Set() }));
 vi.mock("@/lib/classic-store", () => ({
+  listStories: async () => [],
   listChallenges,
   listCategories,
   getSolveCounts,

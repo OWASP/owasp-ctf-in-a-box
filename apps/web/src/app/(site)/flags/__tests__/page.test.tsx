@@ -41,7 +41,14 @@ vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
+// #463 stories: none by default; the story tests below set some.
+const storyMocks = vi.hoisted(() => ({
+  listStories: vi.fn(async () => [] as { id: string; title: string; intro: string; steps: string[] }[]),
+  getTeamClassicSolvedIds: vi.fn(async () => new Set<string>()),
+}));
+vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: storyMocks.getTeamClassicSolvedIds }));
 vi.mock("@/lib/classic-store", () => ({
+  listStories: storyMocks.listStories,
   listChallenges,
   listCategories,
   getSolveCounts,
@@ -288,5 +295,51 @@ describe("the admin preview banner (#464)", () => {
     expect(renderToStaticMarkup(await FlagsPage())).toContain("Preview — event not launched");
     launchLock.redirectIfNotLaunched.mockResolvedValueOnce({ allowed: true, preview: false });
     expect(renderToStaticMarkup(await FlagsPage())).not.toContain("Preview — event not launched");
+  });
+});
+
+describe("stories on the board (#463)", () => {
+  const op = { id: "op", title: "Operation CTF", intro: "Break in, step by step.", steps: ["c1", "c2"] };
+  beforeEach(() => {
+    isModuleEnabled.mockReset();
+    isModuleEnabled.mockReturnValue(true);
+    getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
+    getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
+  });
+
+  it("renders a story lane above the categories, and a LOCKED step as a placeholder that reveals nothing about it", async () => {
+    getSession.mockResolvedValue({ user: { login: "alice" } });
+    listChallenges.mockResolvedValue(baseChallenges);
+    storyMocks.listStories.mockResolvedValue([op]);
+    storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
+    const html = renderToStaticMarkup(await FlagsPage());
+    expect(html).toContain("Operation CTF");
+    expect(html).toContain("Break in, step by step.");
+    expect(html).toContain("??? — step 2 of 2");
+    // Nothing about the locked step: not its title, description or points.
+    expect(html).not.toContain("Still cooling down");
+    expect(html).not.toContain(">d2<");
+    expect(html).not.toContain('href="/flags/c2"');
+    // Step 1 is open, and story steps are not ALSO in their category column.
+    expect(html).toContain("Solved one");
+    expect(html.split('href="/flags/c1"').length - 1).toBe(1); // one tile, in the lane only
+    // The lane comes before the category grid.
+    expect(html.indexOf("Operation CTF")).toBeLessThan(html.indexOf("Crypto"));
+  });
+
+  it("opens the next step once the team has solved the one before it", async () => {
+    getSession.mockResolvedValue({ user: { login: "alice" } });
+    listChallenges.mockResolvedValue(baseChallenges);
+    storyMocks.listStories.mockResolvedValue([op]);
+    storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["c1"]));
+    const html = renderToStaticMarkup(await FlagsPage());
+    expect(html).toContain("Still cooling down");
+    expect(html).not.toContain("??? — step 2 of 2");
+  });
+
+  it("renders no Stories section when there are none", async () => {
+    listChallenges.mockResolvedValue(baseChallenges);
+    storyMocks.listStories.mockResolvedValue([]);
+    expect(renderToStaticMarkup(await FlagsPage())).not.toContain('aria-label="Stories"');
   });
 });

@@ -43,7 +43,14 @@ vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
 vi.mock("@/lib/hint-store", () => ({ getClassicHintIds, getHintNotice, getViewerHints }));
+// #463 stories: none by default; the story tests below set some.
+const storyMocks = vi.hoisted(() => ({
+  listStories: vi.fn(async () => [] as { id: string; title: string; intro: string; steps: string[] }[]),
+  getTeamClassicSolvedIds: vi.fn(async () => new Set<string>()),
+}));
+vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: storyMocks.getTeamClassicSolvedIds }));
 vi.mock("@/lib/classic-store", () => ({
+  listStories: storyMocks.listStories,
   listChallenges,
   getSolveCounts,
   getViewerClassic,
@@ -232,5 +239,25 @@ describe("generateMetadata before launch (#464)", () => {
     launchLock.getLaunchAccess.mockResolvedValueOnce({ allowed: false, preview: false });
     expect(await generateMetadata(params("x"))).toEqual({});
     expect(listChallenges).not.toHaveBeenCalled();
+  });
+});
+
+describe("a locked story step's own page (#463)", () => {
+  beforeEach(() => {
+    storyMocks.listStories.mockResolvedValue([{ id: "op", title: "Op", intro: "", steps: ["recon", "c1"] }]);
+    storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
+  });
+
+  it("is a 404 — the same as an unknown id, revealing nothing", async () => {
+    await expect(ClassicChallengePage(params("c1"))).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
+  });
+
+  it("has no metadata (no title or points leak through the <title>)", async () => {
+    expect(await generateMetadata(params("c1"))).toEqual({});
+  });
+
+  it("renders normally once the team has solved the step before it", async () => {
+    storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon"]));
+    expect(renderToStaticMarkup(await ClassicChallengePage(params("c1")))).toContain(record.title);
   });
 });

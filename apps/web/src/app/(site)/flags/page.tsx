@@ -22,7 +22,7 @@ import { deriveStatus } from "@/lib/derive-status";
 import { isAdminLogin } from "@/lib/admin-auth";
 import { auth } from "@/lib/auth";
 import { getAdminSettings } from "@/lib/admin-store";
-import {
+import { listStories,
   CLASSIC_COOLDOWN_SEC,
   getSolveCounts,
   getViewerClassic,
@@ -32,6 +32,9 @@ import {
 } from "@/lib/classic-store";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { redirectIfNotLaunched } from "@/lib/launch";
+import { getTeamClassicSolvedIds } from "@/lib/classic-team";
+import { isLocked, lockedLabel, storyPositions } from "@/lib/story-lock";
+import StoryLanes, { type StoryLaneView, type StoryStepView } from "@/components/story-lanes";
 import { getClassicHintIds } from "@/lib/hint-store";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
@@ -69,7 +72,7 @@ export default async function FlagsPage() {
   // below, so a redirect never follows work that was thrown away.
   await redirectIfTeamless(login, { isAdmin: viewerIsAdmin });
 
-  const [challenges, categories, solveCounts, viewerClassic, settings, modules, hintIds] = await Promise.all([
+  const [challenges, categories, solveCounts, viewerClassic, settings, modules, hintIds, stories] = await Promise.all([
     listChallenges(),
     listCategories(),
     getSolveCounts(),
@@ -82,7 +85,13 @@ export default async function FlagsPage() {
     getAdminSettings().catch(() => null),
     getResolvedModules(),
     getClassicHintIds(),
+    // #463 stories. A read error fails the page (like the challenge list):
+    // "no stories" would silently put every locked step on the board.
+    listStories(),
   ]);
+  // The team's solves decide which story steps are open; only read when a
+  // story exists, and "nothing solved" for a signed-out visitor.
+  const teamSolved = stories.length > 0 && login ? await getTeamClassicSolvedIds(login) : new Set<string>();
 
   const mod = modules.find((m) => m.id === "classic");
   const moduleTitle = mod?.title ?? DEFAULT_TITLE;
@@ -108,6 +117,28 @@ export default async function FlagsPage() {
     caseSensitive: c.caseSensitive,
     ...deriveStatus(viewerClassic.solved[c.id], viewerClassic.attempts[c.id], cooldownMs),
   }));
+
+  // #463: story lanes, and the category grid WITHOUT any story step (each
+  // challenge has exactly one place on the board). A locked step's view is
+  // just its position — the challenge's own fields never reach the render.
+  const positions = storyPositions(stories);
+  const byId = new Map(viewChallenges.map((c) => [c.id, c]));
+  const storyLanes: StoryLaneView[] = stories
+    .map((st) => ({
+      id: st.id,
+      title: st.title,
+      intro: st.intro,
+      steps: st.steps
+        .filter((id) => byId.has(id))
+        .map((id): StoryStepView => {
+          const pos = positions.get(id)!;
+          if (isLocked(pos, teamSolved)) return { locked: true, key: `${st.id}:${pos.position}`, label: lockedLabel(pos) };
+          const c = byId.get(id)!;
+          return { locked: false, id, title: c.title, category: c.category, points: c.points, solved: c.status === "solved", position: pos.position, total: pos.total };
+        }),
+    }))
+    .filter((lane) => lane.steps.length > 0);
+  const boardChallenges = viewChallenges.filter((c) => !positions.has(c.id));
 
   // Per-VIEWER state, so it sits above the board rather than in the header.
   // Signed in, the board's "Your run" rail carries the solved and point
@@ -144,13 +175,16 @@ export default async function FlagsPage() {
             authoring={viewerIsAdmin ? { href: "/admin?tab=classic", label: "Author challenges" } : null}
           />
         ) : (
+          <>
+          <StoryLanes stories={storyLanes} basePath="/flags" />
           <ChallengeBoard
             categories={categories}
-            challenges={viewChallenges}
+            challenges={boardChallenges}
             authenticated={Boolean(login)}
             hintIds={hintIds}
             basePath="/flags"
           />
+          </>
         )}
       </div>
     </div>

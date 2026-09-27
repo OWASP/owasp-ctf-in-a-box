@@ -259,6 +259,10 @@ submit_solves() {
   esac
   [ "$count" -gt "$n" ] && count=$n
   ids_json="$(challenge_ids_json "$target" "$count")" || return 1
+  # Exit 3 = the scorer answered 503 "scoring is paused": its own reader says
+  # the window is not open (a kept FUTURE start, or a freeze). The scorer
+  # decides that, not this script — no fourth copy of the window logic here.
+  local rc=0
   status="$(compose exec -T \
     -e CTF_LOGIN="$login" -e CTF_TARGET="$target" -e CTF_IDS_JSON="$ids_json" \
     scorer node -e '
@@ -271,10 +275,16 @@ submit_solves() {
           solved: JSON.parse(process.env.CTF_IDS_JSON),
         }),
       }).then(async (r) => {
+        if (r.status === 503) { console.error(await r.text()); process.exit(3); }
         if (!r.ok) { console.error(await r.text()); process.exit(1); }
         process.stdout.write(String(r.status));
       }).catch((err) => { console.error(String(err)); process.exit(1); });
-    ')"
+    ')" || rc=$?
+  if [ "$rc" -eq 3 ]; then
+    echo "   $login / $target: not scored — scoring is paused or not open yet (HTTP 503)"
+    return 3
+  fi
+  [ "$rc" -eq 0 ] || return "$rc"
   echo "   $login / $target: submitted $count solve(s) -> HTTP $status"
 }
 
@@ -290,7 +300,7 @@ launch_dev_event() {
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   current="$(compose exec -T redis redis-cli HGET ctf:admin:settings scoringStartsAt | tr -d '\r')"
   if [ -n "$current" ] && compose exec -T scorer node -e 'process.exit(Number.isFinite(Date.parse(process.argv[1])) ? 0 : 1)' "$current"; then
-    echo "== dev event already launched (scoringStartsAt=$current kept)"
+    echo "== dev event start already set (scoringStartsAt=$current kept)"
   else
     compose exec -T redis redis-cli HSET ctf:admin:settings scoringStartsAt "$now" >/dev/null
     echo "== launched the dev event (scoringStartsAt=$now)"
@@ -299,7 +309,17 @@ launch_dev_event() {
 
 seed_demo_data() {
   echo "== seeding demo leaderboard data (real POST /score, rubric-priced)"
-  submit_solves alice-dev juice-shop 6
+  # The first submission doubles as the probe: when the scorer says scoring is
+  # not open (a scheduled start kept above, or a freeze), seeding is DEFERRED,
+  # not a failed `up` — the stack itself is fine.
+  local rc=0
+  submit_solves alice-dev juice-shop 6 || rc=$?
+  if [ "$rc" -eq 3 ]; then
+    echo "== demo seeding deferred: scoring is not open yet (scheduled start kept, or frozen)."
+    echo "   Once it opens, seed by hand: ./scripts/dev-stack score <login> <juice-shop|dvwa> <n>"
+    return 0
+  fi
+  [ "$rc" -eq 0 ] || return "$rc"
   submit_solves alice-dev dvwa 4
   submit_solves bob-dev juice-shop 3
   submit_solves carol-dev dvwa 5

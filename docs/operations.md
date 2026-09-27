@@ -1936,9 +1936,10 @@ This generates a throwaway `.env.dev-stack` if you have no `.env` (never
 touches or overwrites a real one), builds the scorer image locally from
 `scorer/` and the app image from `apps/web/`, brings up `redis`,
 `srh`, `scorer`, `app` and `caddy`, **launches** the dev event (it sets
-`scoringStartsAt` to now unless one is already set, because an event with no
-scoring start is not launched and scores nothing), and seeds a few demo
-players onto the
+`scoringStartsAt` to now unless a valid one is already set, because an event
+with no scoring start is not launched and scores nothing; a kept start that is
+still in the future defers the seeding below, with a line saying so), and
+seeds a few demo players onto the
 leaderboard through the scorer's real bearer-authed `POST /score` — the same
 endpoint a scored PR hits, so it exercises the real validation and Redis-write
 path rather than poking Redis keys directly. It prints the URL to open when

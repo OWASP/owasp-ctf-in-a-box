@@ -100,11 +100,13 @@ import { CLASSIC_COOLDOWN_SEC } from "@/lib/classic-defaults";
 // is fully erased at compile time — no runtime import ever reaches the
 // client bundle. Never change this to a value import.
 import type { AdminChallenge, Challenge, ImportSummary } from "@/lib/classic-store";
+import type { Story } from "@/lib/story-lock";
 import { parseBundle, serializeBundle } from "@/lib/classic-io";
 import ConfirmDelete from "@/components/admin/confirm-delete";
 import DiscardDraftConfirm from "@/components/admin/discard-draft-confirm";
 import ImportPanel from "@/components/admin/import-panel";
 import { downloadJson, useBundleImport } from "@/components/admin/use-bundle-import";
+import AdminClassicStories from "@/components/admin-classic-stories";
 import CategoryEditor from "@/components/admin/category-editor";
 import { useCategoryEditor } from "@/components/admin/use-category-editor";
 import SortableList from "@/components/admin/sortable-list";
@@ -152,6 +154,8 @@ export type AdminClassicControlsProps = {
   /** Seeds the loaded flag — same test seam as the two above. */
   initialLoaded?: boolean;
   initialCategories?: string[];
+  /** Seeds the story list (#463); the mount-time GET replaces it. */
+  initialStories?: Story[];
   /** Reports the board's size to the shell for the setup checklist above this
    *  panel — after the mount-time fetch has settled, never from the seed. */
   onInventory?: (inventory: ModuleInventory) => void;
@@ -166,6 +170,7 @@ export default function AdminClassicControls({
   moduleSettings,
   initialChallenges = [],
   initialCategories = [],
+  initialStories = [],
   initialLoaded = false,
   onInventory,
 }: AdminClassicControlsProps) {
@@ -176,14 +181,28 @@ export default function AdminClassicControls({
   // replies map to rows, and the payload builders above. The seeds are the
   // first paint; the hook's mount-time GET replaces them in the browser
   // (never under `renderToStaticMarkup`).
+  // The story list (#463) rides the same GET as the board: every read of it
+  // (mount, Retry, an import's refresh) hands the stories over here, and the
+  // bump remounts the story editor on the fresh list rather than leaving a
+  // stale draft on screen.
+  const [stories, setStories] = useState<Story[]>(initialStories);
+  const [storiesRev, setStoriesRev] = useState(0);
+  function takeStories(next: Story[]) {
+    setStories(next);
+    setStoriesRev((n) => n + 1);
+  }
+
   const resource = useAdminResource<AdminChallenge, Challenge, ChallengeEditor, ChallengePayload>({
     endpoint: "/api/admin/classic",
     describeError: describeClassicError,
     rows: CHALLENGE_ROWS,
-    parseList: (data) => ({
-      rows: Array.isArray(data.challenges) ? (data.challenges as AdminChallenge[]) : [],
-      categories: Array.isArray(data.categories) ? (data.categories as string[]) : [],
-    }),
+    parseList: (data) => {
+      if (Array.isArray(data.stories)) takeStories(data.stories as Story[]);
+      return {
+        rows: Array.isArray(data.challenges) ? (data.challenges as AdminChallenge[]) : [],
+        categories: Array.isArray(data.categories) ? (data.categories as string[]) : [],
+      };
+    },
     loadErrorMessage: "Couldn't load challenges — check your connection and try again.",
     // The route echoes the STORED (trimmed) flag alongside the challenge;
     // falling back to the payload's own flag would leave the list holding
@@ -227,7 +246,12 @@ export default function AdminClassicControls({
     endpoint: "/api/admin/classic",
     describeError: describeClassicError,
     parse: parseBundle,
-    parseSummary: (reply) => ({ created: reply.created ?? 0, updated: reply.updated ?? 0, categories: reply.categories ?? 0 }),
+    parseSummary: (reply) => ({
+      created: reply.created ?? 0,
+      updated: reply.updated ?? 0,
+      categories: reply.categories ?? 0,
+      ...(reply.stories !== undefined ? { stories: reply.stories } : {}),
+    }),
     afterImport: resource.reload,
   });
 
@@ -283,6 +307,14 @@ export default function AdminClassicControls({
         onCommitRename={categoryEditor.commitRename}
       />
 
+      <AdminClassicStories
+        key={storiesRev}
+        loading={!resource.loaded}
+        challenges={challenges.map((row) => ({ id: row.challenge.id, title: row.challenge.title }))}
+        stories={stories}
+        onSaved={takeStories}
+      />
+
       <div className="flex flex-col gap-3 border-t border-white/[0.06] pt-4">
         <div className="flex items-center justify-between gap-3">
           <span className="text-white">Challenges</span>
@@ -335,7 +367,7 @@ export default function AdminClassicControls({
         exportDescription="Downloads every challenge currently on the board as one JSON file, flags included."
         exportLabel="Export challenges"
         exportDisabled={challenges.length === 0}
-        onExport={() => downloadJson(serializeBundle(exportBundleFrom(challenges, categories)), "classic-challenges.json")}
+        onExport={() => downloadJson(serializeBundle(exportBundleFrom(challenges, categories, stories)), "classic-challenges.json")}
         notice={
           <>
             Import never deletes existing challenges — anything already on the board that isn&rsquo;t in the file

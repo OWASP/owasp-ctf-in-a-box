@@ -7,6 +7,7 @@
 // these helpers implement.
 
 import type { AdminChallenge, Challenge, ImportSummary } from "@/lib/classic-store";
+import type { Story } from "@/lib/story-lock";
 import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
 import { CLASSIC_BUNDLE_VERSION, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
@@ -311,10 +312,19 @@ export function categoryUsageCount(challenges: readonly AdminChallenge[], catego
  *  that one reads the store server-side; this one reads client state — so an
  *  export built here round-trips through `parseBundle` exactly like a
  *  server-side export would. Exported for direct testing. */
-export function exportBundleFrom(rows: readonly AdminChallenge[], categories: readonly string[]): ClassicBundle {
+export function exportBundleFrom(
+  rows: readonly AdminChallenge[],
+  categories: readonly string[],
+  stories: readonly Story[] = [],
+): ClassicBundle {
+  // A step must name a challenge in the same file, or parseBundle refuses
+  // the file this function just wrote (#463). The store drops a deleted
+  // challenge from its story too; this is the same rule at the client door.
+  const exported = new Set(rows.map((r) => r.challenge.id));
   return {
     version: CLASSIC_BUNDLE_VERSION,
     categories: [...categories],
+    stories: stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) })),
     challenges: rows.map(({ challenge: c, flag, hint }) => ({
       id: c.id,
       title: c.title,
@@ -339,7 +349,9 @@ export function exportBundleFrom(rows: readonly AdminChallenge[], categories: re
  *  pluralization branch (and the created/updated interpolation next to it)
  *  has to live outside a render tree to be exercised by a test at all.
  *  Exported for direct testing. */
-export function formatImportSummary({ created, updated, categories }: ImportSummary): string {
+export function formatImportSummary({ created, updated, categories, stories }: ImportSummary): string {
   const categoryWord = categories === 1 ? "category" : "categories";
-  return `Imported: ${created} created, ${updated} updated. (${categories} ${categoryWord} listed in the file.)`;
+  // `stories` is present only for a v2 file (#463); a v1 summary reads as before.
+  const storyPart = stories === undefined ? "" : `, ${stories} ${stories === 1 ? "story" : "stories"}`;
+  return `Imported: ${created} created, ${updated} updated. (${categories} ${categoryWord}${storyPart} listed in the file.)`;
 }

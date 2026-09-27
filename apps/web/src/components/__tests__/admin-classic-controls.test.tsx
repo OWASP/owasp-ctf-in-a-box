@@ -392,6 +392,58 @@ describe("exportBundleFrom", () => {
   });
 });
 
+// #463: the client export is the organizer's backup door, so it must carry
+// the stories the server's exportBundle carries — or a re-import silently
+// flattens every chain.
+describe("exportBundleFrom — stories (#463)", () => {
+  const story = { id: "op", title: "Operation", intro: "Begin here.", steps: [c1.id] };
+  it("carries the stories, and its own parser accepts the result", () => {
+    const bundle = exportBundleFrom([row1], ["Web"], [story]);
+    expect(bundle.stories).toEqual([story]);
+    const parsed = parseBundle(serializeBundle(bundle));
+    expect(parsed.ok && parsed.bundle.stories).toEqual([story]);
+  });
+  it("drops a step whose challenge is not in the export, so the file still parses", () => {
+    const bundle = exportBundleFrom([row1], ["Web"], [{ ...story, steps: [c1.id, "gone-zz99zz"] }]);
+    expect(bundle.stories?.[0].steps).toEqual([c1.id]);
+    expect(parseBundle(serializeBundle(bundle)).ok).toBe(true);
+  });
+});
+
+describe("formatImportSummary — stories (#463)", () => {
+  it("names the stories a v2 file carried, and stays silent for a v1 file", () => {
+    expect(formatImportSummary({ created: 1, updated: 0, categories: 1, stories: 2 })).toBe(
+      "Imported: 1 created, 0 updated. (1 category, 2 stories listed in the file.)",
+    );
+    expect(formatImportSummary({ created: 1, updated: 0, categories: 1, stories: 1 })).toMatch(/1 story listed/);
+    expect(formatImportSummary({ created: 1, updated: 0, categories: 1 })).not.toMatch(/stor/);
+  });
+});
+
+describe("AdminClassicControls — stories editor (#463)", () => {
+  it("renders the story editor below the categories, with the seeded story and its steps", () => {
+    const html = renderToStaticMarkup(
+      <AdminClassicControls
+        initialLoaded
+        pending={false}
+        classicCooldownSecInput="5"
+        setClassicCooldownSecInput={noop}
+        commitNumber={noop}
+        initialChallenges={[row1, row2]}
+        initialCategories={["Web"]}
+        initialStories={[{ id: "op", title: "Operation Red", intro: "", steps: [c2.id, c1.id] }]}
+      />,
+    );
+    const categoriesAt = html.indexOf(">Categories<");
+    const storiesAt = html.indexOf(">Stories<");
+    expect(categoriesAt).toBeGreaterThan(-1);
+    expect(storiesAt).toBeGreaterThan(categoriesAt);
+    expect(html).toContain("Operation Red");
+    // Steps in story order, by challenge title.
+    expect(html.indexOf(c2.title, storiesAt)).toBeLessThan(html.indexOf(c1.title, storiesAt));
+  });
+});
+
 describe("payloadFromRow", () => {
   it("round-trips a stored row unchanged, so a reorder re-saves only the order", () => {
     const payload = payloadFromRow({ challenge: { ...c1, order: 3 }, flag: "CTF{real}", hint: null });

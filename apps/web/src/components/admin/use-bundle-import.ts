@@ -42,8 +42,9 @@ export const FILE_READ_ERROR: ImportError = {
 /** What a module's `parseBundle` returns, as far as this hook cares. */
 export type BundleParse = { ok: true } | { ok: false; errors: ImportError[] };
 
-/** The counts a successful import reply carries. `categories` is classic's. */
-export type ImportReply = { created?: number; updated?: number; categories?: number };
+/** The counts a successful import reply carries. `categories` is classic's,
+ *  and so is `stories` — sent only for a v2 bundle (#463). */
+export type ImportReply = { created?: number; updated?: number; categories?: number; stories?: number };
 
 /** The client-side gate on the Import button. Convenience only — the server
  *  re-validates the raw text regardless — and skipped entirely on an empty

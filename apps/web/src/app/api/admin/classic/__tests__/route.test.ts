@@ -22,6 +22,9 @@ const {
   deleteChallenge,
   importBundle,
   renameCategory,
+  listStories,
+  setStories,
+  listChallengeIds,
   writeAdminAudit,
   ClassicValidationError,
 } = vi.hoisted(() => {
@@ -46,6 +49,9 @@ const {
     deleteChallenge: vi.fn(),
     importBundle: vi.fn(),
     renameCategory: vi.fn(),
+    listStories: vi.fn(),
+    setStories: vi.fn(),
+    listChallengeIds: vi.fn(),
     writeAdminAudit: vi.fn(),
     ClassicValidationError,
   };
@@ -61,6 +67,9 @@ vi.mock("@/lib/classic-store", () => ({
   deleteChallenge,
   importBundle,
   renameCategory,
+  listStories,
+  setStories,
+  listChallengeIds,
   ClassicValidationError,
 }));
 // `adminErrorLabel` is the real (name+message, capped) implementation, not a
@@ -84,6 +93,7 @@ import {
   CATEGORIES_KEYS,
   IMPORT_KEYS,
   RENAME_CATEGORY_KEYS,
+  STORIES_KEYS,
 } from "@/app/api/admin/classic/route";
 
 const adminReq = (method: "GET" | "POST" | "DELETE", body?: unknown) =>
@@ -126,7 +136,12 @@ beforeEach(() => {
   deleteChallenge.mockReset();
   importBundle.mockReset();
   renameCategory.mockReset();
+  listStories.mockReset();
+  setStories.mockReset();
+  listChallengeIds.mockReset();
   writeAdminAudit.mockReset();
+  listStories.mockResolvedValue([]);
+  listChallengeIds.mockResolvedValue(new Set(["c-1", "c-2"]));
   allowAdmin();
   listChallengesForAdmin.mockResolvedValue([ADMIN_ROW]);
   listCategories.mockResolvedValue(["Web"]);
@@ -155,7 +170,7 @@ describe("GET /api/admin/classic", () => {
   it("returns challenges (with flags) and categories for an admin", async () => {
     const res = await GET(adminReq("GET"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"] });
+    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [] });
   });
 
   // Finding B: the store reads were not wrapped in a try/catch, so a
@@ -224,6 +239,8 @@ describe("POST /api/admin/classic — dispatch key sets", () => {
       // promised; RENAME_FIELD_KEYS is deliberately absent because it names
       // the INNER object's keys, which never take part in outer dispatch.
       ["RENAME_CATEGORY_KEYS", RENAME_CATEGORY_KEYS],
+      // The fifth shape (#463).
+      ["STORIES_KEYS", STORIES_KEYS],
     ] as const;
     for (const [aName, a] of sets) {
       for (const [bName, b] of sets) {
@@ -434,6 +451,49 @@ describe("POST /api/admin/classic — import", () => {
     importBundle.mockResolvedValue({ created: 2, updated: 0, categories: 2 });
     await POST(adminReq("POST", { import: JSON.stringify(validBundle) }));
     expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-import", { created: 2, updated: 0, categories: 2 });
+  });
+});
+
+// #463: the story authoring shape — exactly `{ stories }`, the whole list.
+describe("POST /api/admin/classic — stories", () => {
+  const STORY = { id: "op", title: "Operation", intro: "", steps: ["c-1", "c-2"] };
+
+  it("checks requireAdmin before reading or writing anything", async () => {
+    denyAdmin();
+    const res = await POST(adminReq("POST", { stories: [STORY] }));
+    expect(res.status).toBe(403);
+    expect(listChallengeIds).not.toHaveBeenCalled();
+    expect(setStories).not.toHaveBeenCalled();
+  });
+
+  it("replaces the list, echoes what was stored, and writes an audit line", async () => {
+    setStories.mockResolvedValue([STORY]);
+    const res = await POST(adminReq("POST", { stories: [STORY] }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ stories: [STORY] });
+    expect(setStories).toHaveBeenCalledWith([STORY]);
+    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-stories", { count: 1 });
+  });
+
+  it("400s a step naming a challenge that does not exist, without writing", async () => {
+    const res = await POST(adminReq("POST", { stories: [{ ...STORY, steps: ["c-1", "ghost-zz99zz"] }] }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/ghost-zz99zz/);
+    expect(setStories).not.toHaveBeenCalled();
+  });
+
+  it("400s a non-array and a body carrying another key too", async () => {
+    expect((await POST(adminReq("POST", { stories: "op" }))).status).toBe(400);
+    expect((await POST(adminReq("POST", { stories: [STORY], categories: ["Web"] }))).status).toBe(400);
+    expect(setStories).not.toHaveBeenCalled();
+    expect(setCategories).not.toHaveBeenCalled();
+  });
+
+  it("maps a store validation error to 400 and a read failure to 503", async () => {
+    setStories.mockRejectedValue(new ClassicValidationError("stories", "c-1 is in two stories"));
+    expect((await POST(adminReq("POST", { stories: [STORY] }))).status).toBe(400);
+    listChallengeIds.mockRejectedValue(new Error("upstash down"));
+    expect((await POST(adminReq("POST", { stories: [STORY] }))).status).toBe(503);
   });
 });
 

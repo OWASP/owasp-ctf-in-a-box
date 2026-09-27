@@ -7,13 +7,17 @@ import {
   deleteChallenge,
   importBundle,
   listCategories,
+  listChallengeIds,
   listChallengesForAdmin,
+  listStories,
   renameCategory,
   setCategories,
+  setStories,
   upsertChallenge,
   type AdminChallenge,
   type Challenge,
 } from "@/lib/classic-store";
+import type { Story } from "@/lib/story-lock";
 
 /**
  * Organizer authoring surface for the classic (flag) module: list (GET),
@@ -41,14 +45,15 @@ import {
  * guard: unknown keys, wrong types, or a missing field all fail closed with a
  * 400, never a partially-trusted write.
  *
- * POST carries FOUR distinct payload shapes on the SAME route rather than a
+ * POST carries FIVE distinct payload shapes on the SAME route rather than a
  * separate endpoint per resource: a body with exactly one key, `categories`
  * (an array), replaces the category list; one with exactly `renameCategory`
  * ({from, to}) renames a single category and carries its challenges across
  * (#304 — the array shape cannot express that, since a renamed entry is
  * indistinguishable from one removed plus one added); one with exactly
- * `import` (a string) bulk-imports a challenge bundle; anything else is
- * parsed as a challenge-plus-flag upsert. The four key sets never overlap,
+ * `import` (a string) bulk-imports a challenge bundle; one with exactly
+ * `stories` (an array) replaces the story list (#463); anything else is
+ * parsed as a challenge-plus-flag upsert. The five key sets never overlap,
  * so the shape alone is enough to dispatch — no extra discriminator field for
  * a caller to get wrong. See the exported `*_KEYS` constants below and the
  * route test's "keeps every payload key set pairwise disjoint" case, which
@@ -92,6 +97,9 @@ export const CATEGORIES_KEYS = new Set(["categories"]);
 export const RENAME_CATEGORY_KEYS = new Set(["renameCategory"]);
 export const RENAME_FIELD_KEYS = new Set(["from", "to"]);
 export const IMPORT_KEYS = new Set(["import"]);
+/** The story shape (#463): the whole list, and each story's own keys. */
+export const STORIES_KEYS = new Set(["stories"]);
+export const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -181,6 +189,24 @@ function parseImportPayload(body: unknown): string | null {
   return body.import;
 }
 
+/** Recognizes the FIFTH POST shape (#463): exactly `stories`, the whole
+ *  story list — each entry exactly `{ id, title, intro?, steps }` with string
+ *  fields and a string-array `steps`. Shape only: `setStories` owns the
+ *  content rules (id format, caps, one story per challenge), and the handler
+ *  checks every step names a challenge that exists. */
+function parseStoriesPayload(body: unknown): Story[] | null {
+  if (!isPlainObject(body) || !hasOnlyKeys(body, STORIES_KEYS) || !Array.isArray(body.stories)) return null;
+  const stories: Story[] = [];
+  for (const st of body.stories) {
+    if (!isPlainObject(st) || !hasOnlyKeys(st, STORY_KEYS)) return null;
+    if (typeof st.id !== "string" || typeof st.title !== "string") return null;
+    if (st.intro !== undefined && typeof st.intro !== "string") return null;
+    if (!Array.isArray(st.steps) || !st.steps.every((step) => typeof step === "string")) return null;
+    stories.push({ id: st.id, title: st.title, intro: st.intro ?? "", steps: st.steps as string[] });
+  }
+  return stories;
+}
+
 /** Maps an error thrown by `upsertChallenge`/`deleteChallenge`/`setCategories`
  *  to a response: a `ClassicValidationError` means the caller's payload was
  *  genuinely bad (bad id, unknown category, non-integer points, empty flag,
@@ -209,12 +235,13 @@ export async function GET(request: Request) {
   // unauthenticated request is no longer merely wasted work.
   let challenges: AdminChallenge[];
   let categories: string[];
+  let stories: Story[];
   try {
-    [challenges, categories] = await Promise.all([listChallengesForAdmin(), listCategories()]);
+    [challenges, categories, stories] = await Promise.all([listChallengesForAdmin(), listCategories(), listStories()]);
   } catch (err) {
     return errorResponse(err);
   }
-  return NextResponse.json({ challenges, categories });
+  return NextResponse.json({ challenges, categories, stories });
 }
 
 export async function POST(request: Request) {
@@ -233,6 +260,24 @@ export async function POST(request: Request) {
     }
     await writeAdminAudit(gate.login, "classic-categories", { count: categories.length });
     return NextResponse.json({ categories });
+  }
+
+  const storiesPayload = parseStoriesPayload(body);
+  if (storiesPayload) {
+    let stories: Story[];
+    try {
+      // A step must name a challenge that exists: the store checks a step id's
+      // shape, not its existence (#463). A ghost step would otherwise sit in
+      // the list, dropped at read time by storyPositions, invisible here.
+      const existing = await listChallengeIds();
+      const ghost = storiesPayload.flatMap((st) => st.steps).find((step) => !existing.has(step));
+      if (ghost) throw new ClassicValidationError("stories", `No challenge with id ${ghost}`);
+      stories = await setStories(storiesPayload);
+    } catch (err) {
+      return errorResponse(err);
+    }
+    await writeAdminAudit(gate.login, "classic-stories", { count: stories.length });
+    return NextResponse.json({ stories });
   }
 
   const renamePayload = parseRenameCategoryPayload(body);
@@ -272,6 +317,7 @@ export async function POST(request: Request) {
       created: summary.created,
       updated: summary.updated,
       categories: summary.categories,
+      ...(summary.stories !== undefined ? { stories: summary.stories } : {}),
     });
     return NextResponse.json(summary);
   }

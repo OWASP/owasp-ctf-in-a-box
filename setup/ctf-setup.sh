@@ -429,8 +429,8 @@ cmd_doctor() {
   if [ -n "$(env_val CHALLENGES_GATE_ENABLED)" ] || [ -n "$(env_val CHALLENGES_GATE_PASSWORD)" ]; then
     printf '%s⚠️  %s sets CHALLENGES_GATE_ENABLED / CHALLENGES_GATE_PASSWORD — the password gate is REMOVED (#464) and the keys are no longer read.%s\n' \
       "$C_YELLOW" "${OUT:-.env}" "$C_RESET"
-    printf '    The event is locked until you launch it: set Scoring opens on the Event\n'
-    printf '    tab in /admin. Delete both lines.\n\n'
+    printf '    The event is locked until you launch it: press Launch in /admin → Event, or\n'
+    printf '    set Scoring opens there. Delete both lines.\n\n'
   fi
   # Every event needs an official launch (#464): until then contestants see
   # the landing page only and nothing scores. Asked of the box itself (the

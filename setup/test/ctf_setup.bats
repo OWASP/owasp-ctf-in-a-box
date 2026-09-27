@@ -466,8 +466,8 @@ EOF
     echo 'Missing doctor output: removed password-gate warning' >&2
     return 1
   fi
-  if ! printf '%s' "$output" | grep -qF -- 'set Scoring opens on the Event'; then
-    echo 'Missing doctor output: the Scoring opens launch guidance' >&2
+  if ! printf '%s' "$output" | grep -qF -- 'press Launch in /admin'; then
+    echo 'Missing doctor output: the Launch guidance' >&2
     return 1
   fi
   # The password itself must never be echoed back.

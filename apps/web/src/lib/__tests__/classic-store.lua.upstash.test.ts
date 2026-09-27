@@ -63,12 +63,33 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
   }
 
   /** Runs the script exactly as `submitFlag` does, with both comparison forms. */
-  async function submit(id: string, flag: string, { nowMs = T0, cooldownMs = 5_000, login = LOGIN, dry = false } = {}) {
+  async function submit(
+    id: string,
+    flag: string,
+    {
+      nowMs = T0,
+      cooldownMs = 5_000,
+      login = LOGIN,
+      dry = false,
+      prereq = "",
+      teamSolveKeys = [] as string[],
+    } = {},
+  ) {
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved],
-      [id, keys.normalizeFlag(flag), iso(nowMs), login, cooldownMs, nowMs, keys.caseSensitiveFlagForm(flag), dry ? "1" : "0"],
+      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, ...teamSolveKeys],
+      [
+        id,
+        keys.normalizeFlag(flag),
+        iso(nowMs),
+        login,
+        cooldownMs,
+        nowMs,
+        keys.caseSensitiveFlagForm(flag),
+        dry ? "1" : "0",
+        prereq, // ARGV[9] — #463 story prerequisite ("" = none)
+      ],
     );
   }
 
@@ -213,5 +234,35 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     expect(await submit(id, "flag{right}")).toEqual(["correct", "25"]);
     expect(await snapshot()).not.toEqual(before);
     expect(await hget(K.solves, id)).toBe(`{"points":25,"at":"${iso(T0)}"}`);
+  });
+
+  // #463 stories: a step is locked until a TEAMMATE (any of the solves hashes
+  // handed in) has solved its prerequisite — decided in the script, before any
+  // write, so a locked step costs no attempt and is no flag oracle.
+  it("story lock: refuses a locked step with `locked`, writing nothing — then grades the SAME flag once a teammate solved the prerequisite", async () => {
+    const prereqId = freshId("recon");
+    const id = freshId("web");
+    await seed(id, "flag{web}", 40);
+    const teammate = liveKey("classic", freshId("solves-bob"));
+    const before = await snapshot();
+    expect(await submit(id, "flag{web}", { prereq: prereqId, teamSolveKeys: [K.solves, teammate] })).toEqual(["locked"]);
+    expect(await snapshot()).toEqual(before);
+
+    // A NON-teammate's solve does not count — only the keys the caller hands in.
+    const stranger = liveKey("classic", freshId("solves-eve"));
+    await pipeline([["HSET", stranger, prereqId, '{"points":1,"at":"x"}']]);
+    expect(await submit(id, "flag{web}", { prereq: prereqId, teamSolveKeys: [K.solves, teammate] })).toEqual(["locked"]);
+
+    // The teammate solves the prerequisite: the same flag now grades.
+    await pipeline([["HSET", teammate, prereqId, '{"points":10,"at":"x"}']]);
+    expect(await submit(id, "flag{web}", { prereq: prereqId, teamSolveKeys: [K.solves, teammate] })).toEqual(["correct", "40"]);
+    await pipeline([["DEL", teammate, stranger]]);
+  });
+
+  it("story lock: still refuses an unknown challenge first, and a dry-run preview skips the lock", async () => {
+    expect(await submit(freshId("ghost"), "x", { prereq: "p", teamSolveKeys: [K.solves] })).toEqual(["missing"]);
+    const id = freshId("dry-story");
+    await seed(id, "flag{x}", 5);
+    expect(await submit(id, "flag{x}", { prereq: freshId("p"), teamSolveKeys: [K.solves], dry: true })).toEqual(["correct", "5", "dry"]);
   });
 });

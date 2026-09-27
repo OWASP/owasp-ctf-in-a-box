@@ -163,6 +163,9 @@ export function describeRefusal(reason: string): string {
       // submitted a flag and is being told it didn't count; "you need a team"
       // without saying where to get one is a dead end.
       return "You need a team before solves count — create one on your profile, or hit Play solo there for a team of one.";
+    case "locked":
+      // #463: a story step whose previous step the team hasn't solved yet.
+      return "This step is still locked — solve the previous step in the story first.";
     case "not-launched":
       // #464: reachable from a tab loaded before an un-launch — the page
       // itself redirects before launch, but an open tab can still submit.

@@ -1,5 +1,6 @@
 import "server-only";
-import type { Story } from "@/lib/story-lock";
+import { storyPositions, type Story } from "@/lib/story-lock";
+import { teamSolveKeys } from "@/lib/classic-team";
 // Re-exported, not redeclared — the admin UI cannot import a server-only
 // module, so the value lives in the dependency-free defaults file.
 export { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
@@ -1014,6 +1015,18 @@ if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 local cooldownMs = tonumber(ARGV[5])
 local nowMs = tonumber(ARGV[6])
 local dry = ARGV[8] == '1'
+-- STORY LOCK (#463): ARGV[9] names this step's prerequisite ("" when the
+-- challenge is not a later story step). It is open only if some TEAMMATE —
+-- one of the solves hashes the caller handed in as KEYS[8..] — holds it.
+-- Checked before any read or write of attempts, so a locked step spends no
+-- attempt and cannot be used to test a flag. A dry-run preview skips it.
+if not dry and ARGV[9] and ARGV[9] ~= '' then
+  local open = false
+  for i = 8, #KEYS do
+    if redis.call('HEXISTS', KEYS[i], ARGV[9]) == 1 then open = true break end
+  end
+  if not open then return {'locked'} end
+end
 
 local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
 local attempts = 0
@@ -1079,7 +1092,7 @@ export type SubmitResult =
   // wrote NOTHING, so `points` is what the flag is worth, not what was banked.
   | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
   | { ok: true; correct: false; dryRun?: true }
-  | { ok: false; reason: "paused" | "solved" | "cooldown"; retryAt?: string }
+  | { ok: false; reason: "paused" | "solved" | "cooldown" | "locked"; retryAt?: string }
   // The gate's lookup itself failed (fail-closed), the submission was
   // malformed / named an unknown challenge, or the script blew up. Kept
   // distinct from the gate reasons above so a caller-facing message can say
@@ -1137,6 +1150,23 @@ export async function submitFlag(
       : { ok: false, reason: gate.reason };
   }
 
+  // STORY LOCK (#463): a later story step names its prerequisite, and the
+  // script checks it against every teammate's solves hash. Resolved here and
+  // enforced THERE (the script is the authority). A stories or team read that
+  // fails is `unavailable` — closed, never "no lock".
+  let prereq = "";
+  let lockKeys: string[] = [];
+  try {
+    const pos = storyPositions(await listStories()).get(challengeId);
+    if (pos?.prereq) {
+      prereq = pos.prereq;
+      lockKeys = await teamSolveKeys(login);
+    }
+  } catch (err) {
+    console.error("classic: story lock lookup failed (failing closed):", errorLabel(err));
+    return { ok: false, reason: "unavailable" };
+  }
+
   const now = new Date();
   const nowIso = now.toISOString();
   // A duration in ms, recomputed from the SAME settings the pre-check used —
@@ -1157,6 +1187,7 @@ export async function submitFlag(
         POINTS_KEY, // KEYS[5]
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
+        ...lockKeys, // KEYS[8..] — teammates' solves hashes, for the story lock (#463)
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the
@@ -1172,6 +1203,7 @@ export async function submitFlag(
         now.getTime(),
         caseSensitiveFlagForm(flag), // ARGV[7] — case preserved (issue #193)
         dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing (#464)
+        prereq, // ARGV[9] — story prerequisite, "" when none (#463)
       ],
     );
   } catch (err) {
@@ -1181,6 +1213,8 @@ export async function submitFlag(
 
   const [status, value, marker] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") return { ok: false, reason: "invalid" };
+  // A locked story step (#463): its own reason — never a wrong answer.
+  if (status === "locked") return { ok: false, reason: "locked" };
   // A dry verdict carries a trailing 'dry' from the script itself, so a
   // preview result can never be read as a banked solve.
   if (marker === "dry") {

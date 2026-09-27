@@ -258,3 +258,13 @@ describe("a teamless admin preview (#464)", () => {
     expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: true });
   });
 });
+
+describe("a locked story step (#463)", () => {
+  it("answers 403 { error: \"locked\" } — its own refusal, not a wrong answer", async () => {
+    session("alice");
+    storeReturns({ ok: false, reason: "locked" });
+    const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "locked" });
+  });
+});

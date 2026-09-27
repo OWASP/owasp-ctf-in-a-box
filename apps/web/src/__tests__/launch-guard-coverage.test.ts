@@ -105,7 +105,8 @@ describe("launch guard coverage (#464)", () => {
   });
 
   it.each(lockedRoutes.map((p) => [rel(p), p]))("route %s calls the launch lock", (_name, p) => {
-    expect(readFileSync(p, "utf8")).toMatch(/await (requireLaunchedApi|launchApiAccess)\(/);
+    // classicVisibility (#186) asks the launch lock itself — pinned above.
+    expect(readFileSync(p, "utf8")).toMatch(/await (requireLaunchedApi|launchApiAccess|classicVisibility)\(/);
   });
 
   it("guards the ai launch-token mint (the server action behind /ai/[id])", () => {

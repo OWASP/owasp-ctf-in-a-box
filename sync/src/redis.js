@@ -17,6 +17,17 @@ export function outsideWindow(nowMs, startsAt, endsAt) {
   return false;
 }
 
+// The SCORING window: outsideWindow plus a REQUIRED start (issue #464 —
+// every event needs an official launch). An absent or unparseable
+// scoringStartsAt means "not launched", so ingestion holds. Mirrors apps/web
+// schedule-window.ts and scorer/src/store.js — change all three together;
+// test/fixtures/scoring-window-corpus.json pins them.
+export function outsideScoringWindow(nowMs, startsAt, endsAt) {
+  const s = startsAt ? Date.parse(startsAt) : NaN;
+  if (!Number.isFinite(s)) return true;
+  return outsideWindow(nowMs, startsAt, endsAt);
+}
+
 // How long one /pipeline round trip may take before it is treated as a failed
 // read. A backend that accepts the connection and never answers would
 // otherwise stall the tick forever, and `restart: on-failure` cannot help a
@@ -65,13 +76,14 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
   return {
     async isPaused() {
       try {
-        // Effective freeze = manual toggle OR scheduled scoring window.
+        // Effective freeze = manual toggle OR scheduled scoring window
+        // (including "not launched": no scoringStartsAt at all).
         const [row] = await pipeline([
           ["HMGET", ADMIN_SETTINGS_KEY, "paused", "scoringStartsAt", "scoringEndsAt"],
         ]);
         const [paused, startsAt, endsAt] = Array.isArray(row) ? row : [];
         if (paused === "1") return true;
-        return outsideWindow(Date.now(), startsAt, endsAt);
+        return outsideScoringWindow(Date.now(), startsAt, endsAt);
       } catch (err) {
         log(`redis isPaused: ${err.message}`);
         return false; // fail open: a Redis blip must not freeze ingestion

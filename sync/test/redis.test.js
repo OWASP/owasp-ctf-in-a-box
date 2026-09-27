@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { makeRedis, outsideWindow } from "../src/redis.js";
+import { makeRedis, outsideScoringWindow, outsideWindow } from "../src/redis.js";
 import { TARGETS } from "../src/config.js";
 
 const PAST = "2000-01-01T00:00:00.000Z";
@@ -33,6 +33,24 @@ test("outsideWindow: shared boundary-instant corpus", async (t) => {
       assert.equal(outsideWindow(nowMs, startsAt, endsAt), expected);
     });
   }
+});
+
+// The scoring window's own corpus (#464): a start is REQUIRED — an absent or
+// unparseable scoringStartsAt means the event has not launched. Same rows run
+// against apps/web's schedule-window.ts and scorer/src/store.js.
+test("outsideScoringWindow: shared scoring-window corpus (#464)", async (t) => {
+  const url = new URL("../../test/fixtures/scoring-window-corpus.json", import.meta.url);
+  const { cases } = JSON.parse(await readFile(url, "utf8"));
+  for (const { description, nowMs, startsAt, endsAt, expected } of cases) {
+    await t.test(description, () => {
+      assert.equal(outsideScoringWindow(nowMs, startsAt, endsAt), expected);
+    });
+  }
+});
+
+test("isPaused: no scoringStartsAt means not launched, so paused (#464)", async () => {
+  const redis = makeRedis(env, hmgetFetch([null, null, null]));
+  assert.equal(await redis.isPaused(), true);
 });
 
 test("isPaused: manual flag pauses", async () => {

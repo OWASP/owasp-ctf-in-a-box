@@ -18,7 +18,7 @@ export type PhaseResolution = {
   endsAt: string | null;
 };
 
-/** results > manual freeze > registration > scheduled gap > live. */
+/** not launched > results > manual freeze > before start > scheduled gap > live. */
 export function phaseFromSettings(
   s: { paused: boolean; scoringStartsAt: string | null; scoringEndsAt: string | null },
   now: number = Date.now(),
@@ -26,11 +26,13 @@ export function phaseFromSettings(
   const start = s.scoringStartsAt ? Date.parse(s.scoringStartsAt) : NaN;
   const end = s.scoringEndsAt ? Date.parse(s.scoringEndsAt) : NaN;
   let phase: EventPhase;
-  if (Number.isFinite(end) && now > end) phase = "results";
-  else if (s.paused) phase = "frozen";
   // No (or an unparseable) scoring start = not launched (#464): the
-  // pre-launch lobby, exactly like "before a scheduled start".
-  else if (!Number.isFinite(start) || now < start) phase = "registration";
+  // pre-launch lobby, FIRST — an event that never launched has no results,
+  // whatever its end date says, and a freeze means nothing before launch.
+  if (!Number.isFinite(start)) phase = "registration";
+  else if (Number.isFinite(end) && now > end) phase = "results";
+  else if (s.paused) phase = "frozen";
+  else if (now < start) phase = "registration";
   else if (outsideScoringWindow(now, s.scoringStartsAt, s.scoringEndsAt)) phase = "frozen";
   else phase = "live";
   return { phase, startsAt: s.scoringStartsAt, endsAt: s.scoringEndsAt };

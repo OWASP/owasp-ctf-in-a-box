@@ -374,9 +374,11 @@ export default function AdminEventTab({
         <div>
           <span className="text-white">Schedule (auto dates)</span>
           <span className="block text-sm text-muted">
-            Optional. Times are your local time; leave blank for no bound. Scoring
-            auto-freezes outside its window; registration auto-closes outside its
-            window — on top of the manual toggles above.
+            Times are your local time. <strong className="text-white">Scoring opens is required</strong>{" "}
+            to launch: until it is set and has passed, the event is not launched
+            and nothing scores. The other three are optional — leave one blank for
+            no bound. Scoring auto-freezes outside its window; registration
+            auto-closes outside its window — on top of the manual toggles above.
           </span>
         </div>
         {/* The EFFECTIVE state, computed from the same fields this section

@@ -370,6 +370,15 @@ describe("AdminControls panel contents", () => {
     expect(eventPanel).toContain("registration is open");
   });
 
+  // #464: a blank Scoring opens now means "not launched", so the help text
+  // must not tell an organizer every date is optional.
+  it("says Scoring opens is required to launch, the other dates optional", () => {
+    const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
+    const eventPanel = panelFor(html, "event");
+    expect(eventPanel).toContain("Scoring opens is required");
+    expect(eventPanel).not.toContain("Optional. Times are your local time");
+  });
+
   it("names WHY scoring is frozen — manual freeze vs a closed window", () => {
     const manuallyFrozen = renderToStaticMarkup(
       <AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={{ ...settings, paused: true }} modules={twoModules} />,

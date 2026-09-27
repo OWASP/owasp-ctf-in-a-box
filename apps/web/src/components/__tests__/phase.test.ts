@@ -32,8 +32,19 @@ describe("phaseFromSettings", () => {
 
   it("is results after the scoring close, even while paused", () => {
     expect(
-      phaseFromSettings({ paused: true, scoringStartsAt: null, scoringEndsAt: iso(-HOUR) }).phase,
+      phaseFromSettings({ paused: true, scoringStartsAt: iso(-2 * HOUR), scoringEndsAt: iso(-HOUR) }).phase,
     ).toBe("results");
+  });
+
+  // #464: an event that never launched has no results to show, whatever its
+  // end date says — the lobby, not "See the final standings".
+  it("is registration, not results, when there is no start even if the end has passed", () => {
+    expect(
+      phaseFromSettings({ paused: false, scoringStartsAt: null, scoringEndsAt: iso(-HOUR) }).phase,
+    ).toBe("registration");
+    expect(
+      phaseFromSettings({ paused: true, scoringStartsAt: "nope", scoringEndsAt: iso(-HOUR) }).phase,
+    ).toBe("registration");
   });
 
   it("is frozen under a manual pause mid-event", () => {

@@ -278,17 +278,22 @@ submit_solves() {
   echo "   $login / $target: submitted $count solve(s) -> HTTP $status"
 }
 
-# Every event needs an official launch (#464): with no scoringStartsAt, the
-# scorer answers 503 "scoring is paused" and the seed below dies. A dev stack is
-# for poking at a live event, so launch it — HSETNX keeps a start an earlier
-# `up` (or /admin) already set, so a re-run never moves the clock.
+# Every event needs an official launch (#464): with no valid scoringStartsAt,
+# the scorer answers 503 "scoring is paused" and the seed below dies. A dev
+# stack is for poking at a live event, so launch it. A VALID start an earlier
+# `up` (or /admin) set is kept, so a re-run never moves the clock; an empty or
+# unparseable one is replaced, since every reader treats it as not launched.
+# Validity is judged by the scorer's own node (the same Date.parse the three
+# readers use), so bash never has to parse a date.
 launch_dev_event() {
-  local now
+  local now current
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  if [ "$(compose exec -T redis redis-cli HSETNX ctf:admin:settings scoringStartsAt "$now" | tr -d '[:space:]')" = "1" ]; then
-    echo "== launched the dev event (scoringStartsAt=$now)"
+  current="$(compose exec -T redis redis-cli HGET ctf:admin:settings scoringStartsAt | tr -d '\r')"
+  if [ -n "$current" ] && compose exec -T scorer node -e 'process.exit(Number.isFinite(Date.parse(process.argv[1])) ? 0 : 1)' "$current"; then
+    echo "== dev event already launched (scoringStartsAt=$current kept)"
   else
-    echo "== dev event already launched (scoringStartsAt kept)"
+    compose exec -T redis redis-cli HSET ctf:admin:settings scoringStartsAt "$now" >/dev/null
+    echo "== launched the dev event (scoringStartsAt=$now)"
   fi
 }
 

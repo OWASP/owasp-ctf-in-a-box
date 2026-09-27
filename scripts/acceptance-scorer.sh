@@ -348,6 +348,15 @@ score_freeze() {
     -d '{"author":"octocat","target":"juice-shop","solved":["reflected-xss-search"]}'
 }
 
+echo "--- freeze: an unlaunched event (no scoringStartsAt) rejects POST /score with 503"
+# #464: no scoring start = not launched = scoring closed, in every reader.
+# The launch below is what makes the 202 after the freeze clears meaningful.
+code=$(score_freeze)
+[ "$code" = "503" ] || { echo "FAIL: expected 503 before launch (scoringStartsAt unset), got $code"; exit 1; }
+
+echo "--- freeze: launch (write scoringStartsAt) for the freeze checks below"
+docker exec "$FREEZE_REDIS_CTR" redis-cli HSET ctf:admin:settings scoringStartsAt "2000-01-01T00:00:00Z" >/dev/null
+
 echo "--- freeze: ctf:admin:settings paused=1 rejects POST /score with 503"
 docker exec "$FREEZE_REDIS_CTR" redis-cli HSET ctf:admin:settings paused 1 >/dev/null
 code=$(score_freeze)

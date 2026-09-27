@@ -57,6 +57,10 @@ vi.mock("@/lib/classic-store", () => ({
   CLASSIC_COOLDOWN_SEC: 5,
 }));
 
+// #186 attachments: none by default.
+const attachmentMocks = vi.hoisted(() => ({ listAttachments: vi.fn(async () => [] as Record<string, unknown>[]) }));
+vi.mock("@/lib/attachments-store", () => attachmentMocks);
+
 import ClassicChallengePage, { generateMetadata } from "@/app/(site)/flags/[id]/page";
 
 // The store record carries grading material alongside the public fields —
@@ -168,6 +172,25 @@ describe("challenge page", () => {
 // The paid hint (#190): availability is public, the TEXT is not — it renders
 // only for the viewer who bought it, and the affordance never 401s a
 // signed-out visitor.
+describe("challenge page files (#186)", () => {
+  it("lists the challenge's files — never their hash or chunk bookkeeping", async () => {
+    attachmentMocks.listAttachments.mockResolvedValueOnce([
+      { id: "a0123456789abcdef", kind: "upload", name: "capture.pcap", size: 2048, sha256: "e".repeat(64), chunks: 1 },
+      { id: "a0123456789abcdee", kind: "link", name: "disk.img", url: "https://files.example.org/disk.img" },
+    ]);
+    const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+    expect(attachmentMocks.listAttachments).toHaveBeenCalledWith("classic", "c1");
+    expect(html).toContain('href="/api/attachments/a0123456789abcdef"');
+    expect(html).toContain("disk.img");
+    expect(html).not.toContain("e".repeat(64));
+  });
+
+  it("renders no Files section for a challenge without any", async () => {
+    const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+    expect(html).not.toContain(">Files<");
+  });
+});
+
 describe("challenge page hint", () => {
   beforeEach(() => {
     getClassicHintIds.mockResolvedValue(["c1"]);

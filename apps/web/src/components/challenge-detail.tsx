@@ -12,6 +12,7 @@
 // ai-store.ts). This component never sees — and cannot render — a flag:
 // `ChallengeView` has no field that could carry one.
 
+import AttachmentList, { type AttachmentView } from "@/components/attachment-list";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Markdown from "@/components/markdown";
@@ -43,6 +44,9 @@ export type ChallengeView = {
   /** Compared with capitalisation intact (issue #193). Public deliberately —
    *  see the badge below. Optional so every existing caller is unchanged. */
   caseSensitive?: boolean;
+  /** Files and links (#186), classic only today. Optional so every other
+   *  caller is unchanged; absent or empty renders nothing extra. */
+  attachments?: readonly AttachmentView[];
 } & ChallengeStatus;
 
 /** Old name, kept importable for classic's existing call sites and tests —
@@ -351,6 +355,7 @@ export function ChallengeCard({
       </div>
 
       <Markdown source={challenge.description} />
+      {challenge.attachments && <AttachmentList items={challenge.attachments} />}
 
       {/* OUTCOME AND ITS CONSEQUENCE, TOGETHER AND ABOVE THE FORM. Mirrors
           quiz-board.tsx exactly — the two boards mirror each other

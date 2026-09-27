@@ -33,6 +33,8 @@ import {
   type ViewerClassic,
 } from "@/lib/classic-store";
 import { classicVisibility } from "@/lib/classic-visibility";
+import { listAttachments } from "@/lib/attachments-store";
+import type { AttachmentView } from "@/components/attachment-list";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { redirectIfNotLaunched } from "@/lib/launch";
 import { getClassicHintIds, getHintNotice, getViewerHints } from "@/lib/hint-store";
@@ -100,6 +102,15 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   // preview (#464) may open it, to test the whole story before launch.
   if ((await classicVisibility(login, challengeId)).state !== "visible") notFound();
 
+  // Read only once the challenge is known visible (#186). Field by field for
+  // the same reason as the view below: the sha256 and chunk bookkeeping stay
+  // out of props, and a missing upload is dropped by AttachmentList itself.
+  const attachments: AttachmentView[] = (await listAttachments("classic", challenge.id)).map((a) =>
+    a.kind === "link"
+      ? { id: a.id, kind: "link", name: a.name, url: a.url ?? "" }
+      : { id: a.id, kind: "upload", name: a.name, size: a.size ?? 0, ...(a.missing ? { missing: true as const } : {}) },
+  );
+
   const moduleTitle = modules.find((m) => m.id === "classic")?.title ?? "Jeopardy";
   const cooldownMs = (settings.classicCooldownSec ?? CLASSIC_COOLDOWN_SEC) * 1000;
 
@@ -113,6 +124,7 @@ export default async function ClassicChallengePage({ params }: { params: Promise
     points: challenge.points,
     solveCount: solveCounts.get(challenge.id) ?? 0,
     caseSensitive: challenge.caseSensitive,
+    attachments,
     ...deriveStatus(viewerClassic.solved[challenge.id], viewerClassic.attempts[challenge.id], cooldownMs),
   };
 

@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { LOGIN_RE } from "@/lib/admin-admins";
 import { getViewerAi, listAiChallenges } from "@/lib/ai-store";
 import { getViewerClassic, listChallenges } from "@/lib/classic-store";
+import { auth } from "@/lib/auth";
 import { isModuleLive } from "@/lib/enabled-modules";
+import { requireLaunchedApi } from "@/lib/launch";
 import { getViewerQuiz, listQuestions } from "@/lib/quiz-store";
 
 /** How many logins one request may union — a team's roster, not a scrape. */
@@ -25,6 +27,13 @@ type Item = { id: string; label: string; points: number; done: boolean; earnedPo
  * reader that carries flags, hints and signing keys.
  */
 export async function GET(request: Request) {
+  // #464 pre-launch lock: this returns challenge titles and points, which is
+  // module content. The session is optional here (the board is public once
+  // launched); it is read only so an admin's preview board still loads.
+  const session = await auth.api.getSession({ headers: request.headers }).catch(() => null);
+  const notLaunched = await requireLaunchedApi((session?.user as { login?: string } | undefined)?.login);
+  if (notLaunched) return notLaunched;
+
   const raw = new URL(request.url).searchParams.get("logins") ?? "";
   const logins = raw.split(",").map((l) => l.trim()).filter(Boolean);
   if (logins.length === 0 || logins.length > MAX_LOGINS || !logins.every((l) => LOGIN_RE.test(l))) {

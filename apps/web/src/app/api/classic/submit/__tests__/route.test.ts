@@ -10,17 +10,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 
-const { getSession, submitFlag, requireGatePassed, hasTeam, CLASSIC_ID_RE } = vi.hoisted(() => ({
+const { getSession, submitFlag, requireLaunchedApi, hasTeam, CLASSIC_ID_RE } = vi.hoisted(() => ({
   getSession: vi.fn(),
   submitFlag: vi.fn(),
-  requireGatePassed: vi.fn(),
+  requireLaunchedApi: vi.fn(),
   hasTeam: vi.fn(),
   CLASSIC_ID_RE: /^[\w-]{1,64}$/,
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
-vi.mock("@/lib/gate-request", () => ({ requireGatePassed }));
+vi.mock("@/lib/launch", () => ({ requireLaunchedApi }));
 vi.mock("@/lib/classic-store", () => ({ submitFlag, CLASSIC_ID_RE }));
 vi.mock("@/lib/team-store", () => ({ hasTeam }));
 
@@ -46,10 +46,10 @@ function storeReturns(result: unknown) {
 beforeEach(() => {
   getSession.mockReset();
   submitFlag.mockReset();
-  requireGatePassed.mockReset();
+  requireLaunchedApi.mockReset();
   hasTeam.mockReset();
   getSession.mockResolvedValue(SESSION);
-  requireGatePassed.mockResolvedValue(true);
+  requireLaunchedApi.mockResolvedValue(null);
   hasTeam.mockResolvedValue(true);
 });
 
@@ -68,22 +68,22 @@ describe("POST /api/classic/submit", () => {
     expect(submitFlag).not.toHaveBeenCalled();
   });
 
-  it("403s with { error: \"gate\" } while the pre-event gate is active, without touching the store", async () => {
+  it("403s with { error: \"not-launched\" } before launch (#464), without touching the store", async () => {
     session("alice");
-    requireGatePassed.mockResolvedValue(false);
+    requireLaunchedApi.mockResolvedValue(Response.json({ error: "not-launched" }, { status: 403 }));
     const res = await POST(req({ challengeId: "c-1", flag: "x" }));
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "gate" });
+    expect(await res.json()).toEqual({ error: "not-launched" });
     expect(submitFlag).not.toHaveBeenCalled();
   });
 
   // Covers both "gate active, valid unlock cookie" and "gate inactive" —
-  // at this boundary they're the same case (requireGatePassed resolves
+  // at this boundary they're the same case (requireLaunchedApi resolves
   // true either way); the active-vs-inactive distinction is exercised
   // directly against the real cookie/crypto logic in gate.test.ts.
-  it("proceeds normally when the gate check passes", async () => {
+  it("proceeds normally once launched (or for an admin preview)", async () => {
     session("alice");
-    requireGatePassed.mockResolvedValue(true);
+    requireLaunchedApi.mockResolvedValue(null);
     storeReturns({ ok: true, correct: true, points: 50 });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
@@ -121,11 +121,11 @@ describe("POST /api/classic/submit", () => {
     expect(hasTeam).toHaveBeenCalledWith("alice");
   });
 
-  it("checks the gate BEFORE the team, so a pre-event caller is told that first", async () => {
-    requireGatePassed.mockResolvedValue(false);
+  it("checks the launch lock BEFORE the team, so a pre-launch caller is told that first", async () => {
+    requireLaunchedApi.mockResolvedValue(Response.json({ error: "not-launched" }, { status: 403 }));
     hasTeam.mockResolvedValue(false);
     const res = await POST(req({ challengeId: "c-1", flag: "x" }));
-    expect(await res.json()).toEqual({ error: "gate" });
+    expect(await res.json()).toEqual({ error: "not-launched" });
     expect(hasTeam).not.toHaveBeenCalled();
   });
 

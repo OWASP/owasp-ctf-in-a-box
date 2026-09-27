@@ -21,7 +21,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   getSession,
   requireAdmin,
-  requireGatePassed,
+  requireLaunchedApi,
   hasTeam,
   answerQuestion,
   listQuestions,
@@ -48,7 +48,7 @@ const {
   return {
     getSession: vi.fn(),
     requireAdmin: vi.fn(),
-    requireGatePassed: vi.fn(),
+    requireLaunchedApi: vi.fn(),
     hasTeam: vi.fn(),
     answerQuestion: vi.fn(),
     listQuestions: vi.fn(),
@@ -65,7 +65,7 @@ const {
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
-vi.mock("@/lib/gate-request", () => ({ requireGatePassed }));
+vi.mock("@/lib/launch", () => ({ requireLaunchedApi }));
 vi.mock("@/lib/team-store", () => ({ hasTeam }));
 vi.mock("@/lib/quiz-store", () => ({
   answerQuestion,
@@ -126,7 +126,7 @@ const ADMIN_ROW = { question: QUESTION, correct: ["opt-right"] };
 beforeEach(() => {
   getSession.mockReset();
   requireAdmin.mockReset();
-  requireGatePassed.mockReset();
+  requireLaunchedApi.mockReset();
   hasTeam.mockReset();
   answerQuestion.mockReset();
   listQuestions.mockReset();
@@ -136,7 +136,7 @@ beforeEach(() => {
   writeAdminAudit.mockReset();
   getSession.mockResolvedValue(SESSION);
   requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
-  requireGatePassed.mockResolvedValue(true);
+  requireLaunchedApi.mockResolvedValue(null);
   hasTeam.mockResolvedValue(true);
   writeAdminAudit.mockResolvedValue(undefined);
 });
@@ -156,20 +156,20 @@ describe("POST /api/quiz/answer", () => {
     expect(answerQuestion).not.toHaveBeenCalled();
   });
 
-  it("403s with { error: \"gate\" } while the pre-event gate is active, without touching the store", async () => {
-    requireGatePassed.mockResolvedValue(false);
+  it("403s with { error: \"not-launched\" } before launch (#464), without touching the store", async () => {
+    requireLaunchedApi.mockResolvedValue(Response.json({ error: "not-launched" }, { status: 403 }));
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "gate" });
+    expect(await res.json()).toEqual({ error: "not-launched" });
     expect(answerQuestion).not.toHaveBeenCalled();
   });
 
   // Covers both "gate active, valid unlock cookie" and "gate inactive" —
-  // at this boundary they're the same case (requireGatePassed resolves
+  // at this boundary they're the same case (requireLaunchedApi resolves
   // true either way); the active-vs-inactive distinction is exercised
   // directly against the real cookie/crypto logic in gate.test.ts.
-  it("proceeds normally when the gate check passes", async () => {
-    requireGatePassed.mockResolvedValue(true);
+  it("proceeds normally once launched (or for an admin preview)", async () => {
+    requireLaunchedApi.mockResolvedValue(null);
     answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(res.status).toBe(200);
@@ -197,13 +197,13 @@ describe("POST /api/quiz/answer", () => {
     expect(hasTeam).toHaveBeenCalledWith("alice");
   });
 
-  it("checks the gate BEFORE the team, so a pre-event caller is told that first", async () => {
+  it("checks the launch lock BEFORE the team, so a pre-launch caller is told that first", async () => {
     // Ordering matters for the message a contestant reads: before the event
     // has opened, "not yet" is the true answer, not "go make a team".
-    requireGatePassed.mockResolvedValue(false);
+    requireLaunchedApi.mockResolvedValue(Response.json({ error: "not-launched" }, { status: 403 }));
     hasTeam.mockResolvedValue(false);
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
-    expect(await res.json()).toEqual({ error: "gate" });
+    expect(await res.json()).toEqual({ error: "not-launched" });
     expect(hasTeam).not.toHaveBeenCalled();
   });
 

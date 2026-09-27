@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
-import { requireGatePassed } from "@/lib/gate-request";
+import { requireLaunchedApi } from "@/lib/launch";
 import { answerQuestion, QUIZ_ID_RE } from "@/lib/quiz-store";
 import { hasTeam } from "@/lib/team-store";
 
@@ -29,18 +29,17 @@ function isChoiceList(v: unknown): v is string[] {
  * result to a status code:
  *   - unauthenticated -> 401
  *   - session with no GitHub login -> 400
- *   - pre-event gate active, no valid unlock cookie -> 403 { error: "gate" }
+ *   - event not launched (and not an admin) -> 403 { error: "not-launched" }
  *   - malformed questionId/choices -> 400
  *   - unknown/missing question -> 404
  *   - gate refusal (paused/answered/exhausted/cooldown/unavailable) -> 403
  *   - grading script failure -> 503
  *   - success -> 200
  *
- * The pre-event gate check runs after authentication (so an unauthenticated
+ * The pre-launch lock (#464) runs after authentication (so an unauthenticated
  * caller still gets the more specific 401) and before `answerQuestion` is
  * ever called — a refusal here can never follow a write that already
- * happened. See `requireGatePassed` (apps/web/src/lib/gate-request.ts) and
- * docs/modules.md §5.8.
+ * happened. See `requireLaunchedApi` (apps/web/src/lib/launch.ts).
  *
  * No response from this route can ever reveal the correct choice ids:
  * `AnswerResult` (quiz-store's return type) never carries them, by
@@ -53,15 +52,16 @@ export async function POST(request: Request) {
   const login = (session.user as { login?: string }).login;
   if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
 
-  if (!(await requireGatePassed())) {
-    return NextResponse.json({ error: "gate" }, { status: 403 });
-  }
+  // #464 pre-launch lock (admins pass as a preview). Its own refusal —
+  // 403 `not-launched` — never a wrong-answer shape.
+  const notLaunched = await requireLaunchedApi(login);
+  if (notLaunched) return notLaunched;
 
   // Scoring is per team, and a teamless login's banked points fold into no
-  // team total (issue #153). Refused here, AFTER the gate (a pre-event lockout
+  // team total (issue #153). Refused here, AFTER the launch lock (a pre-launch lockout
   // is the more fundamental "not yet") and BEFORE `answerQuestion`, so the
   // refusal can never follow a write that already happened — the same ordering
-  // rule the gate check above follows. `hasTeam` fails OPEN, so a Redis blip
+  // rule the launch check above follows. `hasTeam` fails OPEN, so a Redis blip
   // lets the answer through rather than dropping it.
   if (!(await hasTeam(login))) {
     return NextResponse.json({ error: "no-team" }, { status: 403 });

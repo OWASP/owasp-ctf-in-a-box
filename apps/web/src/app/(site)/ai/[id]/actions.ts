@@ -17,7 +17,7 @@
 // THIS IS A SECURITY BOUNDARY, NOT A CONVENIENCE WRAPPER. A Server Action is
 // a POST endpoint with a generated id: anything that can reach the page can
 // reach it directly, so it re-checks every gate the page's render checked,
-// in the page's own order — module live, pre-event gate, session, team —
+// in the page's own order — module live, session, pre-launch lock, team —
 // before the store is touched. Nothing here may return (or import) anything
 // carrying a token, a flag or a signing key; `SubmitResponse` has no field
 // one could ride in.
@@ -37,7 +37,7 @@ import { AI_ID_RE } from "@/lib/ai-keys";
 import { submitAiFlag, type AiSubmitResult } from "@/lib/ai-store";
 import { auth } from "@/lib/auth";
 import { isModuleLive } from "@/lib/enabled-modules";
-import { requireGatePassed } from "@/lib/gate-request";
+import { getLaunchAccess } from "@/lib/launch";
 import { hasTeam } from "@/lib/team-store";
 
 /** Hard cap on a submitted flag's length, checked BEFORE the store ever sees
@@ -67,9 +67,10 @@ function toResponse(result: AiSubmitResult): SubmitResponse {
  * re-validated here — a bound argument travels through the client and is an
  * input like any other.
  *
- * Order is load-bearing and mirrors the page's render: the module and gate
- * checks run before the session is read (a disabled module is not a way to
- * probe a cookie), and every check runs before `submitAiFlag`, so a refusal
+ * Order is load-bearing and mirrors the page's render: the module check runs
+ * before the session is read (a disabled module is not a way to probe a
+ * cookie), the pre-launch lock (#464) needs the login so it comes right
+ * after, and every check runs before `submitAiFlag`, so a refusal
  * can never follow a write. `submitAiFlag` stays authoritative on pause,
  * cooldown, already-solved and grading — its Lua script re-checks all of it
  * atomically; nothing above re-implements any of that.
@@ -77,30 +78,17 @@ function toResponse(result: AiSubmitResult): SubmitResponse {
 export async function submitAiFlagAction(challengeId: string, flag: string): Promise<SubmitResponse> {
   if (!(await isModuleLive("ai"))) return { error: "unavailable" };
 
-  // The PRE-EVENT gate fails CLOSED — the opposite direction from the team
-  // check below. `requireGatePassed()` touches no store today and documents
-  // that it cannot error mid-request (gate-request.ts), but that is an
-  // implementation detail of the current check, not a contract this action
-  // may lean on: a future gate that reads from somewhere fallible must not
-  // silently start opening the board on an error. An exception here is
-  // treated exactly like a `false` — refused — because letting it propagate
-  // unhandled would hand the CLIENT (not this action) the decision, and open
-  // is the wrong default for a gate whose entire job is keeping the board
-  // closed until the event starts.
-  let gatePassed: boolean;
-  try {
-    gatePassed = await requireGatePassed();
-  } catch {
-    gatePassed = false;
-  }
-  if (!gatePassed) return { error: "gate" };
-
   const session = await auth.api.getSession({ headers: await headers() });
   const login = (session?.user as { login?: string } | undefined)?.login;
   if (!login) return { error: "unauthorized" };
 
+  // #464 pre-launch lock, CLOSED on uncertainty (getLaunchAccess never
+  // throws: a failed read counts as "not launched"), and the opposite
+  // direction from the team check below. Admins pass as a preview.
+  if (!(await getLaunchAccess(login)).allowed) return { error: "not-launched" };
+
   // Fails OPEN — same doctrine as the manual-freeze read, and the opposite
-  // direction from the gate above: a team-store error must not drop a solve a
+  // direction from the launch lock above: a team-store error must not drop a solve a
   // contestant is entitled to make, so a rejection here is read the same as
   // "has a team" rather than refused. `hasTeam` already swallows its own
   // errors and returns `true` (team-store.ts), so this only guards a caller

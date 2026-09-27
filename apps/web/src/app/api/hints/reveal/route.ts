@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { requireGatePassed } from "@/lib/gate-request";
+import { requireLaunchedApi } from "@/lib/launch";
 import { resolveHintConfig, revealHint } from "@/lib/hint-store";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 
@@ -8,11 +8,11 @@ import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
  *  repeat calls for an owned hint return it for free. Purchases are final;
  *  there is no refund route.
  *
- * Also behind the pre-event gate (`requireGatePassed`, checked after
+ * Also behind the pre-launch lock (`requireLaunchedApi`, #464, checked after
  * authentication and before `revealHint` is ever called): unlike the other
- * two gated routes, this one doesn't just bank points early — it returns
- * hint TEXT, so an ungated call would leak challenge content before the
- * event opens, not just score early. See docs/modules.md §5.8. */
+ * locked routes, this one doesn't just bank points early — it returns hint
+ * TEXT, so an unlocked call would leak challenge content before the event
+ * launches, not just score early. */
 export async function POST(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -20,11 +20,12 @@ export async function POST(request: Request) {
   const login = (session.user as { login?: string }).login;
   if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
 
-  if (!(await requireGatePassed())) {
-    return NextResponse.json({ error: "gate" }, { status: 403 });
-  }
+  // #464 pre-launch lock (admins pass as a preview). Its own refusal —
+  // 403 `not-launched` — never a wrong-answer shape.
+  const notLaunched = await requireLaunchedApi(login);
+  if (notLaunched) return notLaunched;
 
-  // After the gate, before any store write — a refusal here can never follow
+  // After the lock, before any store write — a refusal here can never follow
   // a charge that already happened.
   const limit = await consumeRateLimit(
     RATE_LIMITS.hintReveal.bucket,

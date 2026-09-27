@@ -8,17 +8,17 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getSession, revealHint, resolveHintConfig, requireGatePassed, consumeRateLimit } = vi.hoisted(() => ({
+const { getSession, revealHint, resolveHintConfig, requireLaunchedApi, consumeRateLimit } = vi.hoisted(() => ({
   getSession: vi.fn(),
   revealHint: vi.fn(),
   resolveHintConfig: vi.fn(),
-  requireGatePassed: vi.fn(),
+  requireLaunchedApi: vi.fn(),
   consumeRateLimit: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
-vi.mock("@/lib/gate-request", () => ({ requireGatePassed }));
+vi.mock("@/lib/launch", () => ({ requireLaunchedApi }));
 vi.mock("@/lib/hint-store", () => ({ revealHint, resolveHintConfig }));
 // Mocked EXPLICITLY rather than left to load for real. The real module fails
 // open on any Upstash error, so an unmocked import would quietly make every
@@ -40,10 +40,10 @@ beforeEach(() => {
   getSession.mockReset();
   revealHint.mockReset();
   resolveHintConfig.mockReset();
-  requireGatePassed.mockReset();
+  requireLaunchedApi.mockReset();
   consumeRateLimit.mockReset();
   getSession.mockResolvedValue(SESSION);
-  requireGatePassed.mockResolvedValue(true);
+  requireLaunchedApi.mockResolvedValue(null);
   consumeRateLimit.mockResolvedValue({ allowed: true });
   resolveHintConfig.mockResolvedValue({ enabled: true, cost: 10 });
 });
@@ -72,7 +72,7 @@ describe("POST /api/hints/reveal rate limiting", () => {
   });
 
   it("stays behind the pre-event gate — a gated call is refused before it is charged", async () => {
-    requireGatePassed.mockResolvedValue(false);
+    requireLaunchedApi.mockResolvedValue(Response.json({ error: "not-launched" }, { status: 403 }));
     const res = await POST(req({ app: "quiz", id: "q1" }));
     expect(res.status).toBe(403);
     expect(consumeRateLimit).not.toHaveBeenCalled();
@@ -94,20 +94,20 @@ describe("POST /api/hints/reveal", () => {
     expect(revealHint).not.toHaveBeenCalled();
   });
 
-  it("403s with { error: \"gate\" } while the pre-event gate is active, without revealing anything", async () => {
-    requireGatePassed.mockResolvedValue(false);
+  it("403s with { error: \"not-launched\" } before launch (#464), without revealing anything", async () => {
+    requireLaunchedApi.mockResolvedValue(Response.json({ error: "not-launched" }, { status: 403 }));
     const res = await POST(req({ app: "quiz", id: "q1" }));
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "gate" });
+    expect(await res.json()).toEqual({ error: "not-launched" });
     expect(revealHint).not.toHaveBeenCalled();
   });
 
   // Covers both "gate active, valid unlock cookie" and "gate inactive" —
-  // at this boundary they're the same case (requireGatePassed resolves
+  // at this boundary they're the same case (requireLaunchedApi resolves
   // true either way); the active-vs-inactive distinction is exercised
   // directly against the real cookie/crypto logic in gate.test.ts.
-  it("proceeds normally when the gate check passes", async () => {
-    requireGatePassed.mockResolvedValue(true);
+  it("proceeds normally once launched (or for an admin preview)", async () => {
+    requireLaunchedApi.mockResolvedValue(null);
     revealHint.mockResolvedValue({ ok: true, hint: "look under the rug", alreadyOwned: false, spent: 10 });
     const res = await POST(req({ app: "quiz", id: "q1" }));
     expect(res.status).toBe(200);

@@ -66,4 +66,11 @@ describe("phaseBoundaryLabel", () => {
   it("states the close time while live", () => {
     expect(phaseBoundaryLabel("live", null, "2099-08-24T18:00:00.000Z")).toMatch(/^until Aug 24, 6:00 PM UTC$/);
   });
+
+  // A freeze means nothing before the event has started: the phase is still
+  // the pre-launch lobby (otherwise the hero points at standings that the
+  // launch lock just bounces back to the landing page).
+  it("is registration, not frozen, when paused before a scheduled start", () => {
+    expect(phaseFromSettings({ paused: true, scoringStartsAt: iso(HOUR), scoringEndsAt: null }).phase).toBe("registration");
+  });
 });

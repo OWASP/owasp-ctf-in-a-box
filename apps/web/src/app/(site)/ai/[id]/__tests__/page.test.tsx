@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // lib/__tests__/launch.test.ts.
 const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
+  getLaunchAccess: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
@@ -477,5 +478,16 @@ describe("ai challenge page metadata", () => {
     expect(await generateMetadata(params("nope"))).toEqual({});
     isModuleEnabled.mockReturnValue(false);
     expect(await generateMetadata(params("a1"))).toEqual({});
+  });
+});
+
+describe("generateMetadata before launch (#464)", () => {
+  // Metadata runs on its own path — a flight/soft-nav response can carry it
+  // next to the page's redirect — so it must not read or return challenge
+  // content (title, category, points) for a refused viewer.
+  it("returns no metadata and reads no challenge list when the viewer is refused", async () => {
+    launchLock.getLaunchAccess.mockResolvedValueOnce({ allowed: false, preview: false });
+    expect(await generateMetadata(params("x"))).toEqual({});
+    expect(listAiChallenges).not.toHaveBeenCalled();
   });
 });

@@ -41,7 +41,7 @@ import {
   type ViewerAi,
 } from "@/lib/ai-store";
 import { isModuleLive } from "@/lib/enabled-modules";
-import { redirectIfNotLaunched } from "@/lib/launch";
+import { getLaunchAccess, redirectIfNotLaunched } from "@/lib/launch";
 import { getAiHintIds, getHintNotice, getViewerHints } from "@/lib/hint-store";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
@@ -52,6 +52,11 @@ const DEFAULT_TITLE = "AI";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   if (!(await isModuleLive("ai"))) return {};
+  // #464: metadata renders on its own path (a flight response can carry it
+  // next to the page's redirect), so it is locked too — a refused viewer gets
+  // no title, category or points, and not even whether the id exists.
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!(await getLaunchAccess((session?.user as { login?: string } | undefined)?.login)).allowed) return {};
   const { id } = await params;
   const challenge = (await listAiChallenges()).find((c) => c.id === decodeURIComponent(id));
   if (!challenge) return {};

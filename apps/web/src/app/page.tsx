@@ -357,7 +357,9 @@ export default async function Home({
                   {countFor(section.id) && (
                     <p className="font-mono text-xs tabular-nums text-[#8f8f9b]">{countFor(section.id)}</p>
                   )}
-                  {section.cta && (
+                  {/* Before launch (#464) every board redirects back here, so
+                      the card carries no link to one. */}
+                  {section.cta && phaseInfo?.phase !== "registration" && (
                     <Link
                       href={section.cta.href}
                       className="mt-1 inline-flex w-fit items-center rounded-md border border-white/15 px-4 py-2 text-sm font-medium text-white transition-colors hover:border-[#2563eb]/45 hover:bg-white/[0.04] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"

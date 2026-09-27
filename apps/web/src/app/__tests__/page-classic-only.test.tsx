@@ -26,12 +26,16 @@ vi.mock("@/lib/leaderboard/source", () => ({
 }));
 vi.mock("next/server", () => ({ connection: async () => {} }));
 vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+const launched = vi.hoisted(() => ({ startsAt: "2000-01-01T00:00:00.000Z" as string | null }));
 vi.mock("@/lib/admin-store", () => ({
   // `getResolvedModules` falls back to the baked shim's ALL-module
   // `defaultModuleIds` unless this names the fixture's own set.
   // `eventIdentity` is config v2's source for the event name (issue #386,
   // PR 1b).
   getAdminSettings: async () => ({
+    // A LAUNCHED event (#464): before launch the module cards carry no board
+    // link. Cleared only while the dateless metadata below is computed.
+    scoringStartsAt: launched.startsAt,
     moduleOverrides: {},
     enabledModuleIds: ["classic"],
     eventIdentity: { eventName: "Flag Night" },
@@ -57,7 +61,9 @@ import Home from "@/app/page";
 import { generateMetadata } from "@/app/layout";
 
 const html = await Home().then(renderToStaticMarkup);
+launched.startsAt = null; // the description would append a "From <date>"
 const metadata = await generateMetadata();
+launched.startsAt = "2000-01-01T00:00:00.000Z";
 
 describe("landing page in a classic-only event", () => {
   it("still renders the platform frame", () => {

@@ -80,7 +80,8 @@ esac
 echo "--- booting redis + srh for the launched containers"
 AA_SRH_TOKEN=acceptance-srh-token
 docker network create aa-net >/dev/null
-docker run -d --name aa-redis --network aa-net --network-alias redis redis:7-alpine >/dev/null
+docker run -d --name aa-redis --network aa-net --network-alias redis \
+  redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 >/dev/null
 docker run -d --name aa-srh --network aa-net --network-alias srh \
   -e SRH_MODE=env -e SRH_TOKEN="$AA_SRH_TOKEN" -e SRH_CONNECTION_STRING=redis://redis:6379 \
   hiett/serverless-redis-http:latest@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150 >/dev/null

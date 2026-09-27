@@ -474,6 +474,14 @@ describe("the landing page before launch (#464)", () => {
     });
   });
 
+  it("links no module card at a board before launch (it would only bounce back here)", async () => {
+    await withSettings({ scoringStartsAt: null, teamRegistrationOpen: true }, (html) => {
+      // The secure-development card's CTA label; the header nav may still name
+      // the board (it is navigation, and the page itself redirects).
+      expect(html).not.toContain("Browse targets");
+    });
+  });
+
   it("never points a teamed contestant at a board that would bounce them back here", async () => {
     viewer.session = { user: { login: "alice" } };
     viewer.hasTeam = true;

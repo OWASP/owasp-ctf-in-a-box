@@ -18,7 +18,7 @@ export type PhaseResolution = {
   endsAt: string | null;
 };
 
-/** not launched > results > manual freeze > before start > scheduled gap > live. */
+/** not launched > results > before start > manual freeze > scheduled gap > live. */
 export function phaseFromSettings(
   s: { paused: boolean; scoringStartsAt: string | null; scoringEndsAt: string | null },
   now: number = Date.now(),
@@ -31,8 +31,9 @@ export function phaseFromSettings(
   // whatever its end date says, and a freeze means nothing before launch.
   if (!Number.isFinite(start)) phase = "registration";
   else if (Number.isFinite(end) && now > end) phase = "results";
-  else if (s.paused) phase = "frozen";
+  // Before a scheduled start is still pre-launch, freeze or not.
   else if (now < start) phase = "registration";
+  else if (s.paused) phase = "frozen";
   else if (outsideScoringWindow(now, s.scoringStartsAt, s.scoringEndsAt)) phase = "frozen";
   else phase = "live";
   return { phase, startsAt: s.scoringStartsAt, endsAt: s.scoringEndsAt };

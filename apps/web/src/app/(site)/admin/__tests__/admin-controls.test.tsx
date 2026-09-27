@@ -862,3 +862,33 @@ describe("AdminControls ai panel", () => {
     expect(panelFor(html, "ai")).toContain('value="42"');
   });
 });
+
+describe("the Launch block (#464)", () => {
+  const render = (over: Partial<typeof settings>) =>
+    panelFor(
+      renderToStaticMarkup(
+        <AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={{ ...settings, ...over }} modules={twoModules} />,
+      ),
+      "event",
+    );
+
+  it("offers Launch now while not launched", () => {
+    const html = render({ scoringStartsAt: null });
+    expect(html).toContain("Not launched");
+    expect(html).toContain("Launch now");
+    expect(html).not.toContain("Un-launch");
+  });
+
+  it("names a scheduled launch and still offers Launch now", () => {
+    const html = render({ scoringStartsAt: "2999-01-01T00:00:00.000Z" });
+    expect(html).toContain("Scheduled for");
+    expect(html).toContain("Launch now");
+  });
+
+  it("offers Un-launch once live", () => {
+    const html = render({ scoringStartsAt: "2000-01-01T00:00:00.000Z" });
+    expect(html).toContain("Live since");
+    expect(html).toContain("Un-launch");
+    expect(html).not.toContain("Launch now");
+  });
+});

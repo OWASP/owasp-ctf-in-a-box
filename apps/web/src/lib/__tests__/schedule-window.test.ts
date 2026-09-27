@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { nextScheduleBoundary, outsideScoringWindow, outsideWindow } from "@/lib/schedule-window";
+import { launchState, nextScheduleBoundary, outsideScoringWindow, outsideWindow } from "@/lib/schedule-window";
 
 // Shared differential corpus (issue #232): the same cases run verbatim in
 // scorer/test/store.test.js and sync/test/redis.test.js against their own
@@ -84,5 +84,18 @@ describe("nextScheduleBoundary", () => {
     const at = nextScheduleBoundary(T, [w(null, endsAt)]);
     expect(at).toBe(T + 60_000 + 1);
     expect(outsideWindow(at!, null, endsAt)).toBe(true);
+  });
+});
+
+describe("launchState (#464, the /admin Launch block)", () => {
+  const now = Date.parse("2026-10-01T12:00:00Z");
+  it("is not-launched with no, an empty, or an unparseable start", () => {
+    expect(launchState(now, null)).toEqual({ kind: "not-launched" });
+    expect(launchState(now, "")).toEqual({ kind: "not-launched" });
+    expect(launchState(now, "nope")).toEqual({ kind: "not-launched" });
+  });
+  it("is scheduled while the start is ahead, and live from it on", () => {
+    expect(launchState(now, "2026-10-02T00:00:00Z")).toEqual({ kind: "scheduled", at: "2026-10-02T00:00:00.000Z" });
+    expect(launchState(now, "2026-10-01T12:00:00Z")).toEqual({ kind: "live", since: "2026-10-01T12:00:00.000Z" });
   });
 });

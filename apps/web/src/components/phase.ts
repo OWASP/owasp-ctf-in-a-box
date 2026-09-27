@@ -70,6 +70,9 @@ function fmt(iso: string | null): string | null {
 export function phaseBoundaryLabel(phase: EventPhase, startsAt: string | null, endsAt: string | null): string | null {
   return phase === "registration" && fmt(startsAt)
     ? `scoring opens ${fmt(startsAt)} UTC`
+    : phase === "registration"
+      ? // No start to name (#464): the event has simply not launched yet.
+        "not launched yet"
     : phase === "live" && fmt(endsAt)
       ? `until ${fmt(endsAt)} UTC`
       : phase === "results" && fmt(endsAt)

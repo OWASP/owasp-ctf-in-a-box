@@ -74,3 +74,9 @@ describe("phaseBoundaryLabel", () => {
     expect(phaseFromSettings({ paused: true, scoringStartsAt: iso(HOUR), scoringEndsAt: null }).phase).toBe("registration");
   });
 });
+
+describe("phaseBoundaryLabel before launch (#464)", () => {
+  it("says the event is not launched yet when there is no start to name", () => {
+    expect(phaseBoundaryLabel("registration", null, null)).toBe("not launched yet");
+  });
+});

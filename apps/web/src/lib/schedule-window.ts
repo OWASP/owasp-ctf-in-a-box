@@ -56,6 +56,18 @@ export function isLaunched(nowMs: number, startsAt: string | null): boolean {
   return Number.isFinite(s) && nowMs >= s;
 }
 
+/** The /admin Launch block's state (#464): not launched (no or an
+ *  unparseable start), scheduled (a start still ahead), or live (the start has
+ *  passed). Instants come back normalised to ISO-8601 UTC. */
+export type LaunchState = { kind: "not-launched" } | { kind: "scheduled"; at: string } | { kind: "live"; since: string };
+
+export function launchState(nowMs: number, startsAt: string | null): LaunchState {
+  const s = startsAt ? Date.parse(startsAt) : NaN;
+  if (!Number.isFinite(s)) return { kind: "not-launched" };
+  const iso = new Date(s).toISOString();
+  return nowMs < s ? { kind: "scheduled", at: iso } : { kind: "live", since: iso };
+}
+
 /** The next instant strictly after `nowMs` at which `outsideWindow` flips for
  *  any of `windows`, or null when no bound lies ahead. A start bound flips at
  *  the bound itself (`now < s` stops holding); an end bound flips one ms

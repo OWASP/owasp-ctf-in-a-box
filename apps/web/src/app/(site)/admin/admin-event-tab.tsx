@@ -18,7 +18,7 @@
 
 import { useEffect, useState } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
-import { outsideScoringWindow, outsideWindow } from "@/lib/schedule-window";
+import { launchState, outsideScoringWindow, outsideWindow } from "@/lib/schedule-window";
 import { TEAM_MAX_MEMBERS, TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
 import { DEFAULT_EVENT_IDENTITY, EVENT_IDENTITY_MAX, type EventIdentityKey } from "@/lib/event-identity";
 import AdminEventControls from "@/components/admin-event-controls";
@@ -161,6 +161,12 @@ function ScheduleField({
   );
 }
 
+/** "2026-10-01 12:00 UTC" — a fixed format, so the server render and the
+ *  client's first paint agree (a locale-formatted time would not). */
+function utcLabel(iso: string): string {
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
 export type AdminEventTabProps = {
   settings: AdminSettings;
   pending: boolean;
@@ -228,6 +234,7 @@ export default function AdminEventTab({
   // would give is the same one the stamp already holds.
   // The scoring window REQUIRES a start (#464: no start = not launched);
   // registration keeps outsideWindow's "absent bound = open".
+  const launch = launchState(nowMs, settings.scoringStartsAt);
   const scoringLiveNow = !settings.paused && !outsideScoringWindow(nowMs, settings.scoringStartsAt, settings.scoringEndsAt);
   const registrationOpenNow =
     settings.teamRegistrationOpen && !outsideWindow(nowMs, settings.registrationStartsAt, settings.registrationEndsAt);
@@ -369,6 +376,64 @@ export default function AdminEventTab({
         onChange={setTeamMaxMembersInput}
         onBlur={() => commitNumber("teamMaxMembers", teamMaxMembersInput, setTeamMaxMembersInput, "Players per team")}
       />
+
+      {/* #464: every event needs an official launch. The launch IS the
+          scoring start — Launch now writes it (on the server's clock), a
+          future Scoring opens below schedules it, Un-launch clears it. */}
+      <div className="flex flex-col gap-3 border-t border-white/[0.06] pt-4">
+        <div>
+          <span className="text-white">Launch</span>
+          <span className="block text-sm text-muted">
+            Until the event is launched, contestants see the landing page only and nothing scores.
+            Admins can browse every board as a preview.
+          </span>
+        </div>
+        <p className="text-sm leading-relaxed">
+          <span className="uppercase tracking-wider text-muted">Status: </span>
+          {launch.kind === "not-launched" && <span className="text-[#d4a017]">Not launched</span>}
+          {launch.kind === "scheduled" && (
+            <span className="text-[#2563eb]">Scheduled for {utcLabel(launch.at)}</span>
+          )}
+          {launch.kind === "live" && <span className="text-[#22c55e]">Live since {utcLabel(launch.since)}</span>}
+        </p>
+        <div className="flex flex-wrap gap-3">
+          {launch.kind !== "live" && (
+            <button
+              type="button"
+              className="self-start rounded-md border border-[#2563eb]/50 bg-[#2563eb]/15 px-3 py-1.5 text-sm font-medium text-white hover:bg-[#2563eb]/25 disabled:opacity-50"
+              disabled={pending}
+              onClick={() =>
+                setConfirm({
+                  title: "Launch the event now?",
+                  confirmLabel: "Launch now",
+                  body: "Every board opens to contestants and scoring starts immediately, on the server's clock.",
+                  onConfirm: () => applyField("scoringStartsAt", { scoringStartsAt: "now" }, "Launch"),
+                })
+              }
+            >
+              Launch now
+            </button>
+          )}
+          {launch.kind === "live" && (
+            <button
+              type="button"
+              className="self-start rounded-md border border-[#e53e3e]/40 px-3 py-1.5 text-sm font-medium text-[#e53e3e] hover:bg-[#e53e3e]/10 disabled:opacity-50"
+              disabled={pending}
+              onClick={() =>
+                setConfirm({
+                  title: "Un-launch the event?",
+                  confirmLabel: "Un-launch",
+                  danger: true,
+                  body: "Every module page locks again for contestants and nothing scores until you launch again. Solves already banked are kept.",
+                  onConfirm: () => applyField("scoringStartsAt", { scoringStartsAt: null }, "Un-launch"),
+                })
+              }
+            >
+              Un-launch
+            </button>
+          )}
+        </div>
+      </div>
 
       <div className="flex flex-col gap-3 border-t border-white/[0.06] pt-4">
         <div>
@@ -571,7 +636,9 @@ export default function AdminEventTab({
                     This permanently deletes every team, score, player record, and
                     hint purchase, and freezes scoring. Your authored content —
                     questions, challenges, flags, hints, categories — and every
-                    setting are kept. The AI launch key is rotated, so an external
+                    setting except the launch are kept: the event returns to not
+                    launched, so contestants see the landing page until you launch
+                    again. The AI launch key is rotated, so an external
                     challenge site must re-fetch it. This cannot be undone.
                   </>
                 ),

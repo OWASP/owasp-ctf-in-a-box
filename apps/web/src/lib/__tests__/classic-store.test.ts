@@ -820,6 +820,21 @@ describe("stories in the bundle (#463)", () => {
     expect(bundle.stories).toEqual([{ id: "op", title: "Operation", intro: "", steps: [FULL_BOARD_ID] }]);
   });
 
+  // A stored step can outlive its challenge (deleteChallenge's story update
+  // is a second call). The export must not carry it: parseBundle refuses a
+  // step that is not in the file, so the backup would not restore.
+  it("exports stories without a step whose challenge is gone", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: row(challenge({ id: FULL_BOARD_ID })) },
+      { result: [FULL_BOARD_ID, "ctfbox{One}"] },
+      { result: [] },
+    ]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify([story("op", ["ghost-zz99zz", FULL_BOARD_ID])]) }]);
+    const bundle = await exportBundle();
+    expect(bundle.stories).toEqual([story("op", [FULL_BOARD_ID])]);
+  });
+
   it("a v1 bundle reads and writes no stories at all", async () => {
     seedChallenges([]);
     const summary = await importBundle(twoRowBundle);

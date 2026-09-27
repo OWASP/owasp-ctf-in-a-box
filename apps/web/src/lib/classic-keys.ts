@@ -11,6 +11,13 @@ export const CLASSIC_CATEGORIES_KEY = "ctf:classic:categories";
 /** Stories (#463): a JSON list of `{id, title, intro, steps}` — content, like
  *  the categories list, so a master reset keeps it. */
 export const CLASSIC_STORIES_KEY = "ctf:classic:stories";
+/** Story caps (#463). Here, not in classic-store.ts, so the client-safe
+ *  bundle parser (classic-io.ts) enforces exactly what `setStories` does — an
+ *  event-archive import clears the box before the store ever sees a story. */
+export const CLASSIC_STORIES_MAX = 50;
+export const CLASSIC_STORY_STEPS_MAX = 64;
+export const CLASSIC_STORY_TITLE_MAX = 120;
+export const CLASSIC_STORY_INTRO_MAX = 2000;
 export const CLASSIC_POINTS_KEY = "ctf:classic:points";
 export const CLASSIC_SOLVED_KEY = "ctf:classic:solved";
 export const CLASSIC_SOLVECOUNT_KEY = "ctf:classic:solvecount";

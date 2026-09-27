@@ -139,6 +139,33 @@ describe("bundle v2: stories (#463)", () => {
     expect(parseBundle(JSON.stringify(valid)).ok).toBe(true);
   });
 
+  // The store's caps, enforced HERE too: an event-archive import resets and
+  // clears the box before its classic section reaches setStories' checks, so
+  // a cap the parser misses turns into a wiped box and a failed import.
+  it("enforces the store's story caps: count, steps, title and intro length", () => {
+    const one = (over: Record<string, unknown>) => ({ id: "op", title: "Op", intro: "", steps: [ids[0]], ...over });
+    const many = Array.from({ length: 51 }, (_, i) => ({ id: `s${i}`, title: "T", intro: "", steps: [] }));
+    expect(parseBundle(v2(many)).ok).toBe(false);
+    expect(parseBundle(v2(many.slice(0, 50))).ok).toBe(true);
+    expect(parseBundle(v2([one({ title: "x".repeat(121) })])).ok).toBe(false);
+    expect(parseBundle(v2([one({ title: "x".repeat(120) })])).ok).toBe(true);
+    expect(parseBundle(v2([one({ intro: "x".repeat(2001) })])).ok).toBe(false);
+    expect(parseBundle(v2([one({ intro: "x".repeat(2000) })])).ok).toBe(true);
+    // 65 steps: the step-count cap, not the unknown-id rule, must be what refuses.
+    const bigIds = Array.from({ length: 65 }, (_, i) => `c${i}-aa11aa`);
+    const big = (n: number) =>
+      JSON.stringify({
+        version: 2,
+        categories: ["Web"],
+        challenges: bigIds.slice(0, n).map((id, i) => ({ ...valid.challenges[0], id, order: i })),
+        stories: [{ id: "op", title: "Op", intro: "", steps: bigIds.slice(0, n) }],
+      });
+    expect(parseBundle(big(64)).ok).toBe(true);
+    const over = parseBundle(big(65));
+    expect(over.ok).toBe(false);
+    expect(!over.ok && over.errors.some((e) => /at most 64 steps/.test(e.message))).toBe(true);
+  });
+
   it("refuses stories on a v1 bundle (a hand edit that forgot the bump would drop the lock silently)", () => {
     const res = parseBundle(JSON.stringify({ ...valid, stories: [] }));
     expect(res.ok).toBe(false);

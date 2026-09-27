@@ -32,6 +32,10 @@ import {
   CLASSIC_POINTS_MAX,
   CLASSIC_CATEGORY_MAX_LEN,
   CLASSIC_CATEGORIES_MAX,
+  CLASSIC_STORIES_MAX,
+  CLASSIC_STORY_INTRO_MAX,
+  CLASSIC_STORY_STEPS_MAX,
+  CLASSIC_STORY_TITLE_MAX,
 } from "@/lib/classic-keys";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { Story } from "@/lib/story-lock";
@@ -317,6 +321,9 @@ function validateStories(raw: unknown, challengeIds: ReadonlySet<string>, errors
     errors.push({ where: "stories", message: '"stories" must be an array' });
     return [];
   }
+  if (raw.length > CLASSIC_STORIES_MAX) {
+    errors.push({ where: "stories", message: `At most ${CLASSIC_STORIES_MAX} stories are allowed` });
+  }
   const out: Story[] = [];
   const storyIds = new Set<string>();
   const owner = new Map<string, string>();
@@ -332,11 +339,22 @@ function validateStories(raw: unknown, challengeIds: ReadonlySet<string>, errors
     if (!STORY_ID_RE.test(id)) errors.push({ where: `${base}.id`, message: `Invalid story id: ${JSON.stringify(st.id)}` });
     else if (storyIds.has(id)) errors.push({ where: `${base}.id`, message: `Story ids must be unique: ${id}` });
     storyIds.add(id);
+    // The caps are setStories' own (trimmed, like it measures): refusing here
+    // is what keeps an event import from clearing the box and then failing.
     if (typeof st.title !== "string" || !st.title.trim()) errors.push({ where: `${base}.title`, message: "A story needs a title" });
+    else if (st.title.trim().length > CLASSIC_STORY_TITLE_MAX) {
+      errors.push({ where: `${base}.title`, message: `A story title must be at most ${CLASSIC_STORY_TITLE_MAX} characters` });
+    }
     if (st.intro !== undefined && typeof st.intro !== "string") errors.push({ where: `${base}.intro`, message: "intro must be a string" });
+    else if (typeof st.intro === "string" && st.intro.trim().length > CLASSIC_STORY_INTRO_MAX) {
+      errors.push({ where: `${base}.intro`, message: `A story intro must be at most ${CLASSIC_STORY_INTRO_MAX} characters` });
+    }
     if (!Array.isArray(st.steps)) {
       errors.push({ where: `${base}.steps`, message: "steps must be an array of challenge ids" });
       return;
+    }
+    if (st.steps.length > CLASSIC_STORY_STEPS_MAX) {
+      errors.push({ where: `${base}.steps`, message: `A story must have at most ${CLASSIC_STORY_STEPS_MAX} steps` });
     }
     const seen = new Set<string>();
     st.steps.forEach((step, j) => {

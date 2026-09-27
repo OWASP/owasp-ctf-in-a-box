@@ -19,6 +19,10 @@ import {
   CLASSIC_FLAGNORM_KEY as FLAGNORM_KEY,
   CLASSIC_CATEGORIES_KEY as CATEGORIES_KEY,
   CLASSIC_STORIES_KEY,
+  CLASSIC_STORIES_MAX,
+  CLASSIC_STORY_INTRO_MAX,
+  CLASSIC_STORY_STEPS_MAX,
+  CLASSIC_STORY_TITLE_MAX,
   CLASSIC_POINTS_KEY as POINTS_KEY,
   CLASSIC_SOLVED_KEY as SOLVED_KEY,
   CLASSIC_SOLVECOUNT_KEY as SOLVECOUNT_KEY,
@@ -684,7 +688,13 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // byte-identically to a pre-#190 one.
     ...(hint ? { hint } : {}),
   }));
-  return { version: CLASSIC_BUNDLE_VERSION, categories, challenges, stories };
+  // A stored step can outlive its challenge (deleteChallenge updates the story
+  // in a second call; read paths already drop such a step via storyPositions).
+  // parseBundle refuses a step not in the file, so an export that kept one
+  // would be a backup that does not restore — prune to the exported ids.
+  const exported = new Set(challenges.map((c) => c.id));
+  const kept = stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) }));
+  return { version: CLASSIC_BUNDLE_VERSION, categories, challenges, stories: kept };
 }
 
 /** Removes a challenge and both of its flag rows together — nothing else.
@@ -1275,10 +1285,7 @@ export async function submitFlag(
 // Stored like the category list: one JSON value. The lock itself is derived
 // (lib/story-lock.ts), never stored.
 
-export const CLASSIC_STORIES_MAX = 50;
-export const CLASSIC_STORY_STEPS_MAX = 64;
-export const CLASSIC_STORY_TITLE_MAX = 120;
-export const CLASSIC_STORY_INTRO_MAX = 2000;
+export { CLASSIC_STORIES_MAX, CLASSIC_STORY_STEPS_MAX, CLASSIC_STORY_TITLE_MAX, CLASSIC_STORY_INTRO_MAX };
 const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 function parseStoredStories(raw: unknown): Story[] {

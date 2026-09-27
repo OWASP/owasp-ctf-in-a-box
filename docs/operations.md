@@ -1657,14 +1657,17 @@ carries:
   under that name for every verdict listed below, so the table here is a
   reference rather than something to look up mid-event. Reading the result:
   - **`would-award`** (shown as the green line) — good: the dry run
-    verified the whole pipeline end
-    to end (signature, token, rate limit, team, schedule).
+    verified the whole pipeline end to end. After launch that is signature,
+    token, rate limit, team and schedule. Before launch the test runs as an
+    admin preview, which skips the team and schedule gates, so the verdict
+    vouches for signature, token and rate limit only.
   - **`paused`**, **`solved`**, **`no-team`** — the signature and token
-    were fine and a gate refused the award, relayed as-is: scoring is frozen,
-    outside its scheduled window, or not launched yet (no scoring start set;
-    the dry run honours the schedule like a real event), the organizer's own login already holds this challenge, or
-    the organizer is on no team (the event route refuses a teamless login
-    before the award, organizers included). None of these is a fault on the
+    were fine and a gate refused the award, relayed as-is. `solved`: the
+    organizer's own login already holds this challenge. After launch only:
+    `paused` means scoring is frozen or outside its scheduled window, and
+    `no-team` means the organizer is on no team (the event route refuses a
+    teamless login before the award, organizers included). Before launch a
+    preview skips both of those gates. None of these is a fault on the
     external side.
   - **`unavailable`** — Redis could not be read, or the request itself
     failed; try again.

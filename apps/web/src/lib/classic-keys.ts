@@ -8,6 +8,9 @@ export const CLASSIC_CHALLENGES_KEY = "ctf:classic:challenges";
 export const CLASSIC_FLAG_KEY = "ctf:classic:flag";
 export const CLASSIC_FLAGNORM_KEY = "ctf:classic:flagnorm";
 export const CLASSIC_CATEGORIES_KEY = "ctf:classic:categories";
+/** Stories (#463): a JSON list of `{id, title, intro, steps}` — content, like
+ *  the categories list, so a master reset keeps it. */
+export const CLASSIC_STORIES_KEY = "ctf:classic:stories";
 export const CLASSIC_POINTS_KEY = "ctf:classic:points";
 export const CLASSIC_SOLVED_KEY = "ctf:classic:solved";
 export const CLASSIC_SOLVECOUNT_KEY = "ctf:classic:solvecount";

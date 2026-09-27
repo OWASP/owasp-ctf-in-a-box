@@ -421,6 +421,8 @@ describe("AdminChallenge", () => {
 describe("deleteChallenge", () => {
   it("removes the challenge and BOTH flag rows, leaving history and aggregates alone", async () => {
     writeReply(3);
+    // The stories read that follows (#463): none stored, so nothing to prune.
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
     await deleteChallenge("chal-1");
     expect(pipelineCalls()[0]).toEqual([
       ["HDEL", "ctf:classic:challenges", "chal-1"],

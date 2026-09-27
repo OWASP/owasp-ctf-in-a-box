@@ -1,4 +1,5 @@
 import "server-only";
+import type { Story } from "@/lib/story-lock";
 // Re-exported, not redeclared — the admin UI cannot import a server-only
 // module, so the value lives in the dependency-free defaults file.
 export { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
@@ -16,6 +17,7 @@ import {
   CLASSIC_FLAG_KEY as FLAG_KEY,
   CLASSIC_FLAGNORM_KEY as FLAGNORM_KEY,
   CLASSIC_CATEGORIES_KEY as CATEGORIES_KEY,
+  CLASSIC_STORIES_KEY,
   CLASSIC_POINTS_KEY as POINTS_KEY,
   CLASSIC_SOLVED_KEY as SOLVED_KEY,
   CLASSIC_SOLVECOUNT_KEY as SOLVECOUNT_KEY,
@@ -690,6 +692,12 @@ export async function deleteChallenge(id: string): Promise<void> {
   ]);
   const failed = results.find((r) => r.error);
   if (failed) throw new Error(`Upstash HDEL failed: ${failed.error}`);
+  // A deleted step leaves its story (#463): the story shrinks, and the next
+  // step's prerequisite becomes the one before it — solves are kept, as above.
+  const stories = await listStories();
+  if (stories.some((st) => st.steps.includes(id))) {
+    await setStories(stories.map((st) => ({ ...st, steps: st.steps.filter((step) => step !== id) })));
+  }
 }
 
 /** Deletes ONLY the content keys — challenges, both flag hashes, categories,
@@ -707,6 +715,7 @@ export async function clearChallenges(): Promise<void> {
     ["DEL", FLAG_KEY],
     ["DEL", FLAGNORM_KEY],
     ["DEL", CATEGORIES_KEY],
+    ["DEL", CLASSIC_STORIES_KEY],
     ["DEL", HINTS_KEY],
   ]);
   // This runs on the destructive replace-all path (event-store's
@@ -1189,4 +1198,90 @@ export async function submitFlag(
   if (status === "already") return { ok: true, correct: true, points: 0, already: true };
   if (status === "correct") return { ok: true, correct: true, points: Number(value) || 0 };
   return { ok: false, reason: "error" };
+}
+
+// ---------------------------------------------------------------------------
+// Stories (#463) — ordered chains of challenges a team unlocks step by step.
+// Stored like the category list: one JSON value. The lock itself is derived
+// (lib/story-lock.ts), never stored.
+
+export const CLASSIC_STORIES_MAX = 50;
+export const CLASSIC_STORY_STEPS_MAX = 64;
+export const CLASSIC_STORY_TITLE_MAX = 120;
+export const CLASSIC_STORY_INTRO_MAX = 2000;
+const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+function parseStoredStories(raw: unknown): Story[] {
+  if (raw === null || raw === undefined) return [];
+  if (typeof raw !== "string") throw new Error("stories: stored value is not a string");
+  const parsed = JSON.parse(raw) as unknown; // a corrupt value THROWS
+  if (!Array.isArray(parsed)) throw new Error("stories: stored value is not a list");
+  return parsed.map((v) => {
+    const o = v as Partial<Story>;
+    if (typeof o?.id !== "string" || typeof o.title !== "string" || !Array.isArray(o.steps)) {
+      throw new Error("stories: a stored story is malformed");
+    }
+    return {
+      id: o.id,
+      title: o.title,
+      intro: typeof o.intro === "string" ? o.intro : "",
+      steps: o.steps.filter((s): s is string => typeof s === "string"),
+    };
+  });
+}
+
+/** Every story, in organizer order. THROWS on a read error or a corrupt
+ *  value — unlike `listCategories`, which reads either as "none": "no stories"
+ *  would open every story step, so the caller's fail-CLOSED direction must
+ *  apply instead (a page errors, a grade answers `unavailable`). */
+export async function listStories(): Promise<Story[]> {
+  const [res] = await upstashPipeline([["GET", CLASSIC_STORIES_KEY]]);
+  if (res.error) throw new Error(`Upstash GET failed: ${res.error}`);
+  return parseStoredStories(res.result);
+}
+
+/** Replaces the whole story list, after validating it: unique story ids, a
+ *  non-empty title, a challenge in at most one story and at most once. Step
+ *  ids are checked for shape here and for existence by the authoring route.
+ *  Returns what was stored. */
+export async function setStories(stories: Story[]): Promise<Story[]> {
+  if (!Array.isArray(stories)) throw new ClassicValidationError("stories", "stories must be an array");
+  if (stories.length > CLASSIC_STORIES_MAX) {
+    throw new ClassicValidationError("stories", `At most ${CLASSIC_STORIES_MAX} stories are allowed`);
+  }
+  const storyIds = new Set<string>();
+  const stepOwner = new Map<string, string>();
+  const canonical: Story[] = [];
+  for (const st of stories) {
+    const id = typeof st?.id === "string" ? st.id.trim() : "";
+    if (!STORY_ID_RE.test(id)) throw new ClassicValidationError("stories", `Invalid story id: ${JSON.stringify(st?.id)}`);
+    if (storyIds.has(id)) throw new ClassicValidationError("stories", `Story ids must be unique: ${id}`);
+    storyIds.add(id);
+    const title = typeof st.title === "string" ? st.title.trim() : "";
+    if (!title || title.length > CLASSIC_STORY_TITLE_MAX) {
+      throw new ClassicValidationError("stories", `Story ${id} needs a title of at most ${CLASSIC_STORY_TITLE_MAX} characters`);
+    }
+    const intro = typeof st.intro === "string" ? st.intro.trim() : "";
+    if (intro.length > CLASSIC_STORY_INTRO_MAX) {
+      throw new ClassicValidationError("stories", `Story ${id}'s intro must be at most ${CLASSIC_STORY_INTRO_MAX} characters`);
+    }
+    if (!Array.isArray(st.steps) || st.steps.length > CLASSIC_STORY_STEPS_MAX) {
+      throw new ClassicValidationError("stories", `Story ${id} must have at most ${CLASSIC_STORY_STEPS_MAX} steps`);
+    }
+    const seen = new Set<string>();
+    for (const step of st.steps) {
+      if (typeof step !== "string" || !CLASSIC_ID_RE.test(step)) {
+        throw new ClassicValidationError("stories", `Story ${id} has an invalid step id: ${JSON.stringify(step)}`);
+      }
+      if (seen.has(step)) throw new ClassicValidationError("stories", `Story ${id} lists ${step} twice`);
+      seen.add(step);
+      const owner = stepOwner.get(step);
+      if (owner) throw new ClassicValidationError("stories", `${step} is in two stories (${owner}, ${id}) — a challenge belongs to one story`);
+      stepOwner.set(step, id);
+    }
+    canonical.push({ id, title, intro, steps: [...st.steps] });
+  }
+  const [res] = await upstashPipeline([["SET", CLASSIC_STORIES_KEY, JSON.stringify(canonical)]]);
+  if (res.error) throw new Error(`Upstash SET failed: ${res.error}`);
+  return canonical;
 }

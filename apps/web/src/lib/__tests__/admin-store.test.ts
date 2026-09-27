@@ -528,6 +528,24 @@ describe("scheduled windows", () => {
     expect(strArgs.slice(5, 6)).toContain("scoringEndsAt"); // the del target
   });
 
+  // #464 Launch now: "now" is resolved on the SERVER's clock, so an
+  // organizer's skewed laptop clock can never "launch" into the future.
+  it("updateAdminSettings: scoringStartsAt \"now\" stores the server's current instant", async () => {
+    mocks.upstashEval.mockResolvedValue(["updatedBy", "a", "updatedAt", "x"]);
+    const before = Date.now();
+    await updateAdminSettings({ scoringStartsAt: "now" }, "a");
+    const after = Date.now();
+    const strArgs = mocks.upstashEval.mock.calls[0][2].map(String);
+    const stored = Date.parse(strArgs[strArgs.indexOf("scoringStartsAt") + 1]);
+    expect(stored).toBeGreaterThanOrEqual(before);
+    expect(stored).toBeLessThanOrEqual(after);
+  });
+
+  it("updateAdminSettings: \"now\" is a scoringStartsAt sentinel only", async () => {
+    await expect(updateAdminSettings({ scoringEndsAt: "now" }, "a")).rejects.toThrow();
+    await expect(updateAdminSettings({ scoringStartsAt: "later" }, "a")).rejects.toThrow();
+  });
+
   it("updateAdminSettings: rejects an unparseable date", async () => {
     await expect(updateAdminSettings({ scoringStartsAt: "not-a-date" }, "a")).rejects.toThrow(AdminValidationError);
   });

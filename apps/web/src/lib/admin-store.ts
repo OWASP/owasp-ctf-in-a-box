@@ -547,7 +547,10 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
         changed[k] = null as unknown as boolean;
       } else {
         if (typeof v !== "string") throw new AdminValidationError(k, `${k} must be an ISO date string or null`);
-        const ms = Date.parse(v);
+        // #464 Launch now: "now" means THIS server's clock, so an organizer's
+        // skewed laptop clock can never launch into the future. The one
+        // sentinel, and only for the scoring start.
+        const ms = k === "scoringStartsAt" && v === "now" ? Date.now() : Date.parse(v);
         if (!Number.isFinite(ms)) throw new AdminValidationError(k, `${k} must be a valid ISO date string`);
         const iso = new Date(ms).toISOString();
         fields.push(k, iso);

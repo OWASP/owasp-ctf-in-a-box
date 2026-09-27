@@ -13,6 +13,7 @@
 // to a challenge's id or position.
 
 import { CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
+import AdminAttachments from "@/components/admin-attachments";
 import EditorFrame, { IdBlock, editorHeading } from "@/components/admin/editor-frame";
 import {
   CaseSensitiveField,
@@ -114,6 +115,9 @@ export function ChallengeForm({
       <HintField value={draft.hint} disabled={pending} onChange={(hint) => set({ hint })} />
 
       <DescriptionField value={draft.description} disabled={pending} onChange={(description) => set({ description })} />
+
+      {/* #186: immediate writes of their own, never part of this draft's Save. */}
+      <AdminAttachments key={editor.mode === "edit" ? editor.id : "new"} itemId={editor.mode === "edit" ? editor.id : null} />
     </EditorFrame>
   );
 }

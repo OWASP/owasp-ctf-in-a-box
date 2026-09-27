@@ -18,6 +18,13 @@
 // any rendering can hide a field.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #464 pre-launch lock: launched by default in this file; the "pre-launch
+// lock" test below drives the refused path. The lock itself is unit-tested in
+// lib/__tests__/launch.test.ts.
+const launchLock = vi.hoisted(() => ({
+  redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
+}));
+vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
 const { isModuleEnabled, getSession, listQuestions, getViewerQuiz, getAdminSettings, getResolvedModules } = vi.hoisted(

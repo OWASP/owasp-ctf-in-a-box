@@ -21,6 +21,7 @@ import { isAdminLogin } from "@/lib/admin-auth";
 import { auth } from "@/lib/auth";
 import { getAdminSettings } from "@/lib/admin-store";
 import { isModuleLive } from "@/lib/enabled-modules";
+import { redirectIfNotLaunched } from "@/lib/launch";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 import TeamlessNotice from "@/components/teamless-notice";
@@ -79,6 +80,9 @@ export default async function QuizPage() {
 
   const session = await auth.api.getSession({ headers: await headers() });
   const login = (session?.user as { login?: string } | undefined)?.login;
+  // #464 pre-launch lock: before ANY content load below. A refused viewer
+  // (not launched, not an admin) goes to the landing page.
+  await redirectIfNotLaunched(login);
   // Drives the empty state's authoring route only. Deliberately the SAME
   // check `/admin` and every `/api/admin/*` route gate on, so this can never
   // offer a link to someone the admin page would then 403 at.

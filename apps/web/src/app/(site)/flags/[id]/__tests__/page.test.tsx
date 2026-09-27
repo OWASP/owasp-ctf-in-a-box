@@ -4,6 +4,13 @@
 // unknown id), the view model deriving the same states the board derives,
 // and the flag having no path into the markup.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #464 pre-launch lock: launched by default in this file; the "pre-launch
+// lock" test below drives the refused path. The lock itself is unit-tested in
+// lib/__tests__/launch.test.ts.
+const launchLock = vi.hoisted(() => ({
+  redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
+}));
+vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
 const { isModuleEnabled, isAdminLogin, getSession, listChallenges, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints } =
@@ -203,5 +210,15 @@ describe("challenge page metadata", () => {
     expect(await generateMetadata(params("nope"))).toEqual({});
     isModuleEnabled.mockReturnValue(false);
     expect(await generateMetadata(params("c1"))).toEqual({});
+  });
+});
+
+describe("pre-launch lock (#464)", () => {
+  it("sends a refused viewer to the landing page before loading any content", async () => {
+    launchLock.redirectIfNotLaunched.mockImplementationOnce(async () => {
+      throw new Error("NEXT_REDIRECT:/");
+    });
+    await expect(ClassicChallengePage(params("c1"))).rejects.toThrow("NEXT_REDIRECT:/");
+    expect(listChallenges).not.toHaveBeenCalled();
   });
 });

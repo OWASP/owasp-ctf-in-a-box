@@ -8,6 +8,7 @@ import PageHeader from "@/components/page-header";
 import Leaderboard from "@/components/leaderboard";
 import MockDataNotice from "@/components/mock-data-notice";
 import { getLeaderboardSourceMode } from "@/lib/leaderboard/source";
+import { redirectIfNotLaunched } from "@/lib/launch";
 import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { auth } from "@/lib/auth";
@@ -65,9 +66,13 @@ export default async function LeaderboardPage({
   // is the "you" highlight, and <Leaderboard> applies that from viewerLogin.
   // `data` is shared with every concurrent request: read it, never mutate it
   // — the spreads below build new objects.
-  const [data, session, modules, enabledApps] = await Promise.all([
+  // #464 pre-launch lock, before the board is read: standings (and the
+  // projector surface) are module content. Admins get through as a preview.
+  const session = await auth.api.getSession({ headers: await headers() });
+  await redirectIfNotLaunched((session?.user as { login?: string } | undefined)?.login);
+
+  const [data, modules, enabledApps] = await Promise.all([
     getFoldedLeaderboard(),
-    auth.api.getSession({ headers: await headers() }),
     getResolvedModules(),
     getEnabledApps(),
   ]);

@@ -6,7 +6,8 @@
 //      the externally hosted challenge — this is the ONE place in the app
 //      that mints it. `mintLaunchUrl` (ai-launch.ts) is called from behind
 //      every gate this render already passed: the module-enabled check
-//      above, a real session, and the team redirect below. No other route
+//      above, a real session, the pre-launch lock (#464), and the team
+//      redirect below. No other route
 //      calls it. A signed-out visitor sees a sign-in prompt where the
 //      launcher would be, and the mint is never reached at all — there is no
 //      branch that calls it without `login` in hand.
@@ -24,7 +25,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import ChallengeDetail, { type ChallengeView } from "@/components/challenge-detail";
 import HintRevealButton from "@/components/hint-reveal-button";
 import { deriveStatus } from "@/lib/derive-status";
@@ -40,7 +41,7 @@ import {
   type ViewerAi,
 } from "@/lib/ai-store";
 import { isModuleLive } from "@/lib/enabled-modules";
-import { requireGatePassed } from "@/lib/gate-request";
+import { redirectIfNotLaunched } from "@/lib/launch";
 import { getAiHintIds, getHintNotice, getViewerHints } from "@/lib/hint-store";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
@@ -65,22 +66,16 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 export default async function AiChallengePage({ params }: { params: Promise<{ id: string }> }) {
   if (!(await isModuleLive("ai"))) notFound();
 
-  // THE PRE-EVENT GATE, ENFORCED HERE RATHER THAN INHERITED. proxy.ts covers
-  // page routes with `GATED_ROUTES.has(pathname)` — an EXACT match over the
-  // registry's nav hrefs, so it gates `/ai` and never `/ai/<id>`. This is the
-  // one route that mints a launch token, and §6.6's contract (the API routes
-  // never re-check the gate, because a token in hand proves it passed) is
-  // only true if the check happens before the mint. So it happens here, in
-  // the page, above every load below — and again in ./actions.ts, which is
-  // the other way in. Same destination proxy.ts sends a gated visitor to;
-  // /gate's own redirect keys on the complement, so this cannot loop.
-  if (!(await requireGatePassed())) redirect("/gate");
-
   const { id } = await params;
   const challengeId = decodeURIComponent(id);
 
   const session = await auth.api.getSession({ headers: await headers() });
   const login = (session?.user as { login?: string } | undefined)?.login;
+  // #464 pre-launch lock, before every load below — including the launch
+  // token mint, which is only safe to hand out once this check has passed
+  // (the AI API routes trust a token in hand). ./actions.ts checks again: it
+  // is the other way in.
+  await redirectIfNotLaunched(login);
   const viewerIsAdmin = await isAdminLogin(login);
 
   // Same order as /ai and /flags/[id]: the team redirect fires before the

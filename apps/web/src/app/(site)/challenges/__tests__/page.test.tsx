@@ -8,6 +8,13 @@
 // nav had. So both directions are pinned: override wins, no override changes
 // nothing.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #464 pre-launch lock: launched by default in this file; the "pre-launch
+// lock" test below drives the refused path. The lock itself is unit-tested in
+// lib/__tests__/launch.test.ts.
+const launchLock = vi.hoisted(() => ({
+  redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
+}));
+vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
 const { getResolvedModules, getChallengeCatalog, getHintAvailability, isModuleEnabled, getEnabledApps, getEnabledTotals, getGithubOrg } = vi.hoisted(() => ({
@@ -178,5 +185,15 @@ describe("/challenges wires GITHUB_ORG into the fork links", () => {
     const html = renderToStaticMarkup(await ChallengesPage());
     expect(html).toContain("DVWA");
     expect(html).not.toContain("https://github.com/");
+  });
+});
+
+describe("pre-launch lock (#464)", () => {
+  it("sends a refused viewer to the landing page before loading any content", async () => {
+    launchLock.redirectIfNotLaunched.mockImplementationOnce(async () => {
+      throw new Error("NEXT_REDIRECT:/");
+    });
+    await expect(ChallengesPage()).rejects.toThrow("NEXT_REDIRECT:/");
+    expect(getChallengeCatalog).not.toHaveBeenCalled();
   });
 });

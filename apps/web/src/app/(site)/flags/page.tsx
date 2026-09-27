@@ -30,6 +30,7 @@ import {
   type ViewerClassic,
 } from "@/lib/classic-store";
 import { isModuleLive } from "@/lib/enabled-modules";
+import { redirectIfNotLaunched } from "@/lib/launch";
 import { getClassicHintIds } from "@/lib/hint-store";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
@@ -53,6 +54,9 @@ export default async function FlagsPage() {
 
   const session = await auth.api.getSession({ headers: await headers() });
   const login = (session?.user as { login?: string } | undefined)?.login;
+  // #464 pre-launch lock: before ANY content load below. A refused viewer
+  // (not launched, not an admin) goes to the landing page.
+  await redirectIfNotLaunched(login);
   // Drives the empty state's authoring route only — same check `/admin` and
   // every `/api/admin/*` route gate on, so a link is never offered to someone
   // the admin page would then 403 at. Mirrors quiz/page.tsx.

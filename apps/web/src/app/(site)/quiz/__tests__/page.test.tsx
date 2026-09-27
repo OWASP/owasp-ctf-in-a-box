@@ -3,6 +3,13 @@
 // enough to check the initial server render, since we only assert on markup
 // text — same pattern as admin/__tests__/page.test.tsx.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #464 pre-launch lock: launched by default in this file; the "pre-launch
+// lock" test below drives the refused path. The lock itself is unit-tested in
+// lib/__tests__/launch.test.ts.
+const launchLock = vi.hoisted(() => ({
+  redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
+}));
+vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
 const { isModuleEnabled, isAdminLogin, getSession, listQuestions, getViewerQuiz, getAdminSettings, getResolvedModules } = vi.hoisted(() => ({
@@ -281,5 +288,15 @@ describe("quiz page metadata", () => {
       title: "Round 1",
       description: "Ten questions.",
     });
+  });
+});
+
+describe("pre-launch lock (#464)", () => {
+  it("sends a refused viewer to the landing page before loading any content", async () => {
+    launchLock.redirectIfNotLaunched.mockImplementationOnce(async () => {
+      throw new Error("NEXT_REDIRECT:/");
+    });
+    await expect(QuizPage()).rejects.toThrow("NEXT_REDIRECT:/");
+    expect(listQuestions).not.toHaveBeenCalled();
   });
 });

@@ -13,6 +13,7 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { getGithubOrg } from "@/lib/bootstrap-env";
 import { isModuleLive } from "@/lib/enabled-modules";
+import { redirectIfNotLaunched } from "@/lib/launch";
 import { getResolvedModules } from "@/lib/resolved-modules";
 
 /** This page's own name, with an organizer rename applied.
@@ -52,11 +53,15 @@ export default async function ChallengesPage() {
 
   // The page renders dynamically regardless — the root layout resolves module
   // names per request, so every route under it does (see resolved-modules.ts).
-  const [catalog, title, session, enabledApps, enabledTotals] = await Promise.all([
+  // The session first, on its own: the #464 pre-launch lock must run before
+  // any content load (a refused viewer goes to the landing page). It also
+  // feeds the viewer's own solved marks below.
+  const session = await auth.api.getSession({ headers: await headers() });
+  await redirectIfNotLaunched((session?.user as { login?: string } | undefined)?.login);
+
+  const [catalog, title, enabledApps, enabledTotals] = await Promise.all([
     getChallengeCatalog(),
     pageTitle(),
-    // For the viewer's own solved marks below.
-    auth.api.getSession({ headers: await headers() }),
     getEnabledApps(),
     getEnabledTotals(),
   ]);

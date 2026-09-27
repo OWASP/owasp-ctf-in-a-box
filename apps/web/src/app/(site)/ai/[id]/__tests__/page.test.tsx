@@ -19,6 +19,13 @@
 // src/components/__tests__/challenge-detail.test.tsx; this file's job is only
 // to check the PAGE passes the right props to it.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #464 pre-launch lock: launched by default in this file; the "pre-launch
+// lock" test below drives the refused path. The lock itself is unit-tested in
+// lib/__tests__/launch.test.ts.
+const launchLock = vi.hoisted(() => ({
+  redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
+}));
+vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
 const {
@@ -31,7 +38,6 @@ const {
   getResolvedModules,
   mintLaunchUrl,
   redirectIfTeamless,
-  requireGatePassed,
   challengeDetailSpy,
   headersRef,
   getAiHintIds,
@@ -47,7 +53,6 @@ const {
   getResolvedModules: vi.fn(),
   mintLaunchUrl: vi.fn(),
   redirectIfTeamless: vi.fn(),
-  requireGatePassed: vi.fn(),
   challengeDetailSpy: vi.fn(),
   // Mutable so a test can put caller-controlled headers on the request and
   // pin that the mint ignores them. A `vi.mock` factory is hoisted above every
@@ -75,7 +80,6 @@ vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
 vi.mock("@/lib/ai-launch", () => ({ mintLaunchUrl }));
 vi.mock("@/lib/require-team", () => ({ redirectIfTeamless }));
-vi.mock("@/lib/gate-request", () => ({ requireGatePassed }));
 vi.mock("@/lib/hint-store", () => ({ getAiHintIds, getHintNotice, getViewerHints }));
 vi.mock("@/lib/ai-store", () => ({
   listAiChallenges,
@@ -141,9 +145,6 @@ beforeEach(() => {
     { id: "ai", title: "AI", blurb: "Prompt-injection and guardrail challenges." },
   ]);
   mintLaunchUrl.mockResolvedValue(MINTED_URL);
-  // The passing default: no pre-event gate is active (or it has been
-  // unlocked). The dedicated test below flips it.
-  requireGatePassed.mockResolvedValue(true);
   // The passing default: a signed-in viewer already has a team, so the gate
   // never redirects. The dedicated test below overrides this to throw,
   // mimicking Next's own `redirect()` control-flow signal.
@@ -167,22 +168,16 @@ describe("ai challenge page gates", () => {
     });
   });
 
-  // §6.6's gate-at-mint contract, which the API routes lean on and never
-  // re-check. It was asserted but NOT enforced: `GATED_ROUTES` matches exact
-  // paths, so proxy.ts covers `/ai` and never `/ai/<id>` — the one route that
-  // mints. The page checks it itself now, and this is what says so.
-  it("redirects an ungated visitor to /gate, and never mints", async () => {
-    requireGatePassed.mockResolvedValue(false);
-
-    await expect(AiChallengePage(params("a1"))).rejects.toMatchObject({
-      digest: expect.stringContaining("NEXT_REDIRECT"),
+  // The launch-token mint is only safe once the pre-launch lock (#464) has
+  // passed: the AI API routes trust a token in hand and never re-check. The
+  // page checks before every load, and this is what says so.
+  it("sends a refused viewer to the landing page before launch, and never mints", async () => {
+    launchLock.redirectIfNotLaunched.mockImplementationOnce(async () => {
+      throw new Error("NEXT_REDIRECT:/");
     });
-    await expect(AiChallengePage(params("a1"))).rejects.toMatchObject({
-      digest: expect.stringContaining("/gate"),
-    });
+    await expect(AiChallengePage(params("a1"))).rejects.toThrow("NEXT_REDIRECT:/");
     expect(mintLaunchUrl).not.toHaveBeenCalled();
-    // And nothing was loaded on the way there either — the check sits above
-    // the data load, not between it and the mint.
+    // And nothing was loaded on the way there either.
     expect(listAiChallenges).not.toHaveBeenCalled();
   });
 

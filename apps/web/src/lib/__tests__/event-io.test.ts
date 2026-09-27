@@ -221,7 +221,8 @@ describe("attachment files in the archive (#186)", () => {
   });
 
   it("refuses files on an archive without a classic section", () => {
-    const { classic: _c, ...rest } = valid;
+    const rest: Partial<EventBundle> = { ...valid };
+    delete rest.classic;
     expect(fileErrors(JSON.stringify({ ...rest, attachmentFiles: [{ item: "web-one-ab12cd", sha256: sha, bytes }] })).length).toBeGreaterThan(0);
   });
 });

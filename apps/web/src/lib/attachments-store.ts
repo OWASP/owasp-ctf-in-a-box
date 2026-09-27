@@ -88,7 +88,8 @@ local list = raw and cjson.decode(raw) or {}
 local keep = {}
 for _, a in ipairs(list) do
   if a.id == ARGV[1] then
-    if a.chunks then for n = 0, a.chunks - 1 do redis.call('HDEL', KEYS[4], a.id .. ':' .. n) end end
+    local prefix = a.blob or a.id
+    if a.chunks then for n = 0, a.chunks - 1 do redis.call('HDEL', KEYS[4], prefix .. ':' .. n) end end
     if a.kind == 'upload' and not a.missing and a.size then redis.call('DECRBY', KEYS[3], a.size) end
   else
     table.insert(keep, a)
@@ -99,14 +100,16 @@ redis.call('HDEL', KEYS[2], ARGV[1])
 return 1
 `;
 
-/** KEYS: meta, index, bytes, blob. ARGV: id, chunk count, event max, sha256.
- *  Gives a missing upload its bytes (#186): the entry must exist, still be
- *  missing and carry this sha256, and its size must fit the event total.
- *  Returns {"ok"} or a refusal ({"unknown"}, {"notmissing"}, {"sha"},
- *  {"bytes", total}); a refusal deletes the chunks it was handed. */
+/** KEYS: meta, index, bytes, blob. ARGV: id, chunk count, event max, sha256,
+ *  blob prefix. Gives a missing upload its bytes (#186): the entry must exist,
+ *  still be missing and carry this sha256, and its size must fit the event
+ *  total. Returns {"ok"} or a refusal ({"unknown"}, {"notmissing"}, {"sha"},
+ *  {"bytes", total}). A refusal deletes the chunks it was handed — which are
+ *  under THIS attempt's own prefix, so a fill that lost a race to another
+ *  never touches the winner's chunks. */
 export const FILL_SCRIPT = `
 local function drop()
-  for n = 0, tonumber(ARGV[2]) - 1 do redis.call('HDEL', KEYS[4], ARGV[1] .. ':' .. n) end
+  for n = 0, tonumber(ARGV[2]) - 1 do redis.call('HDEL', KEYS[4], ARGV[5] .. ':' .. n) end
 end
 local ik = redis.call('HGET', KEYS[2], ARGV[1])
 if not ik then drop() return {'unknown'} end
@@ -120,6 +123,7 @@ for _, a in ipairs(list) do
     if total + a.size > tonumber(ARGV[3]) then drop() return {'bytes', total} end
     a.missing = nil
     a.chunks = tonumber(ARGV[2])
+    a.blob = ARGV[5]
     redis.call('HSET', KEYS[1], ik, cjson.encode(list))
     redis.call('INCRBY', KEYS[3], a.size)
     return {'ok'}
@@ -265,15 +269,17 @@ export async function fillMissingUpload(id: string, bytes: Uint8Array, keys = KE
     throw new AttachmentError(`sha256 mismatch: ${att.name} was recorded as ${att.sha256}, this file is ${sha}`);
   }
   const chunks = splitChunks(bytes);
+  // This attempt's own chunk prefix (see FILL_SCRIPT).
+  const blob = `${id}.${newAttachmentId().slice(1, 9)}`;
   try {
     for (const [n, chunk] of chunks.entries()) {
-      const [res] = await upstashPipeline([["HSET", keys.blob, chunkField(id, n), Buffer.from(chunk).toString("base64")]]);
+      const [res] = await upstashPipeline([["HSET", keys.blob, chunkField(blob, n), Buffer.from(chunk).toString("base64")]]);
       if (res.error) throw new Error(`Upstash HSET failed: ${res.error}`);
     }
     const verdict = (await upstashEval(
       FILL_SCRIPT,
       [keys.meta, keys.index, keys.bytes, keys.blob],
-      [id, chunks.length, ATTACHMENTS_EVENT_MAX_BYTES, sha],
+      [id, chunks.length, ATTACHMENTS_EVENT_MAX_BYTES, sha, blob],
     )) as [string, number?];
     if (verdict[0] === "bytes") {
       throw new AttachmentError(
@@ -282,11 +288,12 @@ export async function fillMissingUpload(id: string, bytes: Uint8Array, keys = KE
     }
     if (verdict[0] !== "ok") throw new AttachmentError(`${att.name} could not be filled (${verdict[0]})`);
   } catch (err) {
-    if (!(err instanceof AttachmentError)) await dropChunks(id, chunks.length, keys);
+    if (!(err instanceof AttachmentError)) await dropChunks(blob, chunks.length, keys);
     throw err;
   }
-  const { missing: _missing, ...rest } = att;
-  return { ...rest, chunks: chunks.length };
+  const filled: Attachment = { ...att, chunks: chunks.length, blob };
+  delete filled.missing;
+  return filled;
 }
 
 /** Every item's attachments for one module, in one read (export, archive). */
@@ -349,7 +356,7 @@ export async function readUploadBytes(att: Attachment, keys = KEYS): Promise<Uin
   }
   const parts: Buffer[] = [];
   for (let n = 0; n < att.chunks; n += 1) {
-    const [res] = await upstashPipeline([["HGET", keys.blob, chunkField(att.id, n)]]);
+    const [res] = await upstashPipeline([["HGET", keys.blob, chunkField(att.blob ?? att.id, n)]]);
     if (res.error) throw new Error(`Upstash HGET failed: ${res.error}`);
     if (typeof res.result !== "string") throw new Error(`attachments: chunk ${n} of ${att.id} is missing`);
     parts.push(Buffer.from(res.result, "base64"));

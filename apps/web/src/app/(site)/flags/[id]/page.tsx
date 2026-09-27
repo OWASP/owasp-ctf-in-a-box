@@ -104,11 +104,15 @@ export default async function ClassicChallengePage({ params }: { params: Promise
 
   // Read only once the challenge is known visible (#186). Field by field for
   // the same reason as the view below: the sha256 and chunk bookkeeping stay
-  // out of props, and a missing upload is dropped by AttachmentList itself.
-  const attachments: AttachmentView[] = (await listAttachments("classic", challenge.id)).map((a) =>
+  // out of props. A read error throws — the page errors rather than render a
+  // challenge whose files it could not check.
+  const attachments: AttachmentView[] = (await listAttachments("classic", challenge.id))
+    // A missing upload is not offered, so it never reaches the client either.
+    .filter((a) => !(a.kind === "upload" && a.missing))
+    .map((a) =>
     a.kind === "link"
       ? { id: a.id, kind: "link", name: a.name, url: a.url ?? "" }
-      : { id: a.id, kind: "upload", name: a.name, size: a.size ?? 0, ...(a.missing ? { missing: true as const } : {}) },
+      : { id: a.id, kind: "upload", name: a.name, size: a.size ?? 0 },
   );
 
   const moduleTitle = modules.find((m) => m.id === "classic")?.title ?? "Jeopardy";

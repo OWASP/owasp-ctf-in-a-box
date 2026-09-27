@@ -948,6 +948,14 @@ describe("attachments in the bundle (#186)", () => {
     expect(attachments.addLink).not.toHaveBeenCalled();
   });
 
+  // Review (PR3) I2: a hand-written link is stored normalized (URL href,
+  // sanitized name); comparing the raw bundle value re-added it every import.
+  it("matches a hand-written link against its stored, normalized form", async () => {
+    attachments.listAttachments.mockResolvedValue([{ id: "a2", kind: "link", name: "disk img", url: "https://example.com/" }]);
+    await importBundle(bundleWith([{ name: " ../disk img", url: " https://example.com" }]));
+    expect(attachments.addLink).not.toHaveBeenCalled();
+  });
+
   it("refuses the whole import before any write when the box's files plus the bundle's pass the per-challenge cap", async () => {
     attachments.listAttachments.mockResolvedValue(
       Array.from({ length: 9 }, (_, i) => ({ id: `a${i}`, kind: "link", name: `l${i}`, url: `https://e.org/${i}` })),

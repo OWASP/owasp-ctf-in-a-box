@@ -1543,8 +1543,9 @@ every file's sha256 before it replaces anything.
   (sha256 …)") with a re-upload control, and contestants do not see it until
   it has its bytes.
 - A re-upload whose sha256 differs from the recorded one is refused.
-- Import still never deletes: a file on the box that the bundle does not
-  mention stays. A link matches by name and URL, an upload by sha256.
+- A challenge-bundle import still never deletes: a file on the box that the
+  bundle does not mention stays. A link matches by name and URL, an upload
+  by sha256. (An event-archive import is a full replace, files included.)
 
 ## AI
 

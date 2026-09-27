@@ -1473,7 +1473,11 @@ export async function seedDemoData(
   if (auditFailed) console.error("[admin] seed audit write failed:", adminErrorLabel(new Error(auditFailed.error)));
   // #186: the forensics challenges' artifacts, through the attachments store
   // (so the caps and locks apply). Keyed by sha256 — a re-seed adds nothing.
-  if (classicEnabled) await seedDemoAttachments();
+  if (classicEnabled) {
+    // After the seed landed: a failure here is logged, like the audit write
+    // above — the demo is seeded, only its forensics files are not.
+    await seedDemoAttachments().catch((err) => console.error("[admin] demo attachments failed:", adminErrorLabel(err)));
+  }
   return {
     contestants: DEMO_CONTESTANTS.length,
     teams: DEMO_TEAMS.length,

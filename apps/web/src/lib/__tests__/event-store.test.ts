@@ -679,6 +679,37 @@ describe("attachment bytes in the archive (#186)", () => {
     expect(files.fillMissingUpload.mock.invocationCallOrder[0]).toBeGreaterThan(importAt);
   });
 
+  // Review (PR3) I3: checks that would otherwise fail AFTER the reset.
+  it("refuses a file whose length differs from its metadata's size, before the reset", async () => {
+    const bundle = archiveWithFile();
+    bundle.classic.challenges[0].attachments[0].size = bytes.length + 1;
+    await expect(importEventBundle(bundle, "alice")).rejects.toThrow(/size/);
+    expect(adminStore.resetEvent).not.toHaveBeenCalled();
+  });
+
+  it("refuses files that add up past the event cap, before the reset", async () => {
+    const big = new Uint8Array(26 * 1024 * 1024);
+    const bigSha = createHash("sha256").update(big).digest("hex");
+    const b64 = Buffer.from(big).toString("base64");
+    const bundle = {
+      ...bundleFixture(),
+      classic: {
+        version: 2 as const,
+        categories: ["Web"],
+        challenges: ["a-one-ab12cd", "b-two-ab12cd"].map((id, i) => ({
+          id, title: "T", category: "Web", description: "", points: 1, order: i, flag: "f",
+          attachments: [{ name: "big", size: big.length, sha256: bigSha }],
+        })),
+      },
+      attachmentFiles: [
+        { item: "a-one-ab12cd", sha256: bigSha, bytes: b64 },
+        { item: "b-two-ab12cd", sha256: bigSha, bytes: b64 },
+      ],
+    };
+    await expect(importEventBundle(bundle, "alice")).rejects.toThrow(/50\.0 MB/);
+    expect(adminStore.resetEvent).not.toHaveBeenCalled();
+  });
+
   it("refuses bytes whose sha256 does not match BEFORE the reset wipes anything", async () => {
     await expect(importEventBundle(archiveWithFile(sha, Buffer.from("tampered").toString("base64")), "alice")).rejects.toThrow(
       /sha256/,

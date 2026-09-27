@@ -40,8 +40,11 @@ const LINK_BODY_MAX = 8 * 1024;
 const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
 
 /** What the admin UI sees: chunk bookkeeping stays in the store. */
-function view({ chunks: _chunks, ...att }: Attachment): Omit<Attachment, "chunks"> {
-  return att;
+function view(att: Attachment): Omit<Attachment, "chunks" | "blob"> {
+  const out: Omit<Attachment, "chunks" | "blob"> & Partial<Pick<Attachment, "chunks" | "blob">> = { ...att };
+  delete out.chunks;
+  delete out.blob;
+  return out;
 }
 
 function failure(err: unknown): Response {

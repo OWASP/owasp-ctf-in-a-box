@@ -197,3 +197,21 @@ describe("describeEventError", () => {
     expect(msg).toMatch(/unavailable/i);
   });
 });
+
+// Review (#186 PR3) I4: an archive carrying attachment bytes is tens of MB;
+// in a controlled textarea it freezes the tab. Past a size the text is held,
+// not shown, and the panel says what it holds.
+describe("AdminEventControls — a large archive (#186)", () => {
+  it("holds a large archive out of the textarea and shows its size instead", () => {
+    const big = JSON.stringify({ pad: "x".repeat(300 * 1024) });
+    const html = renderToStaticMarkup(<AdminEventControls initialImportText={big} />);
+    expect(html).not.toContain("x".repeat(1000));
+    expect(html).toMatch(/Loaded an archive of 300\.\d KB/);
+    expect(html).toContain("Clear");
+  });
+
+  it("keeps a small paste in the textarea", () => {
+    const html = renderToStaticMarkup(<AdminEventControls initialImportText='{"version":1}' />);
+    expect(html).toContain("&quot;version&quot;:1");
+  });
+});

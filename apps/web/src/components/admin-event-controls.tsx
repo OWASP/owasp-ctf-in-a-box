@@ -49,7 +49,8 @@
 // their own `server-only` stores' types. Never change either import to a
 // value import.
 
-import { useState, type ChangeEvent } from "react";
+import { useMemo, useState, type ChangeEvent } from "react";
+import { formatBytes } from "@/lib/attachments-keys";
 import { parseEventBundle, serializeEventBundle, type EventBundle, type EventImportError } from "@/lib/event-io";
 import type { EventImportSummary } from "@/lib/event-store";
 import ConfirmModal from "@/components/confirm-modal";
@@ -164,6 +165,9 @@ async function parseJson<T>(res: Response): Promise<T> {
  *  `submitImport` unreachable except by clicking through both `ConfirmModal`s
  *  in order. */
 type ImportStage = "idle" | "warn" | "confirm";
+
+/** Past this many characters an archive is held, not shown (#186). */
+const IMPORT_TEXTAREA_MAX = 256 * 1024;
 
 export default function AdminEventControls({ initialImportText = "", showHeading = true }: AdminEventControlsProps = {}) {
   const [exportPending, setExportPending] = useState(false);
@@ -290,7 +294,10 @@ export default function AdminEventControls({ initialImportText = "", showHeading
   // empty textarea, mirroring both siblings, so the panel doesn't greet an
   // organizer who hasn't pasted anything yet with a wall of "must be an
   // object" errors.
-  const validation = importText.trim().length > 0 ? parseEventBundle(importText) : null;
+  // Memoized on the text: an archive with attachment bytes (#186) is tens of
+  // MB, and re-parsing it on every stage/pending render froze the tab.
+  const validation = useMemo(() => (importText.trim().length > 0 ? parseEventBundle(importText) : null), [importText]);
+  const heldOut = importText.length > IMPORT_TEXTAREA_MAX;
   const clientErrors = validation && !validation.ok ? validation.errors : null;
   const canImport = validation !== null && validation.ok === true;
 
@@ -340,6 +347,26 @@ export default function AdminEventControls({ initialImportText = "", showHeading
           wipes all teams, solves, attempts and answers. Refused outright while the event is live.
         </p>
 
+        {heldOut ? (
+          // Too large to edit by hand, and a controlled textarea of it freezes
+          // the tab — held, validated and sent as-is, described instead.
+          <div className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-zinc-300">
+            <span>Loaded an archive of {formatBytes(importText.length)} — too large to show here.</span>
+            <button
+              type="button"
+              disabled={importPending}
+              onClick={() => {
+                setImportText("");
+                setImportResult(null);
+                setImportSkipped(null);
+                setImportErrors(null);
+              }}
+              className="rounded-md border border-white/15 px-3 py-1 text-sm text-white hover:bg-white/[0.06] disabled:opacity-50"
+            >
+              Clear
+            </button>
+          </div>
+        ) : (
         <textarea
           value={importText}
           disabled={importPending}
@@ -353,6 +380,7 @@ export default function AdminEventControls({ initialImportText = "", showHeading
           placeholder="Paste an event bundle's JSON here, or choose a file below."
           className="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-xs text-white focus-visible:border-[#d4a017]/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
         />
+        )}
 
         <input
           type="file"

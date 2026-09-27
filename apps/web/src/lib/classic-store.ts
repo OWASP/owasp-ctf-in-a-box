@@ -9,7 +9,7 @@ import {
   listAllAttachments,
   listAttachments,
 } from "@/lib/attachments-store";
-import { ATTACHMENTS_PER_ITEM_MAX, type Attachment, attachmentMeta } from "@/lib/attachments-keys";
+import { ATTACHMENTS_PER_ITEM_MAX, type Attachment, attachmentMeta, sanitizeFilename } from "@/lib/attachments-keys";
 import type { BundleAttachment } from "@/lib/classic-io";
 // Re-exported, not redeclared — the admin UI cannot import a server-only
 // module, so the value lives in the dependency-free defaults file.
@@ -533,9 +533,14 @@ async function planBundleAttachments(bundle: ClassicBundle): Promise<AttachmentA
   for (const c of bundle.challenges) {
     if (!c.attachments?.length) continue;
     const existing = await listAttachments("classic", c.id);
+    // Compared in the form the store keeps (URL href, sanitized name) — a
+    // hand-written bundle's raw spelling would otherwise never match what its
+    // own last import stored, and every re-import would add the link again.
     const has = (m: BundleAttachment) =>
       existing.some((e: Attachment) =>
-        "url" in m ? e.kind === "link" && e.url === m.url && e.name === m.name : e.kind === "upload" && e.sha256 === m.sha256,
+        "url" in m
+          ? e.kind === "link" && e.url === normalizedUrl(m.url) && e.name === sanitizeFilename(m.name)
+          : e.kind === "upload" && e.sha256 === m.sha256,
       );
     const adds = c.attachments.filter((m) => !has(m));
     if (existing.length + adds.length > ATTACHMENTS_PER_ITEM_MAX) {
@@ -547,6 +552,14 @@ async function planBundleAttachments(bundle: ClassicBundle): Promise<AttachmentA
     for (const meta of adds) plan.push({ itemId: c.id, meta });
   }
   return plan;
+}
+
+function normalizedUrl(raw: string): string {
+  try {
+    return new URL(raw.trim()).href;
+  } catch {
+    return raw;
+  }
 }
 
 async function applyBundleAttachments(plan: readonly AttachmentAddition[]): Promise<void> {

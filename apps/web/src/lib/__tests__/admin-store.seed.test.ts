@@ -9,7 +9,7 @@ vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipelin
 // #186: the demo ships two real forensics artifacts through the attachments
 // store, which has its own suites — here, only what the seed asks of it.
 const files = vi.hoisted(() => ({
-  listAttachments: vi.fn(async (_module: string, _item: string) => [] as Record<string, unknown>[]),
+  listAttachments: vi.fn<(module: string, item: string) => Promise<Record<string, unknown>[]>>(async () => []),
   addUpload: vi.fn(async (..._args: unknown[]) => ({})),
 }));
 vi.mock("@/lib/attachments-store", () => files);
@@ -841,6 +841,14 @@ describe("demo attachments (#186)", () => {
     });
     await seedDemoData("alice");
     expect(files.addUpload).not.toHaveBeenCalled();
+  });
+
+  // Review (PR3) M3: the artifacts go in after the seed pipeline landed — a
+  // failure there is logged, never turned into "the seed failed".
+  it("still reports the seed when an artifact upload fails", async () => {
+    files.addUpload.mockRejectedValueOnce(new Error("NOAUTH"));
+    const res = await seedDemoData("alice");
+    expect(res.contestants).toBeGreaterThan(0);
   });
 
   it("uploads nothing when classic is off", async () => {

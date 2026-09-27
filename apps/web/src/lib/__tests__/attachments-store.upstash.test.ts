@@ -93,6 +93,19 @@ describe.skipIf(!liveConfigured)("attachments store — live (#186)", () => {
     await expect(fillMissingUpload(att.id, bytes, k)).rejects.toThrow(/not missing/);
   });
 
+  // Review (PR3) I1: two fills of one missing upload used to write the SAME
+  // chunk fields; the loser's cleanup deleted the winner's bytes.
+  it("a concurrent second fill never deletes the bytes of the fill that won", async () => {
+    const k = keysFor("race");
+    const bytes = new Uint8Array(1024 * 1024 + 7).map((_, i) => i % 199);
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    const att = await addMissingUpload("classic", "x", "big.bin", bytes.length, sha, k);
+    const results = await Promise.allSettled([fillMissingUpload(att.id, bytes, k), fillMissingUpload(att.id, bytes, k)]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const stored = (await listAttachments("classic", "x", k))[0];
+    expect(Buffer.from(await readUploadBytes(stored, k)).equals(Buffer.from(bytes))).toBe(true);
+  });
+
   it("refuses the 11th attachment on an item", async () => {
     const k = keysFor("items");
     await own(k, "x");

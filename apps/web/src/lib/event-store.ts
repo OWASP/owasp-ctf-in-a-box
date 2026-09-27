@@ -17,6 +17,7 @@ import {
   type SettingsPatch,
 } from "@/lib/admin-store";
 import { fillMissingUpload, listAllAttachments, listAttachments, readUploadBytes } from "@/lib/attachments-store";
+import { ATTACHMENTS_EVENT_MAX_BYTES, formatBytes } from "@/lib/attachments-keys";
 import { resolveSite } from "@/lib/site";
 import {
   EVENT_BUNDLE_VERSION,
@@ -182,14 +183,32 @@ type DecodedFile = { item: string; sha256: string; bytes: Uint8Array };
 /** Decodes the archive's files and checks each one's sha256. THROWS
  *  `AdminValidationError` on a mismatch — before anything destructive. */
 function decodeAttachmentFiles(bundle: EventBundle): DecodedFile[] {
-  return (bundle.attachmentFiles ?? []).map((f, i) => {
+  // Every check the fill would make later, made now — size against the
+  // metadata, and the event total — so none of them can fail after the reset.
+  const sizes = new Map<string, number>();
+  for (const c of bundle.classic?.challenges ?? []) {
+    for (const a of c.attachments ?? []) if ("sha256" in a) sizes.set(`${c.id}\n${a.sha256}`, a.size);
+  }
+  let total = 0;
+  const decoded = (bundle.attachmentFiles ?? []).map((f, i) => {
+    const where = `attachmentFiles[${i}]`;
     const bytes = new Uint8Array(Buffer.from(f.bytes, "base64"));
     const actual = createHash("sha256").update(bytes).digest("hex");
-    if (actual !== f.sha256) {
-      throw new AdminValidationError(`attachmentFiles[${i}]`, `attachmentFiles[${i}]: the bytes' sha256 is ${actual}, not ${f.sha256}`);
+    if (actual !== f.sha256) throw new AdminValidationError(where, `${where}: the bytes' sha256 is ${actual}, not ${f.sha256}`);
+    const size = sizes.get(`${f.item}\n${f.sha256}`);
+    if (size !== bytes.length) {
+      throw new AdminValidationError(where, `${where}: ${bytes.length} bytes, but the classic metadata says size ${size}`);
     }
+    total += bytes.length;
     return { item: f.item, sha256: f.sha256, bytes };
   });
+  if (total > ATTACHMENTS_EVENT_MAX_BYTES) {
+    throw new AdminValidationError(
+      "attachmentFiles",
+      `The archive's files add up to ${formatBytes(total)}; the event's attachments are capped at ${formatBytes(ATTACHMENTS_EVENT_MAX_BYTES)}`,
+    );
+  }
+  return decoded;
 }
 
 async function fillAttachmentFiles(files: readonly DecodedFile[]): Promise<void> {

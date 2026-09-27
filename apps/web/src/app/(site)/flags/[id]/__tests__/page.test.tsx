@@ -185,6 +185,30 @@ describe("challenge page files (#186)", () => {
     expect(html).not.toContain("e".repeat(64));
   });
 
+  // Review (PR3) M1: a missing upload is dropped server-side — its id and
+  // name never reach the client payload.
+  it("never sends a missing upload to the client", async () => {
+    attachmentMocks.listAttachments.mockResolvedValueOnce([
+      { id: "a0123456789abcd99", kind: "upload", name: "secret-plan.pcap", size: 10, sha256: "e".repeat(64), missing: true },
+    ]);
+    // The props handed to the client component ARE the RSC payload — walk the
+    // element tree to them (static markup would hide what AttachmentList drops).
+    const find = (node: unknown): Record<string, unknown> | null => {
+      if (!node || typeof node !== "object") return null;
+      const props = (node as { props?: Record<string, unknown> }).props;
+      if (props?.challenge) return props;
+      const kids = props?.children;
+      for (const k of Array.isArray(kids) ? kids : [kids]) {
+        const hit = find(k);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const props = find(await ClassicChallengePage(params("c1")));
+    expect(props).not.toBeNull();
+    expect(JSON.stringify(props!.challenge)).not.toContain("secret-plan.pcap");
+  });
+
   it("renders no Files section for a challenge without any", async () => {
     const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(html).not.toContain(">Files<");

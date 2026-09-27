@@ -41,6 +41,10 @@ export type Attachment = {
   sha256?: string;
   /** Upload only: how many stored chunks hold the bytes. */
   chunks?: number;
+  /** Upload only: the chunk-field prefix, when it is not `id` — a fill writes
+   *  under a per-attempt prefix so a losing concurrent fill can only ever
+   *  delete its own chunks, never the winner's (#186). */
+  blob?: string;
   /** Upload only: named by a bundle but the bytes are not on this box yet. */
   missing?: true;
   /** Link only: an http(s) URL the organizer hosts elsewhere. */
@@ -68,8 +72,7 @@ export function sanitizeFilename(raw: string): string {
   const last = raw.split(/[/\\]/).pop() ?? "";
   const clean = last
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD")
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f]|\p{Cf}/gu, "")
+    .replace(/\p{Cc}|\p{Cf}/gu, "")
     .trim()
     .replace(/^\.+/, "");
   return Array.from(clean).slice(0, ATTACHMENT_NAME_MAX).join("").trim() || "file";

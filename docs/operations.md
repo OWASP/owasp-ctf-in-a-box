@@ -383,14 +383,18 @@ The panel offers:
   closes** (`scoringStartsAt` / `scoringEndsAt`) and **Registration opens** /
   **Registration closes** (`registrationStartsAt` / `registrationEndsAt`).
   You enter local time; each is stored as an ISO instant, and a blank field
-  means no bound on that side. They stack **on top of** the manual toggles
+  means no bound on that side — **except Scoring opens**: an event with no
+  scoring start is **not launched**, and nothing scores (flags, quiz, AI,
+  hints, and Secure Development PRs in the scorer and the poller) until one
+  is set. Every event needs that official launch (#464). They stack **on top of** the manual toggles
   rather than replacing them: scoring is live only when it is not frozen
   *and* inside its window, registration is open only when the switch is open
   *and* inside its window — either condition on its own closes it. Because
   four fields plus two switches is a boolean nobody should do in their head
   mid-event, the section shows the **effective** state in a live
   **Right now:** readout — "scoring is live" / "is frozen (manual)" / "is
-  frozen (outside its window)", and the same three for registration —
+  frozen (outside its window)" / "is closed (not launched — set a scoring
+  start)", and the matching states for registration —
   computed from the very fields it edits. The scoring window is honoured by
   every reader of scoring state (the app, the scorer, the sync poller — see
   [architecture](architecture.md)); the registration window is enforced by

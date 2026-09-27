@@ -86,10 +86,14 @@ they were.
 
 Work down this list — each item is a different subsystem:
 
-1. **Is the event frozen or outside the scoring window?** Check the Event tab
-   (or `HGETALL ctf:admin:settings` — `paused`, `scoringStartsAt/EndsAt`). A
-   freeze **holds** ingestion; the score is queued in the PR comment and
-   ingests on the first tick after you unfreeze. Nothing is lost.
+1. **Is the event frozen, outside the scoring window, or not launched?**
+   Check the Event tab (or `HGETALL ctf:admin:settings` — `paused`,
+   `scoringStartsAt/EndsAt`). An empty `scoringStartsAt` means the event has
+   **not launched** and nothing scores — the usual cause right after an
+   upgrade, since a blank start used to mean "always open" (#464). A freeze
+   or a pre-launch hold **holds** ingestion; the score is queued in the PR
+   comment and ingests on the first tick after you unfreeze or set a start.
+   Nothing is lost.
 2. **Did the fork's Action run and post the score comment?** Open the PR: you
    should see the `github-actions[bot]` comment with the score table. No
    comment → the fork's workflow didn't run or failed; check the fork's

@@ -8,6 +8,19 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Breaking: every event needs an official launch — an empty scoring start
+  now means "not launched".** A blank `scoringStartsAt` used to mean "no
+  bound, always open"; it now means nothing scores. That covers the app's
+  flag, quiz and AI graders and hint reveals, and the scorer and `sync`,
+  which hold Secure Development ingestion. The three readers change together
+  through a new `outsideScoringWindow`, pinned by a shared corpus
+  (`test/fixtures/scoring-window-corpus.json`). The registration window keeps
+  its old meaning, so a blank bound there is still open. **After upgrading,
+  set Scoring opens in `/admin` → Event**, or scoring stays closed. This is
+  PR 1 of #464. The page lock, admin preview and a Launch button follow, and
+  ADR 59 records the decision. CI now also runs all three suites when only a
+  window corpus changes; before this, such an edit ran none of them.
+
 - **Every screenshot and the demo GIF now show the current brand.** The
   rename in #456 reached every string a `grep` can see and none of the
   pictures: all fourteen raster assets under `docs/assets/` predated it, and

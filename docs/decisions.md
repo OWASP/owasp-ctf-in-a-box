@@ -3533,3 +3533,55 @@ redeploy, since Redis data outlives the process but the env var does not)
 still cannot reach either action. *A live-event guard, as first drafted* —
 see above; rejected once it was clear it would refuse-by-default on a
 never-paused box, which is the common case, not the exception.
+
+## ADR 59. Every event needs an official launch: an empty scoring start means "not launched"
+
+**Context.** Before issue #464, nothing on the box was locked by the clock.
+The scoring window (`scoringStartsAt`/`scoringEndsAt`) blocked submissions
+only when a bound was set: an empty start meant "no bound, always open", so
+a freshly provisioned box scored from its first second. The only pre-event
+lock was the `CHALLENGES_GATE_*` password gate. It was set in `.env` and
+fixed for the whole deployment, it guarded pages but not APIs, it had no
+admin bypass, and an organizer had to remember to turn it off at the start.
+An organizer building an event had no state that meant "not open yet",
+short of scheduling a start date they didn't know.
+
+**Decision.** There is one clock, and the launch is `scoringStartsAt`. A
+missing or unparseable `scoringStartsAt` means the event is **not
+launched**, and nothing scores. This is implemented as
+`outsideScoringWindow(nowMs, startsAt, endsAt)`, next to the generic
+`outsideWindow` in each of the three readers (`apps/web/src/lib/schedule-window.ts`,
+`scorer/src/store.js`, `sync/src/redis.js`). A shared corpus
+(`test/fixtures/scoring-window-corpus.json`) pins the three copies against
+each other, the way `window-corpus.json` already did (#232). The
+registration window keeps `outsideWindow`, where an absent bound means
+open: teams have to be able to form before launch. The fail directions
+stay separate. The *value* rule is closed (no start, not launched). The
+*error* rule for the freeze read is still open: a Redis blip on a live
+event must not drop real submissions, so the two are decided and named
+separately.
+
+**Consequences.** A box upgraded with an empty start stops scoring until an
+organizer sets one. That is the intended behavior (every event needs an
+official launch), and it is called out as a breaking change in CHANGELOG
+and in `docs/troubleshooting.md`. There is no automatic migration, because
+setting a start on an organizer's behalf would launch an event they
+haven't launched. The public phase strip reads a missing start as the
+`registration` (pre-launch) phase. Event archive import, which refuses a
+live event, is allowed on an unlaunched box. The rest of #464 builds on
+this: locking pages, admin preview with dry-run grading, and a
+Launch/Schedule/Un-launch control that writes and clears this same field.
+The password gate is removed once the page lock replaces it.
+
+**Alternatives rejected.** *A separate `launched` flag, defaulting to
+launched on existing boxes.* It would be backward compatible, but it adds
+a second field the three readers must agree on, and a second clock that
+can disagree with the first. *An opt-in "pre-launch lock" switch.* New
+events would have to remember to turn it on, which is the failure the
+password gate already had. *Changing `outsideWindow` itself.* It is shared
+with the registration window, where "empty means locked" would stop teams
+from forming before launch.
+
+**Status.** Accepted (#464). The password gate is superseded once #464's
+page lock lands.
+

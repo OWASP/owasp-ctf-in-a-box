@@ -311,8 +311,13 @@ suggestions.
   `apps/web/src/lib/schedule-window.ts` (re-exported through
   `admin-store.ts`), `scorer/src/store.js`, and `sync/src/redis.js`;
   registration windows in `team-store.ts`. They read the same `ctf:admin:settings` fields and must
-  agree. Manual-freeze reads fail **open** (a Redis blip must not drop live
-  submissions); keep that.
+  agree. The scoring window goes through `outsideScoringWindow`, where a
+  start is **required**: an empty or unparseable `scoringStartsAt` means the
+  event is not launched and nothing scores (#464, ADR 59). The registration
+  window keeps `outsideWindow`, where an absent bound means open. Each rule
+  has a shared corpus in `test/fixtures/` (`scoring-window-corpus.json`,
+  `window-corpus.json`) that all three suites run. Manual-freeze reads fail
+  **open** (a Redis blip must not drop live submissions); keep that.
 - **`upstashPipeline` in `apps/web` does not throw on a per-command error.**
   It returns `{ result?, error? }` positionally; a caller that reads
   `.result` without checking `.error` turns `NOAUTH`/`WRONGTYPE` into a

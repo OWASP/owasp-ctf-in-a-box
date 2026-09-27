@@ -32,7 +32,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 cleanup() {
-  docker rm -f web-acceptance web-default web-noscorer >/dev/null 2>&1 || true
+  docker rm -f web-acceptance web-default web-noscorer web-launched aa-redis aa-srh >/dev/null 2>&1 || true
+  docker network rm aa-net >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -61,7 +62,41 @@ docker run -d --name web-acceptance -p 3100:3000 \
   -e GITHUB_ORG=acceptance-org -e ADMIN_LOGINS=acceptance-admin ctf-web:acceptance
 
 HOME_HTML=$(wait_for_html http://localhost:3100/)
-CHALLENGES_HTML=$(wait_for_html http://localhost:3100/challenges)
+
+# web-acceptance has NO Redis at all. Since #464 the module pages are behind
+# the launch lock, which fails CLOSED on an unreadable settings read — so a box
+# whose datastore is down must redirect a visitor away from /challenges rather
+# than render it. That is the right answer, and asserted here.
+echo "--- with Redis unreachable, /challenges redirects to the landing page (launch lock fails closed)"
+got="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://localhost:3100/challenges)"
+case "$got" in
+  30[1278]" http://localhost:3100/") ;;
+  *) echo "FAIL: /challenges with Redis down should redirect to /, got: $got"; exit 1 ;;
+esac
+
+# The page content checks below need a LAUNCHED event, which needs a settings
+# hash to launch: a real redis behind srh, with scoringStartsAt written the
+# way /admin's Launch writes it. web-launched is web-acceptance's twin with it.
+echo "--- booting redis + srh for the launched containers"
+AA_SRH_TOKEN=acceptance-srh-token
+docker network create aa-net >/dev/null
+docker run -d --name aa-redis --network aa-net --network-alias redis redis:7-alpine >/dev/null
+docker run -d --name aa-srh --network aa-net --network-alias srh \
+  -e SRH_MODE=env -e SRH_TOKEN="$AA_SRH_TOKEN" -e SRH_CONNECTION_STRING=redis://redis:6379 \
+  hiett/serverless-redis-http:latest@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150 >/dev/null
+aa_deadline=$((SECONDS + 30))
+until docker exec aa-redis redis-cli ping 2>/dev/null | grep -q PONG; do
+  [ "$SECONDS" -ge "$aa_deadline" ] && { echo "FAIL: acceptance redis never answered"; exit 1; }
+  sleep 1
+done
+docker exec aa-redis redis-cli HSET ctf:admin:settings scoringStartsAt "2000-01-01T00:00:00Z" >/dev/null
+AA_REDIS_ENV="-e UPSTASH_REDIS_REST_URL=http://srh:80 -e UPSTASH_REDIS_REST_TOKEN=$AA_SRH_TOKEN"
+# shellcheck disable=SC2086  # AA_REDIS_ENV is two -e flags on purpose
+docker run -d --name web-launched --network aa-net -p 3103:3000 $AA_REDIS_ENV \
+  -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3103 \
+  -e SCORE_IMAGE=ghcr.io/example/score:acceptance \
+  -e GITHUB_ORG=acceptance-org -e ADMIN_LOGINS=acceptance-admin ctf-web:acceptance >/dev/null
+CHALLENGES_HTML=$(wait_for_html http://localhost:3103/challenges)
 
 # A bare `grep -q` under `set -e` fails with no message at all; every positive
 # assertion goes through this so a red run says what was missing.
@@ -78,7 +113,7 @@ echo "--- identity fails open to the default name (no Redis behind this run)"
 expect_in "$HOME_HTML" "<title>OWASP CTF in a Box</title>" "landing page title is not the default event name without settings"
 echo "--- no DC34 branding"
 if echo "$HOME_HTML$CHALLENGES_HTML" | grep -qi "DEF CON"; then echo "FAIL: DC34 leaked"; exit 1; fi
-echo "--- all six targets render; no Redis behind this run means no admin-chosen subset"
+echo "--- all six targets render; no admin-chosen subset is stored, so the default applies"
 # With no Redis behind this run, the app has no secureDevTargets to read and
 # defaults to all six — DVWA and VAmPI AND WebGoat must all render even
 # though nothing above named any of them. Which targets actually run is
@@ -180,7 +215,9 @@ if [ "$code" != "404" ]; then echo "FAIL: /challenges returned $code without a s
 echo "--- default run (no GITHUB_ORG) is neutral (no DEF CON, name OWASP CTF in a Box)"
 # SAME image as web-acceptance — this is a runtime env difference, not a
 # rebuild: config v2 has nothing left for a second build to bake.
-docker run -d --name web-default -p 3101:3000 \
+# On the launched redis too, so its /challenges renders (see web-launched).
+# shellcheck disable=SC2086  # AA_REDIS_ENV is two -e flags on purpose
+docker run -d --name web-default --network aa-net -p 3101:3000 $AA_REDIS_ENV \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3101 \
   -e SCORE_IMAGE=ghcr.io/example/score:acceptance ctf-web:acceptance
 DEFAULT_HTML=$(wait_for_html http://localhost:3101/)

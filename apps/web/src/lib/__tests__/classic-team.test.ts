@@ -12,9 +12,16 @@ import { getTeamClassicSolvedIds, teamSolveKeys } from "@/lib/classic-team";
 beforeEach(() => vi.clearAllMocks());
 
 describe("teamSolveKeys", () => {
-  it("is every teammate's solves key, plus the viewer's own spelling, deduped case-insensitively", async () => {
-    m.getViewerTeam.mockResolvedValue({ slug: "t", name: "T", members: ["Alice", "bob"] });
-    expect(await teamSolveKeys("alice")).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+  // Exact-string dedupe (review I3): a member stored in a different case than
+  // the viewer's session keeps BOTH spellings — dropping one could drop the
+  // very hash that holds the solves. An extra HEXISTS key costs nothing.
+  it("is every teammate's solves key plus the viewer's own, keeping a differently-cased member spelling", async () => {
+    m.getViewerTeam.mockResolvedValue({ slug: "t", name: "T", members: ["Alice", "bob", "alice"] });
+    expect(await teamSolveKeys("alice")).toEqual([
+      "ctf:classic:solves:alice",
+      "ctf:classic:solves:Alice",
+      "ctf:classic:solves:bob",
+    ]);
   });
 
   it("is just the viewer's own key with no team (a team of one)", async () => {

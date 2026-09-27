@@ -244,6 +244,9 @@ describe("generateMetadata before launch (#464)", () => {
 
 describe("a locked story step's own page (#463)", () => {
   beforeEach(() => {
+    // "recon" must be a real challenge: a story step that doesn't exist is
+    // skipped (it can't lock the step after it — review I2).
+    listChallenges.mockResolvedValue([{ ...record, id: "recon", title: "Recon" }, record]);
     storyMocks.listStories.mockResolvedValue([{ id: "op", title: "Op", intro: "", steps: ["recon", "c1"] }]);
     storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
   });

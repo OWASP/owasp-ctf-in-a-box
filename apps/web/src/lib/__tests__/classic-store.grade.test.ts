@@ -557,6 +557,7 @@ describe("story lock (#463)", () => {
   it("hands the script the step's prerequisite and every teammate's solves key", async () => {
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["recon", "chal-1"]));
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["recon", "chal-1"] }]); // existing ids
     evalReturns(["correct", "50"]);
     await submitFlag("alice", "chal-1", "CTF{x}");
     const { keys, argv } = lastEval();
@@ -567,6 +568,7 @@ describe("story lock (#463)", () => {
   it("reports the script's `locked` as its own reason — never a wrong answer", async () => {
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["recon", "chal-1"]));
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["recon", "chal-1"] }]); // existing ids
     evalReturns(["locked"]);
     expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "locked" });
   });
@@ -574,6 +576,7 @@ describe("story lock (#463)", () => {
   it("passes no prerequisite for step 1 or a challenge outside any story", async () => {
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["chal-1", "web"]));
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["chal-1", "web"] }]); // existing ids
     evalReturns(["correct", "50"]);
     await submitFlag("alice", "chal-1", "CTF{x}");
     expect(lastEval().argv[8]).toBe("");

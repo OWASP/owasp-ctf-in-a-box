@@ -3,6 +3,8 @@
 // contestant's progress from the active leaderboard source and renders their
 // dossier: identity, overall progress, per-app breakdown, and team control.
 
+import { getTeamClassicSolvedIds } from "@/lib/classic-team";
+import { isLocked, storyPositions } from "@/lib/story-lock";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -37,7 +39,7 @@ import {
   type AiTotal,
   type ViewerAi,
 } from "@/lib/ai-store";
-import {
+import { listStories,
   getClassicTotals,
   getViewerClassic,
   listChallenges,
@@ -227,6 +229,19 @@ export default async function ProfilePage() {
   // module-blocks.ts does the arithmetic. A module's slice is undefined
   // exactly when that module is disabled, which is what keeps a disabled
   // module out of every derived figure below.
+  // #463: story steps still locked for this viewer's team never reach the
+  // page — not their title, points or category (review C1). A stories read
+  // that fails errors the page, like the challenge list would.
+  let classicLocked: Set<string> = new Set();
+  if (classicEnabled) {
+    const stories = await listStories();
+    if (stories.length > 0) {
+      const positions = storyPositions(stories, new Set(classicChallenges.map((c) => c.id)));
+      const teamSolved = await getTeamClassicSolvedIds(login);
+      classicLocked = new Set([...positions.values()].filter((pos) => isLocked(pos, teamSolved)).map((pos) => pos.id));
+    }
+  }
+
   const moduleInput: ProfileModuleInput = {
     profile,
     appsRecord,
@@ -235,7 +250,7 @@ export default async function ProfilePage() {
     secureDev: secureDevEnabled,
     quiz: quizEnabled ? { total: quizTotal, questions: quizQuestions, maxPoints: quizMaxPoints, viewer: viewerQuiz } : undefined,
     classic: classicEnabled
-      ? { total: classicTotal, challenges: classicChallenges, maxPoints: classicMaxPoints, viewer: viewerClassic }
+      ? { total: classicTotal, challenges: classicChallenges, maxPoints: classicMaxPoints, viewer: viewerClassic, locked: classicLocked }
       : undefined,
     ai: aiEnabled ? { total: aiTotal, challenges: aiChallenges, maxPoints: aiMaxPoints, viewer: viewerAi } : undefined,
   };

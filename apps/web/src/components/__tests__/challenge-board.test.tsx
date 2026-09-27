@@ -142,3 +142,17 @@ describe("ChallengeBoard (tile grid)", () => {
     expect(html).not.toContain("ctf{leaked}");
   });
 });
+
+describe("the run rail counts open story steps too (#463, review M3)", () => {
+  it("includes runExtras (open story steps, rendered in their lane) in the rail's totals", () => {
+    const solvedStep: ClassicChallengeView = { ...web, id: "story-step", title: "Step 1", status: "solved", earnedPoints: 50 };
+    const without = renderToStaticMarkup(<ChallengeBoard categories={["Web"]} challenges={[web]} authenticated basePath="/flags" />);
+    const withStep = renderToStaticMarkup(
+      <ChallengeBoard categories={["Web"]} challenges={[web]} runExtras={[solvedStep]} authenticated basePath="/flags" />,
+    );
+    expect(without).toContain("/ 1 solved");
+    expect(withStep).toContain("/ 2 solved");
+    // The extra is counted, not rendered as a tile here — it lives in its lane.
+    expect(withStep).not.toContain('href="/flags/story-step"');
+  });
+});

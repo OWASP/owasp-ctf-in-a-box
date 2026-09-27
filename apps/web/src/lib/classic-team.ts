@@ -3,11 +3,14 @@
 // way the leaderboard folds team solves (the members' own solves hashes), so a
 // story unlock and a team's score never disagree about what the team solved.
 //
-// A viewer with no team is a team of one. Logins join case-insensitively (the
-// AGENTS.md rule): the viewer's own spelling is always included, and members
-// are deduped on their lowercased form. A read error THROWS, so every caller's
-// fail-CLOSED direction applies (a lock read never guesses "nothing solved"
-// silently, and never "everything").
+// A viewer with no team is a team of one. The viewer's own spelling is always
+// included, and members are deduped on the EXACT string, not the lowercased
+// one: a solves hash is keyed on whatever spelling wrote it, so a member stored
+// in a different case keeps its own key alongside (an extra key costs one
+// HEXISTS; dropping the one holding the solves would wrongly lock a step).
+// A solves-read error THROWS, so callers fail closed. A TEAM-read error is
+// read as "team of one" by getViewerTeam itself — which is also closed (fewer
+// unlocks, never more).
 
 import "server-only";
 import { classicSolvesKey } from "@/lib/classic-keys";
@@ -17,14 +20,7 @@ import { upstashPipeline } from "@/lib/upstash";
 /** The solves-hash keys of every current teammate (the viewer first). */
 export async function teamSolveKeys(login: string): Promise<string[]> {
   const team = await getViewerTeam(login);
-  const seen = new Set<string>();
-  const logins: string[] = [];
-  for (const member of [login, ...(team?.members ?? [])]) {
-    const fold = member.toLowerCase();
-    if (seen.has(fold)) continue;
-    seen.add(fold);
-    logins.push(member);
-  }
+  const logins = [...new Set([login, ...(team?.members ?? [])])];
   return logins.map(classicSolvesKey);
 }
 

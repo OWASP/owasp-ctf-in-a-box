@@ -121,7 +121,7 @@ export default async function FlagsPage() {
   // #463: story lanes, and the category grid WITHOUT any story step (each
   // challenge has exactly one place on the board). A locked step's view is
   // just its position — the challenge's own fields never reach the render.
-  const positions = storyPositions(stories);
+  const positions = storyPositions(stories, new Set(challenges.map((c) => c.id)));
   const byId = new Map(viewChallenges.map((c) => [c.id, c]));
   const storyLanes: StoryLaneView[] = stories
     .map((st) => ({
@@ -132,7 +132,8 @@ export default async function FlagsPage() {
         .filter((id) => byId.has(id))
         .map((id): StoryStepView => {
           const pos = positions.get(id)!;
-          if (isLocked(pos, teamSolved)) return { locked: true, key: `${st.id}:${pos.position}`, label: lockedLabel(pos) };
+          // An admin preview (#464) sees every step open, to test the story.
+          if (!launch.preview && isLocked(pos, teamSolved)) return { locked: true, key: `${st.id}:${pos.position}`, label: lockedLabel(pos) };
           const c = byId.get(id)!;
           return { locked: false, id, title: c.title, category: c.category, points: c.points, solved: c.status === "solved", position: pos.position, total: pos.total };
         }),
@@ -180,6 +181,7 @@ export default async function FlagsPage() {
           <ChallengeBoard
             categories={categories}
             challenges={boardChallenges}
+            runExtras={viewChallenges.filter((c) => positions.has(c.id) && storyLanes.some((l) => l.steps.some((st) => !st.locked && st.id === c.id)))}
             authenticated={Boolean(login)}
             hintIds={hintIds}
             basePath="/flags"

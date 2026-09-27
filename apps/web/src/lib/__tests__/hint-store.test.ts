@@ -15,7 +15,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 // #463: no stories on this board unless a test says otherwise.
 const storyMocks = vi.hoisted(() => ({ listStories: vi.fn(async () => [] as unknown[]), teamSolveKeys: vi.fn(async () => [] as string[]) }));
-vi.mock("@/lib/classic-store", () => ({ listStories: storyMocks.listStories }));
+vi.mock("@/lib/classic-store", () => ({
+  listStories: storyMocks.listStories,
+  listChallengeIds: async () => new Set(["recon", "web", "web-robots-only"]),
+}));
 vi.mock("@/lib/classic-team", () => ({ teamSolveKeys: storyMocks.teamSolveKeys }));
 vi.mock("@/lib/upstash", () => ({
   upstashEval: mocks.upstashEval,

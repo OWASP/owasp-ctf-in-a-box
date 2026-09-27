@@ -342,4 +342,16 @@ describe("stories on the board (#463)", () => {
     storyMocks.listStories.mockResolvedValue([]);
     expect(renderToStaticMarkup(await FlagsPage())).not.toContain('aria-label="Stories"');
   });
+
+  it("opens every step for an admin PREVIEW, so the whole story can be tested before launch", async () => {
+    getSession.mockResolvedValue({ user: { login: "organizer" } });
+    listChallenges.mockResolvedValue(baseChallenges);
+    storyMocks.listStories.mockResolvedValue([op]);
+    storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
+    launchLock.redirectIfNotLaunched.mockResolvedValueOnce({ allowed: true, preview: true });
+    const html = renderToStaticMarkup(await FlagsPage());
+    expect(html).toContain("Still cooling down");
+    expect(html).not.toContain("??? — step 2 of 2");
+  });
 });
+

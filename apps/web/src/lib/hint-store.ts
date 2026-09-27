@@ -12,7 +12,7 @@ import { CLASSIC_HINTS_KEY, classicSolvesKey } from "@/lib/classic-keys";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { userHintTimesKey } from "@/lib/team-keys";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
-import { listStories } from "@/lib/classic-store";
+import { listChallengeIds, listStories } from "@/lib/classic-store";
 import { teamSolveKeys } from "@/lib/classic-team";
 import { storyPositions } from "@/lib/story-lock";
 
@@ -306,7 +306,8 @@ export async function revealHint(
   let lockKeys: string[] = [];
   if (target === "classic") {
     try {
-      const pos = storyPositions(await listStories()).get(id);
+      const [stories, existing] = await Promise.all([listStories(), listChallengeIds()]);
+      const pos = storyPositions(stories, existing).get(id);
       if (pos?.prereq) {
         prereq = pos.prereq;
         lockKeys = await teamSolveKeys(login);

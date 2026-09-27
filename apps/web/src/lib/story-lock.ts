@@ -16,6 +16,8 @@ export type Story = {
 };
 
 export type StoryPosition = {
+  /** The step's own challenge id. */
+  id: string;
   storyId: string;
   /** 1-based. */
   position: number;
@@ -24,24 +26,34 @@ export type StoryPosition = {
   prereq: string | null;
 };
 
-/** Where every story step sits. A challenge not in any story has no entry. */
-export function storyPositions(stories: readonly Story[]): Map<string, StoryPosition> {
+/** Where every story step sits. A challenge not in any story has no entry.
+ *
+ *  `existing` (the ids of challenges that exist) drops any stale step id first
+ *  — a challenge deleted without its story being pruned, or an id that never
+ *  existed. Without it, a ghost step nobody can ever solve would lock the step
+ *  after it forever. Every caller that knows the challenge list passes it. */
+export function storyPositions(stories: readonly Story[], existing?: ReadonlySet<string>): Map<string, StoryPosition> {
   const out = new Map<string, StoryPosition>();
   for (const story of stories) {
-    story.steps.forEach((id, i) => {
+    const steps = existing ? story.steps.filter((id) => existing.has(id)) : story.steps;
+    steps.forEach((id, i) => {
       out.set(id, {
+        id,
         storyId: story.id,
         position: i + 1,
-        total: story.steps.length,
-        prereq: i === 0 ? null : story.steps[i - 1],
+        total: steps.length,
+        prereq: i === 0 ? null : steps[i - 1],
       });
     });
   }
   return out;
 }
 
-/** Whether a step is locked for a team that has solved `teamSolved`. */
+/** Whether a step is locked for a team that has solved `teamSolved`. A step
+ *  the team has ALREADY solved is never locked — a teammate leaving or a
+ *  reorder must not hide a solve whose points are banked. */
 export function isLocked(pos: StoryPosition, teamSolved: ReadonlySet<string>): boolean {
+  if (teamSolved.has(pos.id)) return false;
   return pos.prereq !== null && !teamSolved.has(pos.prereq);
 }
 

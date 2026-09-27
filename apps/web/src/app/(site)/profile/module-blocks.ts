@@ -36,7 +36,15 @@ export type ProfileModuleInput = {
   enabledMaxPoints: number;
   secureDev: boolean;
   quiz?: { total?: QuizTotal; questions: Question[]; maxPoints: number; viewer: ViewerQuiz };
-  classic?: { total?: ClassicTotal; challenges: Challenge[]; maxPoints: number; viewer: ViewerClassic };
+  classic?: {
+    total?: ClassicTotal;
+    challenges: Challenge[];
+    maxPoints: number;
+    viewer: ViewerClassic;
+    /** #463: story steps still locked for the viewer's team — left out of
+     *  the list entirely, so nothing about them reaches the page. */
+    locked?: ReadonlySet<string>;
+  };
   ai?: { total?: AiTotal; challenges: AiChallenge[]; maxPoints: number; viewer: ViewerAi };
 };
 
@@ -202,10 +210,10 @@ export function moduleItemsFor(id: ModuleId, input: ProfileModuleInput): { items
     };
   }
   if (id === "classic" && input.classic && input.classic.challenges.length > 0) {
-    const { challenges, viewer } = input.classic;
+    const { challenges, viewer, locked } = input.classic;
     return {
       doneWord: "solved",
-      items: challenges.map((c) => {
+      items: challenges.filter((c) => !locked?.has(c.id)).map((c) => {
         const done = Boolean(viewer.solved[c.id]);
         return {
           key: c.id,

@@ -1157,7 +1157,8 @@ export async function submitFlag(
   let prereq = "";
   let lockKeys: string[] = [];
   try {
-    const pos = storyPositions(await listStories()).get(challengeId);
+    const [stories, existing] = await Promise.all([listStories(), listChallengeIds()]);
+    const pos = storyPositions(stories, existing).get(challengeId);
     if (pos?.prereq) {
       prereq = pos.prereq;
       lockKeys = await teamSolveKeys(login);
@@ -1318,4 +1319,12 @@ export async function setStories(stories: Story[]): Promise<Story[]> {
   const [res] = await upstashPipeline([["SET", CLASSIC_STORIES_KEY, JSON.stringify(canonical)]]);
   if (res.error) throw new Error(`Upstash SET failed: ${res.error}`);
   return canonical;
+}
+
+/** The ids of every challenge that exists — what `storyPositions` needs to
+ *  drop a stale story step (#463). One HKEYS; THROWS on a read error. */
+export async function listChallengeIds(): Promise<Set<string>> {
+  const [res] = await upstashPipeline([["HKEYS", CHALLENGES_KEY]]);
+  if (res.error) throw new Error(`Upstash HKEYS failed: ${res.error}`);
+  return new Set(Array.isArray(res.result) ? (res.result as unknown[]).filter((v): v is string => typeof v === "string") : []);
 }

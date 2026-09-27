@@ -31,6 +31,7 @@ export default function ChallengeBoard({
   authenticated,
   hintIds = [],
   basePath,
+  runExtras = [],
 }: {
   /** The organizer's category display order — categories render in this
    *  order, and a category with no matching challenge is skipped entirely. */
@@ -48,11 +49,16 @@ export default function ChallengeBoard({
   /** Where a tile's link points — classic passes "/flags", a second module
    *  passes its own board route. Tile href is `${basePath}/${encodeURIComponent(challenge.id)}`. */
   basePath: string;
+  /** Challenges that count toward the viewer's run rail but render elsewhere
+   *  — the OPEN story steps, shown in their lane (#463). Never tiled here. */
+  runExtras?: ChallengeView[];
 }) {
   // Totals over the RENDERED set — challenges whose category is in the
   // `categories` prop — so the summary can never disagree with the tiles
   // below it (the CodeRabbit finding on the old rail, kept fixed here).
-  const rendered = challenges.filter((c) => categories.includes(c.category));
+  // Open story steps (#463) render in their lane, not here, but they are part
+  // of the viewer's run — counted, never tiled. Locked steps are never passed.
+  const rendered = [...challenges.filter((c) => categories.includes(c.category)), ...runExtras];
   const solvedTotal = rendered.filter((c) => c.status === "solved").length;
   const pointsTotal = rendered.reduce((n, c) => n + (c.status === "solved" ? c.earnedPoints : 0), 0);
   const pointsAvailable = rendered.reduce((n, c) => n + c.points, 0);

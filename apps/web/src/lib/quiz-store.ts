@@ -668,11 +668,18 @@ type ResolvedAdminSettings = Awaited<ReturnType<typeof getAdminSettings>>;
  *  obviously-refused answer off the write path cheaply; GRADE_SCRIPT
  *  re-checks both, against state read fresh at script-execution time, and
  *  is what actually enforces them (see GRADE_SCRIPT's comment). */
-async function evaluateGate(settings: ResolvedAdminSettings | null, login: string, questionId: string): Promise<QuizGate> {
+async function evaluateGate(
+  settings: ResolvedAdminSettings | null,
+  login: string,
+  questionId: string,
+  dryRun = false,
+): Promise<QuizGate> {
   // `settings` is null when the settings read itself failed — the pause/
   // schedule check then fails OPEN (a null reads as "not paused"), matching
   // classic-store's gate and the manual-freeze fail-open in scorer and sync.
-  if (settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
+  // A dry run (#464 admin preview) happens exactly while scoring is closed —
+  // before launch — so the pause is what is being previewed, not a refusal.
+  if (!dryRun && settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
 
   const maxAttempts = settings?.quizMaxAttempts ?? QUIZ_MAX_ATTEMPTS;
   const retryAfterMin = settings?.quizRetryAfterMin ?? QUIZ_RETRY_AFTER_MIN;
@@ -694,6 +701,8 @@ async function evaluateGate(settings: ResolvedAdminSettings | null, login: strin
   }
 
   if (answered) return { allowed: false, reason: "answered" };
+  // Nothing a dry run does is recorded: no budget is spent, nothing cools.
+  if (dryRun) return { allowed: true };
 
   const attemptsSoFar = attempt?.attempts ?? 0;
   if (maxAttempts > 0 && attemptsSoFar >= maxAttempts) {
@@ -821,6 +830,9 @@ if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 local maxAttempts = tonumber(ARGV[5])
 local cooldownMs = tonumber(ARGV[6])
 local nowMs = tonumber(ARGV[7])
+-- DRY RUN (#464 admin preview): grade, write NOTHING, ignore the attempt
+-- budget and cooldown (nothing is recorded, so neither is being spent).
+local dry = ARGV[8] == '1'
 
 local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
 local attempts = 0
@@ -838,18 +850,21 @@ if attemptsRaw then
   firstAt = string.match(attemptsRaw, '"firstAt":"([^"]*)"')
 end
 
-if maxAttempts > 0 and attempts >= maxAttempts then
+if not dry and maxAttempts > 0 and attempts >= maxAttempts then
   return {'exhausted'}
 end
-if cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
+if not dry and cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
   return {'cooldown', tostring(lastAtMs + cooldownMs)}
 end
 
 attempts = attempts + 1
 if not firstAt then firstAt = ARGV[3] end
-redis.call('HSET', KEYS[1], ARGV[1], '{"attempts":' .. attempts .. ',"firstAt":"' .. firstAt .. '","lastAt":"' .. ARGV[3] .. '","lastAtMs":' .. ARGV[7] .. '}')
+if not dry then
+  redis.call('HSET', KEYS[1], ARGV[1], '{"attempts":' .. attempts .. ',"firstAt":"' .. firstAt .. '","lastAt":"' .. ARGV[3] .. '","lastAtMs":' .. ARGV[7] .. '}')
+end
 
 if key ~= ARGV[2] then
+  if dry then return {'incorrect', '0', 'dry'} end
   return {'incorrect', tostring(attempts)}
 end
 
@@ -859,6 +874,7 @@ if qRaw then
   local found = string.match(qRaw, '"points":(%-?%d+)[,}]')
   if found then points = tonumber(found) end
 end
+if dry then return {'correct', tostring(points), 'dry'} end
 redis.call('HSET', KEYS[2], ARGV[1], '{"choices":' .. ARGV[2] .. ',"points":' .. points .. ',"at":"' .. ARGV[3] .. '"}')
 redis.call('HINCRBY', KEYS[5], ARGV[4], points)
 redis.call('HINCRBY', KEYS[6], ARGV[4], 1)
@@ -870,8 +886,9 @@ export type AnswerResult =
   // answer, but `points` is 0 because this call awarded nothing further —
   // NOT because the question is worth nothing. Callers must render the two
   // apart; "Correct — +0 points." is exactly the wrong thing to say here.
-  | { ok: true; correct: true; points: number; already?: boolean }
-  | { ok: true; correct: false }
+  // `dryRun`: an admin-preview grade (#464) — nothing was written.
+  | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
+  | { ok: true; correct: false; dryRun?: true }
   | { ok: false; reason: "paused" | "answered" | "exhausted" | "cooldown"; retryAt?: string }
   // The gate's lookup itself failed (fail-closed) — kept distinct from
   // "exhausted" so a caller-facing message can say the check couldn't be
@@ -893,7 +910,13 @@ export type AnswerResult =
  *  settings resolved by THIS call, so a race that slips past the pre-check
  *  is still caught, atomically, by the script. This function never returns
  *  the answer key itself, only whether the submission was right. */
-export async function answerQuestion(login: string, questionId: string, choices: string[]): Promise<AnswerResult> {
+export async function answerQuestion(
+  login: string,
+  questionId: string,
+  choices: string[],
+  opts: { dryRun?: boolean } = {},
+): Promise<AnswerResult> {
+  const dryRun = opts.dryRun === true;
   if (!QUIZ_ID_RE.test(questionId)) return { ok: false, reason: "invalid" };
   if (
     !Array.isArray(choices) ||
@@ -904,7 +927,7 @@ export async function answerQuestion(login: string, questionId: string, choices:
   }
 
   const settings = await readSettingsFailOpen();
-  const gate = await evaluateGate(settings, login, questionId);
+  const gate = await evaluateGate(settings, login, questionId, dryRun);
   if (!gate.allowed) {
     // Kept as its own branch (not folded into the passthrough below) so its
     // caller-facing shape can never accidentally pick up a retryAt/attempts
@@ -934,15 +957,23 @@ export async function answerQuestion(login: string, questionId: string, choices:
     verdict = await upstashEval(
       GRADE_SCRIPT,
       [attemptsKey(login), answersKey(login), KEY_KEY, QUESTIONS_KEY, POINTS_KEY, ANSWERED_KEY],
-      [questionId, submitted, nowIso, login, maxAttempts, cooldownMs, now.getTime()],
+      // ARGV[8]: dry run — grade, write nothing (#464 admin preview).
+      [questionId, submitted, nowIso, login, maxAttempts, cooldownMs, now.getTime(), dryRun ? "1" : "0"],
     );
   } catch (err) {
     console.error("Quiz grading failed:", errorLabel(err));
     return { ok: false, reason: "error" };
   }
 
-  const [status, value] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
+  const [status, value, marker] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") return { ok: false, reason: "invalid" };
+  // A dry verdict carries a trailing 'dry' from the script itself, so a
+  // preview result can never be read as a banked answer.
+  if (marker === "dry") {
+    if (status === "correct") return { ok: true, correct: true, points: Number(value) || 0, dryRun: true };
+    if (status === "incorrect") return { ok: true, correct: false, dryRun: true };
+    return { ok: false, reason: "error" };
+  }
   if (status === "exhausted") return { ok: false, reason: "exhausted" };
   if (status === "cooldown") {
     const retryAtMs = Number(value);

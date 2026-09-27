@@ -58,13 +58,30 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     ]);
   }
 
-  async function answer(id: string, submitted: string, { nowMs = T0, maxAttempts = 3, cooldownMs = 0, login = LOGIN } = {}) {
+  async function answer(
+    id: string,
+    submitted: string,
+    { nowMs = T0, maxAttempts = 3, cooldownMs = 0, login = LOGIN, dry = false } = {},
+  ) {
     await load();
     return upstashEval(
       script,
       [K.attempts, K.answers, K.key, K.questions, K.points, K.answered],
-      [id, submitted, iso(nowMs), login, maxAttempts, cooldownMs, nowMs],
+      [id, submitted, iso(nowMs), login, maxAttempts, cooldownMs, nowMs, dry ? "1" : "0"],
     );
+  }
+
+  /** Every key the script can touch, as sorted field maps (HGETALL's field
+   *  ORDER is not stable across a hash's re-encoding, only its contents). */
+  async function snapshot() {
+    await load();
+    const replies = await pipeline(Object.values(K).map((k) => ["HGETALL", k]));
+    return replies.map(({ result }) => {
+      const flat = (result as string[] | null) ?? [];
+      const pairs: [string, string][] = [];
+      for (let i = 0; i < flat.length; i += 2) pairs.push([flat[i], flat[i + 1]]);
+      return Object.fromEntries(pairs.sort(([a], [b]) => a.localeCompare(b)));
+    });
   }
 
   async function hget(key: string, field: string) {
@@ -124,5 +141,38 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     ]);
     expect(await hget(K.attempts, id)).toBe(attemptsRow(1, iso(T0), iso(T0), T0));
     expect(await answer(id, WRONG, { nowMs: T0 + 300_000, cooldownMs: 300_000 })).toEqual(["incorrect", "2"]);
+  });
+
+  // #464 admin preview: the SAME script grades and writes nothing.
+  it("dry run: grades a correct answer and writes nothing at all", async () => {
+    const id = freshId("dry-ok");
+    await seed(id, 20);
+    const before = await snapshot();
+    expect(await answer(id, CORRECT, { dry: true })).toEqual(["correct", "20", "dry"]);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("dry run: grades a wrong answer without spending an attempt", async () => {
+    const id = freshId("dry-wrong");
+    await seed(id, 20);
+    const before = await snapshot();
+    expect(await answer(id, '["z"]', { dry: true })).toEqual(["incorrect", "0", "dry"]);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("dry run: an exhausted attempt budget or a cooldown does not block a preview", async () => {
+    const id = freshId("dry-cap");
+    await seed(id, 20);
+    expect(await answer(id, '["z"]', { maxAttempts: 1, cooldownMs: 60_000 })).toEqual(["incorrect", "1"]);
+    expect(await answer(id, CORRECT, { nowMs: T0 + 1, maxAttempts: 1, cooldownMs: 60_000, dry: true })).toEqual(["correct", "20", "dry"]);
+  });
+
+  it("anti-vacuous: the SAME answer without dry run does write", async () => {
+    const id = freshId("dry-anti");
+    await seed(id, 20);
+    expect(await answer(id, CORRECT, { dry: true })).toEqual(["correct", "20", "dry"]);
+    const before = await snapshot();
+    expect(await answer(id, CORRECT)).toEqual(["correct", "20"]);
+    expect(await snapshot()).not.toEqual(before);
   });
 });

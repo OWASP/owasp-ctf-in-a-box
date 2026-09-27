@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
-import { requireLaunchedApi } from "@/lib/launch";
+import { launchApiAccess } from "@/lib/launch";
 import { answerQuestion, QUIZ_ID_RE } from "@/lib/quiz-store";
 import { hasTeam } from "@/lib/team-store";
 
@@ -52,10 +52,11 @@ export async function POST(request: Request) {
   const login = (session.user as { login?: string }).login;
   if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
 
-  // #464 pre-launch lock (admins pass as a preview). Its own refusal —
-  // 403 `not-launched` — never a wrong-answer shape.
-  const notLaunched = await requireLaunchedApi(login);
-  if (notLaunched) return notLaunched;
+  // #464 pre-launch lock. Its own refusal — 403 `not-launched` — never a
+  // wrong-answer shape. An admin before launch passes as a PREVIEW, and their
+  // answer is graded as a dry run: the same script, writing nothing.
+  const { refused, preview } = await launchApiAccess(login);
+  if (refused) return refused;
 
   // Scoring is per team, and a teamless login's banked points fold into no
   // team total (issue #153). Refused here, AFTER the launch lock (a pre-launch lockout
@@ -74,7 +75,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  const result = await answerQuestion(login, questionId, choices);
+  const result = await answerQuestion(login, questionId, choices, { dryRun: preview });
   if (result.ok) {
     if (!result.correct) return NextResponse.json({ correct: false });
     // Activity log (issue #212): fresh solves only — an idempotent

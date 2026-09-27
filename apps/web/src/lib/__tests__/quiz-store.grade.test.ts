@@ -553,3 +553,36 @@ describe("failures never reach the log with the request attached (#244)", () => 
     }
   });
 });
+
+describe("dry run (#464 admin preview)", () => {
+  it("grades before launch, passes ARGV[8] = \"1\", and reports dryRun", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: null }));
+    gateReads(null, null);
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "20", "dry"]);
+    expect(await answerQuestion("octocat", "q1", ["a", "c"], { dryRun: true })).toEqual({
+      ok: true,
+      correct: true,
+      points: 20,
+      dryRun: true,
+    });
+    const [, , args] = mocks.upstashEval.mock.calls.at(-1)!;
+    expect(args[7]).toBe("1");
+  });
+
+  it("ignores an exhausted budget in the pre-check, but still refuses an answered question", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ quizMaxAttempts: 1 }));
+    gateReads(null, JSON.stringify({ attempts: 1, lastAt: new Date().toISOString() }));
+    mocks.upstashEval.mockResolvedValueOnce(["incorrect", "0", "dry"]);
+    expect(await answerQuestion("octocat", "q1", ["z"], { dryRun: true })).toEqual({ ok: true, correct: false, dryRun: true });
+    gateReads(JSON.stringify({ choices: ["a"], points: 20, at: "2026-01-01T00:00:00Z" }), null);
+    expect(await answerQuestion("octocat", "q1", ["a"], { dryRun: true })).toEqual({ ok: false, reason: "answered" });
+  });
+
+  it("a normal answer passes ARGV[8] = \"0\"", async () => {
+    gateReads(null, null);
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "20"]);
+    await answerQuestion("octocat", "q1", ["a", "c"]);
+    const [, , args] = mocks.upstashEval.mock.calls.at(-1)!;
+    expect(args[7]).toBe("0");
+  });
+});

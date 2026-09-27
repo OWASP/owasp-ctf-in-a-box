@@ -19,6 +19,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ upstashEval: vi.fn(), upstashPipeline: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
+// #186: a deleted challenge takes its attachments; clearing the board clears
+// them. The attachments store has its own suites — here, only that it is asked.
+const attachments = vi.hoisted(() => ({ deleteItemAttachments: vi.fn(), clearAllAttachments: vi.fn() }));
+vi.mock("@/lib/attachments-store", () => attachments);
 
 import {
   CLASSIC_CATEGORIES_MAX,
@@ -441,8 +445,18 @@ describe("deleteChallenge", () => {
   });
 
   it("rejects a malformed id without touching Upstash", async () => {
+    attachments.deleteItemAttachments.mockReset();
     await expect(deleteChallenge("../etc")).rejects.toThrow(ClassicValidationError);
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+    expect(attachments.deleteItemAttachments).not.toHaveBeenCalled();
+  });
+
+  it("takes the challenge's attachments with it (#186)", async () => {
+    attachments.deleteItemAttachments.mockReset();
+    writeReply(4);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
+    await deleteChallenge("chal-1");
+    expect(attachments.deleteItemAttachments).toHaveBeenCalledWith("classic", "chal-1");
   });
 });
 
@@ -464,6 +478,13 @@ describe("clearChallenges", () => {
     expect(deleted).not.toContain("ctf:classic:points");
     expect(deleted).not.toContain("ctf:classic:solved");
     expect(deleted.some((k) => k.startsWith("ctf:classic:solves:"))).toBe(false);
+  });
+
+  it("clears every attachment with the content (#186)", async () => {
+    attachments.clearAllAttachments.mockReset();
+    mocks.upstashPipeline.mockResolvedValue([]);
+    await clearChallenges();
+    expect(attachments.clearAllAttachments).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces a per-command pipeline error instead of swallowing it", async () => {

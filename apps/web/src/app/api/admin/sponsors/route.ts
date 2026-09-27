@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readBoundedBody } from "@/lib/bounded-body";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
 import { isSponsorTier, SPONSOR_ID_RE } from "@/lib/sponsors-keys";
@@ -78,38 +79,6 @@ function parseReorderPayload(body: unknown): string[] | null {
   if (!Array.isArray(body.reorder)) return null;
   if (!body.reorder.every((id) => typeof id === "string")) return null;
   return body.reorder as string[];
-}
-
-/** Reads the request body up to `maxBytes`, returning `null` the moment that
- *  cap is exceeded — checked against bytes actually read off the stream, not
- *  the client-supplied `Content-Length` header, which a caller can omit or
- *  understate. `requireAdmin` has already run by the time this is called, so
- *  the DoS surface here is an authenticated admin's own oversized request,
- *  not an anonymous one — but "authenticated" is not "trusted with unbounded
- *  memory". Distinguishes "too large" from "stream broke" so the caller can
- *  return 413 for the former and 400 for the latter instead of conflating
- *  them. */
-type BoundedBodyResult =
-  | { ok: true; body: string }
-  | { ok: false; reason: "too_large" | "stream_error" };
-
-async function readBoundedBody(request: Request, maxBytes: number): Promise<BoundedBodyResult> {
-  const reader = request.body?.getReader();
-  if (!reader) return { ok: true, body: "" };
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) return { ok: false, reason: "too_large" };
-      chunks.push(value);
-    }
-  } catch {
-    return { ok: false, reason: "stream_error" };
-  }
-  return { ok: true, body: Buffer.concat(chunks).toString("utf-8") };
 }
 
 function errorResponse(err: unknown): Response {

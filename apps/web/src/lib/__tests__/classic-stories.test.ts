@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ upstashPipeline: vi.fn(), upstashEval: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
+vi.mock("@/lib/attachments-store", () => ({ deleteItemAttachments: vi.fn(), clearAllAttachments: vi.fn() }));
 
 import { deleteChallenge, listStories, setStories } from "@/lib/classic-store";
 import { CLASSIC_STORIES_KEY } from "@/lib/classic-keys";

@@ -1,6 +1,7 @@
 import "server-only";
 import { storyPositions, type Story } from "@/lib/story-lock";
 import { teamSolveKeys } from "@/lib/classic-team";
+import { clearAllAttachments, deleteItemAttachments } from "@/lib/attachments-store";
 // Re-exported, not redeclared — the admin UI cannot import a server-only
 // module, so the value lives in the dependency-free defaults file.
 export { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
@@ -732,6 +733,9 @@ export async function deleteChallenge(id: string): Promise<void> {
   if (stories.some((st) => st.steps.includes(id))) {
     await setStories(stories.map((st) => ({ ...st, steps: st.steps.filter((step) => step !== id) })));
   }
+  // Its files go with it (#186). The download route already 404s them once
+  // the challenge is gone; this frees their bytes from the event cap.
+  await deleteItemAttachments("classic", id);
 }
 
 /** Deletes ONLY the content keys — challenges, both flag hashes, categories,
@@ -758,6 +762,9 @@ export async function clearChallenges(): Promise<void> {
   // Same discipline as deleteChallenge above: surface it instead.
   const failed = results.find((r) => r.error);
   if (failed) throw new Error(`Upstash DEL failed: ${failed.error}`);
+  // Attachments are classic content too (#186) — classic is their only
+  // adopter today, so a clean board clears every one.
+  await clearAllAttachments();
 }
 
 type Solve = { points: number; at: string };

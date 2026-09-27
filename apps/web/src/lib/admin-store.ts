@@ -243,10 +243,8 @@ export function effectivePaused(s: AdminSettings, nowMs: number = Date.now()): b
   return s.paused || outsideScoringWindow(nowMs, s.scoringStartsAt, s.scoringEndsAt);
 }
 
-/** Effective registration state: the manual toggle AND inside the window. */
-export function effectiveRegistrationOpen(s: AdminSettings, nowMs: number = Date.now()): boolean {
-  return s.teamRegistrationOpen && !outsideWindow(nowMs, s.registrationStartsAt, s.registrationEndsAt);
-}
+/** Effective registration state — the rule lives in schedule-window.ts. */
+export { effectiveRegistrationOpen } from "@/lib/schedule-window";
 
 export type SyncStatus = {
   lastPollAt: string | null;

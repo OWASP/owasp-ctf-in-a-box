@@ -17,6 +17,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { headers } from "next/headers";
 import EventCountdown from "@/components/event-countdown";
+import { effectiveRegistrationOpen } from "@/lib/schedule-window";
 import HeroCta from "@/components/hero-cta";
 import OAuthErrorNotice from "@/components/oauth-error-notice";
 import PhaseLine, { resolvePhase, type EventPhase } from "@/components/phase-line";
@@ -30,7 +31,7 @@ import { listChallenges } from "@/lib/classic-store";
 import { listQuestions } from "@/lib/quiz-store";
 import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { DOCS_URL, type HomeContext } from "@/lib/modules";
-import { getEnabledModuleIds } from "@/lib/enabled-modules";
+import { getAdminSettingsSnapshot, getEnabledModuleIds } from "@/lib/enabled-modules";
 import { getModuleHome, getNavLinks, getResolvedModules } from "@/lib/resolved-modules";
 import { hasTeam } from "@/lib/team-store";
 import { sanitizeNext } from "@/lib/post-signin";
@@ -42,14 +43,23 @@ function primaryAction(
   signedIn: boolean,
   hasTeam: boolean,
   firstBoard: { href: string; label: string } | null,
+  registrationOpen: boolean,
 ): { label: string; href?: string; signIn?: boolean; callbackURL?: string } {
   if (phase === "results") return { label: "See the final standings", href: "/leaderboard" };
   if (phase === "frozen") return { label: "See the standings", href: "/leaderboard" };
-  if (!signedIn) {
-    return phase === "registration"
-      ? { label: "Sign in and register", signIn: true, callbackURL: "/profile#team" }
-      : { label: "Sign in and play", signIn: true, callbackURL: firstBoard?.href ?? "/profile" };
+  // Before launch (#464) every board redirects back here, so no action may
+  // point at one. The team is the only thing to do, and only while
+  // registration is open.
+  if (phase === "registration") {
+    if (!signedIn) {
+      return registrationOpen
+        ? { label: "Sign in and register", signIn: true, callbackURL: "/profile#team" }
+        : { label: "Sign in", signIn: true, callbackURL: "/profile" };
+    }
+    if (hasTeam) return { label: "Your team", href: "/profile#team" };
+    return registrationOpen ? { label: "Join a team", href: "/profile#team" } : { label: "Your profile", href: "/profile" };
   }
+  if (!signedIn) return { label: "Sign in and play", signIn: true, callbackURL: firstBoard?.href ?? "/profile" };
   if (!hasTeam) return { label: "Join a team", href: "/profile#team" };
   // The board CTA's own label carries its verb ("Browse targets", "Take the
   // quiz") — prefixing "Open" produced "Open Browse targets", caught on the
@@ -171,11 +181,15 @@ export default async function Home({
   // Visitor state for the single primary action. The phase comes from the
   // same resolver the phase line uses, so the hero and the strip can never
   // disagree; the team read only runs signed-in.
-  const [phaseInfo, session, navLinks] = await Promise.all([
+  const [phaseInfo, session, navLinks, settingsSnapshot] = await Promise.all([
     resolvePhase(),
     auth.api.getSession({ headers: await headers() }),
     getNavLinks(),
+    getAdminSettingsSnapshot(),
   ]);
+  // A failed settings read reads as "open" — the same fail-open the join page
+  // and /profile's team controls use, so the three never disagree.
+  const registrationOpen = settingsSnapshot === null ? true : effectiveRegistrationOpen(settingsSnapshot);
   // Called and awaited, not mounted as `<SiteFooter navLinks={navLinks} />`:
   // since `site-footer.tsx` became an async Server Component (config v2, PR
   // 1b), mounting it as a nested JSX element suspends under
@@ -190,7 +204,7 @@ export default async function Home({
   // blip, or a dev stack with team writes off).
   const team = login ? await hasTeam(login) : false;
   const firstBoard = sections.find((s) => s.cta)?.cta ?? null;
-  const action = primaryAction(phaseInfo?.phase ?? null, Boolean(login), team, firstBoard);
+  const action = primaryAction(phaseInfo?.phase ?? null, Boolean(login), team, firstBoard, registrationOpen);
 
   // The live strip: the top of the same standings the leaderboard shows —
   // literally the same fold, read through the 10 s cross-request memo the
@@ -256,6 +270,12 @@ export default async function Home({
 
           {phaseInfo?.phase === "registration" && event.ctfStartsAt && (
             <EventCountdown startsAt={event.ctfStartsAt} />
+          )}
+          {/* Not launched and nothing scheduled (#464): no countdown to show. */}
+          {phaseInfo?.phase === "registration" && !event.ctfStartsAt && (
+            <p className="font-mono text-sm text-[#8f8f9b]">
+              {registrationOpen && !login ? "Launching soon. Sign in and form your team." : "Launching soon."}
+            </p>
           )}
 
           {oauthError && (

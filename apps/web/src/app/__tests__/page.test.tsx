@@ -27,8 +27,10 @@ vi.mock("server-only", () => ({}));
 // the leaderboard. These fixtures render signed-out with the board read
 // failing, which the page must tolerate by hiding the strip.
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
-vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => null } } }));
-vi.mock("@/lib/team-store", () => ({ hasTeam: async () => false, getViewerTeam: async () => null }));
+// Mutable per test (the pre-launch CTA tests below sign a viewer in).
+const viewer = vi.hoisted(() => ({ session: null as null | { user: { login: string } }, hasTeam: false }));
+vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => viewer.session } } }));
+vi.mock("@/lib/team-store", () => ({ hasTeam: async () => viewer.hasTeam, getViewerTeam: async () => null }));
 // Switchable: the default fixture renders with the board read FAILING (the
 // page must hide the strip), and the standings-strip test below swaps in a
 // synthetic board for one render.
@@ -432,5 +434,53 @@ describe("challenge counts follow the enabled targets, not the catalogue total",
       adminSettings.secureDevTargets = undefined;
       catalogFixture.data = null;
     }
+  });
+});
+
+describe("the landing page before launch (#464)", () => {
+  const withSettings = async (over: Record<string, unknown>, fn: (html: string) => void) => {
+    const saved = { ...adminSettings };
+    Object.assign(adminSettings, over);
+    try {
+      fn(renderToStaticMarkup(await Home({ searchParams: Promise.resolve({}) })));
+    } finally {
+      for (const k of Object.keys(adminSettings)) delete (adminSettings as Record<string, unknown>)[k];
+      Object.assign(adminSettings, saved);
+      viewer.session = null;
+      viewer.hasTeam = false;
+    }
+  };
+
+  it("says Launching soon, with the team call, when unscheduled and registration is open", async () => {
+    await withSettings({ scoringStartsAt: null, teamRegistrationOpen: true }, (html) => {
+      expect(html).toContain("Launching soon. Sign in and form your team.");
+      expect(html).not.toContain("CTF opens");
+      expect(html).toContain("Sign in and register");
+    });
+  });
+
+  it("drops the team call when registration is closed", async () => {
+    await withSettings({ scoringStartsAt: null, teamRegistrationOpen: false }, (html) => {
+      expect(html).toContain("Launching soon.");
+      expect(html).not.toContain("form your team");
+      expect(html).not.toContain("Sign in and register");
+    });
+  });
+
+  it("shows the countdown, not Launching soon, once a start is scheduled", async () => {
+    await withSettings({ scoringStartsAt: "2999-01-01T00:00:00.000Z", teamRegistrationOpen: true }, (html) => {
+      expect(html).toContain("CTF opens");
+      expect(html).not.toContain("Launching soon");
+    });
+  });
+
+  it("never points a teamed contestant at a board that would bounce them back here", async () => {
+    viewer.session = { user: { login: "alice" } };
+    viewer.hasTeam = true;
+    await withSettings({ scoringStartsAt: null, teamRegistrationOpen: true }, (html) => {
+      // The hero's one action is the team, not the first board's CTA.
+      expect(html).toContain('href="/profile#team"');
+      expect(html).toContain("Your team");
+    });
   });
 });

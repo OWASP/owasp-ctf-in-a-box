@@ -704,9 +704,13 @@ of one module's shape.
 
    Admins (`isAdminLogin`: `ADMIN_LOGINS` plus stored admins) pass as a
    **preview** — `getLaunchAccess` returns `{ allowed: true, preview: true }`
-   — so an organizer can check the board before kickoff. The preview is not
-   scoring: the scoring window itself still reads "not launched", so a
-   module's write path refuses an admin's submission on its own window check.
+   — so an organizer can check the board before kickoff. A grading route asks
+   `launchApiAccess`, which also returns `preview`, and passes it on as
+   `dryRun`. **A module's grader must honour `dryRun` INSIDE its grading
+   script:** it compares as usual, skips pause, cooldown and attempt limits,
+   writes nothing, and tags its verdict `dry`. It must not re-implement the
+   comparison in TypeScript. A dry-run result must also skip the route's
+   activity-log write.
 
    The lock fails **closed**: a settings read that throws counts as "not
    launched" for a non-admin, and an admin check that throws counts as "not

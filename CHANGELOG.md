@@ -8,6 +8,21 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Admins preview the event before launch, with dry-run grading.** An admin
+  who opens a module page before launch sees a **Preview — event not
+  launched** banner, with a link to view the event as a contestant.
+  - Their flags, quiz answers, AI flags and events, and hint reveals are
+    graded by the same Lua scripts as a real submission. Each script takes a
+    new trailing dry-run argument, compares as usual, and writes nothing:
+    no solve, points, attempt, cooldown, solve count, hint charge or
+    activity-log line.
+  - The answer carries `dryRun: true`, and the UI says "preview only,
+    nothing was recorded".
+  - The AI module's launch token gains a signed `ctf.preview` claim for this
+    case. The admin Send test mints its token that way before launch, so it
+    can now reach **Would award**.
+  - Part of #464.
+
 - **Breaking: every event needs an official launch — an empty scoring start
   now means "not launched".** A blank `scoringStartsAt` used to mean "no
   bound, always open"; it now means nothing scores. That covers the app's

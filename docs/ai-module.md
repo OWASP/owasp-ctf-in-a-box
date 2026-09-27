@@ -96,6 +96,7 @@ The claims:
 | `ctf.points` | number | Same as `ctf.challenge.points` — kept at both levels for convenience. |
 | `ctf.progress` | array | The player's progress across the whole `ai` board at mint time — see below. |
 | `ctf.truncated` | `true` \| absent | Present only when `ctf.progress` was cut short (see below). |
+| `ctf.preview` | `true` \| absent | Present only on a token minted for an organizer **preview** (the event isn't launched yet). The box grades everything under it as a dry run, and its answers carry `dryRun: true`. Don't treat that player as real (no progress, no unlocks). It's signed like every other claim, so no one can add it to a contestant's token. |
 
 Each entry in `ctf.progress` is `{id, points, solved, solvedAt}` — one per
 `ai` challenge, `solved: false` / `solvedAt: null` for anything the player

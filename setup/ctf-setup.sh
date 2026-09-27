@@ -565,6 +565,9 @@ cmd_doctor() {
       if [ "$doctor_launch" = not-launched ] && [ "$vis" = public ]; then
         [ "$vis_note" -eq 1 ] || echo; vis_note=1
         printf '%s⚠️  %s is public before launch — contestants can see its ctf branch; detach it and run '"'"'ctf-setup.sh private'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET"
+      elif [ -z "$vis" ]; then
+        [ "$vis_note" -eq 1 ] || echo; vis_note=1
+        printf 'ℹ️  could not read %s'"'"'s visibility (GitHub did not answer).\n' "$name"
       elif [ "$doctor_launch" = launched ] && [ "$vis" = private ]; then
         [ "$vis_note" -eq 1 ] || echo; vis_note=1
         printf '%s⚠️  %s is still private after launch — contestants cannot fork it; run '"'"'ctf-setup.sh launch'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET"
@@ -1112,12 +1115,32 @@ privatize_forks() {
       return 0
       ;;
   esac
+  local is_fork forks
   for t in $(all_targets); do
     name="$(prov_repo_name "$t")"; slug="$org/$name"
-    if ! fork_detached "$slug"; then
-      printf '%s⚠️  %s is still in its fork network (or GitHub did not answer) — detach it (Settings -> Leave fork network), then re-run '"'"'ctf-setup.sh private'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET"
-      continue
-    fi
+    # Attached (advisory: detach, re-run) is told apart from unreadable (an
+    # error: a broken token must not exit 0).
+    is_fork="$(gh api "repos/$slug" --jq '.fork' 2>/dev/null)" || is_fork=""
+    case "$is_fork" in
+      false) ;;
+      true)
+        printf '%s⚠️  %s is still in its fork network — detach it (Settings -> Leave fork network), then re-run '"'"'ctf-setup.sh private'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET"
+        continue
+        ;;
+      *) echo "  ❌ $name: GitHub did not answer whether it is detached" >&2; rc=1; continue ;;
+    esac
+    # A fork contestants already forked (the event opened, a timed-out
+    # launch, a re-run in the launch window) must not go private: GitHub
+    # would split their forks off it, breaking their PRs.
+    forks="$(gh api "repos/$slug" --jq '.forks_count' 2>/dev/null)" || forks=""
+    case "$forks" in
+      0) ;;
+      ''|*[!0-9]*) echo "  ❌ $name: could not read its fork count" >&2; rc=1; continue ;;
+      *)
+        printf '%s⚠️  %s already has %s forks — left public: making it private now would cut those forks off from it.%s\n' "$C_YELLOW" "$name" "$forks" "$C_RESET"
+        continue
+        ;;
+    esac
     vis="$(fork_visibility "$slug")" || vis=""
     case "$vis" in
       private) echo "  ✓ $name: already private" ;;
@@ -1169,6 +1192,11 @@ cmd_launch() {
   [ -n "$org" ] || { echo "${OUT:-.env}: GITHUB_ORG missing" >&2; exit 1; }
   url="$(env_val EVENT_URL)"; url="${url%/}"
   require_targets
+  # The wait's bounds are checked before anything changes: a typo here must
+  # not surface only after the forks are already public.
+  local max="${LAUNCH_WAIT_SECS:-1800}" poll="${LAUNCH_POLL_SECS:-5}"
+  case "$max" in ''|*[!0-9]*) echo "LAUNCH_WAIT_SECS must be a whole number of seconds (got '$max')" >&2; exit 2 ;; esac
+  case "$poll" in ''|*[!0-9]*) echo "LAUNCH_POLL_SECS must be a whole number of seconds (got '$poll')" >&2; exit 2 ;; esac
 
   if [ "$DRY_RUN" -eq 1 ]; then
     echo "DRY-RUN: check every fork in $org is detached, no fork was refused the scorer image, and ghcr.io/$org/score is private"
@@ -1227,7 +1255,7 @@ cmd_launch() {
     echo "== forks are public. Now press Launch in /admin → Event (no EVENT_URL in ${OUT:-.env}, so this cannot confirm it)."
     return 0
   fi
-  local state waited=0 max="${LAUNCH_WAIT_SECS:-1800}" poll="${LAUNCH_POLL_SECS:-5}"
+  local state waited=0
   state="$(box_launch_state)"
   if [ "$state" != launched ]; then
     echo "== forks are public. Now press Launch in /admin → Event — waiting for $url to report launched…"

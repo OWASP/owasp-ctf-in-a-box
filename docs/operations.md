@@ -2158,7 +2158,9 @@ template, or fork and open PRs, before the event starts.
    network). A fork still in the network cannot be made private.
 2. **`ctf-setup.sh private`** sets each detached fork private while the box
    reports it is not launched. It names every fork it skipped, and changes
-   nothing when it cannot reach the box. `org` runs this step too. Private
+   nothing when it cannot reach the box, once the event is launched, or for
+   a fork that already has forks of its own (making it private would cut
+   those off from it). `org` runs this step too. Private
    repos in a free org use the org's limited Actions minutes, which is
    plenty for your own test PRs before launch.
 3. **Preview** the event in `/admin` as described above.
@@ -2169,7 +2171,8 @@ template, or fork and open PRs, before the event starts.
    - It makes every fork **public**.
    - It waits while you press **Launch** in `/admin` → Event, polling
      `/health/deep` until the box reports `launched` (up to 30 minutes;
-     `LAUNCH_WAIT_SECS` changes that).
+     `LAUNCH_WAIT_SECS` and `LAUNCH_POLL_SECS`, whole seconds, change the
+     limit and the 5-second interval).
 
    It uses your own `gh` login; the box never holds a GitHub admin
    credential. Every step is idempotent: after a partial failure it names

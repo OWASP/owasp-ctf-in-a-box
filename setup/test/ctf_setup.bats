@@ -2152,7 +2152,9 @@ repo="$(printf '%s' "$*" | sed -n 's|.*repos/test-event-org/\([^ /?]*\).*|\1|p')
 case "$*" in
   *"-X PATCH"*visibility=*) [ -f "$S/patch-fails" ] && exit 1; printf '%s' "$*" | sed 's/.*visibility=//' > "$S/vis_$repo"; exit 0 ;;
   *packages/container/score*) cat "$S/package" 2>/dev/null || echo private ;;
-  *actions/workflows/ctf-score.yml/runs*) exit 1 ;;
+  *actions/workflows/ctf-score.yml/runs*) if [ -f "$S/refused_$repo" ]; then echo 101; else exit 1; fi ;;
+  *actions/runs/101/jobs*) echo failure ;;
+  *".forks_count"*) cat "$S/forks_$repo" 2>/dev/null || echo 0 ;;
   *".fork"*) if [ -f "$S/attached_$repo" ]; then echo true; else echo false; fi ;;
   *".visibility"*) cat "$S/vis_$repo" 2>/dev/null || echo public ;;
   *) exit 1 ;;
@@ -2162,6 +2164,12 @@ GH
 #!/usr/bin/env bash
 S="$BATS_TEST_TMPDIR/state"
 echo "curl $*" >> "$S/curl.log"
+# state/launch_on_call_N: report launched from the Nth call on (a Launch press mid-wait).
+n="$(wc -l < "$S/curl.log" | tr -d ' ')"
+for f in "$S"/launch_on_call_*; do
+  [ -e "$f" ] || continue
+  if [ "$n" -ge "${f##*_}" ]; then echo true > "$S/launched"; fi
+done
 [ -f "$S/launched" ] || exit 7
 printf '{"status":"ok","launched":%s}' "$(cat "$S/launched")"
 CURL
@@ -2204,7 +2212,7 @@ patched() {
   vis_env
   echo true > state/launched
   run_vis private
-  printf '%s' "$output" | grep -qF -- 'launched'
+  printf '%s' "$output" | grep -qF -- 'the event is launched — its forks stay public'
   [ "$(patched)" -eq 0 ]
 }
 
@@ -2326,4 +2334,81 @@ patched() {
   echo private > state/vis_DVWA
   run_vis doctor
   printf '%s' "$output" | grep -qF -- 'DVWA is still private after launch'
+}
+
+@test "private exits non-zero when GitHub cannot answer the detach check" {
+  vis_env
+  echo false > state/launched
+  touch state/gh-broken
+  run_vis private
+  [ "$(patched)" -eq 0 ]
+  [ "$status" -ne 0 ]
+}
+
+@test "private never hides a fork that contestants have already forked" {
+  vis_env
+  echo false > state/launched
+  echo 3 > state/forks_DVWA
+  run_vis private
+  printf '%s' "$output" | grep -qF -- 'DVWA already has 3 forks'
+  [ ! -f state/vis_DVWA ]
+}
+
+@test "launch refuses a fork that was refused the scorer image, before any change" {
+  vis_env
+  echo true > state/launched
+  touch state/refused_DVWA
+  run_vis launch
+  printf '%s' "$output" | grep -qF -- 'DVWA was refused the scorer image'
+  [ "$(patched)" -eq 0 ]
+  [ "$status" -ne 0 ]
+}
+
+@test "launch refuses a non-integer wait setting before any fork is touched" {
+  vis_env
+  echo true > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  run env BATS_TEST_TMPDIR="$BATS_TEST_TMPDIR" PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 \
+    LAUNCH_WAIT_SECS=30m bash "$SCRIPT" launch < /dev/null
+  printf '%s' "$output" | grep -qF -- 'LAUNCH_WAIT_SECS'
+  [ "$(patched)" -eq 0 ]
+  [ "$status" -ne 0 ]
+}
+
+@test "launch sees a Launch press that lands while it waits" {
+  vis_env
+  echo false > state/launched
+  touch state/launch_on_call_3
+  run env BATS_TEST_TMPDIR="$BATS_TEST_TMPDIR" PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 \
+    LAUNCH_WAIT_SECS=5 LAUNCH_POLL_SECS=1 bash "$SCRIPT" launch < /dev/null
+  printf '%s' "$output" | grep -qF -- 'launched ✓'
+  [ "$status" -eq 0 ]
+}
+
+@test "launch with a zero poll interval still ends its wait" {
+  vis_env
+  echo false > state/launched
+  run env BATS_TEST_TMPDIR="$BATS_TEST_TMPDIR" PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 \
+    LAUNCH_WAIT_SECS=2 LAUNCH_POLL_SECS=0 bash "$SCRIPT" launch < /dev/null
+  printf '%s' "$output" | grep -qF -- 'not launched yet'
+  [ "$status" -ne 0 ]
+}
+
+@test "a flip that fails partway names the forks it already made public" {
+  vis_env
+  echo true > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  # Fail only the third fork (VulnerableApp, in targets.tsv order).
+  sed -i.bak 's|\[ -f "\$S/patch-fails" \] \&\& exit 1;|[ "$repo" = VulnerableApp ] \&\& exit 1;|' stubs/gh
+  run_vis launch
+  printf '%s' "$output" | grep -qF -- 'Made public so far: juice-shop WebGoat'
+  [ "$status" -ne 0 ]
+}
+
+@test "doctor names a fork whose visibility it could not read" {
+  vis_env
+  echo false > state/launched
+  sed -i.bak 's|  \*".visibility"\*) cat|  *".visibility"*) [ "$repo" = DVWA ] \&\& exit 1; cat|' stubs/gh
+  run_vis doctor
+  printf '%s' "$output" | grep -qF -- "could not read DVWA's visibility"
 }

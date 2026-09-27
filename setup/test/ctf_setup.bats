@@ -506,6 +506,38 @@ doctor_with_box() {
   [ "$status" -eq 0 ]
 }
 
+@test "doctor still reads the launch state from a degraded (503) box" {
+  # curl -f would treat the 503 as "unreachable"; the body still says launched:false.
+  # The stub behaves like real curl on a 503: exit 22 ONLY when asked to fail
+  # on HTTP errors (-f / -fsS), otherwise print the body and exit 0.
+  doctor_with_box 'for a in "$@"; do case "$a" in -f|-f?*) exit 22 ;; esac; done; printf "%s" "{\"status\":\"degraded\",\"redis\":\"ok\",\"scorer\":\"down\",\"launched\":false}"'
+  printf '%s' "$output" | grep -qF -- 'not launched'
+  [ "$status" -eq 0 ]
+}
+
+@test "doctor tolerates a space after the colon in the JSON" {
+  doctor_with_box 'printf "%s" "{\"status\": \"ok\", \"launched\": false}"'
+  printf '%s' "$output" | grep -qF -- 'not launched'
+  [ "$status" -eq 0 ]
+}
+
+@test "doctor says it could not read the launch state when the box reports null" {
+  doctor_with_box 'printf "%s" "{\"status\":\"ok\",\"redis\":\"ok\",\"launched\":null}"'
+  printf '%s' "$output" | grep -qF -- "could not read the launch state"
+  [ "$status" -eq 0 ]
+}
+
+@test "doctor --dry-run narrates the launch-state read and makes no box call" {
+  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nEVENT_URL=https://box.example\n' > .env
+  mkdir -p stubs
+  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
+  printf '#!/usr/bin/env bash\necho CURL-CALLED\n' > stubs/curl
+  chmod +x stubs/gh stubs/curl
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor --dry-run
+  printf '%s' "$output" | grep -qF -- 'DRY-RUN: would read the launch state from https://box.example/health/deep'
+  [ -z "$(printf '%s' "$output" | grep -F -- 'CURL-CALLED')" ]
+}
+
 @test "doctor makes no box call without an EVENT_URL" {
   printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\n' > .env
   mkdir -p stubs

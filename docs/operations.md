@@ -1016,7 +1016,10 @@ repeat run of the same CTF renames itself without a rebuild. The bundle's
 export for the record — see above) and are **not** reapplied on import: both
 are derived from the **Scoring opens** / **Scoring closes** schedule, which an
 organizer sets for the new run on the Event tab, so importing a bundle never
-overwrites this event's actual dates. **Contact e-mail and Discord
+writes this event's dates from the file. The import's reset does **clear
+Scoring opens**, though, exactly like a master reset (#464): an imported
+event is **not launched** until an organizer launches it again, so set or
+press Launch once the new run is ready. **Contact e-mail and Discord
 invite are deliberately left
 out of the bundle**, even though both are runtime settings too: they are
 organizer PII (a private inbox, an invite link), not needed to replay the

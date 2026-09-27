@@ -439,13 +439,24 @@ cmd_doctor() {
   # the normal state before kickoff, and an unreachable one is named once,
   # neutrally — doctor is not a monitor.
   local event_url; event_url="$(env_val EVENT_URL)"
-  if [ -n "$event_url" ]; then
-    local deep
-    if deep="$(curl -fsS --max-time 5 "${event_url%/}/health/deep" 2>/dev/null)"; then
-      case "$deep" in
+  if [ -n "$event_url" ] && [ "$DRY_RUN" -eq 1 ]; then
+    printf 'DRY-RUN: would read the launch state from %s/health/deep\n\n' "${event_url%/}"
+  elif [ -n "$event_url" ]; then
+    # No -f: /health/deep answers 503 when a dependency is down, and that body
+    # still carries `launched`. Only a transport failure means "unreadable".
+    # The key is matched with or without a space after the colon, and a
+    # `null` (the box could not read its own settings) is named as unreadable.
+    local deep deep_compact
+    if deep="$(curl -sS --max-time 5 "${event_url%/}/health/deep" 2>/dev/null)"; then
+      deep_compact="$(printf '%s' "$deep" | tr -d ' ')"
+      case "$deep_compact" in
         *'"launched":false'*)
           printf '%s⚠️  %s is not launched — contestants see the landing page only and nothing scores.%s\n' "$C_YELLOW" "$event_url" "$C_RESET"
           printf '    When you are ready: press Launch in /admin → Event (or set Scoring opens).\n\n'
+          ;;
+        *'"launched":true'*) ;;
+        *)
+          printf 'ℹ️  could not read the launch state from %s/health/deep (the box could not read its settings).\n\n' "${event_url%/}"
           ;;
       esac
     else

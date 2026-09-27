@@ -406,10 +406,12 @@ export default function AdminControls({
       setError(data.error ?? "Reset failed");
       return;
     }
-    setSettings((s) => ({ ...s, paused: true }));
+    // The server reset freezes AND relocks (#464: clears the scoring start),
+    // so local state follows — or the Launch block would still say "Live".
+    setSettings((s) => ({ ...s, paused: true, scoringStartsAt: null }));
     setSettingsAt(Date.now());
     const total = Object.values(data.cleared ?? {}).reduce((a, b) => a + b, 0);
-    setResetInfo(`Wiped ${total} keys — scoring is now frozen. Unfreeze when you're ready.`);
+    setResetInfo(`Wiped ${total} keys — the event is frozen and not launched. Launch and unfreeze when you're ready.`);
   };
 
   // No DEMO_MODE gate any more (issue #419): populate a demo leaderboard

@@ -659,7 +659,9 @@ and both live under the same disclosure rule: nothing in either payload that
   last poll time and its age in seconds, for information only: a quiet poller
   never fails the check. `launched` (`true`, `false`, or `null` when the
   settings could not be read) says whether the event has launched — public
-  anyway, since the landing page shows it, and informational only. A box with no scorer image omits `scorer` and `sync`
+  anyway, since the landing page shows it, and informational only. It rides
+  the same 10-second cache, so a poller (e.g. `ctf-setup.sh launch`) should
+  allow at least that long after pressing Launch. A box with no scorer image omits `scorer` and `sync`
   entirely rather than vouching for a service it does not run. Results are
   cached in-process for 10 seconds, so the unauthenticated URL cannot be
   turned into a probe storm.

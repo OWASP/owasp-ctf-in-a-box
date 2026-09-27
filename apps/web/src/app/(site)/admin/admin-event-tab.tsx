@@ -234,7 +234,12 @@ export default function AdminEventTab({
   // would give is the same one the stamp already holds.
   // The scoring window REQUIRES a start (#464: no start = not launched);
   // registration keeps outsideWindow's "absent bound = open".
-  const launch = launchState(nowMs, settings.scoringStartsAt);
+  // The start is written on the SERVER's clock (Launch now's "now" sentinel).
+  // A client clock behind it would show a just-launched event as "Scheduled",
+  // so the latest server instant we know — the settings' own updatedAt — is a
+  // floor on "now" (a start at or before the last save is already live).
+  const serverFloor = settings.updatedAt ? Date.parse(settings.updatedAt) : NaN;
+  const launch = launchState(Number.isFinite(serverFloor) ? Math.max(nowMs, serverFloor) : nowMs, settings.scoringStartsAt);
   const scoringLiveNow = !settings.paused && !outsideScoringWindow(nowMs, settings.scoringStartsAt, settings.scoringEndsAt);
   const registrationOpenNow =
     settings.teamRegistrationOpen && !outsideWindow(nowMs, settings.registrationStartsAt, settings.registrationEndsAt);
@@ -395,6 +400,11 @@ export default function AdminEventTab({
             <span className="text-[#2563eb]">Scheduled for {utcLabel(launch.at)}</span>
           )}
           {launch.kind === "live" && <span className="text-[#22c55e]">Live since {utcLabel(launch.since)}</span>}
+          {settings.paused && (
+            <span className="block text-muted">
+              Scoring is frozen — unfreeze it above for anything to score, launched or not.
+            </span>
+          )}
         </p>
         <div className="flex flex-wrap gap-3">
           {launch.kind !== "live" && (
@@ -406,8 +416,10 @@ export default function AdminEventTab({
                 setConfirm({
                   title: "Launch the event now?",
                   confirmLabel: "Launch now",
-                  body: "Every board opens to contestants and scoring starts immediately, on the server's clock.",
-                  onConfirm: () => applyField("scoringStartsAt", { scoringStartsAt: "now" }, "Launch"),
+                  body: settings.paused
+                    ? "Every board opens to contestants now, on the server's clock. Scoring is frozen, so nothing scores until you unfreeze it."
+                    : "Every board opens to contestants and scoring starts immediately, on the server's clock.",
+                  onConfirm: () => applyField("launch", { scoringStartsAt: "now" }, "Launch"),
                 })
               }
             >
@@ -425,7 +437,7 @@ export default function AdminEventTab({
                   confirmLabel: "Un-launch",
                   danger: true,
                   body: "Every module page locks again for contestants and nothing scores until you launch again. Solves already banked are kept.",
-                  onConfirm: () => applyField("scoringStartsAt", { scoringStartsAt: null }, "Un-launch"),
+                  onConfirm: () => applyField("launch", { scoringStartsAt: null }, "Un-launch"),
                 })
               }
             >
@@ -433,6 +445,9 @@ export default function AdminEventTab({
             </button>
           )}
         </div>
+        {/* Its own status key, so a Launch result shows HERE, not under the
+            Scoring opens field below. */}
+        <FieldStatusLine id="event-launch-status" status={statusOf("launch")} />
       </div>
 
       <div className="flex flex-col gap-3 border-t border-white/[0.06] pt-4">

@@ -150,12 +150,25 @@ export async function probeDeepHealth(
   return inflight;
 }
 
+/** `launched` (#464), bounded by the SAME probe timeout as every other leg —
+ *  a hung settings read must not stall this public probe — and logged, never
+ *  silent. A ref'd timer, cleared on settle: an unref'd one lets Node 22 drain
+ *  the loop before it fires (#256). */
 async function readLaunched(now: number): Promise<boolean | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const settings = await getAdminSettings();
+    const settings = await Promise.race([
+      getAdminSettings(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`settings read timed out after ${PROBE_TIMEOUT_MS}ms`)), PROBE_TIMEOUT_MS);
+      }),
+    ]);
     return isLaunched(now, settings.scoringStartsAt);
-  } catch {
+  } catch (err) {
+    console.error("health deep: launch state unreadable:", errorLabel(err));
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

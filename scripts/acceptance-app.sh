@@ -198,6 +198,8 @@ DEEP_JSON=$(cat "$DEEP_BODY"); rm -f "$DEEP_BODY"
 if [ "$DEEP_CODE" != "503" ]; then echo "FAIL: /health/deep returned $DEEP_CODE with no Redis, want 503"; exit 1; fi
 expect_in "$DEEP_JSON" '"status":"degraded"' "/health/deep did not report degraded without Redis"
 expect_in "$DEEP_JSON" '"redis":"down"' "/health/deep did not name redis as the failed dependency"
+# #464: with no settings to read, the launch state is unknown, never a guess.
+expect_in "$DEEP_JSON" '"launched":null' "/health/deep did not report launched:null on a box that cannot read its settings"
 for leak in BETTER_AUTH GITHUB_CLIENT SRH_TOKEN REDIS_PASSWORD UPSTASH http:// ECONNREFUSED; do
   if grep -qF -- "$leak" <<< "$DEEP_JSON"; then
     echo "FAIL: /health/deep leaked $leak"; exit 1

@@ -24,7 +24,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: mocks.upstashPipeline }));
 vi.mock("@/lib/admin-store", () => ({ getSyncStatus: mocks.getSyncStatus, getAdminSettings: mocks.getAdminSettings }));
 
-import { DEEP_HEALTH_CACHE_MS, probeDeepHealth, resetDeepHealthCache } from "@/lib/health-deep";
+import { DEEP_HEALTH_CACHE_MS, PROBE_TIMEOUT_MS, probeDeepHealth, resetDeepHealthCache } from "@/lib/health-deep";
 
 const NOW = Date.parse("2026-09-15T12:00:00Z");
 const SCORER_URL = "http://scorer:4000";
@@ -188,5 +188,14 @@ describe("launched (#464)", () => {
   it("reports launched: null when the settings cannot be read — never a guess", async () => {
     mocks.getAdminSettings.mockRejectedValue(new Error("redis down"));
     expect((await probeDeepHealth(NOW)).launched).toBeNull();
+  });
+
+  it("never lets a hung settings read stall the probe past its timeout, and logs it", async () => {
+    mocks.getAdminSettings.mockImplementation(() => new Promise(() => {}));
+    const started = Date.now();
+    const h = await probeDeepHealth(NOW);
+    expect(h.launched).toBeNull();
+    expect(Date.now() - started).toBeLessThan(PROBE_TIMEOUT_MS + 1_500);
+    expect(console.error).toHaveBeenCalled();
   });
 });

@@ -108,7 +108,8 @@ export function importFirstWarning(): { title: string; body: string; confirmLabe
     title: "This import is destructive",
     body:
       "Importing this file REPLACES every Jeopardy challenge, every Quiz question and every AI challenge with what's in it, " +
-      "and WIPES all teams, solves, attempts and answers — the same reset the master reset performs. " +
+      "and WIPES all teams, solves, attempts and answers — the same reset the master reset performs, " +
+      "which also returns the event to not launched (launch it again when the new run is ready). " +
       "There is no undo. The next step asks you to type a confirmation phrase.",
     confirmLabel: "I understand, continue",
   };

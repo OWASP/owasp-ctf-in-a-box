@@ -891,4 +891,17 @@ describe("the Launch block (#464)", () => {
     expect(html).toContain("Un-launch");
     expect(html).not.toContain("Launch now");
   });
+
+  it("says scoring stays frozen while the event is paused (a reset freezes and relocks)", () => {
+    const html = render({ scoringStartsAt: null, paused: true });
+    expect(html).toContain("Scoring is frozen");
+  });
+
+  // The start is written on the SERVER's clock; a client clock behind it must
+  // not show a just-launched event as "Scheduled". A start at or before the
+  // settings' own updatedAt (also a server instant) is already live.
+  it("treats a start at or before the last server save as live, whatever the client clock says", () => {
+    const html = render({ scoringStartsAt: "2999-01-01T00:00:00.000Z", updatedAt: "2999-01-01T00:00:05.000Z" });
+    expect(html).toContain("Live since");
+  });
 });

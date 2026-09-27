@@ -194,8 +194,10 @@ export type EventImportSummary = {
  *  failing after the board has already been wiped and half-replaced. The
  *  identity fields ride the same patch and so get the same guarantee.
  *  `resetEvent` is safe to run after: it keeps `ctf:admin:settings` (see its
- *  own doc comment in admin-store.ts) — it only freezes scoring and bumps the
- *  reset epoch — so it can never clobber the policy fields just written.
+ *  own doc comment in admin-store.ts) — it only freezes scoring, bumps the
+ *  reset epoch and clears the scoring start (#464: an imported event is not
+ *  launched until an organizer launches it) — so it can never clobber the
+ *  policy fields just written.
  *
  *  The caller (the route) owns writing the `event-import` audit entry, the
  *  same split classic/quiz import routes already use. */

@@ -58,5 +58,7 @@ export async function POST(request: Request) {
     alreadyOwned: result.alreadyOwned,
     spent: result.spent,
     cost,
+    // An admin preview (#464): the text is shown, nothing was charged.
+    ...(result.dryRun ? { dryRun: true } : {}),
   });
 }

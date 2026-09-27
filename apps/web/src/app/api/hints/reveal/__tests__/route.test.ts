@@ -112,7 +112,7 @@ describe("POST /api/hints/reveal", () => {
     revealHint.mockResolvedValue({ ok: true, hint: "look under the rug", alreadyOwned: false, spent: 10 });
     const res = await POST(req({ app: "quiz", id: "q1" }));
     expect(res.status).toBe(200);
-    expect(revealHint).toHaveBeenCalledWith("alice", "quiz", "q1");
+    expect(revealHint).toHaveBeenCalledWith("alice", "quiz", "q1", { dryRun: false });
     expect(await res.json()).toEqual({ hint: "look under the rug", alreadyOwned: false, spent: 10, cost: 10 });
   });
 
@@ -136,6 +136,8 @@ describe("POST /api/hints/reveal admin preview (#464)", () => {
     const res = await POST(req({ app: "classic", id: "c1" }));
     expect(res.status).toBe(200);
     expect(revealHint).toHaveBeenCalledWith(expect.any(String), "classic", "c1", { dryRun: true });
+    // The UI says "not charged" off this flag.
+    expect((await res.json()).dryRun).toBe(true);
   });
 
   it("never asks for a dry run once launched", async () => {

@@ -164,10 +164,9 @@ describe("POST /api/quiz/answer", () => {
     expect(answerQuestion).not.toHaveBeenCalled();
   });
 
-  // Covers both "gate active, valid unlock cookie" and "gate inactive" —
-  // at this boundary they're the same case (requireLaunchedApi resolves
-  // true either way); the active-vs-inactive distinction is exercised
-  // directly against the real cookie/crypto logic in gate.test.ts.
+  // Covers both "launched" and "admin preview" — at this boundary they're the
+  // same case (requireLaunchedApi resolves null either way); the distinction
+  // is exercised directly in lib/__tests__/launch.test.ts.
   it("proceeds normally once launched (or for an admin preview)", async () => {
     requireLaunchedApi.mockResolvedValue(null);
     answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });

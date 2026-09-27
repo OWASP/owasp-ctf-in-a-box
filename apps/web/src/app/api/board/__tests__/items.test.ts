@@ -12,8 +12,12 @@ const mocks = vi.hoisted(() => ({
   getViewerClassic: vi.fn(),
   listAiChallenges: vi.fn(),
   getViewerAi: vi.fn(),
+  getSession: vi.fn(),
+  requireLaunchedApi: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: mocks.getSession } } }));
+vi.mock("@/lib/launch", () => ({ requireLaunchedApi: mocks.requireLaunchedApi }));
 vi.mock("@/lib/enabled-modules", () => ({ isModuleLive: mocks.isModuleLive }));
 vi.mock("@/lib/quiz-store", () => ({ listQuestions: mocks.listQuestions, getViewerQuiz: mocks.getViewerQuiz }));
 vi.mock("@/lib/classic-store", () => ({ listChallenges: mocks.listChallenges, getViewerClassic: mocks.getViewerClassic }));
@@ -26,6 +30,8 @@ const req = (logins: string) => new Request(`http://box/api/board/items?logins=$
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.isModuleLive.mockResolvedValue(true);
+  mocks.getSession.mockResolvedValue(null);
+  mocks.requireLaunchedApi.mockResolvedValue(null);
   mocks.listQuestions.mockResolvedValue([{ id: "q1", prompt: "What is XSS?", points: 50 }]);
   mocks.getViewerQuiz.mockResolvedValue({ answered: {}, attempts: {} });
   mocks.listChallenges.mockResolvedValue([{ id: "c1", title: "Robots Only", points: 50 }]);
@@ -88,5 +94,30 @@ describe("GET /api/board/items", () => {
     expect(text).not.toContain("CTF{ai-leak}");
     expect(text).not.toContain("psst");
     expect(text).not.toContain("sk-secret");
+  });
+});
+
+describe("GET /api/board/items pre-launch lock (#464)", () => {
+  it("refuses with 403 not-launched before launch, reading no challenge list", async () => {
+    mocks.requireLaunchedApi.mockResolvedValue(Response.json({ error: "not-launched" }, { status: 403 }));
+    const res = await GET(req("alice"));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "not-launched" });
+    expect(mocks.listChallenges).not.toHaveBeenCalled();
+    expect(mocks.listQuestions).not.toHaveBeenCalled();
+    expect(mocks.listAiChallenges).not.toHaveBeenCalled();
+  });
+
+  it("asks the lock about the caller's session login, so an admin preview works", async () => {
+    mocks.getSession.mockResolvedValue({ user: { login: "organizer" } });
+    await GET(req("alice"));
+    expect(mocks.requireLaunchedApi).toHaveBeenCalledWith("organizer");
+  });
+
+  it("treats a failed session read as signed out, not as an error", async () => {
+    mocks.getSession.mockRejectedValue(new Error("bad cookie"));
+    const res = await GET(req("alice"));
+    expect(res.status).toBe(200);
+    expect(mocks.requireLaunchedApi).toHaveBeenCalledWith(undefined);
   });
 });

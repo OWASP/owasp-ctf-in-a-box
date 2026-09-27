@@ -10,10 +10,10 @@
 // been called — a refusal that still wrote is not a refusal.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getSession, isModuleLive, requireGatePassed, hasTeam, submitAiFlag, logActivity } = vi.hoisted(() => ({
+const { getSession, isModuleLive, getLaunchAccess, hasTeam, submitAiFlag, logActivity } = vi.hoisted(() => ({
   getSession: vi.fn(),
   isModuleLive: vi.fn(),
-  requireGatePassed: vi.fn(),
+  getLaunchAccess: vi.fn(),
   hasTeam: vi.fn(),
   submitAiFlag: vi.fn(),
   logActivity: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/enabled-modules", () => ({ isModuleLive }));
-vi.mock("@/lib/gate-request", () => ({ requireGatePassed }));
+vi.mock("@/lib/launch", () => ({ getLaunchAccess }));
 vi.mock("@/lib/team-store", () => ({ hasTeam }));
 vi.mock("@/lib/ai-store", () => ({ submitAiFlag }));
 vi.mock("@/lib/activity-log", () => ({ logActivity }));
@@ -33,7 +33,7 @@ import { submitAiFlagAction } from "@/app/(site)/ai/[id]/actions";
 beforeEach(() => {
   vi.clearAllMocks();
   isModuleLive.mockResolvedValue(true);
-  requireGatePassed.mockResolvedValue(true);
+  getLaunchAccess.mockResolvedValue({ allowed: true, preview: false });
   getSession.mockResolvedValue({ user: { login: "alice" } });
   hasTeam.mockResolvedValue(true);
   submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40 });
@@ -46,19 +46,20 @@ describe("submitAiFlagAction gates", () => {
     expect(submitAiFlag).not.toHaveBeenCalled();
   });
 
-  it("refuses — without touching the store — when the pre-event gate has not been passed", async () => {
-    requireGatePassed.mockResolvedValue(false);
-    await expect(submitAiFlagAction("a1", "CTF{x}")).resolves.toEqual({ error: "gate" });
+  it("refuses — without touching the store — before launch (#464)", async () => {
+    getLaunchAccess.mockResolvedValue({ allowed: false, preview: false });
+    await expect(submitAiFlagAction("a1", "CTF{x}")).resolves.toEqual({ error: "not-launched" });
     expect(submitAiFlag).not.toHaveBeenCalled();
+    // Refused before the team check, too — a pre-launch "not yet" comes first.
+    expect(hasTeam).not.toHaveBeenCalled();
   });
 
-  // The gate fails CLOSED: an error reading it must read the same as "not
-  // passed", never as "passed". Opposite direction from the team check below
-  // on purpose — see the comment in actions.ts.
-  it("refuses — without touching the store — when the gate check itself errors", async () => {
-    requireGatePassed.mockRejectedValueOnce(new Error("redis down"));
-    await expect(submitAiFlagAction("a1", "CTF{x}")).resolves.toEqual({ error: "gate" });
-    expect(submitAiFlag).not.toHaveBeenCalled();
+  // No "the lock itself errors" case here: getLaunchAccess never throws — a
+  // failed read already resolves as refused (lib/__tests__/launch.test.ts
+  // pins that fail-closed direction).
+  it("asks the lock about the session's login (an admin passes as a preview)", async () => {
+    await submitAiFlagAction("a1", "CTF{x}");
+    expect(getLaunchAccess).toHaveBeenCalledWith("alice");
   });
 
   it("refuses — without touching the store — for a signed-out caller", async () => {
@@ -88,7 +89,7 @@ describe("submitAiFlagAction gates", () => {
     expect(result).toHaveProperty("error");
   });
 
-  // The team check fails OPEN — the opposite direction from the gate above:
+  // The team check fails OPEN — the opposite direction from the launch lock above:
   // an error must not drop a solve an entitled contestant is making. Mocked
   // to reject here purely to pin the action's OWN guard; `hasTeam` itself
   // already swallows a store error and resolves `true` (team-store.ts).
@@ -115,14 +116,8 @@ describe("submitAiFlagAction gates", () => {
 
   // Order pin: the module check runs before the session read, so a disabled
   // module is not a way to probe whether a cookie is valid.
-  it("checks the module and the gate before it ever reads the session", async () => {
+  it("checks the module before it ever reads the session", async () => {
     isModuleLive.mockResolvedValue(false);
-    await submitAiFlagAction("a1", "CTF{x}");
-    expect(getSession).not.toHaveBeenCalled();
-
-    vi.clearAllMocks();
-    isModuleLive.mockResolvedValue(true);
-    requireGatePassed.mockResolvedValue(false);
     await submitAiFlagAction("a1", "CTF{x}");
     expect(getSession).not.toHaveBeenCalled();
   });

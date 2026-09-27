@@ -77,10 +77,9 @@ describe("POST /api/classic/submit", () => {
     expect(submitFlag).not.toHaveBeenCalled();
   });
 
-  // Covers both "gate active, valid unlock cookie" and "gate inactive" —
-  // at this boundary they're the same case (requireLaunchedApi resolves
-  // true either way); the active-vs-inactive distinction is exercised
-  // directly against the real cookie/crypto logic in gate.test.ts.
+  // Covers both "launched" and "admin preview" — at this boundary they're the
+  // same case (requireLaunchedApi resolves null either way); the distinction
+  // is exercised directly in lib/__tests__/launch.test.ts.
   it("proceeds normally once launched (or for an admin preview)", async () => {
     session("alice");
     requireLaunchedApi.mockResolvedValue(null);
@@ -88,6 +87,8 @@ describe("POST /api/classic/submit", () => {
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
     expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}");
+    // The lock is asked about THIS session's login (an admin passes as preview).
+    expect(requireLaunchedApi).toHaveBeenCalledWith("alice");
   });
 
   // --- the team requirement (issue #153) ------------------------------------

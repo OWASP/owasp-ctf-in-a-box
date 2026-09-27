@@ -1510,9 +1510,9 @@ signs a demo event with the challenge's real key and runs the whole pipeline
 with `dryRun: true` — writing no solve and claiming no nonce — then relays
 the box's own verdict. **Would award** is the answer you want; every other
 verdict is read in the Send test list further down this section. Before
-the event is launched (no scoring start set), every dry run answers
-`paused`. A pre-launch dry run that can reach **Would award** arrives with
-#464's admin preview.
+the event is launched, the Send test mints its demo token as an admin
+preview, so the dry run is graded while scoring is closed and can reach
+**Would award**.
 
 **Authoring** happens in `/admin`, under the AI module's tab. Before adding
 a challenge you need at least one **category** — same chip row as classic's
@@ -2011,9 +2011,15 @@ previewing the event can open one, as described next.
 
 **Admins preview.** A signed-in admin (`ADMIN_LOGINS`, or an admin added in
 the panel) passes the lock and browses every module page as a preview, to
-check the board before contestants see it. The preview does not open
-scoring: the scoring window still says "not launched", so an admin's
-submission before the start banks nothing.
+check the board before contestants see it. Every module page shows a
+**Preview — event not launched** banner, with a **View as contestant** link
+(the landing page, which is all a contestant sees) and a link to `/admin`.
+An admin's submissions are graded as **dry runs**: a flag, a quiz answer,
+an AI flag or event, or a hint reveal goes through the same grading script
+as a real one, and that script writes nothing. There's no solve, no points,
+no attempt or cooldown, no solve count, no hint charge and no activity-log
+line. The answer says so ("preview only, nothing was recorded"). Once the
+event launches, admins score like anyone else.
 
 **Fail direction: closed.** The lock is a secrecy boundary (challenge text
 before kickoff), so if the settings read fails, a non-admin is treated as

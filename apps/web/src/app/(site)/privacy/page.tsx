@@ -276,7 +276,7 @@ export default async function PrivacyPage() {
 
       <Card heading="Cookies">
         <p className="mb-4 text-sm leading-relaxed text-zinc-400">
-          Four, all strictly functional, all marked{" "}
+          Three, all strictly functional, all marked{" "}
           <span className="font-mono text-xs text-zinc-200">httpOnly</span> so no script on the
           page can read them. None of them track you, and none follow you off this site.
         </p>

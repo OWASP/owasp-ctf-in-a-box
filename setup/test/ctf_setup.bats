@@ -462,8 +462,14 @@ EOF
   printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
   chmod +x stubs/gh
   run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  printf '%s' "$output" | grep -qF -- 'CHALLENGES_GATE_ENABLED / CHALLENGES_GATE_PASSWORD — the password gate is REMOVED (#464)'
-  printf '%s' "$output" | grep -qF -- 'press Launch in /admin'
+  if ! printf '%s' "$output" | grep -qF -- 'CHALLENGES_GATE_ENABLED / CHALLENGES_GATE_PASSWORD — the password gate is REMOVED (#464)'; then
+    echo 'Missing doctor output: removed password-gate warning' >&2
+    return 1
+  fi
+  if ! printf '%s' "$output" | grep -qF -- 'set Scoring opens on the Event'; then
+    echo 'Missing doctor output: the Scoring opens launch guidance' >&2
+    return 1
+  fi
   # The password itself must never be echoed back.
   [ -z "$(printf '%s' "$output" | grep -F -- 'open-sesame')" ]
   # Advisory: an inert key breaks nothing.

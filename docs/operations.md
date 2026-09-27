@@ -2005,8 +2005,9 @@ call directly — `POST /api/classic/submit`, `POST /api/quiz/answer`,
 `{ "error": "not-launched" }`**, and the classic, quiz and hint UIs name that
 refusal rather than showing it as a wrong answer. The ai module's launch
 token is only minted from `/ai/[id]`, which is locked, and that page's
-in-box flag form (its server action) answers `not-launched` too, so no AI
-challenge can be opened or solved early.
+in-box flag form (its server action) answers `not-launched` too, so no
+contestant can open or solve an AI challenge early — only an admin
+previewing the event can open one, as described next.
 
 **Admins preview.** A signed-in admin (`ADMIN_LOGINS`, or an admin added in
 the panel) passes the lock and browses every module page as a preview, to

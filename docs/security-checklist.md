@@ -204,11 +204,13 @@ Security aside, the checks that save an event, in the order to run them:
 
 **The morning of:**
 
-- [ ] Set the scoring and registration windows (or plan to flip the freeze
-  by hand). **Scoring opens** is also the launch: until it passes, module
+- [ ] Set **Scoring opens** — a scoring start is required, because it is
+  the launch: flipping the freeze cannot launch an event that has none.
+  Set the registration window too. Until Scoring opens passes, module
   pages redirect to `/` and module APIs answer `not-launched` for everyone
   but admins — check from a signed-out window that the lock is up, and that
-  it lifts at the time you announced.
+  it lifts at the time you announced. The freeze is a separate control: it
+  pauses scoring on an event that is already launched.
 - [ ] Confirm hint knobs (cost, minimum solves, unlock delay) are what you
   announced.
 - [ ] Running Secure Development: `docker compose logs -f sync` shows a clean

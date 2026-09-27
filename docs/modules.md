@@ -696,8 +696,10 @@ of one module's shape.
      `getLaunchAccess(login)` and answers `{ error: "not-launched" }`. The ai
      launch token is minted only from `/ai/[id]`, behind its own
      `redirectIfNotLaunched`, so `POST /api/ai/submit` and `/api/ai/event`,
-     which are authenticated by that token, inherit the lock — a token
-     cannot exist before launch. A module that hands out any credential for
+     which are authenticated by that token, inherit the lock — before
+     launch no contestant can hold a token; only an admin previewing the
+     page can mint one, and nothing scores until the scoring window opens.
+     A module that hands out any credential for
      an external site mints it behind the page guard the same way.
 
    Admins (`isAdminLogin`: `ADMIN_LOGINS` plus stored admins) pass as a

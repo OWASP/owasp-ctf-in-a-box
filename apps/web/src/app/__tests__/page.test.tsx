@@ -35,6 +35,11 @@ vi.mock("@/lib/team-store", () => ({ hasTeam: async () => viewer.hasTeam, getVie
 // page must hide the strip), and the standings-strip test below swaps in a
 // synthetic board for one render.
 const board = vi.hoisted(() => ({ data: null as unknown }));
+// "boss" is an organizer: the pre-launch preview tests below sign them in.
+vi.mock("@/lib/admin-auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/admin-auth")>()),
+  isAdminLogin: async (login: string | undefined) => login === "boss",
+}));
 vi.mock("@/lib/leaderboard/source", () => ({
   getLeaderboardSource: async () => ({
     getLeaderboard: async () => {
@@ -479,6 +484,29 @@ describe("the landing page before launch (#464)", () => {
       // The secure-development card's CTA label; the header nav may still name
       // the board (it is navigation, and the page itself redirects).
       expect(html).not.toContain("Browse targets");
+    });
+  });
+
+  // The secure-development target cards are links to /challenges too, and
+  // /challenges redirects a non-admin back here before launch.
+  const targetCardLinks = (html: string) => (html.match(/<a class="ds-card[^"]*" href="\/challenges"/g) ?? []).length;
+
+  it("renders the target cards without a board link before launch", async () => {
+    await withSettings({ scoringStartsAt: null, teamRegistrationOpen: true }, (html) => {
+      expect(html).toContain("challenges up for grabs");
+      expect(targetCardLinks(html)).toBe(0);
+    });
+    // Not vacuous: the same matcher finds the links once launched.
+    await withSettings({ scoringStartsAt: "2000-01-01T00:00:00.000Z" }, (html) => {
+      expect(targetCardLinks(html)).toBeGreaterThan(0);
+    });
+  });
+
+  it("keeps the board links for an organizer previewing the locked event", async () => {
+    viewer.session = { user: { login: "boss" } };
+    await withSettings({ scoringStartsAt: null, teamRegistrationOpen: true }, (html) => {
+      expect(targetCardLinks(html)).toBeGreaterThan(0);
+      expect(html).toContain("Browse targets");
     });
   });
 

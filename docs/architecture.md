@@ -585,7 +585,7 @@ that mints a launch token, via `mintLaunchUrl`/`buildLaunchClaims`
 module is live, then reads the session, then runs `redirectIfNotLaunched()`
 (the launch lock, #464 — before launch a non-admin is sent to `/`), then
 redirects a teamless contestant away — all four before the mint is ever
-reached, so no token can exist before the event is launched, and there is no code path above the mint that
+reached, so before the event is launched only an admin previewing the page can hold a token (and nothing it reports scores until the scoring window opens), and there is no code path above the mint that
 calls it without a `login` in hand. The token is Ed25519 (ADR 53), signed
 with the module-wide keypair in `ctf:ai:launchkey`, minted lazily on first
 use; its claims carry the player's login (`sub`), the one challenge it is

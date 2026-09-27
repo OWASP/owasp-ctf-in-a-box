@@ -33,6 +33,7 @@ import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { DOCS_URL, type HomeContext } from "@/lib/modules";
 import { getAdminSettingsSnapshot, getEnabledModuleIds } from "@/lib/enabled-modules";
 import { getModuleHome, getNavLinks, getResolvedModules } from "@/lib/resolved-modules";
+import { getLaunchAccess } from "@/lib/launch";
 import { hasTeam } from "@/lib/team-store";
 import { sanitizeNext } from "@/lib/post-signin";
 import { getSite } from "@/lib/site";
@@ -203,6 +204,11 @@ export default async function Home({
   // say "Join a team" to someone whose submissions would score (a Redis
   // blip, or a dev stack with team writes off).
   const team = login ? await hasTeam(login) : false;
+  // Before launch (#464) every board redirects a contestant back here, so the
+  // cards below link to a board only for whoever the board would let in: a
+  // launched event, or an organizer previewing the locked one. Same answer
+  // the board pages' own guard gives (fails closed).
+  const boardsOpen = (await getLaunchAccess(login ?? undefined)).allowed;
   const firstBoard = sections.find((s) => s.cta)?.cta ?? null;
   const action = primaryAction(phaseInfo?.phase ?? null, Boolean(login), team, firstBoard, registrationOpen);
 
@@ -357,9 +363,9 @@ export default async function Home({
                   {countFor(section.id) && (
                     <p className="font-mono text-xs tabular-nums text-[#8f8f9b]">{countFor(section.id)}</p>
                   )}
-                  {/* Before launch (#464) every board redirects back here, so
-                      the card carries no link to one. */}
-                  {section.cta && phaseInfo?.phase !== "registration" && (
+                  {/* Before launch (#464) the card links a board only for an
+                      organizer's preview — see `boardsOpen`. */}
+                  {section.cta && boardsOpen && (
                     <Link
                       href={section.cta.href}
                       className="mt-1 inline-flex w-fit items-center rounded-md border border-white/15 px-4 py-2 text-sm font-medium text-white transition-colors hover:border-[#2563eb]/45 hover:bg-white/[0.04] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
@@ -447,18 +453,29 @@ export default async function Home({
             <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {sortedApps.map((app) => (
                 <li key={app.id}>
-                  <Link
-                    href="/challenges"
-                    className="ds-card group flex h-full flex-col gap-2 rounded-lg border border-white/[0.06] bg-[#16162a] p-5"
-                  >
-                    <div className="flex items-baseline justify-between gap-3">
-                      <h3 className="text-base font-bold text-white">{app.name}</h3>
-                      <span className="font-mono text-xs tabular-nums text-[#8f8f9b]">
-                        {catalog?.byApp[app.id]?.length ?? app.challengeCount}
-                      </span>
-                    </div>
-                    <p className="text-sm leading-relaxed text-zinc-400">{app.blurb}</p>
-                  </Link>
+                  {(() => {
+                    const body = (
+                      <>
+                        <div className="flex items-baseline justify-between gap-3">
+                          <h3 className="text-base font-bold text-white">{app.name}</h3>
+                          <span className="font-mono text-xs tabular-nums text-[#8f8f9b]">
+                            {catalog?.byApp[app.id]?.length ?? app.challengeCount}
+                          </span>
+                        </div>
+                        <p className="text-sm leading-relaxed text-zinc-400">{app.blurb}</p>
+                      </>
+                    );
+                    const card = "ds-card group flex h-full flex-col gap-2 rounded-lg border border-white/[0.06] bg-[#16162a] p-5";
+                    // A plain card before launch: /challenges would redirect
+                    // a contestant straight back here (#464).
+                    return boardsOpen ? (
+                      <Link href="/challenges" className={card}>
+                        {body}
+                      </Link>
+                    ) : (
+                      <div className={card}>{body}</div>
+                    );
+                  })()}
                 </li>
               ))}
             </ul>

@@ -1,7 +1,16 @@
 import "server-only";
 import { storyPositions, type Story } from "@/lib/story-lock";
 import { teamSolveKeys } from "@/lib/classic-team";
-import { clearAllAttachments, deleteItemAttachments } from "@/lib/attachments-store";
+import {
+  addLink,
+  addMissingUpload,
+  clearAllAttachments,
+  deleteItemAttachments,
+  listAllAttachments,
+  listAttachments,
+} from "@/lib/attachments-store";
+import { ATTACHMENTS_PER_ITEM_MAX, type Attachment } from "@/lib/attachments-keys";
+import type { BundleAttachment } from "@/lib/classic-io";
 // Re-exported, not redeclared — the admin UI cannot import a server-only
 // module, so the value lives in the dependency-free defaults file.
 export { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
@@ -512,6 +521,41 @@ export async function upsertChallenge(c: Challenge, flag: string, hint?: string 
  *  of stories the bundle upserted, not the size of the merged list. */
 export type ImportSummary = { created: number; updated: number; categories: number; stories?: number };
 
+type AttachmentAddition = { itemId: string; meta: BundleAttachment };
+
+/** What an import adds (#186): a link the challenge lacks (same name and
+ *  URL = already there), an upload whose sha256 it lacks (created as
+ *  "missing" until its bytes arrive — from the event archive, or a
+ *  re-upload). THROWS `ClassicValidationError` when the challenge's stored
+ *  files plus the additions pass the per-challenge cap. */
+async function planBundleAttachments(bundle: ClassicBundle): Promise<AttachmentAddition[]> {
+  const plan: AttachmentAddition[] = [];
+  for (const c of bundle.challenges) {
+    if (!c.attachments?.length) continue;
+    const existing = await listAttachments("classic", c.id);
+    const has = (m: BundleAttachment) =>
+      existing.some((e: Attachment) =>
+        "url" in m ? e.kind === "link" && e.url === m.url && e.name === m.name : e.kind === "upload" && e.sha256 === m.sha256,
+      );
+    const adds = c.attachments.filter((m) => !has(m));
+    if (existing.length + adds.length > ATTACHMENTS_PER_ITEM_MAX) {
+      throw new ClassicValidationError(
+        "attachments",
+        `At most ${ATTACHMENTS_PER_ITEM_MAX} attachments per challenge — ${c.id} has ${existing.length} and the bundle adds ${adds.length}`,
+      );
+    }
+    for (const meta of adds) plan.push({ itemId: c.id, meta });
+  }
+  return plan;
+}
+
+async function applyBundleAttachments(plan: readonly AttachmentAddition[]): Promise<void> {
+  for (const { itemId, meta } of plan) {
+    if ("url" in meta) await addLink("classic", itemId, meta.name, meta.url);
+    else await addMissingUpload("classic", itemId, meta.name, meta.size, meta.sha256);
+  }
+}
+
 /** Applies a PRE-VALIDATED bundle (produced by `classic-io.ts`'s
  *  `parseBundle`) to the store: upserts every challenge it contains and
  *  unions its categories into the existing list.
@@ -656,10 +700,16 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
   commands.push(["SET", CATEGORIES_KEY, JSON.stringify(unioned)]);
   if (mergedStories) commands.push(["SET", CLASSIC_STORIES_KEY, JSON.stringify(mergedStories)]);
 
+  // #186: work out each challenge's attachment additions BEFORE any write,
+  // so a bundle that would push a challenge past the per-challenge cap
+  // refuses whole, never after its challenges already landed.
+  const attachmentPlan = await planBundleAttachments(bundle);
+
   const results = await upstashPipeline(commands);
   const failed = results.find((r) => r.error);
   if (failed) throw new Error(`Upstash bulk import failed: ${failed.error}`);
 
+  await applyBundleAttachments(attachmentPlan);
   return { created, updated, categories: bundle.categories.length, ...(bundle.stories ? { stories: bundle.stories.length } : {}) };
 }
 
@@ -670,8 +720,17 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
  *  AUTHORED — never the normalized form) and the category list; every row
  *  comes back with its flag alongside the public fields, matching
  *  `ClassicBundleChallenge`. */
+function bundleMeta(a: Attachment): BundleAttachment {
+  return a.kind === "link" ? { name: a.name, url: a.url ?? "" } : { name: a.name, size: a.size ?? 0, sha256: a.sha256 ?? "" };
+}
+
 export async function exportBundle(): Promise<ClassicBundle> {
-  const [rows, categories, stories] = await Promise.all([listChallengesForAdmin(), listCategories(), listStories()]);
+  const [rows, categories, stories, files] = await Promise.all([
+    listChallengesForAdmin(),
+    listCategories(),
+    listStories(),
+    listAllAttachments("classic"),
+  ]);
   const challenges: ClassicBundleChallenge[] = rows.map(({ challenge, flag, hint }) => ({
     id: challenge.id,
     title: challenge.title,
@@ -688,6 +747,9 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // Same only-when-set rule as caseSensitive: a hint-less board exports
     // byte-identically to a pre-#190 one.
     ...(hint ? { hint } : {}),
+    // #186: metadata only (the bytes ride the event archive), and only when
+    // there is some — the same byte-identical rule as hint.
+    ...(files.get(challenge.id)?.length ? { attachments: files.get(challenge.id)!.map(bundleMeta) } : {}),
   }));
   // A stored step can outlive its challenge (deleteChallenge updates the story
   // in a second call; read paths already drop such a step via storyPositions).

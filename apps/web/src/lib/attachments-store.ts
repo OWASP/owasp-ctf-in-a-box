@@ -99,6 +99,36 @@ redis.call('HDEL', KEYS[2], ARGV[1])
 return 1
 `;
 
+/** KEYS: meta, index, bytes, blob. ARGV: id, chunk count, event max, sha256.
+ *  Gives a missing upload its bytes (#186): the entry must exist, still be
+ *  missing and carry this sha256, and its size must fit the event total.
+ *  Returns {"ok"} or a refusal ({"unknown"}, {"notmissing"}, {"sha"},
+ *  {"bytes", total}); a refusal deletes the chunks it was handed. */
+export const FILL_SCRIPT = `
+local function drop()
+  for n = 0, tonumber(ARGV[2]) - 1 do redis.call('HDEL', KEYS[4], ARGV[1] .. ':' .. n) end
+end
+local ik = redis.call('HGET', KEYS[2], ARGV[1])
+if not ik then drop() return {'unknown'} end
+local raw = redis.call('HGET', KEYS[1], ik)
+local list = raw and cjson.decode(raw) or {}
+for _, a in ipairs(list) do
+  if a.id == ARGV[1] then
+    if not a.missing then drop() return {'notmissing'} end
+    if a.sha256 ~= ARGV[4] then drop() return {'sha'} end
+    local total = tonumber(redis.call('GET', KEYS[3]) or '0')
+    if total + a.size > tonumber(ARGV[3]) then drop() return {'bytes', total} end
+    a.missing = nil
+    a.chunks = tonumber(ARGV[2])
+    redis.call('HSET', KEYS[1], ik, cjson.encode(list))
+    redis.call('INCRBY', KEYS[3], a.size)
+    return {'ok'}
+  end
+end
+drop()
+return {'unknown'}
+`;
+
 function parseList(raw: unknown): Attachment[] {
   if (raw === null || raw === undefined) return [];
   if (typeof raw !== "string") throw new Error("attachments: stored value is not a string");
@@ -123,7 +153,7 @@ async function commit(itemId: string, module: AttachmentModule, att: Attachment,
   const verdict = (await upstashEval(
     COMMIT_SCRIPT,
     [keys.meta, keys.index, keys.bytes, keys.blob, keys.owner ?? CLASSIC_CHALLENGES_KEY],
-    [itemKey(module, itemId), JSON.stringify(att), att.size ?? 0, ATTACHMENTS_PER_ITEM_MAX, ATTACHMENTS_EVENT_MAX_BYTES, att.id, att.chunks ?? 0, itemId],
+    [itemKey(module, itemId), JSON.stringify(att), att.missing ? 0 : (att.size ?? 0), ATTACHMENTS_PER_ITEM_MAX, ATTACHMENTS_EVENT_MAX_BYTES, att.id, att.chunks ?? 0, itemId],
   )) as [string, number?];
   if (verdict[0] === "noitem") throw new AttachmentError(`No challenge with id ${itemId}`);
   if (verdict[0] === "items") {
@@ -200,6 +230,77 @@ export async function addLink(module: AttachmentModule, itemId: string, rawName:
   const att: Attachment = { id: newAttachmentId(), kind: "link", name: sanitizeFilename(rawName), url: url.href };
   await commit(itemId, module, att, keys);
   return att;
+}
+
+const SHA256_RE = /^[0-9a-f]{64}$/;
+
+/** Records an upload a bundle names but whose bytes are not on this box
+ *  (#186): it counts toward the per-item cap, not the byte total, and is
+ *  never offered to contestants until `fillMissingUpload` gives it bytes. */
+export async function addMissingUpload(
+  module: AttachmentModule,
+  itemId: string,
+  rawName: string,
+  size: number,
+  sha256: string,
+  keys = KEYS,
+): Promise<Attachment> {
+  if (!Number.isInteger(size) || size < 1 || size > ATTACHMENT_MAX_BYTES) throw new AttachmentError(`Invalid size ${size}`);
+  if (!SHA256_RE.test(sha256)) throw new AttachmentError("Invalid sha256");
+  const att: Attachment = { id: newAttachmentId(), kind: "upload", name: sanitizeFilename(rawName), size, sha256, missing: true };
+  await commit(itemId, module, att, keys);
+  return att;
+}
+
+/** Gives a missing upload its bytes — a re-upload, or the event archive's
+ *  copy. Bytes whose sha256 differs from the recorded one are refused before
+ *  a chunk is written; the fill itself is re-checked atomically in Lua. */
+export async function fillMissingUpload(id: string, bytes: Uint8Array, keys = KEYS): Promise<Attachment> {
+  const found = await resolveAttachment(id, keys);
+  if (!found || found.attachment.kind !== "upload") throw new AttachmentError("No such upload");
+  const att = found.attachment;
+  if (!att.missing) throw new AttachmentError(`${att.name} is not missing — remove it first to replace it`);
+  const sha = sha256Hex(bytes);
+  if (sha !== att.sha256 || bytes.length !== att.size) {
+    throw new AttachmentError(`sha256 mismatch: ${att.name} was recorded as ${att.sha256}, this file is ${sha}`);
+  }
+  const chunks = splitChunks(bytes);
+  try {
+    for (const [n, chunk] of chunks.entries()) {
+      const [res] = await upstashPipeline([["HSET", keys.blob, chunkField(id, n), Buffer.from(chunk).toString("base64")]]);
+      if (res.error) throw new Error(`Upstash HSET failed: ${res.error}`);
+    }
+    const verdict = (await upstashEval(
+      FILL_SCRIPT,
+      [keys.meta, keys.index, keys.bytes, keys.blob],
+      [id, chunks.length, ATTACHMENTS_EVENT_MAX_BYTES, sha],
+    )) as [string, number?];
+    if (verdict[0] === "bytes") {
+      throw new AttachmentError(
+        `The event's attachments are capped at ${formatBytes(ATTACHMENTS_EVENT_MAX_BYTES)} — ${formatBytes(Number(verdict[1]))} are stored, and this file is ${formatBytes(bytes.length)}`,
+      );
+    }
+    if (verdict[0] !== "ok") throw new AttachmentError(`${att.name} could not be filled (${verdict[0]})`);
+  } catch (err) {
+    if (!(err instanceof AttachmentError)) await dropChunks(id, chunks.length, keys);
+    throw err;
+  }
+  const { missing: _missing, ...rest } = att;
+  return { ...rest, chunks: chunks.length };
+}
+
+/** Every item's attachments for one module, in one read (export, archive). */
+export async function listAllAttachments(module: AttachmentModule, keys = KEYS): Promise<Map<string, Attachment[]>> {
+  const [res] = await upstashPipeline([["HGETALL", keys.meta]]);
+  if (res.error) throw new Error(`Upstash HGETALL failed: ${res.error}`);
+  const flat = Array.isArray(res.result) ? (res.result as unknown[]) : [];
+  const out = new Map<string, Attachment[]>();
+  const prefix = `${module}:`;
+  for (let i = 0; i + 1 < flat.length; i += 2) {
+    const field = String(flat[i]);
+    if (field.startsWith(prefix)) out.set(field.slice(prefix.length), parseList(flat[i + 1]));
+  }
+  return out;
 }
 
 /** Removes one attachment (and its bytes). Returns false when unknown. */

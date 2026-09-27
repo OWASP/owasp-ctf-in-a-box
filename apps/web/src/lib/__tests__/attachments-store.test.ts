@@ -14,6 +14,9 @@ import { ATTACHMENT_CHUNK_BYTES, ATTACHMENT_MAX_BYTES } from "@/lib/attachments-
 import {
   AttachmentError,
   addLink,
+  addMissingUpload,
+  fillMissingUpload,
+  listAllAttachments,
   addUpload,
   readUploadBytes,
   resolveAttachment,
@@ -104,5 +107,34 @@ describe("resolveAttachment / readUploadBytes", () => {
     await expect(
       readUploadBytes({ id: "a0123456789abcdef", kind: "upload", name: "f", size: 4, chunks: 1, sha256: "x" }),
     ).rejects.toThrow(/expected 4/);
+  });
+});
+
+describe("missing uploads (#186 PR3)", () => {
+  it("records a missing upload without bytes, chunks or counted size", async () => {
+    const att = await addMissingUpload("classic", "x", "cap.pcap", 10, "ab".repeat(32));
+    expect(att).toMatchObject({ kind: "upload", name: "cap.pcap", size: 10, sha256: "ab".repeat(32), missing: true });
+    expect(att.chunks).toBeUndefined();
+    const [, , , argv] = [0, 0, 0, mocks.upstashEval.mock.calls[0][2] as (string | number)[]];
+    // ARGV[3] is the size the commit adds to the event total: 0 for a missing one.
+    expect(argv[2]).toBe(0);
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+  });
+
+  it("refuses to fill with bytes whose sha256 differs, before writing a chunk", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "classic:x" }]).mockResolvedValueOnce([
+      { result: JSON.stringify([{ id: "a0123456789abcdef", kind: "upload", name: "f", size: 3, sha256: "ab".repeat(32), missing: true }]) },
+    ]);
+    await expect(fillMissingUpload("a0123456789abcdef", new Uint8Array([1, 2, 3]))).rejects.toThrow(/sha256 mismatch/);
+    expect(calls().some((c) => c[0][0] === "HSET")).toBe(false);
+  });
+
+  it("lists every item's attachments for one module in one read", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: ["classic:a", JSON.stringify([{ id: "a1", kind: "link", name: "l", url: "https://e.org" }]), "quiz:b", "[]"] },
+    ]);
+    const all = await listAllAttachments("classic");
+    expect([...all.keys()]).toEqual(["a"]);
+    expect(calls()).toHaveLength(1);
   });
 });

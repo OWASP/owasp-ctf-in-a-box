@@ -37,6 +37,12 @@ import {
   CLASSIC_STORY_STEPS_MAX,
   CLASSIC_STORY_TITLE_MAX,
 } from "@/lib/classic-keys";
+import {
+  ATTACHMENTS_PER_ITEM_MAX,
+  ATTACHMENT_MAX_BYTES,
+  ATTACHMENT_NAME_MAX,
+  ATTACHMENT_URL_MAX,
+} from "@/lib/attachments-keys";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { Story } from "@/lib/story-lock";
 
@@ -45,6 +51,8 @@ export const CLASSIC_BUNDLE_VERSION = 2;
 const SUPPORTED_VERSIONS = new Set([1, 2]);
 const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
+
+export type BundleAttachment = { name: string; size: number; sha256: string } | { name: string; url: string };
 
 export type ClassicBundleChallenge = {
   id: string;
@@ -61,6 +69,10 @@ export type ClassicBundleChallenge = {
   /** Optional paid-hint text (#190). Absent = no hint. Secret like `flag`:
    *  a bundle is an ORGANIZER artifact and already carries every answer. */
   hint?: string;
+  /** v2 (#186): the challenge's files as METADATA only — an upload's name,
+   *  size and sha256, or a link. Bytes travel in the event archive; an
+   *  import that names an upload the box lacks creates it as "missing". */
+  attachments?: BundleAttachment[];
 };
 
 export type ClassicBundle = {
@@ -85,6 +97,7 @@ const CHALLENGE_KEYS = [
   "flag",
   "caseSensitive",
   "hint",
+  "attachments",
 ] as const;
 const CHALLENGE_KEY_SET = new Set<string>(CHALLENGE_KEYS);
 
@@ -217,6 +230,52 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
   if (typeof flag !== "string" || !flag.trim()) {
     errors.push({ where: `${base}.flag`, message: "Flag is required" });
   }
+
+  if (raw.attachments !== undefined) validateAttachments(raw.attachments, `${base}.attachments`, errors);
+}
+
+const UPLOAD_META_KEYS = new Set(["name", "size", "sha256"]);
+const LINK_META_KEYS = new Set(["name", "url"]);
+const SHA256_RE = /^[0-9a-f]{64}$/;
+
+/** A challenge's attachment metadata (#186): each entry EXACTLY an upload
+ *  `{ name, size, sha256 }` or a link `{ name, url }` — never bytes — within
+ *  the store's own caps, so an import cannot pass here and fail there. */
+function validateAttachments(raw: unknown, where: string, errors: ImportError[]): void {
+  if (!Array.isArray(raw)) return void errors.push({ where, message: "attachments must be an array" });
+  if (raw.length > ATTACHMENTS_PER_ITEM_MAX) {
+    errors.push({ where, message: `At most ${ATTACHMENTS_PER_ITEM_MAX} attachments per challenge` });
+  }
+  raw.forEach((a, i) => {
+    const at = `${where}[${i}]`;
+    if (!isPlainObject(a)) return void errors.push({ where: at, message: "An attachment must be an object" });
+    const isLink = "url" in a;
+    const allowed = isLink ? LINK_META_KEYS : UPLOAD_META_KEYS;
+    const unknown = Object.keys(a).filter((k) => !allowed.has(k));
+    if (unknown.length > 0) {
+      errors.push({ where: at, message: `Unknown key(s): ${unknown.join(", ")} — an attachment is { name, size, sha256 } or { name, url }` });
+    }
+    if (typeof a.name !== "string" || !a.name.trim() || Array.from(a.name).length > ATTACHMENT_NAME_MAX) {
+      errors.push({ where: `${at}.name`, message: `name must be a non-empty string of at most ${ATTACHMENT_NAME_MAX} characters` });
+    }
+    if (isLink) {
+      let ok = false;
+      try {
+        const u = new URL(String(a.url));
+        ok = (u.protocol === "https:" || u.protocol === "http:") && u.href.length <= ATTACHMENT_URL_MAX;
+      } catch {
+        ok = false;
+      }
+      if (!ok) errors.push({ where: `${at}.url`, message: "url must be a full http(s) URL" });
+      return;
+    }
+    if (typeof a.size !== "number" || !Number.isInteger(a.size) || a.size < 1 || a.size > ATTACHMENT_MAX_BYTES) {
+      errors.push({ where: `${at}.size`, message: `size must be an integer from 1 to ${ATTACHMENT_MAX_BYTES}` });
+    }
+    if (typeof a.sha256 !== "string" || !SHA256_RE.test(a.sha256)) {
+      errors.push({ where: `${at}.sha256`, message: "sha256 must be 64 lowercase hex digits" });
+    }
+  });
 }
 
 /** Cross-row rule with no single-challenge equivalent: a repeated id within
@@ -285,6 +344,15 @@ export function parseBundle(raw: string): ParseResult {
   const rawChallenges = parsed.challenges;
   rawChallenges.forEach((c, i) => validateChallenge(c, i, categories, errors));
   checkDuplicateIds(rawChallenges, errors);
+
+  // v2 (#186): attachments, like stories, need the version that knows them.
+  if (parsed.version === 1) {
+    rawChallenges.forEach((c, i) => {
+      if (isPlainObject(c) && c.attachments !== undefined) {
+        errors.push({ where: `challenges[${i}].attachments`, message: `"attachments" needs bundle version ${CLASSIC_BUNDLE_VERSION}` });
+      }
+    });
+  }
 
   // v2 (#463): stories. On a v1 bundle the key is an error, not ignored — an
   // older box ignoring it would serve every step unlocked, which is exactly

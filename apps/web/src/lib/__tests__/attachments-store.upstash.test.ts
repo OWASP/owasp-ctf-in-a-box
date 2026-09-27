@@ -2,6 +2,7 @@
 // round-trips through srh (chunked), and COMMIT_SCRIPT enforces the per-item
 // and event caps atomically, deleting the chunks of a refused upload.
 
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -9,7 +10,10 @@ import { liveConfigured, liveKey } from "./live-redis";
 import { ATTACHMENT_MAX_BYTES } from "@/lib/attachments-keys";
 import {
   addLink,
+  addMissingUpload,
   addUpload,
+  fillMissingUpload,
+  listAllAttachments,
   listAttachments,
   readUploadBytes,
   removeAttachment,
@@ -65,6 +69,28 @@ describe.skipIf(!liveConfigured)("attachments store — live (#186)", () => {
     await expect(addUpload("classic", "deleted", "f", new Uint8Array(8), k)).rejects.toThrow(/No challenge/);
     expect(await hlen(k.blob)).toBe(0);
     expect(await listAttachments("classic", "deleted", k)).toEqual([]);
+  });
+
+  // #186 PR3: a bundle names an upload the box lacks → "missing", counted
+  // toward the item cap but not the byte total; its bytes arrive later and
+  // must match the recorded sha256.
+  it("creates a missing upload, then fills it only with matching bytes", async () => {
+    const k = keysFor("missing");
+    await own(k, "x");
+    const bytes = new Uint8Array([9, 8, 7, 6]);
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    const att = await addMissingUpload("classic", "x", "cap.pcap", bytes.length, sha, k);
+    expect(att.missing).toBe(true);
+    expect(Number((await upstashPipeline([["GET", k.bytes]]))[0].result ?? 0)).toBe(0);
+    await expect(fillMissingUpload(att.id, new Uint8Array([1, 2, 3, 4]), k)).rejects.toThrow(/sha256 mismatch/);
+    expect(await hlen(k.blob)).toBe(0);
+    const filled = await fillMissingUpload(att.id, bytes, k);
+    expect(filled.missing).toBeUndefined();
+    expect(Buffer.from(await readUploadBytes(filled, k)).equals(Buffer.from(bytes))).toBe(true);
+    expect(Number((await upstashPipeline([["GET", k.bytes]]))[0].result)).toBe(4);
+    expect((await listAllAttachments("classic", k)).get("x")?.[0].missing).toBeUndefined();
+    // Filling twice is refused: the entry is no longer missing.
+    await expect(fillMissingUpload(att.id, bytes, k)).rejects.toThrow(/not missing/);
   });
 
   it("refuses the 11th attachment on an item", async () => {

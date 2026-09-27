@@ -189,3 +189,43 @@ describe("bundle v2: stories (#463)", () => {
     expect(text).toMatch(/two stories|one story/);
   });
 });
+
+// #186: a challenge's attachments travel as METADATA only — the bytes go in
+// the event archive. v2 only, like stories.
+describe("bundle v2: attachments (#186)", () => {
+  const sha = "ab".repeat(32);
+  const withAtt = (attachments: unknown, version = 2) =>
+    JSON.stringify({ ...valid, version, challenges: [{ ...valid.challenges[0], attachments }, ...valid.challenges.slice(1)] });
+
+  it("accepts upload metadata and links, and keeps them on the parsed challenge", () => {
+    const att = [
+      { name: "capture.pcap", size: 2048, sha256: sha },
+      { name: "disk.img", url: "https://files.example.org/disk.img" },
+    ];
+    const res = parseBundle(withAtt(att));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.challenges[0].attachments).toEqual(att);
+  });
+
+  const attErrors = (text: string) => {
+    const res = parseBundle(text);
+    return res.ok ? [] : res.errors.filter((e) => e.where.includes("attachments"));
+  };
+
+  it("refuses attachments on a v1 bundle", () => {
+    expect(attErrors(withAtt([{ name: "a", url: "https://e.org/a" }], 1)).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["a bad sha256", [{ name: "a", size: 1, sha256: "nope" }]],
+    ["a size over 5 MiB", [{ name: "a", size: 5 * 1024 * 1024 + 1, sha256: sha }]],
+    ["both a url and bytes", [{ name: "a", size: 1, sha256: sha, url: "https://e.org/a" }]],
+    ["a non-http url", [{ name: "a", url: "javascript:alert(1)" }]],
+    ["an unknown key", [{ name: "a", url: "https://e.org/a", bytes: "AAAA" }]],
+    ["a missing name", [{ url: "https://e.org/a" }]],
+    ["eleven entries", Array.from({ length: 11 }, (_, i) => ({ name: `l${i}`, url: `https://e.org/${i}` }))],
+    ["a non-array", "capture.pcap"],
+  ])("refuses %s, naming the attachments field", (_label, att) => {
+    expect(attErrors(withAtt(att)).length).toBeGreaterThan(0);
+  });
+});

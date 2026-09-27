@@ -21,7 +21,14 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
 // #186: a deleted challenge takes its attachments; clearing the board clears
 // them. The attachments store has its own suites — here, only that it is asked.
-const attachments = vi.hoisted(() => ({ deleteItemAttachments: vi.fn(), clearAllAttachments: vi.fn() }));
+const attachments = vi.hoisted(() => ({
+  deleteItemAttachments: vi.fn(),
+  clearAllAttachments: vi.fn(),
+  listAllAttachments: vi.fn(async () => new Map()),
+  listAttachments: vi.fn(async () => [] as Record<string, unknown>[]),
+  addLink: vi.fn(),
+  addMissingUpload: vi.fn(),
+}));
 vi.mock("@/lib/attachments-store", () => attachments);
 
 import {
@@ -905,6 +912,71 @@ describe("stories in the bundle (#463)", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: [] }, { result: null }, { result: "{not json" }]);
     await expect(importBundle(withStories([]))).rejects.toThrow();
     expect(pipelineCalls()).toHaveLength(1);
+  });
+});
+
+// #186: bundle attachments are metadata. Import creates a link, or an upload
+// the box lacks as "missing"; one it already holds (same sha256) is kept.
+describe("attachments in the bundle (#186)", () => {
+  const sha = "ab".repeat(32);
+  const bundleWith = (attachments: unknown[]): ClassicBundle => ({
+    ...twoRowBundle,
+    version: 2,
+    challenges: [{ ...twoRowBundle.challenges[0], attachments } as ClassicBundle["challenges"][number], twoRowBundle.challenges[1]],
+  });
+  const firstId = () => twoRowBundle.challenges[0].id;
+
+  beforeEach(() => {
+    for (const f of [attachments.listAttachments, attachments.addLink, attachments.addMissingUpload, attachments.listAllAttachments]) f.mockClear();
+    attachments.listAttachments.mockResolvedValue([]);
+    attachments.listAllAttachments.mockResolvedValue(new Map());
+  });
+
+  it("creates a missing upload and a link for a challenge that has neither", async () => {
+    await importBundle(bundleWith([{ name: "cap.pcap", size: 10, sha256: sha }, { name: "disk", url: "https://e.org/disk" }]));
+    expect(attachments.addMissingUpload).toHaveBeenCalledWith("classic", firstId(), "cap.pcap", 10, sha);
+    expect(attachments.addLink).toHaveBeenCalledWith("classic", firstId(), "disk", "https://e.org/disk");
+  });
+
+  it("keeps an upload the box already holds by sha256, and a link it already has", async () => {
+    attachments.listAttachments.mockResolvedValue([
+      { id: "a1", kind: "upload", name: "old-name.pcap", size: 10, sha256: sha, chunks: 1 },
+      { id: "a2", kind: "link", name: "disk", url: "https://e.org/disk" },
+    ]);
+    await importBundle(bundleWith([{ name: "cap.pcap", size: 10, sha256: sha }, { name: "disk", url: "https://e.org/disk" }]));
+    expect(attachments.addMissingUpload).not.toHaveBeenCalled();
+    expect(attachments.addLink).not.toHaveBeenCalled();
+  });
+
+  it("refuses the whole import before any write when the box's files plus the bundle's pass the per-challenge cap", async () => {
+    attachments.listAttachments.mockResolvedValue(
+      Array.from({ length: 9 }, (_, i) => ({ id: `a${i}`, kind: "link", name: `l${i}`, url: `https://e.org/${i}` })),
+    );
+    await expect(
+      importBundle(bundleWith([{ name: "x", url: "https://e.org/x" }, { name: "y", url: "https://e.org/y" }])),
+    ).rejects.toThrow(/At most 10 attachments/);
+    // Only the leading reads ran: no challenge, flag or category write.
+    expect(pipelineCalls().flat().some((c) => c[0] === "HSET" || c[0] === "SET")).toBe(false);
+  });
+
+  it("exports each challenge's attachment metadata, never bytes or ids", async () => {
+    attachments.listAllAttachments.mockResolvedValueOnce(
+      new Map([[FULL_BOARD_ID, [
+        { id: "a1", kind: "upload", name: "cap.pcap", size: 10, sha256: sha, chunks: 1 },
+        { id: "a2", kind: "link", name: "disk", url: "https://e.org/disk" },
+      ]]]),
+    );
+    seedFullBoard();
+    const bundle = await exportBundle();
+    expect(bundle.challenges[0].attachments).toEqual([
+      { name: "cap.pcap", size: 10, sha256: sha },
+      { name: "disk", url: "https://e.org/disk" },
+    ]);
+  });
+
+  it("exports no attachments key for a challenge without any", async () => {
+    seedFullBoard();
+    expect((await exportBundle()).challenges[0]).not.toHaveProperty("attachments");
   });
 });
 

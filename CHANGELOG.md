@@ -8,6 +8,20 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Challenge files and links (#186).** A classic challenge can carry
+  uploaded files (up to 5 MiB each, 50 MiB per event, 10 attachments per
+  challenge) and external links.
+  - Uploads are stored in Redis and served only to whoever can see the
+    challenge, through the same visibility check as the challenge page. They
+    are always served as a download, never rendered.
+  - Links are marked as public to anyone with the URL.
+  - Challenge bundles carry attachment metadata; the event archive carries
+    the bytes, sha256-checked before an import replaces anything. A bundle
+    that names a file the box lacks records it as missing until it is
+    re-uploaded.
+  - The demo's two forensics challenges now ship a real synthetic pcap and
+    JPEG. See ADR 61.
+
 - **Classic stories (#463, part 1).** A story is an ordered chain of classic
   challenges that a team unlocks one step at a time.
   - Step N+1 opens once any teammate solves step N.

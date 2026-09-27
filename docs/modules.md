@@ -285,7 +285,7 @@ also scored entirely inside the app — see
 [docs/architecture.md#jeopardy-data-flow](architecture.md#jeopardy-data-flow)
 for its data flow and `docs/operations.md`'s "Jeopardy" section for the
 organizer-facing authoring/cooldown guide, including stories — chains of
-challenges a team unlocks in order, #463), and `ai` (challenges hosted on an
+challenges a team unlocks in order, #463 — and challenge files, #186), and `ai` (challenges hosted on an
 external site, played there or graded by a typed flag back on `/ai/[id]`).
 Registered and selectable, and its contract, store layer, contestant surface
 **and** admin section have all shipped: the nav entry, the `/ai` board and
@@ -425,10 +425,17 @@ third module isn't mistaken for a fully general n-module platform:
   contracts. Neither bundle carries its module's retry-gate settings: those
   are event policy, live-editable in `/admin`, and an import must never move
   them.
-- **`classic` still has no file attachments — plainly, not by omission.**
-  A challenge's `description` is Markdown text only, with nowhere to attach
-  a downloadable file (an image, a pcap, a binary) for a contestant to pull
-  down. Attachments are scoped to a later PR in this same series (#186).
+- **`classic` has attachments (issue #186).** A challenge carries uploads
+  (bytes in Redis, chunked; `lib/attachments-store.ts`) and external links.
+  - The store is keyed by `(module, itemId)`, so another module can adopt it
+    without new storage. Classic is the only adopter today, and
+    `GET /api/attachments/<id>` resolves only classic items.
+  - **One visibility answer.** The download route asks `classicVisibility`
+    (`lib/classic-visibility.ts`), which the challenge page and its metadata
+    ask too. A module that adopts attachments must route its downloads
+    through its own page's visibility function, never a copy of it.
+  - Bundles carry metadata; the event archive carries the bytes. See
+    [ADR 61](decisions.md#adr-61-challenge-attachments-live-in-redis-served-only-as-downloads-behind-the-challenges-own-visibility).
 - **`classic` has stories (issue #463).** A story is `{id, title, intro,
   steps}` in `ctf:classic:stories`, an ordered chain of challenges drawn from
   any category. Step N+1 **unlocks for the whole team** once any current

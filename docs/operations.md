@@ -1505,9 +1505,46 @@ minimum solves, unlock delay, and the penalty fold all work identically.
 See the hints section under [Organizer admin
 panel](#organizer-admin-panel).
 
-**What classic still doesn't do:** no file attachments — a challenge's
-description is text only, with nowhere to attach an image, a capture file,
-or a binary for contestants to download.
+**Files and links on a challenge** (#186). Open a saved challenge in the
+Jeopardy tab and use its **Files** section.
+
+- **Upload a file.** It is stored in the box's own Redis and served only to
+  whoever can see the challenge: nobody before launch except an admin
+  previewing, nobody while it is a locked story step, and nobody once the
+  module is off or the challenge is deleted. It always downloads and never
+  opens in the browser, so an uploaded `.html` or `.svg` is harmless.
+- **Add a link** for anything larger (a disk image, a big capture). A link
+  is **publicly reachable by anyone with the URL** and is not covered by the
+  launch or story locks. The panel says so on every link.
+- Each file shows its size and the sha256 the server computed, so you can
+  check it is the file you meant to ship.
+
+| Cap | Limit |
+|---|---|
+| One uploaded file | 5 MiB |
+| Uploads per event, in total | 50 MiB |
+| Attachments per challenge (files and links) | 10 |
+
+Each refusal names the cap and the current usage. Deleting a challenge
+deletes its files. The bytes live in Redis's AOF, so they survive a restart
+and a redeploy. At the event cap they take about 67 MB of Redis memory as
+base64; count that when sizing the box. See
+[ADR 61](decisions.md#adr-61-challenge-attachments-live-in-redis-served-only-as-downloads-behind-the-challenges-own-visibility)
+for why the bytes live in Redis.
+
+**Files in bundles and archives.** A challenge bundle (version 2) carries
+each attachment's **metadata only**: `{ "name", "size", "sha256" }` for an
+upload, `{ "name", "url" }` for a link, in an `attachments` list on the
+challenge. The bytes travel in the **event archive**, whose import checks
+every file's sha256 before it replaces anything.
+
+- Importing a bundle that names an upload the box does not have creates it
+  as **missing**. The Files section flags it ("re-upload `capture.pcap`
+  (sha256 …)") with a re-upload control, and contestants do not see it until
+  it has its bytes.
+- A re-upload whose sha256 differs from the recorded one is refused.
+- Import still never deletes: a file on the box that the bundle does not
+  mention stays. A link matches by name and URL, an upload by sha256.
 
 ## AI
 

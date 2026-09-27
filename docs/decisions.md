@@ -72,6 +72,8 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 55 — Configuration v2: `.env` bootstrap, `/admin` runtime, no event.yaml](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml)
 - [ADR 56 — Poll is the score transport; push ingest is removed](#adr-56-poll-is-the-score-transport-push-ingest-is-removed)
 - [ADR 59 — Every event needs an official launch: an empty scoring start means "not launched"](#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched)
+- [ADR 60 — Stories: first-class objects, a derived unlock, and team scope](#adr-60-stories-first-class-objects-a-derived-unlock-and-team-scope)
+- [ADR 61 — Challenge attachments live in Redis, served only as downloads, behind the challenge's own visibility](#adr-61-challenge-attachments-live-in-redis-served-only-as-downloads-behind-the-challenges-own-visibility)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -3632,4 +3634,74 @@ resolves the team, so the extra keys cost one pipeline. Story authoring (the
 editor and bundle v2) follows in #463's second PR.
 
 **Status.** Accepted (#463).
+
+## ADR 61. Challenge attachments live in Redis, served only as downloads, behind the challenge's own visibility
+
+**Context.** Issue #186. A jeopardy CTF is largely about artifacts: a pcap,
+a binary, a suspicious JPEG. A classic challenge could only link to a file
+hosted elsewhere, which is public to anyone with the URL and ignores both
+the launch lock (#464) and a locked story step (#463).
+
+**Decision.**
+- **Uploads live in Redis; larger files are external links.**
+  - An upload is at most 5 MiB. The event holds at most 50 MiB of uploads,
+    and a challenge at most 10 attachments. The caps are checked in one Lua
+    commit script, so two uploads that each fit alone cannot both land.
+  - A link can be any size. It is stored as metadata and never proxied, and
+    the admin UI says it is only as private as its URL.
+  - This follows the sponsor-logo precedent (ADR 57): the bytes work
+    unchanged on compose, Fly and AWS (ElastiCache behind srh), and they
+    survive restarts and redeploys through the AOF.
+- **Rejected alternatives.**
+  - *A filesystem volume.* It works on compose and on Fly's single `/data`
+    mount, but Fargate storage is ephemeral, so AWS would need new S3 or EFS
+    Terraform for one target.
+  - *External links only.* They cannot honor the launch lock or the story
+    lock.
+- **Bytes are chunked at 1 MiB.** Every write goes through srh as JSON.
+  Measured against the srh image CI pins: one request body is accepted up to
+  at least 7500 KiB and refused at 7900 KiB, which is Plug's default
+  8,000,000-byte limit. A 5 MiB file is 6.99 MB of base64, which fits with
+  only about 1 MB to spare. At 1 MiB raw, each request is about 1.4 MB of
+  base64. Reads reassemble the chunks and refuse a length mismatch.
+- **One visibility answer.** `classicVisibility` (module switch, launch
+  lock, team, existence, story lock; an admin preview skips the story lock)
+  is asked by the challenge page, its metadata and the download route.
+  - A lock added to it reaches downloads automatically, so a guessable URL
+    is never a way around one.
+  - Hidden, unknown, malformed, link and still-missing all answer the same
+    bodiless 404.
+- **Always a download.** The route sends:
+  - `Content-Type: application/octet-stream`
+  - `Content-Disposition: attachment` with an RFC 5987 `filename*`
+  - `X-Content-Type-Options: nosniff`
+  - `Cache-Control: private, no-store`
+  - an `ETag` taken from the sha256
+
+  The bytes come from the app's own origin, so an uploaded `.html` or `.svg`
+  rendered inline would be stored XSS against signed-in contestants and
+  admins. Visibility changes at launch and when a step unlocks, so no shared
+  cache may keep a copy.
+- **Names and ids.**
+  - An attachment id is server-generated random, so no key, URL or header is
+    ever built from what an organizer typed.
+  - A name keeps only its last path segment. Control and format characters
+    are dropped (a bidi override would disguise an extension), lone
+    surrogates are replaced, leading dots are removed, and the length is cut
+    at 200 code points.
+- **Bundles and archives.**
+  - The classic bundle (v2, shared with #463) carries attachment metadata
+    only: `{ name, size, sha256 }` or `{ name, url }`.
+  - Importing metadata for an upload the box lacks records it as
+    **missing**. It counts toward the per-challenge cap, not the byte total,
+    and contestants never see it. A re-upload whose sha256 differs is
+    refused.
+  - The event archive embeds the bytes as base64 in `attachmentFiles`. Each
+    sha256 is verified before the import resets anything, and the import
+    body is read bounded at 50 MiB × 4/3 + 8 MiB.
+
+**Consequences.** Redis memory grows by up to about 67 MB of base64 at the
+event cap. The caps bound it, and an operator sizing a box counts it. An
+upload interrupted between its chunk writes and its commit can leave
+uncounted, unreachable chunks; every handled failure path deletes them.
 

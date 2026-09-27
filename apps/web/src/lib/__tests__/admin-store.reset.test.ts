@@ -123,6 +123,15 @@ describe("resetEvent", () => {
     expect(auditLine).toMatchObject({ by: "alice", action: "reset", cleared: { solves: 2, teams: 2 } });
   });
 
+  // #464: a master reset returns the event to NOT LAUNCHED — the scoring
+  // start is cleared in the same atomic script that freezes and audits.
+  it("relocks the event: clears scoringStartsAt in the same eval", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [[]]));
+    await resetEvent("alice");
+    const [script] = mocks.upstashEval.mock.calls[0];
+    expect(script).toMatch(/redis\.call\('HDEL', KEYS\[1\], 'scoringStartsAt'\)/);
+  });
+
   it("wipes quiz answers and attempts", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
     await resetEvent("alice");

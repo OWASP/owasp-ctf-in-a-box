@@ -784,11 +784,15 @@ async function scanDelByPrefix(pattern: string): Promise<number> {
 }
 
 // Freeze scoring, bump the reset epoch (sync reads `resetAt` and clears its
-// cursor when it advances — the poll-mode re-ingest fix), and append the audit
-// record. One atomic script so a reset can never land without its audit line.
+// cursor when it advances — the poll-mode re-ingest fix), RELOCK the event
+// (clear the scoring start, #464: a reset event is not launched until an
+// organizer launches it again), and append the audit record. One atomic script
+// so a reset can never land without its audit line. Exported for the live
+// suite only.
 // ARGV: [1]=actor [2]=at [3]=resetAt [4]=auditLine [5]=cap-1
-const RESET_SCRIPT = `
+export const RESET_SCRIPT = `
 redis.call('HSET', KEYS[1], 'paused', '1', 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
+redis.call('HDEL', KEYS[1], 'scoringStartsAt')
 redis.call('LPUSH', KEYS[2], ARGV[4])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
 

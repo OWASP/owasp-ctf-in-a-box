@@ -11,7 +11,7 @@
 // is serial — `--no-file-parallelism` in ci.yml — rather than concurrent.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { liveConfigured } from "./live-redis";
+import { freshId, liveConfigured, liveKey } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
 
@@ -103,5 +103,25 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     await updateAdminSettings({ secureDevTargets: ["webgoat"] }, "alice");
     s = await getAdminSettings();
     expect(s.secureDevTargets).toEqual(["webgoat"]);
+  });
+
+  // #464: the reset script relocks the event — run for real, on throwaway keys
+  // (never the shared settings hash), so nothing else in the suite is touched.
+  it("RESET_SCRIPT clears the scoring start (not launched) and freezes, atomically", async () => {
+    const { RESET_SCRIPT } = await import("@/lib/admin-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const settingsKey = liveKey("admin", freshId("settings"));
+    const auditKey = liveKey("admin", freshId("audit"));
+    await upstashPipeline([["HSET", settingsKey, "scoringStartsAt", "2000-01-01T00:00:00.000Z", "eventName", "Kept"]]);
+    await upstashEval(RESET_SCRIPT, [settingsKey, auditKey], ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9]);
+    const [start, paused, name] = await upstashPipeline([
+      ["HGET", settingsKey, "scoringStartsAt"],
+      ["HGET", settingsKey, "paused"],
+      ["HGET", settingsKey, "eventName"],
+    ]);
+    expect(start.result).toBeNull();
+    expect(paused.result).toBe("1");
+    expect(name.result).toBe("Kept"); // settings other than the launch survive
+    await upstashPipeline([["DEL", settingsKey, auditKey]]);
   });
 });

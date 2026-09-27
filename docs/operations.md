@@ -2149,6 +2149,36 @@ reads it and warns while the box is not launched. If contestants
 report that only the landing page loads, this is almost always why — see
 [troubleshooting](troubleshooting.md).
 
+**Launch day with Secure Development** (#465). The forks are the one part of
+the event outside the box, so they get their own lock: they stay **private
+until launch**, and nobody can see the `ctf` branch, the workflow or the PR
+template, or fork and open PRs, before the event starts.
+
+1. **Detach** each fork from its fork network (repo Settings → Leave fork
+   network). A fork still in the network cannot be made private.
+2. **`ctf-setup.sh private`** sets each detached fork private while the box
+   reports it is not launched. It names every fork it skipped, and changes
+   nothing when it cannot reach the box. `org` runs this step too. Private
+   repos in a free org use the org's limited Actions minutes, which is
+   plenty for your own test PRs before launch.
+3. **Preview** the event in `/admin` as described above.
+4. **`ctf-setup.sh launch`**:
+   - It checks, before changing anything, that every fork is detached, that
+     no fork was refused the scorer image, and that the scorer package is
+     private. A GitHub error counts as a problem, never as "fine".
+   - It makes every fork **public**.
+   - It waits while you press **Launch** in `/admin` → Event, polling
+     `/health/deep` until the box reports `launched` (up to 30 minutes;
+     `LAUNCH_WAIT_SECS` changes that).
+
+   It uses your own `gh` login; the box never holds a GitHub admin
+   credential. Every step is idempotent: after a partial failure it names
+   what changed, and a re-run finishes the rest.
+
+`doctor` warns about a fork that is public before launch, or still private
+after it. An event without Secure Development has no forks: press Launch
+in `/admin`, and `ctf-setup.sh launch` says exactly that.
+
 ## Status and upstream dependencies
 
 The kit is complete, tested offline and running live: `scripts/smoke.sh`

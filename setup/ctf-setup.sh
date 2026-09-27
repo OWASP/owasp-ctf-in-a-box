@@ -2232,6 +2232,9 @@ cmd_wizard() {
   if [ "$secdev" -eq 1 ]; then
     echo "   Secure Development provisions all six from targets.tsv: $(all_targets)."
     echo "   Choose which ones actually run in /admin -> Secure Development -> Targets."
+    echo "   Launch day: detach each fork, run 'ctf-setup.sh private' (forks stay private"
+    echo "   until launch), preview the event in /admin, then run 'ctf-setup.sh launch' —"
+    echo "   it opens every fork and waits for you to press Launch."
   fi
 }
 

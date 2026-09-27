@@ -293,7 +293,10 @@ mirrors your `SCORE_IMAGE` into the org's GHCR. (The separate `render`
 subcommand writes the workflows to `dist/workflows/` for offline inspection
 without committing.) It automates the whole per-fork setup, is idempotent (safe to
 re-run — each step is skipped once already satisfied), and leaves only three
-GitHub-UI-only steps for you to finish by hand. Run `ctf-setup.sh doctor`
+GitHub-UI-only steps for you to finish by hand. Forks stay **private until
+launch**: once detached, `ctf-setup.sh private` hides them, and
+`ctf-setup.sh launch` opens them on launch day (see
+[Launch day with Secure Development](operations.md#before-launch)). Run `ctf-setup.sh doctor`
 afterward: it prints a **status matrix** (one row per target, one column per
 step) so the whole org's provisioning is scannable at a glance, then reports
 each fork's **scoring-workflow version** (see

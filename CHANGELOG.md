@@ -53,6 +53,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
     this release or later; a hand-made version 1 file (no `stories`) still
     imports everywhere.
 
+- **Forks stay private until launch; `ctf-setup.sh launch` (#465).** `org`
+  (and the new `private` subcommand) sets each detached Secure Development
+  fork private while the event is not launched. On launch day,
+  `ctf-setup.sh launch` checks every fork is detached and the scorer package
+  private, makes every fork public, then waits for Launch in `/admin`.
+  `doctor` warns about a fork that is public before launch or private after.
+
 - **A Launch block in `/admin`.** The Event tab now shows **Not launched**,
   **Scheduled for …** or **Live since …**.
   - **Launch now** (with a confirmation) writes `scoringStartsAt: "now"`, and

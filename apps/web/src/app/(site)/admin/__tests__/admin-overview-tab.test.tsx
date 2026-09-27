@@ -24,7 +24,9 @@ const settings: AdminSettings = {
   aiCooldownSec: null,
   teamMaxMembers: null,
   scoreCooldownMin: null,
-  scoringStartsAt: null,
+  // A LAUNCHED event (#464: no scoring start = not launched = registration
+  // phase), so the live-event renders below keep describing a live event.
+  scoringStartsAt: "2000-01-01T00:00:00.000Z",
   scoringEndsAt: null,
   registrationStartsAt: null,
   registrationEndsAt: null,

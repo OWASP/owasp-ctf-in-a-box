@@ -35,9 +35,13 @@ type SettingsOverride = Partial<{
   classicCooldownSec: number | null;
 }>;
 
+// The base fixture is a LAUNCHED event: since #464 a missing scoring start
+// means "not launched" and every grader refuses as paused, so the happy-path
+// tests below need an explicit start in the past.
+const LAUNCHED_AT = "2000-01-01T00:00:00.000Z";
 const settings = (over: SettingsOverride = {}) => ({
   paused: false,
-  scoringStartsAt: null,
+  scoringStartsAt: LAUNCHED_AT,
   scoringEndsAt: null,
   classicCooldownSec: null,
   ...over,
@@ -213,6 +217,12 @@ describe("the gate (checked before the grading script ever runs)", () => {
     mocks.getAdminSettings.mockResolvedValue(
       settings({ scoringStartsAt: new Date(Date.now() + 60_000).toISOString() }),
     );
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "paused" });
+    expect(evalCalls()).toHaveLength(0);
+  });
+
+  it("refuses before launch — no scoring start at all (#464)", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: null }));
     expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "paused" });
     expect(evalCalls()).toHaveLength(0);
   });

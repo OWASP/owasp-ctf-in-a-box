@@ -234,12 +234,13 @@ export type AdminSettings = {
 // server-only module — renders its "right now" readout from the SAME
 // implementation instead of a fourth copy of the three-reader contract.
 // Re-exported here so every existing caller and test is untouched.
-import { outsideWindow } from "@/lib/schedule-window";
-export { outsideWindow };
+import { outsideScoringWindow, outsideWindow } from "@/lib/schedule-window";
+export { outsideScoringWindow, outsideWindow };
 
-/** Effective scoring freeze: the manual toggle OR the scheduled window. */
+/** Effective scoring freeze: the manual toggle OR the scheduled scoring
+ *  window — which includes "not launched" (no scoring start, #464). */
 export function effectivePaused(s: AdminSettings, nowMs: number = Date.now()): boolean {
-  return s.paused || outsideWindow(nowMs, s.scoringStartsAt, s.scoringEndsAt);
+  return s.paused || outsideScoringWindow(nowMs, s.scoringStartsAt, s.scoringEndsAt);
 }
 
 /** Effective registration state: the manual toggle AND inside the window. */

@@ -8,7 +8,7 @@
 // code and crash at build/runtime. This is the same split
 // `lib/schedule-window.ts` makes for `outsideWindow`, for the same reason.
 
-import { outsideWindow } from "@/lib/schedule-window";
+import { outsideScoringWindow } from "@/lib/schedule-window";
 
 export type EventPhase = "registration" | "live" | "frozen" | "results";
 
@@ -28,8 +28,10 @@ export function phaseFromSettings(
   let phase: EventPhase;
   if (Number.isFinite(end) && now > end) phase = "results";
   else if (s.paused) phase = "frozen";
-  else if (Number.isFinite(start) && now < start) phase = "registration";
-  else if (outsideWindow(now, s.scoringStartsAt, s.scoringEndsAt)) phase = "frozen";
+  // No (or an unparseable) scoring start = not launched (#464): the
+  // pre-launch lobby, exactly like "before a scheduled start".
+  else if (!Number.isFinite(start) || now < start) phase = "registration";
+  else if (outsideScoringWindow(now, s.scoringStartsAt, s.scoringEndsAt)) phase = "frozen";
   else phase = "live";
   return { phase, startsAt: s.scoringStartsAt, endsAt: s.scoringEndsAt };
 }

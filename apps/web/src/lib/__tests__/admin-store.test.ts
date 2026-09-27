@@ -489,6 +489,20 @@ describe("scheduled windows", () => {
     expect(effectivePaused({ ...base, scoringStartsAt: "2026-01-01T00:00:00Z", scoringEndsAt: "2026-01-02T00:00:00Z" }, now)).toBe(false); // inside
   });
 
+  // #464: every event needs an official launch — no scoring start means not
+  // launched, so scoring is closed even with no manual pause and no end.
+  it("effectivePaused: no scoring start means not launched (#464)", () => {
+    const now = T("2026-01-01T12:00:00Z");
+    expect(effectivePaused({ ...base, paused: false, scoringStartsAt: null, scoringEndsAt: null }, now)).toBe(true);
+    expect(effectivePaused({ ...base, paused: false, scoringStartsAt: "not-a-date", scoringEndsAt: null }, now)).toBe(true);
+    expect(effectivePaused({ ...base, paused: false, scoringStartsAt: "2026-01-01T00:00:00Z", scoringEndsAt: null }, now)).toBe(false);
+  });
+
+  it("effectiveRegistrationOpen: an unlaunched event keeps registration open (window unbounded)", () => {
+    const now = T("2026-01-01T12:00:00Z");
+    expect(effectiveRegistrationOpen({ ...base, teamRegistrationOpen: true, scoringStartsAt: null, registrationStartsAt: null, registrationEndsAt: null }, now)).toBe(true);
+  });
+
   it("effectiveRegistrationOpen: manual AND inside the registration window", () => {
     const now = T("2026-01-01T12:00:00Z");
     expect(effectiveRegistrationOpen({ ...base, teamRegistrationOpen: false }, now)).toBe(false); // manual close wins

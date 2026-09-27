@@ -18,7 +18,7 @@
 
 import { useEffect, useState } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
-import { outsideWindow } from "@/lib/schedule-window";
+import { outsideScoringWindow, outsideWindow } from "@/lib/schedule-window";
 import { TEAM_MAX_MEMBERS, TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
 import { DEFAULT_EVENT_IDENTITY, EVENT_IDENTITY_MAX, type EventIdentityKey } from "@/lib/event-identity";
 import AdminEventControls from "@/components/admin-event-controls";
@@ -226,7 +226,9 @@ export default function AdminEventTab({
   // their next change. Not `Date.now()` here — reading the clock during
   // render is the impure read react-hooks/purity rejects, and the value it
   // would give is the same one the stamp already holds.
-  const scoringLiveNow = !settings.paused && !outsideWindow(nowMs, settings.scoringStartsAt, settings.scoringEndsAt);
+  // The scoring window REQUIRES a start (#464: no start = not launched);
+  // registration keeps outsideWindow's "absent bound = open".
+  const scoringLiveNow = !settings.paused && !outsideScoringWindow(nowMs, settings.scoringStartsAt, settings.scoringEndsAt);
   const registrationOpenNow =
     settings.teamRegistrationOpen && !outsideWindow(nowMs, settings.registrationStartsAt, settings.registrationEndsAt);
   // No "Event" heading inside the panel: the old flat layout needed an <h3> to
@@ -386,7 +388,14 @@ export default function AdminEventTab({
         <p className="text-sm leading-relaxed">
           <span className="uppercase tracking-wider text-muted">Right now: </span>
           <span className={scoringLiveNow ? "text-[#22c55e]" : "text-[#d4a017]"}>
-            scoring {scoringLiveNow ? "is live" : settings.paused ? "is frozen (manual)" : "is frozen (outside its window)"}
+            scoring{" "}
+            {scoringLiveNow
+              ? "is live"
+              : settings.paused
+                ? "is frozen (manual)"
+                : !settings.scoringStartsAt
+                  ? "is closed (not launched — set a scoring start)"
+                  : "is frozen (outside its window)"}
           </span>
           <span className="text-muted"> · </span>
           <span className={registrationOpenNow ? "text-[#22c55e]" : "text-[#d4a017]"}>

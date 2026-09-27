@@ -31,8 +31,12 @@ type SettingsOverride = Partial<{
   scoringEndsAt: string | null;
   aiCooldownSec: number | null;
 }>;
+// The base fixture is a LAUNCHED event: since #464 a missing scoring start
+// means "not launched" and every grader refuses as paused, so the happy-path
+// tests below need an explicit start in the past.
+const LAUNCHED_AT = "2000-01-01T00:00:00.000Z";
 const settings = (over: SettingsOverride = {}) =>
-  ({ paused: false, scoringStartsAt: null, scoringEndsAt: null, aiCooldownSec: null, ...over }) as never;
+  ({ paused: false, scoringStartsAt: LAUNCHED_AT, scoringEndsAt: null, aiCooldownSec: null, ...over }) as never;
 
 /** No prior solve, no prior attempt — the gate's own pre-check reads. */
 function cleanGateReply() {
@@ -97,6 +101,15 @@ describe("submitAiFlag", () => {
 
   it("refuses while the event is paused, without touching Redis", async () => {
     mocks.getAdminSettings.mockResolvedValue(settings({ paused: true }));
+    expect(await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}")).toEqual({
+      ok: false,
+      reason: "paused",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("refuses before launch — no scoring start at all (#464)", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: null }));
     expect(await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}")).toEqual({
       ok: false,
       reason: "paused",

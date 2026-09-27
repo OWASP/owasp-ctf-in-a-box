@@ -42,9 +42,13 @@ type SettingsOverride = Partial<{
   quizRetryAfterMin: number | null;
 }>;
 
+// The base fixture is a LAUNCHED event: since #464 a missing scoring start
+// means "not launched" and every grader refuses as paused, so the happy-path
+// tests below need an explicit start in the past.
+const LAUNCHED_AT = "2000-01-01T00:00:00.000Z";
 const settings = (over: SettingsOverride = {}) => ({
   paused: false,
-  scoringStartsAt: null,
+  scoringStartsAt: LAUNCHED_AT,
   scoringEndsAt: null,
   quizMaxAttempts: null,
   quizRetryAfterMin: null,
@@ -303,6 +307,12 @@ describe("quizGate", () => {
     mocks.getAdminSettings.mockResolvedValue(settings({ quizMaxAttempts: 3, quizRetryAfterMin: 1 }));
     gateReads(null, attemptRow(1, lastAt));
     expect(await quizGate("octocat", "q1")).toEqual({ allowed: true });
+  });
+
+  it("refuses before launch — no scoring start at all (#464)", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: null }));
+    expect(await quizGate("octocat", "q1")).toEqual({ allowed: false, reason: "paused" });
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
   it("refuses while scoring is paused, before ever looking up attempts", async () => {

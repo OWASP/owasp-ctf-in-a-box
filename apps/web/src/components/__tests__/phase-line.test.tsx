@@ -30,8 +30,14 @@ beforeEach(() => {
 });
 
 describe("resolvePhase", () => {
-  it("is live on a dateless, unpaused event", async () => {
+  // #464: no scoring start = not launched — the pre-launch lobby.
+  it("is registration on a dateless, unpaused event (not launched)", async () => {
     mocks.getAdminSettings.mockResolvedValue({});
+    expect((await resolvePhase())?.phase).toBe("registration");
+  });
+
+  it("is live once the scoring start has passed", async () => {
+    mocks.getAdminSettings.mockResolvedValue({ scoringStartsAt: iso(-HOUR) });
     expect((await resolvePhase())?.phase).toBe("live");
   });
 

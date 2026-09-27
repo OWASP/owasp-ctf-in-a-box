@@ -47,6 +47,9 @@ vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
 // override for one render and put the default back — same pattern as
 // `board` above.
 const adminSettings = vi.hoisted(() => ({
+  // A LAUNCHED event (#464: no scoring start = not launched = registration
+  // phase), so the live-event renders below keep describing a live event.
+  scoringStartsAt: "2000-01-01T00:00:00.000Z" as string | null,
   moduleOverrides: {} as Record<string, unknown>,
   enabledModuleIds: ["secure-development"] as string[],
   eventIdentity: undefined as { eventName?: string } | undefined,
@@ -393,8 +396,15 @@ describe("GitHub OAuth callback: retry destination", () => {
 });
 
 describe("root metadata", () => {
-  it("describes the event with the enabled modules' taglines", () => {
-    expect(metadata.description).toBe("OWASP CTF in a Box — Secure Development.");
+  it("describes the event with the enabled modules' taglines", async () => {
+    // Dateless on purpose: the file's fixture is a launched event, and a
+    // scoring start would append its "From <date>" to the description.
+    adminSettings.scoringStartsAt = null;
+    try {
+      expect((await generateMetadata()).description).toBe("OWASP CTF in a Box — Secure Development.");
+    } finally {
+      adminSettings.scoringStartsAt = "2000-01-01T00:00:00.000Z";
+    }
   });
 
   it("no longer hardcodes secure-development copy onto every page", () => {

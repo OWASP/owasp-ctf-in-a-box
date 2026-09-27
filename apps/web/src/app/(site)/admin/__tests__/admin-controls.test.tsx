@@ -142,7 +142,9 @@ const settings: AdminSettings = {
   aiCooldownSec: null,
   teamMaxMembers: null,
   scoreCooldownMin: null,
-  scoringStartsAt: null,
+  // A LAUNCHED event (#464: no scoring start = not launched = registration
+  // phase), so the live-event renders below keep describing a live event.
+  scoringStartsAt: "2000-01-01T00:00:00.000Z",
   scoringEndsAt: null,
   registrationStartsAt: null,
   registrationEndsAt: null,
@@ -373,6 +375,13 @@ describe("AdminControls panel contents", () => {
       <AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={{ ...settings, paused: true }} modules={twoModules} />,
     );
     expect(panelFor(manuallyFrozen, "event")).toContain("scoring is frozen (manual)");
+
+    // #464: no scoring start at all reads as "not launched", distinct from a
+    // closed window — the organizer's fix differs (set a start vs move it).
+    const notLaunched = renderToStaticMarkup(
+      <AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={{ ...settings, scoringStartsAt: null }} modules={twoModules} />,
+    );
+    expect(panelFor(notLaunched, "event")).toContain("scoring is closed (not launched");
 
     const windowClosed = renderToStaticMarkup(
       <AdminControls

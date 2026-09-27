@@ -21,6 +21,18 @@ export function outsideWindow(nowMs, startsAt, endsAt) {
   return false;
 }
 
+// The SCORING window: outsideWindow plus a REQUIRED start (issue #464 —
+// every event needs an official launch). An absent or unparseable
+// scoringStartsAt means "not launched", so scoring is closed. The generic
+// outsideWindow keeps "absent bound = open" for the registration window.
+// Mirrors apps/web schedule-window.ts and sync/src/redis.js — change all
+// three together; test/fixtures/scoring-window-corpus.json pins them.
+export function outsideScoringWindow(nowMs, startsAt, endsAt) {
+  const s = startsAt ? Date.parse(startsAt) : NaN;
+  if (!Number.isFinite(s)) return true;
+  return outsideWindow(nowMs, startsAt, endsAt);
+}
+
 export function createMemoryStore({ teams = [] } = {}) {
   const hashes = new Map(); // key -> Map(field -> ISO timestamp)
   let paused = false; // test seam mirroring ctf:admin:settings.paused
@@ -118,14 +130,15 @@ export function createRedisStore({
     async isPaused() {
       try {
         // Effective freeze = the manual toggle OR the scheduled scoring window
-        // (before start / after end). Mirrors apps/web admin-store's
+        // (not launched — no start — / before start / after end). Mirrors
+        // apps/web admin-store's
         // effectivePaused + sync/src/redis.js — keep the three in lockstep.
         const [row] = await pipeline([
           ["HMGET", ADMIN_SETTINGS_KEY, "paused", "scoringStartsAt", "scoringEndsAt"],
         ]);
         const [paused, startsAt, endsAt] = Array.isArray(row) ? row : [];
         if (paused === "1") return true;
-        return outsideWindow(Date.now(), startsAt, endsAt);
+        return outsideScoringWindow(Date.now(), startsAt, endsAt);
       } catch (err) {
         // Fail OPEN, not closed: this is a live-scoring endpoint, not an
         // authz gate. A Redis blip must never silently drop real submissions

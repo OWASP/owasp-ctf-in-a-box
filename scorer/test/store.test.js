@@ -197,7 +197,7 @@ test("redis store getTeams: falls back to slug when name is empty", async (t) =>
 });
 
 // --- isPaused honors the scheduled scoring window (manual toggle OR window) ---
-import { outsideWindow } from "../src/store.js";
+import { outsideScoringWindow, outsideWindow } from "../src/store.js";
 
 // Mock a single HMGET [paused, scoringStartsAt, scoringEndsAt] reply.
 function pausedFetch(row) {
@@ -228,6 +228,27 @@ test("outsideWindow: shared boundary-instant corpus", async (t) => {
       assert.equal(outsideWindow(nowMs, startsAt, endsAt), expected);
     });
   }
+});
+
+// The scoring window's own corpus (#464): a start is REQUIRED — an absent or
+// unparseable scoringStartsAt means the event has not launched. Same rows run
+// against apps/web's schedule-window.ts and sync/src/redis.js.
+test("outsideScoringWindow: shared scoring-window corpus (#464)", async (t) => {
+  const url = new URL("../../test/fixtures/scoring-window-corpus.json", import.meta.url);
+  const { cases } = JSON.parse(await readFile(url, "utf8"));
+  for (const { description, nowMs, startsAt, endsAt, expected } of cases) {
+    await t.test(description, () => {
+      assert.equal(outsideScoringWindow(nowMs, startsAt, endsAt), expected);
+    });
+  }
+});
+
+test("redis store isPaused: no scoringStartsAt means not launched, so paused (#464)", async (t) => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = pausedFetch([null, null, null]);
+  t.after(() => { globalThis.fetch = realFetch; });
+  const store = createRedisStore({ url: "http://srh:80", token: "t" });
+  assert.equal(await store.isPaused(), true);
 });
 
 test("redis store isPaused: manual paused flag wins", async (t) => {

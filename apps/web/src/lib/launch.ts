@@ -68,3 +68,16 @@ export async function requireLaunchedApi(login: string | undefined): Promise<Nex
   if (access.allowed) return null;
   return NextResponse.json({ error: "not-launched" }, { status: 403 });
 }
+
+/** API guard for a route that GRADES: the refusal (or `null`) plus whether
+ *  the caller is only through as a preview — an admin before launch — in
+ *  which case the route grades as a dry run (the same Lua script, writing
+ *  nothing). `preview` is the only way a dry run is ever requested for the
+ *  in-box routes; no request field can turn it on. */
+export async function launchApiAccess(
+  login: string | undefined,
+): Promise<{ refused: NextResponse | null; preview: boolean }> {
+  const access = await getLaunchAccess(login);
+  if (!access.allowed) return { refused: NextResponse.json({ error: "not-launched" }, { status: 403 }), preview: false };
+  return { refused: null, preview: access.preview };
+}

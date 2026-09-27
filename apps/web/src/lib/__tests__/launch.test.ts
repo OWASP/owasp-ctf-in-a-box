@@ -14,7 +14,7 @@ vi.mock("@/lib/admin-store", () => ({ getAdminSettings: m.getAdminSettings }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin: m.isAdminLogin }));
 vi.mock("next/navigation", () => ({ redirect: m.redirect }));
 
-import { getLaunchAccess, redirectIfNotLaunched, requireLaunchedApi } from "@/lib/launch";
+import { getLaunchAccess, launchApiAccess, redirectIfNotLaunched, requireLaunchedApi } from "@/lib/launch";
 import { isLaunched } from "@/lib/schedule-window";
 
 const NOW = Date.parse("2026-10-01T12:00:00Z");
@@ -102,5 +102,24 @@ describe("redirectIfNotLaunched", () => {
     m.isAdminLogin.mockResolvedValue(true);
     expect(await redirectIfNotLaunched("alice")).toEqual({ allowed: true, preview: true });
     expect(m.redirect).not.toHaveBeenCalled();
+  });
+});
+
+describe("launchApiAccess", () => {
+  it("refuses a non-admin before launch with 403 not-launched", async () => {
+    m.getAdminSettings.mockResolvedValue({ scoringStartsAt: null, scoringEndsAt: null });
+    const { refused, preview } = await launchApiAccess("bob");
+    expect(preview).toBe(false);
+    expect(refused?.status).toBe(403);
+    expect(await refused?.json()).toEqual({ error: "not-launched" });
+  });
+  it("lets everyone through once launched, not as a preview", async () => {
+    m.getAdminSettings.mockResolvedValue({ scoringStartsAt: "2000-01-01T00:00:00Z", scoringEndsAt: null });
+    expect(await launchApiAccess("bob")).toEqual({ refused: null, preview: false });
+  });
+  it("lets an admin through before launch AS a preview (the route grades dry)", async () => {
+    m.getAdminSettings.mockResolvedValue({ scoringStartsAt: null, scoringEndsAt: null });
+    m.isAdminLogin.mockResolvedValue(true);
+    expect(await launchApiAccess("alice")).toEqual({ refused: null, preview: true });
   });
 });

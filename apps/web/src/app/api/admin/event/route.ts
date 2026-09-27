@@ -1,4 +1,6 @@
 import { requireAdmin } from "@/lib/admin-auth";
+import { ATTACHMENTS_EVENT_MAX_BYTES } from "@/lib/attachments-keys";
+import { readBoundedBody } from "@/lib/bounded-body";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP, AdminValidationError } from "@/lib/admin-store";
 import { parseEventBundle } from "@/lib/event-io";
 import { EventLiveError, exportEventBundle, importEventBundle } from "@/lib/event-store";
@@ -64,11 +66,27 @@ export async function GET(request: Request) {
   return Response.json({ bundle, warnings });
 }
 
+/** The largest archive import body (#186): a full event of attachments
+ *  (50 MiB) as base64, plus 8 MiB for everything else in the archive. */
+export const EVENT_IMPORT_MAX_BYTES = Math.ceil((ATTACHMENTS_EVENT_MAX_BYTES * 4) / 3) + 8 * 1024 * 1024;
+
 export async function POST(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return Response.json({ error: "forbidden" }, { status: gate.status });
 
-  const body = await request.json().catch(() => null);
+  // Bounded (#186): an archive carries every attachment's bytes as base64,
+  // so the body is capped and read by bytes, never `request.json()` whole.
+  const tooLarge = () =>
+    Response.json({ error: `An archive import can be at most ${Math.round(EVENT_IMPORT_MAX_BYTES / (1024 * 1024))} MB` }, { status: 413 });
+  if (Number(request.headers.get("content-length") ?? 0) > EVENT_IMPORT_MAX_BYTES) return tooLarge();
+  const read = await readBoundedBody(request, EVENT_IMPORT_MAX_BYTES);
+  if (!read.ok) return read.reason === "too_large" ? tooLarge() : Response.json({ error: "invalid request payload" }, { status: 400 });
+  let body: unknown = null;
+  try {
+    body = JSON.parse(read.body);
+  } catch {
+    body = null;
+  }
   if (!isPlainObject(body) || !hasOnlyKeys(body, IMPORT_KEYS) || typeof body.import !== "string") {
     return Response.json({ error: "invalid request payload" }, { status: 400 });
   }

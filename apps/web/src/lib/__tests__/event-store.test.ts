@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as classicStore from "@/lib/classic-store";
 import * as quizStore from "@/lib/quiz-store";
@@ -12,6 +13,14 @@ const m = vi.hoisted(() => ({
   getAdminSettings: vi.fn(), effectivePaused: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
+// #186: upload bytes ride the archive; the attachments store is mocked here.
+const files = vi.hoisted(() => ({
+  listAllAttachments: vi.fn(async () => new Map()),
+  readUploadBytes: vi.fn(),
+  listAttachments: vi.fn(async () => [] as Record<string, unknown>[]),
+  fillMissingUpload: vi.fn(),
+}));
+vi.mock("@/lib/attachments-store", () => files);
 vi.mock("@/lib/classic-store", () => ({ exportBundle: m.exportClassic, clearChallenges: vi.fn(), importBundle: vi.fn() }));
 vi.mock("@/lib/quiz-store", () => ({ exportBundle: m.exportQuiz, clearQuestions: vi.fn(), importBundle: vi.fn() }));
 vi.mock("@/lib/ai-store", () => ({ exportBundle: m.exportAi, clearAiChallenges: vi.fn(), importBundle: vi.fn() }));
@@ -24,7 +33,17 @@ vi.mock("@/lib/sponsors-store", () => ({
   importBundle: m.importSponsors,
   validateBundleLogos: m.validateBundleLogos,
 }));
-vi.mock("@/lib/admin-store", () => ({ getAdminSettings: m.getAdminSettings, effectivePaused: m.effectivePaused, updateAdminSettings: vi.fn(), resetEvent: vi.fn() }));
+vi.mock("@/lib/admin-store", () => ({
+  getAdminSettings: m.getAdminSettings,
+  effectivePaused: m.effectivePaused,
+  updateAdminSettings: vi.fn(),
+  resetEvent: vi.fn(),
+  AdminValidationError: class AdminValidationError extends Error {
+    constructor(public field: string, message: string) {
+      super(message);
+    }
+  },
+}));
 // event-store.ts's reconciliation (`reconcileEnabledModuleIds`) only needs
 // `isModuleId` from `@/lib/modules` now — module availability is decided by
 // `secureDevAvailable`/`defaultEnabledModules` (from the real, unmocked,
@@ -613,5 +632,58 @@ describe("event identity in the archive (issue #386)", () => {
       const { skipped } = await importEventBundle(bundleFixture(), "alice");
       expect(skipped.join(" ")).not.toMatch(/baked at build time/);
     });
+  });
+});
+
+describe("attachment bytes in the archive (#186)", () => {
+  const bytes = Buffer.from("pcap-bytes");
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  const archiveWithFile = (fileSha = sha, fileBytes = bytes.toString("base64")) => ({
+    ...bundleFixture(),
+    classic: {
+      version: 2 as const,
+      categories: ["Web"],
+      challenges: [{ id: "web-one-ab12cd", title: "One", category: "Web", description: "hi", points: 50, order: 0, flag: "f", attachments: [{ name: "cap.pcap", size: bytes.length, sha256: sha }] }],
+    },
+    attachmentFiles: [{ item: "web-one-ab12cd", sha256: fileSha, bytes: fileBytes }],
+  });
+
+  beforeEach(() => {
+    m.getAdminSettings.mockResolvedValue({ paused: true, enabledModuleIds: ["classic", "quiz"] });
+    m.effectivePaused.mockReturnValue(true);
+    vi.mocked(classicStore.importBundle).mockResolvedValue({ created: 1, updated: 0, categories: 1 });
+    vi.mocked(quizStore.importBundle).mockResolvedValue({ created: 0, updated: 0 });
+    vi.mocked(adminStore.resetEvent).mockResolvedValue({ cleared: {}, resetAt: "x" });
+    vi.mocked(adminStore.updateAdminSettings).mockResolvedValue({} as Awaited<ReturnType<typeof adminStore.updateAdminSettings>>);
+  });
+
+  it("exports every stored upload's bytes, and none for a missing one or a link", async () => {
+    files.listAllAttachments.mockResolvedValueOnce(
+      new Map([["web-one-ab12cd", [
+        { id: "a1", kind: "upload", name: "cap.pcap", size: bytes.length, sha256: sha, chunks: 1 },
+        { id: "a2", kind: "upload", name: "gone", size: 3, sha256: "cd".repeat(32), missing: true },
+        { id: "a3", kind: "link", name: "l", url: "https://e.org" },
+      ]]]),
+    );
+    files.readUploadBytes.mockResolvedValueOnce(new Uint8Array(bytes));
+    const { bundle } = await exportEventBundle(new Date());
+    expect(bundle.attachmentFiles).toEqual([{ item: "web-one-ab12cd", sha256: sha, bytes: bytes.toString("base64") }]);
+    expect(files.readUploadBytes).toHaveBeenCalledTimes(1);
+  });
+
+  it("fills each imported missing upload with its bytes, after the classic import", async () => {
+    files.listAttachments.mockResolvedValueOnce([{ id: "a9", kind: "upload", name: "cap.pcap", size: bytes.length, sha256: sha, missing: true }]);
+    await importEventBundle(archiveWithFile(), "alice");
+    expect(files.fillMissingUpload).toHaveBeenCalledWith("a9", new Uint8Array(bytes));
+    const importAt = vi.mocked(classicStore.importBundle).mock.invocationCallOrder[0];
+    expect(files.fillMissingUpload.mock.invocationCallOrder[0]).toBeGreaterThan(importAt);
+  });
+
+  it("refuses bytes whose sha256 does not match BEFORE the reset wipes anything", async () => {
+    await expect(importEventBundle(archiveWithFile(sha, Buffer.from("tampered").toString("base64")), "alice")).rejects.toThrow(
+      /sha256/,
+    );
+    expect(adminStore.resetEvent).not.toHaveBeenCalled();
+    expect(classicStore.clearChallenges).not.toHaveBeenCalled();
   });
 });

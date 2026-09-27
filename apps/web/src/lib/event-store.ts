@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { exportBundle as exportClassic, clearChallenges, importBundle as importClassic } from "@/lib/classic-store";
 import { exportBundle as exportQuiz, clearQuestions, importBundle as importQuiz } from "@/lib/quiz-store";
 import { exportBundle as exportAi, clearAiChallenges, importBundle as importAi } from "@/lib/ai-store";
@@ -7,9 +8,23 @@ import {
   importBundle as importSponsors,
   validateBundleLogos,
 } from "@/lib/sponsors-store";
-import { effectivePaused, getAdminSettings, resetEvent, updateAdminSettings, type SettingsPatch } from "@/lib/admin-store";
+import {
+  AdminValidationError,
+  effectivePaused,
+  getAdminSettings,
+  resetEvent,
+  updateAdminSettings,
+  type SettingsPatch,
+} from "@/lib/admin-store";
+import { fillMissingUpload, listAllAttachments, listAttachments, readUploadBytes } from "@/lib/attachments-store";
 import { resolveSite } from "@/lib/site";
-import { EVENT_BUNDLE_VERSION, EVENT_POLICY_FIELDS, type EventBundle, type EventPolicySettings } from "@/lib/event-io";
+import {
+  EVENT_BUNDLE_VERSION,
+  EVENT_POLICY_FIELDS,
+  type AttachmentFile,
+  type EventBundle,
+  type EventPolicySettings,
+} from "@/lib/event-io";
 import { isModuleId, type ModuleId, type ModuleOverrides } from "@/lib/modules";
 import { defaultEnabledModules, secureDevAvailable } from "@/lib/module-defaults";
 import { checkSecureDevTargets, DEFAULT_SECURE_DEV_TARGETS } from "@/lib/secure-dev-targets";
@@ -140,7 +155,48 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
   const sponsorsBundle = await exportSponsors();
   if (sponsorsBundle) bundle.sponsors = sponsorsBundle;
 
+  // #186: the classic section names its uploads; their bytes ride here.
+  if (bundle.classic) {
+    const attachmentFiles = await exportAttachmentFiles();
+    if (attachmentFiles.length > 0) bundle.attachmentFiles = attachmentFiles;
+  }
+
   return { bundle, warnings };
+}
+
+/** Every stored classic upload's bytes, base64 (#186) — the classic bundle
+ *  carries only metadata. A missing upload and a link carry no bytes. */
+async function exportAttachmentFiles(): Promise<AttachmentFile[]> {
+  const out: AttachmentFile[] = [];
+  for (const [item, list] of await listAllAttachments("classic")) {
+    for (const a of list) {
+      if (a.kind !== "upload" || a.missing || !a.sha256) continue;
+      out.push({ item, sha256: a.sha256, bytes: Buffer.from(await readUploadBytes(a)).toString("base64") });
+    }
+  }
+  return out;
+}
+
+type DecodedFile = { item: string; sha256: string; bytes: Uint8Array };
+
+/** Decodes the archive's files and checks each one's sha256. THROWS
+ *  `AdminValidationError` on a mismatch — before anything destructive. */
+function decodeAttachmentFiles(bundle: EventBundle): DecodedFile[] {
+  return (bundle.attachmentFiles ?? []).map((f, i) => {
+    const bytes = new Uint8Array(Buffer.from(f.bytes, "base64"));
+    const actual = createHash("sha256").update(bytes).digest("hex");
+    if (actual !== f.sha256) {
+      throw new AdminValidationError(`attachmentFiles[${i}]`, `attachmentFiles[${i}]: the bytes' sha256 is ${actual}, not ${f.sha256}`);
+    }
+    return { item: f.item, sha256: f.sha256, bytes };
+  });
+}
+
+async function fillAttachmentFiles(files: readonly DecodedFile[]): Promise<void> {
+  for (const f of files) {
+    const target = (await listAttachments("classic", f.item)).find((a) => a.kind === "upload" && a.missing && a.sha256 === f.sha256);
+    if (target) await fillMissingUpload(target.id, f.bytes);
+  }
 }
 
 /** Thrown by `importEventBundle`'s live guard. Maps to a 409 at the route via
@@ -219,6 +275,11 @@ export async function importEventBundle(
   // logo throws with the current event still intact.
   if (bundle.sponsors) validateBundleLogos(bundle.sponsors);
 
+  // #186: same fail-fast rule for attachment bytes — decode and check every
+  // sha256 now, before `resetEvent`, so a tampered file refuses the import
+  // with the current event still intact.
+  const decodedFiles = decodeAttachmentFiles(bundle);
+
   // Apply (and validate) the settings patch BEFORE any destructive step. A
   // bad bundle throws `AdminValidationError` here, before `resetEvent` or any
   // clear/import has run — see the fail-fast note above.
@@ -252,6 +313,9 @@ export async function importEventBundle(
   if (bundle.classic) {
     const c = await importClassic(bundle.classic);
     summary.classic = { created: c.created, updated: c.updated };
+    // The classic import recorded each named upload as "missing"; the
+    // archive's bytes fill them (#186). Matched by (challenge, sha256).
+    await fillAttachmentFiles(decodedFiles);
   }
 
   if (bundle.quiz) {

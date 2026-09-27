@@ -21,7 +21,7 @@ vi.mock("@/lib/event-store", () => ({
   exportEventBundle: h.exportEventBundle, importEventBundle: h.importEventBundle, EventLiveError: h.FakeLive,
 }));
 
-import { GET, POST } from "@/app/api/admin/event/route";
+import { EVENT_IMPORT_MAX_BYTES, GET, POST } from "@/app/api/admin/event/route";
 
 const post = (body: unknown) =>
   new Request("http://box.test/api/admin/event", { method: "POST", body: JSON.stringify(body) });
@@ -50,6 +50,23 @@ describe("GET /api/admin/event", () => {
     const res = await GET(new Request("http://box.test/api/admin/event"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ bundle: { version: 1 }, warnings: [] });
+  });
+});
+
+describe("POST /api/admin/event — bounded body (#186)", () => {
+  it("413s a declared body over the archive cap before reading or parsing it", async () => {
+    const req = new Request("http://x/api/admin/event", {
+      method: "POST",
+      body: JSON.stringify({ import: validRaw }),
+      headers: { "content-type": "application/json", "content-length": String(EVENT_IMPORT_MAX_BYTES + 1) },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toMatch(/MB/);
+  });
+
+  it("sizes the cap for a full event of attachments as base64, plus headroom", () => {
+    expect(EVENT_IMPORT_MAX_BYTES).toBeGreaterThan(Math.ceil((50 * 1024 * 1024 * 4) / 3));
   });
 });
 

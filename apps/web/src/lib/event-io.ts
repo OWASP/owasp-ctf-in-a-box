@@ -7,7 +7,8 @@
 // the server, so this file must NEVER import a `server-only` module (e.g.
 // admin-store.ts, classic-store.ts, quiz-store.ts, ai-store.ts) or anything
 // that pulls in Upstash/Redis. It may only import from classic-io.ts,
-// quiz-io.ts and ai-io.ts, themselves client-safe for the same reason.
+// quiz-io.ts and ai-io.ts, themselves client-safe for the same reason, and
+// the dependency-free attachments-keys.ts (#186).
 //
 // `settings` is deliberately an ALLOWLIST of policy fields
 // (`EVENT_POLICY_FIELDS`), not a passthrough object: the live admin settings
@@ -30,6 +31,7 @@
 // quiz-io.ts's header): one validator per format, never two independent
 // answers to the same question.
 
+import { ATTACHMENT_MAX_BYTES } from "@/lib/attachments-keys";
 import { parseBundle as parseAiBundle, type AiBundle } from "@/lib/ai-io";
 import { parseBundle as parseClassicBundle, type ClassicBundle } from "@/lib/classic-io";
 import { parseBundle as parseQuizBundle, type QuizBundle } from "@/lib/quiz-io";
@@ -103,7 +105,13 @@ export type EventBundle = {
    *  configured — a platform feature, so unlike classic/quiz/ai this is never
    *  gated on `enabledModuleIds`. */
   sponsors?: SponsorsBundle;
+  /** Upload bytes (#186), base64, one entry per stored classic upload. The
+   *  classic section carries only metadata; these fill it on import. Each
+   *  must match a classic upload's `(item, sha256)` in this same archive. */
+  attachmentFiles?: AttachmentFile[];
 };
+
+export type AttachmentFile = { item: string; sha256: string; bytes: string };
 
 export type EventImportError = { where: string; message: string };
 
@@ -256,6 +264,11 @@ export function parseEventBundle(raw: string): EventParseResult {
     }
   }
 
+  let attachmentFiles: AttachmentFile[] | undefined;
+  if (parsed.attachmentFiles !== undefined) {
+    attachmentFiles = validateAttachmentFiles(parsed.attachmentFiles, classic, parsed.classic !== undefined, errors);
+  }
+
   if (errors.length > 0) return { ok: false, errors };
 
   // Every check above passed (errors.length === 0), so `parsed.event` and
@@ -269,6 +282,7 @@ export function parseEventBundle(raw: string): EventParseResult {
     ...(quiz !== undefined ? { quiz } : {}),
     ...(ai !== undefined ? { ai } : {}),
     ...(sponsors !== undefined ? { sponsors } : {}),
+      ...(attachmentFiles ? { attachmentFiles } : {}),
   };
   return { ok: true, bundle };
 }
@@ -281,4 +295,52 @@ export function parseEventBundle(raw: string): EventParseResult {
  *  classic/quiz section must still serialize. */
 export function serializeEventBundle(bundle: EventBundle): string {
   return JSON.stringify(bundle, null, 2) + "\n";
+}
+
+const FILE_KEYS = new Set(["item", "sha256", "bytes"]);
+const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/** Shape of the archive's upload bytes (#186). Client-safe: the sha256 of
+ *  the decoded bytes is verified server-side (event-store) before the import
+ *  resets anything. Each file must name a classic upload's `(item, sha256)`
+ *  in this archive — bytes for nothing are refused, not silently dropped. */
+function validateAttachmentFiles(
+  raw: unknown,
+  classic: ClassicBundle | undefined,
+  classicPresent: boolean,
+  errors: EventImportError[],
+): AttachmentFile[] {
+  const where = "attachmentFiles";
+  if (!Array.isArray(raw)) {
+    errors.push({ where, message: '"attachmentFiles" must be an array' });
+    return [];
+  }
+  if (!classicPresent) {
+    errors.push({ where, message: '"attachmentFiles" needs a "classic" section to attach to' });
+    return [];
+  }
+  const named = new Set<string>();
+  for (const c of classic?.challenges ?? []) {
+    for (const a of c.attachments ?? []) if ("sha256" in a) named.add(`${c.id}\n${a.sha256}`);
+  }
+  const out: AttachmentFile[] = [];
+  raw.forEach((f, i) => {
+    const at = `${where}[${i}]`;
+    if (!isPlainObject(f)) return void errors.push({ where: at, message: "Each file must be an object" });
+    const unknown = Object.keys(f).filter((k) => !FILE_KEYS.has(k));
+    if (unknown.length > 0) errors.push({ where: at, message: `Unknown key(s): ${unknown.join(", ")}` });
+    if (typeof f.item !== "string" || typeof f.sha256 !== "string" || typeof f.bytes !== "string") {
+      return void errors.push({ where: at, message: "A file is { item, sha256, bytes } — all strings" });
+    }
+    if (f.bytes.length % 4 !== 0 || !BASE64_RE.test(f.bytes)) {
+      errors.push({ where: `${at}.bytes`, message: "bytes must be base64" });
+    } else if (Math.floor((f.bytes.length * 3) / 4) > ATTACHMENT_MAX_BYTES + 2) {
+      errors.push({ where: `${at}.bytes`, message: `A file can be at most ${ATTACHMENT_MAX_BYTES} bytes` });
+    }
+    if (!named.has(`${f.item}\n${f.sha256}`)) {
+      errors.push({ where: at, message: `No classic upload with sha256 ${f.sha256} on challenge ${f.item} in this archive` });
+    }
+    out.push({ item: f.item, sha256: f.sha256, bytes: f.bytes });
+  });
+  return out;
 }

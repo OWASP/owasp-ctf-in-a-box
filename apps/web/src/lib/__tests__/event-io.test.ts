@@ -182,3 +182,46 @@ describe("parseEventBundle", () => {
     expect(res.errors.length).toBeGreaterThan(1);
   });
 });
+
+// #186: the archive carries upload BYTES (the classic bundle carries only
+// metadata). Shape is checked here — client-safe; the sha256 of the bytes is
+// verified server-side before the import wipes anything.
+describe("attachment files in the archive (#186)", () => {
+  const bytes = Buffer.from("pcap-bytes").toString("base64");
+  const sha = "ab".repeat(32);
+  const withFiles = (files: unknown, sha256 = sha) =>
+    JSON.stringify({
+      ...valid,
+      classic: {
+        version: 2,
+        categories: ["Web"],
+        challenges: [{ ...valid.classic!.challenges[0], attachments: [{ name: "cap.pcap", size: 10, sha256 }] }],
+      },
+      attachmentFiles: files,
+    });
+  const fileErrors = (text: string) => {
+    const r = parseEventBundle(text);
+    return r.ok ? [] : r.errors.filter((e) => e.where.startsWith("attachmentFiles"));
+  };
+
+  it("accepts files that match a classic upload's metadata, and keeps them", () => {
+    const res = parseEventBundle(withFiles([{ item: "web-one-ab12cd", sha256: sha, bytes }]));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.attachmentFiles).toEqual([{ item: "web-one-ab12cd", sha256: sha, bytes }]);
+  });
+
+  it.each([
+    ["a file no classic upload names", [{ item: "web-one-ab12cd", sha256: "cd".repeat(32), bytes }]],
+    ["an unknown challenge", [{ item: "ghost-zz99zz", sha256: sha, bytes }]],
+    ["bytes that are not base64", [{ item: "web-one-ab12cd", sha256: sha, bytes: "not base64!!" }]],
+    ["an extra key", [{ item: "web-one-ab12cd", sha256: sha, bytes, name: "x" }]],
+    ["a non-array", "cap.pcap"],
+  ])("refuses %s", (_label, files) => {
+    expect(fileErrors(withFiles(files)).length).toBeGreaterThan(0);
+  });
+
+  it("refuses files on an archive without a classic section", () => {
+    const { classic: _c, ...rest } = valid;
+    expect(fileErrors(JSON.stringify({ ...rest, attachmentFiles: [{ item: "web-one-ab12cd", sha256: sha, bytes }] })).length).toBeGreaterThan(0);
+  });
+});

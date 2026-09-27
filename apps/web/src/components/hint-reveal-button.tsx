@@ -55,7 +55,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         // revealed text itself stays in local state so it shows instantly.
         router.refresh();
       } else {
-        setError(typeof data.error === "string" ? data.error : "Couldn't reveal the hint. Try again.");
+        setError(data.error === "not-launched" ? "The event hasn't launched yet." : typeof data.error === "string" ? data.error : "Couldn't reveal the hint. Try again.");
       }
     } catch {
       setError("Couldn't reveal the hint. Try again.");

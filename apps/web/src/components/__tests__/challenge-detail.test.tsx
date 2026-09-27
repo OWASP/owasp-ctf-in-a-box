@@ -239,6 +239,7 @@ describe("describeRefusal", () => {
       "unavailable",
       "no-team",
       "unauthorized",
+      "not-launched",
       "wrong-mode",
       "invalid",
       "error",

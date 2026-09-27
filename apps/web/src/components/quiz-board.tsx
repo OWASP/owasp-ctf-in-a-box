@@ -125,8 +125,13 @@ export function submitDisabled(opts: {
   return opts.pending || opts.selectedCount === 0;
 }
 
-function describeRefusal(reason: string): string {
+/** Exported for direct testing (the pre-launch copy, #464). */
+export function describeRefusal(reason: string): string {
   switch (reason) {
+    case "not-launched":
+      // #464: reachable from a tab loaded before an un-launch — the page
+      // itself redirects before launch, but an open tab can still submit.
+      return "The event hasn't launched yet — nothing counts until it starts.";
     case "paused":
       return "Scoring is paused right now. Try again later.";
     case "answered":

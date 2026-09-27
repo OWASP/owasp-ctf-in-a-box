@@ -20,6 +20,7 @@ import QuizBoard, {
   submitDisabled,
   type Feedback,
   type QuizQuestionView,
+  describeRefusal as describeQuizRefusal,
 } from "@/components/quiz-board";
 
 const singleChoiceQuestion: QuizQuestionView = {
@@ -334,5 +335,14 @@ describe("describeCorrect", () => {
     const text = describeCorrect(0, true);
     expect(text).not.toContain("+0");
     expect(text).toMatch(/already answered/i);
+  });
+});
+
+describe("describeRefusal (quiz)", () => {
+  // #464: a tab loaded before an un-launch can still submit; the refusal must
+  // say why, not fall through to the generic line.
+  it("names the pre-launch refusal", () => {
+    expect(describeQuizRefusal("not-launched")).not.toBe("That submission wasn't accepted.");
+    expect(describeQuizRefusal("not-launched")).toMatch(/launch/i);
   });
 });

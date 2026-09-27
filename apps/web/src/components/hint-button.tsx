@@ -82,7 +82,7 @@ export default function HintButton({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || typeof data.hint !== "string") {
-        throw new Error(typeof data.error === "string" ? data.error : "Hint reveal failed. Try again");
+        throw new Error(data.error === "not-launched" ? "The event hasn't launched yet." : typeof data.error === "string" ? data.error : "Hint reveal failed. Try again");
       }
       onPurchased(app, id, data.hint, Number(data.spent) || 0);
     } catch (err) {

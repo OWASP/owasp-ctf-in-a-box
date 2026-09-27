@@ -155,6 +155,10 @@ export function describeRefusal(reason: string): string {
       // submitted a flag and is being told it didn't count; "you need a team"
       // without saying where to get one is a dead end.
       return "You need a team before solves count — create one on your profile, or hit Play solo there for a team of one.";
+    case "not-launched":
+      // #464: reachable from a tab loaded before an un-launch — the page
+      // itself redirects before launch, but an open tab can still submit.
+      return "The event hasn't launched yet — nothing counts until it starts.";
     case "unauthorized":
       // Reachable, unlike `gate` below: a session can expire while this page
       // stays open. The form was rendered for a signed-in viewer, so by the

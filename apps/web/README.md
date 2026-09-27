@@ -50,7 +50,7 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm dev            # http://localhost:3000
 ```
 
-There is no `predev`/`prebuild`/`pretest` generator step — the app reads no build-time config at all. Copy `.env.example` to `.env.local` for what `pnpm dev` reads: `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL=http://localhost:3000` (also sign the gate cookie), and a `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` pair if you need sign-in (callback `<BETTER_AUTH_URL>/api/auth/callback/github`). Everything else is optional and falls back to mocks; `.env.example` documents each variable, and `docker-compose.yml`'s `app` service is the authority for what a real event sets. Every variable, including `ADMIN_LOGINS` and `GITHUB_ORG`, is read at start, so a change means only a container restart, never a rebuild.
+There is no `predev`/`prebuild`/`pretest` generator step — the app reads no build-time config at all. Copy `.env.example` to `.env.local` for what `pnpm dev` reads: `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL=http://localhost:3000`, and a `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` pair if you need sign-in (callback `<BETTER_AUTH_URL>/api/auth/callback/github`). Everything else is optional and falls back to mocks; `.env.example` documents each variable, and `docker-compose.yml`'s `app` service is the authority for what a real event sets. Every variable, including `ADMIN_LOGINS` and `GITHUB_ORG`, is read at start, so a change means only a container restart, never a rebuild.
 
 ## Testing
 
@@ -82,12 +82,12 @@ test ! -f .next/server/app/index.html   # must pass
 
 ```
 src/
-  proxy.ts                  # Middleware: same-origin check on mutating /api, pre-event gate
+  proxy.ts                  # Middleware: same-origin check on mutating /api, /profile sign-in redirect
   instrumentation.ts        # Startup checks (http:// EVENT_URL refusal)
   app/
     (site)/                 # Pages: challenges, quiz, flags, ai, leaderboard, profile,
-                            #   admin, gate, join, how-to-play, rules, faq, privacy, terms
-    api/                    # auth, team, hints, quiz, classic, ai, admin, board, gate,
+                            #   admin, join, how-to-play, rules, faq, privacy, terms
+    api/                    # auth, team, hints, quiz, classic, ai, admin, board,
                             #   me, post-signin, public, stats
   components/               # Header/footer, boards, leaderboard, team card, countdown
   lib/
@@ -96,7 +96,7 @@ src/
     auth.ts                 # better-auth config; disabledPaths closes unused endpoints
     admin-store.ts          # ctf:admin:settings — pause, schedule, cap, hint policy
     team-store.ts, hint-store.ts, quiz-store.ts, classic-store.ts, ai-store.ts
-    gate.ts, gate-request.ts, gate-store.ts   # Pre-event gate cookie, API check, throttle
+    launch.ts               # Pre-launch lock: page redirect + API 403 not-launched
     leaderboard/            # Source adapters (mock/lambda/upstash/empty) + overlays
     upstash.ts              # Redis REST client (pipeline + EVAL)
     __tests__/              # vitest, incl. the *.lua.upstash.test.ts grading suites
@@ -106,7 +106,7 @@ src/
 
 **Authentication surface.** better-auth mounts its whole default endpoint set under `src/app/api/auth/[...all]`; the app uses four routes and closes the rest with `disabledPaths` in `src/lib/auth.ts`. `POST /update-user` was the one that mattered — with no database it would re-sign the session cookie with a client-chosen `login`. Do not "harden" `login` to `input: false` (it breaks OAuth profile mapping), remember `disabledPaths` matches literal paths only, and keep `src/lib/__tests__/auth.test.ts` green — it fails when an upgrade adds an endpoint that is neither used nor closed.
 
-**Pre-event challenges gate.** `CHALLENGES_GATE_ENABLED=true` plus `CHALLENGES_GATE_PASSWORD` lock the module pages behind a shared password until the event opens; a flag without a password stays open. Enforcement is in two places on purpose: `src/proxy.ts` redirects page requests for every route in `ALL_MODULE_ROUTES` (`/challenges`, `/quiz`, `/flags`, `/ai` — enabled or not, so the gate does not leak which modules an event runs) to `/gate`, and the module APIs that bank points or return challenge content (`POST /api/quiz/answer`, `/api/classic/submit`, `/api/hints/reveal`, and the ai module's `/ai/[id]` page and server action) each call `requireGatePassed()` (`src/lib/gate-request.ts`) and answer **403 `{ error: "gate" }`** while locked. The proxy never gates `/api/*` itself — that would block the sign-in needed to pass the gate. `POST /api/ai/submit` is exempt: it is authenticated by a launch token that can only be minted from a page that already passed. Verification is server-side (constant-time compare); success sets an HMAC-signed httpOnly cookie for 30 days, signed by `BETTER_AUTH_SECRET` rather than the password. Five failures from one IP lock it for 24 hours (`gate:attempts:<ip>`, 30-day expiry, charged before the compare in one `EVAL`; fails closed if Redis is down) — everyone behind one NAT shares that budget, and the fix during the event is to turn the gate off, not to clear keys. It is a "the board opens at the keynote" curtain, not an authorization boundary: every route still checks session, pause, schedule window and attempt caps on its own (see [Known limitations](../../docs/operations.md#known-limitations)).
+**Launch lock.** Until the event is launched — a **Scoring opens** (`scoringStartsAt`) that has passed — every module page (`/challenges`, `/flags`, `/quiz`, `/ai`, their detail pages, `/leaderboard`) calls `redirectIfNotLaunched(login)` before loading any content and sends a non-admin to `/`, and the module APIs (`POST /api/classic/submit`, `/api/quiz/answer`, `/api/hints/reveal`, `GET /api/board/items`, and the ai module's `/ai/[id]` server action) call `requireLaunchedApi(login)` and answer **403 `{ error: "not-launched" }`**. Both live in `src/lib/launch.ts`; admins pass as a preview; it fails closed. The check is per page and route, not in `src/proxy.ts` (the proxy makes no Redis reads), so `src/__tests__/launch-guard-coverage.test.ts` walks the module pages and routes on disk and fails if a new one forgets the guard. The contract is in [modules.md §8](../../docs/modules.md); the operator view is [Before launch](../../docs/operations.md#before-launch).
 
 **Reach counter.** `POST /api/stats/visit` does `HINCRBY stats:countries <iso2> 1` once per browser session, taking the country from `cf-ipcountry` or `x-geo-country` and validating it as ISO-3166 alpha-2; the body is ignored and no login, IP or timestamp is stored, which is the promise `/privacy` makes. The kit's Caddy does not set or strip that header, so on a bare deployment the tally is spoofable — accepted for an approximate, no-PII counter.
 

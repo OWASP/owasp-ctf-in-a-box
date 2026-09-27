@@ -22,6 +22,27 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   ADR 59 records the decision. CI now also runs all three suites when only a
   window corpus changes; before this, such an edit ran none of them.
 
+- **Breaking: the pre-event password gate is removed; the launch lock
+  replaces it.** Gone: the `CHALLENGES_GATE_ENABLED`/`CHALLENGES_GATE_PASSWORD`
+  keys, the `/gate` page and `POST /api/gate`, the HMAC-signed unlock cookie,
+  and the per-IP attempt throttle — the site now stores no IP address at all.
+  In its place, until the event is launched (a Scoring opens that has passed)
+  every module page — `/challenges`, `/flags`, `/quiz`, `/ai`, their detail
+  pages, and `/leaderboard` — redirects a non-admin to `/` before loading any
+  content, and the module APIs (`POST /api/classic/submit`,
+  `/api/quiz/answer`, `/api/hints/reveal`, `GET /api/board/items`, and the ai
+  module's in-box flag action, which also guards the launch-token mint)
+  answer `403 { "error": "not-launched" }`, a refusal the classic, quiz and
+  hint UIs name. Unlike the gate, it covers the APIs, it follows the one
+  clock instead of a second switch, and admins browse every page as a
+  preview. It fails closed: a settings or admin-check error counts as not
+  launched. The landing page counts down to a scheduled start, or says
+  "Launching soon." with none, and points signed-out visitors at forming a
+  team while registration is open. `launch-guard-coverage.test.ts` fails if
+  a module page or route lacks the guard. **After upgrading, delete any
+  `CHALLENGES_GATE_*` lines from `.env`** — nothing reads them, and
+  `ctf-setup.sh doctor` names them. Part of #464.
+
 - **Every screenshot and the demo GIF now show the current brand.** The
   rename in #456 reached every string a `grep` can see and none of the
   pictures: all fourteen raster assets under `docs/assets/` predated it, and

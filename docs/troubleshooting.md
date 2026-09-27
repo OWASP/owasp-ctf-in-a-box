@@ -67,6 +67,34 @@ passing `ADMIN_LOGINS` through to the app service's environment — it is on
 recent `docker-compose.yml`, but a customized override file that dropped it
 would reproduce this exact symptom.
 
+## Only the landing page loads (module pages redirect to `/`)
+
+**Symptom.** Contestants open `/challenges`, `/flags`, `/quiz`, `/ai` or
+`/leaderboard` and land back on `/`, which says **Launching soon.** or shows
+a countdown; a script calling a submit or answer API gets
+`403 { "error": "not-launched" }`. You, signed in as an admin, see every page
+normally.
+
+**Diagnosis.** The event is not launched. Since #464 an event is launched
+only once its **Scoring opens** time (`scoringStartsAt`) is set and has
+passed; until then every module page redirects a non-admin to the landing
+page and every module API refuses. Admins pass the lock as a preview, which
+is why it looks fine from your own session — check from a private window.
+An empty field means *not launched*, not "no start bound", and so does a
+value the settings read cannot parse. The lock fails closed, so a Redis
+error also shows this symptom — if `/admin` itself is failing, fix that
+first ([`NOAUTH`](#services-log-noauth-authentication-required),
+[`fetch failed`](#a-service-cant-reach-another-nothing-but-fetch-failed)).
+
+**Fix.** In `/admin` → **Event**, set **Scoring opens** to now to launch
+immediately, or leave the scheduled time and wait — the lock lifts on its
+own at that instant, no restart. The **Right now:** readout under the
+schedule says "closed (not launched …)" until it has. A leftover
+`CHALLENGES_GATE_ENABLED`/`CHALLENGES_GATE_PASSWORD` in `.env` does nothing
+any more (the password gate was removed; `ctf-setup.sh doctor` names the
+stale lines) — delete them. See
+[Before launch](operations.md#before-launch).
+
 ## A board that was on before the upgrade is gone
 
 **Symptom.** After upgrading, Quiz, Jeopardy, or AI no longer appears in the

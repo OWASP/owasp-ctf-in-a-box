@@ -291,7 +291,7 @@ reviews:
         rather than emptySource. Placeholder rows would be indistinguishable
         from real standings on a board carrying real quiz or classic points.
 
-    - path: "apps/web/src/lib/{admin-store,admin-auth,resolved-modules,hint-store,rate-limit-store,gate-store}.ts"
+    - path: "apps/web/src/lib/{admin-store,admin-auth,resolved-modules,hint-store,rate-limit-store,launch}.ts"
       instructions: |
         Runtime-override and access-control layer. Flag
         ⚠️ WARNING: <description> — <fix> for:
@@ -392,19 +392,27 @@ reviews:
         /api/ai/state is the example. Reading ANY OTHER contestant's data
         still requires requireAdmin.
 
-        Oracle ordering — running the team check or pre-event gate AFTER
+        Oracle ordering — running the team check or launch lock AFTER
         parsing or evaluating a submission, so the refusal reveals whether the
         answer was correct. Refuse before the body is interpreted.
+
+        Missing launch lock (#464) — a module API that banks points or returns
+        module content (challenge text, questions, titles, standings) without
+        `requireLaunchedApi(login)` from src/lib/launch.ts before any store
+        read or write, or answering the refusal with anything but 403
+        `{ error: "not-launched" }`. The lock fails CLOSED and admins pass as
+        a preview; launch-guard-coverage.test.ts enumerates the module route
+        trees, so a new module's API root must be added there too.
 
         Public surface growth — GET /api/public/scoring, GET
         /api/ai/launch-key, GET /api/board/items and GET
         /api/sponsors/logo/[id] are the ONLY sanctioned unauthenticated GET
-        routes, and POST /api/gate (the pre-event password check: per-IP
-        attempt budget charged before the compare, pass/fail only) and POST
-        /api/stats/visit (the no-PII per-country reach counter, always 204)
-        the ONLY sanctioned unauthenticated POSTs — the same six
-        docs/reviewing.md invariant 11 names. The GETs must stay read-only,
-        policy or public-by-design content out and never facts in, with
+        routes, and POST /api/stats/visit (the no-PII per-country reach
+        counter, always 204) the ONLY sanctioned unauthenticated POST — the
+        same five docs/reviewing.md invariant 11 names (the pre-event password
+        check, POST /api/gate, was removed in #464; do not restore it). The
+        GETs must stay read-only, policy or public-by-design content out and
+        never facts in, with
         nothing secret in the payload: launch-key publishes the launch
         PUBLIC key, its `kid` and the algorithm, with the private half
         import-forbidden by the ai contract test; board/items serves the
@@ -704,8 +712,9 @@ reviews:
           limits on /api/team/join and /api/hints/reveal.
 
           FAIL CLOSED (a store error refuses) — requireAdmin; the quiz
-          attempt/answer lookup; the classic cooldown lookup; the pre-event
-          gate throttle in gate-store; ctf-setup.sh's `.env` parsing
+          attempt/answer lookup; the classic cooldown lookup; the launch lock
+          in launch.ts (a settings or admin-check error is "not launched" /
+          "not admin"); ctf-setup.sh's `.env` parsing
           (`env_val`); an empty `ADMIN_LOGINS` in `parseAdminLogins`/
           `admin-auth.ts`; sync's `loadConfig(env)` refusing on a missing
           `GITHUB_ORG`.

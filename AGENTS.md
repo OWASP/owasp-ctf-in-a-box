@@ -400,7 +400,7 @@ suggestions.
   how scores reach the box, OAuth app, the `.env` bootstrap.
 - [`docs/operations.md`](docs/operations.md) — running the event once it is
   up: admin panel and runtime overrides, teams, the event archive, per-module
-  runbooks, pre-event verification, dev-stack, known limitations.
+  runbooks, pre-event verification, dev-stack, the pre-launch lock.
 - [`docs/ai-module.md`](docs/ai-module.md) — the `ai` module's contract with
   the external challenge site: launch tokens, solve reporting, errors, keys.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — symptom-ordered

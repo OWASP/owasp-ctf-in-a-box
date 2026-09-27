@@ -709,7 +709,7 @@ never counted; sign-in goes through `/api/auth/*`, and no person clicks that
 ten times a second. Verified on the reference box with a side-effect-free
 probe — `GET` on a deliberately nonexistent path such as
 `/api/rate-probe`, which answers 404 and touches no store; never a `POST`
-to a submit, answer, hint or gate route, which would spend cooldowns,
+to a submit, answer or hint route, which would spend cooldowns,
 attempt caps or hint budgets — from one address: 130 requests in about three
 seconds let 115 through and blocked 15 with `429`, the block lifted after
 ten seconds, and `/leaderboard` answered 200 throughout.
@@ -717,10 +717,8 @@ ten seconds, and `/leaderboard` answered 200 throughout.
 This is the layer above the app's own controls, not a replacement for them:
 per-item cooldowns and the quiz attempt cap stop *guessing* (they run inside
 the grading scripts); the per-login limiter stops one account hammering team
-join and hint reveal; the pre-event password gate (`POST /api/gate`) has its
-own best-effort throttle keyed on the first `x-forwarded-for` value, which a
-caller can spoof for a fresh bucket — it slows a casual guesser, and that is
-all it claims; Cloudflare stops gross floods before they reach the box.
+join and hint reveal (the app keys nothing on IP and stores no IP address);
+Cloudflare stops gross floods before they reach the box.
 Issue #438 tracks the per-login buckets still missing on the two submit
 routes and an Insights view of throttled logins.
 
@@ -897,7 +895,7 @@ request.
 `.env` is what `docker-compose.yml` interpolates; each service then reads its
 own environment. A variable reaches a container **only if `docker-compose.yml`
 passes it** — setting one that compose does not forward does nothing, silently
-(that is why `ALLOW_INSECURE_EVENT_URL` and the gate pair are wired through
+(that is why `ALLOW_INSECURE_EVENT_URL` is wired through
 explicitly). Rows marked *override* are knobs compose does not forward; reach
 them with a `docker-compose.override.yml`, or on Fly through `.env.fly`. Rows
 marked *fixed* are values compose sets itself and you do not set at all.
@@ -921,10 +919,9 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 
 | Variable | Read by | Default | Meaning |
 |---|---|---|---|
-| `BETTER_AUTH_SECRET` | `lib/auth.ts`, `lib/gate.ts` | required | Session-signing secret; also keys the pre-event gate cookie's HMAC. |
+| `BETTER_AUTH_SECRET` | `lib/auth.ts` | required | Session-signing secret. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | `lib/auth.ts` | required | The sign-in OAuth app (not the poll GitHub App). |
 | `ALLOW_INSECURE_EVENT_URL` | `instrumentation.ts` | unset | `1` downgrades the `http://` non-loopback refusal to a start-up warning. TLS-less closed networks only. |
-| `CHALLENGES_GATE_ENABLED`, `CHALLENGES_GATE_PASSWORD` | `lib/gate.ts` | unset | Pre-event shared-password gate over the module pages: `true` plus a password. A half-configured gate stays *open*. |
 | `LEADERBOARD_SOURCE` | `lib/leaderboard/source.ts` | *fixed*: `lambda` | `mock` / `lambda` / `upstash`. With `secure-development` disabled the mode is forced to `empty` (no scorer read; the board is built from the module overlays alone); an unknown value falls back to `mock` with a warning. |
 | `LEADERBOARD_API_URL` | `lib/challenges.ts`, `lib/leaderboard/lambda.ts` | *fixed*: `http://scorer:4000` | Scorer base URL for the challenge catalogue and the board. |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | `lib/upstash.ts`; also `scorer/src/store.js`, `sync/src/redis.js` | *fixed*: `http://srh:80`, `SRH_TOKEN` | Redis-over-REST endpoint. Hints, teams, admin settings and module content live behind it. |

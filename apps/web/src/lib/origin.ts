@@ -9,7 +9,7 @@
 //
 // Deliberately dependency-free — no `server-only`, no `next/*` — because
 // `proxy.ts` imports it and that module's graph is kept to primitives that are
-// safe outside a request scope (same discipline as `lib/gate.ts`).
+// safe outside a request scope.
 
 /** Methods that can change state, and therefore the ones worth asserting on.
  *  A cross-origin GET is not a CSRF concern here: no route mutates on GET. */

@@ -72,6 +72,7 @@ row's shared corpus (`test/fixtures/window-corpus.json`) is what closed it.
 | Team registration window read | **OPEN** | a Redis blip must not itself block registration; the join/create Lua script still validates every real invariant atomically | `team-store.ts` `isRegistrationClosed` (comments its direction, logs and fails open on both a thrown transport error and a resolved per-command error) · `team-store.test.ts` ("fails OPEN … and logs when … transport failure" / "… per-command error") |
 | Scheduled-window boundary instant (the exact `<`/`<=` at start and end) | **N/A — cross-reader agreement** | a flip surviving one reader's own tests must still fail via the shared corpus | `schedule-window.ts` / `scorer/src/store.js` / `sync/src/redis.js` `outsideWindow` · `test/fixtures/window-corpus.json` run verbatim by `schedule-window.test.ts`, `store.test.js`, `redis.test.js` |
 | Scoring start present? (no/unparseable `scoringStartsAt` = not launched, #464) | **CLOSED (value)** | an event nobody launched scores nothing; distinct from the freeze READ, which still fails open | `outsideScoringWindow` in the same three readers · `test/fixtures/scoring-window-corpus.json` run verbatim by the same three suites |
+| Launch lock (module pages and APIs before launch, #464) | **CLOSED** | a secrecy boundary over challenge text: a failed settings read is "not launched" for a non-admin, a failed admin check is "not admin"; distinct from the freeze READ, which still fails open | `launch.ts` `getLaunchAccess` (comments its direction) · `launch.test.ts` ("fails CLOSED for a non-admin when the settings read throws" / "treats an admin check that throws as not-admin"); `launch-guard-coverage.test.ts` fails if a module page or route lacks the guard |
 | `ctf-setup.sh` `check_step` | **CLOSED** | a `gh` error is never "already satisfied" | `setup/ctf-setup.sh` `check_step` · `setup/test/ctf_setup.bats` ("fails closed when gh api errors") |
 | Audit-log writes | **best-effort** | an audit failure is logged, never fails the request that already committed | `writeAudit` in each `api/admin/*` route · route tests assert success without a completed audit write |
 
@@ -151,23 +152,24 @@ rebuild. The last three of those are machine-enforced as well: `.coderabbit.yaml
 carries path instructions for `bootstrap-env.ts` and the snapshot readers, and
 for `apps/web/src/**/*.tsx` (the client-bundle read and the prerendered `/`).
 
-**11. The public surface is a named list, not a shape.** Exactly six routes
+**11. The public surface is a named list, not a shape.** Exactly five routes
 under `/api` answer without a session or a verified launch token, and each is
-on the list for its own stated reason — a seventh does not inherit an exemption
+on the list for its own stated reason — a sixth does not inherit an exemption
 by resembling one that has it; it needs its own case. Four are read-only,
 policy or public-by-design content out and never facts in, nothing secret in
 the response: `GET /api/public/scoring`, `GET /api/ai/launch-key`, `GET
-/api/board/items` and `GET /api/sponsors/logo/[id]`. Two are POSTs that exist
-*before* identity: `POST /api/gate` (the pre-event password check — it runs
-before anyone can sign in, charges a per-IP attempt before comparing, and
-answers only pass/fail) and `POST /api/stats/visit` (the approximate, no-PII
+/api/board/items` and `GET /api/sponsors/logo/[id]`. One is a POST that exists
+*before* identity: `POST /api/stats/visit` (the approximate, no-PII
 per-country reach counter, always `204`, whose own header comment documents
-that it is not a security boundary). `/api/auth/*` is better-auth's and is
-outside this list. Anything else under `/api` that answers without
+that it is not a security boundary). The pre-event password check
+(`POST /api/gate`) that used to be the second is gone (#464); a route that
+brings back a pre-identity credential check is a new case, not a
+restoration. `/api/auth/*` is better-auth's and is outside this list. Anything else under `/api` that answers without
 `getSession`, `requireAdmin` or a verified launch token is the finding.
 `board/items` (from the #207 redesign) serves the public leaderboard's row
-expansion: who solved what is already on the board as counts, the items are
-built only from the contestant-safe listers (ids, labels, banked points —
+expansion, and like the board it is public only once the event is launched —
+before that it answers `403 not-launched` to anyone but an admin. Who
+solved what is already on the board as counts, the items are built only from the contestant-safe listers (ids, labels, banked points —
 never a flag, hint, or key), and the login list is capped at a team roster's
 size so it reads like the board, not like a scrape. `launch-key` is the
 sharpest test of the "nothing secret" half: it exists to publish the launch

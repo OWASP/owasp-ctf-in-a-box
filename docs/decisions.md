@@ -3572,7 +3572,7 @@ haven't launched. The public phase strip reads a missing start as the
 live event, is allowed on an unlaunched box. The rest of #464 builds on
 this: locking pages, admin preview with dry-run grading, and a
 Launch/Schedule/Un-launch control that writes and clears this same field.
-The password gate is removed once the page lock replaces it.
+The password gate was removed once the page lock replaced it.
 
 **Alternatives rejected.** *A separate `launched` flag, defaulting to
 launched on existing boxes.* It would be backward compatible, but it adds
@@ -3583,6 +3583,6 @@ password gate already had. *Changing `outsideWindow` itself.* It is shared
 with the registration window, where "empty means locked" would stop teams
 from forming before launch.
 
-**Status.** Accepted (#464). The password gate is superseded once #464's
-page lock lands.
+**Status.** Accepted (#464). The password gate is superseded: it was
+removed in #464's page-lock PR, which replaced it with the launch lock.
 

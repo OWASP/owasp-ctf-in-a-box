@@ -205,7 +205,10 @@ Security aside, the checks that save an event, in the order to run them:
 **The morning of:**
 
 - [ ] Set the scoring and registration windows (or plan to flip the freeze
-  by hand) — the password gate, if you use it, is a curtain, not a lock.
+  by hand). **Scoring opens** is also the launch: until it passes, module
+  pages redirect to `/` and module APIs answer `not-launched` for everyone
+  but admins — check from a signed-out window that the lock is up, and that
+  it lifts at the time you announced.
 - [ ] Confirm hint knobs (cost, minimum solves, unlock delay) are what you
   announced.
 - [ ] Running Secure Development: `docker compose logs -f sync` shows a clean

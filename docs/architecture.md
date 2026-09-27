@@ -582,9 +582,10 @@ an external-event intake, both described below.
 (`apps/web/src/app/(site)/ai/[id]/page.tsx`) is the ONE place in the app
 that mints a launch token, via `mintLaunchUrl`/`buildLaunchClaims`
 (`lib/ai-launch.ts`). This is **gate-at-mint**: the render checks the
-module is live, then `requireGatePassed()` (the pre-event gate), then reads
-the session, then redirects a teamless contestant away — all four before
-the mint is ever reached, and there is no code path above the mint that
+module is live, then reads the session, then runs `redirectIfNotLaunched()`
+(the launch lock, #464 — before launch a non-admin is sent to `/`), then
+redirects a teamless contestant away — all four before the mint is ever
+reached, so no token can exist before the event is launched, and there is no code path above the mint that
 calls it without a `login` in hand. The token is Ed25519 (ADR 53), signed
 with the module-wide keypair in `ctf:ai:launchkey`, minted lazily on first
 use; its claims carry the player's login (`sub`), the one challenge it is
@@ -602,8 +603,9 @@ arrive three ways, and every one folds into the same atomic Lua script:
   `submitAiFlagAction` (`[id]/actions.ts`) — not to the token API, because
   the token that would authenticate such a call lives only in the launcher
   href and must not reach the client any other way. The action re-runs the
-  page's own gate order — module live, pre-event gate (fails **closed** — an
-  exception is treated as a refusal), session, team (fails **open**, via
+  page's own gate order — module live, session, launch lock
+  (`getLaunchAccess`, answering `{ error: "not-launched" }`; fails **closed**
+  — a failed read is treated as not launched), team (fails **open**, via
   `hasTeam`) — before calling `submitAiFlag` (`ai-store.ts`).
 - **External flag submission**: `POST /api/ai/submit` takes `{token, flag}`
   for an external site that renders its own flag box — the launch token in
@@ -668,8 +670,8 @@ against state read fresh at that instant rather than a value either caller
 read earlier. The JS-side pre-check (`evaluateGate`) that runs before it is
 only a cheap early-out; the script is what actually closes the race.
 
-**Fail directions, and they don't all point the same way.** The pre-event
-gate is **closed** — a check that cannot pass is treated as a refusal, the
+**Fail directions, and they don't all point the same way.** The launch
+lock is **closed** — a settings read that fails counts as not launched, the
 same direction quiz's own gate lookup takes on an unverifiable read, because
 a mint or a solve is exactly the kind of write a gate exists to hold back.
 Team membership is **open** — `hasTeam`'s own catch resolves to `true`,
@@ -759,7 +761,7 @@ for the integrator-facing statement of the same rotation contract.
 
 **A team is required to score** (ADR 47). `POST /api/quiz/answer` and
 `POST /api/classic/submit` refuse a teamless login with
-`403 { error: "no-team" }` — after the pre-event gate, before the store call,
+`403 { error: "no-team" }` — after the launch lock, before the store call,
 and (on the classic route) before the body is even parsed, so the refusal
 cannot become an oracle for whether a flag was correct. The page-level
 redirect to `/profile#team` is signposting on top of that, not the boundary.
@@ -1235,6 +1237,16 @@ build.
   HMAC event signature, and `GET /api/ai/launch-key` is intentionally public
   (see `AI_PREFIX` in `src/proxy.ts`). A missing `Origin` is allowed: it means a
   non-browser client, which carries no ambient cookie to ride. See ADR 40.
+- **Module content is locked until launch (#464, ADR 59).** Before the
+  event's scoring start has passed, every module page redirects a non-admin
+  to `/` before it loads any content, and the module APIs answer
+  `403 { error: "not-launched" }` (`src/lib/launch.ts`). The check lives in
+  each page and route rather than the proxy, which makes no Redis reads, and
+  `src/__tests__/launch-guard-coverage.test.ts` fails if a module page or
+  route on disk lacks it — the per-handler design's failure mode is a new
+  route that forgets. It fails **closed** (a settings read error is "not
+  launched"), because it is a secrecy boundary over challenge text; admins
+  pass as a preview.
 - **A leaked event key cannot mint identity (ADR 53).** The `ai` module
   splits its two signatures by key type rather than sharing one: the
   per-challenge `ctf:ai:signkey` (HMAC) proves the sender is the real
@@ -1251,12 +1263,11 @@ build.
   `/api/admin/ai/test` charges its own `aiAdminTest` budget against the
   admin's session login before it mints the test token. That distinction is
   the point:
-  `lib/gate-store.ts` keys on IP because the pre-event gate runs before anyone
-  has an identity, and it documents that the key is spoofable (Caddy *appends*
-  to `x-forwarded-for`). These routes run after `getSession()`, so there is a
-  key a caller cannot forge without forging the session. They fail **open** on
-  a Redis error — the opposite of the gate throttle, which guards a password
-  compare and fails closed — because these bound abuse of routes that have
+  an IP key is spoofable (Caddy *appends* to `x-forwarded-for`), and the app
+  stores no IP address at all since the pre-event password gate and its
+  per-IP throttle were removed (#464). These routes run after `getSession()`,
+  so there is a key a caller cannot forge without forging the session. They
+  fail **open** on a Redis error because they bound abuse of routes that have
   their own correctness gates underneath.
 
 ## Testing strategy

@@ -21,7 +21,7 @@ live-GitHub scoring. For standing the kit up in the first place, see
 [Jeopardy](#jeopardy) ·
 [Verifying it works](#verifying-it-works) ·
 [Local dev-stack](#local-dev-stack) ·
-[Known limitations](#known-limitations) ·
+[Before launch](#before-launch) ·
 [Status](#status-and-upstream-dependencies)
 
 ## Running an event
@@ -386,7 +386,8 @@ The panel offers:
   means no bound on that side — **except Scoring opens**: an event with no
   scoring start is **not launched**, and nothing scores (flags, quiz, AI,
   and Secure Development PRs in the scorer and the poller) until one is
-  set. Every event needs that official launch (#464). They stack **on top of** the manual toggles
+  set. Every event needs that official launch (#464) — until then module
+  pages redirect to `/` (see [Before launch](#before-launch)). They stack **on top of** the manual toggles
   rather than replacing them: scoring is live only when it is not frozen
   *and* inside its window, registration is open only when the switch is open
   *and* inside its window — either condition on its own closes it. Because
@@ -1976,59 +1977,57 @@ one or to the generated `.env.dev-stack` otherwise. Edit that file, then run
 `./scripts/dev-stack down && ./scripts/dev-stack up` to apply it — a restart,
 not a rebuild, since `ADMIN_LOGINS` and the OAuth settings are read at start.
 
-## Known limitations
+## Before launch
 
-**The pre-event gate's page block (`proxy.ts`) is page-only.** With
-`CHALLENGES_GATE_ENABLED=true` and `CHALLENGES_GATE_PASSWORD` set in `.env`
-(compose passes both through to the app), every enabled module's own page
-route (`/challenges`, `/quiz`, `/flags`, `/ai`) redirects a visitor without a
-valid unlock cookie to `/gate`. That list is exact-match and it is *pages* —
-the gate deliberately does not widen over `/api/*`. (The proxy's matcher
-does carry `/api/:path*`, but only for the cross-origin write assertion;
-gating the APIs would put the gate in front of `/api/auth/*`, breaking the
-sign-in a contestant needs in order to pass the gate, and in front of
-`/api/gate` itself, and would answer API calls with a page redirect an API
-client can't act on.) `/ai/[id]` — the one route that mints a launch token —
-is deliberately **not** in that exact-match list: it enforces the gate
-itself, at mint time, rather than inheriting it from the middleware (see
-below).
+An event is **launched** once its **Scoring opens** time (`scoringStartsAt`,
+on the `/admin` Event tab) is set and has passed. There is no separate
+switch and no password: until that moment the whole contestant side of the
+event is locked (#464, ADR 59). After **Scoring closes** the event stays
+launched — scoring stops, but the boards and results stay browsable.
 
-Instead, the three module routes that bank points or leak challenge content
-— `POST /api/quiz/answer`, `POST /api/classic/submit`, and
-`POST /api/hints/reveal` — run their own server-side gate check
-(`requireGatePassed()`) beside their other rules, and refuse with
-**403 `{ error: "gate" }`** while the lock screen is up. The ai module reaches
-the same guarantee a different way: its two cross-origin routes,
-`POST /api/ai/submit` and `POST /api/ai/event`, are cookie-blind by design
-and read no gate at all — the gate is enforced exactly once, at token-mint
-time, when `/ai/[id]` renders (and re-checked, redundantly, in that same
-page's in-box Server Action, `submitAiFlagAction` in `[id]/actions.ts`). A
-launch token in hand already proves the gate had passed when it was minted,
-so the routes that redeem that token don't re-check it themselves.
-Everything else the API routes already enforced independently still holds
-regardless: the session-backed routes (quiz answer, classic submit, hints
-reveal) still require a session — the ai module's own cross-origin routes
-authenticate differently, as just described (`/api/ai/submit` by launch
-token alone, `/api/ai/event` by launch token plus the per-challenge HMAC,
-neither reading a session) — and the admin **pause** and the **scheduled
-scoring window** are checked on every write, and per-question attempt caps
-and cooldowns (or classic's/ai's own submission cooldown) apply. So an
-organizer who additionally sets the scoring window (or keeps the event
-paused) is not exposed even if they somehow rely on the password gate alone
-— the schedule/pause pair in the admin panel (see [Organizer admin
-panel](#organizer-admin-panel)) is still the control that actually stops
-early scoring.
+**What a contestant sees.** Before launch, every module page — `/challenges`,
+`/flags` and `/flags/[id]`, `/quiz`, `/ai` and `/ai/[id]`, and
+`/leaderboard` — redirects to the landing page (`/`), and the redirect runs
+before the page loads any module content, so no challenge text, question or
+standing is rendered for a refused visitor. The landing page shows a
+countdown when a start is scheduled, or **Launching soon.** when none is set;
+while registration is open it adds "Sign in and form your team." for a
+signed-out visitor, and the hero's call to action points only at the team
+(`/profile#team`). Everything that is not module content stays reachable:
+`/`, `/profile`, `/join/[code]`, `/faq`, `/rules`, `/how-to-play`,
+`/sponsors`, `/privacy`, `/terms`, `/code-of-conduct`, sign-in, and the team
+APIs — so contestants can sign in and form teams ahead of kickoff (inside
+the registration window, which is its own setting).
 
-Read the gate for what it is: a "the board opens at the keynote" curtain over
-the contestant-facing pages and the handful of API routes that bank points or
-leak content, and a way to keep the challenge list unpublished until the
-event starts. It is **not** an authorization boundary — every API route
-(gated or not) still enforces its own rules independently, including
-`/api/admin/*` (organizers must be able to configure the event before
-kickoff) and `/api/team/*` (registration has its own separate window and is
-meant to be open pre-event). If you need scoring genuinely shut until a
-moment in time, set the scoring window (or keep the event paused) as well as
-— or instead of — the password gate.
+**What the APIs answer.** The module APIs a contestant (or a script) would
+call directly — `POST /api/classic/submit`, `POST /api/quiz/answer`,
+`POST /api/hints/reveal` and `GET /api/board/items` — refuse with **HTTP 403
+`{ "error": "not-launched" }`**, and the classic, quiz and hint UIs name that
+refusal rather than showing it as a wrong answer. The ai module's launch
+token is only minted from `/ai/[id]`, which is locked, and that page's
+in-box flag form (its server action) answers `not-launched` too, so no AI
+challenge can be opened or solved early.
+
+**Admins preview.** A signed-in admin (`ADMIN_LOGINS`, or an admin added in
+the panel) passes the lock and browses every module page as a preview, to
+check the board before contestants see it. The preview does not open
+scoring: the scoring window still says "not launched", so an admin's
+submission before the start banks nothing.
+
+**Fail direction: closed.** The lock is a secrecy boundary (challenge text
+before kickoff), so if the settings read fails, a non-admin is treated as
+"not launched", and if the admin check fails, the viewer is treated as not
+an admin. The manual scoring **freeze** read is a different decision and
+still fails open — a Redis blip must not drop live submissions.
+
+**Launching.** Set **Scoring opens** on the `/admin` Event tab: to a time in
+the future to schedule the launch (the landing page counts down to it and
+the lock lifts on its own), or to now to launch immediately. **Un-launching**
+is clearing the field — the event is then not launched again, the module
+pages redirect, and nothing scores. A Launch/Schedule/Un-launch button in
+`/admin` is planned; until then the field is the control. If contestants
+report that only the landing page loads, this is almost always why — see
+[troubleshooting](troubleshooting.md).
 
 ## Status and upstream dependencies
 

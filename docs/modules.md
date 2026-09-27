@@ -670,68 +670,70 @@ of one module's shape.
    neither promise a per-challenge breakdown an event has no notion of, nor
    stay silent about the answers a quiz-only event does keep.
 
-8. **Pre-event gate.** The gate (`proxy.ts` + `/gate`) covers **every enabled
-   module's own page route** — the exact `nav.href` each module registers —
-   rather than the hardcoded `/challenges` it used to. `proxy.ts` gates the
-   registry's FULL route list (`ALL_MODULE_ROUTES`), not the enabled subset —
-   enablement is a runtime Redis read the middleware must not depend on, and
-   gating a disabled module's page costs nothing while hiding which modules
-   an event runs before it opens (see the comment on `GATED_ROUTES`); `/gate`
-   sends an unlocked visitor to the first enabled route, falling back to `/`.
-   Next requires
-   `config.matcher` to be a static literal, so it cannot be computed — it
-   lists every registry route by hand and `src/__tests__/proxy.test.ts`
-   asserts it covers `ALL_MODULE_ROUTES`, so a newly registered module cannot
-   end up silently un-gated. `proxy-quiz-only.test.ts` and
-   `proxy-disabled-module.test.ts` pin what it then *does* with them.
+8. **Launch lock.** Until the event is launched — a **Scoring opens**
+   (`scoringStartsAt`) that parses and has passed (#464, ADR 59) — a
+   module's contestant surface is closed to everyone but admins, and every
+   module MUST enforce that itself. `src/lib/launch.ts` is the one
+   implementation; a module does not re-derive "launched" from the settings.
 
-   Know what this is and is not. The gate's route set is **page-only and
-   exact-match**: it protects the module's page, not any deeper path under
-   it, and it deliberately does **not** widen over `/api/*` — that would put
-   the gate in front of `/api/auth/*` (breaking the sign-in a contestant
-   needs in order to pass the gate) and `/api/gate` itself, and would answer
-   API calls with a page *redirect*, which an API client can't act on. (The
-   matcher literal itself also carries `/api/:path*`, but that entry serves
-   the cross-origin write assertion, not the gate.)
+   - **Pages.** Every module page (its `nav.href` and every page under it —
+     `/flags/[id]`, `/ai/[id]`, and `/leaderboard` too) calls
+     `await redirectIfNotLaunched(login)` **before it loads any module
+     content**: a refused viewer is redirected to `/`, and the page must not
+     have read a challenge, question or standing first. Order matters — a
+     guard after the load still does the work it then refuses to show.
+   - **APIs.** Every module API that banks points or returns module content
+     calls `requireLaunchedApi(login)` after authentication (so an
+     unauthenticated caller still gets the more specific 401) and before any
+     store read or write, and returns the response it hands back: **HTTP 403
+     `{ "error": "not-launched" }`** — its own error, never a wrong-answer
+     shape and never a redirect. Today that is `POST /api/classic/submit`,
+     `POST /api/quiz/answer`, `POST /api/hints/reveal` and
+     `GET /api/board/items`. A module's UI should name the refusal (the
+     classic, quiz and hint UIs do) rather than render it as "wrong".
+   - **Server actions and tokens.** A server action is an API too: the ai
+     module's in-box flag action (`/ai/[id]/actions.ts`) checks
+     `getLaunchAccess(login)` and answers `{ error: "not-launched" }`. The ai
+     launch token is minted only from `/ai/[id]`, behind its own
+     `redirectIfNotLaunched`, so `POST /api/ai/submit` and `/api/ai/event`,
+     which are authenticated by that token, inherit the lock — a token
+     cannot exist before launch. A module that hands out any credential for
+     an external site mints it behind the page guard the same way.
 
-   Instead, the module routes that bank points or leak challenge content
-   (three API routes plus the ai module's in-box flag form — `/ai/[id]`'s
-   page and server action — while `POST /api/ai/submit` relies on the launch
-   token, which can only be minted from a page that already passed the gate)
-   call a small server-side check of their own,
-   `requireGatePassed()` (`src/lib/gate-request.ts`) — beside the gates they already
-   run (`effectivePaused`, attempt caps, cooldowns), after authentication (so
-   an unauthenticated caller still gets the more specific 401) and before any
-   store read or write:
-   - `POST /api/quiz/answer` and `POST /api/classic/submit` — bank points.
-   - `POST /api/hints/reveal` — deducts points **and** returns hint text, so
-     an ungated call would leak challenge content early, not just score
-     early.
+   Admins (`isAdminLogin`: `ADMIN_LOGINS` plus stored admins) pass as a
+   **preview** — `getLaunchAccess` returns `{ allowed: true, preview: true }`
+   — so an organizer can check the board before kickoff. The preview is not
+   scoring: the scoring window itself still reads "not launched", so a
+   module's write path refuses an admin's submission on its own window check.
 
-   A refused call gets **403 `{ error: "gate" }`**, never a redirect.
-   `isGateActive()` is a module-load env read and `verifyGateCookie` is pure
-   crypto — neither does I/O, so `requireGatePassed()` can never error
-   mid-check; there is no fail-open/fail-closed case to make here, unlike the
-   store-backed gates it sits beside.
+   The lock fails **closed**: a settings read that throws counts as "not
+   launched" for a non-admin, and an admin check that throws counts as "not
+   an admin". It is a secrecy boundary (challenge text before kickoff), unlike
+   the manual scoring freeze beside it, which still fails open.
 
-   Deliberately **not** gated, on purpose: `/api/auth/*` (signing in is how a
-   contestant passes the gate), `/api/gate` (the gate itself), `/api/admin/*`
-   (organizers must be able to configure the event before kickoff — that's
-   the entire point of a pre-event window), `/api/team/*` (team registration
-   has its own separate window, `effectiveRegistrationOpen` — registering
-   before kickoff is intended), `/api/stats/visit` (telemetry), and
-   `GET /api/hints` (it returns the texts of hints the caller has **already
-   purchased**, to a caller who must already be authenticated — it reveals
-   nothing the buyer has not already paid for and cannot be used to read an
-   unbought hint).
+   The check lives in each page and route, **not** in `proxy.ts`: the proxy
+   makes no Redis reads (its matcher is only `/profile` and `/api/:path*`, for
+   the sign-in redirect and the cross-origin write assertion), and a
+   page-level check runs on every request, soft navigations included, where a
+   layout would not. The failure mode that design invites — a new module page
+   or route that forgets the guard — is closed by
+   `src/__tests__/launch-guard-coverage.test.ts`, which walks every page under
+   the module page trees and every route under the module API trees on disk
+   and fails if one does not call the guard. A new module adds its page and
+   API roots to that test's lists; an exemption (today only
+   `GET /api/hints`, which returns the caller's own purchases and never hint
+   text) is named there with its reason.
 
-   This still is **not** an authorization boundary: it is a "the board opens
-   at the keynote" curtain over a handful of scoring/content-leak paths, not
-   a replacement for every API route enforcing its own rules
-   (authentication, the pause/schedule window, attempt caps) independently —
-   they must keep doing so, and a module MUST NOT treat "the gate is up" as
-   a reason to skip a check in its own API. See `docs/operations.md`'s
-   "Known limitations" for the operator-facing note.
+   Deliberately **not** locked: `/api/auth/*` (signing in before kickoff is
+   intended), `/api/admin/*` (organizers configure the event before it
+   opens), `/api/team/*` (team registration has its own window,
+   `effectiveRegistrationOpen`), `/api/stats/visit` (telemetry), and the
+   platform pages (`/`, `/profile`, `/join/[code]`, `/faq`, `/rules`,
+   `/how-to-play`, `/sponsors`, `/privacy`, `/terms`, `/code-of-conduct`).
+   The lock does not replace a module API's own rules — authentication, the
+   pause/schedule window, attempt caps and cooldowns still run independently,
+   and a module MUST NOT skip one because the lock is up. See
+   `docs/operations.md`'s "Before launch" for the operator-facing note.
 
 9. **Setup instructions (organizer-facing, optional but expected).** A module
    MAY contribute a `setup` block (`ModuleSetup` in

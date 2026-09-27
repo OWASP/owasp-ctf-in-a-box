@@ -34,8 +34,13 @@ import {
   CLASSIC_CATEGORIES_MAX,
 } from "@/lib/classic-keys";
 import { MARKDOWN_MAX } from "@/lib/markdown";
+import type { Story } from "@/lib/story-lock";
 
-export const CLASSIC_BUNDLE_VERSION = 1;
+/** 2 since #463: an optional top-level `stories`. 1 stays importable. */
+export const CLASSIC_BUNDLE_VERSION = 2;
+const SUPPORTED_VERSIONS = new Set([1, 2]);
+const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
 
 export type ClassicBundleChallenge = {
   id: string;
@@ -58,6 +63,8 @@ export type ClassicBundle = {
   version: number;
   categories: string[];
   challenges: ClassicBundleChallenge[];
+  /** v2 (#463): ordered chains of this bundle's challenges. */
+  stories?: Story[];
 };
 
 export type ImportError = { where: string; message: string };
@@ -265,8 +272,8 @@ export function parseBundle(raw: string): ParseResult {
 
   const errors: ImportError[] = [];
 
-  if (parsed.version !== CLASSIC_BUNDLE_VERSION) {
-    errors.push({ where: "version", message: `Unsupported bundle version: expected ${CLASSIC_BUNDLE_VERSION}` });
+  if (typeof parsed.version !== "number" || !SUPPORTED_VERSIONS.has(parsed.version)) {
+    errors.push({ where: "version", message: `Unsupported bundle version: expected 1 or ${CLASSIC_BUNDLE_VERSION}` });
   }
 
   const categories = validateCategories(parsed.categories, errors);
@@ -275,12 +282,76 @@ export function parseBundle(raw: string): ParseResult {
   rawChallenges.forEach((c, i) => validateChallenge(c, i, categories, errors));
   checkDuplicateIds(rawChallenges, errors);
 
+  // v2 (#463): stories. On a v1 bundle the key is an error, not ignored — an
+  // older box ignoring it would serve every step unlocked, which is exactly
+  // why the version bumped.
+  let stories: Story[] | undefined;
+  if (parsed.stories !== undefined) {
+    if (parsed.version === 1) {
+      errors.push({ where: "stories", message: `"stories" needs bundle version ${CLASSIC_BUNDLE_VERSION}` });
+    } else {
+      const ids = new Set(
+        rawChallenges.map((c) => (isPlainObject(c) && typeof c.id === "string" ? c.id : null)).filter((v): v is string => v !== null),
+      );
+      stories = validateStories(parsed.stories, ids, errors);
+    }
+  }
+
   if (errors.length > 0) return { ok: false, errors };
 
   // Every challenge passed validation above (errors.length === 0), so this
   // cast is sound: each entry has exactly the required keys and types.
   const challenges = rawChallenges as ClassicBundleChallenge[];
-  return { ok: true, bundle: { version: CLASSIC_BUNDLE_VERSION, categories, challenges } };
+  return {
+    ok: true,
+    bundle: { version: parsed.version as number, categories, challenges, ...(stories ? { stories } : {}) },
+  };
+}
+
+/** Validates a v2 bundle's stories, collecting every problem: each story's
+ *  shape, every step naming a challenge IN THIS BUNDLE (a bundle is
+ *  self-contained), no challenge in two stories or twice in one, and unique
+ *  story ids. */
+function validateStories(raw: unknown, challengeIds: ReadonlySet<string>, errors: ImportError[]): Story[] {
+  if (!Array.isArray(raw)) {
+    errors.push({ where: "stories", message: '"stories" must be an array' });
+    return [];
+  }
+  const out: Story[] = [];
+  const storyIds = new Set<string>();
+  const owner = new Map<string, string>();
+  raw.forEach((st, i) => {
+    const base = `stories[${i}]`;
+    if (!isPlainObject(st)) {
+      errors.push({ where: base, message: "A story must be an object" });
+      return;
+    }
+    const unknown = Object.keys(st).filter((k) => !STORY_KEYS.has(k));
+    if (unknown.length > 0) errors.push({ where: base, message: `Unknown key(s): ${unknown.join(", ")}` });
+    const id = typeof st.id === "string" ? st.id : "";
+    if (!STORY_ID_RE.test(id)) errors.push({ where: `${base}.id`, message: `Invalid story id: ${JSON.stringify(st.id)}` });
+    else if (storyIds.has(id)) errors.push({ where: `${base}.id`, message: `Story ids must be unique: ${id}` });
+    storyIds.add(id);
+    if (typeof st.title !== "string" || !st.title.trim()) errors.push({ where: `${base}.title`, message: "A story needs a title" });
+    if (st.intro !== undefined && typeof st.intro !== "string") errors.push({ where: `${base}.intro`, message: "intro must be a string" });
+    if (!Array.isArray(st.steps)) {
+      errors.push({ where: `${base}.steps`, message: "steps must be an array of challenge ids" });
+      return;
+    }
+    const seen = new Set<string>();
+    st.steps.forEach((step, j) => {
+      const where = `${base}.steps[${j}]`;
+      if (typeof step !== "string") return void errors.push({ where, message: "A step must be a challenge id" });
+      if (!challengeIds.has(step)) return void errors.push({ where, message: `Unknown challenge in this bundle: ${step}` });
+      if (seen.has(step)) return void errors.push({ where, message: `${step} is listed twice in this story` });
+      seen.add(step);
+      const prior = owner.get(step);
+      if (prior !== undefined && prior !== id) errors.push({ where, message: `${step} is in two stories — a challenge belongs to one story` });
+      owner.set(step, id);
+    });
+    out.push({ id, title: typeof st.title === "string" ? st.title : "", intro: typeof st.intro === "string" ? st.intro : "", steps: st.steps.filter((s): s is string => typeof s === "string") });
+  });
+  return out;
 }
 
 /** Indented, not minified — an organizer edits this file by hand. Ends in a

@@ -118,6 +118,7 @@ function seedFullBoard() {
     { result: [] },
   ]);
   mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web", "Crypto"]) }]);
+  mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
 }
 
 /** Clears recorded pipeline calls (so a following assertion only sees what
@@ -742,7 +743,8 @@ describe("exportBundle", () => {
   it("returns the current board in the importable shape", async () => {
     seedFullBoard();
     const bundle = await exportBundle();
-    expect(bundle.version).toBe(1);
+    expect(bundle.version).toBe(2);
+    expect(bundle.stories).toEqual([]);
     expect(bundle.categories).toEqual(["Web", "Crypto"]);
     expect(bundle.challenges[0]).toEqual({
       id: "web-one-ab12cd",
@@ -775,6 +777,7 @@ describe("exportBundle", () => {
       { result: [] },
     ]);
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
     const bundle = await exportBundle();
     expect(bundle.challenges[0].caseSensitive).toBe(true);
   });
@@ -788,8 +791,84 @@ describe("exportBundle", () => {
       { result: [FULL_BOARD_ID, "Look closer."] },
     ]);
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
     const bundle = await exportBundle();
     expect(bundle.challenges[0].hint).toBe("Look closer.");
+  });
+});
+
+// #463: bundle v2 carries stories. Import MERGES them by id (the same upsert
+// rule as challenges), validates the merged list before any write, and writes
+// it in the same pipeline as the challenges.
+describe("stories in the bundle (#463)", () => {
+  const story = (id: string, steps: string[], title = id) => ({ id, title, intro: "", steps });
+  const withStories = (stories: ReturnType<typeof story>[]): ClassicBundle => ({ ...twoRowBundle, version: 2, stories });
+  const storedStories = () => JSON.parse(valueFor("ctf:classic:stories")) as ReturnType<typeof story>[];
+
+  it("exports the stored stories", async () => {
+    seedFullBoard();
+    mocks.upstashPipeline.mockReset();
+    mocks.upstashPipeline.mockResolvedValue([{ result: [] }, { result: [] }, { result: [] }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: row(challenge({ id: FULL_BOARD_ID })) },
+      { result: [FULL_BOARD_ID, "ctfbox{One}"] },
+      { result: [] },
+    ]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify([story("op", [FULL_BOARD_ID], "Operation")]) }]);
+    const bundle = await exportBundle();
+    expect(bundle.stories).toEqual([{ id: "op", title: "Operation", intro: "", steps: [FULL_BOARD_ID] }]);
+  });
+
+  it("a v1 bundle reads and writes no stories at all", async () => {
+    seedChallenges([]);
+    const summary = await importBundle(twoRowBundle);
+    const keys = pipelineCalls().flat().map((c) => c[1]);
+    expect(keys).not.toContain("ctf:classic:stories");
+    expect(summary).toEqual({ created: 2, updated: 0, categories: 2 });
+  });
+
+  it("replaces a story with the same id and appends a new one, in the write pipeline", async () => {
+    const ids = twoRowBundle.challenges.map((c) => c.id);
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: [] },
+      { result: null },
+      { result: JSON.stringify([story("keep", ["legacy-zz99zz"]), story("op", ["old-aa11aa"], "Old")]) },
+    ]);
+    const summary = await importBundle(withStories([story("op", [ids[0]], "New"), story("side", [ids[1]])]));
+    expect(storedStories()).toEqual([
+      story("keep", ["legacy-zz99zz"]),
+      story("op", [ids[0]], "New"),
+      story("side", [ids[1]]),
+    ]);
+    // Written with the challenges, not in a pipeline of its own.
+    const write = pipelineCalls().slice(-1)[0].map((c) => c[1]);
+    expect(write).toContain("ctf:classic:challenges");
+    expect(write).toContain("ctf:classic:stories");
+    expect(summary.stories).toBe(2);
+  });
+
+  it("refuses the whole import before any write when the merge puts a challenge in two stories", async () => {
+    const ids = twoRowBundle.challenges.map((c) => c.id);
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: [] },
+      { result: null },
+      { result: JSON.stringify([story("keep", [ids[0]])]) },
+    ]);
+    await expect(importBundle(withStories([story("op", [ids[0]])]))).rejects.toThrow(ClassicValidationError);
+    expect(pipelineCalls()).toHaveLength(1);
+  });
+
+  it("refuses to write anything when the stories read failed", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: [] }, { result: null }, { error: "NOAUTH" }]);
+    await expect(importBundle(withStories([]))).rejects.toThrow(/NOAUTH/);
+    expect(pipelineCalls()).toHaveLength(1);
+  });
+
+  it("refuses a corrupt stored stories value rather than overwriting it", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: [] }, { result: null }, { result: "{not json" }]);
+    await expect(importBundle(withStories([]))).rejects.toThrow();
+    expect(pipelineCalls()).toHaveLength(1);
   });
 });
 

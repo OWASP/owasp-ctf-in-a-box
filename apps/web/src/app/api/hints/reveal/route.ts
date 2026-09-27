@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { requireLaunchedApi } from "@/lib/launch";
+import { launchApiAccess } from "@/lib/launch";
 import { resolveHintConfig, revealHint } from "@/lib/hint-store";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 
@@ -20,10 +20,11 @@ export async function POST(request: Request) {
   const login = (session.user as { login?: string }).login;
   if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
 
-  // #464 pre-launch lock (admins pass as a preview). Its own refusal —
-  // 403 `not-launched` — never a wrong-answer shape.
-  const notLaunched = await requireLaunchedApi(login);
-  if (notLaunched) return notLaunched;
+  // #464 pre-launch lock. Its own refusal — 403 `not-launched` — never a
+  // wrong-answer shape. An admin before launch passes as a PREVIEW: they see
+  // the hint text and are charged nothing (the same script, writing nothing).
+  const { refused, preview } = await launchApiAccess(login);
+  if (refused) return refused;
 
   // After the lock, before any store write — a refusal here can never follow
   // a charge that already happened.
@@ -45,6 +46,7 @@ export async function POST(request: Request) {
     login,
     typeof body.app === "string" ? body.app : "",
     typeof body.id === "string" ? body.id : "",
+    { dryRun: preview },
   );
   if (!result.ok) {
     const status = result.missing ? 404 : result.forbidden ? 403 : 400;

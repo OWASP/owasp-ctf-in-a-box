@@ -8,17 +8,18 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getSession, revealHint, resolveHintConfig, requireLaunchedApi, consumeRateLimit } = vi.hoisted(() => ({
+const { getSession, revealHint, resolveHintConfig, requireLaunchedApi, launchApiAccess, consumeRateLimit } = vi.hoisted(() => ({
   getSession: vi.fn(),
   revealHint: vi.fn(),
   resolveHintConfig: vi.fn(),
   requireLaunchedApi: vi.fn(),
+  launchApiAccess: vi.fn(),
   consumeRateLimit: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
-vi.mock("@/lib/launch", () => ({ requireLaunchedApi }));
+vi.mock("@/lib/launch", () => ({ requireLaunchedApi, launchApiAccess }));
 vi.mock("@/lib/hint-store", () => ({ revealHint, resolveHintConfig }));
 // Mocked EXPLICITLY rather than left to load for real. The real module fails
 // open on any Upstash error, so an unmocked import would quietly make every
@@ -44,6 +45,7 @@ beforeEach(() => {
   consumeRateLimit.mockReset();
   getSession.mockResolvedValue(SESSION);
   requireLaunchedApi.mockResolvedValue(null);
+  launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
   consumeRateLimit.mockResolvedValue({ allowed: true });
   resolveHintConfig.mockResolvedValue({ enabled: true, cost: 10 });
 });
@@ -124,5 +126,21 @@ describe("POST /api/hints/reveal", () => {
     revealHint.mockResolvedValue({ ok: false, error: "forbidden", forbidden: true });
     const res = await POST(req({ app: "quiz", id: "q1" }));
     expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /api/hints/reveal admin preview (#464)", () => {
+  it("reveals a preview admin's hint as a dry run (nothing charged)", async () => {
+    launchApiAccess.mockResolvedValueOnce({ refused: null, preview: true });
+    revealHint.mockResolvedValue({ ok: true, hint: "look at the query", alreadyOwned: false, spent: 0, dryRun: true });
+    const res = await POST(req({ app: "classic", id: "c1" }));
+    expect(res.status).toBe(200);
+    expect(revealHint).toHaveBeenCalledWith(expect.any(String), "classic", "c1", { dryRun: true });
+  });
+
+  it("never asks for a dry run once launched", async () => {
+    revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10 });
+    await POST(req({ app: "classic", id: "c1" }));
+    expect(revealHint).toHaveBeenCalledWith(expect.any(String), "classic", "c1", { dryRun: false });
   });
 });

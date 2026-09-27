@@ -102,6 +102,23 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     expect(owned.result).toBe(0);
   });
 
+  // #464 admin preview: the SAME script, told to write nothing — the text comes
+  // back, nothing is charged or recorded, and the unlock gates do not apply
+  // (a preview happens before launch). The next test, which charges, is the
+  // anti-vacuous half: the same reveal without dry run DOES write.
+  it("a dry-run (preview) reveal returns the text and charges nothing", async () => {
+    const result = await store.revealHint(PLAYER, TARGET, HINT_ID, { dryRun: true });
+    expect(result).toEqual({ ok: true, hint: HINT_TEXT, alreadyOwned: false, spent: 0, dryRun: true });
+    const [spent, owned, at] = await pipeline([
+      ["HGET", "ctf:hints:spent", PLAYER],
+      ["SCARD", `ctf:user:${PLAYER}:hints`],
+      ["HLEN", `ctf:hints:at:${PLAYER}`],
+    ]);
+    expect(spent.result).toBeNull();
+    expect(owned.result).toBe(0);
+    expect(at.result).toBe(0);
+  });
+
   it("charges the first reveal once the gate is earned", async () => {
     await pipeline([["HSET", SOLVES_HASH, SOLVE_FIELD, new Date().toISOString()]]);
     const result = await store.revealHint(PLAYER, TARGET, HINT_ID);

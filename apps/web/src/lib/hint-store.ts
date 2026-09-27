@@ -108,9 +108,12 @@ export function isHintTarget(value: string): value is HintTarget {
 // availability cache can't charge for a hint that no longer exists.
 // KEYS: [1]=user's hint set [2]=spend hash [3]=app hint catalogue [4]=purchase times
 // ARGV: [1]=challengeId [2]=<app>/<id> [3]=login [4]=cost [5]=now (ISO)
+//       [6]="1" for a DRY RUN (#464 admin preview): read the text, write
+//       nothing — no SADD, no charge, no purchase time.
 const REVEAL_SCRIPT = `
 local hint = redis.call('HGET', KEYS[3], ARGV[1])
 if not hint then return {'missing'} end
+if ARGV[6] == '1' then return {'preview', hint, '0'} end
 if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
   local spent = redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
   redis.call('HSETNX', KEYS[4], ARGV[2], ARGV[5])
@@ -119,7 +122,8 @@ end
 return {'owned', hint, redis.call('HGET', KEYS[2], ARGV[3]) or '0'}`;
 
 export type RevealResult =
-  | { ok: true; hint: string; alreadyOwned: boolean; spent: number }
+  // `dryRun`: an admin-preview reveal (#464) — nothing was charged or recorded.
+  | { ok: true; hint: string; alreadyOwned: boolean; spent: number; dryRun?: true }
   | { ok: false; error: string; missing?: boolean; forbidden?: boolean };
 
 /** Resolves the effective hint config for this request: an admin override
@@ -199,7 +203,7 @@ export type HintGate =
 /** Decides whether `login` may buy a hint on `app` right now. Both gates are
  *  evaluated at READ time (no scheduler on the box), matching how the freeze
  *  and registration windows work. */
-export async function hintGate(login: string, target: HintTarget): Promise<HintGate> {
+export async function hintGate(login: string, target: HintTarget, opts: { dryRun?: boolean } = {}): Promise<HintGate> {
   // Per-target module gate: a target whose module is off has nothing to
   // sell, so the gate refuses. The module READ itself is not the closed
   // side of that — `isModuleLive`/`getEnabledModuleIds` fail OPEN to this
@@ -214,6 +218,10 @@ export async function hintGate(login: string, target: HintTarget): Promise<HintG
 
   const { enabled, minSolves, unlockAfterMin, scoringStartsAt } = await resolveHintConfig();
   if (!enabled) return { allowed: false, reason: "disabled" };
+  // A preview (#464: an admin before launch) is not buying anything, so the
+  // time and anti-burner gates — both about when a PURCHASE is fair — do not
+  // apply to it. Module-live and hints-enabled still do.
+  if (opts.dryRun) return { allowed: true };
 
   // Time phase: only meaningful once the organizer has set a scoring start.
   if (unlockAfterMin > 0 && scoringStartsAt) {
@@ -243,7 +251,13 @@ export async function hintGate(login: string, target: HintTarget): Promise<HintG
   return { allowed: true };
 }
 
-export async function revealHint(login: string, target: string, id: string): Promise<RevealResult> {
+export async function revealHint(
+  login: string,
+  target: string,
+  id: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<RevealResult> {
+  const dryRun = opts.dryRun === true;
   // Fails CLOSED: unlike the scoring freeze, a settings-read error here must
   // never let a purchase through unpriced/ungated — `resolveHintConfig`'s
   // `getAdminSettings` throws on any read failure (transport or per-command),
@@ -257,7 +271,7 @@ export async function revealHint(login: string, target: string, id: string): Pro
   // Gate BEFORE the charge script. Enforced here (not just in the route) so
   // every caller goes through it — the UI hides locked hints, but the API is
   // the boundary that actually decides.
-  const gate = await hintGate(login, target);
+  const gate = await hintGate(login, target, { dryRun });
   if (!gate.allowed) {
     if (gate.reason === "locked") {
       return { ok: false, forbidden: true, error: `Hints unlock at ${gate.unlocksAt}` };
@@ -277,7 +291,7 @@ export async function revealHint(login: string, target: string, id: string): Pro
     verdict = await upstashEval(
       REVEAL_SCRIPT,
       [userHintsKey(login), SPENT_KEY, hintHashKey(target), userHintTimesKey(login)],
-      [id, `${target}/${id}`, login, cost, new Date().toISOString()],
+      [id, `${target}/${id}`, login, cost, new Date().toISOString(), dryRun ? "1" : "0"],
     );
   } catch (err) {
     console.error("Hint reveal failed:", err);
@@ -287,6 +301,9 @@ export async function revealHint(login: string, target: string, id: string): Pro
   const [status, hint, spent] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") {
     return { ok: false, missing: true, error: "No hint available for this challenge" };
+  }
+  if (status === "preview" && typeof hint === "string") {
+    return { ok: true, hint, alreadyOwned: false, spent: 0, dryRun: true };
   }
   if ((status === "charged" || status === "owned") && typeof hint === "string") {
     return { ok: true, hint, alreadyOwned: status === "owned", spent: Number(spent) || 0 };

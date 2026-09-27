@@ -484,7 +484,7 @@ describe("ai module contract: structural cookie-blindness", () => {
   // in this test file would hide a real `@/lib/auth`/`next/headers` read
   // that only bites in production. This makes the check survive a future
   // edit even if that edit's own route test still passes.
-  const FORBIDDEN_IMPORTS = ['"@/lib/auth"', "'@/lib/auth'", '"next/headers"', "'next/headers'", '"@/lib/gate-request"', "'@/lib/gate-request'"];
+  const FORBIDDEN_IMPORTS = ['"@/lib/auth"', "'@/lib/auth'", '"next/headers"', "'next/headers'", '"@/lib/launch"', "'@/lib/launch'"];
 
   it.each(DISCOVERED_ROUTES)("%s imports no cookie/session primitive", (name) => {
     const imports = IMPORTS[name];

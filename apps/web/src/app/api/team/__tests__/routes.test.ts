@@ -78,10 +78,9 @@ describe("POST /api/team/join rate limiting", () => {
   });
 
   it("charges the session login, not an IP header a caller controls", async () => {
-    // lib/gate-store keys on the IP because the gate runs before anyone has
-    // an identity, and documents that the key is spoofable (Caddy APPENDS to
-    // x-forwarded-for). This route runs after getSession, so it keys on
-    // something a caller cannot forge without forging the session.
+    // An IP key would be spoofable (Caddy APPENDS to x-forwarded-for). This
+    // route runs after getSession, so it keys on something a caller cannot
+    // forge without forging the session.
     joinTeam.mockResolvedValue({ ok: true, team: { slug: "t" } });
     await joinPOST(req({ code: "abc123" }));
     expect(consumeRateLimit).toHaveBeenCalledWith("team-join", "alice", 10, 600);

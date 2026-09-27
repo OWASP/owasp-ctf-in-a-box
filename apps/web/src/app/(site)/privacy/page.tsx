@@ -1,14 +1,11 @@
 // Privacy notice for this site specifically. The OWASP Foundation privacy
 // policy is the governing document; this page exists because it can't describe
-// what a one-off CTF site does with GitHub logins, hint purchases, and gate
-// rate-limiting data.
+// what a one-off CTF site does with GitHub logins and hint purchases.
 //
 // IMPORTANT: every claim here is a promise about code in this repo. If you
 // change what is stored, what a cookie holds, or how long anything is kept,
 // change this page in the SAME PR. Sources for the claims below:
 //   src/lib/auth.ts .................. sessions, OAuth scopes, no token storage
-//   src/lib/gate.ts .................. gate cookie
-//   src/lib/gate-store.ts ............ gate IP throttle + 30-day retention
 //   src/lib/stats-store.ts ........... aggregate country counters
 //   src/lib/hint-store.ts ............ hint purchases
 //   src/lib/team-store.ts ............ team membership
@@ -72,10 +69,10 @@ const Bullets = ({ items, accent = "#2563eb" }: { items: React.ReactNode[]; acce
 // The strongest thing this page can say is what never happens at all. Every
 // line here is enforced by code, not policy — check before adding to it.
 //
-// Both this and `cookieRows` below are FUNCTIONS of `secureDev`, not module-
-// scope constants: secure-development is runtime-toggleable now (issue #386),
-// so there is no longer a module-load-time answer for whether it is live —
-// only a per-request one, read inside the page component.
+// This is a FUNCTION of `secureDev`, not a module-scope constant:
+// secure-development is runtime-toggleable now (issue #386), so there is no
+// longer a module-load-time answer for whether it is live — only a
+// per-request one, read inside the page component.
 function neverLines(secureDev: boolean): string[] {
   return [
     "No advertising, no tracking pixels, no third-party analytics, no data broker. Nothing about you is sold or shared.",
@@ -91,7 +88,7 @@ function neverLines(secureDev: boolean): string[] {
   ];
 }
 
-function cookieRows(secureDev: boolean): { name: string; what: string; life: string }[] {
+function cookieRows(): { name: string; what: string; life: string }[] {
   return [
     {
       name: "Sign-in session",
@@ -102,16 +99,6 @@ function cookieRows(secureDev: boolean): { name: string; what: string; life: str
       name: "Sign-in handshake",
       what: "Protects the GitHub sign-in redirect against tampering. Discarded the moment sign-in finishes.",
       life: "10 minutes",
-    },
-    {
-      // The literal cookie name, which is what a reader inspecting their
-      // browser will see. It is not renamed per event — an identifier, not
-      // copy.
-      name: "ctf-challenges-gate",
-      what: secureDev
-        ? "Remembers that the challenge-board password was entered correctly. Holds an expiry timestamp and a signature. Nothing about you."
-        : "Remembers that the event's access password was entered correctly. Holds an expiry timestamp and a signature. Nothing about you.",
-      life: "30 days",
     },
     {
       name: "ctf-mock-team",
@@ -132,7 +119,7 @@ export default async function PrivacyPage() {
   const quiz = liveModules.has("quiz");
   const classic = liveModules.has("classic");
   const NEVER = neverLines(secureDev);
-  const cookies = cookieRows(secureDev);
+  const cookies = cookieRows();
 
   return (
     <div className="flex flex-col gap-10">
@@ -267,24 +254,6 @@ export default async function PrivacyPage() {
           event. Being straight with you: apart from the activity log&apos;s rolling cap, this
           competition data has no automatic expiry today, so treat it as kept until the
           organizers clear it down after the event. You can ask for yours sooner. See below.
-        </p>
-      </Card>
-
-      <Card heading={secureDev ? "Protecting the challenge board" : "Protecting the board before it opens"}>
-        <p className="text-sm leading-relaxed text-zinc-400">
-          Before the board opens it sits behind a password, and to stop that password being
-          brute forced we count failed attempts per IP address: five wrong tries locks that
-          address for 24 hours. So a failed attempt writes down an{" "}
-          <span className="text-white">IP address</span>, a counter, and a timestamp, the one
-          place on this site where an IP address is stored at all.
-        </p>
-        <p className="mt-4 text-sm leading-relaxed text-zinc-400">
-          We keep that as tight as we can. The record is deleted the moment a correct password
-          is entered from that address, and anything left over expires automatically after{" "}
-          <span className="text-white">30 days</span>. It is never linked to your GitHub
-          account. The gate runs before anyone signs in, so there is no identity to attach it
-          to even if we wanted one. One caveat worth knowing on conference Wi-Fi: an IP address
-          can cover a lot of people, so a lockout may not have been caused by you.
         </p>
       </Card>
 

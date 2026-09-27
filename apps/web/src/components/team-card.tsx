@@ -368,8 +368,8 @@ export default function TeamCard({
       {/* role="alert" so a rejected create/join/leave is announced. This is
           the only feedback the action produces — the form does not move focus
           — so without it the button click was silent for a screen reader and
-          the team simply never appeared. Matches gate-form.tsx and
-          join-team-invite.tsx, which already announce theirs. */}
+          the team simply never appeared. Matches join-team-invite.tsx, which
+          already announces its own. */}
       {error && (
         <p role="alert" className="mt-2 text-xs text-[#e53e3e]">
           {error}

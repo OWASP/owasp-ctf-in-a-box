@@ -33,17 +33,16 @@ import Privacy from "@/app/(site)/privacy/page";
 // input" rather than as anything resembling a missing await.
 const rendered = renderToStaticMarkup(await Privacy());
 
-/** The gate cookie's literal name is `ctf-challenges-gate` — an identifier a
- *  reader will see in their own browser, not copy, and not renamed per event.
- *  Disclosing it accurately is the whole point of the cookie table, so it is
- *  removed before the vocabulary check rather than the "challenge" term being
- *  weakened for every other page. Nothing else on this page may say it. */
-const COOKIE_NAME = "ctf-challenges-gate";
-const html = rendered.split(COOKIE_NAME).join("«gate-cookie»");
+const html = rendered;
 
 describe("/privacy in a quiz-only event", () => {
-  it("still names the gate cookie exactly once, and only in the cookie table", () => {
-    expect(rendered.split(COOKIE_NAME).length - 1).toBe(1);
+  // #464 removed the password gate, and with it the gate cookie and the
+  // per-IP attempt throttle — the one place this site ever stored an IP. The
+  // notice must stop disclosing a store that no longer exists.
+  it("discloses no gate cookie and no IP throttle any more", () => {
+    expect(rendered).not.toContain("ctf-challenges-gate");
+    expect(rendered).not.toContain("five wrong tries");
+    expect(rendered).not.toContain("the one place on this site where an IP address is stored");
   });
 
   it("renders no secure-development copy", () => {

@@ -420,6 +420,18 @@ cmd_doctor() {
     printf '    Poll is the score transport: the sync poller runs under --profile secdev\n'
     printf '    and caddy always mounts caddy/Caddyfile.poll. Delete the line.\n\n'
   fi
+  # The pre-event password gate is GONE (#464, ADR 59): the event is locked
+  # until an organizer launches it (/admin -> Launch, or a Scoring opens time).
+  # A `.env` that still sets the gate keys belongs to an organizer who thinks
+  # the board sits behind a password, so name the keys once — never the
+  # password's value. Advisory, like SCORE_INGEST above, and before the no-org
+  # return for the same reason. A commented-out example line is not "set".
+  if [ -n "$(env_val CHALLENGES_GATE_ENABLED)" ] || [ -n "$(env_val CHALLENGES_GATE_PASSWORD)" ]; then
+    printf '%s⚠️  %s sets CHALLENGES_GATE_ENABLED / CHALLENGES_GATE_PASSWORD — the password gate is REMOVED (#464) and the keys are no longer read.%s\n' \
+      "$C_YELLOW" "${OUT:-.env}" "$C_RESET"
+    printf '    The event is locked until you launch it: press Launch in /admin, or set\n'
+    printf '    Scoring opens on the Event tab. Delete both lines.\n\n'
+  fi
   # Nothing org-scoped left to inspect without an org: SD-on already failed
   # loudly above; SD-off simply has nothing further to check here.
   [ -n "$org" ] || return $rc

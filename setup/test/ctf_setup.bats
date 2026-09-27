@@ -453,6 +453,33 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "doctor names leftover CHALLENGES_GATE_* keys: the password gate is gone (#464)" {
+  # The gate was replaced by the launch lock. An organizer who still has the
+  # keys set believes the board sits behind a password — it does not, it sits
+  # behind Launch — so name it, once, before the no-org return.
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nCHALLENGES_GATE_ENABLED=true\nCHALLENGES_GATE_PASSWORD=open-sesame\n' > .env
+  mkdir -p stubs
+  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
+  chmod +x stubs/gh
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
+  printf '%s' "$output" | grep -qF -- 'CHALLENGES_GATE_ENABLED / CHALLENGES_GATE_PASSWORD — the password gate is REMOVED (#464)'
+  printf '%s' "$output" | grep -qF -- 'press Launch in /admin'
+  # The password itself must never be echoed back.
+  [ -z "$(printf '%s' "$output" | grep -F -- 'open-sesame')" ]
+  # Advisory: an inert key breaks nothing.
+  [ "$status" -eq 0 ]
+}
+
+@test "doctor says nothing about the gate when no CHALLENGES_GATE_* key is set" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\n#CHALLENGES_GATE_ENABLED=true\n' > .env
+  mkdir -p stubs
+  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
+  chmod +x stubs/gh
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
+  [ "$status" -eq 0 ]
+  [ -z "$(printf '%s' "$output" | grep -F -- 'CHALLENGES_GATE')" ]
+}
+
 @test "doctor says nothing about the transport when SCORE_INGEST is poll" {
   # The value every `.env` this wizard ever wrote carries. It agrees with the
   # behaviour exactly, so it must not put a ⚠️ on an upgraded box.

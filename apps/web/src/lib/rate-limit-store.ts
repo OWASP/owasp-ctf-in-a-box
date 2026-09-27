@@ -4,10 +4,9 @@ import { upstashEval } from "@/lib/upstash";
 /**
  * Per-login fixed-window rate limiter for authenticated routes.
  *
- * KEYED ON THE LOGIN, not the IP, and that is the point. `lib/gate-store.ts`
- * throttles by IP because the gate runs before anyone has an identity — and it
- * documents that the key is spoofable, because Caddy appends to
- * `x-forwarded-for` rather than replacing it. These routes run *after*
+ * KEYED ON THE LOGIN, not the IP, and that is the point. An IP key is
+ * spoofable here, because Caddy appends to `x-forwarded-for` rather than
+ * replacing it. These routes run *after*
  * `auth.api.getSession()`, so there is a session-backed login to key on that a
  * caller cannot forge without forging the session itself.
  *

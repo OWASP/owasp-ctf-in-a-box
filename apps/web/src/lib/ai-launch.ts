@@ -11,17 +11,14 @@ import { signLaunchToken, type AiTokenClaims, type AiTokenProgress } from "@/lib
  *
  * The gate-at-mint contract lives here by construction: the only caller is the
  * `/ai/[id]` Server Component, which runs behind a session, the team redirect,
- * and its OWN explicit `requireGatePassed()` call — so a token cannot exist
+ * and its OWN explicit `redirectIfNotLaunched()` call (#464) — so a token cannot exist
  * unless all three said yes, and `AI_TOKEN_TTL_SEC` is the window that
  * decision stays honoured. The API routes never re-check those gates; this is
  * why. See spec §6.
  *
- * The gate check is the page's own line, NOT something inherited from
- * `proxy.ts`. `GATED_ROUTES` is an exact-path set built from the registry's
- * nav hrefs, so it covers `/ai` and never `/ai/<id>` — the only route that
- * mints. Reading that middleware as coverage here is exactly the mistake this
- * note exists to stop; `/ai/[id]/page.tsx` and `/ai/[id]/actions.ts` are the
- * two enforcement points, and each carries its own call.
+ * The launch check is the page's own line; the proxy guards no module pages.
+ * `/ai/[id]/page.tsx` and `/ai/[id]/actions.ts` are the two enforcement
+ * points, and each carries its own call.
  *
  * The jti MUST satisfy `AI_JTI_RE` (the event route's replay guard refuses
  * anything else). `randomBytes(16).toString("base64url")` is 22 chars of the

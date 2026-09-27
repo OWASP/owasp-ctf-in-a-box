@@ -56,11 +56,6 @@ services:
       # (docs/hosting.md). Read at runtime by the app, so it must be passed
       # through here or setting it in .env silently does nothing.
       ALLOW_INSECURE_EVENT_URL: ${ALLOW_INSECURE_EVENT_URL:-}
-      # Pre-event password gate over the module pages ("the board opens at
-      # the keynote" — docs/operations.md, Known limitations). Same rule as
-      # above: runtime reads, so they only work if compose passes them.
-      CHALLENGES_GATE_ENABLED: ${CHALLENGES_GATE_ENABLED:-}
-      CHALLENGES_GATE_PASSWORD: ${CHALLENGES_GATE_PASSWORD:-}
     # NOT depends_on scorer: the app reads the scorer over HTTP lazily, per
     # request, and depends_on does not wait for readiness anyway — so this
     # only ever expressed a start ORDER. Keeping it would have forced the

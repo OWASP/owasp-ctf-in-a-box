@@ -20,7 +20,7 @@ const ALLOWED_METHODS = "POST, OPTIONS";
  * hosted challenge acting for a player.
  *
  * COOKIE-BLIND BY DESIGN. This route never imports `@/lib/auth`,
- * `next/headers` or `@/lib/gate-request`, and reads no cookie at all —
+ * `next/headers` or `@/lib/launch`, and reads no cookie at all —
  * identity is `token.sub`, the launch token's subject, and nothing else. That
  * is what makes CORS `*` on this endpoint safe rather than a CSRF hole: a
  * forged cross-site POST carries no session to ride on, because there is no
@@ -29,16 +29,17 @@ const ALLOWED_METHODS = "POST, OPTIONS";
  * `AI_PREFIX` comment. If this route ever starts reading a cookie, that
  * exemption becomes a hole, not a convenience.
  *
- * The pre-event gate is enforced once, at token-mint time, not here — see
- * spec §6.5. A launch token in hand already proves the box minted it after
- * that gate passed; this route does not re-check it, the same way it does not
- * re-check any other launch-time decision.
+ * The pre-launch lock (#464) is enforced once, at token-mint time, not here —
+ * see spec §6.5. A launch token in hand already proves the box minted it
+ * after that lock passed; this route does not re-check it, the same way it
+ * does not re-check any other launch-time decision. (Scoring itself is still
+ * closed before launch: `submitAiFlag`'s pause check reads the same missing
+ * scoring start as "not launched".)
  *
- * That enforcement is an EXPLICIT `requireGatePassed()` call in
- * `(site)/ai/[id]/page.tsx`, above the mint (and a second one in that page's
- * `actions.ts`, the in-box form's server half). It is NOT inherited from
- * `proxy.ts`: `GATED_ROUTES` matches exact paths, so the middleware covers
- * `/ai` and never `/ai/<id>` — which is the route that mints.
+ * That enforcement is an EXPLICIT `redirectIfNotLaunched()` call in
+ * `(site)/ai/[id]/page.tsx`, above the mint (and a second check in that
+ * page's `actions.ts`, the in-box form's server half). The proxy guards no
+ * module pages at all.
  *
  * `submitAiFlag` remains authoritative on pause, cooldown, already-solved and
  * grading — its Lua script re-checks all of that atomically. This route

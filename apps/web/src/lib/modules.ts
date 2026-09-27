@@ -1280,9 +1280,8 @@ git push -u origin fix/<short-description>`,
     id: "ai",
     displayName: "AI",
     description: "Prompt-injection and guardrail challenges hosted outside the box, scored inside it.",
-    // /ai exists now (the pages PR), so the module gets its nav entry — which
-    // also puts /ai in GATED_ROUTES (proxy.ts's matcher must carry it too;
-    // proxy.test.ts asserts the two agree) and the 404's route directory.
+    // /ai exists now (the pages PR), so the module gets its nav entry — and
+    // the 404's route directory.
     nav: { href: "/ai", label: "AI" },
     emptyBoard: {
       line: "No challenges solved yet. Every rank is unclaimed. Solve your first AI challenge and you’ll be the one everyone else is chasing.",

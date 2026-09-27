@@ -50,10 +50,12 @@ const FLAG_MAX_LEN = 512;
  *  deliberately absent: `submitAiFlag` never produces one. */
 function toResponse(result: AiSubmitResult): SubmitResponse {
   if (result.ok) {
-    if (!result.correct) return { correct: false };
+    // `dryRun` (#464 admin preview) rides along so the form says nothing was recorded.
+    const dry = result.dryRun ? { dryRun: true } : {};
+    if (!result.correct) return { correct: false, ...dry };
     // `already` rides along defaulted rather than omitted, same as the route:
     // a caller must never have to read a missing key as "false" itself.
-    return { correct: true, points: result.points, already: result.already ?? false };
+    return { correct: true, points: result.points, already: result.already ?? false, ...dry };
   }
   if (result.reason === "cooldown" && result.retryAt) return { error: "cooldown", retryAt: result.retryAt };
   return { error: result.reason };

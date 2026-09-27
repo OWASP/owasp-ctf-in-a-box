@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import PreviewBanner from "@/components/preview-banner";
 import { notFound } from "next/navigation";
 import PageHeader from "@/components/page-header";
 import ChallengeGrid from "@/components/challenge-grid";
@@ -57,7 +58,7 @@ export default async function ChallengesPage() {
   // any content load (a refused viewer goes to the landing page). It also
   // feeds the viewer's own solved marks below.
   const session = await auth.api.getSession({ headers: await headers() });
-  await redirectIfNotLaunched((session?.user as { login?: string } | undefined)?.login);
+  const launch = await redirectIfNotLaunched((session?.user as { login?: string } | undefined)?.login);
 
   const [catalog, title, enabledApps, enabledTotals] = await Promise.all([
     getChallengeCatalog(),
@@ -108,6 +109,8 @@ export default async function ChallengesPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      {/* #464: an admin browsing before launch sees what contestants will. */}
+      {launch.preview && <PreviewBanner />}
       <PageHeader eyebrow="Targets" title={title} description={description} />
       {/* The scoring cadence, stated instead of silent (DESIGN.MD: "scoring
           latency — the honest version"). The app never sees a contestant's

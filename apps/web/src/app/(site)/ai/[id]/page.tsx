@@ -23,6 +23,7 @@
 // in `[id]/not-found.tsx`).
 
 import type { Metadata } from "next";
+import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -135,6 +136,8 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
 
   return (
     <div className="flex flex-col gap-6">
+      {/* #464: an admin browsing before launch sees what contestants will. */}
+      {launch.preview && <PreviewBanner />}
       {viewerIsTeamless && <TeamlessNotice what="solves" />}
       <div className="flex flex-col gap-3">
         <Link href="/ai" className="ds-link w-fit text-sm">

@@ -19,6 +19,7 @@ vi.mock("next/navigation", () => ({
 import ChallengeDetail, {
   ChallengeCard,
   describeCorrect,
+  describeIncorrect,
   describeRefusal,
   dispatchSubmit,
   resultLine,
@@ -258,5 +259,13 @@ describe("describeRefusal", () => {
   // (sign in again), not just that something went wrong.
   it("tells an expired session to sign in again, by name", () => {
     expect(describeRefusal("unauthorized")).toBe("Your session expired — sign in and try again.");
+  });
+});
+
+describe("dry-run result copy (#464 admin preview)", () => {
+  it("says a preview grade recorded nothing, right or wrong", () => {
+    expect(describeCorrect(50, false, true)).toBe("Correct — preview only, nothing was recorded (+50 once the event launches).");
+    expect(describeIncorrect(true)).toBe("Not quite — preview only, nothing was recorded.");
+    expect(describeIncorrect(false)).toBe("Not quite.");
   });
 });

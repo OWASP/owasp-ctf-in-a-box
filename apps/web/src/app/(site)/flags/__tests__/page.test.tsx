@@ -280,3 +280,13 @@ describe("pre-launch lock (#464)", () => {
     expect(listChallenges).not.toHaveBeenCalled();
   });
 });
+
+describe("the admin preview banner (#464)", () => {
+  it("renders for an admin preview and not for anyone else", async () => {
+    listChallenges.mockResolvedValue([]);
+    launchLock.redirectIfNotLaunched.mockResolvedValueOnce({ allowed: true, preview: true });
+    expect(renderToStaticMarkup(await FlagsPage())).toContain("Preview — event not launched");
+    launchLock.redirectIfNotLaunched.mockResolvedValueOnce({ allowed: true, preview: false });
+    expect(renderToStaticMarkup(await FlagsPage())).not.toContain("Preview — event not launched");
+  });
+});

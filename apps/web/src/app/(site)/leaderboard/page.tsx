@@ -3,6 +3,7 @@
 // both. Data (and auth) in, interactivity down.
 
 import type { Metadata } from "next";
+import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import PageHeader from "@/components/page-header";
 import Leaderboard from "@/components/leaderboard";
@@ -69,7 +70,7 @@ export default async function LeaderboardPage({
   // #464 pre-launch lock, before the board is read: standings (and the
   // projector surface) are module content. Admins get through as a preview.
   const session = await auth.api.getSession({ headers: await headers() });
-  await redirectIfNotLaunched((session?.user as { login?: string } | undefined)?.login);
+  const launch = await redirectIfNotLaunched((session?.user as { login?: string } | undefined)?.login);
 
   const [data, modules, enabledApps] = await Promise.all([
     getFoldedLeaderboard(),
@@ -139,6 +140,8 @@ export default async function LeaderboardPage({
 
   return (
     <div className="flex flex-col gap-8">
+      {/* #464: an admin browsing before launch sees what contestants will. */}
+      {launch.preview && <PreviewBanner />}
       <PageHeader
         eyebrow="Standings"
         title="Leaderboard"

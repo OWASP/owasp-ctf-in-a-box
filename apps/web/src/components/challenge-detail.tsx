@@ -54,8 +54,8 @@ export type ClassicChallengeView = ChallengeView;
  *  this component knows how to render — the two cannot drift into disagreeing
  *  about a field. Nothing here can carry a flag, a token or a key. */
 export type SubmitResponse =
-  | { correct: true; points: number; already?: boolean }
-  | { correct: false }
+  | { correct: true; points: number; already?: boolean; dryRun?: boolean }
+  | { correct: false; dryRun?: boolean }
   | { error: string; retryAt?: string };
 
 /** The ai module's transport: a Server Action bound to the challenge id,
@@ -108,9 +108,17 @@ export type Feedback = { kind: "success" | "error" | "info"; text: string };
  *  already banked as `correct: true, points: 0`, and rendering that through
  *  the normal template would announce "Correct — +0 points." — the opposite
  *  of the truth. Exported for direct testing. */
-export function describeCorrect(points: number, already?: boolean): string {
+export function describeCorrect(points: number, already?: boolean, dryRun?: boolean): string {
+  // An admin preview (#464): graded by the same script, nothing recorded.
+  if (dryRun) return `Correct — preview only, nothing was recorded (+${points} once the event launches).`;
   if (already) return "You already solved this one — those points are already yours.";
   return `Correct — +${points} point${points === 1 ? "" : "s"}.`;
+}
+
+/** The wrong-answer line; an admin preview (#464) says nothing was recorded.
+ *  Exported for direct testing. */
+export function describeIncorrect(dryRun?: boolean): string {
+  return dryRun ? "Not quite — preview only, nothing was recorded." : "Not quite.";
 }
 
 /** The ONE result line a challenge card prints, and the precedence between the
@@ -248,11 +256,11 @@ export default function ChallengeDetail(
       if (ok && "correct" in data) {
         setFeedback(
           data.correct
-            ? { kind: "success", text: describeCorrect(data.points, data.already) }
+            ? { kind: "success", text: describeCorrect(data.points, data.already, data.dryRun) }
             : // No "Try again." — same reasoning as quiz-board.tsx: a wrong
               // flag starts the classic cooldown, and the card's own countdown
               // is what says when the form re-opens.
-              { kind: "error", text: "Not quite." },
+              { kind: "error", text: describeIncorrect(data.dryRun) },
         );
       } else if ("error" in data && typeof data.error === "string") {
         setFeedback({ kind: "info", text: describeRefusal(data.error) });

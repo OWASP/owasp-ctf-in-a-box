@@ -15,6 +15,7 @@
 // and 404s for an unknown or deleted challenge id.
 
 import type { Metadata } from "next";
+import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -65,7 +66,7 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   const login = (session?.user as { login?: string } | undefined)?.login;
   // #464 pre-launch lock: before ANY content load below. A refused viewer
   // (not launched, not an admin) goes to the landing page.
-  await redirectIfNotLaunched(login);
+  const launch = await redirectIfNotLaunched(login);
   const viewerIsAdmin = await isAdminLogin(login);
 
   // Same order as /flags: the team redirect fires before the loads below, so
@@ -109,6 +110,8 @@ export default async function ClassicChallengePage({ params }: { params: Promise
 
   return (
     <div className="flex flex-col gap-6">
+      {/* #464: an admin browsing before launch sees what contestants will. */}
+      {launch.preview && <PreviewBanner />}
       {viewerIsTeamless && <TeamlessNotice what="solves" />}
       <div className="flex flex-col gap-3">
         <Link href="/flags" className="ds-link w-fit text-sm">

@@ -44,8 +44,8 @@ export type QuizQuestionView = {
 } & QuizStatus;
 
 type AnswerResponse =
-  | { correct: true; points: number; already?: boolean }
-  | { correct: false }
+  | { correct: true; points: number; already?: boolean; dryRun?: boolean }
+  | { correct: false; dryRun?: boolean }
   | { error: string; retryAt?: string };
 
 export type Feedback = { kind: "success" | "error" | "info"; text: string };
@@ -57,9 +57,17 @@ export type Feedback = { kind: "success" | "error" | "info"; text: string };
  *  template would announce "Correct — +0 points." — which reads as "this
  *  question is worth nothing", the opposite of the truth. Exported for
  *  direct testing. */
-export function describeCorrect(points: number, already?: boolean): string {
+export function describeCorrect(points: number, already?: boolean, dryRun?: boolean): string {
+  // An admin preview (#464): graded by the same script, nothing recorded.
+  if (dryRun) return `Correct — preview only, nothing was recorded (+${points} once the event launches).`;
   if (already) return "You already answered this one — those points are already yours.";
   return `Correct — +${points} point${points === 1 ? "" : "s"}.`;
+}
+
+/** The wrong-answer line; an admin preview (#464) says nothing was recorded.
+ *  Exported for direct testing. */
+export function describeIncorrect(dryRun?: boolean): string {
+  return dryRun ? "Not quite — preview only, nothing was recorded." : "Not quite.";
 }
 
 /** The ONE result line a question card prints, and the precedence between the
@@ -242,13 +250,13 @@ export default function QuizBoard({
         setFeedback((prev) => ({
           ...prev,
           [question.id]: data.correct
-            ? { kind: "success", text: describeCorrect(data.points, data.already) }
+            ? { kind: "success", text: describeCorrect(data.points, data.already, data.dryRun) }
             // No "Try again." here. Whether they CAN try again right now is
             // the retry gate's answer, not this line's: a wrong answer
             // usually starts a cooldown, and the card's own countdown says
             // when. Printing an invitation next to a form the same
             // submission just disabled is what made this read as broken.
-            : { kind: "error", text: "Not quite." },
+            : { kind: "error", text: describeIncorrect(data.dryRun) },
         }));
       } else if ("error" in data && typeof data.error === "string") {
         setFeedback((prev) => ({

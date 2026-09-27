@@ -12,6 +12,7 @@
 // /api/classic/submit itself.
 
 import type { Metadata } from "next";
+import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import ModuleEmptyState from "@/components/module-empty-state";
@@ -56,7 +57,7 @@ export default async function FlagsPage() {
   const login = (session?.user as { login?: string } | undefined)?.login;
   // #464 pre-launch lock: before ANY content load below. A refused viewer
   // (not launched, not an admin) goes to the landing page.
-  await redirectIfNotLaunched(login);
+  const launch = await redirectIfNotLaunched(login);
   // Drives the empty state's authoring route only — same check `/admin` and
   // every `/api/admin/*` route gate on, so a link is never offered to someone
   // the admin page would then 403 at. Mirrors quiz/page.tsx.
@@ -117,6 +118,8 @@ export default async function FlagsPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      {/* #464: an admin browsing before launch sees what contestants will. */}
+      {launch.preview && <PreviewBanner />}
       {/* The eyebrow names WHAT THE PAGE LISTS, the title names the module —
           eyebrow={moduleTitle} rendered the same words twice, stacked
           ("QUIZ" over "Quiz"), which read as a template slip rather than a

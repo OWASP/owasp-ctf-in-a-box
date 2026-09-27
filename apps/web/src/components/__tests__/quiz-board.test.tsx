@@ -346,3 +346,9 @@ describe("describeRefusal (quiz)", () => {
     expect(describeQuizRefusal("not-launched")).toMatch(/launch/i);
   });
 });
+
+describe("quiz dry-run result copy (#464 admin preview)", () => {
+  it("says a preview grade recorded nothing", () => {
+    expect(describeCorrect(20, false, true)).toBe("Correct — preview only, nothing was recorded (+20 once the event launches).");
+  });
+});

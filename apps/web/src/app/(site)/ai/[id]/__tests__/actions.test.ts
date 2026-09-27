@@ -211,7 +211,7 @@ describe("submitAiFlagAction admin preview (#464)", () => {
   it("grades a preview admin's flag as a dry run", async () => {
     getLaunchAccess.mockResolvedValue({ allowed: true, preview: true });
     submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40, dryRun: true });
-    await submitAiFlagAction("a1", "CTF{x}");
+    expect(await submitAiFlagAction("a1", "CTF{x}")).toEqual({ correct: true, points: 40, already: false, dryRun: true });
     expect(submitAiFlag).toHaveBeenCalledWith("alice", "a1", "CTF{x}", { dryRun: true });
   });
 });

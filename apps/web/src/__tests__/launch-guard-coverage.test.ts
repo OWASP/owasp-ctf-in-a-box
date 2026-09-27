@@ -80,6 +80,10 @@ describe("launch guard coverage (#464)", () => {
     expect(readFileSync(p, "utf8")).toContain("await redirectIfNotLaunched(");
   });
 
+  it.each(pages.map((p) => [rel(p), p]))("page %s shows an admin preview the banner", (_name, p) => {
+    expect(readFileSync(p, "utf8")).toMatch(/\.preview && <PreviewBanner \/>/);
+  });
+
   it.each(pages.map((p) => [rel(p), p]))("page %s locks its generateMetadata too (if it has one)", (_name, p) => {
     const meta = metadataSource(readFileSync(p, "utf8"));
     // Metadata that reads module CONTENT (a challenge/question list, a

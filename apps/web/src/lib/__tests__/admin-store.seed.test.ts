@@ -6,6 +6,13 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
+// #186: the demo ships two real forensics artifacts through the attachments
+// store, which has its own suites — here, only what the seed asks of it.
+const files = vi.hoisted(() => ({
+  listAttachments: vi.fn(async (_module: string, _item: string) => [] as Record<string, unknown>[]),
+  addUpload: vi.fn(async (..._args: unknown[]) => ({})),
+}));
+vi.mock("@/lib/attachments-store", () => files);
 
 import { seedDemoData, SEED_CATEGORIES_SCRIPT } from "@/lib/admin-store";
 import { upsertQuestion } from "@/lib/quiz-store";
@@ -23,6 +30,7 @@ import {
   DEMO_AI_CATEGORIES,
   DEMO_AI_SOLVES,
   DEMO_SPONSORS,
+  DEMO_CLASSIC_ATTACHMENTS,
 } from "@/lib/demo-fixture";
 
 /** The settings-read shape `getAdminSettings` decodes `enabledModules` from —
@@ -797,5 +805,47 @@ describe("seedDemoData hands its category work to one atomic script", () => {
     expect(result.contestants).toBe(DEMO_CONTESTANTS.length);
     expect(spy).toHaveBeenCalledWith("[admin] seed audit write failed:", expect.stringContaining("NOAUTH"));
     spy.mockRestore();
+  });
+});
+
+describe("demo attachments (#186)", () => {
+  beforeEach(() => {
+    files.listAttachments.mockReset();
+    files.listAttachments.mockResolvedValue([]);
+    files.addUpload.mockClear();
+  });
+
+  it("ship a real artifact for each forensics challenge — the flag is in the bytes", () => {
+    const byId = new Map(DEMO_CHALLENGES.map((c) => [c.id, c]));
+    expect(DEMO_CLASSIC_ATTACHMENTS.map((a) => a.challengeId).sort()).toEqual(["forensics-metadata-leak", "forensics-packet-peek"]);
+    for (const a of DEMO_CLASSIC_ATTACHMENTS) {
+      const bytes = Buffer.from(a.base64, "base64");
+      expect(bytes.includes(Buffer.from(byId.get(a.challengeId)!.flag))).toBe(true);
+    }
+  });
+
+  it("uploads each artifact when classic is on", async () => {
+    await seedDemoData("alice");
+    expect(files.addUpload).toHaveBeenCalledTimes(DEMO_CLASSIC_ATTACHMENTS.length);
+    const [module, item, name] = files.addUpload.mock.calls[0] as unknown as [string, string, string];
+    expect(module).toBe("classic");
+    expect(DEMO_CLASSIC_ATTACHMENTS.map((a) => a.challengeId)).toContain(item);
+    expect(name).toMatch(/\.(pcap|jpg)$/);
+  });
+
+  it("does not upload an artifact twice on a re-seed", async () => {
+    files.listAttachments.mockImplementation(async (_m: string, item: string) => {
+      const a = DEMO_CLASSIC_ATTACHMENTS.find((x) => x.challengeId === item)!;
+      const sha = (await import("node:crypto")).createHash("sha256").update(Buffer.from(a.base64, "base64")).digest("hex");
+      return [{ id: "a1", kind: "upload", name: a.name, sha256: sha }];
+    });
+    await seedDemoData("alice");
+    expect(files.addUpload).not.toHaveBeenCalled();
+  });
+
+  it("uploads nothing when classic is off", async () => {
+    mockEnabledModules(["quiz"]);
+    await seedDemoData("alice");
+    expect(files.addUpload).not.toHaveBeenCalled();
   });
 });

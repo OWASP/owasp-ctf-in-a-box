@@ -256,6 +256,39 @@ export const DEMO_CHALLENGES: DemoChallenge[] = [
 
 export type DemoClassicSolve = { login: string; challengeId: string };
 
+/** #186: tiny synthetic artifacts, so the two forensics challenges ship the
+ *  file they ask about instead of pretending. Made for this kit (nothing
+ *  captured or photographed): a one-packet pcap whose FTP PASS carries the
+ *  flag, and a 1x1 JPEG whose comment segment does. Seeded through the
+ *  attachments store, so they sit behind the same locks as any upload. */
+export type DemoClassicAttachment = { challengeId: string; name: string; base64: string };
+
+export const DEMO_CLASSIC_ATTACHMENTS: DemoClassicAttachment[] = [
+  {
+    challengeId: "forensics-packet-peek",
+    name: "capture.pcap",
+    base64:
+    "1MOyoQIABAAAAAAAAAAAAP//AAABAAAAgDuxagAAAABgAAAAYAAAAAIAAAAAIQIAAAAAIwgARQAAUgAAAABABmZ7CgAAFwoAABXA" +
+    "AAAVAAAAAQAAAAFQGPrwAAAAAFBBU1MgY3RmYm94e1BsYWludGV4dF9GdHBfU3RyaWtlc19BZ2Fpbn0NCg==",
+  },
+  {
+    challengeId: "forensics-metadata-leak",
+    name: "photo.jpg",
+    base64:
+    "/9j//gAlQ29tbWVudDogY3RmYm94e0V4aWZfTmV2ZXJfRm9yZ2V0c33/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAA" +
+    "AAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAAD/7QA4UGhvdG9zaG9w" +
+    "IDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAAQABAwEiAAIRAQMRAf/EAB8AAAEFAQEB" +
+    "AQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHw" +
+    "JDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqi" +
+    "o6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAA" +
+    "AAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDTh" +
+    "JfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ip" +
+    "qrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwUDAwMFBgUFBQUGCAYG" +
+    "BgYGCAoICAgICAgKCgoKCgoKCgwMDAwMDA4ODg4ODw8PDw8PDw8PD//bAEMBAgICBAQEBwQEBxALCQsQEBAQEBAQEBAQEBAQEBAQ" +
+    "EBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEP/dAAQAAf/aAAwDAQACEQMRAD8A1KKKK/TD/Ls//9k=",
+  },
+];
+
 // Spread across several demo contestants (and across both members of more
 // than one team) so the classic board's contribution to the combined
 // leaderboard is visible, not just an authored board with nobody on it.

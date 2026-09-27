@@ -91,8 +91,17 @@ describe("launch guard coverage (#464)", () => {
     // identity (title, blurb, target app names) is public on the landing page
     // anyway, so reading only that needs no guard.
     if (meta && /await (list[A-Z]\w*|getViewer\w*|getFolded\w*|getSolve\w*)\(/.test(meta)) {
-      expect(meta).toContain("getLaunchAccess(");
+      // classicVisibility (#186) is a lock too — it asks getLaunchAccess
+      // itself (pinned by the next test), so the page and downloads share it.
+      expect(meta).toMatch(/getLaunchAccess\(|await classicVisibility\(/);
     }
+  });
+
+  it("classicVisibility, the shared classic lock, asks the launch lock first", () => {
+    const src = readFileSync(join(APP, "../lib/classic-visibility.ts"), "utf8");
+    const launch = src.indexOf("await getLaunchAccess(");
+    expect(launch).toBeGreaterThan(-1);
+    expect(launch).toBeLessThan(src.indexOf("await listChallenges("));
   });
 
   it.each(lockedRoutes.map((p) => [rel(p), p]))("route %s calls the launch lock", (_name, p) => {

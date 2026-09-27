@@ -25,43 +25,32 @@ import { deriveStatus } from "@/lib/derive-status";
 import { isAdminLogin } from "@/lib/admin-auth";
 import { auth } from "@/lib/auth";
 import { getAdminSettings } from "@/lib/admin-store";
-import { listStories,
+import {
   CLASSIC_COOLDOWN_SEC,
   getSolveCounts,
   getViewerClassic,
   listChallenges,
   type ViewerClassic,
 } from "@/lib/classic-store";
+import { classicVisibility } from "@/lib/classic-visibility";
 import { isModuleLive } from "@/lib/enabled-modules";
-import { getLaunchAccess, redirectIfNotLaunched } from "@/lib/launch";
-import { getTeamClassicSolvedIds } from "@/lib/classic-team";
-import { isLocked, storyPositions } from "@/lib/story-lock";
+import { redirectIfNotLaunched } from "@/lib/launch";
 import { getClassicHintIds, getHintNotice, getViewerHints } from "@/lib/hint-store";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 import TeamlessNotice from "@/components/teamless-notice";
 
-/** Whether `id` is a story step still locked for `login`'s team (#463). A
- *  stories or team read that fails THROWS — the page errors rather than
- *  showing a step it cannot prove is open. */
-async function storyLockedFor(id: string, login: string | undefined, existing: ReadonlySet<string>): Promise<boolean> {
-  const pos = storyPositions(await listStories(), existing).get(id);
-  if (!pos?.prereq) return false;
-  return isLocked(pos, login ? await getTeamClassicSolvedIds(login) : new Set());
-}
-
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
-  if (!(await isModuleLive("classic"))) return {};
-  // #464: metadata renders on its own path (a flight response can carry it
-  // next to the page's redirect), so it is locked too — a refused viewer gets
-  // no title, category or points, and not even whether the id exists.
+  // #464/#463: metadata renders on its own path (a flight response can carry
+  // it next to the page's redirect), so it asks the same visibility question
+  // as the page — a refused viewer gets no title, category or points, and not
+  // even whether the id exists.
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!(await getLaunchAccess((session?.user as { login?: string } | undefined)?.login)).allowed) return {};
-  const { id } = await params;
   const login = (session?.user as { login?: string } | undefined)?.login;
-  const all = await listChallenges();
-  if (await storyLockedFor(decodeURIComponent(id), login, new Set(all.map((c) => c.id)))) return {}; // #463: nothing about a locked step
-  const challenge = all.find((c) => c.id === decodeURIComponent(id));
+  const { id } = await params;
+  const challengeId = decodeURIComponent(id);
+  if ((await classicVisibility(login, challengeId)).state !== "visible") return {};
+  const challenge = (await listChallenges()).find((c) => c.id === challengeId);
   if (!challenge) return {};
   return {
     title: challenge.title,
@@ -105,10 +94,11 @@ export default async function ClassicChallengePage({ params }: { params: Promise
 
   const challenge = challenges.find((c) => c.id === challengeId);
   if (!challenge) notFound();
-  // #463: a locked story step is a 404, the same as an unknown id — its page
-  // must reveal nothing, not even that it exists. An admin preview (#464) may
-  // open it, to test the whole story before launch.
-  if (!launch.preview && (await storyLockedFor(challengeId, login, new Set(challenges.map((c) => c.id))))) notFound();
+  // #463/#186: the shared visibility answer — the attachment download route
+  // asks the same one. A locked story step is a 404, the same as an unknown
+  // id: its page must reveal nothing, not even that it exists. An admin
+  // preview (#464) may open it, to test the whole story before launch.
+  if ((await classicVisibility(login, challengeId)).state !== "visible") notFound();
 
   const moduleTitle = modules.find((m) => m.id === "classic")?.title ?? "Jeopardy";
   const cooldownMs = (settings.classicCooldownSec ?? CLASSIC_COOLDOWN_SEC) * 1000;

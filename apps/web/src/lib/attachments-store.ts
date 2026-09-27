@@ -161,7 +161,14 @@ export async function addUpload(
     await dropChunks(id, chunks.length, keys);
     throw err;
   }
-  await commit(itemId, module, att, keys);
+  try {
+    await commit(itemId, module, att, keys);
+  } catch (err) {
+    // A refusal already deleted the chunks in Lua; anything else (a Redis
+    // error after the chunks landed) must not leave them behind, uncounted.
+    if (!(err instanceof AttachmentError)) await dropChunks(id, chunks.length, keys);
+    throw err;
+  }
   return att;
 }
 

@@ -42,6 +42,15 @@ describe.skipIf(!liveConfigured)("attachments store — live (#186)", () => {
     expect(await resolveAttachment(att.id, k)).toBeNull();
   }, 60_000);
 
+  // Review I1: a name that used to be cut mid-emoji made cjson reject the
+  // commit and orphaned the chunks. It now commits and reads back.
+  it("commits a name with an emoji at the length cap", async () => {
+    const k = keysFor("emoji");
+    const att = await addUpload("classic", "x", "x".repeat(199) + "😀😀", new Uint8Array([1, 2, 3]), k);
+    expect(Array.from(att.name)).toHaveLength(200);
+    expect((await listAttachments("classic", "x", k))[0].name).toBe(att.name);
+  });
+
   it("refuses the 11th attachment on an item", async () => {
     const k = keysFor("items");
     for (let i = 0; i < 10; i += 1) await addLink("classic", "x", `l${i}`, `https://example.org/${i}`, k);

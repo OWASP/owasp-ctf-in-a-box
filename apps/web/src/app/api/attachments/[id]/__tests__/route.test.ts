@@ -78,6 +78,12 @@ describe("GET /api/attachments/[id]", () => {
     expect(unknown.status).toBe(404);
     expect(malformed.status).toBe(404);
     expect(await unknown.text()).toBe(await malformed.text());
+    expect(m.visibilityCalls).toEqual([]);
+  });
+
+  it("never answers 304 for a hidden attachment, even with its ETag", async () => {
+    m.state = "locked";
+    expect((await get({ "if-none-match": `"${"ab".repeat(32)}"` })).status).toBe(404);
   });
 
   it("404s a link (never proxied) and an upload still missing its bytes", async () => {

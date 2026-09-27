@@ -60,6 +60,16 @@ describe("addUpload", () => {
     await expect(addUpload("classic", "x", "a", new Uint8Array(4))).rejects.toThrow(/50\.0 MB .* 49\.0 MB are stored/);
   });
 
+  // Review I2: only a Lua refusal cleaned up; a commit that THROWS (a Redis
+  // blip after the chunks landed) orphaned up to 5 MiB outside the cap.
+  it("drops the chunks when the commit itself throws", async () => {
+    mocks.upstashEval.mockRejectedValueOnce(new Error("Upstash EVAL failed: NOAUTH"));
+    await expect(addUpload("classic", "x", "a", new Uint8Array(ATTACHMENT_CHUNK_BYTES + 1))).rejects.toThrow(/NOAUTH/);
+    const last = calls().at(-1)!;
+    expect(last[0][0]).toBe("HDEL");
+    expect(last[0].slice(2)).toHaveLength(2);
+  });
+
   it("drops the chunks it wrote when a chunk write fails, and never commits", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }]).mockResolvedValueOnce([{ error: "NOAUTH" }]);
     await expect(addUpload("classic", "x", "a", new Uint8Array(ATTACHMENT_CHUNK_BYTES + 1))).rejects.toThrow(/NOAUTH/);

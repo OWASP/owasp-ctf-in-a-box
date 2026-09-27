@@ -95,6 +95,22 @@ describe("/api/admin/attachments", () => {
     expect((await upload(new Uint8Array(1))).status).toBe(503);
   });
 
+  // Review M2: a multipart body would be stored with its boundaries inside.
+  it("415s an upload that is not application/octet-stream", async () => {
+    const res = await POST(
+      new Request(url("module=classic&item=web-one&name=x"), { method: "POST", body: "--b\r\n", headers: { "content-type": "multipart/form-data; boundary=b" } }),
+    );
+    expect(res.status).toBe(415);
+    expect(m.addUpload).not.toHaveBeenCalled();
+  });
+
+  // Review M1: the JSON branch is bounded too.
+  it("413s an oversized link body", async () => {
+    const res = await json({ module: "classic", item: "web-one", link: { name: "x", url: "https://e.org/" + "a".repeat(20_000) } });
+    expect(res.status).toBe(413);
+    expect(m.addLink).not.toHaveBeenCalled();
+  });
+
   it("adds a link from an exact JSON shape", async () => {
     const res = await json({ module: "classic", item: "web-one", link: { name: "big", url: "https://e.org/big" } });
     expect(res.status).toBe(200);

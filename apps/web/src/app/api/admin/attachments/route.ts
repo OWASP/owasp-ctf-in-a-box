@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
 import { ATTACHMENT_MAX_BYTES, type Attachment, type AttachmentModule } from "@/lib/attachments-keys";
 import { AttachmentError, addLink, addUpload, listAttachments, removeAttachment } from "@/lib/attachments-store";
-import { readBoundedBytes } from "@/lib/bounded-body";
+import { readBoundedBody, readBoundedBytes } from "@/lib/bounded-body";
 import { listChallengeIds } from "@/lib/classic-store";
 
 /**
@@ -26,6 +26,7 @@ import { listChallengeIds } from "@/lib/classic-store";
 
 const MODULES = new Set<AttachmentModule>(["classic"]);
 const LINK_KEYS = new Set(["module", "item", "link"]);
+const LINK_BODY_MAX = 8 * 1024;
 
 const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
 
@@ -62,8 +63,17 @@ export async function POST(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
 
-  if ((request.headers.get("content-type") ?? "").startsWith("application/json")) {
-    const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
+  if (contentType.startsWith("application/json")) {
+    // Bounded like the upload: authenticated is not trusted with unbounded memory.
+    const read = await readBoundedBody(request, LINK_BODY_MAX);
+    if (!read.ok) return read.reason === "too_large" ? bad("request too large", 413) : bad("could not read the request");
+    let body: Record<string, unknown> | null = null;
+    try {
+      body = JSON.parse(read.body) as Record<string, unknown> | null;
+    } catch {
+      body = null;
+    }
     const link = body?.link as Record<string, unknown> | undefined;
     if (
       !body ||
@@ -90,6 +100,10 @@ export async function POST(request: Request) {
     }
   }
 
+  // Raw bytes only: a multipart body would be stored with its boundaries in it.
+  if (!contentType.startsWith("application/octet-stream")) {
+    return bad("upload the file as application/octet-stream, or a link as application/json", 415);
+  }
   const q = new URL(request.url).searchParams;
   const owner = q.get("module") as AttachmentModule;
   const item = q.get("item") ?? "";

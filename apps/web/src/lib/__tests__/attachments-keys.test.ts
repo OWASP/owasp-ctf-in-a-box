@@ -13,10 +13,28 @@ describe("sanitizeFilename (#186)", () => {
     expect(sanitizeFilename("C:\\temp\\cap.pcap")).toBe("cap.pcap");
     expect(sanitizeFilename("a\r\nSet-Cookie: x.txt")).toBe("aSet-Cookie: x.txt");
   });
+  // Review I1: a UTF-16 slice can split an emoji; a lone surrogate then
+  // breaks cjson in the commit script and encodeURIComponent in the header.
+  it("caps by code point and never leaves a lone surrogate", () => {
+    const name = sanitizeFilename("x".repeat(199) + "😀😀");
+    expect(Array.from(name)).toHaveLength(200);
+    expect(name.endsWith("😀")).toBe(true);
+    expect(() => encodeURIComponent(sanitizeFilename("bad\ud800name"))).not.toThrow();
+    expect(() => encodeURIComponent(sanitizeFilename("x".repeat(199) + "😀"))).not.toThrow();
+  });
+
+  // Review M4: a bidi override shows "‮fdp.exe" as "exe.pdf"; a leading dot
+  // makes a hidden or special file.
+  it("drops format characters and leading dots", () => {
+    expect(sanitizeFilename("\u202Efdp.exe")).toBe("fdp.exe");
+    expect(sanitizeFilename(".htaccess")).toBe("htaccess");
+    expect(sanitizeFilename("..")).toBe("file");
+  });
+
   it("falls back to 'file' for an empty result and caps the length", () => {
     expect(sanitizeFilename("../")).toBe("file");
     expect(sanitizeFilename("   ")).toBe("file");
-    expect(sanitizeFilename("x".repeat(300) + ".bin").length).toBe(200);
+    expect(Array.from(sanitizeFilename("x".repeat(300) + ".bin"))).toHaveLength(200);
   });
 });
 

@@ -58,14 +58,21 @@ export function newAttachmentId(): string {
   return `a${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** A display/download name: the last path segment, control characters
- *  (CR/LF included) dropped, trimmed, at most `ATTACHMENT_NAME_MAX`
- *  characters, and `file` when nothing is left. */
+/** A display/download name: the last path segment; control characters
+ *  (CR/LF included) and format characters (a bidi override would show
+ *  "‮fdp.exe" as "exe.pdf") dropped; lone surrogates replaced (they break
+ *  cjson in the commit script and `encodeURIComponent` in the header);
+ *  leading dots dropped; trimmed; at most `ATTACHMENT_NAME_MAX` CODE POINTS
+ *  (a UTF-16 slice could split an emoji); `file` when nothing is left. */
 export function sanitizeFilename(raw: string): string {
   const last = raw.split(/[/\\]/).pop() ?? "";
-  // eslint-disable-next-line no-control-regex
-  const clean = last.replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  return clean.slice(0, ATTACHMENT_NAME_MAX) || "file";
+  const clean = last
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]|\p{Cf}/gu, "")
+    .trim()
+    .replace(/^\.+/, "");
+  return Array.from(clean).slice(0, ATTACHMENT_NAME_MAX).join("").trim() || "file";
 }
 
 /** `Content-Disposition` for a download: always `attachment`, an ASCII

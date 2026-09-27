@@ -17,6 +17,9 @@
 // signature, not a stub.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #464: the Send test mints a PREVIEW token while the event is not launched.
+const launchLock = vi.hoisted(() => ({ getLaunchAccess: vi.fn(async () => ({ allowed: true, preview: false })) }));
+vi.mock("@/lib/launch", () => launchLock);
 import type { AiTokenClaims } from "@/lib/ai-token";
 
 const mocks = vi.hoisted(() => ({
@@ -190,7 +193,7 @@ describe("POST /api/admin/ai/test", () => {
     expect(json.body).toMatchObject({ dryRun: true, wouldAward: true });
     // The dry run never claims a nonce and never awards for real.
     expect(mocks.claimAiNonce).not.toHaveBeenCalled();
-    expect(mocks.awardAiEvent).toHaveBeenCalledWith("organizer", CHAL, { dryRun: true });
+    expect(mocks.awardAiEvent).toHaveBeenCalledWith("organizer", CHAL, { dryRun: true, preview: false });
     // The private key must never leak into the response.
     const serialized = JSON.stringify(json);
     expect(serialized).not.toContain("aik_");
@@ -245,7 +248,7 @@ describe("POST /api/admin/ai/test", () => {
     // A real award never runs: no nonce claimed, and the event handler was
     // called with dryRun:true regardless of the caller's dryRun:false.
     expect(mocks.claimAiNonce).not.toHaveBeenCalled();
-    expect(mocks.awardAiEvent).toHaveBeenCalledWith("organizer", CHAL, { dryRun: true });
+    expect(mocks.awardAiEvent).toHaveBeenCalledWith("organizer", CHAL, { dryRun: true, preview: false });
     // The minted token names the ADMIN, never the caller-supplied "victim".
     expect(mocks.signLaunchToken).toHaveBeenCalledTimes(1);
     const claims = mocks.signLaunchToken.mock.calls[0][0] as AiTokenClaims;
@@ -272,5 +275,16 @@ describe("POST /api/admin/ai/test", () => {
     expect(json.body).not.toMatchObject({ error: "invalid-signature" });
     expect(json.body).not.toMatchObject({ error: "invalid-token" });
     expect(json.status).toBe(200);
+  });
+
+  // #464: before launch the Send test would only ever answer "paused". It
+  // mints the admin's demo token as a PREVIEW, so the dry run is graded while
+  // scoring is closed and can reach would-award.
+  it("mints a preview token before launch, so the dry run is graded while scoring is closed", async () => {
+    allGatesOpen();
+    launchLock.getLaunchAccess.mockResolvedValueOnce({ allowed: true, preview: true });
+    const res = await POST(adminReq());
+    expect(res.status).toBe(200);
+    expect(mocks.awardAiEvent).toHaveBeenCalledWith("organizer", CHAL, { dryRun: true, preview: true });
   });
 });

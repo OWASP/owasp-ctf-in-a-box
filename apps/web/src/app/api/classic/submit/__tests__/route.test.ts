@@ -8,6 +8,9 @@
 // stored one — pinned explicitly below, not just inferred from status codes.
 
 import { beforeEach, describe, expect, it } from "vitest";
+// The activity log, so the dry-run test below can see that nothing was logged.
+const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
+vi.mock("@/lib/activity-log", () => activityLog);
 import { vi } from "vitest";
 
 const { getSession, submitFlag, requireLaunchedApi, launchApiAccess, hasTeam, CLASSIC_ID_RE } = vi.hoisted(() => ({
@@ -229,5 +232,17 @@ describe("POST /api/classic/submit admin preview (#464)", () => {
     storeReturns({ ok: true, correct: true, points: 50 });
     await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
+  });
+});
+
+describe("a dry-run answer (#464 admin preview)", () => {
+  it("says dryRun and writes no activity-log line", async () => {
+    activityLog.logActivity.mockClear();
+    session("alice");
+    launchApiAccess.mockResolvedValueOnce({ refused: null, preview: true });
+    storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
+    const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect((await res.json()).dryRun).toBe(true);
+    expect(activityLog.logActivity).not.toHaveBeenCalled();
   });
 });

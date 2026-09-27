@@ -122,7 +122,8 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   // re-submission banked nothing and would double-count the event. The id
   // and the path, never the flag; logActivity is fail-open, so it cannot
   // fail an award that already landed. Mirrors classic/submit's guard.
-  if (result.ok && result.correct && !result.already) {
+  // Never for a dry run (#464 admin preview): nothing was solved.
+  if (result.ok && result.correct && !result.already && !result.dryRun) {
     await logActivity("ai-solve", claims.sub, `${aud} via flag`);
   }
   return aiAwardResponse(result);

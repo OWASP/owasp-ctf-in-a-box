@@ -17,6 +17,9 @@
 
 import { inspect } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// The activity log, so the dry-run test below can see that nothing was logged.
+const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
+vi.mock("@/lib/activity-log", () => activityLog);
 
 const {
   getSession,
@@ -632,5 +635,16 @@ describe("POST /api/quiz/answer admin preview (#464)", () => {
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(res.status).toBe(200);
     expect(answerQuestion).toHaveBeenCalledWith("alice", "q1", ["b"], { dryRun: true });
+  });
+});
+
+describe("a dry-run answer (#464 admin preview)", () => {
+  it("says dryRun and writes no activity-log line", async () => {
+    activityLog.logActivity.mockClear();
+    launchApiAccess.mockResolvedValueOnce({ refused: null, preview: true });
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10, dryRun: true });
+    const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect((await res.json()).dryRun).toBe(true);
+    expect(activityLog.logActivity).not.toHaveBeenCalled();
   });
 });

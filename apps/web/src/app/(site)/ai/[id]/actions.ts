@@ -112,7 +112,8 @@ export async function submitAiFlagAction(challengeId: string, flag: string): Pro
   // and the path, never the flag; logActivity is fail-open, so it cannot
   // fail an award that already landed. Mirrors api/ai/submit's guard —
   // this action is the third award surface and was the only one not logging.
-  if (result.ok && result.correct && !result.already) {
+  // Never for a dry run (#464 admin preview): nothing was solved.
+  if (result.ok && result.correct && !result.already && !result.dryRun) {
     await logActivity("ai-solve", login, `${challengeId} via flag`);
   }
   return toResponse(result);

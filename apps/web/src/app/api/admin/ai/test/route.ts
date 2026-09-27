@@ -5,6 +5,7 @@ import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
 import { resolveOrigin } from "@/lib/app-origin";
 import { getAiLaunchKeys, getAiSigningKey, listAiChallenges } from "@/lib/ai-store";
 import { signEventBody, signLaunchToken, type AiTokenClaims } from "@/lib/ai-token";
+import { getLaunchAccess } from "@/lib/launch";
 // The REAL event handler — invoked in-process, never over the network. See
 // the header comment below: this route relays its verdict verbatim rather
 // than re-implementing any of its verification.
@@ -95,6 +96,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: RESULT_ERROR }, { status: 503 });
   }
 
+  // Before launch (#464) the admin is only a preview: mint the demo token
+  // with the signed `ctf.preview` claim so the dry run is graded while
+  // scoring is closed — otherwise every pre-launch Send test says "paused".
+  const { preview } = await getLaunchAccess(gate.login);
   const now = Math.floor(Date.now() / 1000);
   const claims: AiTokenClaims = {
     iss: resolveOrigin(),
@@ -108,6 +113,7 @@ export async function POST(request: Request) {
       challenge: { id: challenge.id, title: challenge.title, points: challenge.points },
       points: 0,
       progress: [],
+      ...(preview ? { preview: true as const } : {}),
     },
   };
   const token = signLaunchToken(claims, launchPrivateKey);

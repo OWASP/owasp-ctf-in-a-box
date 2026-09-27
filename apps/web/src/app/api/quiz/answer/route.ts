@@ -77,6 +77,14 @@ export async function POST(request: Request) {
 
   const result = await answerQuestion(login, questionId, choices, { dryRun: preview });
   if (result.ok) {
+    // An admin preview (#464): graded by the same script, nothing recorded —
+    // and nothing logged either, so the activity feed never shows a solve
+    // that did not happen. `dryRun` rides along so the UI can say so.
+    if (result.dryRun) {
+      return result.correct
+        ? NextResponse.json({ correct: true, points: result.points, dryRun: true })
+        : NextResponse.json({ correct: false, dryRun: true });
+    }
     if (!result.correct) return NextResponse.json({ correct: false });
     // Activity log (issue #212): fresh solves only — an idempotent
     // re-submission banked nothing. The question id, never the choices;

@@ -10,17 +10,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 
-const { getSession, submitFlag, requireLaunchedApi, hasTeam, CLASSIC_ID_RE } = vi.hoisted(() => ({
+const { getSession, submitFlag, requireLaunchedApi, launchApiAccess, hasTeam, CLASSIC_ID_RE } = vi.hoisted(() => ({
   getSession: vi.fn(),
   submitFlag: vi.fn(),
   requireLaunchedApi: vi.fn(),
+  launchApiAccess: vi.fn(),
   hasTeam: vi.fn(),
   CLASSIC_ID_RE: /^[\w-]{1,64}$/,
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
-vi.mock("@/lib/launch", () => ({ requireLaunchedApi }));
+vi.mock("@/lib/launch", () => ({ requireLaunchedApi, launchApiAccess }));
 vi.mock("@/lib/classic-store", () => ({ submitFlag, CLASSIC_ID_RE }));
 vi.mock("@/lib/team-store", () => ({ hasTeam }));
 
@@ -50,6 +51,7 @@ beforeEach(() => {
   hasTeam.mockReset();
   getSession.mockResolvedValue(SESSION);
   requireLaunchedApi.mockResolvedValue(null);
+  launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
   hasTeam.mockResolvedValue(true);
 });
 
@@ -86,7 +88,7 @@ describe("POST /api/classic/submit", () => {
     storeReturns({ ok: true, correct: true, points: 50 });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}");
+    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
     // The lock is asked about THIS session's login (an admin passes as preview).
     expect(requireLaunchedApi).toHaveBeenCalledWith("alice");
   });
@@ -134,7 +136,7 @@ describe("POST /api/classic/submit", () => {
     session("alice");
     storeReturns({ ok: true, correct: false });
     await POST(req({ challengeId: "c-1", flag: "x", login: "mallory" }));
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "x");
+    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "x", { dryRun: false });
   });
 
   it("400s a malformed challenge id and 404s an unknown one", async () => {
@@ -208,5 +210,24 @@ describe("POST /api/classic/submit", () => {
     storeReturns({ ok: false, reason: "error" });
     const res = await POST(req({ challengeId: "c-1", flag: "x" }));
     expect(res.status).toBe(503);
+  });
+});
+
+describe("POST /api/classic/submit admin preview (#464)", () => {
+  it("grades a preview admin's flag as a dry run", async () => {
+    session("alice");
+    launchApiAccess.mockResolvedValueOnce({ refused: null, preview: true });
+    storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
+    const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(res.status).toBe(200);
+    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: true });
+  });
+
+  it("never asks for a dry run once launched", async () => {
+    session("alice");
+    launchApiAccess.mockResolvedValueOnce({ refused: null, preview: false });
+    storeReturns({ ok: true, correct: true, points: 50 });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
   });
 });

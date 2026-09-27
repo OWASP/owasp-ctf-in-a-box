@@ -514,3 +514,34 @@ describe("failures never reach the log with the request attached (#244)", () => 
     }
   });
 });
+
+describe("dry run (#464 admin preview)", () => {
+  it("grades before launch: the not-launched pause is what is being previewed", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: null }));
+    evalReturns(["correct", "50", "dry"]);
+    expect(await submitFlag("alice", "chal-1", "CTF{x}", { dryRun: true })).toEqual({
+      ok: true,
+      correct: true,
+      points: 50,
+      dryRun: true,
+    });
+    // The SAME script, told to write nothing.
+    expect(lastEval().argv[7]).toBe("1");
+  });
+
+  it("ignores the cooldown pre-check, but still refuses an already-solved challenge", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ classicCooldownSec: 60 }));
+    gateReads(null, attemptRow(1, new Date(Date.now() - 1_000).toISOString()));
+    evalReturns(["incorrect", "0", "dry"]);
+    expect(await submitFlag("alice", "chal-1", "nope", { dryRun: true })).toEqual({ ok: true, correct: false, dryRun: true });
+
+    gateReads(solveRow(50, "2026-08-19T10:00:00.000Z"), null);
+    expect(await submitFlag("alice", "chal-1", "x", { dryRun: true })).toEqual({ ok: false, reason: "solved" });
+  });
+
+  it("a normal submission passes ARGV[8] = \"0\" (writes as always)", async () => {
+    evalReturns(["correct", "50"]);
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: true, correct: true, points: 50 });
+    expect(lastEval().argv[7]).toBe("0");
+  });
+});

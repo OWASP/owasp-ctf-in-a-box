@@ -63,12 +63,12 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
   }
 
   /** Runs the script exactly as `submitFlag` does, with both comparison forms. */
-  async function submit(id: string, flag: string, { nowMs = T0, cooldownMs = 5_000, login = LOGIN } = {}) {
+  async function submit(id: string, flag: string, { nowMs = T0, cooldownMs = 5_000, login = LOGIN, dry = false } = {}) {
     await load();
     return upstashEval(
       script,
       [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved],
-      [id, keys.normalizeFlag(flag), iso(nowMs), login, cooldownMs, nowMs, keys.caseSensitiveFlagForm(flag)],
+      [id, keys.normalizeFlag(flag), iso(nowMs), login, cooldownMs, nowMs, keys.caseSensitiveFlagForm(flag), dry ? "1" : "0"],
     );
   }
 
@@ -157,5 +157,61 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     const lax = freshId("lax");
     await seed(lax, "SeCrEt{Flag}", 3);
     expect(await submit(lax, "secret{flag}")).toEqual(["correct", "3"]);
+  });
+
+  // #464 admin preview: a DRY run goes through this same script, grades, and
+  // writes NOTHING. Every key the script can touch is snapshotted around it.
+  async function snapshot() {
+    await load();
+    const replies = await pipeline(Object.values(K).map((k) => ["HGETALL", k]));
+    // As sorted field maps: HGETALL's field ORDER is not stable across a
+    // hash's re-encoding, only its contents are.
+    return replies.map(({ result }) => {
+      const flat = (result as string[] | null) ?? [];
+      const pairs: [string, string][] = [];
+      for (let i = 0; i < flat.length; i += 2) pairs.push([flat[i], flat[i + 1]]);
+      return Object.fromEntries(pairs.sort(([a], [b]) => a.localeCompare(b)));
+    });
+  }
+
+  it("dry run: grades a correct flag and writes nothing at all", async () => {
+    const id = freshId("dry-ok");
+    await seed(id, "flag{right}", 25);
+    const before = await snapshot();
+    expect(await submit(id, "flag{right}", { dry: true })).toEqual(["correct", "25", "dry"]);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("dry run: grades a wrong flag without recording an attempt", async () => {
+    const id = freshId("dry-wrong");
+    await seed(id, "flag{right}", 25);
+    const before = await snapshot();
+    expect(await submit(id, "flag{nope}", { dry: true })).toEqual(["incorrect", "0", "dry"]);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("dry run: ignores a cooldown (nothing is recorded, so nothing to cool)", async () => {
+    const id = freshId("dry-cool");
+    await seed(id, "flag{right}", 25);
+    expect(await submit(id, "flag{nope}", { nowMs: T0, cooldownMs: 60_000 })).toEqual(["incorrect", "1"]);
+    expect(await submit(id, "flag{right}", { nowMs: T0 + 1, cooldownMs: 60_000, dry: true })).toEqual(["correct", "25", "dry"]);
+  });
+
+  it("dry run: still refuses an unknown challenge and an already-solved one", async () => {
+    const id = freshId("dry-guards");
+    expect(await submit(id, "x", { dry: true })).toEqual(["missing"]);
+    await seed(id, "flag{right}", 25);
+    expect(await submit(id, "flag{right}")).toEqual(["correct", "25"]);
+    expect(await submit(id, "flag{right}", { nowMs: T0 + 60_000, dry: true })).toEqual(["already"]);
+  });
+
+  it("anti-vacuous: the SAME submission without dry run does write a solve", async () => {
+    const id = freshId("dry-anti");
+    await seed(id, "flag{right}", 25);
+    expect(await submit(id, "flag{right}", { dry: true })).toEqual(["correct", "25", "dry"]);
+    const before = await snapshot();
+    expect(await submit(id, "flag{right}")).toEqual(["correct", "25"]);
+    expect(await snapshot()).not.toEqual(before);
+    expect(await hget(K.solves, id)).toBe(`{"points":25,"at":"${iso(T0)}"}`);
   });
 });

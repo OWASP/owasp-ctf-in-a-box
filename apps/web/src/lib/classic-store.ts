@@ -923,8 +923,11 @@ async function evaluateGate(
   login: string,
   challengeId: string,
   cooldownSec: number,
+  dryRun = false,
 ): Promise<ClassicGate> {
-  if (settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
+  // A dry run (#464 admin preview) happens exactly while scoring is closed —
+  // before launch — so the pause is what is being previewed, not a refusal.
+  if (!dryRun && settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
 
   let solve: Solve | null;
   let attempt: Attempt | null;
@@ -944,7 +947,8 @@ async function evaluateGate(
 
   if (solve) return { allowed: false, reason: "solved" };
 
-  if (cooldownSec > 0 && attempt) {
+  // Nothing a dry run does is recorded, so there is nothing for it to cool.
+  if (!dryRun && cooldownSec > 0 && attempt) {
     const lastMs = Date.parse(attempt.lastAt);
     if (Number.isFinite(lastMs)) {
       const retryAtMs = lastMs + cooldownSec * 1000;
@@ -986,6 +990,11 @@ async function evaluateGate(
 //      challenge nobody can solve.
 //   6. Equal: read points, write the solve row, bump the three counters.
 //
+// DRY RUN (ARGV[8] == "1", #464 admin preview): steps 1-2 and 5 run as
+// normal; the cooldown refusal (3) is skipped and NOTHING is written — no
+// attempts row (4), no solve or counters (6). The verdict comes back with a
+// trailing 'dry' so the caller can never mistake it for a banked solve.
+//
 // The points match is anchored with a trailing [,}] so it can only match a
 // complete "points":<int> pair, not a digit run appearing earlier in the blob.
 export const SUBMIT_SCRIPT = `
@@ -995,6 +1004,7 @@ if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 
 local cooldownMs = tonumber(ARGV[5])
 local nowMs = tonumber(ARGV[6])
+local dry = ARGV[8] == '1'
 
 local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
 local attempts = 0
@@ -1012,13 +1022,15 @@ if attemptsRaw then
   firstAt = string.match(attemptsRaw, '"firstAt":"([^"]*)"')
 end
 
-if cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
+if not dry and cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
   return {'cooldown', tostring(lastAtMs + cooldownMs)}
 end
 
 attempts = attempts + 1
 if not firstAt then firstAt = ARGV[3] end
-redis.call('HSET', KEYS[1], ARGV[1], '{"attempts":' .. attempts .. ',"firstAt":"' .. firstAt .. '","lastAt":"' .. ARGV[3] .. '","lastAtMs":' .. ARGV[6] .. '}')
+if not dry then
+  redis.call('HSET', KEYS[1], ARGV[1], '{"attempts":' .. attempts .. ',"firstAt":"' .. firstAt .. '","lastAt":"' .. ARGV[3] .. '","lastAtMs":' .. ARGV[6] .. '}')
+end
 
 -- Fetched BEFORE the comparison, not after, because the record now decides
 -- WHICH submitted form to compare (issue #193) as well as what the solve is
@@ -1039,8 +1051,10 @@ local submitted = ARGV[2]
 if caseSensitive then submitted = ARGV[7] end
 
 if target ~= submitted then
+  if dry then return {'incorrect', '0', 'dry'} end
   return {'incorrect', tostring(attempts)}
 end
+if dry then return {'correct', tostring(points), 'dry'} end
 redis.call('HSET', KEYS[2], ARGV[1], '{"points":' .. points .. ',"at":"' .. ARGV[3] .. '"}')
 redis.call('HINCRBY', KEYS[5], ARGV[4], points)
 redis.call('HINCRBY', KEYS[7], ARGV[4], 1)
@@ -1052,8 +1066,10 @@ export type SubmitResult =
   // ALREADY banked (SUBMIT_SCRIPT's step-2 guard). It is still a correct flag,
   // but `points` is 0 because this call awarded nothing further — NOT because
   // the challenge is worth nothing. Callers must render the two apart.
-  | { ok: true; correct: true; points: number; already?: boolean }
-  | { ok: true; correct: false }
+  // `dryRun` marks an admin-preview grade (#464): the script compared and
+  // wrote NOTHING, so `points` is what the flag is worth, not what was banked.
+  | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
+  | { ok: true; correct: false; dryRun?: true }
   | { ok: false; reason: "paused" | "solved" | "cooldown"; retryAt?: string }
   // The gate's lookup itself failed (fail-closed), the submission was
   // malformed / named an unknown challenge, or the script blew up. Kept
@@ -1080,7 +1096,13 @@ export type SubmitResult =
  *
  *  This function never returns the flag itself, only whether the submission
  *  was right. */
-export async function submitFlag(login: string, challengeId: string, flag: string): Promise<SubmitResult> {
+export async function submitFlag(
+  login: string,
+  challengeId: string,
+  flag: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<SubmitResult> {
+  const dryRun = opts.dryRun === true;
   if (!CLASSIC_ID_RE.test(challengeId)) return { ok: false, reason: "invalid" };
   if (typeof flag !== "string" || !flag.trim()) return { ok: false, reason: "invalid" };
 
@@ -1095,7 +1117,7 @@ export async function submitFlag(login: string, challengeId: string, flag: strin
   }
   const cooldownSec = settings?.classicCooldownSec ?? CLASSIC_COOLDOWN_SEC;
 
-  const gate = await evaluateGate(settings, login, challengeId, cooldownSec);
+  const gate = await evaluateGate(settings, login, challengeId, cooldownSec, dryRun);
   if (!gate.allowed) {
     // Kept as its own branch (not folded into the passthrough below) so its
     // caller-facing shape can never accidentally pick up a retryAt the lookup
@@ -1140,6 +1162,7 @@ export async function submitFlag(login: string, challengeId: string, flag: strin
         cooldownMs,
         now.getTime(),
         caseSensitiveFlagForm(flag), // ARGV[7] — case preserved (issue #193)
+        dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing (#464)
       ],
     );
   } catch (err) {
@@ -1147,8 +1170,15 @@ export async function submitFlag(login: string, challengeId: string, flag: strin
     return { ok: false, reason: "error" };
   }
 
-  const [status, value] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
+  const [status, value, marker] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") return { ok: false, reason: "invalid" };
+  // A dry verdict carries a trailing 'dry' from the script itself, so a
+  // preview result can never be read as a banked solve.
+  if (marker === "dry") {
+    if (status === "correct") return { ok: true, correct: true, points: Number(value) || 0, dryRun: true };
+    if (status === "incorrect") return { ok: true, correct: false, dryRun: true };
+    return { ok: false, reason: "error" };
+  }
   if (status === "cooldown") {
     const retryAtMs = Number(value);
     return { ok: false, reason: "cooldown", retryAt: new Date(retryAtMs).toISOString() };

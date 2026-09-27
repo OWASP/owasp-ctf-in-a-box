@@ -1,6 +1,7 @@
 import "server-only";
 import { upstashPipeline } from "@/lib/upstash";
-import { getSyncStatus } from "@/lib/admin-store";
+import { getAdminSettings, getSyncStatus } from "@/lib/admin-store";
+import { isLaunched } from "@/lib/schedule-window";
 import { secureDevAvailable } from "@/lib/module-defaults";
 import { errorLabel } from "@/lib/error-label";
 
@@ -48,6 +49,11 @@ export type DeepHealth = {
   scorer?: DependencyState;
   /** Present only when `SCORE_IMAGE` is set. Informational — never fails the check. */
   sync?: { lastPollAt: string | null; ageSec: number | null };
+  /** Whether the event has launched (#464) — public anyway (the landing page
+   *  says so), and what `ctf-setup.sh doctor`/`launch` read. `null` when the
+   *  settings could not be read: never a guess. Informational — never fails
+   *  the check. */
+  launched: boolean | null;
 };
 
 export const DEEP_HEALTH_CACHE_MS = 10_000;
@@ -144,16 +150,26 @@ export async function probeDeepHealth(
   return inflight;
 }
 
+async function readLaunched(now: number): Promise<boolean | null> {
+  try {
+    const settings = await getAdminSettings();
+    return isLaunched(now, settings.scoringStartsAt);
+  } catch {
+    return null;
+  }
+}
+
 async function probeAll(now: number, env: Record<string, string | undefined>): Promise<DeepHealth> {
   const hasScorer = secureDevAvailable(env);
-  const [redis, scorer, sync] = await Promise.all([
+  const [redis, scorer, sync, launched] = await Promise.all([
     probeRedis(),
     hasScorer ? probeScorer(env) : Promise.resolve(undefined),
     hasScorer ? readSyncAge(now) : Promise.resolve(undefined),
+    readLaunched(now),
   ]);
 
   const healthy = redis === "ok" && (scorer === undefined || scorer === "ok");
-  const result: DeepHealth = { status: healthy ? "ok" : "degraded", redis };
+  const result: DeepHealth = { status: healthy ? "ok" : "degraded", redis, launched };
   if (scorer !== undefined) result.scorer = scorer;
   if (sync !== undefined) result.sync = sync;
   return result;

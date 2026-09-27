@@ -16,12 +16,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   upstashPipeline: vi.fn<(commands: (string | number)[][], opts?: unknown) => Promise<{ result?: unknown; error?: string }[]>>(),
   getSyncStatus: vi.fn<() => Promise<{ lastPollAt: string | null } | null>>(),
+  getAdminSettings: vi.fn<() => Promise<{ scoringStartsAt: string | null }>>(),
   fetch: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: mocks.upstashPipeline }));
-vi.mock("@/lib/admin-store", () => ({ getSyncStatus: mocks.getSyncStatus }));
+vi.mock("@/lib/admin-store", () => ({ getSyncStatus: mocks.getSyncStatus, getAdminSettings: mocks.getAdminSettings }));
 
 import { DEEP_HEALTH_CACHE_MS, probeDeepHealth, resetDeepHealthCache } from "@/lib/health-deep";
 
@@ -38,6 +39,8 @@ beforeEach(() => {
   // Happy path by default; tests knock one leg out at a time.
   vi.stubEnv("SCORE_IMAGE", "ghcr.io/example/scorer:1");
   vi.stubEnv("LEADERBOARD_API_URL", SCORER_URL);
+  // A launched event by default (#464); the launch tests below vary it.
+  mocks.getAdminSettings.mockResolvedValue({ scoringStartsAt: "2000-01-01T00:00:00Z" });
   mocks.upstashPipeline.mockResolvedValue([{ result: "PONG" }]);
   mocks.fetch.mockResolvedValue(new Response("{}", { status: 200 }));
   mocks.getSyncStatus.mockResolvedValue({ lastPollAt: "2026-09-15T11:59:18Z" });
@@ -56,6 +59,7 @@ describe("probeDeepHealth", () => {
       redis: "ok",
       scorer: "ok",
       sync: { lastPollAt: "2026-09-15T11:59:18Z", ageSec: 42 },
+      launched: true,
     });
     // The scorer probe hits the scorer's own health route, not the leaderboard.
     expect(mocks.fetch.mock.calls[0]![0]).toBe(`${SCORER_URL}/healthz`);
@@ -109,7 +113,7 @@ describe("probeDeepHealth", () => {
   it("omits the scorer and poller entirely when there is no scorer image", async () => {
     vi.stubEnv("SCORE_IMAGE", "");
     const h = await probeDeepHealth(NOW);
-    expect(Object.keys(h).sort()).toEqual(["redis", "status"]);
+    expect(Object.keys(h).sort()).toEqual(["launched", "redis", "status"]);
     expect(h.status).toBe("ok");
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.getSyncStatus).not.toHaveBeenCalled();
@@ -164,5 +168,25 @@ describe("probeDeepHealth", () => {
     await probeDeepHealth(NOW);
     await probeDeepHealth(NOW + 1000);
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("launched (#464)", () => {
+  // Public on purpose: the landing page already says whether the event has
+  // launched. `ctf-setup.sh doctor` and `launch` read it from here.
+  it("reports launched: true once the scoring start has passed", async () => {
+    expect((await probeDeepHealth(NOW)).launched).toBe(true);
+  });
+
+  it("reports launched: false before launch, without degrading the status", async () => {
+    mocks.getAdminSettings.mockResolvedValue({ scoringStartsAt: null });
+    const h = await probeDeepHealth(NOW);
+    expect(h.launched).toBe(false);
+    expect(h.status).toBe("ok");
+  });
+
+  it("reports launched: null when the settings cannot be read — never a guess", async () => {
+    mocks.getAdminSettings.mockRejectedValue(new Error("redis down"));
+    expect((await probeDeepHealth(NOW)).launched).toBeNull();
   });
 });

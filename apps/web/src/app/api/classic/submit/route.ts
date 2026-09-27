@@ -64,7 +64,9 @@ export async function POST(request: Request) {
   //
   // This runs before the body is even parsed, so a teamless caller cannot use
   // the response to distinguish a correct flag from a wrong one.
-  if (!(await hasTeam(login))) {
+  // A preview (#464) skips the team check: a dry run banks nothing to fold
+  // into a team, and organizers usually have none.
+  if (!preview && !(await hasTeam(login))) {
     return NextResponse.json({ error: "no-team" }, { status: 403 });
   }
 

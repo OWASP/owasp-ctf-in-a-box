@@ -103,7 +103,9 @@ export async function submitAiFlagAction(challengeId: string, flag: string): Pro
   } catch {
     teamed = true;
   }
-  if (!teamed) return { error: "no-team" };
+  // A preview (#464) skips the team check: a dry run banks nothing to fold
+  // into a team, and organizers usually have none.
+  if (!teamed && !launch.preview) return { error: "no-team" };
 
   if (typeof challengeId !== "string" || !AI_ID_RE.test(challengeId)) return { error: "invalid" };
   if (typeof flag !== "string" || !flag.trim() || flag.length > FLAG_MAX_LEN) return { error: "invalid" };

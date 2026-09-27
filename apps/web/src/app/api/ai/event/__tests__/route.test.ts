@@ -5,6 +5,9 @@
 // timestamp tests are only meaningful if the real one runs. Time is pinned
 // with fake timers instead.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// #464: a preview token is honoured only while the event is not launched.
+const aiPreview = vi.hoisted(() => ({ previewClaimStillValid: vi.fn(async () => true) }));
+vi.mock("@/lib/ai-preview", () => aiPreview);
 
 const mocks = vi.hoisted(() => ({
   verifyLaunchToken: vi.fn(),
@@ -504,5 +507,31 @@ describe("POST /api/ai/event with a preview token (#464)", () => {
     expect((await res.json()).dryRun).toBe(true);
     expect(mocks.awardAiEvent).toHaveBeenCalledWith("alice", CHAL, { dryRun: false, preview: true });
     expect(mocks.claimAiNonce).not.toHaveBeenCalled();
+  });
+});
+
+describe("a preview event token after launch, or on a teamless admin (#464)", () => {
+  const previewClaims = { sub: "alice", aud: CHAL, jti: "nonce-1", ctf: { preview: true } };
+
+  it("is refused once the event has launched", async () => {
+    allGatesOpen();
+    mocks.verifyLaunchToken.mockReturnValue({ ok: true, claims: previewClaims });
+    aiPreview.previewClaimStillValid.mockResolvedValueOnce(false);
+    const res = await POST(signed(bodyFor()));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "invalid-token" });
+    expect(mocks.awardAiEvent).not.toHaveBeenCalled();
+  });
+
+  it("is graded for a teamless preview admin, and does not claim to have checked the schedule", async () => {
+    allGatesOpen();
+    mocks.verifyLaunchToken.mockReturnValue({ ok: true, claims: previewClaims });
+    mocks.hasTeam.mockResolvedValue(false);
+    mocks.awardAiEvent.mockResolvedValue({ ok: true, correct: true, points: 400, dryRun: true });
+    const res = await POST(signed(bodyFor()));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.dryRun).toBe(true);
+    expect(json.checks).not.toContain("schedule");
   });
 });

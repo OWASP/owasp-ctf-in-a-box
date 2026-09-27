@@ -20,6 +20,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // #464: the Send test mints a PREVIEW token while the event is not launched.
 const launchLock = vi.hoisted(() => ({ getLaunchAccess: vi.fn(async () => ({ allowed: true, preview: false })) }));
 vi.mock("@/lib/launch", () => launchLock);
+// The Send test runs the REAL event handler, which honours a preview token
+// only while the event is not launched (#464). Pinned open here; the handler's
+// own suite tests the refusal.
+vi.mock("@/lib/ai-preview", () => ({ previewClaimStillValid: async () => true }));
 import type { AiTokenClaims } from "@/lib/ai-token";
 
 const mocks = vi.hoisted(() => ({

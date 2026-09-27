@@ -96,7 +96,7 @@ The claims:
 | `ctf.points` | number | Same as `ctf.challenge.points` — kept at both levels for convenience. |
 | `ctf.progress` | array | The player's progress across the whole `ai` board at mint time — see below. |
 | `ctf.truncated` | `true` \| absent | Present only when `ctf.progress` was cut short (see below). |
-| `ctf.preview` | `true` \| absent | Present only on a token minted for an organizer **preview** (the event isn't launched yet). The box grades everything under it as a dry run, and its answers carry `dryRun: true`. Don't treat that player as real (no progress, no unlocks). It's signed like every other claim, so no one can add it to a contestant's token. |
+| `ctf.preview` | `true` \| absent | Present only on a token minted for an organizer **preview** (the event isn't launched yet). The box grades everything under it as a dry run, and its answers carry `dryRun: true`. Don't treat that player as real (no progress, no unlocks). It's signed like every other claim, so no one can add it to a contestant's token. The box honours it only until the event launches, then refuses the token with `401 invalid-token`, and the organizer re-launches for a normal token. On `/api/ai/event`, a preview token always gets the dry-run answer shape (`{ dryRun, wouldAward, verdict, checks }`), even without `dryRun: true` in the body. Its `checks` omit `team` and `schedule`, which a preview skips. |
 
 Each entry in `ctf.progress` is `{id, points, solved, solvedAt}` — one per
 `ai` challenge, `solved: false` / `solvedAt: null` for anything the player

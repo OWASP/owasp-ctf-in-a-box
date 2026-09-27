@@ -215,3 +215,12 @@ describe("submitAiFlagAction admin preview (#464)", () => {
     expect(submitAiFlag).toHaveBeenCalledWith("alice", "a1", "CTF{x}", { dryRun: true });
   });
 });
+
+describe("a teamless admin preview in the AI form (#464)", () => {
+  it("is graded (dry) even with no team", async () => {
+    getLaunchAccess.mockResolvedValue({ allowed: true, preview: true });
+    hasTeam.mockResolvedValue(false);
+    submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40, dryRun: true });
+    expect(await submitAiFlagAction("a1", "CTF{x}")).toMatchObject({ correct: true, dryRun: true });
+  });
+});

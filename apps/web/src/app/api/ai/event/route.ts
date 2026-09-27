@@ -5,6 +5,7 @@ import { AI_ID_RE } from "@/lib/ai-keys";
 // secret-reader greps run over `import` LINES, and a wrapped list would need
 // the join-then-match treatment noted there.
 import { awardAiEvent, claimAiNonce, getAiLaunchPublicKey, getAiSigningKey, listAiChallenges, releaseAiNonce } from "@/lib/ai-store";
+import { previewClaimStillValid } from "@/lib/ai-preview";
 import { verifyEventSignature, verifyLaunchToken, withinSkew } from "@/lib/ai-token";
 import { RATE_LIMITS, consumeRateLimit } from "@/lib/rate-limit-store";
 import { hasTeam } from "@/lib/team-store";
@@ -87,7 +88,10 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   const login = verified.claims.sub;
   // A token minted for an admin preview (#464) is always a dry run — even when
   // the body asks for a real award — and is graded while scoring is closed.
+  // It is honoured only while the event is not launched: after launch it is
+  // refused, so an admin re-launches for a normal token.
   const preview = verified.claims.ctf?.preview === true;
+  if (preview && !(await previewClaimStillValid())) return aiJson({ error: "invalid-token" }, 401);
   const dry = dryRun || preview;
 
   // 6. Budget, charged before any write.
@@ -101,7 +105,8 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   //    BEFORE the nonce claim: a teamless refusal must not spend the jti — a
   //    solver who joins a team and retries the SAME launch token would
   //    otherwise get `409 replay` for the token's whole TTL.
-  if (!(await hasTeam(login))) return aiJson({ error: "no-team" }, 403);
+  // A preview skips it: a dry run banks nothing to fold into a team.
+  if (!preview && !(await hasTeam(login))) return aiJson({ error: "no-team" }, 403);
 
   // 8. Replay. Claimed immediately before the award — any earlier (e.g. above
   //    the team check) would spend the jti on a refusal that never awarded;
@@ -121,7 +126,10 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
       dryRun: true,
       wouldAward,
       verdict: wouldAward ? "would-award" : result.ok ? "would-refuse" : result.reason,
-      checks: ["body", "challenge", "mode", "signature", "timestamp", "token", "rate-limit", "team", "schedule"],
+      // A preview skips the team and schedule gates, so it does not claim them.
+      checks: preview
+        ? ["body", "challenge", "mode", "signature", "timestamp", "token", "rate-limit"]
+        : ["body", "challenge", "mode", "signature", "timestamp", "token", "rate-limit", "team", "schedule"],
     });
   }
 

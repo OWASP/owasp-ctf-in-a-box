@@ -246,3 +246,15 @@ describe("a dry-run answer (#464 admin preview)", () => {
     expect(activityLog.logActivity).not.toHaveBeenCalled();
   });
 });
+
+describe("a teamless admin preview (#464)", () => {
+  it("is graded (dry) even with no team — a dry run banks nothing to fold into one", async () => {
+    session("alice");
+    launchApiAccess.mockResolvedValueOnce({ refused: null, preview: true });
+    hasTeam.mockResolvedValue(false);
+    storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
+    const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(res.status).toBe(200);
+    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: true });
+  });
+});

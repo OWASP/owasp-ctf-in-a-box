@@ -1,6 +1,7 @@
 import { logActivity } from "@/lib/activity-log";
 import { AI_ID_RE } from "@/lib/ai-keys";
 import { aiAwardResponse, aiJson, aiPreflight, aiRoute, readRawBody } from "@/lib/ai-http";
+import { previewClaimStillValid } from "@/lib/ai-preview";
 import { getAiLaunchPublicKey, listAiChallenges, submitAiFlag } from "@/lib/ai-store";
 import { decodeTokenUnverified, verifyLaunchToken } from "@/lib/ai-token";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
@@ -94,6 +95,11 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
     return aiJson({ error: "invalid-token" }, 401);
   }
   const { claims } = check;
+  // A token minted for an admin preview (#464) is honoured only while the
+  // event is not launched; after launch it is refused (the player re-launches
+  // for a normal token) — never graded dry, never graded for real.
+  const preview = claims.ctf?.preview === true;
+  if (preview && !(await previewClaimStillValid())) return aiJson({ error: "invalid-token" }, 401);
 
   const rl = RATE_LIMITS.aiSubmit;
   const limited = await consumeRateLimit(rl.bucket, claims.sub, rl.limit, rl.windowSeconds);
@@ -110,14 +116,16 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   // total. Route-level, matching classic/submit — see file header. Runs after
   // every check above that can be answered from the token and the challenge
   // list alone, and before the only write in this pipeline.
-  if (!(await hasTeam(claims.sub))) {
+  // A preview skips it: a dry run banks nothing to fold into a team, and
+  // organizers usually have none.
+  if (!preview && !(await hasTeam(claims.sub))) {
     return aiJson({ error: "no-team" }, 403);
   }
 
   // A token minted for an admin preview (#464) is graded as a dry run: the
   // same script, writing nothing. The claim is signed, so a contestant cannot
   // add it to their own token.
-  const result = await submitAiFlag(claims.sub, aud, flag, { dryRun: claims.ctf?.preview === true });
+  const result = await submitAiFlag(claims.sub, aud, flag, { dryRun: preview });
   // Activity log (issue #212): fresh solves only — an idempotent
   // re-submission banked nothing and would double-count the event. The id
   // and the path, never the flag; logActivity is fail-open, so it cannot

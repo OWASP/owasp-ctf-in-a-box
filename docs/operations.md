@@ -2018,8 +2018,11 @@ An admin's submissions are graded as **dry runs**: a flag, a quiz answer,
 an AI flag or event, or a hint reveal goes through the same grading script
 as a real one, and that script writes nothing. There's no solve, no points,
 no attempt or cooldown, no solve count, no hint charge and no activity-log
-line. The answer says so ("preview only, nothing was recorded"). Once the
-event launches, admins score like anyone else.
+line. Rate-limit counters still count, as they do for any caller. The answer
+says so ("preview only, nothing was recorded"). A preview needs no team.
+Once the event launches, admins score like anyone else. An AI launch token
+minted during the preview is refused after launch, so re-open the challenge
+for a normal one.
 
 **Fail direction: closed.** The lock is a secrecy boundary (challenge text
 before kickoff), so if the settings read fails, a non-admin is treated as

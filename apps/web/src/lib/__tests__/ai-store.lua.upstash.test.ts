@@ -93,9 +93,9 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
   }
 
   /** The signed-event path (`recordAiEvent` → runAward with grade=false). */
-  async function recordEvent(id: string, { nowMs = T0, login = LOGIN } = {}) {
+  async function recordEvent(id: string, { nowMs = T0, login = LOGIN, dry = false } = {}) {
     await load();
-    return upstashEval(script, KEYS(), [id, "", iso(nowMs), login, 5_000, nowMs, "", "0", "event"]);
+    return upstashEval(script, KEYS(), [id, "", iso(nowMs), login, 5_000, nowMs, "", "0", "event", dry ? "1" : "0"]);
   }
 
   async function hget(key: string, field: string) {
@@ -187,5 +187,22 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
     const before = await snapshot();
     expect(await submitFlag(id, "ctf{right}")).toEqual(["correct", "30"]);
     expect(await snapshot()).not.toEqual(before);
+  });
+
+  // #464: the EVENT path's dry run goes through the same script too.
+  it("dry run (event path): writes nothing, and still refuses missing, mode and already", async () => {
+    const id = freshId("dry-event");
+    expect(await recordEvent(id, { dry: true })).toEqual(["missing"]);
+    await seed(id, "event", 50);
+    const before = await snapshot();
+    expect(await recordEvent(id, { dry: true })).toEqual(["correct", "50", "dry"]);
+    expect(await snapshot()).toEqual(before);
+
+    const flagOnly = freshId("dry-event-flag");
+    await seed(flagOnly, "flag", 50, "ctf{x}");
+    expect(await recordEvent(flagOnly, { dry: true })).toEqual(["mode"]);
+
+    expect(await recordEvent(id)).toEqual(["correct", "50"]); // anti-vacuous: a real event writes
+    expect(await recordEvent(id, { dry: true })).toEqual(["already"]);
   });
 });

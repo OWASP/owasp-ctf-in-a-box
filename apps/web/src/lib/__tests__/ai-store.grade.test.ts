@@ -179,15 +179,21 @@ describe("awardAiEvent", () => {
     });
   });
 
-  it("dryRun runs every gate and writes NOTHING", async () => {
+  // #464: a dry run goes through AWARD_SCRIPT itself (its trailing dry
+  // argument), not a TS short-circuit — so the script's own missing/mode/
+  // already checks apply and it reports the challenge's real points.
+  it("dryRun runs every gate and the SAME script, told to write nothing", async () => {
     cleanGateReply();
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "400", "dry"]);
     expect(await awardAiEvent("alice", "guardrail-cd34ef", { dryRun: true })).toEqual({
       ok: true,
       correct: true,
-      points: 0,
+      points: 400,
       dryRun: true,
     });
-    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    const { argv } = lastEval();
+    expect(argv[7]).toBe("0"); // the event path — no flag comparison
+    expect(argv[9]).toBe("1"); // dry
   });
 
   it("dryRun still reports a refusal — paused", async () => {
@@ -454,12 +460,13 @@ describe("dry run (#464 admin preview)", () => {
     mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: null }));
     expect(await awardAiEvent("alice", "prompt-leak-ab12cd", { dryRun: true })).toEqual({ ok: false, reason: "paused" });
     cleanGateReply();
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "40", "dry"]);
     expect(await awardAiEvent("alice", "prompt-leak-ab12cd", { preview: true })).toEqual({
       ok: true,
       correct: true,
-      points: 0,
+      points: 40,
       dryRun: true,
     });
-    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(lastEval().argv[9]).toBe("1");
   });
 });

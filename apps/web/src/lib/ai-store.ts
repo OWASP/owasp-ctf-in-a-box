@@ -1093,7 +1093,9 @@ export async function awardAiEvent(
   const gate = await evaluateGate(settings, login, challengeId, 0, preview);
   if (!gate.allowed) return gateToResult(gate);
 
-  if (opts.dryRun || preview) return { ok: true, correct: true, points: 0, dryRun: true };
+  // A dry run goes through the SAME script, told to write nothing (#464) —
+  // so its missing/mode/already checks apply exactly as on a real award.
+  if (opts.dryRun || preview) return runAward(login, challengeId, "", cooldownSec, false, "event", true);
 
   return runAward(login, challengeId, "", cooldownSec, false, "event");
 }

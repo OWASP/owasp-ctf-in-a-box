@@ -648,3 +648,13 @@ describe("a dry-run answer (#464 admin preview)", () => {
     expect(activityLog.logActivity).not.toHaveBeenCalled();
   });
 });
+
+describe("a teamless admin preview on the quiz (#464)", () => {
+  it("is graded (dry) even with no team", async () => {
+    launchApiAccess.mockResolvedValueOnce({ refused: null, preview: true });
+    hasTeam.mockResolvedValue(false);
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10, dryRun: true });
+    const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(res.status).toBe(200);
+  });
+});

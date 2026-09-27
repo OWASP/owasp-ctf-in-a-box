@@ -6,6 +6,9 @@
 // because "just read the session too" is the natural-looking change that
 // would quietly reintroduce CSRF on a CORS `*` endpoint.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #464: a preview token is honoured only while the event is not launched.
+const aiPreview = vi.hoisted(() => ({ previewClaimStillValid: vi.fn(async () => true) }));
+vi.mock("@/lib/ai-preview", () => aiPreview);
 
 const mocks = vi.hoisted(() => ({
   verifyLaunchToken: vi.fn(),
@@ -289,5 +292,36 @@ describe("POST /api/ai/submit with a preview token (#464)", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ correct: true, points: 300, already: false, dryRun: true });
     expect(mocks.submitAiFlag).toHaveBeenCalledWith("alice", CHAL, "CTF{x}", { dryRun: true });
+  });
+});
+
+describe("a preview token after launch, or on a teamless admin (#464)", () => {
+  const previewClaims = { sub: "alice", aud: CHAL, jti: "n1", ctf: { preview: true } };
+
+  it("is refused once the event has launched — never graded dry, never graded for real", async () => {
+    tokenIsGood();
+    mocks.verifyLaunchToken.mockReturnValue({ ok: true, claims: previewClaims });
+    aiPreview.previewClaimStillValid.mockResolvedValueOnce(false);
+    const res = await POST(post({ token: "t", flag: "CTF{x}" }));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "invalid-token" });
+    expect(mocks.submitAiFlag).not.toHaveBeenCalled();
+  });
+
+  it("grades a teamless preview admin (dry) — a dry run banks nothing to fold into a team", async () => {
+    tokenIsGood();
+    mocks.verifyLaunchToken.mockReturnValue({ ok: true, claims: previewClaims });
+    mocks.hasTeam.mockResolvedValue(false);
+    mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 300, dryRun: true });
+    const res = await POST(post({ token: "t", flag: "CTF{x}" }));
+    expect(res.status).toBe(200);
+  });
+
+  it("a normal token never asks whether a preview is still valid", async () => {
+    aiPreview.previewClaimStillValid.mockClear();
+    tokenIsGood();
+    mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 300 });
+    await POST(post({ token: "t", flag: "CTF{x}" }));
+    expect(aiPreview.previewClaimStillValid).not.toHaveBeenCalled();
   });
 });

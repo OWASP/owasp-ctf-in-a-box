@@ -64,7 +64,9 @@ export async function POST(request: Request) {
   // refusal can never follow a write that already happened — the same ordering
   // rule the launch check above follows. `hasTeam` fails OPEN, so a Redis blip
   // lets the answer through rather than dropping it.
-  if (!(await hasTeam(login))) {
+  // A preview (#464) skips the team check: a dry run banks nothing to fold
+  // into a team, and organizers usually have none.
+  if (!preview && !(await hasTeam(login))) {
     return NextResponse.json({ error: "no-team" }, { status: 403 });
   }
 

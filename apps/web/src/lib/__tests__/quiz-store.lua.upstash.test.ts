@@ -175,4 +175,12 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     expect(await answer(id, CORRECT)).toEqual(["correct", "20"]);
     expect(await snapshot()).not.toEqual(before);
   });
+
+  it("dry run: still refuses an unknown question and an already-answered one", async () => {
+    const id = freshId("dry-guards");
+    expect(await answer(id, CORRECT, { dry: true })).toEqual(["missing"]);
+    await seed(id, 20);
+    expect(await answer(id, CORRECT)).toEqual(["correct", "20"]);
+    expect(await answer(id, CORRECT, { nowMs: T0 + 1, dry: true })).toEqual(["already"]);
+  });
 });

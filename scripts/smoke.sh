@@ -68,6 +68,25 @@ until compose run --rm --no-deps --entrypoint sh sync -c \
   sleep 1
 done
 
+echo "--- unlaunched event: sync holds ingestion (holding 6s)"
+# No scoringStartsAt on a fresh box means "not launched" (#464): the poller
+# must not ingest anything. Anti-vacuous: the SAME fixtures do ingest right
+# after the launch below, so an empty board here is the lock holding, not a
+# poller that never works.
+hold_until=$((SECONDS + 6))
+while [ "$SECONDS" -lt "$hold_until" ]; do
+  if curl -sf http://localhost:4000/leaderboard | grep -q '"octocat"'; then
+    echo "FAIL: sync ingested scores before launch (scoringStartsAt unset)"; compose logs sync; exit 1
+  fi
+  sleep 2
+done
+
+echo "--- launch: write scoringStartsAt"
+# The app isn't in this profile, so write the field /admin's Launch writes
+# straight onto the settings hash the poller reads.
+launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+compose exec -T redis redis-cli HSET ctf:admin:settings scoringStartsAt "$launched_at" >/dev/null
+
 echo "--- sync ingests fixture comments (waiting up to 30s)"
 deadline=$((SECONDS + 30))
 until curl -sf http://localhost:4000/leaderboard | grep -q '"octocat"'; do

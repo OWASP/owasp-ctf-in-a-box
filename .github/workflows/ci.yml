@@ -75,13 +75,18 @@ jobs:
             # an upstream rename, a new target — runs neither suite, so the one
             # guard that would catch the drift stays silent on the exact commit
             # that causes it.
-            echo "app=$(m "^apps/web/|^setup/targets\.tsv$|^scripts/acceptance-app\.sh$CI")"
+            # The shared window corpora (test/fixtures/window-corpus.json and
+            # scoring-window-corpus.json, #232 and #464) are read by the app,
+            # scorer AND sync suites — each runs every row against its own
+            # copy of the three-reader contract. A corpus-only edit must run
+            # all three, and before this line it ran none.
+            echo "app=$(m "^apps/web/|^setup/targets\.tsv$|^scripts/acceptance-app\.sh|^test/fixtures/(scoring-)?window-corpus\.json\$$CI")"
             # sync/src/parse.js rides the scorer filter too:
             # acceptance-scorer.sh imports the REAL parser as the one live
             # cross-check of the marker/grammar contract, so a sync-only PR
             # that changes the grammar must run the suite that proves the
             # scorer still agrees with it.
-            echo "scorer=$(m "^scorer/|^sync/src/parse\.js$|^scripts/acceptance-scorer\.sh$CI")"
+            echo "scorer=$(m "^scorer/|^sync/src/parse\.js$|^scripts/acceptance-scorer\.sh|^test/fixtures/(scoring-)?window-corpus\.json\$$CI")"
             # setup/targets.tsv is here for the reason given under `app`
             # above: it is the only authoritative source of a fork's repo
             # name, and sync keeps a copy pinned to it by
@@ -89,7 +94,7 @@ jobs:
             # catches the drift, which must therefore run on the commit that
             # causes it. (The event.yaml reader corpus the two used to share
             # went with the config file itself in #386.)
-            echo "sync=$(m "^sync/|^setup/targets\.tsv$CI")"
+            echo "sync=$(m "^sync/|^setup/targets\.tsv|^test/fixtures/(scoring-)?window-corpus\.json\$$CI")"
             # deploy/fly is here because its checks ARE shell: a bats suite
             # plus a shellcheck'd deploy script. There is no `terraform
             # validate` equivalent for fly.toml to give it its own job.

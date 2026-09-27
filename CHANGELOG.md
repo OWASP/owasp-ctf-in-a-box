@@ -11,8 +11,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 - **Breaking: every event needs an official launch — an empty scoring start
   now means "not launched".** A blank `scoringStartsAt` used to mean "no
   bound, always open"; it now means nothing scores. That covers the app's
-  flag, quiz and AI graders and hint reveals, and the scorer and `sync`,
-  which hold Secure Development ingestion. The three readers change together
+  flag, quiz and AI graders, and the scorer and `sync`, which hold Secure
+  Development ingestion. Paid hint reveals are not gated by this change;
+  #464's page lock covers them. The three readers change together
   through a new `outsideScoringWindow`, pinned by a shared corpus
   (`test/fixtures/scoring-window-corpus.json`). The registration window keeps
   its old meaning, so a blank bound there is still open. **After upgrading,

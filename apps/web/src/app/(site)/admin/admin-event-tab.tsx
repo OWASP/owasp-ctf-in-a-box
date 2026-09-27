@@ -393,7 +393,7 @@ export default function AdminEventTab({
               ? "is live"
               : settings.paused
                 ? "is frozen (manual)"
-                : !settings.scoringStartsAt
+                : !Number.isFinite(settings.scoringStartsAt ? Date.parse(settings.scoringStartsAt) : NaN)
                   ? "is closed (not launched — set a scoring start)"
                   : "is frozen (outside its window)"}
           </span>

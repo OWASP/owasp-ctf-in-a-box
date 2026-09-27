@@ -802,7 +802,9 @@ readable and writable while the stack is running, without a restart:
   `resolveHintConfig`), never the reverse.
 
   **The scheduled windows are enforced at READ time**, not by a scheduler on
-  the box, and the same `outsideWindow` logic is implemented independently in
+  the box, and the same `outsideWindow` logic (plus `outsideScoringWindow`
+  for the scoring window, where a missing start means not launched, #464) is
+  implemented independently in
   `apps/web/src/lib/schedule-window.ts` (re-exported through
   `admin-store.ts`), `scorer/src/store.js` and `sync/src/redis.js`. Those
   three must agree; changing one alone silently splits the event's idea of

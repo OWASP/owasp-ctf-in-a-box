@@ -278,6 +278,20 @@ submit_solves() {
   echo "   $login / $target: submitted $count solve(s) -> HTTP $status"
 }
 
+# Every event needs an official launch (#464): with no scoringStartsAt, the
+# scorer answers 503 "scoring is paused" and the seed below dies. A dev stack is
+# for poking at a live event, so launch it — HSETNX keeps a start an earlier
+# `up` (or /admin) already set, so a re-run never moves the clock.
+launch_dev_event() {
+  local now
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [ "$(compose exec -T redis redis-cli HSETNX ctf:admin:settings scoringStartsAt "$now" | tr -d '[:space:]')" = "1" ]; then
+    echo "== launched the dev event (scoringStartsAt=$now)"
+  else
+    echo "== dev event already launched (scoringStartsAt kept)"
+  fi
+}
+
 seed_demo_data() {
   echo "== seeding demo leaderboard data (real POST /score, rubric-priced)"
   submit_solves alice-dev juice-shop 6
@@ -352,6 +366,7 @@ cmd_up() {
   event_url="$(env_value EVENT_URL http://localhost)"
   wait_for_app "$event_url"
 
+  launch_dev_event
   seed_demo_data
 
   # What the CONTAINERS got, in their precedence order — an exported value

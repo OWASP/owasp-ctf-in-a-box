@@ -471,6 +471,9 @@ describe("AiIntegrationPanel — Send test rendering", () => {
   });
 
   it("explains the three that ARE something to fix", () => {
+    // #464: before launch every dry run answers "paused" — the help must name
+    // that cause, or an organizer proving the pipeline can't tell why.
+    expect(testOutcomeHelp("paused")).toMatch(/not launched/);
     expect(testOutcomeHelp("unavailable")).toMatch(/Try again/);
     expect(testOutcomeHelp("wrong-mode")).toMatch(/flag-only/);
     expect(testOutcomeHelp("no-signing-key")).toMatch(/Rotate/);

@@ -71,6 +71,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 53 — ai launch tokens are asymmetric; event signatures stay symmetric](#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric)
 - [ADR 55 — Configuration v2: `.env` bootstrap, `/admin` runtime, no event.yaml](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml)
 - [ADR 56 — Poll is the score transport; push ingest is removed](#adr-56-poll-is-the-score-transport-push-ingest-is-removed)
+- [ADR 59 — Every event needs an official launch: an empty scoring start means "not launched"](#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -1422,7 +1423,7 @@ override and no config key — not back in `event.yaml`.
 
 ## ADR 32. Scheduled windows, evaluated at read time in three readers
 
-**Status.** Accepted.
+**Status.** Accepted; amended by [ADR 59](#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched): the scoring window now requires a start (`outsideScoringWindow`), so `effectivePaused` below reads `s.paused || outsideScoringWindow(...)`; the registration window is unchanged.
 
 **Context.** [#19](#adr-19-organizer-admin-panel-runtime-override-layer) gave
 organizers a manual freeze. Manual is not enough for a real event: an

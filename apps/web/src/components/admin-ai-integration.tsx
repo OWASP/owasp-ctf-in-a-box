@@ -120,7 +120,7 @@ export function testOutcomeTone(outcome: AiTestOutcome): "good" | "bad" {
 export function testOutcomeHelp(label: string): string | null {
   switch (label) {
     case "paused":
-      return "Not a fault: scoring is frozen, or the event is outside its scheduled window. The dry run honours the schedule exactly as a real submission would.";
+      return "Not a fault: scoring is frozen, the event is outside its scheduled window, or it is not launched yet (no scoring start set). The dry run honours the schedule exactly as a real submission would.";
     case "solved":
       return "Not a fault: the signature and token were accepted, and your own login already holds this challenge.";
     case "no-team":

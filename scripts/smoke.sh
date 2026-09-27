@@ -73,6 +73,15 @@ echo "--- unlaunched event: sync holds ingestion (holding 6s)"
 # must not ingest anything. Anti-vacuous: the SAME fixtures do ingest right
 # after the launch below, so an empty board here is the lock holding, not a
 # poller that never works.
+# First prove the poller is ticking AND refusing: its heartbeat must report
+# paused. Without this, an empty board could just mean "hadn't polled yet".
+# 30s, like the ingest wait: a tick that started while srh was still booting
+# can sit in two 10s pipeline timeouts (isPaused + writeStatus) first.
+prelaunch_deadline=$((SECONDS + 30))
+until compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | grep -q '^1$'; do
+  [ "$SECONDS" -ge "$prelaunch_deadline" ] && { echo "FAIL: sync heartbeat never reported paused before launch"; compose logs sync; exit 1; }
+  sleep 1
+done
 hold_until=$((SECONDS + 6))
 while [ "$SECONDS" -lt "$hold_until" ]; do
   if curl -sf http://localhost:4000/leaderboard | grep -q '"octocat"'; then

@@ -66,8 +66,10 @@ fork's Action). See [scorer.md](scorer.md).
 **Freeze vs scoring window** — two ways scoring stops. **Freeze** is the
 manual switch: ingestion holds (queued, never lost), fork Actions keep
 running. The **scoring window** (`scoringStartsAt`/`scoringEndsAt`) does the
-same on a schedule. Both are evaluated at read time by three independent
-readers that must agree. See [operations.md](operations.md) and
+same on a schedule, and an empty `scoringStartsAt` means the event is **not
+launched** and nothing scores ([ADR 59](decisions.md#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched)).
+Both are evaluated at read time by three independent readers that must
+agree. See [operations.md](operations.md) and
 [ADR 32](decisions.md#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers).
 
 **Vacuous pass** — a rubric check that "passes" only because the app wasn't

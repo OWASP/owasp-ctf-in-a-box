@@ -179,9 +179,11 @@ reviews:
         Fail-open direction — isPaused() and getResetAt() must fail OPEN on a
         Redis error. A blip must never freeze ingestion or replay a reset.
 
-        Window logic — outsideWindow here has independent twins in
-        apps/web/src/lib/admin-store.ts and scorer/src/store.js. A change to
-        one needs the other two in the same PR.
+        Window logic — outsideWindow and outsideScoringWindow (the scoring
+        window: no scoringStartsAt means not launched, #464) here have
+        independent twins in apps/web/src/lib/schedule-window.ts and
+        scorer/src/store.js. A change to one needs the other two in the same
+        PR, plus test/fixtures/(scoring-)window-corpus.json when a rule moves.
 
         State-file trust — treating parsed /state/state.json as having a valid
         shape. It is validated and repaired field by field; `ingested` and
@@ -308,9 +310,11 @@ reviews:
         the same script, or a support action not recording both actor and
         target.
 
-        Window logic divergence — outsideWindow here has independent twins in
-        scorer/src/store.js and sync/src/redis.js. All three must change
-        together.
+        Window logic divergence — outsideWindow and outsideScoringWindow
+        (no scoringStartsAt means not launched, #464) here have independent
+        twins in scorer/src/store.js and sync/src/redis.js. All three must
+        change together; scoring consumers use outsideScoringWindow, the
+        registration window keeps outsideWindow.
 
         Units — classicCooldownSec is SECONDS; quizRetryAfterMin,
         hintsUnlockAfterMin, scoreCooldownMin are MINUTES. Flag a new knob

@@ -71,6 +71,7 @@ row's shared corpus (`test/fixtures/window-corpus.json`) is what closed it.
 | Hint purchase (spend) | **CLOSED** | never charge on uncertainty | `hint-store.ts` `revealHint` (comments its direction) · `hint-store.test.ts` ("fails CLOSED (rejects, never charges) when the settings read errors") |
 | Team registration window read | **OPEN** | a Redis blip must not itself block registration; the join/create Lua script still validates every real invariant atomically | `team-store.ts` `isRegistrationClosed` (comments its direction, logs and fails open on both a thrown transport error and a resolved per-command error) · `team-store.test.ts` ("fails OPEN … and logs when … transport failure" / "… per-command error") |
 | Scheduled-window boundary instant (the exact `<`/`<=` at start and end) | **N/A — cross-reader agreement** | a flip surviving one reader's own tests must still fail via the shared corpus | `schedule-window.ts` / `scorer/src/store.js` / `sync/src/redis.js` `outsideWindow` · `test/fixtures/window-corpus.json` run verbatim by `schedule-window.test.ts`, `store.test.js`, `redis.test.js` |
+| Scoring start present? (no/unparseable `scoringStartsAt` = not launched, #464) | **CLOSED (value)** | an event nobody launched scores nothing; distinct from the freeze READ, which still fails open | `outsideScoringWindow` in the same three readers · `test/fixtures/scoring-window-corpus.json` run verbatim by the same three suites |
 | `ctf-setup.sh` `check_step` | **CLOSED** | a `gh` error is never "already satisfied" | `setup/ctf-setup.sh` `check_step` · `setup/test/ctf_setup.bats` ("fails closed when gh api errors") |
 | Audit-log writes | **best-effort** | an audit failure is logged, never fails the request that already committed | `writeAudit` in each `api/admin/*` route · route tests assert success without a completed audit write |
 
@@ -92,8 +93,9 @@ checkout), posted only when the scorer step succeeded. Never post
 checkout-derived content as the bot; never gate the final-comment step on
 `if: always()` without an outcome check. Either reopens the score-forge.
 
-**6. Three-reader lockstep.** `effectivePaused`/`outsideWindow` is
-implemented independently in `apps/web/src/lib/schedule-window.ts`,
+**6. Three-reader lockstep.** `effectivePaused`/`outsideWindow`, and the
+scoring window's `outsideScoringWindow` (a start is required: no start
+means not launched, #464), are implemented independently in `apps/web/src/lib/schedule-window.ts`,
 `scorer/src/store.js`, and `sync/src/redis.js` (registration windows in
 `team-store.ts`). They read the same `ctf:admin:settings` fields and must
 agree — a diff touching one reader touches all three or explains why not.

@@ -306,7 +306,7 @@ connection your `fetch` can't even inspect.
 | 401 | `{"error": "stale-request"}` | `X-CTF-Timestamp` missing/non-numeric, or outside the ±300s window. | event | Resync your clock; retry with a fresh timestamp and matching signature. |
 | 401 | `{"error": "invalid-token"}` | The launch token is malformed, its signature doesn't verify, or its `aud` doesn't match the challenge id. | submit, event, state | The token is unusable — the player needs a fresh launch link. |
 | 401 | `{"error": "expired"}` | The launch token's `exp` has passed (>24h since mint). | submit, event, state | Same as above — a fresh launch link, not a retry. |
-| 403 | `{"error": "paused"}` | The event is frozen or outside its scheduled scoring window. | submit, event | Retry later; this isn't an error in your integration. |
+| 403 | `{"error": "paused"}` | The event is frozen, outside its scheduled scoring window, or not launched yet (no scoring start set). | submit, event | Retry later; this isn't an error in your integration. |
 | 403 | `{"error": "no-team"}` | The player isn't on a team. | submit, event | Nothing to do on your side — team membership is the player's problem to fix in the box's UI. |
 | 404 | `{"error": "unknown-challenge"}` | The `challengeId` (or the token's `aud`) doesn't name a live challenge. | submit, event | Check the id you're using; it may have been deleted or never existed. |
 | 409 | `{"error": "wrong-mode"}` | You asserted an event against a `mode: "flag"` challenge, or submitted a flag against a `mode: "event"` one. | submit, event | Use the other reporting path — see §1/§8. |

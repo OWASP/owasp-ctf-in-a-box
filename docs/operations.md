@@ -385,8 +385,8 @@ The panel offers:
   You enter local time; each is stored as an ISO instant, and a blank field
   means no bound on that side — **except Scoring opens**: an event with no
   scoring start is **not launched**, and nothing scores (flags, quiz, AI,
-  hints, and Secure Development PRs in the scorer and the poller) until one
-  is set. Every event needs that official launch (#464). They stack **on top of** the manual toggles
+  and Secure Development PRs in the scorer and the poller) until one is
+  set. Every event needs that official launch (#464). They stack **on top of** the manual toggles
   rather than replacing them: scoring is live only when it is not frozen
   *and* inside its window, registration is open only when the switch is open
   *and* inside its window — either condition on its own closes it. Because
@@ -1508,7 +1508,10 @@ assert solves for that one challenge, so rotate it.</sup>
 signs a demo event with the challenge's real key and runs the whole pipeline
 with `dryRun: true` — writing no solve and claiming no nonce — then relays
 the box's own verdict. **Would award** is the answer you want; every other
-verdict is read in the Send test list further down this section.
+verdict is read in the Send test list further down this section. Before
+the event is launched (no scoring start set), every dry run answers
+`paused`. A pre-launch dry run that can reach **Would award** arrives with
+#464's admin preview.
 
 **Authoring** happens in `/admin`, under the AI module's tab. Before adding
 a challenge you need at least one **category** — same chip row as classic's
@@ -1656,9 +1659,9 @@ carries:
     verified the whole pipeline end
     to end (signature, token, rate limit, team, schedule).
   - **`paused`**, **`solved`**, **`no-team`** — the signature and token
-    were fine and a gate refused the award, relayed as-is: scoring is frozen
-    or outside its scheduled window (the dry run honours the schedule like a
-    real event), the organizer's own login already holds this challenge, or
+    were fine and a gate refused the award, relayed as-is: scoring is frozen,
+    outside its scheduled window, or not launched yet (no scoring start set;
+    the dry run honours the schedule like a real event), the organizer's own login already holds this challenge, or
     the organizer is on no team (the event route refuses a teamless login
     before the award, organizers included). None of these is a fault on the
     external side.
@@ -1932,7 +1935,10 @@ org, an OAuth app, or a real contestant PR? One command:
 This generates a throwaway `.env.dev-stack` if you have no `.env` (never
 touches or overwrites a real one), builds the scorer image locally from
 `scorer/` and the app image from `apps/web/`, brings up `redis`,
-`srh`, `scorer`, `app` and `caddy`, and seeds a few demo players onto the
+`srh`, `scorer`, `app` and `caddy`, **launches** the dev event (it sets
+`scoringStartsAt` to now unless one is already set, because an event with no
+scoring start is not launched and scores nothing), and seeds a few demo
+players onto the
 leaderboard through the scorer's real bearer-authed `POST /score` — the same
 endpoint a scored PR hits, so it exercises the real validation and Redis-write
 path rather than poking Redis keys directly. It prints the URL to open when

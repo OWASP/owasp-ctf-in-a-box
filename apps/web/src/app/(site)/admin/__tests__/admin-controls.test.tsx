@@ -382,6 +382,12 @@ describe("AdminControls panel contents", () => {
       <AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={{ ...settings, scoringStartsAt: null }} modules={twoModules} />,
     );
     expect(panelFor(notLaunched, "event")).toContain("scoring is closed (not launched");
+    // An unparseable start (hand-written via redis-cli) is "not launched" to
+    // every reader, so the readout must say so too — not "outside its window".
+    const garbledStart = renderToStaticMarkup(
+      <AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={{ ...settings, scoringStartsAt: "nope" }} modules={twoModules} />,
+    );
+    expect(panelFor(garbledStart, "event")).toContain("scoring is closed (not launched");
 
     const windowClosed = renderToStaticMarkup(
       <AdminControls

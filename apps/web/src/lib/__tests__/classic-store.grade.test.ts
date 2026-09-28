@@ -577,6 +577,19 @@ describe("story lock (#463)", () => {
     expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "invalid" });
   });
 
+  // CodeRabbit #470: the TS cooldown pre-check ran BEFORE the story lock, so a
+  // step that became locked (a reorder) while in cooldown answered `cooldown`
+  // — a refusal an unknown id never gives. For a story step the pre-check is
+  // left to the script, which checks the lock first.
+  it("answers a locked step in cooldown like an unknown challenge, not with a cooldown", async () => {
+    gateReads(null, JSON.stringify({ attempts: 1, lastAt: new Date().toISOString() }));
+    mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["recon", "chal-1"]));
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["recon", "chal-1"] }]); // existing ids
+    evalReturns(["locked"]);
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "invalid" });
+    expect(evalCalls()).toHaveLength(1);
+  });
+
   it("passes no prerequisite for step 1 or a challenge outside any story", async () => {
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["chal-1", "web"]));

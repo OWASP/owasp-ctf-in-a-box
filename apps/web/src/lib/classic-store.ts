@@ -1142,15 +1142,6 @@ export async function submitFlag(
   const cooldownSec = settings?.classicCooldownSec ?? CLASSIC_COOLDOWN_SEC;
 
   const gate = await evaluateGate(settings, login, challengeId, cooldownSec, dryRun);
-  if (!gate.allowed) {
-    // Kept as its own branch (not folded into the passthrough below) so its
-    // caller-facing shape can never accidentally pick up a retryAt the lookup
-    // never actually established.
-    if (gate.reason === "unavailable") return { ok: false, reason: "unavailable" };
-    return gate.retryAt
-      ? { ok: false, reason: gate.reason, retryAt: gate.retryAt }
-      : { ok: false, reason: gate.reason };
-  }
 
   // STORY LOCK (#463): a later story step names its prerequisite, and the
   // script checks it against every teammate's solves hash. Resolved here and
@@ -1158,16 +1149,33 @@ export async function submitFlag(
   // fails is `unavailable` — closed, never "no lock".
   let prereq = "";
   let lockKeys: string[] = [];
-  try {
-    const [stories, existing] = await Promise.all([listStories(), listChallengeIds()]);
-    const pos = storyPositions(stories, existing).get(challengeId);
-    if (pos?.prereq) {
-      prereq = pos.prereq;
-      lockKeys = await teamSolveKeys(login);
+  if (gate.allowed || gate.reason === "cooldown") {
+    try {
+      const [stories, existing] = await Promise.all([listStories(), listChallengeIds()]);
+      const pos = storyPositions(stories, existing).get(challengeId);
+      if (pos?.prereq) {
+        prereq = pos.prereq;
+        lockKeys = await teamSolveKeys(login);
+      }
+    } catch (err) {
+      console.error("classic: story lock lookup failed (failing closed):", errorLabel(err));
+      return { ok: false, reason: "unavailable" };
     }
-  } catch (err) {
-    console.error("classic: story lock lookup failed (failing closed):", errorLabel(err));
-    return { ok: false, reason: "unavailable" };
+  }
+
+  // A later story step's cooldown is left to the script (CodeRabbit #470): it
+  // checks the lock BEFORE the cooldown, so a locked step is answered like an
+  // unknown challenge — never with a cooldown an unknown id cannot have. The
+  // script still enforces the cooldown on an open step.
+  const cooldownDeferred = !gate.allowed && gate.reason === "cooldown" && prereq !== "";
+  if (!gate.allowed && !cooldownDeferred) {
+    // Kept as its own branch (not folded into the passthrough below) so its
+    // caller-facing shape can never accidentally pick up a retryAt the lookup
+    // never actually established.
+    if (gate.reason === "unavailable") return { ok: false, reason: "unavailable" };
+    return gate.retryAt
+      ? { ok: false, reason: gate.reason, retryAt: gate.retryAt }
+      : { ok: false, reason: gate.reason };
   }
 
   const now = new Date();

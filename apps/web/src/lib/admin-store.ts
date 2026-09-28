@@ -2,7 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ADMIN_ADMINS_KEY, LOGIN_RE } from "@/lib/admin-admins";
-import { addUpload, listAttachments } from "@/lib/attachments-store";
+import { addUpload, fillMissingUpload, listAttachments } from "@/lib/attachments-store";
 import { TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
 import { SCORE_COOLDOWN_MIN_MAX } from "@/lib/scoring-defaults";
 import {
@@ -1063,8 +1063,11 @@ async function seedDemoAttachments(): Promise<void> {
     const bytes = new Uint8Array(Buffer.from(a.base64, "base64"));
     const sha = createHash("sha256").update(bytes).digest("hex");
     const stored = await listAttachments("classic", a.challengeId);
-    if (stored.some((s) => s.kind === "upload" && s.sha256 === sha)) continue;
-    await addUpload("classic", a.challengeId, a.name, bytes);
+    const match = stored.find((s) => s.kind === "upload" && s.sha256 === sha);
+    // Present with its bytes: nothing to do. Present but MISSING (an imported
+    // bundle carries metadata only): the right sha and no bytes, so fill it.
+    if (match?.missing) await fillMissingUpload(match.id, bytes);
+    else if (!match) await addUpload("classic", a.challengeId, a.name, bytes);
   }
 }
 

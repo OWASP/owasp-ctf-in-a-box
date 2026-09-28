@@ -11,6 +11,7 @@ vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipelin
 const files = vi.hoisted(() => ({
   listAttachments: vi.fn<(module: string, item: string) => Promise<Record<string, unknown>[]>>(async () => []),
   addUpload: vi.fn(async (..._args: unknown[]) => ({})),
+  fillMissingUpload: vi.fn(async (..._args: unknown[]) => ({})),
 }));
 vi.mock("@/lib/attachments-store", () => files);
 
@@ -813,15 +814,43 @@ describe("demo attachments (#186)", () => {
     files.listAttachments.mockReset();
     files.listAttachments.mockResolvedValue([]);
     files.addUpload.mockClear();
+    files.fillMissingUpload.mockClear();
   });
 
-  it("ship a real artifact for each forensics challenge — the flag is in the bytes", () => {
+  // The secrecy boundary (docs/reviewing.md): a contestant can download these,
+  // so the stored flag must not be in them — in any case, since flags compare
+  // case-insensitively. Each carries the secret unwrapped, and the challenge
+  // text says to wrap it; the second half is the anti-vacuous check that the
+  // artifact still answers its challenge.
+  it("ship a real artifact for each forensics challenge — the secret, never the stored flag", () => {
     const byId = new Map(DEMO_CHALLENGES.map((c) => [c.id, c]));
     expect(DEMO_CLASSIC_ATTACHMENTS.map((a) => a.challengeId).sort()).toEqual(["forensics-metadata-leak", "forensics-packet-peek"]);
     for (const a of DEMO_CLASSIC_ATTACHMENTS) {
-      const bytes = Buffer.from(a.base64, "base64");
-      expect(bytes.includes(Buffer.from(byId.get(a.challengeId)!.flag))).toBe(true);
+      const challenge = byId.get(a.challengeId)!;
+      const text = Buffer.from(a.base64, "base64").toString("latin1");
+      expect(text.toLowerCase()).not.toContain(normalizeFlag(challenge.flag));
+      expect(text.toLowerCase()).not.toContain("ctfbox{");
+      const inner = /^ctfbox\{(.+)\}$/.exec(challenge.flag)![1]!;
+      expect(text).toContain(inner);
+      expect(challenge.description).toContain("wrapped in this board's flag format");
     }
+  });
+
+  // Review (#475): an artifact whose record is there but still MISSING (an
+  // imported bundle carries metadata only) has the right sha and no bytes —
+  // the re-seed fills it rather than skipping it as present.
+  it("fills a matching upload that is still missing its bytes", async () => {
+    files.listAttachments.mockImplementation(async (_m: string, item: string) => {
+      const a = DEMO_CLASSIC_ATTACHMENTS.find((x) => x.challengeId === item)!;
+      const sha = (await import("node:crypto")).createHash("sha256").update(Buffer.from(a.base64, "base64")).digest("hex");
+      return [{ id: `m-${item}`, kind: "upload", name: a.name, sha256: sha, missing: true }];
+    });
+    await seedDemoData("alice");
+    expect(files.addUpload).not.toHaveBeenCalled();
+    expect(files.fillMissingUpload).toHaveBeenCalledTimes(DEMO_CLASSIC_ATTACHMENTS.length);
+    const [id, bytes] = files.fillMissingUpload.mock.calls[0] as unknown as [string, Uint8Array];
+    const a = DEMO_CLASSIC_ATTACHMENTS.find((x) => `m-${x.challengeId}` === id)!;
+    expect(Buffer.from(bytes).equals(Buffer.from(a.base64, "base64"))).toBe(true);
   });
 
   it("uploads each artifact when classic is on", async () => {

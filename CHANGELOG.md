@@ -19,6 +19,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
     the bytes, sha256-checked before an import replaces anything. A bundle
     that names a file the box lacks records it as missing until it is
     re-uploaded.
+  - **Breaking for older boxes:** a bundle exported from a challenge with
+    files carries an `attachments` list, which a box on an earlier release
+    refuses (v0.6.0 and earlier already refuse any version 2 file, see
+    stories below). Upgrade the destination box to this release or later
+    before importing; a bundle with no files carries no `attachments` key.
   - The demo's two forensics challenges now ship a real synthetic pcap and
     JPEG. See ADR 61.
 

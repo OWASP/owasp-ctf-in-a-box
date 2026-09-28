@@ -3724,7 +3724,8 @@ the sponsor list. Every other route keeps the footer credit, still text-only
 and still absent when there are no sponsors. ADR 57's four surfaces are
 unchanged; this only says where two of them overlap.
 
-**Consequences.** A sponsor is credited once per page. The landing page does
-one sponsor read, not two. A new page that shows its own sponsor block passes
+**Consequences.** The landing page credits each sponsor once and does one
+sponsor read, not two. Other pages are unchanged: `/sponsors` still pairs its
+full list with the footer's line, as ADR 57 set out. A new page that shows its own sponsor block passes
 `creditSponsors: false` the same way; the default keeps every other caller
 crediting them.

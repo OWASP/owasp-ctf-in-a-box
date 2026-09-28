@@ -249,6 +249,9 @@ jobs:
       # terraform, so --dry-run's "makes no real call" is asserted rather than
       # assumed, and no AWS account is used here either.
       - run: bats deploy/aws-terraform/test/
+      # scripts/check-changelog.sh, the rule changelog.yml enforces on every PR
+      # (#483). Each case builds a throwaway git repo, so it needs no fixture.
+      - run: bats scripts/test/
 
   smoke:
     needs: changes

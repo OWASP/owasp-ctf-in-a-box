@@ -1,0 +1,42 @@
+name: changelog
+# A PR that changes shipped code (apps/, sync/, scorer/, setup/, deploy/) must
+# add a CHANGELOG.md entry (#483). Test-only and doc-only paths are exempt; the
+# rules live in scripts/check-changelog.sh, which bats covers under the shell
+# job. The `no-changelog` label bypasses it for an internal change with nothing
+# to tell an organizer, and Dependabot PRs are skipped.
+#
+# Its own workflow rather than a ci.yml job because it must re-run when a label
+# is added or removed (the `labeled`/`unlabeled` types below), which ci.yml's
+# bare `pull_request` trigger does not include — and it is cheap enough to run
+# on every PR, so it needs no `changes` gate. It checks the PR, not a commit,
+# so there is no push trigger.
+#
+# Not a CodeRabbit check: .coderabbit.yaml's path_filters exclude
+# **/CHANGELOG.md, so CodeRabbit never sees the entry it would be judging.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 so both SHAs and their merge base are present for the
+      # three-dot diff. persist-credentials: false as in ci.yml: `git diff` is
+      # local and needs no token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Only SHAs and a computed '1'/'0' reach the step, and through env, not
+      # inlined into the script: no PR-controlled text (title, body, branch
+      # name) is ever interpolated into a shell command.
+      - name: CHANGELOG updated
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CHANGELOG_SKIP: ${{ (contains(github.event.pull_request.labels.*.name, 'no-changelog') || github.event.pull_request.user.login == 'dependabot[bot]') && '1' || '0' }}
+        run: ./scripts/check-changelog.sh "$BASE_SHA" "$HEAD_SHA"

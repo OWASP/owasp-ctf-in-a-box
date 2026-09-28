@@ -196,7 +196,8 @@ export default async function Home({
   // 1b), mounting it as a nested JSX element suspends under
   // `renderToStaticMarkup` — the same trap `(site)/layout.tsx` documents for
   // `PhaseLine`.
-  const footer = await SiteFooter({ navLinks });
+  // The hero's SponsorStrip credits the sponsors on this page (#474).
+  const footer = await SiteFooter({ navLinks, creditSponsors: false });
   const sponsorStrip = await SponsorStrip();
   const login = (session?.user as { login?: string } | undefined)?.login ?? null;
   // hasTeam, not getViewerTeam truthiness: hasTeam is the SAME fail-open,

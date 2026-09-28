@@ -271,6 +271,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   domain the project maintains, and an event box runs on the organizer's own
   hostname.
 
+- **One footer, not four (#474).** The site footer stacked four bands, each
+  with its own divider, and read as four footers. It is now a main block
+  (wordmark and dates, the site nav, the policy links, the OWASP attribution)
+  plus one bottom bar (the trademark notice and the sponsor credit), with the
+  bar's divider the only one inside it. The phone column follows source
+  order, so a screen reader hears what the eye sees. Every footer link is
+  padded to meet WCAG 2.5.8, the main nav is labelled "Site", and the landing
+  page no longer credits its sponsors twice.
+
 ## v0.6.0 — 2026-09-20
 
 ### Breaking changes

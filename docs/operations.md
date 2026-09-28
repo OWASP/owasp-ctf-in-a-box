@@ -846,7 +846,8 @@ scoring, no contestant data, and no lead capture — anything past that is out
 of scope for this tab entirely. It is a platform feature, not a module: there
 is no toggle to turn it off, and it renders on the landing page, the footer,
 `/sponsors`, and the leaderboard's projector display (`?display=1`) if and
-only if at least one sponsor is configured. An event with no sponsors ships
+only if at least one sponsor is configured. The footer's credit is left out
+on the landing page, where the strip above the fold already names them. An event with no sponsors ships
 zero sponsor pixels anywhere.
 
 **The tab is the list.** Each sponsor is a card showing its logo as it will

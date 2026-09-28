@@ -3412,7 +3412,8 @@ not a nice-to-have (issue #405).
   nothing on an empty list: the landing page's credit strip (grayscale by
   default, color on hover — a credit row, not an ad rail), the shared
   footer's text-only line (no logos, since the footer renders on every page
-  load), the dedicated `/sponsors` page (logo, name, blurb, link, grouped by
+  load; left out on the landing page itself, whose strip already credits
+  the same list — #474), the dedicated `/sponsors` page (logo, name, blurb, link, grouped by
   tier), and — extending the original four-surface design the same session
   this ADR was written in — the leaderboard's projector display
   (`?display=1`), since that is the one screen a sponsor's own booth signage

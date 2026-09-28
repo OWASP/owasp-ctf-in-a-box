@@ -48,6 +48,11 @@ vi.mock("@/lib/leaderboard/source", () => ({
     },
   }),
 }));
+// Empty by default (what an unreachable Redis already gave this file through
+// listSponsors' fail-open); the sponsor-credit test below names one sponsor
+// for a single render.
+const sponsorList = vi.hoisted(() => ({ data: [] as unknown[] }));
+vi.mock("@/lib/sponsors-store", () => ({ listSponsors: async () => sponsorList.data }));
 vi.mock("next/server", () => ({ connection: async () => {} }));
 vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
 // Mutable so the event-identity test below can swap in an organizer-named
@@ -518,5 +523,22 @@ describe("the landing page before launch (#464)", () => {
       expect(html).toContain('href="/profile#team"');
       expect(html).toContain("Your team");
     });
+  });
+});
+
+describe("the landing page credits its sponsors once (#474)", () => {
+  it("names a sponsor in the hero strip and not again in the footer", async () => {
+    sponsorList.data = [
+      { id: "zzyzx-sec-ab12cd", name: "Zzyzx Security Labs", url: "https://zzyzx.example", blurb: "", tier: "gold", order: 0 },
+    ];
+    try {
+      const withSponsor = await Home().then(renderToStaticMarkup);
+      // One credit (the strip), not two: the footer's text credit would add a
+      // second link to the same URL and a second "Sponsored by".
+      expect(withSponsor.match(/href="https:\/\/zzyzx\.example"/g)?.length).toBe(1);
+      expect(withSponsor.match(/Sponsored by/g)?.length).toBe(1);
+    } finally {
+      sponsorList.data = [];
+    }
   });
 });

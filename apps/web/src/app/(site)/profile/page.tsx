@@ -15,7 +15,7 @@ import AppBreakdown from "@/components/app-breakdown";
 import ProgressRow, { moduleUnit } from "@/components/progress/progress-row";
 import ChallengeList from "@/components/progress/challenge-list";
 import RemainingLine from "@/components/progress/remaining-line";
-import { maxPointsAcrossModules } from "@/app/(site)/profile/module-blocks";
+import { maxPointsAcrossModules, visibleClassic } from "@/app/(site)/profile/module-blocks";
 import { fillStyle } from "@/components/progress/progress-bar";
 import ProfileStatTiles, { type StatTile } from "@/components/profile-stat-tiles";
 import { loadTeamStanding } from "@/app/(site)/profile/team-standing";
@@ -215,7 +215,6 @@ export default async function ProfilePage() {
   // deleted question/challenge deliberately leaves banked points in place, so
   // the numerator can legitimately exceed a shrunken denominator.
   const quizMaxPoints = quizQuestions.reduce((sum, q) => sum + (Number(q.points) || 0), 0);
-  const classicMaxPoints = classicChallenges.reduce((sum, c) => sum + (Number(c.points) || 0), 0);
   const aiMaxPoints = aiChallenges.reduce((sum, c) => sum + (Number(c.points) || 0), 0);
   // Only the apps the event actually enabled — same filter the per-app grid
   // used before this task, kept so a target an organizer turned off never
@@ -242,6 +241,10 @@ export default async function ProfilePage() {
     }
   }
 
+  // Locked steps are out of the ceiling too, not only the list (CodeRabbit #470).
+  const classicVisible = visibleClassic(classicChallenges, classicLocked);
+  const classicMaxPoints = classicVisible.maxPoints;
+
   const moduleInput: ProfileModuleInput = {
     profile,
     appsRecord,
@@ -250,7 +253,7 @@ export default async function ProfilePage() {
     secureDev: secureDevEnabled,
     quiz: quizEnabled ? { total: quizTotal, questions: quizQuestions, maxPoints: quizMaxPoints, viewer: viewerQuiz } : undefined,
     classic: classicEnabled
-      ? { total: classicTotal, challenges: classicChallenges, maxPoints: classicMaxPoints, viewer: viewerClassic, locked: classicLocked }
+      ? { total: classicTotal, challenges: classicVisible.challenges, maxPoints: classicMaxPoints, viewer: viewerClassic, locked: classicLocked }
       : undefined,
     ai: aiEnabled ? { total: aiTotal, challenges: aiChallenges, maxPoints: aiMaxPoints, viewer: viewerAi } : undefined,
   };
@@ -310,7 +313,7 @@ export default async function ProfilePage() {
     classicEnabled && classicChallenges.length > 0 && {
       unit: moduleUnit("classic"),
       done: classicTotal?.solved ?? 0,
-      total: Math.max(classicChallenges.length, classicTotal?.solved ?? 0),
+      total: Math.max(classicVisible.challenges.length, classicTotal?.solved ?? 0),
     },
     aiEnabled && aiChallenges.length > 0 && {
       unit: moduleUnit("ai"),

@@ -58,6 +58,18 @@ export type ProfileModuleInput = {
  *  module-contributions.ts: a deleted item deliberately leaves banked points
  *  and the aggregate counter alone, so the list can shrink while the count
  *  does not, and "1 / 0 answered" is worse than an imprecise "1 / 1". */
+/** The classic challenges this viewer may know about, and their points
+ *  ceiling (#463): a story step still locked for the team is left out of
+ *  BOTH — its title and points would otherwise leak through the list, the
+ *  row's max, the "still winnable" line and the overall progress ceiling. */
+export function visibleClassic(
+  challenges: readonly Challenge[],
+  locked: ReadonlySet<string>,
+): { challenges: Challenge[]; maxPoints: number } {
+  const shown = challenges.filter((c) => !locked.has(c.id));
+  return { challenges: shown, maxPoints: shown.reduce((sum, c) => sum + (Number(c.points) || 0), 0) };
+}
+
 export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<ModuleId, ModuleProgress>> {
   const { profile } = input;
   const blocks: Partial<Record<ModuleId, ModuleProgress>> = {};

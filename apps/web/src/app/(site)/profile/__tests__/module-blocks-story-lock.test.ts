@@ -20,3 +20,15 @@ describe("moduleItemsFor classic with locked story steps", () => {
     expect(JSON.stringify(list)).not.toContain("Secret SQLi");
   });
 });
+
+// CodeRabbit #470: the classic ceiling (row max, "still winnable", overall
+// progress) counted locked steps' points — a locked step's value leaked.
+describe("visibleClassic", () => {
+  it("drops locked steps from the challenge list AND the points ceiling", async () => {
+    const { visibleClassic } = await import("@/app/(site)/profile/module-blocks");
+    const v = visibleClassic(challenges, new Set(["secret"]));
+    expect(v.challenges.map((c) => c.id)).toEqual(["recon"]);
+    expect(v.maxPoints).toBe(10);
+    expect(visibleClassic(challenges, new Set()).maxPoints).toBe(60);
+  });
+});

@@ -885,6 +885,14 @@ describe("the Launch block (#464)", () => {
     expect(html).toContain("Launch now");
   });
 
+  // CodeRabbit #469: the panel says why Launch now cannot work, instead of
+  // leaving the refusal to the save.
+  it("holds Launch now while Scoring closes has already passed, and says what to fix", () => {
+    const html = render({ scoringStartsAt: null, scoringEndsAt: "2000-01-01T00:00:00.000Z" });
+    expect(html).toMatch(/Scoring closes has already passed/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Launch now<\/button>/);
+  });
+
   it("offers Un-launch once live", () => {
     const html = render({ scoringStartsAt: "2000-01-01T00:00:00.000Z" });
     expect(html).toContain("Live since");

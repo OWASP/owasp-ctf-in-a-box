@@ -512,6 +512,8 @@ describe("scheduled windows", () => {
 
   it("updateAdminSettings: valid ISO is stored normalised (HSET); null clears (HDEL)", async () => {
     mocks.upstashEval.mockResolvedValue(["scoringStartsAt", "2026-01-01T00:00:00.000Z", "updatedBy", "a", "updatedAt", "x"]);
+    // A start alone reads the stored end, to check the window can open (#464).
+    mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
     await updateAdminSettings({ scoringStartsAt: "2026-01-01T00:00:00Z" }, "a");
     let [, , args] = mocks.upstashEval.mock.calls[0];
     let strArgs = args.map(String);
@@ -556,6 +558,31 @@ describe("scheduled windows", () => {
     await updateAdminSettings({ scoringStartsAt: "now" }, "a");
     mocks.upstashPipeline.mockResolvedValue([{ result: ["scoringEndsAt", "2000-01-01T00:00:00.000Z"] }]);
     await updateAdminSettings({ scoringStartsAt: "now", scoringEndsAt: "2999-01-01T00:00:00.000Z" }, "a");
+    expect(mocks.upstashEval).toHaveBeenCalledTimes(2);
+  });
+
+  // CodeRabbit #469 round 2: the same check for a SCHEDULED start, and for an
+  // end moved before the stored start — a window that can never open.
+  it("updateAdminSettings: refuses a scheduled start at or after the stored Scoring closes", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["scoringEndsAt", "2030-01-01T00:00:00.000Z"] }]);
+    await expect(updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, "a")).rejects.toThrow(/Scoring closes/);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("updateAdminSettings: refuses a Scoring closes at or before the start, in the patch or stored", async () => {
+    await expect(
+      updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z", scoringEndsAt: "2030-01-01T00:00:00.000Z" }, "a"),
+    ).rejects.toThrow(/Scoring closes/);
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["scoringStartsAt", "2030-06-01T00:00:00.000Z"] }]);
+    await expect(updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, "a")).rejects.toThrow(/Scoring closes/);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("updateAdminSettings: a valid window, or clearing Scoring closes, goes through", async () => {
+    mocks.upstashEval.mockResolvedValue(["updatedBy", "a", "updatedAt", "x"]);
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["scoringEndsAt", "2031-01-01T00:00:00.000Z"] }]);
+    await updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, "a");
+    await updateAdminSettings({ scoringEndsAt: null }, "a");
     expect(mocks.upstashEval).toHaveBeenCalledTimes(2);
   });
 

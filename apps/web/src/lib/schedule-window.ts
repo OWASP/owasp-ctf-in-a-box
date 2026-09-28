@@ -98,3 +98,20 @@ export function serverFloorNow(nowMs: number, updatedAt: string | null | undefin
   const floor = updatedAt ? Date.parse(updatedAt) : NaN;
   return Number.isFinite(floor) ? Math.max(nowMs, floor) : nowMs;
 }
+
+/** When the /admin boundary timer should fire and what to stamp (#464). The
+ *  delay is measured on the floored timeline (`serverFloorNow`), counting the
+ *  time since the stamp; the stamp IS the boundary, so a client clock behind
+ *  the server cannot fall back under the floor and re-arm the same boundary.
+ *  Null when no window bound lies ahead. */
+export function restampPlan(
+  settingsAt: number,
+  updatedAt: string | null | undefined,
+  windows: readonly { startsAt: string | null | undefined; endsAt: string | null | undefined }[],
+  clientNow: number,
+): { delayMs: number; stampAt: number } | null {
+  const base = serverFloorNow(settingsAt, updatedAt);
+  const at = nextScheduleBoundary(base, windows.map((w) => ({ startsAt: w.startsAt ?? null, endsAt: w.endsAt ?? null })));
+  if (at === null) return null;
+  return { delayMs: Math.max(0, at - (base + (clientNow - settingsAt))), stampAt: at };
+}

@@ -2045,6 +2045,10 @@ since …**.
   clock, so a laptop with a skewed clock can't launch it into the future.
 - **To schedule**, set **Scoring opens** to a future time. The landing page
   counts down to it, and the lock lifts on its own.
+- A window that could never open is refused, with the field to fix named:
+  **Launch now** or a scheduled start at or after **Scoring closes**, or a
+  Scoring closes moved to before the start. A Scoring closes left over from
+  an earlier run is the usual cause — clear it first.
 - **Un-launch**, shown once live and confirmed as a dangerous action, locks
   every module page again and stops scoring. Solves already banked are kept.
 

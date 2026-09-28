@@ -242,6 +242,10 @@ export default function AdminEventTab({
   // the "Right now" line can never disagree.
   const effectiveNow = serverFloorNow(nowMs, settings.updatedAt);
   const launch = launchState(effectiveNow, settings.scoringStartsAt);
+  // Launch now under a Scoring closes already past would open nothing; the
+  // server refuses it too — the panel says why before anyone clicks.
+  const endMs = settings.scoringEndsAt ? Date.parse(settings.scoringEndsAt) : NaN;
+  const scoringEndPassed = Number.isFinite(endMs) && endMs <= effectiveNow;
   const scoringLiveNow = !settings.paused && !outsideScoringWindow(effectiveNow, settings.scoringStartsAt, settings.scoringEndsAt);
   const registrationOpenNow =
     settings.teamRegistrationOpen && !outsideWindow(effectiveNow, settings.registrationStartsAt, settings.registrationEndsAt);
@@ -409,11 +413,16 @@ export default function AdminEventTab({
           )}
         </p>
         <div className="flex flex-wrap gap-3">
+          {launch.kind !== "live" && scoringEndPassed && (
+            <p className="w-full text-sm text-[#d4a017]">
+              Scoring closes has already passed — clear or move it in the schedule below before launching.
+            </p>
+          )}
           {launch.kind !== "live" && (
             <button
               type="button"
               className="self-start rounded-md border border-[#2563eb]/50 bg-[#2563eb]/15 px-3 py-1.5 text-sm font-medium text-white hover:bg-[#2563eb]/25 disabled:opacity-50"
-              disabled={pending}
+              disabled={pending || scoringEndPassed}
               onClick={() =>
                 setConfirm({
                   title: "Launch the event now?",

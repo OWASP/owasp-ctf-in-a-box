@@ -554,20 +554,6 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
         // sentinel, and only for the scoring start.
         const ms = k === "scoringStartsAt" && v === "now" ? Date.now() : Date.parse(v);
         if (!Number.isFinite(ms)) throw new AdminValidationError(k, `${k} must be a valid ISO date string`);
-        // Launching into a window that already closed would report success
-        // while nothing opens: refuse, naming the field to fix. The end is
-        // this patch's own when it carries one, else the stored one — a read
-        // failure throws (cannot confirm the window is open).
-        if (k === "scoringStartsAt" && v === "now") {
-          const endRaw = "scoringEndsAt" in patch ? patch.scoringEndsAt : (await getAdminSettings()).scoringEndsAt;
-          const end = typeof endRaw === "string" && endRaw !== "" ? Date.parse(endRaw) : NaN;
-          if (Number.isFinite(end) && end <= ms) {
-            throw new AdminValidationError(
-              "scoringEndsAt",
-              `Scoring closes (${new Date(end).toISOString()}) has already passed — clear or move it before launching`,
-            );
-          }
-        }
         const iso = new Date(ms).toISOString();
         fields.push(k, iso);
         changed[k] = iso as unknown as boolean;
@@ -679,6 +665,31 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       changed[k] = text as unknown as boolean;
     } else {
       throw new AdminValidationError(k, `unknown setting: ${k}`);
+    }
+  }
+
+  // The scoring window must be able to open (#464): a start at or after
+  // Scoring closes would save — or "launch" — while nothing ever scores.
+  // Checked on the RESULTING window: this patch's values, else the stored
+  // ones (read only when needed; a read failure throws — cannot confirm).
+  const touchesStart = "scoringStartsAt" in patch;
+  const touchesEnd = "scoringEndsAt" in patch;
+  if (touchesStart || touchesEnd) {
+    const patchedStart = touchesStart ? changed.scoringStartsAt : undefined;
+    const patchedEnd = touchesEnd ? changed.scoringEndsAt : undefined;
+    const settingSomething = (touchesStart && patchedStart !== null) || (touchesEnd && patchedEnd !== null);
+    if (settingSomething) {
+      const stored = touchesStart && touchesEnd ? null : await getAdminSettings();
+      const startRaw = touchesStart ? patchedStart : stored?.scoringStartsAt;
+      const endRaw = touchesEnd ? patchedEnd : stored?.scoringEndsAt;
+      const startMs = typeof startRaw === "string" ? Date.parse(startRaw) : NaN;
+      const endMs = typeof endRaw === "string" ? Date.parse(endRaw) : NaN;
+      if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs <= startMs) {
+        throw new AdminValidationError(
+          "scoringEndsAt",
+          `Scoring closes (${new Date(endMs).toISOString()}) is at or before Scoring opens (${new Date(startMs).toISOString()}), so scoring could never open — clear or move Scoring closes first`,
+        );
+      }
     }
   }
   const at = new Date().toISOString();

@@ -32,7 +32,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatRelativeTime } from "@/lib/relative-time";
 import type { AdminSettings } from "@/lib/admin-store";
-import { nextScheduleBoundary, serverFloorNow } from "@/lib/schedule-window";
+import { restampPlan } from "@/lib/schedule-window";
 import { DEFAULT_EVENT_IDENTITY } from "@/lib/event-identity";
 import { phaseFromSettings } from "@/components/phase";
 import {
@@ -245,17 +245,21 @@ export default function AdminControls({
   useEffect(() => {
     // The same floored "now" the readouts use (serverFloorNow), so a client
     // clock behind the server re-stamps at the boundary the READOUT crosses.
-    const base = serverFloorNow(settingsAt, settings.updatedAt);
-    const at = nextScheduleBoundary(base, [
-      { startsAt: settings.scoringStartsAt, endsAt: settings.scoringEndsAt },
-      { startsAt: settings.registrationStartsAt, endsAt: settings.registrationEndsAt },
-    ]);
-    if (at === null) return;
+    const plan = restampPlan(
+      settingsAt,
+      settings.updatedAt,
+      [
+        { startsAt: settings.scoringStartsAt, endsAt: settings.scoringEndsAt },
+        { startsAt: settings.registrationStartsAt, endsAt: settings.registrationEndsAt },
+      ],
+      Date.now(),
+    );
+    if (plan === null) return;
     // setState in a timer callback, not in the effect body: the clock is the
     // external system this effect subscribes to. Re-stamping re-runs the
     // effect, which arms the timer for the following boundary, if any. The
-    // delay counts from `base` plus the time since the stamp.
-    const id = setTimeout(() => setSettingsAt(Date.now()), Math.max(0, at - (base + (Date.now() - settingsAt))));
+    // stamp is the boundary itself, never a client clock that may trail it.
+    const id = setTimeout(() => setSettingsAt(plan.stampAt), plan.delayMs);
     return () => clearTimeout(id);
   }, [
     settingsAt,

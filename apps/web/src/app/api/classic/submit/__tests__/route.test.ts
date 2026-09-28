@@ -260,11 +260,14 @@ describe("a teamless admin preview (#464)", () => {
 });
 
 describe("a locked story step (#463)", () => {
-  it("answers 403 { error: \"locked\" } — its own refusal, not a wrong answer", async () => {
+  // CodeRabbit #470 (secrecy boundary): the store reports a locked step as
+  // an unknown challenge, so the route's answer is the same 404 — a guessed
+  // id cannot be confirmed as a hidden step.
+  it("answers a locked step exactly as an unknown challenge", async () => {
     session("alice");
-    storeReturns({ ok: false, reason: "locked" });
+    storeReturns({ ok: false, reason: "invalid" });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "locked" });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "challenge not found" });
   });
 });

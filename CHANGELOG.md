@@ -13,8 +13,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   - Step N+1 opens once any teammate solves step N.
   - The board shows a lane per story above the categories, and a locked step
     appears only as "??? — step N of M".
-  - Grading and hint reveal enforce the lock inside their Lua scripts (a
-    locked step answers `locked` and costs nothing).
+  - Grading and hint reveal enforce the lock inside their Lua scripts,
+    before reading any secret. A locked step costs nothing and is answered
+    exactly like an unknown challenge.
   - A locked step's page, metadata and board-items entry reveal nothing.
   - The authoring UI and the bundle come next. See ADR 60.
 

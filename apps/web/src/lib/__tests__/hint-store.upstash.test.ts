@@ -212,4 +212,16 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     expect(await reveal()).toEqual(["charged", "look at the cookie", 10]);
     await pipeline([["DEL", set, spent, hints, at, teammate]]);
   });
+
+  // CodeRabbit #470: the lock comes BEFORE the hint read — a locked step with
+  // no hint at all answers `locked`, not `missing`.
+  it("REVEAL_SCRIPT checks the lock before reading the hint", async () => {
+    const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const k = (n: string) => `ctf-test:hint-lock2:${RUN}:${n}`;
+    const [set, spent, hints, at, teammate] = ["set", "spent", "hints", "at", "bob"].map(k);
+    expect(
+      await upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, teammate], ["nohint", "classic/nohint", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon"]),
+    ).toEqual(["locked"]);
+  });
 });

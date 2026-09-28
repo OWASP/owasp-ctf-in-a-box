@@ -259,8 +259,13 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await pipeline([["DEL", teammate, stranger]]);
   });
 
-  it("story lock: still refuses an unknown challenge first, and a dry-run preview skips the lock", async () => {
-    expect(await submit(freshId("ghost"), "x", { prereq: "p", teamSolveKeys: [K.solves] })).toEqual(["missing"]);
+  // CodeRabbit #470 (secrecy boundary): the lock is checked BEFORE the
+  // script reads the flag hash — observable as a locked id with no flag at
+  // all answering `locked`, not `missing` (both reach a contestant as the
+  // same 404). Without a prerequisite, an unknown id is still `missing`.
+  it("story lock: checked before any flag read; a dry-run preview skips the lock", async () => {
+    expect(await submit(freshId("ghost"), "x", { prereq: "p", teamSolveKeys: [K.solves] })).toEqual(["locked"]);
+    expect(await submit(freshId("ghost"), "x")).toEqual(["missing"]);
     const id = freshId("dry-story");
     await seed(id, "flag{x}", 5);
     expect(await submit(id, "flag{x}", { prereq: freshId("p"), teamSolveKeys: [K.solves], dry: true })).toEqual(["correct", "5", "dry"]);

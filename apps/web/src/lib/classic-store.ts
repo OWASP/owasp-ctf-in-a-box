@@ -1008,18 +1008,15 @@ async function evaluateGate(
 // The points match is anchored with a trailing [,}] so it can only match a
 // complete "points":<int> pair, not a digit run appearing earlier in the blob.
 export const SUBMIT_SCRIPT = `
-local target = redis.call('HGET', KEYS[3], ARGV[1])
-if not target then return {'missing'} end
-if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
-
-local cooldownMs = tonumber(ARGV[5])
-local nowMs = tonumber(ARGV[6])
 local dry = ARGV[8] == '1'
+if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 -- STORY LOCK (#463): ARGV[9] names this step's prerequisite ("" when the
 -- challenge is not a later story step). It is open only if some TEAMMATE —
 -- one of the solves hashes the caller handed in as KEYS[8..] — holds it.
--- Checked before any read or write of attempts, so a locked step spends no
--- attempt and cannot be used to test a flag. A dry-run preview skips it.
+-- Checked FIRST, before the flag hash is read and before any read or write
+-- of attempts: a locked step touches no secret, spends no attempt and cannot
+-- be used to test a flag. The store reports it exactly like an unknown
+-- challenge (no oracle). A dry-run preview skips it.
 if not dry and ARGV[9] and ARGV[9] ~= '' then
   local open = false
   for i = 8, #KEYS do
@@ -1027,6 +1024,11 @@ if not dry and ARGV[9] and ARGV[9] ~= '' then
   end
   if not open then return {'locked'} end
 end
+local target = redis.call('HGET', KEYS[3], ARGV[1])
+if not target then return {'missing'} end
+
+local cooldownMs = tonumber(ARGV[5])
+local nowMs = tonumber(ARGV[6])
 
 local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
 local attempts = 0
@@ -1214,8 +1216,10 @@ export async function submitFlag(
 
   const [status, value, marker] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") return { ok: false, reason: "invalid" };
-  // A locked story step (#463): its own reason — never a wrong answer.
-  if (status === "locked") return { ok: false, reason: "locked" };
+  // A locked story step (#463): answered EXACTLY like an unknown challenge —
+  // a distinct refusal would confirm that a guessed id is a hidden step
+  // (CodeRabbit #470, secrecy boundary). Never a wrong answer either.
+  if (status === "locked") return { ok: false, reason: "invalid" };
   // A dry verdict carries a trailing 'dry' from the script itself, so a
   // preview result can never be read as a banked solve.
   if (marker === "dry") {

@@ -720,13 +720,15 @@ describe("getHintAvailability", () => {
 });
 
 describe("the story lock on classic hints (#463)", () => {
-  it("hands the script the prerequisite and the teammates' solves keys, and reports `locked` as forbidden", async () => {
+  it("hands the script the prerequisite and the teammates' solves keys, and reports `locked` exactly as a missing hint", async () => {
     const store = await loadStore();
     storyMocks.listStories.mockResolvedValueOnce([{ id: "op", title: "Op", intro: "", steps: ["recon", "web"] }]);
     storyMocks.teamSolveKeys.mockResolvedValueOnce(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
     mocks.upstashEval.mockResolvedValueOnce(["locked"]);
     const result = await store.revealHint("alice", "classic", "web");
-    expect(result).toEqual({ ok: false, forbidden: true, error: "Solve the previous step in the story first" });
+    // No oracle (CodeRabbit #470): a locked step's hint is indistinguishable
+    // from a challenge with no hint.
+    expect(result).toEqual({ ok: false, missing: true, error: "No hint available for this challenge" });
     const [, keys, argv] = mocks.upstashEval.mock.calls.at(-1)!;
     expect(keys.slice(4)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
     expect(argv[6]).toBe("recon");

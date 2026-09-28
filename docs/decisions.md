@@ -3613,9 +3613,12 @@ step by step while the free-pick board stays as it is.
   uses, so a story and a team's score never disagree. A solo player is a
   team of one.
 - **The lock lives in the scripts.** `SUBMIT_SCRIPT` and `REVEAL_SCRIPT`
-  receive the prerequisite and the teammates' solves hashes, and answer
-  `locked` before any write. A locked step therefore costs no attempt and
-  can't be used as a flag oracle.
+  receive the prerequisite and the teammates' solves hashes, and check the
+  lock first — before they read the flag or hint hash, and before any
+  write. A locked step therefore costs no attempt and can't be used as a
+  flag oracle. The store then answers it exactly like an unknown challenge
+  (a 404 on submit, "No hint available" on reveal), so a guessed id cannot
+  be confirmed as a hidden step.
 - **A locked step is invisible.** It never leaves the server: not in the
   board, not on its own page (a 404, like an unknown id), not in metadata,
   and not in `/api/board/items`. That includes its id, which is derived from

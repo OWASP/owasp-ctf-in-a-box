@@ -1,4 +1,5 @@
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 // Re-exported, not redeclared: the admin UI is a Client Component and cannot
 // import from this server-only module, so the values live in the
 // dependency-free defaults file and both sides read the same constant.
@@ -117,8 +118,7 @@ export function isHintTarget(value: string): value is HintTarget {
 //       (a solves hash in KEYS[5..]) holds it; checked before any charge.
 // Exported for the live suite only.
 export const REVEAL_SCRIPT = `
-local hint = redis.call('HGET', KEYS[3], ARGV[1])
-if not hint then return {'missing'} end
+-- The story lock (#463) comes FIRST: a locked step's hint is never read.
 if ARGV[6] ~= '1' and ARGV[7] and ARGV[7] ~= '' then
   local open = false
   for i = 5, #KEYS do
@@ -126,6 +126,8 @@ if ARGV[6] ~= '1' and ARGV[7] and ARGV[7] ~= '' then
   end
   if not open then return {'locked'} end
 end
+local hint = redis.call('HGET', KEYS[3], ARGV[1])
+if not hint then return {'missing'} end
 if ARGV[6] == '1' then return {'preview', hint, '0'} end
 if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
   local spent = redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
@@ -313,7 +315,7 @@ export async function revealHint(
         lockKeys = await teamSolveKeys(login);
       }
     } catch (err) {
-      console.error("Hint reveal: story lock lookup failed (failing closed):", err instanceof Error ? err.message : err);
+      console.error("Hint reveal: story lock lookup failed (failing closed):", errorLabel(err));
       return { ok: false, error: "Hint reveal failed. Try again" };
     }
   }
@@ -334,8 +336,10 @@ export async function revealHint(
   if (status === "missing") {
     return { ok: false, missing: true, error: "No hint available for this challenge" };
   }
+  // Exactly a missing hint (CodeRabbit #470): a distinct refusal would
+  // confirm that a guessed id is a locked story step.
   if (status === "locked") {
-    return { ok: false, forbidden: true, error: "Solve the previous step in the story first" };
+    return { ok: false, missing: true, error: "No hint available for this challenge" };
   }
   if (status === "preview" && typeof hint === "string") {
     return { ok: true, hint, alreadyOwned: false, spent: 0, dryRun: true };

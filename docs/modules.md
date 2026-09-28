@@ -437,7 +437,9 @@ third module isn't mistaken for a fully general n-module platform:
   - **Enforced in Lua.** It is enforced **inside the grading and hint
     scripts**: `SUBMIT_SCRIPT` ARGV[9] and `REVEAL_SCRIPT` ARGV[7] carry the
     prerequisite, and the teammates' solves hashes come in as the extra KEYS.
-    A locked step answers `locked` before any write.
+    The lock is checked before the flag or hint hash is read and before any
+    write, and a locked step is answered exactly like an unknown challenge
+    (404 on submit, "No hint available" on reveal) — no existence oracle.
   - **Redacted everywhere.** A locked step shows only "??? — step N of M" on
     the board, is a 404 on its own page, has no metadata, and is redacted
     (label, points and id) in `/api/board/items`.

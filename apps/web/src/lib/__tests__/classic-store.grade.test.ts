@@ -360,7 +360,11 @@ describe("the grading script itself (text invariants)", () => {
     ]) {
       expect(idx).toBeGreaterThan(-1);
     }
-    expect(missing).toBeLessThan(guard);
+    // The already-solved guard reads only the caller's own solves; the flag
+    // hash (the `missing` read) comes after the story lock (CodeRabbit #470),
+    // and still before anything is spent or written.
+    expect(guard).toBeLessThan(missing);
+    expect(missing).toBeLessThan(cooldownReturn);
     // The authoritative cooldown re-check happens after the already-solved
     // guard but strictly BEFORE any attempt is spent — a refusal writes
     // nothing. And because the guard precedes every increment, a login can
@@ -565,12 +569,12 @@ describe("story lock (#463)", () => {
     expect(keys.slice(7)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
   });
 
-  it("reports the script's `locked` as its own reason — never a wrong answer", async () => {
+  it("reports the script's `locked` exactly as an unknown challenge — no oracle, never a wrong answer", async () => {
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["recon", "chal-1"]));
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["recon", "chal-1"] }]); // existing ids
     evalReturns(["locked"]);
-    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "locked" });
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "invalid" });
   });
 
   it("passes no prerequisite for step 1 or a challenge outside any story", async () => {

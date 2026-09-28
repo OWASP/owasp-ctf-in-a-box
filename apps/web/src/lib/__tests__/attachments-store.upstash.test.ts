@@ -97,6 +97,7 @@ describe.skipIf(!liveConfigured)("attachments store — live (#186)", () => {
   // chunk fields; the loser's cleanup deleted the winner's bytes.
   it("a concurrent second fill never deletes the bytes of the fill that won", async () => {
     const k = keysFor("race");
+    await own(k, "x");
     const bytes = new Uint8Array(1024 * 1024 + 7).map((_, i) => i % 199);
     const sha = createHash("sha256").update(bytes).digest("hex");
     const att = await addMissingUpload("classic", "x", "big.bin", bytes.length, sha, k);

@@ -28,6 +28,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
     Import merges the stories by id, and a merge that would put one
     challenge in two stories refuses the whole file. Version 1 files still
     import unchanged.
+  - **Breaking for older boxes:** an export from this version is stamped
+    `"version": 2`, which a box running an earlier release refuses (it
+    accepts only version 1). Export from the newer box only into a box on
+    this release or later; a hand-made version 1 file (no `stories`) still
+    imports everywhere.
 
 - **A Launch block in `/admin`.** The Event tab now shows **Not launched**,
   **Scheduled for …** or **Live since …**.

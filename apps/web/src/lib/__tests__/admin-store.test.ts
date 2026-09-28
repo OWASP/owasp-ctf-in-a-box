@@ -532,6 +532,7 @@ describe("scheduled windows", () => {
   // organizer's skewed laptop clock can never "launch" into the future.
   it("updateAdminSettings: scoringStartsAt \"now\" stores the server's current instant", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "a", "updatedAt", "x"]);
+    mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
     const before = Date.now();
     await updateAdminSettings({ scoringStartsAt: "now" }, "a");
     const after = Date.now();
@@ -539,6 +540,23 @@ describe("scheduled windows", () => {
     const stored = Date.parse(strArgs[strArgs.indexOf("scoringStartsAt") + 1]);
     expect(stored).toBeGreaterThanOrEqual(before);
     expect(stored).toBeLessThanOrEqual(after);
+  });
+
+  // CodeRabbit #469: Launch now under a Scoring closes already in the past
+  // wrote a start and reported success while the window stayed shut.
+  it("updateAdminSettings: refuses Launch now while the stored Scoring closes has passed", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["scoringEndsAt", "2000-01-01T00:00:00.000Z"] }]);
+    await expect(updateAdminSettings({ scoringStartsAt: "now" }, "a")).rejects.toThrow(/Scoring closes/);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("updateAdminSettings: Launch now with a future Scoring closes, or a new one in the same patch, goes through", async () => {
+    mocks.upstashEval.mockResolvedValue(["updatedBy", "a", "updatedAt", "x"]);
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["scoringEndsAt", "2999-01-01T00:00:00.000Z"] }]);
+    await updateAdminSettings({ scoringStartsAt: "now" }, "a");
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["scoringEndsAt", "2000-01-01T00:00:00.000Z"] }]);
+    await updateAdminSettings({ scoringStartsAt: "now", scoringEndsAt: "2999-01-01T00:00:00.000Z" }, "a");
+    expect(mocks.upstashEval).toHaveBeenCalledTimes(2);
   });
 
   it("updateAdminSettings: \"now\" is a scoringStartsAt sentinel only", async () => {

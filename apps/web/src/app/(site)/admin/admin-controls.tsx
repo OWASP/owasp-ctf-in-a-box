@@ -32,7 +32,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatRelativeTime } from "@/lib/relative-time";
 import type { AdminSettings } from "@/lib/admin-store";
-import { nextScheduleBoundary } from "@/lib/schedule-window";
+import { nextScheduleBoundary, serverFloorNow } from "@/lib/schedule-window";
 import { DEFAULT_EVENT_IDENTITY } from "@/lib/event-identity";
 import { phaseFromSettings } from "@/components/phase";
 import {
@@ -243,17 +243,28 @@ export default function AdminControls({
   // that is the impure read the compiler lint rejects.
   const [settingsAt, setSettingsAt] = useState(() => Date.now());
   useEffect(() => {
-    const at = nextScheduleBoundary(settingsAt, [
+    // The same floored "now" the readouts use (serverFloorNow), so a client
+    // clock behind the server re-stamps at the boundary the READOUT crosses.
+    const base = serverFloorNow(settingsAt, settings.updatedAt);
+    const at = nextScheduleBoundary(base, [
       { startsAt: settings.scoringStartsAt, endsAt: settings.scoringEndsAt },
       { startsAt: settings.registrationStartsAt, endsAt: settings.registrationEndsAt },
     ]);
     if (at === null) return;
     // setState in a timer callback, not in the effect body: the clock is the
     // external system this effect subscribes to. Re-stamping re-runs the
-    // effect, which arms the timer for the following boundary, if any.
-    const id = setTimeout(() => setSettingsAt(Date.now()), Math.max(0, at - Date.now()));
+    // effect, which arms the timer for the following boundary, if any. The
+    // delay counts from `base` plus the time since the stamp.
+    const id = setTimeout(() => setSettingsAt(Date.now()), Math.max(0, at - (base + (Date.now() - settingsAt))));
     return () => clearTimeout(id);
-  }, [settingsAt, settings.scoringStartsAt, settings.scoringEndsAt, settings.registrationStartsAt, settings.registrationEndsAt]);
+  }, [
+    settingsAt,
+    settings.updatedAt,
+    settings.scoringStartsAt,
+    settings.scoringEndsAt,
+    settings.registrationStartsAt,
+    settings.registrationEndsAt,
+  ]);
   const [hintCostInput, setHintCostInput] = useState(initial.hintCost === null ? "" : String(initial.hintCost));
   const [minSolvesInput, setMinSolvesInput] = useState(
     initial.hintsMinSolves === null ? "" : String(initial.hintsMinSolves),

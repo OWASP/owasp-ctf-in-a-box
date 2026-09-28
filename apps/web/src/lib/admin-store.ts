@@ -397,8 +397,10 @@ function decodeEnabledModuleIds(raw: string | undefined): ModuleId[] | null {
   return ids.length > 0 ? [...new Set(ids)] : null;
 }
 
-export async function getAdminSettings(): Promise<AdminSettings> {
-  const [res] = await upstashPipeline([["HGETALL", ADMIN_SETTINGS_KEY]]);
+/** `timeoutMs` bounds the read itself (the pipeline's default otherwise) —
+ *  the public /health/deep probe passes its own deadline (#464). */
+export async function getAdminSettings(timeoutMs?: number): Promise<AdminSettings> {
+  const [res] = await upstashPipeline([["HGETALL", ADMIN_SETTINGS_KEY]], timeoutMs === undefined ? undefined : { timeoutMs });
   // A command-level failure resolves as { error } rather than rejecting.
   // Decoding its missing result would silently serve DEFAULT settings (not
   // paused, baked caps) with no log — so throw, making it behave exactly
@@ -552,6 +554,20 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
         // sentinel, and only for the scoring start.
         const ms = k === "scoringStartsAt" && v === "now" ? Date.now() : Date.parse(v);
         if (!Number.isFinite(ms)) throw new AdminValidationError(k, `${k} must be a valid ISO date string`);
+        // Launching into a window that already closed would report success
+        // while nothing opens: refuse, naming the field to fix. The end is
+        // this patch's own when it carries one, else the stored one — a read
+        // failure throws (cannot confirm the window is open).
+        if (k === "scoringStartsAt" && v === "now") {
+          const endRaw = "scoringEndsAt" in patch ? patch.scoringEndsAt : (await getAdminSettings()).scoringEndsAt;
+          const end = typeof endRaw === "string" && endRaw !== "" ? Date.parse(endRaw) : NaN;
+          if (Number.isFinite(end) && end <= ms) {
+            throw new AdminValidationError(
+              "scoringEndsAt",
+              `Scoring closes (${new Date(end).toISOString()}) has already passed — clear or move it before launching`,
+            );
+          }
+        }
         const iso = new Date(ms).toISOString();
         fields.push(k, iso);
         changed[k] = iso as unknown as boolean;

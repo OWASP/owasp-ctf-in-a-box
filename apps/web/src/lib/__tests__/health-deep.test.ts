@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   upstashPipeline: vi.fn<(commands: (string | number)[][], opts?: unknown) => Promise<{ result?: unknown; error?: string }[]>>(),
   getSyncStatus: vi.fn<() => Promise<{ lastPollAt: string | null } | null>>(),
-  getAdminSettings: vi.fn<() => Promise<{ scoringStartsAt: string | null }>>(),
+  getAdminSettings: vi.fn<(timeoutMs?: number) => Promise<{ scoringStartsAt: string | null }>>(),
   fetch: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(),
 }));
 
@@ -176,6 +176,9 @@ describe("launched (#464)", () => {
   // launched. `ctf-setup.sh doctor` and `launch` read it from here.
   it("reports launched: true once the scoring start has passed", async () => {
     expect((await probeDeepHealth(NOW)).launched).toBe(true);
+    // CodeRabbit #469: the read itself carries the probe's bound, so a hung
+    // read is cut at the probe deadline rather than running on behind it.
+    expect(mocks.getAdminSettings).toHaveBeenCalledWith(PROBE_TIMEOUT_MS);
   });
 
   it("reports launched: false before launch, without degrading the status", async () => {

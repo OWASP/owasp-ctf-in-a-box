@@ -158,7 +158,7 @@ async function readLaunched(now: number): Promise<boolean | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const settings = await Promise.race([
-      getAdminSettings(),
+      getAdminSettings(PROBE_TIMEOUT_MS),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`settings read timed out after ${PROBE_TIMEOUT_MS}ms`)), PROBE_TIMEOUT_MS);
       }),

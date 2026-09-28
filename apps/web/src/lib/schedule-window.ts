@@ -89,3 +89,12 @@ export function nextScheduleBoundary(
   }
   return next;
 }
+
+/** The /admin readouts' "now" (#464): the client's stamp, floored at the last
+ *  server instant it knows (the settings' `updatedAt`). A start is written on
+ *  the SERVER's clock, so a client clock behind it would otherwise show a
+ *  just-launched event as scheduled and its scoring as closed. */
+export function serverFloorNow(nowMs: number, updatedAt: string | null | undefined): number {
+  const floor = updatedAt ? Date.parse(updatedAt) : NaN;
+  return Number.isFinite(floor) ? Math.max(nowMs, floor) : nowMs;
+}

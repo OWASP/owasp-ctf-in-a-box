@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { launchState, nextScheduleBoundary, outsideScoringWindow, outsideWindow } from "@/lib/schedule-window";
+import { launchState, nextScheduleBoundary, outsideScoringWindow, outsideWindow, serverFloorNow } from "@/lib/schedule-window";
 
 // Shared differential corpus (issue #232): the same cases run verbatim in
 // scorer/test/store.test.js and sync/test/redis.test.js against their own
@@ -97,5 +97,14 @@ describe("launchState (#464, the /admin Launch block)", () => {
   it("is scheduled while the start is ahead, and live from it on", () => {
     expect(launchState(now, "2026-10-02T00:00:00Z")).toEqual({ kind: "scheduled", at: "2026-10-02T00:00:00.000Z" });
     expect(launchState(now, "2026-10-01T12:00:00Z")).toEqual({ kind: "live", since: "2026-10-01T12:00:00.000Z" });
+  });
+});
+
+describe("serverFloorNow (#464, the /admin readouts' now)", () => {
+  it("floors the client stamp at the last server instant, and ignores a missing or bad one", () => {
+    expect(serverFloorNow(1000, new Date(5000).toISOString())).toBe(5000);
+    expect(serverFloorNow(9000, new Date(5000).toISOString())).toBe(9000);
+    expect(serverFloorNow(1000, null)).toBe(1000);
+    expect(serverFloorNow(1000, "nope")).toBe(1000);
   });
 });

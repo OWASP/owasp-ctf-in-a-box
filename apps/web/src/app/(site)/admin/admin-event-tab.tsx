@@ -18,7 +18,7 @@
 
 import { useEffect, useState } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
-import { launchState, outsideScoringWindow, outsideWindow } from "@/lib/schedule-window";
+import { launchState, outsideScoringWindow, outsideWindow, serverFloorNow } from "@/lib/schedule-window";
 import { TEAM_MAX_MEMBERS, TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
 import { DEFAULT_EVENT_IDENTITY, EVENT_IDENTITY_MAX, type EventIdentityKey } from "@/lib/event-identity";
 import AdminEventControls from "@/components/admin-event-controls";
@@ -238,11 +238,13 @@ export default function AdminEventTab({
   // A client clock behind it would show a just-launched event as "Scheduled",
   // so the latest server instant we know — the settings' own updatedAt — is a
   // floor on "now" (a start at or before the last save is already live).
-  const serverFloor = settings.updatedAt ? Date.parse(settings.updatedAt) : NaN;
-  const launch = launchState(Number.isFinite(serverFloor) ? Math.max(nowMs, serverFloor) : nowMs, settings.scoringStartsAt);
-  const scoringLiveNow = !settings.paused && !outsideScoringWindow(nowMs, settings.scoringStartsAt, settings.scoringEndsAt);
+  // Every readout below uses this one floored "now", so the Launch block and
+  // the "Right now" line can never disagree.
+  const effectiveNow = serverFloorNow(nowMs, settings.updatedAt);
+  const launch = launchState(effectiveNow, settings.scoringStartsAt);
+  const scoringLiveNow = !settings.paused && !outsideScoringWindow(effectiveNow, settings.scoringStartsAt, settings.scoringEndsAt);
   const registrationOpenNow =
-    settings.teamRegistrationOpen && !outsideWindow(nowMs, settings.registrationStartsAt, settings.registrationEndsAt);
+    settings.teamRegistrationOpen && !outsideWindow(effectiveNow, settings.registrationStartsAt, settings.registrationEndsAt);
   // No "Event" heading inside the panel: the old flat layout needed an <h3> to
   // separate this group from the module sections below it, but the tab strip is
   // that heading now (the panel is labelled by its own tab via

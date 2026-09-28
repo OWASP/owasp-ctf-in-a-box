@@ -903,5 +903,8 @@ describe("the Launch block (#464)", () => {
   it("treats a start at or before the last server save as live, whatever the client clock says", () => {
     const html = render({ scoringStartsAt: "2999-01-01T00:00:00.000Z", updatedAt: "2999-01-01T00:00:05.000Z" });
     expect(html).toContain("Live since");
+    // CodeRabbit #469: the "Right now" scoring readout uses the SAME floored
+    // now — it must not say "outside its window" beside "Live since".
+    expect(html).toContain("scoring is live");
   });
 });

@@ -2049,7 +2049,7 @@ since …**.
   every module page again and stops scoring. Solves already banked are kept.
 
 A **master reset** also returns the event to not launched. Launch state is
-public on `/health/deep` (`"launched": true | false`). `ctf-setup.sh doctor`
+public on `/health/deep` (`"launched": true | false | null`, where `null` means the box could not read its settings). `ctf-setup.sh doctor`
 reads it and warns while the box is not launched. If contestants
 report that only the landing page loads, this is almost always why — see
 [troubleshooting](troubleshooting.md).

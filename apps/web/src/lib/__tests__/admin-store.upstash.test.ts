@@ -105,6 +105,36 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     expect(s.secureDevTargets).toEqual(["webgoat"]);
   });
 
+  // CodeRabbit #469: the window-can-open check runs INSIDE the write script,
+  // so it sees the other bound as it is at commit time — no read-then-write
+  // race between two organizers saving opposite bounds.
+  it("refuses a start at or after the stored Scoring closes, writing nothing", async () => {
+    await updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, "alice");
+    await expect(updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, "bob")).rejects.toThrow(/Scoring closes/);
+    const s = await getAdminSettings();
+    expect(s.scoringStartsAt ?? null).toBeNull();
+    expect(s.updatedBy).toBe("alice");
+  });
+
+  it("two opposite saves racing: at most one lands, and the stored window can open", async () => {
+    const results = await Promise.allSettled([
+      updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, "alice"),
+      updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, "bob"),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const s = await getAdminSettings();
+    const both = s.scoringStartsAt && s.scoringEndsAt;
+    expect(both ? Date.parse(s.scoringEndsAt!) > Date.parse(s.scoringStartsAt!) : true).toBe(true);
+  });
+
+  it("an unrelated save is not refused over a window it does not touch", async () => {
+    await upstashPipeline([
+      ["HSET", "ctf:admin:settings", "scoringStartsAt", "2030-06-01T00:00:00.000Z", "scoringEndsAt", "2030-01-01T00:00:00.000Z"],
+    ]);
+    await updateAdminSettings({ hintCost: 5 }, "alice");
+    expect((await getAdminSettings()).hintCost).toBe(5);
+  });
+
   // #464: the reset script relocks the event — run for real, on throwaway keys
   // (never the shared settings hash), so nothing else in the suite is touched.
   it("RESET_SCRIPT clears the scoring start (not launched) and freezes, atomically", async () => {

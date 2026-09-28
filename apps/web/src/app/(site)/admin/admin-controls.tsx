@@ -32,7 +32,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatRelativeTime } from "@/lib/relative-time";
 import type { AdminSettings } from "@/lib/admin-store";
-import { restampPlan } from "@/lib/schedule-window";
+import { restampPlan, type ReadoutStamp } from "@/lib/schedule-window";
 import { DEFAULT_EVENT_IDENTITY } from "@/lib/event-identity";
 import { phaseFromSettings } from "@/components/phase";
 import {
@@ -241,12 +241,20 @@ export default function AdminControls({
   // closes, so an organizer parked on the tab across a boundary sees the
   // flip without touching anything. Never read from the clock in render:
   // that is the impure read the compiler lint rejects.
-  const [settingsAt, setSettingsAt] = useState(() => Date.now());
+  const [stamp, setStamp] = useState<ReadoutStamp>(() => {
+    const now = Date.now();
+    return { at: now, client: now };
+  });
+  const settingsAt = stamp.at;
+  const restampNow = () => {
+    const now = Date.now();
+    setStamp({ at: now, client: now });
+  };
   useEffect(() => {
     // The same floored "now" the readouts use (serverFloorNow), so a client
     // clock behind the server re-stamps at the boundary the READOUT crosses.
     const plan = restampPlan(
-      settingsAt,
+      stamp,
       settings.updatedAt,
       [
         { startsAt: settings.scoringStartsAt, endsAt: settings.scoringEndsAt },
@@ -259,10 +267,10 @@ export default function AdminControls({
     // external system this effect subscribes to. Re-stamping re-runs the
     // effect, which arms the timer for the following boundary, if any. The
     // stamp is the boundary itself, never a client clock that may trail it.
-    const id = setTimeout(() => setSettingsAt(plan.stampAt), plan.delayMs);
+    const id = setTimeout(() => setStamp({ at: plan.stampAt, client: Date.now() }), plan.delayMs);
     return () => clearTimeout(id);
   }, [
-    settingsAt,
+    stamp,
     settings.updatedAt,
     settings.scoringStartsAt,
     settings.scoringEndsAt,
@@ -424,7 +432,7 @@ export default function AdminControls({
     // The server reset freezes AND relocks (#464: clears the scoring start),
     // so local state follows — or the Launch block would still say "Live".
     setSettings((s) => ({ ...s, paused: true, scoringStartsAt: null }));
-    setSettingsAt(Date.now());
+    restampNow();
     const total = Object.values(data.cleared ?? {}).reduce((a, b) => a + b, 0);
     setResetInfo(`Wiped ${total} keys — the event is frozen and not launched. Launch and unfreeze when you're ready.`);
   };
@@ -485,7 +493,7 @@ export default function AdminControls({
    *  confirmed, so what the fields show is what is stored. */
   const syncInputs = (s: AdminSettings) => {
     setSettings(s);
-    setSettingsAt(Date.now());
+    restampNow();
     setHintCostInput(s.hintCost === null ? "" : String(s.hintCost));
     setMinSolvesInput(s.hintsMinSolves === null ? "" : String(s.hintsMinSolves));
     setUnlockAfterInput(s.hintsUnlockAfterMin === null ? "" : String(s.hintsUnlockAfterMin));

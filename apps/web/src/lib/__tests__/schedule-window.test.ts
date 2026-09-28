@@ -111,24 +111,36 @@ describe("serverFloorNow (#464, the /admin readouts' now)", () => {
 
 // CodeRabbit #469: with the client clock behind the server floor, a timer that
 // re-stamped Date.now() fell back under the floor and re-armed the SAME
-// boundary forever — the tab stayed "Scheduled" after launch.
+// boundary forever; and a stamp on the floored timeline must carry its own
+// client-clock anchor, or the next delay mixes the two clocks.
 describe("restampPlan (#464, the /admin boundary timer)", () => {
   const floor = Date.parse("2026-10-01T12:00:00Z");
   const updatedAt = new Date(floor).toISOString();
   const start = floor + 60_000;
+  const end = start + 60_000;
   const clientStamp = floor - 5 * 60_000; // client 5 minutes behind the server
+  const windows = [{ startsAt: new Date(start).toISOString(), endsAt: new Date(end).toISOString() }];
 
   it("waits until the boundary on the floored timeline, then stamps the boundary itself", () => {
-    const plan = restampPlan(clientStamp, updatedAt, [{ startsAt: new Date(start).toISOString(), endsAt: null }], clientStamp);
+    const plan = restampPlan({ at: clientStamp, client: clientStamp }, updatedAt, windows, clientStamp);
     expect(plan).toEqual({ delayMs: 60_000, stampAt: start });
-    // The new stamp is past the boundary on the same timeline the readout uses.
     expect(launchState(serverFloorNow(plan!.stampAt, updatedAt), new Date(start).toISOString()).kind).toBe("live");
-    // And the next plan does not re-arm the boundary it just crossed.
-    expect(restampPlan(plan!.stampAt, updatedAt, [{ startsAt: new Date(start).toISOString(), endsAt: null }], clientStamp + 60_000)).toBeNull();
+  });
+
+  it("measures the NEXT boundary from the stamp's own client anchor — no skew added", () => {
+    // Fired one real minute after the first stamp: stamp = the start, anchored
+    // at the client time it fired.
+    const fired = { at: start, client: clientStamp + 60_000 };
+    const plan = restampPlan(fired, updatedAt, windows, clientStamp + 60_000);
+    expect(plan).toEqual({ delayMs: 60_001, stampAt: end + 1 });
   });
 
   it("counts time already elapsed since the stamp", () => {
-    const plan = restampPlan(clientStamp, updatedAt, [{ startsAt: new Date(start).toISOString(), endsAt: null }], clientStamp + 20_000);
+    const plan = restampPlan({ at: clientStamp, client: clientStamp }, updatedAt, windows, clientStamp + 20_000);
     expect(plan?.delayMs).toBe(40_000);
+  });
+
+  it("is null once no bound lies ahead", () => {
+    expect(restampPlan({ at: end + 1, client: 0 }, updatedAt, windows, 0)).toBeNull();
   });
 });

@@ -432,12 +432,39 @@ export async function getSyncStatus(): Promise<SyncStatus | null> {
 //       [6 .. 5+numDels]=field names to HDEL  [6+numDels ..]=field,value pairs to HSET
 const UPDATE_SCRIPT = `
 local numDels = tonumber(ARGV[5])
+-- The scoring window must be able to open (#464). Checked here, atomically
+-- with the write, on the RESULTING bounds: this patch's value for a bound it
+-- sets or clears, else the stored one. Stored bounds are normalised ISO-8601
+-- UTC strings, so string order is time order. Only when the patch touches a
+-- bound: an unrelated save is never refused over a window it does not touch.
+local touched, startV, endV = false, nil, nil
+local startSet, endSet = false, false
+for i = 1, numDels do
+  if ARGV[5 + i] == 'scoringStartsAt' then touched = true; startSet = true end
+  if ARGV[5 + i] == 'scoringEndsAt' then touched = true; endSet = true end
+end
+for i = 6 + numDels, #ARGV, 2 do
+  if ARGV[i] == 'scoringStartsAt' then touched = true; startSet = true; startV = ARGV[i+1] end
+  if ARGV[i] == 'scoringEndsAt' then touched = true; endSet = true; endV = ARGV[i+1] end
+end
+if touched then
+  if not startSet then startV = redis.call('HGET', KEYS[1], 'scoringStartsAt') or nil end
+  if not endSet then endV = redis.call('HGET', KEYS[1], 'scoringEndsAt') or nil end
+  if startV and endV and endV <= startV then return {'__window_refused__', startV, endV} end
+end
 redis.call('HSET', KEYS[1], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
 for i = 1, numDels do redis.call('HDEL', KEYS[1], ARGV[5 + i]) end
 for i = 6 + numDels, #ARGV, 2 do redis.call('HSET', KEYS[1], ARGV[i], ARGV[i+1]) end
 redis.call('LPUSH', KEYS[2], ARGV[3])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]))
 return redis.call('HGETALL', KEYS[1])`;
+
+function windowRefusal(start: string, end: string): AdminValidationError {
+  return new AdminValidationError(
+    "scoringEndsAt",
+    `Scoring closes (${end}) is at or before Scoring opens (${start}), so scoring could never open — clear or move Scoring closes first`,
+  );
+}
 
 export async function updateAdminSettings(patch: SettingsPatch, actor: string): Promise<AdminSettings> {
   const keys = Object.keys(patch);
@@ -668,29 +695,13 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
     }
   }
 
-  // The scoring window must be able to open (#464): a start at or after
-  // Scoring closes would save — or "launch" — while nothing ever scores.
-  // Checked on the RESULTING window: this patch's values, else the stored
-  // ones (read only when needed; a read failure throws — cannot confirm).
-  const touchesStart = "scoringStartsAt" in patch;
-  const touchesEnd = "scoringEndsAt" in patch;
-  if (touchesStart || touchesEnd) {
-    const patchedStart = touchesStart ? changed.scoringStartsAt : undefined;
-    const patchedEnd = touchesEnd ? changed.scoringEndsAt : undefined;
-    const settingSomething = (touchesStart && patchedStart !== null) || (touchesEnd && patchedEnd !== null);
-    if (settingSomething) {
-      const stored = touchesStart && touchesEnd ? null : await getAdminSettings();
-      const startRaw = touchesStart ? patchedStart : stored?.scoringStartsAt;
-      const endRaw = touchesEnd ? patchedEnd : stored?.scoringEndsAt;
-      const startMs = typeof startRaw === "string" ? Date.parse(startRaw) : NaN;
-      const endMs = typeof endRaw === "string" ? Date.parse(endRaw) : NaN;
-      if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs <= startMs) {
-        throw new AdminValidationError(
-          "scoringEndsAt",
-          `Scoring closes (${new Date(endMs).toISOString()}) is at or before Scoring opens (${new Date(startMs).toISOString()}), so scoring could never open — clear or move Scoring closes first`,
-        );
-      }
-    }
+  // Both bounds in this one patch: refused here, before any write. A single
+  // bound is checked against the stored other one inside UPDATE_SCRIPT,
+  // atomically with the write, so two organizers cannot race past it.
+  const patchedStart = changed.scoringStartsAt as unknown;
+  const patchedEnd = changed.scoringEndsAt as unknown;
+  if (typeof patchedStart === "string" && typeof patchedEnd === "string" && Date.parse(patchedEnd) <= Date.parse(patchedStart)) {
+    throw windowRefusal(patchedStart, patchedEnd);
   }
   const at = new Date().toISOString();
   const audit = JSON.stringify({ at, by: actor, changed });
@@ -699,6 +710,8 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
     [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
     [actor, at, audit, String(AUDIT_CAP - 1), String(dels.length), ...dels, ...fields],
   );
+  // The script refused a window that could never open, writing nothing.
+  if (Array.isArray(result) && result[0] === "__window_refused__") throw windowRefusal(String(result[1]), String(result[2]));
   return decodeSettings(flatToObject(result));
 }
 

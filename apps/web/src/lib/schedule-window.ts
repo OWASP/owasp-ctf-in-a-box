@@ -99,19 +99,25 @@ export function serverFloorNow(nowMs: number, updatedAt: string | null | undefin
   return Number.isFinite(floor) ? Math.max(nowMs, floor) : nowMs;
 }
 
+/** A readout stamp: `at` on the floored timeline the readouts use, and
+ *  `client`, the client-clock instant it was taken at — the anchor elapsed
+ *  time is measured from, so the two clocks are never subtracted. */
+export type ReadoutStamp = { at: number; client: number };
+
 /** When the /admin boundary timer should fire and what to stamp (#464). The
- *  delay is measured on the floored timeline (`serverFloorNow`), counting the
- *  time since the stamp; the stamp IS the boundary, so a client clock behind
- *  the server cannot fall back under the floor and re-arm the same boundary.
- *  Null when no window bound lies ahead. */
+ *  delay is the distance to the next boundary on the floored timeline
+ *  (`serverFloorNow`), less the client time elapsed since the stamp's own
+ *  anchor. The new stamp IS the boundary, so a client clock behind the
+ *  server can neither fall back under the floor and re-arm the same boundary
+ *  nor add its skew to the next delay. Null when no bound lies ahead. */
 export function restampPlan(
-  settingsAt: number,
+  stamp: ReadoutStamp,
   updatedAt: string | null | undefined,
   windows: readonly { startsAt: string | null | undefined; endsAt: string | null | undefined }[],
   clientNow: number,
 ): { delayMs: number; stampAt: number } | null {
-  const base = serverFloorNow(settingsAt, updatedAt);
+  const base = serverFloorNow(stamp.at, updatedAt);
   const at = nextScheduleBoundary(base, windows.map((w) => ({ startsAt: w.startsAt ?? null, endsAt: w.endsAt ?? null })));
   if (at === null) return null;
-  return { delayMs: Math.max(0, at - (base + (clientNow - settingsAt))), stampAt: at };
+  return { delayMs: Math.max(0, at - base - (clientNow - stamp.client)), stampAt: at };
 }

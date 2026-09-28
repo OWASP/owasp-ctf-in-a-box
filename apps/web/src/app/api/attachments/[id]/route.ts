@@ -3,6 +3,7 @@ import { ATTACHMENT_ID_RE, contentDisposition } from "@/lib/attachments-keys";
 import { readUploadBytes, resolveAttachment } from "@/lib/attachments-store";
 import { auth } from "@/lib/auth";
 import { classicVisibility } from "@/lib/classic-visibility";
+import { requireLaunchedApi } from "@/lib/launch";
 
 /**
  * An attachment's bytes (#186), for exactly the viewers who can see its
@@ -10,6 +11,11 @@ import { classicVisibility } from "@/lib/classic-visibility";
  * challenge page gives — so the launch lock (#464), a locked story step
  * (#463), the module switch and a deleted challenge all apply here without a
  * copy that could drift; a guessable URL is not a way around any of them.
+ *
+ * One of the six sanctioned unauthenticated routes (docs/reviewing.md
+ * invariant 11): a signed-out visitor may read a launched challenge's page, so
+ * they may download its files. Before launch it answers 403 not-launched,
+ * like every module API.
  *
  * Hidden, unknown, malformed, a link (links are never proxied) and an upload
  * still missing its bytes all answer the same bodiless 404, so the response
@@ -31,10 +37,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!ATTACHMENT_ID_RE.test(id)) return notFound();
 
   try {
-    const found = await resolveAttachment(id);
-    if (!found) return notFound();
     const session = await auth.api.getSession({ headers: request.headers });
     const login = (session?.user as { login?: string } | undefined)?.login;
+    // The module-API launch contract first (#464): before launch, 403
+    // not-launched to anyone but an admin — decided before the attachment is
+    // even looked up, so nothing about it can differ.
+    const locked = await requireLaunchedApi(login);
+    if (locked) return locked;
+    const found = await resolveAttachment(id);
+    if (!found) return notFound();
     if ((await classicVisibility(login, found.itemId)).state !== "visible") return notFound();
 
     const att = found.attachment;

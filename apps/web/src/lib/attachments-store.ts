@@ -33,6 +33,7 @@ import {
   sanitizeFilename,
   splitChunks,
 } from "@/lib/attachments-keys";
+import { CLASSIC_CHALLENGES_KEY } from "@/lib/classic-keys";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
 
 export class AttachmentError extends Error {
@@ -42,24 +43,31 @@ export class AttachmentError extends Error {
   }
 }
 
-export type AttachmentKeys = { meta: string; index: string; blob: string; bytes: string };
+/** `owner` is the hash whose field must exist for an item to take a file —
+ *  classic's challenge hash (#472: checked inside the commit, atomically). */
+export type AttachmentKeys = { meta: string; index: string; blob: string; bytes: string; owner?: string };
 const KEYS: AttachmentKeys = {
   meta: ATTACHMENTS_META_KEY,
   index: ATTACHMENTS_INDEX_KEY,
   blob: ATTACHMENTS_BLOB_KEY,
   bytes: ATTACHMENTS_BYTES_KEY,
+  owner: CLASSIC_CHALLENGES_KEY,
 };
 
-/** KEYS: meta, index, bytes, blob. ARGV: item key, attachment JSON, size,
- *  per-item max, event max, id, chunk count. Returns {"ok"} or a refusal
- *  {"items", count} / {"bytes", total}; a refusal deletes the chunks. */
+/** KEYS: meta, index, bytes, blob, owner. ARGV: item key, attachment JSON,
+ *  size, per-item max, event max, id, chunk count, item id. Returns {"ok"} or
+ *  a refusal {"noitem"} / {"items", count} / {"bytes", total}; a refusal
+ *  deletes the chunks. The item must still exist in the owner hash — checked
+ *  here, atomically with the write, so a challenge deleted after the route's
+ *  own check never gains an orphan still counted against the event cap. */
 export const COMMIT_SCRIPT = `
-local raw = redis.call('HGET', KEYS[1], ARGV[1])
-local list = raw and cjson.decode(raw) or {}
 local size = tonumber(ARGV[3])
 local function drop()
   for n = 0, tonumber(ARGV[7]) - 1 do redis.call('HDEL', KEYS[4], ARGV[6] .. ':' .. n) end
 end
+if redis.call('HEXISTS', KEYS[5], ARGV[8]) == 0 then drop() return {'noitem'} end
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+local list = raw and cjson.decode(raw) or {}
 if #list >= tonumber(ARGV[4]) then drop() return {'items', #list} end
 local total = tonumber(redis.call('GET', KEYS[3]) or '0')
 if total + size > tonumber(ARGV[5]) then drop() return {'bytes', total} end
@@ -114,9 +122,10 @@ function sha256Hex(bytes: Uint8Array): string {
 async function commit(itemId: string, module: AttachmentModule, att: Attachment, keys: AttachmentKeys): Promise<void> {
   const verdict = (await upstashEval(
     COMMIT_SCRIPT,
-    [keys.meta, keys.index, keys.bytes, keys.blob],
-    [itemKey(module, itemId), JSON.stringify(att), att.size ?? 0, ATTACHMENTS_PER_ITEM_MAX, ATTACHMENTS_EVENT_MAX_BYTES, att.id, att.chunks ?? 0],
+    [keys.meta, keys.index, keys.bytes, keys.blob, keys.owner ?? CLASSIC_CHALLENGES_KEY],
+    [itemKey(module, itemId), JSON.stringify(att), att.size ?? 0, ATTACHMENTS_PER_ITEM_MAX, ATTACHMENTS_EVENT_MAX_BYTES, att.id, att.chunks ?? 0, itemId],
   )) as [string, number?];
+  if (verdict[0] === "noitem") throw new AttachmentError(`No challenge with id ${itemId}`);
   if (verdict[0] === "items") {
     throw new AttachmentError(`At most ${ATTACHMENTS_PER_ITEM_MAX} attachments per challenge — this one has ${verdict[1]}`);
   }

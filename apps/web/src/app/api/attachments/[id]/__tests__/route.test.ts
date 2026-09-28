@@ -11,6 +11,8 @@ const m = vi.hoisted(() => ({
   bytes: new Uint8Array([60, 104, 49, 62]),
   fail: false,
   visibilityCalls: [] as [string | undefined, string][],
+  launched: true,
+  resolveCalls: 0,
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({
@@ -23,8 +25,15 @@ vi.mock("@/lib/classic-visibility", () => ({
     return { state: m.state, preview: false };
   },
 }));
+vi.mock("@/lib/launch", () => ({
+  requireLaunchedApi: async () =>
+    m.launched ? null : new Response(JSON.stringify({ error: "not-launched" }), { status: 403, headers: { "content-type": "application/json" } }),
+}));
 vi.mock("@/lib/attachments-store", () => ({
-  resolveAttachment: async () => m.resolved,
+  resolveAttachment: async () => {
+    m.resolveCalls += 1;
+    return m.resolved;
+  },
   readUploadBytes: async () => m.bytes,
 }));
 
@@ -41,9 +50,21 @@ beforeEach(() => {
   m.resolved = { module: "classic", itemId: "web-one", attachment: { ...upload } };
   m.fail = false;
   m.visibilityCalls = [];
+  m.launched = true;
+  m.resolveCalls = 0;
 });
 
 describe("GET /api/attachments/[id]", () => {
+  // CodeRabbit #472: the module-API launch contract — 403 not-launched,
+  // decided before the attachment is even looked up.
+  it("answers 403 not-launched before launch, without resolving the attachment", async () => {
+    m.launched = false;
+    const res = await get();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "not-launched" });
+    expect(m.resolveCalls).toBe(0);
+  });
+
   it("serves an uploaded .html as an opaque download, never rendered", async () => {
     const res = await get();
     expect(res.status).toBe(200);

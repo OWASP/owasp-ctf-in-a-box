@@ -152,13 +152,14 @@ rebuild. The last three of those are machine-enforced as well: `.coderabbit.yaml
 carries path instructions for `bootstrap-env.ts` and the snapshot readers, and
 for `apps/web/src/**/*.tsx` (the client-bundle read and the prerendered `/`).
 
-**11. The public surface is a named list, not a shape.** Exactly five routes
+**11. The public surface is a named list, not a shape.** Exactly six routes
 under `/api` answer without a session or a verified launch token, and each is
 on the list for its own stated reason — a sixth does not inherit an exemption
-by resembling one that has it; it needs its own case. Four are read-only,
+by resembling one that has it; it needs its own case. Five are read-only,
 policy or public-by-design content out and never facts in, nothing secret in
 the response: `GET /api/public/scoring`, `GET /api/ai/launch-key`, `GET
-/api/board/items` and `GET /api/sponsors/logo/[id]`. One is a POST that exists
+/api/board/items`, `GET /api/sponsors/logo/[id]` and `GET
+/api/attachments/[id]`. One is a POST that exists
 *before* identity: `POST /api/stats/visit` (the approximate, no-PII
 per-country reach counter, always `204`, whose own header comment documents
 that it is not a security boundary). The pre-event password check
@@ -188,7 +189,16 @@ directly), and carries nothing an organizer did not deliberately upload to be
 shown publicly — no flag, key, or contestant data has anywhere to ride in this
 payload. The finding to watch for here is the same shape as `launch-key`'s:
 anything beyond those bytes and their content-type metadata leaking into the
-response, or the id check moving after a Redis read.
+response, or the id check moving after a Redis read. `attachments/[id]` (issue #186, ADR 61) serves a classic
+challenge's uploaded file to exactly the viewers who can read that
+challenge's page — and a signed-out visitor can read a launched challenge,
+which is why it needs no session. It answers `403 not-launched` before launch
+(admins pass as a preview) before it looks the attachment up, then asks
+`classicVisibility`, the same answer the page gives, so a story lock or a
+disabled module applies to downloads too; a hidden, unknown or malformed id is
+one bodiless `404`. The bytes are always served as a download
+(`application/octet-stream`, `Content-Disposition: attachment`, `nosniff`,
+`private, no-store`), never rendered from the box's origin.
 
 **12. `requireAdmin` gates per-contestant data by default; self-service reads
 are the one carve-out, and it's narrow.** A route returning points,

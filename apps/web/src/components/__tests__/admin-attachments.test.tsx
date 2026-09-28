@@ -47,3 +47,14 @@ describe("AdminAttachments", () => {
     expect(renderToStaticMarkup(<AdminAttachments itemId="web-one" initialItems={[]} />)).toMatch(/5\.0 MB.*10 per challenge/);
   });
 });
+
+// CodeRabbit #473: until the list has loaded, no write may start — a late
+// GET would otherwise overwrite an attachment added in the meantime.
+describe("AdminAttachments while the list is loading", () => {
+  it("holds every write control until the list has loaded", () => {
+    const html = renderToStaticMarkup(<AdminAttachments itemId="web-one" />);
+    expect(html).toContain("Checking…");
+    expect(html).toMatch(/<input type="file" disabled=""/);
+    expect(html).toMatch(/placeholder="Name, e\.g\. disk\.img" disabled=""/);
+  });
+});

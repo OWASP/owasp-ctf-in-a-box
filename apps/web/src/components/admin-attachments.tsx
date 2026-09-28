@@ -45,6 +45,9 @@ export default function AdminAttachments({
   const [error, setError] = useState<string | null>(null);
   const [linkName, setLinkName] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+  // A failed first read is recoverable (CodeRabbit #473): Retry bumps this.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
     if (!itemId || initialItems) return;
@@ -52,13 +55,18 @@ export default function AdminAttachments({
     (async () => {
       const res = await fetch(`${ENDPOINT}?module=classic&item=${encodeURIComponent(itemId)}`).catch(() => null);
       if (cancelled) return;
-      if (!res?.ok) return setError(res ? await errorOf(res) : "Couldn't load the files — check your connection.");
+      if (!res?.ok) return setLoadError(res ? await errorOf(res) : "Couldn't load the files — check your connection.");
+      setLoadError(null);
       setItems(((await res.json()) as { attachments: Item[] }).attachments);
     })();
     return () => {
       cancelled = true;
     };
-  }, [itemId, initialItems]);
+  }, [itemId, initialItems, loadAttempt]);
+
+  // No write starts before the list has loaded (CodeRabbit #473): a late GET
+  // would otherwise replace an attachment added in the meantime.
+  const busy = pending || items === null;
 
   if (!itemId) {
     return (
@@ -97,7 +105,23 @@ export default function AdminAttachments({
       </div>
       {error && <p className="text-sm text-[#e53e3e]">{error}</p>}
       {items === null ? (
-        <p className="text-sm text-muted">Checking…</p>
+        loadError ? (
+          <div className="flex items-center gap-3 text-sm">
+            <span className="text-[#e53e3e]">{loadError}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setLoadError(null);
+                setLoadAttempt((n) => n + 1);
+              }}
+              className="rounded-md border border-white/15 px-3 py-1 text-sm text-white hover:bg-white/[0.06]"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <p className="text-sm text-muted">Checking…</p>
+        )
       ) : items.length === 0 ? (
         <p className="text-sm text-muted">No files yet.</p>
       ) : (
@@ -109,7 +133,7 @@ export default function AdminAttachments({
                 <button
                   type="button"
                   aria-label={`Remove ${a.name}`}
-                  disabled={pending}
+                  disabled={busy}
                   onClick={() =>
                     void run(
                       () => fetch(`${ENDPOINT}?id=${a.id}`, { method: "DELETE" }),
@@ -146,7 +170,7 @@ export default function AdminAttachments({
         Upload a file
         <input
           type="file"
-          disabled={pending}
+          disabled={busy}
           onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = "";
@@ -174,20 +198,20 @@ export default function AdminAttachments({
           <input
             value={linkName}
             placeholder="Name, e.g. disk.img"
-            disabled={pending}
+            disabled={busy}
             onChange={(e) => setLinkName(e.target.value)}
             className={`w-40 ${INPUT_CLASS}`}
           />
           <input
             value={linkUrl}
             placeholder="https://…"
-            disabled={pending}
+            disabled={busy}
             onChange={(e) => setLinkUrl(e.target.value)}
             className={`flex-1 ${INPUT_CLASS}`}
           />
           <button
             type="button"
-            disabled={pending || !linkName.trim() || !linkUrl.trim()}
+            disabled={busy || !linkName.trim() || !linkUrl.trim()}
             onClick={() =>
               void run(
                 () =>

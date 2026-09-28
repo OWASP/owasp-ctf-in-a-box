@@ -116,6 +116,9 @@ export default function Leaderboard({
   const [sort, setSort] = useState<SortKey>("rank");
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  // If teams are deleted while viewing them, force the view back to individual
+  const activeView = showTeamsToggle ? view : "individual";
+
   const topPoints = useMemo(
     () => data.entries.reduce((max, e) => Math.max(max, e.points), 0),
     [data.entries],
@@ -181,8 +184,8 @@ export default function Leaderboard({
           in "individual" — only one of the two props is ever passed, so
           ScoreTimeChart never has to choose between them. */}
       <ScoreTimeChart
-        series={view === "individual" ? data.series : undefined}
-        teamSeries={view === "teams" ? data.teamSeries : undefined}
+        series={activeView === "individual" ? data.series : undefined}
+        teamSeries={activeView === "teams" ? data.teamSeries : undefined}
         note={chartNote}
       />
 
@@ -203,7 +206,7 @@ export default function Leaderboard({
             name="leaderboard-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={view === "individual" ? "Search contestants…" : "Search teams…"}
+            placeholder={activeView === "individual" ? "Search contestants…" : "Search teams…"}
             aria-label="Search leaderboard"
             className="w-full rounded-md border border-white/10 bg-white/[0.03] py-2 pl-9 pr-3 text-sm text-white placeholder:text-muted focus-visible:border-[#d4a017]/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
           />
@@ -224,10 +227,10 @@ export default function Leaderboard({
               <button
                 key={v}
                 type="button"
-                onClick={() => setView(v)}
-                aria-pressed={view === v}
+                onClick={() => { setView(v); setExpanded(null); }}
+                aria-pressed={activeView === v}
                 className={`rounded-full border px-3 py-1 text-xs font-medium capitalize transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017] ${
-                  view === v
+                  activeView === v
                     ? "border-[#2563eb]/70 bg-white/[0.06] text-[var(--accent-blue-link)]"
                     : "border-white/10 text-zinc-400 hover:text-white"
                 }`}
@@ -241,7 +244,7 @@ export default function Leaderboard({
       </div>
       )}
 
-      {view === "individual" && data.entries.length > 0 && (
+      {activeView === "individual" && data.entries.length > 0 && (
         <div className="flex items-center gap-4 px-1 text-xs uppercase tracking-wider text-muted">
           <span>Sort:</span>
           {sortKeys.map((key) => (
@@ -266,15 +269,15 @@ export default function Leaderboard({
           concludes the ranking is broken unless the rule is stated where the
           ranking is (issue #200, 2.1). Shown only while that order is active:
           the points/solved sorts are self-describing. */}
-      {view === "individual" && data.entries.length > 0 && sort === "rank" && (
+      {activeView === "individual" && data.entries.length > 0 && sort === "rank" && (
         <p className="px-1 text-xs leading-relaxed text-muted">
           Rank rewards breadth: challenges solved across every module first, then points as the
           tiebreak, then whoever got there first.
         </p>
       )}
 
-      {view === "individual" ? (
-        data.entries.length === 0 ? (
+      {activeView === "individual" ? (
+        data.entries.length === 0 && query.trim() === "" ? (
           <EmptyBoard modules={modules} />
         ) : visibleEntries.length === 0 ? (
           <NoMatch noun="contestants" query={query.trim()} onClear={() => setQuery("")} />
@@ -318,7 +321,7 @@ export default function Leaderboard({
 
       {!boardIsEmpty && (
         <p className="px-1 text-xs text-muted">
-          {view === "individual"
+          {activeView === "individual"
             ? `Showing ${visibleEntries.length} of ${data.entries.length} contestants`
             : `Showing ${visibleTeams.length} of ${data.teams.length} teams`}
           {" · click a row for the breakdown"}

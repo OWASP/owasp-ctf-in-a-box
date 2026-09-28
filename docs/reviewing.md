@@ -292,9 +292,12 @@ ADR, not the code.
 - `.coderabbit.yaml` — path-scoped instructions carrying the invariants
   above to the file level, and the pre-merge checks (secrecy boundary,
   fail-direction, unpinned dependencies, breaking-change docs, secrets in
-  logs). Two of the five — secrecy boundary and unpinned dependencies — run
-  at `mode: error` with the request-changes workflow on, so a violation
-  blocks rather than warns; the other three stay warnings. The dividing line
+  logs, behavior changes ship a test). Two of the six — secrecy boundary and
+  unpinned dependencies — run at `mode: error` with the request-changes
+  workflow on, so a violation blocks rather than warns; the other four stay
+  warnings. "Behavior changes ship a test" (#483) started on 2026-09-28 as a
+  one-week `warning` trial and is meant to move to `error` once its false
+  positives are reviewed. The dividing line
   is that a check blocks only when it judges CODE against a mechanical rule:
   breaking-change docs was demoted after #241, because it scores the PR
   description from a snapshot taken at review time and blocked a PR whose

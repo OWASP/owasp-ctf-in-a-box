@@ -76,6 +76,7 @@ shellcheck scripts/*.sh scripts/lib/*.sh scripts/dev-stack setup/*.sh scorer/ent
   deploy/fly/deploy.sh deploy/fly/render-compose.sh
 bats setup/test/
 bats deploy/fly/test/
+bats scripts/test/
 ```
 
 (CI additionally lints `scorer/entrypoints/*.sh` as POSIX `sh` fragments with
@@ -162,8 +163,19 @@ PR you intend to merge. A finding you disagree with is answered, not
 ignored: CodeRabbit is fallible and a reasoned decline is a valid outcome,
 but the decline has to be on the record. Its pre-merge checks
 (secrecy boundary, fail-open/closed direction, unpinned dependencies,
-breaking-change docs, secrets in logs) encode invariants this repo has been
-burned by; a warning from one is a prompt to look, not a formality.
+breaking-change docs, secrets in logs, behavior changes ship a test) encode
+invariants this repo has been burned by; a warning from one is a prompt to
+look, not a formality.
+
+Two more workflows run on every PR (#483). `changelog.yml` fails a PR that
+changes `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without touching
+`CHANGELOG.md` (test-only and `.md` paths are exempt; the rules are in
+`scripts/check-changelog.sh`, run locally as
+`scripts/check-changelog.sh origin/main HEAD`). The `no-changelog` label
+skips it, and Dependabot PRs are skipped. `labeler.yml` applies labels by
+path from `.github/labeler.yml`. It runs on `pull_request_target` so it can
+label fork PRs, which is safe only because it never checks out or runs PR
+code. Keep it that way.
 
 **Always WAIT for CodeRabbit's re-review after every push, and check its
 comments — do not treat a PR as done on green CI alone.** CodeRabbit

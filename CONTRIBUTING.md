@@ -80,7 +80,10 @@ shellcheck scripts/*.sh scripts/lib/*.sh scripts/dev-stack setup/*.sh scorer/ent
   deploy/fly/deploy.sh deploy/fly/render-compose.sh
 # entrypoint fragments are sourced POSIX sh, never run standalone
 shellcheck -s sh --exclude=SC2034 scorer/entrypoints/*.sh
-bats setup/test/ && bats deploy/fly/test/
+bats setup/test/ && bats deploy/fly/test/ && bats scripts/test/
+
+# CHANGELOG rule (what the `changelog` workflow runs on your PR)
+scripts/check-changelog.sh origin/main HEAD
 
 # single-module compose bring-ups
 ./scripts/acceptance-quiz-only.sh
@@ -129,6 +132,39 @@ are path-scoped to judge-relevant scorer inputs plus `patches/`.
 `terraform.yml` validates and *tests* `deploy/aws-terraform` —
 `userdata.tftest.hcl` renders the bring-up script at plan time, because
 `terraform validate` never inspects rendered template output.
+
+## What a PR needs to pass
+
+Nothing here is only asked for; each item is checked on every PR.
+
+- **CI green.** The `ci.yml` jobs for the areas you touched (table above).
+  The commands behind each one are in
+  [AGENTS.md's build/test/lint list](AGENTS.md#buildtestlint); run the ones
+  for your area before you push.
+- **CodeRabbit review.** It must reach "Review completed" on your latest
+  commit with no open actionable thread (see
+  [Pull request flow](#pull-request-flow)). Its pre-merge checks include
+  **"Behavior Changes Ship a Test"**: a change to runtime behavior in
+  `apps/web/src/`, `sync/src/`, `scorer/src/` or `setup/*.sh` needs a new or
+  changed test next to it (`apps/web/src/**/__tests__/`, `sync/test/`,
+  `scorer/test/`, `setup/test/`), or a line in the PR description saying why
+  it has none (`No test: <reason>`). Pure refactors, copy, comments and docs
+  are exempt. The check only warns during its trial and is meant to block
+  later.
+- **A CHANGELOG entry.** The `changelog` workflow fails a PR that changes
+  `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without a line under
+  `## Unreleased` in `CHANGELOG.md`. Test-only paths (`__tests__/`, `test/`,
+  `*.test.*`, `*.bats`, `*.tftest.hcl`) and `.md` files do not count as code.
+  For an internal change with nothing to tell an organizer, a maintainer can
+  apply the `no-changelog` label, which skips the check. Dependabot PRs are
+  skipped too. Check locally with
+  `scripts/check-changelog.sh origin/main HEAD`.
+- **Conventional Commits** with a DCO sign-off on every commit (see
+  [DCO](#developer-certificate-of-origin-dco)).
+- **Labels are automatic.** The `labeler` workflow labels your PR from the
+  paths it changes (`.github/labeler.yml`: `javascript`, `scoring`,
+  `infrastructure`, `area:docs`, `test`, and the rest), so you don't need to
+  pick any.
 
 ## Testing conventions this repo holds on purpose
 

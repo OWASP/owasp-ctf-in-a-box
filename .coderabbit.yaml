@@ -6,7 +6,7 @@
 # Tuning principles applied here:
 #   1. Semantic and security linters ON; style and IaC-policy linters OFF.
 #      A style nit you scroll past trains you to scroll past the real one.
-#   2. Five pre-merge checks, not thirteen. Every pre-merge check emits a
+#   2. Six pre-merge checks, not thirteen. Every pre-merge check emits a
 #      status row on EVERY PR, including "not applicable" — so each one costs
 #      vertical space whether or not it fires. Only invariants worth that
 #      permanent cost stay.
@@ -649,11 +649,13 @@ reviews:
         Prose style, grammar, and line length are NOT in scope. Do not comment
         on them.
 
-  # Five checks. Each costs a status row on every PR, so the bar is: an
+  # Six checks. Each costs a status row on every PR, so the bar is: an
   # invariant whose violation is silent, expensive, and not caught by CI.
   # The first and third run at mode: error (paired with
   # request_changes_workflow: true above) — the ratchet planned at adoption,
-  # pulled once the config had survived 15+ PRs. The other three are warnings.
+  # pulled once the config had survived 15+ PRs. The other four are warnings;
+  # the sixth, "Behavior Changes Ship a Test" (#483), is on a dated trial and
+  # is meant to become an error — see its own comment.
   #
   # The dividing line, after #241: a check blocks only if it judges CODE against
   # a mechanical rule. "Breaking Change Documentation" judges the PR description
@@ -874,6 +876,44 @@ reviews:
           redaction at the logger level, correlation ids not derived from a
           login, and the deliberate per-repo tick summary reporting counts
           rather than content.
+
+      - name: "Behavior Changes Ship a Test"
+        # 2026-09-28 (#483): runs at `warning` for a trial week. After a week
+        # of PRs, review its false positives, tighten the instructions, and
+        # flip it to `mode: error` — with request_changes_workflow: true that
+        # withholds approval from an untested behavior change. It is an AI
+        # judgement of what "alters behavior" means, which is why it earns
+        # the trial before it can block anyone. #481 is the PR that motivated
+        # it: a good change that merged with no test and nothing flagged it.
+        mode: warning
+        instructions: |
+          Trigger condition — the PR changes runtime behavior in
+          apps/web/src/**, sync/src/**, scorer/src/**, or setup/*.sh. If it
+          touches none of these, report Passed with the reason "not
+          applicable".
+
+          Exempt, report Passed with the reason: a pure refactor that keeps
+          behavior (a rename, an extraction, a moved function with identical
+          semantics); a change only to copy, UI text, comments, or log wording;
+          docs; type-only changes that emit no different JavaScript.
+
+          Satisfied when the same PR adds or changes a test in the matching
+          location:
+            apps/web/src/**  → a file under apps/web/src/**/__tests__/
+            sync/src/**      → a file under sync/test/
+            scorer/src/**    → a file under scorer/test/
+            setup/*.sh       → a file under setup/test/ (*.bats)
+          A test elsewhere counts only if it exercises the changed code (for
+          example scripts/acceptance-*.sh or a shared corpus under
+          test/fixtures/ that the matching suite runs). Also satisfied when
+          the PR description states, in a line of its own, why no test was
+          added (for example "No test: <reason>").
+
+          Flag ⚠️ WARNING: <description> — <fix> naming each changed source
+          file whose behavior changed with no matching test change and no
+          stated reason. The fix is either the test that would fail without
+          the change, or the one-line reason in the PR description. Do not
+          judge the quality of an existing test here; only its presence.
 
   # Rule applied here: semantic and security analysis ON, style and
   # policy-template linters OFF. Style findings are exactly the comments you

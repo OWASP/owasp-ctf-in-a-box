@@ -8,6 +8,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Contribution gates (#483).** A PR that changes `apps/`, `sync/`,
+  `scorer/`, `setup/` or `deploy/` now fails the `changelog` check without a
+  CHANGELOG entry (test-only and `.md` paths are exempt; the `no-changelog`
+  label skips it). PRs are labeled by path automatically, and a new
+  CodeRabbit check warns on a behavior change that ships no test.
+  CONTRIBUTING.md lists what a PR needs to pass.
+
 - **Challenge files and links (#186).** A classic challenge can carry
   uploaded files (up to 5 MiB each, 50 MiB per event, 10 attachments per
   challenge) and external links.

@@ -1,0 +1,28 @@
+name: labeler
+# Labels each PR by the paths it changes, from .github/labeler.yml (#483).
+#
+# pull_request_target, not pull_request: a fork PR's `pull_request` token is
+# read-only, so it could not apply a label at all. pull_request_target runs
+# THIS workflow as it exists on the base branch, with a token that can write.
+# That is safe here only because nothing from the PR is ever executed: there
+# is no checkout step, and actions/labeler reads just the PR's changed-file
+# list and the base branch's .github/labeler.yml through the API. Do not add
+# a checkout of the PR head, a `run:` step, or any interpolation of PR fields
+# to this workflow — each would hand PR-controlled content a write token.
+#
+# sync-labels stays at its default (false): a label is added when a path
+# matches and never removed by this workflow, so a label a maintainer applied
+# by hand survives.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0

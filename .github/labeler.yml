@@ -1,0 +1,58 @@
+# Path-to-label rules for .github/workflows/labeler.yml (#483), in
+# actions/labeler v5+ syntax. Every label here must already exist in the repo
+# (the labeler does not create one), so this maps onto the existing
+# vocabulary only — `gh label list`. A PR gets every label whose rule matches.
+
+javascript:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/web/**/*.{js,jsx,mjs,cjs,ts,tsx}"
+          - "sync/**/*.{js,mjs,cjs}"
+          - "scorer/**/*.{js,mjs,cjs}"
+          - "apps/web/package.json"
+          - "sync/package.json"
+          - "scorer/package.json"
+
+scoring:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "scorer/**"
+          - "sync/**"
+
+infrastructure:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "deploy/**"
+          - "docker-compose*.yml"
+          - "caddy/**"
+
+area:docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "**/*.md"
+
+test:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/__tests__/**"
+          - "**/test/**"
+          - "**/*.test.*"
+          - "**/*.bats"
+          - "**/*.tftest.hcl"
+
+github_actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+
+docker_compose:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docker-compose*.yml"
+
+docker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/Dockerfile"
+          - "**/Dockerfile.*"

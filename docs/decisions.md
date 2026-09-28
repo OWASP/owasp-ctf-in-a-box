@@ -74,6 +74,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 59 — Every event needs an official launch: an empty scoring start means "not launched"](#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched)
 - [ADR 60 — Stories: first-class objects, a derived unlock, and team scope](#adr-60-stories-first-class-objects-a-derived-unlock-and-team-scope)
 - [ADR 61 — Challenge attachments live in Redis, served only as downloads, behind the challenge's own visibility](#adr-61-challenge-attachments-live-in-redis-served-only-as-downloads-behind-the-challenges-own-visibility)
+- [ADR 62 — The landing page's footer does not repeat the sponsor credit](#adr-62-the-landing-pages-footer-does-not-repeat-the-sponsor-credit)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -3412,8 +3413,7 @@ not a nice-to-have (issue #405).
   nothing on an empty list: the landing page's credit strip (grayscale by
   default, color on hover — a credit row, not an ad rail), the shared
   footer's text-only line (no logos, since the footer renders on every page
-  load; left out on the landing page itself, whose strip already credits
-  the same list — #474), the dedicated `/sponsors` page (logo, name, blurb, link, grouped by
+  load), the dedicated `/sponsors` page (logo, name, blurb, link, grouped by
   tier), and — extending the original four-surface design the same session
   this ADR was written in — the leaderboard's projector display
   (`?display=1`), since that is the one screen a sponsor's own booth signage
@@ -3473,6 +3473,10 @@ which this site's privacy policy does not permit trading away for one field
 of an admin form. *Allow SVG logos, sanitized* — a sanitizer is one more
 dependency and one more place a bypass shows up later; rejecting SVG outright
 at the store boundary needs no library and cannot regress.
+
+**Status.** Accepted; amended by
+[ADR 62](#adr-62-the-landing-pages-footer-does-not-repeat-the-sponsor-credit)
+(the landing page's footer leaves its credit out).
 
 ## ADR 58. Demo seed/clear are admin-gated dangerous settings, not a `DEMO_MODE` env var
 
@@ -3706,3 +3710,21 @@ event cap. The caps bound it, and an operator sizing a box counts it. An
 upload interrupted between its chunk writes and its commit can leave
 uncounted, unreachable chunks; every handled failure path deletes them.
 
+## ADR 62. The landing page's footer does not repeat the sponsor credit
+
+**Context.** Issue #474. [ADR 57](#adr-57-sponsors-are-recognition-only-appear-in-four-fixed-surfaces-and)
+put a text-only sponsor credit in the shared footer, which renders on every
+route. On `/` the hero's `SponsorStrip` credits the same list, so the landing
+page named every sponsor twice, once as logos and once as text, on the page
+most people open first.
+
+**Decision.** `SiteFooter` takes `creditSponsors` (default `true`). The
+landing page passes `false`: its footer neither renders the credit nor reads
+the sponsor list. Every other route keeps the footer credit, still text-only
+and still absent when there are no sponsors. ADR 57's four surfaces are
+unchanged; this only says where two of them overlap.
+
+**Consequences.** A sponsor is credited once per page. The landing page does
+one sponsor read, not two. A new page that shows its own sponsor block passes
+`creditSponsors: false` the same way; the default keeps every other caller
+crediting them.

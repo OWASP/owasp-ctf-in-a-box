@@ -46,8 +46,13 @@ export default async function SiteFooter({
   // on this cosmetic read must never take down a page whose actual content
   // loaded fine. Same independent-catch discipline admin-panel.tsx applies
   // to getAdminSettings().
-  const [event, sponsors] = await Promise.all([getSite(), listSponsors().catch(() => [])]);
-  const credited = creditSponsors ? sponsors : [];
+  //
+  // Not read at all when the caller credits the sponsors itself: the landing
+  // page's SponsorStrip already does, and the read is uncached.
+  const [event, credited] = await Promise.all([
+    getSite(),
+    creditSponsors ? listSponsors().catch(() => []) : Promise.resolve([]),
+  ]);
   return (
     <footer className="relative mt-auto border-t border-white/[0.06]">
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#2563eb]/20 to-transparent" />

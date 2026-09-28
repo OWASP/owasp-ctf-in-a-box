@@ -22,7 +22,8 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
 
 const sponsors = vi.hoisted(() => ({ list: [] as unknown[] }));
-vi.mock("@/lib/sponsors-store", () => ({ listSponsors: vi.fn(async () => sponsors.list) }));
+const listSponsors = vi.hoisted(() => vi.fn(async () => sponsors.list));
+vi.mock("@/lib/sponsors-store", () => ({ listSponsors }));
 
 const { default: SiteFooter } = await import("@/components/site-footer");
 
@@ -45,6 +46,7 @@ async function render(opts: { creditSponsors?: boolean } = {}) {
 
 beforeEach(() => {
   sponsors.list = [];
+  listSponsors.mockClear();
 });
 
 describe("the footer's layout", () => {
@@ -115,6 +117,17 @@ describe("the footer's sponsor credit", () => {
     const html = await render({ creditSponsors: false });
     expect(html).not.toContain("Sponsored by");
     expect(html).not.toContain(SPONSOR.name);
+  });
+
+  // Review (#478): the landing page's SponsorStrip already reads the list, and
+  // the Upstash read is uncached (no-store), so a footer that read it only to
+  // discard it cost every landing render a second HGETALL.
+  it("does not read the sponsor list when the credit is left out", async () => {
+    sponsors.list = [SPONSOR];
+    await render({ creditSponsors: false });
+    expect(listSponsors).not.toHaveBeenCalled();
+    await render();
+    expect(listSponsors).toHaveBeenCalledTimes(1);
   });
 
   it("leaves the OWASP attribution in place when the sponsor credit is left out", async () => {

@@ -171,9 +171,14 @@ box_launch_state() {
 #            the pull happened inside "Run scorer" and cannot be observed
 #            separately). `unknown` therefore does NOT mean the grant is
 #            missing, and the doctor line must not say it does.
+#   error    GitHub did not answer (the runs or a run's jobs could not be
+#            read), so nothing was observed. Distinct from `unknown` because
+#            `launch` must refuse on it (#477 review): "no run yet" is a fact
+#            about the fork, "could not ask" is not. doctor, advisory, shows
+#            both as unverified.
 #
 # FAILS CLOSED, like every check_step: an API error, an unreadable reply, or
-# anything unrecognized reports `unknown`, never `granted`. Reporting a grant
+# anything unrecognized reports `error` or `unknown`, never `granted`. Reporting a grant
 # that was never observed is the one answer that would make this worse than
 # the reminder.
 #
@@ -181,15 +186,15 @@ box_launch_state() {
 # back, so an old refusal under a recent success is history rather than news —
 # hence first-success-wins over first-failure-wins in the loop below.
 pull_grant_status() {
-  slug="$1"; runs=""; jobs=""; step=""
+  slug="$1"; runs=""; jobs=""; step=""; unread=0
 
   runs="$(gh api "repos/$slug/actions/workflows/ctf-score.yml/runs?per_page=5" \
-    --jq '.workflow_runs[].id' 2>/dev/null)" || { echo unknown; return 0; }
+    --jq '.workflow_runs[].id' 2>/dev/null)" || { echo error; return 0; }
   [ -n "$runs" ] || { echo unknown; return 0; }
 
   for run in $runs; do
     jobs="$(gh api "repos/$slug/actions/runs/$run/jobs" \
-      --jq '.jobs[].steps[] | select(.name == "Pull scorer image") | .conclusion' 2>/dev/null)" || continue
+      --jq '.jobs[].steps[] | select(.name == "Pull scorer image") | .conclusion' 2>/dev/null)" || { unread=1; continue; }
     for step in $jobs; do
       case "$step" in
         success) echo granted; return 0 ;;
@@ -199,7 +204,7 @@ pull_grant_status() {
     done
   done
 
-  echo unknown
+  if [ "$unread" -eq 1 ]; then echo error; else echo unknown; fi
 }
 
 # --- scoring-workflow versioning ------------------------------------------
@@ -1174,9 +1179,13 @@ cmd_private() {
 #   1. Pre-flight, fail closed: every fork detached, the scorer package
 #      private, and no fork refused the scorer image. A gh error counts as a
 #      problem, never as "OK". Anything wrong refuses BEFORE any change.
-#   2. Flip every fork public (an already-public one is skipped).
-#   3. Wait for Launch: the organizer presses it in /admin → Event, and this
-#      polls EVENT_URL/health/deep until the box reports `launched`.
+#   2. Wait for Launch: the organizer presses it in /admin → Event, and this
+#      polls EVENT_URL/health/deep until the box reports `launched`. The forks
+#      stay private throughout (#477 review): they ARE the event's content —
+#      the ctf branch, the workflow, the PR template — and opening them first
+#      handed everyone a head start for as long as the press took.
+#   3. Flip every fork public (an already-public one is skipped), within one
+#      poll interval of the press.
 # Every step is idempotent, so after a partial failure the report names the
 # state and a re-run finishes it. LAUNCH_WAIT_SECS (default 1800) and
 # LAUNCH_POLL_SECS (default 5) bound the wait.
@@ -1191,6 +1200,10 @@ cmd_launch() {
   org="$(env_val GITHUB_ORG)"
   [ -n "$org" ] || { echo "${OUT:-.env}: GITHUB_ORG missing" >&2; exit 1; }
   url="$(env_val EVENT_URL)"; url="${url%/}"
+  # Without the box's address there is no way to see the Launch press, and
+  # the forks open only after it — so refuse up front rather than open them
+  # unconfirmed.
+  [ -n "$url" ] || { echo "${OUT:-.env}: EVENT_URL missing — launch opens the forks only once the box reports launched, and needs its address to see that" >&2; exit 1; }
   require_targets
   # The wait's bounds are checked before anything changes: a typo here must
   # not surface only after the forks are already public.
@@ -1200,10 +1213,10 @@ cmd_launch() {
 
   if [ "$DRY_RUN" -eq 1 ]; then
     echo "DRY-RUN: check every fork in $org is detached, no fork was refused the scorer image, and ghcr.io/$org/score is private"
+    echo "DRY-RUN: would wait for $url/health/deep to report launched (press Launch in /admin → Event), with every fork still private"
     for t in $(all_targets); do
       echo "DRY-RUN: gh api -X PATCH repos/$org/$(prov_repo_name "$t") -f visibility=public"
     done
-    echo "DRY-RUN: would wait for ${url:-<EVENT_URL>}/health/deep to report launched (press Launch in /admin → Event)"
     return 0
   fi
 
@@ -1213,8 +1226,12 @@ cmd_launch() {
     name="$(prov_repo_name "$t")"; slug="$org/$name"
     if ! fork_detached "$slug"; then
       problems="$problems   - $name is still in its fork network (or GitHub did not answer)\n"
-    elif [ "$(pull_grant_status "$slug")" = MISSING ]; then
-      problems="$problems   - $name was refused the scorer image — grant it Read under the package's Manage Actions access\n"
+    else
+      case "$(pull_grant_status "$slug")" in
+        MISSING) problems="$problems   - $name was refused the scorer image — grant it Read under the package's Manage Actions access\n" ;;
+        error) problems="$problems   - could not read $name's scoring runs (GitHub did not answer), so its scorer-image access is unchecked\n" ;;
+        *) ;; # granted, or unknown: no run has reached the pull step yet
+      esac
     fi
   done
   if ! package_private "$org"; then
@@ -1226,6 +1243,22 @@ cmd_launch() {
     exit 1
   fi
   echo "  ✓ every fork detached, the scorer package private"
+
+  local state waited=0 launched_at
+  state="$(box_launch_state)"
+  if [ "$state" != launched ]; then
+    echo "== now press Launch in /admin → Event — waiting for $url to report launched (the forks stay private until it does)…"
+    while [ "$state" != launched ] && [ "$waited" -lt "$max" ]; do
+      sleep "$poll"; waited=$((waited + poll)); [ "$poll" -gt 0 ] || waited=$max
+      state="$(box_launch_state)"
+    done
+  fi
+  if [ "$state" != launched ]; then
+    echo "⚠️  $url is not launched yet (it reports: $state) — every fork is still private; nothing was changed." >&2
+    echo "   press Launch in /admin → Event, then re-run 'ctf-setup.sh launch'." >&2
+    exit 1
+  fi
+  launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   echo "== open the forks"
   local flipped="" vis
@@ -1251,25 +1284,7 @@ cmd_launch() {
     esac
   done
 
-  if [ -z "$url" ]; then
-    echo "== forks are public. Now press Launch in /admin → Event (no EVENT_URL in ${OUT:-.env}, so this cannot confirm it)."
-    return 0
-  fi
-  local state waited=0
-  state="$(box_launch_state)"
-  if [ "$state" != launched ]; then
-    echo "== forks are public. Now press Launch in /admin → Event — waiting for $url to report launched…"
-    while [ "$state" != launched ] && [ "$waited" -lt "$max" ]; do
-      sleep "$poll"; waited=$((waited + poll)); [ "$poll" -gt 0 ] || waited=$max
-      state="$(box_launch_state)"
-    done
-  fi
-  if [ "$state" != launched ]; then
-    echo "⚠️  forks are public, but $url is not launched yet (it reports: $state)." >&2
-    echo "   press Launch in /admin → Event, then re-run 'ctf-setup.sh launch' to confirm." >&2
-    exit 1
-  fi
-  echo "== launched ✓ $url (confirmed $(date -u +%Y-%m-%dT%H:%M:%SZ))"
+  echo "== launched ✓ $url (confirmed $launched_at)"
   echo "   forks made public now:${flipped:- none — every fork was already public}"
 }
 

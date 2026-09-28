@@ -2164,15 +2164,19 @@ template, or fork and open PRs, before the event starts.
    repos in a free org use the org's limited Actions minutes, which is
    plenty for your own test PRs before launch.
 3. **Preview** the event in `/admin` as described above.
-4. **`ctf-setup.sh launch`**:
+4. **`ctf-setup.sh launch`**, started before you press Launch:
    - It checks, before changing anything, that every fork is detached, that
      no fork was refused the scorer image, and that the scorer package is
      private. A GitHub error counts as a problem, never as "fine".
-   - It makes every fork **public**.
    - It waits while you press **Launch** in `/admin` → Event, polling
      `/health/deep` until the box reports `launched` (up to 30 minutes;
      `LAUNCH_WAIT_SECS` and `LAUNCH_POLL_SECS`, whole seconds, change the
-     limit and the 5-second interval).
+     limit and the 5-second interval). The forks stay **private** the whole
+     time: they hold the event's content, so opening them first would give
+     everyone a head start. It needs `EVENT_URL` in `.env` to see the press,
+     and refuses without it.
+   - Then it makes every fork **public**, within one poll interval of the
+     press. If Launch never comes, nothing was changed.
 
    It uses your own `gh` login; the box never holds a GitHub admin
    credential. Every step is idempotent: after a partial failure it names

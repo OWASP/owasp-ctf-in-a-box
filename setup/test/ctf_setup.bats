@@ -2150,9 +2150,9 @@ echo "$*" >> "$S/gh.log"
 [ -f "$S/gh-broken" ] && exit 1
 repo="$(printf '%s' "$*" | sed -n 's|.*repos/test-event-org/\([^ /?]*\).*|\1|p')"
 case "$*" in
-  *"-X PATCH"*visibility=*) [ -f "$S/patch-fails" ] && exit 1; printf '%s' "$*" | sed 's/.*visibility=//' > "$S/vis_$repo"; exit 0 ;;
+  *"-X PATCH"*visibility=*) [ -f "$S/patch-fails" ] && exit 1; cat "$S/launched" 2>/dev/null >> "$S/patch_saw_launched" || echo none >> "$S/patch_saw_launched"; printf '%s' "$*" | sed 's/.*visibility=//' > "$S/vis_$repo"; exit 0 ;;
   *packages/container/score*) cat "$S/package" 2>/dev/null || echo private ;;
-  *actions/workflows/ctf-score.yml/runs*) if [ -f "$S/refused_$repo" ]; then echo 101; else exit 1; fi ;;
+  *actions/workflows/ctf-score.yml/runs*) if [ -f "$S/refused_$repo" ]; then echo 101; elif [ -f "$S/runs-broken_$repo" ]; then exit 1; fi ;;
   *actions/runs/101/jobs*) echo failure ;;
   *".forks_count"*) cat "$S/forks_$repo" 2>/dev/null || echo 0 ;;
   *".fork"*) if [ -f "$S/attached_$repo" ]; then echo true; else echo false; fi ;;
@@ -2401,7 +2401,7 @@ patched() {
   # Fail only the third fork (VulnerableApp, in targets.tsv order).
   sed -i.bak 's|\[ -f "\$S/patch-fails" \] \&\& exit 1;|[ "$repo" = VulnerableApp ] \&\& exit 1;|' stubs/gh
   run_vis launch
-  printf '%s' "$output" | grep -qF -- 'Made public so far: juice-shop WebGoat'
+  printf '%s' "$output" | grep -qF -- 'Made public so far: juice-shop WebGoat. The box was not touched.'
   [ "$status" -ne 0 ]
 }
 
@@ -2412,3 +2412,52 @@ patched() {
   run_vis doctor
   printf '%s' "$output" | grep -qF -- "could not read DVWA's visibility"
 }
+
+# Review (#477): the forks are the event's content — the ctf branch, the
+# workflow, the PR template — so opening them before the box is launched
+# hands everyone a head start for as long as the organizer takes to press
+# Launch. launch waits for the press first, and opens them after.
+@test "launch keeps every fork private until the box reports launched" {
+  vis_env
+  echo false > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  run_vis launch
+  [ "$(patched)" -eq 0 ]
+  [ "$(cat state/vis_DVWA)" = private ]
+  printf '%s' "$output" | grep -qF -- 'every fork is still private'
+  [ "$status" -ne 0 ]
+}
+
+@test "launch opens the forks only once it has seen the Launch press" {
+  vis_env
+  echo false > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  touch state/launch_on_call_3
+  run env BATS_TEST_TMPDIR="$BATS_TEST_TMPDIR" PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 \
+    LAUNCH_WAIT_SECS=5 LAUNCH_POLL_SECS=1 bash "$SCRIPT" launch < /dev/null
+  [ "$status" -eq 0 ]
+  [ "$(cat state/vis_VulnerableApp)" = public ]
+  # Every flip happened while the box already reported launched.
+  [ "$(sort -u state/patch_saw_launched)" = true ]
+}
+
+@test "launch refuses without an EVENT_URL, before any change" {
+  vis_env
+  sed -i.bak '/^EVENT_URL=/d' .env
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  run_vis launch
+  printf '%s' "$output" | grep -qF -- 'EVENT_URL'
+  [ "$(patched)" -eq 0 ]
+  [ "$status" -ne 0 ]
+}
+
+@test "launch fails closed when GitHub cannot answer the scorer-image check" {
+  vis_env
+  echo true > state/launched
+  touch state/runs-broken_DVWA
+  run_vis launch
+  printf '%s' "$output" | grep -qF -- "could not read DVWA's scoring runs"
+  [ "$(patched)" -eq 0 ]
+  [ "$status" -ne 0 ]
+}
+

@@ -57,7 +57,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   (and the new `private` subcommand) sets each detached Secure Development
   fork private while the event is not launched. On launch day,
   `ctf-setup.sh launch` checks every fork is detached and the scorer package
-  private, makes every fork public, then waits for Launch in `/admin`.
+  private, waits for Launch in `/admin`, and only then makes every fork
+  public.
   `doctor` warns about a fork that is public before launch or private after.
 
 - **A Launch block in `/admin`.** The Event tab now shows **Not launched**,

@@ -283,6 +283,14 @@ export async function main(deps = {}) {
   }
 }
 
+/** The migration seed exists but could not be read (#508 review). */
+class LegacyStateUnreadable extends Error {
+  constructor(path, cause) {
+    super(`cannot read ${path}: ${cause.message}`, { cause });
+    this.path = path;
+  }
+}
+
 /**
  * Reads the poller's durable state from Redis before the first tick (ADR 64).
  *
@@ -309,7 +317,15 @@ async function loadDurableState(cfg, redis, { readState, retire, logErr, sleep }
     try {
       const raw = await redis.readPollState();
       if (raw !== null) return parseState(raw, `Redis ${SYNC_STATE_KEY}`, { log: logErr });
-      const seed = readState(cfg.statePath, { log: logErr });
+      let seed;
+      try {
+        seed = readState(cfg.statePath, { log: logErr, strict: true });
+      } catch (err) {
+        // A file that EXISTS but cannot be read is not a first boot: seeding
+        // an empty cursor and retiring the file would re-ingest every score
+        // comment for good. Hold, exactly as for an unreadable Redis.
+        throw new LegacyStateUnreadable(cfg.statePath, err);
+      }
       // Establish the key BEFORE the first tick, so the file can be retired
       // only once its contents are safely in Redis.
       await redis.writePollState(seed);
@@ -324,7 +340,9 @@ async function loadDurableState(cfg, redis, { readState, retire, logErr, sleep }
       return seed;
     } catch (err) {
       logErr(
-        `ctf-sync: cannot load poll state from Redis (${SYNC_STATE_KEY}): ${err.message} — not polling until it is readable (starting from an empty cursor would re-ingest every score comment); retrying in ${cfg.pollIntervalMs}ms`,
+        err instanceof LegacyStateUnreadable
+          ? `ctf-sync: cannot read the legacy state file ${err.path} (${err.cause.message}) — not polling until it is readable or removed (seeding Redis with an empty cursor would re-ingest every score comment); retrying in ${cfg.pollIntervalMs}ms`
+          : `ctf-sync: cannot load poll state from Redis (${SYNC_STATE_KEY}): ${err.message} — not polling until it is readable (starting from an empty cursor would re-ingest every score comment); retrying in ${cfg.pollIntervalMs}ms`,
       );
       await sleep(cfg.pollIntervalMs);
     }

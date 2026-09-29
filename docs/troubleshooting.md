@@ -208,7 +208,10 @@ If the logs instead repeat `cannot load poll state from Redis
 it is **holding** on purpose, because starting from an empty cursor would
 re-ingest every score comment. Fix srh/Redis (the `fetch failed` and
 `NOAUTH` entries in this runbook) and it resumes on its own at the next
-retry.
+retry. The same hold applies on the first boot after an upgrade when the old
+`state.json` exists but cannot be read (`cannot read the legacy state file
+…`): fix its permissions, or delete it to start from an empty cursor on
+purpose.
 
 **Fix.** Read the first error line of `docker compose logs sync`. If state
 is beyond repair: `docker compose exec redis redis-cli DEL ctf:sync:state`,

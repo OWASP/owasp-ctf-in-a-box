@@ -54,6 +54,23 @@ export function parseState(raw, where, { log = console.error } = {}) {
     parsed.repos = {};
   }
 
+  // The counters feed `++` and /admin's totals: anything but a non-negative
+  // safe integer ("x" would concatenate, -3 would misreport) is reset to 0.
+  // An absent counter stays absent; tick defaults it (#508 review).
+  for (const field of ["ingested", "dropped"]) {
+    const v = parsed[field];
+    if (v !== undefined && !(Number.isSafeInteger(v) && v >= 0)) {
+      log(`ctf-sync: state at ${where} has an unusable "${field}" (${JSON.stringify(v)}) — resetting it to 0`);
+      parsed[field] = 0;
+    }
+  }
+  // resetAt is compared with the settings' ISO string; a non-string never
+  // matches, so the master reset would be re-applied on every tick.
+  if (parsed.resetAt !== undefined && parsed.resetAt !== null && typeof parsed.resetAt !== "string") {
+    log(`ctf-sync: state at ${where} has an unusable "resetAt" (${JSON.stringify(parsed.resetAt)}) — clearing it`);
+    parsed.resetAt = null;
+  }
+
   return parsed;
 }
 
@@ -63,16 +80,21 @@ export function parseState(raw, where, { log = console.error } = {}) {
  * Redis it is read once, as a migration seed, and then retired (index.js).
  *
  * A MISSING file is not a fault: that is every event's first boot, and warning
- * about it would cry wolf. Anything else is logged.
+ * about it would cry wolf. Anything else is logged — or, with `strict`, thrown:
+ * the Redis migration uses that, because seeding Redis with an empty cursor
+ * from a file that exists but cannot be read would lose the cursor for good
+ * (#508 review).
  */
-export function loadState(path, { log = console.error } = {}) {
+export function loadState(path, { log = console.error, strict = false } = {}) {
   let raw;
   try {
     raw = readFileSync(path, "utf8");
   } catch (err) {
-    // ENOENT is the normal first-boot path; anything else (permissions, a
-    // directory where the file should be) is worth saying out loud.
-    if (err.code !== "ENOENT") log(`ctf-sync: cannot read state at ${path} (${err.message}) — starting fresh`);
+    if (err.code === "ENOENT") return freshState();
+    if (strict) throw err;
+    // Anything else (permissions, a directory where the file should be) is
+    // worth saying out loud.
+    log(`ctf-sync: cannot read state at ${path} (${err.message}) — starting fresh`);
     return freshState();
   }
   return parseState(raw, path, { log });

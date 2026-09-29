@@ -7,7 +7,7 @@
 // code's, not a hand-rolled stand-in's.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, tick } from "../src/index.js";
@@ -247,6 +247,28 @@ test("upgrade: with no Redis state yet, an existing state.json seeds it once and
   assert.ok(logErr.some((m) => /migrat/i.test(m)), "the one-time migration is logged");
   assert.equal(existsSync(cfg.statePath), false, "the file no longer sits at STATE_PATH");
   assert.equal(existsSync(`${cfg.statePath}.migrated`), true, "kept aside for the operator, not deleted");
+});
+
+// #508 review: a state file that EXISTS but cannot be read (permissions, a
+// directory where the file should be) is not a first boot. Seeding Redis with
+// an empty cursor there, and retiring the file, would lose the cursor for good
+// and re-ingest every score comment — the same outcome the unreadable-Redis
+// hold exists to prevent. So the poller holds on it the same way.
+test("upgrade: a legacy state file that exists but cannot be read holds the poller — no empty seed, no retire, no tick", async () => {
+  const dir = tmp();
+  const cfg = cfgFor(dir);
+  mkdirSync(cfg.statePath); // EISDIR on read: present, unreadable
+  const srh = fakeSrh();
+  const world = fakeWorld([comment(1, "2026-10-01T10:00:00Z")]);
+  const { sleeps, logErr } = await runMain({ cfg, srh, world, ticks: 2 });
+
+  assert.equal(srh.strings.has(SYNC_STATE_KEY), false, "no empty cursor written to Redis");
+  assert.equal(existsSync(`${cfg.statePath}.migrated`), false, "the unreadable file is not retired");
+  assert.deepEqual(world.polls, [], "no poll while the seed is unreadable");
+  assert.equal(world.posts.length, 0);
+  assert.deepEqual(sleeps, [1000, 1000], "it waits a poll interval and retries");
+  const holds = logErr.filter((m) => m.includes(cfg.statePath) && /not polling/.test(m));
+  assert.equal(holds.length, 2, JSON.stringify(logErr));
 });
 
 test("with Redis present the file is never written: the durable copy is the one next to the scores", async () => {

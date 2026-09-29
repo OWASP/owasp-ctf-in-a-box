@@ -217,15 +217,16 @@ writes are idempotent on replay) — but the re-read brings back any Secure
 Development solves a per-contestant reset removed, and resets `/admin`'s
 ingested/dropped counters to 0.
 
-**On AWS** there is no `sync-state` volume: the state file is on the task's
-own disk, so every new sync task starts from an empty cursor. Read the error
+**On AWS** there is no `sync-state` volume and none is needed: the cursor is
+in `ctf:sync:state` on ElastiCache, so a new sync task resumes from it, and
+holds while srh is unreadable. Read the error
 with `aws logs tail /ecs/<name>/sync --since 30m`, and why the task stopped
 with `describe-tasks` (see the
 [AWS runbook](aws.md#watching-the-stack)). A `GITHUB_ORG is not set` or a
 missing App id means a Terraform variable is empty: set `github_org` and
-`github_app_id`, then `terraform apply`. A
-restart re-reads every score comment. That is safe for totals, but it undoes
-a per-contestant Secure Development reset: see the sync drill in the
+`github_app_id`, then `terraform apply`. Only deleting `ctf:sync:state`
+makes sync re-read every score comment, which undoes a per-contestant Secure
+Development reset: see the sync drill in the
 [AWS runbook](aws.md#failure-drills).
 
 ## The monitor says `/health/deep` is 503 (but the site loads fine)

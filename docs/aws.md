@@ -379,20 +379,23 @@ it.
 
 **sync restarts.** A restart can come from a deploy, a crash or AWS retiring
 the host. The module runs one poller and stops the old task before it starts
-the new one. **On ECS, sync's cursor is not persistent.** It lives in
-`/state/state.json` on the task's own disk, so every new sync task re-reads
-every score comment from the start. That is safe for totals: the scorer
-writes each solve with `HSETNX`, so re-ingesting a comment adds nothing.
-Two things do change:
+the new one. sync keeps its cursor, seen cache and `/admin` counters in
+Redis (`ctf:sync:state`, ADR 64), not on the task's disk, so a new sync task
+resumes where the old one stopped:
 
 - The heartbeat on `/admin` (**ingested**, **dropped**, the last drop
-  reason) starts again from 0. Read the old values from the
-  `/ecs/<name>/sync` log if you need them.
-- **A per-contestant Secure Development reset does not survive a sync
-  restart.** The re-read ingests that contestant's comments again. Closing
-  the contestant's PR does not help, because a closed PR's comments are
-  still read. To make the reset stick, delete the `github-actions[bot]`
-  score comment on their PR before you reset.
+  reason) carries over.
+- A per-contestant Secure Development reset stays reset: the new task does
+  not re-read the comments the old one already ingested.
+- If Redis (through srh) is unreadable when the task starts, sync **holds**
+  and retries instead of starting from an empty cursor. The log repeats
+  `cannot load poll state from Redis (ctf:sync:state)`, and `sync.ageSec` in
+  `/health/deep` keeps climbing until srh answers again. Fix srh first (see
+  "srh restarts" above); sync then resumes on its own.
+
+Only deleting `ctf:sync:state` makes sync re-read every score comment from
+the start. That is safe for totals, because the scorer writes each solve with
+`HSETNX`, but it undoes any per-contestant reset and zeroes the counters.
 
 To restart sync yourself, for example after you fix its configuration:
 

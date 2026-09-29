@@ -26,8 +26,8 @@
 #   private   set each DETACHED fork private while the event is not launched
 #             (#465; `org` runs this too — re-run it after detaching)
 #   launch    launch-day for Secure Development: check every fork is detached
-#             and the scorer package private, flip every fork PUBLIC, then
-#             wait for Launch in /admin (polls EVENT_URL/health/deep)
+#             and the scorer package private, wait for Launch in /admin
+#             (polls EVENT_URL/health/deep), then flip every fork PUBLIC
 #   teardown  archive event repos after the event
 #   doctor    read-only status check: verify a previously-provisioned org
 #             matches targets.tsv (no mutation, no --dry-run needed)

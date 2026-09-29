@@ -45,6 +45,9 @@ live-GitHub scoring. For standing the kit up in the first place, see
   retries.
 - Poller logs: `docker compose logs -f sync`.
 - All state lives in named Docker volumes, so a box reboot loses nothing.
+- **On AWS (ECS)**, the logs, a shell, the failure drills, rollback and
+  tear-down are in the [AWS event-day runbook](aws.md#running-the-event-on-aws).
+  Everything else on this page applies unchanged.
 
 **After** — preview the teardown, then run it:
 
@@ -1134,6 +1137,19 @@ Lowering the cap mid-event can leave a contestant holding more spent
 attempts than the new cap allows; the chip floors at `0 of N` rather than
 reporting a negative budget.
 
+**Both knobs count per contestant, but points count per team.** The
+attempts and the cooldown are kept for each login. A team's quiz score is
+the union of its members' correct answers, so every member has their own
+**Max attempts** and their own **Retry after** on the same question. A team
+of N members therefore gets N times the cap. With the defaults (3 attempts,
+teams of up to 4), a team can try 12 answers on one question, so a question
+with 12 or fewer possible answers can always be solved. **Max attempts = 1**
+on a four-choice question does not stop guessing: four teammates can pick
+one choice each. The `2 of 3 attempts left` chip shows the contestant's own
+budget, not the team's. Take this into account when you set the cap, and
+prefer questions with more possible answers than the team's total budget.
+The team-size cap is under [Players per team](#players-per-team).
+
 **Points and scoring.** A question's points are captured on the answer
 record at the moment it's answered correctly, so re-pricing a question
 later never changes what a contestant already earned — only a future
@@ -1342,6 +1358,12 @@ made one. Set it to `0` to remove the cooldown entirely. This is worth
 calling out plainly because every other retry-gate setting on this platform
 (the quiz's retry cooldown, the hint gate's unlock delay) is in **minutes**
 — classic's own knob is not.
+
+**The cooldown is per contestant, but a solve counts for the team.** Each
+login has its own cooldown on each challenge, and a team's score is the
+union of its members' solves. So a team of N members can submit N flags per
+cooldown period on the same challenge. The cooldown slows one contestant
+down; it does not slow a team to one guess per period.
 
 **Points are static.** A challenge's point value is fixed by whoever wrote
 it and is read off the challenge record at the instant of a correct solve;
@@ -1930,6 +1952,12 @@ route, which would spend real cooldowns and attempt caps). See
 [docs/troubleshooting.md](troubleshooting.md) for what a 503 means and what
 to do.
 
+On AWS, the first and last checks do not apply: there is no Fly machine to
+suspend, and no Cloudflare rule unless you put one in front of the ALB.
+`scripts/load-test.sh` does not run against an ECS stack either. The AWS
+checks, and how to run the load pass by hand, are in the
+[AWS event-day runbook](aws.md#before-the-event).
+
 ### The org and the bootstrap keys: `ctf-setup.sh doctor`
 
 Read-only, no `--dry-run` needed, and the first thing to run when something
@@ -2023,6 +2051,32 @@ challenge that passes there asserts the exploit rather than the fix, and the
 gate fails the build rather than handing every contestant a free point. The
 full testing strategy is in
 [docs/architecture.md](architecture.md#testing-strategy).
+
+**On the release commit, dispatch both heavy scoring gates.** The
+`stock-scores-zero` and `patched-scores-right` workflows run the real
+upstream images, so they run on a pull request only when it touches the
+judge path. Neither runs on `main`, and the target images can drift
+upstream between runs. Before you cut a release or run an event, run both
+by hand on the commit you are releasing (`main` here; a tag such as
+`v0.7.0` works as the ref too):
+
+```sh
+gh workflow run stock-scores-zero.yml --repo OWASP/owasp-ctf-in-a-box --ref main
+gh workflow run patched-scores-right.yml --repo OWASP/owasp-ctf-in-a-box --ref main
+```
+
+Then check that both runs finished green on that exact commit. The
+`headSha` must be the release commit:
+
+```sh
+gh run list --repo OWASP/owasp-ctf-in-a-box --workflow stock-scores-zero.yml --limit 1 --json headSha,conclusion,event
+gh run list --repo OWASP/owasp-ctf-in-a-box --workflow patched-scores-right.yml --limit 1 --json headSha,conclusion,event
+```
+
+`stock-scores-zero` proves that no challenge scores against the stock
+targets. `patched-scores-right` proves that each reference patch scores
+exactly its own challenge. A release whose two runs are not both green on
+its own commit has not shown that Secure Development scores correctly.
 
 ## Local dev-stack
 

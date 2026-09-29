@@ -357,6 +357,21 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
     the event or after it, never during one; `/admin` → Freeze first if you
     must.
 
+- **Docs: an AWS event-day runbook, and the gaps an organizer should know
+  about.** `docs/aws.md` now covers running the event on ECS: watching the
+  services, a shell with ECS Exec, freezing scoring, what an app task loss,
+  an srh restart, an ElastiCache failover and a sync restart each look like,
+  rolling back a bad image, running the load pass by hand (the load-test
+  harness is Fly-only), and a tear-down that exports first and deletes the
+  hand-made SSM parameters. `docs/troubleshooting.md` gains the matching ECS
+  recipes. `docs/operations.md` and the `/admin` help text now say that the
+  quiz attempt cap, the quiz retry cooldown and the classic cooldown count
+  per contestant while points count per team, so a team of N gets N times
+  the budget. The pre-event checks now dispatch `stock-scores-zero` and
+  `patched-scores-right` on the release commit. The `ctf-setup.sh` header
+  now describes `launch` in the order it runs: wait for Launch, then make
+  the forks public.
+
 ## v0.6.0 — 2026-09-20
 
 ### Breaking changes

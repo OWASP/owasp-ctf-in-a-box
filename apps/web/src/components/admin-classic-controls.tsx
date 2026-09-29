@@ -273,7 +273,7 @@ export default function AdminClassicControls({
     <AdminNumberField
       id="classic-cooldown-sec"
       label="Submission cooldown (sec)"
-      help="Seconds a contestant must wait between flag submissions on the same challenge. 0 = no cooldown."
+      help="Seconds a contestant must wait between flag submissions on the same challenge. 0 = no cooldown. Counted per contestant, not per team: each teammate has their own."
       value={classicCooldownSecInput}
       placeholder={String(CLASSIC_COOLDOWN_SEC)}
       disabled={pending}

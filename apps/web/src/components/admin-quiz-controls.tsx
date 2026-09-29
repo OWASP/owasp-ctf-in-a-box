@@ -202,7 +202,7 @@ export default function AdminQuizControls({
       <AdminNumberField
         id="quiz-max-attempts"
         label="Max attempts"
-        help="Attempts a contestant gets on a question before the retry gate refuses further submissions. 0 = unlimited."
+        help="Attempts each contestant gets on a question before the retry gate refuses further submissions. 0 = unlimited. Counted per contestant, not per team: a team of N members gets N times this."
         value={quizMaxAttemptsInput}
         placeholder={String(QUIZ_MAX_ATTEMPTS)}
         disabled={pending}

@@ -1000,6 +1000,17 @@ confirmations in sequence — a plain warning naming exactly what gets wiped,
 then a type-to-confirm phrase — so there is no single click that can fire
 it.
 
+**How big an archive can be.** An import body can be at most about 75 MB:
+the full 50 MiB of event attachments as base64, plus 8 MiB for everything
+else. The limit is the same on every deployment: Caddy on compose, Fly's
+proxy and the AWS ALB set no body limit of their own. An archive over it is refused with
+`413` and the panel says `An archive import can be at most 75 MB`, before
+anything is reset. That holds even if the upload declares no length, because
+the route counts the bytes it actually reads. The route sits outside the Next
+proxy on purpose: the proxy cuts every body it sees at 10 MB, which
+used to break any archive with more than about 7 MB of attachments with a bare
+"invalid request payload" (ADR 40 has the detail).
+
 **Import is not atomic — re-run it if it fails partway.** Once the settings
 have validated, the reset and the three content replacements run in sequence
 against Redis, and there is no cross-step transaction rolling them back: a

@@ -747,7 +747,7 @@ of one module's shape.
    the manual scoring freeze beside it, which still fails open.
 
    The check lives in each page and route, **not** in `proxy.ts`: the proxy
-   makes no Redis reads (its matcher is only `/profile` and `/api/:path*`, for
+   makes no Redis reads (its matcher is only `/profile` and `/api/*`, for
    the sign-in redirect and the cross-origin write assertion), and a
    page-level check runs on every request, soft navigations included, where a
    layout would not. The failure mode that design invites — a new module page

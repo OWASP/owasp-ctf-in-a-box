@@ -1967,6 +1967,20 @@ and `launch-key` is intentionally public. So the ambient-credential attack
 this assertion exists to stop does not apply to them. Two carve-outs, each with its own reason; a third
 needs its own.
 
+*Amended (audit S2, the event-archive import):* the third has its reason.
+`/api/admin/event` is outside the proxy matcher
+(`"/api/((?!admin/event/?$).*)"`), because Next clones the body of every
+request the proxy runs on and silently cuts it at
+`experimental.proxyClientMaxBodySize` (10 MB by default), so an archive with
+attachments (capped at about 75 MB) reached the route truncated and failed
+with a generic `400`. Raising that knob would raise it for every `/api` route,
+unauthenticated ones included, because it is one global number. Unlike the two
+prefixes above, this route is **not** exempt from the check: it runs the same
+`originAllowed` call itself, first thing in `POST`, so it is a carve-out from
+the proxy, not from the assertion. `proxy-matcher.test.ts` compiles the
+matcher with Next's own code and pins that exactly this one path is outside
+it, and the route's test pins its own `403`.
+
 **Decision, part 2: rate-limit on the LOGIN, not the IP.** `gate-store.ts`'s
 throttle is keyed on the client IP its route (`app/api/gate/route.ts`)
 extracts, because the pre-event gate runs before anyone has an identity — and

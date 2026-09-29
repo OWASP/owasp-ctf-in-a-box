@@ -1,6 +1,7 @@
 import { requireAdmin } from "@/lib/admin-auth";
 import { ATTACHMENTS_EVENT_MAX_BYTES } from "@/lib/attachments-keys";
 import { readBoundedBody } from "@/lib/bounded-body";
+import { originAllowed } from "@/lib/origin";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP, AdminValidationError } from "@/lib/admin-store";
 import { parseEventBundle } from "@/lib/event-io";
 import { EventLiveError, exportEventBundle, importEventBundle } from "@/lib/event-store";
@@ -71,6 +72,13 @@ export async function GET(request: Request) {
 export const EVENT_IMPORT_MAX_BYTES = Math.ceil((ATTACHMENTS_EVENT_MAX_BYTES * 4) / 3) + 8 * 1024 * 1024;
 
 export async function POST(request: Request) {
+  // This route is the one `/api/*` path outside the proxy matcher (audit S2:
+  // the proxy's body clone would truncate an archive past 10 MB — see
+  // `config` in src/proxy.ts), so it runs the proxy's CSRF origin assertion
+  // itself, before anything else, exactly as the proxy would.
+  if (!originAllowed({ origin: request.headers.get("origin"), configuredUrl: process.env.BETTER_AUTH_URL })) {
+    return Response.json({ error: "cross-origin request refused" }, { status: 403 });
+  }
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return Response.json({ error: "forbidden" }, { status: gate.status });
 

@@ -28,7 +28,9 @@ function destination(pathname: string): string | null {
 
 describe("the proxy matcher", () => {
   it("carries exactly /profile and the API pattern — no module page routes", () => {
-    expect([...config.matcher].sort()).toEqual(["/api/:path*", "/profile"]);
+    // The API pattern's one exemption (the archive import) is pinned against
+    // Next's own matcher compiler in proxy-matcher.test.ts.
+    expect([...config.matcher].sort()).toEqual(["/api/((?!admin/event/?$).*)", "/profile"]);
   });
 });
 

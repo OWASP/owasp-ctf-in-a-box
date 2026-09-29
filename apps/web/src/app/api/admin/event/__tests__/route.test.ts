@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
   // A real (not mocked) Error subclass, so `err instanceof EventLiveError` in
@@ -67,6 +67,87 @@ describe("POST /api/admin/event — bounded body (#186)", () => {
 
   it("sizes the cap for a full event of attachments as base64, plus headroom", () => {
     expect(EVENT_IMPORT_MAX_BYTES).toBeGreaterThan(Math.ceil((50 * 1024 * 1024 * 4) / 3));
+  });
+});
+
+// Audit S2. Through the Next proxy, a body past 10 MB reached this route cut
+// short and failed with a generic 400; the route is now outside the proxy
+// matcher (proxy-matcher.test.ts pins that). These pin the route's half: a
+// body between the proxy's old 10 MB ceiling and the archive cap is read whole
+// and imported, and a body over the cap is refused with a 413 naming the cap,
+// even when it declares no length.
+describe("POST /api/admin/event — bodies past the proxy's 10 MB", () => {
+  const MB = 1024 * 1024;
+
+  /** A body of exactly `total` bytes, streamed in 1 MiB chunks with no
+   *  Content-Length, the way a chunked upload arrives. */
+  function streamedRequest(total: number): Request {
+    let sent = 0;
+    const chunk = new Uint8Array(MB).fill(0x20);
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent >= total) return controller.close();
+        const n = Math.min(MB, total - sent);
+        controller.enqueue(n === MB ? chunk : chunk.subarray(0, n));
+        sent += n;
+      },
+    });
+    return new Request("http://box.test/api/admin/event", { method: "POST", body, duplex: "half" } as RequestInit);
+  }
+
+  it("imports a 12 MB archive whole", async () => {
+    // JSON whitespace between tokens: a real, parseable archive of real size,
+    // through the real validator (parseEventBundle is not mocked).
+    const padded = validRaw.replace("{", `{${" ".repeat(12 * MB)}`);
+    const body = JSON.stringify({ import: padded });
+    expect(body.length).toBeGreaterThan(12 * MB);
+    expect(body.length).toBeLessThan(EVENT_IMPORT_MAX_BYTES);
+    const res = await POST(new Request("http://box.test/api/admin/event", { method: "POST", body }));
+    expect(res.status).toBe(200);
+    expect(h.importEventBundle).toHaveBeenCalledWith(expect.objectContaining({ kind: "archive" }), "alice");
+  });
+
+  it("413s a streamed body over the cap, naming the cap, without importing", async () => {
+    const res = await POST(streamedRequest(EVENT_IMPORT_MAX_BYTES + MB));
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toBe(
+      `An archive import can be at most ${Math.round(EVENT_IMPORT_MAX_BYTES / MB)} MB`,
+    );
+    expect(h.importEventBundle).not.toHaveBeenCalled();
+  });
+});
+
+// The proxy's CSRF origin assertion does not run on this route any more (it is
+// outside the matcher, above), so the route runs it itself. Deleting that
+// check leaves every other test in this file green; these are the ones that
+// fail.
+describe("POST /api/admin/event — origin check in place of the proxy's", () => {
+  beforeEach(() => {
+    vi.stubEnv("BETTER_AUTH_URL", "https://ctf.example.org");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const withOrigin = (origin: string) =>
+    new Request("https://ctf.example.org/api/admin/event", {
+      method: "POST",
+      headers: { origin },
+      body: JSON.stringify({ import: validRaw }),
+    });
+
+  it("403s a cross-origin POST before the admin gate or the import", async () => {
+    const res = await POST(withOrigin("https://evil.example"));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "cross-origin request refused" });
+    expect(h.requireAdmin).not.toHaveBeenCalled();
+    expect(h.importEventBundle).not.toHaveBeenCalled();
+  });
+
+  it("lets the event's own origin through", async () => {
+    const res = await POST(withOrigin("https://ctf.example.org"));
+    expect(res.status).toBe(200);
+    expect(h.importEventBundle).toHaveBeenCalled();
   });
 });
 

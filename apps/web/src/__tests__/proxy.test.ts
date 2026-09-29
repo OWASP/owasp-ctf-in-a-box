@@ -28,7 +28,7 @@ function destination(pathname: string): string | null {
 
 describe("the proxy matcher", () => {
   it("carries exactly /profile and the API pattern — no module page routes", () => {
-    expect([...config.matcher].sort()).toEqual(["/api/:path*", "/profile"]);
+    expect([...config.matcher].sort()).toEqual(["/api/((?!admin/event|admin/attachments).*)", "/profile"]);
   });
 });
 

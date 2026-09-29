@@ -60,5 +60,6 @@ export function proxy(request: NextRequest) {
 // this file never makes, so it lives in each page and route (lib/launch.ts).
 // `/api/:path*` carries the origin assertion above.
 export const config = {
-  matcher: ["/profile", "/api/:path*"],
+  matcher: ["/profile", "/api/((?!admin/event|admin/attachments).*)"],
+  proxyClientMaxBodySize: "64kb",
 };

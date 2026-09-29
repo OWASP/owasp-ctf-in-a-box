@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
+import { originAllowed } from "@/lib/origin";
 import { ATTACHMENT_MAX_BYTES, type Attachment, type AttachmentModule } from "@/lib/attachments-keys";
 import {
   AttachmentError,
@@ -72,6 +73,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!originAllowed({ origin: request.headers.get("origin"), configuredUrl: process.env.BETTER_AUTH_URL })) {
+    return NextResponse.json({ error: "cross-origin request refused" }, { status: 403 });
+  }
+
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
 
@@ -156,6 +161,10 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  if (!originAllowed({ origin: request.headers.get("origin"), configuredUrl: process.env.BETTER_AUTH_URL })) {
+    return NextResponse.json({ error: "cross-origin request refused" }, { status: 403 });
+  }
+
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
   const id = new URL(request.url).searchParams.get("id") ?? "";

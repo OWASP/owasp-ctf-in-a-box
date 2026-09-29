@@ -4,6 +4,7 @@ import { readBoundedBody } from "@/lib/bounded-body";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP, AdminValidationError } from "@/lib/admin-store";
 import { parseEventBundle } from "@/lib/event-io";
 import { EventLiveError, exportEventBundle, importEventBundle } from "@/lib/event-store";
+import { originAllowed } from "@/lib/origin";
 import { upstashPipeline } from "@/lib/upstash";
 
 /**
@@ -71,6 +72,10 @@ export async function GET(request: Request) {
 export const EVENT_IMPORT_MAX_BYTES = Math.ceil((ATTACHMENTS_EVENT_MAX_BYTES * 4) / 3) + 8 * 1024 * 1024;
 
 export async function POST(request: Request) {
+  if (!originAllowed({ origin: request.headers.get("origin"), configuredUrl: process.env.BETTER_AUTH_URL })) {
+    return Response.json({ error: "cross-origin request refused" }, { status: 403 });
+  }
+
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return Response.json({ error: "forbidden" }, { status: gate.status });
 

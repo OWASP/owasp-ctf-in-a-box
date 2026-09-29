@@ -4,7 +4,7 @@
 #
 # Usage: scripts/check-changelog.sh <base-ref> <head-ref>
 #
-# Compares `git diff --name-only BASE...HEAD` (three dots: what HEAD adds since
+# Compares `git diff --no-renames --name-only -z BASE...HEAD` (three dots: what HEAD adds since
 # it forked from BASE, so commits that landed on BASE afterwards are not
 # blamed on the PR). Run by .github/workflows/changelog.yml with the PR's base
 # and head SHAs; run it locally as `scripts/check-changelog.sh origin/main HEAD`.
@@ -52,7 +52,14 @@ for ref in "$base" "$head"; do
   fi
 done
 
-if ! changed="$(git diff --name-only "${base}...${head}")"; then
+# NUL-delimited, unquoted and with no rename detection (#486 review):
+# - `-z` plus core.quotePath=false, because git otherwise quotes a non-ASCII
+#   or odd path, and a quoted path matched none of the patterns below;
+# - `--no-renames`, because a detected rename reports only its destination,
+#   so moving shipped code into docs/ would have passed as a docs change.
+list="$(mktemp)"
+trap 'rm -f "$list"' EXIT
+if ! git -c core.quotePath=false diff --no-renames --name-only -z "${base}...${head}" > "$list"; then
   echo "check-changelog: git diff ${base}...${head} failed — no merge base? refusing to guess" >&2
   exit 2
 fi
@@ -80,7 +87,7 @@ exempt() {
 
 has_changelog=0
 triggers=""
-while IFS= read -r path; do
+while IFS= read -r -d '' path; do
   [ -n "$path" ] || continue
   if [ "$path" = "CHANGELOG.md" ]; then
     has_changelog=1
@@ -94,18 +101,44 @@ while IFS= read -r path; do
       fi
       ;;
   esac
-done <<EOF
-$changed
-EOF
+done < "$list"
 
 if [ -z "$triggers" ]; then
   echo "check-changelog: ok — no shipped code changed outside tests and docs"
   exit 0
 fi
 
+# A changed CHANGELOG.md is not enough (#486 review): at least one added,
+# non-blank line must sit inside head's `## Unreleased` section, so rewording
+# an older release does not pass for a new entry.
+unreleased_entry() {
+  local range
+  range="$(git show "${head}:CHANGELOG.md" | awk '
+    /^## Unreleased/ { s = NR; next }
+    s && /^## / { print s, NR; found = 1; exit }
+    END { if (s && !found) print s, NR + 1 }')"
+  [ -n "$range" ] || return 1
+  # shellcheck disable=SC2086
+  set -- $range
+  git diff --no-renames -U0 "${base}...${head}" -- CHANGELOG.md | awk -v s="$1" -v e="$2" '
+    /^@@/ { split($3, a, ","); n = substr(a[1], 2) + 0; next }
+    /^\+\+\+/ { next }
+    /^\+/ { if (n > s && n < e && $0 !~ /^\+[[:space:]]*$/) hit = 1; n++; next }
+    END { exit hit ? 0 : 1 }'
+}
+
 if [ "$has_changelog" = "1" ]; then
-  echo "check-changelog: ok — code changed and CHANGELOG.md is updated"
-  exit 0
+  if unreleased_entry; then
+    echo "check-changelog: ok — code changed and CHANGELOG.md has a new entry under '## Unreleased'"
+    exit 0
+  fi
+  {
+    echo "check-changelog: CHANGELOG.md changed, but no new line landed under '## Unreleased' — this change touches shipped code:"
+    printf '%s' "$triggers"
+    echo "Fix: add the entry under the '## Unreleased' heading (editing an older release does not count),"
+    echo "or ask a maintainer to apply the 'no-changelog' label."
+  } >&2
+  exit 1
 fi
 
 {

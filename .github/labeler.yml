@@ -37,6 +37,7 @@ test:
       - any-glob-to-any-file:
           - "**/__tests__/**"
           - "**/test/**"
+          - "**/tests/**"
           - "**/*.test.*"
           - "**/*.bats"
           - "**/*.tftest.hcl"

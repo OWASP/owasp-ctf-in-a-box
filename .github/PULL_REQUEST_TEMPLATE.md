@@ -47,11 +47,13 @@
 - [ ] No AI attribution in commits or this PR (no "Generated with", no
       `Co-authored-by:` trailers for an AI tool/agent).
 - [ ] Docs updated if this changes user-facing behavior or commands.
-- [ ] `CHANGELOG.md` has an `## Unreleased` line if this changes `apps/`,
-      `sync/`, `scorer/`, `setup/` or `deploy/` (the `changelog` check
-      fails without one; a maintainer applies `no-changelog` for an
+- [ ] `CHANGELOG.md` gains a new line under `## Unreleased` if this changes
+      `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` (the `changelog`
+      check fails without one; a maintainer applies `no-changelog` for an
       internal-only change).
-- [ ] A behavior change ships a test, or the summary says `No test: <reason>`.
+- [ ] A runtime behavior change in `apps/web/src/`, `sync/src/`, `scorer/src/`
+      or `setup/*.sh` ships a test, or the summary says `No test: <reason>`.
+      Pure refactors, copy, comments and docs are exempt.
 - [ ] **Breaking changes declared**: if this changes a published contract
       (an `.env` key, a `ctf:*` Redis key name or value shape, scorer
       HTTP payloads, a `ctf-setup.sh` subcommand/flag), the summary above

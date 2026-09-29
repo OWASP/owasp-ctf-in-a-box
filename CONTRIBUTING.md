@@ -154,7 +154,10 @@ Nothing here is only asked for; each item is checked on every PR.
 - **A CHANGELOG entry.** The `changelog` workflow fails a PR that changes
   `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without a line under
   `## Unreleased` in `CHANGELOG.md`. Test-only paths (`__tests__/`, `test/`,
-  `*.test.*`, `*.bats`, `*.tftest.hcl`) and `.md` files do not count as code.
+  `*.test.*`, `*.bats`, `*.tftest.hcl`) and `.md` files do not count as code,
+  with one exception: everything under `scorer/rubric*/` except its `.md`
+  files counts as code, because a rubric's tests are what the judge runs
+  against a contestant's fork and changing one moves scores.
   For an internal change with nothing to tell an organizer, a maintainer can
   apply the `no-changelog` label, which skips the check. Dependabot PRs are
   skipped too. Check locally with

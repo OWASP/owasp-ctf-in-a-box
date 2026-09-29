@@ -15,7 +15,7 @@ setup() {
   git config user.email "bats@example.invalid"
   git config commit.gpgsign false
   mkdir -p apps/web/src sync/src scorer/src setup deploy/fly docs
-  echo "# Changelog" > CHANGELOG.md
+  printf '# Changelog\n\n## Unreleased\n\n## v0.1.0\n\n- an old entry\n' > CHANGELOG.md
   echo "a" > apps/web/src/a.ts
   echo "b" > sync/src/b.js
   echo "c" > deploy/fly/fly.toml
@@ -44,6 +44,15 @@ _commit() {
   git commit -q -m "change"
 }
 
+# Adds an entry under `## Unreleased` (right after the heading), like a
+# contributor would, and commits it with the other named files.
+_entry() {
+  local tmp="$BATS_TEST_TMPDIR/cl.$$"
+  awk -v line="- an entry $RANDOM" '{ print } /^## Unreleased/ { print ""; print line }' CHANGELOG.md > "$tmp"
+  mv "$tmp" CHANGELOG.md
+  _commit "$@"
+}
+
 @test "code change without a CHANGELOG entry fails and names the path" {
   _commit sync/src/b.js
   run "$SCRIPT" base HEAD
@@ -54,7 +63,7 @@ _commit() {
 }
 
 @test "code change with a CHANGELOG entry passes" {
-  _commit apps/web/src/a.ts CHANGELOG.md
+  _entry apps/web/src/a.ts
   run "$SCRIPT" base HEAD
   [ "$status" -eq 0 ]
 }
@@ -138,3 +147,33 @@ _commit() {
   [ "$status" -eq 2 ]
   _has "missing argument"
 }
+
+# Review (#486): editing an older release section is not a new entry.
+@test "an edit only to an older release section does not count as an entry" {
+  sed -i.bak 's/- an old entry/- an old entry, reworded/' CHANGELOG.md && rm -f CHANGELOG.md.bak
+  _commit apps/web/src/a.ts CHANGELOG.md
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 1 ]
+  _has "## Unreleased"
+}
+
+# Review (#486): with rename detection, moving shipped code into docs/ would
+# report only the docs/ destination and slip through.
+@test "moving shipped code out of apps/ without an entry fails, naming the source" {
+  mkdir -p docs/moved
+  git mv apps/web/src/a.ts docs/moved/a.ts
+  git commit -q -m "move"
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 1 ]
+  _has "  apps/web/src/a.ts"
+}
+
+# Review (#486): git quotes a non-ASCII path in --name-only output unless told
+# not to, and a quoted path matched none of the shipped-code patterns.
+@test "a shipped file with a non-ASCII name is still seen" {
+  _commit "apps/web/src/café.ts"
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 1 ]
+  _has "  apps/web/src/café.ts"
+}
+

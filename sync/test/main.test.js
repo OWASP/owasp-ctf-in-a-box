@@ -17,7 +17,7 @@ import { main } from "../src/index.js";
 const STOP = new Error("stop-the-poll-loop");
 
 function spyDeps(overrides = {}) {
-  const calls = { readState: 0, makeRedis: 0, tick: [], writeState: [], sleep: [], log: [], logErr: [], exit: [] };
+  const calls = { readState: 0, makeRedis: 0, tick: [], writeState: [], pollState: [], sleep: [], log: [], logErr: [], exit: [] };
   const deps = {
     log: (m) => calls.log.push(m),
     logErr: (m) => calls.logErr.push(m),
@@ -28,8 +28,15 @@ function spyDeps(overrides = {}) {
     },
     makeRedisImpl: () => {
       calls.makeRedis++;
-      return { fake: "redis" };
+      // No stored poll state yet (a first boot), so main() seeds it from
+      // readState and writes it back before the first tick (ADR 64).
+      return {
+        fake: "redis",
+        readPollState: async () => null,
+        writePollState: async (s) => calls.pollState.push(s),
+      };
     },
+    retireFile: () => false,
     runTick: async (cfg, state, opts) => {
       calls.tick.push({ cfg, state, opts });
       return state;
@@ -82,10 +89,11 @@ test("a valid config proceeds: state, redis, then the poll loop", async () => {
   assert.equal(calls.tick.length, 1);
   assert.equal(calls.tick[0].cfg, cfg);
   assert.equal(calls.tick[0].opts.redis.fake, "redis");
-  // The tick's state is persisted before sleeping, under the config's path.
-  assert.equal(calls.writeState.length, 1);
-  assert.equal(calls.writeState[0][0], "/state/state.json");
-  assert.equal(calls.writeState[0][1], calls.tick[0].state);
+  // With Redis, the tick's state is persisted to Redis before sleeping (once
+  // to establish the key, once after the tick) and the file is not written.
+  assert.equal(calls.pollState.length, 2);
+  assert.equal(calls.pollState[1], calls.tick[0].state);
+  assert.deepEqual(calls.writeState, []);
   // Slept around the configured interval (±20% jitter), not the raw value.
   assert.equal(calls.sleep.length, 1);
   assert.ok(calls.sleep[0] >= 24000 && calls.sleep[0] <= 36000, `slept ${calls.sleep[0]}ms`);

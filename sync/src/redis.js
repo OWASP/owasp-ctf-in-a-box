@@ -4,6 +4,16 @@
 import { TARGETS } from "./config.js";
 
 const SYNC_STATUS_KEY = "ctf:sync:status";
+// The poller's DURABLE state (ADR 64): per-repo `since`/ETag cursors, the seen
+// cache, `ingested`/`dropped`/`lastDrop`, and the last master-reset epoch it
+// applied — one JSON string. It lives next to the scores it describes, so a
+// sync restart on a disk that did not survive (Fargate, a container recreated
+// without its volume) resumes where it stopped instead of re-reading every
+// comment. `ctf:sync:status` is the heartbeat /admin reads; this is sync's
+// own and nothing else reads or writes it. The master reset leaves every
+// `ctf:sync:*` key alone on purpose: it clears the cursor through the
+// `resetAt` epoch instead.
+export const SYNC_STATE_KEY = "ctf:sync:state";
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 
 // Scheduled scoring window: true when `now` is before start / after end.
@@ -137,6 +147,21 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
         throw new Error(`secureDevTargets: no known target id in stored list (${JSON.stringify(parsed).slice(0, 100)})`);
       }
       return known;
+    },
+    // The durable state, raw (ADR 64). null means the key does not exist: a first
+    // boot, or the first boot after upgrading from a file-backed build. Like
+    // getSecureDevTargets this does NOT catch: a failed read is not "no
+    // state", because treating it as such would start the cursor from zero
+    // and re-ingest every score comment — undoing any per-contestant reset
+    // and zeroing the /admin counters. main() holds the poller instead.
+    async readPollState() {
+      const [raw] = await pipeline([["GET", SYNC_STATE_KEY]]);
+      return raw ?? null;
+    },
+    // Throws too, so the caller logs it: a write that silently failed would
+    // look fine until the next restart rewound the cursor.
+    async writePollState(state) {
+      await pipeline([["SET", SYNC_STATE_KEY, JSON.stringify(state)]]);
     },
     async writeStatus(s) {
       try {

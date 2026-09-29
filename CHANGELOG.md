@@ -8,6 +8,21 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Security headers on every deployment (audit S1).** The app now sends
+  `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`,
+  `nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` and HSTS on
+  every response, and no longer sends `X-Powered-By`. Before this only Caddy
+  set them, so AWS and Fly boxes, which run no Caddy, sent none. Caddy keeps
+  the same values as a deferred defence-in-depth block, and a test fails if
+  the two drift apart.
+
+- **Event-archive imports over 10 MB work (audit S2).** The Next proxy cut
+  every request body at 10 MB, so an archive with more than about 7 MB of
+  attachments failed with a bare "invalid request payload". The import route
+  is now outside the proxy matcher and runs the proxy's cross-origin check
+  itself. It accepts up to its documented cap of about 75 MB and refuses a
+  larger body with a `413` that names the cap. See ADR 40.
+
 - **Contribution gates (#483).** A PR that changes `apps/`, `sync/`,
   `scorer/`, `setup/` or `deploy/` now fails the `changelog` check without a
   CHANGELOG entry (test-only and `.md` paths are exempt; the `no-changelog`

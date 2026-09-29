@@ -1236,7 +1236,24 @@ build.
   with a signed launch token, `POST /api/ai/event` with that token plus an
   HMAC event signature, and `GET /api/ai/launch-key` is intentionally public
   (see `AI_PREFIX` in `src/proxy.ts`). A missing `Origin` is allowed: it means a
-  non-browser client, which carries no ambient cookie to ride. See ADR 40.
+  non-browser client, which carries no ambient cookie to ride. One route runs
+  the assertion itself instead of through the proxy: `/api/admin/event`, the
+  event-archive import, is outside the proxy matcher because the proxy's body
+  clone cuts any request at 10 MB, and an archive with attachments can reach
+  about 75 MB. See ADR 40.
+- **Baseline security headers come from the app.** `next.config.ts` sends
+  `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`,
+  `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin` and
+  `Strict-Transport-Security: max-age=31536000; includeSubDomains` on every
+  route, and turns off `X-Powered-By`. The app owns them because AWS (an ALB)
+  and Fly (its own proxy) run no Caddy. `caddy/Caddyfile.poll` keeps the same
+  block as defence in depth on compose, deferred so it overwrites the app's
+  copy rather than duplicating it; `security-headers.test.ts` fails if the two
+  disagree. HSTS is sent unconditionally: browsers ignore it over plain HTTP,
+  and `next.config` headers are fixed at build time, so they cannot follow the
+  runtime `EVENT_URL`. The CSP carries `frame-ancestors` only. A full policy
+  would have to allow Next's inline scripts, so it is a separate change.
 - **Module content is locked until launch (#464, ADR 59).** Before the
   event's scoring start has passed, every module page redirects a non-admin
   to `/` before it loads any content, and the module APIs answer

@@ -98,7 +98,9 @@ describe("POST /api/admin/event — bodies past the proxy's 10 MB", () => {
   it("imports a 12 MB archive whole", async () => {
     // JSON whitespace between tokens: a real, parseable archive of real size,
     // through the real validator (parseEventBundle is not mocked).
-    const padded = validRaw.replace("{", `{${" ".repeat(12 * MB)}`);
+    // Whitespace right after the opening brace, and nowhere else.
+    expect(validRaw.startsWith("{")).toBe(true);
+    const padded = `{${" ".repeat(12 * MB)}${validRaw.slice(1)}`;
     const body = JSON.stringify({ import: padded });
     expect(body.length).toBeGreaterThan(12 * MB);
     expect(body.length).toBeLessThan(EVENT_IMPORT_MAX_BYTES);

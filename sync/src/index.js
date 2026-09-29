@@ -291,6 +291,33 @@ class LegacyStateUnreadable extends Error {
   }
 }
 
+/** The seed reached Redis but the file could not be moved aside (#508 review). */
+class LegacyStateUnretired extends Error {
+  constructor(path, cause) {
+    super(`cannot move ${path} aside: ${cause.message}`, { cause });
+    this.path = path;
+  }
+}
+
+/**
+ * Moves the legacy file aside once its contents are in Redis, or throws
+ * LegacyStateUnretired so the caller holds. A file left at STATE_PATH is a
+ * stale cursor: if Redis is later wiped, it would seed the key again and
+ * resume from it instead of re-reading everything, so polling waits for the
+ * move rather than proceeding with the file still there.
+ */
+function retireOrHold(path, retire, logErr, announce) {
+  let moved;
+  try {
+    moved = retire(path);
+  } catch (err) {
+    throw new LegacyStateUnretired(path, err);
+  }
+  if (moved && announce) {
+    logErr(`ctf-sync: migrated poll state from ${path} to Redis ${SYNC_STATE_KEY}; the file is now ${path}.migrated`);
+  }
+}
+
 /**
  * Reads the poller's durable state from Redis before the first tick (ADR 64).
  *
@@ -316,7 +343,13 @@ async function loadDurableState(cfg, redis, { readState, retire, logErr, sleep }
   for (;;) {
     try {
       const raw = await redis.readPollState();
-      if (raw !== null) return parseState(raw, `Redis ${SYNC_STATE_KEY}`, { log: logErr });
+      if (raw !== null) {
+        const state = parseState(raw, `Redis ${SYNC_STATE_KEY}`, { log: logErr });
+        // A retry after a failed move lands here: the key is established, so
+        // this finishes the migration (or is a no-op once the file is gone).
+        retireOrHold(cfg.statePath, retire, logErr, true);
+        return state;
+      }
       let seed;
       try {
         seed = readState(cfg.statePath, { log: logErr, strict: true });
@@ -330,18 +363,14 @@ async function loadDurableState(cfg, redis, { readState, retire, logErr, sleep }
       // only once its contents are safely in Redis.
       await redis.writePollState(seed);
       const hadCursor = Object.keys(seed.repos).length > 0 || (seed.ingested ?? 0) > 0;
-      try {
-        if (retire(cfg.statePath) && hadCursor) {
-          logErr(`ctf-sync: migrated poll state from ${cfg.statePath} to Redis ${SYNC_STATE_KEY}; the file is now ${cfg.statePath}.migrated`);
-        }
-      } catch (err) {
-        logErr(`ctf-sync: migrated poll state to Redis ${SYNC_STATE_KEY}, but could not move ${cfg.statePath} aside (${err.message}) — it is ignored while the key exists`);
-      }
+      retireOrHold(cfg.statePath, retire, logErr, hadCursor);
       return seed;
     } catch (err) {
       logErr(
         err instanceof LegacyStateUnreadable
           ? `ctf-sync: cannot read the legacy state file ${err.path} (${err.cause.message}) — not polling until it is readable or removed (seeding Redis with an empty cursor would re-ingest every score comment); retrying in ${cfg.pollIntervalMs}ms`
+          : err instanceof LegacyStateUnretired
+          ? `ctf-sync: poll state is in Redis ${SYNC_STATE_KEY}, but could not move ${err.path} aside (${err.cause.message}) — not polling until it is moved or deleted (a leftover file would re-seed a wiped Redis with a stale cursor); retrying in ${cfg.pollIntervalMs}ms`
           : `ctf-sync: cannot load poll state from Redis (${SYNC_STATE_KEY}): ${err.message} — not polling until it is readable (starting from an empty cursor would re-ingest every score comment); retrying in ${cfg.pollIntervalMs}ms`,
       );
       await sleep(cfg.pollIntervalMs);

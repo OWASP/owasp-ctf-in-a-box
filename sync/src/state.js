@@ -38,7 +38,7 @@ export const freshState = () => ({ repos: {} });
 /** What a repair line says about a bad value: its kind, never the value
  *  itself, which came from Redis or a hand-edited file (#508 review). */
 const kindOf = (v) =>
-  v === null ? "null" : Array.isArray(v) ? "an array" : typeof v === "object" ? "an object" : `a ${typeof v}`;
+  v === undefined ? "missing" : v === null ? "null" : Array.isArray(v) ? "an array" : typeof v === "object" ? "an object" : `a ${typeof v}`;
 
 export function parseState(raw, where, { log = console.error } = {}) {
   let parsed;
@@ -56,7 +56,7 @@ export function parseState(raw, where, { log = console.error } = {}) {
   }
 
   if (!isRecord(parsed.repos)) {
-    log(`ctf-sync: state at ${where} has no usable "repos" — resetting cursors, keeping the rest`);
+    log(`ctf-sync: state at ${where} has no usable "repos" (${kindOf(parsed.repos)}) — resetting cursors, keeping the rest`);
     parsed.repos = {};
   }
 

@@ -222,3 +222,11 @@ test("an unparseable state's repair line does not quote the stored text", () => 
   assert.ok(/not valid JSON/.test(warnings[0]), warnings[0]);
   assert.ok(!warnings[0].includes("do-not-log-me"), warnings[0]);
 });
+
+test("the repos repair line names the kind of value it replaced, not the value", () => {
+  const warnings = [];
+  parseState(JSON.stringify({ repos: ["FLAG{do-not-log-me}"] }), "test", { log: (m) => warnings.push(m) });
+  assert.equal(warnings.length, 1);
+  assert.ok(/"repos" \(an array\)/.test(warnings[0]), warnings[0]);
+  assert.ok(!warnings[0].includes("do-not-log-me"), warnings[0]);
+});

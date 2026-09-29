@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, tick } from "../src/index.js";
 import { makeRedis, SYNC_STATE_KEY } from "../src/redis.js";
-import { loadState, saveState } from "../src/state.js";
+import { loadState, retireStateFile, saveState } from "../src/state.js";
 
 const env = { UPSTASH_REDIS_REST_URL: "http://srh:80", UPSTASH_REDIS_REST_TOKEN: "t" };
 const STOP = new Error("stop-the-poll-loop");
@@ -269,6 +269,56 @@ test("upgrade: a legacy state file that exists but cannot be read holds the poll
   assert.deepEqual(sleeps, [1000, 1000], "it waits a poll interval and retries");
   const holds = logErr.filter((m) => m.includes(cfg.statePath) && /not polling/.test(m));
   assert.equal(holds.length, 2, JSON.stringify(logErr));
+});
+
+// #508 review: a legacy file left at STATE_PATH after its contents reached
+// Redis is a stale cursor waiting to happen — if Redis is later wiped, it
+// would seed the key again and resume from that old cursor instead of
+// re-reading everything. So the poller holds until the file is moved aside,
+// retrying the move each poll interval (it resumes as soon as it succeeds).
+test("upgrade: a legacy file that cannot be moved aside holds the poller until the move succeeds", async () => {
+  const dir = tmp();
+  const cfg = cfgFor(dir);
+  saveState(cfg.statePath, {
+    repos: { VAmPI: { since: "2026-10-01T10:05:00Z", etag: null, seen: ["2@2026-10-01T10:05:00Z"] } },
+    ingested: 2,
+    dropped: 0,
+  });
+  const srh = fakeSrh();
+  const world = fakeWorld([comment(1, "2026-10-01T10:00:00Z"), comment(2, "2026-10-01T10:05:00Z")]);
+  const logErr = [];
+  const sleeps = [];
+  let attempts = 0;
+  let n = 0;
+  await assert.rejects(
+    () =>
+      main({
+        load: () => cfg,
+        log: () => {},
+        logErr: (m) => logErr.push(m),
+        makeRedisImpl: () => makeRedis(env, srh.fetchImpl, () => {}),
+        retireFile: (p) => {
+          if (++attempts === 1) throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+          return retireStateFile(p);
+        },
+        runTick: (c, state, opts) => tick(c, state, { ...opts, fetchImpl: world.fetchImpl, log: () => {} }),
+        sleep: async (ms) => {
+          sleeps.push(ms);
+          // Stop once the poller has ticked: one hold wait, then one tick wait.
+          if (++n >= 2) throw STOP;
+        },
+      }),
+    (err) => err === STOP,
+  );
+
+  assert.equal(attempts, 2, "the move is retried after the hold");
+  const holds = logErr.filter((m) => /could not move/.test(m) && /not polling/.test(m));
+  assert.equal(holds.length, 1, JSON.stringify(logErr));
+  assert.equal(stored(srh).ingested, 2, "the seed reached Redis before the failed move");
+  assert.deepEqual(world.polls, ["2026-10-01T10:05:00Z"], "after the move it polls once, from the carried-over cursor");
+  assert.equal(world.posts.length, 0);
+  assert.equal(existsSync(cfg.statePath), false);
+  assert.equal(existsSync(`${cfg.statePath}.migrated`), true);
 });
 
 test("with Redis present the file is never written: the durable copy is the one next to the scores", async () => {

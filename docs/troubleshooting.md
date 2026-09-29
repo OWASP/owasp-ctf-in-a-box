@@ -211,7 +211,10 @@ re-ingest every score comment. Fix srh/Redis (the `fetch failed` and
 retry. The same hold applies on the first boot after an upgrade when the old
 `state.json` exists but cannot be read (`cannot read the legacy state file
 …`): fix its permissions, or delete it to start from an empty cursor on
-purpose.
+purpose. It also holds, after copying the file into Redis, if it cannot move
+the file aside (`could not move … aside`), because a leftover file would
+re-seed a wiped Redis with a stale cursor: fix the directory's permissions,
+or delete the file — its contents are already in Redis.
 
 **Fix.** Read the first error line of `docker compose logs sync`. If state
 is beyond repair: `docker compose exec redis redis-cli DEL ctf:sync:state`,

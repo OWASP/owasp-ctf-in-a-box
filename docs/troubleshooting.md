@@ -23,6 +23,19 @@ docker compose exec redis redis-cli HGETALL ctf:admin:settings   # the live over
 (`redis-cli` authenticates itself inside the container via `REDISCLI_AUTH` —
 no password on the command line.)
 
+**On AWS (ECS)** there is no `docker compose` and no `redis-cli`. The same
+two views are:
+
+```sh
+aws logs tail /ecs/<name>/sync --follow          # the poller's own account of itself
+aws ecs describe-services --cluster <cluster> --services app srh scorer sync \
+  --query 'services[].{name:serviceName,running:runningCount,desired:desiredCount}'
+```
+
+and a Redis read goes through srh from an ECS Exec shell in the app
+container. The exact command, how to get the shell, and every other ECS
+recipe are in the [AWS event-day runbook](aws.md#running-the-event-on-aws).
+
 ## `docker compose up` refuses to start: "set REDIS_PASSWORD in .env"
 
 **Symptom.** Compose exits immediately at interpolation with that message.
@@ -66,6 +79,10 @@ docker compose --profile secdev --profile app up -d
 passing `ADMIN_LOGINS` through to the app service's environment — it is on
 recent `docker-compose.yml`, but a customized override file that dropped it
 would reproduce this exact symptom.
+
+**On AWS** the list is the `admin_logins` Terraform variable, not `.env`.
+Set it in `terraform.tfvars` and run `terraform apply`, which rolls out a new
+app task definition. An empty value is refused at plan time.
 
 ## Only the landing page loads (module pages redirect to `/`)
 
@@ -128,7 +145,8 @@ Work down this list — each item is a different subsystem:
    Actions tab, then `./setup/ctf-setup.sh doctor` for the fork's
    provisioning row (workflow present? version current? image grant
    observed?). `upgrade` re-applies a stale workflow.
-3. **Is `sync` actually polling?** `docker compose logs -f sync`. No `sync`
+3. **Is `sync` actually polling?** `docker compose logs -f sync` (on AWS,
+   `aws logs tail /ecs/<name>/sync --follow`). No `sync`
    container at all means the stack came up without `--profile secdev` —
    correct for an event with no `SCORE_IMAGE`, wrong if you expected scoring.
    A container that exits non-zero with `ctf-sync: GITHUB_ORG is not set`
@@ -162,7 +180,12 @@ writes fail.
 Redis they're talking to — typically `.env` was edited after the stack came
 up (compose does not re-read `.env` into running containers).
 
-**Fix.** `docker compose up -d` again (recreates with current env). Note an
+**Fix.** `docker compose up -d` again (recreates with current env). On AWS,
+srh reads its connection string from the `SRH_CONNECTION_STRING` SSM
+parameter when a task starts, so a task started before that parameter
+changed still carries the old one. Start fresh srh tasks with
+`aws ecs update-service --cluster <cluster> --service srh --force-new-deployment`.
+Note an
 unauthenticated `PING` answering `NOAUTH` is the *correct* state —
 `scripts/smoke.sh` asserts it — the bug is only when the kit's own services
 hit it.
@@ -184,6 +207,17 @@ is beyond repair on an old version: `docker compose down && docker volume rm
 losing the cursor is safe; the poller re-reads scores from the PR comments
 and the scorer's writes are idempotent on replay.
 
+**On AWS** there is no `sync-state` volume: the state file is on the task's
+own disk, so every new sync task starts from an empty cursor. Read the error
+with `aws logs tail /ecs/<name>/sync --since 30m`, and why the task stopped
+with `describe-tasks` (see the
+[AWS runbook](aws.md#watching-the-stack)). A `GITHUB_ORG is not set` or a
+missing App id means a Terraform variable is empty: set `github_org` and
+`github_app_id`, then `terraform apply`. A
+restart re-reads every score comment. That is safe for totals, but it undoes
+a per-contestant Secure Development reset: see the sync drill in the
+[AWS runbook](aws.md#failure-drills).
+
 ## The monitor says `/health/deep` is 503 (but the site loads fine)
 
 That combination is the check doing its job. Every read in this kit fails
@@ -195,10 +229,16 @@ place that failure is visible from outside. Read the body:
   scoring in any module and admin settings reads are serving defaults. On
   Fly: `fly ssh console --app <app> -C "redis-cli PING"`, then `fly logs`
   for `srh` and `redis`; a `NOAUTH` there is the password mismatch described
-  above. On compose: `docker compose ps` and the `srh`/`redis` logs.
+  above. On compose: `docker compose ps` and the `srh`/`redis` logs. On
+  AWS: `aws logs tail /ecs/<name>/srh`, and `describe-services` for whether
+  the srh task is running at all. The module runs one srh task, so while
+  ECS replaces it the whole stack reads as down. See the srh and failover
+  drills in the [AWS runbook](aws.md#failure-drills).
 - **`"scorer": "down"`** — Redis is fine but the scorer's `/healthz` did not
   answer. Quiz, Jeopardy and AI keep scoring; Secure Development scores stop
-  landing and the board shows stale SD totals. Restart the scorer container;
+  landing and the board shows stale SD totals. Restart the scorer container
+  (on AWS, `aws ecs update-service --cluster <cluster> --service scorer
+  --force-new-deployment`, after reading its `stoppedReason`);
   `LEADERBOARD_API_URL` unset on a box with `SCORE_IMAGE` set also reports
   this, since a scorer nothing can reach is as good as down.
 - **`"sync.ageSec"` growing while the check is 200** — not a failure of the
@@ -208,8 +248,9 @@ place that failure is visible from outside. Read the body:
   idle-suspending (`FLY_AUTO_STOP` not `off`), that is the cause.
 
 The body never says *why* — no host, no error text; that is deliberate for a
-public URL. The reason is in the server log: `fly logs --app <app>` or
-`docker compose logs app`, lines tagged `[health/deep]`.
+public URL. The reason is in the server log: `fly logs --app <app>`,
+`docker compose logs app`, or on AWS `aws logs tail /ecs/<name>/app`, lines
+tagged `[health/deep]`.
 
 **What a dead container actually does on Fly (measured, not assumed).** The
 rendered compose file carries no `restart:` — `render-compose.sh` drops it —
@@ -226,6 +267,45 @@ whose HTTP check fails is **not replaced** — Fly's check is a signal, not a
 supervisor. Both are what the external monitor on `/health/deep` is for; when
 it fires and `fly logs` shows `restart count is 10/10`, `fly machine restart
 <id> --app <app>` is the fix.
+
+## An ECS service never settles (AWS)
+
+**Symptom.** `terraform apply` or `./deploy.sh --apply` sits on
+`Still modifying...` for a service and eventually times out, or
+`describe-services` shows `running` below `desired` while the service's
+events repeat `has started 1 tasks` or `is unhealthy`.
+
+**Diagnosis.** ECS is starting tasks that stop again. The module sets no
+deployment circuit breaker, so it keeps trying. Old tasks keep serving while
+it does, so the site may look fine. The reason is on the stopped task:
+
+```sh
+aws ecs list-tasks --cluster <cluster> --service-name <service> --desired-status STOPPED
+aws ecs describe-tasks --cluster <cluster> --tasks <task-arn> \
+  --query 'tasks[].{stopped:stoppedReason,containers:containers[].{name:name,exit:exitCode,reason:reason}}'
+```
+
+`CannotPullContainerError` means the image is missing or the task cannot
+pull it (a private registry, or an image built for the wrong CPU
+architecture). An `AccessDeniedException` on KMS or SSM means a secret was
+stored under the wrong key or path: every SecureString must use
+`--key-id alias/<name>-secrets`. A container that exits or fails its health
+check has the reason in `/ecs/<name>/<service>`.
+
+**Fix.** Fix the cause, then `terraform apply` again. For a bad app image,
+roll back to the previous tag as described in
+[Rolling back a bad deploy](aws.md#rolling-back-a-bad-deploy).
+
+## `aws ecs execute-command` fails: "execute command was not enabled" (AWS)
+
+**Diagnosis.** ECS Exec is off for that service, or the task was started
+before it was turned on. A task keeps the setting it started with.
+
+**Fix.** Enable ECS Exec in the stack and `terraform apply`, then start
+fresh tasks with `aws ecs update-service --cluster <cluster> --service
+<service> --force-new-deployment`. Also check that the Session Manager
+plugin for the AWS CLI is installed locally. See
+[A shell inside a task](aws.md#a-shell-inside-a-task-ecs-exec).
 
 ## A re-scored PR never updates ("it scored once and never again")
 

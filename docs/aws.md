@@ -185,10 +185,330 @@ probes fail together, so ECS must not replace them over an outage a restart
 cannot fix. A wrong AUTH token still fails every probe from first boot, so a
 broken deployment goes unhealthy within about 2.5 minutes and rolls back.
 
+## Running the event on AWS
+
+The event-day runbook for this stack. [docs/operations.md](operations.md) is
+the runbook for the event itself (the admin panel, the modules, launch day),
+and it applies here unchanged. This section covers only what is different
+on ECS: where the logs are, how to get a shell, what each failure looks
+like, and how to roll back and tear down. Symptom-first recipes are in
+[docs/troubleshooting.md](troubleshooting.md).
+
+**Not yet verified on a live stack.** This module has not been applied end
+to end yet. The rehearsal tracked in
+[#476](https://github.com/OWASP/owasp-ctf-in-a-box/issues/476) runs every
+drill below against a throwaway stack, and it is where this runbook gets
+corrected. Run that rehearsal before you rely on AWS for a real event.
+
+Every command below uses these names:
+
+| Placeholder | Where it comes from |
+|---|---|
+| `<cluster>` | `terraform output -raw cluster_name` (the `name` variable) |
+| `<name>` | the `name` variable in `terraform.tfvars` (default `owasp-ctf`) |
+| `<domain>` | the `domain` variable; `terraform output -raw event_url` |
+| services | `app`, `srh`, and on a Secure Development event `scorer` and `sync` (`terraform output services_running`) |
+| log groups | `/ecs/<name>/<service>`, one per service |
+| ElastiCache | replication group `<name>-redis` |
+| target group | `<name>-app` |
+
+### Before the event
+
+- **Point the external monitor at `https://<domain>/health/deep`**, as
+  [docs/hosting.md](hosting.md#monitoring) describes. It is the one check
+  that sees a dead dependency, because every read in the app fails open.
+  The ALB checks only `/health`, which is liveness and never reads Redis.
+- **There is no per-IP rate limit in front of the ALB.** The Fly box gets
+  one from the Cloudflare rule in
+  [docs/hosting.md](hosting.md#cloudflare-in-front-of-the-box). This module
+  creates no WAF, so on AWS only the app's own per-login limits apply. To
+  get the same protection, put the domain behind Cloudflare with that rule.
+  Using an ACM certificate with Cloudflare's Full (strict) mode works.
+- **Dispatch both heavy scoring gates on the release commit** (see
+  [The offline gates](operations.md#the-offline-gates)).
+- **Run the load pass** described in [Load testing on AWS](#load-testing-on-aws).
+
+### Watching the stack
+
+The state of every service in one table:
+
+```sh
+aws ecs describe-services --cluster <cluster> --services app srh scorer sync \
+  --query 'services[].{name:serviceName,running:runningCount,desired:desiredCount,rollout:deployments[0].rolloutState}' \
+  --output table
+```
+
+Drop `scorer sync` on an event without Secure Development. `running` equal
+to `desired` and `COMPLETED` on every row means the stack is settled.
+
+A service's recent events. These show a task that failed its health check,
+a task that could not pull its image, or a deployment that is still waiting:
+
+```sh
+aws ecs describe-services --cluster <cluster> --services app \
+  --query 'services[0].events[:10].[createdAt,message]' --output text
+```
+
+Why a task stopped. Check this first whenever a service keeps replacing
+tasks:
+
+```sh
+aws ecs list-tasks --cluster <cluster> --service-name app --desired-status STOPPED
+aws ecs describe-tasks --cluster <cluster> --tasks <task-arn> \
+  --query 'tasks[].{stopped:stoppedReason,containers:containers[].{name:name,exit:exitCode,reason:reason,health:healthStatus}}'
+```
+
+The logs, per service:
+
+```sh
+aws logs tail /ecs/<name>/app --follow --since 10m
+aws logs tail /ecs/<name>/sync --follow           # the poller's own account of itself
+```
+
+Whether the ALB sees healthy app tasks:
+
+```sh
+aws elbv2 describe-target-health --target-group-arn \
+  "$(aws elbv2 describe-target-groups --names <name>-app --query 'TargetGroups[0].TargetGroupArn' --output text)"
+```
+
+Container Insights is on for the cluster, so CPU and memory per service are
+in CloudWatch under **Container Insights → ECS**. For the cache, watch the
+ElastiCache metrics `EngineCPUUtilization` and `DatabaseMemoryUsagePercentage`.
+
+### A shell inside a task (ECS Exec)
+
+ECS Exec gives you a shell in a running container. It is the only way into
+the private side of the stack: srh accepts connections only from the app,
+the scorer and sync, and the cache accepts them only from srh. You need the
+AWS CLI's
+[Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+installed locally, and the stack must have ECS Exec enabled. Without it,
+the command fails with `execute command was not enabled`.
+
+```sh
+TASK="$(aws ecs list-tasks --cluster <cluster> --service-name app --query 'taskArns[0]' --output text)"
+aws ecs execute-command --cluster <cluster> --task "$TASK" --container app \
+  --interactive --command "/bin/sh"
+```
+
+The container name is the service name (`app`, `srh`, `scorer`, `sync`).
+Inside the app container there is no `redis-cli`, and the app has no route
+to Redis by design. To run a Redis command, send it through srh with the
+URL and token the container already holds. This is the AWS equivalent of
+the `redis-cli HGETALL ctf:admin:settings` line in
+[docs/troubleshooting.md](troubleshooting.md):
+
+```sh
+node -e 'fetch(process.env.UPSTASH_REDIS_REST_URL,{method:"POST",headers:{authorization:"Bearer "+process.env.UPSTASH_REDIS_REST_TOKEN,"content-type":"application/json"},body:JSON.stringify(process.argv.slice(1))}).then(r=>r.text()).then(console.log)' \
+  HGETALL ctf:admin:settings
+```
+
+Replace `HGETALL ctf:admin:settings` with any other command, for example
+`HGETALL ctf:sync:status` for the poller's heartbeat. Treat anything that
+writes as break-glass: it bypasses the admin panel's validation and its
+audit log.
+
+### Freezing scoring
+
+Freeze from `/admin` → **Event** → **Freeze scoring**, exactly as on any
+other box. See the **Freeze** entry in
+[the admin panel section](operations.md#organizer-admin-panel). It stops
+ingestion and the scorer's writes, and nothing is lost: judged PRs wait in
+their comments until you unfreeze.
+
+If `/admin` itself is unreachable, set the same field from an ECS Exec shell
+in the app container, with the `node -e` line above and these arguments:
+
+```text
+HSET ctf:admin:settings paused 1     # freeze
+HDEL ctf:admin:settings paused       # unfreeze: absent means not paused, never "0"
+```
+
+The app, the scorer and sync all read that field on their next check, so no
+restart is needed.
+
+### Failure drills
+
+What each failure looks like, and what to do. The rehearsal in #476 runs
+each one and records how long it takes.
+
+**An app task dies.** The ALB stops sending traffic to it and serves from
+the other task (`app_desired_count` defaults to 2). ECS starts a
+replacement without any action from you. The operator sees one target go
+`unhealthy` or `draining` in `describe-target-health`, and a `stopped` event
+on the `app` service. Players see nothing, or one failed request. Do
+nothing unless the replacement also stops. Then read its `stoppedReason`
+(above) and the `/ecs/<name>/app` log.
+
+**srh restarts.** srh is the whole data path: every page, submission and
+grading script goes through it. The module runs **one** srh task, so while
+it is down nothing reads or writes. Pages still render, because reads fail
+open, but nothing scores in any module. `/health/deep` answers 503 with
+`"redis": "down"`, and your monitor fires. ECS replaces the task by itself.
+Expect the outage to last as long as a Fargate task start: the network
+interface, the image pull and the health check's start period. Nothing is
+lost. A quiz or flag submission made during the outage gets an error, and
+the contestant can submit again once srh is back. Secure Development scores
+wait in the PR comments until sync reaches srh again. If the replacement keeps failing, read its
+`stoppedReason` and the `/ecs/<name>/srh` log. A `WRONGPASS` or `NOAUTH`
+there means the connection string does not match the cache: see
+[docs/troubleshooting.md](troubleshooting.md#services-log-noauth-authentication-required).
+
+**ElastiCache fails over.** With `cache_replica_count` at 1 or more (the
+default), ElastiCache promotes the replica on its own. During the switch,
+writes fail, and `/health/deep` may report `"redis": "down"`. srh connects
+through the primary endpoint, whose DNS name moves to the new primary. Do
+nothing but watch `/health/deep` return to `"redis": "ok"`. Then confirm
+that a **write** works, for example answer a quiz question in a test
+account: a demoted node still answers `PING`. If srh's health check fails
+for long enough during the switch, ECS replaces srh too, which adds a task
+start to the outage. To rehearse this, run the failover on purpose. A plain
+reboot does not exercise it:
+
+```sh
+aws elasticache test-failover --replication-group-id <name>-redis --node-group-id 0001
+```
+
+With `cache_replica_count = 0` there is no replica, so there is no failover
+either. A lost node is then an outage that lasts until ElastiCache replaces
+it.
+
+**sync restarts.** A restart can come from a deploy, a crash or AWS retiring
+the host. The module runs one poller and stops the old task before it starts
+the new one. **On ECS, sync's cursor is not persistent.** It lives in
+`/state/state.json` on the task's own disk, so every new sync task re-reads
+every score comment from the start. That is safe for totals: the scorer
+writes each solve with `HSETNX`, so re-ingesting a comment adds nothing.
+Two things do change:
+
+- The heartbeat on `/admin` (**ingested**, **dropped**, the last drop
+  reason) starts again from 0. Read the old values from the
+  `/ecs/<name>/sync` log if you need them.
+- **A per-contestant Secure Development reset does not survive a sync
+  restart.** The re-read ingests that contestant's comments again. Closing
+  the contestant's PR does not help, because a closed PR's comments are
+  still read. To make the reset stick, delete the `github-actions[bot]`
+  score comment on their PR before you reset.
+
+To restart sync yourself, for example after you fix its configuration:
+
+```sh
+aws ecs update-service --cluster <cluster> --service sync --force-new-deployment
+```
+
+Then watch `sync.ageSec` in `/health/deep` drop back under a minute.
+
+### Rolling back a bad deploy
+
+`./deploy.sh --apply` pushes a new, content-tagged app image and runs
+`terraform apply`. ECS starts the new tasks before it stops the old ones, so
+old tasks keep serving while new ones fail their health check. The module
+sets no deployment circuit breaker, so a bad image is not rolled back
+automatically. ECS keeps starting failing tasks, and `terraform apply`
+waits for a steady state that never comes, then times out.
+
+1. Read why the new tasks stop (`describe-tasks` above). A wrong image
+   architecture, a secret the tasks cannot decrypt, or an app that exits at
+   start each show up there.
+2. Find the previous image tag. ECR tags are immutable and name the git
+   revision:
+
+   ```sh
+   aws ecr describe-images --repository-name <name>-app \
+     --query 'sort_by(imageDetails,&imagePushedAt)[].imageTags' --output text
+   ```
+
+3. Put that tag back in `deploy/aws-terraform/image.auto.tfvars`, the file
+   `deploy.sh` writes:
+
+   ```hcl
+   app_image = "<ecr_app_repository_url>:<previous-tag>"
+   ```
+
+4. `terraform apply`. The previous task definition rolls out the same way
+   the bad one did.
+
+A change to `admin_logins`, `github_org` or any other variable rolls back
+the same way: set the old value and `terraform apply`.
+
+### Load testing on AWS
+
+`scripts/load-test.sh`, described in
+[docs/operations.md](operations.md#the-box-under-load-scriptsload-testsh),
+**cannot run against this stack as it is.** It is written for Fly:
+
+- It finds the machine with `fly machines list` and requires `--app`.
+- It uploads `scripts/load-seed.mjs` into the app container with
+  `fly ssh sftp`, because the seeder is not in the app image. It runs the
+  seed, `--clean` and `--break-lock` with `fly ssh console`. ECS Exec opens
+  a shell but has no file upload, so there is no equivalent way to get the
+  seeder into an app task.
+- It samples memory with `fly ssh console … cat /proc/meminfo`, and a run
+  with no memory sample fails by design.
+
+What is missing is an ECS mode for the harness: finding a task with
+`aws ecs list-tasks`, getting the seeder into it, and reading memory from
+Container Insights. Until that exists, run the same pass by hand:
+
+1. **Data.** `/admin` → **Seed demo data** gives a small board. Without the
+   seeder there is no way to put 200 synthetic contestants on the board, so
+   this pass measures a smaller board than the Fly harness does. Say so in
+   the result.
+2. **Traffic.** Run the harness's own two phases, one after the other, from
+   your laptop against the ALB domain:
+
+   ```sh
+   npx --yes autocannon -d 60 -R 10 -c 10 https://<domain>/leaderboard
+   npx --yes autocannon -d 60 -R 2 -c 10 "https://<domain>/leaderboard?display=1"
+   ```
+
+3. **The bar.** The same as the harness: `/leaderboard` p97.5 under 1.5 s,
+   `?display=1` under 1 s, zero 5xx, zero errors and zero timeouts. Read CPU
+   and memory from Container Insights while it runs, for srh as well as the
+   app, because srh's 0.25 vCPU is the smallest size in the stack. Also read
+   `EngineCPUUtilization` on the cache.
+4. **Clean up** with a **Master reset** before registration opens. It
+   removes the seeded demo data along with everything else.
+
 ## Tear down
+
+`terraform destroy` deletes the cache and its automatic snapshots with it.
+The module takes no final snapshot, so export everything you want to keep
+**first**:
+
+1. `/admin` → **Event** → **Event archive** → **Export**. It carries the
+   authored content and settings, not contestant progress (see
+   [Archiving and replaying an event](operations.md#archiving-and-replaying-an-event)).
+2. Save the final standings: the `/leaderboard` page, and on a Secure
+   Development event the scorer's `/leaderboard` JSON, from an ECS Exec
+   shell in the app container: `wget -qO- "$LEADERBOARD_API_URL/leaderboard"`.
+3. Run `./setup/ctf-setup.sh teardown` for the org, as on any other box.
+
+Then:
 
 ```sh
 terraform destroy
+```
+
+Afterwards, check for leftovers:
+
+```sh
+aws resourcegroupstaggingapi get-resources --tag-filters Key=Event,Values=<name>
+aws ssm describe-parameters --parameter-filters Key=Name,Option=BeginsWith,Values=<ssm_prefix>
+aws logs describe-log-groups --log-group-name-prefix /ecs/<name>
+```
+
+The KMS key stays listed in `PendingDeletion` for its deletion window,
+which is expected. **Delete the SSM parameters you created by hand**
+(`BETTER_AUTH_SECRET`, `GITHUB_CLIENT_SECRET`, `SRH_TOKEN`, and on a Secure
+Development event `GITHUB_APP_PRIVATE_KEY` and `SCORER_TOKEN`). Terraform
+does not manage them and they carry no `Event` tag, so the tag query above
+passes while they still exist:
+
+```sh
+aws ssm delete-parameters --names <ssm_prefix>/BETTER_AUTH_SECRET <ssm_prefix>/GITHUB_CLIENT_SECRET \
+  <ssm_prefix>/SRH_TOKEN <ssm_prefix>/GITHUB_APP_PRIVATE_KEY <ssm_prefix>/SCORER_TOKEN
 ```
 
 ## Notes

@@ -16,8 +16,8 @@ help:
 	@echo "  test-scorer           scorer unit tests, vacuous-pass gate, offline acceptance loop"
 	@echo "  lint-app              app: install + eslint"
 	@echo "  test-app              app: install + eslint + vitest"
-	@echo "  lint-shell            shellcheck over scripts/, setup/, entrypoints, deploy/fly"
-	@echo "  test-shell            bats over setup/test/, deploy/fly/test/, scripts/test/"
+	@echo "  lint-shell            shellcheck over scripts/, setup/, entrypoints, deploy/fly, deploy/aws-terraform"
+	@echo "  test-shell            bats over setup/test/, deploy/fly/test/, deploy/aws-terraform/test/, scripts/test/"
 	@echo "  smoke                 the full poll pipeline, end to end, offline"
 	@echo "  acceptance-scorer     scorer's offline acceptance loop"
 	@echo "  acceptance-quiz-only  quiz-only compose bring-up"
@@ -48,11 +48,11 @@ test-app:
 
 lint-shell:
 	shellcheck scripts/*.sh scripts/lib/*.sh scripts/dev-stack setup/*.sh scorer/entrypoint.sh sync/docker-entrypoint.sh \
-	  deploy/fly/deploy.sh deploy/fly/render-compose.sh
+	  deploy/fly/deploy.sh deploy/fly/render-compose.sh deploy/aws-terraform/deploy.sh
 	shellcheck -s sh --exclude=SC2034 scorer/entrypoints/*.sh
 
 test-shell:
-	bats setup/test/ && bats deploy/fly/test/ && bats scripts/test/
+	bats setup/test/ && bats deploy/fly/test/ && bats deploy/aws-terraform/test/ && bats scripts/test/
 
 smoke:
 	./scripts/smoke.sh

@@ -447,7 +447,7 @@ That takes the volume with it. Export anything you want to keep first.
 ## CI
 
 `.github/workflows/ci.yml`'s `shell` job shellchecks both scripts and runs
-`bats deploy/fly/test/` — 56 assertions covering `fly.toml`'s invariants, the
+`bats deploy/fly/test/`, whose assertions cover `fly.toml`'s invariants, the
 render's output (no secret values, no `$$`, every service on loopback with an
 image, no leftover build/networks/volumes/profiles keys), and `deploy.sh`'s
 guards. The render runs for real; nothing is ever deployed, and no Fly account

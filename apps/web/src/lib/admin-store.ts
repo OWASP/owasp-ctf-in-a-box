@@ -187,10 +187,12 @@ export type AdminSettings = {
    *  team that is already over the new cap. */
   teamMaxMembers: number | null;
   teamRegistrationOpen: boolean;
-  // Scheduled "auto dates" — nullable ISO instants. Absent = no bound.
-  // scoring* gates the freeze (before start / after end = paused); registration*
-  // gates team create/join. Enforced at READ time (no scheduler on the box):
-  // see effectivePaused / effectiveRegistrationOpen, mirrored in the scorer
+  // Scheduled "auto dates" — nullable ISO instants. scoring* gates the freeze
+  // through outsideScoringWindow (before start / after end = paused, and an
+  // absent start = not launched, so paused — issue #464); registration* gates
+  // team create/join through outsideWindow (absent bound = open). Enforced at
+  // READ time (no scheduler on the box): see effectivePaused below and
+  // effectiveRegistrationOpen in schedule-window.ts, mirrored in the scorer
   // (store.js), sync poller (redis.js), and team-store.
   scoringStartsAt: string | null;
   scoringEndsAt: string | null;
@@ -1053,9 +1055,10 @@ function raiseSolveCounts(cmds: (string | number)[][], key: string, counts: Map<
  * score-over-time graph, plus a few teams. When the quiz module is enabled,
  * also seeds a small demo question bank and a spread of correct answers
  * across the same contestants (timestamped inside the same ~6h window) so
- * DEMO_MODE shows a genuinely combined two-module leaderboard. Additive —
- * does not clear first. Gated by the route on DEMO_MODE + requireAdmin;
- * never a production path.
+ * the demo shows a genuinely combined two-module leaderboard. Additive —
+ * does not clear first. Gated by the route on requireAdmin plus a
+ * type-to-confirm (no DEMO_MODE env var since issue #419, ADR 58); never a
+ * production operation.
  */
 async function seedDemoAttachments(): Promise<void> {
   for (const a of DEMO_CLASSIC_ATTACHMENTS) {

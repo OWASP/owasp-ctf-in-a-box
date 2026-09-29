@@ -10,7 +10,8 @@ repo root. `apps/web/AGENTS.md` and `CLAUDE.md` point here on purpose.
 ## Build/test/lint
 
 These are the authoritative commands — they match what CI runs in
-`.github/workflows/ci.yml` exactly. Node 22 is used across the board; run
+`.github/workflows/ci.yml` exactly. Node 22 is used across the board
+(`.nvmrc` pins it, so `nvm use` picks it up); run
 the suites on 22 — a sync/scorer suite was green on Node 25 and red on 22 in
 CI (#256, an unref'd `AbortSignal.timeout` timer).
 
@@ -40,9 +41,11 @@ corepack pnpm test
 
 The grading Lua scripts (`SUBMIT_SCRIPT`, `GRADE_SCRIPT`, `AWARD_SCRIPT`) are
 the scoring authority, and `src/lib/__tests__/*.lua.upstash.test.ts` execute
-them against a real Redis behind srh; the `admin-store`, `hint-store` and
-`team-store` `.upstash` suites next to them do the same for the settings,
-reveal and team scripts. All six gate through `live-redis.ts`: they skip
+them against a real Redis behind srh; the other `*.upstash.test.ts` suites
+next to them (`admin-store`, `hint-store`, `team-store`, `attachments-store`
+and more) do the same for the settings, reveal, team and attachment scripts.
+Every `src/lib/__tests__/*.upstash.test.ts` suite gates through
+`live-redis.ts` — count them by that glob, not from a list here: they skip
 locally without `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`, and CI
 brings the two containers up and sets `CTF_LUA_SUITES_REQUIRED=1` so a skip
 fails the job. If you touch any of those scripts, run them (the `docker run`
@@ -73,9 +76,10 @@ Check it after any build you run here.
 
 ```sh
 shellcheck scripts/*.sh scripts/lib/*.sh scripts/dev-stack setup/*.sh scorer/entrypoint.sh sync/docker-entrypoint.sh \
-  deploy/fly/deploy.sh deploy/fly/render-compose.sh
+  deploy/fly/deploy.sh deploy/fly/render-compose.sh deploy/aws-terraform/deploy.sh
 bats setup/test/
 bats deploy/fly/test/
+bats deploy/aws-terraform/test/
 bats scripts/test/
 ```
 
@@ -318,8 +322,8 @@ suggestions.
   checkout-derived content as the bot, and never gate that post on
   `if: always()` without an outcome check — either reopens the score-forge.
 - **The pause/schedule contract lives in THREE readers — change them in
-  lockstep.** `effectivePaused`/`outsideWindow` (freeze + scheduled scoring
-  window) is implemented independently in
+  lockstep.** `effectivePaused`/`outsideScoringWindow` (freeze + scheduled
+  scoring window) is implemented independently in
   `apps/web/src/lib/schedule-window.ts` (re-exported through
   `admin-store.ts`), `scorer/src/store.js`, and `sync/src/redis.js`;
   registration windows in `team-store.ts`. They read the same `ctf:admin:settings` fields and must
@@ -384,7 +388,9 @@ suggestions.
   challenge; the input to `acceptance-patched.sh`. `git`-format diffs against
   the source the script pins by commit; `patches/README.md` is the contract.
 - `test/fixtures/` — `mock-github.mjs` and `mock-scorer.mjs`, the stand-ins
-  `docker-compose.smoke.yml` builds for `smoke.sh`. Nothing else reads it.
+  `docker-compose.smoke.yml` builds for `smoke.sh`; and the shared window
+  corpora (`window-corpus.json`, `scoring-window-corpus.json`) that the app,
+  scorer and sync suites all run (the three-reader rule above).
 - `deploy/` — optional cloud deploy modules: `aws-terraform/` (ECS Fargate +
   ElastiCache + ALB; `docs/aws.md`) and `fly/` (one Fly machine running the
   rendered compose file; `docs/fly.md`; its scripts and bats suite run under
@@ -396,8 +402,8 @@ suggestions.
   `deploy/aws-terraform/stack.tftest.hcl` (`command = plan`, mocked
   providers) is what reads them; a task-definition change needs an assertion
   there, not just a passing validate. `deploy/aws-terraform/test/aws.bats`
-  covers the other blind spot, `deploy.sh` and its config bake, with stubbed
-  `docker`/`aws`/`terraform`.
+  covers the other blind spot, `deploy.sh` (the image build and push, and the
+  tag it hands Terraform), with stubbed `docker`/`aws`/`terraform`.
 - `docs/` — documentation site, published via GitHub Pages.
 
 ## Where to look

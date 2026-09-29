@@ -841,8 +841,10 @@ them. See [docs/modules.md §5](modules.md#section-5-ui--presentation-contract) 
 the UI composition contract and [ADR 55](decisions.md#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml)
 for where module registration and enablement live now — the app's registry and
 the `/admin` settings, with `SCORE_IMAGE` as the one switch Secure Development
-answers to. [ADR 24](decisions.md#adr-24-tolerating-a-missing-module-vs-rejecting-an-unknown-one)
-records why an unconfigured module is tolerated while an unknown one is not.
+answers to. ADR 55 is also where the rule survives that an unconfigured
+module is tolerated while an unknown one is not; the superseded
+[ADR 24](decisions.md#adr-24-tolerating-a-missing-module-vs-rejecting-an-unknown-one)
+is the original record of why.
 
 **Boot a quiz-only event with `docker compose --profile app up -d --build`**
 — just the `app` profile, and no build-args at all. Secure Development's
@@ -916,7 +918,7 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 |---|---|---|---|
 | `REDIS_PASSWORD` | `redis`, `srh` | **required** (`:?`) | Redis `requirepass`. Unset *or empty* fails `up` at interpolation rather than starting an open Redis; only `srh` can reach `redis:6379`. |
 | `SRH_TOKEN` | `srh`; `app`/`scorer`/`sync` as `UPSTASH_REDIS_REST_TOKEN` | required | Bearer token in front of the Redis REST proxy every service talks to. |
-| `SCORE_IMAGE` | `scorer` image; `scripts/dev-stack` and `deploy/fly/render-compose.sh` as the `secdev` switch | `ghcr.io/owasp-ctf/score:latest` (private) | Your scorer image built from `scorer/`. Non-empty is what makes Secure Development *available*: it adds the `secdev` profile, seeds the first-boot default module set, and permits the `/admin` toggle (`enabledModules` still decides what is live). Empty and `ctf-setup org` skips every fork/mirror/poll step instead of failing; non-empty and it provisions all six targets. |
+| `SCORE_IMAGE` | `scorer` image; `app` (`lib/module-defaults.ts`); `scripts/dev-stack` and `deploy/fly/render-compose.sh` as the `secdev` switch | `ghcr.io/owasp-ctf/score:latest` (private) | Your scorer image built from `scorer/`. Non-empty is what makes Secure Development *available*: it adds the `secdev` profile, seeds the first-boot default module set, and permits the `/admin` toggle (`enabledModules` still decides what is live). Empty and `ctf-setup org` skips every fork/mirror/poll step instead of failing; non-empty and it provisions all six targets. |
 | `EVENT_URL` | `caddy` as `EVENT_HOST`; `app` as `BETTER_AUTH_URL` | `http://localhost` | **The** event URL — TLS host, auth callback origin, HTTPS start-up guard, CSRF origin check. `https://` for any real event. |
 | `REDIS_DIR` | `redis` | `/data` | Where the append-only file lives inside the volume. Fly sets `/data/redis` (one volume per machine, see [docs/fly.md](fly.md)). |
 | `STATE_PATH` | `sync` | `/state/state.json` | The poller's legacy cursor file. The cursor lives in Redis (`ctf:sync:state`); this file is read once to migrate an older box, then renamed `.migrated`, and is the store only when sync has no Redis client. Fly sets `/data/sync/state.json`. |
@@ -935,6 +937,7 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 | `TEAM_WRITES_ENABLED` | `lib/team-store.ts` | *fixed*: `"true"` | Enables team create/join writes; off in mock mode. |
 | `GITHUB_ORG` | `lib/bootstrap-env.ts` | empty | The GitHub org contestants fork the target repos under; drives fork links and policy-page prose. Empty renders plain repo-name text, never a broken link. |
 | `ADMIN_LOGINS` | `lib/bootstrap-env.ts`, `lib/admin-auth.ts` | empty | Comma-separated GitHub logins (case-insensitive) allowed into `/admin`. Empty means nobody — and so does a value that parses to nobody: unparseable entries are dropped, so separators-only, whitespace-only and invalid-only all mean the same 403 for everyone. Changing it needs an env edit and a restart. |
+| `APP_BUILD_REV`, `APP_BUILT_AT` | `lib/app-version.ts` (`GET /health`) | empty | *Build args*, not runtime: the commit and build time the image reports. Unset reports `unknown`/`null` rather than failing a plain `docker compose build`; `scripts/dev-stack`, `deploy/fly/deploy.sh` and `deploy/aws-terraform/deploy.sh` fill them in. |
 
 **Sync** (`sync/src/config.js`):
 

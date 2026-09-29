@@ -403,12 +403,12 @@ EOF
 
 # --- doctor: deprecated push ingest (issue #377) -----------------------------
 #
-# Push ingest is deprecated and REMOVED in v0.7, so doctor — where an
+# Push ingest was removed in v0.6 (issue #377, ADR 56), so doctor — where an
 # organizer looks — names what is left of it. Two independent warnings, both
-# ADVISORY (a push event still boots this release, so neither may fail the
-# exit code): the `.env` switch itself, and the two org Actions secrets the
-# push transport needs, which are read by contestant-triggered runs and have
-# nothing left to authorize once an event is off push.
+# ADVISORY (a `.env` carried over from a push event still boots, since nothing
+# reads the key, so neither may fail the exit code): the `.env` switch itself,
+# and the two org Actions secrets the push transport needed, which are read by
+# contestant-triggered runs and have nothing left to authorize.
 #
 # The secrets read is `gh api orgs/<org>/actions/secrets --jq
 # '.secrets[].name'`, and it follows check (c)'s fail-closed convention: a

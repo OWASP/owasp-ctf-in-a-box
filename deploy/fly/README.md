@@ -13,7 +13,7 @@ Why it is shaped this way: [ADR 42](../../docs/decisions.md).
 | `fly.toml` | The app: which container serves the public, the volume, the machine size |
 | `render-compose.sh` | Turns the repo's `docker-compose.yml` into the compose file Fly deploys |
 | `deploy.sh` | `init` (env file) and the deploy: build, push, mirror, render, secrets, deploy |
-| `test/fly.bats` | 88 tests, run by CI's `shell` job. Nothing is ever deployed |
+| `test/fly.bats` | The module's bats suite, run by CI's `shell` job. Nothing is ever deployed |
 | `compose.fly.yml` | **Generated**, gitignored. The rendered file Fly actually reads |
 
 ## It runs the real compose file

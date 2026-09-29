@@ -76,6 +76,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 61 — Challenge attachments live in Redis, served only as downloads, behind the challenge's own visibility](#adr-61-challenge-attachments-live-in-redis-served-only-as-downloads-behind-the-challenges-own-visibility)
 - [ADR 62 — The landing page's footer does not repeat the sponsor credit](#adr-62-the-landing-pages-footer-does-not-repeat-the-sponsor-credit)
 - [ADR 63 — Service hops inside the stack are plain HTTP; the network is the boundary](#adr-63-service-hops-inside-the-stack-are-plain-http-the-network-is-the-boundary)
+- [ADR 64 — sync's cursor lives in Redis, and an unreadable cursor holds the poller](#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -3787,3 +3788,52 @@ own services as such, nor the scorer's open read routes. It should flag a new
 internal write or `srh` hop without a bearer token, a security-group rule
 wider than the one caller, and any internal hop exposed beyond the stack's
 network.
+
+## ADR 64. sync's cursor lives in Redis, and an unreadable cursor holds the poller
+
+**Context.** sync kept its durable state in `state.json` on its own volume:
+the per-repo `since`/ETag cursors, the seen cache, the `/admin`
+`ingested`/`dropped`/`lastDrop` counters and the last reset epoch it had
+applied. The AWS module runs sync on Fargate with no volume, and its comments
+said the cursor was in Redis. It was not, so every task restart (a deploy, a
+crash, a host retirement) re-read every score comment in every fork. Nothing
+was double-counted, because the scorer writes solves with `HSETNX`. But the
+Secure Development solves an organizer had removed with a per-contestant
+reset came back, and the counters, including the only record of dropped
+scores, went back to 0. The same happens to any compose stack whose sync
+container is recreated without its volume.
+
+**Decision.** The state is one JSON string at `ctf:sync:state`, read through
+srh once at startup and written after every tick. `ctf:sync:status` stays the
+heartbeat `/admin` reads, and the master reset leaves both alone: it clears
+the cursor through the `resetAt` epoch, as before.
+
+- **An unreadable Redis holds the poller.** If the startup read fails (a
+  transport error, or a per-command error reply), sync does not tick. It logs
+  why, naming the key, and retries each poll interval. Starting from an empty
+  cursor instead would re-ingest everything, which is the failure above.
+  Holding loses nothing: the comments stay on GitHub, and while Redis is
+  unreadable the scorer could not have written a score anyway. sync writes no
+  heartbeat while it holds, so the stale `lastPollAt` is what `/admin` and
+  `/health/deep` show.
+- **An absent key is a first boot or an upgrade.** If `STATE_PATH` holds a
+  file, it seeds the key once and is renamed `state.json.migrated`, so an
+  upgraded box keeps its cursor and counters. The file is moved aside rather
+  than left as a fallback. If Redis is ever wiped, the scores go with it, and
+  the right recovery is to re-read every comment and rebuild the board. A
+  stale file cursor would prevent that. Keeping the cursor in the same store
+  as the scores makes the two fail together.
+- **A failed write is logged and retried on the next tick.** The in-memory
+  state stays authoritative for the running process.
+- **An unusable stored value is repaired, not refused.** It gets the same
+  field-by-field repair the file got (#63). A retry cannot fix bad content,
+  and refusing would stop ingestion until a human deleted the key.
+- **The file stays for a poller with no Redis client** (a dev run without
+  `UPSTASH_REDIS_REST_URL`), and the compose volume and Fly directory stay so
+  the migration has something to read.
+
+**Consequences.** A sync restart no longer undoes a per-contestant reset or
+zeroes the counters, on any platform. A Redis outage at startup delays
+ingestion until Redis answers, which is loud in the logs and in the stale
+heartbeat. Reviews should flag any path that treats a failed state read as an
+empty state.

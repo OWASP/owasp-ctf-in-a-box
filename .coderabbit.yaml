@@ -185,9 +185,12 @@ reviews:
         scorer/src/store.js. A change to one needs the other two in the same
         PR, plus test/fixtures/(scoring-)window-corpus.json when a rule moves.
 
-        State-file trust — treating parsed /state/state.json as having a valid
-        shape. It is validated and repaired field by field; `ingested` and
-        `resetAt` survive a repair that resets `repos`.
+        State trust — treating parsed poll state (Redis `ctf:sync:state`, or
+        the legacy /state/state.json) as having a valid shape. It is
+        validated and repaired field by field; `ingested` and `resetAt`
+        survive a repair that resets `repos`. And the read's fail direction
+        (ADR 64): a FAILED read of `ctf:sync:state` must hold the poller,
+        never fall through to an empty cursor that re-ingests every comment.
 
     - path: "scorer/src/**/*.js"
       instructions: |

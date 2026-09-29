@@ -507,10 +507,13 @@ resource "aws_ecs_task_definition" "sync" {
   }])
 }
 
-// No volume, deliberately. The compose stack gave sync one for its cursor; the
-// cursor lives in Redis (`ctf:sync:status`), so ephemeral Fargate storage costs
-// nothing here — a restarted task resumes from the stored cursor rather than
-// re-polling from the beginning.
+// No volume, deliberately. sync keeps its durable state (cursors, seen cache,
+// ingested/dropped counters, reset epoch) in Redis at `ctf:sync:state`, through
+// srh, so ephemeral Fargate storage costs nothing here: a restarted task
+// resumes from the stored cursor rather than re-polling from the beginning. If
+// srh cannot be read at startup the task holds (logs, retries each interval)
+// instead of starting from an empty cursor. STATE_PATH is only read as a
+// one-time migration seed, and there is no file to seed from on Fargate.
 resource "aws_ecs_service" "sync" {
   count = local.run_sync ? 1 : 0
 

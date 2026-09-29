@@ -194,18 +194,28 @@ hit it.
 
 **Symptom.** `docker compose ps` shows `sync` restarting; every tick throws.
 
-**Diagnosis.** The poller's cursor lives in `/state/state.json` on the
-`sync-state` volume. Current `sync` validates and **repairs** a damaged
-state file field by field (each repair is logged — look for repair lines
-before assuming worse). Historically a bare `{}` — valid JSON, unusable
-shape — crash-looped the poller for a whole event, which is exactly why the
-repair exists.
+**Diagnosis.** The poller's cursor lives in Redis at `ctf:sync:state` (a
+JSON string). Older builds kept it in `/state/state.json` on the
+`sync-state` volume; the first boot of a current build moves that file's
+contents into Redis and renames the file to `state.json.migrated`. Current
+`sync` validates and **repairs** damaged state field by field (each repair
+is logged — look for repair lines before assuming worse). Historically a
+bare `{}` — valid JSON, unusable shape — crash-looped the poller for a whole
+event, which is exactly why the repair exists.
+
+If the logs instead repeat `cannot load poll state from Redis
+(ctf:sync:state) … not polling until it is readable`, sync is not crashing:
+it is **holding** on purpose, because starting from an empty cursor would
+re-ingest every score comment. Fix srh/Redis (the `fetch failed` and
+`NOAUTH` entries in this runbook) and it resumes on its own at the next
+retry.
 
 **Fix.** Read the first error line of `docker compose logs sync`. If state
-is beyond repair on an old version: `docker compose down && docker volume rm
-<project>_sync-state && docker compose --profile secdev --profile app up -d` —
-losing the cursor is safe; the poller re-reads scores from the PR comments
-and the scorer's writes are idempotent on replay.
+is beyond repair: `docker compose exec redis redis-cli DEL ctf:sync:state`,
+then restart sync. Losing the cursor does not double-count (the scorer's
+writes are idempotent on replay) — but the re-read brings back any Secure
+Development solves a per-contestant reset removed, and resets `/admin`'s
+ingested/dropped counters to 0.
 
 **On AWS** there is no `sync-state` volume: the state file is on the task's
 own disk, so every new sync task starts from an empty cursor. Read the error

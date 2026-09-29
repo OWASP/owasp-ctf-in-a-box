@@ -229,8 +229,13 @@ services:
       # the admin-panel freeze never reaches the poller.
       UPSTASH_REDIS_REST_URL: http://srh:80
       UPSTASH_REDIS_REST_TOKEN: ${SRH_TOKEN}
-      # The poller's cursor. Same reasoning as redis's REDIS_DIR above: the
-      # default is exactly what compose has always used, and .env.fly moves it
+      # The poller's LEGACY state file. The cursor itself lives in Redis
+      # (ctf:sync:state, through srh above); this file is read once, to carry
+      # an older box's cursor into Redis, then renamed state.json.migrated.
+      # It is the store only when sync has no Redis client. The volume stays
+      # so that migration has something to read. Same reasoning as redis's
+      # REDIS_DIR above: the default is exactly what compose has always used,
+      # and .env.fly moves it
       # to /data/sync/state.json so both services fit the single volume a Fly
       # machine allows. sync creates the parent directory itself.
       STATE_PATH: ${STATE_PATH:-/state/state.json}

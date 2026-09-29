@@ -99,11 +99,11 @@ primary_region = "iad"
 #
 #   invalid config.mounts, only 1 volume supported
 #
-# Two things here must survive a redeploy — redis's append-only file (every
-# score, team and hint purchase) and sync's cursor (losing it makes the poller
-# re-read every comment in every fork from scratch). Compose gives each its own
-# named volume; a Fly machine cannot, so they share this one under separate
-# directories.
+# Two things live here — redis's append-only file (every score, team and hint
+# purchase, and since ADR 64, sync's cursor at ctf:sync:state) and sync's legacy
+# state file (read once to migrate an older box's cursor into Redis). Compose
+# gives each its own named volume; a Fly machine cannot, so they share this
+# one under separate directories.
 #
 # WHICH directory each uses is a knob in docker-compose.yml — `REDIS_DIR` and
 # `STATE_PATH` — defaulting to the paths the local stack has always used, with

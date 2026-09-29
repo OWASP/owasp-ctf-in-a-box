@@ -63,16 +63,18 @@ output "next_steps" {
        ENCRYPTED WITH THIS EVENT'S KEY. --key-id is not optional: the tasks'
        decrypt grant names only this key, so a parameter stored under any
        other one fails at task start with an AccessDeniedException on KMS.
-       Replace each "..." with that secret's real value before running it —
-       --overwrite would otherwise store the literal "...".
+       One command per secret, the same list as the module README; only
+       GITHUB_CLIENT_SECRET needs a value you paste in (the OAuth app's).
 
-         for s in BETTER_AUTH_SECRET GITHUB_CLIENT_SECRET SRH_TOKEN \
-                  GITHUB_APP_PRIVATE_KEY SCORER_TOKEN; do   # the last two: Secure Development only
-           aws ssm put-parameter --region ${var.region} \
-             --name "${var.ssm_prefix}/$s" --type SecureString \
-             --key-id ${aws_kms_alias.secrets.name} \
-             --value "..." --overwrite
-         done
+         P=${var.ssm_prefix}
+         K=${aws_kms_alias.secrets.name}
+         R=${var.region}
+         aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/BETTER_AUTH_SECRET   --value "$(openssl rand -base64 32)"
+         aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/SRH_TOKEN            --value "$(openssl rand -hex 24)"
+         aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/GITHUB_CLIENT_SECRET --value "<the OAuth app's client secret>"
+         # Secure Development only:
+         aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/GITHUB_APP_PRIVATE_KEY --value "$(base64 < app.private-key.pem | tr -d '\n')"
+         aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/SCORER_TOKEN           --value "$(openssl rand -hex 24)"
 
        (REDIS_AUTH_TOKEN and SRH_CONNECTION_STRING are written there by
        Terraform, already under that key.)

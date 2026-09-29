@@ -1,0 +1,41 @@
+// Remote state for this stack. REQUIRED for a real event (#476):
+//
+//   cp backend.tf.example backend.tf    # then edit bucket/key/region
+//   terraform init                      # or `terraform init -migrate-state`
+//                                       # if you already applied with local state
+//
+// Why it is not optional:
+//
+//   - The state holds a secret. This stack GENERATES the ElastiCache AUTH
+//     token (elasticache.tf), and a generated password is in state by
+//     construction. A local terraform.tfstate is that token in a plain file
+//     on one laptop.
+//   - The state is the only handle on the stack. Lose or corrupt that laptop
+//     mid-event and there is no redeploy, no rollback and no clean destroy.
+//
+// Shipped as an .example, not a backend.tf, because the bucket is yours and
+// because CI must keep running `terraform init -backend=false` and the mocked
+// `terraform test` with no AWS credentials. backend.tf is gitignored, like
+// terraform.tfvars.
+//
+// The bucket cannot be part of this stack (its state would live in itself),
+// so create it once, by hand, in the account the stack runs in. README.md's
+// "Remote state" section has the commands: versioning on, public access
+// blocked, encryption on, and access limited to whoever runs the apply.
+terraform {
+  backend "s3" {
+    bucket = "<your-state-bucket>"
+    key    = "owasp-ctf/<name>/terraform.tfstate"
+    region = "us-east-1"
+
+    // Server-side encryption of the state object. The bucket's default
+    // encryption covers it too; saying it here means a bucket without one
+    // still gets it.
+    encrypt = true
+
+    // S3-native state locking, no DynamoDB table (Terraform >= 1.10, which
+    // versions.tf already requires). Two operators applying at once during
+    // an event is exactly the moment a lock earns its keep.
+    use_lockfile = true
+  }
+}

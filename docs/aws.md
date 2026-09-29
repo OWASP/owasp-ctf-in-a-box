@@ -73,39 +73,69 @@ that is too much.
    module
    [README](https://github.com/OWASP/owasp-ctf-in-a-box/tree/main/deploy/aws-terraform#prerequisites-done-once-off-the-stack).
 
+4. **Create the remote-state bucket.** Required for a real event: the state
+   holds the generated Redis AUTH token, and it is the only handle on the
+   stack, so it cannot live only on one laptop. Create a versioned, encrypted,
+   private S3 bucket once, then `cp backend.tf.example backend.tf` and edit it.
+   The module
+   [README](https://github.com/OWASP/owasp-ctf-in-a-box/tree/main/deploy/aws-terraform#remote-state-required-for-a-real-event)
+   has the commands. CI never uses a backend.
+
 ## Deploy
 
 Two things must exist before the rest of the stack can be described: **ECR**,
-since the image cannot be named until the registry does, and the **KMS key**
-that step 3's secrets are encrypted with. One targeted apply creates both.
+since no image can be named until its registry does, and the **KMS key** that
+step 3's secrets are encrypted with. One targeted apply creates both, including
+the `scorer` and `sync` repositories on a Secure Development event.
 
 ```sh
 cd deploy/aws-terraform
 cp terraform.tfvars.example terraform.tfvars    # edit: domain, github_org, admin_logins, github_client_id, github_app_id
+cp backend.tf.example backend.tf                # edit: your state bucket (step 4)
 terraform init
 terraform apply \
   -target=aws_ecr_repository.main \
-  -target=aws_kms_alias.secrets                 # the registry and the secrets key
+  -target=aws_kms_alias.secrets                 # the registries and the secrets key
 #   ... now store the secrets (step 3), with --key-id ...
-./deploy.sh                                     # build, push
+docker login ghcr.io                            # Secure Development: the scorer package is private
+./deploy.sh --scorer-source ghcr.io/<your-event-org>/score:latest   # build, mirror, push
 terraform apply                                 # the rest of the stack
 ```
+
+The image variables in `terraform.tfvars.example` are placeholders for that
+bootstrap apply only. A full `terraform apply` while one is still the
+placeholder is refused at plan time with a sentence naming `deploy.sh`.
 
 Afterwards a redeploy is one command:
 
 ```sh
-./deploy.sh --apply
+./deploy.sh --apply        # with SCORE_IMAGE exported, or --scorer-source again
 ```
+
+**`deploy.sh` publishes every image the stack runs** into the stack's own ECR
+repositories and writes their refs into `image.auto.tfvars` (#476). It builds
+the app from the repo root with `-f apps/web/Dockerfile`, and sync from
+`./sync`. It **mirrors** the scorer: it pulls `--scorer-source` (default
+`$SCORE_IMAGE`, the event `.env`'s value), then tags and pushes it. Fargate
+cannot pull the scorer package itself, because the package is private until
+launch, and sync is published nowhere. Everything is built or pulled for
+`linux/amd64`, the architecture every task definition declares. An Apple
+Silicon laptop otherwise pushes arm64 images, and the tasks die with an exec
+format error. The mirror's tag comes from the source's digest, so an upstream
+re-push of `:latest` cannot swap the rubric mid-event. `scorer_image` and
+`sync_image` are refused at plan time unless they name this stack's ECR
+repository or are digest-pinned. The execution role may pull those
+repositories and nothing else.
 
 Terraform creates the VPC (two AZs; a public tier for the ALB and tasks, a
 private tier for ElastiCache alone), the security groups above (five, plus
 the scorer's own on a Secure Development event), the
 ElastiCache replication group with in-transit encryption and an AUTH token it
-generates for you, the ALB with its ACM certificate, the ECR repository, and the
+generates for you, the ALB with its ACM certificate, the ECR repositories, and the
 Fargate services for whichever modules this event runs — a quiz-only event
 brings up no scorer and no poller, the same rule as the compose profiles.
 
-**`deploy.sh` builds and pushes the image; Terraform cannot.** The app takes no
+**Terraform cannot build an image; `deploy.sh` does.** The app takes no
 build-time configuration at all (config v2, #386): `github_org` and
 `admin_logins` are two Terraform variables, set in `terraform.tfvars` — this
 path's equivalent of the wizard's `.env` — and mirrored into the app's
@@ -120,12 +150,12 @@ secrets in SSM are the App's private key (`GITHUB_APP_PRIVATE_KEY`, base64 of
 the `.pem`) and the scorer's bearer token (`SCORER_TOKEN`), which the scorer
 and sync share.
 
-The image tag is content-addressed to the git revision, and ECR is set to
+The app and sync tags are content-addressed to the git revision, and ECR is set to
 immutable tags, so re-running with nothing changed reports "already there" and
-skips the build instead of failing. A dirty `apps/web` tree gets
+skips the build instead of failing. A dirty `apps/web` (or `sync/`) tree gets
 `<revision>-dirty-<digest>`, where the digest is taken over the uncommitted
 build context: change the tracked diff, or the set or contents of the
-untracked, non-ignored **build-input** files under `apps/web` — `node_modules`
+untracked, non-ignored **build-input** files under that directory — `node_modules`
 and `.next` are excluded, along with anything else your git ignore rules
 exclude — and the tag changes with it. That is what keeps a work-in-progress
 deploy off the tag an earlier one already pushed, which on an immutable
@@ -140,6 +170,20 @@ aws logs tail /ecs/<name>/app --follow
 ```
 
 Both names come from the `terraform output`.
+
+**A bad deploy rolls itself back.** Every service has the ECS deployment
+circuit breaker on with rollback. A revision whose tasks never go healthy
+(a bad image, a missing secret, the wrong architecture) returns to the last
+working one, instead of being relaunched until `terraform apply` times out. To
+roll back by hand, put the previous tags in `image.auto.tfvars` and run
+`terraform apply`. `aws ecr describe-images --repository-name <name>-app` lists
+them.
+
+**srh runs two tasks** and its health check tolerates two minutes of failures.
+srh is the whole data path, and during an ElastiCache failover both tasks'
+probes fail together, so ECS must not replace them over an outage a restart
+cannot fix. A wrong AUTH token still fails every probe from first boot, so a
+broken deployment goes unhealthy within about 2.5 minutes and rolls back.
 
 ## Tear down
 
@@ -158,8 +202,8 @@ terraform destroy
   required variable and there is no working HTTP mode to fall back to.
 - **Terraform state now holds a secret.** The old module could honestly say it
   did not; this one generates the ElastiCache AUTH token, and a generated
-  password is in state by construction. Use an encrypted remote backend with
-  restricted access.
+  password is in state by construction. Keep it in the encrypted,
+  access-restricted S3 backend from Prerequisites step 4.
 - **Durability is snapshots, not AOF** — daily, five retained by default. A
   restore loses up to a day rather than up to a second. For the authored content
   (questions, challenges, flags, hints) the app's own event archive export is

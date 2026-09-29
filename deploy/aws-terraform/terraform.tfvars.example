@@ -5,9 +5,9 @@
 # admin_logins and github_client_id are required too, through its validation block rather than
 # through a missing default: it defaults to "" so the refusal is a sentence
 # naming the problem instead of an interactive prompt in a non-interactive
-# plan, and a plan with no login in it is refused either way. github_org and
-# github_app_id are required on the same terms whenever
-# enable_secure_development is true.
+# plan, and a plan with no login in it is refused either way. github_org,
+# github_app_id, scorer_image and sync_image are required on the same terms
+# whenever enable_secure_development is true (deploy.sh fills in the images).
 # Everything else below is optional and shown at its default.
 
 region = "us-east-1"
@@ -24,16 +24,21 @@ name = "owasp-ctf"
 domain = "ctf.example.org"
 
 # The app image ECS runs. deploy.sh writes the real value into
-# image.auto.tfvars (Terraform loads it automatically), so you do not maintain
-# this by hand — but the FIRST apply happens before ECR exists, so there is
-# nothing to name yet. Bootstrap order:
+# image.auto.tfvars (Terraform loads it automatically, after this file, so it
+# wins), so you do not maintain this by hand — but the FIRST apply happens
+# before ECR exists, so there is nothing to name yet. Bootstrap order, the same
+# as README.md and docs/aws.md:
 #
-#   terraform apply -target=aws_ecr_repository.main   # just the registry
-#   ./deploy.sh                                       # build, push, write the tfvars
-#   terraform apply                                   # the rest of the stack
+#   terraform apply \
+#     -target=aws_ecr_repository.main \
+#     -target=aws_kms_alias.secrets      # the registries and the secrets key
+#   # store the SSM secrets, with --key-id alias/<name>-secrets (README.md)
+#   ./deploy.sh --scorer-source <SCORE_IMAGE>   # build/mirror, push, write the tfvars
+#   terraform apply                      # the rest of the stack
 #
-# Applying everything at once with the placeholder still works; the app tasks
-# simply cannot pull an image until deploy.sh has run, and settle once it has.
+# A full apply while this is still the placeholder is refused at plan time
+# (a precondition on the task definition names deploy.sh), rather than
+# creating services that can never pull an image.
 app_image = "PLACEHOLDER-deploy.sh-overwrites-this"
 
 # --- TLS ---------------------------------------------------------------------
@@ -82,14 +87,22 @@ github_client_id = "Iv1.0000000000000000"
 # v0.6 (issue #377, ADR 56).
 
 # Images for the secure-development services. Ignored when
-# enable_secure_development is false; REQUIRED otherwise. Neither is published by this repo — deploy.sh builds and
-# pushes only the app image:
-#   scorer_image: the mirror `setup/ctf-setup.sh org` pushes into your event
-#                 org — the same value as SCORE_IMAGE in .env.
-#   sync_image:   build ./sync yourself (linux/amd64) and push it to a registry
-#                 the task execution role can pull from, e.g. a second ECR repo.
-# scorer_image = "ghcr.io/<your-event-org>/score:latest"
-# sync_image   = "<account>.dkr.ecr.<region>.amazonaws.com/<name>-sync:<tag>"
+# enable_secure_development is false; REQUIRED otherwise — and, like
+# app_image, filled in by deploy.sh (#476), which writes both into
+# image.auto.tfvars:
+#   sync_image:   deploy.sh builds ./sync for linux/amd64 and pushes it to
+#                 this stack's <name>-sync ECR repository.
+#   scorer_image: deploy.sh MIRRORS the scorer package into this stack's
+#                 <name>-scorer ECR repository. Tell it the source with
+#                 --scorer-source, or export SCORE_IMAGE — the same value as
+#                 SCORE_IMAGE in the event .env, e.g.
+#                 ghcr.io/<your-event-org>/score:latest. Fargate cannot pull
+#                 that ref itself: the package is private.
+# Both must be this stack's ECR repository in this account and region, or
+# digest-pinned (@sha256:); anything else is refused at plan time. The
+# placeholders are for the bootstrap apply only.
+scorer_image = "PLACEHOLDER-deploy.sh-overwrites-this"
+sync_image   = "PLACEHOLDER-deploy.sh-overwrites-this"
 
 # --- sizing ------------------------------------------------------------------
 

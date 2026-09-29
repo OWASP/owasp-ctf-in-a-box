@@ -15,3 +15,7 @@
 terraform.tfvars
 *.auto.tfvars
 crash.log
+
+# Your remote-state config (backend.tf.example is the committed template).
+# Kept out of the repo so CI never inherits one operator's backend.
+backend.tf

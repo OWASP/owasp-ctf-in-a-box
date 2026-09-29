@@ -1968,8 +1968,9 @@ $ curl -s https://ctf.example.org/health
 | `builtAt` | When the image was built. Distinguishes two deploys of the same commit — a redeploy after a config or secret change rebuilds the image without moving the sha. |
 
 `revision` and `builtAt` are baked at build time from `APP_BUILD_REV` and
-`APP_BUILT_AT` (Docker build args). `deploy/fly/deploy.sh` and
-`scripts/dev-stack` fill them in; a build that passes neither reports
+`APP_BUILT_AT` (Docker build args). `deploy/fly/deploy.sh`,
+`deploy/aws-terraform/deploy.sh` and `scripts/dev-stack` fill them in; a build
+that passes neither reports
 `"unknown"` and `null` rather than failing. `deploy.sh` deliberately reports
 `unknown` when the working tree is dirty, because the sha would not describe
 the image it built.

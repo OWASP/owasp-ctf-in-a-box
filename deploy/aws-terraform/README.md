@@ -48,6 +48,7 @@ carried over intact:
 | `web_ingress_cidrs` | ALB | 443 (80 redirects) |
 | ALB | app | 3000 |
 | app, scorer, sync | srh | 80 |
+| app, sync | scorer | 4000 (Secure Development only) |
 | srh | ElastiCache | 6379 |
 
 The app security group has **no route to ElastiCache**. The bearer token is not
@@ -70,11 +71,11 @@ replaces.** Rough `us-east-1` on-demand, per month, at the defaults:
 |---|---|
 | ALB | 16 + LCUs |
 | app tasks (2 × 1 vCPU / 2 GB) | 72 |
-| srh task | 9 |
+| srh tasks (2 × 0.25 vCPU / 0.5 GB) | 18 |
 | ElastiCache `cache.t4g.micro` × 2 (primary + replica) | 24 |
 | KMS key for the event's secrets | 1 |
 | CloudWatch Logs, ECR storage | a few |
-| **total** | **~125–140** |
+| **total** | **~135–150** |
 | *the EC2 box this replaced (t3.medium + EBS)* | *~35* |
 
 Order-of-magnitude only — check the AWS calculator for your region, and note
@@ -125,51 +126,132 @@ that can replace a task without dropping the event.
    Terraform generates both and writes them under `<prefix>/` itself, already
    encrypted with that key, so operators and tasks read them from one place.
 
+## Remote state (required for a real event)
+
+The state holds the generated ElastiCache AUTH token, and it is the only handle
+on the stack: lose the laptop that holds a local `terraform.tfstate` mid-event
+and there is no redeploy, no rollback and no clean destroy. So a real event
+keeps it in S3. The bucket cannot be part of this stack, so create it once, by
+hand, in the account the stack runs in:
+
+```sh
+B=<your-state-bucket>; R=us-east-1
+aws s3api create-bucket --bucket $B --region $R      # outside us-east-1 add: --create-bucket-configuration LocationConstraint=$R
+aws s3api put-bucket-versioning --bucket $B --versioning-configuration Status=Enabled
+aws s3api put-public-access-block --bucket $B \
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+aws s3api put-bucket-encryption --bucket $B \
+  --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"aws:kms"}}]}'
+```
+
+Then, in `deploy/aws-terraform`:
+
+```sh
+cp backend.tf.example backend.tf     # edit bucket, key and region
+terraform init                       # `terraform init -migrate-state` if you already applied locally
+```
+
+Limit the bucket to whoever runs the apply: anyone who can read the object can
+read the AUTH token. `backend.tf` is gitignored like `terraform.tfvars`, and
+`use_lockfile = true` gives S3-native locking, with no DynamoDB table
+(Terraform 1.10 or later, which `versions.tf` already requires). CI never sees a
+backend: it runs `terraform init -backend=false` and the mocked `terraform
+test`.
+
 ## Deploy
 
-Two resources have to exist before the rest of the stack can be described:
-**ECR**, because the image cannot be named until the registry exists, and the
-**KMS key**, because the secrets in step 3 above must be encrypted with it.
-Both are created by one targeted apply:
+Two kinds of resource have to exist before the rest of the stack can be
+described: **ECR**, because no image can be named until its registry exists,
+and the **KMS key**, because the secrets in step 3 above must be encrypted with
+it. One targeted apply creates both:
 
 ```sh
 cd deploy/aws-terraform
 cp terraform.tfvars.example terraform.tfvars    # then edit: domain, github_org, admin_logins, github_client_id, github_app_id
+cp backend.tf.example backend.tf                # then edit (see Remote state)
 terraform init
 terraform apply \
   -target=aws_ecr_repository.main \
-  -target=aws_kms_alias.secrets                 # the registry and the secrets key
+  -target=aws_kms_alias.secrets                 # the registries and the secrets key
 #   ... now run step 3's put-parameter commands, with --key-id ...
-./deploy.sh                                     # build, push
+docker login ghcr.io                            # Secure Development: the scorer package is private
+./deploy.sh --scorer-source ghcr.io/<your-event-org>/score:latest   # build, mirror, push, write image.auto.tfvars
 terraform apply                                 # the rest of the stack
 ```
 
-Targeting the *alias* pulls in the key it points at, so both arrive in one
-step. The parameters themselves are not a dependency of the apply — task
-definitions reference them by constructed ARN, not by data source — so a
-missing one surfaces when a task starts, not at plan time. That is the one
-sequencing mistake this order exists to prevent.
+Targeting the *alias* pulls in the key it points at, and targeting the
+repository resource creates every repository this event needs: `app` always,
+`scorer` and `sync` on a Secure Development event. The parameters themselves
+are not a dependency of the apply — task definitions reference them by
+constructed ARN, not by data source — so a missing one surfaces when a task
+starts, not at plan time. That is the one sequencing mistake this order exists
+to prevent. The image variables in `terraform.tfvars.example` are placeholders
+for the bootstrap apply only: a full `terraform apply` while any of them is
+still the placeholder is refused at plan time with a sentence naming
+`deploy.sh`.
 
 Afterwards a redeploy is one command:
 
 ```sh
-./deploy.sh --apply
+./deploy.sh --apply        # with SCORE_IMAGE exported, or --scorer-source again
 ```
 
-`deploy.sh` builds and pushes the image; Terraform cannot build one, which is
-why this is a script and not an `apply`. The app takes no build-time
+### The images
+
+`deploy.sh` publishes every image the stack runs into the stack's own ECR
+repositories, and writes their refs into `image.auto.tfvars`; Terraform cannot
+build an image, which is why this is a script and not an `apply` (#476):
+
+| Image | How it gets to ECR | Tag |
+|---|---|---|
+| app | built from the **repo root** with `-f apps/web/Dockerfile` | the git revision |
+| sync | built from `./sync` (Secure Development only) | the git revision |
+| scorer | **mirrored**: `docker pull --platform linux/amd64` of `--scorer-source`, then tagged and pushed (Secure Development only) | `mirror-<first 12 hex of the source's digest>` |
+
+- **Every image is `linux/amd64`.** Every task definition sets
+  `runtime_platform` to `X86_64`, and every build and the mirror pass
+  `--platform linux/amd64` (builds also pass `--provenance=false
+  --sbom=false`, so each tag is one plain manifest). Without it an Apple
+  Silicon laptop pushes arm64 images, and the tasks die with an exec format
+  error after a clean apply.
+- **The scorer is mirrored, not rebuilt.** The leaderboard's scorer must be the
+  same artifact the forks' judge pulls. Its package is private by contract
+  (`ctf-setup.sh` keeps it so until launch), and Fargate cannot pull it, so
+  `deploy.sh` copies it into this stack's `<name>-scorer` repository.
+  `--scorer-source` defaults to `$SCORE_IMAGE`, the event `.env`'s name for the
+  same image; `docker login` to its registry first. Its tag comes from the
+  source's digest, so a floating `:latest` cannot swap the rubric under a
+  running event: an upstream re-push only reaches ECS through a new
+  `deploy.sh` run and an apply.
+- **`scorer_image` and `sync_image` are validated.** Each must be this stack's
+  ECR repository in this account and region, or a digest-pinned
+  (`@sha256:`) image. A `ghcr.io/<org>/score:latest` ref, which is what these
+  were set to before #476, is refused at plan time.
+- **The execution role pulls these repositories and nothing else.** It carries
+  a named policy for the app, scorer and sync repositories and the four log
+  groups, not the managed `AmazonECSTaskExecutionRolePolicy`, which grants
+  both on `"*"`. The one `"*"` left is `ecr:GetAuthorizationToken`, which AWS
+  offers no resource-level permission for.
+- **A bad deploy rolls back.** Every service has the ECS deployment circuit
+  breaker on with rollback, so a revision whose tasks never go healthy (bad
+  image, missing secret) returns to the last working one. To roll back by
+  hand, put the previous tags in `image.auto.tfvars` (`aws ecr describe-images
+  --repository-name <name>-app` lists them) and `terraform apply`.
+
+The app takes no build-time
 configuration at all (config v2, #386): `github_org` and `admin_logins` are
 plain Terraform variables, mirrored into the app's task-definition environment
 the same way `scorer_image` is — `terraform.tfvars` is this path's equivalent
 of the wizard's `.env`. Change either and roll it out with `terraform apply`;
 nothing needs rebuilding.
 
-The tag is content-addressed to the git revision, and the ECR repository is
-`IMMUTABLE`. Same code gives the same tag, so a re-run reports "already there"
-and skips the build rather than failing. A dirty `apps/web` tree is tagged
-`<revision>-dirty-<digest>`, where the digest is taken over the uncommitted
-build context: change the tracked diff, or the set or contents of the
-untracked, non-ignored **build-input** files under `apps/web` — `node_modules`
+The app and sync tags are content-addressed to the git revision, and every ECR
+repository is `IMMUTABLE`. Same code gives the same tag, so a re-run reports
+"already there" and skips the build rather than failing. A dirty `apps/web` (or
+`sync/`) tree is tagged `<revision>-dirty-<digest>`, where the digest is taken
+over that directory's uncommitted build context: change the tracked diff, or
+the set or contents of the untracked, non-ignored **build-input** files under
+it — `node_modules`
 and `.next` are excluded, as is anything else the ignore rules exclude — and
 the tag changes with it. A symlink counts as its target string, the way
 `docker build` sends it. That is what keeps a work-in-progress deploy from
@@ -185,6 +267,7 @@ Every input is in `variables.tf` with its own description;
 |---|---|
 | `domain` | The session cookie is `Secure`. There is no working HTTP mode. |
 | `app_image` | What ECS runs. `deploy.sh` writes it into `image.auto.tfvars`; the example carries a placeholder for the bootstrap apply. |
+| `scorer_image`, `sync_image` | Secure Development only. `deploy.sh` writes both into `image.auto.tfvars` (see The images). Each must be this stack's ECR repository in this account and region, or digest-pinned. |
 | `github_client_id` | The GitHub OAuth app's client id (public; the secret is `GITHUB_CLIENT_SECRET` in SSM). Without it no one can sign in. |
 | `admin_logins` | The `/admin` allowlist. Its `validation` block refuses a roster with no login at plan time — empty, or nothing but separators like `" , "` — because that would forbid everyone, you included, and the only fix is another apply. |
 
@@ -210,16 +293,26 @@ ECS task (#476).
 terraform destroy
 ```
 
-The ECR repository is `force_delete` — a registry that refused to go because it
-still held images would leave the teardown half-done, and the whole point of
-this module is that `destroy` ends the event.
+Every ECR repository (app, and scorer and sync when they exist) is
+`force_delete` — a registry that refused to go because it still held images
+would leave the teardown half-done, and the whole point of this module is that
+`destroy` ends the event. The state bucket is not part of the stack and
+survives it; delete it yourself once you no longer need the state.
 
 ## Notes and gotchas
 
 - **Terraform state now contains a secret.** The EC2 module could honestly say
   it did not; this one generates the ElastiCache AUTH token, and a generated
-  password is in state by construction. Use an encrypted remote backend with
-  restricted access for anything real.
+  password is in state by construction. A real event keeps it in the encrypted,
+  access-restricted S3 backend under Remote state above.
+- **srh runs two tasks and tolerates a failover.** srh is the whole data path,
+  so a single task was one host retirement from an outage. Both tasks probe the
+  same Redis, so the health check allows 8 × 15 s of failures before ECS
+  replaces a task: an ElastiCache failover must not get srh killed, since a
+  restart cannot fix Redis. A wrong AUTH token or endpoint still fails every
+  probe from first boot, so a broken deployment goes unhealthy within about
+  2.5 minutes and the circuit breaker rolls it back. sync stays at exactly
+  one task.
 - **Durability is snapshots, not AOF.** The EC2 box ran Redis with AOF on an
   EBS volume; ElastiCache gives daily snapshots
   (`cache_snapshot_retention_days`, default 5) plus in-memory replication. A
@@ -288,7 +381,13 @@ this module is that `destroy` ends the event.
   `validate` never inspects rendered output — which is how a fundamentally
   broken bring-up script survived in the EC2 version of this module unnoticed.
   `test/aws.bats` covers `deploy.sh`, the part Terraform cannot see. No AWS
-  credentials, no network and no apply, in either.
+  credentials, no network and no apply, in either. One thing is executed for
+  real: `test/srh-healthcheck.bats` runs `srh-healthcheck.sh`, the file the srh
+  health check is read from, inside the pinned srh image against a real Redis.
+  The first check called `GET /ping`, which that srh answers with a 404, and
+  every string assertion passed over it (#476). The suite skips without
+  docker; `terraform.yml` runs it with `SRH_HEALTHCHECK_REQUIRED=1`, where a
+  skip is a failure.
 
 ## Migrating from the EC2 box
 

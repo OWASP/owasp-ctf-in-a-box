@@ -241,7 +241,9 @@ SOURCE_DIGEST="aaaaaaaaaaaabbbbbbbbbbbbccccccccccccddddddddddddeeeeeeeeeeeeffff"
 # $1 = 1 for a Secure Development stack, 0 for quiz-only.
 # $2 = "fail-sync-output" to make that one terraform read fail;
 #      "ecr-error" to make every ECR describe-images an access error;
-#      "two-digests" to give the pulled scorer a second (ECR) RepoDigests entry.
+#      "two-digests" to give the pulled scorer a second (ECR) RepoDigests entry;
+#      "prefixed-mirror" to list, first, a mirror whose name ENDS in the source's;
+#      "port-no-tag" to name the source by a registry port and no tag.
 applied_stack_stubs() {
   local secdev="$1"
   local mode="${2:-}"
@@ -282,7 +284,12 @@ echo "docker \$*" >> "$CALLS"
 case "\$1" in
 login) cat > /dev/null ;;
 image)
-  echo "ghcr.io/owasp-ctf-test/score@sha256:$SOURCE_DIGEST"
+  if [ "$mode" = "prefixed-mirror" ]; then echo "mirror.example/ghcr.io/owasp-ctf-test/score@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"; fi
+  if [ "$mode" = "port-no-tag" ]; then
+    echo "localhost:5000/owasp-ctf-test/score@sha256:$SOURCE_DIGEST"
+  else
+    echo "ghcr.io/owasp-ctf-test/score@sha256:$SOURCE_DIGEST"
+  fi
   if [ "$mode" = "two-digests" ]; then echo "$ACCT_REGISTRY/owasp-ctf-scorer@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"; fi ;;
 esac
 exit 0
@@ -399,6 +406,29 @@ EOF
   repo="$(fake_repo)"
   applied_stack_stubs 1 two-digests
   run "$repo/deploy/aws-terraform/deploy.sh" --scorer-source ghcr.io/owasp-ctf-test/score:latest
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -qx "docker push $ACCT_REGISTRY/owasp-ctf-scorer:mirror-${SOURCE_DIGEST:0:12}" "$CALLS"
+}
+
+# Review (#507): the entry has to START with the source repository. A
+# substring match also takes a mirror whose name merely ends in it, listed
+# ahead of the source's own entry.
+@test "the scorer mirror tag ignores a RepoDigests entry that only ends in the source repository" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 1 prefixed-mirror
+  run "$repo/deploy/aws-terraform/deploy.sh" --scorer-source ghcr.io/owasp-ctf-test/score:latest
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -qx "docker push $ACCT_REGISTRY/owasp-ctf-scorer:mirror-${SOURCE_DIGEST:0:12}" "$CALLS"
+}
+
+# Review (#507): with no tag, the last colon is the registry port's, and
+# stripping it left "localhost" — so no entry matched and the deploy failed.
+@test "a scorer source with a registry port and no tag still finds its digest" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 1 port-no-tag
+  run "$repo/deploy/aws-terraform/deploy.sh" --scorer-source localhost:5000/owasp-ctf-test/score
   echo "$output"
   [ "$status" -eq 0 ]
   grep -qx "docker push $ACCT_REGISTRY/owasp-ctf-scorer:mirror-${SOURCE_DIGEST:0:12}" "$CALLS"

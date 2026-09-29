@@ -379,6 +379,33 @@ ecr_login() {
 # a successful-looking deploy (#476). --provenance=false --sbom=false keep the
 # push to ONE plain manifest, the same as deploy/fly/deploy.sh, so the tag names
 # exactly the image that runs.
+# The pulled image's RepoDigests entry for the SOURCE repository, not entry 0:
+# after the first push the local image also carries an ECR digest (#507
+# review), and a --platform pull+push makes a different manifest there. The
+# entry must START with the repository (a prefix match, not a substring, so a
+# mirror whose name ends in it does not count), and the tag is dropped only
+# when the last path component has one — with no tag, the last colon is a
+# registry port's.
+source_repo_digest() {
+  local source="$1" repo digests entry
+  repo="$source"
+  case "${repo##*/}" in
+  *:*) repo="${repo%:*}" ;;
+  esac
+  digests="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$source" 2>/dev/null)" || return 1
+  while IFS= read -r entry; do
+    case "$entry" in
+    "$repo@sha256:"*)
+      printf '%s\n' "$entry"
+      return 0
+      ;;
+    esac
+  done <<EOF
+$digests
+EOF
+  return 1
+}
+
 publish_build() {
   local label="$1"
   local image="$2"
@@ -451,11 +478,7 @@ if [ -n "$SECDEV" ]; then
   *)
     if [ -n "$DRY_RUN" ]; then
       SOURCE_DIGEST="<source-digest>"
-    # The entry for the SOURCE repository, not entry 0: after the first push
-    # the local image also carries an ECR digest (#507 review), and a
-    # --platform pull+push makes a different manifest there.
-    elif ! SOURCE_DIGEST="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$SCORER_SOURCE" 2>/dev/null |
-      grep -F -- "${SCORER_SOURCE%:*}@sha256:" | head -n 1)" ||
+    elif ! SOURCE_DIGEST="$(source_repo_digest "$SCORER_SOURCE")" ||
       [ -z "$SOURCE_DIGEST" ] || [ "${SOURCE_DIGEST#*@sha256:}" = "$SOURCE_DIGEST" ]; then
       echo "FAIL: pulled $SCORER_SOURCE but could not read its registry digest," >&2
       echo "      which the mirror's tag is derived from." >&2

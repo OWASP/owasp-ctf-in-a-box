@@ -381,8 +381,11 @@ survives it; delete it yourself once you no longer need the state.
   ```
 - **State is reconstructible in poll mode.** `sync` re-reads scores from the
   GitHub PR comments, so a replaced task repopulates the leaderboard. The
-  poller's cursor lives in Redis, not on disk, so Fargate's ephemeral storage
-  costs nothing here — at worst a restarted task re-polls.
+  poller's cursor is on the task's own disk (`/state/state.json`), so a new
+  sync task re-reads every score comment from the start. Totals are safe
+  (each solve is written once), but the `/admin` heartbeat restarts at 0 and
+  a per-contestant reset does not survive it — see "sync restarts" in
+  [`docs/aws.md`](../../docs/aws.md).
 - **DNS in another account?** Leave `route53_zone_id` empty, set
   `acm_certificate_arn` to a certificate in this region, and point your own
   record at the `alb_dns_name` output. Terraform manages the record only when

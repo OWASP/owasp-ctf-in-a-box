@@ -107,7 +107,12 @@ probe() {
 }
 
 @test "the right token against a live Redis passes" {
-  [ -f "$BATS_FILE_TMPDIR/ready" ] || echo "srh never passed its health check within 60s" >&2
+  # A missing marker FAILS the test rather than probing a half-up srh: a pass
+  # here must mean srh came up and the check held, not that a late probe won.
+  if [ ! -f "$BATS_FILE_TMPDIR/ready" ]; then
+    echo "srh never passed its health check within 60s" >&2
+    return 1
+  fi
   run probe "$TOKEN"
   echo "status=$status output=$output"
   [ "$status" -eq 0 ]

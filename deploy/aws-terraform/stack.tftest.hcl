@@ -119,8 +119,8 @@ variables {
   domain           = "ctf.example.org"
   route53_zone_id  = "Z0123456789ABCDEFGHIJ"
   app_image        = "123456789012.dkr.ecr.us-east-1.amazonaws.com/owasp-ctf-app:v1"
-  scorer_image     = "ghcr.io/example/scorer:v1"
-  sync_image       = "ghcr.io/example/sync:v1"
+  scorer_image     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/owasp-ctf-scorer:mirror-0123456789ab"
+  sync_image       = "123456789012.dkr.ecr.us-east-1.amazonaws.com/owasp-ctf-sync:0123456789ab"
   github_org       = "owasp-ctf-test"
   admin_logins     = "octocat,defunkt"
 }
@@ -926,3 +926,219 @@ run "an_empty_installation_id_is_accepted" {
   }
 }
 
+
+// --- every image has a pullable home, for the CPU the tasks run (#476) -----
+//
+// The scorer package is private by contract and sync is published nowhere, so
+// before #476 a Secure Development stack had no image Fargate could pull for
+// either. registry.tf now gives both a repository here, deploy.sh fills them,
+// and the execution role may pull exactly those.
+
+run "secure_development_creates_scorer_and_sync_repositories" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+  }
+
+  assert {
+    condition     = toset(keys(aws_ecr_repository.main)) == toset(["app", "scorer", "sync"])
+    error_message = "A Secure Development stack needs ECR repositories for the app, the scorer mirror and sync — Fargate has nowhere else to pull the last two from."
+  }
+
+  assert {
+    // IMMUTABLE for the tag-reuse reason registry.tf gives, and force_delete
+    // so `terraform destroy` really ends the event, for every repository.
+    condition = alltrue([
+      for k, r in aws_ecr_repository.main :
+      r.image_tag_mutability == "IMMUTABLE" && r.force_delete == true && r.name == "${var.name}-${k}"
+    ])
+    error_message = "Every ECR repository must be <name>-<service>, IMMUTABLE, and force_delete so destroy removes it."
+  }
+
+  assert {
+    condition     = output.ecr_scorer_repository_url != "" && output.ecr_sync_repository_url != ""
+    error_message = "deploy.sh learns that the stack runs Secure Development from these outputs being non-empty."
+  }
+}
+
+run "a_quiz_only_event_creates_only_the_app_repository" {
+  command = plan
+
+  variables {
+    enable_secure_development = false
+    scorer_image              = ""
+    sync_image                = ""
+  }
+
+  assert {
+    condition     = toset(keys(aws_ecr_repository.main)) == toset(["app"])
+    error_message = "A quiz-only event runs no scorer and no sync, so it must create no repository for either."
+  }
+
+  assert {
+    // deploy.sh reads "" as "publish the app only".
+    condition     = output.ecr_scorer_repository_url == "" && output.ecr_sync_repository_url == ""
+    error_message = "The scorer and sync repository outputs must be empty when Secure Development is off."
+  }
+
+  assert {
+    condition     = local.execution_pull_policy.Statement[0].Resource == ["arn:aws:ecr:us-east-1:123456789012:repository/owasp-ctf-app"]
+    error_message = "A quiz-only event's execution role may pull the app repository and nothing else."
+  }
+}
+
+run "the_pull_grant_names_the_three_repositories_never_a_wildcard" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+  }
+
+  assert {
+    // Spelled out, not rebuilt from the same locals the policy uses: a
+    // comparison of a value with itself proves nothing.
+    condition = anytrue([
+      for s in local.execution_pull_policy.Statement :
+      contains(s.Action, "ecr:BatchGetImage") && s.Resource == [
+        "arn:aws:ecr:us-east-1:123456789012:repository/owasp-ctf-app",
+        "arn:aws:ecr:us-east-1:123456789012:repository/owasp-ctf-scorer",
+        "arn:aws:ecr:us-east-1:123456789012:repository/owasp-ctf-sync",
+      ]
+    ])
+    error_message = "The execution role must be able to pull the app, scorer and sync repositories — named, one ARN each."
+  }
+
+  assert {
+    // The one "*" allowed, on the one action AWS offers no resource type for.
+    // Any other statement with a "*" resource is the managed policy's
+    // account-wide grant coming back.
+    condition = alltrue([
+      for s in local.execution_pull_policy.Statement :
+      !contains(s.Resource, "*") || s.Action == ["ecr:GetAuthorizationToken"]
+    ])
+    error_message = "Only ecr:GetAuthorizationToken (which supports no resource-level permission) may use a \"*\" resource in the execution role's pull policy."
+  }
+
+  assert {
+    // A wildcard INSIDE an ARN (repository/*, log-group:*) is the same hole
+    // spelled differently; the log grant's trailing ":*" is the one legal
+    // use, and it follows a named group.
+    condition = alltrue(flatten([
+      for s in local.execution_pull_policy.Statement : [
+        for r in s.Resource :
+        r == "*" || can(regex("^arn:aws:ecr:us-east-1:123456789012:repository/owasp-ctf-(app|scorer|sync)$", r)) || can(regex("^arn:aws:logs:us-east-1:123456789012:log-group:/ecs/owasp-ctf/(app|srh|scorer|sync):\\*$", r))
+      ]
+    ]))
+    error_message = "Every resource in the pull policy must name this event's repository or log group."
+  }
+
+  assert {
+    // Non-vacuity: the alltrue checks above pass over an empty policy.
+    condition     = length(local.execution_pull_policy.Statement) == 3 && length(local.execution_pull_policy.Statement[2].Resource) == 4
+    error_message = "Expected three statements (pull, auth token, logs), the log grant naming all four log groups."
+  }
+
+}
+
+run "a_private_floating_scorer_ref_is_refused" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    // What terraform.tfvars.example told operators to set before #476:
+    // private on GHCR, and a floating tag.
+    scorer_image = "ghcr.io/owasp-ctf-test/score:latest"
+  }
+
+  expect_failures = [var.scorer_image]
+}
+
+run "an_ecr_ref_in_another_account_is_refused" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    sync_image                = "999999999999.dkr.ecr.us-east-1.amazonaws.com/owasp-ctf-sync:0123456789ab"
+  }
+
+  expect_failures = [var.sync_image]
+}
+
+run "an_ecr_ref_in_another_region_is_refused" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    scorer_image              = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/owasp-ctf-scorer:mirror-0123456789ab"
+  }
+
+  expect_failures = [var.scorer_image]
+}
+
+run "a_digest_pinned_image_is_accepted" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    scorer_image              = "ghcr.io/example/score@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    sync_image                = "ghcr.io/example/sync@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  }
+
+  assert {
+    condition     = jsondecode(aws_ecs_task_definition.scorer[0].container_definitions)[0].image == var.scorer_image
+    error_message = "A digest-pinned scorer image must reach the task definition unchanged."
+  }
+}
+
+// The bootstrap value: legal for `-target=aws_ecr_repository.main`, which
+// plans no task definition, and refused by a precondition on a full plan —
+// a sentence at plan time, where it used to be an apply that timed out on a
+// CannotPullContainerError.
+run "the_placeholder_is_refused_by_a_full_plan" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    app_image                 = "PLACEHOLDER-deploy.sh-overwrites-this"
+    scorer_image              = "PLACEHOLDER-deploy.sh-overwrites-this"
+    sync_image                = "PLACEHOLDER-deploy.sh-overwrites-this"
+  }
+
+  expect_failures = [
+    aws_ecs_task_definition.app,
+    aws_ecs_task_definition.scorer,
+    aws_ecs_task_definition.sync,
+  ]
+}
+
+run "every_task_runs_x86_64_to_match_deploy_sh" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+  }
+
+  assert {
+    // deploy.sh builds and mirrors --platform linux/amd64 (test/aws.bats
+    // asserts that half). An ARM64 task, or an arm64 image on X86_64, is an
+    // exec format error after a clean apply.
+    condition = alltrue([
+      for td in concat(
+        [aws_ecs_task_definition.srh, aws_ecs_task_definition.app],
+        aws_ecs_task_definition.scorer,
+        aws_ecs_task_definition.sync,
+      ) :
+      length(td.runtime_platform) == 1 &&
+      td.runtime_platform[0].cpu_architecture == "X86_64" &&
+      td.runtime_platform[0].operating_system_family == "LINUX"
+    ])
+    error_message = "Every task definition must set runtime_platform X86_64/LINUX — the architecture deploy.sh builds for."
+  }
+
+  assert {
+    // Non-vacuity: the alltrue above passes over an empty list.
+    condition     = length(aws_ecs_task_definition.scorer) == 1 && length(aws_ecs_task_definition.sync) == 1
+    error_message = "Expected four task definitions on a Secure Development event."
+  }
+}

@@ -18,6 +18,19 @@ output "ecr_app_repository_url" {
   value       = aws_ecr_repository.main["app"].repository_url
 }
 
+// "" when the event does not run Secure Development: registry.tf creates the
+// repository only then, and deploy.sh reads the empty string as "publish app
+// only". A failed read is a different thing, and deploy.sh refuses it.
+output "ecr_sync_repository_url" {
+  description = "deploy.sh builds ./sync and pushes it here. Empty when enable_secure_development is false."
+  value       = local.run_sync ? aws_ecr_repository.main["sync"].repository_url : ""
+}
+
+output "ecr_scorer_repository_url" {
+  description = "deploy.sh mirrors the event org's scorer package here. Empty when enable_secure_development is false."
+  value       = local.run_scorer ? aws_ecr_repository.main["scorer"].repository_url : ""
+}
+
 output "cluster_name" {
   description = "ECS cluster, for `aws ecs execute-command` and the console."
   value       = aws_ecs_cluster.main.name
@@ -63,7 +76,8 @@ output "next_steps" {
 
        (REDIS_AUTH_TOKEN and SRH_CONNECTION_STRING are written there by
        Terraform, already under that key.)
-    2. Build and push the app image:  ./deploy.sh
+    2. Build, mirror and push the images (app; sync and scorer on a Secure
+       Development event):  ./deploy.sh --scorer-source <SCORE_IMAGE>
     3. If you did not set route53_zone_id, point ${var.domain} at ${aws_lb.main.dns_name}
     4. Set the OAuth app callback to ${local.event_url}/api/auth/callback/github
     5. Tear the event down when it ends:  terraform destroy

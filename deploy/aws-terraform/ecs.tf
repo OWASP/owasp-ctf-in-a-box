@@ -77,6 +77,15 @@ resource "aws_cloudwatch_log_group" "main" {
 }
 
 locals {
+  // Every task runs X86_64, SAID rather than left to Fargate's default, because
+  // it is one half of a contract: deploy.sh builds and mirrors every image
+  // `--platform linux/amd64`, and the two must agree or a task dies with an
+  // exec format error after a clean apply. An operator's Apple Silicon laptop
+  // builds arm64 unless told otherwise, which is how that nearly shipped
+  // (#476). stack.tftest.hcl asserts all four task definitions carry it;
+  // changing to ARM64 (Graviton) means changing deploy.sh's --platform too.
+  task_cpu_architecture = "X86_64"
+
   event_url = "https://${var.domain}"
   srh_host  = "srh.${aws_service_discovery_private_dns_namespace.main.name}"
 
@@ -143,6 +152,11 @@ resource "aws_ecs_task_definition" "srh" {
   memory                   = 512
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = local.task_cpu_architecture
+  }
 
   container_definitions = jsonencode([{
     name      = "srh"
@@ -246,6 +260,18 @@ resource "aws_ecs_task_definition" "app" {
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = local.task_cpu_architecture
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.app_image != local.image_placeholder
+      error_message = "app_image is still the terraform.tfvars.example placeholder. Run ./deploy.sh after the bootstrap apply (docs/aws.md): it pushes the image and writes the real ref into image.auto.tfvars."
+    }
+  }
+
   container_definitions = jsonencode([{
     name      = "app"
     image     = var.app_image
@@ -333,6 +359,18 @@ resource "aws_ecs_task_definition" "scorer" {
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = local.task_cpu_architecture
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.scorer_image != local.image_placeholder
+      error_message = "scorer_image is still the terraform.tfvars.example placeholder. Run ./deploy.sh after the bootstrap apply (docs/aws.md): it pushes the image and writes the real ref into image.auto.tfvars."
+    }
+  }
+
   container_definitions = jsonencode([{
     name      = "scorer"
     image     = var.scorer_image
@@ -383,6 +421,18 @@ resource "aws_ecs_task_definition" "sync" {
   memory                   = 512
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = local.task_cpu_architecture
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.sync_image != local.image_placeholder
+      error_message = "sync_image is still the terraform.tfvars.example placeholder. Run ./deploy.sh after the bootstrap apply (docs/aws.md): it pushes the image and writes the real ref into image.auto.tfvars."
+    }
+  }
 
   container_definitions = jsonencode([{
     name      = "sync"

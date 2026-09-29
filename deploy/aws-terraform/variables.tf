@@ -197,14 +197,31 @@ variable "enable_secure_development" {
 // --- images ----------------------------------------------------------------
 
 variable "app_image" {
-  description = "Fully qualified app image, e.g. <account>.dkr.ecr.<region>.amazonaws.com/ctf-app:v0.4.0. Built and pushed by deploy.sh — Terraform cannot build images — into the ECR repository this module creates."
+  description = "Fully qualified app image, e.g. <account>.dkr.ecr.<region>.amazonaws.com/<name>-app:<rev>. Built for linux/amd64 and pushed by deploy.sh — Terraform cannot build images — into the ECR repository this module creates, and written into image.auto.tfvars."
   type        = string
 }
 
 variable "scorer_image" {
-  description = "Fully qualified scorer image. Ignored unless enable_secure_development, and REQUIRED when it is on."
+  description = "The scorer image. deploy.sh MIRRORS the event org's scorer package into this stack's `<name>-scorer` ECR repository and writes the ref into image.auto.tfvars, so you do not set it by hand. Must be that repository in this account and region, or any digest-pinned (@sha256:) image Fargate can pull anonymously. Ignored unless enable_secure_development, and REQUIRED when it is on."
   type        = string
   default     = ""
+
+  // Where the ref may point (#476). The scorer package is private by contract,
+  // so `ghcr.io/<org>/score:latest` — what this variable used to be set to —
+  // is a CannotPullContainerError on Fargate, and a floating tag would let a
+  // re-push swap the rubric under a running event on the next task restart.
+  // This stack's own ECR repository (IMMUTABLE tags, and the only one the
+  // execution role may pull from) or a digest pin is refused neither.
+  validation {
+    condition = (
+      !var.enable_secure_development ||
+      var.scorer_image == "" ||
+      var.scorer_image == local.image_placeholder ||
+      can(regex("^[^@[:space:]]+@sha256:[0-9a-f]{64}$", var.scorer_image)) ||
+      can(regex("^${replace(local.ecr_registry, ".", "\\.")}/${var.name}-scorer:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.scorer_image))
+    )
+    error_message = "scorer_image must be this stack's <name>-scorer ECR repository in this account and region (deploy.sh mirrors the scorer there and writes the ref into image.auto.tfvars), or a digest-pinned image (...@sha256:<64 hex>). A private or floating-tag ref such as ghcr.io/<org>/score:latest cannot be pulled by Fargate."
+  }
 
   // The empty default is only legal while the module builds no scorer task.
   // With secure-development enabled it is passed straight through as a
@@ -219,9 +236,23 @@ variable "scorer_image" {
 }
 
 variable "sync_image" {
-  description = "Fully qualified sync image. Ignored unless enable_secure_development, and REQUIRED when it is on."
+  description = "The sync image. deploy.sh builds ./sync for linux/amd64, pushes it to this stack's `<name>-sync` ECR repository and writes the ref into image.auto.tfvars, so you do not set it by hand. Must be that repository in this account and region, or any digest-pinned (@sha256:) image Fargate can pull anonymously. Ignored unless enable_secure_development, and REQUIRED when it is on."
   type        = string
   default     = ""
+
+  // scorer_image's rule, for sync's repository: sync is published nowhere,
+  // so there was never a registry to point this at but one the operator made
+  // by hand, outside the stack and outside `terraform destroy` (#476).
+  validation {
+    condition = (
+      !var.enable_secure_development ||
+      var.sync_image == "" ||
+      var.sync_image == local.image_placeholder ||
+      can(regex("^[^@[:space:]]+@sha256:[0-9a-f]{64}$", var.sync_image)) ||
+      can(regex("^${replace(local.ecr_registry, ".", "\\.")}/${var.name}-sync:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.sync_image))
+    )
+    error_message = "sync_image must be this stack's <name>-sync ECR repository in this account and region (deploy.sh builds and pushes sync there and writes the ref into image.auto.tfvars), or a digest-pinned image (...@sha256:<64 hex>)."
+  }
 
   // Same rule as scorer_image's now that poll is the only score transport
   // (#377, ADR 56): a secure-development event always runs the poller, so it

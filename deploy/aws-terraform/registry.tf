@@ -1,4 +1,4 @@
-// Where deploy.sh pushes the image ECS pulls.
+// Where deploy.sh pushes the images ECS pulls.
 //
 // The EC2 box built its images ON the instance from a git checkout. Fargate
 // pulls prebuilt ones, which moves the build off the box and into a deploy
@@ -18,10 +18,43 @@ locals {
   run_scorer = var.enable_secure_development
   run_sync   = var.enable_secure_development
 
-  // Only the app is built by this module's own deploy.sh. The scorer and sync
-  // images are the kit's own and are pulled from wherever the operator points
-  // them.
-  repositories = toset(["app"])
+  // Every image a task runs, except srh (a public, digest-pinned third-party
+  // image), comes from a repository here. deploy.sh fills them: it builds the
+  // app and sync, and MIRRORS the scorer from the event org's package.
+  //
+  // The scorer and sync used to be "pulled from wherever the operator points
+  // them", and there was nowhere that worked (#476): the scorer package is
+  // private by contract (setup/ctf-setup.sh keeps it so until launch), so an
+  // anonymous Fargate pull is a CannotPullContainerError, and sync is not
+  // published anywhere at all. A hand-made repository for either would also
+  // survive `terraform destroy`. Here they follow the secdev rule like the
+  // services themselves: a quiz-only event creates neither.
+  repositories = toset(concat(
+    ["app"],
+    local.run_scorer ? ["scorer"] : [],
+    local.run_sync ? ["sync"] : [],
+  ))
+
+  // The ARN of each repository, built from its name rather than read off the
+  // resource, for the reason iam.tf gives for its policy locals: a plannable
+  // string is something stack.tftest.hcl can compare for equality, where a
+  // provider-computed attribute under mock_provider proves nothing.
+  repository_arns = {
+    for k in local.repositories :
+    k => "arn:${data.aws_partition.current.partition}:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/${var.name}-${k}"
+  }
+
+  // What deploy.sh's image refs look like: this account, this region, this
+  // stack's repository. variables.tf validates scorer_image and sync_image
+  // against it.
+  ecr_registry = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com"
+
+  // The value terraform.tfvars.example gives the three image variables before
+  // deploy.sh has run: legal for the bootstrap apply, which targets only the
+  // registry and the KMS key, and refused by a precondition on each task
+  // definition, so a full apply with it fails at plan with a sentence instead
+  // of timing out on a CannotPullContainerError.
+  image_placeholder = "PLACEHOLDER-deploy.sh-overwrites-this"
 }
 
 resource "aws_ecr_repository" "main" {

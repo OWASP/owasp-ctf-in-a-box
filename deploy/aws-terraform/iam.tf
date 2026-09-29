@@ -43,9 +43,63 @@ resource "aws_iam_role" "execution" {
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
 }
 
-resource "aws_iam_role_policy_attachment" "execution_managed" {
-  role       = aws_iam_role.execution.name
-  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+// Image pulls and log writes, NAMED — in place of the AWS-managed
+// AmazonECSTaskExecutionRolePolicy this role used to carry.
+//
+// That managed policy grants the same six actions on `"*"`: this role could
+// pull every ECR repository in the account and write to every log group.
+// With the scorer and sync now in this stack's own repositories (#476), the
+// grant can say exactly which three images a task may run, and
+// stack.tftest.hcl asserts it does. srh needs nothing here: it is a public
+// Docker Hub image, pulled anonymously.
+//
+// A local for iam.tf's own reason below: a data source's rendered json is
+// empty under mock_provider, and an assertion over an empty list passes.
+locals {
+  execution_pull_policy = {
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "PullThisEventsImages"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
+        ]
+        Resource = [for k in sort(tolist(local.repositories)) : local.repository_arns[k]]
+      },
+      // The one `"*"` in this role, and not a choice: GetAuthorizationToken
+      // is account-wide and supports no resource-level permission at all
+      // (the ECR IAM reference lists no resource type for it). The token it
+      // returns pulls nothing on its own — each pull is still checked against
+      // the statement above.
+      {
+        Sid      = "EcrAuthToken"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = ["*"]
+      },
+      {
+        Sid    = "WriteThisEventsLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = [
+          for service in sort(keys(aws_cloudwatch_log_group.main)) :
+          "arn:${data.aws_partition.current.partition}:logs:${var.region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${var.name}/${service}:*"
+        ]
+      },
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "execution_pull" {
+  name   = "pull-event-images-write-logs"
+  role   = aws_iam_role.execution.id
+  policy = jsonencode(local.execution_pull_policy)
 }
 
 // BUILT AS A LOCAL AND `jsonencode`d, not rendered by

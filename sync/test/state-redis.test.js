@@ -7,7 +7,7 @@
 // code's, not a hand-rolled stand-in's.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, tick } from "../src/index.js";
@@ -319,6 +319,28 @@ test("upgrade: a legacy file that cannot be moved aside holds the poller until t
   assert.equal(world.posts.length, 0);
   assert.equal(existsSync(cfg.statePath), false);
   assert.equal(existsSync(`${cfg.statePath}.migrated`), true);
+});
+
+// #508 review: existsSync answers false for a path it cannot stat (EACCES on
+// the directory), so an unreadable legacy directory read as "no file left"
+// and polling went ahead with the file still there. Only ENOENT means absent.
+test("a legacy file behind an unreadable directory holds the poller even when Redis already has the state", async (t) => {
+  if (process.getuid?.() === 0) return t.skip("root ignores directory permissions");
+  const dir = tmp();
+  const stateDir = join(dir, "state");
+  mkdirSync(stateDir);
+  const cfg = { ...cfgFor(dir), statePath: join(stateDir, "state.json") };
+  writeFileSync(cfg.statePath, JSON.stringify({ repos: {} }));
+  chmodSync(stateDir, 0o000);
+  t.after(() => chmodSync(stateDir, 0o755));
+  const srh = fakeSrh();
+  srh.strings.set(SYNC_STATE_KEY, JSON.stringify({ repos: { VAmPI: { since: "2026-10-01T10:05:00Z", etag: null, seen: [] } }, ingested: 1 }));
+  const world = fakeWorld([comment(1, "2026-10-01T10:00:00Z")]);
+  const { sleeps, logErr } = await runMain({ cfg, srh, world, ticks: 2 });
+
+  assert.deepEqual(world.polls, [], "no poll while the leftover file cannot even be checked");
+  assert.deepEqual(sleeps, [1000, 1000]);
+  assert.equal(logErr.filter((m) => /could not move/.test(m) && /not polling/.test(m)).length, 2, JSON.stringify(logErr));
 });
 
 test("with Redis present the file is never written: the durable copy is the one next to the scores", async () => {

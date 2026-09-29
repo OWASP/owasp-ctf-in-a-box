@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 const SEEN_CAP = 500;
@@ -124,7 +124,15 @@ export function saveState(path, state) {
  * Returns true when a file was moved, false when there was none to move.
  */
 export function retireStateFile(path) {
-  if (!existsSync(path)) return false;
+  // Not existsSync: it answers false for a path it cannot stat (EACCES on
+  // the directory), which would read an unreadable leftover as "gone" and let
+  // polling start with it still there (#508 review). Only ENOENT is absent.
+  try {
+    lstatSync(path);
+  } catch (err) {
+    if (err.code === "ENOENT") return false;
+    throw err;
+  }
   renameSync(path, `${path}.migrated`);
   return true;
 }

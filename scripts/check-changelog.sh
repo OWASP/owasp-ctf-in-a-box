@@ -61,6 +61,14 @@ fi
 exempt() {
   local p="$1" name
   name="${p##*/}"
+  # A rubric's tests/ files are not test code: the judge runs them against a
+  # contestant's fork, so changing one moves scores. Only its docs are exempt.
+  case "$p" in
+    scorer/rubric*/*)
+      case "$name" in *.md) return 0 ;; esac
+      return 1
+      ;;
+  esac
   case "/$p" in
     */__tests__/* | */test/* | */tests/*) return 0 ;;
   esac

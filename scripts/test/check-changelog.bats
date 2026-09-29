@@ -73,6 +73,21 @@ _commit() {
   [ "$status" -eq 0 ]
 }
 
+# Review (#486): a rubric's tests/ directory is not test code — the judge
+# runs those files against a contestant's fork, so changing one moves scores.
+@test "a rubric test change without a CHANGELOG entry fails — rubric tests are scoring inputs" {
+  _commit scorer/rubric.owasp/vampi/tests/challenge-3-sqli.test.js
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 1 ]
+  _has "  scorer/rubric.owasp/vampi/tests/challenge-3-sqli.test.js"
+}
+
+@test "a rubric README change still counts as docs" {
+  _commit scorer/rubric.owasp/vampi/README.md
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 0 ]
+}
+
 @test "code plus tests without a CHANGELOG entry still fails, naming only the code" {
   _commit scorer/src/judge.js scorer/test/judge.test.js
   run "$SCRIPT" base HEAD

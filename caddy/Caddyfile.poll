@@ -1,11 +1,19 @@
 {$EVENT_HOST}
 
-# Baseline security headers. HSTS only bites on HTTPS (Caddy auto-provisions TLS
-# for a real domain in EVENT_HOST; it's inert on http://localhost).
+# Baseline security headers. The app owns these (apps/web/next.config.ts sends
+# the same set on every response, which is what covers AWS and Fly, where no
+# Caddy runs); this block is defence in depth for compose and must carry the
+# SAME values — apps/web/src/__tests__/security-headers.test.ts compares them.
+# `defer` applies it after reverse_proxy has copied the app's headers, so each
+# field is set once, not appended as a duplicate. HSTS only bites on HTTPS
+# (Caddy auto-provisions TLS for a real domain in EVENT_HOST; browsers ignore
+# it on http://localhost).
 header {
+	defer
 	Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	X-Content-Type-Options "nosniff"
 	X-Frame-Options "DENY"
+	Content-Security-Policy "frame-ancestors 'none'"
 	Referrer-Policy "strict-origin-when-cross-origin"
 	-Server
 }

@@ -80,7 +80,11 @@ jobs:
             # scorer AND sync suites — each runs every row against its own
             # copy of the three-reader contract. A corpus-only edit must run
             # all three, and before this line it ran none.
-            echo "app=$(m "^apps/web/|^setup/targets\.tsv$|^scripts/acceptance-app\.sh|^test/fixtures/(scoring-)?window-corpus\.json\$$CI")"
+            # caddy/Caddyfile.poll is here because the app's
+            # security-headers.test.ts pins Caddy's header block to the same
+            # values next.config.ts sends (audit S1); a Caddy-only edit must
+            # run the suite that catches the two drifting apart.
+            echo "app=$(m "^apps/web/|^caddy/Caddyfile\.poll$|^setup/targets\.tsv$|^scripts/acceptance-app\.sh|^test/fixtures/(scoring-)?window-corpus\.json\$$CI")"
             # sync/src/parse.js rides the scorer filter too:
             # acceptance-scorer.sh imports the REAL parser as the one live
             # cross-check of the marker/grammar contract, so a sync-only PR

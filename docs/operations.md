@@ -335,9 +335,17 @@ The panel offers:
   event without losing what contestants have already done.
 
   Switching Quiz, Jeopardy or AI off also **stops their grading** on the next
-  request: an answer or flag submitted from a tab that was already open (or
-  straight to the API) is refused with "Couldn't verify that right now" and
-  nothing is recorded, so nothing banks while the board is off (#495).
+  request, and nothing is recorded while the board is off (#495):
+
+  - **Quiz and Jeopardy:** an answer or flag submitted from a tab that was
+    already open (or straight to the API) is refused, and the board shows
+    "Couldn't verify that right now".
+  - **AI, in the box:** the flag form on an already-open challenge page gets
+    the same refusal from its server action.
+  - **AI, from the external challenge site:** `POST /api/ai/submit` and
+    `POST /api/ai/event` answer `403 {"error": "unavailable"}` before the
+    token or signature is even checked (see the
+    [AI module contract](ai-module.md#section-7-the-full-error-table)).
 
   For Secure Development specifically: switching it off does not stop the
   poller or the scorer — ingestion keeps running underneath, and any points
@@ -1804,7 +1812,9 @@ carries:
     preview skips both of those gates. None of these is a fault on the
     external side.
   - **`unavailable`** — Redis could not be read, or the request itself
-    failed; try again.
+    failed; try again. Also the answer while the AI module is switched off
+    on the Event tab (a stale tab can still click Send test): the real
+    event route refuses first (#495), so switch the module back on.
   - **`wrong-mode`** — this challenge is `flag`-only. The panel doesn't
     even render the signing key, curl, or Send test for a flag-only
     challenge in the first place (only the three endpoint URLs stay,

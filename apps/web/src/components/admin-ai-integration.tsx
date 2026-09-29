@@ -126,7 +126,7 @@ export function testOutcomeHelp(label: string): string | null {
     case "no-team":
       return "Not a fault: the signature and token were accepted, but you are not on a team — the event route refuses a teamless login before awarding, organizers included.";
     case "unavailable":
-      return "Redis could not be read, or the request itself failed. Try again.";
+      return "Redis could not be read, the request itself failed, or the AI module is switched off on the Event tab. Try again, or switch it back on.";
     case "wrong-mode":
       return "This challenge is flag-only, so it has no external event to report. Its mode changed after this panel loaded — refresh and re-check.";
     case "no-signing-key":

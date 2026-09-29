@@ -231,8 +231,8 @@ place that failure is visible from outside. Read the body:
   for `srh` and `redis`; a `NOAUTH` there is the password mismatch described
   above. On compose: `docker compose ps` and the `srh`/`redis` logs. On
   AWS: `aws logs tail /ecs/<name>/srh`, and `describe-services` for whether
-  the srh task is running at all. The module runs one srh task, so while
-  ECS replaces it the whole stack reads as down. See the srh and failover
+  the srh tasks are running at all. The module runs two, so the stack reads
+  as down only when both are. See the srh and failover
   drills in the [AWS runbook](aws.md#failure-drills).
 - **`"scorer": "down"`** — Redis is fine but the scorer's `/healthz` did not
   answer. Quiz, Jeopardy and AI keep scoring; Secure Development scores stop
@@ -275,9 +275,10 @@ it fires and `fly logs` shows `restart count is 10/10`, `fly machine restart
 `describe-services` shows `running` below `desired` while the service's
 events repeat `has started 1 tasks` or `is unhealthy`.
 
-**Diagnosis.** ECS is starting tasks that stop again. The module sets no
-deployment circuit breaker, so it keeps trying. Old tasks keep serving while
-it does, so the site may look fine. The reason is on the stopped task:
+**Diagnosis.** ECS is starting tasks that stop again. After a few failures
+the deployment circuit breaker rolls the service back to its last working
+revision, and the events say so; old tasks keep serving meanwhile, so the
+site may look fine. The reason is on the stopped task:
 
 ```sh
 aws ecs list-tasks --cluster <cluster> --service-name <service> --desired-status STOPPED
@@ -301,7 +302,7 @@ roll back to the previous tag as described in
 **Diagnosis.** ECS Exec is off for that service, or the task was started
 before it was turned on. A task keeps the setting it started with.
 
-**Fix.** Enable ECS Exec in the stack and `terraform apply`, then start
+**Fix.** Set `enable_ecs_exec = true` (the default) and `terraform apply`, then start
 fresh tasks with `aws ecs update-service --cluster <cluster> --service
 <service> --force-new-deployment`. Also check that the Session Manager
 plugin for the AWS CLI is installed locally. See

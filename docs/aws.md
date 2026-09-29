@@ -283,8 +283,9 @@ the private side of the stack: srh accepts connections only from the app,
 the scorer and sync, and the cache accepts them only from srh. You need the
 AWS CLI's
 [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
-installed locally, and the stack must have ECS Exec enabled. Without it,
-the command fails with `execute command was not enabled`.
+installed locally. ECS Exec is on by default (`enable_ecs_exec`); a stack
+applied with `enable_ecs_exec = false` answers `execute command was not
+enabled`.
 
 ```sh
 TASK="$(aws ecs list-tasks --cluster <cluster> --service-name app --query 'taskArns[0]' --output text)"
@@ -342,10 +343,12 @@ nothing unless the replacement also stops. Then read its `stoppedReason`
 (above) and the `/ecs/<name>/app` log.
 
 **srh restarts.** srh is the whole data path: every page, submission and
-grading script goes through it. The module runs **one** srh task, so while
-it is down nothing reads or writes. Pages still render, because reads fail
-open, but nothing scores in any module. `/health/deep` answers 503 with
-`"redis": "down"`, and your monitor fires. ECS replaces the task by itself.
+grading script goes through it. The module runs **two** srh tasks behind the
+same Cloud Map name, so losing one leaves the other serving. If both are down,
+nothing reads or writes: pages still render, because reads fail open, but
+nothing scores in any module, `/health/deep` answers 503 with
+`"redis": "down"`, and your monitor fires. ECS replaces a failed task by
+itself.
 Expect the outage to last as long as a Fargate task start: the network
 interface, the image pull and the health check's start period. Nothing is
 lost. A quiz or flag submission made during the outage gets an error, and
@@ -403,10 +406,11 @@ Then watch `sync.ageSec` in `/health/deep` drop back under a minute.
 
 `./deploy.sh --apply` pushes a new, content-tagged app image and runs
 `terraform apply`. ECS starts the new tasks before it stops the old ones, so
-old tasks keep serving while new ones fail their health check. The module
-sets no deployment circuit breaker, so a bad image is not rolled back
-automatically. ECS keeps starting failing tasks, and `terraform apply`
-waits for a steady state that never comes, then times out.
+old tasks keep serving while new ones fail their health check. Every service
+has the deployment circuit breaker on with rollback, so a revision whose tasks
+never go healthy is rolled back to the last working one, and the service
+events say so. `terraform apply` then reports the failed deployment rather
+than waiting out its timeout.
 
 1. Read why the new tasks stop (`describe-tasks` above). A wrong image
    architecture, a secret the tasks cannot decrypt, or an app that exits at

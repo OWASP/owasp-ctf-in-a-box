@@ -587,6 +587,13 @@ of one module's shape.
    example, `/challenges` (`app/(site)/challenges/page.tsx`) calls
    `notFound()` as its first statement when `secure-development` is
    disabled, the same gate `/quiz` already ran for its own module.
+   It reaches the module's grading endpoint too: a disabled module MUST
+   refuse a submission before anything is graded or written, so an answer
+   from a tab opened before the toggle cannot bank points that reappear on
+   re-enable. `POST /api/classic/submit`, `POST /api/quiz/answer` and the ai
+   module's submit action each answer `403 { error: "unavailable" }` as
+   their first check (#495), and `hintGate` refuses a hint on a disabled
+   module's target the same way.
 
 
 

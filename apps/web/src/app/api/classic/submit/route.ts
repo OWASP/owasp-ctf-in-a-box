@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
+import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { CLASSIC_ID_RE, submitFlag } from "@/lib/classic-store";
 import { hasTeam } from "@/lib/team-store";
@@ -19,6 +20,7 @@ const FLAG_MAX_LEN = 512;
  * second-guesses that enforcement. It only derives `login` from the session
  * (never the request body — a body-supplied login would be an account-
  * impersonation hole) and maps the store's result to a status code:
+ *   - classic module switched off in /admin -> 403 { error: "unavailable" }
  *   - unauthenticated -> 401
  *   - session with no GitHub login -> 400
  *   - event not launched (and not an admin) -> 403 { error: "not-launched" }
@@ -43,6 +45,22 @@ const FLAG_MAX_LEN = 512;
  * construction — there is no field here to leak.
  */
 export async function POST(request: Request) {
+  // Module switch (#495). Switching classic off in /admin 404s its board, and
+  // this route refuses too, or an answer from a tab opened before the toggle
+  // (or a plain curl) would still bank points that reappear on re-enable. It
+  // runs FIRST, before the session is read — the same order as the ai
+  // module's `submitAiFlagAction` (a switched-off module is not a way to
+  // probe a cookie) — and so before `submitFlag`: a refusal can never follow a
+  // write. An admin preview is refused too: there is no board to preview.
+  // `isModuleLive` never throws; on a settings-read failure it answers from
+  // this deployment's default module set (fail-open to the default, like
+  // every module consumer). That default is SCORE_IMAGE-derived and never
+  // includes classic, so a grade during such a blip is refused and retried —
+  // the same answer the board page gives on that request.
+  if (!(await isModuleLive("classic"))) {
+    return NextResponse.json({ error: "unavailable" }, { status: 403 });
+  }
+
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 

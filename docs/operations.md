@@ -334,6 +334,11 @@ The panel offers:
   the toggle is a switch, not a delete. Use it to pull a broken board out of an
   event without losing what contestants have already done.
 
+  Switching Quiz, Jeopardy or AI off also **stops their grading** on the next
+  request: an answer or flag submitted from a tab that was already open (or
+  straight to the API) is refused with "Couldn't verify that right now" and
+  nothing is recorded, so nothing banks while the board is off (#495).
+
   For Secure Development specifically: switching it off does not stop the
   poller or the scorer — ingestion keeps running underneath, and any points
   it records while the board is off show up on the board again the moment

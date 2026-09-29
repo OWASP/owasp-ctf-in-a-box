@@ -195,3 +195,30 @@ test("loadState with strict: a missing file is a fresh state, any other read err
   assert.deepEqual(loadState(dir, { log: (m) => warnings.push(m) }), { repos: {} });
   assert.equal(warnings.length, 1);
 });
+
+// #508 review (pre-merge "secrets in logs"): the repaired values come from
+// Redis or a hand-edited file, so the repair line names the field and the
+// value's TYPE only — never the value, which could be anything pasted there.
+test("a repair line never echoes the repaired value", () => {
+  const warnings = [];
+  const secret = "FLAG{do-not-log-me}";
+  parseState(
+    JSON.stringify({ repos: {}, ingested: secret, dropped: { flag: secret }, resetAt: [secret] }),
+    "test",
+    { log: (m) => warnings.push(m) },
+  );
+  assert.equal(warnings.length, 3, JSON.stringify(warnings));
+  for (const m of warnings) assert.ok(!m.includes("do-not-log-me"), m);
+  assert.ok(warnings.some((m) => /"ingested" \(a string\)/.test(m)), JSON.stringify(warnings));
+  assert.ok(warnings.some((m) => /"dropped" \(an object\)/.test(m)), JSON.stringify(warnings));
+  assert.ok(warnings.some((m) => /"resetAt" \(an array\)/.test(m)), JSON.stringify(warnings));
+});
+
+test("an unparseable state's repair line does not quote the stored text", () => {
+  // JSON.parse's own message quotes the input ("FLAG{..." is not valid JSON).
+  const warnings = [];
+  parseState("FLAG{do-not-log-me}", "test", { log: (m) => warnings.push(m) });
+  assert.equal(warnings.length, 1);
+  assert.ok(/not valid JSON/.test(warnings[0]), warnings[0]);
+  assert.ok(!warnings[0].includes("do-not-log-me"), warnings[0]);
+});

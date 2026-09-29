@@ -191,6 +191,9 @@ reviews:
         survive a repair that resets `repos`. And the read's fail direction
         (ADR 64): a FAILED read of `ctf:sync:state` must hold the poller,
         never fall through to an empty cursor that re-ingests every comment.
+        A FAILED read of the legacy /state/state.json during migration (the
+        file exists but cannot be read) must hold the poller the same way.
+        A repair line names the field and the value's kind, never the value.
 
     - path: "scorer/src/**/*.js"
       instructions: |

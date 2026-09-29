@@ -35,12 +35,18 @@ export const freshState = () => ({ repos: {} });
  * logged, because a silent repair is how corrupt state goes unnoticed until
  * the cursor quietly re-reads from scratch.
  */
+/** What a repair line says about a bad value: its kind, never the value
+ *  itself, which came from Redis or a hand-edited file (#508 review). */
+const kindOf = (v) =>
+  v === null ? "null" : Array.isArray(v) ? "an array" : typeof v === "object" ? "an object" : `a ${typeof v}`;
+
 export function parseState(raw, where, { log = console.error } = {}) {
   let parsed;
   try {
     parsed = JSON.parse(raw);
-  } catch (err) {
-    log(`ctf-sync: state at ${where} is not valid JSON (${err.message}) — starting fresh`);
+  } catch {
+    // Not err.message: JSON.parse quotes the input text in it (#508 review).
+    log(`ctf-sync: state at ${where} is not valid JSON (${raw.length} bytes) — starting fresh`);
     return freshState();
   }
 
@@ -60,14 +66,14 @@ export function parseState(raw, where, { log = console.error } = {}) {
   for (const field of ["ingested", "dropped"]) {
     const v = parsed[field];
     if (v !== undefined && !(Number.isSafeInteger(v) && v >= 0)) {
-      log(`ctf-sync: state at ${where} has an unusable "${field}" (${JSON.stringify(v)}) — resetting it to 0`);
+      log(`ctf-sync: state at ${where} has an unusable "${field}" (${kindOf(v)}) — resetting it to 0`);
       parsed[field] = 0;
     }
   }
   // resetAt is compared with the settings' ISO string; a non-string never
   // matches, so the master reset would be re-applied on every tick.
   if (parsed.resetAt !== undefined && parsed.resetAt !== null && typeof parsed.resetAt !== "string") {
-    log(`ctf-sync: state at ${where} has an unusable "resetAt" (${JSON.stringify(parsed.resetAt)}) — clearing it`);
+    log(`ctf-sync: state at ${where} has an unusable "resetAt" (${kindOf(parsed.resetAt)}) — clearing it`);
     parsed.resetAt = null;
   }
 

@@ -176,12 +176,29 @@ resource "aws_ecs_task_definition" "srh" {
     // contestant submission would be what discovered it.
     //
     // This issues a REAL command through the REST interface with the bearer
-    // token and requires a result back. It fails when Redis is unreachable,
-    // when AUTH is wrong, and when TLS does not verify.
+    // token — the Upstash command body `["PING"]`, POSTed as JSON to `/` —
+    // and requires PONG back. It fails when Redis is unreachable, when AUTH
+    // is wrong, and when TLS does not verify.
+    //
+    // The first version asked `GET /ping` and grepped for `result`. The pinned
+    // srh answers that path with a 404 whatever the token or the Redis state,
+    // so the check could never pass: srh would never have gone healthy, and
+    // with `wait_for_steady_state` the first apply would have hung until the
+    // provider timed out (#476). A `strcontains` test passed over it. The
+    // `Content-Type` header is not decoration either — srh answers 400
+    // without it.
+    //
+    // The command lives in srh-healthcheck.sh, ONE line and nothing else, so
+    // there is a single source: this reads it verbatim, and
+    // test/srh-healthcheck.bats runs that same file inside the pinned srh
+    // image against a real Redis (right token passes; wrong token and a
+    // stopped Redis fail). terraform.yml makes that test mandatory in CI.
+    // `file()` does not interpolate, so `$SRH_TOKEN` reaches the container
+    // shell unexpanded, which is where it must be expanded.
     healthCheck = {
       command = [
         "CMD-SHELL",
-        "wget -q -O - --header=\"Authorization: Bearer $SRH_TOKEN\" http://127.0.0.1:80/ping | grep -q result || exit 1",
+        trimspace(file("${path.module}/srh-healthcheck.sh")),
       ]
       interval    = 15
       timeout     = 5

@@ -41,3 +41,22 @@ jobs:
       # No AWS credentials, no network, no apply.
       - name: test
         run: terraform test -no-color
+
+  # stack.tftest.hcl pins the srh health check to srh-healthcheck.sh, but a
+  # string assertion cannot tell a working probe from one that can never pass:
+  # the first version called `GET /ping`, which the pinned srh answers with a
+  # 404, and every mocked test was green over it (#476). This job EXECUTES the
+  # file inside the pinned srh image against a real Redis. The suite skips
+  # without docker locally; SRH_HEALTHCHECK_REQUIRED=1 turns that skip into a
+  # failure here, so CI cannot pass it by not running it.
+  srh-healthcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y bats shellcheck
+      - name: lint the health check as the POSIX sh ECS runs it with
+        run: shellcheck -s sh deploy/aws-terraform/srh-healthcheck.sh
+      - name: execute the health check against the pinned srh
+        env:
+          SRH_HEALTHCHECK_REQUIRED: "1"
+        run: bats deploy/aws-terraform/test/srh-healthcheck.bats

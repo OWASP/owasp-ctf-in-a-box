@@ -598,18 +598,41 @@ run "the_secret_grants_name_resources_never_a_wildcard" {
 run "srh_health_check_issues_a_real_command" {
   command = plan
 
+  // srh's own source: Redix opens the connection lazily, so srh starts green
+  // against an unreachable ElastiCache or a wrong AUTH token. A check that
+  // only proves the process is up would report a healthy stack whose data
+  // path is broken, and the first contestant submission would find out.
+  //
+  // These assertions pin the RENDERED command to srh-healthcheck.sh, and
+  // test/srh-healthcheck.bats executes that file against the pinned srh
+  // image. The two halves need each other: this one alone passed for months
+  // over a `GET /ping` srh answers with a 404 (#476), because a string check
+  // cannot tell a working probe from one that can never succeed.
   assert {
-    // srh's own source: Redix opens the connection lazily, so srh starts green
-    // against an unreachable ElastiCache or a wrong AUTH token. A check that
-    // only proves the process is up would report a healthy stack whose data
-    // path is broken, and the first contestant submission would find out.
-    condition     = strcontains(aws_ecs_task_definition.srh.container_definitions, "Authorization: Bearer")
-    error_message = "srh's health check must issue an authenticated request — an unauthenticated or TCP-only probe passes while Redis is unreachable."
+    condition = jsondecode(aws_ecs_task_definition.srh.container_definitions)[0].healthCheck.command == [
+      "CMD-SHELL",
+      trimspace(file("${path.module}/srh-healthcheck.sh")),
+    ]
+    error_message = "srh's health check must be exactly srh-healthcheck.sh — the file test/srh-healthcheck.bats executes against a real srh. A command written anywhere else is untested."
   }
 
   assert {
-    condition     = strcontains(aws_ecs_task_definition.srh.container_definitions, "grep -q result")
-    error_message = "srh's health check must require a real reply body: srh answers before it has ever contacted Redis."
+    // Non-vacuity for the equality above: an empty file would render an
+    // empty CMD-SHELL and still "equal" itself.
+    condition = alltrue([
+      for needle in [
+        "--post-data='[\"PING\"]'",
+        "grep -q PONG",
+        "Authorization: Bearer $SRH_TOKEN",
+        "Content-Type: application/json",
+      ] : strcontains(jsondecode(aws_ecs_task_definition.srh.container_definitions)[0].healthCheck.command[1], needle)
+    ])
+    error_message = "srh's health check must POST the Upstash body [\"PING\"] as JSON with the bearer token and require PONG back."
+  }
+
+  assert {
+    condition     = !strcontains(jsondecode(aws_ecs_task_definition.srh.container_definitions)[0].healthCheck.command[1], "/ping")
+    error_message = "srh's health check must not call /ping: the pinned srh returns 404 there whatever the token or the Redis state, so srh would never go healthy (#476)."
   }
 }
 

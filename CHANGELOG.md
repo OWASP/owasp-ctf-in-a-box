@@ -8,6 +8,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Dependency refresh: Next.js 16.3.6, `@types/node` 26.6.2, Caddy image
+  digest.** `next` and `eslint-config-next` move 16.3.5 → 16.3.6, the fix for
+  GHSA-vcvr-r3jv-pc5j (remote code execution in `next/og`'s
+  `ImageResponse`). The app does not use `next/og` or `ImageResponse`, so it
+  was not exploitable here; the bump is hygiene. `@types/node` moves to
+  26.6.2 in the lockfile, and `docker-compose.yml` pins the current
+  `caddy:2-alpine` digest (Caddy 2.11.4).
+
 - **Security headers on every deployment (audit S1).** The app now sends
   `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`,
   `nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` and HSTS on

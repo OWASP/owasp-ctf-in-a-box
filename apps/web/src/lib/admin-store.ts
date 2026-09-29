@@ -21,6 +21,7 @@ import type { AppId } from "@/lib/apps";
 // source both sides compute the same default from; admin-store is
 // `server-only`, so calling it with `process.env` here is safe.
 import { defaultEnabledModules, secureDevAvailable } from "@/lib/module-defaults";
+import { errorLabel } from "@/lib/error-label";
 import {
   DEMO_CONTESTANTS,
   DEMO_TEAMS,
@@ -103,17 +104,15 @@ export const CLASSIC_COOLDOWN_SEC_MAX = 3600;
 export const AI_COOLDOWN_SEC_MAX = 3600;
 
 /** The ONLY thing an admin-authoring route may hand `console.error`. Shared
- *  by every `admin/*` route that writes secrets (a flag, a signing key) so
- *  each one does not keep its own byte-identical copy.
+ *  by every `admin/*` route that writes secrets (a flag, a signing key).
  *
  *  Never the caught value itself: a driver can decorate an error with the
  *  request it failed on, and an admin write's arguments can include a flag
  *  or a signing key, so a bare `console.error(err)` could turn an outage into
- *  a secret in the log. Name and message, both capped, nothing else. */
-export function adminErrorLabel(err: unknown): string {
-  if (!(err instanceof Error)) return "non-Error throw";
-  return `${err.name}: ${err.message}`.slice(0, 200);
-}
+ *  a secret in the log. It IS `errorLabel` — re-exported under the name the
+ *  admin routes already import, not a second copy of the body (#500), so a
+ *  change to the shared label reaches these routes too. */
+export const adminErrorLabel: (err: unknown) => string = errorLabel;
 
 /** Appends one line to the shared `ctf:admin:audit` trail — the same
  *  LPUSH+LTRIM pattern every admin authoring route uses. Best-effort: an

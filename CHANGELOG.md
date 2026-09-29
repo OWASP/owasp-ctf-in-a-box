@@ -358,6 +358,19 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
     true. In SSM, `GITHUB_TOKEN` is no longer read; store
     `GITHUB_APP_PRIVATE_KEY` (base64 of the `.pem`) and `SCORER_TOKEN`
     instead. `docs/aws.md` and the module README list the commands.
+- **Fixed: hint errors are logged as a label, and archive-import errors no
+  longer echo the file's values (#500).**
+  - Four hint-store failure logs (the hint gate's solve lookup, a failed hint
+    reveal, and the classic and ai hint-list reads) passed the caught error
+    object itself to `console.error`. They now log `errorLabel(err)`, the name
+    and message only, like every other store.
+  - Importing an event archive refused a bad attachment file with a message
+    that repeated its `sha256`, its `item` and any unknown key names. Those
+    messages now give the file's position and the rule it broke, and a
+    `sha256` that is not 64 lowercase hex digits gets its own error.
+  - `ai-http.ts` and `admin-store.ts` had their own copies of `errorLabel`.
+    Both now use the one in `error-label.ts` (`adminErrorLabel` is kept as an
+    alias), and a test fails if another copy appears in `apps/web/src`.
 
 - **The AWS stack comes up (#476, pre-event bring-up fixes).** The stack
   had never been applied, and a rehearsal would have stopped at the first

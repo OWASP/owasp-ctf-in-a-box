@@ -221,8 +221,10 @@ its rejection with the request it failed on (`command`, `body`, `cause`)
 turns one `console.error("…", err)` into the event's flags in a log the
 organizer may already have shipped somewhere. No error shape reachable today
 carries them; the invariant is that nothing prevents a future one from doing
-so, and logs cannot be un-shipped. The three stores hand the logger
-`errorLabel(err)` from `apps/web/src/lib/error-label.ts` — name and message,
+so, and logs cannot be un-shipped. Every store hands the logger
+`errorLabel(err)` from `apps/web/src/lib/error-label.ts` (the admin routes
+import the same function as `adminErrorLabel`; `error-label.test.ts` fails on
+any second copy of its body in `apps/web/src`) — name and message,
 capped, no stack, no own properties, `"non-Error throw"` for anything that
 is not an `Error` — and nothing else. In a diff, the red flag is a raw `err`
 (or `String(err)`, or `JSON.stringify(err)`) as a `console.*` argument in

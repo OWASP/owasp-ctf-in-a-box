@@ -257,7 +257,7 @@ export async function hintGate(login: string, target: HintTarget, opts: { dryRun
     try {
       have = await countSolves(login, target);
     } catch (err) {
-      console.error("hint gate: solve lookup failed:", err);
+      console.error("hint gate: solve lookup failed:", errorLabel(err));
       return { allowed: false, reason: "no-progress", needed: minSolves, have: 0 };
     }
     if (have < minSolves) return { allowed: false, reason: "no-progress", needed: minSolves, have };
@@ -328,7 +328,7 @@ export async function revealHint(
       [id, `${target}/${id}`, login, cost, new Date().toISOString(), dryRun ? "1" : "0", prereq],
     );
   } catch (err) {
-    console.error("Hint reveal failed:", err);
+    console.error("Hint reveal failed:", errorLabel(err));
     return { ok: false, error: "Hint reveal failed. Try again" };
   }
 
@@ -460,7 +460,7 @@ export async function getClassicHintIds(): Promise<string[]> {
     // OUTSIDE this catch, which rejected the whole Promise.all callers run
     // it under (the /ai and /flags pages) and 500'd the public board instead
     // of degrading like every other read here.
-    console.error("Classic hint availability fetch failed:", err);
+    console.error("Classic hint availability fetch failed:", errorLabel(err));
     return [];
   }
 }
@@ -480,7 +480,7 @@ export async function getAiHintIds(): Promise<string[]> {
     // resolveHintConfig (→ getAdminSettings), not just the HKEYS read, so a
     // settings-read blip degrades to [] here instead of rejecting the
     // Promise.all callers (the /ai and /flags pages) run it under.
-    console.error("AI hint availability fetch failed:", err);
+    console.error("AI hint availability fetch failed:", errorLabel(err));
     return [];
   }
 }

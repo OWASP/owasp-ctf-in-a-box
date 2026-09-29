@@ -299,6 +299,8 @@ export function serializeEventBundle(bundle: EventBundle): string {
 
 const FILE_KEYS = new Set(["item", "sha256", "bytes"]);
 const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+/** The same shape `classic-io.ts` requires of an upload's metadata sha256. */
+const SHA256_RE = /^[0-9a-f]{64}$/;
 
 /** Shape of the archive's upload bytes (#186). Client-safe: the sha256 of
  *  the decoded bytes is verified server-side (event-store) before the import
@@ -327,8 +329,13 @@ function validateAttachmentFiles(
   raw.forEach((f, i) => {
     const at = `${where}[${i}]`;
     if (!isPlainObject(f)) return void errors.push({ where: at, message: "Each file must be an object" });
+    // #500: every message below names the indexed path and the rule, never
+    // the file's own `item`, `sha256` or key names — this list is echoed to
+    // the client verbatim, and an archive's values are arbitrary text.
     const unknown = Object.keys(f).filter((k) => !FILE_KEYS.has(k));
-    if (unknown.length > 0) errors.push({ where: at, message: `Unknown key(s): ${unknown.join(", ")}` });
+    if (unknown.length > 0) {
+      errors.push({ where: at, message: `Unknown key(s) (${unknown.length}) — a file is exactly { item, sha256, bytes }` });
+    }
     if (typeof f.item !== "string" || typeof f.sha256 !== "string" || typeof f.bytes !== "string") {
       return void errors.push({ where: at, message: "A file is { item, sha256, bytes } — all strings" });
     }
@@ -337,8 +344,10 @@ function validateAttachmentFiles(
     } else if (Math.floor((f.bytes.length * 3) / 4) > ATTACHMENT_MAX_BYTES + 2) {
       errors.push({ where: `${at}.bytes`, message: `A file can be at most ${ATTACHMENT_MAX_BYTES} bytes` });
     }
-    if (!named.has(`${f.item}\n${f.sha256}`)) {
-      errors.push({ where: at, message: `No classic upload with sha256 ${f.sha256} on challenge ${f.item} in this archive` });
+    if (!SHA256_RE.test(f.sha256)) {
+      errors.push({ where: `${at}.sha256`, message: "sha256 must be 64 lowercase hex digits" });
+    } else if (!named.has(`${f.item}\n${f.sha256}`)) {
+      errors.push({ where: at, message: "No classic upload in this archive matches this file's item and sha256" });
     }
     out.push({ item: f.item, sha256: f.sha256, bytes: f.bytes });
   });

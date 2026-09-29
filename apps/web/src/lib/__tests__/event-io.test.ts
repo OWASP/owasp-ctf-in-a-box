@@ -225,4 +225,33 @@ describe("attachment files in the archive (#186)", () => {
     delete rest.classic;
     expect(fileErrors(JSON.stringify({ ...rest, attachmentFiles: [{ item: "web-one-ab12cd", sha256: sha, bytes }] })).length).toBeGreaterThan(0);
   });
+
+  // #500 (S9): the validator's messages are echoed back to the admin client.
+  // They must name WHERE (the indexed path) and WHAT rule, never the uploaded
+  // file's own values — an arbitrary `sha256`, `item` or key name is attacker-
+  // or accident-shaped text, and a pasted secret must not ride back out in it.
+  describe("messages never echo the file's own values (#500)", () => {
+    const PLANTED = "PLANTED-archive-value-91c2";
+
+    it("refuses a sha256 that is not 64 lowercase hex, at the indexed path, without echoing it", () => {
+      const errors = fileErrors(withFiles([{ item: "web-one-ab12cd", sha256: `${PLANTED}-not-hex`, bytes }]));
+      expect(errors).toContainEqual({ where: "attachmentFiles[0].sha256", message: "sha256 must be 64 lowercase hex digits" });
+      expect(JSON.stringify(errors)).not.toContain(PLANTED);
+    });
+
+    it("refuses an unmatched (item, sha256) pair without echoing either", () => {
+      const other = "cd".repeat(32);
+      const errors = fileErrors(withFiles([{ item: `${PLANTED}-item`, sha256: other, bytes }]));
+      expect(errors.some((e) => e.where === "attachmentFiles[0]")).toBe(true);
+      const text = JSON.stringify(errors);
+      expect(text).not.toContain(PLANTED);
+      expect(text).not.toContain(other);
+    });
+
+    it("refuses unknown keys without echoing their names", () => {
+      const errors = fileErrors(withFiles([{ item: "web-one-ab12cd", sha256: sha, bytes, [PLANTED]: "x" }]));
+      expect(errors.some((e) => e.where === "attachmentFiles[0]" && /unknown key/i.test(e.message))).toBe(true);
+      expect(JSON.stringify(errors)).not.toContain(PLANTED);
+    });
+  });
 });

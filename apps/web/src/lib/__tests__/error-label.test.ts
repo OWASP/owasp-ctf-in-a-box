@@ -2,7 +2,11 @@
 // stores share it so they cannot drift: the invariant is "never the object",
 // and an object's own fields (`command`, `cause`, `body`) are where a client
 // puts the request it failed on — which, on a grading path, is the flag.
-import { describe, expect, it } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { describe, expect, it, vi } from "vitest";
 
 import { errorLabel } from "@/lib/error-label";
 
@@ -31,5 +35,40 @@ describe("errorLabel", () => {
     expect(errorLabel("CTF{thrown-as-string}")).toBe("non-Error throw");
     expect(errorLabel({ flag: "CTF{obj}" })).toBe("non-Error throw");
     expect(errorLabel(undefined)).toBe("non-Error throw");
+  });
+});
+
+// #500 (M12): "cannot drift" only holds if there is ONE implementation. Two
+// byte-identical copies (`ai-http.ts`'s local `errorLabel`, `admin-store.ts`'s
+// `adminErrorLabel`) had grown back next to this one; a fix to the shared
+// label — a tighter cap, a new redaction — would silently skip them. Walk the
+// app's source and refuse any other body that builds the label by hand.
+describe("errorLabel has exactly one implementation", () => {
+  const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const BODY = /`\$\{err\.name\}: \$\{err\.message\}`/;
+
+  function sources(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) return e.name === "__tests__" || e.name === "node_modules" ? [] : sources(p);
+      return /\.(ts|tsx)$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [p] : [];
+    });
+  }
+
+  it("builds the name-and-message label only in lib/error-label.ts", () => {
+    const files = sources(SRC);
+    // Non-vacuous: the walk must actually reach the one legitimate copy.
+    const holders = files.filter((f) => BODY.test(readFileSync(f, "utf8"))).map((f) => relative(SRC, f));
+    expect(files.length).toBeGreaterThan(50);
+    expect(holders).toEqual([join("lib", "error-label.ts")]);
+  });
+
+  it("admin-store's adminErrorLabel IS the shared errorLabel", async () => {
+    vi.resetModules();
+    vi.doMock("server-only", () => ({}));
+    // Both from the same (fresh) module registry, so identity is meaningful.
+    const { adminErrorLabel } = await import("@/lib/admin-store");
+    const shared = await import("@/lib/error-label");
+    expect(adminErrorLabel).toBe(shared.errorLabel);
   });
 });

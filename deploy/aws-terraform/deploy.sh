@@ -326,16 +326,30 @@ fi
 # provisioning path, and this is the aws CLI's own filtering, the same way
 # `gh api --jq` is the gh CLI's. A dry run never asks, so it previews the
 # build.
+# Returns 0 when the tag is in ECR and 1 when ECR says it is not
+# (ImageNotFoundException). Any OTHER failure — access denied, a throttle, no
+# network, a missing repository — is an unknown registry state: it stops the
+# deploy rather than being read as "absent" and rebuilding or re-pushing over
+# it (fail closed; #507 review).
 in_ecr() {
   local repo_url="$1"
   local tag="$2"
+  local err
   if [ -n "$DRY_RUN" ]; then
     return 1
   fi
-  aws ecr describe-images --region "$REGION" \
+  if err="$(aws ecr describe-images --region "$REGION" \
     --repository-name "${repo_url##*/}" \
     --image-ids "imageTag=$tag" \
-    --query 'imageDetails[0].imageDigest' --output text > /dev/null 2>&1
+    --query 'imageDetails[0].imageDigest' --output text 2>&1 >/dev/null)"; then
+    return 0
+  fi
+  case "$err" in
+    *ImageNotFoundException*) return 1 ;;
+  esac
+  echo "FAIL: could not read ECR for ${repo_url##*/}:$tag — refusing to guess whether it is there:" >&2
+  echo "      $err" >&2
+  exit 1
 }
 
 # Once per run, and only when something is actually pushed.
@@ -437,7 +451,11 @@ if [ -n "$SECDEV" ]; then
   *)
     if [ -n "$DRY_RUN" ]; then
       SOURCE_DIGEST="<source-digest>"
-    elif ! SOURCE_DIGEST="$(docker image inspect --format '{{index .RepoDigests 0}}' "$SCORER_SOURCE" 2>/dev/null)" ||
+    # The entry for the SOURCE repository, not entry 0: after the first push
+    # the local image also carries an ECR digest (#507 review), and a
+    # --platform pull+push makes a different manifest there.
+    elif ! SOURCE_DIGEST="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$SCORER_SOURCE" 2>/dev/null |
+      grep -F -- "${SCORER_SOURCE%:*}@sha256:" | head -n 1)" ||
       [ -z "$SOURCE_DIGEST" ] || [ "${SOURCE_DIGEST#*@sha256:}" = "$SOURCE_DIGEST" ]; then
       echo "FAIL: pulled $SCORER_SOURCE but could not read its registry digest," >&2
       echo "      which the mirror's tag is derived from." >&2

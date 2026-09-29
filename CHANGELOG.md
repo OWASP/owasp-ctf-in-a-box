@@ -350,6 +350,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
     two new repositories, then run `./deploy.sh --scorer-source
     <SCORE_IMAGE>`, which writes both. `docker login` to the scorer's registry
     first.
+  - **On a stack that is already running an event:** do not take this
+    upgrade mid-event. The first apply after it replaces the scorer and sync
+    task definitions (new image refs) and the execution role's policy, and
+    brings a second srh task up, so every service rolls once. Take it before
+    the event or after it, never during one; `/admin` → Freeze first if you
+    must.
 
 ## v0.6.0 — 2026-09-20
 

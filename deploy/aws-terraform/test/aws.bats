@@ -239,7 +239,9 @@ ACCT_REGISTRY="123456789012.dkr.ecr.us-east-1.amazonaws.com"
 SOURCE_DIGEST="aaaaaaaaaaaabbbbbbbbbbbbccccccccccccddddddddddddeeeeeeeeeeeeffff"
 
 # $1 = 1 for a Secure Development stack, 0 for quiz-only.
-# $2 = "fail-sync-output" to make that one terraform read fail.
+# $2 = "fail-sync-output" to make that one terraform read fail;
+#      "ecr-error" to make every ECR describe-images an access error;
+#      "two-digests" to give the pulled scorer a second (ECR) RepoDigests entry.
 applied_stack_stubs() {
   local secdev="$1"
   local mode="${2:-}"
@@ -256,12 +258,20 @@ case "\$*" in
 esac
 exit 0
 EOF
-  # describe-images fails: no tag is in ECR yet, so everything is published.
+  # describe-images says the tag is not there yet (ImageNotFoundException, as
+  # the real CLI does), so everything is published — or, in "ecr-error" mode,
+  # it fails for another reason, which must stop the deploy.
   cat > "$STUBS/aws" <<EOF
 #!/bin/sh
 echo "aws \$*" >> "$CALLS"
 case "\$*" in
-*describe-images*) exit 1 ;;
+*describe-images*)
+  if [ "$mode" = "ecr-error" ]; then
+    echo "An error occurred (AccessDeniedException) when calling the DescribeImages operation" >&2
+  else
+    echo "An error occurred (ImageNotFoundException) when calling the DescribeImages operation" >&2
+  fi
+  exit 254 ;;
 *get-login-password*) echo stub-password ;;
 esac
 exit 0
@@ -271,7 +281,9 @@ EOF
 echo "docker \$*" >> "$CALLS"
 case "\$1" in
 login) cat > /dev/null ;;
-image) echo "ghcr.io/owasp-ctf-test/score@sha256:$SOURCE_DIGEST" ;;
+image)
+  echo "ghcr.io/owasp-ctf-test/score@sha256:$SOURCE_DIGEST"
+  if [ "$mode" = "two-digests" ]; then echo "$ACCT_REGISTRY/owasp-ctf-scorer@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"; fi ;;
 esac
 exit 0
 EOF
@@ -378,3 +390,30 @@ EOF
   echo "$output" | grep -q 'docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:latest'
   [ ! -s "$CALLS" ]
 }
+
+# Review (#507): after the first push the local image also carries an ECR
+# RepoDigests entry, and a --platform pull+push makes a single-platform
+# manifest whose digest differs from the source's. Taking entry 0 could then
+# pick the ECR one, change the mirror tag and push a duplicate.
+@test "the scorer mirror tag comes from the source repository's digest, not another RepoDigests entry" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 1 two-digests
+  run "$repo/deploy/aws-terraform/deploy.sh" --scorer-source ghcr.io/owasp-ctf-test/score:latest
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -qx "docker push $ACCT_REGISTRY/owasp-ctf-scorer:mirror-${SOURCE_DIGEST:0:12}" "$CALLS"
+}
+
+# Review (#507): describe-images fails both for "no such tag" and for an
+# access or API error. Only the first means "publish it"; the second must stop
+# before anything is built or pushed.
+@test "an ECR read error stops the deploy before any build or push" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 1 ecr-error
+  run "$repo/deploy/aws-terraform/deploy.sh" --scorer-source ghcr.io/owasp-ctf-test/score:latest
+  echo "$output"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q "could not read ECR"
+  [ -z "$(grep -E '^docker (build|push)' "$CALLS")" ]
+}
+

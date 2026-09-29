@@ -346,3 +346,10 @@ variable "ssm_prefix" {
     error_message = "ssm_prefix must start with / and not end with one."
   }
 }
+
+variable "enable_ecs_exec" {
+  description = "Allow `aws ecs execute-command` into the running tasks (the event-day runbook's shell). Adds enable_execute_command to every service and the four ssmmessages actions to the task role. On by default for an event; set false to run with logs only."
+  type        = bool
+  default     = true
+}
+

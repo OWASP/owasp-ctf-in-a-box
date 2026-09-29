@@ -287,6 +287,21 @@ outbound only. `stack.tftest.hcl` reads `docker-compose.yml` and fails if any
 environment key compose gives the app, the scorer or sync is missing from its
 ECS task (#476).
 
+## A shell in a running task (ECS Exec)
+
+`enable_ecs_exec` (default `true`) turns on `aws ecs execute-command` for every
+service, and gives the task role the four `ssmmessages` actions it needs, and
+nothing else. You need the AWS CLI's Session Manager plugin locally:
+
+```sh
+aws ecs list-tasks --cluster "$(terraform output -raw cluster_name)" --service-name app
+aws ecs execute-command --cluster "$(terraform output -raw cluster_name)" \
+  --task <task-id> --container app --interactive --command "/bin/sh"
+```
+
+Set `enable_ecs_exec = false` to run with logs only; the task role then has no
+policy at all.
+
 ## Tear down
 
 ```sh

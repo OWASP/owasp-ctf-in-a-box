@@ -320,6 +320,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 - **The AWS stack comes up (#476, pre-event bring-up fixes).** The stack
   had never been applied, and a rehearsal would have stopped at the first
   image build.
+  - **ECS Exec is on by default** (`enable_ecs_exec`), so `aws ecs
+    execute-command` gives an operator a shell in a running task on event day.
   - **srh's health check could never pass.** It called `GET /ping`, which
     the pinned srh answers with a 404, so srh never went healthy and the first
     apply hung. It now POSTs `["PING"]` as JSON and requires `PONG`. The

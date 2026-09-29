@@ -1226,3 +1226,55 @@ run "sync_stays_a_single_poller" {
     error_message = "sync must stay exactly one task, with min 0 / max 100 so a deployment never runs two pollers."
   }
 }
+
+// R7 (audit): the runbook and outputs.tf point operators at
+// `aws ecs execute-command`. It needs enable_execute_command on the service
+// and the four ssmmessages actions on the TASK role (the SSM agent runs as the
+// task). On by default for an event; one variable turns it off.
+run "ecs_exec_is_on_by_default_for_every_service" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+  }
+
+  assert {
+    condition = alltrue([
+      aws_ecs_service.app.enable_execute_command,
+      aws_ecs_service.srh.enable_execute_command,
+      aws_ecs_service.scorer[0].enable_execute_command,
+      aws_ecs_service.sync[0].enable_execute_command,
+    ])
+    error_message = "Every service must allow ECS Exec by default: the runbook's shell depends on it."
+  }
+
+  assert {
+    condition = length(aws_iam_role_policy.task_ecs_exec) == 1 && toset(jsondecode(aws_iam_role_policy.task_ecs_exec[0].policy).Statement[0].Action) == toset([
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ])
+    error_message = "The task role gets exactly the four ssmmessages actions ECS Exec needs, and nothing else."
+  }
+}
+
+run "ecs_exec_off_grants_nothing" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    enable_ecs_exec           = false
+  }
+
+  assert {
+    condition     = !aws_ecs_service.app.enable_execute_command && !aws_ecs_service.srh.enable_execute_command
+    error_message = "enable_ecs_exec = false must turn ECS Exec off."
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.task_ecs_exec) == 0
+    error_message = "With ECS Exec off, the task role keeps no policy at all."
+  }
+}
+

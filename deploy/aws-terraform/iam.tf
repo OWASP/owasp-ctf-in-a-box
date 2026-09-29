@@ -168,12 +168,38 @@ resource "aws_iam_role_policy" "execution_secrets" {
   policy = jsonencode(local.execution_secrets_policy)
 }
 
-// Deliberately policy-less — see the header. It exists so every task
-// definition names one, which makes "this container has no AWS permissions" an
-// explicit statement rather than an omission somebody later fills in by
-// accident.
+// Policy-less except for ECS Exec's channel (task_ecs_exec below, off with
+// var.enable_ecs_exec = false). It exists so every task definition names one,
+// which makes "this container calls no AWS API" an explicit statement rather
+// than an omission somebody later fills in by accident.
 resource "aws_iam_role" "task" {
   name_prefix        = "${var.name}-task-"
-  description        = "Application identity. No policies: nothing here calls an AWS API."
+  description        = "Application identity. Nothing here calls an AWS API; its one optional policy is ECS Exec's channel."
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
+}
+
+// ECS Exec (R7, var.enable_ecs_exec). The SSM agent inside each task opens
+// its control and data channels as the TASK role, so that is where these
+// go. The four ssmmessages actions accept no resource-level scoping, which is
+// why the Resource is "*" (the one wildcard this module grants, and only to
+// this channel); the actions are the whole of what it can do.
+resource "aws_iam_role_policy" "task_ecs_exec" {
+  count = var.enable_ecs_exec ? 1 : 0
+
+  name = "ecs-exec-channel"
+  role = aws_iam_role.task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "EcsExecChannel"
+      Effect = "Allow"
+      Action = [
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel",
+      ]
+      Resource = "*"
+    }]
+  })
 }

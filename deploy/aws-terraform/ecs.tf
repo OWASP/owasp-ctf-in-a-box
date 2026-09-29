@@ -257,6 +257,9 @@ resource "aws_ecs_service" "srh" {
   // being relaunched forever while `terraform apply` sits on
   // wait_for_steady_state until the provider times out (#476). Every service
   // carries this.
+  // R7: the runbook's shell (`aws ecs execute-command`). See var.enable_ecs_exec.
+  enable_execute_command = var.enable_ecs_exec
+
   deployment_circuit_breaker {
     enable   = true
     rollback = true
@@ -354,6 +357,9 @@ resource "aws_ecs_service" "app" {
   launch_type     = "FARGATE"
 
   // aws_ecs_service.srh says why every service carries this.
+  // R7: the runbook's shell (`aws ecs execute-command`). See var.enable_ecs_exec.
+  enable_execute_command = var.enable_ecs_exec
+
   deployment_circuit_breaker {
     enable   = true
     rollback = true
@@ -434,6 +440,9 @@ resource "aws_ecs_service" "scorer" {
   launch_type     = "FARGATE"
 
   // aws_ecs_service.srh says why every service carries this.
+  // R7: the runbook's shell (`aws ecs execute-command`). See var.enable_ecs_exec.
+  enable_execute_command = var.enable_ecs_exec
+
   deployment_circuit_breaker {
     enable   = true
     rollback = true
@@ -514,6 +523,9 @@ resource "aws_ecs_service" "sync" {
   // aws_ecs_service.srh says why every service carries this. A rollback here
   // still respects the single-poller rule below: min 0 / max 100 governs the
   // rollback deployment too.
+  // R7: the runbook's shell (`aws ecs execute-command`). See var.enable_ecs_exec.
+  enable_execute_command = var.enable_ecs_exec
+
   deployment_circuit_breaker {
     enable   = true
     rollback = true
@@ -525,8 +537,9 @@ resource "aws_ecs_service" "sync" {
     assign_public_ip = true
   }
 
-  // Exactly one poller, never two: a second would double-ingest every score
-  // comment. The old task goes before the new one arrives.
+  // Exactly one poller, never two. A second would not double-count (the
+  // scorer's HSETNX dedupes), but it doubles GitHub API use and the
+  // ingested/dropped counters. The old task goes before the new one arrives.
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
 

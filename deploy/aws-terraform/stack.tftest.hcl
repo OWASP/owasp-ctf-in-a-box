@@ -1142,3 +1142,87 @@ run "every_task_runs_x86_64_to_match_deploy_sh" {
     error_message = "Expected four task definitions on a Secure Development event."
   }
 }
+
+// --- a bad deploy rolls back; srh outlives a failover (#476) --------------
+
+run "every_service_rolls_back_a_deployment_that_never_goes_healthy" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+  }
+
+  assert {
+    // Without it ECS relaunches failing tasks forever and `terraform apply`
+    // sits on wait_for_steady_state until the provider times out.
+    condition = alltrue([
+      for s in concat(
+        [aws_ecs_service.srh, aws_ecs_service.app],
+        aws_ecs_service.scorer,
+        aws_ecs_service.sync,
+      ) :
+      length(s.deployment_circuit_breaker) == 1 &&
+      s.deployment_circuit_breaker[0].enable == true &&
+      s.deployment_circuit_breaker[0].rollback == true
+    ])
+    error_message = "Every ECS service must enable the deployment circuit breaker with rollback."
+  }
+
+  assert {
+    // Non-vacuity for the alltrue above.
+    condition     = length(aws_ecs_service.scorer) == 1 && length(aws_ecs_service.sync) == 1
+    error_message = "Expected four services on a Secure Development event."
+  }
+}
+
+run "srh_survives_one_task_loss_and_an_elasticache_failover" {
+  command = plan
+
+  assert {
+    // srh is the whole data path; one task is one host retirement from an
+    // outage.
+    condition     = aws_ecs_service.srh.desired_count >= 2
+    error_message = "srh must run at least two tasks: it is the entire data path, and it is stateless behind a MULTIVALUE Cloud Map record."
+  }
+
+  assert {
+    // Both tasks probe the same Redis, so a count alone does not help in a
+    // failover: the probe itself has to outlast one, or ECS replaces every
+    // srh task over an outage a restart cannot fix.
+    condition = (
+      jsondecode(aws_ecs_task_definition.srh.container_definitions)[0].healthCheck.retries *
+      jsondecode(aws_ecs_task_definition.srh.container_definitions)[0].healthCheck.interval
+    ) >= 120
+    error_message = "srh's health check must tolerate at least 120 s of failed probes (retries x interval) so an ElastiCache failover does not get srh killed."
+  }
+
+  assert {
+    // ...and still catch a broken first boot before the provider's 20 minute
+    // steady-state wait gives up.
+    condition = (
+      jsondecode(aws_ecs_task_definition.srh.container_definitions)[0].healthCheck.startPeriod +
+      jsondecode(aws_ecs_task_definition.srh.container_definitions)[0].healthCheck.retries *
+      jsondecode(aws_ecs_task_definition.srh.container_definitions)[0].healthCheck.interval
+    ) <= 300
+    error_message = "srh's health check must still mark a task with a wrong AUTH token or endpoint UNHEALTHY within five minutes."
+  }
+}
+
+run "sync_stays_a_single_poller" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+  }
+
+  assert {
+    // The circuit breaker added alongside must not have changed this: the
+    // old task goes before the new one arrives.
+    condition = (
+      aws_ecs_service.sync[0].desired_count == 1 &&
+      aws_ecs_service.sync[0].deployment_maximum_percent == 100 &&
+      aws_ecs_service.sync[0].deployment_minimum_healthy_percent == 0
+    )
+    error_message = "sync must stay exactly one task, with min 0 / max 100 so a deployment never runs two pollers."
+  }
+}

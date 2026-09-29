@@ -214,9 +214,11 @@ resource "aws_ecs_task_definition" "srh" {
         "CMD-SHELL",
         trimspace(file("${path.module}/srh-healthcheck.sh")),
       ]
+      // 8 x 15 s: long enough to ride out an ElastiCache failover without
+      // ECS killing srh over it — aws_ecs_service.srh says why.
       interval    = 15
       timeout     = 5
-      retries     = 3
+      retries     = 8
       startPeriod = 20
     }
 
@@ -228,8 +230,37 @@ resource "aws_ecs_service" "srh" {
   name            = "srh"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.srh.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  // TWO tasks, and a health check that outlasts a failover (#476).
+  //
+  // srh is the entire data path — every page, submit and Lua script goes
+  // through it — so one task is one host retirement or one failed
+  // replacement from the event being down. It is stateless and Cloud Map's
+  // record is MULTIVALUE, so a second task is a second A record and nothing
+  // else.
+  //
+  // Two tasks alone would NOT survive an ElastiCache failover, though: both
+  // probe the same Redis, so both would go unhealthy together and ECS would
+  // replace both — a restart that cannot fix Redis, with a Fargate cold start
+  // (ENI plus image pull) added on top of the failover. So the task
+  // definition's health check tolerates `retries * interval` = 8 * 15 s =
+  // 120 s of a failing probe before ECS acts, comfortably past a Multi-AZ
+  // failover (typically well under a minute). The probe still catches what it
+  // exists for: a wrong AUTH token or endpoint at first boot fails every
+  // attempt, so the task goes UNHEALTHY about two and a half minutes in, and
+  // the circuit breaker below rolls the deployment back. Size it again from
+  // the rehearsal's failover drill if that measures longer.
+  desired_count = 2
+  launch_type   = "FARGATE"
+
+  // A deployment whose tasks never go healthy (bad image, missing secret,
+  // wrong architecture) is rolled back to the last working one instead of
+  // being relaunched forever while `terraform apply` sits on
+  // wait_for_steady_state until the provider times out (#476). Every service
+  // carries this.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -322,6 +353,12 @@ resource "aws_ecs_service" "app" {
   desired_count   = var.app_desired_count
   launch_type     = "FARGATE"
 
+  // aws_ecs_service.srh says why every service carries this.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
   network_configuration {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.app.id]
@@ -396,6 +433,12 @@ resource "aws_ecs_service" "scorer" {
   desired_count   = 1
   launch_type     = "FARGATE"
 
+  // aws_ecs_service.srh says why every service carries this.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
   network_configuration {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.scorer[0].id]
@@ -467,6 +510,14 @@ resource "aws_ecs_service" "sync" {
   task_definition = aws_ecs_task_definition.sync[0].arn
   desired_count   = 1
   launch_type     = "FARGATE"
+
+  // aws_ecs_service.srh says why every service carries this. A rollback here
+  // still respects the single-poller rule below: min 0 / max 100 governs the
+  // rollback deployment too.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   network_configuration {
     subnets          = aws_subnet.public[*].id

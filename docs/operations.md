@@ -1924,6 +1924,10 @@ scripts/load-test.sh --app <fly-app> --url <EVENT_URL> --count 200
 scripts/load-test.sh --app <fly-app> --clean
 ```
 
+Every run, `--clean` and `--break-lock` included, deletes the seeder copy it
+uploaded to the container's `/tmp` on the way out, without changing the
+run's exit status.
+
 Pass bar for a ~100-player event, on the percentile autocannon reports
 (p97.5 — it has no p95, so the bar is the stricter one): `/leaderboard` p97.5
 under 1.5 s at 10 req/s, `?display=1` under 1 s, zero 5xx, zero connection
@@ -1983,6 +1987,88 @@ suspend, and no Cloudflare rule unless you put one in front of the ALB.
 `scripts/load-test.sh` does not run against an ECS stack either. The AWS
 checks, and how to run the load pass by hand, are in the
 [AWS event-day runbook](aws.md#before-the-event).
+
+### Checking score consistency: `scripts/score-audit.sh`
+
+A read-only differential audit of the scores the board shows. It runs
+`scripts/score-audit.mjs` **inside the Fly machine's `app` container** (the
+same upload-and-run as the load test), reads every key the leaderboard is
+folded from — the scorer's `ctf:solves:<target>` hashes and its rubric
+catalogue, the quiz, Jeopardy and AI aggregates and per-login rows, hint
+spend, team rosters, the module switches — and recomputes every
+contestant's and every team's total, per module and overall, with ranks.
+That recompute is a second implementation of the rules on this page and in
+[docs/architecture.md](architecture.md); it imports none of the app's fold
+code, so a bug there shows up as a disagreement instead of being copied.
+It then fetches `/leaderboard` from the app with `RSC: 1` — the page's
+flight payload, which carries the exact `data` object the board renders —
+and diffs the two.
+
+```sh
+scripts/score-audit.sh --app <fly-app> [--report <path>]
+```
+
+What it checks, beyond the totals: each module block's points and item
+count, the hint penalty, each contestant's team chip, each team's roster,
+and ranks (a full tie may come in either order); and three store
+invariants — each quiz/Jeopardy/AI aggregate equals the per-login rows it
+sums, a login is on at most one team, and its `ctf:user:<login>` record
+names that team.
+
+Exit codes:
+
+- **0**: every compared value agrees, no invariant is broken, and the
+  comparison was not vacuous (at least one contestant or team compared).
+- **1**: any finding. Each is printed as a `MISMATCH` or `INVARIANT` line,
+  and the JSON report has them all.
+- **2**: a usage error — a missing `--app`, or an `--app`, `--settle-ms` or
+  `--sd-cache-ms` value that is not a plain name or number. Nothing reaches
+  `fly`.
+- **3**: the audit could not be trusted, and says why:
+  - the store holds no scores and no teams, or it has data but no
+    contestant or team was matched and compared;
+  - the served payload is a shape the parser does not recognise (it fails
+    rather than reporting "no differences");
+  - `/leaderboard` redirected away (the event is not launched);
+  - the store changed during every attempt;
+  - a Redis read or the scorer's `/challenges` read failed;
+  - a wrapper setup step failed: no `fly` or `node`, the machine lookup,
+    the upload, a missing result line, or pulling the report back.
+
+The board is memoized for 10 s, and its Secure Development part is fetched
+through a cache that serves a copy up to 30 s old as fresh. So each attempt
+reads the store, waits past that cache when Secure Development is live
+(`--sd-cache-ms`, 32 s) so that any copy cached before the read is stale,
+fetches the board once to make it refresh, waits past the memo
+(`--settle-ms`, 12 s), fetches the board it compares, and re-reads the
+store; it compares only if nothing moved in between. An attempt takes about
+45 s with Secure Development live. The cache refreshes in the background,
+so if the scorer is slow to answer, the compared fetch can still carry the
+old copy — and the before/after store check cannot see that, because the
+store itself did not move. A Secure Development mismatch on a box whose
+scorer is under load is worth one re-run before you believe it. Run it on a quiet box: before the event,
+after a load-test seed, or once scoring closes. The report defaults to
+`docs/superpowers/` (gitignored).
+
+It is read-only by construction: every Redis command goes through a guard
+that refuses anything outside a fixed list of reads before it is sent. Those
+reads travel as a `POST` to srh's REST `/pipeline` (the method, not a
+write); its other requests, to the scorer's `/challenges` and the app's
+`/leaderboard`, are `GET`s. Combined with the load-test seed it
+exercises the board's read-and-fold path at volume. `load-test.sh` has no
+seed-only mode, so seed without the HTTP load by calling the seeder
+directly, run the audit, then clean:
+
+```sh
+fly ssh sftp put scripts/load-seed.mjs /tmp/load-seed.mjs --app <fly-app> --container app
+fly ssh console --app <fly-app> --container app -C "node /tmp/load-seed.mjs --count 100"
+scripts/score-audit.sh --app <fly-app>
+scripts/load-test.sh --app <fly-app> --clean
+```
+
+The seeder writes its
+rows directly rather than through the grading Lua, so that pairing tests
+how the board **reads** scores, not how a submission is graded.
 
 ### The org and the bootstrap keys: `ctf-setup.sh doctor`
 

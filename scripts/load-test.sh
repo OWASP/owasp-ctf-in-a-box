@@ -109,9 +109,15 @@ fail_setup() { # step
 # the report path: a run that cannot hold its own results must not seed.
 TMP=""
 MEM_PID=""
+# Set once the seeder is in the container, so every exit path — seed, clean,
+# break-lock, a failure — removes the uploaded copy. The trap re-raises the
+# script's own status: a failed rm (or the machine being gone) never turns a
+# failed run into a pass or a pass into a failure.
+REMOTE_UPLOADED=""
+rc=0
+trap 'rc=$?; if [ -n "$TMP" ]; then rm -rf "$TMP"; fi; if [ -n "$MEM_PID" ]; then kill "$MEM_PID" 2>/dev/null || true; fi; if [ -n "$REMOTE_UPLOADED" ]; then fly ssh console --app "$APP" --machine "$MACHINE" --container app -C "rm -f $REMOTE_SEEDER" >/dev/null 2>&1 || true; fi; exit "$rc"' EXIT
 if [ -z "$CLEAN" ]; then
   if ! TMP="$(mktemp -d)"; then fail_setup "creating a temporary directory (mktemp -d)"; fi
-  trap 'rm -rf "$TMP"; if [ -n "$MEM_PID" ]; then kill "$MEM_PID" 2>/dev/null || true; fi' EXIT
 fi
 
 MACHINE=""
@@ -129,6 +135,7 @@ if ! fly ssh sftp put "$HERE/load-seed.mjs" "$REMOTE_SEEDER" --app "$APP" --mach
   # the seed, clean and lock commands below all target $MACHINE.
   if ! fly ssh sftp put "$HERE/load-seed.mjs" "$REMOTE_SEEDER" --app "$APP" --machine "$MACHINE" >/dev/null 2>&1; then fail_setup "uploading the seeder to the app container"; fi
 fi
+REMOTE_UPLOADED=1
 
 if [ -n "$BREAK_LOCK" ]; then
   # Stale-lock recovery after a crashed run. The seeder is not in the app

@@ -8,6 +8,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+### Changes
+
 - **Fixed: team totals counted quiz, Jeopardy and AI points twice (#520).**
   On any board whose source reports its own teams (the scorer, i.e. every
   event running Secure Development), each team's total added its quiz,
@@ -25,6 +27,26 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   be read. The same fix gives a team's Jeopardy chip the right denominator:
   challenges solved before they were deleted now count in it, as they
   already did for Quiz and AI (#350).
+
+- **Added: a read-only score auditor.** `scripts/score-audit.sh --app
+  <fly-app>` runs `scripts/score-audit.mjs` inside the app container: it
+  recomputes every contestant's and every team's score, per module and
+  overall, with ranks, from the raw Redis rows — a second implementation of
+  the documented rules, importing none of the app's fold code — and diffs it
+  against the `data` the `/leaderboard` page actually serves (its RSC flight
+  payload). It sends only read-only Redis commands (anything else is refused
+  before it is sent), fails loudly on a payload shape it does not recognise,
+  refuses a vacuous comparison, and exits 0 only on zero mismatches. See
+  [Checking score consistency](docs/operations.md#checking-score-consistency-scriptsscore-auditsh).
+- **Fixed: the load-test seeder read which modules are live from a field
+  nothing writes.** `scripts/load-seed.mjs` parsed a JSON `enabledModuleIds`,
+  but the app stores `enabledModules` as a comma list, so every module always
+  read as live and a seed attached points to boards that were switched off.
+  It now reads the real field with the app's default (absent = Secure
+  Development iff `SCORE_IMAGE`, empty = none) and refuses to seed on a list
+  holding anything but known module ids. Its test suite now runs in CI.
+- **Changed: `scripts/load-test.sh` deletes the seeder it uploaded** to the
+  container's `/tmp` on every exit path, without changing the exit status.
 
 ## v0.7.0 — 2026-09-30
 

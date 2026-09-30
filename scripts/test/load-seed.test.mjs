@@ -264,13 +264,26 @@ test("ops are shaped for the seed script, and claimed exactly when an earlier ba
 });
 
 // Fail closed: the seed refuses to guess which modules are live.
-test("liveModules parses the stored list and throws on anything it cannot read", () => {
-  assert.equal(liveModules({}), null);
-  assert.equal(liveModules({ enabledModuleIds: "" }), null);
-  assert.deepEqual(liveModules({ enabledModuleIds: '["quiz","classic"]' }), ["quiz", "classic"]);
-  assert.throws(() => liveModules({ enabledModuleIds: "{not json" }), /not valid JSON/);
-  assert.throws(() => liveModules({ enabledModuleIds: '{"quiz":true}' }), /not a list/);
-  assert.throws(() => liveModules({ enabledModuleIds: "[1,2]" }), /not a list/);
+// The stored field is `enabledModules`, a comma list (admin-store.ts
+// decodeEnabledModuleIds) — the seeder once read a JSON `enabledModuleIds`
+// that nothing writes, so every module always read as live.
+test("liveModules reads the stored comma list the app writes, with the app's default", () => {
+  const sd = { SCORE_IMAGE: "ghcr.io/x/score:1" };
+  assert.deepEqual(liveModules({}, sd), ["secure-development"], "absent: the deployment default");
+  assert.deepEqual(liveModules({}, {}), [], "absent with no scorer image: nothing");
+  assert.deepEqual(liveModules({ enabledModules: "" }, sd), [], "empty: the organizer switched every board off");
+  assert.deepEqual(liveModules({ enabledModules: " quiz, classic " }, sd), ["quiz", "classic"]);
+  assert.deepEqual(liveModules({ enabledModules: "quiz,secure-development" }, {}), ["quiz"], "no scorer image: SD is never live");
+  assert.deepEqual(liveModules({ enabledModules: "quiz,quiz" }, sd), ["quiz"]);
+  assert.deepEqual(liveModules({ enabledModuleIds: '["quiz"]' }, {}), [], "the JSON field nothing writes is ignored");
+});
+
+test("liveModules fails closed on a stored list it cannot fully read", () => {
+  assert.throws(() => liveModules({ enabledModules: "quiz,bingo" }, {}), /bingo.*refusing to guess/);
+  // The app drops an empty token; the seeder refuses it, on purpose: a
+  // malformed list is not one it guesses its way through.
+  assert.throws(() => liveModules({ enabledModules: "quiz," }, {}), /"", not a module id/);
+  assert.throws(() => liveModules({ enabledModules: '["quiz"]' }, {}), /refusing to guess/);
 });
 
 test("resolveCatalogue attaches only live modules and aborts when Secure Development has no scorer", () => {

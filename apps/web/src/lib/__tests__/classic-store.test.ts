@@ -583,6 +583,15 @@ describe("getClassicTotals", () => {
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
     expect(mocks.upstashPipeline.mock.calls[0][0]).toContainEqual(["HGETALL", "ctf:classic:lastAt"]);
   });
+
+  // #523: an errored counter read is not "nobody has points".
+  it.each([
+    ["points", [{ error: "WRONGTYPE" }, { result: [] }, { result: [] }]],
+    ["solved", [{ result: [] }, { error: "NOAUTH" }, { result: [] }]],
+  ])("throws when the %s counter read fails, instead of reading it as empty", async (_name, replies) => {
+    mocks.upstashPipeline.mockResolvedValueOnce(replies);
+    await expect(getClassicTotals()).rejects.toThrow(/classic totals/);
+  });
 });
 
 describe("getTeamClassicTotalsBatch", () => {

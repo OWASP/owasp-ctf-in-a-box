@@ -517,6 +517,15 @@ describe("totals", () => {
     expect(mocks.upstashPipeline.mock.calls[0][0]).toContainEqual(["HGETALL", "ctf:ai:lastAt"]);
   });
 
+  // #523: an errored counter read is not "nobody has points".
+  it.each([
+    ["points", [{ error: "WRONGTYPE" }, { result: [] }, { result: [] }]],
+    ["solved", [{ result: [] }, { error: "NOAUTH" }, { result: [] }]],
+  ])("throws when the %s counter read fails, instead of reading it as empty", async (_name, replies) => {
+    mocks.upstashPipeline.mockResolvedValueOnce(replies);
+    await expect(getAiTotals()).rejects.toThrow(/ai totals/);
+  });
+
   it("counts distinct solvers per challenge", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: [CHALLENGE.id, "4"] }]);
     expect(await getAiSolveCounts()).toEqual(new Map([[CHALLENGE.id, 4]]));

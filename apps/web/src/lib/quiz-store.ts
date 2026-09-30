@@ -587,6 +587,11 @@ export async function getQuizTotals(): Promise<Map<string, QuizTotal>> {
     ["HGETALL", ANSWERED_KEY],
     ["HGETALL", LAST_AT_KEY],
   ]);
+  // An errored counter read is not "nobody has points" (#523): throw, so the
+  // leaderboard's own handling applies (it logs and leaves the module off the
+  // board) instead of every row silently losing these points.
+  const failed = pointsRes.error ?? answeredRes.error;
+  if (failed !== undefined) throw new Error(`quiz totals read failed: ${failed}`);
   const points = parseCounterHash(pointsRes.result);
   const answered = parseCounterHash(answeredRes.result);
   const lastAt = readLastAt(lastAtRes, "quiz");

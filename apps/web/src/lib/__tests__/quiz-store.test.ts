@@ -519,6 +519,22 @@ describe("getQuizTotals", () => {
     mocks.upstashPipeline.mockResolvedValue([{ result: [] }, { result: [] }, { result: [] }]);
     expect(await getQuizTotals()).toEqual(new Map());
   });
+
+  // #523: an errored counter read is not "nobody has points" — it throws, so
+  // the leaderboard's own handling (log, drop the module) applies and says so.
+  it.each([
+    ["points", [{ error: "WRONGTYPE" }, { result: [] }, { result: [] }]],
+    ["answered", [{ result: [] }, { error: "NOAUTH" }, { result: [] }]],
+  ])("throws when the %s counter read fails, instead of reading it as empty", async (_name, replies) => {
+    mocks.upstashPipeline.mockResolvedValue(replies);
+    await expect(getQuizTotals()).rejects.toThrow(/quiz totals/);
+  });
+
+  it("still returns the totals when only the award-time read fails (it only orders ties)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["ada", "30"] }, { result: ["ada", "3"] }, { error: "WRONGTYPE" }]);
+    expect(await getQuizTotals()).toEqual(new Map([["ada", { points: 30, answered: 3, lastAt: null }]]));
+  });
 });
 
 // The fold semantics for ONE team, exercised through the batch with a single

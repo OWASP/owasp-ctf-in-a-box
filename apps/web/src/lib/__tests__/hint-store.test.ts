@@ -693,6 +693,13 @@ describe("getHintPenalties", () => {
     expect(await store.getHintPenalties()).toEqual(new Map());
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
+
+  // #523: an errored read of the spend hash is not "nobody bought a hint".
+  it("throws when the spent-hash read fails, instead of reading it as no penalties", async () => {
+    const store = await loadStore();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "WRONGTYPE" }]);
+    await expect(store.getHintPenalties()).rejects.toThrow(/hint penalties/);
+  });
 });
 
 describe("getHintAvailability", () => {

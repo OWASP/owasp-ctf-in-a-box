@@ -957,6 +957,11 @@ export async function getClassicTotals(): Promise<Map<string, ClassicTotal>> {
     ["HGETALL", SOLVED_KEY],
     ["HGETALL", LAST_AT_KEY],
   ]);
+  // An errored counter read is not "nobody has points" (#523): throw, so the
+  // leaderboard's own handling applies (it logs and leaves the module off the
+  // board) instead of every row silently losing these points.
+  const failed = pointsRes.error ?? solvedRes.error;
+  if (failed !== undefined) throw new Error(`classic totals read failed: ${failed}`);
   const points = parseCounterHash(pointsRes.result);
   const solved = parseCounterHash(solvedRes.result);
   const lastAt = readLastAt(lastAtRes, "classic");

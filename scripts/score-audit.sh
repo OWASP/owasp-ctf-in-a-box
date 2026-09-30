@@ -9,8 +9,9 @@
 # is on the private network; the container holds the URL/token and the
 # scorer's address), runs it there against http://127.0.0.1:3000, pulls the
 # JSON report back and prints the human summary. The auditor sends only
-# read-only Redis commands (it refuses anything else before sending) and
-# only GETs over HTTP; nothing on the box is written except the two scratch
+# read-only Redis commands (it refuses anything else before sending), as a
+# POST to srh's /pipeline, and otherwise only GETs (the scorer's /challenges
+# and the app's /leaderboard); nothing on the box is written except the two scratch
 # files under /tmp in the container, which are removed afterwards.
 #
 # Exit code: 0 only when the audit ran, compared a non-zero number of

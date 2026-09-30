@@ -15,8 +15,10 @@
 //
 // READ-ONLY, ENFORCED. Every command goes through `pipeline()`, which calls
 // `assertReadOnly()` first and throws — sending nothing — on any command not
-// in READ_ONLY_COMMANDS. The only HTTP calls are GETs: the scorer's public
-// /challenges catalogue and the app's own /leaderboard.
+// in READ_ONLY_COMMANDS. Those reads travel as a POST to srh's REST
+// /pipeline (the request method, not a write); the only other HTTP calls are
+// GETs: the scorer's public /challenges catalogue and the app's own
+// /leaderboard.
 //
 // THE RULES, AS DERIVED (file:line at v0.7.0, 37bdb813)
 //

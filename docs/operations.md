@@ -2051,8 +2051,10 @@ after a load-test seed, or once scoring closes. The report defaults to
 `docs/superpowers/` (gitignored).
 
 It is read-only by construction: every Redis command goes through a guard
-that refuses anything outside a fixed list of reads before it is sent, and
-the only HTTP requests are `GET`s. Combined with the load-test seed it
+that refuses anything outside a fixed list of reads before it is sent. Those
+reads travel as a `POST` to srh's REST `/pipeline` (the method, not a
+write); its other requests, to the scorer's `/challenges` and the app's
+`/leaderboard`, are `GET`s. Combined with the load-test seed it
 exercises the board's read-and-fold path at volume. `load-test.sh` has no
 seed-only mode, so seed without the HTTP load by calling the seeder
 directly, run the audit, then clean:

@@ -62,6 +62,8 @@ describe("parseEventBundle", () => {
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
     expect(res.errors[0].message).toContain("newer than this box supports");
+    // #515 review: the message states the rule, never the submitted value.
+    expect(res.errors[0].message).not.toContain(String(EVENT_BUNDLE_VERSION + 1));
   });
 
   it("refuses a version older than EVENT_BUNDLE_MIN_VERSION", () => {

@@ -30,9 +30,9 @@ import {
  * bulk-maintenance paths are the deliberate exception, reusing this file's
  * key constants/`canonicalizeChoices` (via quiz-keys.ts) rather than going
  * through these functions: `seedDemoData()` HSETs the questions/key/answers/
- * aggregate hashes directly when seeding demo data, and the master reset's
- * `scanDelByPrefix()` SCAN+DELs the per-login answers/attempts hashes and
- * the two aggregate hashes (never the questions/key hashes — those are
+ * aggregate/award-time hashes directly when seeding demo data, and the master
+ * reset's `scanDelByPrefix()` SCAN+DELs the per-login answers/attempts hashes,
+ * the two aggregate hashes and `ctf:quiz:lastAt` (never the questions/key hashes — those are
  * organizer content the reset keeps). See docs/architecture.md's "Quiz data
  * flow" for the full picture.
  *
@@ -823,9 +823,9 @@ async function readSettingsFailOpen(): Promise<ResolvedAdminSettings | null> {
 //      earlier; `upsertQuestion` requires `points` to be a non-negative
 //      integer so this match — and the HINCRBY below — can't be handed a
 //      decimal mid-script with no way to roll back), HSET the answer row,
-//      and HINCRBY the two aggregate counters (`ctf:quiz:points`,
-//      `ctf:quiz:answered`) that the leaderboard overlay reads later ->
-//      {'correct', points}.
+//      HINCRBY the two aggregate counters (`ctf:quiz:points`,
+//      `ctf:quiz:answered`) and move `ctf:quiz:lastAt` forward, which the
+//      leaderboard overlay reads later -> {'correct', points}.
 //
 // Both pattern matches are anchored with a trailing `[,}]` so a value can
 // only match a complete `"field":<value>` pair immediately followed by the

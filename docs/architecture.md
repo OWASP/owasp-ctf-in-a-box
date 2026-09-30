@@ -288,10 +288,10 @@ during normal contestant and authoring activity — answering, grading,
 question authoring/deletion all go through it — but two `admin-store.ts`
 bulk-maintenance paths touch `ctf:quiz:*` directly rather than calling into
 `quiz-store.ts`: `seedDemoData()` (`HSET`s the questions key, the answer key,
-a per-login answers hash, and both aggregate hashes when seeding demo data)
-and the master reset's `scanDelByPrefix()` (`SCAN`+`DEL`s
+a per-login answers hash, both aggregate hashes and `ctf:quiz:lastAt` when
+seeding demo data) and the master reset's `scanDelByPrefix()` (`SCAN`+`DEL`s
 `ctf:quiz:answers:*`/`ctf:quiz:attempts:*`/`ctf:quiz:points`/
-`ctf:quiz:answered` — see "Master reset" below). Both reuse `quiz-keys.ts`'s
+`ctf:quiz:answered`/`ctf:quiz:lastAt` — see "Master reset" below). Both reuse `quiz-keys.ts`'s
 shared key constants and `canonicalizeChoices` recipe rather than
 re-deriving them, so the two writers can't silently disagree on key names or
 answer-set format even though they're separate code paths:
@@ -407,7 +407,7 @@ denominator. A failed question-list read degrades to a missing denominator
 hinge on a cosmetic read.
 
 The master reset (below) wipes `ctf:quiz:answers:*`, `ctf:quiz:attempts:*`,
-`ctf:quiz:points`, and `ctf:quiz:answered` — contestant progress — but
+`ctf:quiz:points`, `ctf:quiz:answered` and `ctf:quiz:lastAt` — contestant progress — but
 deliberately leaves `ctf:quiz:questions` and `ctf:quiz:key` untouched, the
 same way it leaves `ctf:admin:settings` untouched: both are organizer-
 authored content, not event-run state a reset should ever destroy.

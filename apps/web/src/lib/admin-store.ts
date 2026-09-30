@@ -730,7 +730,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
 // hash and ctf:user:<login>:hints; ctf:team:* covers <slug> and <slug>:members.
 //
 // Quiz scope (spec Q1): wipes contestant PROGRESS (per-login answers/attempts,
-// plus the two running-total aggregate hashes) and deliberately KEEPS
+// plus the two running-total aggregate hashes and the award-time hash) and deliberately KEEPS
 // `ctf:quiz:questions` / `ctf:quiz:key` — those are organizer CONTENT, like
 // `ctf:admin:settings`, not something a reset should ever destroy. The
 // aggregates (`ctf:quiz:points`/`ctf:quiz:answered`) MUST still be cleared:
@@ -743,8 +743,8 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
 // deleteChallenge's doc comment in classic-store.ts for the same contract
 // stated from the single-challenge-delete side): wipes contestant PROGRESS —
 // per-login solves/attempts, plus the three aggregate hashes
-// (`ctf:classic:points`/`ctf:classic:solved`/`ctf:classic:solvecount`) the
-// leaderboard reads — and deliberately KEEPS `ctf:classic:challenges` /
+// (`ctf:classic:points`/`ctf:classic:solved`/`ctf:classic:solvecount`) and
+// the award-time hash (`ctf:classic:lastAt`) the leaderboard reads — and deliberately KEEPS `ctf:classic:challenges` /
 // `ctf:classic:flag` / `ctf:classic:flagnorm` / `ctf:classic:categories`,
 // which are organizer CONTENT, not something a reset should ever destroy.
 const RESET_PREFIXES: readonly [string, string][] = [
@@ -767,8 +767,8 @@ const RESET_PREFIXES: readonly [string, string][] = [
   ["classicSolveCount", CLASSIC_SOLVECOUNT_KEY],
   ["classicLastAt", CLASSIC_LAST_AT_KEY],
   // ai scope mirrors classic's exactly, same PROGRESS/CONTENT split: solves,
-  // attempts, the two per-login aggregate hashes and the per-challenge
-  // solvecount are wiped, while `ctf:ai:challenges` / `ctf:ai:flag` /
+  // attempts, the two per-login aggregate hashes, the award-time hash and the
+  // per-challenge solvecount are wiped, while `ctf:ai:challenges` / `ctf:ai:flag` /
   // `ctf:ai:flagnorm` / `ctf:ai:hints` / `ctf:ai:signkey` / `ctf:ai:categories`
   // survive for the same reason classic's catalogue does: organizer CONTENT,
   // not something a reset should ever destroy.

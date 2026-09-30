@@ -115,7 +115,9 @@ jobs:
             # docs/decisions.md, the Makefile, AGENTS.md and CONTRIBUTING.md
             # are here because scripts/test/check-docs-drift.bats pins the ADR
             # index and the local copies of this job's own commands (#501).
-            echo "shell=$(m "^scripts/|^setup/|^deploy/fly/|^deploy/aws-terraform/deploy\.sh$|^deploy/aws-terraform/test/|^sync/Dockerfile$|^docker-compose\.yml$|^scorer/consumer-workflow\.example\.yml$|^scorer/entrypoint|^docs/decisions\.md$|^Makefile$|^AGENTS\.md$|^CONTRIBUTING\.md$$CI")"
+            # .nvmrc and every workflow are here for the same check's third
+            # rule: each workflow's node-version must equal .nvmrc.
+            echo "shell=$(m "^scripts/|^setup/|^deploy/fly/|^deploy/aws-terraform/deploy\.sh$|^deploy/aws-terraform/test/|^sync/Dockerfile$|^docker-compose\.yml$|^scorer/consumer-workflow\.example\.yml$|^scorer/entrypoint|^docs/decisions\.md$|^Makefile$|^AGENTS\.md$|^CONTRIBUTING\.md$|^\.nvmrc$|^\.github/workflows/$CI")"
             # `^sync/` is here because smoke runs the REAL sync service —
             # docker-compose.smoke.yml overrides only its environment. It is
             # the one end-to-end proof the poll pipeline works, so the area

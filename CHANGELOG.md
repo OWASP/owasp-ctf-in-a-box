@@ -8,6 +8,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Team join codes draw every symbol uniformly (#435).** A join code's six
+  symbols were `randomBytes` values reduced `% 31`, and 256 is not a multiple
+  of 31, so the first eight symbols of the alphabet came up 9/256 of the time
+  and the other 23 at 8/256 (CodeQL `js/biased-cryptographic-random`, high).
+  The loss was about 0.012 bits over a whole code, but the alert stayed open
+  on every PR. Each symbol is now `randomInt(0, 31)` from `node:crypto`, which
+  rejection-samples. The alphabet, length and format are unchanged, and
+  existing codes keep working.
+
 - **sync's cursor now lives in Redis (`ctf:sync:state`).** Before, it lived
   only in `state.json` on sync's disk, so a restart on Fargate (or any sync
   container recreated without its volume) re-read every score comment.

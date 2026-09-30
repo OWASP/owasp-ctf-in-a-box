@@ -9,6 +9,7 @@ vi.mock("server-only", () => ({}));
 
 import { getChallengeCatalog, groupCatalog, type CatalogChallenge } from "@/lib/challenges";
 import type { AppId } from "@/lib/apps";
+import { decoratedError, expectLabelOnly } from "./log-redaction";
 
 /** One challenge in the shape the SCORER sends: a rubric `name`, and `owasp`
  *  as a bare code (or null). Resolving that code into a label and a link is
@@ -116,5 +117,18 @@ describe("getChallengeCatalog", () => {
   it("returns null when fetch itself rejects", async () => {
     fetchMock.mockRejectedValueOnce(new Error("network down"));
     expect(await getChallengeCatalog()).toBeNull();
+  });
+
+  // undici decorates a failed fetch with a `cause` that can carry the request;
+  // the log gets the label only (#500 follow-up).
+  it("logs the label, not the rejected error", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      fetchMock.mockRejectedValueOnce(decoratedError("network down"));
+      expect(await getChallengeCatalog()).toBeNull();
+      expectLabelOnly(consoleError, { label: "network down" });
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

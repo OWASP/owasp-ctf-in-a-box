@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
+import { errorLabel } from "@/lib/error-label";
 import { getAdminSettings, getSyncStatus } from "@/lib/admin-store";
 import { getLeaderboardSource } from "@/lib/leaderboard/source";
 import { withModuleContributions } from "@/lib/leaderboard/module-contributions";
@@ -31,7 +32,7 @@ async function readLeaderboardFreshness(): Promise<LeaderboardFreshness> {
     }
     return { players: entries.length, lastUpdatedAt };
   } catch (err) {
-    console.error("[admin/status] leaderboard freshness read failed", err);
+    console.error("[admin/status] leaderboard freshness read failed", errorLabel(err));
     return null;
   }
 }

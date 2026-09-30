@@ -1,4 +1,5 @@
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 import { upstashEval } from "@/lib/upstash";
 
 /**
@@ -73,7 +74,7 @@ export async function consumeRateLimit(
     // thing this response is saying not to do.
     return { allowed: false, retryAfterSeconds: Math.max(1, Number(ttl)) };
   } catch (err) {
-    console.error(`[rate-limit] ${bucket} charge failed, allowing: ${(err as Error).message}`);
+    console.error(`[rate-limit] ${bucket} charge failed, allowing: ${errorLabel(err)}`);
     return { allowed: true };
   }
 }

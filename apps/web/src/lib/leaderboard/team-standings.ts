@@ -1,4 +1,5 @@
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 import { listTeams } from "@/lib/team-store";
 import { withTeamAiPoints, withTeamClassicPoints, withTeamQuizPoints } from "./module-contributions";
 import type { LeaderboardData, TeamStanding } from "./types";
@@ -46,7 +47,7 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   try {
     teams = await listTeams();
   } catch (err) {
-    console.error("team standings unavailable:", err);
+    console.error("team standings unavailable:", errorLabel(err));
     return data;
   }
   if (teams.length === 0) return data;

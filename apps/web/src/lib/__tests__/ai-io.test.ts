@@ -158,3 +158,38 @@ describe("serializeBundle (ai)", () => {
     expect(text).toContain('\n  "categories": [');
   });
 });
+
+// The error list goes back to the admin client verbatim, and a bundle's
+// values are arbitrary text: an id, a category, a mode or a key name can
+// carry a flag or a pasted signing key. Every message names the indexed path
+// and the rule, never the submitted value (#500 follow-up, the shape
+// event-io.ts's `validateAttachmentFiles` set).
+describe("ai import errors never echo the submitted value (#500)", () => {
+  const PLANTED = "FLAG{do-not-echo}";
+  const PLANTED_ID = "planted-do-not-echo";
+  const c0 = valid.challenges[0];
+
+  function errorsOf(bundle: unknown): { where: string; message: string }[] {
+    const res = parseBundle(asJson(bundle));
+    if (res.ok) throw new Error("expected the bundle to be rejected, but it parsed");
+    return res.errors;
+  }
+  function expectNoEcho(errors: { where: string; message: string }[], where: string, secret = PLANTED): void {
+    expect(errors.some((e) => e.where === where)).toBe(true);
+    expect(JSON.stringify(errors)).not.toContain(secret);
+  }
+  const withChallenge = (patch: Record<string, unknown>) => ({ ...valid, challenges: [{ ...c0, ...patch }] });
+
+  it("an invalid id, an unknown category, an unknown mode and unknown keys never echo", () => {
+    expectNoEcho(errorsOf(withChallenge({ id: PLANTED })), "challenges[0].id");
+    expectNoEcho(errorsOf(withChallenge({ category: PLANTED })), "challenges[0].category");
+    expectNoEcho(errorsOf(withChallenge({ mode: PLANTED })), "challenges[0].mode");
+    expectNoEcho(errorsOf(withChallenge({ [PLANTED]: 1 })), "challenges[0]");
+  });
+
+  it("a duplicate challenge id and a duplicate category name the position, not the value", () => {
+    const dup = { ...c0, id: PLANTED_ID };
+    expectNoEcho(errorsOf({ ...valid, challenges: [dup, dup] }), "challenges[1].id", PLANTED_ID);
+    expectNoEcho(errorsOf({ ...valid, categories: [...valid.categories, PLANTED, PLANTED] }), "categories[3]");
+  });
+});

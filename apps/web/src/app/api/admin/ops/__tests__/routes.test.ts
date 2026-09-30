@@ -52,6 +52,7 @@ vi.mock("@/lib/admin-ops-store", () => ({
 
 import { GET as userGET, POST as userPOST, DELETE as userDELETE } from "@/app/api/admin/ops/user/route";
 import { POST as teamPOST, DELETE as teamDELETE } from "@/app/api/admin/ops/team/route";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const userReq = (login: string) =>
   new Request(`http://x/api/admin/ops/user?login=${encodeURIComponent(login)}`);
@@ -198,6 +199,23 @@ describe("/api/admin/ops/team", () => {
     expect(format).toBe("[admin/ops/team] %s failed");
     expect(args[0]).toBe("remove-member");
     spy.mockRestore();
+  });
+
+  // Label only, never the raw caught value: the ops writes carry the login
+  // and slug as ARGV, and a decorated error would put them in the log (#500).
+  it("logs the error's label, never the raw err, on the team and user routes", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      forceRemoveFromTeam.mockRejectedValue(decoratedError("redis exploded"));
+      expect((await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "remove-member" }))).status).toBe(503);
+      expectLabelOnly(spy, { label: "redis exploded" });
+      spy.mockClear();
+      lookupUser.mockRejectedValue(decoratedError("redis exploded"));
+      expect((await userGET(userReq("bob"))).status).toBe(503);
+      expectLabelOnly(spy, { label: "redis exploded" });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("rejects an unknown team action", async () => {

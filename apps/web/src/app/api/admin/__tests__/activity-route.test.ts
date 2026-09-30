@@ -13,6 +13,7 @@ vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
 vi.mock("@/lib/activity-log", () => ({ listActivity }));
 
 import { GET } from "@/app/api/admin/activity/route";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const req = (query = "") => new Request(`http://x/api/admin/activity${query}`);
 
@@ -61,5 +62,17 @@ describe("GET /api/admin/activity", () => {
     const res = await GET(req());
     expect(res.status).toBe(503);
     error.mockRestore();
+  });
+
+  // Label only, never the raw caught value (#500 follow-up).
+  it("logs the label on a read failure, never the raw err", async () => {
+    listActivity.mockRejectedValue(decoratedError());
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await GET(req())).status).toBe(503);
+      expectLabelOnly(error);
+    } finally {
+      error.mockRestore();
+    }
   });
 });

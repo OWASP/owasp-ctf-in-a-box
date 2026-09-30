@@ -1,4 +1,5 @@
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 import { getHintPenalties, HINTS_AVAILABLE } from "@/lib/hint-store";
 import { compareStanding } from "./rank";
 import type { LeaderboardData } from "./types";
@@ -45,7 +46,7 @@ export async function withHintPenalties(data: LeaderboardData): Promise<Leaderbo
   try {
     penalties = await getHintPenalties();
   } catch (err) {
-    console.error("hint penalties unavailable:", err);
+    console.error("hint penalties unavailable:", errorLabel(err));
     return data;
   }
   if (penalties.size === 0) return data;

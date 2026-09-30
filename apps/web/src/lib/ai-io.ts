@@ -44,6 +44,7 @@ import {
   AI_CATEGORY_MAX_LEN,
   AI_HINT_MAX,
   AI_ID_RE,
+  AI_MODES,
   AI_POINTS_MAX,
   AI_URL_TEMPLATE_MAX,
   isAiMode,
@@ -85,6 +86,10 @@ export type AiBundle = {
   challenges: AiBundleChallenge[];
 };
 
+/** `where` is the indexed path, `message` the rule it broke — never the
+ *  submitted value or a key name. The list goes back to the admin client
+ *  verbatim, and a bundle's values are arbitrary text a flag or a pasted
+ *  signing key can ride in (#500). */
 export type ImportError = { where: string; message: string };
 
 export type ParseResult = { ok: true; bundle: AiBundle } | { ok: false; errors: ImportError[] };
@@ -119,7 +124,7 @@ function validateCategories(raw: unknown, errors: ImportError[]): string[] {
   if (raw.length > AI_CATEGORIES_MAX) {
     errors.push({ where: "categories", message: `At most ${AI_CATEGORIES_MAX} categories are allowed` });
   }
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   const out: string[] = [];
   raw.forEach((entry, i) => {
     const where = `categories[${i}]`;
@@ -137,11 +142,12 @@ function validateCategories(raw: unknown, errors: ImportError[]): string[] {
       return;
     }
     const fold = trimmed.toLowerCase();
-    if (seen.has(fold)) {
-      errors.push({ where, message: `Duplicate category: ${trimmed}` });
+    const first = seen.get(fold);
+    if (first !== undefined) {
+      errors.push({ where, message: `Duplicate category — the same name as categories[${first}], ignoring case` });
       return;
     }
-    seen.add(fold);
+    seen.set(fold, i);
     out.push(trimmed);
   });
   return out;
@@ -159,12 +165,12 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
 
   const unknownKeys = Object.keys(raw).filter((k) => !CHALLENGE_KEY_SET.has(k));
   if (unknownKeys.length > 0) {
-    errors.push({ where: base, message: `Unknown key(s): ${unknownKeys.join(", ")}` });
+    errors.push({ where: base, message: `Unknown key(s) (${unknownKeys.length}) — a challenge has only ${CHALLENGE_KEYS.join(", ")}` });
   }
 
   const id = raw.id;
   if (typeof id !== "string" || !AI_ID_RE.test(id)) {
-    errors.push({ where: `${base}.id`, message: `Invalid challenge id: ${String(id)}` });
+    errors.push({ where: `${base}.id`, message: "Challenge id must be 1-64 letters, digits, _ or -" });
   }
 
   const title = raw.title;
@@ -176,7 +182,7 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
   if (typeof category !== "string") {
     errors.push({ where: `${base}.category`, message: "Challenge category must be a string" });
   } else if (!categories.includes(category)) {
-    errors.push({ where: `${base}.category`, message: `Unknown category: ${category}` });
+    errors.push({ where: `${base}.category`, message: "Challenge category must be one of this bundle's categories" });
   }
 
   const description = raw.description;
@@ -200,7 +206,7 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
   const mode = raw.mode;
   const modeOk = isAiMode(mode);
   if (!modeOk) {
-    errors.push({ where: `${base}.mode`, message: `Unknown mode: ${String(mode)}` });
+    errors.push({ where: `${base}.mode`, message: `Mode must be one of ${AI_MODES.join(", ")}` });
   }
 
   const urlTemplate = raw.urlTemplate;
@@ -250,14 +256,15 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
 
 /** Cross-row rule: a repeated id within one file is always a mistake. */
 function checkDuplicateIds(challenges: readonly unknown[], errors: ImportError[]): void {
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   challenges.forEach((raw, i) => {
     if (!isPlainObject(raw) || typeof raw.id !== "string") return;
-    if (seen.has(raw.id)) {
-      errors.push({ where: `challenges[${i}].id`, message: `Duplicate challenge id: ${raw.id}` });
+    const first = seen.get(raw.id);
+    if (first !== undefined) {
+      errors.push({ where: `challenges[${i}].id`, message: `Duplicate challenge id — the same as challenges[${first}].id` });
       return;
     }
-    seen.add(raw.id);
+    seen.set(raw.id, i);
   });
 }
 

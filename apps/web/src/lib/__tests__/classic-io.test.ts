@@ -184,7 +184,9 @@ describe("bundle v2: stories (#463)", () => {
     const text = JSON.stringify(res.errors);
     expect(text).toMatch(/title/);
     expect(text).toMatch(/twice/);
-    expect(text).toMatch(/not-in-bundle-zz99zz/);
+    // Named by position, not echoed: the step's own text never comes back.
+    expect(res.errors.some((e) => e.where === "stories[0].steps[2]" && /challenge in this bundle/.test(e.message))).toBe(true);
+    expect(text).not.toMatch(/not-in-bundle-zz99zz/);
     expect(text).toMatch(/unique/);
     expect(text).toMatch(/two stories|one story/);
   });
@@ -227,5 +229,62 @@ describe("bundle v2: attachments (#186)", () => {
     ["a non-array", "capture.pcap"],
   ])("refuses %s, naming the attachments field", (_label, att) => {
     expect(attErrors(withAtt(att)).length).toBeGreaterThan(0);
+  });
+});
+
+// The error list goes back to the admin client verbatim, and a bundle's
+// values are arbitrary text: an id, a category, a key name or a story step
+// can carry a flag or a pasted secret. Every message names the indexed path
+// and the rule, never the submitted value (#500 follow-up, the shape
+// event-io.ts's `validateAttachmentFiles` set).
+describe("classic import errors never echo the submitted value (#500)", () => {
+  const PLANTED = "FLAG{do-not-echo}";
+  const PLANTED_ID = "planted-do-not-echo";
+  const c0 = valid.challenges[0];
+
+  function errorsOf(bundle: unknown): { where: string; message: string }[] {
+    const res = parseBundle(JSON.stringify(bundle));
+    if (res.ok) throw new Error("expected the bundle to be rejected, but it parsed");
+    return res.errors;
+  }
+  function expectNoEcho(errors: { where: string; message: string }[], where: string, secret = PLANTED): void {
+    expect(errors.some((e) => e.where === where)).toBe(true);
+    expect(JSON.stringify(errors)).not.toContain(secret);
+  }
+  const withChallenge = (patch: Record<string, unknown>) => ({ ...valid, challenges: [{ ...c0, ...patch }] });
+
+  it("an invalid challenge id, an unknown category and unknown keys never echo", () => {
+    expectNoEcho(errorsOf(withChallenge({ id: PLANTED })), "challenges[0].id");
+    expectNoEcho(errorsOf(withChallenge({ category: PLANTED })), "challenges[0].category");
+    expectNoEcho(errorsOf(withChallenge({ [PLANTED]: 1 })), "challenges[0]");
+  });
+
+  it("a duplicate challenge id and a duplicate category name the position, not the value", () => {
+    const dup = { ...c0, id: PLANTED_ID };
+    expectNoEcho(errorsOf({ ...valid, challenges: [dup, dup] }), "challenges[1].id", PLANTED_ID);
+    expectNoEcho(errorsOf({ ...valid, categories: ["Web", "Crypto", PLANTED, PLANTED] }), "categories[3]");
+  });
+
+  it("an attachment's unknown keys are counted, not named", () => {
+    const att = [{ name: "a.txt", url: "https://files.example.org/a.txt", [PLANTED]: 1 }];
+    expectNoEcho(errorsOf({ ...valid, version: 2, challenges: [{ ...c0, attachments: att }] }), "challenges[0].attachments[0]");
+  });
+
+  it("story ids, unknown keys and steps never echo", () => {
+    const v2 = (stories: unknown) => ({ ...valid, version: 2, stories });
+    const ok = { title: "T", intro: "", steps: [] };
+    expectNoEcho(errorsOf(v2([{ id: PLANTED, ...ok }])), "stories[0].id");
+    expectNoEcho(errorsOf(v2([{ id: PLANTED_ID, ...ok }, { id: PLANTED_ID, ...ok }])), "stories[1].id", PLANTED_ID);
+    expectNoEcho(errorsOf(v2([{ id: "op", ...ok, [PLANTED]: 1 }])), "stories[0]");
+    expectNoEcho(errorsOf(v2([{ id: "op", ...ok, steps: [PLANTED] }])), "stories[0].steps[0]");
+    // A real challenge id is still the bundle's own text: twice in one story,
+    // or in two stories, is named by position too.
+    const withId = (id: string) => ({ ...valid, version: 2, challenges: [{ ...c0, id }] });
+    expectNoEcho(errorsOf({ ...withId(PLANTED_ID), stories: [{ id: "op", ...ok, steps: [PLANTED_ID, PLANTED_ID] }] }), "stories[0].steps[1]", PLANTED_ID);
+    expectNoEcho(
+      errorsOf({ ...withId(PLANTED_ID), stories: [{ id: "op", ...ok, steps: [PLANTED_ID] }, { id: "side", ...ok, steps: [PLANTED_ID] }] }),
+      "stories[1].steps[0]",
+      PLANTED_ID,
+    );
   });
 });

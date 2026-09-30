@@ -255,3 +255,33 @@ describe("attachment files in the archive (#186)", () => {
     });
   });
 });
+
+// The archive's own top-level checks and the embedded sponsors section follow
+// the same rule as the attachment files above: the indexed path and the rule,
+// never the submitted value or key name (#500 follow-up).
+describe("archive-level errors never echo the submitted value (#500)", () => {
+  const PLANTED = "FLAG{do-not-echo}";
+  const PLANTED_ID = "planted-do-not-echo";
+
+  function errorsOf(bundle: unknown): { where: string; message: string }[] {
+    const res = parseEventBundle(JSON.stringify(bundle));
+    if (res.ok) throw new Error("expected the bundle to be rejected, but it parsed");
+    return res.errors;
+  }
+  function expectNoEcho(errors: { where: string; message: string }[], where: string, secret = PLANTED): void {
+    expect(errors.some((e) => e.where === where)).toBe(true);
+    expect(JSON.stringify(errors)).not.toContain(secret);
+  }
+
+  it("a bad version, a bad kind and a settings key outside the allowlist never echo", () => {
+    expectNoEcho(errorsOf({ ...valid, version: PLANTED }), "version");
+    expectNoEcho(errorsOf({ ...valid, kind: PLANTED }), "kind");
+    expectNoEcho(errorsOf({ ...valid, settings: { ...valid.settings, [PLANTED]: 1 } }), "settings");
+  });
+
+  it("the sponsors section's version and duplicate ids never echo", () => {
+    const sponsor = { id: PLANTED_ID, name: "Acme", url: "https://acme.example", blurb: "", tier: "gold", order: 0, logo: null };
+    expectNoEcho(errorsOf({ ...valid, sponsors: { version: PLANTED, sponsors: [] } }), "sponsors.version");
+    expectNoEcho(errorsOf({ ...valid, sponsors: { version: 1, sponsors: [sponsor, sponsor] } }), "sponsors.sponsors[1].id", PLANTED_ID);
+  });
+});

@@ -7,6 +7,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings: m.getAdminSettings }));
 
 import { previewClaimStillValid } from "@/lib/ai-preview";
+import { PLANTED_LOG_SECRET, decoratedError, expectLabelOnly } from "./log-redaction";
 
 const NOW = Date.parse("2026-10-01T12:00:00Z");
 
@@ -29,5 +30,21 @@ describe("previewClaimStillValid", () => {
     m.getAdminSettings.mockRejectedValue(new Error("redis down"));
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await previewClaimStillValid(NOW)).toBe(false);
+  });
+
+  // A thrown string could BE a secret; the shared label never stringifies a
+  // non-Error, and a decorated Error reaches the log as its label (#500).
+  it("logs the label only: never a thrown non-Error, never the error's decoration", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      m.getAdminSettings.mockRejectedValueOnce(PLANTED_LOG_SECRET);
+      expect(await previewClaimStillValid(NOW)).toBe(false);
+      expectLabelOnly(log, { label: "non-Error throw" });
+      m.getAdminSettings.mockRejectedValueOnce(decoratedError("redis down"));
+      expect(await previewClaimStillValid(NOW)).toBe(false);
+      expectLabelOnly(log, { label: "redis down" });
+    } finally {
+      log.mockRestore();
+    }
   });
 });

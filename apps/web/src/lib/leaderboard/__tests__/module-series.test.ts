@@ -8,6 +8,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "../types";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 vi.mock("server-only", () => ({}));
 
@@ -152,9 +153,17 @@ describe("withModuleSeries", () => {
   });
 
   it("leaves the board alone when Upstash is unavailable", async () => {
-    mocks.upstashPipeline.mockRejectedValueOnce(new Error("down"));
-    const base = data();
-    expect(await withModuleSeries(base)).toBe(base);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // Decorated like a driver's error: the log gets the label, never the
+      // caught value's `command`/`cause` (#500 follow-up).
+      mocks.upstashPipeline.mockRejectedValueOnce(decoratedError());
+      const base = data();
+      expect(await withModuleSeries(base)).toBe(base);
+      expectLabelOnly(consoleError);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("reads nothing when no app-side module is enabled", async () => {

@@ -12,6 +12,7 @@
 // refused rather than guessed at.
 
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 import { getAdminSettings } from "@/lib/admin-store";
 import { isLaunched } from "@/lib/schedule-window";
 
@@ -20,8 +21,7 @@ export async function previewClaimStillValid(nowMs: number = Date.now()): Promis
     const settings = await getAdminSettings();
     return !isLaunched(nowMs, settings.scoringStartsAt);
   } catch (err) {
-    const e = err instanceof Error ? err : new Error(String(err));
-    console.error("ai preview: settings read failed, refusing the preview token:", e.name, e.message);
+    console.error("ai preview: settings read failed, refusing the preview token:", errorLabel(err));
     return false;
   }
 }

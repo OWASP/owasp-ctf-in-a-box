@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
+import { errorLabel } from "@/lib/error-label";
 import { AdminValidationError, updateAdminSettings, type SettingsPatch } from "@/lib/admin-store";
 
 export async function POST(request: Request) {
@@ -13,7 +14,7 @@ export async function POST(request: Request) {
     if (err instanceof AdminValidationError) {
       return NextResponse.json({ error: err.message, field: err.field }, { status: 400 });
     }
-    console.error("[admin/settings] write failed", err);
+    console.error("[admin/settings] write failed", errorLabel(err));
     return NextResponse.json({ error: "settings write failed" }, { status: 503 });
   }
 }

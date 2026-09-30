@@ -5,6 +5,7 @@
 // forever). Upstash is mocked; a small fake interprets the script's contract.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PLANTED_LOG_SECRET, decoratedError, expectLabelOnly } from "./log-redaction";
 
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
@@ -56,6 +57,20 @@ describe("consumeRateLimit", () => {
     // Failing open silently is how a disabled control goes unnoticed.
     expect(err).toHaveBeenCalled();
     err.mockRestore();
+  });
+
+  // The shared label, not a bespoke `.message` read: capped, so an error
+  // whose message quotes the request cannot carry it past 200 characters
+  // into the log (#500 follow-up).
+  it("logs the capped label, never the full message or the decoration", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mocks.upstashEval.mockRejectedValueOnce(decoratedError(`upstash down ${"x".repeat(250)} ${PLANTED_LOG_SECRET}`));
+      expect(await consumeRateLimit("b", "alice", 10, 600)).toEqual({ allowed: true });
+      expectLabelOnly(err);
+    } finally {
+      err.mockRestore();
+    }
   });
 
   it("allows rather than throwing on an unexpected reply shape", async () => {

@@ -1,4 +1,5 @@
 import { requireAdmin } from "@/lib/admin-auth";
+import { errorLabel } from "@/lib/error-label";
 import { ATTACHMENTS_EVENT_MAX_BYTES } from "@/lib/attachments-keys";
 import { readBoundedBody } from "@/lib/bounded-body";
 import { originAllowed } from "@/lib/origin";
@@ -55,7 +56,7 @@ async function writeAudit(actor: string, action: string, detail: Record<string, 
       ["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1],
     ]);
   } catch (err) {
-    console.error("[admin/event] audit write failed", err);
+    console.error("[admin/event] audit write failed", errorLabel(err));
   }
 }
 

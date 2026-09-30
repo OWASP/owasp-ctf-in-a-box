@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
+import { errorLabel } from "@/lib/error-label";
 import { challengesToCsv, computeEventMetrics } from "@/lib/metrics-store";
 
 /**
@@ -44,7 +45,7 @@ export async function GET(request: Request) {
     }
     return NextResponse.json(metrics);
   } catch (err) {
-    console.error("[admin/metrics] compute failed", err);
+    console.error("[admin/metrics] compute failed", errorLabel(err));
     return NextResponse.json({ error: "unavailable" }, { status: 503 });
   }
 }

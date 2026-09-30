@@ -129,7 +129,7 @@ describe("parseBundle", () => {
 
   it("rejects a correct id that is not one of the question's own choices", () => {
     const errors = errorsOf(withQuestion({ correct: ["z"] }));
-    expect(errors.some((e) => e.where === "questions[0].correct" && /not among choices/i.test(e.message))).toBe(true);
+    expect(errors.some((e) => e.where === "questions[0].correct[0]" && /choice ids/i.test(e.message))).toBe(true);
   });
 
   // Mirrors upsertQuestion: with more than one right answer, all-or-nothing
@@ -165,7 +165,7 @@ describe("parseBundle", () => {
   it("does not report every correct id as unknown when choices itself is malformed", () => {
     const errors = errorsOf(withQuestion({ choices: "nope" }));
     expect(errors.some((e) => e.where === "questions[0].choices")).toBe(true);
-    expect(errors.some((e) => /not among choices/i.test(e.message))).toBe(false);
+    expect(errors.some((e) => e.where.startsWith("questions[0].correct"))).toBe(false);
   });
 
   it("accepts an empty bank — an export of a quiz with nothing authored yet", () => {
@@ -182,5 +182,50 @@ describe("serializeBundle", () => {
     expect(text.endsWith("\n")).toBe(true);
     expect(text).toContain("\n  "); // indented, not minified
     expect(text).toBe(serializeBundle(valid));
+  });
+});
+
+// The error list goes back to the admin client verbatim, and a bundle's
+// values are arbitrary text: a correct choice id, a key name or a question id
+// can carry an answer or a pasted secret. Every message names the indexed
+// path and the rule, never the submitted value (#500 follow-up, the shape
+// event-io.ts's `validateAttachmentFiles` set).
+describe("quiz import errors never echo the submitted value (#500)", () => {
+  const PLANTED = "FLAG{do-not-echo}";
+  const PLANTED_ID = "planted-do-not-echo";
+  const q0 = valid.questions[0];
+
+  function expectNoEcho(errors: { where: string; message: string }[], where: string, secret = PLANTED): void {
+    expect(errors.some((e) => e.where === where)).toBe(true);
+    expect(JSON.stringify(errors)).not.toContain(secret);
+  }
+
+  it("a correct entry that is not a choice id names its position, not its value", () => {
+    const errors = errorsOf(withQuestion({ type: "multi", correct: ["a", PLANTED] }));
+    expect(errors).toContainEqual({ where: "questions[0].correct[1]", message: "must be one of this question's choice ids" });
+    expectNoEcho(errors, "questions[0].correct[1]");
+  });
+
+  it("an invalid choice id names its position, not its value", () => {
+    expectNoEcho(errorsOf(withQuestion({ choices: [{ id: PLANTED, label: "A" }], correct: ["a"] })), "questions[0].choices[0].id");
+  });
+
+  it("a duplicate choice id names the position, not the id", () => {
+    const errors = errorsOf(
+      withQuestion({ choices: [{ id: PLANTED_ID, label: "A" }, { id: PLANTED_ID, label: "B" }], correct: [PLANTED_ID] }),
+    );
+    expectNoEcho(errors, "questions[0].choices[1].id", PLANTED_ID);
+  });
+
+  it("unknown keys are counted, not named, on a question and on a choice", () => {
+    expectNoEcho(errorsOf(withQuestion({ [PLANTED]: 1 })), "questions[0]");
+    expectNoEcho(errorsOf(withQuestion({ choices: [{ id: "a", label: "A", [PLANTED]: 1 }] })), "questions[0].choices[0]");
+  });
+
+  it("an invalid question id, a bad type and a duplicate question id never echo", () => {
+    expectNoEcho(errorsOf(withQuestion({ id: PLANTED })), "questions[0].id");
+    expectNoEcho(errorsOf(withQuestion({ type: PLANTED })), "questions[0].type");
+    const dup = { ...q0, id: PLANTED_ID };
+    expectNoEcho(errorsOf(JSON.stringify({ version: 1, questions: [dup, dup] })), "questions[1].id", PLANTED_ID);
   });
 });

@@ -3,6 +3,7 @@
 // ISO-3166 alpha-2 never reaches Redis. Upstash is mocked.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PLANTED_LOG_SECRET, decoratedError, expectLabelOnly } from "./log-redaction";
 
 const mocks = vi.hoisted(() => ({
   upstashPipeline: vi.fn<(commands: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
@@ -57,6 +58,20 @@ describe("recordCountryVisit", () => {
     // and the log line carries no personal data, only the aggregate code
     expect(consoleError.mock.calls[0][0]).not.toMatch(/\d+\.\d+\.\d+\.\d+/);
     consoleError.mockRestore();
+  });
+
+  // The shared label, not a bespoke `.message` read: capped, so an error
+  // whose message quotes the request cannot carry it past 200 characters
+  // into the log (#500 follow-up).
+  it("logs the capped label, never the full message or the decoration", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mocks.upstashPipeline.mockRejectedValueOnce(decoratedError(`upstash down ${"x".repeat(250)} ${PLANTED_LOG_SECRET}`));
+      await expect(recordCountryVisit("FR")).resolves.toBeUndefined();
+      expectLabelOnly(consoleError);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("swallows an in-band Upstash error the same as a transport error", async () => {

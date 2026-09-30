@@ -3,6 +3,7 @@ import { ATTACHMENT_ID_RE, contentDisposition } from "@/lib/attachments-keys";
 import { readUploadBytes, resolveAttachment } from "@/lib/attachments-store";
 import { auth } from "@/lib/auth";
 import { classicVisibility } from "@/lib/classic-visibility";
+import { errorLabel } from "@/lib/error-label";
 import { requireLaunchedApi } from "@/lib/launch";
 
 /**
@@ -66,9 +67,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       },
     });
   } catch (err) {
-    // Name and message only — never the error object (#244).
-    const e = err instanceof Error ? err : new Error(String(err));
-    console.error("[attachments] download failed:", e.name, e.message);
+    // The shared label only — never the error object (#244), never
+    // `String(err)` on a non-Error (#500).
+    console.error("[attachments] download failed:", errorLabel(err));
     return new NextResponse(null, { status: 503 });
   }
 }

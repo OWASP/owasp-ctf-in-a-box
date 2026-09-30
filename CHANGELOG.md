@@ -10,6 +10,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: a failed Redis read no longer zeroes quiz, Jeopardy or AI points
+  in silence (#523).** The per-contestant totals, and the hint-penalty total,
+  read their hashes without checking the reply's error, so a `WRONGTYPE`,
+  `NOAUTH` or timeout read as "nobody has points" (or "nobody bought a hint"):
+  the board re-ranked on the missing points and nothing was logged. They now
+  throw, so the leaderboard logs which read failed and leaves that module (or
+  the penalties) off the board, as it already did for a read that threw.
+
 - **Changed: the individual leaderboard ranks by points first (#522).**
   Organizers, note this before an event: the order is now points, then items
   completed across modules (a tiebreak only), then whoever got there first.

@@ -416,6 +416,9 @@ export async function getHintPenalties(): Promise<Map<string, number>> {
   if (!(await resolveHintConfig()).enabled) return new Map();
 
   const [res] = await upstashPipeline([["HGETALL", SPENT_KEY]]);
+  // An errored read is not "nobody bought a hint" (#523): throw, so
+  // withHintPenalties logs it instead of the board silently going gross.
+  if (res.error !== undefined) throw new Error(`hint penalties read failed: ${res.error}`);
   const flat = Array.isArray(res.result) ? (res.result as string[]) : [];
   const penalties = new Map<string, number>();
   for (let i = 0; i < flat.length; i += 2) {

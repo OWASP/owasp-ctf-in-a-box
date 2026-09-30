@@ -888,7 +888,9 @@ clicking Leave.
 **Secure Development solves can be deleted but not kept deleted.** The scorer
 writes them with `HSETNX` so replays no-op, and the poller re-submits from PR
 comments — so a per-contestant reset clears them and the next re-score writes
-them back. `resetEvent` solves this globally by freezing and bumping `resetAt`;
+them back. A sync restart does not: the poller's cursor is in Redis
+(`ctf:sync:state`, below), so a restarted poller does not re-read the comments
+it already consumed. `resetEvent` solves this globally by freezing and bumping `resetAt`;
 there is no per-login equivalent, so the API returns a **warning** instead of
 pretending. Quiz, classic and ai writes originate in the app, so those deletes are
 final.
@@ -993,9 +995,46 @@ Both sides **fail open** on a Redis error — a Redis blip must never freeze
 ingestion by accident (`sync/src/redis.js`'s `isPaused()` catches and
 returns `false`; `scorer/src/store.js` does the same).
 
-**The state file is repaired, never trusted.** The poller's cursor, seen-cache
-and counters live in `/state/state.json` on the `sync-state` volume
-(`sync/src/state.js`). It is JSON this service wrote, which makes its *shape*
+**The poller's state lives in Redis, next to the scores.** The per-repo
+`since`/ETag cursors, the seen cache, `ingested`/`dropped`/`lastDrop` and the
+last reset epoch applied are one JSON string at **`ctf:sync:state`**, read once
+at startup and written after every tick (`sync/src/index.js`, through
+`sync/src/redis.js`'s `readPollState`/`writePollState`). It used to be a file
+on the `sync-state` volume, and a file does not survive a container that
+restarts without its volume — every Fargate task restart ([ADR 64](decisions.md#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)). A poller that
+loses its cursor re-reads every score comment: nothing is double-counted
+(the scorer's `HSETNX`), but the Secure Development solves an organizer removed
+with a per-contestant reset come back, and `/admin`'s counters restart at 0.
+Keeping the cursor with the scores also makes the two fail together: if Redis
+is wiped, the key is gone with the leaderboard and the poller re-reads
+everything, which is what rebuilds the board.
+
+The fail directions follow from that:
+
+- **Redis unreadable at startup → hold.** A transport error or a per-command
+  error reply on the read means sync does not tick. It logs
+  `cannot load poll state from Redis (ctf:sync:state) … not polling until it
+  is readable` and retries each poll interval. Starting from an empty cursor
+  would re-ingest. Holding loses nothing (the comments stay on GitHub, and an
+  unreadable Redis could not have taken a score anyway), and the stale
+  `lastPollAt` heartbeat is what makes the hold visible.
+- **Key absent → first boot or upgrade.** An existing `STATE_PATH` file seeds
+  the key once and is renamed to `state.json.migrated`, so it can never seed a
+  stale cursor again. Without a file, the state starts empty.
+- **A write fails after a tick → log and retry next tick.** The in-memory
+  state stays authoritative; only a restart before the next successful write
+  rewinds to the last one that landed.
+- **The stored value is unusable → repaired**, by the same rule as the file
+  below: a retry cannot fix bad content, and refusing would stop ingestion
+  until a human deleted the key.
+
+The master reset deliberately does not delete `ctf:sync:state`; the `resetAt`
+epoch below is how it clears the cursor. A poller with no Redis client (a dev
+run without `UPSTASH_REDIS_REST_URL`) still keeps its state in the
+`STATE_PATH` file.
+
+**Stored state is repaired, never trusted.** It is JSON this service wrote
+(`sync/src/state.js`'s `parseState`), which makes its *shape*
 tempting to assume once it parses — and that was a real outage: a bare `{}` is
 valid JSON, so a partial write or a hand edit during a reset produced a file
 that loaded fine and then threw on `state.repos[repo]` for every repo, on every
@@ -1003,13 +1042,14 @@ tick. Nothing contains that throw — `tick()`'s per-repo `try` wraps only the
 fetch — so it reached the fatal handler, exited 1, and compose restarted
 straight back into the same file. Ingestion stayed down for the whole event.
 
-`loadState` now validates the shape it parsed and repairs what is unusable,
+`parseState` (used for both the Redis value and the file) now validates the
+shape it parsed and repairs what is unusable,
 field by field rather than all-or-nothing: a damaged `repos` is reset while
 `ingested` and `resetAt` survive, because re-zeroing them would misreport the
 event's totals and re-apply a master reset already performed. `repoState` does
 the same one level down, since a per-repo entry can be damaged on its own and
 `markSeen` dereferences `seen` immediately. Every repair is logged; a **missing**
-file is not, because that is every event's first boot.
+file or key is not, because that is every event's first boot.
 
 **Master reset + the reset epoch.** `resetEvent()` (`admin-store.ts`, behind
 `POST /api/admin/reset`, `requireAdmin` + server-side type-to-confirm) wipes

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 const SEEN_CAP = 500;
@@ -7,63 +7,103 @@ const SEEN_CAP = 500;
  *  per-repo entry may take. */
 const isRecord = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
 
-const freshState = () => ({ repos: {} });
+export const freshState = () => ({ repos: {} });
 
 /**
- * Reads the cursor/seen-cache state file, repairing anything unusable.
+ * Parses a serialized state, repairing anything unusable. `where` names the
+ * source in every repair line: the file path, or the Redis key when the state
+ * came from `ctf:sync:state` (ADR 64). The same JSON is stored either way, and it
+ * gets the same distrust either way.
  *
- * The file is JSON this service wrote, so it is tempting to trust its SHAPE
- * once it parses. That was the bug (#63): a partial write, a disk problem or a
- * hand edit during a reset can leave behind valid JSON that is still wrong,
- * and `{}` parses perfectly. The old `catch` only covered read and parse
- * errors, so a bare `{}` sailed through and `repoState` then dereferenced an
- * absent `repos` — on every repo, on every tick.
+ * It is JSON this service wrote, so it is tempting to trust its SHAPE once it
+ * parses. That was the bug (#63): a partial write, a disk problem or a hand
+ * edit during a reset can leave behind valid JSON that is still wrong, and
+ * `{}` parses perfectly. `repoState` then dereferenced an absent `repos` — on
+ * every repo, on every tick.
  *
  * That throw is not contained anywhere: `tick`'s per-repo `try` wraps only the
  * fetch, so the rejection reaches main's fatal handler and exits 1, compose
- * restarts the container, and it reads the same file again. Ingestion stays
+ * restarts the container, and it reads the same state again. Ingestion stays
  * down for the whole event, which is why this repairs rather than propagates.
+ * A retry cannot fix a stored value that is wrong, so unlike a failed READ
+ * (index.js holds the poller until Redis answers), bad CONTENT is repaired.
  *
  * Repairing is not the same as discarding. Anything still usable is kept —
  * re-zeroing `ingested` would misreport the event's totals, and dropping
  * `resetAt` would make the next tick re-apply a master reset it already
- * performed. Only what is actually broken is replaced.
- *
- * A MISSING file is not a fault: that is every event's first boot, and warning
- * about it would cry wolf. Anything else that had to be repaired is logged,
- * because a silent repair is how a corrupt state file goes unnoticed until the
- * cursor quietly re-reads from scratch.
+ * performed. Only what is actually broken is replaced, and every repair is
+ * logged, because a silent repair is how corrupt state goes unnoticed until
+ * the cursor quietly re-reads from scratch.
  */
-export function loadState(path, { log = console.error } = {}) {
-  let raw;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch (err) {
-    // ENOENT is the normal first-boot path; anything else (permissions, a
-    // directory where the file should be) is worth saying out loud.
-    if (err.code !== "ENOENT") log(`ctf-sync: cannot read state at ${path} (${err.message}) — starting fresh`);
-    return freshState();
-  }
+/** What a repair line says about a bad value: its kind, never the value
+ *  itself, which came from Redis or a hand-edited file (#508 review). */
+const kindOf = (v) =>
+  v === undefined ? "missing" : v === null ? "null" : Array.isArray(v) ? "an array" : typeof v === "object" ? "an object" : `a ${typeof v}`;
 
+export function parseState(raw, where, { log = console.error } = {}) {
   let parsed;
   try {
     parsed = JSON.parse(raw);
-  } catch (err) {
-    log(`ctf-sync: state at ${path} is not valid JSON (${err.message}) — starting fresh`);
+  } catch {
+    // Not err.message: JSON.parse quotes the input text in it (#508 review).
+    log(`ctf-sync: state at ${where} is not valid JSON (${raw.length} bytes) — starting fresh`);
     return freshState();
   }
 
   if (!isRecord(parsed)) {
-    log(`ctf-sync: state at ${path} is not an object — starting fresh`);
+    log(`ctf-sync: state at ${where} is not an object — starting fresh`);
     return freshState();
   }
 
   if (!isRecord(parsed.repos)) {
-    log(`ctf-sync: state at ${path} has no usable "repos" — resetting cursors, keeping the rest`);
+    log(`ctf-sync: state at ${where} has no usable "repos" (${kindOf(parsed.repos)}) — resetting cursors, keeping the rest`);
     parsed.repos = {};
   }
 
+  // The counters feed `++` and /admin's totals: anything but a non-negative
+  // safe integer ("x" would concatenate, -3 would misreport) is reset to 0.
+  // An absent counter stays absent; tick defaults it (#508 review).
+  for (const field of ["ingested", "dropped"]) {
+    const v = parsed[field];
+    if (v !== undefined && !(Number.isSafeInteger(v) && v >= 0)) {
+      log(`ctf-sync: state at ${where} has an unusable "${field}" (${kindOf(v)}) — resetting it to 0`);
+      parsed[field] = 0;
+    }
+  }
+  // resetAt is compared with the settings' ISO string; a non-string never
+  // matches, so the master reset would be re-applied on every tick.
+  if (parsed.resetAt !== undefined && parsed.resetAt !== null && typeof parsed.resetAt !== "string") {
+    log(`ctf-sync: state at ${where} has an unusable "resetAt" (${kindOf(parsed.resetAt)}) — clearing it`);
+    parsed.resetAt = null;
+  }
+
   return parsed;
+}
+
+/**
+ * Reads the state FILE, repairing anything unusable (see `parseState`).
+ * Since ADR 64, the file is the store only for a poller with no Redis client; with
+ * Redis it is read once, as a migration seed, and then retired (index.js).
+ *
+ * A MISSING file is not a fault: that is every event's first boot, and warning
+ * about it would cry wolf. Anything else is logged — or, with `strict`, thrown:
+ * the Redis migration uses that, because seeding Redis with an empty cursor
+ * from a file that exists but cannot be read would lose the cursor for good
+ * (#508 review).
+ */
+export function loadState(path, { log = console.error, strict = false } = {}) {
+  let raw;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return freshState();
+    if (strict) throw err;
+    // Anything else (permissions, a directory where the file should be) is
+    // worth saying out loud.
+    log(`ctf-sync: cannot read state at ${path} (${err.message}) — starting fresh`);
+    return freshState();
+  }
+  return parseState(raw, path, { log });
 }
 
 export function saveState(path, state) {
@@ -71,6 +111,30 @@ export function saveState(path, state) {
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(state));
   renameSync(tmp, path);
+}
+
+/**
+ * Moves a migrated state file aside to `<path>.migrated` once its contents are
+ * in Redis (ADR 64). Kept rather than deleted, in case an operator wants it, but
+ * no longer at STATE_PATH: a file left there would seed a STALE cursor the
+ * next time the Redis key is absent. That happens when Redis itself was wiped,
+ * scores included, and then the right move is to re-read every comment and
+ * rebuild the board, which an old cursor would prevent.
+ *
+ * Returns true when a file was moved, false when there was none to move.
+ */
+export function retireStateFile(path) {
+  // Not existsSync: it answers false for a path it cannot stat (EACCES on
+  // the directory), which would read an unreadable leftover as "gone" and let
+  // polling start with it still there (#508 review). Only ENOENT is absent.
+  try {
+    lstatSync(path);
+  } catch (err) {
+    if (err.code === "ENOENT") return false;
+    throw err;
+  }
+  renameSync(path, `${path}.migrated`);
+  return true;
 }
 
 /**

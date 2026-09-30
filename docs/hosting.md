@@ -919,7 +919,7 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 | `SCORE_IMAGE` | `scorer` image; `scripts/dev-stack` and `deploy/fly/render-compose.sh` as the `secdev` switch | `ghcr.io/owasp-ctf/score:latest` (private) | Your scorer image built from `scorer/`. Non-empty is what makes Secure Development *available*: it adds the `secdev` profile, seeds the first-boot default module set, and permits the `/admin` toggle (`enabledModules` still decides what is live). Empty and `ctf-setup org` skips every fork/mirror/poll step instead of failing; non-empty and it provisions all six targets. |
 | `EVENT_URL` | `caddy` as `EVENT_HOST`; `app` as `BETTER_AUTH_URL` | `http://localhost` | **The** event URL — TLS host, auth callback origin, HTTPS start-up guard, CSRF origin check. `https://` for any real event. |
 | `REDIS_DIR` | `redis` | `/data` | Where the append-only file lives inside the volume. Fly sets `/data/redis` (one volume per machine, see [docs/fly.md](fly.md)). |
-| `STATE_PATH` | `sync` | `/state/state.json` | The poller's cursor file. Fly sets `/data/sync/state.json`. |
+| `STATE_PATH` | `sync` | `/state/state.json` | The poller's legacy cursor file. The cursor lives in Redis (`ctf:sync:state`); this file is read once to migrate an older box, then renamed `.migrated`, and is the store only when sync has no Redis client. Fly sets `/data/sync/state.json`. |
 | `EVENT_HOST`, `SRH_MODE`, `REDISCLI_AUTH` | `caddy`, `srh`, `redis` | *fixed* | Derived by compose: Caddy's host from `EVENT_URL`, `srh`'s config mode (`env`), `redis-cli`'s password from `REDIS_PASSWORD` so `docker compose exec redis redis-cli` authenticates itself. |
 
 **App** (`apps/web`, runtime unless noted):

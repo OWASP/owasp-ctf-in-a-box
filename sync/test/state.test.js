@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadState, saveState, repoState, markSeen, seenKey } from "../src/state.js";
+import { loadState, parseState, saveState, repoState, markSeen, seenKey } from "../src/state.js";
 
 /** Writes `body` to a fresh state file and loads it, capturing warnings. */
 function loadWritten(body) {
@@ -151,4 +151,82 @@ test("markSeen re-presents a comment that was EDITED after being seen", () => {
 test("markSeen re-presents comments recorded by an older build as bare ids", () => {
   const rs = { since: null, etag: null, seen: [5364196433] };
   assert.equal(markSeen(rs, 5364196433, "2026-08-21T02:06:17Z"), true);
+});
+
+// #508 review: the state now lives in Redis, where a hand edit with redis-cli
+// is one command away. A counter that is not a count ("x", -3, 1.5) would
+// otherwise poison `ingested++` into string concatenation or report a
+// negative total on /admin, and a non-string resetAt would never equal the
+// settings' epoch, so the master reset would be re-applied every tick.
+test("parseState repairs bad counters and a non-string resetAt, one field at a time", () => {
+  const warnings = [];
+  const state = parseState(
+    JSON.stringify({ repos: { VAmPI: { since: "s", etag: null, seen: [] } }, ingested: "x", dropped: -3, resetAt: 5, lastDrop: "kept" }),
+    "test",
+    { log: (m) => warnings.push(m) },
+  );
+  assert.equal(state.ingested, 0);
+  assert.equal(state.dropped, 0);
+  assert.equal(state.resetAt, null);
+  assert.equal(state.lastDrop, "kept");
+  assert.deepEqual(Object.keys(state.repos), ["VAmPI"]);
+  for (const f of ["ingested", "dropped", "resetAt"]) {
+    assert.ok(warnings.some((m) => m.includes(f)), `repair of ${f} is logged: ${JSON.stringify(warnings)}`);
+  }
+});
+
+test("parseState keeps valid counters and resetAt untouched and silent", () => {
+  const warnings = [];
+  const body = { repos: {}, ingested: 7, dropped: 0, resetAt: "2026-10-01T00:00:00.000Z" };
+  const state = parseState(JSON.stringify(body), "test", { log: (m) => warnings.push(m) });
+  assert.deepEqual(state, body);
+  const unset = parseState(JSON.stringify({ repos: {}, resetAt: null }), "test", { log: (m) => warnings.push(m) });
+  assert.equal(unset.resetAt, null);
+  assert.equal(unset.ingested, undefined, "an absent counter stays absent (tick defaults it)");
+  assert.deepEqual(warnings, []);
+});
+
+test("loadState with strict: a missing file is a fresh state, any other read error throws", () => {
+  const dir = mkdtempSync(join(tmpdir(), "st-"));
+  assert.deepEqual(loadState(join(dir, "absent.json"), { log: () => {}, strict: true }), { repos: {} });
+  assert.throws(() => loadState(dir, { log: () => {}, strict: true }), /EISDIR|illegal operation/);
+  // Without strict (the no-Redis dev poller) it still starts fresh, loudly.
+  const warnings = [];
+  assert.deepEqual(loadState(dir, { log: (m) => warnings.push(m) }), { repos: {} });
+  assert.equal(warnings.length, 1);
+});
+
+// #508 review (pre-merge "secrets in logs"): the repaired values come from
+// Redis or a hand-edited file, so the repair line names the field and the
+// value's TYPE only — never the value, which could be anything pasted there.
+test("a repair line never echoes the repaired value", () => {
+  const warnings = [];
+  const secret = "FLAG{do-not-log-me}";
+  parseState(
+    JSON.stringify({ repos: {}, ingested: secret, dropped: { flag: secret }, resetAt: [secret] }),
+    "test",
+    { log: (m) => warnings.push(m) },
+  );
+  assert.equal(warnings.length, 3, JSON.stringify(warnings));
+  for (const m of warnings) assert.ok(!m.includes("do-not-log-me"), m);
+  assert.ok(warnings.some((m) => /"ingested" \(a string\)/.test(m)), JSON.stringify(warnings));
+  assert.ok(warnings.some((m) => /"dropped" \(an object\)/.test(m)), JSON.stringify(warnings));
+  assert.ok(warnings.some((m) => /"resetAt" \(an array\)/.test(m)), JSON.stringify(warnings));
+});
+
+test("an unparseable state's repair line does not quote the stored text", () => {
+  // JSON.parse's own message quotes the input ("FLAG{..." is not valid JSON).
+  const warnings = [];
+  parseState("FLAG{do-not-log-me}", "test", { log: (m) => warnings.push(m) });
+  assert.equal(warnings.length, 1);
+  assert.ok(/not valid JSON/.test(warnings[0]), warnings[0]);
+  assert.ok(!warnings[0].includes("do-not-log-me"), warnings[0]);
+});
+
+test("the repos repair line names the kind of value it replaced, not the value", () => {
+  const warnings = [];
+  parseState(JSON.stringify({ repos: ["FLAG{do-not-log-me}"] }), "test", { log: (m) => warnings.push(m) });
+  assert.equal(warnings.length, 1);
+  assert.ok(/"repos" \(an array\)/.test(warnings[0]), warnings[0]);
+  assert.ok(!warnings[0].includes("do-not-log-me"), warnings[0]);
 });

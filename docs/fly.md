@@ -296,7 +296,7 @@ artifact the forks pull to judge PRs, or the totals disagree.
 volume supported`, reported only when the machine is created, after images are
 pushed and IPs provisioned.
 
-`redis`'s append-only file and `sync`'s cursor therefore share it, under
+`redis`'s append-only file and `sync`'s state file therefore share it, under
 separate directories:
 
 | | Local (compose) | Fly |
@@ -315,7 +315,7 @@ entrypoint drops privileges, and sync's entrypoint creates and `chown`s
 `dirname(STATE_PATH)` as root, then drops to `node` before starting the
 poller. An `.env.fly` written before `init` learned to add the two knobs
 still deploys, but `deploy.sh` warns and names the two lines to add — without
-them sync's cursor sits on the machine's ephemeral disk.
+them sync's state file sits on the machine's ephemeral disk.
 
 Compose's named volumes are **ignored** by Fly in a compose file; the mount is
 declared as `[[mounts]]` in `fly.toml`.
@@ -325,8 +325,10 @@ declared as `[[mounts]]` in `fly.toml`.
 deploy. Changing it later means destroying and recreating the volume, so pick
 the one nearest your contestants.
 
-Losing the sync cursor is not fatal but is noisy: the poller re-reads every
-comment in every fork from scratch.
+sync's cursor itself lives in Redis (`ctf:sync:state`), so it survives
+anything redis's append-only file survives. The `STATE_PATH` file is read
+once, on the first boot of a build that keeps the cursor in Redis, to carry
+an older box's cursor over; it is then renamed `state.json.migrated`.
 
 ## Secrets
 

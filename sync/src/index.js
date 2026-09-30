@@ -2,12 +2,12 @@ import { loadConfig, REPO_NAMES, TARGETS } from "./config.js";
 import { fetchNewScoreComments } from "./github.js";
 import { hasScoreMarker, parseScoreComment } from "./parse.js";
 import { submitScore } from "./submit.js";
-import { loadState, markSeen, repoState, saveState, seenKey } from "./state.js";
-import { makeRedis } from "./redis.js";
+import { loadState, markSeen, parseState, repoState, retireStateFile, saveState, seenKey } from "./state.js";
+import { makeRedis, SYNC_STATE_KEY } from "./redis.js";
 
 // Fail-safe wrapper: a broken deps.redis (whatever its origin) must never
-// reject the tick — cursors live in the JSON state file and must be
-// unaffected by any Redis problem.
+// reject the tick — a heartbeat that could not be written must not stop the
+// poll, and main() persists the cursor separately, after the tick.
 async function writeStatusSafely(redis, log, status) {
   try {
     await redis.writeStatus(status);
@@ -227,6 +227,7 @@ export async function main(deps = {}) {
     logErr = console.error,
     readState = loadState,
     writeState = saveState,
+    retireFile = retireStateFile,
     makeRedisImpl = makeRedis,
     runTick = tick,
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -241,10 +242,6 @@ export async function main(deps = {}) {
     return exit(1);
   }
 
-  // `logErr` so a state repair lands in the same stream as the poller's other
-  // operational lines — a warning nobody sees is the silent repair this guards
-  // against (#63).
-  const state = readState(cfg.statePath, { log: logErr });
   const redis = makeRedisImpl();
   // No static repo count here any more: which of the six targets get polled
   // is decided per tick from Redis (config-v2), so a count printed once at
@@ -254,11 +251,130 @@ export async function main(deps = {}) {
   // tick() falls back to TARGETS (all six) every tick — worth saying once at
   // boot rather than leaving an organizer to infer it from the poll logs.
   if (!redis) logErr("ctf-sync: no Redis client — polling all six targets");
+
+  // Where the durable state lives (ADR 64). With Redis, in `ctf:sync:state`,
+  // next to the scores; the file is read at most once, as a migration seed.
+  // With no Redis client (a dev poller), the file at STATE_PATH, as before.
+  // `logErr` so a state repair lands in the same stream as the poller's other
+  // operational lines — a warning nobody sees is the silent repair this guards
+  // against (#63).
+  const state = redis
+    ? await loadDurableState(cfg, redis, { readState, retire: retireFile, logErr, sleep })
+    : readState(cfg.statePath, { log: logErr });
+  const persist = redis
+    ? async () => {
+        try {
+          await redis.writePollState(state);
+        } catch (err) {
+          // Not fatal: the in-memory state stays authoritative for this
+          // process and the next tick writes again. Only a restart before a
+          // write lands rewinds the cursor to the last one that did, and the
+          // re-read that causes is idempotent (the scorer's HSETNX).
+          logErr(`ctf-sync: could not save poll state to Redis (${SYNC_STATE_KEY}): ${err.message} — retrying next tick`);
+        }
+      }
+    : async () => writeState(cfg.statePath, state);
+
   for (;;) {
     await runTick(cfg, state, { redis });
-    writeState(cfg.statePath, state);
+    await persist();
     const jitter = cfg.pollIntervalMs * 0.2 * (2 * Math.random() - 1);
     await sleep(cfg.pollIntervalMs + jitter);
+  }
+}
+
+/** The migration seed exists but could not be read (#508 review). */
+class LegacyStateUnreadable extends Error {
+  constructor(path, cause) {
+    super(`cannot read ${path}: ${cause.message}`, { cause });
+    this.path = path;
+  }
+}
+
+/** The seed reached Redis but the file could not be moved aside (#508 review). */
+class LegacyStateUnretired extends Error {
+  constructor(path, cause) {
+    super(`cannot move ${path} aside: ${cause.message}`, { cause });
+    this.path = path;
+  }
+}
+
+/**
+ * Moves the legacy file aside once its contents are in Redis, or throws
+ * LegacyStateUnretired so the caller holds. A file left at STATE_PATH is a
+ * stale cursor: if Redis is later wiped, it would seed the key again and
+ * resume from it instead of re-reading everything, so polling waits for the
+ * move rather than proceeding with the file still there.
+ */
+function retireOrHold(path, retire, logErr, announce) {
+  let moved;
+  try {
+    moved = retire(path);
+  } catch (err) {
+    throw new LegacyStateUnretired(path, err);
+  }
+  if (moved && announce) {
+    logErr(`ctf-sync: migrated poll state from ${path} to Redis ${SYNC_STATE_KEY}; the file is now ${path}.migrated`);
+  }
+}
+
+/**
+ * Reads the poller's durable state from Redis before the first tick (ADR 64).
+ *
+ * FAIL DIRECTION: if Redis cannot be read, the poller HOLDS — it does not
+ * tick, logs why on every attempt, and retries each poll interval until the
+ * read succeeds. The alternative, starting from an empty cursor, re-reads
+ * every score comment: no points are double-counted (the scorer writes with
+ * HSETNX), but every Secure Development solve an organizer removed with a
+ * per-contestant reset comes back, and /admin's ingested/dropped counters
+ * restart at 0 — losing the only record of dropped scores. Holding costs
+ * nothing: the comments stay on GitHub and are read once Redis answers, and
+ * while Redis is unreadable the scorer could not have written a score anyway.
+ * The stale heartbeat (`ctf:sync:status.lastPollAt`) is what shows it in
+ * /admin and /health/deep; writing a fresh one here would hide the hold.
+ *
+ * A key that is ABSENT is different: that is a first boot, or the first boot
+ * after upgrading from a build that kept state only on disk. Then an
+ * existing state file seeds Redis once and is moved aside (`.migrated`), so a
+ * later wipe of Redis — scores and cursor together — re-reads everything and
+ * rebuilds the board, instead of resuming from a stale file cursor.
+ */
+async function loadDurableState(cfg, redis, { readState, retire, logErr, sleep }) {
+  for (;;) {
+    try {
+      const raw = await redis.readPollState();
+      if (raw !== null) {
+        const state = parseState(raw, `Redis ${SYNC_STATE_KEY}`, { log: logErr });
+        // A retry after a failed move lands here: the key is established, so
+        // this finishes the migration (or is a no-op once the file is gone).
+        retireOrHold(cfg.statePath, retire, logErr, true);
+        return state;
+      }
+      let seed;
+      try {
+        seed = readState(cfg.statePath, { log: logErr, strict: true });
+      } catch (err) {
+        // A file that EXISTS but cannot be read is not a first boot: seeding
+        // an empty cursor and retiring the file would re-ingest every score
+        // comment for good. Hold, exactly as for an unreadable Redis.
+        throw new LegacyStateUnreadable(cfg.statePath, err);
+      }
+      // Establish the key BEFORE the first tick, so the file can be retired
+      // only once its contents are safely in Redis.
+      await redis.writePollState(seed);
+      const hadCursor = Object.keys(seed.repos).length > 0 || (seed.ingested ?? 0) > 0;
+      retireOrHold(cfg.statePath, retire, logErr, hadCursor);
+      return seed;
+    } catch (err) {
+      logErr(
+        err instanceof LegacyStateUnreadable
+          ? `ctf-sync: cannot read the legacy state file ${err.path} (${err.cause.message}) — not polling until it is readable or removed (seeding Redis with an empty cursor would re-ingest every score comment); retrying in ${cfg.pollIntervalMs}ms`
+          : err instanceof LegacyStateUnretired
+          ? `ctf-sync: poll state is in Redis ${SYNC_STATE_KEY}, but could not move ${err.path} aside (${err.cause.message}) — not polling until it is moved or deleted (a leftover file would re-seed a wiped Redis with a stale cursor); retrying in ${cfg.pollIntervalMs}ms`
+          : `ctf-sync: cannot load poll state from Redis (${SYNC_STATE_KEY}): ${err.message} — not polling until it is readable (starting from an empty cursor would re-ingest every score comment); retrying in ${cfg.pollIntervalMs}ms`,
+      );
+      await sleep(cfg.pollIntervalMs);
+    }
   }
 }
 

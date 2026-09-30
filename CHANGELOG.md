@@ -8,6 +8,24 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **sync's cursor now lives in Redis (`ctf:sync:state`).** Before, it lived
+  only in `state.json` on sync's disk, so a restart on Fargate (or any sync
+  container recreated without its volume) re-read every score comment.
+  Nothing was double-counted, but Secure Development solves removed by a
+  per-contestant reset came back, and `/admin`'s ingested/dropped counters
+  went back to 0.
+  - The cursor, seen cache, counters and reset epoch are read at startup and
+    written after every tick. A restart resumes where it stopped.
+  - If Redis cannot be read at startup, sync **holds**: it logs
+    `cannot load poll state from Redis (ctf:sync:state) … not polling until it
+    is readable` and retries each poll interval, instead of starting from an
+    empty cursor.
+  - **Upgrade:** the first boot copies an existing `STATE_PATH` file into
+    Redis and renames it `state.json.migrated`. No action needed. The compose
+    `sync-state` volume and the Fly `STATE_PATH` stay, for that migration and
+    for a sync run with no Redis client.
+  - See ADR 64.
+
 - **The empty board says nobody has scored yet (#482).** Searching a board with no scored contestants used to answer with the spelling nudge, which is wrong when there is nobody to check the spelling against. A typed query now reads "Nobody has scored yet" instead, and only the empty search box still draws the "board is wide open" podium. Covered by regression tests on the board-state helpers.
 
 - **Switching a module off stops its grading (#495).** Turning Quiz,

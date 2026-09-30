@@ -381,11 +381,12 @@ survives it; delete it yourself once you no longer need the state.
   ```
 - **State is reconstructible in poll mode.** `sync` re-reads scores from the
   GitHub PR comments, so a replaced task repopulates the leaderboard. The
-  poller's cursor is on the task's own disk (`/state/state.json`), so a new
-  sync task re-reads every score comment from the start. Totals are safe
-  (each solve is written once), but the `/admin` heartbeat restarts at 0 and
-  a per-contestant reset does not survive it — see "sync restarts" in
-  [`docs/aws.md`](../../docs/aws.md).
+  poller's cursor, seen cache and `/admin` ingested/dropped counters live in
+  Redis (`ctf:sync:state`), not on disk, so Fargate's ephemeral storage costs
+  nothing here: a restarted sync task resumes from the stored cursor, a
+  per-contestant reset stays reset, and the counters carry over. If srh is
+  unreadable when sync starts, sync holds and retries rather than re-polling
+  from the start (the stale heartbeat shows it in `/admin`).
 - **DNS in another account?** Leave `route53_zone_id` empty, set
   `acm_certificate_arn` to a certificate in this region, and point your own
   record at the `alb_dns_name` output. Terraform manages the record only when

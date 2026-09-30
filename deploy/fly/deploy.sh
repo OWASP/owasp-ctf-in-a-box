@@ -616,9 +616,11 @@ warn_duplicate_keys "$ENV_FILE"
 # ---------------------------------------------------------------------------
 # The single-volume layout has to be IN the env file (init writes it; see the
 # block in init). An env file from before that step still deploys — with redis
-# at the volume root and sync's cursor on the machine's ephemeral disk, lost on
-# every restart. That ran unnoticed for weeks, so it is named here rather than
-# left to the volume listing.
+# at the volume root and sync's state file on the machine's ephemeral disk.
+# Before ADR 64, that file WAS the cursor, lost on every restart; that ran unnoticed
+# for weeks (#364). The cursor now lives in Redis (ctf:sync:state) and the file
+# only seeds it once on upgrade, but the layout is still named here rather
+# than left to the volume listing.
 # ---------------------------------------------------------------------------
 missing_knobs=""
 for key in REDIS_DIR STATE_PATH; do
@@ -627,8 +629,9 @@ done
 if [ -n "$missing_knobs" ]; then
   echo "WARNING: not set in $ENV_FILE:$missing_knobs" >&2
   echo "         This env file predates the single-volume layout. Without them" >&2
-  echo "         sync's poll cursor lives on the machine's ephemeral disk and is" >&2
-  echo "         lost on every restart, so the poller re-reads every fork." >&2
+  echo "         redis writes at the volume root and sync's legacy state file sits" >&2
+  echo "         on the machine's ephemeral disk. (sync's cursor itself is in" >&2
+  echo "         Redis, ctf:sync:state; the file only seeds it on an upgrade.)" >&2
   echo "         Add to $ENV_FILE:" >&2
   echo "           REDIS_DIR=/data/redis" >&2
   echo "           STATE_PATH=/data/sync/state.json" >&2

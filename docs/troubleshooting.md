@@ -194,28 +194,45 @@ hit it.
 
 **Symptom.** `docker compose ps` shows `sync` restarting; every tick throws.
 
-**Diagnosis.** The poller's cursor lives in `/state/state.json` on the
-`sync-state` volume. Current `sync` validates and **repairs** a damaged
-state file field by field (each repair is logged — look for repair lines
-before assuming worse). Historically a bare `{}` — valid JSON, unusable
-shape — crash-looped the poller for a whole event, which is exactly why the
-repair exists.
+**Diagnosis.** The poller's cursor lives in Redis at `ctf:sync:state` (a
+JSON string). Older builds kept it in `/state/state.json` on the
+`sync-state` volume; the first boot of a current build moves that file's
+contents into Redis and renames the file to `state.json.migrated`. Current
+`sync` validates and **repairs** damaged state field by field (each repair
+is logged — look for repair lines before assuming worse). Historically a
+bare `{}` — valid JSON, unusable shape — crash-looped the poller for a whole
+event, which is exactly why the repair exists.
+
+If the logs instead repeat `cannot load poll state from Redis
+(ctf:sync:state) … not polling until it is readable`, sync is not crashing:
+it is **holding** on purpose, because starting from an empty cursor would
+re-ingest every score comment. Fix srh/Redis (the `fetch failed` and
+`NOAUTH` entries in this runbook) and it resumes on its own at the next
+retry. The same hold applies on the first boot after an upgrade when the old
+`state.json` exists but cannot be read (`cannot read the legacy state file
+…`): fix its permissions, or delete it to start from an empty cursor on
+purpose. It also holds, after copying the file into Redis, if it cannot move
+the file aside (`could not move … aside`), because a leftover file would
+re-seed a wiped Redis with a stale cursor: fix the directory's permissions,
+or delete the file — its contents are already in Redis.
 
 **Fix.** Read the first error line of `docker compose logs sync`. If state
-is beyond repair on an old version: `docker compose down && docker volume rm
-<project>_sync-state && docker compose --profile secdev --profile app up -d` —
-losing the cursor is safe; the poller re-reads scores from the PR comments
-and the scorer's writes are idempotent on replay.
+is beyond repair: `docker compose exec redis redis-cli DEL ctf:sync:state`,
+then restart sync. Losing the cursor does not double-count (the scorer's
+writes are idempotent on replay) — but the re-read brings back any Secure
+Development solves a per-contestant reset removed, and resets `/admin`'s
+ingested/dropped counters to 0.
 
-**On AWS** there is no `sync-state` volume: the state file is on the task's
-own disk, so every new sync task starts from an empty cursor. Read the error
+**On AWS** there is no `sync-state` volume and none is needed: the cursor is
+in `ctf:sync:state` on ElastiCache, so a new sync task resumes from it, and
+holds while srh is unreadable. Read the error
 with `aws logs tail /ecs/<name>/sync --since 30m`, and why the task stopped
 with `describe-tasks` (see the
 [AWS runbook](aws.md#watching-the-stack)). A `GITHUB_ORG is not set` or a
 missing App id means a Terraform variable is empty: set `github_org` and
-`github_app_id`, then `terraform apply`. A
-restart re-reads every score comment. That is safe for totals, but it undoes
-a per-contestant Secure Development reset: see the sync drill in the
+`github_app_id`, then `terraform apply`. Only deleting `ctf:sync:state`
+makes sync re-read every score comment, which undoes a per-contestant Secure
+Development reset: see the sync drill in the
 [AWS runbook](aws.md#failure-drills).
 
 ## The monitor says `/health/deep` is 503 (but the site loads fine)

@@ -100,7 +100,8 @@ function slug(text) {
     problems.push(".github/workflows/ci.yml: no `shell:` job found — the parser no longer matches the file");
   } else {
     for (let i = start + 1; i < ci.length && !/^ {2}\S/.test(ci[i]); i++) {
-      const m = /^\s+- run: (shellcheck|bats) (.+)$/.exec(ci[i]);
+      // `- run:` for a bare step, plain `run:` under a named one (#512 review).
+      const m = /^\s+(?:- )?run: (shellcheck|bats) (.+)$/.exec(ci[i]);
       if (!m) continue;
       // Paths are the tokens with a slash; flags and their values have none.
       for (const tok of m[2].trim().split(/\s+/)) if (tok.includes("/")) wanted.add(tok);

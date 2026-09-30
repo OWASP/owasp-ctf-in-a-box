@@ -1057,8 +1057,9 @@ function raiseSolveCounts(cmds: (string | number)[][], key: string, counts: Map<
  * across the same contestants (timestamped inside the same ~6h window) so
  * the demo shows a genuinely combined two-module leaderboard. Additive —
  * does not clear first. Gated by the route on requireAdmin plus a
- * type-to-confirm (no DEMO_MODE env var since issue #419, ADR 58); never a
- * production operation.
+ * type-to-confirm (no DEMO_MODE env var since issue #419, ADR 58). It stays
+ * reachable on a production box, so do not run it during a live event: the
+ * demo contestants and solves land on the real board.
  */
 async function seedDemoAttachments(): Promise<void> {
   for (const a of DEMO_CLASSIC_ATTACHMENTS) {

@@ -100,6 +100,15 @@ _swap() {
   _has 'CONTRIBUTING.md: CI'\''s shell job runs `deploy/new/thing.sh`'
 }
 
+# #512 review: a named step puts `run:` on its own line with no `- ` marker.
+# The parser used to match only `- run:`, so a path added that way slipped by.
+@test "a shell path in a named step (run: without the - marker) is still checked" {
+  _swap .github/workflows/ci.yml "      - run: bats scripts/test/" "      - name: a named step\n        run: bats deploy/new/named/\n      - run: bats scripts/test/"
+  run node "$SCRIPT" "$ROOT"
+  [ "$status" -eq 1 ]
+  _has 'Makefile: CI'\''s shell job runs `deploy/new/named/`'
+}
+
 @test "a workflow node-version that differs from .nvmrc fails" {
   printf '24\n' > "$ROOT/.nvmrc"
   run node "$SCRIPT" "$ROOT"

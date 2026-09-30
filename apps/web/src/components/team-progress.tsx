@@ -6,7 +6,9 @@
 // Presentational Server Component: the profile page builds the standing and
 // member entries from the SAME leaderboard pipeline the public board uses
 // (getLeaderboard → withModuleContributions → withTeamStandings →
-// withHintPenalties, see profile/team-standing.ts), so this panel can never disagree with the team's public
+// withHintPenalties, see profile/team-standing.ts — defaultFold's order minus
+// withModuleSeries, which builds chart series and adds no points), so this
+// panel can never disagree with the team's public
 // row. A member with no scores yet still gets a row — a full roster with an
 // honest zero beats a list that silently omits teammates.
 

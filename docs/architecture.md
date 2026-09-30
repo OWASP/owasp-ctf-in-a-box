@@ -386,7 +386,7 @@ summation. Individual rows read the cheap per-login aggregate counters
 instead (`getQuizTotals`); only a team standing pays the per-member
 `HGETALL` cost. That happens in exactly one place: `withTeamStandings` calls
 `withTeamQuizPoints` (and its classic and ai counterparts) once, over the
-union of the source's own deduped team rows (mock/lambda, with rosters merged
+union of the source's own deduped team rows (scorer, mock or lambda, with rosters merged
 from the team store) and the membership-only rows it synthesises for teams
 the source does not know — the only point in the pipeline where every team
 exists. `withModuleContributions`, one stage earlier, stamps a source team's

@@ -122,7 +122,7 @@ export type TeamStanding = {
   apps?: Partial<Record<AppId, AppProgress>>;
   /** Per-module breakdown, mirroring `LeaderboardEntry.modules`. The
    *  `secure-development` block is stamped by `withModuleContributions`, and
-   *  only on sources that already provide deduped teams (mock/lambda); the
+   *  only on sources that already provide deduped teams (scorer, mock or lambda); the
    *  quiz, classic and ai blocks — and the points they add — come from
    *  `withTeamStandings`, once, for every team row on the board, including
    *  the membership-only rows it synthesises (issue #520). */

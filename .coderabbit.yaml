@@ -831,7 +831,7 @@ reviews:
 
           Environment variables — removing or renaming GITHUB_ORG,
           ADMIN_LOGINS, EVENT_URL, SCORE_IMAGE, LEADERBOARD_API_URL,
-          LEADERBOARD_SOURCE, UPSTASH_REDIS_REST_URL, DEMO_MODE, or similar.
+          LEADERBOARD_SOURCE, UPSTASH_REDIS_REST_URL, or similar.
           Re-introducing SCORE_INGEST, or the judge's SCORE_API/SCORE_TOKEN,
           counts too: push ingest was removed in v0.6 (#377) and a diff that
           brings the key back is proposing a second score transport.

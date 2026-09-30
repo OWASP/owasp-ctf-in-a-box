@@ -447,6 +447,19 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   now describes `launch` in the order it runs: wait for Launch, then make
   the forks public.
 
+- **Docs drift from the pre-v0.7.0 audit (#501).** `docker-compose.yml` no
+  longer passes `DEMO_MODE` to the app. Nothing has read it since #419 (demo
+  seed/clear are admin-gated, ADR 58), so a `.env` that still sets it boots
+  exactly as before; delete the line at leisure. A `.nvmrc` pins Node 22 for
+  `nvm use`. The ADR index lists 54, 57 and 58, and ADR 57's heading no
+  longer wraps (its anchor had lost half its title). The Makefile, AGENTS.md
+  and CONTRIBUTING.md now name the AWS `deploy.sh` shellcheck and bats suite
+  CI runs, and CONTRIBUTING describes the AWS module as ECS, not an EC2 box.
+  A new `scripts/check-docs-drift.mjs`, run by the `shell` job's bats suite,
+  fails a PR whose ADR index, local shell commands or Node pin drift from
+  the source they copy. Stale comments, test counts and push-era wording
+  are corrected.
+
 ## v0.6.0 — 2026-09-20
 
 ### Breaking changes

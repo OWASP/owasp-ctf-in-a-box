@@ -8,7 +8,7 @@ a change merged.
 ## Dev environment
 
 - **Node 22** across the board (`sync`, `scorer`, `apps/web` all pin it in
-  CI). `apps/web` uses **pnpm via corepack** (`corepack enable` once); the
+  CI, and `.nvmrc` pins it locally — `nvm use`). `apps/web` uses **pnpm via corepack** (`corepack enable` once); the
   other two are plain npm.
 - **Docker with Compose v2** for anything that brings containers up (smoke,
   the acceptance scripts, the dev stack). `openssl` for secret generation.
@@ -33,10 +33,11 @@ a change merged.
   the leaderboard. Plain Node.js, tested with `node:test`.
 - **`setup/`** — `ctf-setup.sh` and the event provisioning flow. Bash,
   tested with `bats`.
-- **`deploy/`** — optional cloud deploy modules (e.g. `aws-terraform/`, a
-  single-shot EC2 box; `fly/`, one Fly machine). CI-validated by its own
-  Terraform workflow (fmt + validate + test, never apply) and by the shell
-  job's shellcheck/bats coverage of `deploy/fly/`.
+- **`deploy/`** — optional cloud deploy modules (e.g. `aws-terraform/`, ECS
+  Fargate behind an ALB with ElastiCache for Redis; `fly/`, one Fly machine).
+  CI-validated by its own Terraform workflow (fmt + validate + test, never
+  apply) and by the shell job's shellcheck/bats coverage of `deploy/fly/` and
+  `deploy/aws-terraform/deploy.sh`.
 - **`patches/`** — reference patches for the target apps, with their own
   [`README.md`](patches/README.md).
 - **`scripts/`** — the acceptance, smoke and dev-stack scripts. Bash; the
@@ -76,11 +77,11 @@ agent-facing copy with the full gotcha list is
 ./scripts/acceptance-app.sh
 
 # shell
-shellcheck scripts/*.sh scripts/lib/*.sh scripts/dev-stack setup/*.sh scorer/entrypoint.sh \
-  deploy/fly/deploy.sh deploy/fly/render-compose.sh
+shellcheck scripts/*.sh scripts/lib/*.sh scripts/dev-stack setup/*.sh scorer/entrypoint.sh sync/docker-entrypoint.sh \
+  deploy/fly/deploy.sh deploy/fly/render-compose.sh deploy/aws-terraform/deploy.sh
 # entrypoint fragments are sourced POSIX sh, never run standalone
 shellcheck -s sh --exclude=SC2034 scorer/entrypoints/*.sh
-bats setup/test/ && bats deploy/fly/test/ && bats scripts/test/
+bats setup/test/ && bats deploy/fly/test/ && bats deploy/aws-terraform/test/ && bats scripts/test/
 
 # CHANGELOG rule (what the `changelog` workflow runs on your PR)
 scripts/check-changelog.sh origin/main HEAD
@@ -118,7 +119,7 @@ filtering) plus eleven gated jobs — a job for an area your PR doesn't touch is
 | `sync-tests` | Poller parsing, cursors, idempotency, config validation |
 | `scorer` | Rubric grammars, judge report format, serve auth, both solve stores; then the offline acceptance loop |
 | `vacuous` | No rubric check passes against an up-but-useless stub (0/321) |
-| `shell` | shellcheck + bats over `setup/`, `scripts/`, `deploy/fly/` |
+| `shell` | shellcheck + bats over `setup/`, `scripts/`, `deploy/fly/`, `deploy/aws-terraform/` (its `deploy.sh` and bats suite) |
 | `smoke` | The full poll pipeline against fixture services, including the forged-comment drop and the freeze hold |
 | `app` | eslint (`pnpm lint`, zero problems); vitest; the three grading Lua scripts and the admin, hint and team scripts executed against a real Redis behind srh (every `*.upstash.test.ts` suite, run serially; required, not skippable, in CI); the production build; the `/`-never-prerendered assertion; `acceptance-app.sh`'s runtime-config acceptance (one image, three environments) |
 | `quiz-only` / `classic-only` / `ai-only` | A single app-side module runs a whole event alone, with no scorer to pull |
@@ -130,8 +131,9 @@ Two heavier workflows (`stock-scores-zero`, `patched-scores-right`) run
 real target containers, one matrix row per target or reference patch, and
 are path-scoped to judge-relevant scorer inputs plus `patches/`.
 `terraform.yml` validates and *tests* `deploy/aws-terraform` —
-`userdata.tftest.hcl` renders the bring-up script at plan time, because
-`terraform validate` never inspects rendered template output.
+`stack.tftest.hcl` plans the stack with mocked providers and reads the
+rendered ECS task definitions, because `terraform validate` never inspects
+rendered output.
 
 ## What a PR needs to pass
 

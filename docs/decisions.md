@@ -69,8 +69,11 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 51 — Base images are digest-pinned, and dependabot is what keeps the pin honest](#adr-51-base-images-are-digest-pinned-and-dependabot-is-what-keeps-the-pin-honest)
 - [ADR 52 — Modules are switched at runtime; Secure Development is configured at setup](#adr-52-modules-are-switched-at-runtime-secure-development-is-configured-at-setup)
 - [ADR 53 — ai launch tokens are asymmetric; event signatures stay symmetric](#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric)
+- [ADR 54 — The AWS module is ECS + managed Redis; the event's data stopped being ours to lose](#adr-54-the-aws-module-is-ecs--managed-redis-the-events-data-stopped-being-ours-to-lose)
 - [ADR 55 — Configuration v2: `.env` bootstrap, `/admin` runtime, no event.yaml](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml)
 - [ADR 56 — Poll is the score transport; push ingest is removed](#adr-56-poll-is-the-score-transport-push-ingest-is-removed)
+- [ADR 57 — Sponsors are recognition-only, appear in four fixed surfaces, and the disclaimer is not configurable](#adr-57-sponsors-are-recognition-only-appear-in-four-fixed-surfaces-and-the-disclaimer-is-not-configurable)
+- [ADR 58 — Demo seed/clear are admin-gated dangerous settings, not a `DEMO_MODE` env var](#adr-58-demo-seedclear-are-admin-gated-dangerous-settings-not-a-demo_mode-env-var)
 - [ADR 59 — Every event needs an official launch: an empty scoring start means "not launched"](#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched)
 - [ADR 60 — Stories: first-class objects, a derived unlock, and team scope](#adr-60-stories-first-class-objects-a-derived-unlock-and-team-scope)
 - [ADR 61 — Challenge attachments live in Redis, served only as downloads, behind the challenge's own visibility](#adr-61-challenge-attachments-live-in-redis-served-only-as-downloads-behind-the-challenges-own-visibility)
@@ -3395,8 +3398,7 @@ says `push` comes up exactly as before, now on the transport that works. *Make p
 trade: it needs a public URL, inbound surface and org secrets for every
 event, including the laptop-behind-NAT case the kit is built for.
 
-## ADR 57. Sponsors are recognition-only, appear in four fixed surfaces, and
-the disclaimer is not configurable
+## ADR 57. Sponsors are recognition-only, appear in four fixed surfaces, and the disclaimer is not configurable
 
 **Context.** An event needs to credit the organizations funding it. The kit
 had nowhere to put them, so the fallback was editing branding by hand — which
@@ -3728,7 +3730,7 @@ uncounted, unreachable chunks; every handled failure path deletes them.
 
 ## ADR 62. The landing page's footer does not repeat the sponsor credit
 
-**Context.** Issue #474. [ADR 57](#adr-57-sponsors-are-recognition-only-appear-in-four-fixed-surfaces-and)
+**Context.** Issue #474. [ADR 57](#adr-57-sponsors-are-recognition-only-appear-in-four-fixed-surfaces-and-the-disclaimer-is-not-configurable)
 put a text-only sponsor credit in the shared footer, which renders on every
 route. On `/` the hero's `SponsorStrip` credits the same list, so the landing
 page named every sponsor twice, once as logos and once as text, on the page

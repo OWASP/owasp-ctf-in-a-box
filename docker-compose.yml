@@ -42,9 +42,6 @@ services:
       # a runtime read too. Empty or unset refuses every login at /admin —
       # see apps/web/src/lib/bootstrap-env.ts.
       ADMIN_LOGINS: ${ADMIN_LOGINS:-}
-      # Runtime flag: exposes the /admin "Seed demo data" button + its route.
-      # Set to "1" only for demos (dev-stack does). Never in a real event.
-      DEMO_MODE: ${DEMO_MODE:-}
       # Runtime flag, not a build arg: non-empty means this deployment runs
       # Secure Development (the scorer and sync containers exist), and that is
       # the ONLY module enabled before an organizer switches others on in

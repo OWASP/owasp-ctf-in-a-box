@@ -177,8 +177,8 @@ ElastiCache and an ALB — `apply` up / `destroy` down) or
 
 **Secure Development** — fork a deliberately vulnerable app, find the flaw,
 **patch** it, open a PR. A GitHub Action in the fork runs the target's rubric
-against the patch and the score lands on the leaderboard (~30 s later in poll
-mode). Six targets, 321 challenges; stock scores 0, a correct patch earns its
+against the patch and the score lands on the leaderboard (~30 s later, on
+the box's next poll). Six targets, 321 challenges; stock scores 0, a correct patch earns its
 points — gated in both directions. Needs the GitHub org and the scoring
 pipeline.
 

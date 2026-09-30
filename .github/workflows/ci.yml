@@ -112,7 +112,12 @@ jobs:
             # they belong here; the .tf files belong to terraform.yml, which
             # has its own paths filter. Both jobs run when the module changes,
             # and each checks the half the other cannot see.
-            echo "shell=$(m "^scripts/|^setup/|^deploy/fly/|^deploy/aws-terraform/deploy\.sh$|^deploy/aws-terraform/test/|^sync/Dockerfile$|^docker-compose\.yml$|^scorer/consumer-workflow\.example\.yml$|^scorer/entrypoint$CI")"
+            # docs/decisions.md, the Makefile, AGENTS.md and CONTRIBUTING.md
+            # are here because scripts/test/check-docs-drift.bats pins the ADR
+            # index and the local copies of this job's own commands (#501).
+            # .nvmrc and every workflow are here for the same check's third
+            # rule: each workflow's node-version must equal .nvmrc.
+            echo "shell=$(m "^scripts/|^setup/|^deploy/fly/|^deploy/aws-terraform/deploy\.sh$|^deploy/aws-terraform/test/|^sync/Dockerfile$|^docker-compose\.yml$|^scorer/consumer-workflow\.example\.yml$|^scorer/entrypoint|^docs/decisions\.md$|^Makefile$|^AGENTS\.md$|^CONTRIBUTING\.md$|^\.nvmrc$|^\.github/workflows/$CI")"
             # `^sync/` is here because smoke runs the REAL sync service —
             # docker-compose.smoke.yml overrides only its environment. It is
             # the one end-to-end proof the poll pipeline works, so the area
@@ -255,6 +260,11 @@ jobs:
       - run: bats deploy/aws-terraform/test/
       # scripts/check-changelog.sh, the rule changelog.yml enforces on every PR
       # (#483). Each case builds a throwaway git repo, so it needs no fixture.
+      # And scripts/check-docs-drift.mjs (#501): the ADR index and the local
+      # copies of this job's commands. It is plain Node, pinned to 22 like the
+      # rest of the repo.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 22 }
       - run: bats scripts/test/
 
   smoke:

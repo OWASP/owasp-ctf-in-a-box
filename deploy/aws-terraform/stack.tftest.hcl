@@ -698,8 +698,6 @@ run "every_compose_variable_reaches_its_ecs_task" {
       setsubtract(keys(yamldecode(file("../../docker-compose.yml")).services.app.environment), [
         // HTTPS is not optional here (the session cookie is Secure).
         "ALLOW_INSECURE_EVENT_URL",
-        // The demo seed is a local-evaluation switch, never an event's.
-        "DEMO_MODE",
       ]),
       concat(
         [for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : e.name],

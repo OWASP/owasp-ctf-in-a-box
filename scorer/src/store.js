@@ -9,10 +9,11 @@ const solveField = (author, id) => `${author}:${id}`;
 // (sync/src/redis.js) reads — "1" means paused, anything else does not.
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 
-// Scheduled scoring window: true when `now` is before start / after end.
-// Absent or unparseable bounds are ignored (no bound). Mirrors apps/web
-// admin-store.ts outsideWindow and sync/src/redis.js — change all three
-// together.
+// Generic scheduled window: true when `now` is before start / after end.
+// Absent or unparseable bounds are ignored (no bound) — the registration
+// window's rule; scoring goes through outsideScoringWindow below. Mirrors
+// apps/web schedule-window.ts outsideWindow and sync/src/redis.js — change
+// all three together; test/fixtures/window-corpus.json pins them.
 export function outsideWindow(nowMs, startsAt, endsAt) {
   const s = startsAt ? Date.parse(startsAt) : NaN;
   const e = endsAt ? Date.parse(endsAt) : NaN;

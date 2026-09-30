@@ -16,9 +16,11 @@ const SYNC_STATUS_KEY = "ctf:sync:status";
 export const SYNC_STATE_KEY = "ctf:sync:state";
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 
-// Scheduled scoring window: true when `now` is before start / after end.
-// Absent/unparseable bounds are ignored. Mirrors apps/web admin-store.ts
-// and scorer/src/store.js — change all three together.
+// Generic scheduled window: true when `now` is before start / after end.
+// Absent/unparseable bounds are ignored — the registration window's rule;
+// scoring goes through outsideScoringWindow below. Mirrors apps/web
+// schedule-window.ts outsideWindow and scorer/src/store.js — change all
+// three together; test/fixtures/window-corpus.json pins them.
 export function outsideWindow(nowMs, startsAt, endsAt) {
   const s = startsAt ? Date.parse(startsAt) : NaN;
   const e = endsAt ? Date.parse(endsAt) : NaN;

@@ -65,7 +65,7 @@ export type ModuleProgress = {
   /** This module's contribution to the row's total points. */
   points: number;
   /** Items completed in this module — solved flags, answered questions, … .
-   *  Summed across modules to rank on breadth. */
+   *  Summed across modules for the points tiebreak and the solved column. */
   completed: number;
   /** ISO time of the most recent scoring activity in this module. */
   lastActivityAt: string | null;

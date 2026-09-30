@@ -139,9 +139,9 @@ describe("the solved column", () => {
     return m[2] ? `${m[1]} / ${m[2]}` : m[1];
   }
 
-  // The whole point of the column: it is the number `compareStanding` orders
-  // on — 2 quiz completions here, NOT the row's `patched` (0) or points (30).
-  it("shows the cross-module completion count the board ranks by", () => {
+  // The whole point of the column: it is the number `compareStanding` breaks
+  // points ties on — 2 quiz completions here, NOT the row's `patched` (0).
+  it("shows the cross-module completion count the board breaks ties on", () => {
     expect(solvedCell(render({ completable: 4 }))).toBe("2 / 4");
   });
 
@@ -162,11 +162,13 @@ describe("the solved column", () => {
 });
 
 describe("the sort controls on a quiz-only event", () => {
-  it("offers rank and points but not patched", () => {
+  // No "rank" key since #522: the standing order IS points first, so a
+  // separate "rank" sort would repeat "points".
+  it("offers points but not rank or patched", () => {
     const html = renderToStaticMarkup(
       <Leaderboard data={data} viewerLogin={null} modules={QUIZ_ONLY} enabledApps={[]} />,
     );
-    expect(html).toContain(">rank<");
+    expect(html).not.toContain(">rank<");
     expect(html).toContain(">points<");
     expect(html).not.toContain("patched");
   });
@@ -182,11 +184,11 @@ describe("the sort controls on a quiz-only event", () => {
     expect(html).toContain(">solved<");
   });
 
-  it("offers the same three keys where secure-development is enabled", () => {
+  it("offers the same two keys where secure-development is enabled", () => {
     const html = renderToStaticMarkup(
       <Leaderboard data={data} viewerLogin={null} modules={WITH_SECURE_DEV} enabledApps={[]} />,
     );
-    expect(html).toContain(">rank<");
+    expect(html).not.toContain(">rank<");
     expect(html).toContain(">points<");
     expect(html).toContain(">solved<");
   });

@@ -61,6 +61,11 @@ describe("/faq with every module enabled", () => {
     expect(html).toContain("Where do I ask for help during the event?");
   });
 
+  it("answers how the leaderboard is ranked (#522)", () => {
+    expect(questions()).toContain("How is the leaderboard ranked?");
+    expect(html).toContain("By points. At equal points, whoever completed more items ranks higher, and after that whoever got there first.");
+  });
+
   it("keeps every module's answer to a shared question, labelled by module", () => {
     // The three "do I need experience" answers differ only in what they name —
     // targets, questions, flags. Losing one to a dedupe would be silent, so

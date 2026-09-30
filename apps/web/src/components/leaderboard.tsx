@@ -24,7 +24,7 @@ import type { LeaderboardData } from "@/lib/leaderboard/types";
 export { EntryRow, TeamRow };
 
 export type View = "individual" | "teams";
-type SortKey = "rank" | "points" | "solved";
+type SortKey = "points" | "solved";
 
 /** Which individual-board state to render, from the entry count and the
  *  query. The bare query on a board with nobody scored draws the podium
@@ -158,18 +158,19 @@ export default function Leaderboard({
   // Teams are the primary competitive unit once they exist — default there
   // and let individual standings be the secondary, opt-in view.
   const showTeamsToggle = data.capabilities.teams && data.teams.length > 0;
-  // All three keys are offered on every event now. The third used to be
-  // "patched" and was gated on hasSecureDev, because it sorted a column a
-  // quiz-only event does not have; it sorts on cross-module completion
-  // instead, which every event has, so the gate went with the column.
-  const sortKeys: SortKey[] = ["rank", "points", "solved"];
+  // Both keys are offered on every event. "solved" used to be "patched" and
+  // was gated on hasSecureDev, because it sorted a column a quiz-only event
+  // does not have; it sorts on cross-module completion instead, which every
+  // event has, so the gate went with the column. There is no "rank" key since
+  // #522: the standing order is points first, so it would repeat "points".
+  const sortKeys: SortKey[] = ["points", "solved"];
 
   const [query, setQuery] = useState("");
   const [{ view, expanded }, dispatch] = useReducer(boardUiReducer, {
     view: showTeamsToggle ? "teams" : "individual",
     expanded: null,
   });
-  const [sort, setSort] = useState<SortKey>("rank");
+  const [sort, setSort] = useState<SortKey>("points");
 
   // If teams are deleted while viewing them, force the view back to individual
   const activeView = resolveActiveView(view, showTeamsToggle);
@@ -207,10 +208,12 @@ export default function Leaderboard({
     return data.entries
       .filter((e) => (q === "" ? true : e.login.toLowerCase().includes(q) || e.team?.toLowerCase().includes(q)))
       .sort((a, b) => {
-        if (sort === "rank") return a.rank - b.rank;
-        if (sort === "points") return b.points - a.points;
-        // Same figure the column shows and the comparator ranks on.
-        return completedCount(b) - completedCount(a);
+        // "points" IS the standing order (compareStanding: points, then items,
+        // then earliest activity), so it follows the rank the fold stamped
+        // rather than re-sorting on points alone and losing the tiebreaks.
+        if (sort === "points") return a.rank - b.rank;
+        // Same figure the column shows; ties keep the standing order.
+        return completedCount(b) - completedCount(a) || a.rank - b.rank;
       });
   }, [data.entries, query, sort]);
 
@@ -331,17 +334,14 @@ export default function Leaderboard({
         </div>
       )}
 
-      {/* The default order is breadth-first (compareStanding: items solved
-          across every module, then points, then earliest activity) — which
-          means the top row is NOT necessarily the highest points, and a
-          contestant reading "#3" next to the biggest PTS figure on the board
-          concludes the ranking is broken unless the rule is stated where the
-          ranking is (issue #200, 2.1). Shown only while that order is active:
-          the points/solved sorts are self-describing. */}
-      {activeView === "individual" && data.entries.length > 0 && sort === "rank" && (
+      {/* The default order (compareStanding, #522): points, then items
+          completed across every module, then earliest activity. The
+          tiebreaks are not visible in the numbers, so the rule is stated
+          where the ranking is (issue #200, 2.1). Shown only while that order
+          is active: the solved sort is self-describing. */}
+      {activeView === "individual" && data.entries.length > 0 && sort === "points" && (
         <p className="px-1 text-xs leading-relaxed text-muted">
-          Rank rewards breadth: challenges solved across every module first, then points as the
-          tiebreak, then whoever got there first.
+          Ranked by points; ties go to more items completed, then to whoever got there first.
         </p>
       )}
 

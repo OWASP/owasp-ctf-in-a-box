@@ -147,20 +147,19 @@ describe("withModuleContributions", () => {
   });
 
   // upstash carries no per-app data and no modules map, so completedCount
-  // falls back to `patched` — which DOES re-order the raw ZRANGE
-  // points-descending order this source arrives in. Accepted deliberately (it
-  // makes upstash rank by the same breadth-first rule as lambda/mock); pinned
-  // here so the change can't happen again unnoticed.
-  it("re-orders an upstash-shaped board onto the breadth-first rule", async () => {
+  // falls back to `patched`. Points come first (#522), so the raw ZRANGE
+  // points-descending order stands; `patched` only breaks a points tie, the
+  // same way it does on lambda/mock. Pinned here so neither half drifts.
+  it("keeps an upstash-shaped board's points order and breaks its ties on patched", async () => {
     const bare = (login: string, points: number, patched: number) => ({
       ...entry(login, points, patched), apps: {},
     });
     const out = await withModuleContributions({
-      // ZRANGE order: points descending.
-      ...data([bare("hoarder", 90, 1), bare("grinder", 20, 4)]),
+      // ZRANGE order: points descending, ties in arrival order.
+      ...data([bare("scorer", 90, 1), bare("fewer", 20, 1), bare("more", 20, 4)]),
       capabilities: { apps: false, teams: false, challenges: false },
     });
-    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([["grinder", 1], ["hoarder", 2]]);
+    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([["scorer", 1], ["more", 2], ["fewer", 3]]);
     expect(out.entries.every((e) => Object.keys(e.modules ?? {}).length === 0)).toBe(true);
   });
 
@@ -302,9 +301,8 @@ describe("withModuleContributions", () => {
     });
 
     it("reflects the added quiz points in ranking", async () => {
-      // Same breadth (secure-dev completed=3 vs quiz completed=1 -> combined
-      // completed 3 for both), so the tie falls to points: ada's raw 30 loses
-      // to bob's 20 + 15 quiz = 35, once the quiz points are added.
+      // Points come first: ada's raw 30 loses to bob's 20 + 15 quiz = 35,
+      // once the quiz points are added.
       mocks.getQuizTotals.mockResolvedValue(
         new Map([["bob", { points: 15, answered: 1, lastAt: null }]]),
       );

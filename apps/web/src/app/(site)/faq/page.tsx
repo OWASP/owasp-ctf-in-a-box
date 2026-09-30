@@ -128,6 +128,11 @@ export default async function FaqPage() {
     ...fromModules("prep"),
     ...fromModules("playing"),
     {
+      // The same order rank.ts `compareStanding` applies (#522).
+      q: "How is the leaderboard ranked?",
+      a: "By points. At equal points, whoever completed more items ranks higher, and after that whoever got there first. Teams are ranked by points.",
+    },
+    {
       q: "Is there a prize?",
       a: "Yes. Prizes go to the top individuals and top teams overall. You must be present at the closing ceremony to claim.",
     },

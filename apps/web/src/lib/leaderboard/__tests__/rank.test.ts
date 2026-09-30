@@ -1,8 +1,8 @@
-// Unit tests for the standing comparator. Order of precedence:
-//   1. challenges solved (patched) desc
-//   2. total points desc
-//   3. lastSolveAt asc (earlier = reached the score first = higher rank)
-// Entries without a solve time sort after those with one.
+// Unit tests for the standing comparator (#522). Order of precedence:
+//   1. total points desc
+//   2. items completed across modules desc (with no module data: patched)
+//   3. activity time asc (earlier = reached the score first = higher rank)
+// Entries without an activity time sort after those with one.
 
 import { describe, expect, it } from "vitest";
 import { rankByStanding } from "../rank";
@@ -27,35 +27,35 @@ function entry(
 }
 
 describe("rankByStanding", () => {
-  it("orders by challenges solved first", () => {
+  it("orders by points first", () => {
     const ranked = rankByStanding([
-      entry("few", { patched: 2, points: 500 }),
-      entry("many", { patched: 9, points: 90 }),
+      entry("low", { patched: 2, points: 90 }),
+      entry("high", { patched: 2, points: 500 }),
     ]);
     expect(ranked.map((e) => [e.login, e.rank])).toEqual([
-      ["many", 1],
-      ["few", 2],
+      ["high", 1],
+      ["low", 2],
     ]);
   });
 
-  it("ranks more solves above more points, even at a large points deficit", () => {
-    // The headline behaviour change: breadth of solving beats point hoarding.
+  it("ranks more points above more items, whatever the item deficit", () => {
+    // The #522 change: the old breadth-first rule put `grinder` first.
     const ranked = rankByStanding([
-      entry("hoarder", { patched: 1, points: 9999 }),
-      entry("grinder", { patched: 2, points: 20 }),
+      entry("grinder", { patched: 9, points: 20 }),
+      entry("scorer", { patched: 1, points: 9999 }),
     ]);
-    expect(ranked.map((e) => e.login)).toEqual(["grinder", "hoarder"]);
+    expect(ranked.map((e) => e.login)).toEqual(["scorer", "grinder"]);
   });
 
-  it("breaks solve-count ties on total points", () => {
+  it("breaks points ties on items completed", () => {
     const ranked = rankByStanding([
-      entry("cheap", { patched: 5, points: 50 }),
-      entry("hard", { patched: 5, points: 120 }),
+      entry("fewer", { patched: 2, points: 120 }),
+      entry("more", { patched: 5, points: 120 }),
     ]);
-    expect(ranked.map((e) => e.login)).toEqual(["hard", "cheap"]);
+    expect(ranked.map((e) => e.login)).toEqual(["more", "fewer"]);
   });
 
-  it("breaks solved+points ties by earlier lastSolveAt", () => {
+  it("breaks points+items ties by earlier lastSolveAt", () => {
     const ranked = rankByStanding([
       entry("later", { patched: 5, points: 50, lastSolveAt: "2026-08-07T15:00:00Z" }),
       entry("earlier", { patched: 5, points: 50, lastSolveAt: "2026-08-07T12:00:00Z" }),
@@ -63,8 +63,8 @@ describe("rankByStanding", () => {
     expect(ranked.map((e) => e.login)).toEqual(["earlier", "later"]);
   });
 
-  it("only consults time when BOTH solved and points are tied", () => {
-    // `early` solved first but cleared fewer challenges — it must still lose.
+  it("only consults time when BOTH points and items are tied", () => {
+    // `early` got there first but completed fewer items — it must still lose.
     const ranked = rankByStanding([
       entry("early", { patched: 3, points: 30, lastSolveAt: "2026-08-07T09:00:00Z" }),
       entry("late", { patched: 4, points: 30, lastSolveAt: "2026-08-07T23:00:00Z" }),
@@ -103,13 +103,13 @@ describe("rankByStanding", () => {
     const ranked = rankByStanding([
       entry("d", { patched: 1, points: 10 }),
       entry("a", { patched: 7, points: 70 }),
-      entry("c", { patched: 3, points: 99 }),
-      entry("b", { patched: 3, points: 100 }),
+      entry("c", { patched: 3, points: 100 }),
+      entry("b", { patched: 4, points: 100 }),
     ]);
     expect(ranked.map((e) => [e.login, e.rank])).toEqual([
-      ["a", 1],
-      ["b", 2],
-      ["c", 3],
+      ["b", 1],
+      ["c", 2],
+      ["a", 3],
       ["d", 4],
     ]);
   });
@@ -126,19 +126,19 @@ const withModules = (
 });
 
 describe("compareStanding across modules", () => {
-  it("counts completion across every module, not just patching", () => {
-    // ada: 0 patches but 12 quiz answers; bob: 1 patch, no quiz.
+  it("counts completion across every module, not just patching, for the tiebreak", () => {
+    // Equal points. ada: 0 patches but 12 quiz answers; bob: 1 patch, no quiz.
     const ada = withModules("ada", 0, 120, {
       quiz: { points: 120, completed: 12, lastActivityAt: null, detail: { kind: "quiz", answered: 12, total: 15, points: 120 } },
     });
-    const bob = withModules("bob", 1, 10, {
-      "secure-development": { points: 10, completed: 1, lastActivityAt: null, detail: { kind: "secure-development", apps: {} } },
+    const bob = withModules("bob", 1, 120, {
+      "secure-development": { points: 120, completed: 1, lastActivityAt: null, detail: { kind: "secure-development", apps: {} } },
     });
     expect(rankByStanding([bob, ada]).map((e) => e.login)).toEqual(["ada", "bob"]);
   });
 
-  it("falls back to `patched` when a source supplies no modules map", () => {
-    const a = withModules("a", 5, 50, {});
+  it("falls back to `patched` for the tiebreak when a source supplies no modules map", () => {
+    const a = withModules("a", 5, 90, {});
     const b = withModules("b", 3, 90, {});
     expect(rankByStanding([b, a]).map((e) => e.login)).toEqual(["a", "b"]);
   });
@@ -147,9 +147,9 @@ describe("compareStanding across modules", () => {
   // with the quiz DISABLED: on an event with secure-development disabled, no
   // row carries a secure-development block at all, so `completedCount` falls
   // back to `patched` on every row — and `patched` is 0 on every row, because
-  // there is no scorer feeding it. The board must still rank on breadth
-  // (answers) rather than collapsing to a points sort.
-  it("ranks a board with no secure-development module on module completions", () => {
+  // there is no scorer feeding it. The items tiebreak must still count
+  // answers rather than collapse to every row's 0.
+  it("breaks points ties on module completions when there is no secure-development module", () => {
     const quiz = (login: string, points: number, answered: number) =>
       withModules(login, 0, points, {
         quiz: {
@@ -159,11 +159,11 @@ describe("compareStanding across modules", () => {
           detail: { kind: "quiz", answered, total: 10, points },
         },
       });
-    // hoarder holds one expensive question; grinder four cheap ones.
-    expect(rankByStanding([quiz("hoarder", 90, 1), quiz("grinder", 20, 4)]).map((e) => e.login))
+    // Equal points: grinder answered four questions, hoarder one.
+    expect(rankByStanding([quiz("hoarder", 40, 1), quiz("grinder", 40, 4)]).map((e) => e.login))
       .toEqual(["grinder", "hoarder"]);
-    // …and points still break an answer-count tie.
-    expect(rankByStanding([quiz("cheap", 20, 2), quiz("dear", 50, 2)]).map((e) => e.login))
+    // …and points still come first.
+    expect(rankByStanding([quiz("cheap", 20, 4), quiz("dear", 50, 2)]).map((e) => e.login))
       .toEqual(["dear", "cheap"]);
   });
 

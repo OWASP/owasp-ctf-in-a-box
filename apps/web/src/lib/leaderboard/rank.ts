@@ -1,23 +1,23 @@
 import type { LeaderboardEntry } from "./types";
 
-/** Standing order, most significant first:
+/** Standing order, most significant first (#522):
  *
- *    1. items completed ACROSS MODULES descending — the board rewards BREADTH
- *       above all else, so clearing more items always outranks clearing fewer
- *       high-value ones. With only secure-development enabled this is exactly
- *       the old `patched` count;
- *    2. total points descending — breaks completion ties on difficulty;
+ *    1. total points descending — the same rule the team view and the
+ *       scorer's own board use, so the two views of one board agree;
+ *    2. items completed ACROSS MODULES descending — a tiebreak only: at equal
+ *       points, more items ranks higher. With only secure-development enabled
+ *       this is exactly the old `patched` count;
  *    3. earliest activity ascending — whoever reached that score first ranks
  *       higher.
  *
  *  Entries without a parseable activity time sort after those with one, so
  *  remaining ties fall through to the caller's stable ordering. */
 export function compareStanding(a: LeaderboardEntry, b: LeaderboardEntry): number {
-  return completedCount(b) - completedCount(a) || b.points - a.points || activityMs(a) - activityMs(b);
+  return b.points - a.points || completedCount(b) - completedCount(a) || activityMs(a) - activityMs(b);
 }
 
-/** Completion across modules — the number the board RANKS by, and therefore
- *  the number the board has to SHOW. Exported for the row's own solved
+/** Completion across modules — the board's points tiebreak, and the number
+ *  its solved column SHOWS. Exported for the row's own solved
  *  column: computing it a second time in the component is how a displayed
  *  figure drifts from the ordering it is supposed to explain.
  *
@@ -25,11 +25,10 @@ export function compareStanding(a: LeaderboardEntry, b: LeaderboardEntry): numbe
  *  no secure-development module data (upstash: `capabilities.apps: false`, so
  *  `withModuleContributions` never stamps a `secure-development` block).
  *
- *  That fallback DOES re-order the upstash board relative to the raw `ZRANGE`
- *  points-descending order it arrives in: a row with more patches but fewer
- *  points now ranks higher. This is deliberate — it makes upstash rank by the
- *  same breadth-first rule as the lambda and mock sources rather than being
- *  the one board scored differently.
+ *  That fallback only matters within a points tie: it breaks a tie on the
+ *  upstash board the same way it breaks one on the lambda and mock sources,
+ *  rather than leaving upstash the one board where equal points fall back to
+ *  the raw `ZRANGE` order.
  *
  *  The fallback is keyed on the `secure-development` block specifically, NOT
  *  on `modules` being empty — an upstash row with quiz activity gets a `quiz`

@@ -110,14 +110,14 @@ describe("leaderboard pipeline", () => {
 
   it("re-ranks on the penalised totals", async () => {
     hints.enabled = true;
-    // ada (30) buys 25 points of hints; bob (10, fewer solves) stays clean.
-    // compareStanding ranks breadth (patched) first, so ada still leads —
-    // pin the POINTS are netted and the order is recomputed by the overlay.
+    // ada (30) buys 25 points of hints; bob (10) stays clean. compareStanding
+    // ranks points first (#522), so ada's net 5 drops her below bob — the
+    // order has to come from the NETTED totals, not the gross ones.
     hints.penalties = new Map([["ada", 25]]);
     const out = await pipeline(base);
     const ada = out.entries.find((e) => e.login === "ada")!;
     expect(ada.points).toBe(5);
-    expect(out.entries[0].rank).toBe(1);
+    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([["bob", 1], ["ada", 2]]);
   });
 
   // A team row SYNTHESISED by withTeamStandings (the upstash path: no source

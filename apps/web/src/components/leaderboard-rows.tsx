@@ -72,7 +72,7 @@ export function EntryRow({
   // Both which modules are on and a module's name are runtime now; neither
   // needs a rebuild.
   const multiModule = modules.length > 1;
-  // The same function the comparator ranks on — see `completedCount`.
+  // The same function the comparator breaks points ties on — see `completedCount`.
   const solved = completedCount(entry);
   // Clamped to the row's own numerator: a failed module-count read leaves
   // `completable` short (see withModuleContributions), and "28 / 21" is worse
@@ -109,12 +109,12 @@ export function EntryRow({
                 </span>
               )}
             </div>
-            {/* The ranking figure, restated for the narrow layout. The
+            {/* The tiebreak figure, restated for the narrow layout. The
                 right-hand `solved` column is a `hidden sm:block`, so below
-                640px the board dropped the one number that explains its own
-                ordering — the exact gap the comment on that column describes
-                closing on desktop, left open on the screen most contestants
-                read the board on. Restated here rather than unhiding the
+                640px the board dropped the one number that explains a
+                points tie — the exact gap the comment on that column
+                describes closing on desktop, left open on the screen most
+                contestants read the board on. Restated here rather than unhiding the
                 column because at 320px the row already carries a rank chip,
                 an avatar, a login, a team tag and the points. */}
             <p className="mt-1.5 font-mono text-[11px] tabular-nums text-muted sm:hidden">
@@ -142,17 +142,15 @@ export function EntryRow({
                 </p>
               ) : null}
             </div>
-            {/* ONE column, and deliberately the one the board RANKS by.
-                It replaced a `patched` + `non-patched` pair that was both
-                cluttered and unexplanatory: the two always summed to the
-                catalogue, so `non-patched` carried no information `patched`
-                didn't already, and NEITHER was the figure the ordering came
-                from — leaving rows like "1,061 pts at rank 3, above 550 pts
-                at rank 1" with nothing on screen to explain them.
-                `completedCount` is imported from the comparator itself so the
-                number shown and the number sorted on cannot drift apart.
-                Ungated by module, unlike the pair before it: breadth is what
-                every event ranks on, including one with no patching in it. */}
+            {/* ONE column, and deliberately the one the board breaks points
+                ties on (#522). It replaced a `patched` + `non-patched` pair
+                that was both cluttered and unexplanatory: the two always
+                summed to the catalogue, so `non-patched` carried no
+                information `patched` didn't already. `completedCount` is
+                imported from the comparator itself so the number shown and
+                the number sorted on cannot drift apart. Ungated by module,
+                unlike the pair before it: every event breaks ties on it,
+                including one with no patching in it. */}
             <div className="hidden sm:block">
               <p className="font-mono text-base tabular-nums text-[#22c55e]">
                 {solved}

@@ -90,33 +90,33 @@ describe("withModuleContributions on an ai-only event", () => {
     expect(out.entries[0].modules!["secure-development"]).toBeUndefined();
   });
 
-  it("ranks created rows on solves first, then points", async () => {
+  it("ranks created rows on points first, then solves (#522)", async () => {
     mocks.getAiTotals.mockResolvedValue(
       new Map([
-        ["hoarder", totals(90, 1)], // one expensive challenge
-        ["grinder", totals(20, 4)], // four cheap ones
+        ["grinder", totals(20, 4)], // four cheap challenges
+        ["scorer", totals(90, 1)], // one expensive one
       ]),
     );
 
     const out = await withModuleContributions(empty());
 
     expect(out.entries.map((e) => [e.login, e.rank])).toEqual([
-      ["grinder", 1],
-      ["hoarder", 2],
+      ["scorer", 1],
+      ["grinder", 2],
     ]);
   });
 
-  it("breaks a solve-count tie on points", async () => {
+  it("breaks a points tie on solve count", async () => {
     mocks.getAiTotals.mockResolvedValue(
       new Map([
-        ["cheap", totals(20, 2)],
-        ["dear", totals(50, 2)],
+        ["fewer", totals(40, 1)],
+        ["more", totals(40, 4)],
       ]),
     );
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => e.login)).toEqual(["dear", "cheap"]);
+    expect(out.entries.map((e) => e.login)).toEqual(["more", "fewer"]);
   });
 
   it("stamps sequential ranks across the created field", async () => {

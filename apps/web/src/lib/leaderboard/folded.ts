@@ -48,8 +48,11 @@ type Clock = () => number;
 
 // Stage order is load-bearing (this commentary moved here from the page with
 // the fold itself). Penalties fold LAST: withModuleContributions attributes
-// (and, for the app-side modules, adds) each row's gross per-module points,
-// and withTeamStandings folds rows into teams — only then does
+// (and, for the app-side modules, adds) each contestant row's gross
+// per-module points, and withTeamStandings folds rows into teams — it is the
+// ONE stage that adds quiz, classic and ai points to a team; the first stage
+// only stamps a source team's secure-development block (running both on the
+// source's teams counted those modules twice, issue #520) — only then does
 // withHintPenalties net the final all-module total, exactly once. Module
 // blocks everywhere show their gross contribution; the row's "−N hints"
 // marker is what reconciles them against the netted header. Running the

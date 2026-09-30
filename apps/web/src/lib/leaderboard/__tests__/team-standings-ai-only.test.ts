@@ -190,17 +190,25 @@ describe("withTeamStandings on an ai-only event", () => {
     expect(mocks.getTeamAiTotalsBatch).not.toHaveBeenCalled();
   });
 
-  it("no-ops on a source that already carries teams, so points are never added twice", async () => {
+  // A source that already provides deduped team rows (mock/lambda) gets its
+  // ai points from THIS stage and no other. withModuleContributions used to
+  // add them one step earlier as well, and with this overlay on top every
+  // scorer team counted them twice (issue #520). An empty team store must
+  // not skip them either — this is the only place they are added.
+  it("adds a source team's ai points exactly once, even with an empty team store", async () => {
+    mocks.listTeams.mockResolvedValue([]);
+    totalsByMember({ ada: totals(40, 4) });
     const base: LeaderboardData = {
       ...empty(),
       teams: [{ rank: 1, slug: "red", name: "Red", captain: "ada", points: 50, members: ["ada"] }],
       capabilities: { apps: true, teams: true, challenges: false },
     };
 
-    const out = await withTeamStandings(base);
+    const out = await pipeline(base);
 
-    expect(out).toBe(base);
-    expect(mocks.getTeamAiTotalsBatch).not.toHaveBeenCalled();
+    expect(out.teams.map((t) => [t.slug, t.points])).toEqual([["red", 90]]);
+    expect(out.teams[0].modules?.ai?.points).toBe(40);
+    expect(mocks.getTeamAiTotalsBatch).toHaveBeenCalledTimes(1);
   });
 });
 

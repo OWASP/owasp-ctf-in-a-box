@@ -120,12 +120,12 @@ export type TeamStanding = {
    *  (the `challenges` capability); otherwise undefined and the teams view
    *  shows members only. */
   apps?: Partial<Record<AppId, AppProgress>>;
-  /** Per-module breakdown, mirroring `LeaderboardEntry.modules`. Populated
-   *  only on sources that already provide deduped teams (mock/lambda —
-   *  `capabilities.teams` is true when `withModuleContributions` runs); on
-   *  the upstash path `withTeamStandings` replaces `data.teams` wholesale
-   *  with membership-only rows (`points: 0`, no per-flag data to dedupe
-   *  with), so there is nothing yet for a module overlay to attach to. */
+  /** Per-module breakdown, mirroring `LeaderboardEntry.modules`. The
+   *  `secure-development` block is stamped by `withModuleContributions`, and
+   *  only on sources that already provide deduped teams (scorer, mock or lambda); the
+   *  quiz, classic and ai blocks — and the points they add — come from
+   *  `withTeamStandings`, once, for every team row on the board, including
+   *  the membership-only rows it synthesises (issue #520). */
   modules?: Partial<Record<ModuleId, ModuleProgress>>;
 };
 

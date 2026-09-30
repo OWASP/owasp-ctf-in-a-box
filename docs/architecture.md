@@ -269,9 +269,9 @@ attributed (see [Quiz data flow](#quiz-data-flow), [Jeopardy data
 flow](#jeopardy-data-flow) and [AI data flow](#ai-data-flow) below for why
 those are
 different verbs). `withTeamStandings` does the same one step later for
-teams: its membership-only rows (synthesised from live team records whenever
-the source has no team concept of its own) get quiz, classic and ai points
-added
+teams: every team row — the source's own, and the membership-only rows it
+synthesises from live team records the source does not know — gets quiz,
+classic and ai points added, once,
 via
 `withTeamQuizPoints`, `withTeamClassicPoints` and `withTeamAiPoints`, each
 deduped by question/flag/challenge
@@ -384,15 +384,15 @@ aggregates — summing would double-count a question two teammates both
 answered, exactly like a shared flag would double-count under naive
 summation. Individual rows read the cheap per-login aggregate counters
 instead (`getQuizTotals`); only a team standing pays the per-member
-`HGETALL` cost. That happens in one of two places: `withModuleContributions`
-attributes it directly when the source already provides deduped team rows
-with real per-flag points (mock/lambda, `capabilities.teams` already `true`);
-otherwise — upstash, and the empty source a quiz-only event uses — team rows
-don't exist yet when `withModuleContributions` runs, so the same attribution
-(`withTeamQuizPoints`, calling the identical `attributeTeams` helper) runs
-from `withTeamStandings` instead, against the membership-only rows it just
-synthesised. One dedupe rule, called from whichever of the two places the
-rows actually exist at. Those per-member reads for **every** team on the
+`HGETALL` cost. That happens in exactly one place: `withTeamStandings` calls
+`withTeamQuizPoints` (and its classic and ai counterparts) once, over the
+union of the source's own deduped team rows (scorer, mock or lambda, with rosters merged
+from the team store) and the membership-only rows it synthesises for teams
+the source does not know — the only point in the pipeline where every team
+exists. `withModuleContributions`, one stage earlier, stamps a source team's
+`secure-development` block and nothing else. It used to add the app-side
+modules to the source's teams too, so on a scorer-sourced board every team
+counted its quiz, Jeopardy and AI points twice (issue #520). Those per-member reads for **every** team on the
 board go out in a single pipeline (one `HGETALL` per distinct member, not one
 round trip per team), because `/leaderboard` is dynamic and fetched
 `no-store` — a per-team round trip would bill an event one REST call per

@@ -16,7 +16,8 @@ import type { LeaderboardData, TeamStanding } from "./types";
  * require the scorer/lambda path, which computes them from per-flag data
  * upstream and sets `capabilities.teams = true` before this function ever runs.
  *
- * Module points ARE added to the rows synthesised here, via
+ * Module points ARE added — to the rows synthesised here AND to the source's
+ * own teams, in this one place and nowhere else (issue #520) — via
  * `withTeamQuizPoints`, `withTeamClassicPoints` and `withTeamAiPoints` — the
  * quiz stores which QUESTION each member answered, classic which CHALLENGE
  * each member solved, and ai which CHALLENGE each member solved, so a team's
@@ -38,9 +39,12 @@ import type { LeaderboardData, TeamStanding } from "./types";
  * spelling of the login, and a case disagreement with the team record would
  * otherwise silently drop the team chip.
  *
- * No-ops when the source already provides deduped teams (mock/lambda), when
- * team writes are disabled, or when no teams exist yet. Upstash trouble
- * degrades to the team-less view rather than failing the whole leaderboard.
+ * When the team store holds no teams, or cannot be read, membership is left
+ * as the source reported it — a team-less view on a source with no teams of
+ * its own, rather than failing the whole leaderboard. The source's own teams
+ * (scorer/lambda) still get their module points in that case: this is the one
+ * place those are added, so skipping it would drop them, not just the
+ * app-side rows.
  */
 export async function withTeamStandings(data: LeaderboardData): Promise<LeaderboardData> {
   let teams;
@@ -48,9 +52,9 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
     teams = await listTeams();
   } catch (err) {
     console.error("team standings unavailable:", errorLabel(err));
-    return data;
+    return withSourceTeamModules(data);
   }
-  if (teams.length === 0) return data;
+  if (teams.length === 0) return withSourceTeamModules(data);
 
   // A source that reports teams of its own (scorer/lambda) does NOT mean the
   // team store has nothing to add. Those are two different records: the source
@@ -128,9 +132,12 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   // would rank teams on different point sets. On a scorer-sourced board this
   // also fixes a matching gap: the team view listed secure-development points
   // alone while the individual view counted every module.
-  const standings = await withTeamAiPoints(
-    await withTeamClassicPoints(await withTeamQuizPoints([...sourceTeams, ...membershipOnly])),
-  );
+  //
+  // This is the ONLY place the app-side modules reach a team's points.
+  // `withModuleContributions` stamps a source team's secure-development chip
+  // and nothing else; it used to add quiz, classic and ai too, and with this
+  // call on top every scorer team counted them twice (issue #520).
+  const standings = await withAppModulePoints([...sourceTeams, ...membershipOnly]);
 
   return {
     ...data,
@@ -141,4 +148,18 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
     teams: standings,
     capabilities: { ...data.capabilities, teams: true },
   };
+}
+
+/** The three app-side module overlays, applied in sequence (each adds only its
+ *  own module and re-ranks on the running total; each no-ops when its module
+ *  is off). The one call site for all of them — see the #520 note above. */
+async function withAppModulePoints(teams: TeamStanding[]): Promise<TeamStanding[]> {
+  return withTeamAiPoints(await withTeamClassicPoints(await withTeamQuizPoints(teams)));
+}
+
+/** The no-team-store path: the source's own teams, if it has any, still get
+ *  their module points; a source with none passes through untouched. */
+async function withSourceTeamModules(data: LeaderboardData): Promise<LeaderboardData> {
+  if (!data.capabilities.teams || data.teams.length === 0) return data;
+  return { ...data, teams: await withAppModulePoints(data.teams) };
 }

@@ -466,7 +466,7 @@ value and compares whole strings with Lua's `==` — a flag can contain
 braces, quotes, and backslashes, so it is never pattern-matched out of a
 JSON blob the way a points value is.
 
-**The full key layout is ten `ctf:classic:*` keys** — nine enumerated in
+**The full key layout is eleven `ctf:classic:*` keys** — ten enumerated in
 `classic-store.ts`'s header comment, plus `hints`, which is named only in
 `classic-keys.ts`: `challenges` (the public-safe hash
 contestants see — no field on it could carry a flag even by accident),
@@ -478,9 +478,10 @@ hint-store's reveal, exactly the flag hashes' rule; its name lives in
 `{points, at}`, points captured at solve time so a later re-price never
 rewrites history), `attempts:<login>` (every submission, right or wrong —
 `{attempts, firstAt, lastAt, lastAtMs}`, the cooldown's own read; `firstAt`
-is what Insights' time-to-solve is measured from), and three running
+is what Insights' time-to-solve is measured from), and four running
 aggregates: `points` and `solved` (per-login totals the leaderboard overlay
-reads with two `HGETALL`s regardless of board size) and `solvecount` (the
+reads with flat `HGETALL`s regardless of board size), `lastAt` (each login's
+latest award time, the leaderboard's tiebreak, #522) and `solvecount` (the
 per-challenge distinct-solver count the board displays, distinct by
 construction because the already-solved guard runs before any write).
 
@@ -496,8 +497,9 @@ the actual authority: it re-reads the already-solved guard and the cooldown
 against state read fresh at script-execution time (never a value the caller
 read earlier), so a race that slips past the pre-check is still caught,
 atomically. On a correct submission it reads the challenge's current price
-off the challenge hash, writes the solve row, and bumps all three aggregate
-counters (`points`, `solved`, `solvecount`) in the same script execution.
+off the challenge hash, writes the solve row, bumps the three counters
+(`points`, `solved`, `solvecount`) and moves `lastAt` forward, all in the same
+script execution.
 
 **There is no attempt cap anywhere in this gate — only a cooldown, in
 SECONDS.** `classicCooldownSec` (organizer-configurable, default `5`,
@@ -636,7 +638,7 @@ assertion against a challenge authored as `mode: "flag"`, so a missed
 mode-check in the route cannot turn every flag-only challenge into
 something any signing-key holder can assert.
 
-**The key layout is thirteen `ctf:ai:*` keys**, split by secrecy class:
+**The key layout is fourteen `ctf:ai:*` keys**, split by secrecy class:
 
 - **Catalogue — public**: `ctf:ai:challenges` (the public-safe hash
   contestants and the leaderboard read — no field on it could carry a flag
@@ -666,8 +668,8 @@ something any signing-key holder can assert.
 
 **Grading is one atomic Lua script**, exactly like quiz's and classic's: the
 already-solved guard, the cooldown (graded path only — a signed event has no
-wrong answer to rate-limit), the flag comparison, the solve row, and all
-three aggregate counters are read and written inside one script execution,
+wrong answer to rate-limit), the flag comparison, the solve row, the three
+aggregate counters and the award time are read and written inside one script execution,
 against state read fresh at that instant rather than a value either caller
 read earlier. The JS-side pre-check (`evaluateGate`) that runs before it is
 only a cheap early-out; the script is what actually closes the race.
@@ -707,7 +709,7 @@ that could silently diverge.
 
 **Master reset clears progress, nonces, and the launch key — never the
 catalogue.** `resetEvent`'s `RESET_PREFIXES` wipe `ai`'s solve/attempt rows,
-the three aggregate hashes, and every spent replay nonce, but deliberately
+the three aggregate hashes, the award-time hash, and every spent replay nonce, but deliberately
 leave `ctf:ai:challenges`/`ctf:ai:flag`/`ctf:ai:flagnorm`/`ctf:ai:hints`/
 `ctf:ai:signkey`/`ctf:ai:categories` untouched — organizer-authored content,
 the same rule quiz's and classic's questions/challenges get. Unlike those

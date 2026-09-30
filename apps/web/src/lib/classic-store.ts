@@ -87,6 +87,8 @@ import {
  *                                 readers outside this file should use `lastAt`.
  *   ctf:classic:points           hash, login -> running points total
  *   ctf:classic:solved           hash, login -> running solve count
+ *   ctf:classic:lastAt           hash, login -> ISO time of the latest award
+ *                                 (#522), the leaderboard's tiebreak
  *   ctf:classic:solvecount       hash, challenge id -> DISTINCT solver count
  *
  * TWO flag hashes, on purpose. `flagnorm` is what grading compares; `flag` is

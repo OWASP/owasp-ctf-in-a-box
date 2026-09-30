@@ -7,6 +7,9 @@
 // so the security decisions stay visible in the route rather than hiding
 // behind a helper.
 import { AI_EVENT_BODY_MAX } from "@/lib/ai-defaults";
+// `error-label.ts` is a dependency-free pure function, not a store, so this
+// import keeps the file store-free (#500: it used to hold its own copy).
+import { errorLabel } from "@/lib/error-label";
 import type { AiSubmitResult } from "@/lib/ai-store";
 
 /** CORS for the ai routes, and ONLY these routes.
@@ -45,23 +48,6 @@ export function aiPreflight(methods: string): Response {
     status: 204,
     headers: { ...AI_CORS_HEADERS, "Access-Control-Allow-Methods": methods },
   });
-}
-
-/** The ONLY thing this file is allowed to hand `console.error` — a local copy
- *  of `ai-store.ts`'s discipline, kept local because this file is deliberately
- *  store-free (its one `ai-store` import is type-only).
- *
- *  Never the caught value itself. A store failure on these paths can be
- *  decorated by the driver with the request it failed on, and the ai award
- *  path's Redis arguments include the submitted flag AND the stored flag's
- *  comparison form — so one `console.error(err)` turns an outage into the
- *  event's flags in the log. Name and message, both capped, nothing else: no
- *  stack (the part most likely to carry interpolated arguments), no own
- *  properties, and no `String(err)` on a non-`Error`, because a thrown string
- *  could BE the flag. */
-function errorLabel(err: unknown): string {
-  if (!(err instanceof Error)) return "non-Error throw";
-  return `${err.name}: ${err.message}`.slice(0, 200);
 }
 
 /** Wraps a route handler so nothing it THROWS escapes as a bare 500.

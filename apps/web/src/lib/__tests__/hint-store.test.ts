@@ -3,6 +3,8 @@
 // script) and that everything is keyed by the server-derived login. Upstash
 // is mocked; end-to-end Lua behavior is covered by hint-store.upstash.test.ts.
 
+import { inspect } from "node:util";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -741,5 +743,78 @@ describe("the story lock on classic hints (#463)", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect((await store.revealHint("alice", "classic", "web")).ok).toBe(false);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+});
+
+// #500 (S7): the four catch sites that used to hand `console.error` the caught
+// value itself. A driver can decorate its error with the request it failed on
+// (`command`, `cause`), and the reveal script's ARGV carries the login and the
+// hint id, so each site must log `errorLabel(err)` and nothing else. Every case
+// asserts BOTH that the log line happened (non-vacuous) and that the planted
+// secret is absent from every argument, rendered deep.
+describe("hint-store log redaction (#500)", () => {
+  const SECRET = "PLANTED-hint-secret-7f3a";
+  const decorated = () =>
+    Object.assign(new Error("upstash down"), {
+      command: ["EVAL", "...", SECRET],
+      cause: new Error(`while sending ${SECRET}`),
+    });
+
+  async function logged(run: (store: HintStore) => Promise<unknown>): Promise<string> {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = await loadStore();
+      await run(store);
+      expect(consoleError).toHaveBeenCalled();
+      // The label, never the caught value: a raw Error argument is exactly
+      // what hands the logger its decorated `command` / `cause`.
+      const errorArgs = consoleError.mock.calls.flat().filter((a) => a instanceof Error);
+      expect(errorArgs).toEqual([]);
+      return consoleError.mock.calls
+        .map((args) => args.map((a) => (typeof a === "string" ? a : inspect(a, { depth: 10, showHidden: true }))).join(" "))
+        .join("\n");
+    } finally {
+      consoleError.mockRestore();
+    }
+  }
+
+  it("hintGate's solve-lookup failure logs the label, not the error", async () => {
+    const out = await logged(async (store) => {
+      mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintsMinSolves: 1 });
+      mocks.upstashPipeline.mockRejectedValueOnce(decorated());
+      expect(await store.hintGate("octocat", "juice-shop")).toMatchObject({ allowed: false });
+    });
+    expect(out).toContain("upstash down");
+    expect(out).not.toContain(SECRET);
+  });
+
+  it("revealHint's script failure logs the label, not the error", async () => {
+    const out = await logged(async (store) => {
+      mocks.upstashEval.mockRejectedValueOnce(decorated());
+      expect(await store.revealHint("octocat", "juice-shop", "Challenge-1")).toEqual({
+        ok: false,
+        error: "Hint reveal failed. Try again",
+      });
+    });
+    expect(out).toContain("upstash down");
+    expect(out).not.toContain(SECRET);
+  });
+
+  it("getClassicHintIds' read failure logs the label, not the error", async () => {
+    const out = await logged(async (store) => {
+      mocks.upstashPipeline.mockRejectedValueOnce(decorated());
+      expect(await store.getClassicHintIds()).toEqual([]);
+    });
+    expect(out).toContain("upstash down");
+    expect(out).not.toContain(SECRET);
+  });
+
+  it("getAiHintIds' read failure logs the label, not the error", async () => {
+    const out = await logged(async (store) => {
+      mocks.upstashPipeline.mockRejectedValueOnce(decorated());
+      expect(await store.getAiHintIds()).toEqual([]);
+    });
+    expect(out).toContain("upstash down");
+    expect(out).not.toContain(SECRET);
   });
 });

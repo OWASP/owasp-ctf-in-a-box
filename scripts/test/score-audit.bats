@@ -37,6 +37,11 @@ setup() {
   [ "$status" -eq 2 ] && [ ! -e "$BATS_TEST_TMPDIR/fly.calls" ]
 }
 
+@test "a --sd-cache-ms that is not a plain number is refused before fly runs" {
+  run env PATH="$STUB:$PATH" "$WRAPPER" --app owasp-ctf --sd-cache-ms '5$(id)'
+  [ "$status" -eq 2 ] && [ ! -e "$BATS_TEST_TMPDIR/fly.calls" ]
+}
+
 @test "an out-of-range --settle-ms is refused" {
   run env PATH="$STUB:$PATH" "$WRAPPER" --app owasp-ctf --settle-ms 999999
   [ "$status" -eq 2 ]

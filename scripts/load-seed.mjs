@@ -165,24 +165,33 @@ export function attemptRow(tries, earnedAtMs, gapMinutes, floorMs) {
   });
 }
 
+/** The module ids the app knows (apps/web/src/lib/modules.ts). */
+export const MODULE_IDS = ["secure-development", "quiz", "classic", "ai"];
+
 /**
- * Which modules the settings hash says are live, or null for "no list stored"
- * (every module counts as live then). FAILS CLOSED on a list it cannot read:
- * guessing here would seed points onto a board that does not show them.
+ * Which modules are live, read the way the app reads them: the settings
+ * field `enabledModules`, a COMMA list (apps/web/src/lib/admin-store.ts,
+ * decodeEnabledModuleIds). Absent means the deployment default — Secure
+ * Development iff SCORE_IMAGE is set, else nothing (module-defaults.ts);
+ * "" means the organizer switched every board off; Secure Development is
+ * never live without SCORE_IMAGE (enabled-modules.ts). FAILS CLOSED on a
+ * list holding anything but known module ids: the app would drop those
+ * tokens, but a seeder that cannot read the whole list cannot be sure which
+ * boards are showing, and guessing would seed points onto a board that does
+ * not show them.
  */
-export function liveModules(settings) {
-  const raw = settings && settings.enabledModuleIds;
-  if (raw === undefined || raw === null || raw === "") return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("ctf:admin:settings enabledModuleIds is not valid JSON — refusing to guess which modules are live");
+export function liveModules(settings, env = process.env) {
+  const scoreImage = typeof env.SCORE_IMAGE === "string" && env.SCORE_IMAGE.trim() !== "";
+  const raw = settings ? settings.enabledModules : undefined;
+  let ids;
+  if (raw === undefined || raw === null) ids = scoreImage ? ["secure-development"] : [];
+  else if (raw.trim() === "") ids = [];
+  else {
+    ids = [...new Set(raw.split(",").map((s) => s.trim()))];
+    const unknown = ids.filter((id) => !MODULE_IDS.includes(id));
+    if (unknown.length) throw new Error(`ctf:admin:settings enabledModules holds ${unknown.map((u) => JSON.stringify(u.slice(0, 20))).join(", ")}, not a module id — refusing to guess which modules are live`);
   }
-  if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === "string")) {
-    throw new Error("ctf:admin:settings enabledModuleIds is not a list of module ids — refusing to guess which modules are live");
-  }
-  return parsed;
+  return scoreImage ? ids : ids.filter((id) => id !== "secure-development");
 }
 
 /**

@@ -3,7 +3,7 @@
 # every team's score from the raw Redis rows and diff it against what
 # /leaderboard serves (scripts/score-audit.mjs has the rules and the reasons).
 #
-#   scripts/score-audit.sh --app <fly-app> [--report <path>] [--settle-ms <ms>]
+#   scripts/score-audit.sh --app <fly-app> [--report <path>] [--settle-ms <ms>] [--sd-cache-ms <ms>]
 #
 # Uploads scripts/score-audit.mjs into the Fly machine's app container (srh
 # is on the private network; the container holds the URL/token and the
@@ -20,24 +20,27 @@
 # setup step); 2 on a usage error.
 set -euo pipefail
 
-APP=""; REPORT=""; SETTLE_MS=12000
+APP=""; REPORT=""; SETTLE_MS=12000; SD_CACHE_MS=32000
 need_value() { if [ "$#" -lt 2 ] || [ -z "$2" ]; then echo "FAIL: $1 needs a value" >&2; exit 2; fi; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --app) need_value "$@"; APP="$2"; shift 2 ;;
     --report) need_value "$@"; REPORT="$2"; shift 2 ;;
     --settle-ms) need_value "$@"; SETTLE_MS="$2"; shift 2 ;;
+    --sd-cache-ms) need_value "$@"; SD_CACHE_MS="$2"; shift 2 ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
 if [ -z "$APP" ]; then echo "FAIL: --app is required" >&2; exit 2; fi
-# APP and SETTLE_MS reach command lines (SETTLE_MS inside the remote `-C`
-# shell string), so both are checked against a strict charset HERE, before
+# APP, SETTLE_MS and SD_CACHE_MS reach command lines (the two waits inside the remote `-C`
+# shell string), so all three are checked against a strict charset HERE, before
 # anything reaches `fly ssh console`.
 case "$APP" in *[!a-z0-9-]*|-*) echo "FAIL: --app must be a Fly app name (a-z, 0-9, -), got '$APP'" >&2; exit 2 ;; esac
 case "$SETTLE_MS" in ''|*[!0-9]*|???????*) echo "FAIL: --settle-ms must be a whole number of milliseconds (0..120000), got '$SETTLE_MS'" >&2; exit 2 ;; esac
 if [ "$SETTLE_MS" -gt 120000 ]; then echo "FAIL: --settle-ms must be at most 120000, got $SETTLE_MS" >&2; exit 2; fi
+case "$SD_CACHE_MS" in ''|*[!0-9]*|???????*) echo "FAIL: --sd-cache-ms must be a whole number of milliseconds (0..120000), got '$SD_CACHE_MS'" >&2; exit 2 ;; esac
+if [ "$SD_CACHE_MS" -gt 120000 ]; then echo "FAIL: --sd-cache-ms must be at most 120000, got $SD_CACHE_MS" >&2; exit 2; fi
 command -v fly >/dev/null || { echo "FAIL: fly CLI not found" >&2; exit 3; }
 command -v node >/dev/null || { echo "FAIL: node not found" >&2; exit 3; }
 
@@ -69,9 +72,9 @@ fi
 # Remove the two scratch files whatever happens next.
 trap 'remote "rm -f $REMOTE_JS $REMOTE_REPORT" >/dev/null 2>&1 || true' EXIT
 
-echo "== auditing (reads the store, fetches /leaderboard twice ${SETTLE_MS} ms apart, reads the store again)"
+echo "== auditing (reads the store, waits ${SD_CACHE_MS} ms for the scorer cache when Secure Development is live, fetches /leaderboard twice ${SETTLE_MS} ms apart, reads the store again)"
 RUN_STATUS=0
-RUN_OUT="$(remote "node $REMOTE_JS --report $REMOTE_REPORT --settle-ms $SETTLE_MS" 2>&1)" || RUN_STATUS=$?
+RUN_OUT="$(remote "node $REMOTE_JS --report $REMOTE_REPORT --settle-ms $SETTLE_MS --sd-cache-ms $SD_CACHE_MS" 2>&1)" || RUN_STATUS=$?
 printf '%s\n' "$RUN_OUT" | grep -v '^{"mode":"score-audit"' || true
 LAST="$(printf '%s\n' "$RUN_OUT" | tr -d '\r' | grep '^{"mode":"score-audit"' | tail -1 || true)"
 if [ -z "$LAST" ]; then echo "FAIL: the auditor printed no result line (exit $RUN_STATUS)" >&2; exit 3; fi

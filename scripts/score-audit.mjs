@@ -100,11 +100,14 @@
 //
 // STALENESS. The board is memoized for 10 s (folded.ts:44) and its SD part
 // comes through a fetch cached with `revalidate: 30` (lambda.ts:242-244),
-// which serves a stale copy once and refreshes behind it. So the audit reads
-// the store (S1), fetches the board once to trigger any refresh, waits past
-// the memo (--settle-ms), fetches again, reads the store again (S2), and
-// compares only when S1 and S2 are identical; otherwise it retries, and
-// after --attempts it FAILS as unstable. Run it on a quiet box.
+// which serves a copy up to 30 s old as fresh, and an older one once (stale)
+// while it refreshes behind it. So each attempt (auditAttempt) reads the
+// store (S1); when Secure Development is live, waits past that cache
+// (--sd-cache-ms, 32 s) so any copy cached before S1 is stale; fetches the
+// board once to trigger the refresh; waits past the memo (--settle-ms, 12 s);
+// fetches the board it compares; reads the store again (S2); and compares
+// only when S1 and S2 are identical. Otherwise it retries, and after
+// --attempts it FAILS as unstable. Run it on a quiet box.
 //
 // OUTPUT: a human summary on stdout, the full JSON report at --report, and a
 // last stdout line `{"mode":"score-audit",...}`. Exit 0 only when zero board
@@ -816,6 +819,35 @@ export async function fetchFlight(baseUrl) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Past the scorer fetch's `revalidate: 30` (lambda.ts:242-244), with margin. */
+export const SD_CACHE_WAIT_MS = 32_000;
+/** Past the 10 s fold memo (folded.ts:44), with margin. */
+export const MEMO_WAIT_MS = 12_000;
+
+/**
+ * One attempt, in the order that makes the compared board a function of the
+ * store as S1 read it:
+ *   1. read the store (S1);
+ *   2. if Secure Development is live, wait past the scorer fetch cache, so any
+ *      copy cached BEFORE S1 is stale by the next step (a copy younger than
+ *      30 s would otherwise be served as fresh and never refreshed);
+ *   3. priming fetch: serves that stale copy once and refreshes it behind it;
+ *   4. wait past the fold memo, so the priming fold is not the one compared;
+ *   5. compared fetch: a new fold over a scorer copy fetched after S1;
+ *   6. read the store again (S2) — the attempt is stable only if S1 = S2.
+ * The seams (`readSnapshot`, `fetchFlight`, `sleep`) are parameters so the
+ * tests can check the order without real waits.
+ */
+export async function auditAttempt({ readSnapshot: read, fetchFlight: fetchBoard, sleep: wait = sleep, sdCacheMs = SD_CACHE_WAIT_MS, memoMs = MEMO_WAIT_MS }) {
+  const s1 = await read();
+  if (liveModules(s1.settings, s1.scoreImage).has("secure-development") && sdCacheMs > 0) await wait(sdCacheMs);
+  await fetchBoard();
+  await wait(memoMs);
+  const flight = await fetchBoard();
+  const s2 = await read();
+  return { snapshot: s1, flight, stable: fingerprint(s1) === fingerprint(s2) };
+}
+
 /** The loggable part of an error: its message, any token or URL redacted. */
 export function errorLabel(err) {
   if (!(err instanceof Error)) return "failed (non-Error throw)";
@@ -843,11 +875,14 @@ async function main() {
     options: {
       url: { type: "string", default: `http://127.0.0.1:${process.env.PORT || "3000"}` },
       report: { type: "string" },
-      "settle-ms": { type: "string", default: "12000" },
+      "settle-ms": { type: "string", default: String(MEMO_WAIT_MS) },
+      "sd-cache-ms": { type: "string", default: String(SD_CACHE_WAIT_MS) },
       attempts: { type: "string", default: "3" },
     },
   });
   const settle = Number(values["settle-ms"]);
+  const sdCache = Number(values["sd-cache-ms"]);
+  if (!Number.isInteger(sdCache) || sdCache < 0 || sdCache > 120000) { console.error("--sd-cache-ms must be 0..120000"); process.exit(2); }
   const attempts = Number(values.attempts);
   if (!Number.isInteger(settle) || settle < 0 || settle > 120000) { console.error("--settle-ms must be 0..120000"); process.exit(2); }
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 10) { console.error("--attempts must be 1..10"); process.exit(2); }
@@ -857,12 +892,8 @@ async function main() {
   try {
     let result = null;
     for (let a = 1; a <= attempts && !result; a += 1) {
-      const s1 = await readSnapshot();
-      await fetchFlight(values.url); // primes the scorer-fetch refresh behind a stale cache
-      await sleep(settle); // past the 10 s fold memo
-      const flight = await fetchFlight(values.url);
-      const s2 = await readSnapshot();
-      if (fingerprint(s1) !== fingerprint(s2)) {
+      const { snapshot: s1, flight, stable } = await auditAttempt({ readSnapshot, fetchFlight: () => fetchFlight(values.url), sdCacheMs: sdCache, memoMs: settle });
+      if (!stable) {
         report.unstableAttempts = a;
         continue;
       }

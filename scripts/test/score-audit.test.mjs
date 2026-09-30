@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import {
   assertReadOnly,
+  auditAttempt,
   audit,
   diffBoard,
   extractBoard,
@@ -322,4 +323,47 @@ test("diffBoard flags a broken rank sequence even when every row's own range hol
   served.entries[4].rank = 4; // erin and frank both 4: each inside its tie range, but the sequence is 1,2,3,4,4
   const { mismatches } = diffBoard(exp, served);
   assert.ok(mismatches.some((m) => m.field === "rank sequence"));
+});
+
+test("one attempt lets the SD fetch cache go stale BEFORE priming, then waits past the fold memo before the compared fetch", async () => {
+  const log = [];
+  const snap = snapshot();
+  const flight = toFlight(correctBoard());
+  const r = await auditAttempt({
+    readSnapshot: async () => { log.push("read"); return snap; },
+    fetchFlight: async () => { log.push("fetch"); return flight; },
+    sleep: async (ms) => { log.push(`sleep ${ms}`); },
+    sdCacheMs: 31000,
+    memoMs: 11000,
+  });
+  assert.deepEqual(log, ["read", "sleep 31000", "fetch", "sleep 11000", "fetch", "read"]);
+  assert.equal(r.stable, true);
+  assert.equal(r.flight, flight);
+  assert.equal(r.snapshot, snap);
+});
+
+test("without Secure Development live the SD-cache wait is skipped", async () => {
+  const log = [];
+  const snap = snapshot();
+  snap.settings.enabledModules = "quiz,classic";
+  await auditAttempt({
+    readSnapshot: async () => { log.push("read"); return snap; },
+    fetchFlight: async () => { log.push("fetch"); return ""; },
+    sleep: async (ms) => { log.push(`sleep ${ms}`); },
+    sdCacheMs: 31000,
+    memoMs: 11000,
+  });
+  assert.deepEqual(log, ["read", "fetch", "sleep 11000", "fetch", "read"]);
+});
+
+test("a store that moves between the two reads makes the attempt unstable", async () => {
+  let n = 0;
+  const r = await auditAttempt({
+    readSnapshot: async () => { const s = snapshot(); if (n++ > 0) s.hintsSpent.bob = "8"; return s; },
+    fetchFlight: async () => "",
+    sleep: async () => {},
+    sdCacheMs: 0,
+    memoMs: 0,
+  });
+  assert.equal(r.stable, false);
 });

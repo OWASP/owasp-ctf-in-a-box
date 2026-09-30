@@ -1924,6 +1924,10 @@ scripts/load-test.sh --app <fly-app> --url <EVENT_URL> --count 200
 scripts/load-test.sh --app <fly-app> --clean
 ```
 
+Every run, `--clean` and `--break-lock` included, deletes the seeder copy it
+uploaded to the container's `/tmp` on the way out, without changing the
+run's exit status.
+
 Pass bar for a ~100-player event, on the percentile autocannon reports
 (p97.5 — it has no p95, so the bar is the stricter one): `/leaderboard` p97.5
 under 1.5 s at 10 req/s, `?display=1` under 1 s, zero 5xx, zero connection
@@ -2011,20 +2015,36 @@ invariants — each quiz/Jeopardy/AI aggregate equals the per-login rows it
 sums, a login is on at most one team, and its `ctf:user:<login>` record
 names that team.
 
-Exit 0 only when every compared value agrees, no invariant is broken, and
-the comparison was not vacuous (at least one contestant or team compared);
-1 on any finding (each is printed as a `MISMATCH` or `INVARIANT` line, and
-the JSON report has them all); 3 when the audit could not be trusted. Being
-unable to trust the audit covers four cases: an empty store, a payload shape
-the parser does not recognise (it fails rather than reporting "no
-differences"), a `/leaderboard` that redirects away because the event is
-not launched, or a store that kept changing. The board is memoized for 10 s
-and its Secure Development part is fetched through a 30 s cache, so the
-audit reads the store, fetches the board, waits past the memo, fetches
-again and re-reads the store, and compares only if nothing moved in
-between. Run it on a quiet box: before the event, after a load-test seed,
-or once scoring closes. The report defaults to `docs/superpowers/`
-(gitignored).
+Exit codes:
+
+- **0**: every compared value agrees, no invariant is broken, and the
+  comparison was not vacuous (at least one contestant or team compared).
+- **1**: any finding. Each is printed as a `MISMATCH` or `INVARIANT` line,
+  and the JSON report has them all.
+- **2**: a usage error — a missing `--app`, or an `--app`, `--settle-ms` or
+  `--sd-cache-ms` value that is not a plain name or number. Nothing reaches
+  `fly`.
+- **3**: the audit could not be trusted, and says why:
+  - the store holds no scores and no teams, or it has data but no
+    contestant or team was matched and compared;
+  - the served payload is a shape the parser does not recognise (it fails
+    rather than reporting "no differences");
+  - `/leaderboard` redirected away (the event is not launched);
+  - the store changed during every attempt;
+  - a Redis read or the scorer's `/challenges` read failed;
+  - a wrapper setup step failed: no `fly` or `node`, the machine lookup,
+    the upload, a missing result line, or pulling the report back.
+
+The board is memoized for 10 s, and its Secure Development part is fetched
+through a cache that serves a copy up to 30 s old as fresh. So each attempt
+reads the store, waits past that cache when Secure Development is live
+(`--sd-cache-ms`, 32 s) so that any copy cached before the read is stale,
+fetches the board once to make it refresh, waits past the memo
+(`--settle-ms`, 12 s), fetches the board it compares, and re-reads the
+store; it compares only if nothing moved in between. An attempt takes about
+45 s with Secure Development live. Run it on a quiet box: before the event,
+after a load-test seed, or once scoring closes. The report defaults to
+`docs/superpowers/` (gitignored).
 
 It is read-only by construction: every Redis command goes through a guard
 that refuses anything outside a fixed list of reads before it is sent, and

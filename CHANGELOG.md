@@ -38,6 +38,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   before it is sent), fails loudly on a payload shape it does not recognise,
   refuses a vacuous comparison, and exits 0 only on zero mismatches. See
   [Checking score consistency](docs/operations.md#checking-score-consistency-scriptsscore-auditsh).
+- **Fixed: the load-test seeder read which modules are live from a field
+  nothing writes.** `scripts/load-seed.mjs` parsed a JSON `enabledModuleIds`,
+  but the app stores `enabledModules` as a comma list, so every module always
+  read as live and a seed attached points to boards that were switched off.
+  It now reads the real field with the app's default (absent = Secure
+  Development iff `SCORE_IMAGE`, empty = none) and refuses to seed on a list
+  holding anything but known module ids. Its test suite now runs in CI.
+- **Changed: `scripts/load-test.sh` deletes the seeder it uploaded** to the
+  container's `/tmp` on every exit path, without changing the exit status.
 
 ## v0.7.0 — 2026-09-30
 

@@ -1,5 +1,5 @@
 import "server-only";
-import { randomBytes } from "node:crypto";
+import { randomInt } from "node:crypto";
 import { cookies } from "next/headers";
 import { parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { logActivity } from "@/lib/activity-log";
@@ -86,11 +86,14 @@ const JOIN_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 const JOIN_CODE_LENGTH = 6;
 const JOIN_CODE_MAX_ATTEMPTS = 5;
 
+/** Each symbol is an unbiased draw over the alphabet: randomInt rejection-
+ *  samples internally. A raw byte reduced `% 31` would not be — 256 % 31 = 8,
+ *  so the first eight symbols would land at 9/256 and the rest at 8/256
+ *  (CodeQL js/biased-cryptographic-random, #435). */
 function generateJoinCodeCandidate(): string {
-  const bytes = randomBytes(JOIN_CODE_LENGTH);
   let code = "";
   for (let i = 0; i < JOIN_CODE_LENGTH; i++) {
-    code += JOIN_CODE_ALPHABET[bytes[i] % JOIN_CODE_ALPHABET.length];
+    code += JOIN_CODE_ALPHABET[randomInt(0, JOIN_CODE_ALPHABET.length)];
   }
   return code;
 }

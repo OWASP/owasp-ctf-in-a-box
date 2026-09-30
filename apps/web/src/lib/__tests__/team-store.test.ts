@@ -250,6 +250,55 @@ describe("create input handling", () => {
   });
 });
 
+// CodeQL js/biased-cryptographic-random (#435): `randomBytes(n)[i] % 31`
+// favours the first 256 % 31 = 8 symbols (9/256 vs 8/256). Each symbol must
+// come from an unbiased draw over exactly the alphabet — node:crypto's
+// randomInt(0, 31), which rejection-samples internally. The fake randomInt
+// below walks every index once, so the pin checks the bounds, that each
+// index maps to its own symbol (no symbol is reachable twice), and that
+// nothing reads a raw byte and reduces it.
+describe("join code generation", () => {
+  const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+
+  it("draws each symbol with randomInt over the alphabet, never a reduced byte", async () => {
+    const draws: [number, number][] = [];
+    let next = 0;
+    vi.doMock("node:crypto", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("node:crypto")>();
+      return {
+        ...actual,
+        randomBytes: () => {
+          throw new Error("join codes must not reduce raw bytes modulo the alphabet");
+        },
+        randomInt: (min: number, max: number) => {
+          draws.push([min, max]);
+          return next++ % ALPHABET.length;
+        },
+      };
+    });
+    try {
+      const store = await loadStore(true);
+      const codes: string[] = [];
+      // 31 symbols / 6 per code: six codes walk indices 0..35, i.e. every
+      // symbol at least once.
+      for (let i = 0; i < 6; i++) {
+        mockRegistrationOpen();
+        mockCodeCollisionCheck(false);
+        mocks.upstashEval.mockResolvedValueOnce("ok");
+        const result = await store.createTeam(`player${i}`, `Team ${i}`);
+        expect(result.ok).toBe(true);
+        codes.push(String(mocks.upstashEval.mock.calls[i][2][4]));
+      }
+      expect(draws.length).toBe(36);
+      expect(draws.every(([min, max]) => min === 0 && max === ALPHABET.length)).toBe(true);
+      const expected = Array.from({ length: 36 }, (_, i) => ALPHABET[i % ALPHABET.length]).join("");
+      expect(codes.join("")).toBe(expected);
+    } finally {
+      vi.doUnmock("node:crypto");
+    }
+  });
+});
+
 describe("registration window", () => {
   it("rejects createTeam when registration is closed, without mutating", async () => {
     const store = await loadStore(true);

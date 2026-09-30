@@ -8,6 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // #464: a preview token is honoured only while the event is not launched.
 const aiPreview = vi.hoisted(() => ({ previewClaimStillValid: vi.fn(async () => true) }));
 vi.mock("@/lib/ai-preview", () => aiPreview);
+// #495: the module switch. Kept out of `mocks` (which beforeEach resets to
+// no implementation) so every test runs with ai ON unless it says otherwise.
+const modules = vi.hoisted(() => ({ isModuleLive: vi.fn<(id: string) => Promise<boolean>>(async () => true) }));
+vi.mock("@/lib/enabled-modules", () => modules);
 
 const mocks = vi.hoisted(() => ({
   verifyLaunchToken: vi.fn(),
@@ -97,10 +101,42 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW_MS);
   for (const m of Object.values(mocks)) if (vi.isMockFunction(m)) m.mockReset();
+  modules.isModuleLive.mockReset();
+  modules.isModuleLive.mockResolvedValue(true);
 });
 afterEach(() => vi.useRealTimers());
 
 describe("POST /api/ai/event", () => {
+  // --- the module switch (#495) ---------------------------------------------
+
+  it("403s with { error: \"unavailable\" } when ai is switched off, before any key, signature, token or nonce is touched (#495)", async () => {
+    allGatesOpen();
+    modules.isModuleLive.mockResolvedValue(false);
+
+    const res = await POST(signed(bodyFor()));
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    expect(modules.isModuleLive).toHaveBeenCalledWith("ai");
+    expect(mocks.getAiSigningKey).not.toHaveBeenCalled();
+    expect(mocks.verifyEventSignature).not.toHaveBeenCalled();
+    expect(mocks.verifyLaunchToken).not.toHaveBeenCalled();
+    expect(mocks.consumeRateLimit).not.toHaveBeenCalled();
+    expect(mocks.claimAiNonce).not.toHaveBeenCalled();
+    expect(mocks.awardAiEvent).not.toHaveBeenCalled();
+    expect(mocks.logActivity).not.toHaveBeenCalled();
+  });
+
+  it("refuses a dryRun the same way while ai is off — there is no module to test against (#495)", async () => {
+    allGatesOpen();
+    modules.isModuleLive.mockResolvedValue(false);
+    const res = await POST(signed(bodyFor({ dryRun: true })));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+    expect(mocks.awardAiEvent).not.toHaveBeenCalled();
+  });
+
   it("awards a solve asserted by the real backend", async () => {
     allGatesOpen();
     const res = await POST(signed(bodyFor()));

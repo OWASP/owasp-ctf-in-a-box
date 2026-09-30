@@ -13,8 +13,9 @@ const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
 vi.mock("@/lib/activity-log", () => activityLog);
 import { vi } from "vitest";
 
-const { getSession, submitFlag, requireLaunchedApi, launchApiAccess, hasTeam, CLASSIC_ID_RE } = vi.hoisted(() => ({
+const { getSession, submitFlag, requireLaunchedApi, launchApiAccess, hasTeam, isModuleLive, CLASSIC_ID_RE } = vi.hoisted(() => ({
   getSession: vi.fn(),
+  isModuleLive: vi.fn<(id: string) => Promise<boolean>>(),
   submitFlag: vi.fn(),
   requireLaunchedApi: vi.fn(),
   launchApiAccess: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/launch", () => ({ requireLaunchedApi, launchApiAccess }));
 vi.mock("@/lib/classic-store", () => ({ submitFlag, CLASSIC_ID_RE }));
 vi.mock("@/lib/team-store", () => ({ hasTeam }));
+vi.mock("@/lib/enabled-modules", () => ({ isModuleLive }));
 
 import { POST } from "@/app/api/classic/submit/route";
 
@@ -56,9 +58,47 @@ beforeEach(() => {
   requireLaunchedApi.mockResolvedValue(null);
   launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
   hasTeam.mockResolvedValue(true);
+  isModuleLive.mockReset();
+  isModuleLive.mockResolvedValue(true);
+  activityLog.logActivity.mockClear();
 });
 
 describe("POST /api/classic/submit", () => {
+  // --- the module switch (issue #495) ---------------------------------------
+  //
+  // An organizer who switches classic off in /admin meant "no more flags":
+  // the board 404s, and this route must refuse too, or a flag typed into an
+  // open tab (or curl) still banks points that reappear on re-enable.
+
+  it("403s with { error: \"unavailable\" } when classic is switched off, before the session is read or the store is touched (#495)", async () => {
+    isModuleLive.mockResolvedValue(false);
+    storeReturns({ ok: true, correct: true, points: 100 });
+    const res = await POST(req({ challengeId: "c-1", flag: "flag{right}" }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+    expect(isModuleLive).toHaveBeenCalledWith("classic");
+    expect(getSession).not.toHaveBeenCalled();
+    expect(submitFlag).not.toHaveBeenCalled();
+    expect(activityLog.logActivity).not.toHaveBeenCalled();
+  });
+
+  it("refuses an admin preview too when classic is switched off — a dry run of a board that is not served (#495)", async () => {
+    isModuleLive.mockResolvedValue(false);
+    launchApiAccess.mockResolvedValue({ refused: null, preview: true });
+    const res = await POST(req({ challengeId: "c-1", flag: "flag{right}" }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+    expect(submitFlag).not.toHaveBeenCalled();
+  });
+
+  it("gates on classic alone — another module being off does not refuse a flag (#495)", async () => {
+    isModuleLive.mockImplementation(async (id: string) => id === "classic");
+    storeReturns({ ok: true, correct: true, points: 100 });
+    const res = await POST(req({ challengeId: "c-1", flag: "flag{right}" }));
+    expect(res.status).toBe(200);
+    expect(submitFlag).toHaveBeenCalledOnce();
+  });
+
   it("401s an unauthenticated request without touching the store", async () => {
     noSession();
     const res = await POST(req({ challengeId: "c-1", flag: "x" }));

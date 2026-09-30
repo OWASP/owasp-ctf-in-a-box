@@ -24,6 +24,10 @@ vi.mock("@/lib/launch", () => launchLock);
 // only while the event is not launched (#464). Pinned open here; the handler's
 // own suite tests the refusal.
 vi.mock("@/lib/ai-preview", () => ({ previewClaimStillValid: async () => true }));
+// #495: the real event handler gates on the ai module being live. ON unless a
+// test says otherwise; kept out of `mocks`, which beforeEach resets.
+const modules = vi.hoisted(() => ({ isModuleLive: vi.fn<(id: string) => Promise<boolean>>(async () => true) }));
+vi.mock("@/lib/enabled-modules", () => modules);
 import type { AiTokenClaims } from "@/lib/ai-token";
 
 const mocks = vi.hoisted(() => ({
@@ -113,9 +117,21 @@ beforeEach(() => {
   // `mockReset()` above also clears the wrapped real implementation — restore
   // it so every test's mint still produces a genuinely verifiable signature.
   mocks.signLaunchToken.mockImplementation(mocks.realSignLaunchToken);
+  modules.isModuleLive.mockReset();
+  modules.isModuleLive.mockResolvedValue(true);
 });
 
 describe("POST /api/admin/ai/test", () => {
+  it("relays the event handler's 403 unavailable verbatim while the ai module is off, awarding nothing (#495)", async () => {
+    allGatesOpen();
+    modules.isModuleLive.mockResolvedValue(false);
+    const res = await POST(adminReq());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 403, body: { error: "unavailable" } });
+    expect(mocks.awardAiEvent).not.toHaveBeenCalled();
+    expect(mocks.claimAiNonce).not.toHaveBeenCalled();
+  });
+
   it("refuses a non-admin before minting anything or touching the event handler", async () => {
     mocks.requireAdmin.mockResolvedValue({ ok: false, status: 403 });
     const res = await POST(adminReq());

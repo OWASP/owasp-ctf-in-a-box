@@ -1,4 +1,5 @@
 import { logActivity } from "@/lib/activity-log";
+import { isModuleLive } from "@/lib/enabled-modules";
 import { AI_ID_RE } from "@/lib/ai-keys";
 import { aiAwardResponse, aiJson, aiPreflight, aiRoute, readRawBody } from "@/lib/ai-http";
 import { previewClaimStillValid } from "@/lib/ai-preview";
@@ -45,6 +46,8 @@ const ALLOWED_METHODS = "POST, OPTIONS";
  * `submitAiFlag` remains authoritative on pause, cooldown, already-solved and
  * grading — its Lua script re-checks all of that atomically. This route
  * re-implements none of it; it only:
+ *   - refuses outright while the ai module is switched off in /admin (403
+ *     `unavailable`, #495), before anything else is read
  *   - validates the body shape (400 `invalid-request`)
  *   - reads the challenge id from the token's `aud`, unverified, to select
  *     which public key and audience to verify against (401 `invalid-token`
@@ -72,6 +75,20 @@ const ALLOWED_METHODS = "POST, OPTIONS";
  * an external caller cannot even see the status of.
  */
 export const POST = aiRoute(async (request: Request): Promise<Response> => {
+  // 0. Module switch (#495), FIRST — before the body, the token, the
+  //    signature or any key is read. Switching ai off in /admin 404s its
+  //    board; without this, the external site kept grading and banking
+  //    points that reappeared on re-enable. First, not after token auth,
+  //    because whether a module is on is already public (its nav link and
+  //    board vanish), while every later answer (invalid-token, expired,
+  //    invalid-signature, rate-limited) tells the caller something about what
+  //    it presented: an off module is not a token or signature oracle, and a
+  //    refused call spends no rate-limit budget. 403, not the 503 `aiRoute`
+  //    uses for a thrown store read — this is a decision, not a blip.
+  //    `isModuleLive` never throws; a failed settings read answers from the
+  //    deployment default, which never includes ai, so this refuses then.
+  if (!(await isModuleLive("ai"))) return aiJson({ error: "unavailable" }, 403);
+
   const body = await readRawBody(request);
   if (!body.ok) return aiJson({ error: "invalid-request" }, 400);
 

@@ -9,6 +9,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // #464: a preview token is honoured only while the event is not launched.
 const aiPreview = vi.hoisted(() => ({ previewClaimStillValid: vi.fn(async () => true) }));
 vi.mock("@/lib/ai-preview", () => aiPreview);
+// #495: the module switch. Kept out of `mocks` (which beforeEach resets to
+// no implementation) so every test runs with ai ON unless it says otherwise.
+const modules = vi.hoisted(() => ({ isModuleLive: vi.fn<(id: string) => Promise<boolean>>(async () => true) }));
+vi.mock("@/lib/enabled-modules", () => modules);
 
 const mocks = vi.hoisted(() => ({
   verifyLaunchToken: vi.fn(),
@@ -57,9 +61,45 @@ function tokenIsGood(sub = "alice") {
 
 beforeEach(() => {
   for (const m of Object.values(mocks)) m.mockReset();
+  modules.isModuleLive.mockReset();
+  modules.isModuleLive.mockResolvedValue(true);
 });
 
 describe("POST /api/ai/submit", () => {
+  // --- the module switch (#495) ---------------------------------------------
+  //
+  // Switching ai off in /admin 404s its board; this token-authenticated path
+  // must refuse too, or the external challenge site keeps banking points.
+
+  it("403s with { error: \"unavailable\" } when ai is switched off, before the token is read or anything is graded (#495)", async () => {
+    tokenIsGood();
+    modules.isModuleLive.mockResolvedValue(false);
+    mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 300 });
+
+    const res = await POST(post({ token: "t", flag: "CTF{x}" }));
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+    // Still CORS-readable, like every answer from this route family.
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    expect(modules.isModuleLive).toHaveBeenCalledWith("ai");
+    // First check: no token oracle, no rate-limit spend, no grade, no log.
+    expect(mocks.decodeTokenUnverified).not.toHaveBeenCalled();
+    expect(mocks.verifyLaunchToken).not.toHaveBeenCalled();
+    expect(mocks.consumeRateLimit).not.toHaveBeenCalled();
+    expect(mocks.submitAiFlag).not.toHaveBeenCalled();
+    expect(mocks.logActivity).not.toHaveBeenCalled();
+  });
+
+  it("answers an invalid token the same 403 while ai is off — a disabled module is no token oracle (#495)", async () => {
+    tokenIsGood();
+    mocks.verifyLaunchToken.mockReturnValue({ ok: false, error: "invalid-signature" });
+    modules.isModuleLive.mockResolvedValue(false);
+    const res = await POST(post({ token: "forged", flag: "CTF{x}" }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+  });
+
   it("awards a correct flag and answers with CORS headers", async () => {
     tokenIsGood();
     mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 300 });

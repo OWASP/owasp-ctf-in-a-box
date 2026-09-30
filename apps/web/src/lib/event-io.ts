@@ -168,13 +168,13 @@ export function parseEventBundle(raw: string): EventParseResult {
     } else {
       errors.push({
         where: "version",
-        message: `Unsupported bundle version: expected ${EVENT_BUNDLE_MIN_VERSION}-${EVENT_BUNDLE_VERSION}, got ${String(version)}`,
+        message: `Unsupported bundle version: expected an integer ${EVENT_BUNDLE_MIN_VERSION}-${EVENT_BUNDLE_VERSION}`,
       });
     }
   }
 
   if (parsed.kind !== "archive") {
-    errors.push({ where: "kind", message: `Bundle kind must be "archive", got ${String(parsed.kind)}` });
+    errors.push({ where: "kind", message: 'Bundle kind must be "archive"' });
   }
 
   if (!isPlainObject(parsed.event) || typeof parsed.event.name !== "string") {
@@ -210,8 +210,12 @@ export function parseEventBundle(raw: string): EventParseResult {
     errors.push({ where: "settings", message: '"settings" must be an object' });
   } else {
     const unknownKeys = Object.keys(parsed.settings).filter((k) => !EVENT_POLICY_FIELD_SET.has(k));
-    for (const key of unknownKeys) {
-      errors.push({ where: "settings", message: `field not allowed: ${key}` });
+    // Counted, not named (#500): a key name is the archive's own text.
+    if (unknownKeys.length > 0) {
+      errors.push({
+        where: "settings",
+        message: `field not allowed (${unknownKeys.length}) — "settings" carries only the event-policy fields`,
+      });
     }
   }
 

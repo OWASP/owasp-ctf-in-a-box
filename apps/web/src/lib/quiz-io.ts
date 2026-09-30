@@ -63,6 +63,10 @@ export type QuizBundle = {
   questions: QuizBundleQuestion[];
 };
 
+/** `where` is the indexed path, `message` the rule it broke — never the
+ *  submitted value or a key name. The list goes back to the admin client
+ *  verbatim, and a bundle's values are arbitrary text: a `correct` entry is
+ *  the answer key itself (#500). */
 export type ImportError = { where: string; message: string };
 
 export type ParseResult = { ok: true; bundle: QuizBundle } | { ok: false; errors: ImportError[] };
@@ -79,8 +83,10 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  *  that passed, for `correct` to be checked against. Returning the ids rather
  *  than a boolean is what lets a bad `correct` entry be reported against the
  *  choice list the file actually declared, instead of against nothing. */
-function validateChoices(raw: unknown, base: string, errors: ImportError[]): Set<string> {
-  const ids = new Set<string>();
+function validateChoices(raw: unknown, base: string, errors: ImportError[]): Map<string, number> {
+  // id -> the index it first appeared at, so a duplicate names the position
+  // it collides with rather than the id itself (#500).
+  const ids = new Map<string, number>();
   if (!Array.isArray(raw)) {
     errors.push({ where: `${base}.choices`, message: '"choices" must be an array' });
     return ids;
@@ -97,10 +103,10 @@ function validateChoices(raw: unknown, base: string, errors: ImportError[]): Set
     }
     const unknownKeys = Object.keys(entry).filter((k) => !CHOICE_KEY_SET.has(k));
     if (unknownKeys.length > 0) {
-      errors.push({ where, message: `Unknown key(s): ${unknownKeys.join(", ")}` });
+      errors.push({ where, message: `Unknown key(s) (${unknownKeys.length}) — a choice is exactly { id, label }` });
     }
     if (typeof entry.id !== "string" || !QUIZ_ID_RE.test(entry.id)) {
-      errors.push({ where: `${where}.id`, message: `Invalid choice id: ${String(entry.id)}` });
+      errors.push({ where: `${where}.id`, message: "Choice id must be 1-64 letters, digits, _ or -" });
       return;
     }
     if (typeof entry.label !== "string" || !entry.label.trim()) {
@@ -108,11 +114,12 @@ function validateChoices(raw: unknown, base: string, errors: ImportError[]): Set
     }
     // Bundle-only: the admin form generates choice ids, so only a
     // hand-written file can collide. See this file's header.
-    if (ids.has(entry.id)) {
-      errors.push({ where: `${where}.id`, message: `Duplicate choice id: ${entry.id}` });
+    const first = ids.get(entry.id);
+    if (first !== undefined) {
+      errors.push({ where: `${where}.id`, message: `Duplicate choice id — the same as ${base}.choices[${first}].id` });
       return;
     }
-    ids.add(entry.id);
+    ids.set(entry.id, i);
   });
   return ids;
 }
@@ -131,12 +138,12 @@ function validateQuestion(raw: unknown, index: number, errors: ImportError[]): v
 
   const unknownKeys = Object.keys(raw).filter((k) => !QUESTION_KEY_SET.has(k));
   if (unknownKeys.length > 0) {
-    errors.push({ where: base, message: `Unknown key(s): ${unknownKeys.join(", ")}` });
+    errors.push({ where: base, message: `Unknown key(s) (${unknownKeys.length}) — a question has only ${QUESTION_KEYS.join(", ")}` });
   }
 
   const id = raw.id;
   if (typeof id !== "string" || !QUIZ_ID_RE.test(id)) {
-    errors.push({ where: `${base}.id`, message: `Invalid question id: ${String(id)}` });
+    errors.push({ where: `${base}.id`, message: "Question id must be 1-64 letters, digits, _ or -" });
   }
 
   // TRIMMED, not merely non-empty, mirroring the admin route's prompt check —
@@ -151,7 +158,7 @@ function validateQuestion(raw: unknown, index: number, errors: ImportError[]): v
 
   const type = raw.type;
   if (type !== "single" && type !== "multi") {
-    errors.push({ where: `${base}.type`, message: `Question type must be "single" or "multi", got ${String(type)}` });
+    errors.push({ where: `${base}.type`, message: 'Question type must be "single" or "multi"' });
   }
 
   // Mirrors upsertQuestion's points check verbatim: points are written
@@ -183,11 +190,13 @@ function validateQuestion(raw: unknown, index: number, errors: ImportError[]): v
   // from a malformed `choices` array would otherwise report every correct id
   // as unknown, burying the real error under noise.
   if (choiceIds.size > 0) {
-    for (const c of correct as string[]) {
+    // Named by position: a correct entry IS the answer key, so echoing it
+    // would put the answer on the admin screen (#500).
+    (correct as string[]).forEach((c, j) => {
       if (!choiceIds.has(c)) {
-        errors.push({ where: `${base}.correct`, message: `Correct choice id not among choices: ${c}` });
+        errors.push({ where: `${base}.correct[${j}]`, message: "must be one of this question's choice ids" });
       }
-    }
+    });
   }
   // Canonicalized (deduped) BEFORE the arity check, exactly as
   // `upsertQuestion` does it: `["a","a"]` on a single-choice question is one
@@ -205,14 +214,15 @@ function validateQuestion(raw: unknown, index: number, errors: ImportError[]): v
  *  question, inheriting every answer already recorded against that id),
  *  never something to resolve with "last one wins". */
 function checkDuplicateIds(questions: readonly unknown[], errors: ImportError[]): void {
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   questions.forEach((raw, i) => {
     if (!isPlainObject(raw) || typeof raw.id !== "string") return;
-    if (seen.has(raw.id)) {
-      errors.push({ where: `questions[${i}].id`, message: `Duplicate question id: ${raw.id}` });
+    const first = seen.get(raw.id);
+    if (first !== undefined) {
+      errors.push({ where: `questions[${i}].id`, message: `Duplicate question id — the same as questions[${first}].id` });
       return;
     }
-    seen.add(raw.id);
+    seen.set(raw.id, i);
   });
 }
 

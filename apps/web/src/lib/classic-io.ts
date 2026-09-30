@@ -84,6 +84,10 @@ export type ClassicBundle = {
   stories?: Story[];
 };
 
+/** `where` is the indexed path, `message` the rule it broke — never the
+ *  submitted value or a key name. The list goes back to the admin client
+ *  verbatim, and a bundle's values are arbitrary text a flag or a pasted
+ *  secret can ride in (#500). */
 export type ImportError = { where: string; message: string };
 
 export type ParseResult = { ok: true; bundle: ClassicBundle } | { ok: false; errors: ImportError[] };
@@ -120,7 +124,7 @@ function validateCategories(raw: unknown, errors: ImportError[]): string[] {
   if (raw.length > CLASSIC_CATEGORIES_MAX) {
     errors.push({ where: "categories", message: `At most ${CLASSIC_CATEGORIES_MAX} categories are allowed` });
   }
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   const out: string[] = [];
   raw.forEach((entry, i) => {
     const where = `categories[${i}]`;
@@ -138,11 +142,12 @@ function validateCategories(raw: unknown, errors: ImportError[]): string[] {
       return;
     }
     const fold = trimmed.toLowerCase();
-    if (seen.has(fold)) {
-      errors.push({ where, message: `Duplicate category: ${trimmed}` });
+    const first = seen.get(fold);
+    if (first !== undefined) {
+      errors.push({ where, message: `Duplicate category — the same name as categories[${first}], ignoring case` });
       return;
     }
-    seen.add(fold);
+    seen.set(fold, i);
     out.push(trimmed);
   });
   return out;
@@ -162,12 +167,12 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
 
   const unknownKeys = Object.keys(raw).filter((k) => !CHALLENGE_KEY_SET.has(k));
   if (unknownKeys.length > 0) {
-    errors.push({ where: base, message: `Unknown key(s): ${unknownKeys.join(", ")}` });
+    errors.push({ where: base, message: `Unknown key(s) (${unknownKeys.length}) — a challenge has only ${CHALLENGE_KEYS.join(", ")}` });
   }
 
   const id = raw.id;
   if (typeof id !== "string" || !CLASSIC_ID_RE.test(id)) {
-    errors.push({ where: `${base}.id`, message: `Invalid challenge id: ${String(id)}` });
+    errors.push({ where: `${base}.id`, message: "Challenge id must be 1-64 letters, digits, _ or -" });
   }
 
   // Optional, and only a boolean when present. A string "true" is the shape a
@@ -202,7 +207,7 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
   if (typeof category !== "string") {
     errors.push({ where: `${base}.category`, message: "Challenge category must be a string" });
   } else if (!categories.includes(category)) {
-    errors.push({ where: `${base}.category`, message: `Unknown category: ${category}` });
+    errors.push({ where: `${base}.category`, message: "Challenge category must be one of this bundle's categories" });
   }
 
   const description = raw.description;
@@ -254,7 +259,7 @@ function validateAttachments(raw: unknown, where: string, errors: ImportError[])
     const allowed = isLink ? LINK_META_KEYS : UPLOAD_META_KEYS;
     const unknown = Object.keys(a).filter((k) => !allowed.has(k));
     if (unknown.length > 0) {
-      errors.push({ where: at, message: `Unknown key(s): ${unknown.join(", ")} — an attachment is { name, size, sha256 } or { name, url }` });
+      errors.push({ where: at, message: `Unknown key(s) (${unknown.length}) — an attachment is { name, size, sha256 } or { name, url }` });
     }
     if (typeof a.name !== "string" || !a.name.trim() || Array.from(a.name).length > ATTACHMENT_NAME_MAX) {
       errors.push({ where: `${at}.name`, message: `name must be a non-empty string of at most ${ATTACHMENT_NAME_MAX} characters` });
@@ -284,14 +289,15 @@ function validateAttachments(raw: unknown, where: string, errors: ImportError[])
  *  challenge, inheriting its solves), never something to resolve with
  *  "last one wins". */
 function checkDuplicateIds(challenges: readonly unknown[], errors: ImportError[]): void {
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   challenges.forEach((raw, i) => {
     if (!isPlainObject(raw) || typeof raw.id !== "string") return;
-    if (seen.has(raw.id)) {
-      errors.push({ where: `challenges[${i}].id`, message: `Duplicate challenge id: ${raw.id}` });
+    const first = seen.get(raw.id);
+    if (first !== undefined) {
+      errors.push({ where: `challenges[${i}].id`, message: `Duplicate challenge id — the same as challenges[${first}].id` });
       return;
     }
-    seen.add(raw.id);
+    seen.set(raw.id, i);
   });
 }
 
@@ -394,8 +400,11 @@ function validateStories(raw: unknown, challengeIds: ReadonlySet<string>, errors
     errors.push({ where: "stories", message: `At most ${CLASSIC_STORIES_MAX} stories are allowed` });
   }
   const out: Story[] = [];
-  const storyIds = new Set<string>();
-  const owner = new Map<string, string>();
+  // Positions, not values, are what a message may name (#500): the story id
+  // -> the index it first appeared at, and the step -> the story that
+  // already holds it.
+  const storyIds = new Map<string, number>();
+  const owner = new Map<string, { id: string; at: number }>();
   raw.forEach((st, i) => {
     const base = `stories[${i}]`;
     if (!isPlainObject(st)) {
@@ -403,11 +412,17 @@ function validateStories(raw: unknown, challengeIds: ReadonlySet<string>, errors
       return;
     }
     const unknown = Object.keys(st).filter((k) => !STORY_KEYS.has(k));
-    if (unknown.length > 0) errors.push({ where: base, message: `Unknown key(s): ${unknown.join(", ")}` });
+    if (unknown.length > 0) {
+      errors.push({ where: base, message: `Unknown key(s) (${unknown.length}) — a story is exactly { id, title, intro, steps }` });
+    }
     const id = typeof st.id === "string" ? st.id : "";
-    if (!STORY_ID_RE.test(id)) errors.push({ where: `${base}.id`, message: `Invalid story id: ${JSON.stringify(st.id)}` });
-    else if (storyIds.has(id)) errors.push({ where: `${base}.id`, message: `Story ids must be unique: ${id}` });
-    storyIds.add(id);
+    const firstAt = storyIds.get(id);
+    if (!STORY_ID_RE.test(id)) {
+      errors.push({ where: `${base}.id`, message: "Story id must be 1-64 lowercase letters, digits or -, starting with a letter or digit" });
+    } else if (firstAt !== undefined) {
+      errors.push({ where: `${base}.id`, message: `Story ids must be unique — the same as stories[${firstAt}].id` });
+    }
+    if (firstAt === undefined) storyIds.set(id, i);
     // The caps are setStories' own (trimmed, like it measures): refusing here
     // is what keeps an event import from clearing the box and then failing.
     if (typeof st.title !== "string" || !st.title.trim()) errors.push({ where: `${base}.title`, message: "A story needs a title" });
@@ -425,16 +440,19 @@ function validateStories(raw: unknown, challengeIds: ReadonlySet<string>, errors
     if (st.steps.length > CLASSIC_STORY_STEPS_MAX) {
       errors.push({ where: `${base}.steps`, message: `A story must have at most ${CLASSIC_STORY_STEPS_MAX} steps` });
     }
-    const seen = new Set<string>();
+    const seen = new Map<string, number>();
     st.steps.forEach((step, j) => {
       const where = `${base}.steps[${j}]`;
       if (typeof step !== "string") return void errors.push({ where, message: "A step must be a challenge id" });
-      if (!challengeIds.has(step)) return void errors.push({ where, message: `Unknown challenge in this bundle: ${step}` });
-      if (seen.has(step)) return void errors.push({ where, message: `${step} is listed twice in this story` });
-      seen.add(step);
+      if (!challengeIds.has(step)) return void errors.push({ where, message: "A step must name a challenge in this bundle" });
+      const twice = seen.get(step);
+      if (twice !== undefined) return void errors.push({ where, message: `Listed twice in this story — the same challenge as ${base}.steps[${twice}]` });
+      seen.set(step, j);
       const prior = owner.get(step);
-      if (prior !== undefined && prior !== id) errors.push({ where, message: `${step} is in two stories — a challenge belongs to one story` });
-      owner.set(step, id);
+      if (prior !== undefined && prior.id !== id) {
+        errors.push({ where, message: `Also a step of stories[${prior.at}] — a challenge is in two stories, and it belongs to one story` });
+      }
+      if (prior === undefined) owner.set(step, { id, at: i });
     });
     out.push({ id, title: typeof st.title === "string" ? st.title : "", intro: typeof st.intro === "string" ? st.intro : "", steps: st.steps.filter((s): s is string => typeof s === "string") });
   });

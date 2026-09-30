@@ -183,7 +183,7 @@ export function parseBundle(raw: string): ParseResult {
   if (typeof version !== "number" || !Number.isInteger(version) || version !== SPONSORS_BUNDLE_VERSION) {
     errors.push({
       where: "version",
-      message: `Unsupported bundle version: expected ${SPONSORS_BUNDLE_VERSION}, got ${String(version)}`,
+      message: `Unsupported bundle version: expected ${SPONSORS_BUNDLE_VERSION}`,
     });
   }
 
@@ -193,15 +193,18 @@ export function parseBundle(raw: string): ParseResult {
   }
 
   const sponsors: SponsorsBundleSponsor[] = [];
-  const seenIds = new Set<string>();
+  // id -> first index: a duplicate names the position it collides with, never
+  // the id (#500 — the error list goes back to the admin client verbatim).
+  const seenIds = new Map<string, number>();
   parsed.sponsors.forEach((raw, i) => {
     const sponsor = validateSponsor(raw, `sponsors[${i}]`, errors);
     if (!sponsor) return;
-    if (seenIds.has(sponsor.id)) {
-      errors.push({ where: `sponsors[${i}].id`, message: `duplicate sponsor id: ${sponsor.id}` });
+    const first = seenIds.get(sponsor.id);
+    if (first !== undefined) {
+      errors.push({ where: `sponsors[${i}].id`, message: `duplicate sponsor id — the same as sponsors[${first}].id` });
       return;
     }
-    seenIds.add(sponsor.id);
+    seenIds.set(sponsor.id, i);
     sponsors.push(sponsor);
   });
 

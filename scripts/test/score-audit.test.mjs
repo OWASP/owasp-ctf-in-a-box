@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import {
+  assertRedisUrl,
   assertReadOnly,
   auditAttempt,
   audit,
@@ -283,6 +284,19 @@ test("secure-development off: no SD points anywhere, module rows remain", () => 
   const exp = recompute(s);
   assert.equal(exp.entries.get("carol").points, 100);
   assert.equal(exp.teams.get("red").points, 30);
+});
+
+// The token rides in the Authorization header, so a guard that let plain
+// http:// through to a public host would send it in cleartext. The public
+// IPv6 cases carry private-looking groups mid-address: they pass only if the
+// prefix checks lose their `^` anchor.
+test("the Redis URL guard allows https and private http endpoints only", () => {
+  for (const ok of ["https://redis.example.com", "http://srh", "http://localhost:8079", "http://127.0.0.1", "http://app.internal", "http://[::1]:80", "http://[fdaa::3]", "http://[fc00::1]", "http://[fe80::1]"]) {
+    assert.doesNotThrow(() => assertRedisUrl(ok), ok);
+  }
+  for (const bad of ["http://redis.example.com", "http://srh.example.com", "http://internal.example.com", "http://127.0.0.1.nip.io", "http://[2001:db8::1]", "http://[2606:4700:fe80::1]", "http://[2606:4700:fc00::1]", "ftp://srh", "not a url"]) {
+    assert.throws(() => assertRedisUrl(bad), /UPSTASH_REDIS_REST_URL/, bad);
+  }
 });
 
 test("the read-only guard refuses every write before it is sent", () => {

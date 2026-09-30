@@ -2042,7 +2042,11 @@ reads the store, waits past that cache when Secure Development is live
 fetches the board once to make it refresh, waits past the memo
 (`--settle-ms`, 12 s), fetches the board it compares, and re-reads the
 store; it compares only if nothing moved in between. An attempt takes about
-45 s with Secure Development live. Run it on a quiet box: before the event,
+45 s with Secure Development live. The cache refreshes in the background,
+so if the scorer is slow to answer, the compared fetch can still carry the
+old copy — and the before/after store check cannot see that, because the
+store itself did not move. A Secure Development mismatch on a box whose
+scorer is under load is worth one re-run before you believe it. Run it on a quiet box: before the event,
 after a load-test seed, or once scoring closes. The report defaults to
 `docs/superpowers/` (gitignored).
 

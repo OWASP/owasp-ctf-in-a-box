@@ -280,6 +280,9 @@ test("liveModules reads the stored comma list the app writes, with the app's def
 
 test("liveModules fails closed on a stored list it cannot fully read", () => {
   assert.throws(() => liveModules({ enabledModules: "quiz,bingo" }, {}), /bingo.*refusing to guess/);
+  // The app drops an empty token; the seeder refuses it, on purpose: a
+  // malformed list is not one it guesses its way through.
+  assert.throws(() => liveModules({ enabledModules: "quiz," }, {}), /"", not a module id/);
   assert.throws(() => liveModules({ enabledModules: '["quiz"]' }, {}), /refusing to guess/);
 });
 

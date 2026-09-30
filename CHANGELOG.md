@@ -8,6 +8,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **The empty board says nobody has scored yet (#482).** Searching a board with no scored contestants used to answer with the spelling nudge, which is wrong when there is nobody to check the spelling against. A typed query now reads "Nobody has scored yet" instead, and only the empty search box still draws the "board is wide open" podium. Covered by regression tests on the board-state helpers.
+
 - **Switching a module off stops its grading (#495).** Turning Quiz,
   Jeopardy or AI off in `/admin` hid the board but left its grading routes
   live: `POST /api/quiz/answer`, `POST /api/classic/submit`, and the AI

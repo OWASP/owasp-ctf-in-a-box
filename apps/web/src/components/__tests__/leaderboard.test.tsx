@@ -1,9 +1,10 @@
-// Leaderboard is a "use client" component, but it has no effects that run
-// during a plain render (all state is useState with static initial values),
-// so renderToStaticMarkup is enough to check markup — same pattern as
-// score-time-chart.test.tsx and team-card.test.tsx. next/image is mocked
-// because the real component needs Next's image-optimization runtime, which
-// isn't wired up under vitest.
+// Leaderboard is a "use client" component, but its one effect (the
+// teams-fallback sync) never runs under renderToStaticMarkup, so static
+// rendering is enough to check markup — same pattern as
+// score-time-chart.test.tsx and team-card.test.tsx. The effect's transition
+// is the exported `switchView` reducer action, pinned directly below.
+// next/image is mocked because the real component needs Next's
+// image-optimization runtime, which isn't wired up under vitest.
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -14,7 +15,15 @@ vi.mock("next/image", () => ({
   },
 }));
 
-import Leaderboard, { EntryRow, TeamRow } from "@/components/leaderboard";
+import Leaderboard, {
+  EntryRow,
+  TeamRow,
+  NoMatch,
+  individualBoardState,
+  boardUiReducer,
+  resolveActiveView,
+  needsTeamsViewReset,
+} from "@/components/leaderboard";
 import type { ResolvedModule } from "@/lib/modules";
 import { apps } from "@/lib/apps";
 import type { LeaderboardData, LeaderboardEntry, TeamStanding, ChallengeCatalog } from "@/lib/leaderboard/types";
@@ -420,5 +429,120 @@ describe("per-module breakdown", () => {
     const narrow = html.match(/<p class="[^"]*sm:hidden[^"]*">(.*?)<\/p>/);
     expect(narrow, "no sm:hidden line in the team row").not.toBeNull();
     expect(narrow?.[1]).toMatch(/3 members/);
+  });
+});
+
+// The three #481 edge cases, pinned by #482. The calls the component
+// branches on live in exported helpers in leaderboard.tsx, so these test
+// the helpers straight, plus the markup where static rendering reaches.
+// No clicking needed, no render harness.
+describe("leaderboard edge cases (#481)", () => {
+  it("shows NoMatch, not EmptyBoard, for a query on a board with no scored contestants", () => {
+    // Only the bare query still draws the podium.
+    expect(individualBoardState(0, "", 0)).toBe("empty");
+    // Typing used to keep the EmptyBoard podium on screen; now the query
+    // falls through to NoMatch. Reverting the `query.trim() === ""` half
+    // of the check flips both of these back to "empty".
+    expect(individualBoardState(0, "zzz", 0)).toBe("no-match");
+    expect(individualBoardState(3, "zzz", 0)).toBe("no-match");
+    expect(individualBoardState(2, "", 2)).toBe("list");
+    // A whitespace-only box is still a bare query.
+    expect(individualBoardState(0, "   ", 0)).toBe("empty");
+
+    // And the bare query really does draw the podium in the component.
+    const board = data({
+      entries: [],
+      teams: [],
+      capabilities: { apps: false, teams: false, challenges: false },
+    });
+    const html = renderToStaticMarkup(
+      <Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
+    );
+    expect(html).toContain("The board is wide open");
+  });
+
+  it("pins the nobody-scored copy for a query on an empty board", () => {
+    const html = renderToStaticMarkup(
+      <NoMatch noun="contestants" query="zzz" onClear={() => {}} boardEmpty />,
+    );
+    expect(html).toContain("No contestants matching");
+    expect(html).toContain("zzz");
+    // Nobody to spell-check against, so the spelling nudge would be wrong.
+    expect(html).toContain("Nobody has scored yet");
+    // The populated-board line stays on the populated board.
+    const full = renderToStaticMarkup(
+      <NoMatch noun="contestants" query="zzz" onClear={() => {}} boardEmpty={false} />,
+    );
+    expect(full).toContain("Double-check the spelling");
+    expect(full).not.toContain("Nobody has scored yet");
+  });
+
+  it("does not carry an expanded row across views", () => {
+    // The toggle dispatches switchView, which sets the view and clears
+    // `expanded`, so the other view starts closed even when a team row
+    // shares the old login's slug ("red-team"). Dropping the clear from
+    // the reducer reopens it.
+    expect(boardUiReducer({ view: "individual", expanded: "red-team" }, { type: "switchView", view: "teams" })).toEqual({
+      view: "teams",
+      expanded: null,
+    });
+    // Switching to the view already shown still closes whatever is open.
+    expect(boardUiReducer({ view: "teams", expanded: "alice" }, { type: "switchView", view: "teams" })).toEqual({
+      view: "teams",
+      expanded: null,
+    });
+    // Toggling still opens and closes rows.
+    expect(boardUiReducer({ view: "individual", expanded: null }, { type: "toggleRow", key: "alice" })).toEqual({
+      view: "individual",
+      expanded: "alice",
+    });
+    expect(boardUiReducer({ view: "individual", expanded: "alice" }, { type: "toggleRow", key: "alice" })).toEqual({
+      view: "individual",
+      expanded: null,
+    });
+  });
+
+  it("falls back to the individual view when the teams disappear", () => {
+    // Deleting the last team while watching the teams view used to trap the
+    // page on an empty teams filter. Returning `requested` here reopens it.
+    expect(resolveActiveView("teams", false)).toBe("individual");
+    expect(resolveActiveView("teams", true)).toBe("teams");
+    expect(resolveActiveView("individual", false)).toBe("individual");
+
+    // And the component commits that way back through the reducer, not just
+    // the derivation: the same action that resets the view drops the
+    // expanded team row, so a stale slug can't reopen under a returning
+    // teams list. Reverting either half flips this.
+    expect(boardUiReducer({ view: "teams", expanded: "red-team" }, { type: "switchView", view: "individual" })).toEqual({
+      view: "individual",
+      expanded: null,
+    });
+
+    // What the fallback looks like once it fires: the individual board,
+    // not an empty teams filter.
+    const board = data({
+      entries: [entry({ login: "alice" }), entry({ rank: 2, login: "bob", points: 80 })],
+      teams: [],
+      capabilities: { apps: false, teams: true, challenges: false },
+    });
+    const html = renderToStaticMarkup(
+      <Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
+    );
+    expect(html).toContain("alice");
+    expect(html).toMatch(/Sort:/);
+    expect(html).not.toMatch(/aria-pressed/);
+    // Back on the individual board, so the box searches contestants.
+    expect(html).toContain('placeholder="Search contestants…"');
+  });
+
+  it("leaves an open individual row alone when teams are unavailable", () => {
+    // The fallback sync used to reset whenever `expanded` was non-null,
+    // so opening a row with no teams around re-ran the effect and shut
+    // the row straight away. The guard only fires on the stored teams
+    // view now, widening either half reopens the bug.
+    expect(needsTeamsViewReset(false, "teams")).toBe(true);
+    expect(needsTeamsViewReset(false, "individual")).toBe(false);
+    expect(needsTeamsViewReset(true, "teams")).toBe(false);
+    expect(needsTeamsViewReset(true, "individual")).toBe(false);
   });
 });

@@ -3,11 +3,12 @@
 // Interactive leaderboard.
 //
 // This is a Client Component because everything here needs the browser:
-// useState for the query/view/sort/expand state. The server page loads the
+// useState for the query/sort state and useReducer for the view/expand
+// state. The server page loads the
 // data (and the viewer's session) and hands both down as props — data
 // fetching and auth stay on the server, interactivity on the client.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { completedCount } from "@/lib/leaderboard/rank";
@@ -22,13 +23,61 @@ import type { LeaderboardData } from "@/lib/leaderboard/types";
 // other caller keep importing them from here, where they have always lived.
 export { EntryRow, TeamRow };
 
-type View = "individual" | "teams";
+export type View = "individual" | "teams";
 type SortKey = "rank" | "points" | "solved";
 
-/** Shown when the board holds no contestants at all (pre-event, or after a
- *  reset) — distinct from a search that simply matched nothing. The framing is
- *  deliberately an invitation rather than an error: the podium is drawn empty
- *  and the copy points at the way onto the board.
+/** Which individual-board state to render, from the entry count and the
+ *  query. The bare query on a board with nobody scored draws the podium
+ *  ("empty"); a typed query with nothing to match falls through to
+ *  no-match, same as a populated board with zero hits. */
+export type IndividualBoardState = "empty" | "no-match" | "list";
+export function individualBoardState(
+  entryCount: number,
+  query: string,
+  visibleCount: number,
+): IndividualBoardState {
+  if (entryCount === 0 && query.trim() === "") return "empty";
+  if (visibleCount === 0) return "no-match";
+  return "list";
+}
+
+/** View plus whichever row is expanded. Switching views always closes
+ *  whatever row is open: a team row shares its key space with the
+ *  individual rows, so carrying the slug over reopens the wrong row. */
+export type BoardUi = { view: View; expanded: string | null };
+export type BoardUiAction =
+  | { type: "switchView"; view: View }
+  | { type: "toggleRow"; key: string };
+export function boardUiReducer(state: BoardUi, action: BoardUiAction): BoardUi {
+  switch (action.type) {
+    case "switchView":
+      return { view: action.view, expanded: null };
+    case "toggleRow":
+      return { ...state, expanded: state.expanded === action.key ? null : action.key };
+  }
+}
+
+/** The teams view only exists while the toggle does. If the last team
+ *  goes away under a viewer on the teams view, they land back on
+ *  individual instead of an empty teams filter. */
+export function resolveActiveView(requested: View, teamsToggleShown: boolean): View {
+  return teamsToggleShown ? requested : "individual";
+}
+
+/** Guard for the teams-fallback sync below. It fires only while the stored
+ *  view is still "teams" after the toggle goes away. An open individual
+ *  row must not trip it: expanding a row used to rerun the effect and
+ *  dispatch a reset that closed the row just opened. */
+export function needsTeamsViewReset(teamsToggleShown: boolean, view: View): boolean {
+  return !teamsToggleShown && view === "teams";
+}
+
+/** Shown when the individual board holds no contestants at all (pre-event, or
+ *  after a reset) AND the search box is empty. Once the user has typed
+ *  anything, a board with nothing to match falls through to NoMatch instead —
+ *  the bare query is the only thing that still draws the podium. The framing
+ *  is deliberately an invitation rather than an error: the podium is drawn
+ *  empty and the copy points at the way onto the board.
  *
  *  WHICH way is the module's to say, not this component's: "patch your first
  *  challenge", pointing at /challenges, is nonsense on a quiz-only event that
@@ -68,16 +117,20 @@ export function EmptyBoard({ modules }: { modules: readonly ResolvedModule[] }) 
   );
 }
 
-/** Shown when the board has contestants but the query matched none of them.
+/** Shown when the query matched nothing. Usually that means a board with
+ *  contestants behind it — but a typed query on a board with no scored
+ *  contestants lands here too (only the bare query draws EmptyBoard). The
+ *  second line says which case it is: the spelling nudge when there is a
+ *  board to check against, a plain nobody-scored line when there isn't.
  *  Always offers the way out (clearing the search) rather than dead-ending. */
-function NoMatch({ noun, query, onClear }: { noun: string; query: string; onClear: () => void }) {
+export function NoMatch({ noun, query, onClear, boardEmpty }: { noun: string; query: string; onClear: () => void; boardEmpty: boolean }) {
   return (
     <div className="flex flex-col items-center gap-3 rounded-lg border border-white/[0.06] bg-[#16162a] px-5 py-10 text-center">
       <p className="text-base text-zinc-300">
         No {noun} matching <span className="font-mono text-white">&ldquo;{query}&rdquo;</span> on the
         board yet.
       </p>
-      <p className="text-sm text-muted">Double-check the spelling, or take another look at everyone.</p>
+      <p className="text-sm text-muted">{boardEmpty ? "Nobody has scored yet, so there is nothing to match." : "Double-check the spelling, or take another look at everyone."}</p>
       <button
         type="button"
         onClick={onClear}
@@ -112,12 +165,26 @@ export default function Leaderboard({
   const sortKeys: SortKey[] = ["rank", "points", "solved"];
 
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<View>(showTeamsToggle ? "teams" : "individual");
+  const [{ view, expanded }, dispatch] = useReducer(boardUiReducer, {
+    view: showTeamsToggle ? "teams" : "individual",
+    expanded: null,
+  });
   const [sort, setSort] = useState<SortKey>("rank");
-  const [expanded, setExpanded] = useState<string | null>(null);
 
   // If teams are deleted while viewing them, force the view back to individual
-  const activeView = showTeamsToggle ? view : "individual";
+  const activeView = resolveActiveView(view, showTeamsToggle);
+
+  // Commit the way back to the reducer, not just derive it above: the
+  // reset also drops the expanded team row, so a returning teams list
+  // can't reopen a stale slug that now names a different row. The
+  // transition itself is the tested `switchView` action, pinned at the
+  // reducer level — static rendering never runs effects, so no markup
+  // test can see this fire.
+  useEffect(() => {
+    if (needsTeamsViewReset(showTeamsToggle, view)) {
+      dispatch({ type: "switchView", view: "individual" });
+    }
+  }, [showTeamsToggle, view]);
 
   const topPoints = useMemo(
     () => data.entries.reduce((max, e) => Math.max(max, e.points), 0),
@@ -158,6 +225,8 @@ export default function Leaderboard({
    *  state stands alone. Teams can exist before anyone has solved anything, so
    *  this checks both collections rather than just `entries`. */
   const boardIsEmpty = data.entries.length === 0 && data.teams.length === 0;
+
+  const boardState = individualBoardState(data.entries.length, query, visibleEntries.length);
 
   // The chart plots every enabled module now: the source supplies
   // secure-development's history and `withModuleSeries` merges the app-side
@@ -227,7 +296,7 @@ export default function Leaderboard({
               <button
                 key={v}
                 type="button"
-                onClick={() => { setView(v); setExpanded(null); }}
+                onClick={() => dispatch({ type: "switchView", view: v })}
                 aria-pressed={activeView === v}
                 className={`rounded-full border px-3 py-1 text-xs font-medium capitalize transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017] ${
                   activeView === v
@@ -277,10 +346,10 @@ export default function Leaderboard({
       )}
 
       {activeView === "individual" ? (
-        data.entries.length === 0 && query.trim() === "" ? (
+        boardState === "empty" ? (
           <EmptyBoard modules={modules} />
-        ) : visibleEntries.length === 0 ? (
-          <NoMatch noun="contestants" query={query.trim()} onClear={() => setQuery("")} />
+        ) : boardState === "no-match" ? (
+          <NoMatch noun="contestants" query={query.trim()} onClear={() => setQuery("")} boardEmpty={data.entries.length === 0} />
         ) : (
           <ul className="flex flex-col gap-2.5">
             {visibleEntries.map((entry) => (
@@ -290,7 +359,7 @@ export default function Leaderboard({
                 topPoints={topPoints}
                 isOwn={viewerLogin === entry.login}
                 isOpen={expanded === entry.login}
-                onToggle={() => setExpanded(expanded === entry.login ? null : entry.login)}
+                onToggle={() => dispatch({ type: "toggleRow", key: entry.login })}
                 capabilities={data.capabilities}
                 modules={modules}
                 completable={data.completable}
@@ -301,7 +370,7 @@ export default function Leaderboard({
           </ul>
         )
       ) : visibleTeams.length === 0 ? (
-        <NoMatch noun="teams" query={query.trim()} onClear={() => setQuery("")} />
+        <NoMatch noun="teams" query={query.trim()} onClear={() => setQuery("")} boardEmpty={data.teams.length === 0} />
       ) : (
         <ul className="flex flex-col gap-2.5">
           {visibleTeams.map((team) => (
@@ -312,7 +381,7 @@ export default function Leaderboard({
               pointsByLogin={pointsByLogin}
               modules={modules}
               isOpen={expanded === team.slug}
-              onToggle={() => setExpanded(expanded === team.slug ? null : team.slug)}
+              onToggle={() => dispatch({ type: "toggleRow", key: team.slug })}
               enabledApps={enabledApps}
             />
           ))}

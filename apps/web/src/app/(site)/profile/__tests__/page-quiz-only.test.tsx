@@ -14,8 +14,8 @@
 //
 // Own file because `vi.mock` hoists per file and this fixture needs its own
 // module set — same split as lib/__tests__/modules-resolve.test.ts and
-// app/__tests__/page-quiz-only.test.tsx. `@/lib/modules` is mocked with
-// `importOriginal` so only `isModuleEnabled` is stubbed and the real
+// app/__tests__/page-quiz-only.test.tsx. `@/lib/modules` is NOT mocked:
+// only the live set is, so the real
 // `resolveModules`/`getResolvedModules` pipeline still runs off the real
 // registry — so this is also proof that a quiz-only event needs no
 // per-module branch on this page.
@@ -40,18 +40,16 @@ vi.mock("next/navigation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/navigation")>()),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["quiz"]),
+);
 vi.mock("@/lib/admin-store", () => ({
-  // `getResolvedModules` falls back to the baked shim's ALL-module
-  // `defaultModuleIds` unless this names the fixture's own set.
+  // `getResolvedModules` reads `moduleOverrides` from this; `enabledModuleIds`
+  // mirrors the set the enabled-modules mock above serves.
   getAdminSettings: async () => ({ moduleOverrides: {}, enabledModuleIds: ["quiz"] }),
   // The page reads the registration window for the team card's
   // closed-state explanation (issue #217).
   effectiveRegistrationOpen: () => true,
-}));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: (id: string) => id === "quiz",
 }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/leaderboard/source", () => ({ getLeaderboardSource: async () => ({ getUser }) }));

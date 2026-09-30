@@ -25,11 +25,13 @@ vi.mock("@/lib/leaderboard/source", () => ({
   }),
 }));
 vi.mock("next/server", () => ({ connection: async () => {} }));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["classic"]),
+);
 const launched = vi.hoisted(() => ({ startsAt: "2000-01-01T00:00:00.000Z" as string | null }));
 vi.mock("@/lib/admin-store", () => ({
-  // `getResolvedModules` falls back to the baked shim's ALL-module
-  // `defaultModuleIds` unless this names the fixture's own set.
+  // `getResolvedModules` reads `moduleOverrides` from this; `enabledModuleIds`
+  // mirrors the set the enabled-modules mock above serves.
   // `eventIdentity` is config v2's source for the event name (issue #386,
   // PR 1b).
   getAdminSettings: async () => ({
@@ -40,10 +42,6 @@ vi.mock("@/lib/admin-store", () => ({
     enabledModuleIds: ["classic"],
     eventIdentity: { eventName: "Flag Night" },
   }),
-}));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: (id: string) => id === "classic",
 }));
 vi.mock("@/lib/challenges", () => ({ getChallengeCatalog: async () => null }));
 vi.mock("next/font/google", () => {

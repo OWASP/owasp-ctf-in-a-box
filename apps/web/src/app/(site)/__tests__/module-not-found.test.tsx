@@ -11,7 +11,9 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
+);
 // The flags boundaries name the module by its RESOLVED title now (an
 // organizer can rename it in /admin); getResolvedModules needs the same two
 // stubs every other consumer's suite carries.

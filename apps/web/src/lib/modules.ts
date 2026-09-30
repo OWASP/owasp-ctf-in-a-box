@@ -708,17 +708,6 @@ git push -u origin fix/<short-description>`,
       experience: `Contestants fork ${ctx.appList} under the ${ctx.githubOrg} GitHub org, patch a real vulnerability, and open a pull request. A GitHub Action in the fork scores the patch and the score reaches the leaderboard through the poller.`,
       steps: [
         {
-          title: "Nothing to configure for the transport",
-          where: "outside",
-          body: [
-            "Scores arrive one way: the poller reads the score comment a fork's Action leaves on the PR, and nothing has to reach this box from the internet. The push transport and its ",
-            { code: "SCORE_INGEST" },
-            " key were removed in v0.6 (issue #377), so there is no switch here to set or to get wrong. Which targets this event actually runs is chosen on this tab's Targets list: a fresh event runs all six, and provisioning (",
-            { code: "ctf-setup.sh org" },
-            ") always forks and scores all six regardless of what's later switched off.",
-          ],
-        },
-        {
           title: "Build and push the scorer image",
           where: "outside",
           body: [
@@ -734,7 +723,7 @@ git push -u origin fix/<short-description>`,
           ],
         },
         {
-          title: "Create the GitHub org and, for poll mode, the sync GitHub App",
+          title: "Create the GitHub org and the sync GitHub App",
           where: "outside",
           body: [
             `The org (${ctx.githubOrg}) is created by hand on GitHub. `,
@@ -748,7 +737,7 @@ git push -u origin fix/<short-description>`,
           title: "Provision the org with ctf-setup.sh org",
           where: "outside",
           body: [
-            "Forks each target, commits the scoring workflow to every fork, mirrors the scorer image into the org, then prints the steps only GitHub's UI can finish. ",
+            "Forks all six targets, commits the scoring workflow to every fork, mirrors the scorer image into the org, then prints the steps only GitHub's UI can finish. Which of the six contestants see is this tab's Targets list. ",
             { code: "ctf-setup.sh doctor" },
             " verifies the result.",
           ],

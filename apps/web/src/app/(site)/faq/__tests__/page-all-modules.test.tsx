@@ -15,19 +15,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/server", () => ({ connection: async () => {} }));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development", "quiz", "classic"]),
+);
 vi.mock("@/lib/admin-store", () => ({
-  // `getResolvedModules` falls back to the baked shim's ALL-module
-  // `defaultModuleIds` (which includes ai) unless this names the fixture's
-  // own three-module set.
+  // `getResolvedModules` reads `moduleOverrides` from this; `enabledModuleIds`
+  // mirrors the set the enabled-modules mock above serves.
   getAdminSettings: async () => ({
     moduleOverrides: {},
     enabledModuleIds: ["secure-development", "quiz", "classic"],
   }),
-}));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: (id: string) => ["secure-development", "quiz", "classic"].includes(id),
 }));
 
 import Faq from "@/app/(site)/faq/page";

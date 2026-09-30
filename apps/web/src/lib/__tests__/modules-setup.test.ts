@@ -85,6 +85,15 @@ describe("module setup blocks", () => {
     }
   });
 
+  // v0.6 carried a one-release "Nothing to configure for the transport" step
+  // naming the removed SCORE_INGEST key; v0.7 dropped it (#503). The
+  // checklist speaks about what an organizer does now, not removed keys.
+  it.each(ALL_MODULE_IDS)("%s names no key a release removed", (id) => {
+    for (const text of everyString(resolved(id))) {
+      expect(text, text).not.toMatch(/SCORE_INGEST|CHALLENGES_GATE_|EVENT_CONFIG_B64|event\.yaml/);
+    }
+  });
+
   it("only declares checks the panels can actually report", () => {
     // quiz reports `items` only (quizInventory); classic and ai report
     // `items` and `categories`; secure-development's panel holds no list

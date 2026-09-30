@@ -8,6 +8,34 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Breaking: the v0.7 migration shims are removed (#503).** v0.6 kept a few
+  one-release aids for keys and secrets that push ingest (#377) and the
+  password gate (#464) left behind. They are gone:
+  - `ctf-setup.sh doctor` no longer names a leftover `SCORE_INGEST` line or
+    `CHALLENGES_GATE_ENABLED` / `CHALLENGES_GATE_PASSWORD` keys in `.env`,
+    and no longer reads the org's Actions secrets to look for
+    `LEADERBOARD_URL` / `LEADERBOARD_TOKEN`. It makes no
+    `orgs/<org>/actions/secrets` call at all now.
+  - The Secure Development setup checklist in `/admin` drops its "Nothing to
+    configure for the transport" step.
+  - `scripts/acceptance-scorer.sh` no longer runs the judge a second time
+    with `SCORE_API`/`SCORE_TOKEN` set to prove them inert.
+  - Test-only: `apps/web/src/test/enabled-modules-baked.ts`, which mimicked
+    the deleted `event.yaml` bake by reading the module set off a fake
+    `isModuleEnabled` export, is replaced by `enabled-modules-mock.ts`. Each
+    of the 56 suites now states its live module set in its own mock.
+
+  Nothing reads any of those keys or secrets, and nothing did in v0.6
+  either: a box still boots with them. What changes is that nobody tells you
+  they are there. **Upgrading from v0.5 or earlier straight to this release:**
+  delete any `SCORE_INGEST`, `CHALLENGES_GATE_ENABLED` and
+  `CHALLENGES_GATE_PASSWORD` line from `.env` (and `.env.fly`), and delete
+  the `LEADERBOARD_URL` / `LEADERBOARD_TOKEN` Actions secrets from the event
+  org (Settings → Secrets and variables → Actions). Those two secrets are
+  readable by every run a contestant's pull request triggers. The event is
+  locked until you press **Launch** in `/admin` → Event; the password gate
+  those keys set is not coming back.
+
 - **The remaining log and import-error echoes name the label and the
   position, never the value (#500 follow-up).** The server-side `catch` sites
   #510 left alone (the leaderboard overlays, the challenge catalogue fetch,

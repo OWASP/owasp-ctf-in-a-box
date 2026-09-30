@@ -128,7 +128,8 @@ secrets. Org secrets are readable by the `pull_request_target` runs a
 *contestant's* pull request triggers, so a leftover `LEADERBOARD_TOKEN` is a
 score-writing credential exposed to a workflow contestants set off at will —
 and nothing reads it any more, so there is no cost to removing it.
-`ctf-setup.sh doctor` reports whether either is still set. Keep rotating
+Check the org's **Settings → Secrets and variables → Actions** page by hand: `ctf-setup.sh doctor` stopped
+reporting them in v0.7 (#503). Keep rotating
 `SCORER_TOKEN` between events regardless: it is the bearer `sync` presents to
 the one writer.
 

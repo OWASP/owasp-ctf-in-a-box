@@ -13,7 +13,7 @@ vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
 const {
-  isModuleEnabled,
+  moduleLive,
   isAdminLogin,
   getSession,
   listAiChallenges,
@@ -26,7 +26,7 @@ const {
   deriveStatusSpy,
   getAiHintIds,
 } = vi.hoisted(() => ({
-  isModuleEnabled: vi.fn(),
+  moduleLive: vi.fn(),
   isAdminLogin: vi.fn(),
   getSession: vi.fn(),
   listAiChallenges: vi.fn(),
@@ -41,9 +41,10 @@ const {
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules((id) => moduleLive(id)),
+);
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
-vi.mock("@/lib/modules", () => ({ isModuleEnabled }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
@@ -103,7 +104,7 @@ beforeEach(() => {
 
 describe("ai page gate", () => {
   it("404s when the ai module is not enabled", async () => {
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     await expect(AiPage()).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
   });
 
@@ -111,7 +112,7 @@ describe("ai page gate", () => {
   // loads, so a teamless contestant is never bounced after work that gets
   // thrown away — the "no store read" half is what pins that ordering.
   it("redirects a signed-in, teamless contestant before it loads anything", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     const redirectError = Object.assign(new Error("NEXT_REDIRECT"), {
       digest: "NEXT_REDIRECT;replace;/profile;307;",
@@ -127,7 +128,7 @@ describe("ai page gate", () => {
 
 describe("ai page view model", () => {
   it("derives solved/cooldown/unsolved per challenge from viewer progress, in board order", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listAiChallenges.mockResolvedValue(baseChallenges);
     getViewerAi.mockResolvedValue({
@@ -157,7 +158,7 @@ describe("ai page view model", () => {
   });
 
   it("treats a signed-out visitor as having no progress and prompts sign-in instead of a submit control", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listAiChallenges.mockResolvedValue([baseChallenges[2]]);
 
@@ -171,7 +172,7 @@ describe("ai page view model", () => {
   });
 
   it("shows an empty state with no challenges available", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listAiChallenges.mockResolvedValue([]);
 
@@ -185,7 +186,7 @@ describe("ai page view model", () => {
   // at `/admin?tab=ai` — the tab this same PR added, so the link can no
   // longer land on the wrong panel.
   it("sends an organizer to the ai authoring tab from the empty board", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listAiChallenges.mockResolvedValue([]);
@@ -199,7 +200,7 @@ describe("ai page view model", () => {
   });
 
   it("shows a signed-in contestant the plain empty state, with no admin link", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(false);
     getSession.mockResolvedValue({ user: { login: "bob" } });
     listAiChallenges.mockResolvedValue([]);
@@ -212,7 +213,7 @@ describe("ai page view model", () => {
   });
 
   it("renders the organizer's module title instead of the default", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listAiChallenges.mockResolvedValue([]);
     getResolvedModules.mockResolvedValue([{ id: "ai", title: "Prompt Arena", blurb: "Break the bot." }]);
@@ -222,7 +223,7 @@ describe("ai page view model", () => {
   });
 
   it("still prompts a signed-out visitor to sign in when there are no challenges at all", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listAiChallenges.mockResolvedValue([]);
 
@@ -239,7 +240,7 @@ describe("ai page view model", () => {
   // whole public board down, only fall the cooldown back to the module
   // default.
   it("still renders the board when the settings read rejects, falling the cooldown back to the module default", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listAiChallenges.mockResolvedValue(baseChallenges);
     getAdminSettings.mockRejectedValue(new Error("ECONNRESET"));
@@ -278,7 +279,7 @@ describe("ai page view model", () => {
     vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "fake-token");
     vi.doUnmock("@/lib/hint-store");
 
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listAiChallenges.mockResolvedValue(baseChallenges);
     getAdminSettings.mockRejectedValue(new Error("ECONNRESET"));
@@ -309,7 +310,7 @@ describe("ai page view model", () => {
 // hint text itself, which stays server-side on the challenge's own page.
 describe("ai page hint marker", () => {
   it("marks a tile whose id is in hintIds with the paid-hint marker", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listAiChallenges.mockResolvedValue(baseChallenges);
     getAiHintIds.mockResolvedValue(["a2"]);
@@ -321,7 +322,7 @@ describe("ai page hint marker", () => {
   });
 
   it("shows no marker when no challenge id is in hintIds", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listAiChallenges.mockResolvedValue(baseChallenges);
     getAiHintIds.mockResolvedValue([]);

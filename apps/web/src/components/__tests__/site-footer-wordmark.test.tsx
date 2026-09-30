@@ -14,7 +14,9 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
+);
 vi.mock("@/lib/sponsors-store", () => ({ listSponsors: vi.fn(async () => []) }));
 
 const { default: SiteFooter } = await import("@/components/site-footer");

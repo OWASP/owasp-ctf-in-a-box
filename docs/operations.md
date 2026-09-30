@@ -63,7 +63,7 @@ and delete any Actions secrets the org still carries. `LEADERBOARD_URL` /
 event before: push ingest was removed in v0.6
 ([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377)), so nothing reads
 them and they are just credentials every contestant-triggered run can read.
-`ctf-setup.sh doctor` reports whether they are still set.
+Check the org's **Settings → Secrets and variables → Actions** page — `ctf-setup.sh doctor` no longer does (#503).
 
 ## Teams
 

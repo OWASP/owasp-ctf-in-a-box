@@ -12,9 +12,9 @@ const launchLock = vi.hoisted(() => ({
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { isModuleEnabled, isAdminLogin, getSession, listChallenges, listCategories, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, deriveStatusSpy } =
+const { moduleLive, isAdminLogin, getSession, listChallenges, listCategories, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, deriveStatusSpy } =
   vi.hoisted(() => ({
-    isModuleEnabled: vi.fn(),
+    moduleLive: vi.fn(),
     isAdminLogin: vi.fn(),
     getSession: vi.fn(),
     listChallenges: vi.fn(),
@@ -27,7 +27,9 @@ const { isModuleEnabled, isAdminLogin, getSession, listChallenges, listCategorie
   }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules((id) => moduleLive(id)),
+);
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 // ChallengeBoard (the client component this page renders) calls useRouter for
 // its post-submit refresh — needs a mock the same way quiz-board.test.tsx
@@ -36,7 +38,6 @@ vi.mock("next/navigation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/navigation")>()),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
-vi.mock("@/lib/modules", () => ({ isModuleEnabled }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
@@ -89,14 +90,14 @@ beforeEach(() => {
 
 describe("flags page gate", () => {
   it("404s when the classic module is not enabled", async () => {
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     await expect(FlagsPage()).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
   });
 });
 
 describe("flags page view model", () => {
   it("derives solved/cooldown/unsolved per challenge from viewer progress and settings", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: 300 });
@@ -126,7 +127,7 @@ describe("flags page view model", () => {
   // rendering bug. One statement of progress, from one place — the grid's
   // summary strip.
   it("states progress exactly once", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
@@ -143,7 +144,7 @@ describe("flags page view model", () => {
   });
 
   it("treats a signed-out visitor as having no progress and prompts sign-in instead of a submit control", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listChallenges.mockResolvedValue([baseChallenges[2]]);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
@@ -158,7 +159,7 @@ describe("flags page view model", () => {
   });
 
   it("shows an empty state with no challenges available", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listChallenges.mockResolvedValue([]);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
@@ -171,7 +172,7 @@ describe("flags page view model", () => {
   // sees after provisioning. A contestant's "check back soon" is a correct
   // dead end for them and a useless one for whoever has to author the board.
   it("routes an organizer to the authoring tab from the empty state", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listChallenges.mockResolvedValue([]);
@@ -186,7 +187,7 @@ describe("flags page view model", () => {
   });
 
   it("shows a signed-in contestant the plain empty state, with no admin link", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(false);
     getSession.mockResolvedValue({ user: { login: "bob" } });
     listChallenges.mockResolvedValue([]);
@@ -200,7 +201,7 @@ describe("flags page view model", () => {
   });
 
   it("renders the organizer's module title instead of the default", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listChallenges.mockResolvedValue([]);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
@@ -214,7 +215,7 @@ describe("flags page view model", () => {
   // event has zero challenges — a real regression this kit has shipped by
   // nesting them inside the populated branch.
   it("still prompts a signed-out visitor to sign in when there are no challenges at all", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listChallenges.mockResolvedValue([]);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
@@ -232,7 +233,7 @@ describe("flags page view model", () => {
   // must not take the whole public board down, only fall the cooldown back
   // to the module default.
   it("still renders the board when the settings read rejects, falling the cooldown back to the module default", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
     getAdminSettings.mockRejectedValue(new Error("ECONNRESET"));
@@ -301,8 +302,8 @@ describe("the admin preview banner (#464)", () => {
 describe("stories on the board (#463)", () => {
   const op = { id: "op", title: "Operation CTF", intro: "Break in, step by step.", steps: ["c1", "c2"] };
   beforeEach(() => {
-    isModuleEnabled.mockReset();
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReset();
+    moduleLive.mockReturnValue(true);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
     getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
   });

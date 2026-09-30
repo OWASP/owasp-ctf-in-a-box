@@ -36,14 +36,16 @@ import {
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/server", () => ({ connection: async () => {} }));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
+);
 // The org vocabulary this file's own "fork org" case (below) pins now comes
 // from GITHUB_ORG via bootstrap-env, not the (now-dead) event.yaml bake — the
 // shipped config's org, kept so the corpus still carries that vocabulary.
 vi.mock("@/lib/bootstrap-env", () => ({ getGithubOrg: () => "OWASP-CTF" }));
 vi.mock("@/lib/admin-store", () => ({
-  // `getResolvedModules` falls back to the baked shim's ALL-module
-  // `defaultModuleIds` unless this names the shipped config's own set.
+  // `getResolvedModules` reads `moduleOverrides` from this; `enabledModuleIds`
+  // mirrors the set the enabled-modules mock above serves.
   getAdminSettings: async () => ({ moduleOverrides: {}, enabledModuleIds: ["secure-development"] }),
 }));
 

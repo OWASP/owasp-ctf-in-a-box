@@ -28,7 +28,9 @@ const {
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules([]),
+);
 vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
 vi.mock("@/lib/admin-store", async (orig) => ({
   ...(await orig<typeof import("@/lib/admin-store")>()),
@@ -40,10 +42,6 @@ vi.mock("@/lib/admin-store", async (orig) => ({
   clearDemoData,
 }));
 vi.mock("@/lib/leaderboard/source", () => ({ getLeaderboardSource }));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: () => false,
-}));
 
 import { GET } from "@/app/api/admin/status/route";
 import { POST } from "@/app/api/admin/settings/route";

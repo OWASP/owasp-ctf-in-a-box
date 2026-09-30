@@ -14,9 +14,9 @@ const launchLock = vi.hoisted(() => ({
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { isModuleEnabled, isAdminLogin, getSession, listChallenges, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints } =
+const { moduleLive, isAdminLogin, getSession, listChallenges, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints } =
   vi.hoisted(() => ({
-    isModuleEnabled: vi.fn(),
+    moduleLive: vi.fn(),
     isAdminLogin: vi.fn(),
     getSession: vi.fn(),
     listChallenges: vi.fn(),
@@ -30,14 +30,15 @@ const { isModuleEnabled, isAdminLogin, getSession, listChallenges, getSolveCount
   }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules((id) => moduleLive(id)),
+);
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 // ClassicChallenge calls useRouter for its post-submit refresh.
 vi.mock("next/navigation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/navigation")>()),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
-vi.mock("@/lib/modules", () => ({ isModuleEnabled }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
@@ -81,7 +82,7 @@ const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  isModuleEnabled.mockReturnValue(true);
+  moduleLive.mockReturnValue(true);
   isAdminLogin.mockReturnValue(false);
   getSession.mockResolvedValue({ user: { login: "alice" } });
   listChallenges.mockResolvedValue([record]);
@@ -98,7 +99,7 @@ beforeEach(() => {
 
 describe("challenge page gates", () => {
   it("404s when the classic module is not enabled", async () => {
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     await expect(ClassicChallengePage(params("c1"))).rejects.toMatchObject({
       digest: "NEXT_HTTP_ERROR_FALLBACK;404",
     });
@@ -263,7 +264,7 @@ describe("challenge page metadata", () => {
 
   it("stays empty for an unknown id or a disabled module", async () => {
     expect(await generateMetadata(params("nope"))).toEqual({});
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     expect(await generateMetadata(params("c1"))).toEqual({});
   });
 });

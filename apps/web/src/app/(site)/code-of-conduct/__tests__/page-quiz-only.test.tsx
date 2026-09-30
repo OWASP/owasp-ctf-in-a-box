@@ -21,11 +21,9 @@ import {
 // — every other page fixture in this repo mocks "server-only" for the same
 // reason; this file predates the page needing it.
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: (id: string) => id === "quiz",
-}));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["quiz"]),
+);
 // `eventContact` is config v2's source for the organizer contact address
 // (issue #386, PR 1b). The baked `@/lib/enabled-modules` shim's
 // `getAdminSettingsSnapshot` lazily reads this mock's `getAdminSettings`.

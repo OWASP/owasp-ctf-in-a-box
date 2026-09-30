@@ -20,7 +20,7 @@ const {
   getViewerTeam,
   getViewerHints,
   getHintPenalties,
-  isModuleEnabled,
+  moduleLive,
   getQuizTotals,
   listQuestions,
   getAiTotals,
@@ -33,7 +33,7 @@ const {
   getViewerTeam: vi.fn(),
   getViewerHints: vi.fn(),
   getHintPenalties: vi.fn(),
-  isModuleEnabled: vi.fn(),
+  moduleLive: vi.fn(),
   getQuizTotals: vi.fn(),
   listQuestions: vi.fn(),
   getAiTotals: vi.fn(),
@@ -42,7 +42,9 @@ const {
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules((id) => moduleLive(id)),
+);
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 // TeamCard (rendered unconditionally by the profile page) calls useRouter —
 // same reason quiz/__tests__/page.test.tsx mocks it for QuizBoard.
@@ -61,16 +63,6 @@ vi.mock("@/lib/team-store", () => ({
   TEAM_WRITES_ENABLED: false,
 }));
 vi.mock("@/lib/hint-store", () => ({ getViewerHints, getHintPenalties, HINTS_AVAILABLE: true }));
-// Partial mock: `isModuleEnabled` is what this page's gates call, but
-// `@/lib/site` reads `SECURE_AGENT_PLAYBOOK_URL` off this same module at
-// import time (the registry owns the constant; site.ts re-exports it as
-// `event.secureAgentPlaybookUrl`), so a whole-module replacement that omits
-// it makes every importer of site.ts throw — same trap `challenges/
-// __tests__/page.test.tsx` documents for its own `@/lib/modules` mock.
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled,
-}));
 // The per-module block list is driven off this, not off `@/lib/modules`
 // directly — these tests don't exercise the breakdown blocks, so an empty
 // list is enough to keep the page from rendering any.
@@ -118,7 +110,7 @@ const baseProfile = {
 
 describe("profile page points vs. the leaderboard row", () => {
   it("agrees with withHintPenalties + withModuleContributions for the same login (quiz enabled)", async () => {
-    isModuleEnabled.mockImplementation((id: string) => id === "quiz" || id === "secure-development");
+    moduleLive.mockImplementation((id: string) => id === "quiz" || id === "secure-development");
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 10, count: 1 });
@@ -169,7 +161,7 @@ describe("profile page points vs. the leaderboard row", () => {
   // pipeline (withHintPenalties, withModuleContributions), not a hand-rolled
   // formula, so a bug in either implementation shows up here.
   it("floors the TOTAL after folding in ai points, not before (the #210 boundary, ai enabled)", async () => {
-    isModuleEnabled.mockImplementation((id: string) => id === "ai" || id === "secure-development");
+    moduleLive.mockImplementation((id: string) => id === "ai" || id === "secure-development");
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue({ ...baseProfile, points: 5 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 10, count: 1 });
@@ -210,7 +202,7 @@ describe("profile page points vs. the leaderboard row", () => {
   // Kept as a second, non-boundary case: same shape as the quiz test above,
   // where non-ai points alone already exceed the spend.
   it("agrees with withHintPenalties + withModuleContributions for the same login (ai enabled)", async () => {
-    isModuleEnabled.mockImplementation((id: string) => id === "ai" || id === "secure-development");
+    moduleLive.mockImplementation((id: string) => id === "ai" || id === "secure-development");
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 10, count: 1 });
@@ -245,7 +237,7 @@ describe("profile page points vs. the leaderboard row", () => {
   });
 
   it("shows the raw (hint-only-adjusted) total when the quiz module is disabled — never reads quiz data", async () => {
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 10, count: 1 });
@@ -263,7 +255,7 @@ describe("profile team panel member rows", () => {
     // board row carries the scorer's — the PR author's — spelling ("Ada").
     // The join must not render a scoring teammate as 0 pts over casing,
     // matching every other login join in the codebase.
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
@@ -300,7 +292,7 @@ describe("profile team panel member rows", () => {
 
 describe("profile header progress fill", () => {
   it("gives a tiny nonzero score a visible minimum fill — 2 of 3,943 pts is under 0.2%, a fraction of a device pixel unfloored", async () => {
-    isModuleEnabled.mockImplementation((id: string) => id === "secure-development");
+    moduleLive.mockImplementation((id: string) => id === "secure-development");
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue({ ...baseProfile, points: 2, maxPoints: 3943 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
@@ -313,7 +305,7 @@ describe("profile header progress fill", () => {
   });
 
   it("gives an all-zero score no minimum fill", async () => {
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue({ ...baseProfile, points: 0, patched: 0, total: 0, maxPoints: 0 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
@@ -331,7 +323,7 @@ describe("profile header progress fill", () => {
 // instead of the hint-netted one the headline and the leaderboard row use.
 describe("profile per-module block content", () => {
   it("shows the per-app points figure via the reused AppBreakdown (showPoints)", async () => {
-    isModuleEnabled.mockImplementation((id: string) => id === "secure-development");
+    moduleLive.mockImplementation((id: string) => id === "secure-development");
     getResolvedModules.mockResolvedValue([
       {
         id: "secure-development",
@@ -355,7 +347,7 @@ describe("profile per-module block content", () => {
   });
 
   it("shows the module block GROSS and nets hint spend once, in the headline", async () => {
-    isModuleEnabled.mockImplementation((id: string) => id === "secure-development" || id === "quiz");
+    moduleLive.mockImplementation((id: string) => id === "secure-development" || id === "quiz");
     // Two resolved modules so `multiModule` is true and the per-module
     // heading (which carries the points figure under test) renders at all.
     getResolvedModules.mockResolvedValue([
@@ -394,7 +386,7 @@ describe("profile per-module block content", () => {
   // tsc stayed silent about it. This pins the CONTENT (the exhaustiveness
   // check alone would only catch a MISSING arm, not a wrong one).
   it("renders the ai block with its own noun and Show-N item list, never secure-development's", async () => {
-    isModuleEnabled.mockImplementation((id: string) => id === "ai");
+    moduleLive.mockImplementation((id: string) => id === "ai");
     getResolvedModules.mockResolvedValue([
       { id: "ai", nav: { href: "/ai", label: "AI" }, targets: [], title: "AI", blurb: "" },
     ]);
@@ -428,7 +420,7 @@ describe("profile per-module block content", () => {
 // wall of not-done ("315 non-patched"). Issue #200, 2.4.
 describe("profile header stats", () => {
   it("shows one done/available stat per enabled module and drops the non-patched wall", async () => {
-    isModuleEnabled.mockImplementation((id: string) => id === "quiz" || id === "secure-development");
+    moduleLive.mockImplementation((id: string) => id === "quiz" || id === "secure-development");
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
@@ -450,7 +442,7 @@ describe("profile header stats", () => {
   // its own — "One done/available stat per enabled module" was false for a
   // fourth module until this landed.
   it("shows the ai module's own header chip, in its own vocabulary", async () => {
-    isModuleEnabled.mockImplementation((id: string) => id === "ai");
+    moduleLive.mockImplementation((id: string) => id === "ai");
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });

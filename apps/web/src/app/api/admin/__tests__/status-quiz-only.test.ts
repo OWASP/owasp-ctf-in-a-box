@@ -23,15 +23,13 @@ const { requireAdmin, getAdminSettings, getSyncStatus, getLeaderboardSource, get
   }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["quiz"]),
+);
 vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings, getSyncStatus }));
 vi.mock("@/lib/leaderboard/source", () => ({ getLeaderboardSource }));
 vi.mock("@/lib/quiz-store", () => ({ getQuizTotals, listQuestions, getTeamQuizTotalsBatch: vi.fn() }));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: (id: string) => id === "quiz",
-}));
 
 import { GET } from "@/app/api/admin/status/route";
 

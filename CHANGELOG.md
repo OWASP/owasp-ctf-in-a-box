@@ -31,6 +31,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   progress reset and the demo seed and clear keep it in step. Points scored
   before the upgrade have no time until that contestant's next award. A failed
   read of the new hash logs and drops only the tiebreak, never the points.
+  `scripts/load-seed.mjs` seeds the new hashes and `scripts/score-audit.mjs`
+  reads them, so its tiebreak model matches the board's.
 
 - **Fixed: team totals counted quiz, Jeopardy and AI points twice (#520).**
   On any board whose source reports its own teams (the scorer, i.e. every

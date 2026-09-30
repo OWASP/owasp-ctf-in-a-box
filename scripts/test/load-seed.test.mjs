@@ -98,7 +98,7 @@ test("writes only the seed's key families, and the aggregates match the per-logi
   const families = new Set(cmds.map((c) => c[1].replace(/load-[0-9]+|load-team-[0-9]+|(dvwa|webgoat)$/g, "*")));
   assert.deepEqual(
     [...families].sort(),
-    ["ctf:classic:attempts:*", "ctf:classic:points", "ctf:classic:solved", "ctf:classic:solves:*", "ctf:quiz:answered", "ctf:quiz:answers:*", "ctf:quiz:attempts:*", "ctf:quiz:points", "ctf:solves:*", "ctf:team:*", "ctf:team:*:members", "ctf:user:*"],
+    ["ctf:classic:attempts:*", "ctf:classic:lastAt", "ctf:classic:points", "ctf:classic:solved", "ctf:classic:solves:*", "ctf:quiz:answered", "ctf:quiz:answers:*", "ctf:quiz:attempts:*", "ctf:quiz:lastAt", "ctf:quiz:points", "ctf:solves:*", "ctf:team:*", "ctf:team:*:members", "ctf:user:*"],
   );
   // The seeder writes no catalogue and never touches solvecount or hints.
   assert.ok(!cmds.some((c) => /questions|challenges|solvecount|hints|flag/.test(c[1])));
@@ -113,6 +113,25 @@ test("writes only the seed's key families, and the aggregates match the per-logi
     if (c[0] === "HSET" && c[1] === "ctf:quiz:points") points[c[2]] = c[3];
   }
   assert.deepEqual(points, answers);
+});
+
+// #522: the app's grading scripts leave each login's latest award time in
+// ctf:<m>:lastAt; the seed writes the same value, so a seeded board has a
+// "whoever got there first" tiebreak to audit.
+test("the award-time hashes hold each login's latest row time", () => {
+  const { cmds } = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
+  for (const [rows, lastAt] of [["ctf:quiz:answers:", "ctf:quiz:lastAt"], ["ctf:classic:solves:", "ctf:classic:lastAt"]]) {
+    const latest = {};
+    for (const c of cmds) {
+      if (c[0] !== "HSET" || !c[1].startsWith(rows)) continue;
+      const login = c[1].slice(rows.length);
+      const at = JSON.parse(c[3]).at;
+      if (!latest[login] || Date.parse(at) > Date.parse(latest[login])) latest[login] = at;
+    }
+    const seeded = Object.fromEntries(cmds.filter((c) => c[0] === "HSET" && c[1] === lastAt).map((c) => [c[2], c[3]]));
+    assert.ok(Object.keys(latest).length > 1, `${rows} has rows to compare`);
+    assert.deepEqual(seeded, latest);
+  }
 });
 
 test("the manifest records every key and shared-hash field the seed writes, and nothing else", () => {

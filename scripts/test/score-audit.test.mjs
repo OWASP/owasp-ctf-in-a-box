@@ -152,6 +152,27 @@ test("the recompute matches the hand-worked totals", () => {
   assert.equal(exp.stats.sdSolvesIgnored, 1);
 });
 
+// #522: the app's quiz/classic/ai totals carry each login's latest award time
+// (ctf:<m>:lastAt), and rank.ts breaks a points+items tie on the newest time
+// across a row's modules. erin and frank are a full tie without it.
+test("an app-side award time breaks a points-and-items tie, earlier first", () => {
+  const s = snapshot();
+  s.agg.classic.lastAt = { erin: T(32), frank: T(31) };
+  const exp = recompute(s);
+  // The tie is split, frank first — wherever the pair sits on the board.
+  const [f, e] = [exp.entries.get("frank").rankRange, exp.entries.get("erin").rankRange];
+  assert.equal(f[0], f[1], "frank's rank is no longer a range");
+  assert.equal(e[0], f[0] + 1, "erin ranks directly after frank");
+  // A time for a module that is not live, or on a row with nothing completed
+  // in it, does not count — the app never builds that module block.
+  const off = snapshot();
+  off.agg.ai.lastAt = { erin: T(1) };
+  off.agg.classic.lastAt = { frank: T(31) };
+  const r = recompute(off);
+  const [f2, e2] = [r.entries.get("frank").rankRange, r.entries.get("erin").rankRange];
+  assert.equal(e2[0], f2[0] + 1, "frank has the only counted time, so he leads the pair");
+});
+
 test("a correct board audits clean and non-vacuous", () => {
   const r = audit(snapshot(), toFlight(correctBoard()));
   assert.deepEqual(r.mismatches, []);

@@ -69,8 +69,9 @@
 //      floored at 0. hint-store.ts:165,412-426, hint-penalties.ts:25-30,
 //      62-98, folded.ts:49-74.
 //  R9  Contestant rank: (net) points desc, then completed items across
-//      modules desc, then the latest activity time asc (a row with none sorts
-//      last) — points first since #522; a full tie falls through to an order this auditor does not
+//      modules desc, then the latest activity time asc — the newest of SD's
+//      last solve and each counted module's `ctf:<m>:lastAt` award time (a
+//      row with none sorts last); points first since #522; a full tie falls through to an order this auditor does not
 //      model, so it accepts any order WITHIN a tie group. rank.ts:15-17,
 //      49-70, hint-penalties.ts:81.
 //  R10 Team rank: net points desc; ties keep an earlier stage's order
@@ -125,9 +126,9 @@ export const MODULES = ["secure-development", "quiz", "classic", "ai"];
 export const APP_MODULES = ["quiz", "classic", "ai"];
 /** Per-login row hash and aggregate counters for each app-side module. */
 export const MODULE_KEYS = {
-  quiz: { points: "ctf:quiz:points", count: "ctf:quiz:answered", rows: "ctf:quiz:answers:" },
-  classic: { points: "ctf:classic:points", count: "ctf:classic:solved", rows: "ctf:classic:solves:" },
-  ai: { points: "ctf:ai:points", count: "ctf:ai:solved", rows: "ctf:ai:solves:" },
+  quiz: { points: "ctf:quiz:points", count: "ctf:quiz:answered", lastAt: "ctf:quiz:lastAt", rows: "ctf:quiz:answers:" },
+  classic: { points: "ctf:classic:points", count: "ctf:classic:solved", lastAt: "ctf:classic:lastAt", rows: "ctf:classic:solves:" },
+  ai: { points: "ctf:ai:points", count: "ctf:ai:solved", lastAt: "ctf:ai:lastAt", rows: "ctf:ai:solves:" },
 };
 const BATCH = 200;
 const FETCH_TIMEOUT_MS = 15_000;
@@ -200,7 +201,7 @@ export function parseEarnedRow(raw) {
  *     scoreImage: boolean,                // SCORE_IMAGE non-empty in the container
  *     sdCatalogue: [{app, id, points}] | null,
  *     sdSolves: {target: {"<author>:<id>": iso}},
- *     agg: {quiz: {points: {login: n}, count: {login: n}}, classic: …, ai: …},
+ *     agg: {quiz: {points: {login: n}, count: {login: n}, lastAt: {login: iso}}, classic: …, ai: …},
  *     rows: {quiz: {login: {itemId: json}}, classic: …, ai: …},
  *     hintsSpent: {login: n},
  *     teams: [{slug, name, members: [login]}],
@@ -246,12 +247,13 @@ export function recompute(snapshot) {
   }
 
   // --- app-side aggregates per login (R4) and their rows (invariant) -------
-  const agg = {}; // module -> Map(lower -> {login, points, completed})
+  const agg = {}; // module -> Map(lower -> {login, points, completed, lastAt})
   for (const m of APP_MODULES) {
     const a = (snapshot.agg || {})[m] || { points: {}, count: {} };
     const map = new Map();
     for (const login of new Set([...Object.keys(a.points || {}), ...Object.keys(a.count || {})])) {
-      map.set(lc(login), { login, points: num((a.points || {})[login]) ?? 0, completed: num((a.count || {})[login]) ?? 0 });
+      // lastAt joins on the counter's own spelling, as the app's totals do.
+      map.set(lc(login), { login, points: num((a.points || {})[login]) ?? 0, completed: num((a.count || {})[login]) ?? 0, lastAt: (a.lastAt || {})[login] ?? null });
     }
     agg[m] = map;
     // Invariant: the aggregate equals the per-login rows it summarises.
@@ -310,7 +312,7 @@ export function recompute(snapshot) {
   const entries = new Map();
   const touch = (login) => {
     const k = lc(login);
-    if (!entries.has(k)) entries.set(k, { login, modules: {}, gross: 0, completed: 0, lastSolveAt: null });
+    if (!entries.has(k)) entries.set(k, { login, modules: {}, gross: 0, completed: 0, lastSolveAt: null, moduleTimes: [] });
     return entries.get(k);
   };
   for (const a of sdAuthors.values()) {
@@ -328,16 +330,18 @@ export function recompute(snapshot) {
       e.modules[m] = { points: t.points, completed: t.completed };
       e.gross += t.points;
       e.completed += t.completed;
+      e.moduleTimes.push(t.lastAt);
     }
   }
   for (const [k, e] of entries) {
     e.penalty = penalty.get(k) ?? 0;
     e.points = Math.max(0, e.gross - e.penalty);
-    // SD's time only: rank.ts takes the newest module lastActivityAt, but the
-    // app-side per-login totals always carry lastAt null (quiz-store.ts:587,
-    // classic-store.ts:960, ai-store.ts:481), so an app-only row sorts last.
-    const ms = e.lastSolveAt ? Date.parse(e.lastSolveAt) : NaN;
-    e.activityMs = Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
+    // The newest parseable time across the row: SD's last solve and each
+    // counted app-side module's last award (`ctf:<m>:lastAt`, #522) — rank.ts
+    // activityMs. A row with none sorts last.
+    const stamps = [e.lastSolveAt, ...e.moduleTimes].map((iso) => (iso ? Date.parse(iso) : NaN)).filter(Number.isFinite);
+    e.activityMs = stamps.length ? Math.max(...stamps) : Number.MAX_SAFE_INTEGER;
+    delete e.moduleTimes;
     e.team = teamOf.get(k) ?? null;
   }
 
@@ -765,10 +769,10 @@ export async function readSnapshot() {
     }
   }
 
-  const aggKeys = APP_MODULES.flatMap((m) => [MODULE_KEYS[m].points, MODULE_KEYS[m].count]);
+  const aggKeys = APP_MODULES.flatMap((m) => [MODULE_KEYS[m].points, MODULE_KEYS[m].count, MODULE_KEYS[m].lastAt]);
   const aggReplies = await pipeline([...aggKeys.map((k) => ["HGETALL", k]), ["HGETALL", "ctf:hints:spent"]]);
   const agg = {};
-  APP_MODULES.forEach((m, i) => { agg[m] = { points: flat(aggReplies[i * 2]), count: flat(aggReplies[i * 2 + 1]) }; });
+  APP_MODULES.forEach((m, i) => { agg[m] = { points: flat(aggReplies[i * 3]), count: flat(aggReplies[i * 3 + 1]), lastAt: flat(aggReplies[i * 3 + 2]) }; });
   const hintsSpent = flat(aggReplies[aggKeys.length]);
 
   const slugs = (await scanAll("ctf:team:*:members")).map((k) => k.slice("ctf:team:".length, -":members".length)).sort();

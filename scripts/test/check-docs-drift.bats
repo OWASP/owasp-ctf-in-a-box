@@ -109,6 +109,26 @@ _swap() {
   _has 'Makefile: CI'\''s shell job runs `deploy/new/named/`'
 }
 
+# #512 review: a block-scalar step (`run: |` and the commands under it) is a
+# command too; a suite added there must still be mirrored locally.
+@test "a shell path in a block-scalar run step is still checked" {
+  _swap .github/workflows/ci.yml "      - run: bats scripts/test/" "      - name: a block step\n        run: |\n          echo first\n          bats deploy/new/block/\n      - run: bats scripts/test/"
+  run node "$SCRIPT" "$ROOT"
+  [ "$status" -eq 1 ]
+  _has 'Makefile: CI'\''s shell job runs `deploy/new/block/`'
+}
+
+# #512 review: a path the docs only mention in prose is not a command anyone
+# will run. Only fenced code blocks (Markdown) and recipe lines (Makefile)
+# count, so dropping the command but keeping a prose mention must fail.
+@test "a path kept only in prose, with its command dropped, fails" {
+  _drop AGENTS.md "bats deploy/aws-terraform/test/"
+  printf '\nThe AWS suite lives in deploy/aws-terraform/test/ and runs in CI.\n' >> "$ROOT/AGENTS.md"
+  run node "$SCRIPT" "$ROOT"
+  [ "$status" -eq 1 ]
+  _has 'AGENTS.md: CI'\''s shell job runs `deploy/aws-terraform/test/`'
+}
+
 @test "a workflow node-version that differs from .nvmrc fails" {
   printf '24\n' > "$ROOT/.nvmrc"
   run node "$SCRIPT" "$ROOT"

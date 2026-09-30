@@ -99,21 +99,55 @@ function slug(text) {
   if (start === -1) {
     problems.push(".github/workflows/ci.yml: no `shell:` job found — the parser no longer matches the file");
   } else {
+    // Every command line the job runs: a one-line `run:` (after `- ` for a
+    // bare step, or plain under a named one), and each line of a block
+    // scalar (`run: |` / `run: >`) indented under it (#512 review).
+    const commands = [];
     for (let i = start + 1; i < ci.length && !/^ {2}\S/.test(ci[i]); i++) {
-      // `- run:` for a bare step, plain `run:` under a named one (#512 review).
-      const m = /^\s+(?:- )?run: (shellcheck|bats) (.+)$/.exec(ci[i]);
+      const m = /^(\s+)(?:- )?run:\s*(.*)$/.exec(ci[i]);
       if (!m) continue;
-      // Paths are the tokens with a slash; flags and their values have none.
-      for (const tok of m[2].trim().split(/\s+/)) if (tok.includes("/")) wanted.add(tok);
+      if (/^[|>][-+]?\s*$/.test(m[2])) {
+        const keyIndent = m[1].length;
+        for (let j = i + 1; j < ci.length; j++) {
+          if (ci[j].trim() === "") continue;
+          if (ci[j].length - ci[j].trimStart().length <= keyIndent) break;
+          commands.push(ci[j].trim());
+          i = j;
+        }
+      } else {
+        commands.push(m[2].trim());
+      }
+    }
+    for (const cmd of commands) {
+      for (const part of cmd.split(/&&|\|\||;/)) {
+        const m = /^(shellcheck|bats)\s+(.+)$/.exec(part.trim());
+        if (!m) continue;
+        // Paths are the tokens with a slash; flags and their values have none.
+        for (const tok of m[2].trim().split(/\s+/)) if (tok.includes("/")) wanted.add(tok);
+      }
     }
     if (wanted.size === 0) problems.push(".github/workflows/ci.yml: the shell job runs no shellcheck/bats paths — the parser no longer matches the file");
   }
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Only what a reader would RUN counts: a Makefile's recipe lines (tab-led,
+  // minus `@echo` help text) and a Markdown file's fenced code blocks. A path
+  // mentioned in prose is not a command anyone copies (#512 review).
+  const runnable = (file) => {
+    const lines = read(file).split("\n");
+    if (file === "Makefile") return lines.filter((l) => /^\t/.test(l) && !/^\t@?echo\b/.test(l)).join("\n");
+    const out = [];
+    let fenced = false;
+    for (const l of lines) {
+      if (/^\s*(```|~~~)/.test(l)) fenced = !fenced;
+      else if (fenced) out.push(l);
+    }
+    return out.join("\n");
+  };
   for (const file of ["Makefile", "AGENTS.md", "CONTRIBUTING.md"]) {
-    const text = read(file);
+    const text = runnable(file);
     for (const path of wanted) {
       const re = new RegExp(`(^|[\\s\`])${esc(path)}($|[\\s\`\\\\;&)])`, "m");
-      if (!re.test(text)) problems.push(`${file}: CI's shell job runs \`${path}\`, which ${file} never mentions`);
+      if (!re.test(text)) problems.push(`${file}: CI's shell job runs \`${path}\`, which no command in ${file} runs`);
     }
   }
 }

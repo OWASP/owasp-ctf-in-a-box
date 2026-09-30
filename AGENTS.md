@@ -77,15 +77,15 @@ Check it after any build you run here.
 ```sh
 shellcheck scripts/*.sh scripts/lib/*.sh scripts/dev-stack setup/*.sh scorer/entrypoint.sh sync/docker-entrypoint.sh \
   deploy/fly/deploy.sh deploy/fly/render-compose.sh deploy/aws-terraform/deploy.sh
+shellcheck -s sh --exclude=SC2034 scorer/entrypoints/*.sh
 bats setup/test/
 bats deploy/fly/test/
 bats deploy/aws-terraform/test/
 bats scripts/test/
 ```
 
-(CI additionally lints `scorer/entrypoints/*.sh` as POSIX `sh` fragments with
-`shellcheck -s sh --exclude=SC2034` — those are sourced by `entrypoint.sh`,
-never run standalone.)
+(The second `shellcheck` lints `scorer/entrypoints/*.sh` as POSIX `sh`
+fragments: they are sourced by `entrypoint.sh`, never run standalone.)
 
 **smoke** (full stack):
 

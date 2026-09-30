@@ -278,6 +278,18 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await pipeline([["DEL", teammate, stranger]]);
   });
 
+  // The time is taken in JS before the script runs, so two awards can reach
+  // Redis out of order. The later time must survive the earlier write.
+  it("keeps the later award time when two awards land out of order", async () => {
+    const later = freshId("c");
+    const earlier = freshId("c");
+    await seed(later, "flag{later}", 20);
+    await seed(earlier, "flag{earlier}", 10);
+    expect(await submit(later, "flag{later}", { nowMs: T0 + 5_000, cooldownMs: 0 })).toEqual(["correct", "20"]);
+    expect(await submit(earlier, "flag{earlier}", { nowMs: T0 + 1_000, cooldownMs: 0 })).toEqual(["correct", "10"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 5_000));
+  });
+
   // #522 moved the lock keys from KEYS[8..] to KEYS[9..] to make room for
   // the lastAt hash. If the loop still started at 8 it would read that hash
   // as a teammate's solves, and a field named like the prerequisite would

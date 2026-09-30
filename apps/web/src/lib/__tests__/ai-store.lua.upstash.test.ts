@@ -122,6 +122,18 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
     expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 3_000));
   });
 
+  // The time is taken in JS before the script runs, so two awards can reach
+  // Redis out of order. The later time must survive the earlier write.
+  it("keeps the later award time when two awards land out of order", async () => {
+    const later = freshId("chal");
+    const earlier = freshId("chal");
+    await seed(later, "event", 20);
+    await seed(earlier, "event", 10);
+    expect(await recordEvent(later, { nowMs: T0 + 5_000 })).toEqual(["correct", "20"]);
+    expect(await recordEvent(earlier, { nowMs: T0 + 1_000 })).toEqual(["correct", "10"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 5_000));
+  });
+
   it("returns missing for an unknown challenge on both paths", async () => {
     const id = freshId("ghost");
     expect(await submitFlag(id, "x")).toEqual(["missing"]);

@@ -124,6 +124,26 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 4_000));
   });
 
+  // The time is taken in JS before the script runs, so two awards can reach
+  // Redis out of order. The later time must survive the earlier write.
+  it("keeps the later award time when two awards land out of order", async () => {
+    const later = freshId("q");
+    const earlier = freshId("q");
+    await seed(later, 20);
+    await seed(earlier, 10);
+    expect(await answer(later, CORRECT, { nowMs: T0 + 5_000 })).toEqual(["correct", "20"]);
+    expect(await answer(earlier, CORRECT, { nowMs: T0 + 1_000 })).toEqual(["correct", "10"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 5_000));
+  });
+
+  it("replaces a stored award time that is not an ISO time", async () => {
+    const id = freshId("q");
+    await seed(id, 10);
+    await pipeline([["HSET", K.lastAt, LOGIN, "zzz-not-a-time"]]);
+    expect(await answer(id, CORRECT)).toEqual(["correct", "10"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0));
+  });
+
   it("counts a wrong answer as an attempt, including the first-ever one with a cooldown set", async () => {
     const id = freshId("q");
     await seed(id, 20);

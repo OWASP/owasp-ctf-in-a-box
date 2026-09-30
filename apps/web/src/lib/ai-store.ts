@@ -946,7 +946,13 @@ redis.call('HSET', KEYS[2], ARGV[1], '{"points":' .. points .. ',"at":"' .. ARGV
 redis.call('HINCRBY', KEYS[5], ARGV[4], points)
 redis.call('HINCRBY', KEYS[7], ARGV[4], 1)
 redis.call('HINCRBY', KEYS[6], ARGV[1], 1)
-redis.call('HSET', KEYS[8], ARGV[4], ARGV[3])
+-- Keep the LATEST award time (#522). The time is taken before this script
+-- runs, so two awards can arrive out of order; toISOString values compare
+-- correctly as strings. A stored value that is not an ISO time is replaced.
+local prevAt = redis.call('HGET', KEYS[8], ARGV[4])
+if not prevAt or not string.match(prevAt, '^%d%d%d%d%-%d%d%-%d%dT') or prevAt < ARGV[3] then
+  redis.call('HSET', KEYS[8], ARGV[4], ARGV[3])
+end
 return {'correct', tostring(points)}`;
 
 export type AiSubmitResult =

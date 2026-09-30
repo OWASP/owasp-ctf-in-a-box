@@ -11,6 +11,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeaderboardData, LeaderboardEntry } from "../types";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const mocks = vi.hoisted(() => ({
   listTeams: vi.fn<() => Promise<{ slug: string; name: string; members: string[] }[]>>(),
@@ -177,9 +178,15 @@ describe("withTeamStandings", () => {
 
   it("degrades to the team-less view when Upstash is unavailable", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.listTeams.mockRejectedValueOnce(new Error("upstash down"));
-    const base = data();
-    expect(await withTeamStandings(base)).toBe(base);
-    consoleError.mockRestore();
+    try {
+      // Decorated like a driver's error: the log gets the label, never the
+      // caught value's `command`/`cause` (#500 follow-up).
+      mocks.listTeams.mockRejectedValueOnce(decoratedError());
+      const base = data();
+      expect(await withTeamStandings(base)).toBe(base);
+      expectLabelOnly(consoleError);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

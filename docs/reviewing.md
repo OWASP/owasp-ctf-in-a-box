@@ -227,13 +227,22 @@ so, and logs cannot be un-shipped. Every store hands the logger
 import the same function as `adminErrorLabel`; `error-label.test.ts` fails on
 any second copy of its body in `apps/web/src`) — name and message,
 capped, no stack, no own properties, `"non-Error throw"` for anything that
-is not an `Error` — and nothing else. In a diff, the red flag is a raw `err`
-(or `String(err)`, or `JSON.stringify(err)`) as a `console.*` argument in
-`apps/web/src/lib/*-store.ts`. The tests reject with an `Error` carrying a
+is not an `Error` — and nothing else. That holds for every server-side
+`catch` in `apps/web/src`, not only the stores: the leaderboard overlays,
+`challenges.ts`, `activity-log.ts`, the launch lock and the API routes hand
+over the same label. In a diff, the red flag is a raw `err` (or a
+`.reason`, `String(err)`, `new Error(String(err))`, `JSON.stringify(err)`)
+as a `console.*` argument. The tests reject with an `Error` carrying a
 planted flag in `command`/`cause` and assert two things: the flag appears in
 no logged argument, AND no logged argument is `instanceof Error` — the
 second is load-bearing, since `JSON.stringify(new Error("x"))` is `"{}"`
-and the first check alone passes against the unfixed code (#241, #244).
+and the first check alone passes against the unfixed code (#241, #244);
+`apps/web/src/lib/__tests__/log-redaction.ts` holds that assertion for
+every suite to share. The same rule governs the import validators'
+messages (`*-io.ts`), which go back to the admin client verbatim: an error
+names the indexed position and the rule (`questions[3].correct[1]`, "must
+be one of this question's choice ids"), never the submitted value or a key
+name (#500).
 
 ## Section 2. What not to flag
 

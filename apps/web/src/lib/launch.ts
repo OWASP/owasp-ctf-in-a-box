@@ -14,6 +14,7 @@
 // fails open (a blip must not drop live submissions).
 
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { isAdminLogin } from "@/lib/admin-auth";
@@ -22,11 +23,11 @@ import { isLaunched } from "@/lib/schedule-window";
 
 export type LaunchAccess = { allowed: boolean; preview: boolean };
 
-/** Fixed diagnostic plus the error's name/message only — never the error
- *  object, whose own fields can carry request data (#244). */
+/** Fixed diagnostic plus the shared label only — never the error object,
+ *  whose own fields can carry request data (#244), and never `String(err)`
+ *  on a non-Error, which could BE a secret (#500). */
 function logFailure(what: string, err: unknown): void {
-  const e = err instanceof Error ? err : new Error(String(err));
-  console.error(`launch lock: ${what} failed (failing closed):`, e.name, e.message);
+  console.error(`launch lock: ${what} failed (failing closed):`, errorLabel(err));
 }
 
 async function viewerIsAdmin(login: string | undefined): Promise<boolean> {

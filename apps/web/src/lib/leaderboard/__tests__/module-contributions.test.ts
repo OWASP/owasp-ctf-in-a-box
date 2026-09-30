@@ -43,7 +43,13 @@ vi.mock("@/lib/ai-store", () => ({
   listAiChallenges: mocks.listAiChallenges,
 }));
 
-import { withModuleContributions } from "../module-contributions";
+import {
+  withModuleContributions,
+  withTeamAiPoints,
+  withTeamClassicPoints,
+  withTeamQuizPoints,
+} from "../module-contributions";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 // Real value, not a removed build-time constant (issue #386, PR 2):
 // `withModuleContributions` now reads the live target total through
@@ -963,5 +969,75 @@ describe("withModuleContributions", () => {
       expect(out.teams[0].modules!["ai"]).toMatchObject({ points: 20, completed: 1 });
       expect(out.teams.find((t) => t.slug === "grey")!.modules?.["ai"]).toBeUndefined();
     });
+  });
+});
+
+// Every degrade path above logs; none of them may log the caught value. A
+// driver-decorated error carries the request in `command`/`cause`, so each
+// site hands `console.error` the label only (#500 follow-up).
+describe("module-contributions log redaction (#500)", () => {
+  const teams: TeamStanding[] = [{ rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada"] }];
+
+  function failEveryRead(): void {
+    mocks.isModuleEnabled.mockImplementation(() => true);
+    for (const fn of [
+      mocks.getQuizTotals,
+      mocks.listQuestions,
+      mocks.getTeamQuizTotalsBatch,
+      mocks.getClassicTotals,
+      mocks.listChallenges,
+      mocks.getTeamClassicTotalsBatch,
+      mocks.getAiTotals,
+      mocks.listAiChallenges,
+      mocks.getTeamAiTotalsBatch,
+    ]) {
+      fn.mockReset();
+      fn.mockRejectedValue(decoratedError());
+    }
+  }
+
+  it("withModuleContributions logs the label at every individual and team degrade", async () => {
+    failEveryRead();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await withModuleContributions(data([entry("ada", 30, 3)], teams));
+      // Six individual reads plus three team batches, each its own line.
+      expect(consoleError.mock.calls.length).toBeGreaterThanOrEqual(9);
+      expectLabelOnly(consoleError);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it.each([
+    ["withTeamQuizPoints", withTeamQuizPoints],
+    ["withTeamClassicPoints", withTeamClassicPoints],
+    ["withTeamAiPoints", withTeamAiPoints],
+  ])("%s logs the label, not the error", async (_name, fold) => {
+    failEveryRead();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await fold(teams)).toBe(teams);
+      expectLabelOnly(consoleError);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("the denominator-only degrade in a team fold logs the label too", async () => {
+    mocks.isModuleEnabled.mockImplementation(() => true);
+    mocks.listQuestions.mockRejectedValue(decoratedError());
+    mocks.listChallenges.mockRejectedValue(decoratedError());
+    mocks.listAiChallenges.mockRejectedValue(decoratedError());
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await withTeamQuizPoints(teams);
+      await withTeamClassicPoints(teams);
+      await withTeamAiPoints(teams);
+      expect(consoleError).toHaveBeenCalledTimes(3);
+      expectLabelOnly(consoleError);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

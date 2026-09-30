@@ -50,6 +50,7 @@ import { POST } from "@/app/api/admin/settings/route";
 import { POST as resetPOST } from "@/app/api/admin/reset/route";
 import { POST as seedPOST, DELETE as seedDELETE } from "@/app/api/admin/seed/route";
 import { adminErrorLabel } from "@/lib/admin-store";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const req = (body?: unknown) =>
   new Request("http://x/api/admin/settings", { method: "POST", body: JSON.stringify(body ?? {}) });
@@ -170,6 +171,34 @@ describe("POST /api/admin/settings", () => {
   it("503 on a Redis failure", async () => {
     updateAdminSettings.mockRejectedValue(new Error("upstash down"));
     expect((await POST(req({ paused: true }))).status).toBe(503);
+  });
+
+  // The write carries the patch as ARGV; a decorated error would put it in
+  // the log. Label only (#500 follow-up).
+  it("logs the label on a write failure, never the raw err", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      updateAdminSettings.mockRejectedValue(decoratedError());
+      expect((await POST(req({ paused: true }))).status).toBe(503);
+      expectLabelOnly(spy);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("GET /api/admin/status log redaction (#500)", () => {
+  it("logs the label on a leaderboard freshness failure, never the raw err", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      getLeaderboardSource.mockResolvedValue({ getLeaderboard: vi.fn().mockRejectedValue(decoratedError("source down")) });
+      const res = await GET(new Request("http://x/api/admin/status"));
+      expect(res.status).toBe(200);
+      expect((await res.json()).leaderboard).toBeNull();
+      expectLabelOnly(spy, { label: "source down" });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

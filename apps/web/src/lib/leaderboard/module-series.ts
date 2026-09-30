@@ -1,4 +1,5 @@
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 import { aiSolvesKey } from "@/lib/ai-keys";
 import { classicSolvesKey } from "@/lib/classic-keys";
 import { quizAnswersKey } from "@/lib/quiz-keys";
@@ -96,7 +97,7 @@ async function readModuleEvents(logins: readonly string[]): Promise<Map<string, 
   } catch (err) {
     // The chart loses its module events; the board keeps its numbers. Failing
     // the whole page over a cosmetic overlay would be the wrong direction.
-    console.error("module series unavailable:", err);
+    console.error("module series unavailable:", errorLabel(err));
     return byLogin;
   }
 

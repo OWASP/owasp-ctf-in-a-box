@@ -19,6 +19,7 @@ vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
 vi.mock("@/lib/metrics-store", () => ({ computeEventMetrics, challengesToCsv }));
 
 import { GET } from "@/app/api/admin/metrics/route";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const req = (qs = "") => new Request(`http://x/api/admin/metrics${qs}`);
 
@@ -81,5 +82,17 @@ describe("GET /api/admin/metrics", () => {
     const res = await GET(req());
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: "unavailable" });
+  });
+
+  // ...nor in the server log: label only, never the raw caught value (#500).
+  it("logs the label on a compute failure, never the raw err", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      computeEventMetrics.mockRejectedValue(decoratedError("redis exploded"));
+      expect((await GET(req())).status).toBe(503);
+      expectLabelOnly(spy, { label: "redis exploded" });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

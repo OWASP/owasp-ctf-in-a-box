@@ -16,6 +16,7 @@ vi.mock("next/navigation", () => ({ redirect: m.redirect }));
 
 import { getLaunchAccess, launchApiAccess, redirectIfNotLaunched, requireLaunchedApi } from "@/lib/launch";
 import { isLaunched } from "@/lib/schedule-window";
+import { PLANTED_LOG_SECRET, expectLabelOnly } from "./log-redaction";
 
 const NOW = Date.parse("2026-10-01T12:00:00Z");
 const PAST = "2026-10-01T00:00:00Z";
@@ -63,6 +64,19 @@ describe("getLaunchAccess", () => {
     expect(String(log.mock.calls[0].join(" "))).toContain("redis down");
     expect(String(log.mock.calls[0].join(" "))).not.toContain("secret");
     log.mockRestore();
+  });
+  // A rejection need not be an Error, and a thrown string could BE a secret:
+  // `new Error(String(err))` printed it verbatim. The shared label never
+  // stringifies a non-Error (#500 follow-up).
+  it("never logs a thrown non-Error value", async () => {
+    m.getAdminSettings.mockRejectedValue(PLANTED_LOG_SECRET);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await getLaunchAccess("bob", NOW)).toEqual({ allowed: false, preview: false });
+      expectLabelOnly(log, { label: "non-Error throw" });
+    } finally {
+      log.mockRestore();
+    }
   });
   it("still lets an admin in when the settings read throws", async () => {
     m.getAdminSettings.mockRejectedValue(new Error("redis down"));

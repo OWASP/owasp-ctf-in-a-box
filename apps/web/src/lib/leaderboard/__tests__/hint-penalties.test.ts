@@ -4,6 +4,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "../types";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const mocks = vi.hoisted(() => ({
   getHintPenalties: vi.fn<() => Promise<Map<string, number>>>(),
@@ -110,10 +111,16 @@ describe("withHintPenalties", () => {
 
   it("degrades to the penalty-free view when Upstash is unavailable", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.getHintPenalties.mockRejectedValueOnce(new Error("upstash down"));
-    const base = data([entry("ada", 100)]);
-    expect(await withHintPenalties(base)).toBe(base);
-    consoleError.mockRestore();
+    try {
+      // Decorated like a driver's error: the log gets the label, never the
+      // caught value's `command`/`cause` (#500 follow-up).
+      mocks.getHintPenalties.mockRejectedValueOnce(decoratedError());
+      const base = data([entry("ada", 100)]);
+      expect(await withHintPenalties(base)).toBe(base);
+      expectLabelOnly(consoleError);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });
 

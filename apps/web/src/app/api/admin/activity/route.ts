@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
+import { errorLabel } from "@/lib/error-label";
 import { listActivity } from "@/lib/activity-log";
 
 /**
@@ -45,7 +46,7 @@ export async function GET(request: Request) {
     const page = await listActivity(offset, limit);
     return NextResponse.json(page);
   } catch (err) {
-    console.error("[admin/activity] read failed", err);
+    console.error("[admin/activity] read failed", errorLabel(err));
     return NextResponse.json({ error: "unavailable" }, { status: 503 });
   }
 }

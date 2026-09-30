@@ -22,6 +22,7 @@ vi.mock("@/lib/event-store", () => ({
 }));
 
 import { EVENT_IMPORT_MAX_BYTES, GET, POST } from "@/app/api/admin/event/route";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const post = (body: unknown) =>
   new Request("http://box.test/api/admin/event", { method: "POST", body: JSON.stringify(body) });
@@ -185,6 +186,18 @@ describe("POST /api/admin/event", () => {
       .flat(3)
       .some((x) => typeof x === "string" && x.includes("event-import"));
     expect(audited).toBe(true);
+  });
+  // The audit line is the pipeline's ARGV, so a decorated failure would put
+  // it in the log. The import still succeeds; the log gets the label (#500).
+  it("logs an audit-write failure's label, never the raw err, and still answers 200", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      h.upstashPipeline.mockRejectedValue(decoratedError());
+      expect((await POST(post({ import: validRaw }))).status).toBe(200);
+      expectLabelOnly(spy);
+    } finally {
+      spy.mockRestore();
+    }
   });
   it("maps a live-event import to 409", async () => {
     h.importEventBundle.mockRejectedValue(new FakeLive("live"));

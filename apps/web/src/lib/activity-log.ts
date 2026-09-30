@@ -1,4 +1,5 @@
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 
 // The activity log (issue #212): one capped Redis list of who-did-what-when
 // entries, feeding the admin panel's Activity tab. Two rules govern
@@ -64,7 +65,7 @@ export async function logActivity(type: ActivityType, login: string, detail?: st
       () => undefined,
       // The one place a lost log line surfaces at all. Deliberately not
       // rethrown — see rule 1 in the header.
-      (err) => console.warn("[activity] log write failed", err),
+      (err) => console.warn("[activity] log write failed", errorLabel(err)),
     );
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<void>((resolve) => {
@@ -78,7 +79,7 @@ export async function logActivity(type: ActivityType, login: string, detail?: st
   } catch (err) {
     // Belt-and-braces for anything synchronous above (JSON.stringify can't
     // realistically throw here, but rule 1 is absolute).
-    console.warn("[activity] log write failed", err);
+    console.warn("[activity] log write failed", errorLabel(err));
   }
 }
 

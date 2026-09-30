@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
+import { errorLabel } from "@/lib/error-label";
 import {
   OpsValidationError,
   forceDisbandTeam,
@@ -40,7 +41,7 @@ function fail(err: unknown, label: TeamAction | "disband") {
   // format-string sink — CodeQL flagged exactly that here when the label was
   // `String(body.action)`. Narrowing the type fixes the source; keeping the
   // format string a literal fixes the sink, and either alone would do.
-  console.error("[admin/ops/team] %s failed", label, err);
+  console.error("[admin/ops/team] %s failed", label, errorLabel(err));
   return NextResponse.json({ error: "unavailable" }, { status: 503 });
 }
 

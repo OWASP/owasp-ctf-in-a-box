@@ -12,6 +12,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ACTIVITY_LOG_KEY, ACTIVITY_LOG_MAX } from "@/lib/activity-keys";
+import { decoratedError, expectLabelOnly } from "./log-redaction";
 
 vi.mock("server-only", () => ({}));
 
@@ -58,6 +59,19 @@ describe("logActivity", () => {
     await expect(logActivity("login", "octocat")).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  // The write carries the entry (login, type, detail) as ARGV, so a
+  // driver-decorated rejection would put it in the log. Label only (#500).
+  it("logs the label, not the rejected error", async () => {
+    upstash.upstashPipeline.mockRejectedValue(decoratedError("redis down"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(logActivity("login", "octocat")).resolves.toBeUndefined();
+      expectLabelOnly(warn, { label: "redis down" });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   // Fail-open covers HANGS, not just rejections: this writer sits inside

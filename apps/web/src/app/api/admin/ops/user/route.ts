@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
+import { errorLabel } from "@/lib/error-label";
 import {
   OpsValidationError,
   deleteUser,
@@ -36,7 +37,7 @@ function fail(err: unknown, label: "lookup" | "reset" | "delete") {
   // literals at every call site, so this is hygiene rather than a fix — but
   // the sink shape is identical to the one CodeQL flagged on the team route,
   // and a `string` parameter is an invitation to pass request data later.
-  console.error("[admin/ops/user] %s failed", label, err);
+  console.error("[admin/ops/user] %s failed", label, errorLabel(err));
   return NextResponse.json({ error: "unavailable" }, { status: 503 });
 }
 

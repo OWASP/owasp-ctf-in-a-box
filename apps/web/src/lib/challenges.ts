@@ -1,4 +1,5 @@
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 import type { AppId } from "@/lib/apps";
 import { owaspCategory, type OwaspCategory } from "@/lib/owasp";
 
@@ -93,7 +94,7 @@ export async function getChallengeCatalog(): Promise<ChallengeCatalog | null> {
     }
     return groupCatalog(data);
   } catch (err) {
-    console.error("Challenge catalogue fetch failed:", err);
+    console.error("Challenge catalogue fetch failed:", errorLabel(err));
     return null;
   }
 }

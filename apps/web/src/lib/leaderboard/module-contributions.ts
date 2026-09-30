@@ -1,4 +1,5 @@
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 import { getAiTotals, getTeamAiTotalsBatch, listAiChallenges, type AiTotal } from "@/lib/ai-store";
 import { atLeast, unionTotal } from "@/lib/leaderboard/denominators";
 import {
@@ -108,13 +109,13 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     } else {
       // Degrade to the quiz-less view rather than failing the whole board —
       // same pattern as withHintPenalties/withTeamStandings.
-      console.error("quiz totals unavailable for leaderboard:", totalsResult.reason);
+      console.error("quiz totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
     }
     if (questionsResult.status === "fulfilled") {
       quizTotalQuestions = questionsResult.value.length;
       quizLiveIds = new Set(questionsResult.value.map((q) => q.id));
     } else {
-      console.error("quiz question list unavailable for leaderboard denominator:", questionsResult.reason);
+      console.error("quiz question list unavailable for leaderboard denominator:", errorLabel(questionsResult.reason));
     }
   }
 
@@ -134,13 +135,13 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     if (totalsResult.status === "fulfilled") {
       classicTotals = totalsResult.value;
     } else {
-      console.error("classic totals unavailable for leaderboard:", totalsResult.reason);
+      console.error("classic totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
     }
     if (challengesResult.status === "fulfilled") {
       classicTotalChallenges = challengesResult.value.length;
       classicLiveIds = new Set(challengesResult.value.map((c) => c.id));
     } else {
-      console.error("classic challenge list unavailable for leaderboard denominator:", challengesResult.reason);
+      console.error("classic challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
     }
   }
 
@@ -159,13 +160,13 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     if (totalsResult.status === "fulfilled") {
       aiTotals = totalsResult.value;
     } else {
-      console.error("ai totals unavailable for leaderboard:", totalsResult.reason);
+      console.error("ai totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
     }
     if (challengesResult.status === "fulfilled") {
       aiTotalChallenges = challengesResult.value.length;
       aiLiveIds = new Set(challengesResult.value.map((c) => c.id));
     } else {
-      console.error("ai challenge list unavailable for leaderboard denominator:", challengesResult.reason);
+      console.error("ai challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
     }
   }
 
@@ -237,21 +238,21 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
       try {
         teams = attributeTeams(teams, quizContributions(await teamQuizTotals(teams), quizTotalQuestions, quizLiveIds));
       } catch (err) {
-        console.error("quiz team totals unavailable for leaderboard:", err);
+        console.error("quiz team totals unavailable for leaderboard:", errorLabel(err));
       }
     }
     if (classicEnabled) {
       try {
         teams = attributeTeams(teams, classicContributions(await teamClassicTotals(teams), classicTotalChallenges, classicLiveIds));
       } catch (err) {
-        console.error("classic team totals unavailable for leaderboard:", err);
+        console.error("classic team totals unavailable for leaderboard:", errorLabel(err));
       }
     }
     if (aiEnabled) {
       try {
         teams = attributeTeams(teams, aiContributions(await teamAiTotals(teams), aiTotalChallenges, aiLiveIds));
       } catch (err) {
-        console.error("ai team totals unavailable for leaderboard:", err);
+        console.error("ai team totals unavailable for leaderboard:", errorLabel(err));
       }
     }
   }
@@ -322,11 +323,11 @@ export async function withTeamQuizPoints(teams: TeamStanding[]): Promise<TeamSta
   const [totalsResult, questionsResult] = await Promise.allSettled([teamQuizTotals(teams), listQuestions()]);
 
   if (totalsResult.status !== "fulfilled") {
-    console.error("quiz team totals unavailable for leaderboard:", totalsResult.reason);
+    console.error("quiz team totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
     return teams;
   }
   if (questionsResult.status !== "fulfilled") {
-    console.error("quiz question list unavailable for leaderboard denominator:", questionsResult.reason);
+    console.error("quiz question list unavailable for leaderboard denominator:", errorLabel(questionsResult.reason));
   }
 
   return attributeTeams(
@@ -359,11 +360,11 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
   const [totalsResult, challengesResult] = await Promise.allSettled([teamClassicTotals(teams), listChallenges()]);
 
   if (totalsResult.status !== "fulfilled") {
-    console.error("classic team totals unavailable for leaderboard:", totalsResult.reason);
+    console.error("classic team totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
     return teams;
   }
   if (challengesResult.status !== "fulfilled") {
-    console.error("classic challenge list unavailable for leaderboard denominator:", challengesResult.reason);
+    console.error("classic challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
   }
 
   return attributeTeams(
@@ -395,11 +396,11 @@ export async function withTeamAiPoints(teams: TeamStanding[]): Promise<TeamStand
   const [totalsResult, challengesResult] = await Promise.allSettled([teamAiTotals(teams), listAiChallenges()]);
 
   if (totalsResult.status !== "fulfilled") {
-    console.error("ai team totals unavailable for leaderboard:", totalsResult.reason);
+    console.error("ai team totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
     return teams;
   }
   if (challengesResult.status !== "fulfilled") {
-    console.error("ai challenge list unavailable for leaderboard denominator:", challengesResult.reason);
+    console.error("ai challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
   }
 
   return attributeTeams(

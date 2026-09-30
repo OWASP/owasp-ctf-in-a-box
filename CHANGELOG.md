@@ -8,6 +8,20 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **The remaining log and import-error echoes name the label and the
+  position, never the value (#500 follow-up).** The server-side `catch` sites
+  #510 left alone (the leaderboard overlays, the challenge catalogue fetch,
+  the activity log, the launch lock and AI preview check, the rate limiter,
+  the country counter, the attachment download and six `/api/admin/*` routes)
+  now log the shared `errorLabel(err)` instead of the caught value, so a
+  driver-decorated error or a thrown string cannot carry a request into the
+  log. The quiz, Jeopardy, AI, sponsors and event-archive import validators
+  no longer repeat a submitted value or key name in their messages: an error
+  names the indexed position and the rule, e.g. `questions[3].correct[1]`,
+  "must be one of this question's choice ids", and a duplicate names the
+  earlier position it collides with. Admins see different import-error text;
+  no import that passed before is refused, and none that failed now passes.
+
 - **Team join codes draw every symbol uniformly (#435).** A join code's six
   symbols were `randomBytes` values reduced `% 31`, and 256 is not a multiple
   of 31, so the first eight symbols of the alphabet came up 9/256 of the time

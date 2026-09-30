@@ -3,6 +3,7 @@
 // a download, never rendered from our origin.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PLANTED_LOG_SECRET, decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const m = vi.hoisted(() => ({
   login: "alice" as string | undefined,
@@ -10,6 +11,7 @@ const m = vi.hoisted(() => ({
   resolved: null as null | { module: "classic"; itemId: string; attachment: Record<string, unknown> },
   bytes: new Uint8Array([60, 104, 49, 62]),
   fail: false,
+  failWith: undefined as unknown,
   visibilityCalls: [] as [string | undefined, string][],
   launched: true,
   resolveCalls: 0,
@@ -21,7 +23,7 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/classic-visibility", () => ({
   classicVisibility: async (login: string | undefined, id: string) => {
     m.visibilityCalls.push([login, id]);
-    if (m.fail) throw new Error("redis down");
+    if (m.fail) throw m.failWith ?? new Error("redis down");
     return { state: m.state, preview: false };
   },
 }));
@@ -49,6 +51,7 @@ beforeEach(() => {
   m.state = "visible";
   m.resolved = { module: "classic", itemId: "web-one", attachment: { ...upload } };
   m.fail = false;
+  m.failWith = undefined;
   m.visibilityCalls = [];
   m.launched = true;
   m.resolveCalls = 0;
@@ -118,5 +121,22 @@ describe("GET /api/attachments/[id]", () => {
     expect((await get({ "if-none-match": `"${"ab".repeat(32)}"` })).status).toBe(304);
     m.fail = true;
     expect((await get()).status).toBe(503);
+  });
+
+  // A thrown string could BE a secret, and `new Error(String(err))` printed
+  // it; a decorated Error must reach the log as its label only (#500).
+  it("logs the label only on a failed read: never a thrown non-Error, never the decoration", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      m.fail = true;
+      m.failWith = PLANTED_LOG_SECRET;
+      expect((await get()).status).toBe(503);
+      expectLabelOnly(log, { label: "non-Error throw" });
+      m.failWith = decoratedError("redis down");
+      expect((await get()).status).toBe(503);
+      expectLabelOnly(log, { label: "redis down" });
+    } finally {
+      log.mockRestore();
+    }
   });
 });

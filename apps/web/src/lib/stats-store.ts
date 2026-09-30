@@ -1,4 +1,5 @@
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
 import { upstashPipeline } from "@/lib/upstash";
 
 /**
@@ -48,6 +49,6 @@ export async function recordCountryVisit(country: string): Promise<void> {
     const [res] = await upstashPipeline([["HINCRBY", COUNTRY_STATS_KEY, code, 1]]);
     if (res.error) throw new Error(res.error);
   } catch (err) {
-    console.error(`[stats] country counter failed: ${(err as Error).message}`);
+    console.error(`[stats] country counter failed: ${errorLabel(err)}`);
   }
 }

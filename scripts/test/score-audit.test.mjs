@@ -28,7 +28,10 @@ const row = (points, at) => JSON.stringify({ points, at });
 //   alice  SD c1=10 (+ an id the rubric lacks, ignored) + quiz 40      = 50 − 3 (spent as "Alice") = 47, 3 items
 //   bob    SD c1+c2=30 + quiz 10                                        = 40 − 7                    = 33, 3 items
 //   carol  SD c2+w1=25 + classic 100                                    = 125,                         3 items
-//   erin   classic 50, frank classic 50 — a full tie (no SD activity)   → ranks 4–5 either way
+//   erin   classic 50, frank classic 50 — a full tie (no SD activity)   → ranks 2–3 either way
+// Ranks are points first (#522): erin and frank (50, 1 item) sit above alice
+// (47, 3 items) and bob (33, 3 items), where the old items-first rule put
+// them last.
 //   dave   ai 500 only — ai is off, so no row at all
 // Teams: red [alice, bob]: SD union {c1,c2}=30, quiz union {q1 (bob's, earlier), q2}=40 → 70 − (3+7) = 60
 //        blue [carol] — carol MOVED here from red: all her solves, including
@@ -75,10 +78,10 @@ export function correctBoard() {
   return {
     entries: [
       { rank: 1, login: "carol", team: "blue", points: 125, patched: 2, apps: {}, modules: { "secure-development": sd(25, 2), classic: mod(100, 1) } },
-      { rank: 2, login: "alice", team: "red", points: 47, hintPenalty: 3, patched: 1, apps: {}, modules: { "secure-development": sd(10, 1), quiz: mod(40, 2) } },
-      { rank: 3, login: "bob", team: "red", points: 33, hintPenalty: 7, patched: 2, apps: {}, modules: { "secure-development": sd(30, 2), quiz: mod(10, 1) } },
-      { rank: 4, login: "frank", team: "green", points: 50, patched: 0, apps: {}, modules: { classic: mod(50, 1) } },
-      { rank: 5, login: "erin", team: "green", points: 50, patched: 0, apps: {}, modules: { classic: mod(50, 1) } },
+      { rank: 4, login: "alice", team: "red", points: 47, hintPenalty: 3, patched: 1, apps: {}, modules: { "secure-development": sd(10, 1), quiz: mod(40, 2) } },
+      { rank: 5, login: "bob", team: "red", points: 33, hintPenalty: 7, patched: 2, apps: {}, modules: { "secure-development": sd(30, 2), quiz: mod(10, 1) } },
+      { rank: 2, login: "frank", team: "green", points: 50, patched: 0, apps: {}, modules: { classic: mod(50, 1) } },
+      { rank: 3, login: "erin", team: "green", points: 50, patched: 0, apps: {}, modules: { classic: mod(50, 1) } },
     ],
     teams: [
       { rank: 1, slug: "blue", name: "$money", captain: "carol", members: ["carol"], points: 125, modules: { "secure-development": mod(25, 2), classic: mod(100, 1) } },
@@ -139,9 +142,11 @@ test("the recompute matches the hand-worked totals", () => {
   assert.deepEqual(t("red").modules, { "secure-development": { points: 30, completed: 2 }, quiz: { points: 40, completed: 2 } });
   assert.equal(t("blue").points, 125, "a member who changed teams takes every solve to the new team");
   assert.equal(t("green").points, 50, "an item two members hold counts once");
-  assert.deepEqual(e("erin").rankRange, [4, 5]);
-  assert.deepEqual(e("frank").rankRange, [4, 5]);
   assert.deepEqual(e("carol").rankRange, [1, 1]);
+  assert.deepEqual(e("erin").rankRange, [2, 3], "points outrank items (#522)");
+  assert.deepEqual(e("frank").rankRange, [2, 3], "points outrank items (#522)");
+  assert.deepEqual(e("alice").rankRange, [4, 4]);
+  assert.deepEqual(e("bob").rankRange, [5, 5]);
   assert.deepEqual(exp.invariants, []);
   assert.equal(exp.stats.sdSolvesCounted, 5);
   assert.equal(exp.stats.sdSolvesIgnored, 1);
@@ -157,8 +162,8 @@ test("a correct board audits clean and non-vacuous", () => {
 
 test("a full tie accepts either order", () => {
   const b = correctBoard();
-  b.entries[3].rank = 5;
-  b.entries[4].rank = 4;
+  b.entries[3].rank = 3;
+  b.entries[4].rank = 2;
   assert.deepEqual(audit(snapshot(), toFlight(b)).mismatches, []);
 });
 
@@ -340,7 +345,7 @@ test("the board fetch follows the _rsc cache-bust hop and refuses the pre-launch
 test("diffBoard flags a broken rank sequence even when every row's own range holds", () => {
   const exp = recompute(snapshot());
   const served = extractBoard(toFlight(correctBoard()));
-  served.entries[4].rank = 4; // erin and frank both 4: each inside its tie range, but the sequence is 1,2,3,4,4
+  served.entries[4].rank = 2; // erin and frank both 2: each inside its tie range, but the sequence is 1,2,2,4,5
   const { mismatches } = diffBoard(exp, served);
   assert.ok(mismatches.some((m) => m.field === "rank sequence"));
 });

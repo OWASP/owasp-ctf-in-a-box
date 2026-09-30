@@ -21,8 +21,8 @@ export type DisplayRow = {
   rank: number;
   name: string;
   points: number;
-  /** Items completed — the breadth figure the individual board ranks by.
-   *  Absent on team rows: a team's breadth isn't computed here. */
+  /** Items completed — the figure the individual board breaks points ties
+   *  on. Absent on team rows: a team's count isn't computed here. */
   solved?: number;
 };
 

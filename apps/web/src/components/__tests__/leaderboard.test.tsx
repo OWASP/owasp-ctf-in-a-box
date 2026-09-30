@@ -223,18 +223,16 @@ describe("Leaderboard", () => {
     expect(html).toContain("Hint costs are not charted");
   });
 
-  // Rank is breadth-first (compareStanding), so the top row is not
-  // necessarily the highest points — the rule has to be stated where the
-  // ranking is, or a contestant with the biggest PTS figure at #3 concludes
-  // the board is broken (issue #200, 2.1).
-  it("explains the breadth-first rank order under the sort chips", () => {
+  // The tiebreaks are not visible in the numbers, so the rule is stated
+  // where the ranking is (issue #200, 2.1; points first since #522).
+  it("states the points-first rank order and its tiebreaks under the sort chips", () => {
     const board = data({
       entries: [entry({ login: "alice" }), entry({ rank: 2, login: "bob", points: 80 })],
     });
     const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
-    // Default sort is "rank", so the explainer is visible on first paint —
-    // the moment the confusion would otherwise start.
-    expect(html).toContain("Rank rewards breadth");
+    // Default sort is "points", so the rule is visible on first paint.
+    expect(html).toContain("Ranked by points; ties go to more items completed, then to whoever got there first.");
+    expect(html).not.toContain("Rank rewards breadth");
   });
 });
 
@@ -403,7 +401,7 @@ describe("per-module breakdown", () => {
   // The right-hand `solved` and `members` columns are `hidden sm:block` —
   // there is no room for them beside the rank chip, avatar, login, team tag
   // and points at 320px. That left a phone with no view of the figure the
-  // board RANKS by, which is the exact gap the `solved` column was added to
+  // board breaks points ties on, which is the exact gap the `solved` column was added to
   // close on desktop. Both rows now restate it under the name below 640px.
   //
   // Asserted through the rendered markup (the `sm:hidden` line and the number

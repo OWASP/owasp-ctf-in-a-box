@@ -147,20 +147,19 @@ describe("withModuleContributions", () => {
   });
 
   // upstash carries no per-app data and no modules map, so completedCount
-  // falls back to `patched` — which DOES re-order the raw ZRANGE
-  // points-descending order this source arrives in. Accepted deliberately (it
-  // makes upstash rank by the same breadth-first rule as lambda/mock); pinned
-  // here so the change can't happen again unnoticed.
-  it("re-orders an upstash-shaped board onto the breadth-first rule", async () => {
+  // falls back to `patched`. Points come first (#522), so the raw ZRANGE
+  // points-descending order stands; `patched` only breaks a points tie, the
+  // same way it does on lambda/mock. Pinned here so neither half drifts.
+  it("keeps an upstash-shaped board's points order and breaks its ties on patched", async () => {
     const bare = (login: string, points: number, patched: number) => ({
       ...entry(login, points, patched), apps: {},
     });
     const out = await withModuleContributions({
-      // ZRANGE order: points descending.
-      ...data([bare("hoarder", 90, 1), bare("grinder", 20, 4)]),
+      // ZRANGE order: points descending, ties in arrival order.
+      ...data([bare("scorer", 90, 1), bare("fewer", 20, 1), bare("more", 20, 4)]),
       capabilities: { apps: false, teams: false, challenges: false },
     });
-    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([["grinder", 1], ["hoarder", 2]]);
+    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([["scorer", 1], ["more", 2], ["fewer", 3]]);
     expect(out.entries.every((e) => Object.keys(e.modules ?? {}).length === 0)).toBe(true);
   });
 
@@ -302,9 +301,8 @@ describe("withModuleContributions", () => {
     });
 
     it("reflects the added quiz points in ranking", async () => {
-      // Same breadth (secure-dev completed=3 vs quiz completed=1 -> combined
-      // completed 3 for both), so the tie falls to points: ada's raw 30 loses
-      // to bob's 20 + 15 quiz = 35, once the quiz points are added.
+      // Points come first: ada's raw 30 loses to bob's 20 + 15 quiz = 35,
+      // once the quiz points are added.
       mocks.getQuizTotals.mockResolvedValue(
         new Map([["bob", { points: 15, answered: 1, lastAt: null }]]),
       );
@@ -325,7 +323,13 @@ describe("withModuleContributions", () => {
     // stamp a `quiz` block) must not zero out that row's real patch count.
     // ada has more patches AND a quiz answer on top of bob — she must never
     // rank below him.
-    it("does not let quiz activity demote a patched-heavy row on an upstash-shaped board", async () => {
+    // At EQUAL points (points come first, #522), the tiebreak is items
+    // completed: ada's 5 patches + 1 answer must count as 6, not 1. If her
+    // quiz block made completedCount drop `patched` (no secure-development
+    // block on an upstash row), she would lose the tie to bob's 3. Bob is
+    // listed first so a dropped `patched` shows as the wrong order, not as
+    // source order happening to agree.
+    it("keeps a quiz-active row's patches in the tiebreak on an upstash-shaped board", async () => {
       mocks.getQuizTotals.mockResolvedValue(new Map([["ada", { points: 5, answered: 1, lastAt: null }]]));
 
       const bare = (login: string, points: number, patched: number) => ({
@@ -333,11 +337,11 @@ describe("withModuleContributions", () => {
       });
 
       const out = await withModuleContributions({
-        ...data([bare("ada", 50, 5), bare("bob", 30, 3)]),
+        ...data([bare("bob", 30, 3), bare("ada", 25, 5)]),
         capabilities: { apps: false, teams: false, challenges: false },
       });
 
-      expect(out.entries.map((e) => e.login)).toEqual(["ada", "bob"]);
+      expect(out.entries.map((e) => [e.login, e.points])).toEqual([["ada", 30], ["bob", 30]]);
       expect(out.entries[0].modules!["secure-development"]).toBeUndefined();
       expect(out.entries[0].modules!["quiz"]).toBeDefined();
     });

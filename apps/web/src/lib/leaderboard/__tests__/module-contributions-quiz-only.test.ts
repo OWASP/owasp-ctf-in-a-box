@@ -103,37 +103,37 @@ describe("withModuleContributions on a quiz-only event", () => {
 
   // C4/C6 mirror image: with secure-development disabled no row ever carries a
   // secure-development block, so rank.ts's `completedCount` falls back to
-  // `patched` — which is 0 on every created row. The board must therefore rank
-  // on quiz answers, not collapse to a points sort. The Phase 2 ranking bug
-  // was only ever caught with the quiz off; this is the same comparator
-  // exercised with secure-development off.
-  it("ranks created rows on answers first, then points", async () => {
+  // `patched` — which is 0 on every created row. The items tiebreak must
+  // therefore count quiz answers, not collapse to every row's 0. The Phase 2
+  // ranking bug was only ever caught with the quiz off; this is the same
+  // comparator exercised with secure-development off.
+  it("ranks created rows on points first, then answers (#522)", async () => {
     mocks.getQuizTotals.mockResolvedValue(
       new Map([
-        ["hoarder", totals(90, 1)], // one expensive question
-        ["grinder", totals(20, 4)], // four cheap ones
+        ["grinder", totals(20, 4)], // four cheap questions
+        ["scorer", totals(90, 1)], // one expensive one
       ]),
     );
 
     const out = await withModuleContributions(empty());
 
     expect(out.entries.map((e) => [e.login, e.rank])).toEqual([
-      ["grinder", 1],
-      ["hoarder", 2],
+      ["scorer", 1],
+      ["grinder", 2],
     ]);
   });
 
-  it("breaks an answer-count tie on points", async () => {
+  it("breaks a points tie on answer count", async () => {
     mocks.getQuizTotals.mockResolvedValue(
       new Map([
-        ["cheap", totals(20, 2)],
-        ["dear", totals(50, 2)],
+        ["fewer", totals(40, 1)],
+        ["more", totals(40, 4)],
       ]),
     );
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => e.login)).toEqual(["dear", "cheap"]);
+    expect(out.entries.map((e) => e.login)).toEqual(["more", "fewer"]);
   });
 
   it("stamps sequential ranks across the created field", async () => {

@@ -35,6 +35,12 @@ describe("/rules on a secure-development event", () => {
     expect(html).toContain("OWASP Code of Conduct");
   });
 
+  // #522: the standing order is stated where contestants look for rules, not
+  // only under the leaderboard's sort chips.
+  it("states how the leaderboard is ranked", () => {
+    expect(html).toContain("Individuals are ranked by points; ties go to more items completed, then to whoever got there first. Teams are ranked by points.");
+  });
+
   it("keeps the module's rules, verbatim", () => {
     expect(html).toContain(
       "Points for a patch credit the pull request&#x27;s author — open every PR from the same GitHub account you sign in with, or your score lands on a row you can&#x27;t see.",

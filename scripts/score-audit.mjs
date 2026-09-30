@@ -68,9 +68,9 @@
 //      bought is charged twice). Applied LAST, to the all-module total,
 //      floored at 0. hint-store.ts:165,412-426, hint-penalties.ts:25-30,
 //      62-98, folded.ts:49-74.
-//  R9  Contestant rank: completed items across modules desc, then (net)
-//      points desc, then the latest activity time asc (a row with none sorts
-//      last); a full tie falls through to an order this auditor does not
+//  R9  Contestant rank: (net) points desc, then completed items across
+//      modules desc, then the latest activity time asc (a row with none sorts
+//      last) — points first since #522; a full tie falls through to an order this auditor does not
 //      model, so it accepts any order WITHIN a tie group. rank.ts:15-17,
 //      49-70, hint-penalties.ts:81.
 //  R10 Team rank: net points desc; ties keep an earlier stage's order
@@ -378,7 +378,7 @@ export function recompute(snapshot) {
   }
 
   // --- ranks as tie groups (R9, R10) -----------------------------------------
-  const entryKey = (e) => [-e.completed, -e.points, e.activityMs];
+  const entryKey = (e) => [-e.points, -e.completed, e.activityMs];
   assignRankRanges([...entries.values()], entryKey);
   assignRankRanges([...teamRows.values()], (t) => [-t.points]);
 

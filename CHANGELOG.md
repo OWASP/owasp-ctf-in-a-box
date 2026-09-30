@@ -10,6 +10,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: the individual leaderboard ranks by points first (#522).**
+  Organizers, note this before an event: the order is now points, then items
+  completed across modules (a tiebreak only), then whoever got there first.
+  Until now items came first, so a contestant with many cheap solves
+  outranked one with more points, and the individual view disagreed with the
+  team view and the scorer's own board, which already rank by points. The
+  board's sort chips are now `points` (the default, the standing order) and
+  `solved`; the `rank` chip is gone because it repeated `points`. Rules and
+  FAQ now state the order.
+
 - **Fixed: team totals counted quiz, Jeopardy and AI points twice (#520).**
   On any board whose source reports its own teams (the scorer, i.e. every
   event running Secure Development), each team's total added its quiz,

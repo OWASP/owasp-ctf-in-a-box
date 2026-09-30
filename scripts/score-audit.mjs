@@ -331,6 +331,9 @@ export function recompute(snapshot) {
   for (const [k, e] of entries) {
     e.penalty = penalty.get(k) ?? 0;
     e.points = Math.max(0, e.gross - e.penalty);
+    // SD's time only: rank.ts takes the newest module lastActivityAt, but the
+    // app-side per-login totals always carry lastAt null (quiz-store.ts:587,
+    // classic-store.ts:960, ai-store.ts:481), so an app-only row sorts last.
     const ms = e.lastSolveAt ? Date.parse(e.lastSolveAt) : NaN;
     e.activityMs = Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
     e.team = teamOf.get(k) ?? null;

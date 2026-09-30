@@ -52,7 +52,12 @@ export function mockEnabledModules(live: readonly ModuleId[] | ((id: ModuleId) =
   const isLive = typeof live === "function" ? live : (id: ModuleId) => live.includes(id);
   const ids = () => KNOWN.filter((id) => isLive(id));
   return {
-    defaultModuleIds: KNOWN,
+    // The real one is the deployment's own default set (what a box with no
+    // stored module toggles runs); here that is the suite's live set. A
+    // getter, so a predicate a test flips is read at the moment of use.
+    get defaultModuleIds(): readonly ModuleId[] {
+      return ids();
+    },
     getAdminSettingsSnapshot,
     getEnabledModuleIds: async (): Promise<ReadonlySet<ModuleId>> => new Set(ids()),
     isModuleLive: async (id: ModuleId): Promise<boolean> => ids().includes(id),

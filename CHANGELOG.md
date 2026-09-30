@@ -6,7 +6,40 @@ commit-level notes, and this file keeps the human summary. The version is
 repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 `sync` deliberately carry no version field.
 
-## Unreleased
+## v0.7.0 — 2026-09-30
+
+### Breaking changes
+
+Six of them. Each has a full entry below with the reasoning and the steps;
+this is the index an upgrader reads first.
+
+- **Every event needs an official launch (#464).** An empty Scoring opens now
+  means *not launched*: nothing scores, and every module page and API is
+  locked for non-admins until the event is launched. **After upgrading, press
+  Launch in `/admin` → Event** (or set Scoring opens), or the box stays closed.
+- **The pre-event password gate is removed (#464).** The launch lock replaces
+  it, and its `CHALLENGES_GATE_*` keys are no longer read; see the next item.
+- **The v0.7 migration shims are gone (#503).** Delete, by hand, any leftover
+  `SCORE_INGEST`, `CHALLENGES_GATE_ENABLED` and `CHALLENGES_GATE_PASSWORD`
+  lines in `.env` / `.env.fly`, and the `LEADERBOARD_URL` /
+  `LEADERBOARD_TOKEN` org Actions secrets: `doctor` no longer reports them.
+- **Event bundles are version 2 (#463, #186).** An export from this release
+  carries `stories` (and `attachments` when a challenge has files); a box on
+  v0.6.0 or earlier refuses it. Upgrade the destination box first.
+- **Switching a module off stops its grading (#495).** Quiz, Jeopardy and AI
+  grading routes answer `403 {"error": "unavailable"}` while the module is
+  off, including the external AI site's `POST /api/ai/submit` and
+  `POST /api/ai/event` (see `docs/ai-module.md` §7).
+- **The AWS module's inputs changed (#476).** An existing `terraform.tfvars`
+  needs `github_client_id` (and `github_app_id` with Secure Development),
+  new SSM secrets, and the image placeholders from
+  `terraform.tfvars.example`; `docs/aws.md` has the commands.
+
+### Changes
+
+- **An import's "bundle version is newer" error no longer repeats the
+  submitted version.** It states the rule (the supported range) like every
+  other import error since #515.
 
 - **Breaking: the v0.7 migration shims are removed (#503).** v0.6 kept a few
   one-release aids for keys and secrets that push ingest (#377) and the
@@ -90,14 +123,6 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   in-box submit action already had. An admin preview or an AI `dryRun` is
   refused too. External AI integrators: the new 403 is in the
   error table, `docs/ai-module.md` §7.
-
-- **Switching a module off stops its grading (#495).** Turning Quiz or
-  Jeopardy off in `/admin` hid the board but left `POST /api/quiz/answer` and
-  `POST /api/classic/submit` grading, so an answer from an already-open tab
-  (or curl) still banked points that reappeared on re-enable. Both routes now
-  refuse with `403 { error: "unavailable" }` before anything is read or
-  written, the same gate the AI module's submit already had; an admin
-  preview is refused too.
 
 - **Dependency refresh: Next.js 16.3.6, `@types/node` 26.6.2, Caddy image
   digest.** `next` and `eslint-config-next` move 16.3.5 → 16.3.6, the fix for

@@ -41,7 +41,7 @@ import { parseBundle as parseSponsorsBundle, type SponsorsBundle } from "@/lib/s
 // v2, issue #386 PR 3, CodeRabbit round 1): a box running the OLD code (the
 // unbumped version, with a narrower EVENT_POLICY_FIELDS that has never heard
 // of `secureDevTargets`) that receives an export from a box running this
-// code needs a clean "bundle version 2 is newer than this box supports"
+// code needs a clean "bundle version is newer than this box supports"
 // refusal, not the confusing "field not allowed: secureDevTargets" an
 // unversioned schema change would produce. EXPORT always writes the current
 // version; IMPORT accepts anything from `EVENT_BUNDLE_MIN_VERSION` through
@@ -163,7 +163,9 @@ export function parseEventBundle(raw: string): EventParseResult {
     if (typeof version === "number" && version > EVENT_BUNDLE_VERSION) {
       errors.push({
         where: "version",
-        message: `Bundle version ${version} is newer than this box supports (expected ${EVENT_BUNDLE_MIN_VERSION}-${EVENT_BUNDLE_VERSION})`,
+        // The rule, not the submitted value (#515 review): every import error
+        // names the position and what is expected, never what was sent.
+        message: `Bundle version is newer than this box supports (expected an integer ${EVENT_BUNDLE_MIN_VERSION}-${EVENT_BUNDLE_VERSION})`,
       });
     } else {
       errors.push({

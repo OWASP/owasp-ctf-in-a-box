@@ -1984,6 +1984,66 @@ suspend, and no Cloudflare rule unless you put one in front of the ALB.
 checks, and how to run the load pass by hand, are in the
 [AWS event-day runbook](aws.md#before-the-event).
 
+### Checking score consistency: `scripts/score-audit.sh`
+
+A read-only differential audit of the scores the board shows. It runs
+`scripts/score-audit.mjs` **inside the Fly machine's `app` container** (the
+same upload-and-run as the load test), reads every key the leaderboard is
+folded from — the scorer's `ctf:solves:<target>` hashes and its rubric
+catalogue, the quiz, Jeopardy and AI aggregates and per-login rows, hint
+spend, team rosters, the module switches — and recomputes every
+contestant's and every team's total, per module and overall, with ranks.
+That recompute is a second implementation of the rules on this page and in
+[docs/architecture.md](architecture.md); it imports none of the app's fold
+code, so a bug there shows up as a disagreement instead of being copied.
+It then fetches `/leaderboard` from the app with `RSC: 1` — the page's
+flight payload, which carries the exact `data` object the board renders —
+and diffs the two.
+
+```sh
+scripts/score-audit.sh --app <fly-app> [--report <path>]
+```
+
+What it checks, beyond the totals: each module block's points and item
+count, the hint penalty, each contestant's team chip, each team's roster,
+and ranks (a full tie may come in either order); and three store
+invariants — each quiz/Jeopardy/AI aggregate equals the per-login rows it
+sums, a login is on at most one team, and its `ctf:user:<login>` record
+names that team.
+
+Exit 0 only when every compared value agrees, no invariant is broken, and
+the comparison was not vacuous (at least one contestant or team compared);
+1 on any finding (each is printed as a `MISMATCH` or `INVARIANT` line, and
+the JSON report has them all); 3 when the audit could not be trusted. Being
+unable to trust the audit covers four cases: an empty store, a payload shape
+the parser does not recognise (it fails rather than reporting "no
+differences"), a `/leaderboard` that redirects away because the event is
+not launched, or a store that kept changing. The board is memoized for 10 s
+and its Secure Development part is fetched through a 30 s cache, so the
+audit reads the store, fetches the board, waits past the memo, fetches
+again and re-reads the store, and compares only if nothing moved in
+between. Run it on a quiet box: before the event, after a load-test seed,
+or once scoring closes. The report defaults to `docs/superpowers/`
+(gitignored).
+
+It is read-only by construction: every Redis command goes through a guard
+that refuses anything outside a fixed list of reads before it is sent, and
+the only HTTP requests are `GET`s. Combined with the load-test seed it
+exercises the board's read-and-fold path at volume. `load-test.sh` has no
+seed-only mode, so seed without the HTTP load by calling the seeder
+directly, run the audit, then clean:
+
+```sh
+fly ssh sftp put scripts/load-seed.mjs /tmp/load-seed.mjs --app <fly-app> --container app
+fly ssh console --app <fly-app> --container app -C "node /tmp/load-seed.mjs --count 100"
+scripts/score-audit.sh --app <fly-app>
+scripts/load-test.sh --app <fly-app> --clean
+```
+
+The seeder writes its
+rows directly rather than through the grading Lua, so that pairing tests
+how the board **reads** scores, not how a submission is graded.
+
 ### The org and the bootstrap keys: `ctf-setup.sh doctor`
 
 Read-only, no `--dry-run` needed, and the first thing to run when something

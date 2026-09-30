@@ -19,7 +19,7 @@
 #   - /flags serves and shows a seeded challenge BY TITLE
 #   - /challenges 404s (module contract §5.4 — the route must not exist, not
 #     just disappear from the nav; this is secure-development's own route,
-#     gated on isModuleEnabled("secure-development") in
+#     gated on isModuleLive("secure-development") in
 #     apps/web/src/app/(site)/challenges/page.tsx, which a classic-only event
 #     never enables)
 #   - /leaderboard shows a seeded contestant's classic points BY LOGIN. A

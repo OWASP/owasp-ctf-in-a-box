@@ -10,10 +10,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeaderboardData } from "../types";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules((id) => mocks.moduleLive(id)),
+);
 
 const mocks = vi.hoisted(() => ({
-  isModuleEnabled: vi.fn((id: string) => id === "secure-development"),
+  moduleLive: vi.fn((id: string) => id === "secure-development"),
   getQuizTotals: vi.fn(),
   getTeamQuizTotalsBatch: vi.fn(),
   listQuestions: vi.fn(),
@@ -26,7 +28,6 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/modules", () => ({
   enabledModules: [{ id: "secure-development", displayName: "Secure Development", description: "", targets: ["dvwa"] }],
-  isModuleEnabled: mocks.isModuleEnabled,
 }));
 vi.mock("@/lib/quiz-store", () => ({
   getQuizTotals: mocks.getQuizTotals,
@@ -79,7 +80,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   hints.enabled = false;
   hints.penalties = new Map();
-  mocks.isModuleEnabled.mockImplementation((id: string) => id === "secure-development");
+  mocks.moduleLive.mockImplementation((id: string) => id === "secure-development");
   mocks.getQuizTotals.mockResolvedValue(new Map());
   mocks.listQuestions.mockResolvedValue([]);
   mocks.getClassicTotals.mockResolvedValue(new Map());
@@ -123,7 +124,7 @@ describe("leaderboard pipeline", () => {
   // teams) is penalised on its members' spend like any other — the second
   // row shape the old first-stage fold never saw.
   it("charges a synthesised team row its members' hint spend", async () => {
-    mocks.isModuleEnabled.mockImplementation((id: string) => id === "quiz");
+    mocks.moduleLive.mockImplementation((id: string) => id === "quiz");
     mocks.getQuizTotals.mockResolvedValue(new Map([["carol", { points: 100, answered: 4, lastAt: "2026-08-01T11:00:00.000Z" }]]));
     mocks.getTeamQuizTotalsBatch.mockResolvedValue([{ points: 100, answered: 4, lastAt: "2026-08-01T11:00:00.000Z" }]);
     mocks.listQuestions.mockResolvedValue([{}, {}, {}, {}]);
@@ -142,7 +143,7 @@ describe("leaderboard pipeline", () => {
   // hints. With the overlay first, their deduction was max(0, 0 − spend) on a
   // row that didn't exist yet, i.e. nothing.
   it("charges hint spend to a module-only contestant's created row", async () => {
-    mocks.isModuleEnabled.mockImplementation((id: string) => id === "quiz");
+    mocks.moduleLive.mockImplementation((id: string) => id === "quiz");
     mocks.getQuizTotals.mockResolvedValue(new Map([["carol", { points: 100, answered: 4, lastAt: "2026-08-01T11:00:00.000Z" }]]));
     mocks.listQuestions.mockResolvedValue([{}, {}, {}, {}]);
     hints.enabled = true;
@@ -160,7 +161,7 @@ describe("leaderboard pipeline", () => {
   // spend — GROSS everywhere, penalties fold last regardless of which
   // app-side module supplied the points.
   it("shows an ai block GROSS and nets the penalty once, at the row level", async () => {
-    mocks.isModuleEnabled.mockImplementation((id: string) => id === "secure-development" || id === "ai");
+    mocks.moduleLive.mockImplementation((id: string) => id === "secure-development" || id === "ai");
     mocks.getAiTotals.mockResolvedValue(new Map([["ada", { points: 20, solved: 2, lastAt: null }]]));
     mocks.listAiChallenges.mockResolvedValue([{}, {}]);
     hints.enabled = true;
@@ -176,7 +177,7 @@ describe("leaderboard pipeline", () => {
   });
 
   it("charges hint spend to an ai-only contestant's created row", async () => {
-    mocks.isModuleEnabled.mockImplementation((id: string) => id === "ai");
+    mocks.moduleLive.mockImplementation((id: string) => id === "ai");
     mocks.getAiTotals.mockResolvedValue(new Map([["carol", { points: 100, solved: 4, lastAt: "2026-08-01T11:00:00.000Z" }]]));
     mocks.listAiChallenges.mockResolvedValue([{}, {}, {}, {}]);
     hints.enabled = true;

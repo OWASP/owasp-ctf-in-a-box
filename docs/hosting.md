@@ -73,9 +73,8 @@ The wizard does **not** ask how scores reach the box: there is one transport
 and nothing selects it (see [how scores reach the box](#how-scores-reach-the-box)).
 The `SCORE_INGEST` key that used to answer that question is gone — the wizard
 writes no such line and rewrites none, because nothing reads it. A line an
-upgraded `.env` still carries is inert; `doctor` points at one whose value is
-anything other than `poll`, since that value describes a transport the box no
-longer has, and says to delete it. `EVENT_URL` is asked once: at step 2 when the wizard
+upgraded `.env` still carries is inert: delete it. (`doctor` named such a line
+in v0.6 only; v0.7 removed that notice, #503.) `EVENT_URL` is asked once: at step 2 when the wizard
 creates `.env`, or at step 3 when an existing file has no value for it.
 
 **Secure Development decides which later steps run.** With `SCORE_IMAGE` set,
@@ -203,8 +202,8 @@ docker buildx build --platform linux/amd64 -t ghcr.io/<your-org>/score:latest --
 #      (b) keep ghcr.io/<org>/score PRIVATE and grant each fork Read under the
 #          package's Manage Actions access.
 #    (There is no secrets step for scoring — the score comment is the whole
-#     transport. doctor reports any leftover LEADERBOARD_URL/LEADERBOARD_TOKEN
-#     org secret as a credential to delete.)
+#     transport. Delete any leftover LEADERBOARD_URL/LEADERBOARD_TOKEN org
+#     secret from an earlier push-ingest event by hand.)
 #    Then verify provisioning:
 ./setup/ctf-setup.sh doctor
 ```
@@ -498,8 +497,7 @@ removed in v0.6 ([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
 [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed)),
 along with the `SCORE_INGEST` key that used to select between them. An `.env`
 carried over from an earlier release may still carry that line; nothing reads
-it, and `ctf-setup.sh doctor` names it when it says anything other than
-`poll`.
+it, so delete it.
 
 Two properties come with polling, and they are why it is the only transport.
 **Nothing has to reach your box from the internet.** The one Caddyfile has no
@@ -516,7 +514,8 @@ below. If your event org still
 has `LEADERBOARD_URL` / `LEADERBOARD_TOKEN` Actions secrets from a push-mode
 event, delete them: nothing reads them any more, and until they are gone they
 are standing credentials readable by every run a contestant's pull request
-triggers. `ctf-setup.sh doctor` tells you whether they are still set.
+triggers. Check the org's **Settings → Secrets and variables → Actions** page: `ctf-setup.sh doctor` stopped looking
+for them in v0.7 (#503).
 
 ### Which profiles do I need?
 

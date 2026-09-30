@@ -18,9 +18,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("server-only", () => ({}));
 // getSite() reads the admin settings snapshot; the real one calls
-// connection(), which throws outside a request scope. The baked double fails
+// connection(), which throws outside a request scope. The mock below fails
 // open to "no override", which is what an unconfigured box looks like.
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
+);
 // No sponsors: the attribution must not depend on the sponsor row, which
 // renders only when there are sponsors to name.
 vi.mock("@/lib/sponsors-store", () => ({ listSponsors: vi.fn(async () => []) }));

@@ -382,8 +382,8 @@ suggestions.
   ingest was removed in v0.6 (#377, ADR 56), taking `Caddyfile.push`, the
   `push` compose profile, the `SCORE_INGEST` key and the judge's
   `SCORE_API`/`SCORE_TOKEN` hook with it. A `.env` carried over from a push
-  event still boots — nothing reads the key — and `ctf-setup.sh doctor` names
-  the stale line once.
+  event still boots — nothing reads the key (v0.7 also dropped the `doctor`
+  notice that named it, #503).
 - `patches/` — `<target>/<challenge-id>.patch`, one reference fix per
   challenge; the input to `acceptance-patched.sh`. `git`-format diffs against
   the source the script pins by commit; `patches/README.md` is the contract.

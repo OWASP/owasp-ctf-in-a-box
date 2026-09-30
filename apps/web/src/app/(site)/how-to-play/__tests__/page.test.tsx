@@ -8,7 +8,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/server", () => ({ connection: async () => {} }));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
+);
 // The page now reads GITHUB_ORG through bootstrap-env rather than the
 // (now-dead) event.yaml bake — this is the "nothing moved" suite, so it pins
 // the same org the vendored config used to bake.
@@ -20,10 +22,6 @@ vi.mock("@/lib/admin-store", () => ({
   // shipped config's module list explicitly, or the page composes a guide
   // for every module the registry knows, not the one this event runs.
   getAdminSettings: async () => ({ moduleOverrides: {}, enabledModuleIds: ["secure-development"] }),
-}));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: (id: string) => id === "secure-development",
 }));
 
 import HowToPlay, { generateMetadata } from "@/app/(site)/how-to-play/page";

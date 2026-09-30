@@ -19,7 +19,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
+);
 
 const sponsors = vi.hoisted(() => ({ list: [] as unknown[] }));
 const listSponsors = vi.hoisted(() => vi.fn(async () => sponsors.list));

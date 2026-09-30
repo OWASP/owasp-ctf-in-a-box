@@ -26,9 +26,8 @@ import { RUN, liveConfigured } from "./live-redis";
 vi.mock("server-only", () => ({}));
 // The real `isModuleLive` calls `connection()` to stay out of Next's
 // build-time prerender, which throws outside a request scope — there is none
-// here, this is a direct function call from a test. Stood in for with the
-// neutral baked config this suite has always run against: secure-development
-// live, quiz/classic/ai not — see the note by the availability test below for
+// here, this is a direct function call from a test. Stood in for with a
+// secure-development-only set: secure-development live, quiz/classic/ai not — see the note by the availability test below for
 // why their gates are out of scope here.
 vi.mock("@/lib/enabled-modules", () => ({
   isModuleLive: async (id: string) => id === "secure-development",
@@ -186,7 +185,7 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
   });
 
   // Not asserted here: that classic and ai hint reads still work. Both gate on
-  // `isModuleEnabled`, and this suite runs against the neutral baked config
+  // `isModuleLive`, and this suite runs against a secure-development-only set
   // where neither module is on, so a live assertion would only ever exercise
   // the module gate — a skip dressed as a check. Their reads are covered by the
   // mocked suite and by the classic/ai store suites that do enable them.

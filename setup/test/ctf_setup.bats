@@ -401,79 +401,51 @@ EOF
   [ -z "$(grep -F 'installations' "$BATS_TEST_TMPDIR/gh.calls" 2>/dev/null || true)" ]
 }
 
-# --- doctor: deprecated push ingest (issue #377) -----------------------------
+# --- doctor: the v0.7 migration notices are gone (#503) ----------------------
 #
-# Push ingest was removed in v0.6 (issue #377, ADR 56), so doctor — where an
-# organizer looks — names what is left of it. Two independent warnings, both
-# ADVISORY (a `.env` carried over from a push event still boots, since nothing
-# reads the key, so neither may fail the exit code): the `.env` switch itself,
-# and the two org Actions secrets the push transport needed, which are read by
-# contestant-triggered runs and have nothing left to authorize.
-#
-# The secrets read is `gh api orgs/<org>/actions/secrets --jq
-# '.secrets[].name'`, and it follows check (c)'s fail-closed convention: a
-# non-zero exit OR an empty reply from a successful call is "not verified",
-# never "absent" — an organizer told their standing credentials are gone when
-# the API merely refused to answer is the one wrong thing to say here.
+# v0.6 shipped three one-release notices for keys and secrets that push
+# ingest (#377) and the password gate (#464) left behind: a stale
+# SCORE_INGEST line, CHALLENGES_GATE_* keys, and the LEADERBOARD_URL /
+# LEADERBOARD_TOKEN org secrets. v0.7 removed them: those keys are now just
+# unknown `.env` lines, which doctor does not read, and it makes no call to
+# the org's Actions secrets.
 
-# Same shape as write_gh_installations_stub: a canned gh answering exactly
-# this check's endpoint and refusing everything else, so a stray call
-# elsewhere surfaces as a loud failure rather than a silent pass.
-write_gh_secrets_stub() {  # $1 = newline-separated secret names (may be empty)
+@test "doctor says nothing about leftover SCORE_INGEST or CHALLENGES_GATE_* keys (#503)" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nSCORE_INGEST=push\nCHALLENGES_GATE_ENABLED=true\nCHALLENGES_GATE_PASSWORD=open-sesame\n' > .env
+  mkdir -p stubs
+  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
+  chmod +x stubs/gh
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
+  if [ "$status" -ne 0 ]; then
+    echo "doctor failed on an .env with only unknown extra keys (status $status)" >&2
+    return 1
+  fi
+  [ -z "$(printf '%s' "$output" | grep -E -- 'SCORE_INGEST|CHALLENGES_GATE|open-sesame')" ]
+}
+
+@test "doctor no longer reads the org's Actions secrets (#503)" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
   mkdir -p stubs
   cat > stubs/gh <<EOF
 #!/usr/bin/env bash
+echo "gh \$*" >> "$BATS_TEST_TMPDIR/gh.calls"
 case "\$*" in
-  # --paginate is part of the call: the check must see every secret the org
-  # has, not gh's first page of 30 (a truncated list reading as "none left"
-  # is the fail-open this whole check is about).
-  *"--paginate"*"orgs/test-event-org/actions/secrets"*"--jq"*)
-    printf '%s\n' "$1"
-    ;;
   *"packages/container/score"*) echo private ;;
   *) exit 1 ;;
 esac
 EOF
   chmod +x stubs/gh
-}
-
-@test "doctor names a leftover SCORE_INGEST=push as a key nothing reads any more" {
-  # SCORE_IMAGE empty on purpose: this notice is printed BEFORE the
-  # Secure-Development early return, so a box that carries the key hears about
-  # it even when nothing fork-based is left to inspect.
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nSCORE_INGEST=push\n' > .env
-  mkdir -p stubs
-  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
-  chmod +x stubs/gh
   run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  printf '%s' "$output" | grep -qF -- 'says SCORE_INGEST=push — push ingest is REMOVED (issue #377)'
-  printf '%s' "$output" | grep -qF -- 'Delete the line.'
-  # Advisory, not a defect: the key is inert now, so an app-only box with every
-  # required key set is still healthy.
-  [ "$status" -eq 0 ]
-}
-
-@test "doctor names leftover CHALLENGES_GATE_* keys: the password gate is gone (#464)" {
-  # The gate was replaced by the launch lock. An organizer who still has the
-  # keys set believes the board sits behind a password — it does not, it sits
-  # behind Launch — so name it, once, before the no-org return.
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nCHALLENGES_GATE_ENABLED=true\nCHALLENGES_GATE_PASSWORD=open-sesame\n' > .env
-  mkdir -p stubs
-  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
-  chmod +x stubs/gh
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  if ! printf '%s' "$output" | grep -qF -- 'CHALLENGES_GATE_ENABLED / CHALLENGES_GATE_PASSWORD — the password gate is REMOVED (#464)'; then
-    echo 'Missing doctor output: removed password-gate warning' >&2
+  # The stub was reached at all, so an absent secrets call is not vacuous.
+  if ! grep -qF 'packages/container/score' "$BATS_TEST_TMPDIR/gh.calls"; then
+    echo 'doctor never reached the org-level checks; the assertion below would be vacuous' >&2
     return 1
   fi
-  if ! printf '%s' "$output" | grep -qF -- 'press Launch in /admin'; then
-    echo 'Missing doctor output: the Launch guidance' >&2
+  if [ -n "$(printf '%s' "$output" | grep -F -- 'push-mode')" ]; then
+    echo 'doctor still prints a push-mode secrets notice' >&2
     return 1
   fi
-  # The password itself must never be echoed back.
-  [ -z "$(printf '%s' "$output" | grep -F -- 'open-sesame')" ]
-  # Advisory: an inert key breaks nothing.
-  [ "$status" -eq 0 ]
+  [ -z "$(grep -F 'actions/secrets' "$BATS_TEST_TMPDIR/gh.calls")" ]
 }
 
 # #464: doctor reads the box's launch state from /health/deep (public). A
@@ -546,104 +518,6 @@ doctor_with_box() {
   chmod +x stubs/gh stubs/curl
   run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
   [ -z "$(printf '%s' "$output" | grep -F -- 'CURL-CALLED')" ]
-}
-
-@test "doctor says nothing about the gate when no CHALLENGES_GATE_* key is set" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\n#CHALLENGES_GATE_ENABLED=true\n' > .env
-  mkdir -p stubs
-  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
-  chmod +x stubs/gh
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  [ "$status" -eq 0 ]
-  [ -z "$(printf '%s' "$output" | grep -F -- 'CHALLENGES_GATE')" ]
-}
-
-@test "doctor says nothing about the transport when SCORE_INGEST is poll" {
-  # The value every `.env` this wizard ever wrote carries. It agrees with the
-  # behaviour exactly, so it must not put a ⚠️ on an upgraded box.
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nSCORE_INGEST=poll\n' > .env
-  mkdir -p stubs
-  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
-  chmod +x stubs/gh
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  [ "$status" -eq 0 ]
-  [ -z "$(printf '%s' "$output" | grep -F -- 'SCORE_INGEST')" ]
-}
-
-@test "doctor names any other SCORE_INGEST value too, and fails on none of them" {
-  # Before #377 removed the key, a value that was neither mode expanded into
-  # caddy/Caddyfile.<that> and the bring-up failed looking for a file that did
-  # not exist — so doctor had to exit non-zero. Compose now mounts a constant
-  # Caddyfile.poll, so the same value is inert: naming it is right, failing on
-  # it would be a lie about a box that comes up fine.
-  printf 'ADMIN_LOGINS=organizer\nGITHUB_ORG=\nSCORE_IMAGE=\nSCORE_INGEST=pussh\n' > .env
-  mkdir -p stubs
-  printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
-  chmod +x stubs/gh
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  # No org and no scorer image on purpose: the no-org return sits early in
-  # cmd_doctor, and an app-only event is the box most likely to carry a
-  # hand-edited .env — a check placed after that return would never run for it.
-  printf '%s' "$output" | grep -qF -- 'says SCORE_INGEST=pussh'
-  [ -z "$(printf '%s' "$output" | grep -F -- 'Caddyfile.pussh')" ]
-  [ "$status" -eq 0 ]
-}
-
-@test "doctor names the push-mode org secrets that are still set" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
-  write_gh_secrets_stub "$(printf 'SOMETHING_ELSE\nLEADERBOARD_URL\nLEADERBOARD_TOKEN')"
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  printf '%s' "$output" | grep -qF -- 'push-mode org secrets still set: LEADERBOARD_URL LEADERBOARD_TOKEN'
-  printf '%s' "$output" | grep -qF -- '#377'
-  printf '%s' "$output" | grep -qF -- 'https://github.com/organizations/test-event-org/settings/secrets/actions'
-}
-
-@test "doctor reports no push-mode leftovers when the org's secret list has none" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
-  write_gh_secrets_stub "$(printf 'SOMETHING_ELSE\nANOTHER_SECRET')"
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  printf '%s' "$output" | grep -qF -- 'no leftover push-mode org secrets (#377)'
-  [ -z "$(printf '%s' "$output" | grep -F -- 'still set')" ]
-}
-
-@test "doctor's push-secrets check fails closed on a gh error: not verified, never absent" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
-  mkdir -p stubs
-  cat > stubs/gh <<'EOF'
-#!/usr/bin/env bash
-case "$*" in
-  *"packages/container/score"*) echo private ;;
-  *) exit 1 ;;
-esac
-EOF
-  chmod +x stubs/gh
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  printf '%s' "$output" | grep -qF -- 'push-mode org secrets (LEADERBOARD_URL, LEADERBOARD_TOKEN) not verified'
-  printf '%s' "$output" | grep -qF -- 'admin:org scope'
-  [ -z "$(printf '%s' "$output" | grep -F -- 'no leftover push-mode org secrets')" ]
-}
-
-@test "doctor's push-secrets check treats an empty-but-successful list as unverified too" {
-  # An org with zero secrets of any kind is indistinguishable here from a
-  # scope error that produced no output — same reasoning as check (c).
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
-  write_gh_secrets_stub ""
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  # The whole phrase, not a bare "not verified": doctor prints that for the
-  # sync App too, and this assertion passed against the pre-#377 script on
-  # that line alone.
-  printf '%s' "$output" | grep -qF -- 'push-mode org secrets (LEADERBOARD_URL, LEADERBOARD_TOKEN) not verified'
-  [ -z "$(printf '%s' "$output" | grep -F -- 'no leftover push-mode org secrets')" ]
-}
-
-@test "doctor's push-secrets check makes no gh call under --dry-run and narrates instead" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
-  mkdir -p "$BATS_TEST_TMPDIR/stubbin"
-  printf '#!/usr/bin/env bash\necho "gh $*" >> "%s/gh.calls"\nexit 1\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/stubbin/gh"
-  chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
-  run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor --dry-run
-  printf '%s' "$output" | grep -qF -- 'DRY-RUN: would check test-event-org for the removed push-mode secrets (LEADERBOARD_URL, LEADERBOARD_TOKEN)'
-  [ -z "$(grep -F 'actions/secrets' "$BATS_TEST_TMPDIR/gh.calls" 2>/dev/null || true)" ]
 }
 
 @test "check succeeds with no .env at all (regression fix)" {

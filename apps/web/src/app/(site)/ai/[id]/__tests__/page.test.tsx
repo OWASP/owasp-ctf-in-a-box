@@ -30,7 +30,7 @@ vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
 const {
-  isModuleEnabled,
+  moduleLive,
   isAdminLogin,
   getSession,
   listAiChallenges,
@@ -45,7 +45,7 @@ const {
   getHintNotice,
   getViewerHints,
 } = vi.hoisted(() => ({
-  isModuleEnabled: vi.fn(),
+  moduleLive: vi.fn(),
   isAdminLogin: vi.fn(),
   getSession: vi.fn(),
   listAiChallenges: vi.fn(),
@@ -65,7 +65,9 @@ const {
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules((id) => moduleLive(id)),
+);
 vi.mock("next/headers", () => ({ headers: () => headersRef.current }));
 // The hint block renders a real HintRevealButton (unlike ChallengeDetail, which is
 // spied below) — it calls useRouter for its post-reveal refresh, same reason
@@ -75,7 +77,6 @@ vi.mock("next/navigation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/navigation")>()),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
-vi.mock("@/lib/modules", () => ({ isModuleEnabled }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
@@ -136,7 +137,7 @@ const params = (id: string) => ({ params: Promise.resolve({ id }) });
 beforeEach(() => {
   vi.clearAllMocks();
   headersRef.current = new Headers();
-  isModuleEnabled.mockReturnValue(true);
+  moduleLive.mockReturnValue(true);
   isAdminLogin.mockReturnValue(false);
   getSession.mockResolvedValue({ user: { login: "alice" } });
   listAiChallenges.mockResolvedValue([flagChallenge, eventChallenge]);
@@ -157,7 +158,7 @@ beforeEach(() => {
 
 describe("ai challenge page gates", () => {
   it("404s when the ai module is not enabled", async () => {
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     await expect(AiChallengePage(params("a1"))).rejects.toMatchObject({
       digest: "NEXT_HTTP_ERROR_FALLBACK;404",
     });
@@ -477,7 +478,7 @@ describe("ai challenge page metadata", () => {
 
   it("stays empty for an unknown id or a disabled module", async () => {
     expect(await generateMetadata(params("nope"))).toEqual({});
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     expect(await generateMetadata(params("a1"))).toEqual({});
   });
 });

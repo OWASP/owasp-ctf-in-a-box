@@ -8,8 +8,8 @@
 // ../../__tests__/secure-dev-terms.ts.
 //
 // Own file because `vi.mock` hoists per file and this fixture needs its own
-// module set. `@/lib/modules` is mocked with `importOriginal` so only
-// `isModuleEnabled` is stubbed — the real registry (the page's own content)
+// module set. Only the live set is mocked —
+// `@/lib/modules`, the real registry (the page's own content)
 // stays under test — same split as lib/__tests__/modules-resolve.test.ts.
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -22,16 +22,13 @@ import {
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/server", () => ({ connection: async () => {} }));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["quiz"]),
+);
 vi.mock("@/lib/admin-store", () => ({
-  // See page.test.tsx's copy of this comment: `getResolvedModules` falls
-  // back to the baked shim's ALL-module `defaultModuleIds` unless this names
-  // the fixture's own set.
+  // `getResolvedModules` reads `moduleOverrides` from this; `enabledModuleIds`
+  // mirrors the set the enabled-modules mock above serves.
   getAdminSettings: async () => ({ moduleOverrides: {}, enabledModuleIds: ["quiz"] }),
-}));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: (id: string) => id === "quiz",
 }));
 
 import HowToPlay, { generateMetadata } from "@/app/(site)/how-to-play/page";

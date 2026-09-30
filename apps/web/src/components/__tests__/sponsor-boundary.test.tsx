@@ -25,7 +25,9 @@ vi.mock("server-only", () => ({}));
 // double (see its own header) fails open to null here (nothing else in this
 // file mocks @/lib/admin-store), which is exactly "no override" — the same
 // as an unconfigured box.
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
+);
 vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ refresh: () => {} }) }));
 vi.mock("next/image", () => ({
   default: ({ src, alt, className }: { src: string; alt: string; className?: string }) => (

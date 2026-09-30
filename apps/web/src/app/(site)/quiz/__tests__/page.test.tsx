@@ -12,8 +12,8 @@ const launchLock = vi.hoisted(() => ({
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { isModuleEnabled, isAdminLogin, getSession, listQuestions, getViewerQuiz, getAdminSettings, getResolvedModules } = vi.hoisted(() => ({
-  isModuleEnabled: vi.fn(),
+const { moduleLive, isAdminLogin, getSession, listQuestions, getViewerQuiz, getAdminSettings, getResolvedModules } = vi.hoisted(() => ({
+  moduleLive: vi.fn(),
   isAdminLogin: vi.fn(),
   getSession: vi.fn(),
   listQuestions: vi.fn(),
@@ -23,7 +23,9 @@ const { isModuleEnabled, isAdminLogin, getSession, listQuestions, getViewerQuiz,
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules((id) => moduleLive(id)),
+);
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 // QuizBoard (the client component this page renders) calls useRouter for
 // its post-submit refresh — needs a mock the same way quiz-board.test.tsx
@@ -32,7 +34,6 @@ vi.mock("next/navigation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/navigation")>()),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
-vi.mock("@/lib/modules", () => ({ isModuleEnabled }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
@@ -92,14 +93,14 @@ beforeEach(() => {
 
 describe("quiz page gate", () => {
   it("404s when the quiz module is not enabled", async () => {
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     await expect(QuizPage()).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
   });
 });
 
 describe("quiz page view model", () => {
   it("derives answered/exhausted/cooldown/unanswered per question from viewer progress and settings", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listQuestions.mockResolvedValue(baseQuestions);
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: 2, quizRetryAfterMin: 5 });
@@ -122,7 +123,7 @@ describe("quiz page view model", () => {
   });
 
   it("treats a signed-out visitor as having no progress and prompts sign-in instead of a submit control", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listQuestions.mockResolvedValue([baseQuestions[3]]);
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: null, quizRetryAfterMin: null });
@@ -135,7 +136,7 @@ describe("quiz page view model", () => {
   });
 
   it("shows an empty state with no questions available", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listQuestions.mockResolvedValue([]);
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: null, quizRetryAfterMin: null });
@@ -148,7 +149,7 @@ describe("quiz page view model", () => {
   // sees after provisioning. A contestant's "check back soon" is a correct
   // dead end for them and a useless one for whoever has to author the bank.
   it("routes an organizer to the authoring tab from the empty state", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listQuestions.mockResolvedValue([]);
@@ -163,7 +164,7 @@ describe("quiz page view model", () => {
   });
 
   it("shows a signed-in contestant the plain empty state, with no admin link", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(false);
     getSession.mockResolvedValue({ user: { login: "bob" } });
     listQuestions.mockResolvedValue([]);
@@ -177,7 +178,7 @@ describe("quiz page view model", () => {
   });
 
   it("renders the organizer's module title instead of the default", async () => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getSession.mockResolvedValue(null);
     listQuestions.mockResolvedValue([]);
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: null, quizRetryAfterMin: null });
@@ -195,7 +196,7 @@ describe("quiz page view model", () => {
 // occupy that slot is viewer state, and moved into the body.
 describe("quiz page blurb and progress line", () => {
   beforeEach(() => {
-    isModuleEnabled.mockReturnValue(true);
+    moduleLive.mockReturnValue(true);
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: null, quizRetryAfterMin: null });
     getViewerQuiz.mockResolvedValue({ answered: {}, attempts: {} });
     listQuestions.mockResolvedValue(baseQuestions);

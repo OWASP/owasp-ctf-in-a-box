@@ -54,7 +54,9 @@ vi.mock("@/lib/leaderboard/source", () => ({
 const sponsorList = vi.hoisted(() => ({ data: [] as unknown[] }));
 vi.mock("@/lib/sponsors-store", () => ({ listSponsors: async () => sponsorList.data }));
 vi.mock("next/server", () => ({ connection: async () => {} }));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
+);
 // Mutable so the event-identity test below can swap in an organizer-named
 // override for one render and put the default back — same pattern as
 // `board` above.
@@ -72,18 +74,14 @@ const adminSettings = vi.hoisted(() => ({
   secureDevTargets: undefined as string[] | undefined,
 }));
 vi.mock("@/lib/admin-store", () => ({
-  // `getResolvedModules` falls back to the baked shim's ALL-module
-  // `defaultModuleIds` unless this names the shipped config's own set.
+  // `getResolvedModules` reads `moduleOverrides` from this; `enabledModuleIds`
+  // mirrors the set the enabled-modules mock above serves.
   getAdminSettings: async () => ({ ...adminSettings }),
 }));
 // Mutable so the catalogue-vs-enabled-count test below can swap in a
 // successful catalogue response for one render — same pattern as `board`.
 const catalogFixture = vi.hoisted(() => ({ data: null as unknown }));
 vi.mock("@/lib/challenges", () => ({ getChallengeCatalog: async () => catalogFixture.data }));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: (id: string) => id === "secure-development",
-}));
 // layout.tsx is imported for its `generateMetadata` export; its font loaders are
 // build-time Next magic with no runtime implementation under Vitest.
 vi.mock("next/font/google", () => {

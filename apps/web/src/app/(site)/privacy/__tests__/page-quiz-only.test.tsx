@@ -18,11 +18,9 @@ import {
   SECURE_DEV_TERMS,
 } from "../../__tests__/secure-dev-terms";
 
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: (id: string) => id === "quiz",
-}));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["quiz"]),
+);
 
 import Privacy from "@/app/(site)/privacy/page";
 

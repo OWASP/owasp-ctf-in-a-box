@@ -26,9 +26,9 @@ const launchLock = vi.hoisted(() => ({
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { isModuleEnabled, getSession, listChallenges, listCategories, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules } =
+const { moduleLive, getSession, listChallenges, listCategories, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules } =
   vi.hoisted(() => ({
-    isModuleEnabled: vi.fn(),
+    moduleLive: vi.fn(),
     getSession: vi.fn(),
     listChallenges: vi.fn(),
     listCategories: vi.fn(),
@@ -41,7 +41,9 @@ const { isModuleEnabled, getSession, listChallenges, listCategories, getSolveCou
 const captured: { challenges: Record<string, unknown>[] } = { challenges: [] };
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules((id) => moduleLive(id)),
+);
 // Runtime admin grants (issue #147) put a Redis read behind the page's
 // admin-link check for any signed-in viewer. Mocked to empty here: this suite
 // is about the view model's fields, and an unmocked SMEMBERS turns it into a
@@ -49,7 +51,6 @@ vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
 vi.mock("@/lib/admin-admins", () => ({ listStoredAdmins: async () => [] }));
 
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
-vi.mock("@/lib/modules", () => ({ isModuleEnabled }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
@@ -93,7 +94,7 @@ const leakyRecord = {
 beforeEach(() => {
   vi.clearAllMocks();
   captured.challenges = [];
-  isModuleEnabled.mockReturnValue(true);
+  moduleLive.mockReturnValue(true);
   getSession.mockResolvedValue({ user: { login: "alice" } });
   getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
   getAdminSettings.mockResolvedValue({ classicCooldownSec: 5 });

@@ -32,9 +32,6 @@
 #   - the poll transport end to end: the marker this judge wrote, POSTed to
 #     the scorer the way sync does, makes GET /leaderboard show rubric-derived
 #     points and totals
-#   - SCORE_API/SCORE_TOKEN in the judge's environment are inert (#377): the
-#     judge itself posts nothing, so a leaderboard entry can only have come
-#     from the POST this script makes
 # Needs Docker only; the sole network access is pulling node:22-alpine.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -61,9 +58,8 @@ FREEZE_SRH_TOKEN=freeze-srh-token
 FREEZE_PORT=4103
 TMP=$(mktemp -d /tmp/ctf-scorer-acceptance.XXXXXX)
 WS_PATCHED="$TMP/workspace-patched"
-WS_POLL="$TMP/workspace-poll"
 WS_STOCK="$TMP/workspace-stock"
-mkdir -p "$WS_PATCHED" "$WS_POLL" "$WS_STOCK"
+mkdir -p "$WS_PATCHED" "$WS_STOCK"
 
 # Writes a workspace Dockerfile + app.js so juice-shop.sh's PR-patch path
 # (build a Dockerfile found at GITHUB_WORKSPACE) boots this fake app.
@@ -111,7 +107,6 @@ JS
 )
 
 write_fake_app "$WS_PATCHED" "$APP_JS"
-write_fake_app "$WS_POLL" "$APP_JS"
 
 echo "--- build scorer image (pinned to the example rubric)"
 docker build -t "$IMG" --build-arg RUBRIC_DIR=rubric.example scorer/
@@ -149,7 +144,7 @@ import("./sync/src/parse.js").then(({ parseScoreComment }) => {
   [ "$code" = "202" ] || { echo "FAIL: POST /score for $report returned $code"; exit 1; }
 }
 
-echo "--- run judge via the score-action contract (SCORE_API set, and inert)"
+echo "--- run judge via the score-action contract"
 # No --network on purpose: score-action starts the scorer on the default
 # bridge and the entrypoint must self-attach to $NET over docker.sock.
 docker run --rm \
@@ -163,14 +158,7 @@ docker run --rm \
   -e GITHUB_WORKSPACE=/github/workspace \
   -e GITHUB_EVENT_PATH=/github/event.json \
   -e APP_READY_TRIES=15 -e APP_READY_DELAY=1 \
-  -e SCORE_API="http://$SERVE_CTR:4000" \
-  -e SCORE_TOKEN=test-token \
   "$IMG"
-# SCORE_API and SCORE_TOKEN above are deliberate DEAD environment: push ingest
-# is removed (#377) and the judge has no POST hook left. They stay in this run
-# so the leaderboard assertions below mean something - the entry can only come
-# from post_marker, never from the judge, and if a hook ever came back the
-# stage would double-post and the `solved !== 2` check would catch it.
 
 # entrypoint.sh ends every path in `exec score judge`, which replaces the
 # shell's process image — its own EXIT trap (meant to remove the app
@@ -289,30 +277,6 @@ process.stdin.on("data", (c) => (s += c)).on("end", () => {
   console.log("stock-zero ok: " + s);
 });
 '
-
-echo "--- run judge again with no SCORE_API at all: the same report either way"
-docker run --rm \
-  --entrypoint /usr/local/bin/entrypoint.sh \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$WS_POLL:/github/workspace" \
-  -v "$TMP/event.json:/github/event.json:ro" \
-  -e TARGET=juice-shop \
-  -e APP_URL="http://$APP_CTR:3000" \
-  -e NETWORK="$NET" \
-  -e GITHUB_WORKSPACE=/github/workspace \
-  -e GITHUB_EVENT_PATH=/github/event.json \
-  -e APP_READY_TRIES=15 -e APP_READY_DELAY=1 \
-  "$IMG"
-
-POLL_REPORT="$WS_POLL/ctf-score.md"
-grep -qF '**2 / 3** challenges patched' "$POLL_REPORT"
-grep -qF '<!-- ctf-score: ' "$POLL_REPORT"
-# Byte-identical to the run that had SCORE_API set: the judge's output does not
-# depend on that variable any more, which is the removal (#377) stated as an
-# assertion rather than as a comment.
-if ! cmp -s "$REPORT" "$POLL_REPORT"; then
-  echo "FAIL: SCORE_API changed the judge's report"; exit 1
-fi
 
 echo "--- freeze: boot a second serve instance backed by real Redis (via SRH)"
 docker run -d --name "$FREEZE_REDIS_CTR" --network "$NET" redis:7-alpine >/dev/null

@@ -244,7 +244,7 @@ When it's disabled (a quiz-only, classic-only or ai-only event, or any event
 with no
 scored module),
 none of that pipeline runs at all: `getLeaderboardSourceMode`
-(`src/lib/leaderboard/source.ts`) checks `isModuleEnabled("secure-development")`
+(`src/lib/leaderboard/source.ts`) checks `isModuleLive("secure-development")`
 *before* looking at `LEADERBOARD_SOURCE`, and — not overridably by that env
 var — resolves to `"empty"` instead, serving `emptySource`
 (`src/lib/leaderboard/empty.ts`): no entries, no teams, every capability

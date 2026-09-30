@@ -17,11 +17,11 @@ const launchLock = vi.hoisted(() => ({
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { getResolvedModules, getChallengeCatalog, getHintAvailability, isModuleEnabled, getEnabledApps, getEnabledTotals, getGithubOrg } = vi.hoisted(() => ({
+const { getResolvedModules, getChallengeCatalog, getHintAvailability, moduleLive, getEnabledApps, getEnabledTotals, getGithubOrg } = vi.hoisted(() => ({
   getResolvedModules: vi.fn(),
   getChallengeCatalog: vi.fn(),
   getHintAvailability: vi.fn(),
-  isModuleEnabled: vi.fn(),
+  moduleLive: vi.fn(),
   // The live target list (issue #386, PR 2) — defaulted to the real
   // catalogue's full six in the outer beforeEach below, so every existing
   // test here keeps the behaviour it always had; only the new
@@ -43,7 +43,9 @@ vi.mock("@/lib/bootstrap-env", () => ({ getGithubOrg }));
 // copy the assertions below were written against.
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => null } } }));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules((id) => moduleLive(id)),
+);
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/enabled-apps", () => ({ getEnabledApps, getEnabledTotals }));
 vi.mock("@/lib/challenges", () => ({ getChallengeCatalog }));
@@ -52,14 +54,6 @@ vi.mock("@/lib/hint-store", () => ({
   // The page asks getHintNotice once and uses BOTH fields — hints off here,
   // so the notice must not render.
   getHintNotice: async () => ({ active: false, cost: 0 }),
-}));
-// Partial mock: `isModuleEnabled` is what this page's gate calls, but
-// `site.ts` (imported transitively through HintNotice -> EventCountdown)
-// reads `enabledModules` off this same module, so a full replacement would
-// break that unrelated import instead of exercising the gate.
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled,
 }));
 
 import ChallengesPage, { generateMetadata } from "@/app/(site)/challenges/page";
@@ -78,7 +72,7 @@ const resolved = (titleOverride?: string) => [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  isModuleEnabled.mockReturnValue(true);
+  moduleLive.mockReturnValue(true);
   getChallengeCatalog.mockResolvedValue(null);
   getHintAvailability.mockResolvedValue({});
   // Default: every existing test here predates runtime target selection
@@ -97,7 +91,7 @@ beforeEach(() => {
 
 describe("challenges page gate", () => {
   it("404s when secure-development is disabled", async () => {
-    isModuleEnabled.mockReturnValue(false);
+    moduleLive.mockReturnValue(false);
     await expect(ChallengesPage()).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
   });
 });

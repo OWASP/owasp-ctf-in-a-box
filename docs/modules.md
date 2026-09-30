@@ -705,7 +705,7 @@ of one module's shape.
    **not** composed from the registry. They describe the platform's own code
    and policies, not a module's game, so their module-specific claims (hint
    purchases, quiz answers, the GitHub org the code of conduct reaches into)
-   are gated on `isModuleEnabled` instead. `/privacy` is an inventory of what
+   are gated on `isModuleLive` instead. `/privacy` is an inventory of what
    this codebase stores, and which stores are live is per-event: it must
    neither promise a per-challenge breakdown an event has no notion of, nor
    stay silent about the answers a quiz-only event does keep.

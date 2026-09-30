@@ -429,41 +429,6 @@ cmd_doctor() {
     printf '    Add:  REDIS_PASSWORD=%s\n\n' "$(openssl rand -hex 24)"
   fi
 
-  # Push ingest is GONE (issue #377, ADR 56): compose mounts a constant
-  # caddy/Caddyfile.poll and nothing reads SCORE_INGEST any more. A `.env`
-  # carried over from v0.5 still has the line, so name it once — an organizer
-  # who set it to `push` had a transport, and silence here would let them keep
-  # believing they have one. Advisory (no `rc=1`), like the REDIS_PASSWORD
-  # check above: a stale line is inert, so nothing about the event is broken.
-  #
-  # This runs BEFORE the no-org return below, and that placement is the point:
-  # an app-only event has no GITHUB_ORG, so anything after that return is
-  # invisible to exactly the box most likely to carry a hand-edited `.env`.
-  # Only a value that is NOT poll is worth a line. Every `.env` this wizard
-  # has ever written carries `SCORE_INGEST=poll`, and that line now agrees with
-  # the behaviour exactly — warning about it would put a ⚠️ on every upgraded
-  # box for a key that describes what the box already does. A `push` (or a
-  # typo'd) value is the opposite: it says the box has a transport it no longer
-  # has, so it gets named once, here.
-  local ingest; ingest="$(env_val SCORE_INGEST)"
-  if [ -n "$ingest" ] && [ "$ingest" != poll ]; then
-    printf '%s⚠️  %s says SCORE_INGEST=%s — push ingest is REMOVED (issue #377) and the key is no longer read.%s\n' \
-      "$C_YELLOW" "${OUT:-.env}" "$ingest" "$C_RESET"
-    printf '    Poll is the score transport: the sync poller runs under --profile secdev\n'
-    printf '    and caddy always mounts caddy/Caddyfile.poll. Delete the line.\n\n'
-  fi
-  # The pre-event password gate is GONE (#464, ADR 59): the event is locked
-  # until an organizer launches it (/admin -> Launch, or a Scoring opens time).
-  # A `.env` that still sets the gate keys belongs to an organizer who thinks
-  # the board sits behind a password, so name the keys once — never the
-  # password's value. Advisory, like SCORE_INGEST above, and before the no-org
-  # return for the same reason. A commented-out example line is not "set".
-  if [ -n "$(env_val CHALLENGES_GATE_ENABLED)" ] || [ -n "$(env_val CHALLENGES_GATE_PASSWORD)" ]; then
-    printf '%s⚠️  %s sets CHALLENGES_GATE_ENABLED / CHALLENGES_GATE_PASSWORD — the password gate is REMOVED (#464) and the keys are no longer read.%s\n' \
-      "$C_YELLOW" "${OUT:-.env}" "$C_RESET"
-    printf '    The event is locked until you launch it: press Launch in /admin → Event, or\n'
-    printf '    set Scoring opens there. Delete both lines.\n\n'
-  fi
   # Every event needs an official launch (#464): until then contestants see
   # the landing page only and nothing scores. Asked of the box itself (the
   # public /health/deep carries `launched`), and only when this .env names the
@@ -586,45 +551,6 @@ cmd_doctor() {
     printf '%s✅ scorer package private%s\n' "$C_GREEN" "$C_RESET"
   else
     printf '%s⚠️  scorer package NOT private (or missing) — keep it private: https://github.com/orgs/%s/packages%s\n' "$C_YELLOW" "$org" "$C_RESET"
-  fi
-
-  # Org-level (not per-target): push-mode leftovers (issue #377). The two
-  # secrets the removed push transport needed are the only org Actions secrets
-  # this kit ever asked for, and they are read by runs a CONTESTANT's pull
-  # request triggers — so now that push is gone they are standing credentials
-  # with nothing left to authorize, which is why this check outlives the
-  # transport itself. Advisory, never `rc=1`: their presence is not a
-  # provisioning defect, and doctor's exit code gates the steps `org` can fix.
-  #
-  # FAIL CLOSED, like the sync-App check below: a non-zero `gh` exit (no
-  # admin:org scope, network, a revoked token) and an empty reply from an
-  # otherwise-successful call are both reported as NOT VERIFIED, never as
-  # "absent" — telling an organizer their token-bearing secrets are gone when
-  # the API simply refused to answer is the one wrong thing to say here.
-  echo
-  if [ "$DRY_RUN" -eq 1 ]; then
-    printf 'DRY-RUN: would check %s for the removed push-mode secrets (LEADERBOARD_URL, LEADERBOARD_TOKEN)\n' "$org"
-  else
-    local sec_rows sec_found="" sec
-    # `--paginate`, because a truncated first page reading as "no leftovers"
-    # would be the fail-OPEN this check exists to avoid: gh returns 30 items
-    # by default, and the answer here has to be about every secret the org
-    # has, not the first page of them.
-    if sec_rows="$(gh api --paginate "orgs/$org/actions/secrets" --jq '.secrets[].name' 2>/dev/null)" && [ -n "$sec_rows" ]; then
-      for sec in LEADERBOARD_URL LEADERBOARD_TOKEN; do
-        if printf '%s\n' "$sec_rows" | grep -qx "$sec"; then sec_found="$sec_found $sec"; fi
-      done
-      if [ -n "$sec_found" ]; then
-        printf '%s⚠️  push-mode org secrets still set:%s — push ingest is REMOVED (#377), so these are unused credentials%s\n' \
-          "$C_YELLOW" "$sec_found" "$C_RESET"
-        printf '    Nothing reads them any more; delete them: https://github.com/organizations/%s/settings/secrets/actions\n' "$org"
-      else
-        printf '%s✅ no leftover push-mode org secrets (#377)%s\n' "$C_GREEN" "$C_RESET"
-      fi
-    else
-      printf '%s⚠️  push-mode org secrets (LEADERBOARD_URL, LEADERBOARD_TOKEN) not verified (the token needs admin:org scope) — check by hand: https://github.com/organizations/%s/settings/secrets/actions%s\n' \
-        "$C_YELLOW" "$org" "$C_RESET"
-    fi
   fi
 
   # Check (c) — the sync GitHub App (GITHUB_APP_ID) is installed on the org

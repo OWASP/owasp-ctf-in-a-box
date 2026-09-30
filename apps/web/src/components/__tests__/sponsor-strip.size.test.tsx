@@ -7,7 +7,9 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
+);
 
 const SPONSOR_ID = "zzyzx-sec-ab12cd";
 const fixtureSponsors = [
@@ -25,8 +27,8 @@ vi.mock("@/lib/sponsors-store", () => ({
   listSponsors: vi.fn(async () => fixtureSponsors),
 }));
 
-// The double delegates to whatever this file mocks on @/lib/admin-store —
-// see enabled-modules-baked.ts's own header for why that indirection exists.
+// The enabled-modules mock delegates to whatever this file mocks on
+// @/lib/admin-store — see enabled-modules-mock.ts for why.
 const mockGetAdminSettings = vi.fn<() => Promise<{ sponsorLogoSize: string | null }>>();
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings: mockGetAdminSettings }));
 

@@ -25,11 +25,13 @@ vi.mock("@/lib/leaderboard/source", () => ({
   }),
 }));
 vi.mock("next/server", () => ({ connection: async () => {} }));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules([]),
+);
 vi.mock("@/lib/admin-store", () => ({
   // Empty set on both sides: `getResolvedModules` (via this mock) and
-  // `isModuleLive` (via the baked shim, which reads the empty `isModuleEnabled`
-  // below) must agree that nothing is enabled.
+  // `isModuleLive` (via the enabled-modules mock above, serving `[]`) must
+  // agree that nothing is enabled.
   // `eventIdentity` is config v2's source for the event name (issue #386,
   // PR 1b).
   getAdminSettings: async () => ({
@@ -37,10 +39,6 @@ vi.mock("@/lib/admin-store", () => ({
     enabledModuleIds: [],
     eventIdentity: { eventName: "Quiet CTF" },
   }),
-}));
-vi.mock("@/lib/modules", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/modules")>()),
-  isModuleEnabled: () => false,
 }));
 vi.mock("@/lib/challenges", () => ({ getChallengeCatalog: async () => null }));
 vi.mock("next/font/google", () => {

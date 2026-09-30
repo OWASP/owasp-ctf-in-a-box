@@ -5,10 +5,12 @@ import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "../types";
 import { rankByStanding } from "../rank";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enabled-modules", () => import("@/test/enabled-modules-baked"));
+vi.mock("@/lib/enabled-modules", async () =>
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules((id) => mocks.moduleLive(id)),
+);
 
 const mocks = vi.hoisted(() => ({
-  isModuleEnabled: vi.fn((id: string) => id === "secure-development"),
+  moduleLive: vi.fn((id: string) => id === "secure-development"),
   getQuizTotals: vi.fn(),
   getTeamQuizTotalsBatch: vi.fn(),
   listQuestions: vi.fn(),
@@ -22,7 +24,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/modules", () => ({
   enabledModules: [{ id: "secure-development", displayName: "Secure Development", description: "", targets: ["dvwa"] }],
-  isModuleEnabled: mocks.isModuleEnabled,
 }));
 
 vi.mock("@/lib/quiz-store", () => ({
@@ -80,7 +81,7 @@ const data = (entries: LeaderboardEntry[], teams: TeamStanding[] = []): Leaderbo
  *  one of the app-side modules override this. */
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.isModuleEnabled.mockImplementation((id: string) => id === "secure-development");
+  mocks.moduleLive.mockImplementation((id: string) => id === "secure-development");
   mocks.getQuizTotals.mockResolvedValue(new Map());
   mocks.getTeamQuizTotalsBatch.mockImplementation((teams: readonly string[][]) =>
     Promise.resolve(teams.map(() => ({ points: 0, answered: 0, lastAt: null }))),
@@ -208,7 +209,7 @@ describe("withModuleContributions", () => {
 
   describe("with the quiz module enabled", () => {
     beforeEach(() => {
-      mocks.isModuleEnabled.mockImplementation((id: string) => id === "secure-development" || id === "quiz");
+      mocks.moduleLive.mockImplementation((id: string) => id === "secure-development" || id === "quiz");
       mocks.listQuestions.mockResolvedValue([{ id: "q1" }, { id: "q2" }, { id: "q3" }]);
     });
 
@@ -481,7 +482,7 @@ describe("withModuleContributions", () => {
 
   describe("with the classic module enabled", () => {
     beforeEach(() => {
-      mocks.isModuleEnabled.mockImplementation((id: string) => id === "secure-development" || id === "classic");
+      mocks.moduleLive.mockImplementation((id: string) => id === "secure-development" || id === "classic");
       mocks.listChallenges.mockResolvedValue([{ id: "c1" }, { id: "c2" }, { id: "c3" }]);
     });
 
@@ -648,7 +649,7 @@ describe("withModuleContributions", () => {
   // module's points silently replacing the other's.
   describe("with both quiz and classic enabled", () => {
     beforeEach(() => {
-      mocks.isModuleEnabled.mockImplementation((id: string) => id !== "secure-development");
+      mocks.moduleLive.mockImplementation((id: string) => id !== "secure-development");
       mocks.listQuestions.mockResolvedValue([{ id: "q1" }, { id: "q2" }]);
       mocks.listChallenges.mockResolvedValue([{ id: "c1" }, { id: "c2" }]);
     });
@@ -767,7 +768,7 @@ describe("withModuleContributions", () => {
 
   describe("with the ai module enabled", () => {
     beforeEach(() => {
-      mocks.isModuleEnabled.mockImplementation((id: string) => id === "secure-development" || id === "ai");
+      mocks.moduleLive.mockImplementation((id: string) => id === "secure-development" || id === "ai");
       mocks.listAiChallenges.mockResolvedValue([{ id: "a1" }, { id: "a2" }, { id: "a3" }]);
     });
 

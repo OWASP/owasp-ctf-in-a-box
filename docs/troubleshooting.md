@@ -108,8 +108,7 @@ immediately, or leave the scheduled time and wait — the lock lifts on its
 own at that instant, no restart. The **Right now:** readout under the
 schedule says "closed (not launched …)" until it has. A leftover
 `CHALLENGES_GATE_ENABLED`/`CHALLENGES_GATE_PASSWORD` in `.env` does nothing
-any more (the password gate was removed; `ctf-setup.sh doctor` names the
-stale lines) — delete them. See
+any more (the password gate was removed in v0.6) — delete them. See
 [Before launch](operations.md#before-launch).
 
 ## A board that was on before the upgrade is gone

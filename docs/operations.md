@@ -576,8 +576,9 @@ The panel offers:
   ![The Support tab after a contestant lookup: their team and captain status, when they first joined a team, points and solves per module, attempt count and hint spend, with the reset and delete controls beneath](assets/admin-support.jpg)
 
 
-  From there: **reset progress** (clears their quiz answers, classic and AI solves, attempts and
-  hints; keeps the account and the team), **delete contestant** (all of that
+  From there: **reset progress** (clears their Secure Development solves on
+  every target, their quiz answers, classic and AI solves, attempts and hints;
+  keeps the account and the team), **delete contestant** (all of that
   plus the team membership and the account record), or **remove from team**.
   Team-side, there is **transfer captaincy** and **disband** — the captain-only
   controls, available to an organizer for when the captain is unreachable. That
@@ -779,6 +780,20 @@ page render also falls back to all six (fail open), but a poll tick that
 cannot read the list polls **nothing** that tick and records the failure as
 the poller's `lastError`, rather than guessing (a wrong guess here would mean
 scoring the wrong repos or none at all).
+
+**Unchecking a target closes it; it does not take points back.** From the
+next tick nothing new on that target scores, and contestants stop seeing it,
+but solves it already scored stay on the board: they still count in each
+contestant's and each team's total and in the Secure Development figure,
+because the scorer builds the board from every target in its rubric, not from
+this list. The one visible trace is on an expanded leaderboard row, whose
+per-target breakdown lists only the targets that are checked now, so a
+contestant who scored on a target you then unchecked shows Secure Development
+points with no target listed for them. That is deliberate: switching a broken
+target off mid-event should not re-rank anyone. There is no per-target way
+to take those points back: **reset progress** on the Support tab (see
+[Organizer admin panel](#organizer-admin-panel)) clears everything a contestant
+has scored, on every target and in every module.
 
 This panel is the only place the running set is chosen; there is no file and
 no environment variable that also names targets, so nothing can disagree with

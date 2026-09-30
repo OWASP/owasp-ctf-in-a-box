@@ -980,7 +980,7 @@ describe("module-contributions log redaction (#500)", () => {
   const teams: TeamStanding[] = [{ rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada"] }];
 
   function failEveryRead(): void {
-    mocks.isModuleEnabled.mockImplementation(() => true);
+    mocks.moduleLive.mockImplementation(() => true);
     for (const fn of [
       mocks.getQuizTotals,
       mocks.listQuestions,
@@ -1026,7 +1026,7 @@ describe("module-contributions log redaction (#500)", () => {
   });
 
   it("the denominator-only degrade in a team fold logs the label too", async () => {
-    mocks.isModuleEnabled.mockImplementation(() => true);
+    mocks.moduleLive.mockImplementation(() => true);
     mocks.listQuestions.mockRejectedValue(decoratedError());
     mocks.listChallenges.mockRejectedValue(decoratedError());
     mocks.listAiChallenges.mockRejectedValue(decoratedError());

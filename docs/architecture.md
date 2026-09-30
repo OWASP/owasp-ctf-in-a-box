@@ -337,14 +337,19 @@ answer-set format even though they're separate code paths:
   contestant's correctly-answered questions (points and timestamp captured
   at answer time) and every attempt, right or wrong.
 - `ctf:quiz:points` / `ctf:quiz:answered` — running per-login aggregate
-  counters the leaderboard overlay reads with two `HGETALL`s regardless of
+  counters the leaderboard overlay reads with flat `HGETALL`s regardless of
   board size, the same trick `ctf:hints:spent` uses.
+- `ctf:quiz:lastAt` — each login's latest award time, written in the same
+  script as the counters (#522). It is the leaderboard's "whoever got there
+  first" tiebreak; classic and ai keep the same hash (`ctf:classic:lastAt`,
+  `ctf:ai:lastAt`). A failed read of it logs and drops only the tiebreak,
+  never the points.
 
 **Grading is one atomic Lua script**, not a sequence of round trips: reading
 the current attempt count and cooldown, re-checking the cap and cooldown
 against the *current* admin settings, bumping the attempt counter, comparing
 the submission against the stored key, and — on a match — writing the answer
-row and incrementing both aggregate counters, all happen inside a single
+row, incrementing both aggregate counters and stamping `ctf:quiz:lastAt`, all happen inside a single
 script execution. The JS-side `quizGate` pre-check that runs before the
 script is only a cheap early-out over its own separate, non-atomic read; the
 script is what actually closes the race, because Redis runs it to completion
@@ -652,7 +657,8 @@ something any signing-key holder can assert.
 - **Progress** — `ctf:ai:solves:<login>` / `ctf:ai:attempts:<login>` (one
   contestant's banked solves and every attempt, right or wrong) and the
   running aggregates the leaderboard overlay reads with flat `HGETALL`s:
-  `ctf:ai:points`, `ctf:ai:solved`, and the per-challenge
+  `ctf:ai:points`, `ctf:ai:solved`, `ctf:ai:lastAt` (the latest award
+  time, the leaderboard tiebreak), and the per-challenge
   `ctf:ai:solvecount` (distinct-solver count, distinct by construction
   because the already-solved guard runs before any increment).
 - **Replay** — `ctf:ai:nonce:<jti>`, one key per spent event `jti`, written
@@ -1052,11 +1058,11 @@ file or key is not, because that is every event's first boot.
 all event data — `SCAN`+`DEL` of `ctf:solves:*`, `ctf:team:*`, `ctf:user:*`,
 `ctf:joincode:*`, `ctf:hints:*`,
 `ctf:quiz:answers:*`/`ctf:quiz:attempts:*`/`ctf:quiz:points`/
-`ctf:quiz:answered`, and
+`ctf:quiz:answered`/`ctf:quiz:lastAt`, and
 `ctf:classic:solves:*`/`ctf:classic:attempts:*`/`ctf:classic:points`/
-`ctf:classic:solved`/`ctf:classic:solvecount`,
+`ctf:classic:solved`/`ctf:classic:solvecount`/`ctf:classic:lastAt`,
 `ctf:ai:solves:*`/`ctf:ai:attempts:*`/`ctf:ai:points`/`ctf:ai:solved`/
-`ctf:ai:solvecount`, the spent replay nonces `ctf:ai:nonce:*`, the
+`ctf:ai:solvecount`/`ctf:ai:lastAt`, the spent replay nonces `ctf:ai:nonce:*`, the
 module-wide `ctf:ai:launchkey` (so no launch token issued before the reset
 survives it — see "AI data flow" above), and the activity log
 (`ctf:activity:log`) — keeps `ctf:admin:settings`

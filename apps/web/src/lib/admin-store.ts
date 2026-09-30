@@ -41,6 +41,7 @@ import {
   QUIZ_KEY_KEY,
   QUIZ_POINTS_KEY,
   QUIZ_ANSWERED_KEY,
+  QUIZ_LAST_AT_KEY,
   QUIZ_ANSWERS_PREFIX,
   QUIZ_ATTEMPTS_PREFIX,
   quizAnswersKey,
@@ -56,6 +57,7 @@ import {
   CLASSIC_POINTS_KEY,
   CLASSIC_SOLVED_KEY,
   CLASSIC_SOLVECOUNT_KEY,
+  CLASSIC_LAST_AT_KEY,
   CLASSIC_SOLVES_PREFIX,
   CLASSIC_ATTEMPTS_PREFIX,
   classicSolvesKey,
@@ -73,6 +75,7 @@ import {
   AI_POINTS_KEY,
   AI_SOLVED_KEY,
   AI_SOLVECOUNT_KEY,
+  AI_LAST_AT_KEY,
   AI_SOLVES_PREFIX,
   AI_ATTEMPTS_PREFIX,
   AI_NONCE_PREFIX,
@@ -754,11 +757,15 @@ const RESET_PREFIXES: readonly [string, string][] = [
   ["quizAttempts", `${QUIZ_ATTEMPTS_PREFIX}*`],
   ["quizPoints", QUIZ_POINTS_KEY],
   ["quizAnswered", QUIZ_ANSWERED_KEY],
+  // The award times (#522) go with the totals they order: a reset contestant
+  // left with an old time would be ranked by a solve that no longer counts.
+  ["quizLastAt", QUIZ_LAST_AT_KEY],
   ["classicSolves", `${CLASSIC_SOLVES_PREFIX}*`],
   ["classicAttempts", `${CLASSIC_ATTEMPTS_PREFIX}*`],
   ["classicPoints", CLASSIC_POINTS_KEY],
   ["classicSolved", CLASSIC_SOLVED_KEY],
   ["classicSolveCount", CLASSIC_SOLVECOUNT_KEY],
+  ["classicLastAt", CLASSIC_LAST_AT_KEY],
   // ai scope mirrors classic's exactly, same PROGRESS/CONTENT split: solves,
   // attempts, the two per-login aggregate hashes and the per-challenge
   // solvecount are wiped, while `ctf:ai:challenges` / `ctf:ai:flag` /
@@ -770,6 +777,7 @@ const RESET_PREFIXES: readonly [string, string][] = [
   ["aiPoints", AI_POINTS_KEY],
   ["aiSolved", AI_SOLVED_KEY],
   ["aiSolveCount", AI_SOLVECOUNT_KEY],
+  ["aiLastAt", AI_LAST_AT_KEY],
   // The replay-guard nonces are also contestant PROGRESS in the same sense —
   // spent single-use markers from THIS event, not something a fresh one
   // should start carrying.
@@ -1177,7 +1185,7 @@ export async function seedDemoData(
     }
 
     const questionsById = new Map(DEMO_QUESTIONS.map((q) => [q.id, q]));
-    const aggregates = new Map<string, { points: number; answered: number }>();
+    const aggregates = new Map<string, { points: number; answered: number; lastAt: string }>();
     const nAnswers = DEMO_QUIZ_ANSWERS.length;
     DEMO_QUIZ_ANSWERS.forEach(({ login, questionId }, i) => {
       const q = questionsById.get(questionId);
@@ -1200,9 +1208,10 @@ export async function seedDemoData(
         demoAttemptRow(1 + (i % 3), at, 3 + (i % 7), base),
       ]);
 
-      const agg = aggregates.get(login) ?? { points: 0, answered: 0 };
+      const agg = aggregates.get(login) ?? { points: 0, answered: 0, lastAt: at };
       agg.points += q.points;
       agg.answered += 1;
+      if (Date.parse(at) > Date.parse(agg.lastAt)) agg.lastAt = at;
       aggregates.set(login, agg);
       quizAnswersSeeded++;
     });
@@ -1231,6 +1240,8 @@ export async function seedDemoData(
     for (const [login, agg] of aggregates) {
       cmds.push(["HSET", QUIZ_POINTS_KEY, login, agg.points]);
       cmds.push(["HSET", QUIZ_ANSWERED_KEY, login, agg.answered]);
+      // The latest row's time: what GRADE_SCRIPT would have left (#522).
+      cmds.push(["HSET", QUIZ_LAST_AT_KEY, login, agg.lastAt]);
     }
   }
 
@@ -1275,7 +1286,7 @@ export async function seedDemoData(
     }
 
     const challengesById = new Map(DEMO_CHALLENGES.map((c) => [c.id, c]));
-    const classicAggregates = new Map<string, { points: number; solved: number }>();
+    const classicAggregates = new Map<string, { points: number; solved: number; lastAt: string }>();
     const solveCounts = new Map<string, number>();
     const nSolves = DEMO_CLASSIC_SOLVES.length;
     DEMO_CLASSIC_SOLVES.forEach(({ login, challengeId }, i) => {
@@ -1292,9 +1303,10 @@ export async function seedDemoData(
         demoAttemptRow(1 + ((i + 1) % 3), at, 2 + (i % 9), base),
       ]);
 
-      const agg = classicAggregates.get(login) ?? { points: 0, solved: 0 };
+      const agg = classicAggregates.get(login) ?? { points: 0, solved: 0, lastAt: at };
       agg.points += challenge.points;
       agg.solved += 1;
+      if (Date.parse(at) > Date.parse(agg.lastAt)) agg.lastAt = at;
       classicAggregates.set(login, agg);
 
       solveCounts.set(challengeId, (solveCounts.get(challengeId) ?? 0) + 1);
@@ -1320,6 +1332,7 @@ export async function seedDemoData(
     for (const [login, agg] of classicAggregates) {
       cmds.push(["HSET", CLASSIC_POINTS_KEY, login, agg.points]);
       cmds.push(["HSET", CLASSIC_SOLVED_KEY, login, agg.solved]);
+      cmds.push(["HSET", CLASSIC_LAST_AT_KEY, login, agg.lastAt]);
     }
     raiseSolveCounts(cmds, CLASSIC_SOLVECOUNT_KEY, solveCounts);
   }
@@ -1374,7 +1387,7 @@ export async function seedDemoData(
     }
 
     const aiChallengesById = new Map(DEMO_AI_CHALLENGES.map((c) => [c.id, c]));
-    const aiAggregates = new Map<string, { points: number; solved: number }>();
+    const aiAggregates = new Map<string, { points: number; solved: number; lastAt: string }>();
     const aiSolveCounts = new Map<string, number>();
     const nAiSolves = DEMO_AI_SOLVES.length;
     DEMO_AI_SOLVES.forEach(({ login, challengeId }, i) => {
@@ -1387,9 +1400,10 @@ export async function seedDemoData(
       // not random, so the seed is reproducible.
       cmds.push(["HSET", aiAttemptsKey(login), challengeId, demoAttemptRow(1 + ((i + 2) % 3), at, 3 + (i % 6), base)]);
 
-      const agg = aiAggregates.get(login) ?? { points: 0, solved: 0 };
+      const agg = aiAggregates.get(login) ?? { points: 0, solved: 0, lastAt: at };
       agg.points += challenge.points;
       agg.solved += 1;
+      if (Date.parse(at) > Date.parse(agg.lastAt)) agg.lastAt = at;
       aiAggregates.set(login, agg);
 
       aiSolveCounts.set(challengeId, (aiSolveCounts.get(challengeId) ?? 0) + 1);
@@ -1417,6 +1431,7 @@ export async function seedDemoData(
     for (const [login, agg] of aiAggregates) {
       cmds.push(["HSET", AI_POINTS_KEY, login, agg.points]);
       cmds.push(["HSET", AI_SOLVED_KEY, login, agg.solved]);
+      cmds.push(["HSET", AI_LAST_AT_KEY, login, agg.lastAt]);
     }
     raiseSolveCounts(cmds, AI_SOLVECOUNT_KEY, aiSolveCounts);
   }
@@ -1550,16 +1565,19 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
     cmds.push(["DEL", quizAttemptsKey(c.login)]);
     cmds.push(["HDEL", QUIZ_POINTS_KEY, c.login]);
     cmds.push(["HDEL", QUIZ_ANSWERED_KEY, c.login]);
+    cmds.push(["HDEL", QUIZ_LAST_AT_KEY, c.login]);
 
     cmds.push(["DEL", classicSolvesKey(c.login)]);
     cmds.push(["DEL", classicAttemptsKey(c.login)]);
     cmds.push(["HDEL", CLASSIC_POINTS_KEY, c.login]);
     cmds.push(["HDEL", CLASSIC_SOLVED_KEY, c.login]);
+    cmds.push(["HDEL", CLASSIC_LAST_AT_KEY, c.login]);
 
     cmds.push(["DEL", aiSolvesKey(c.login)]);
     cmds.push(["DEL", aiAttemptsKey(c.login)]);
     cmds.push(["HDEL", AI_POINTS_KEY, c.login]);
     cmds.push(["HDEL", AI_SOLVED_KEY, c.login]);
+    cmds.push(["HDEL", AI_LAST_AT_KEY, c.login]);
   }
 
   // Sponsors — same platform-wide, never-module-gated reasoning seeding uses.

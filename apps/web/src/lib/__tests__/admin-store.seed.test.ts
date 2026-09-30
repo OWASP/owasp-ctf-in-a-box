@@ -885,4 +885,32 @@ describe("demo attachments (#186)", () => {
     await seedDemoData("alice");
     expect(files.addUpload).not.toHaveBeenCalled();
   });
+
+  // #522: each module's award-time hash is seeded with every demo login's
+  // LATEST row time, the same value GRADE_SCRIPT / SUBMIT_SCRIPT /
+  // AWARD_SCRIPT would have left behind, so the demo board's "whoever got
+  // there first" tiebreak has something to order.
+  it.each([
+    ["quiz", "ctf:quiz:answers:", "ctf:quiz:lastAt"],
+    ["classic", "ctf:classic:solves:", "ctf:classic:lastAt"],
+    ["ai", "ctf:ai:solves:", "ctf:ai:lastAt"],
+  ])("seeds %s's award times from each login's latest row", async (module, rowPrefix, lastAtKey) => {
+    mockEnabledModules([module]);
+    await seedDemoData("alice");
+    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
+
+    const latest = new Map<string, string>();
+    for (const c of cmds.filter((c) => c[0] === "HSET" && String(c[1]).startsWith(rowPrefix))) {
+      const login = String(c[1]).slice(rowPrefix.length);
+      const at = JSON.parse(String(c[3])).at as string;
+      const prev = latest.get(login);
+      if (!prev || Date.parse(at) > Date.parse(prev)) latest.set(login, at);
+    }
+    expect(latest.size).toBeGreaterThan(1);
+
+    const seeded = new Map(
+      cmds.filter((c) => c[0] === "HSET" && c[1] === lastAtKey).map((c) => [String(c[2]), String(c[3])]),
+    );
+    expect(seeded).toEqual(latest);
+  });
 });

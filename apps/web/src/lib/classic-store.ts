@@ -17,6 +17,7 @@ export { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
 import { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
 import { effectivePaused, getAdminSettings } from "@/lib/admin-store";
 import { errorLabel } from "@/lib/error-label";
+import { readLastAt } from "@/lib/last-at";
 import { CLASSIC_BUNDLE_VERSION, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
@@ -35,6 +36,7 @@ import {
   CLASSIC_STORY_TITLE_MAX,
   CLASSIC_POINTS_KEY as POINTS_KEY,
   CLASSIC_SOLVED_KEY as SOLVED_KEY,
+  CLASSIC_LAST_AT_KEY as LAST_AT_KEY,
   CLASSIC_SOLVECOUNT_KEY as SOLVECOUNT_KEY,
   classicSolvesKey as solvesKey,
   classicAttemptsKey as attemptsKey,
@@ -938,26 +940,28 @@ export async function getSolveCounts(): Promise<Map<string, number>> {
 export type ClassicTotal = { points: number; solved: number; lastAt: string | null; itemIds?: string[] };
 
 /** Per-login classic totals for every login that has solved at least one
- *  challenge — two HGETALLs (`ctf:classic:points`, `ctf:classic:solved`),
- *  maintained atomically by SUBMIT_SCRIPT alongside the per-login solve row.
- *  Cost is exactly two round trips regardless of how many logins are on the
- *  board.
+ *  challenge — three HGETALLs in one pipeline (`ctf:classic:points`,
+ *  `ctf:classic:solved`, `ctf:classic:lastAt`), maintained atomically by
+ *  SUBMIT_SCRIPT alongside the per-login solve row. The cost does not grow
+ *  with the board.
  *
- *  `lastAt` is always `null`: neither aggregate hash carries a timestamp (only
- *  a running total), and reading the per-login solve hash to derive one would
- *  reintroduce the per-login cost this function exists to avoid. Callers fall
- *  back to whatever other activity timestamp they already have. */
+ *  `lastAt` is the login's latest award time (#522), the leaderboard's
+ *  "whoever got there first" tiebreak. It is null for a login that last
+ *  scored before the time was recorded, and for everyone when that read
+ *  fails (`readLastAt` fails open: the points stand). */
 export async function getClassicTotals(): Promise<Map<string, ClassicTotal>> {
-  const [pointsRes, solvedRes] = await upstashPipeline([
+  const [pointsRes, solvedRes, lastAtRes] = await upstashPipeline([
     ["HGETALL", POINTS_KEY],
     ["HGETALL", SOLVED_KEY],
+    ["HGETALL", LAST_AT_KEY],
   ]);
   const points = parseCounterHash(pointsRes.result);
   const solved = parseCounterHash(solvedRes.result);
+  const lastAt = readLastAt(lastAtRes, "classic");
 
   const totals = new Map<string, ClassicTotal>();
   for (const login of new Set([...points.keys(), ...solved.keys()])) {
-    totals.set(login, { points: points.get(login) ?? 0, solved: solved.get(login) ?? 0, lastAt: null });
+    totals.set(login, { points: points.get(login) ?? 0, solved: solved.get(login) ?? 0, lastAt: lastAt.get(login) ?? null });
   }
   return totals;
 }
@@ -1123,14 +1127,15 @@ local dry = ARGV[8] == '1'
 if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 -- STORY LOCK (#463): ARGV[9] names this step's prerequisite ("" when the
 -- challenge is not a later story step). It is open only if some TEAMMATE —
--- one of the solves hashes the caller handed in as KEYS[8..] — holds it.
+-- one of the solves hashes the caller handed in as KEYS[9..] — holds it.
+-- (KEYS[8] is the lastAt hash, #522: never part of this loop.)
 -- Checked FIRST, before the flag hash is read and before any read or write
 -- of attempts: a locked step touches no secret, spends no attempt and cannot
 -- be used to test a flag. The store reports it exactly like an unknown
 -- challenge (no oracle). A dry-run preview skips it.
 if not dry and ARGV[9] and ARGV[9] ~= '' then
   local open = false
-  for i = 8, #KEYS do
+  for i = 9, #KEYS do
     if redis.call('HEXISTS', KEYS[i], ARGV[9]) == 1 then open = true break end
   end
   if not open then return {'locked'} end
@@ -1194,6 +1199,7 @@ redis.call('HSET', KEYS[2], ARGV[1], '{"points":' .. points .. ',"at":"' .. ARGV
 redis.call('HINCRBY', KEYS[5], ARGV[4], points)
 redis.call('HINCRBY', KEYS[7], ARGV[4], 1)
 redis.call('HINCRBY', KEYS[6], ARGV[1], 1)
+redis.call('HSET', KEYS[8], ARGV[4], ARGV[3])
 return {'correct', tostring(points)}`;
 
 export type SubmitResult =
@@ -1309,7 +1315,8 @@ export async function submitFlag(
         POINTS_KEY, // KEYS[5]
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
-        ...lockKeys, // KEYS[8..] — teammates' solves hashes, for the story lock (#463)
+        LAST_AT_KEY, // KEYS[8] — login -> latest award time (#522)
+        ...lockKeys, // KEYS[9..] — teammates' solves hashes, for the story lock (#463)
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the

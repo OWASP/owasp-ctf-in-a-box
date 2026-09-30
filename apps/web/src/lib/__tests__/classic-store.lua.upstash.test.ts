@@ -27,6 +27,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     points: liveKey("classic", "points"),
     solvecount: liveKey("classic", "solvecount"),
     solved: liveKey("classic", "solved"),
+    lastAt: liveKey("classic", "lastAt"),
   };
   // Per test, so no total asserted here can be inflated by an earlier test.
   let LOGIN = "";
@@ -78,7 +79,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, ...teamSolveKeys],
+      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...teamSolveKeys],
       [
         id,
         keys.normalizeFlag(flag),
@@ -97,6 +98,24 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     const [r] = await pipeline([["HGET", key, field]]);
     return r.result;
   }
+
+  // #522: the leaderboard's "whoever got there first" tiebreak reads this.
+  it("stamps the login's last award time, and only an award moves it", async () => {
+    const first = freshId("c");
+    const second = freshId("c");
+    await seed(first, "flag{one}", 20);
+    await seed(second, "flag{two}", 10);
+    expect(await hget(K.lastAt, LOGIN)).toBeNull();
+    expect(await submit(first, "flag{one}", { cooldownMs: 0 })).toEqual(["correct", "20"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0));
+    // A miss, a repeat of a banked flag and a dry-run award leave it alone.
+    expect(await submit(second, "flag{nope}", { nowMs: T0 + 1_000, cooldownMs: 0 })).toEqual(["incorrect", "1"]);
+    expect(await submit(first, "flag{one}", { nowMs: T0 + 2_000, cooldownMs: 0 })).toEqual(["already"]);
+    expect(await submit(second, "flag{two}", { nowMs: T0 + 3_000, cooldownMs: 0, dry: true })).toEqual(["correct", "10", "dry"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0));
+    expect(await submit(second, "flag{two}", { nowMs: T0 + 4_000, cooldownMs: 0 })).toEqual(["correct", "10"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 4_000));
+  });
 
   it("returns missing for an unknown challenge and writes no attempts row", async () => {
     const id = freshId("ghost");
@@ -257,6 +276,19 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await pipeline([["HSET", teammate, prereqId, '{"points":10,"at":"x"}']]);
     expect(await submit(id, "flag{web}", { prereq: prereqId, teamSolveKeys: [K.solves, teammate] })).toEqual(["correct", "40"]);
     await pipeline([["DEL", teammate, stranger]]);
+  });
+
+  // #522 moved the lock keys from KEYS[8..] to KEYS[9..] to make room for
+  // the lastAt hash. If the loop still started at 8 it would read that hash
+  // as a teammate's solves, and a field named like the prerequisite would
+  // open the step.
+  it("story lock: the lastAt hash is never read as a teammate's solves", async () => {
+    const prereqId = freshId("recon");
+    const id = freshId("web");
+    await seed(id, "flag{web}", 40);
+    await pipeline([["HSET", K.lastAt, prereqId, iso(T0)]]);
+    expect(await submit(id, "flag{web}", { prereq: prereqId, teamSolveKeys: [K.solves] })).toEqual(["locked"]);
+    await pipeline([["HDEL", K.lastAt, prereqId]]);
   });
 
   // CodeRabbit #470 (secrecy boundary): the lock is checked BEFORE the

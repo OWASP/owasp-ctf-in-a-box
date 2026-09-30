@@ -506,13 +506,15 @@ describe("totals", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([
       { result: ["alice", "700", "bob", "300"] },
       { result: ["alice", "2", "bob", "1"] },
+      { result: ["bob", "2026-10-01T12:00:00.000Z"] },
     ]);
     expect(await getAiTotals()).toEqual(
       new Map([
         ["alice", { points: 700, solved: 2, lastAt: null }],
-        ["bob", { points: 300, solved: 1, lastAt: null }],
+        ["bob", { points: 300, solved: 1, lastAt: "2026-10-01T12:00:00.000Z" }],
       ]),
     );
+    expect(mocks.upstashPipeline.mock.calls[0][0]).toContainEqual(["HGETALL", "ctf:ai:lastAt"]);
   });
 
   it("counts distinct solvers per challenge", async () => {

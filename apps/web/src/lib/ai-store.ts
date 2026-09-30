@@ -3,6 +3,7 @@ export { AI_COOLDOWN_SEC } from "./ai-defaults";
 
 import { effectivePaused, getAdminSettings } from "@/lib/admin-store";
 import { errorLabel } from "@/lib/error-label";
+import { readLastAt } from "@/lib/last-at";
 import { AI_COOLDOWN_SEC, AI_NONCE_TTL_SEC } from "@/lib/ai-defaults";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { generateLaunchKeyPair, generateSigningKey, type AiLaunchKeyPair } from "@/lib/ai-token";
@@ -26,6 +27,7 @@ import {
   AI_SIGNKEY_KEY as SIGNKEY_KEY,
   AI_SOLVECOUNT_KEY as SOLVECOUNT_KEY,
   AI_SOLVED_KEY as SOLVED_KEY,
+  AI_LAST_AT_KEY as LAST_AT_KEY,
   aiAttemptsKey as attemptsKey,
   aiNonceKey as nonceKey,
   aiSolvesKey as solvesKey,
@@ -464,21 +466,25 @@ export async function getAiSolveCounts(): Promise<Map<string, number>> {
  *  is what every row did before. */
 export type AiTotal = { points: number; solved: number; lastAt: string | null; itemIds?: string[] };
 
-/** Per-login totals off the two aggregate hashes: two round trips regardless
- *  of board size. `lastAt` is always null — neither aggregate carries a
- *  timestamp, and deriving one would reintroduce the per-login cost this
- *  function exists to avoid. */
+/** Per-login totals off the two aggregate hashes plus `ctf:ai:lastAt`, in
+ *  one pipeline whose cost does not grow with the board. `lastAt` is the
+ *  login's latest award time (#522), the leaderboard's "whoever got there
+ *  first" tiebreak; null for a login that last scored before the time was
+ *  recorded, and for everyone when that read fails (`readLastAt` fails
+ *  open: the points stand). */
 export async function getAiTotals(): Promise<Map<string, AiTotal>> {
-  const [pointsRes, solvedRes] = await upstashPipeline([
+  const [pointsRes, solvedRes, lastAtRes] = await upstashPipeline([
     ["HGETALL", POINTS_KEY],
     ["HGETALL", SOLVED_KEY],
+    ["HGETALL", LAST_AT_KEY],
   ]);
   const points = parseCounterHash(pointsRes.result);
   const solved = parseCounterHash(solvedRes.result);
+  const lastAt = readLastAt(lastAtRes, "ai");
 
   const totals = new Map<string, AiTotal>();
   for (const login of new Set([...points.keys(), ...solved.keys()])) {
-    totals.set(login, { points: points.get(login) ?? 0, solved: solved.get(login) ?? 0, lastAt: null });
+    totals.set(login, { points: points.get(login) ?? 0, solved: solved.get(login) ?? 0, lastAt: lastAt.get(login) ?? null });
   }
   return totals;
 }
@@ -940,6 +946,7 @@ redis.call('HSET', KEYS[2], ARGV[1], '{"points":' .. points .. ',"at":"' .. ARGV
 redis.call('HINCRBY', KEYS[5], ARGV[4], points)
 redis.call('HINCRBY', KEYS[7], ARGV[4], 1)
 redis.call('HINCRBY', KEYS[6], ARGV[1], 1)
+redis.call('HSET', KEYS[8], ARGV[4], ARGV[3])
 return {'correct', tostring(points)}`;
 
 export type AiSubmitResult =
@@ -1018,6 +1025,7 @@ async function runAward(
         POINTS_KEY, // KEYS[5]
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
+        LAST_AT_KEY, // KEYS[8] — login -> latest award time (#522)
       ],
       [
         challengeId, // ARGV[1]

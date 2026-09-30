@@ -7,12 +7,14 @@ import { effectivePaused, getAdminSettings } from "@/lib/admin-store";
 import { errorLabel } from "@/lib/error-label";
 import { QUIZ_BUNDLE_VERSION, type QuizBundle, type QuizBundleQuestion } from "@/lib/quiz-io";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
+import { readLastAt } from "@/lib/last-at";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
 import {
   QUIZ_QUESTIONS_KEY as QUESTIONS_KEY,
   QUIZ_KEY_KEY as KEY_KEY,
   QUIZ_POINTS_KEY as POINTS_KEY,
   QUIZ_ANSWERED_KEY as ANSWERED_KEY,
+  QUIZ_LAST_AT_KEY as LAST_AT_KEY,
   quizAnswersKey as answersKey,
   quizAttemptsKey as attemptsKey,
   canonicalizeChoices,
@@ -42,6 +44,10 @@ import {
  *                                returned by any function a contestant-facing
  *                                route can call; readable by the admin-gated
  *                                `listQuestionsForAdmin` alone)
+ *   ctf:quiz:lastAt             hash, login -> ISO time of that login's
+ *                                latest award, written by GRADE_SCRIPT with
+ *                                the totals (#522) — the leaderboard's
+ *                                "whoever got there first" tiebreak
  *   ctf:quiz:answers:<login>    hash, id -> JSON {choices, points, at} —
  *                                records ONLY correct answers. Points are
  *                                captured at answer time, so a later
@@ -93,8 +99,9 @@ import {
 
 // Key names/builders live in ./quiz-keys (a dependency-free module) rather
 // than as local consts here — see quiz-keys.ts's header comment for why.
-// POINTS_KEY/ANSWERED_KEY are running totals, updated atomically by the
-// grading script alongside the per-login answer row — the same
+// POINTS_KEY/ANSWERED_KEY are running totals, and LAST_AT_KEY the latest
+// award time, updated atomically by the grading script alongside the
+// per-login answer row — the same
 // `ctf:hints:spent` trick, so a leaderboard overlay costs one HGETALL each
 // regardless of board size.
 
@@ -564,27 +571,29 @@ function parseCounterHash(flat: unknown): Map<string, number> {
 }
 
 /** Per-login quiz totals for every login that has answered at least one
- *  question correctly — two `HGETALL`s (`ctf:quiz:points`,
- *  `ctf:quiz:answered`), maintained atomically by GRADE_SCRIPT alongside the
- *  per-login answer row (see the header comment and GRADE_SCRIPT's own
- *  comment, step 6). Cost is exactly two round trips regardless of how many
- *  logins are on the board, mirroring `getHintPenalties` in hint-store.ts.
+ *  question correctly — three `HGETALL`s in one pipeline (`ctf:quiz:points`,
+ *  `ctf:quiz:answered`, `ctf:quiz:lastAt`), maintained atomically by
+ *  GRADE_SCRIPT alongside the per-login answer row (see the header comment
+ *  and GRADE_SCRIPT's own comment, step 6). The cost does not grow with the
+ *  board, mirroring `getHintPenalties` in hint-store.ts.
  *
- *  `lastAt` is always `null`: neither aggregate hash carries a timestamp
- *  (only a running total), and reading the per-login answer hash to derive
- *  one would reintroduce the per-login cost this function exists to avoid.
- *  Callers fall back to whatever other activity timestamp they already have. */
+ *  `lastAt` is the login's latest award time (#522), the leaderboard's
+ *  "whoever got there first" tiebreak. It is null for a login that last
+ *  scored before the time was recorded, and for everyone when that read
+ *  fails (`readLastAt` fails open: the points stand). */
 export async function getQuizTotals(): Promise<Map<string, QuizTotal>> {
-  const [pointsRes, answeredRes] = await upstashPipeline([
+  const [pointsRes, answeredRes, lastAtRes] = await upstashPipeline([
     ["HGETALL", POINTS_KEY],
     ["HGETALL", ANSWERED_KEY],
+    ["HGETALL", LAST_AT_KEY],
   ]);
   const points = parseCounterHash(pointsRes.result);
   const answered = parseCounterHash(answeredRes.result);
+  const lastAt = readLastAt(lastAtRes, "quiz");
 
   const totals = new Map<string, QuizTotal>();
   for (const login of new Set([...points.keys(), ...answered.keys()])) {
-    totals.set(login, { points: points.get(login) ?? 0, answered: answered.get(login) ?? 0, lastAt: null });
+    totals.set(login, { points: points.get(login) ?? 0, answered: answered.get(login) ?? 0, lastAt: lastAt.get(login) ?? null });
   }
   return totals;
 }
@@ -878,6 +887,7 @@ if dry then return {'correct', tostring(points), 'dry'} end
 redis.call('HSET', KEYS[2], ARGV[1], '{"choices":' .. ARGV[2] .. ',"points":' .. points .. ',"at":"' .. ARGV[3] .. '"}')
 redis.call('HINCRBY', KEYS[5], ARGV[4], points)
 redis.call('HINCRBY', KEYS[6], ARGV[4], 1)
+redis.call('HSET', KEYS[7], ARGV[4], ARGV[3])
 return {'correct', tostring(points)}`;
 
 export type AnswerResult =
@@ -956,7 +966,7 @@ export async function answerQuestion(
   try {
     verdict = await upstashEval(
       GRADE_SCRIPT,
-      [attemptsKey(login), answersKey(login), KEY_KEY, QUESTIONS_KEY, POINTS_KEY, ANSWERED_KEY],
+      [attemptsKey(login), answersKey(login), KEY_KEY, QUESTIONS_KEY, POINTS_KEY, ANSWERED_KEY, LAST_AT_KEY],
       // ARGV[8]: dry run — grade, write nothing (#464 admin preview).
       [questionId, submitted, nowIso, login, maxAttempts, cooldownMs, now.getTime(), dryRun ? "1" : "0"],
     );

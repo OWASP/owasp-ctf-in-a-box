@@ -13,6 +13,8 @@ export const QUIZ_QUESTIONS_KEY = "ctf:quiz:questions";
 export const QUIZ_KEY_KEY = "ctf:quiz:key";
 export const QUIZ_POINTS_KEY = "ctf:quiz:points";
 export const QUIZ_ANSWERED_KEY = "ctf:quiz:answered";
+/** login -> ISO time of that login's latest award (#522). */
+export const QUIZ_LAST_AT_KEY = "ctf:quiz:lastAt";
 export const QUIZ_ANSWERS_PREFIX = "ctf:quiz:answers:";
 export const QUIZ_ATTEMPTS_PREFIX = "ctf:quiz:attempts:";
 

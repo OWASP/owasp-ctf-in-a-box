@@ -21,6 +21,8 @@ export const CLASSIC_STORY_INTRO_MAX = 2000;
 export const CLASSIC_POINTS_KEY = "ctf:classic:points";
 export const CLASSIC_SOLVED_KEY = "ctf:classic:solved";
 export const CLASSIC_SOLVECOUNT_KEY = "ctf:classic:solvecount";
+/** login -> ISO time of that login's latest award (#522). */
+export const CLASSIC_LAST_AT_KEY = "ctf:classic:lastAt";
 export const CLASSIC_SOLVES_PREFIX = "ctf:classic:solves:";
 export const CLASSIC_ATTEMPTS_PREFIX = "ctf:classic:attempts:";
 

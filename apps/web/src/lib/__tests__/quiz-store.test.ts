@@ -480,15 +480,17 @@ describe("getViewerQuiz", () => {
 });
 
 describe("getQuizTotals", () => {
-  it("reads the two aggregate counters in one pipeline call, keyed by login", async () => {
+  it("reads the two aggregate counters and the award times in one pipeline call, keyed by login", async () => {
     mocks.upstashPipeline.mockResolvedValue([
       { result: ["ada", "30", "bob", "15"] },
       { result: ["ada", "3", "bob", "1"] },
+      { result: ["ada", "2026-10-01T12:00:00.000Z"] },
     ]);
     const totals = await getQuizTotals();
+    // #522: bob scored before the times were recorded, so he has none.
     expect(totals).toEqual(
       new Map([
-        ["ada", { points: 30, answered: 3, lastAt: null }],
+        ["ada", { points: 30, answered: 3, lastAt: "2026-10-01T12:00:00.000Z" }],
         ["bob", { points: 15, answered: 1, lastAt: null }],
       ]),
     );
@@ -496,13 +498,14 @@ describe("getQuizTotals", () => {
     expect(cmds).toEqual([
       ["HGETALL", "ctf:quiz:points"],
       ["HGETALL", "ctf:quiz:answered"],
+      ["HGETALL", "ctf:quiz:lastAt"],
     ]);
   });
 
   it("unions logins present in only one of the two hashes", async () => {
     // Shouldn't happen in practice (both HINCRBYs run in the same script),
     // but a login present in only one hash still gets a total, not dropped.
-    mocks.upstashPipeline.mockResolvedValue([{ result: ["ada", "10"] }, { result: ["bob", "2"] }]);
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["ada", "10"] }, { result: ["bob", "2"] }, { result: [] }]);
     const totals = await getQuizTotals();
     expect(totals).toEqual(
       new Map([
@@ -513,7 +516,7 @@ describe("getQuizTotals", () => {
   });
 
   it("returns an empty map when nobody has answered anything", async () => {
-    mocks.upstashPipeline.mockResolvedValue([{ result: [] }, { result: [] }]);
+    mocks.upstashPipeline.mockResolvedValue([{ result: [] }, { result: [] }, { result: [] }]);
     expect(await getQuizTotals()).toEqual(new Map());
   });
 });

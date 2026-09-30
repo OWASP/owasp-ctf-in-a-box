@@ -29,6 +29,7 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     questions: liveKey("quiz", "questions"),
     points: liveKey("quiz", "points"),
     answered: liveKey("quiz", "answered"),
+    lastAt: liveKey("quiz", "lastAt"),
   };
   // Per test, so no total asserted here can be inflated by an earlier test.
   let LOGIN = "";
@@ -66,7 +67,7 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.answers, K.key, K.questions, K.points, K.answered],
+      [K.attempts, K.answers, K.key, K.questions, K.points, K.answered, K.lastAt],
       [id, submitted, iso(nowMs), login, maxAttempts, cooldownMs, nowMs, dry ? "1" : "0"],
     );
   }
@@ -102,6 +103,25 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     expect(await hget(K.answered, LOGIN)).toBe("1");
     expect(await answer(id, CORRECT, { nowMs: T0 + 1 })).toEqual(["already"]);
     expect(await hget(K.points, LOGIN)).toBe("20");
+  });
+
+  // #522: the leaderboard's "whoever got there first" tiebreak reads this.
+  it("stamps the login's last award time, and only an award moves it", async () => {
+    const first = freshId("q");
+    const second = freshId("q");
+    await seed(first, 20);
+    await seed(second, 10);
+    expect(await hget(K.lastAt, LOGIN)).toBeNull();
+    expect(await answer(first, CORRECT)).toEqual(["correct", "20"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0));
+    // A miss, a repeat of a banked answer and a dry-run award leave it alone.
+    expect(await answer(second, WRONG, { nowMs: T0 + 1_000 })).toEqual(["incorrect", "1"]);
+    expect(await answer(first, CORRECT, { nowMs: T0 + 2_000 })).toEqual(["already"]);
+    expect(await answer(second, CORRECT, { nowMs: T0 + 3_000, dry: true })).toEqual(["correct", "10", "dry"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0));
+    // The next real award does.
+    expect(await answer(second, CORRECT, { nowMs: T0 + 4_000 })).toEqual(["correct", "10"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 4_000));
   });
 
   it("counts a wrong answer as an attempt, including the first-ever one with a cooldown set", async () => {

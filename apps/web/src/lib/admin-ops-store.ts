@@ -14,12 +14,14 @@ import {
 } from "@/lib/team-keys";
 import {
   QUIZ_ANSWERED_KEY,
+  QUIZ_LAST_AT_KEY,
   QUIZ_POINTS_KEY,
   quizAnswersKey,
   quizAttemptsKey,
 } from "@/lib/quiz-keys";
 import {
   CLASSIC_SOLVECOUNT_KEY,
+  CLASSIC_LAST_AT_KEY,
   CLASSIC_SOLVED_KEY,
   CLASSIC_POINTS_KEY,
   classicAttemptsKey,
@@ -28,6 +30,7 @@ import {
 import {
   AI_POINTS_KEY,
   AI_SOLVECOUNT_KEY,
+  AI_LAST_AT_KEY,
   AI_SOLVED_KEY,
   aiAttemptsKey,
   aiSolvesKey,
@@ -319,7 +322,7 @@ async function clearSecureDevSolves(login: string): Promise<number> {
 }
 
 // KEYS: [1]=solves(login) [2]=attempts(login) [3]=points [4]=solved
-//       [5]=solvecount   ARGV: [1]=login
+//       [5]=solvecount   [6]=lastAt (#522)   ARGV: [1]=login
 //
 // Classic's and ai's per-login shape is IDENTICAL — a solves hash keyed by
 // challenge id, an attempts hash, a points aggregate and a solved aggregate
@@ -336,18 +339,21 @@ async function clearSecureDevSolves(login: string): Promise<number> {
 // get DELeted with no matching decrement, leaving solvecount permanently
 // higher than the remaining rows). `login` arrives as ARGV, never spliced
 // into the script text.
-const RESET_MODULE_SOLVES_SCRIPT = `
+export const RESET_MODULE_SOLVES_SCRIPT = `
 local ids = redis.call('HKEYS', KEYS[1])
 local solvesRemoved = redis.call('DEL', KEYS[1])
 local attemptsRemoved = redis.call('DEL', KEYS[2])
 local pointsRemoved = redis.call('HDEL', KEYS[3], ARGV[1])
 local solvedRemoved = redis.call('HDEL', KEYS[4], ARGV[1])
+-- The award time goes with the totals it orders (#522): a reset contestant
+-- keeping an old time would be ranked by a solve that no longer counts.
+redis.call('HDEL', KEYS[6], ARGV[1])
 for i = 1, #ids do
   redis.call('HINCRBY', KEYS[5], ids[i], -1)
 end
 return {solvesRemoved, attemptsRemoved, pointsRemoved, solvedRemoved, #ids}`;
 
-type ModuleResetKeys = { solves: string; attempts: string; points: string; solved: string; solvecount: string };
+type ModuleResetKeys = { solves: string; attempts: string; points: string; solved: string; solvecount: string; lastAt: string };
 type ModuleResetResult = {
   solvesRemoved: number;
   attemptsRemoved: number;
@@ -362,7 +368,7 @@ type ModuleResetResult = {
 async function resetModuleSolves(login: string, keys: ModuleResetKeys): Promise<ModuleResetResult> {
   const result = await upstashEval(
     RESET_MODULE_SOLVES_SCRIPT,
-    [keys.solves, keys.attempts, keys.points, keys.solved, keys.solvecount],
+    [keys.solves, keys.attempts, keys.points, keys.solved, keys.solvecount, keys.lastAt],
     [login],
   );
   const [solvesRemoved, attemptsRemoved, pointsRemoved, solvedRemoved, decremented] = Array.isArray(result)
@@ -435,6 +441,7 @@ export async function resetUserProgress(rawLogin: string, actor: string): Promis
     points: CLASSIC_POINTS_KEY,
     solved: CLASSIC_SOLVED_KEY,
     solvecount: CLASSIC_SOLVECOUNT_KEY,
+    lastAt: CLASSIC_LAST_AT_KEY,
   });
   const aiReset = await resetModuleSolves(login, {
     solves: aiSolvesKey(login),
@@ -442,6 +449,7 @@ export async function resetUserProgress(rawLogin: string, actor: string): Promis
     points: AI_POINTS_KEY,
     solved: AI_SOLVED_KEY,
     solvecount: AI_SOLVECOUNT_KEY,
+    lastAt: AI_LAST_AT_KEY,
   });
 
   const replies = await upstashPipeline([
@@ -452,6 +460,8 @@ export async function resetUserProgress(rawLogin: string, actor: string): Promis
     ["DEL", userHintsKey(login)],
     ["DEL", userHintTimesKey(login)],
     ["HDEL", HINTS_SPENT_KEY, login],
+    // Last, so the counts below keep their positions (#522).
+    ["HDEL", QUIZ_LAST_AT_KEY, login],
   ]);
   const n = (i: number) => Number(replies[i]?.result) || 0;
 

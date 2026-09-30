@@ -47,11 +47,11 @@ function slug(text) {
     if (!m) return;
     const n = Number(m[1]);
     if (headings.has(n)) problems.push(`docs/decisions.md:${i + 1}: a second "## ADR ${n}." heading`);
+    // A heading that wraps onto a second line is caught below, not here: an
+    // ATX heading is one line, so the wrap truncates the anchor and the index
+    // entry stops matching it. A paragraph right under a heading is valid
+    // Markdown and passes (#512 review).
     headings.set(n, slug(`ADR ${n}. ${m[2]}`));
-    const next = lines[i + 1] ?? "";
-    if (next.trim() !== "") {
-      problems.push(`docs/decisions.md:${i + 1}: the ADR ${n} heading wraps onto the next line — keep it on one line, or its anchor loses everything after the break`);
-    }
   });
 
   const firstHeading = lines.findIndex((l) => /^## ADR \d+\. /.test(l));
@@ -118,7 +118,17 @@ function slug(text) {
         commands.push(m[2].trim());
       }
     }
-    for (const cmd of commands) {
+    // Join `\` continuations into one logical command before splitting, so a
+    // path on a continuation line belongs to its command (#512 review).
+    const logical = [];
+    for (const line of commands) {
+      if (logical.length && /\\$/.test(logical[logical.length - 1])) {
+        logical[logical.length - 1] = logical[logical.length - 1].replace(/\\$/, " ") + line;
+      } else {
+        logical.push(line);
+      }
+    }
+    for (const cmd of logical) {
       for (const part of cmd.split(/&&|\|\||;/)) {
         const m = /^(shellcheck|bats)\s+(.+)$/.exec(part.trim());
         if (!m) continue;

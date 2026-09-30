@@ -73,7 +73,18 @@ _swap() {
     "## ADR 57. Sponsors are recognition-only, appear in four fixed surfaces, and\\nthe disclaimer is not configurable"
   run node "$SCRIPT" "$ROOT"
   [ "$status" -eq 1 ]
-  _has "the ADR 57 heading wraps onto the next line"
+  # The wrap truncates the heading's anchor, so the index entry no longer
+  # matches it: that comparison is the detector (#512 review).
+  _has "the ADR 57 index entry points at #adr-57-sponsors-are-recognition-only-appear-in-four-fixed-surfaces-and-the-disclaimer-is-not-configurable, but the heading's anchor is #adr-57-sponsors-are-recognition-only-appear-in-four-fixed-surfaces-and"
+}
+
+# #512 review: in Markdown an ATX heading is always one line, so a paragraph
+# right under a valid heading (no blank line between) is fine and must pass.
+@test "a paragraph directly under a valid one-line heading passes" {
+  _swap docs/decisions.md "## ADR 57. Sponsors are recognition-only, appear in four fixed surfaces, and the disclaimer is not configurable" \
+    "## ADR 57. Sponsors are recognition-only, appear in four fixed surfaces, and the disclaimer is not configurable\nA paragraph that starts right under the heading."
+  run node "$SCRIPT" "$ROOT"
+  [ "$status" -eq 0 ]
 }
 
 @test "an in-page ADR link that lands on no heading fails" {
@@ -127,6 +138,21 @@ _swap() {
   run node "$SCRIPT" "$ROOT"
   [ "$status" -eq 1 ]
   _has 'AGENTS.md: CI'\''s shell job runs `deploy/aws-terraform/test/`'
+}
+
+# #512 review: a `\` continuation carries more paths on the next line; they
+# belong to the same command and must be checked too.
+@test "a shell path on a backslash continuation line is still checked" {
+  # Real lines, not an escaped string: the continuation must survive intact.
+  block="$BATS_TEST_TMPDIR/block.yml"
+  printf '%s\n' '      - name: a continued step' '        run: |' '          bats scripts/test/ \' '            deploy/new/continued/' > "$block"
+  awk -v f="$block" '/^      - run: bats scripts\/test\/$/ { while ((getline l < f) > 0) print l } { print }' \
+    "$ROOT/.github/workflows/ci.yml" > "$ROOT/ci.tmp"
+  mv "$ROOT/ci.tmp" "$ROOT/.github/workflows/ci.yml"
+  grep -qx '          bats scripts/test/ \\' "$ROOT/.github/workflows/ci.yml"
+  run node "$SCRIPT" "$ROOT"
+  [ "$status" -eq 1 ]
+  _has 'Makefile: CI'\''s shell job runs `deploy/new/continued/`'
 }
 
 @test "a workflow node-version that differs from .nvmrc fails" {

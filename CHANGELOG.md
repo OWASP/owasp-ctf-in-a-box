@@ -6,6 +6,26 @@ commit-level notes, and this file keeps the human summary. The version is
 repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 `sync` deliberately carry no version field.
 
+## Unreleased
+
+- **Fixed: team totals counted quiz, Jeopardy and AI points twice (#520).**
+  On any board whose source reports its own teams (the scorer, i.e. every
+  event running Secure Development), each team's total added its quiz,
+  Jeopardy and AI points once in `withModuleContributions` and again in
+  `withTeamStandings`. A team at 58 Secure Development points plus 2050
+  app-side points was served 4158 instead of 2108. The module chips on an
+  expanded team row were right (each pass wrote the same value), and
+  contestant rows were unaffected. Because the error scaled with each team's
+  app-side points, a team strong in Quiz/Jeopardy/AI could rank above a team
+  that had more points: the **team ranking was wrong, not just the numbers**,
+  on the public board, the display board and the profile's Team progress
+  panel. Membership-only teams (not known to the scorer) were counted
+  correctly. Present since v0.6.0 (#414). Teams now get their app-side points
+  in `withTeamStandings` alone, also when the team store is empty or cannot
+  be read. The same fix gives a team's Jeopardy chip the right denominator:
+  challenges solved before they were deleted now count in it, as they
+  already did for Quiz and AI (#350).
+
 ## v0.7.0 — 2026-09-30
 
 ### Breaking changes

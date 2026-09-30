@@ -342,12 +342,12 @@ describe("withModuleContributions", () => {
       expect(out.entries[0].modules!["quiz"]).toBeDefined();
     });
 
-    it("adds the team's already-deduped quiz total to team points", async () => {
-      // getTeamQuizTotalsBatch owns the union-by-question dedupe logic
-      // (proven at the store level in quiz-store.test.ts, where two members
-      // sharing the same question collapse to one). This test only checks
-      // that withModuleContributions ADDS whatever that function returns —
-      // it is NOT the dedupe proof itself.
+    // Issue #520: withModuleContributions used to add a source team's quiz
+    // points here AND withTeamStandings added them again one stage later, so
+    // every scorer team counted them twice. The team half now has one owner,
+    // `withTeamQuizPoints` (called by withTeamStandings); this stage stamps a
+    // team's secure-development chip and must leave its points alone.
+    it("adds no quiz points to a source team — withTeamStandings owns that", async () => {
       mocks.getTeamQuizTotalsBatch.mockResolvedValue([{ points: 20, answered: 1, lastAt: "2026-08-01T11:00:00.000Z" }]);
 
       const teams: TeamStanding[] = [
@@ -355,12 +355,30 @@ describe("withModuleContributions", () => {
       ];
       const out = await withModuleContributions(data([entry("ada", 30, 3)], teams));
 
+      expect(mocks.getTeamQuizTotalsBatch).not.toHaveBeenCalled();
+      expect(out.teams[0].points).toBe(30);
+      expect(out.teams[0].modules?.["quiz"]).toBeUndefined();
+    });
+
+    it("withTeamQuizPoints adds the team's already-deduped quiz total to team points", async () => {
+      // getTeamQuizTotalsBatch owns the union-by-question dedupe logic
+      // (proven at the store level in quiz-store.test.ts, where two members
+      // sharing the same question collapse to one). This test only checks
+      // that the team overlay ADDS whatever that function returns — it is
+      // NOT the dedupe proof itself.
+      mocks.getTeamQuizTotalsBatch.mockResolvedValue([{ points: 20, answered: 1, lastAt: "2026-08-01T11:00:00.000Z" }]);
+
+      const teams: TeamStanding[] = [
+        { rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada", "cyd"] },
+      ];
+      const out = await withTeamQuizPoints(teams);
+
       expect(mocks.getTeamQuizTotalsBatch).toHaveBeenCalledWith([["ada", "cyd"]]);
       // 30 (existing, already-deduped secure-dev team points) + 20 (the ONE
       // question's points) — never 40 (which would be double counting the
       // question across both members).
-      expect(out.teams[0].points).toBe(50);
-      expect(out.teams[0].modules!["quiz"]).toMatchObject({ points: 20, completed: 1 });
+      expect(out[0].points).toBe(50);
+      expect(out[0].modules!["quiz"]).toMatchObject({ points: 20, completed: 1 });
     });
 
     it("does not touch team points when the source has no deduped team data yet (upstash shape)", async () => {
@@ -392,14 +410,14 @@ describe("withModuleContributions", () => {
         { rank: 2, slug: "blue", name: "Blue", captain: "bob", points: 20, members: ["bob"] },
         { rank: 3, slug: "grey", name: "Grey", captain: "eve", points: 10, members: ["eve"] },
       ];
-      const out = await withModuleContributions(data([entry("ada", 30, 3)], teams));
+      const out = await withTeamQuizPoints(teams);
 
       expect(mocks.getTeamQuizTotalsBatch).toHaveBeenCalledTimes(1);
       expect(mocks.getTeamQuizTotalsBatch).toHaveBeenCalledWith([["ada", "cyd"], ["bob"], ["eve"]]);
       // Each team's own total landed on its own row (order preserved
       // through the batch's partitioning), and the quiz-less team got none.
-      expect(out.teams.map((t) => [t.slug, t.points])).toEqual([["red", 50], ["blue", 25], ["grey", 10]]);
-      expect(out.teams.find((t) => t.slug === "grey")!.modules?.["quiz"]).toBeUndefined();
+      expect(out.map((t) => [t.slug, t.points])).toEqual([["red", 50], ["blue", 25], ["grey", 10]]);
+      expect(out.find((t) => t.slug === "grey")!.modules?.["quiz"]).toBeUndefined();
     });
 
     // I3: the two reads are settled independently. `listQuestions` supplies
@@ -464,9 +482,9 @@ describe("withModuleContributions", () => {
       const teams: TeamStanding[] = [
         { rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada", "cyd"] },
       ];
-      const out = await withModuleContributions(data([entry("ada", 30, 3)], teams));
+      const out = await withTeamQuizPoints(teams);
 
-      expect(out.teams[0].modules!["quiz"]!.detail).toEqual({ kind: "quiz", answered: 3, total: 3, points: 30 });
+      expect(out[0].modules!["quiz"]!.detail).toEqual({ kind: "quiz", answered: 3, total: 3, points: 30 });
     });
   });
 
@@ -631,16 +649,16 @@ describe("withModuleContributions", () => {
         { rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada", "cyd"] },
         { rank: 2, slug: "grey", name: "Grey", captain: "eve", points: 10, members: ["eve"] },
       ];
-      const out = await withModuleContributions(data([entry("ada", 30, 3)], teams));
+      const out = await withTeamClassicPoints(teams);
 
       expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledTimes(1);
       expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledWith([["ada", "cyd"], ["eve"]]);
       // 30 (already-deduped secure-dev team points) + 20 (the ONE challenge's
       // points) — never 40, which would double count it across both members.
-      expect(out.teams.map((t) => [t.slug, t.points])).toEqual([["red", 50], ["grey", 10]]);
-      expect(out.teams[0].modules!["classic"]).toMatchObject({ points: 20, completed: 1 });
+      expect(out.map((t) => [t.slug, t.points])).toEqual([["red", 50], ["grey", 10]]);
+      expect(out[0].modules!["classic"]).toMatchObject({ points: 20, completed: 1 });
       // A team with no solves gets no block rather than an empty one.
-      expect(out.teams.find((t) => t.slug === "grey")!.modules?.["classic"]).toBeUndefined();
+      expect(out.find((t) => t.slug === "grey")!.modules?.["classic"]).toBeUndefined();
     });
   });
 
@@ -684,11 +702,11 @@ describe("withModuleContributions", () => {
       const teams: TeamStanding[] = [
         { rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada"] },
       ];
-      const out = await withModuleContributions(data([entry("ada", 30, 3)], teams));
+      const out = await withTeamClassicPoints(await withTeamQuizPoints(teams));
 
-      expect(out.teams[0].points).toBe(95); // 30 + 15 + 50
-      expect(out.teams[0].modules!["quiz"]).toMatchObject({ points: 15 });
-      expect(out.teams[0].modules!["classic"]).toMatchObject({ points: 50 });
+      expect(out[0].points).toBe(95); // 30 + 15 + 50
+      expect(out[0].modules!["quiz"]).toMatchObject({ points: 15 });
+      expect(out[0].modules!["classic"]).toMatchObject({ points: 50 });
     });
 
     // One module's outage must cost only its own points — never the other's.
@@ -962,13 +980,13 @@ describe("withModuleContributions", () => {
         { rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada", "cyd"] },
         { rank: 2, slug: "grey", name: "Grey", captain: "eve", points: 10, members: ["eve"] },
       ];
-      const out = await withModuleContributions(data([entry("ada", 30, 3)], teams));
+      const out = await withTeamAiPoints(teams);
 
       expect(mocks.getTeamAiTotalsBatch).toHaveBeenCalledTimes(1);
       expect(mocks.getTeamAiTotalsBatch).toHaveBeenCalledWith([["ada", "cyd"], ["eve"]]);
-      expect(out.teams.map((t) => [t.slug, t.points])).toEqual([["red", 50], ["grey", 10]]);
-      expect(out.teams[0].modules!["ai"]).toMatchObject({ points: 20, completed: 1 });
-      expect(out.teams.find((t) => t.slug === "grey")!.modules?.["ai"]).toBeUndefined();
+      expect(out.map((t) => [t.slug, t.points])).toEqual([["red", 50], ["grey", 10]]);
+      expect(out[0].modules!["ai"]).toMatchObject({ points: 20, completed: 1 });
+      expect(out.find((t) => t.slug === "grey")!.modules?.["ai"]).toBeUndefined();
     });
   });
 });
@@ -997,13 +1015,14 @@ describe("module-contributions log redaction (#500)", () => {
     }
   }
 
-  it("withModuleContributions logs the label at every individual and team degrade", async () => {
+  it("withModuleContributions logs the label at every individual degrade", async () => {
     failEveryRead();
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       await withModuleContributions(data([entry("ada", 30, 3)], teams));
-      // Six individual reads plus three team batches, each its own line.
-      expect(consoleError.mock.calls.length).toBeGreaterThanOrEqual(9);
+      // Six individual reads, each its own line. (The three team batches
+      // are read by withTeam*Points below, not here — issue #520.)
+      expect(consoleError.mock.calls.length).toBeGreaterThanOrEqual(6);
       expectLabelOnly(consoleError);
     } finally {
       consoleError.mockRestore();

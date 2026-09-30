@@ -48,7 +48,11 @@ import type { ModuleId } from "@/lib/modules";
  * `getTeamQuizTotalsBatch` / `getTeamClassicTotalsBatch` /
  * `getTeamAiTotalsBatch`, which read every member's item hash directly — all
  * of them in ONE pipeline for the whole board — and dedupe per team through
- * the shared fold in `team-fold.ts`; see its doc comment.
+ * the shared fold in `team-fold.ts`; see its doc comment. Those batch reads
+ * run in `withTeamQuizPoints` / `withTeamClassicPoints` / `withTeamAiPoints`
+ * below, which `withTeamStandings` calls once over every team on the board —
+ * this function itself stamps only the secure-development chip on a team, so
+ * that each module reaches each team's total exactly once (issue #520).
  *
  * The board's login set is the UNION of the source's logins and the logins
  * holding module points, so a contestant with quiz, classic or ai points but
@@ -90,9 +94,6 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
 
   let quizTotals = new Map<string, QuizTotal>();
   let quizTotalQuestions = 0;
-  // Ids, not just the count: the denominator is the live catalogue UNIONED
-  // with the items solved whose challenge is gone, and that needs identity.
-  let quizLiveIds = new Set<string>();
   if (quizReads) {
     // Settled INDEPENDENTLY, not under one shared `try`/`Promise.all`. The
     // two reads carry very different weight: `getQuizTotals` supplies the
@@ -113,7 +114,6 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     }
     if (questionsResult.status === "fulfilled") {
       quizTotalQuestions = questionsResult.value.length;
-      quizLiveIds = new Set(questionsResult.value.map((q) => q.id));
     } else {
       console.error("quiz question list unavailable for leaderboard denominator:", errorLabel(questionsResult.reason));
     }
@@ -121,9 +121,6 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
 
   let classicTotals = new Map<string, ClassicTotal>();
   let classicTotalChallenges = 0;
-  // Ids, not just the count: the denominator is the live catalogue UNIONED
-  // with the items solved whose challenge is gone, and that needs identity.
-  let classicLiveIds = new Set<string>();
   if (classicReads) {
     // Settled INDEPENDENTLY for exactly the reason spelled out above the quiz
     // pair, which this mirrors: `getClassicTotals` carries the POINTS and the
@@ -139,7 +136,6 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     }
     if (challengesResult.status === "fulfilled") {
       classicTotalChallenges = challengesResult.value.length;
-      classicLiveIds = new Set(challengesResult.value.map((c) => c.id));
     } else {
       console.error("classic challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
     }
@@ -147,9 +143,6 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
 
   let aiTotals = new Map<string, AiTotal>();
   let aiTotalChallenges = 0;
-  // Ids, not just the count: the denominator is the live catalogue UNIONED
-  // with the items solved whose challenge is gone, and that needs identity.
-  let aiLiveIds = new Set<string>();
   if (aiReads) {
     // Settled INDEPENDENTLY for exactly the reason spelled out above the quiz
     // and classic pairs, which this mirrors: `getAiTotals` carries the
@@ -164,7 +157,6 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     }
     if (challengesResult.status === "fulfilled") {
       aiTotalChallenges = challengesResult.value.length;
-      aiLiveIds = new Set(challengesResult.value.map((c) => c.id));
     } else {
       console.error("ai challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
     }
@@ -204,15 +196,22 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     ),
   ]);
 
-  // Each enabled module is applied in turn, and each re-ranks on the running
-  // totals — so a team's final order reflects EVERY enabled module's points,
-  // and a module whose batch read fails leaves the rows it would have touched
-  // exactly as the previous step left them (missing points, never wrong ones).
+  // Teams get ONE thing from this stage: the secure-development chip. The
+  // app-side modules (quiz, classic, ai) are attributed to teams in exactly
+  // one place, `withTeamStandings`, which runs next and applies
+  // `withTeamQuizPoints` / `withTeamClassicPoints` / `withTeamAiPoints` over
+  // the UNION of the source's teams and the team store's (issue #413), on
+  // rosters merged from both records — which this stage does not have. This
+  // stage used to ADD them to the source's teams as well, so every scorer
+  // team's total carried its quiz, classic and ai points twice while the
+  // chips (each pass overwrote the same key) looked right (issue #520).
   let teams = data.teams;
   // secure-development is ATTRIBUTED for teams exactly as attributeEntry does
   // for entries: at this point team.points holds only the scorer's GROSS
-  // score (hint penalties net the total later, as the pipeline's last
-  // stage), so the block's points are that number, not an addition.
+  // score (the app-side modules are added by withTeamStandings, and hint
+  // penalties net the total later, as the pipeline's last stage), so the
+  // block's points are that number, not an addition — which is why it is
+  // stamped HERE, before anything else lands in team.points.
   // Without this, an expanded team row showed QUIZ and CLASSIC point chips
   // while the secure-development share of the total appeared nowhere — a
   // captain adding up the chips came out short and read it as a scoring bug.
@@ -232,29 +231,6 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
         },
       };
     });
-  }
-  if (data.capabilities.teams && data.teams.length > 0) {
-    if (quizEnabled) {
-      try {
-        teams = attributeTeams(teams, quizContributions(await teamQuizTotals(teams), quizTotalQuestions, quizLiveIds));
-      } catch (err) {
-        console.error("quiz team totals unavailable for leaderboard:", errorLabel(err));
-      }
-    }
-    if (classicEnabled) {
-      try {
-        teams = attributeTeams(teams, classicContributions(await teamClassicTotals(teams), classicTotalChallenges, classicLiveIds));
-      } catch (err) {
-        console.error("classic team totals unavailable for leaderboard:", errorLabel(err));
-      }
-    }
-    if (aiEnabled) {
-      try {
-        teams = attributeTeams(teams, aiContributions(await teamAiTotals(teams), aiTotalChallenges, aiLiveIds));
-      } catch (err) {
-        console.error("ai team totals unavailable for leaderboard:", errorLabel(err));
-      }
-    }
   }
 
   // The board-level denominator for a row's solved count: how many items this
@@ -291,22 +267,26 @@ type Overlay = {
 };
 
 /**
- * The team half of this overlay, for team rows that did NOT exist when
- * `withModuleContributions` ran: the membership-only rows `withTeamStandings`
- * synthesises on a source with no team concept of its own (upstash, and the
- * empty source a quiz-only event uses). Those rows arrive with `points: 0`
- * because there is no per-flag data to dedupe secure-development points from
- * — but their quiz points ARE dedupable, and leaving them at zero put every
- * team on a quiz-only event's DEFAULT board (teams, whenever teams exist) on
- * an all-zero scoreboard while the individual view showed real points.
+ * The team half of this overlay — the ONLY place a team's quiz points are
+ * added (issue #520). `withTeamStandings` calls it once over every team on the
+ * board: the source's own (scorer/lambda) teams, on rosters merged with the
+ * team store's, and the membership-only rows it synthesises on a source with
+ * no team concept of its own (upstash, and the empty source a quiz-only event
+ * uses). Those synthesised rows arrive with `points: 0` because there is no
+ * per-flag data to dedupe secure-development points from — but their quiz
+ * points ARE dedupable, and leaving them at zero put every team on a
+ * quiz-only event's DEFAULT board (teams, whenever teams exist) on an
+ * all-zero scoreboard while the individual view showed real points.
  *
  * Lives here, and is CALLED by `withTeamStandings`, so that all quiz
  * attribution keeps one owner and one dedupe rule — the union-by-question fold
  * in `getTeamQuizTotalsBatch`, never a sum of member aggregates. Calling it
  * from there rather than moving a pipeline stage is deliberate: the
  * `withModuleContributions → withTeamStandings → withHintPenalties` order is
- * load-bearing (see the page's pipeline comment), and these rows simply do not
- * exist until the last of those runs.
+ * load-bearing (see the page's pipeline comment), and the full team set does
+ * not exist until the second of those runs. `withModuleContributions` must
+ * NOT also add these points to the source's teams — it once did, and every
+ * scorer team's total counted them twice.
  *
  * Degrades like every other overlay: a failed totals read returns the teams
  * untouched (their quiz points are missing, never wrong), and a failed
@@ -372,6 +352,12 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
     classicContributions(
       totalsResult.value,
       challengesResult.status === "fulfilled" ? challengesResult.value.length : 0,
+      // The live ids, like the quiz and ai counterparts: the chip's
+      // denominator is the catalogue UNIONED with solved-then-deleted
+      // challenges (#350). This path used to leave them out, and since it ran
+      // last its chip won: a team's classic denominator read "4 / 6" beside
+      // the profile's "4 / 7".
+      challengesResult.status === "fulfilled" ? new Set(challengesResult.value.map((c) => c.id)) : undefined,
     ),
   );
 }

@@ -867,11 +867,18 @@ reviews:
 
           Unsanitized errors — an exception message or stack trace on a path
           that may carry a submitted flag, an answer, a token, or a URL with a
-          token in it. In apps/web/src/lib/*-store.ts the caught value is
-          never a log argument: the stores log errorLabel(err) from
-          lib/error-label.ts (name + capped message, no stack, no own
-          properties). A raw `err`, String(err) or JSON.stringify(err) handed
-          to console.* there is the finding.
+          token in it. Anywhere server-side in apps/web/src (stores, lib/,
+          app/api/ routes) the caught value is never a log argument: log
+          errorLabel(err) from lib/error-label.ts (name + capped message, no
+          stack, no own properties). A raw `err`, `.reason`, String(err),
+          `new Error(String(err))` or JSON.stringify(err) handed to console.*
+          is the finding. Client components (app/error.tsx and friends) log to
+          the viewer's own browser and are out of scope.
+
+          Import validators (apps/web/src/lib/*-io.ts) name the POSITION and
+          the RULE in an error (`questions[3].correct[1]: must be one of this
+          question's choice ids`), never the submitted value or unknown key
+          names: an admin import can carry answer keys, flags and hints.
 
           Base64 blobs — GITHUB_APP_PRIVATE_KEY, an Authorization header
           value, or any long base64-looking string written to a log. Base64 is

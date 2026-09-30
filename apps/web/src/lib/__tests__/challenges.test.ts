@@ -123,8 +123,12 @@ describe("getChallengeCatalog", () => {
   // the log gets the label only (#500 follow-up).
   it("logs the label, not the rejected error", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    fetchMock.mockRejectedValueOnce(decoratedError("network down"));
-    expect(await getChallengeCatalog()).toBeNull();
-    expectLabelOnly(consoleError, { label: "network down" });
+    try {
+      fetchMock.mockRejectedValueOnce(decoratedError("network down"));
+      expect(await getChallengeCatalog()).toBeNull();
+      expectLabelOnly(consoleError, { label: "network down" });
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

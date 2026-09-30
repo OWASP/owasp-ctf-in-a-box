@@ -766,6 +766,10 @@ describe("hint-store log redaction (#500)", () => {
       const store = await loadStore();
       await run(store);
       expect(consoleError).toHaveBeenCalled();
+      // The label, never the caught value: a raw Error argument is exactly
+      // what hands the logger its decorated `command` / `cause`.
+      const errorArgs = consoleError.mock.calls.flat().filter((a) => a instanceof Error);
+      expect(errorArgs).toEqual([]);
       return consoleError.mock.calls
         .map((args) => args.map((a) => (typeof a === "string" ? a : inspect(a, { depth: 10, showHidden: true }))).join(" "))
         .join("\n");

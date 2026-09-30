@@ -176,6 +176,12 @@ test("a moved member's points left behind on the old team are a finding", () => 
   assert.ok(r.mismatches.some((m) => m.who === "team red" && m.field === "members"));
 });
 
+test("team members that differ from the store only in case are not a finding", () => {
+  const b = correctBoard();
+  b.teams[1].members = ["Bob", "alice"]; // sorted by raw string, "Bob" lands first
+  assert.deepEqual(audit(snapshot(), toFlight(b)).mismatches, []);
+});
+
 test("a hint penalty the board forgot, a wrong module block, a rank out of place, a missing and an extra row are each findings", () => {
   const b = correctBoard();
   b.entries[2].points = 40;

@@ -598,7 +598,9 @@ export function diffBoard(expected, served) {
     compared.teams += 1;
     cmp(who, "points (net)", exp.points, got.points);
     cmp(who, "hint penalty", exp.penalty, got.hintPenalty);
-    cmp(who, "members", exp.members.map(lc).join(","), got.members.map(lc).join(","));
+    // Lowercase before sorting: a raw sort puts "Bob" ahead of "alice" (R11).
+    const norm = (ms) => ms.map(lc).sort().join(",");
+    cmp(who, "members", norm(exp.members), norm(got.members));
     cmpModules(who, exp.modules, got.modules);
     inRange(who, exp.rankRange, got.rank);
   }

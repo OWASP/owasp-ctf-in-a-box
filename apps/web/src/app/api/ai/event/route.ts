@@ -1,4 +1,5 @@
 import { logActivity } from "@/lib/activity-log";
+import { isModuleLive } from "@/lib/enabled-modules";
 import { aiAwardResponse, aiJson, aiPreflight, aiRoute, readRawBody } from "@/lib/ai-http";
 import { AI_ID_RE } from "@/lib/ai-keys";
 // Kept on ONE line deliberately: contract.test.ts's cookie-blindness and
@@ -40,6 +41,20 @@ export function OPTIONS() {
 }
 
 export const POST = aiRoute(async (request: Request): Promise<Response> => {
+  // 0. Module switch (#495), FIRST — before the body, the token, the
+  //    signature or any key is read. Switching ai off in /admin 404s its
+  //    board; without this, the external site kept grading and banking
+  //    points that reappeared on re-enable. First, not after token auth,
+  //    because whether a module is on is already public (its nav link and
+  //    board vanish), while every later answer (invalid-token, expired,
+  //    invalid-signature, rate-limited) tells the caller something about what
+  //    it presented: an off module is not a token or signature oracle, and a
+  //    refused call spends no rate-limit budget. 403, not the 503 `aiRoute`
+  //    uses for a thrown store read — this is a decision, not a blip.
+  //    `isModuleLive` never throws; a failed settings read answers from the
+  //    deployment default, which never includes ai, so this refuses then.
+  if (!(await isModuleLive("ai"))) return aiJson({ error: "unavailable" }, 403);
+
   // 1. Raw bytes first — the signature covers exactly what arrived.
   const body = await readRawBody(request);
   if (!body.ok) return aiJson({ error: "invalid-request" }, 400);

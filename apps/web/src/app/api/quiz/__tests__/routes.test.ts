@@ -27,6 +27,7 @@ const {
   requireLaunchedApi,
   launchApiAccess,
   hasTeam,
+  isModuleLive,
   answerQuestion,
   listQuestions,
   listQuestionsForAdmin,
@@ -55,6 +56,7 @@ const {
     requireLaunchedApi: vi.fn(),
     launchApiAccess: vi.fn(),
     hasTeam: vi.fn(),
+    isModuleLive: vi.fn<(id: string) => Promise<boolean>>(),
     answerQuestion: vi.fn(),
     listQuestions: vi.fn(),
     listQuestionsForAdmin: vi.fn(),
@@ -72,6 +74,7 @@ vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
 vi.mock("@/lib/launch", () => ({ requireLaunchedApi, launchApiAccess }));
 vi.mock("@/lib/team-store", () => ({ hasTeam }));
+vi.mock("@/lib/enabled-modules", () => ({ isModuleLive }));
 vi.mock("@/lib/quiz-store", () => ({
   answerQuestion,
   listQuestions,
@@ -145,9 +148,46 @@ beforeEach(() => {
   launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
   hasTeam.mockResolvedValue(true);
   writeAdminAudit.mockResolvedValue(undefined);
+  isModuleLive.mockReset();
+  isModuleLive.mockResolvedValue(true);
+  activityLog.logActivity.mockClear();
 });
 
 describe("POST /api/quiz/answer", () => {
+  // --- the module switch (issue #495) ---------------------------------------
+  //
+  // Switching the quiz off in /admin 404s the board; this route must refuse
+  // too, or an answer from an open tab (or curl) still banks points.
+
+  it("403s with { error: \"unavailable\" } when the quiz is switched off, before the session is read or the store is touched (#495)", async () => {
+    isModuleLive.mockResolvedValue(false);
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
+    const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+    expect(isModuleLive).toHaveBeenCalledWith("quiz");
+    expect(getSession).not.toHaveBeenCalled();
+    expect(answerQuestion).not.toHaveBeenCalled();
+    expect(activityLog.logActivity).not.toHaveBeenCalled();
+  });
+
+  it("refuses an admin preview too when the quiz is switched off (#495)", async () => {
+    isModuleLive.mockResolvedValue(false);
+    launchApiAccess.mockResolvedValue({ refused: null, preview: true });
+    const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+    expect(answerQuestion).not.toHaveBeenCalled();
+  });
+
+  it("gates on the quiz alone — another module being off does not refuse an answer (#495)", async () => {
+    isModuleLive.mockImplementation(async (id: string) => id === "quiz");
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
+    const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(res.status).toBe(200);
+    expect(answerQuestion).toHaveBeenCalledOnce();
+  });
+
   it("401 for no session", async () => {
     getSession.mockResolvedValue(null);
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));

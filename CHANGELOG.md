@@ -8,6 +8,26 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Switching a module off stops its grading (#495).** Turning Quiz,
+  Jeopardy or AI off in `/admin` hid the board but left its grading routes
+  live: `POST /api/quiz/answer`, `POST /api/classic/submit`, and the AI
+  module's token-authenticated `POST /api/ai/submit` and `POST /api/ai/event`.
+  An answer from an already-open tab, a curl, or the external AI challenge
+  site still banked points that reappeared on re-enable. All four now refuse
+  with `403 {"error": "unavailable"}` as their first check, before any
+  session, token, signature or key is read, the same gate the AI module's
+  in-box submit action already had. An admin preview or an AI `dryRun` is
+  refused too. External AI integrators: the new 403 is in the
+  error table, `docs/ai-module.md` §7.
+
+- **Switching a module off stops its grading (#495).** Turning Quiz or
+  Jeopardy off in `/admin` hid the board but left `POST /api/quiz/answer` and
+  `POST /api/classic/submit` grading, so an answer from an already-open tab
+  (or curl) still banked points that reappeared on re-enable. Both routes now
+  refuse with `403 { error: "unavailable" }` before anything is read or
+  written, the same gate the AI module's submit already had; an admin
+  preview is refused too.
+
 - **Dependency refresh: Next.js 16.3.6, `@types/node` 26.6.2, Caddy image
   digest.** `next` and `eslint-config-next` move 16.3.5 → 16.3.6, the fix for
   GHSA-vcvr-r3jv-pc5j (remote code execution in `next/og`'s
@@ -37,7 +57,6 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   label skips it). PRs are labeled by path automatically, and a new
   CodeRabbit check warns on a behavior change that ships no test.
   CONTRIBUTING.md lists what a PR needs to pass.
-
 - **Challenge files and links (#186).** A classic challenge can carry
   uploaded files (up to 5 MiB each, 50 MiB per event, 10 attachments per
   challenge) and external links.

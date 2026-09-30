@@ -72,6 +72,9 @@ vi.mock("@/lib/rate-limit-store", async (orig) => ({
   consumeRateLimit: mocks.consumeRateLimit,
 }));
 vi.mock("@/lib/team-store", () => ({ hasTeam: mocks.hasTeam }));
+// #495: the grading routes gate on the ai module being live. ON for every
+// cross-route contract below — the gate itself is pinned in each route's suite.
+vi.mock("@/lib/enabled-modules", () => ({ isModuleLive: async () => true }));
 
 import * as SubmitRoute from "@/app/api/ai/submit/route";
 import * as EventRoute from "@/app/api/ai/event/route";

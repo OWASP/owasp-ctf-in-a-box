@@ -84,9 +84,10 @@ function mockModuleResets(
 }
 
 /** The plain quiz+hints pipeline `resetUserProgress` still issues after both
- *  module scripts: 2 DEL + 2 HDEL for quiz, 2 DEL + 1 HDEL for hints. */
+ *  module scripts: 2 DEL + 2 HDEL for quiz, 2 DEL + 1 HDEL for hints, then
+ *  the HDEL of quiz's award time (#522). */
 function mockQuizAndHintsPipeline() {
-  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1, 1, 1, 1));
+  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1, 1, 1, 1, 1));
 }
 
 beforeEach(() => {
@@ -255,6 +256,7 @@ describe("resetUserProgress", () => {
       "ctf:classic:points",
       "ctf:classic:solved",
       "ctf:classic:solvecount",
+      "ctf:classic:lastAt",
     ]);
     // Login only — never a solved id, and never a raw HDEL/DEL of the
     // solvecount key from JS. The script is the only thing that ever
@@ -282,6 +284,7 @@ describe("resetUserProgress", () => {
       "ctf:ai:points",
       "ctf:ai:solved",
       "ctf:ai:solvecount",
+      "ctf:ai:lastAt",
     ]);
     expect(argv).toEqual(["octocat"]);
   });
@@ -335,6 +338,8 @@ describe("resetUserProgress", () => {
       "ctf:user:octocat:hints",
       "ctf:hints:at:octocat",
       "ctf:hints:spent#octocat",
+      // #522: the award time goes with the totals it orders.
+      "ctf:quiz:lastAt#octocat",
     ]);
     // Classic's and ai's per-login keys are cleared through the atomic
     // scripts instead — assert those calls named exactly this login's keys.
@@ -346,6 +351,7 @@ describe("resetUserProgress", () => {
         "ctf:classic:points",
         "ctf:classic:solved",
         "ctf:classic:solvecount",
+        "ctf:classic:lastAt",
       ],
       [
         "ctf:ai:solves:octocat",
@@ -353,6 +359,7 @@ describe("resetUserProgress", () => {
         "ctf:ai:points",
         "ctf:ai:solved",
         "ctf:ai:solvecount",
+        "ctf:ai:lastAt",
       ],
     ]);
   });
@@ -382,6 +389,7 @@ describe("resetUserProgress", () => {
       "ctf:ai:points",
       "ctf:ai:solved",
       "ctf:ai:solvecount",
+      "ctf:ai:lastAt",
     ]);
     expect(aiArgv).toEqual(["octocat"]);
   });

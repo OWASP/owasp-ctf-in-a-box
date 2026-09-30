@@ -288,10 +288,10 @@ during normal contestant and authoring activity — answering, grading,
 question authoring/deletion all go through it — but two `admin-store.ts`
 bulk-maintenance paths touch `ctf:quiz:*` directly rather than calling into
 `quiz-store.ts`: `seedDemoData()` (`HSET`s the questions key, the answer key,
-a per-login answers hash, and both aggregate hashes when seeding demo data)
-and the master reset's `scanDelByPrefix()` (`SCAN`+`DEL`s
+a per-login answers hash, both aggregate hashes and `ctf:quiz:lastAt` when
+seeding demo data) and the master reset's `scanDelByPrefix()` (`SCAN`+`DEL`s
 `ctf:quiz:answers:*`/`ctf:quiz:attempts:*`/`ctf:quiz:points`/
-`ctf:quiz:answered` — see "Master reset" below). Both reuse `quiz-keys.ts`'s
+`ctf:quiz:answered`/`ctf:quiz:lastAt` — see "Master reset" below). Both reuse `quiz-keys.ts`'s
 shared key constants and `canonicalizeChoices` recipe rather than
 re-deriving them, so the two writers can't silently disagree on key names or
 answer-set format even though they're separate code paths:
@@ -337,14 +337,19 @@ answer-set format even though they're separate code paths:
   contestant's correctly-answered questions (points and timestamp captured
   at answer time) and every attempt, right or wrong.
 - `ctf:quiz:points` / `ctf:quiz:answered` — running per-login aggregate
-  counters the leaderboard overlay reads with two `HGETALL`s regardless of
+  counters the leaderboard overlay reads with flat `HGETALL`s regardless of
   board size, the same trick `ctf:hints:spent` uses.
+- `ctf:quiz:lastAt` — each login's latest award time, written in the same
+  script as the counters (#522). It is the leaderboard's "whoever got there
+  first" tiebreak; classic and ai keep the same hash (`ctf:classic:lastAt`,
+  `ctf:ai:lastAt`). A failed read of it logs and drops only the tiebreak,
+  never the points.
 
 **Grading is one atomic Lua script**, not a sequence of round trips: reading
 the current attempt count and cooldown, re-checking the cap and cooldown
 against the *current* admin settings, bumping the attempt counter, comparing
 the submission against the stored key, and — on a match — writing the answer
-row and incrementing both aggregate counters, all happen inside a single
+row, incrementing both aggregate counters and stamping `ctf:quiz:lastAt`, all happen inside a single
 script execution. The JS-side `quizGate` pre-check that runs before the
 script is only a cheap early-out over its own separate, non-atomic read; the
 script is what actually closes the race, because Redis runs it to completion
@@ -402,7 +407,7 @@ denominator. A failed question-list read degrades to a missing denominator
 hinge on a cosmetic read.
 
 The master reset (below) wipes `ctf:quiz:answers:*`, `ctf:quiz:attempts:*`,
-`ctf:quiz:points`, and `ctf:quiz:answered` — contestant progress — but
+`ctf:quiz:points`, `ctf:quiz:answered` and `ctf:quiz:lastAt` — contestant progress — but
 deliberately leaves `ctf:quiz:questions` and `ctf:quiz:key` untouched, the
 same way it leaves `ctf:admin:settings` untouched: both are organizer-
 authored content, not event-run state a reset should ever destroy.
@@ -461,7 +466,7 @@ value and compares whole strings with Lua's `==` — a flag can contain
 braces, quotes, and backslashes, so it is never pattern-matched out of a
 JSON blob the way a points value is.
 
-**The full key layout is ten `ctf:classic:*` keys** — nine enumerated in
+**The full key layout is eleven `ctf:classic:*` keys** — ten enumerated in
 `classic-store.ts`'s header comment, plus `hints`, which is named only in
 `classic-keys.ts`: `challenges` (the public-safe hash
 contestants see — no field on it could carry a flag even by accident),
@@ -473,9 +478,10 @@ hint-store's reveal, exactly the flag hashes' rule; its name lives in
 `{points, at}`, points captured at solve time so a later re-price never
 rewrites history), `attempts:<login>` (every submission, right or wrong —
 `{attempts, firstAt, lastAt, lastAtMs}`, the cooldown's own read; `firstAt`
-is what Insights' time-to-solve is measured from), and three running
+is what Insights' time-to-solve is measured from), and four running
 aggregates: `points` and `solved` (per-login totals the leaderboard overlay
-reads with two `HGETALL`s regardless of board size) and `solvecount` (the
+reads with flat `HGETALL`s regardless of board size), `lastAt` (each login's
+latest award time, the leaderboard's tiebreak, #522) and `solvecount` (the
 per-challenge distinct-solver count the board displays, distinct by
 construction because the already-solved guard runs before any write).
 
@@ -491,8 +497,9 @@ the actual authority: it re-reads the already-solved guard and the cooldown
 against state read fresh at script-execution time (never a value the caller
 read earlier), so a race that slips past the pre-check is still caught,
 atomically. On a correct submission it reads the challenge's current price
-off the challenge hash, writes the solve row, and bumps all three aggregate
-counters (`points`, `solved`, `solvecount`) in the same script execution.
+off the challenge hash, writes the solve row, bumps the three counters
+(`points`, `solved`, `solvecount`) and moves `lastAt` forward, all in the same
+script execution.
 
 **There is no attempt cap anywhere in this gate — only a cooldown, in
 SECONDS.** `classicCooldownSec` (organizer-configurable, default `5`,
@@ -631,7 +638,7 @@ assertion against a challenge authored as `mode: "flag"`, so a missed
 mode-check in the route cannot turn every flag-only challenge into
 something any signing-key holder can assert.
 
-**The key layout is thirteen `ctf:ai:*` keys**, split by secrecy class:
+**The key layout is fourteen `ctf:ai:*` keys**, split by secrecy class:
 
 - **Catalogue — public**: `ctf:ai:challenges` (the public-safe hash
   contestants and the leaderboard read — no field on it could carry a flag
@@ -652,7 +659,8 @@ something any signing-key holder can assert.
 - **Progress** — `ctf:ai:solves:<login>` / `ctf:ai:attempts:<login>` (one
   contestant's banked solves and every attempt, right or wrong) and the
   running aggregates the leaderboard overlay reads with flat `HGETALL`s:
-  `ctf:ai:points`, `ctf:ai:solved`, and the per-challenge
+  `ctf:ai:points`, `ctf:ai:solved`, `ctf:ai:lastAt` (the latest award
+  time, the leaderboard tiebreak), and the per-challenge
   `ctf:ai:solvecount` (distinct-solver count, distinct by construction
   because the already-solved guard runs before any increment).
 - **Replay** — `ctf:ai:nonce:<jti>`, one key per spent event `jti`, written
@@ -660,8 +668,8 @@ something any signing-key holder can assert.
 
 **Grading is one atomic Lua script**, exactly like quiz's and classic's: the
 already-solved guard, the cooldown (graded path only — a signed event has no
-wrong answer to rate-limit), the flag comparison, the solve row, and all
-three aggregate counters are read and written inside one script execution,
+wrong answer to rate-limit), the flag comparison, the solve row, the three
+aggregate counters and the award time are read and written inside one script execution,
 against state read fresh at that instant rather than a value either caller
 read earlier. The JS-side pre-check (`evaluateGate`) that runs before it is
 only a cheap early-out; the script is what actually closes the race.
@@ -701,7 +709,7 @@ that could silently diverge.
 
 **Master reset clears progress, nonces, and the launch key — never the
 catalogue.** `resetEvent`'s `RESET_PREFIXES` wipe `ai`'s solve/attempt rows,
-the three aggregate hashes, and every spent replay nonce, but deliberately
+the three aggregate hashes, the award-time hash, and every spent replay nonce, but deliberately
 leave `ctf:ai:challenges`/`ctf:ai:flag`/`ctf:ai:flagnorm`/`ctf:ai:hints`/
 `ctf:ai:signkey`/`ctf:ai:categories` untouched — organizer-authored content,
 the same rule quiz's and classic's questions/challenges get. Unlike those
@@ -1052,11 +1060,11 @@ file or key is not, because that is every event's first boot.
 all event data — `SCAN`+`DEL` of `ctf:solves:*`, `ctf:team:*`, `ctf:user:*`,
 `ctf:joincode:*`, `ctf:hints:*`,
 `ctf:quiz:answers:*`/`ctf:quiz:attempts:*`/`ctf:quiz:points`/
-`ctf:quiz:answered`, and
+`ctf:quiz:answered`/`ctf:quiz:lastAt`, and
 `ctf:classic:solves:*`/`ctf:classic:attempts:*`/`ctf:classic:points`/
-`ctf:classic:solved`/`ctf:classic:solvecount`,
+`ctf:classic:solved`/`ctf:classic:solvecount`/`ctf:classic:lastAt`,
 `ctf:ai:solves:*`/`ctf:ai:attempts:*`/`ctf:ai:points`/`ctf:ai:solved`/
-`ctf:ai:solvecount`, the spent replay nonces `ctf:ai:nonce:*`, the
+`ctf:ai:solvecount`/`ctf:ai:lastAt`, the spent replay nonces `ctf:ai:nonce:*`, the
 module-wide `ctf:ai:launchkey` (so no launch token issued before the reset
 survives it — see "AI data flow" above), and the activity log
 (`ctf:activity:log`) — keeps `ctf:admin:settings`

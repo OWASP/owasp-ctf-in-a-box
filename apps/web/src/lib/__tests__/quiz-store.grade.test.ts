@@ -122,6 +122,7 @@ describe("grading (all-or-nothing, order-insensitive)", () => {
       "ctf:quiz:questions",
       "ctf:quiz:points",
       "ctf:quiz:answered",
+      "ctf:quiz:lastAt",
     ]);
     expect(args[0]).toBe("q1");
     expect(args[3]).toBe("octocat");

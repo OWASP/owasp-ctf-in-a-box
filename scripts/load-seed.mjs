@@ -13,9 +13,9 @@
 //     (team, joinedAt, firstTeamAt)
 //   ctf:solves:<target>  <login>:<challengeId> -> ISO   (Secure Development)
 //   ctf:quiz:answers:<login> / ctf:quiz:attempts:<login> + ctf:quiz:points /
-//     ctf:quiz:answered aggregates
+//     ctf:quiz:answered aggregates + ctf:quiz:lastAt (latest award, #522)
 //   ctf:classic:solves:<login> / ctf:classic:attempts:<login> +
-//     ctf:classic:points / ctf:classic:solved aggregates
+//     ctf:classic:points / ctf:classic:solved aggregates + ctf:classic:lastAt
 // It attaches solves to the CATALOGUE THE BOX ALREADY HAS (quiz questions,
 // classic challenges, the scorer's /challenges) so titles resolve and the
 // leaderboard/metrics folds see real ids. It writes NO catalogue of its own.
@@ -96,7 +96,7 @@ export const FIELD_SEP = "\u0001";
 /** One seed or clean at a time: a token lock held for the whole operation. */
 export const LOCK_KEY = "ctf:load-seed:lock";
 /** The shared hashes keyed by login or `<login>:<id>` that the seed writes fields INTO (everything else it writes is a whole key of its own). */
-export const SHARED_HASHES = ["ctf:quiz:points", "ctf:quiz:answered", "ctf:classic:points", "ctf:classic:solved"];
+export const SHARED_HASHES = ["ctf:quiz:points", "ctf:quiz:answered", "ctf:quiz:lastAt", "ctf:classic:points", "ctf:classic:solved", "ctf:classic:lastAt"];
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for scripts/test/load-seed.test.mjs)
@@ -266,8 +266,10 @@ export function buildCommands({ count, catalogue, now = Date.now(), seed = 439 }
     if (catalogue.quiz.length) {
       const answered = pickSubset(catalogue.quiz, 0, Math.ceil(catalogue.quiz.length * 0.7), rand);
       let points = 0;
+      let lastAt = null;
       for (const q of answered) {
         const ts = at(rand());
+        if (!lastAt || ts > lastAt) lastAt = ts;
         cmds.push(["HSET", `ctf:quiz:answers:${login}`, q.id, JSON.stringify({ choices: q.choices, points: q.points, at: ts.toISOString() })]);
         cmds.push(["HSET", `ctf:quiz:attempts:${login}`, q.id, attemptRow(1 + (li % 3), ts.getTime(), 3 + (li % 7), base)]);
         points += q.points;
@@ -278,14 +280,17 @@ export function buildCommands({ count, catalogue, now = Date.now(), seed = 439 }
       if (answered.length) {
         cmds.push(["HSET", "ctf:quiz:points", login, points]);
         cmds.push(["HSET", "ctf:quiz:answered", login, answered.length]);
+        cmds.push(["HSET", "ctf:quiz:lastAt", login, lastAt.toISOString()]);
       }
     }
     // Classic: solve 0–50% of the board; one extra failed attempt.
     if (catalogue.classic.length) {
       const solved = pickSubset(catalogue.classic, 0, Math.ceil(catalogue.classic.length * 0.5), rand);
       let points = 0;
+      let lastAt = null;
       for (const c of solved) {
         const ts = at(rand());
+        if (!lastAt || ts > lastAt) lastAt = ts;
         cmds.push(["HSET", `ctf:classic:solves:${login}`, c.id, JSON.stringify({ points: c.points, at: ts.toISOString() })]);
         cmds.push(["HSET", `ctf:classic:attempts:${login}`, c.id, attemptRow(1 + ((li + 1) % 3), ts.getTime(), 2 + (li % 9), base)]);
         points += c.points;
@@ -296,6 +301,7 @@ export function buildCommands({ count, catalogue, now = Date.now(), seed = 439 }
       if (solved.length) {
         cmds.push(["HSET", "ctf:classic:points", login, points]);
         cmds.push(["HSET", "ctf:classic:solved", login, solved.length]);
+        cmds.push(["HSET", "ctf:classic:lastAt", login, lastAt.toISOString()]);
       }
     }
   });

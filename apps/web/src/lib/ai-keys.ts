@@ -40,6 +40,8 @@ export const AI_HINTS_KEY = "ctf:ai:hints";
 export const AI_POINTS_KEY = "ctf:ai:points";
 export const AI_SOLVED_KEY = "ctf:ai:solved";
 export const AI_SOLVECOUNT_KEY = "ctf:ai:solvecount";
+/** login -> ISO time of that login's latest award (#522). */
+export const AI_LAST_AT_KEY = "ctf:ai:lastAt";
 export const AI_SOLVES_PREFIX = "ctf:ai:solves:";
 export const AI_ATTEMPTS_PREFIX = "ctf:ai:attempts:";
 /** Replay guard, one key per spent event `jti`, written with NX EX. */

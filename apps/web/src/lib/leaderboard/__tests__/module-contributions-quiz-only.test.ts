@@ -123,6 +123,25 @@ describe("withModuleContributions on a quiz-only event", () => {
     ]);
   });
 
+  // #522: getQuizTotals now carries each login's last award time, so a full
+  // points-and-answers tie goes to whoever got there first — it used to fall
+  // through to the source order, because no quiz row had a time at all.
+  it("breaks a full points-and-answers tie on the earlier last award", async () => {
+    mocks.getQuizTotals.mockResolvedValue(
+      new Map([
+        ["late", totals(40, 2, "2026-10-01T13:00:00.000Z")],
+        ["early", totals(40, 2, "2026-10-01T12:00:00.000Z")],
+      ]),
+    );
+
+    const out = await withModuleContributions(empty());
+
+    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([
+      ["early", 1],
+      ["late", 2],
+    ]);
+  });
+
   it("breaks a points tie on answer count", async () => {
     mocks.getQuizTotals.mockResolvedValue(
       new Map([

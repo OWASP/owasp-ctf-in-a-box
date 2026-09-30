@@ -731,8 +731,8 @@ the button, `POST /api/admin/reset`, additionally accepts the literal `RESET` as
 panel never offers it.
 
 When the `quiz` module is enabled, the master reset also clears every
-contestant's quiz answers and attempts (and the two aggregate point/answered
-counters the leaderboard reads) — but it deliberately **keeps your authored
+contestant's quiz answers and attempts (and the point/answered counters and
+the award times the leaderboard reads) — but it deliberately **keeps your authored
 questions and their answer keys**, the same way it keeps the event's
 identity and policy settings. A reset event doesn't mean re-building the quiz
 from scratch.
@@ -748,8 +748,8 @@ deleting a key that is already gone does nothing, so the fix for a failed
 reset is to run it again.
 
 `classic` is scoped exactly the same way: the master reset clears every
-contestant's flag solves and attempts (and the three aggregate
-points/solved/solve-count hashes the leaderboard reads) but deliberately
+contestant's flag solves and attempts (and the points/solved/solve-count
+hashes and the award times the leaderboard reads) but deliberately
 **keeps your authored challenges, their flags, and your categories** — the
 same organizer content/contestant progress line the quiz reset draws. A
 rehearsal on the `classic` module wipes back to the challenge set you wrote,

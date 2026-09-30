@@ -575,11 +575,13 @@ describe("getClassicTotals", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([
       { result: ["alice", "150", "bob", "50"] },
       { result: ["alice", "2"] },
+      { result: ["alice", "2026-10-01T12:00:00.000Z"] },
     ]);
     const totals = await getClassicTotals();
-    expect(totals.get("alice")).toEqual({ points: 150, solved: 2, lastAt: null });
+    expect(totals.get("alice")).toEqual({ points: 150, solved: 2, lastAt: "2026-10-01T12:00:00.000Z" });
     expect(totals.get("bob")).toEqual({ points: 50, solved: 0, lastAt: null });
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
+    expect(mocks.upstashPipeline.mock.calls[0][0]).toContainEqual(["HGETALL", "ctf:classic:lastAt"]);
   });
 });
 

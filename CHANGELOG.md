@@ -20,6 +20,20 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   `solved`; the `rank` chip is gone because it repeated `points`. Rules and
   FAQ now state the order.
 
+- **Fixed: "whoever got there first" now holds for quiz, Jeopardy and AI (#522).**
+  The leaderboard breaks a points-and-items tie on each contestant's latest
+  award time, but only Secure Development solves carried one: the quiz,
+  Jeopardy and AI totals had no time at all, so a tie between two contestants
+  who scored there fell back to an arbitrary order, and a later quiz answer
+  never counted as activity. Each module's grading script now records the
+  award time in `ctf:quiz:lastAt` / `ctf:classic:lastAt` / `ctf:ai:lastAt` in
+  the same call that updates the totals, and the event reset, a contestant's
+  progress reset and the demo seed and clear keep it in step. Points scored
+  before the upgrade have no time until that contestant's next award. A failed
+  read of the new hash logs and drops only the tiebreak, never the points.
+  `scripts/load-seed.mjs` seeds the new hashes and `scripts/score-audit.mjs`
+  reads them, so its tiebreak model matches the board's.
+
 - **Fixed: team totals counted quiz, Jeopardy and AI points twice (#520).**
   On any board whose source reports its own teams (the scorer, i.e. every
   event running Secure Development), each team's total added its quiz,

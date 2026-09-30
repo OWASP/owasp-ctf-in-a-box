@@ -25,6 +25,7 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
     points: liveKey("ai", "points"),
     solvecount: liveKey("ai", "solvecount"),
     solved: liveKey("ai", "solved"),
+    lastAt: liveKey("ai", "lastAt"),
   };
   // Per test, so no total asserted here can be inflated by an earlier test.
   let LOGIN = "";
@@ -60,7 +61,7 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
     await pipeline(cmds);
   }
 
-  const KEYS = () => [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved];
+  const KEYS = () => [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt];
 
   /** The typed-flag path (`submitAiFlag` → runAward with grade=true). */
   async function submitFlag(id: string, flag: string, { nowMs = T0, cooldownMs = 5_000, login = LOGIN, dry = false } = {}) {
@@ -102,6 +103,36 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
     const [r] = await pipeline([["HGET", key, field]]);
     return r.result;
   }
+
+  // #522: the leaderboard's "whoever got there first" tiebreak reads this.
+  // Both award paths write it: a typed flag and the site's signed event.
+  it("stamps the login's last award time on either path, and only an award moves it", async () => {
+    const byFlag = freshId("chal");
+    const byEvent = freshId("chal");
+    await seed(byFlag, "flag", 20, "flag{one}");
+    await seed(byEvent, "event", 10);
+    expect(await hget(K.lastAt, LOGIN)).toBeNull();
+    expect(await submitFlag(byFlag, "flag{one}", { cooldownMs: 0 })).toEqual(["correct", "20"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0));
+    // A dry-run award and a repeat leave it alone.
+    expect(await recordEvent(byEvent, { nowMs: T0 + 1_000, dry: true })).toEqual(["correct", "10", "dry"]);
+    expect(await submitFlag(byFlag, "flag{one}", { nowMs: T0 + 2_000, cooldownMs: 0 })).toEqual(["already"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0));
+    expect(await recordEvent(byEvent, { nowMs: T0 + 3_000 })).toEqual(["correct", "10"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 3_000));
+  });
+
+  // The time is taken in JS before the script runs, so two awards can reach
+  // Redis out of order. The later time must survive the earlier write.
+  it("keeps the later award time when two awards land out of order", async () => {
+    const later = freshId("chal");
+    const earlier = freshId("chal");
+    await seed(later, "event", 20);
+    await seed(earlier, "event", 10);
+    expect(await recordEvent(later, { nowMs: T0 + 5_000 })).toEqual(["correct", "20"]);
+    expect(await recordEvent(earlier, { nowMs: T0 + 1_000 })).toEqual(["correct", "10"]);
+    expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 5_000));
+  });
 
   it("returns missing for an unknown challenge on both paths", async () => {
     const id = freshId("ghost");

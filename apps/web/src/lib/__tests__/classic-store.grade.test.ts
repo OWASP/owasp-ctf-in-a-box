@@ -305,6 +305,7 @@ describe("the grading script's arguments", () => {
       "ctf:classic:points",
       "ctf:classic:solvecount",
       "ctf:classic:solved",
+      "ctf:classic:lastAt",
     ]);
     expect(argv[0]).toBe("chal-1");
     expect(argv[2]).toBe(new Date(Number(argv[5])).toISOString());
@@ -566,7 +567,9 @@ describe("story lock (#463)", () => {
     await submitFlag("alice", "chal-1", "CTF{x}");
     const { keys, argv } = lastEval();
     expect(argv[8]).toBe("recon");
-    expect(keys.slice(7)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    // KEYS[9..] (index 8 on): KEYS[8] is the lastAt hash (#522).
+    expect(keys[7]).toBe("ctf:classic:lastAt");
+    expect(keys.slice(8)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
   });
 
   it("reports the script's `locked` exactly as an unknown challenge — no oracle, never a wrong answer", async () => {

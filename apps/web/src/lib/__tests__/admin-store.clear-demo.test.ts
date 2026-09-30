@@ -59,16 +59,19 @@ describe("clearDemoData", () => {
       expect(c).toContainEqual(["DEL", `ctf:quiz:attempts:${contestant.login}`]);
       expect(c).toContainEqual(["HDEL", "ctf:quiz:points", contestant.login]);
       expect(c).toContainEqual(["HDEL", "ctf:quiz:answered", contestant.login]);
+      expect(c).toContainEqual(["HDEL", "ctf:quiz:lastAt", contestant.login]);
 
       expect(c).toContainEqual(["DEL", `ctf:classic:solves:${contestant.login}`]);
       expect(c).toContainEqual(["DEL", `ctf:classic:attempts:${contestant.login}`]);
       expect(c).toContainEqual(["HDEL", "ctf:classic:points", contestant.login]);
       expect(c).toContainEqual(["HDEL", "ctf:classic:solved", contestant.login]);
+      expect(c).toContainEqual(["HDEL", "ctf:classic:lastAt", contestant.login]);
 
       expect(c).toContainEqual(["DEL", `ctf:ai:solves:${contestant.login}`]);
       expect(c).toContainEqual(["DEL", `ctf:ai:attempts:${contestant.login}`]);
       expect(c).toContainEqual(["HDEL", "ctf:ai:points", contestant.login]);
       expect(c).toContainEqual(["HDEL", "ctf:ai:solved", contestant.login]);
+      expect(c).toContainEqual(["HDEL", "ctf:ai:lastAt", contestant.login]);
     }
   });
 

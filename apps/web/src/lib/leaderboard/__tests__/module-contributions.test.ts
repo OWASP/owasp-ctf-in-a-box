@@ -323,7 +323,13 @@ describe("withModuleContributions", () => {
     // stamp a `quiz` block) must not zero out that row's real patch count.
     // ada has more patches AND a quiz answer on top of bob — she must never
     // rank below him.
-    it("does not let quiz activity demote a patched-heavy row on an upstash-shaped board", async () => {
+    // At EQUAL points (points come first, #522), the tiebreak is items
+    // completed: ada's 5 patches + 1 answer must count as 6, not 1. If her
+    // quiz block made completedCount drop `patched` (no secure-development
+    // block on an upstash row), she would lose the tie to bob's 3. Bob is
+    // listed first so a dropped `patched` shows as the wrong order, not as
+    // source order happening to agree.
+    it("keeps a quiz-active row's patches in the tiebreak on an upstash-shaped board", async () => {
       mocks.getQuizTotals.mockResolvedValue(new Map([["ada", { points: 5, answered: 1, lastAt: null }]]));
 
       const bare = (login: string, points: number, patched: number) => ({
@@ -331,11 +337,11 @@ describe("withModuleContributions", () => {
       });
 
       const out = await withModuleContributions({
-        ...data([bare("ada", 50, 5), bare("bob", 30, 3)]),
+        ...data([bare("bob", 30, 3), bare("ada", 25, 5)]),
         capabilities: { apps: false, teams: false, challenges: false },
       });
 
-      expect(out.entries.map((e) => e.login)).toEqual(["ada", "bob"]);
+      expect(out.entries.map((e) => [e.login, e.points])).toEqual([["ada", 30], ["bob", 30]]);
       expect(out.entries[0].modules!["secure-development"]).toBeUndefined();
       expect(out.entries[0].modules!["quiz"]).toBeDefined();
     });

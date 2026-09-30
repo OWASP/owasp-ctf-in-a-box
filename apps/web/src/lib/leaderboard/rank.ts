@@ -39,8 +39,8 @@ export function compareStanding(a: LeaderboardEntry, b: LeaderboardEntry): numbe
  *  which is the opposite of what adding quiz points is supposed to do.
  *
  *  That mutation is caught in
- *  `__tests__/module-contributions.test.ts` ("does not let quiz activity
- *  demote a patched-heavy row on an upstash-shaped board"), NOT in
+ *  `__tests__/module-contributions.test.ts` ("keeps a quiz-active row's
+ *  patches in the tiebreak on an upstash-shaped board"), NOT in
  *  `__tests__/rank.test.ts`, which has no upstash-shaped case: this
  *  comparator only sees the rows `withModuleContributions` has already
  *  stamped, so the upstash shape can only be built through that function.

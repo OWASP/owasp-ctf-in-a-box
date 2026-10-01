@@ -114,9 +114,16 @@ export default function DisplayBoard({
         <div className="flex min-w-0 items-center gap-[1.5vw]">
           {eventLogo && (
             // Native <img>, as for the sponsor credits below: next/image would
-            // re-fetch our own image route through its optimizer.
+            // re-fetch our own image route through its optimizer. A failed
+            // load (the route's 503, unreadable bytes) hides the element so
+            // the wall never shows a broken-image icon — the name stays. Keyed
+            // by src: a replaced logo remounts and is shown again.
             // eslint-disable-next-line @next/next/no-img-element
             <img
+              key={eventLogo.src}
+              onError={(e) => {
+                e.currentTarget.hidden = true;
+              }}
               src={eventLogo.src}
               alt={`${eventName} logo`}
               width={eventLogo.w}

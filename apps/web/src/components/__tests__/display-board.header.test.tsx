@@ -2,6 +2,7 @@
 // the scoring-window clock (P2). Static render, like display-board.size.test.
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ refresh: () => {} }) }));
 
@@ -63,5 +64,49 @@ describe("DisplayBoard header — the clock keeps its element when its text is e
   it("renders an empty clock span while live with no end", () => {
     const past = new Date(Date.now() - 3_600_000).toISOString();
     expect(header(render({ scoringStartsAt: past, scoringEndsAt: null }))).toMatch(/<span[^>]*tabular-nums[^>]*><\/span>/);
+  });
+});
+
+// PR #544 review: metadata can load while the image itself fails (a 503 from
+// the route, unreadable bytes) — the wall must not show a broken-image icon.
+// No DOM here (no @testing-library, see admin-event-identity.test.tsx), so
+// the element is captured and its onError called directly.
+describe("DisplayBoard header — a logo that fails to load is hidden", () => {
+  type ImgEl = ReactElement<{ src: string; onError?: (e: { currentTarget: { hidden: boolean } }) => void }>;
+  // Walks the raw children (not Children.toArray, which rewrites keys).
+  function findImg(node: ReactNode): ImgEl | null {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const hit = findImg(child);
+        if (hit) return hit;
+      }
+      return null;
+    }
+    if (!isValidElement(node)) return null;
+    const el = node as ReactElement<{ children?: ReactNode; src?: string }>;
+    if (el.type === "img" && typeof el.props.src === "string" && el.props.src.startsWith("/api/event/logo")) return el as ImgEl;
+    return findImg(el.props.children);
+  }
+  function captureLogo(src: string): ImgEl {
+    let tree: ReactNode = null;
+    function Probe() {
+      tree = DisplayBoard({ rows, eventName: "Red Team Space CTF", phaseLabel: "live", eventLogo: { src, w: 482, h: 603 } });
+      return null;
+    }
+    renderToStaticMarkup(<Probe />);
+    const img = findImg(tree);
+    if (!img) throw new Error("no event logo <img> in the header");
+    return img;
+  }
+
+  it("hides the image on a load error, leaving the name", () => {
+    const img = captureLogo("/api/event/logo?v=0123456789abcdef");
+    const target = { hidden: false };
+    img.props.onError?.({ currentTarget: target });
+    expect(target.hidden).toBe(true);
+  });
+
+  it("keys the image by its src, so a replaced logo remounts and is shown again", () => {
+    expect(captureLogo("/api/event/logo?v=aaaaaaaaaaaaaaaa").key).toBe("/api/event/logo?v=aaaaaaaaaaaaaaaa");
   });
 });

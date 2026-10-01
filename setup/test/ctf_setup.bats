@@ -2335,3 +2335,57 @@ patched() {
   [ "$status" -ne 0 ]
 }
 
+
+# --- #496: setup hygiene before launch day ------------------------------------
+
+# S11: the newest run's jobs could not be read, and an OLDER run had pulled
+# the image. The newer run may have been a refusal (a re-mirrored package
+# drops its grants), so the older success proves nothing now: fail closed.
+@test "doctor does not call a grant verified when a newer run could not be read (#496 S11)" {
+  mkdir -p stubs
+  cat > stubs/gh <<'EOF2'
+#!/usr/bin/env bash
+case "$*" in
+  *"DVWA/actions/workflows/ctf-score.yml/runs"*) printf '102\n101\n' ;;
+  *"DVWA/actions/runs/102/jobs"*) exit 1 ;;
+  *"DVWA/actions/runs/101/jobs"*) echo success ;;
+  *"packages/container/score"*) echo private ;;
+  *) exit 1 ;;
+esac
+EOF2
+  chmod +x stubs/gh
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
+  printf '%s' "$output" | grep -qE '^  dvwa +⚠️  unverified'
+  [ -z "$(printf '%s' "$output" | grep -E '^  dvwa +✅ granted')" ]
+}
+
+# M18: a public fork that contestants already forked is one `private` skips on
+# purpose, so doctor must not send the organizer to run it.
+@test "doctor does not advise 'private' for a public fork contestants already forked (#496 M18)" {
+  vis_env
+  echo false > state/launched
+  echo 1 > state/forks_DVWA
+  run_vis doctor
+  printf '%s' "$output" | grep -qF -- 'DVWA is public before launch and already has 1 fork'
+  [ -z "$(printf '%s' "$output" | grep -F -- "DVWA is public before launch — contestants can see its ctf branch; detach it and run 'ctf-setup.sh private'")" ]
+}
+
+@test "private names one fork in the singular (#496 M18)" {
+  vis_env
+  echo false > state/launched
+  echo 1 > state/forks_DVWA
+  run_vis private
+  printf '%s' "$output" | grep -qF -- 'DVWA already has 1 fork —'
+}
+
+# M20: AGENTS.md — `--dry-run` makes zero gh calls. doctor's org, matrix,
+# visibility, package and grant reads all ran under it.
+@test "doctor --dry-run makes no gh call at all (#496 M20)" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\nEVENT_URL=https://box.example\n' > .env
+  mkdir -p "$BATS_TEST_TMPDIR/stubbin"
+  printf '#!/usr/bin/env bash\necho "gh $*" >> "%s/gh.calls"\nexit 1\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/stubbin/gh"
+  chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
+  run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor --dry-run
+  printf '%s' "$output" | grep -qF -- "DRY-RUN: would check"
+  [ ! -s "$BATS_TEST_TMPDIR/gh.calls" ]
+}

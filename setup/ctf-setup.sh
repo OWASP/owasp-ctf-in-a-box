@@ -184,7 +184,15 @@ box_launch_state() {
 #
 # Only the newest few runs are inspected: a grant, once given, is not taken
 # back, so an old refusal under a recent success is history rather than news —
-# hence first-success-wins over first-failure-wins in the loop below.
+# hence first-success-wins over first-failure-wins in the loop below. But a
+# run whose jobs cannot be READ stops the walk (#496): it may have been the
+# refusal, and an older success no longer proves anything (a re-mirrored
+# package starts with no grants), so that answers `error`, not `granted`.
+# "1 fork", "3 forks": $1 the count, $2 singular, $3 plural.
+plural() {
+  if [ "$1" = 1 ]; then printf '1 %s' "$2"; else printf '%s %s' "$1" "$3"; fi
+}
+
 pull_grant_status() {
   slug="$1"; runs=""; jobs=""; step=""; unread=0
 
@@ -194,7 +202,7 @@ pull_grant_status() {
 
   for run in $runs; do
     jobs="$(gh api "repos/$slug/actions/runs/$run/jobs" \
-      --jq '.jobs[].steps[] | select(.name == "Pull scorer image") | .conclusion' 2>/dev/null)" || { unread=1; continue; }
+      --jq '.jobs[].steps[] | select(.name == "Pull scorer image") | .conclusion' 2>/dev/null)" || { unread=1; break; }
     for step in $jobs; do
       case "$step" in
         success) echo granted; return 0 ;;
@@ -381,10 +389,65 @@ do_step() {
 
 # Read-only per-step status. Non-manual missing steps make it exit non-zero so
 # CI / the future admin wizard can gate on a clean provision.
+# Check (c) of `doctor`, a function so the --dry-run path (#496 M20) can
+# run it — it narrates under --dry-run — before returning ahead of every gh
+# read. Returns 1 when the check fails.
+doctor_check_sync_app() {
+  local org="$1" crc=0
+  # Check (c) — the sync GitHub App (GITHUB_APP_ID) is installed on the org
+  # (issue #382). Only meaningful when Secure Development runs at all: an
+  # app-only event has no poller/pusher that needs a token, so there is
+  # nothing to verify — but we are past the `runs_secdev` early-return above,
+  # so it is always true here.
+  local sync_app_id; sync_app_id="$(env_val GITHUB_APP_ID)"
+  if [ -z "$sync_app_id" ]; then
+    printf '%s❌ GITHUB_APP_ID is empty in %s — sync cannot mint tokens without it%s\n' \
+      "$C_RED" "${OUT:-.env}" "$C_RESET"
+    crc=1
+  elif [ "$DRY_RUN" -eq 1 ]; then
+    printf 'DRY-RUN: would check whether the sync App (GITHUB_APP_ID=%s) is installed on %s\n' \
+      "$sync_app_id" "$org"
+  else
+    # `gh api ... --jq` fails closed two ways we must not conflate with "not
+    # installed": a non-zero exit (missing admin:org scope, network, a
+    # revoked token) and empty output from an otherwise-successful call —
+    # both are treated as UNVERIFIED, never as "installed", so a broken token
+    # never reads as a clean bill of health (R4 / #382).
+    local sync_rows sync_found_id="" sync_found_slug=""
+    if sync_rows="$(gh api "orgs/$org/installations" \
+        --jq '.installations[] | "\(.app_id) \(.app_slug)"' 2>/dev/null)" && [ -n "$sync_rows" ]; then
+      sync_found_id="$(printf '%s\n' "$sync_rows" | awk -v id="$sync_app_id" '$1==id{print $1; exit}')"
+      sync_found_slug="$(printf '%s\n' "$sync_rows" | awk -v id="$sync_app_id" '$1==id{print $2; exit}')"
+      if [ "$sync_found_id" = "$sync_app_id" ]; then
+        printf '%s✅ sync App (GITHUB_APP_ID=%s) installed on %s%s\n' \
+          "$C_GREEN" "$sync_app_id" "$org" "$C_RESET"
+      else
+        # Not among the org's current installations, so its slug cannot be
+        # known from this same response either — fall back to the generic
+        # installations settings page.
+        printf '%s❌ sync App (GITHUB_APP_ID=%s) not installed on %s%s\n' \
+          "$C_RED" "$sync_app_id" "$org" "$C_RESET"
+        if [ -n "$sync_found_slug" ]; then
+          printf '    install it: https://github.com/organizations/%s/settings/apps/%s/installations\n' \
+            "$org" "$sync_found_slug"
+        else
+          printf '    install it: https://github.com/organizations/%s/settings/installations\n' "$org"
+        fi
+        crc=1
+      fi
+    else
+      printf '%s❌ sync App (GITHUB_APP_ID=%s) not verified (gh api orgs/%s/installations failed — the token needs admin:org scope)%s\n' \
+        "$C_RED" "$sync_app_id" "$org" "$C_RESET"
+      crc=1
+    fi
+  fi
+  return $crc
+}
+
 cmd_doctor() {
   require_env_file
   local org; org="$(env_val GITHUB_ORG)"
-  local rc=0 t id cell name want_v have vis
+  local rc=0 t id cell name want_v have vis forks
 
   # Check (a) — ADMIN_LOGINS (issue #382). Always checked, regardless of
   # Secure Development: an event with no admins is broken either way, and the
@@ -469,7 +532,9 @@ cmd_doctor() {
   # loudly above; SD-off simply has nothing further to check here.
   [ -n "$org" ] || return $rc
 
-  if gh_ok "orgs/$org"; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf 'DRY-RUN: would check that org %s exists\n\n' "$org"
+  elif gh_ok "orgs/$org"; then
     printf '%s✅ org %s%s\n\n' "$C_GREEN" "$org" "$C_RESET"
   else
     printf '%s⚠️  org %s — create it: https://github.com/account/organizations/new%s\n\n' "$C_YELLOW" "$org" "$C_RESET"
@@ -492,6 +557,16 @@ cmd_doctor() {
   # exits 0 with empty output on a missing/unreadable/empty file, so this
   # runs once, up front, before any of them.
   require_targets
+
+  # --dry-run makes no gh call (AGENTS.md, #496 M20): name what the live run
+  # would read, run the one check that narrates itself, and stop here —
+  # before the matrix, visibility, package, workflow-version and grant reads.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf 'DRY-RUN: would check, for each target in targets.tsv: the provisioning matrix, fork visibility against the launch, the scoring-workflow version and the package Read grant\n'
+    printf 'DRY-RUN: would check that ghcr.io/%s/score is private\n' "$org"
+    doctor_check_sync_app "$org" || rc=1
+    return $rc
+  fi
 
   # Secure Development IS on: every event provisions all six targets.tsv
   # targets (config v2 PR2, #386) — which ones actually RUN is chosen at
@@ -534,7 +609,16 @@ cmd_doctor() {
       vis="$(fork_visibility "$org/$name")" || vis=""
       if [ "$doctor_launch" = not-launched ] && [ "$vis" = public ]; then
         [ "$vis_note" -eq 1 ] || echo; vis_note=1
-        printf '%s⚠️  %s is public before launch — contestants can see its ctf branch; detach it and run '"'"'ctf-setup.sh private'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET"
+        # `private` deliberately leaves a fork contestants already forked
+        # public (making it private would cut their forks off), so it is not
+        # the advice for one (#496 M18).
+        forks="$(gh api "repos/$org/$name" --jq '.forks_count' 2>/dev/null)" || forks=""
+        case "$forks" in
+          ''|0|*[!0-9]*)
+            printf '%s⚠️  %s is public before launch — contestants can see its ctf branch; detach it and run '"'"'ctf-setup.sh private'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET" ;;
+          *)
+            printf '%s⚠️  %s is public before launch and already has %s — leave it public: '"'"'ctf-setup.sh private'"'"' skips it on purpose, since making it private would cut those forks off.%s\n' "$C_YELLOW" "$name" "$(plural "$forks" fork forks)" "$C_RESET" ;;
+        esac
       elif [ -z "$vis" ]; then
         [ "$vis_note" -eq 1 ] || echo; vis_note=1
         printf 'ℹ️  could not read %s'"'"'s visibility (GitHub did not answer).\n' "$name"
@@ -553,53 +637,7 @@ cmd_doctor() {
     printf '%s⚠️  scorer package NOT private (or missing) — keep it private: https://github.com/orgs/%s/packages%s\n' "$C_YELLOW" "$org" "$C_RESET"
   fi
 
-  # Check (c) — the sync GitHub App (GITHUB_APP_ID) is installed on the org
-  # (issue #382). Only meaningful when Secure Development runs at all: an
-  # app-only event has no poller/pusher that needs a token, so there is
-  # nothing to verify — but we are past the `runs_secdev` early-return above,
-  # so it is always true here.
-  local sync_app_id; sync_app_id="$(env_val GITHUB_APP_ID)"
-  if [ -z "$sync_app_id" ]; then
-    printf '%s❌ GITHUB_APP_ID is empty in %s — sync cannot mint tokens without it%s\n' \
-      "$C_RED" "${OUT:-.env}" "$C_RESET"
-    rc=1
-  elif [ "$DRY_RUN" -eq 1 ]; then
-    printf 'DRY-RUN: would check whether the sync App (GITHUB_APP_ID=%s) is installed on %s\n' \
-      "$sync_app_id" "$org"
-  else
-    # `gh api ... --jq` fails closed two ways we must not conflate with "not
-    # installed": a non-zero exit (missing admin:org scope, network, a
-    # revoked token) and empty output from an otherwise-successful call —
-    # both are treated as UNVERIFIED, never as "installed", so a broken token
-    # never reads as a clean bill of health (R4 / #382).
-    local sync_rows sync_found_id="" sync_found_slug=""
-    if sync_rows="$(gh api "orgs/$org/installations" \
-        --jq '.installations[] | "\(.app_id) \(.app_slug)"' 2>/dev/null)" && [ -n "$sync_rows" ]; then
-      sync_found_id="$(printf '%s\n' "$sync_rows" | awk -v id="$sync_app_id" '$1==id{print $1; exit}')"
-      sync_found_slug="$(printf '%s\n' "$sync_rows" | awk -v id="$sync_app_id" '$1==id{print $2; exit}')"
-      if [ "$sync_found_id" = "$sync_app_id" ]; then
-        printf '%s✅ sync App (GITHUB_APP_ID=%s) installed on %s%s\n' \
-          "$C_GREEN" "$sync_app_id" "$org" "$C_RESET"
-      else
-        # Not among the org's current installations, so its slug cannot be
-        # known from this same response either — fall back to the generic
-        # installations settings page.
-        printf '%s❌ sync App (GITHUB_APP_ID=%s) not installed on %s%s\n' \
-          "$C_RED" "$sync_app_id" "$org" "$C_RESET"
-        if [ -n "$sync_found_slug" ]; then
-          printf '    install it: https://github.com/organizations/%s/settings/apps/%s/installations\n' \
-            "$org" "$sync_found_slug"
-        else
-          printf '    install it: https://github.com/organizations/%s/settings/installations\n' "$org"
-        fi
-        rc=1
-      fi
-    else
-      printf '%s❌ sync App (GITHUB_APP_ID=%s) not verified (gh api orgs/%s/installations failed — the token needs admin:org scope)%s\n' \
-        "$C_RED" "$sync_app_id" "$org" "$C_RESET"
-      rc=1
-    fi
-  fi
+  doctor_check_sync_app "$org" || rc=1
 
   # No API exposes the per-fork "Manage Actions access" grants directly, so
   # this is verified by OBSERVATION instead — see `pull_grant_status`. It is
@@ -1068,7 +1106,7 @@ privatize_forks() {
       0) ;;
       ''|*[!0-9]*) echo "  ❌ $name: could not read its fork count" >&2; rc=1; continue ;;
       *)
-        printf '%s⚠️  %s already has %s forks — left public: making it private now would cut those forks off from it.%s\n' "$C_YELLOW" "$name" "$forks" "$C_RESET"
+        printf '%s⚠️  %s already has %s — left public: making it private now would cut those forks off from it.%s\n' "$C_YELLOW" "$name" "$(plural "$forks" fork forks)" "$C_RESET"
         continue
         ;;
     esac

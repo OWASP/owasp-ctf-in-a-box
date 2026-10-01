@@ -3859,7 +3859,12 @@ origin by `/api/event/logo` and `/api/event/icon`, the same shape as the
 sponsor logos (ADR 57): only the decoded bytes decide acceptance, SVG is
 refused, and the route fails closed while the pages fail open to the
 defaults. An uploaded logo **leads** the hero and the OWASP mark stays beside
-it, smaller — the organizer adds a logo, never removes OWASP's. The built-in
+it, smaller — the organizer adds a logo, never removes OWASP's. The logo is
+bounded by a box (up to 192 px tall, 24 rem wide), not a fixed height, so a
+portrait badge is as present as a wide wordmark (#538). The OWASP mark carries
+the caption "Built with OWASP CTF in a Box", linking to the project: it credits
+the kit the event runs on, and says nothing that would read as OWASP
+organizing or endorsing the event. The built-in
 icons moved from `src/app/` to `public/`, because Next.js file-convention
 icons always override `metadata.icons`.
 

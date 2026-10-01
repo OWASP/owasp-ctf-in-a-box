@@ -300,7 +300,9 @@ The panel offers:
   Below the fields, two **images** (issue #529) — each picked from a file,
   saved at once, and undone with **Restore default**:
   - **Logo** — PNG, JPEG or WebP, up to 128 KB and 4096 px a side. It leads
-    the landing page's hero, and a smaller OWASP mark stays beside it: the
+    the landing page's hero (shown up to 192 px tall and 24 rem wide, whatever
+    its shape), and a smaller OWASP mark stays beside it, captioned "Built
+    with OWASP CTF in a Box": the
     OWASP Project Policy wants OWASP branding prominent on any domain the kit
     runs on, so an event adds its logo and never removes OWASP's (ADR 65).
     It is shown as uploaded on the dark navy hero — upload a version made for

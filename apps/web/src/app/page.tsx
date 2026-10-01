@@ -261,9 +261,12 @@ export default async function Home({
               Project Policy wants OWASP branding prominent on any domain the
               kit runs on, so an organizer adds a logo, never removes OWASP's. */}
           {eventLogo ? (
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-              {/* A plain <img>, as for the sponsor logos: next/image would
-                  re-fetch our own image route through its optimizer. */}
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-4">
+              {/* The event's logo is the main presence (#538): bounded by a
+                  box, not a fixed height, so a portrait badge, a square and a
+                  wide wordmark each fill it. A plain <img>, as for the sponsor
+                  logos: next/image would re-fetch our own image route through
+                  its optimizer. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={eventImageUrl("logo", eventLogo)}
@@ -271,9 +274,25 @@ export default async function Home({
                 width={eventLogo.w}
                 height={eventLogo.h}
                 decoding="async"
-                className="h-16 w-auto max-w-full object-contain sm:h-20"
+                className="h-auto w-auto max-h-36 max-w-[min(100%,24rem)] object-contain sm:max-h-48"
               />
-              <Image src="/owasp-logo.png" alt="OWASP" width={100} height={35} className="invert opacity-80" />
+              {/* OWASP beside it, credited for what it is — the kit this
+                  event runs on — never as an organizer or an endorsement. */}
+              <a
+                href={event.owaspProjectUrl}
+                className="group flex flex-col items-start gap-1.5 sm:border-l sm:border-white/10 sm:pl-6"
+              >
+                <Image
+                  src="/owasp-logo.png"
+                  alt="OWASP"
+                  width={88}
+                  height={30}
+                  className="invert opacity-70 transition-opacity group-hover:opacity-100"
+                />
+                <span className="font-mono text-[11px] tracking-wide text-[#8f8f9b] transition-colors group-hover:text-zinc-300">
+                  Built with OWASP CTF in a Box
+                </span>
+              </a>
             </div>
           ) : (
             <Image

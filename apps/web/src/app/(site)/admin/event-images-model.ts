@@ -11,6 +11,7 @@ import {
   EVENT_LOGO_MAX_DIMENSION,
   type EventImageMeta,
   type EventImageSlot,
+  type EventImagesMeta,
 } from "@/lib/event-images-keys";
 
 export const SLOT_LABEL: Record<EventImageSlot, string> = { logo: "Logo", icon: "Favicon" };
@@ -71,4 +72,60 @@ export async function prepareUpload(
   const size = await decode();
   if (!size) return "That file does not open as an image.";
   return checkPickedDimensions(slot, size.w, size.h);
+}
+
+/** The section's state. Each slot has its OWN in-flight guard, taken before
+ *  any async validation and released only by that slot's own finish/fail, so
+ *  a favicon upload can never re-enable a logo upload still in flight — two
+ *  overlapping writes to one slot could land out of order in Redis. Nothing
+ *  is editable until the first read lands (`loaded`), so a slow first read
+ *  can never overwrite what an upload just saved. */
+export type ImagesState = {
+  images: EventImagesMeta;
+  loaded: boolean;
+  loadError: string | null;
+  busy: Record<EventImageSlot, boolean>;
+};
+
+export type ImagesAction =
+  | { type: "loaded"; images: EventImagesMeta }
+  | { type: "load-failed"; message: string }
+  | { type: "start"; slot: EventImageSlot }
+  | { type: "finish"; slot: EventImageSlot; image: EventImageMeta | null }
+  | { type: "fail"; slot: EventImageSlot };
+
+export const INITIAL_IMAGES_STATE: ImagesState = {
+  images: {},
+  loaded: false,
+  loadError: null,
+  busy: { logo: false, icon: false },
+};
+
+export function imagesReducer(state: ImagesState, action: ImagesAction): ImagesState {
+  switch (action.type) {
+    case "loaded":
+      return { ...state, images: action.images, loaded: true, loadError: null };
+    case "load-failed":
+      return { ...state, loadError: action.message };
+    case "start":
+      return { ...state, busy: { ...state.busy, [action.slot]: true } };
+    case "finish": {
+      const images = { ...state.images };
+      if (action.image) images[action.slot] = action.image;
+      else delete images[action.slot];
+      return { ...state, images, busy: { ...state.busy, [action.slot]: false } };
+    }
+    case "fail":
+      return { ...state, busy: { ...state.busy, [action.slot]: false } };
+  }
+}
+
+/** Whether a slot's controls are disabled. */
+export function isPending(state: ImagesState, slot: EventImageSlot): boolean {
+  return !state.loaded || state.loadError !== null || state.busy[slot];
+}
+
+/** Whether an operation on this slot may begin now. */
+export function canStart(state: ImagesState, slot: EventImageSlot): boolean {
+  return !isPending(state, slot);
 }

@@ -9,12 +9,21 @@
 // preview then comes from our own versioned route. Nothing about the picked
 // file itself ever reaches the DOM (the CodeQL js/xss-through-dom finding the
 // sponsor dialog had to design around), and there is no unsaved draft state
-// to lose.
+// to lose. State and its guards live in event-images-model.ts's reducer.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { EVENT_IMAGE_MIME_TYPES, EVENT_IMAGE_SLOTS, eventImageUrl, type EventImageMeta, type EventImageSlot, type EventImagesMeta } from "@/lib/event-images-keys";
 import { fileToBase64 } from "./sponsor-editor-dialog";
-import { describeStoredImage, prepareUpload, SLOT_HELP, SLOT_LABEL } from "./event-images-model";
+import {
+  canStart,
+  describeStoredImage,
+  imagesReducer,
+  INITIAL_IMAGES_STATE,
+  isPending,
+  prepareUpload,
+  SLOT_HELP,
+  SLOT_LABEL,
+} from "./event-images-model";
 
 export type RowStatus = { state: "saving" | "saved" | "error"; message: string } | null;
 
@@ -115,13 +124,12 @@ async function errorOf(res: Response): Promise<string> {
 }
 
 export default function AdminEventImages() {
-  const [images, setImages] = useState<EventImagesMeta>({});
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(imagesReducer, INITIAL_IMAGES_STATE);
   const [status, setStatus] = useState<Partial<Record<EventImageSlot, RowStatus>>>({});
-  const [busy, setBusy] = useState<EventImageSlot | null>(null);
-  // Which write is the latest per slot: a slow, older one must not overwrite
-  // the result of a newer one (the sponsor dialog's pickSeq, for the same race).
-  const seq = useRef<Record<EventImageSlot, number>>({ logo: 0, icon: 0 });
+  // The same per-slot guard as `state.busy`, read synchronously: two change
+  // events in one tick both see the pre-render state, and only the first may
+  // start (see imagesReducer for why one slot never runs two writes at once).
+  const inFlight = useRef<Record<EventImageSlot, boolean>>({ logo: false, icon: false });
 
   useEffect(() => {
     let cancelled = false;
@@ -131,10 +139,10 @@ export default function AdminEventImages() {
         return (await res.json()) as { images: EventImagesMeta };
       })
       .then((body) => {
-        if (!cancelled) setImages(body.images);
+        if (!cancelled) dispatch({ type: "loaded", images: body.images });
       })
       .catch((err: unknown) => {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : "Could not read the event images.");
+        if (!cancelled) dispatch({ type: "load-failed", message: err instanceof Error ? err.message : "Could not read the event images." });
       });
     return () => {
       cancelled = true;
@@ -143,75 +151,81 @@ export default function AdminEventImages() {
 
   const report = (slot: EventImageSlot, s: RowStatus) => setStatus((prev) => ({ ...prev, [slot]: s }));
 
-  async function pick(slot: EventImageSlot, file: File) {
-    // Checks first, and only a file that passes them takes a sequence
-    // number: a refused pick must not orphan a save already in flight.
-    const refused = await prepareUpload(slot, file, () => decodedSize(file));
-    if (refused) return report(slot, { state: "error", message: refused });
-    const mine = ++seq.current[slot];
-
-    setBusy(slot);
-    report(slot, { state: "saving", message: "Uploading…" });
+  /** Runs one operation on one slot under that slot's guard, taken BEFORE
+   *  anything async (validation included) and released only here. */
+  async function guarded(slot: EventImageSlot, op: () => Promise<EventImageMeta | null | "refused">) {
+    if (inFlight.current[slot] || !canStart(state, slot)) return;
+    inFlight.current[slot] = true;
+    dispatch({ type: "start", slot });
+    let outcome: EventImageMeta | null | "refused" | "failed" = "failed";
     try {
+      outcome = await op();
+    } catch {
+      report(slot, { state: "error", message: "Request failed — check the connection and try again." });
+    } finally {
+      inFlight.current[slot] = false;
+      if (outcome === "refused" || outcome === "failed") dispatch({ type: "fail", slot });
+      else dispatch({ type: "finish", slot, image: outcome });
+    }
+  }
+
+  function pick(slot: EventImageSlot, file: File) {
+    void guarded(slot, async () => {
+      const refused = await prepareUpload(slot, file, () => decodedSize(file));
+      if (refused) {
+        report(slot, { state: "error", message: refused });
+        return "refused";
+      }
+      report(slot, { state: "saving", message: "Uploading…" });
       const data = await fileToBase64(file);
       const res = await fetch("/api/admin/event-images", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ slot, data, declaredType: file.type }),
       });
-      if (mine !== seq.current[slot]) return;
-      if (!res.ok) return report(slot, { state: "error", message: await errorOf(res) });
+      if (!res.ok) {
+        report(slot, { state: "error", message: await errorOf(res) });
+        return "refused";
+      }
       const body = (await res.json()) as { image: EventImageMeta };
-      setImages((prev) => ({ ...prev, [slot]: body.image }));
       report(slot, { state: "saved", message: "Saved — shows on the next page load." });
-    } catch {
-      if (mine === seq.current[slot]) report(slot, { state: "error", message: "Upload failed — check the connection and try again." });
-    } finally {
-      setBusy((b) => (b === slot ? null : b));
-    }
+      return body.image;
+    });
   }
 
-  async function restore(slot: EventImageSlot) {
-    const mine = ++seq.current[slot];
-    setBusy(slot);
-    report(slot, { state: "saving", message: "Restoring the default…" });
-    try {
+  function restore(slot: EventImageSlot) {
+    void guarded(slot, async () => {
+      report(slot, { state: "saving", message: "Restoring the default…" });
       const res = await fetch("/api/admin/event-images", {
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ slot }),
       });
-      if (mine !== seq.current[slot]) return;
-      if (!res.ok) return report(slot, { state: "error", message: await errorOf(res) });
-      setImages((prev) => {
-        const next = { ...prev };
-        delete next[slot];
-        return next;
-      });
+      if (!res.ok) {
+        report(slot, { state: "error", message: await errorOf(res) });
+        return "refused";
+      }
       report(slot, { state: "saved", message: "Default restored." });
-    } catch {
-      if (mine === seq.current[slot]) report(slot, { state: "error", message: "Request failed — check the connection and try again." });
-    } finally {
-      setBusy((b) => (b === slot ? null : b));
-    }
+      return null;
+    });
   }
 
   return (
     <div className="flex flex-col gap-3">
-      {loadError && (
+      {state.loadError && (
         <p role="alert" className="text-xs text-[#e53e3e]">
-          Could not read the stored images: {loadError}
+          Could not read the stored images: {state.loadError}
         </p>
       )}
       {EVENT_IMAGE_SLOTS.map((slot) => (
         <EventImageRow
           key={slot}
           slot={slot}
-          stored={images[slot] ?? null}
-          pending={busy === slot || loadError !== null}
+          stored={state.images[slot] ?? null}
+          pending={isPending(state, slot)}
           status={status[slot] ?? null}
-          onPick={(file) => void pick(slot, file)}
-          onRestore={() => void restore(slot)}
+          onPick={(file) => pick(slot, file)}
+          onRestore={() => restore(slot)}
         />
       ))}
     </div>

@@ -3,7 +3,16 @@
 // bytes (event-images-store.ts); these only have to agree with it, so each
 // limit is read from event-images-keys.ts rather than restated.
 import { describe, expect, it } from "vitest";
-import { checkPickedDimensions, checkPickedFile, describeStoredImage, prepareUpload } from "../event-images-model";
+import {
+  canStart,
+  checkPickedDimensions,
+  checkPickedFile,
+  describeStoredImage,
+  imagesReducer,
+  INITIAL_IMAGES_STATE,
+  isPending,
+  prepareUpload,
+} from "../event-images-model";
 import { EVENT_ICON_MAX_BYTES, EVENT_LOGO_MAX_BYTES } from "@/lib/event-images-keys";
 
 describe("checkPickedFile", () => {
@@ -73,5 +82,49 @@ describe("prepareUpload", () => {
   it("refuses a file that does not decode, and one with the wrong shape", async () => {
     await expect(prepareUpload("icon", png, async () => null)).resolves.toMatch(/does not open/);
     await expect(prepareUpload("icon", png, decodeAs(64, 32))).resolves.toMatch(/square/);
+  });
+});
+
+// The section's state (PR #532 review): each slot has its own in-flight
+// guard, taken before any async validation, and nothing is editable until
+// the first read of the stored images has landed.
+describe("imagesReducer", () => {
+  const meta = { type: "image/png" as const, bytes: 24, w: 64, h: 64, etag: "0123456789abcdef" };
+  const loaded = imagesReducer(INITIAL_IMAGES_STATE, { type: "loaded", images: {} });
+
+  it("keeps both rows pending until the first read lands", () => {
+    expect(isPending(INITIAL_IMAGES_STATE, "logo")).toBe(true);
+    expect(isPending(INITIAL_IMAGES_STATE, "icon")).toBe(true);
+    expect(isPending(loaded, "logo")).toBe(false);
+  });
+
+  it("keeps both rows pending when the first read fails", () => {
+    const failed = imagesReducer(INITIAL_IMAGES_STATE, { type: "load-failed", message: "NOAUTH" });
+    expect(isPending(failed, "logo")).toBe(true);
+    expect(failed.loadError).toBe("NOAUTH");
+  });
+
+  it("refuses to start an operation before the first read lands", () => {
+    expect(canStart(INITIAL_IMAGES_STATE, "logo")).toBe(false);
+  });
+
+  it("guards each slot on its own: a favicon upload leaves a pending logo upload pending", () => {
+    let s = imagesReducer(loaded, { type: "start", slot: "logo" });
+    expect(canStart(s, "logo")).toBe(false);
+    expect(canStart(s, "icon")).toBe(true);
+    s = imagesReducer(s, { type: "start", slot: "icon" });
+    s = imagesReducer(s, { type: "finish", slot: "icon", image: meta });
+    expect(isPending(s, "logo")).toBe(true);
+    expect(canStart(s, "logo")).toBe(false);
+    expect(isPending(s, "icon")).toBe(false);
+    expect(s.images.icon).toEqual(meta);
+  });
+
+  it("finishing a restore clears the slot; a failed operation keeps what was stored", () => {
+    let s = imagesReducer(imagesReducer(loaded, { type: "finish", slot: "logo", image: meta }), { type: "start", slot: "logo" });
+    expect(imagesReducer(s, { type: "finish", slot: "logo", image: null }).images.logo).toBeUndefined();
+    s = imagesReducer(s, { type: "fail", slot: "logo" });
+    expect(s.images.logo).toEqual(meta);
+    expect(isPending(s, "logo")).toBe(false);
   });
 });

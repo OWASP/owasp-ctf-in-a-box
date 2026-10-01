@@ -36,6 +36,7 @@ import { parseBundle as parseAiBundle, type AiBundle } from "@/lib/ai-io";
 import { parseBundle as parseClassicBundle, type ClassicBundle } from "@/lib/classic-io";
 import { parseBundle as parseQuizBundle, type QuizBundle } from "@/lib/quiz-io";
 import { parseBundle as parseSponsorsBundle, type SponsorsBundle } from "@/lib/sponsors-io";
+import { EVENT_IMAGE_SLOTS, isEventImageSlot, type EventImagesBundle } from "@/lib/event-images-keys";
 
 // Bumped 1 -> 2 when `secureDevTargets` joined EVENT_POLICY_FIELDS (config
 // v2, issue #386 PR 3, CodeRabbit round 1): a box running the OLD code (the
@@ -109,6 +110,9 @@ export type EventBundle = {
    *  classic section carries only metadata; these fill it on import. Each
    *  must match a classic upload's `(item, sha256)` in this same archive. */
   attachmentFiles?: AttachmentFile[];
+  /** The event's own logo and favicon (#529). Optional and additive, like
+   *  `attachmentFiles`: a box built before it ignores the key. */
+  eventImages?: EventImagesBundle;
 };
 
 export type AttachmentFile = { item: string; sha256: string; bytes: string };
@@ -275,6 +279,11 @@ export function parseEventBundle(raw: string): EventParseResult {
     attachmentFiles = validateAttachmentFiles(parsed.attachmentFiles, classic, parsed.classic !== undefined, errors);
   }
 
+  let eventImages: EventImagesBundle | undefined;
+  if (parsed.eventImages !== undefined) {
+    eventImages = validateEventImagesSection(parsed.eventImages, errors);
+  }
+
   if (errors.length > 0) return { ok: false, errors };
 
   // Every check above passed (errors.length === 0), so `parsed.event` and
@@ -289,6 +298,7 @@ export function parseEventBundle(raw: string): EventParseResult {
     ...(ai !== undefined ? { ai } : {}),
     ...(sponsors !== undefined ? { sponsors } : {}),
       ...(attachmentFiles ? { attachmentFiles } : {}),
+    ...(eventImages ? { eventImages } : {}),
   };
   return { ok: true, bundle };
 }
@@ -357,5 +367,33 @@ function validateAttachmentFiles(
     }
     out.push({ item: f.item, sha256: f.sha256, bytes: f.bytes });
   });
+  return out;
+}
+
+/** The `eventImages` section's SHAPE (#529): an object of known slots, each
+ *  `{ data: string }`. The bytes themselves are sniffed by
+ *  event-images-store's `validateEventImagesBundle`, which the import runs
+ *  before anything destructive. Errors name the position, never the value or
+ *  key that was sent (#500). */
+function validateEventImagesSection(raw: unknown, errors: EventImportError[]): EventImagesBundle | undefined {
+  if (!isPlainObject(raw)) {
+    errors.push({ where: "eventImages", message: '"eventImages" must be an object' });
+    return undefined;
+  }
+  const unknown = Object.keys(raw).filter((k) => !isEventImageSlot(k));
+  if (unknown.length > 0) {
+    errors.push({ where: "eventImages", message: `field not allowed (${unknown.length}) — the slots are ${EVENT_IMAGE_SLOTS.join(", ")}` });
+  }
+  const out: EventImagesBundle = {};
+  for (const slot of EVENT_IMAGE_SLOTS) {
+    const entry = raw[slot];
+    if (entry === undefined) continue;
+    const where = `eventImages.${slot}`;
+    if (!isPlainObject(entry) || typeof entry.data !== "string" || Object.keys(entry).some((k) => k !== "data")) {
+      errors.push({ where, message: `"${where}" must be an object with only a string "data"` });
+      continue;
+    }
+    out[slot] = { data: entry.data };
+  }
   return out;
 }

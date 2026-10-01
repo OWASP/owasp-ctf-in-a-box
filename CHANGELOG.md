@@ -10,6 +10,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Added: an event logo and favicon, set in `/admin` → Event (#529).**
+  Organizers can upload a logo (PNG, JPEG or WebP, up to 128 KB) that leads
+  the landing page's hero, with a smaller OWASP mark kept beside it, and a
+  favicon (a square PNG, 32–512 px). **Restore default** puts the built-in
+  ones back. The files' real bytes are checked and SVG is refused; both are
+  served from the box itself, kept by a master reset, and carried by the
+  event archive. No rebuild is needed to brand an event any more.
+
 - **Fixed: a failed Redis read no longer zeroes quiz, Jeopardy or AI points
   in silence (#523).** The per-contestant totals, and the hint-penalty total,
   read their hashes without checking the reply's error, so a `WRONGTYPE`,

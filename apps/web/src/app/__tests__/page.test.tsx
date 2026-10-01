@@ -89,10 +89,20 @@ vi.mock("next/font/google", () => {
   return { Poppins: font, Barlow: font, Geist_Mono: font };
 });
 vi.mock("next/image", () => ({
-  default: ({ src, alt }: { src: string; alt: string }) => (
+  default: ({ src, alt, className }: { src: string; alt: string; className?: string }) => (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt={alt} />
+    <img src={src} alt={alt} className={className} />
   ),
+}));
+// The event's own images (#529). Empty by default (the built-in OWASP mark and
+// favicon); the hero-logo tests below set one for a single render, or make the
+// read fail.
+const eventImages = vi.hoisted(() => ({ data: {} as Record<string, unknown>, fail: false }));
+vi.mock("@/lib/event-images-store", () => ({
+  getEventImagesMeta: async () => {
+    if (eventImages.fail) throw new Error("NOAUTH");
+    return eventImages.data;
+  },
 }));
 
 import Home from "@/app/page";
@@ -537,6 +547,73 @@ describe("the landing page credits its sponsors once (#474)", () => {
       expect(withSponsor.match(/Sponsored by/g)?.length).toBe(1);
     } finally {
       sponsorList.data = [];
+    }
+  });
+});
+
+describe("the hero logo (#529)", () => {
+  const logo = { type: "image/png", bytes: 2048, w: 480, h: 160, etag: "0123456789abcdef" };
+  const imgTags = (markup: string) => markup.match(/<img[^>]*>/g) ?? [];
+
+  async function render(data: Record<string, unknown>, fail = false): Promise<string> {
+    eventImages.data = data;
+    eventImages.fail = fail;
+    try {
+      return await Home().then(renderToStaticMarkup);
+    } finally {
+      eventImages.data = {};
+      eventImages.fail = false;
+    }
+  }
+
+  it("shows the OWASP mark, inverted for the navy hero, when no logo is set", () => {
+    const owasp = imgTags(html).find((t) => t.includes('src="/owasp-logo.png"'));
+    expect(owasp).toContain("invert");
+    expect(html).not.toContain("/api/event/logo");
+  });
+
+  it("shows the organizer's logo, as uploaded, with a smaller OWASP mark kept beside it", async () => {
+    const markup = await render({ logo });
+    const custom = imgTags(markup).find((t) => t.includes('src="/api/event/logo?v=0123456789abcdef"'));
+    expect(custom).toBeDefined();
+    expect(custom).not.toContain("invert");
+    expect(custom).toContain('width="480"');
+    expect(custom).toContain('height="160"');
+    // The Project Policy's OWASP mark stays on the page, still inverted.
+    const owasp = imgTags(markup).find((t) => t.includes('src="/owasp-logo.png"'));
+    expect(owasp).toContain("invert");
+  });
+
+  it("falls back to the default hero when the image read fails", async () => {
+    const markup = await render({ logo }, true);
+    expect(markup).not.toContain("/api/event/logo");
+    expect(markup).toContain('src="/owasp-logo.png"');
+  });
+});
+
+describe("the favicon follows the stored icon (#529)", () => {
+  const icon = { type: "image/png", bytes: 900, w: 64, h: 64, etag: "fedcba9876543210" };
+
+  it("points at the built-in icons when none is stored", () => {
+    expect(metadata.icons).toEqual({ icon: [{ url: "/favicon.ico", sizes: "any" }, { url: "/icon.png", type: "image/png" }] });
+  });
+
+  it("points at the stored icon, versioned by its etag, when one is set", async () => {
+    eventImages.data = { icon };
+    try {
+      const m = await generateMetadata();
+      expect(m.icons).toEqual({ icon: [{ url: "/api/event/icon?v=fedcba9876543210", type: "image/png", sizes: "64x64" }] });
+    } finally {
+      eventImages.data = {};
+    }
+  });
+
+  it("falls back to the built-in icons when the read fails", async () => {
+    eventImages.fail = true;
+    try {
+      expect((await generateMetadata()).icons).toEqual(metadata.icons);
+    } finally {
+      eventImages.fail = false;
     }
   });
 });

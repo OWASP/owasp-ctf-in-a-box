@@ -287,3 +287,39 @@ describe("archive-level errors never echo the submitted value (#500)", () => {
     expectNoEcho(errorsOf({ ...valid, sponsors: { version: 1, sponsors: [sponsor, sponsor] } }), "sponsors.sponsors[1].id", PLANTED_ID);
   });
 });
+
+// #529: the event's own images ride as `eventImages`. The parser checks only
+// the shape — the bytes are sniffed by event-images-store before the import
+// runs anything destructive — and, like every other archive error, names the
+// position and the rule, never the submitted value.
+describe("the eventImages section", () => {
+  const PLANTED = "planted-do-not-echo";
+  const errorsOf = (bundle: unknown) => {
+    const res = parseEventBundle(JSON.stringify(bundle));
+    if (res.ok) throw new Error("expected the bundle to be rejected, but it parsed");
+    return res.errors;
+  };
+
+  it("round-trips a logo and an icon", () => {
+    const withImages = { ...valid, eventImages: { logo: { data: "AAAA" }, icon: { data: "BBBB" } } };
+    const res = parseEventBundle(serializeEventBundle(withImages));
+    expect(res.ok && res.bundle.eventImages).toEqual(withImages.eventImages);
+  });
+
+  it("is optional: a bundle without it parses with no eventImages key", () => {
+    const res = parseEventBundle(serializeEventBundle(valid));
+    expect(res.ok && "eventImages" in res.bundle).toBe(false);
+  });
+
+  it.each([
+    ["not an object", ["logo"], "eventImages"],
+    ["an unknown slot", { [PLANTED]: { data: "AAAA" } }, "eventImages"],
+    ["a slot that is not an object", { logo: PLANTED }, "eventImages.logo"],
+    ["non-string data", { icon: { data: 7 } }, "eventImages.icon"],
+    ["an extra key in a slot", { logo: { data: "AAAA", [PLANTED]: 1 } }, "eventImages.logo"],
+  ])("rejects %s, naming the position without echoing it", (_n, eventImages, where) => {
+    const errors = errorsOf({ ...valid, eventImages });
+    expect(errors.some((e) => e.where === where)).toBe(true);
+    expect(JSON.stringify(errors)).not.toContain(PLANTED);
+  });
+});

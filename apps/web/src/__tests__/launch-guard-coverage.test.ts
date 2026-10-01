@@ -46,6 +46,8 @@ const API_EXEMPT: Record<string, string> = {
   "api/public/scoring/route.ts": "scoring policy numbers a fork's Action needs",
   "api/stats/visit/route.ts": "a per-country counter",
   "api/sponsors/logo/[id]/route.ts": "sponsor logos, shown on the landing page",
+  "api/event/logo/route.ts": "the event logo (#529), shown on the landing page",
+  "api/event/icon/route.ts": "the event favicon (#529), on every page",
   "api/ai/launch-key/route.ts": "a public key",
   "api/ai/submit/route.ts": "token-authenticated; the lock is enforced where the token is minted (/ai/[id])",
   "api/ai/event/route.ts": "token-authenticated; the lock is enforced where the token is minted (/ai/[id])",

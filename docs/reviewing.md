@@ -153,14 +153,14 @@ rebuild. The last three of those are machine-enforced as well: `.coderabbit.yaml
 carries path instructions for `bootstrap-env.ts` and the snapshot readers, and
 for `apps/web/src/**/*.tsx` (the client-bundle read and the prerendered `/`).
 
-**11. The public surface is a named list, not a shape.** Exactly six routes
+**11. The public surface is a named list, not a shape.** Exactly eight routes
 under `/api` answer without a session or a verified launch token, and each is
 on the list for its own stated reason — a sixth does not inherit an exemption
-by resembling one that has it; it needs its own case. Five are read-only,
+by resembling one that has it; it needs its own case. Seven are read-only,
 policy or public-by-design content out and never facts in, nothing secret in
 the response: `GET /api/public/scoring`, `GET /api/ai/launch-key`, `GET
-/api/board/items`, `GET /api/sponsors/logo/[id]` and `GET
-/api/attachments/[id]`. One is a POST that exists
+/api/board/items`, `GET /api/sponsors/logo/[id]`, `GET
+/api/attachments/[id]`, `GET /api/event/logo` and `GET /api/event/icon`. One is a POST that exists
 *before* identity: `POST /api/stats/visit` (the approximate, no-PII
 per-country reach counter, always `204`, whose own header comment documents
 that it is not a security boundary). The pre-event password check
@@ -199,7 +199,15 @@ which is why it needs no session. It answers `403 not-launched` before launch
 disabled module applies to downloads too; a hidden, unknown or malformed id is
 one bodiless `404`. The bytes are always served as a download
 (`application/octet-stream`, `Content-Disposition: attachment`, `nosniff`,
-`private, no-store`), never rendered from the box's origin.
+`private, no-store`), never rendered from the box's origin. `event/logo` and
+`event/icon` (issue #529, ADR 65) serve the event's own hero logo and favicon,
+and are public before launch on purpose: the landing page and every tab show
+them. They are the sponsor logo's shape with no id at all — a fixed slot per
+route, so there is nothing to validate before the Redis read — and serve only
+PNG/JPEG/WebP bytes an organizer uploaded to be shown, already sniffed by
+magic number at upload (never SVG). The finding to watch for is the same as
+for the sponsor logo: anything beyond those bytes and their content-type
+metadata in the response.
 
 **12. `requireAdmin` gates per-contestant data by default; self-service reads
 are the one carve-out, and it's narrow.** A route returning points,

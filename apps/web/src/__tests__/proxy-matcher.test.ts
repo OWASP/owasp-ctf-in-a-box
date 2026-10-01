@@ -41,6 +41,7 @@ describe("the proxy matcher, compiled by Next", () => {
     "/api/admin/events",
     "/api/admin/eventx",
     "/api/admin/event/extra",
+    "/api/admin/event-images",
     "/api/admin/settings",
     "/api/admin/attachments",
     "/api/admin/classic",

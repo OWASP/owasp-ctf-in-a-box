@@ -412,10 +412,11 @@ reviews:
 
         Public surface growth — GET /api/public/scoring, GET
         /api/ai/launch-key, GET /api/board/items, GET
-        /api/sponsors/logo/[id] and GET /api/attachments/[id] are the ONLY
+        /api/sponsors/logo/[id], GET /api/attachments/[id], GET
+        /api/event/logo and GET /api/event/icon are the ONLY
         sanctioned unauthenticated GET routes, and POST /api/stats/visit (the
         no-PII per-country reach counter, always 204) the ONLY sanctioned
-        unauthenticated POST — the same six docs/reviewing.md invariant 11
+        unauthenticated POST — the same eight docs/reviewing.md invariant 11
         names (the pre-event password
         check, POST /api/gate, was removed in #464; do not restore it). The
         GETs must stay read-only, policy or public-by-design content out and
@@ -435,9 +436,12 @@ reviews:
         attachments/[id] (issue #186, ADR 61) serves a classic challenge's
         uploaded file only to a viewer the challenge's own page would show it
         to (403 not-launched before launch, then classicVisibility — story
-        lock and module switch included), always as an opaque download.
+        lock and module switch included), always as an opaque download;
+        event/logo and event/icon (issue #529, ADR 65) serve the event's own
+        hero logo and favicon, public before launch on purpose, one fixed
+        slot per route and only bytes sniffed at upload (never SVG).
         Flag any OTHER new unauthenticated route, any secret appearing in any
-        of the five payloads, and anything letting a fork report facts to
+        of the seven payloads, and anything letting a fork report facts to
         the box rather than only read policy from it.
 
         Origin assertion bypass — a mutating route opting out of the

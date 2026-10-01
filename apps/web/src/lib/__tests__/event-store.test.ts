@@ -10,6 +10,7 @@ import { DEFAULT_SECURE_DEV_TARGETS } from "@/lib/secure-dev-targets";
 const m = vi.hoisted(() => ({
   exportClassic: vi.fn(), exportQuiz: vi.fn(), exportAi: vi.fn(), exportSponsors: vi.fn(), importSponsors: vi.fn(),
   validateBundleLogos: vi.fn(),
+  exportEventImages: vi.fn(), importEventImages: vi.fn(), validateEventImagesBundle: vi.fn(),
   getAdminSettings: vi.fn(), effectivePaused: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
@@ -32,6 +33,11 @@ vi.mock("@/lib/sponsors-store", () => ({
   exportBundle: m.exportSponsors,
   importBundle: m.importSponsors,
   validateBundleLogos: m.validateBundleLogos,
+}));
+vi.mock("@/lib/event-images-store", () => ({
+  exportEventImages: m.exportEventImages,
+  importEventImages: m.importEventImages,
+  validateEventImagesBundle: m.validateEventImagesBundle,
 }));
 vi.mock("@/lib/admin-store", () => ({
   getAdminSettings: m.getAdminSettings,
@@ -90,6 +96,7 @@ beforeEach(() => {
   m.exportQuiz.mockResolvedValue({ version: 1, questions: [] });
   m.exportAi.mockResolvedValue({ version: 1, categories: ["Prompt Injection"], challenges: [] });
   m.exportSponsors.mockResolvedValue(null);
+  m.exportEventImages.mockResolvedValue(null);
   m.getAdminSettings.mockResolvedValue({
     hintCost: 50, teamMaxMembers: 4, enabledModuleIds: ["classic", "quiz"],
     scoringStartsAt: "2026-01-01T00:00:00Z", paused: true, updatedBy: "alice", updatedAt: "x",
@@ -156,6 +163,16 @@ describe("exportEventBundle", () => {
     m.exportSponsors.mockResolvedValue(null);
     const withoutSponsors = await exportEventBundle(new Date());
     expect("sponsors" in withoutSponsors.bundle).toBe(false);
+  });
+
+  it("carries an eventImages section iff the store holds at least one image (#529)", async () => {
+    m.exportEventImages.mockResolvedValue({ logo: { data: "AAAA" } });
+    const withImages = await exportEventBundle(new Date());
+    expect(withImages.bundle.eventImages).toEqual({ logo: { data: "AAAA" } });
+
+    m.exportEventImages.mockResolvedValue(null);
+    const withoutImages = await exportEventBundle(new Date());
+    expect("eventImages" in withoutImages.bundle).toBe(false);
   });
 
   it("warns when the event is live", async () => {
@@ -426,6 +443,34 @@ describe("importEventBundle", () => {
     const { summary } = await importEventBundle(withSponsors, "alice");
     expect(m.importSponsors).toHaveBeenCalledWith(withSponsors.sponsors);
     expect(summary.sponsors).toEqual({ created: 1 });
+  });
+
+  // #529: the event's own images travel like its name — validated before
+  // anything destructive, written after the identity patch.
+  it("validates the event images before the reset, so a bad one leaves the event intact", async () => {
+    m.validateEventImagesBundle.mockImplementation(() => {
+      throw new Error("The favicon must be square");
+    });
+    const withImages = { ...bundleFixture(), eventImages: { icon: { data: "AAAA" } } };
+    await expect(importEventBundle(withImages, "alice")).rejects.toThrow(/square/);
+    expect(adminStore.updateAdminSettings).not.toHaveBeenCalled();
+    expect(adminStore.resetEvent).not.toHaveBeenCalled();
+    expect(m.importEventImages).not.toHaveBeenCalled();
+    m.validateEventImagesBundle.mockReset();
+  });
+
+  it("imports the event images and reports the slots in the summary", async () => {
+    m.importEventImages.mockResolvedValue({ logo: {}, icon: {} });
+    const withImages = { ...bundleFixture(), eventImages: { logo: { data: "AAAA" }, icon: { data: "BBBB" } } };
+    const { summary } = await importEventBundle(withImages, "alice");
+    expect(m.validateEventImagesBundle).toHaveBeenCalledWith(withImages.eventImages);
+    expect(m.importEventImages).toHaveBeenCalledWith(withImages.eventImages);
+    expect(summary.eventImages).toEqual({ slots: ["icon", "logo"] });
+  });
+
+  it("leaves the stored event images alone when the bundle carries none", async () => {
+    await importEventBundle(bundleFixture(), "alice");
+    expect(m.importEventImages).not.toHaveBeenCalled();
   });
 
   it("does not call importSponsors when the bundle carries no sponsors section", async () => {

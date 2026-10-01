@@ -404,6 +404,12 @@ doctor_check_sync_app() {
     printf '%s❌ GITHUB_APP_ID is empty in %s — sync cannot mint tokens without it%s\n' \
       "$C_RED" "${OUT:-.env}" "$C_RESET"
     crc=1
+  elif case "$sync_app_id" in *[!0-9]*|0*) true ;; *) false ;; esac; then
+    # Malformed is a configuration error, found before any call (#536
+    # review): an App id is a positive decimal, never 0 or a leading zero.
+    printf '%s❌ GITHUB_APP_ID must be a positive number in %s (got %s)%s\n' \
+      "$C_RED" "${OUT:-.env}" "$sync_app_id" "$C_RESET"
+    crc=1
   elif [ "$DRY_RUN" -eq 1 ]; then
     printf 'DRY-RUN: would check whether the sync App (GITHUB_APP_ID=%s) is installed on %s\n' \
       "$sync_app_id" "$org"
@@ -690,6 +696,12 @@ cmd_doctor() {
         printf '  %-18s %s✅ granted%s (a scoring run pulled the image)\n' "$t" "$C_GREEN" "$C_RESET" ;;
       MISSING)
         printf '  %-18s %s❌ MISSING%s — a run was refused the image; grant this fork Read under "Manage Actions access"\n' \
+          "$t" "$C_RED" "$C_RESET"
+        rc=1 ;;
+      error)
+        # GitHub did not answer (#536 review): fails the exit like any
+        # check_step that cannot read its evidence — not the advisory below.
+        printf '  %-18s %s❌ unreadable%s — GitHub did not answer for its scoring runs, so the grant is unchecked; re-run doctor\n' \
           "$t" "$C_RED" "$C_RESET"
         rc=1 ;;
       *)

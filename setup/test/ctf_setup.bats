@@ -1405,8 +1405,9 @@ EOF
 }
 
 # An unreachable API is not evidence of a grant. This is the same fail-closed
-# rule every check_step follows.
-@test "doctor reports unverified when the runs API itself fails" {
+# rule every check_step follows — and, like a check_step, it fails the exit
+# (#536 review): "GitHub did not answer" is not the advisory "no run yet".
+@test "doctor reports an unreadable grant as a failure when the runs API itself fails" {
   mkdir -p stubs
   cat > stubs/gh <<'EOF'
 #!/usr/bin/env bash
@@ -1417,8 +1418,9 @@ esac
 EOF
   chmod +x stubs/gh
   run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  printf '%s' "$output" | grep -qE '^  dvwa +⚠️  unverified'
+  printf '%s' "$output" | grep -qE '^  dvwa +❌ unreadable'
   [ -z "$(printf '%s' "$output" | grep -F '✅ granted')" ]
+  [ "$status" -ne 0 ]
 }
 
 # The doctor check and the workflow are coupled by one string: doctor reads
@@ -2355,7 +2357,7 @@ esac
 EOF2
   chmod +x stubs/gh
   run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  printf '%s' "$output" | grep -qE '^  dvwa +⚠️  unverified'
+  printf '%s' "$output" | grep -qE '^  dvwa +❌ unreadable'
   [ -z "$(printf '%s' "$output" | grep -E '^  dvwa +✅ granted')" ]
 }
 
@@ -2399,4 +2401,16 @@ EOF2
   run_vis doctor
   printf '%s' "$output" | grep -qF -- "could not read DVWA's fork count"
   [ -z "$(printf '%s' "$output" | grep -F -- "DVWA is public before launch — contestants can see its ctf branch; detach it and run")" ]
+}
+
+# #536 review: a GITHUB_APP_ID that is not a number is a configuration error,
+# found before any call — dry-run or not.
+@test "doctor refuses a GITHUB_APP_ID that is not a positive number (#496)" {
+  for bad in abc 0 -3 "4 2"; do
+    printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=%s\n' "$bad" > .env
+    run env NO_COLOR=1 bash "$SCRIPT" doctor --dry-run
+    printf '%s' "$output" | grep -qF -- "GITHUB_APP_ID must be a positive number" || { echo "not refused: '$bad'"; return 1; }
+    [ "$status" -ne 0 ] || { echo "exit 0 for '$bad'"; return 1; }
+  done
+  [ -z "$(printf '%s' "$output" | grep -F 'would check whether the sync App')" ]
 }

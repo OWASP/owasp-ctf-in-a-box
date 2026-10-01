@@ -53,7 +53,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   tells you to run `private` for a public fork that contestants have already
   forked, which `private` skips on purpose. "1 forks" now reads "1 fork". And
   `doctor --dry-run` makes no `gh` calls at all, as every `--dry-run`
-  promises: it lists what it would check instead.
+  promises: it lists what it would check instead. A grant GitHub would not
+  answer for is now a ❌ that fails `doctor`'s exit, not a quiet "unverified",
+  and a `GITHUB_APP_ID` that is not a positive number is reported before any
+  call.
 
 - **Fixed: a failed Redis read no longer zeroes quiz, Jeopardy or AI points
   in silence (#523).** The per-contestant totals, and the hint-penalty total,

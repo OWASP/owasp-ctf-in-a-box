@@ -129,3 +129,22 @@ export function isPending(state: ImagesState, slot: EventImageSlot): boolean {
 export function canStart(state: ImagesState, slot: EventImageSlot): boolean {
   return !isPending(state, slot);
 }
+
+/** The confirm dialog Restore default opens (the panel's shared ConfirmState,
+ *  minus the action): the uploaded file is deleted, and only the organizer's
+ *  own copy can bring it back. */
+export function restoreConfirm(slot: EventImageSlot): { title: string; body: string; confirmLabel: string; danger: boolean } {
+  return slot === "logo"
+    ? {
+        title: "Restore the built-in logo?",
+        body: "The uploaded logo is deleted from this box and the hero goes back to the OWASP mark alone. To use it again you will need to upload the file again.",
+        confirmLabel: "Restore default",
+        danger: true,
+      }
+    : {
+        title: "Restore the built-in favicon?",
+        body: "The uploaded favicon is deleted from this box and browser tabs go back to the built-in icon. To use it again you will need to upload the file again.",
+        confirmLabel: "Restore default",
+        danger: true,
+      };
+}

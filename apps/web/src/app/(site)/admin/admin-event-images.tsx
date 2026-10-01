@@ -14,6 +14,7 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { EVENT_IMAGE_MIME_TYPES, EVENT_IMAGE_SLOTS, eventImageUrl, type EventImageMeta, type EventImageSlot, type EventImagesMeta } from "@/lib/event-images-keys";
 import { fileToBase64 } from "./sponsor-editor-dialog";
+import type { ConfirmState } from "./types";
 import {
   canStart,
   describeStoredImage,
@@ -21,6 +22,7 @@ import {
   INITIAL_IMAGES_STATE,
   isPending,
   prepareUpload,
+  restoreConfirm,
   SLOT_HELP,
   SLOT_LABEL,
 } from "./event-images-model";
@@ -123,7 +125,7 @@ async function errorOf(res: Response): Promise<string> {
   return typeof body?.error === "string" ? body.error : `Request failed (${res.status}).`;
 }
 
-export default function AdminEventImages() {
+export default function AdminEventImages({ setConfirm }: { setConfirm: (c: ConfirmState) => void }) {
   const [state, dispatch] = useReducer(imagesReducer, INITIAL_IMAGES_STATE);
   const [status, setStatus] = useState<Partial<Record<EventImageSlot, RowStatus>>>({});
   // The same per-slot guard as `state.busy`, read synchronously: two change
@@ -225,7 +227,7 @@ export default function AdminEventImages() {
           pending={isPending(state, slot)}
           status={status[slot] ?? null}
           onPick={(file) => pick(slot, file)}
-          onRestore={() => restore(slot)}
+          onRestore={() => setConfirm({ ...restoreConfirm(slot), onConfirm: () => restore(slot) })}
         />
       ))}
     </div>

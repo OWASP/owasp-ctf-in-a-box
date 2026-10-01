@@ -296,7 +296,7 @@ export default function AdminEventTab({
         })}
         {/* The event's own images (#529) — identity too, but stored apart
             from the settings hash, so the section loads and saves itself. */}
-        <AdminEventImages />
+        <AdminEventImages setConfirm={setConfirm} />
       </section>
 
       <section className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">

@@ -10,6 +10,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Security: the app, sync and scorer images move to a patched Alpine base
+  (#539).** All three pinned a `node:22-alpine` digest whose OpenSSL
+  (`libssl3`/`libcrypto3` 3.5.7-r0) carries 2 critical and 7 high CVEs, as
+  reported by ECR's scan of a live deploy. The pin moves to a digest with
+  3.5.8-r0 (Alpine 3.24.2, Node 22.23.3), still pinned by digest. Rebuild and
+  redeploy to pick it up: on AWS `./deploy.sh` and `terraform apply`, on Fly
+  `deploy/fly/deploy.sh`. On a Secure Development event, also rebuild the
+  scorer image (`docker build --platform linux/amd64 -t <SCORE_IMAGE> scorer/`)
+  and push it; the deploy then mirrors the new digest.
+
 - **Security: brace-expansion patched in the app's dev toolchain
   (GHSA-q2hr-2g5m-vwhr, Dependabot alerts #20 and #21).** Both copies the
   lockfile resolves are bumped: 1.1.18 → 1.1.21, and 5.0.9 → 5.0.12 through a

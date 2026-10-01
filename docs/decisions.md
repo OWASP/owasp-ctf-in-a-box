@@ -80,6 +80,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 62 — The landing page's footer does not repeat the sponsor credit](#adr-62-the-landing-pages-footer-does-not-repeat-the-sponsor-credit)
 - [ADR 63 — Service hops inside the stack are plain HTTP; the network is the boundary](#adr-63-service-hops-inside-the-stack-are-plain-http-the-network-is-the-boundary)
 - [ADR 64 — sync's cursor lives in Redis, and an unreadable cursor holds the poller](#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)
+- [ADR 65 — An event adds its own logo and favicon; the OWASP mark stays](#adr-65-an-event-adds-its-own-logo-and-favicon-the-owasp-mark-stays)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -747,7 +748,7 @@ implied to be complete.
 
 ## ADR 20. Landing-page frame is code; module content is contributed, not organizer-authored
 
-**Status.** Accepted; amended by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): the event name (and tagline, location, contact e-mail, Discord invite) is a runtime `/admin` setting now, not baked — the frame's dates/countdown, logo, and the module `home` content stay exactly as this decision describes.
+**Status.** Accepted; amended by [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386): the event name (and tagline, location, contact e-mail, Discord invite) is a runtime `/admin` setting now, not baked — the frame's dates/countdown, logo, and the module `home` content stay exactly as this decision describes. Amended again by [#529](https://github.com/OWASP/owasp-ctf-in-a-box/issues/529) ([ADR 65](#adr-65-an-event-adds-its-own-logo-and-favicon-the-owasp-mark-stays)): an organizer may add an event logo to the hero and replace the favicon; the OWASP mark stays.
 
 **Context.** The landing page hardcoded `secure-development`'s own pitch — a
 tagline, a hero paragraph, four "how it works" steps, a "please use AI"
@@ -3839,3 +3840,31 @@ zeroes the counters, on any platform. A Redis outage at startup delays
 ingestion until Redis answers, which is loud in the logs and in the stale
 heartbeat. Reviews should flag any path that treats a failed state read as an
 empty state.
+
+## ADR 65. An event adds its own logo and favicon; the OWASP mark stays
+
+**Context.** Issue #529. The hero's OWASP mark and the favicon were fixed at
+build time ([ADR 20](#adr-20-landing-page-frame-is-code-module-content-is-contributed-not-organizer-authored)),
+so an event that is not OWASP's own (the first was Red Team Space CTF) either
+shipped OWASP's branding alone or rebuilt the image. At the same time the
+OWASP Project Policy asks that OWASP branding stay prominent on any domain a
+project's software runs on, which is why the footer's attribution is a
+constant and not an organizer setting.
+
+**Decision.** Two optional images in `/admin` → Event: a **logo** (PNG, JPEG
+or WebP, ≤128 KB) and a **favicon** (a square PNG, 32–512 px, ≤32 KB). They
+are stored in Redis apart from the settings hash (`ctf:event:images`
+metadata, `ctf:event:images:data` bytes) and served from the box's own
+origin by `/api/event/logo` and `/api/event/icon`, the same shape as the
+sponsor logos (ADR 57): only the decoded bytes decide acceptance, SVG is
+refused, and the route fails closed while the pages fail open to the
+defaults. An uploaded logo **leads** the hero and the OWASP mark stays beside
+it, smaller — the organizer adds a logo, never removes OWASP's. The built-in
+icons moved from `src/app/` to `public/`, because Next.js file-convention
+icons always override `metadata.icons`.
+
+**Consequences.** Branding an event is an `/admin` action, not a rebuild. The
+images are identity: a master reset keeps them and the event archive carries
+them. Two more routes join the public surface (docs/reviewing.md invariant
+11), both public before launch because every page shows them. A social share
+card and a header mark are not covered; each would be its own decision.

@@ -296,6 +296,26 @@ The panel offers:
   must be an `https://` URL; the header, hero, rules, how-to-play, FAQ and
   404 pages link to it; blank hides every Discord mention). Changes are live
   on the **next page load** — no rebuild, no cache to wait out.
+
+  Below the fields, two **images** (issue #529) — each picked from a file,
+  saved at once, and undone with **Restore default**:
+  - **Logo** — PNG, JPEG or WebP, up to 128 KB and 4096 px a side. It leads
+    the landing page's hero, and a smaller OWASP mark stays beside it: the
+    OWASP Project Policy wants OWASP branding prominent on any domain the kit
+    runs on, so an event adds its logo and never removes OWASP's (ADR 65).
+    It is shown as uploaded on the dark navy hero — upload a version made for
+    a dark background. With no logo set, the hero shows the OWASP mark alone,
+    as before.
+  - **Favicon** — the browser tab icon: a square PNG, 32–512 px, up to 32 KB.
+    With none set, the built-in icon is used.
+
+  The server checks each file's real bytes, not its name or claimed type, and
+  refuses SVG outright (an SVG served from the box can run script). Both are
+  served from the box's own origin at `/api/event/logo` and
+  `/api/event/icon`; pages link them with `?v=<etag>`, so a replacement
+  shows on the next page load even where a browser holds on to favicons. A
+  **master reset keeps them** — like the name, they are the event's identity,
+  not progress.
 - **Status** — the sync poller's heartbeat (last poll time, comments
   ingested, comments **dropped**, repos polled, last error) and a
   best-effort leaderboard freshness read.
@@ -1048,6 +1068,11 @@ and it is deliberately bounded — import only runs while scoring is not live,
 against an event you have chosen to overwrite. If an import errors, fix the
 storage problem and simply run it again: it is a full replace-all, so a
 second successful run overwrites whatever the failed one left behind.
+
+**The event's logo and favicon travel with the bundle too** (as
+`eventImages`, issue #529), and only when one is set. Their bytes are checked
+again before the import runs anything destructive; an archive without them
+leaves the box's own images as they are.
 
 **Name, tagline and location travel with the bundle; contact and Discord
 never do.** The event's identity is a runtime `/admin` setting now (issue

@@ -106,6 +106,7 @@ beforeEach(() => {
       eventLocation: "Online",
       eventContact: "org@example.org",
       eventDiscord: "https://discord.gg/x",
+      eventLogoUrl: "https://runtime.example/",
     },
   });
   m.effectivePaused.mockReturnValue(true);
@@ -125,6 +126,10 @@ describe("exportEventBundle", () => {
     expect("paused" in bundle.settings).toBe(false);
     expect("updatedBy" in bundle.settings).toBe(false);
     expect(bundle.event.name).toBe("Runtime CTF");
+    // #545: the logo travels in the archive, so the link it opens does too —
+    // a public event page, not organizer PII like contact/Discord.
+    expect(bundle.event.logoUrl).toBe("https://runtime.example/");
+    expect(JSON.stringify(bundle)).not.toContain("discord.gg");
     // Finding I4: one settings read, not two — resolveSite over the settings
     // already in hand, never a second getSite() HGETALL.
     expect(getSite).not.toHaveBeenCalled();
@@ -614,7 +619,7 @@ describe("importEventBundle", () => {
 // suite already uses for importEventBundle — reused here rather than a new
 // one, per the same pattern.
 describe("event identity in the archive (issue #386)", () => {
-  it("exports name/theme/location from the runtime identity, never contact or Discord", async () => {
+  it("exports name/theme/location and the logo link from the runtime identity, never contact or Discord", async () => {
     const { bundle } = await exportEventBundle();
     // dates/ctfStartsAt come off the default fixture's scoringStartsAt
     // ("2026-01-01T00:00:00Z", no scoringEndsAt) via resolveSite/
@@ -625,9 +630,16 @@ describe("event identity in the archive (issue #386)", () => {
       dates: "From Jan 1, 2026",
       location: "Online",
       ctfStartsAt: "2026-01-01T00:00:00Z",
+      logoUrl: "https://runtime.example/",
     });
     expect(JSON.stringify(bundle)).not.toContain("discord.gg");
     expect(JSON.stringify(bundle)).not.toContain("org@example.org");
+  });
+
+  it("omits event.logoUrl when no logo link is set (#545)", async () => {
+    m.getAdminSettings.mockResolvedValue({ paused: true, eventIdentity: { eventName: "No Link CTF" } });
+    const { bundle } = await exportEventBundle();
+    expect("logoUrl" in bundle.event).toBe(false);
   });
 
   // The schedule fields come off the SAME `getAdminSettings()` read as
@@ -665,12 +677,20 @@ describe("event identity in the archive (issue #386)", () => {
       );
     });
 
+    // #545: the logo link comes back with the logo.
+    it("applies the bundle's logo link through the same patch", async () => {
+      await importEventBundle({ ...bundleFixture(), event: { name: "Imported CTF", logoUrl: "https://imported.example/" } }, "alice");
+      const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
+      expect(patch).toMatchObject({ eventName: "Imported CTF", eventLogoUrl: "https://imported.example/" });
+    });
+
     it("leaves theme/location untouched when the bundle omits them", async () => {
       await importEventBundle({ ...bundleFixture(), event: { name: "Only Name" } }, "alice");
       const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
       expect(patch).toMatchObject({ eventName: "Only Name" });
       expect(patch).not.toHaveProperty("eventTheme");
       expect(patch).not.toHaveProperty("eventLocation");
+      expect(patch).not.toHaveProperty("eventLogoUrl");
     });
 
     it("no longer reports branding as skipped", async () => {

@@ -74,6 +74,13 @@ export const EVENT_IDENTITY_ROWS: readonly {
     placeholder: "No Discord link",
     maxLength: EVENT_IDENTITY_MAX.eventDiscord,
   },
+  {
+    key: "eventLogoUrl",
+    label: "Logo link",
+    help: "An https:// page the landing page's event logo opens in a new tab (the logo itself is uploaded below). Blank leaves the logo unlinked.",
+    placeholder: "Logo not linked",
+    maxLength: EVENT_IDENTITY_MAX.eventLogoUrl,
+  },
 ];
 
 // datetime-local <-> ISO. The <input type="datetime-local"> value is a naive

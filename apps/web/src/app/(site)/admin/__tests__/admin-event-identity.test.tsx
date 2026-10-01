@@ -55,6 +55,7 @@ describe("Event tab identity rows", () => {
       "Location",
       "Contact e-mail",
       "Discord invite",
+      "Logo link",
     ]);
   });
 

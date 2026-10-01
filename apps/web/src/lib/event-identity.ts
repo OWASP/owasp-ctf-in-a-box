@@ -1,9 +1,9 @@
-// The event's identity fields (issue #386): the five things an organizer names
-// the event by, stored in ctf:admin:settings and edited on the Event tab's
+// The event's identity fields (issue #386): the things an organizer names the
+// event by (#545 added the hero logo's link), stored in ctf:admin:settings and edited on the Event tab's
 // Identity section. Client-safe on purpose — the Event tab reads the limits
 // for its inputs' maxLength — so this file must never import server-only code.
 
-export const EVENT_IDENTITY_KEYS = ["eventName", "eventTheme", "eventLocation", "eventContact", "eventDiscord"] as const;
+export const EVENT_IDENTITY_KEYS = ["eventName", "eventTheme", "eventLocation", "eventContact", "eventDiscord", "eventLogoUrl"] as const;
 export type EventIdentityKey = (typeof EVENT_IDENTITY_KEYS)[number];
 /** The organizer's stored values, keyed by field. Absent = default. */
 export type EventIdentityOverrides = Partial<Record<EventIdentityKey, string>>;
@@ -13,6 +13,7 @@ export const EVENT_THEME_MAX = 160;
 export const EVENT_LOCATION_MAX = 160;
 export const EVENT_CONTACT_MAX = 254;
 export const EVENT_DISCORD_MAX = 200;
+export const EVENT_LOGO_URL_MAX = 2048;
 
 export const EVENT_IDENTITY_MAX: Record<EventIdentityKey, number> = {
   eventName: EVENT_NAME_MAX,
@@ -20,6 +21,7 @@ export const EVENT_IDENTITY_MAX: Record<EventIdentityKey, number> = {
   eventLocation: EVENT_LOCATION_MAX,
   eventContact: EVENT_CONTACT_MAX,
   eventDiscord: EVENT_DISCORD_MAX,
+  eventLogoUrl: EVENT_LOGO_URL_MAX,
 };
 
 /** Spec §2 defaults. Empty means "hide" for every field but the name — pages
@@ -30,6 +32,7 @@ export const DEFAULT_EVENT_IDENTITY: Record<EventIdentityKey, string> = {
   eventLocation: "",
   eventContact: "",
   eventDiscord: "",
+  eventLogoUrl: "",
 };
 
 const KEY_SET = new Set<string>(EVENT_IDENTITY_KEYS);
@@ -59,6 +62,15 @@ export function checkEventIdentityValue(key: EventIdentityKey, raw: unknown): Id
     try { parsed = new URL(value); } catch { parsed = null; }
     if (!parsed || parsed.protocol !== "https:" || !parsed.hostname) {
       return { ok: false, message: "eventDiscord must be an https:// URL" };
+    }
+  }
+  if (key === "eventLogoUrl") {
+    // The hero logo's link (#545): the sponsor-URL rule — https, a host, and
+    // no user:pass@ riding along in a link every visitor clicks.
+    let parsed: URL | null = null;
+    try { parsed = new URL(value); } catch { parsed = null; }
+    if (!parsed || parsed.protocol !== "https:" || !parsed.hostname || parsed.username !== "" || parsed.password !== "") {
+      return { ok: false, message: "eventLogoUrl must be an https:// URL without credentials" };
     }
   }
   return { ok: true, value };

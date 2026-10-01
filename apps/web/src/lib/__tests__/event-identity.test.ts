@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_EVENT_IDENTITY, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX, EVENT_IDENTITY_KEYS, EVENT_LOCATION_MAX,
+  DEFAULT_EVENT_IDENTITY, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX, EVENT_IDENTITY_KEYS, EVENT_LOCATION_MAX, EVENT_LOGO_URL_MAX,
   EVENT_NAME_MAX, EVENT_THEME_MAX, checkEventIdentityValue, isEventIdentityKey,
 } from "@/lib/event-identity";
 
 describe("event identity contract", () => {
-  it("names exactly the five spec fields, in order", () => {
-    expect([...EVENT_IDENTITY_KEYS]).toEqual(["eventName", "eventTheme", "eventLocation", "eventContact", "eventDiscord"]);
+  it("names exactly the spec fields, in order (#545 adds the logo link last)", () => {
+    expect([...EVENT_IDENTITY_KEYS]).toEqual(["eventName", "eventTheme", "eventLocation", "eventContact", "eventDiscord", "eventLogoUrl"]);
   });
   it("defaults to OWASP CTF in a Box and nothing else", () => {
-    expect(DEFAULT_EVENT_IDENTITY).toEqual({ eventName: "OWASP CTF in a Box", eventTheme: "", eventLocation: "", eventContact: "", eventDiscord: "" });
+    expect(DEFAULT_EVENT_IDENTITY).toEqual({ eventName: "OWASP CTF in a Box", eventTheme: "", eventLocation: "", eventContact: "", eventDiscord: "", eventLogoUrl: "" });
   });
   it("pins the spec limits", () => {
-    expect([EVENT_NAME_MAX, EVENT_THEME_MAX, EVENT_LOCATION_MAX, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX]).toEqual([80, 160, 160, 254, 200]);
+    expect([EVENT_NAME_MAX, EVENT_THEME_MAX, EVENT_LOCATION_MAX, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX, EVENT_LOGO_URL_MAX]).toEqual([80, 160, 160, 254, 200, 2048]);
   });
   it("recognises its keys and nothing else", () => {
     expect(isEventIdentityKey("eventName")).toBe(true);
@@ -54,5 +54,18 @@ describe("checkEventIdentityValue", () => {
     expect(checkEventIdentityValue("eventDiscord", "http://discord.gg/abc")).toMatchObject({ ok: false, message: expect.stringContaining("https") });
     expect(checkEventIdentityValue("eventDiscord", "https://")).toMatchObject({ ok: false });
     expect(checkEventIdentityValue("eventDiscord", "discord.gg/abc")).toMatchObject({ ok: false });
+  });
+  // #545: the hero logo links here, so only a plain https page is accepted —
+  // the same rule as a sponsor's URL (no credentials smuggled in userinfo).
+  it("accepts an https URL or empty for eventLogoUrl, nothing else", () => {
+    expect(checkEventIdentityValue("eventLogoUrl", " https://redteamspace.team/ctf ")).toEqual({ ok: true, value: "https://redteamspace.team/ctf" });
+    expect(checkEventIdentityValue("eventLogoUrl", "")).toEqual({ ok: true, value: "" });
+    expect(checkEventIdentityValue("eventLogoUrl", "http://redteamspace.team")).toMatchObject({ ok: false, message: expect.stringContaining("https") });
+    expect(checkEventIdentityValue("eventLogoUrl", "javascript:alert(1)")).toMatchObject({ ok: false });
+    expect(checkEventIdentityValue("eventLogoUrl", "https://user:pass@redteamspace.team/")).toMatchObject({ ok: false });
+    expect(checkEventIdentityValue("eventLogoUrl", "https://")).toMatchObject({ ok: false });
+    expect(checkEventIdentityValue("eventLogoUrl", "redteamspace.team")).toMatchObject({ ok: false });
+    expect(checkEventIdentityValue("eventLogoUrl", "https://a.example/\u0007")).toMatchObject({ ok: false });
+    expect(checkEventIdentityValue("eventLogoUrl", "https://a.example/" + "x".repeat(2048))).toMatchObject({ ok: false, message: expect.stringContaining("2048") });
   });
 });

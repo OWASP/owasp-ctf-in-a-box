@@ -66,7 +66,7 @@ const adminSettings = vi.hoisted(() => ({
   scoringStartsAt: "2000-01-01T00:00:00.000Z" as string | null,
   moduleOverrides: {} as Record<string, unknown>,
   enabledModuleIds: ["secure-development"] as string[],
-  eventIdentity: undefined as { eventName?: string } | undefined,
+  eventIdentity: undefined as { eventName?: string; eventLogoUrl?: string } | undefined,
   // Undefined by default: `getEnabledApps`/`getEnabledTotals` (real modules,
   // not mocked in this file) fall back to DEFAULT_SECURE_DEV_TARGETS (all
   // six) the same way a live "nothing stored" settings read does. The
@@ -618,12 +618,52 @@ describe("the hero logo (#529)", () => {
   // #538: the event logo is the main presence. A fixed 64/80 px height made a
   // portrait badge (the first event's, 482×603) render as a 64×80 icon; it is
   // bounded by a box instead, so any aspect ratio fills it.
+  // #545: and a larger box from sm up (224 px tall, 512 px wide); phones keep
+  // max-h-36 so the headline stays above the fold.
   it("sizes the organizer's logo by a bounding box, not a fixed height", async () => {
     const custom = imgTags(await render({ logo })).find((t) => t.includes("/api/event/logo"))!;
-    for (const cls of ["max-h-36", "sm:max-h-48", "max-w-[min(100%,24rem)]", "h-auto", "w-auto", "object-contain"]) {
-      expect(custom).toContain(cls);
+    const classes = custom.match(/class="([^"]*)"/)?.[1].split(/\s+/) ?? [];
+    for (const cls of ["max-h-36", "sm:max-h-56", "max-w-[min(100%,32rem)]", "h-auto", "w-auto", "object-contain"]) {
+      expect(classes).toContain(cls);
     }
+    expect(classes).not.toContain("sm:max-h-48");
     expect(custom).not.toMatch(/\bh-16\b|\bsm:h-20\b/);
+  });
+
+  // #545: an organizer-set link makes the logo clickable, in a new tab, with
+  // the window.opener and referrer cut; without one it stays a plain image.
+  it("wraps the logo in the organizer's link, opened in a new tab, when one is set", async () => {
+    adminSettings.eventIdentity = { eventName: "Red Team Space CTF", eventLogoUrl: "https://redteamspace.team/" };
+    try {
+      const markup = await render({ logo });
+      const link = markup.match(/<a[^>]*href="https:\/\/redteamspace\.team\/"[^>]*>([\s\S]*?)<\/a>/);
+      expect(link).not.toBeNull();
+      const open = link![0].match(/^<a[^>]*>/)![0];
+      expect(open).toContain('target="_blank"');
+      expect(open).toContain('rel="noopener noreferrer"');
+      expect(open).toContain('aria-label="Red Team Space CTF website"');
+      expect(open).toMatch(/focus-visible:/);
+      expect(link![1]).toMatch(/^<img[^>]*src="\/api\/event\/logo\?v=0123456789abcdef"/);
+      // The OWASP credit keeps its own link, outside the organizer's.
+      expect(link![1]).not.toContain("owasp.org");
+    } finally {
+      adminSettings.eventIdentity = undefined;
+    }
+  });
+
+  it("leaves the logo unlinked when no link is set", async () => {
+    const markup = await render({ logo });
+    expect(markup).not.toMatch(/<a[^>]*>\s*<img[^>]*api\/event\/logo/);
+  });
+
+  it("renders no organizer link when a link is set but no logo is", async () => {
+    adminSettings.eventIdentity = { eventLogoUrl: "https://redteamspace.team/" };
+    try {
+      const markup = await render({});
+      expect(markup).not.toContain("https://redteamspace.team/");
+    } finally {
+      adminSettings.eventIdentity = undefined;
+    }
   });
 
   // #538: OWASP sits beside it, credited for what it is — the kit the event

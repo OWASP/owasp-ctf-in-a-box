@@ -15,11 +15,14 @@ describe("resolveSite", () => {
     expect(s.location).toBe("");
     expect(s.contactEmail).toBe("");
     expect(s.discordUrl).toBe("");
+    expect(s.logoUrl).toBe("");
   });
   it("lays stored fields over the defaults, field by field", () => {
     const s = resolveSite({ eventName: "Demo CTF", eventDiscord: "https://discord.gg/x" }, null);
     expect(s.name).toBe("Demo CTF");
     expect(s.discordUrl).toBe("https://discord.gg/x");
+    expect(s.logoUrl).toBe("");
+    expect(resolveSite({ eventLogoUrl: "https://redteamspace.team" }, null).logoUrl).toBe("https://redteamspace.team");
     expect(s.theme).toBe("");
   });
   // Config v2, PR 3A (#386): dates/ctfStartsAt no longer come from event.yaml

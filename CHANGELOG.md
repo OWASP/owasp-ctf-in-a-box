@@ -10,6 +10,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: the landing page's event logo is larger and can link to the
+  event's own site (#545).** From `sm` up the hero logo's box grows to 224 px
+  tall and 32 rem wide (phones keep 144 px). A new **Logo link** field in
+  /admin → Event → Identity (`eventLogoUrl`, https only, no credentials,
+  ≤2048 characters) makes the logo open that page in a new tab; blank leaves
+  it unlinked, as before. The OWASP credit keeps its own link, and the event
+  archive carries the logo link with the logo.
+
 - **Changed: the projector board shows the event's logo and a clock, and the
   landing page's main button is back above the fold (#543).** The projector
   view (`/leaderboard?display=1`) puts the uploaded event logo beside the name

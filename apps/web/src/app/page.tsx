@@ -267,15 +267,32 @@ export default async function Home({
                   wide wordmark each fill it. A plain <img>, as for the sponsor
                   logos: next/image would re-fetch our own image route through
                   its optimizer. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={eventImageUrl("logo", eventLogo)}
-                alt={`${event.name} logo`}
-                width={eventLogo.w}
-                height={eventLogo.h}
-                decoding="async"
-                className="h-auto w-auto max-h-36 max-w-[min(100%,24rem)] object-contain sm:max-h-48"
-              />
+              {(() => {
+                // #545: a larger box from sm up, and the organizer's own
+                // link (validated https in /admin) when one is set.
+                const img = (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={eventImageUrl("logo", eventLogo)}
+                    alt={`${event.name} logo`}
+                    width={eventLogo.w}
+                    height={eventLogo.h}
+                    decoding="async"
+                    className="h-auto w-auto max-h-36 max-w-[min(100%,32rem)] object-contain sm:max-h-56"
+                  />
+                );
+                return event.logoUrl ? (
+                  <a
+                    href={event.logoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`${event.name} website`}
+                    className="rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
+                  >
+                    {img}
+                  </a>
+                ) : img;
+              })()}
               {/* OWASP beside it, credited for what it is — the kit this
                   event runs on — never as an organizer or an endorsement. */}
               <a

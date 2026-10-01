@@ -1405,8 +1405,9 @@ EOF
 }
 
 # An unreachable API is not evidence of a grant. This is the same fail-closed
-# rule every check_step follows.
-@test "doctor reports unverified when the runs API itself fails" {
+# rule every check_step follows — and, like a check_step, it fails the exit
+# (#536 review): "GitHub did not answer" is not the advisory "no run yet".
+@test "doctor reports an unreadable grant as a failure when the runs API itself fails" {
   mkdir -p stubs
   cat > stubs/gh <<'EOF'
 #!/usr/bin/env bash
@@ -1417,8 +1418,9 @@ esac
 EOF
   chmod +x stubs/gh
   run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
-  printf '%s' "$output" | grep -qE '^  dvwa +⚠️  unverified'
+  printf '%s' "$output" | grep -qE '^  dvwa +❌ unreadable'
   [ -z "$(printf '%s' "$output" | grep -F '✅ granted')" ]
+  [ "$status" -ne 0 ]
 }
 
 # The doctor check and the workflow are coupled by one string: doctor reads
@@ -2335,3 +2337,80 @@ patched() {
   [ "$status" -ne 0 ]
 }
 
+
+# --- #496: setup hygiene before launch day ------------------------------------
+
+# S11: the newest run's jobs could not be read, and an OLDER run had pulled
+# the image. The newer run may have been a refusal (a re-mirrored package
+# drops its grants), so the older success proves nothing now: fail closed.
+@test "doctor does not call a grant verified when a newer run could not be read (#496 S11)" {
+  mkdir -p stubs
+  cat > stubs/gh <<'EOF2'
+#!/usr/bin/env bash
+case "$*" in
+  *"DVWA/actions/workflows/ctf-score.yml/runs"*) printf '102\n101\n' ;;
+  *"DVWA/actions/runs/102/jobs"*) exit 1 ;;
+  *"DVWA/actions/runs/101/jobs"*) echo success ;;
+  *"packages/container/score"*) echo private ;;
+  *) exit 1 ;;
+esac
+EOF2
+  chmod +x stubs/gh
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
+  printf '%s' "$output" | grep -qE '^  dvwa +❌ unreadable'
+  [ -z "$(printf '%s' "$output" | grep -E '^  dvwa +✅ granted')" ]
+}
+
+# M18: a public fork that contestants already forked is one `private` skips on
+# purpose, so doctor must not send the organizer to run it.
+@test "doctor does not advise 'private' for a public fork contestants already forked (#496 M18)" {
+  vis_env
+  echo false > state/launched
+  echo 1 > state/forks_DVWA
+  run_vis doctor
+  printf '%s' "$output" | grep -qF -- 'DVWA is public before launch and already has 1 fork'
+  [ -z "$(printf '%s' "$output" | grep -F -- "DVWA is public before launch — contestants can see its ctf branch; detach it and run 'ctf-setup.sh private'")" ]
+}
+
+@test "private names one fork in the singular (#496 M18)" {
+  vis_env
+  echo false > state/launched
+  echo 1 > state/forks_DVWA
+  run_vis private
+  printf '%s' "$output" | grep -qF -- 'DVWA already has 1 fork —'
+}
+
+# M20: AGENTS.md — `--dry-run` makes zero gh calls. doctor's org, matrix,
+# visibility, package and grant reads all ran under it.
+@test "doctor --dry-run makes no gh call at all (#496 M20)" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\nEVENT_URL=https://box.example\n' > .env
+  mkdir -p "$BATS_TEST_TMPDIR/stubbin"
+  printf '#!/usr/bin/env bash\necho "gh $*" >> "%s/gh.calls"\nexit 1\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/stubbin/gh"
+  chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
+  run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor --dry-run
+  printf '%s' "$output" | grep -qF -- "DRY-RUN: would check"
+  [ ! -s "$BATS_TEST_TMPDIR/gh.calls" ]
+}
+
+# CLI review of #536: an unreadable fork count must not become advice. It is
+# neither "no forks" (run private) nor "has forks" (leave it) — say it is unread.
+@test "doctor gives no 'private' advice when a public fork's fork count cannot be read (#496 M18)" {
+  vis_env
+  echo false > state/launched
+  echo garbage > state/forks_DVWA
+  run_vis doctor
+  printf '%s' "$output" | grep -qF -- "could not read DVWA's fork count"
+  [ -z "$(printf '%s' "$output" | grep -F -- "DVWA is public before launch — contestants can see its ctf branch; detach it and run")" ]
+}
+
+# #536 review: a GITHUB_APP_ID that is not a number is a configuration error,
+# found before any call — dry-run or not.
+@test "doctor refuses a GITHUB_APP_ID that is not a positive number (#496)" {
+  for bad in abc 0 -3 "4 2"; do
+    printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=%s\n' "$bad" > .env
+    run env NO_COLOR=1 bash "$SCRIPT" doctor --dry-run
+    printf '%s' "$output" | grep -qF -- "GITHUB_APP_ID must be a positive number" || { echo "not refused: '$bad'"; return 1; }
+    [ "$status" -ne 0 ] || { echo "exit 0 for '$bad'"; return 1; }
+  done
+  [ -z "$(printf '%s' "$output" | grep -F 'would check whether the sync App')" ]
+}

@@ -46,6 +46,18 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   now throws or says the read failed, so the caller's documented fail
   direction applies and the log names the read.
 
+- **Fixed: three `ctf-setup.sh` answers organizers read before launch
+  (#496).** `doctor` (and `launch`'s pre-flight) no longer reports a
+  fork's scorer-image grant as verified when its newest scoring run could not
+  be read and only an older run had pulled the image. `doctor` no longer
+  tells you to run `private` for a public fork that contestants have already
+  forked, which `private` skips on purpose. "1 forks" now reads "1 fork". And
+  `doctor --dry-run` makes no `gh` calls at all, as every `--dry-run`
+  promises: it lists what it would check instead. A grant GitHub would not
+  answer for is now a ❌ that fails `doctor`'s exit, not a quiet "unverified",
+  and a `GITHUB_APP_ID` that is not a positive number is reported before any
+  call.
+
 - **Fixed: a failed Redis read no longer zeroes quiz, Jeopardy or AI points
   in silence (#523).** The per-contestant totals, and the hint-penalty total,
   read their hashes without checking the reply's error, so a `WRONGTYPE`,

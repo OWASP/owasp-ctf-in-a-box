@@ -418,6 +418,9 @@ export async function getAdminSettings(timeoutMs?: number): Promise<AdminSetting
 
 export async function getSyncStatus(): Promise<SyncStatus | null> {
   const [res] = await upstashPipeline([["HGETALL", SYNC_STATUS_KEY]]);
+  // An error reply is not "never polled" (#499): throw, so /admin and
+  // /health/deep report the read as failed rather than as no heartbeat.
+  if (res.error) throw new Error(`Upstash HGETALL sync status failed: ${res.error}`);
   const h = flatToObject(res.result);
   if (Object.keys(h).length === 0) return null;
   return {

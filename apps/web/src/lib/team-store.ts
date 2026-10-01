@@ -1,10 +1,10 @@
 import "server-only";
 import { randomInt } from "node:crypto";
 import { cookies } from "next/headers";
-import { parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
+import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { logActivity } from "@/lib/activity-log";
 import { TEAM_MAX_MEMBERS } from "@/lib/team-limits";
-import { outsideWindow } from "@/lib/admin-store";
+import { ADMIN_SETTINGS_KEY, outsideWindow } from "@/lib/admin-store";
 import { errorLabel } from "@/lib/error-label";
 import { joinCodeKey, membersKey, teamKey, userKey } from "@/lib/team-keys";
 
@@ -67,7 +67,6 @@ export type TeamInfo = {
   members: string[];
 };
 
-const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 const REGISTRATION_CLOSED_ERROR = "Team registration is closed";
 
 function slugify(value: string): string {
@@ -244,8 +243,14 @@ export async function resolveTeamMaxMembers(): Promise<number> {
   }
 }
 
+/** The login's team slug, or null when it has none. THROWS on a failed read,
+ *  error reply included (#499): read as null, an error looked like "on no
+ *  team" — which made `hasTeam` fail CLOSED on live submissions and
+ *  `leaveTeam` report a leave that never happened. Each caller now applies
+ *  its own documented direction. */
 async function getUserTeamSlug(login: string): Promise<string | null> {
   const [current] = await upstashPipeline([["HGET", userKey(login), "team"]]);
+  if (current.error) throw new Error(`Upstash HGET user team failed: ${current.error}`);
   return typeof current.result === "string" && current.result ? current.result : null;
 }
 
@@ -385,6 +390,9 @@ export async function joinTeam(login: string, code: string): Promise<TeamActionR
 
   const normalizedCode = trimmedCode.toLowerCase();
   const [codeRes] = await upstashPipeline([["GET", joinCodeKey(normalizedCode)]]);
+  // An error reply is not a bad code (#499): never tell a contestant their
+  // valid code is invalid because Redis hiccupped.
+  if (codeRes.error) throw new Error(`Upstash GET join code failed: ${codeRes.error}`);
   const slug = typeof codeRes.result === "string" && codeRes.result ? codeRes.result : null;
   if (!slug) return { ok: false, error: "Invalid or expired join code" }; // verdict: bad-code
 
@@ -580,7 +588,15 @@ export async function getViewerTeam(login: string): Promise<TeamInfo | null> {
     return slug ? { slug, name: slug, members: [login] } : null;
   }
 
-  const slug = await getUserTeamSlug(login);
+  // Unreadable membership reads as "no team" — the documented team-of-one
+  // that classic-team.ts relies on (fewer unlocks, never more) — but logged.
+  let slug: string | null;
+  try {
+    slug = await getUserTeamSlug(login);
+  } catch (err) {
+    console.error("getViewerTeam: membership read failed, showing no team:", errorLabel(err));
+    return null;
+  }
   if (!slug) return null;
   const [nameRes, membersRes] = await upstashPipeline([
     ["HGET", teamKey(slug), "name"],
@@ -612,13 +628,19 @@ export async function lookupJoinCode(
   if (!TEAM_WRITES_ENABLED) return null;
 
   const [codeRes] = await upstashPipeline([["GET", joinCodeKey(normalized)]]);
+  // Error replies throw (#499); the join page catches and shows its own
+  // unreadable state instead of "this code has expired".
+  if (codeRes.error) throw new Error(`Upstash GET join code failed: ${codeRes.error}`);
   const slug = typeof codeRes.result === "string" && codeRes.result ? codeRes.result : null;
   if (!slug) return null;
 
-  const [nameRes, countRes] = await upstashPipeline([
-    ["HGET", teamKey(slug), "name"],
-    ["SCARD", membersKey(slug)],
-  ]);
+  const [nameRes, countRes] = assertPipelineOk(
+    await upstashPipeline([
+      ["HGET", teamKey(slug), "name"],
+      ["SCARD", membersKey(slug)],
+    ]),
+    "lookupJoinCode team",
+  );
   // A code whose team has since been disbanded is treated as expired rather
   // than rendering an empty card: leaveTeam deletes the team key and the code
   // together, but a partially-cleaned state must not become a dead-end page.

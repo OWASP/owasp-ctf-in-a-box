@@ -22,7 +22,9 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
   const login = (session?.user as { login?: string } | undefined)?.login;
 
   const [team, settings] = await Promise.all([
-    lookupJoinCode(code).catch(() => null),
+    // A failed lookup is "unreadable", not "expired" (#499): the code may be
+    // perfectly good, and asking the captain for another would fail the same way.
+    lookupJoinCode(code).catch(() => "unreadable" as const),
     getAdminSettings().catch(() => null),
   ]);
 
@@ -32,6 +34,16 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
     return (
       <Shell title="Team invite">
         <p className="text-sm text-zinc-400">Team joining is not enabled for this event.</p>
+      </Shell>
+    );
+  }
+
+  if (team === "unreadable") {
+    return (
+      <Shell title="Team invite">
+        <p className="text-sm text-zinc-400">
+          We could not check this invite just now. Reload the page in a moment — the link itself may be fine.
+        </p>
       </Shell>
     );
   }

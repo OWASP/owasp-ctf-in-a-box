@@ -88,3 +88,13 @@ describe("mutations", () => {
     expect(await addStoredAdmin("zed", "alice")).toEqual(["carol", "zed"]);
   });
 });
+
+// #499: the doc comment always said this THROWS on a failed read, so that
+// requireAdmin denies for the right reason; an error REPLY used to resolve as
+// an empty roster instead.
+describe("listStoredAdmins on an error reply", () => {
+  it("throws instead of reading as no stored admins", async () => {
+    upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+    await expect(listStoredAdmins()).rejects.toThrow(/NOAUTH/);
+  });
+});

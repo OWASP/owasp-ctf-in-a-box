@@ -21,6 +21,9 @@ function hgetallToObject(flat: unknown): Record<string, string> {
 
 async function fetchEntries(limit: number): Promise<LeaderboardEntry[]> {
   const [zrange] = await pipeline([["ZRANGE", "leaderboard", "0", String(limit - 1), "REV", "WITHSCORES"]]);
+  // A per-command error reply resolves rather than throws; reading past it
+  // would serve an empty board with no log (#499, the #215 class).
+  if (zrange.error) throw new Error(`Upstash ZRANGE leaderboard failed: ${zrange.error}`);
   const flat = Array.isArray(zrange.result) ? (zrange.result as string[]) : [];
   const logins: string[] = [];
   const scores: number[] = [];
@@ -31,6 +34,8 @@ async function fetchEntries(limit: number): Promise<LeaderboardEntry[]> {
   if (logins.length === 0) return [];
 
   const hashResults = await pipeline(logins.map((login) => ["HGETALL", `team:${login}`]));
+  const failed = hashResults.find((r) => r?.error);
+  if (failed) throw new Error(`Upstash HGETALL team totals failed: ${failed.error}`);
   return logins.map((login, i) => {
     const hash = hgetallToObject(hashResults[i]?.result);
     const patched = Number(hash.patched ?? 0);

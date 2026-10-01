@@ -79,6 +79,18 @@ describe("/join/<code>", () => {
     expect(joinTeam).not.toHaveBeenCalled();
   });
 
+  // #499: a failed lookup is not an expired code. Telling an invitee their
+  // captain's fresh link is dead sends them to ask for another one that will
+  // fail the same way.
+  it("says the invite could not be checked when the lookup fails, not that it expired", async () => {
+    signedIn("octocat");
+    lookupJoinCode.mockRejectedValue(new Error("NOAUTH"));
+    getAdminSettings.mockResolvedValue(OPEN_SETTINGS);
+    const html = await render("ABC123");
+    expect(html).toContain("could not check this invite");
+    expect(html).not.toContain("invalid or has expired");
+  });
+
   it("offers sign-in when signed out, instead of a dead button", async () => {
     signedIn(null);
     lookupJoinCode.mockResolvedValue({ slug: "red-team", name: "Red Team", memberCount: 1 });

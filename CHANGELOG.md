@@ -35,6 +35,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   app too) is refused at plan, and `srh_desired_count` must stay at 2 or
   more. The module README has a sizing note for a bigger event.
 
+- **Fixed: a Redis error reply no longer reads as an empty answer on six more
+  paths (#499).** `upstashPipeline` returns a per-command error instead of
+  throwing, and these reads ignored it. A contestant's team check (`hasTeam`)
+  refused live submissions on a Redis fault even though it is meant to let
+  them through. Leaving a team reported success when nothing happened. A valid
+  join code was called "invalid or expired", both on the join page and when
+  joining. `/admin` and `/health/deep` showed "no sync heartbeat", and the
+  stored-admins list and the Secure Development board read as empty. Each one
+  now throws or says the read failed, so the caller's documented fail
+  direction applies and the log names the read.
+
 - **Fixed: a failed Redis read no longer zeroes quiz, Jeopardy or AI points
   in silence (#523).** The per-contestant totals, and the hint-penalty total,
   read their hashes without checking the reply's error, so a `WRONGTYPE`,

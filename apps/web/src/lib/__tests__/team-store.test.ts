@@ -161,6 +161,15 @@ describe("team size cap", () => {
 });
 
 describe("join by code", () => {
+  // #499: an error reply on the code lookup used to answer "Invalid or
+  // expired join code" — a valid code, refused, with the wrong reason.
+  it("throws on an error reply instead of calling a valid code invalid", async () => {
+    const store = await loadStore(true);
+    mockRegistrationOpen();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+    await expect(store.joinTeam("octocat", "somecode")).rejects.toThrow(/NOAUTH/);
+  });
+
   it("resolves the code to a team and joins it", async () => {
     const store = await loadStore(true);
     mockRegistrationOpen();
@@ -405,6 +414,15 @@ describe("registration window", () => {
 });
 
 describe("leaveTeam", () => {
+  // #499: an error reply used to read as "on no team", so a Redis fault told
+  // the contestant they had left when nothing happened.
+  it("throws on an error reply instead of reporting a leave that never happened", async () => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+    await expect(store.leaveTeam("octocat")).rejects.toThrow(/NOAUTH/);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
   it("leaves the current team", async () => {
     const store = await loadStore(true);
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
@@ -478,6 +496,17 @@ describe("getViewerTeam", () => {
     const store = await loadStore(true);
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
     expect(await store.getViewerTeam("octocat")).toBeNull();
+  });
+
+  // #499: the documented "a team-read error reads as a team of one"
+  // (classic-team.ts) holds for an error REPLY as well, and is logged.
+  it("reads an error reply on the membership as no team, and logs it", async () => {
+    const store = await loadStore(true);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+    expect(await store.getViewerTeam("octocat")).toBeNull();
+    expect(log).toHaveBeenCalled();
+    log.mockRestore();
   });
 });
 
@@ -827,6 +856,17 @@ describe("team member cap", () => {
 // --- shareable join links (issue #45) ---------------------------------------
 
 describe("lookupJoinCode", () => {
+  // #499: the join page catches this and shows its "can't read" state
+  // instead of calling a valid code expired.
+  it("throws on an error reply from either read", async () => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+    await expect(store.lookupJoinCode("ABC123")).rejects.toThrow(/NOAUTH/);
+    mockCodeLookup("red-team");
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "Red Team" }, { error: "WRONGTYPE" }]);
+    await expect(store.lookupJoinCode("ABC123")).rejects.toThrow(/WRONGTYPE/);
+  });
+
   it("resolves a code to its team for display", async () => {
     const store = await loadStore(true);
     mockCodeLookup("red-team");
@@ -921,6 +961,15 @@ describe("hasTeam", () => {
     // point they earn for the length of the outage.
     const store = await loadStore(true);
     mocks.upstashPipeline.mockRejectedValueOnce(new Error("redis down"));
+    expect(await store.hasTeam("octocat")).toBe(true);
+  });
+
+  // #499 M3: an error REPLY (resolved, not thrown) used to decode as "no
+  // team", so a WRONGTYPE/NOAUTH refused live submissions — fail CLOSED,
+  // the opposite of the documented direction above.
+  it("fails OPEN on a per-command error reply too, not only on a transport failure", async () => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "WRONGTYPE Operation against a key holding the wrong kind of value" }]);
     expect(await store.hasTeam("octocat")).toBe(true);
   });
 

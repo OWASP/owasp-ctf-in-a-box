@@ -22,6 +22,9 @@ export function canonicalTimeZone(zone: string): string | null {
     return null;
   }
   if (resolved === "UTC") return "UTC";
+  // An offset ID ("+05:30") passes Intl but is not an IANA zone and carries
+  // no daylight-saving rules — refused, so it never reaches the settings.
+  if (resolved.startsWith("+") || resolved.startsWith("-")) return null;
   const lower = zone.toLowerCase();
   return Intl.supportedValuesOf("timeZone").find((z) => z.toLowerCase() === lower) ?? zone;
 }

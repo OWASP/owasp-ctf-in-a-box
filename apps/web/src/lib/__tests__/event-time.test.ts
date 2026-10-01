@@ -16,6 +16,12 @@ describe("canonicalTimeZone", () => {
     expect(canonicalTimeZone("Mars/Olympus")).toBeNull();
     expect(canonicalTimeZone("")).toBeNull();
     expect(canonicalTimeZone("not a zone")).toBeNull();
+    // Intl takes an offset ID ("+05:30") as a zone, but it is not IANA and
+    // has no daylight-saving rules: refused, never stored (PR #548 review).
+    expect(canonicalTimeZone("+05:30")).toBeNull();
+    expect(canonicalTimeZone("-03:00")).toBeNull();
+    // An IANA link name stays accepted.
+    expect(canonicalTimeZone("US/Eastern")).toBe("US/Eastern");
   });
   it("defaults to UTC", () => {
     expect(DEFAULT_EVENT_TIME_ZONE).toBe("UTC");

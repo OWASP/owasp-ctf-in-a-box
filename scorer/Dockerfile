@@ -18,7 +18,9 @@ FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18
 
 # docker-cli: the judge entrypoint drives sibling containers over the mounted
 # docker.sock (boot the app under test, self-attach to the ctf network).
-RUN apk add --no-cache docker-cli
+# Pinned to the version in the base image's Alpine release (the base is pinned
+# by digest above, so this is deterministic too); bump both together.
+RUN apk add --no-cache docker-cli=29.8.2-r0
 
 WORKDIR /app
 

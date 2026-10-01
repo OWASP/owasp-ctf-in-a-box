@@ -262,6 +262,9 @@ export default async function Home({
               kit runs on, so an organizer adds a logo, never removes OWASP's. */}
           {eventLogo ? (
             <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+              {/* A plain <img>, as for the sponsor logos: next/image would
+                  re-fetch our own image route through its optimizer. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={eventImageUrl("logo", eventLogo)}
                 alt={`${event.name} logo`}

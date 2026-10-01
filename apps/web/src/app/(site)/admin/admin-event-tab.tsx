@@ -26,6 +26,7 @@ import AdminNumberField, { FieldStatusLine, type FieldStatus } from "@/component
 import AdminSwitch from "@/components/admin-switch";
 import { FREEZE_HELP, freezeConfirm } from "./freeze-copy";
 import { IdentityField } from "./admin-module-identity";
+import AdminEventImages from "./admin-event-images";
 import { moduleToggleConfirm, moduleToggleState, type ModuleToggleChoice } from "./module-toggle";
 import type { CommitNumber, ConfirmState } from "./types";
 
@@ -293,6 +294,9 @@ export default function AdminEventTab({
             </div>
           );
         })}
+        {/* The event's own images (#529) — identity too, but stored apart
+            from the settings hash, so the section loads and saves itself. */}
+        <AdminEventImages />
       </section>
 
       <section className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">

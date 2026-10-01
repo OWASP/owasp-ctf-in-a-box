@@ -589,6 +589,44 @@ describe("the hero logo (#529)", () => {
     expect(markup).not.toContain("/api/event/logo");
     expect(markup).toContain('src="/owasp-logo.png"');
   });
+
+  // #538: the event logo is the main presence. A fixed 64/80 px height made a
+  // portrait badge (the first event's, 482×603) render as a 64×80 icon; it is
+  // bounded by a box instead, so any aspect ratio fills it.
+  it("sizes the organizer's logo by a bounding box, not a fixed height", async () => {
+    const custom = imgTags(await render({ logo })).find((t) => t.includes("/api/event/logo"))!;
+    for (const cls of ["max-h-36", "sm:max-h-48", "max-w-[min(100%,24rem)]", "h-auto", "w-auto", "object-contain"]) {
+      expect(custom).toContain(cls);
+    }
+    expect(custom).not.toMatch(/\bh-16\b|\bsm:h-20\b/);
+  });
+
+  // #538: OWASP sits beside it, credited for what it is — the kit the event
+  // runs on — without suggesting OWASP organizes or endorses the event.
+  it("credits OWASP beside the logo with a caption linking to the project", async () => {
+    const markup = await render({ logo });
+    const link = markup.match(/<a[^>]*href="https:\/\/owasp\.org\/projects\/ctf-in-a-box"[^>]*>[\s\S]*?<\/a>/)?.[0];
+    expect(link).toBeDefined();
+    expect(link).toContain("Built with OWASP CTF in a Box");
+    expect(link).toMatch(/<img[^>]*src="\/owasp-logo\.png"[^>]*class="[^"]*invert/);
+  });
+
+  // PR #540 review: flex-wrap alone leaves a narrow portrait badge and the
+  // attribution side by side on a phone; the stack below `sm` is explicit.
+  it("stacks the OWASP credit under the logo on phones and beside it from sm up", async () => {
+    const markup = await render({ logo: { ...logo, w: 482, h: 603 } });
+    const row = markup.match(/<div class="([^"]*)"><img[^>]*api\/event\/logo/)?.[1] ?? "";
+    for (const cls of ["flex", "flex-col", "items-start", "sm:flex-row", "sm:items-center"]) {
+      expect(row.split(/\s+/)).toContain(cls);
+    }
+    expect(row).not.toContain("flex-wrap");
+  });
+
+  it("keeps the default hero unchanged when no logo is set: the OWASP mark alone, no caption", () => {
+    expect(html).not.toContain("Built with OWASP CTF in a Box");
+    const owasp = imgTags(html).filter((t) => t.includes('src="/owasp-logo.png"'));
+    expect(owasp).toHaveLength(1);
+  });
 });
 
 describe("the favicon follows the stored icon (#529)", () => {

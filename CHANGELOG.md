@@ -20,6 +20,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   scorer image (`docker build --platform linux/amd64 -t <SCORE_IMAGE> scorer/`)
   and push it; the deploy then mirrors the new digest.
 
+- **Changed: an uploaded event logo leads the hero at full size (#538).** It
+  was held to a fixed 80 px height, so a portrait or square badge rendered as
+  an icon (a 482×603 logo showed at 64×80). It now fills a box up to 192 px
+  tall and 24 rem wide (144 px on phones), whatever its shape. The OWASP mark
+  beside it is smaller, captioned "Built with OWASP CTF in a Box" and linked
+  to the project. With no logo uploaded, the hero is unchanged.
+
 - **Security: brace-expansion patched in the app's dev toolchain
   (GHSA-q2hr-2g5m-vwhr, Dependabot alerts #20 and #21).** Both copies the
   lockfile resolves are bumped: 1.1.18 → 1.1.21, and 5.0.9 → 5.0.12 through a

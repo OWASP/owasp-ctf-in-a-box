@@ -13,7 +13,7 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 - **Security: brace-expansion patched in the app's dev toolchain
   (GHSA-q2hr-2g5m-vwhr, Dependabot alerts #20 and #21).** Both copies the
   lockfile resolves are bumped: 1.1.18 → 1.1.21, and 5.0.9 → 5.0.12 through a
-  scoped `pnpm-workspace.yaml` override (`^5.0.12`, held inside major 5), since pnpm keeps 5.0.9 within
+  scoped `pnpm-workspace.yaml` override (pinned exactly, `5.0.12`), since pnpm keeps 5.0.9 within
   minimatch's own range. Lint-time only (eslint → minimatch); nothing in the
   served app changes. Supersedes Dependabot #517, which bumped only the 1.x
   copy.

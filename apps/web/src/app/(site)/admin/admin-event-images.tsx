@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from "react";
 import { EVENT_IMAGE_MIME_TYPES, EVENT_IMAGE_SLOTS, eventImageUrl, type EventImageMeta, type EventImageSlot, type EventImagesMeta } from "@/lib/event-images-keys";
 import { fileToBase64 } from "./sponsor-editor-dialog";
-import { checkPickedDimensions, checkPickedFile, describeStoredImage, SLOT_HELP, SLOT_LABEL } from "./event-images-model";
+import { describeStoredImage, prepareUpload, SLOT_HELP, SLOT_LABEL } from "./event-images-model";
 
 export type RowStatus = { state: "saving" | "saved" | "error"; message: string } | null;
 
@@ -144,14 +144,11 @@ export default function AdminEventImages() {
   const report = (slot: EventImageSlot, s: RowStatus) => setStatus((prev) => ({ ...prev, [slot]: s }));
 
   async function pick(slot: EventImageSlot, file: File) {
+    // Checks first, and only a file that passes them takes a sequence
+    // number: a refused pick must not orphan a save already in flight.
+    const refused = await prepareUpload(slot, file, () => decodedSize(file));
+    if (refused) return report(slot, { state: "error", message: refused });
     const mine = ++seq.current[slot];
-    const early = checkPickedFile(slot, file);
-    if (early) return report(slot, { state: "error", message: early });
-    const size = await decodedSize(file);
-    if (mine !== seq.current[slot]) return;
-    if (!size) return report(slot, { state: "error", message: "That file does not open as an image." });
-    const dims = checkPickedDimensions(slot, size.w, size.h);
-    if (dims) return report(slot, { state: "error", message: dims });
 
     setBusy(slot);
     report(slot, { state: "saving", message: "Uploading…" });

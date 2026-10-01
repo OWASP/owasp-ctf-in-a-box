@@ -55,3 +55,20 @@ export const SLOT_HELP: Record<EventImageSlot, string> = {
   logo: `Leads the landing page's hero, with a smaller OWASP mark kept beside it. Shown as uploaded on the dark navy hero, so upload a version made for a dark background. PNG, JPEG or WebP, up to ${kb(EVENT_IMAGE_MAX_BYTES.logo)}.`,
   icon: `The browser tab icon. A square PNG, ${EVENT_ICON_MIN_DIMENSION}–${EVENT_ICON_MAX_DIMENSION} pixels, up to ${kb(EVENT_IMAGE_MAX_BYTES.icon)}.`,
 };
+
+/** Every client-side check, in order, before anything is sent: an error to
+ *  show, or null. `decode` reads the image's real dimensions (the component
+ *  passes createImageBitmap); it is only called once type and size pass.
+ *  Pure of the component's state on purpose — a refused pick must not touch
+ *  the upload sequence, or it would orphan a save already in flight. */
+export async function prepareUpload(
+  slot: EventImageSlot,
+  file: { type: string; size: number },
+  decode: () => Promise<{ w: number; h: number } | null>,
+): Promise<string | null> {
+  const early = checkPickedFile(slot, file);
+  if (early) return early;
+  const size = await decode();
+  if (!size) return "That file does not open as an image.";
+  return checkPickedDimensions(slot, size.w, size.h);
+}

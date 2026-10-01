@@ -10,6 +10,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Security: brace-expansion patched in the app's dev toolchain
+  (GHSA-q2hr-2g5m-vwhr, Dependabot alerts #20 and #21).** Both copies the
+  lockfile resolves are bumped: 1.1.18 → 1.1.21, and 5.0.9 → 5.0.12 through a
+  scoped `pnpm-workspace.yaml` override (pinned exactly, `5.0.12`), since pnpm keeps 5.0.9 within
+  minimatch's own range. Lint-time only (eslint → minimatch); nothing in the
+  served app changes. Supersedes Dependabot #517, which bumped only the 1.x
+  copy.
+
 - **Added: an event logo and favicon, set in `/admin` → Event (#529).**
   Organizers can upload a logo (PNG, JPEG or WebP, up to 128 KB) that leads
   the landing page's hero, with a smaller OWASP mark kept beside it, and a

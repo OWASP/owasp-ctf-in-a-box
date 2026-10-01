@@ -19,7 +19,7 @@ export default function AdminHeader({
   eventName: string;
   resolution: PhaseResolution | null;
 }) {
-  const boundary = resolution ? phaseBoundaryLabel(resolution.phase, resolution.startsAt, resolution.endsAt) : null;
+  const boundary = resolution ? phaseBoundaryLabel(resolution.phase, resolution.startsAt, resolution.endsAt, resolution.timeZone) : null;
   const color = resolution ? PHASE_COLOR[resolution.phase] : null;
 
   return (

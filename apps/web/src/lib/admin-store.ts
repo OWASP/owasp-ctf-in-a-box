@@ -302,6 +302,8 @@ export type SettingsPatch = {
   eventDiscord?: string;
   /** The hero logo's click-through link (#545). */
   eventLogoUrl?: string;
+  /** The event's IANA time zone (#547); "" = UTC. */
+  eventTimeZone?: string;
   /** Which of the six secure-development targets this event runs (issue
    *  #386, PR 2). Replaces the whole set, like `enabledModules`; never
    *  clears — see updateAdminSettings for why there is no empty state. */

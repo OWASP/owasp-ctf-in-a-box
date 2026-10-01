@@ -2,24 +2,14 @@
 // old event.yaml `dates:` free-text string. Pure and client-safe: no
 // `server-only`, no `process.env`.
 //
-// Formatting is pinned to UTC (`timeZone: "UTC"`) rather than the host's
-// local zone so this is deterministic under test regardless of where it
-// runs — the trade-off is that a bound just after local midnight in a
-// negative-UTC-offset zone can print the previous calendar day. Accepted for
-// now; callers wanting local-zone display need a different helper.
+// Formatting is pinned to the EVENT's zone (#547; UTC when none is set),
+// never the host's — deterministic under test wherever it runs, and the day
+// printed is the event's calendar day, not UTC's.
 
-const FULL_DATE = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  timeZone: "UTC",
-});
+import { DEFAULT_EVENT_TIME_ZONE, formatInZone } from "@/lib/event-time";
 
-const MONTH_DAY = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  timeZone: "UTC",
-});
+const FULL_DATE = { month: "short", day: "numeric", year: "numeric" } as const;
+const MONTH_DAY = { month: "short", day: "numeric" } as const;
 
 /** Parses an ISO instant, or returns `null` for a missing/unparseable one —
  *  a malformed bound is treated the same as an absent one rather than
@@ -36,19 +26,20 @@ function parseInstant(iso: string | null): Date | null {
  * 2027" across years, "From Oct 1, 2026" / "Until Oct 3, 2026" for an
  * open-ended bound, and "" when neither bound parses.
  */
-export function formatDateRange(start: string | null, end: string | null): string {
+export function formatDateRange(start: string | null, end: string | null, zone: string = DEFAULT_EVENT_TIME_ZONE): string {
   const startDate = parseInstant(start);
   const endDate = parseInstant(end);
 
   if (!startDate && !endDate) return "";
-  if (startDate && !endDate) return `From ${FULL_DATE.format(startDate)}`;
-  if (!startDate && endDate) return `Until ${FULL_DATE.format(endDate)}`;
+  if (startDate && !endDate) return `From ${formatInZone(startDate, zone, FULL_DATE)}`;
+  if (!startDate && endDate) return `Until ${formatInZone(endDate, zone, FULL_DATE)}`;
 
-  const startFull = FULL_DATE.format(startDate as Date);
-  const endFull = FULL_DATE.format(endDate as Date);
+  const startFull = formatInZone(startDate as Date, zone, FULL_DATE);
+  const endFull = formatInZone(endDate as Date, zone, FULL_DATE);
   if (startFull === endFull) return startFull;
 
-  const sameYear = (startDate as Date).getUTCFullYear() === (endDate as Date).getUTCFullYear();
-  const startHalf = sameYear ? MONTH_DAY.format(startDate as Date) : startFull;
+  const year = (d: Date) => formatInZone(d, zone, { year: "numeric" });
+  const sameYear = year(startDate as Date) === year(endDate as Date);
+  const startHalf = sameYear ? formatInZone(startDate as Date, zone, MONTH_DAY) : startFull;
   return `${startHalf} – ${endFull}`;
 }

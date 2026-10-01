@@ -65,6 +65,14 @@ describe("ScoreTimeChart", () => {
     expect(html).toContain("carol");
   });
 
+  // #547: the time axis reads on the event's clock (UTC by default).
+  it("labels the time axis in the event's zone", () => {
+    const utc = renderToStaticMarkup(<ScoreTimeChart series={series()} />);
+    expect(utc).not.toContain("Jul 31");
+    const ba = renderToStaticMarkup(<ScoreTimeChart series={series()} timeZone="America/Argentina/Buenos_Aires" />);
+    expect(ba).toContain("Jul 31");
+  });
+
   it("renders nothing for undefined series", () => {
     const html = renderToStaticMarkup(<ScoreTimeChart series={undefined} />);
     expect(html).toBe("");

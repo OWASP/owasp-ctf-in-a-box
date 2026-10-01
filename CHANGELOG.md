@@ -10,6 +10,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: an event names its time zone, and every date and time follows
+  it (#547).** A new **Timezone** field in /admin → Event → Identity
+  (`eventTimeZone`, an IANA zone; blank = UTC) sets the clock for the landing
+  page's dates line, the phase line ("scoring opens Oct 3, 9:00 AM GMT-3"),
+  the score chart's time axis and the four /admin schedule inputs. Those
+  inputs now read the event's clock, not the organizer's browser — **on a box
+  with no zone set they are UTC**, where they used to be the browser's local
+  time. Bounds are still stored as ISO instants, so scoring is unchanged;
+  countdowns and the admin ops stamps (Insights, Support) are as before. The
+  event archive carries the zone like the location.
+
 - **Changed: the landing page's event logo is larger and can link to the
   event's own site (#545).** From `sm` up the hero logo's box grows to 224 px
   tall and 32 rem wide (phones keep 144 px). A new **Logo link** field in

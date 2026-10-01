@@ -290,7 +290,12 @@ The panel offers:
   the header, the leaderboard, and this panel's own master-reset confirmation),
   **Tagline** (≤160; one line under the event name on the landing page;
   blank hides it), **Location** (≤160; shown beside the dates on the landing
-  page and in the page description; blank hides it), **Contact e-mail**
+  page and in the page description; blank hides it), **Timezone** (≤64; an
+  IANA zone such as `America/Argentina/Buenos_Aires`, suggested as you type;
+  every date and time the event shows — the landing page's dates, the phase
+  line, the score chart's axis and the schedule inputs below — reads on this
+  clock, labelled with its offset, e.g. "9:00 AM GMT-3"; blank means UTC, the
+  output before this setting existed), **Contact e-mail**
   (≤254; the organizers' own inbox, rendered as a `mailto:` link on the
   privacy and terms pages; blank hides it), and **Discord invite** (≤200;
   must be an `https://` URL; the header, hero, rules, how-to-play, FAQ and
@@ -425,7 +430,11 @@ The panel offers:
   tab beneath the players-per-team cap: **Scoring opens** / **Scoring
   closes** (`scoringStartsAt` / `scoringEndsAt`) and **Registration opens** /
   **Registration closes** (`registrationStartsAt` / `registrationEndsAt`).
-  You enter local time; each is stored as an ISO instant, and a blank field
+  You enter times on the event's clock (the **Timezone** above, UTC when
+  blank), whatever your own laptop is set to; the launch status line shows
+  the event-local time with UTC beside it. Each is stored as an ISO instant —
+  the scorer and the poller only compare instants, so the zone never changes
+  what scores — and a blank field
   means no bound on that side — **except Scoring opens**: an event with no
   scoring start is **not launched**, and nothing scores (flags, quiz, AI,
   and Secure Development PRs in the scorer and the poller) until one is

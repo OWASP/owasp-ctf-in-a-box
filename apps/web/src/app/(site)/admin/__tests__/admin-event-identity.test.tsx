@@ -53,6 +53,7 @@ describe("Event tab identity rows", () => {
       "Event name",
       "Tagline",
       "Location",
+      "Timezone",
       "Contact e-mail",
       "Discord invite",
       "Logo link",

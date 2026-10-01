@@ -3,7 +3,9 @@
 // Identity section. Client-safe on purpose — the Event tab reads the limits
 // for its inputs' maxLength — so this file must never import server-only code.
 
-export const EVENT_IDENTITY_KEYS = ["eventName", "eventTheme", "eventLocation", "eventContact", "eventDiscord", "eventLogoUrl"] as const;
+import { canonicalTimeZone } from "@/lib/event-time";
+
+export const EVENT_IDENTITY_KEYS = ["eventName", "eventTheme", "eventLocation", "eventTimeZone", "eventContact", "eventDiscord", "eventLogoUrl"] as const;
 export type EventIdentityKey = (typeof EVENT_IDENTITY_KEYS)[number];
 /** The organizer's stored values, keyed by field. Absent = default. */
 export type EventIdentityOverrides = Partial<Record<EventIdentityKey, string>>;
@@ -14,6 +16,7 @@ export const EVENT_LOCATION_MAX = 160;
 export const EVENT_CONTACT_MAX = 254;
 export const EVENT_DISCORD_MAX = 200;
 export const EVENT_LOGO_URL_MAX = 2048;
+export const EVENT_TIME_ZONE_MAX = 64;
 
 export const EVENT_IDENTITY_MAX: Record<EventIdentityKey, number> = {
   eventName: EVENT_NAME_MAX,
@@ -22,6 +25,7 @@ export const EVENT_IDENTITY_MAX: Record<EventIdentityKey, number> = {
   eventContact: EVENT_CONTACT_MAX,
   eventDiscord: EVENT_DISCORD_MAX,
   eventLogoUrl: EVENT_LOGO_URL_MAX,
+  eventTimeZone: EVENT_TIME_ZONE_MAX,
 };
 
 /** Spec §2 defaults. Empty means "hide" for every field but the name — pages
@@ -33,6 +37,8 @@ export const DEFAULT_EVENT_IDENTITY: Record<EventIdentityKey, string> = {
   eventContact: "",
   eventDiscord: "",
   eventLogoUrl: "",
+  /** Blank = UTC (#547), so a box that never sets it renders as before. */
+  eventTimeZone: "",
 };
 
 const KEY_SET = new Set<string>(EVENT_IDENTITY_KEYS);
@@ -63,6 +69,12 @@ export function checkEventIdentityValue(key: EventIdentityKey, raw: unknown): Id
     if (!parsed || parsed.protocol !== "https:" || !parsed.hostname) {
       return { ok: false, message: "eventDiscord must be an https:// URL" };
     }
+  }
+  if (key === "eventTimeZone") {
+    // #547: a zone this runtime's Intl knows, kept as typed (case-fixed).
+    const zone = canonicalTimeZone(value);
+    if (!zone) return { ok: false, message: "eventTimeZone must be an IANA time zone, e.g. America/Argentina/Buenos_Aires" };
+    return { ok: true, value: zone };
   }
   if (key === "eventLogoUrl") {
     // The hero logo's link (#545): the sponsor-URL rule — https, a host, and

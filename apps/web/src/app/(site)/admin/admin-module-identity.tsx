@@ -96,6 +96,7 @@ export function IdentityField({
   apply,
   ariaDescribedBy,
   ariaInvalid,
+  list,
 }: {
   /** Optional element id, for a caller that labels the field with a real
    *  `<label htmlFor>` rather than wrapping it (e.g. the Event tab's Identity
@@ -118,6 +119,8 @@ export function IdentityField({
   /** Set alongside `ariaDescribedBy` when the status it points at is a
    *  rejection, matching AdminSwitch/AdminNumberField's `aria-invalid`. */
   ariaInvalid?: boolean;
+  /** A `<datalist>` id offering suggestions (the Event tab's Timezone row). */
+  list?: string;
 }) {
   const [input, setInput] = useState(stored);
 
@@ -137,7 +140,7 @@ export function IdentityField({
     className: fieldClass,
   };
 
-  return multiline ? <textarea rows={2} {...shared} /> : <input type="text" {...shared} />;
+  return multiline ? <textarea rows={2} {...shared} /> : <input type="text" list={list} {...shared} />;
 }
 
 export default function AdminModuleIdentity({ moduleId, defaults, override, pending, apply }: AdminModuleIdentityProps) {

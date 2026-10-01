@@ -5,6 +5,7 @@ import { cache } from "react";
 import { getAdminSettingsSnapshot } from "@/lib/enabled-modules";
 import { DEFAULT_EVENT_IDENTITY, type EventIdentityOverrides } from "@/lib/event-identity";
 import { formatDateRange } from "@/lib/event-dates";
+import { resolveTimeZone } from "@/lib/event-time";
 import { SECURE_AGENT_PLAYBOOK_URL } from "@/lib/modules";
 import type { NavEntry, NavGroup, NavLink } from "@/lib/site-nav";
 
@@ -30,6 +31,8 @@ export type Site = {
   discordUrl: string;
   /** Where the hero's event logo links (#545). "" = not clickable. */
   logoUrl: string;
+  /** The IANA zone dates are shown in (#547); "UTC" when unset. */
+  timeZone: string;
   // The CTF team's own inbox: the one address on this site that reaches the
   // organizers rather than the Foundation. Use it for anything that
   // needs a private, written channel and shouldn't go in a public Discord.
@@ -74,6 +77,8 @@ export function resolveSite(
   schedule: { scoringStartsAt: string | null; scoringEndsAt: string | null } | null,
 ): Site {
   const o = overrides ?? {};
+  // #547: the zone every date is shown in; an unknown stored value reads as UTC.
+  const timeZone = resolveTimeZone(o.eventTimeZone);
   return {
     // `||`, not `??`, for eventName ONLY: an empty string is a valid "no
     // override" state for the other four fields (each hides its own UI
@@ -87,7 +92,8 @@ export function resolveSite(
     contactEmail: o.eventContact ?? DEFAULT_EVENT_IDENTITY.eventContact,
     discordUrl: o.eventDiscord ?? DEFAULT_EVENT_IDENTITY.eventDiscord,
     logoUrl: o.eventLogoUrl ?? DEFAULT_EVENT_IDENTITY.eventLogoUrl,
-    dates: formatDateRange(schedule?.scoringStartsAt ?? null, schedule?.scoringEndsAt ?? null),
+    timeZone,
+    dates: formatDateRange(schedule?.scoringStartsAt ?? null, schedule?.scoringEndsAt ?? null, timeZone),
     ctfStartsAt: schedule?.scoringStartsAt ?? null,
     secureAgentPlaybookUrl: SECURE_AGENT_PLAYBOOK_URL,
     owaspUrl: "https://owasp.org/",

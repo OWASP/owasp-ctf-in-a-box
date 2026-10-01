@@ -16,6 +16,7 @@ describe("resolveSite", () => {
     expect(s.contactEmail).toBe("");
     expect(s.discordUrl).toBe("");
     expect(s.logoUrl).toBe("");
+    expect(s.timeZone).toBe("UTC");
   });
   it("lays stored fields over the defaults, field by field", () => {
     const s = resolveSite({ eventName: "Demo CTF", eventDiscord: "https://discord.gg/x" }, null);
@@ -78,5 +79,16 @@ describe("getSite", () => {
     expect(site.dates).toBe("Oct 1 – Oct 3, 2026");
     expect(site.ctfStartsAt).toBe("2026-10-01T09:00:00Z");
     expect(mocks.getAdminSettingsSnapshot).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("resolveSite event time zone (#547)", () => {
+  it("resolves the stored zone and formats the dates line in it", () => {
+    const s = resolveSite({ eventTimeZone: "America/Argentina/Buenos_Aires" }, { scoringStartsAt: "2026-10-02T01:00:00Z", scoringEndsAt: null });
+    expect(s.timeZone).toBe("America/Argentina/Buenos_Aires");
+    expect(s.dates).toBe("From Oct 1, 2026");
+  });
+  it("falls back to UTC for a stored zone Intl no longer knows", () => {
+    expect(resolveSite({ eventTimeZone: "Mars/Olympus" }, null).timeZone).toBe("UTC");
   });
 });

@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_EVENT_IDENTITY, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX, EVENT_IDENTITY_KEYS, EVENT_LOCATION_MAX, EVENT_LOGO_URL_MAX,
+  DEFAULT_EVENT_IDENTITY, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX, EVENT_IDENTITY_KEYS, EVENT_LOCATION_MAX, EVENT_LOGO_URL_MAX, EVENT_TIME_ZONE_MAX,
   EVENT_NAME_MAX, EVENT_THEME_MAX, checkEventIdentityValue, isEventIdentityKey,
 } from "@/lib/event-identity";
 
 describe("event identity contract", () => {
   it("names exactly the spec fields, in order (#545 adds the logo link last)", () => {
-    expect([...EVENT_IDENTITY_KEYS]).toEqual(["eventName", "eventTheme", "eventLocation", "eventContact", "eventDiscord", "eventLogoUrl"]);
+    expect([...EVENT_IDENTITY_KEYS]).toEqual(["eventName", "eventTheme", "eventLocation", "eventTimeZone", "eventContact", "eventDiscord", "eventLogoUrl"]);
   });
   it("defaults to OWASP CTF in a Box and nothing else", () => {
-    expect(DEFAULT_EVENT_IDENTITY).toEqual({ eventName: "OWASP CTF in a Box", eventTheme: "", eventLocation: "", eventContact: "", eventDiscord: "", eventLogoUrl: "" });
+    expect(DEFAULT_EVENT_IDENTITY).toEqual({ eventName: "OWASP CTF in a Box", eventTheme: "", eventLocation: "", eventTimeZone: "", eventContact: "", eventDiscord: "", eventLogoUrl: "" });
   });
   it("pins the spec limits", () => {
-    expect([EVENT_NAME_MAX, EVENT_THEME_MAX, EVENT_LOCATION_MAX, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX, EVENT_LOGO_URL_MAX]).toEqual([80, 160, 160, 254, 200, 2048]);
+    expect([EVENT_NAME_MAX, EVENT_THEME_MAX, EVENT_LOCATION_MAX, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX, EVENT_LOGO_URL_MAX, EVENT_TIME_ZONE_MAX]).toEqual([80, 160, 160, 254, 200, 2048, 64]);
   });
   it("recognises its keys and nothing else", () => {
     expect(isEventIdentityKey("eventName")).toBe(true);
@@ -57,6 +57,15 @@ describe("checkEventIdentityValue", () => {
   });
   // #545: the hero logo links here, so only a plain https page is accepted —
   // the same rule as a sponsor's URL (no credentials smuggled in userinfo).
+  // #547: an IANA zone Intl knows, stored in its canonical spelling; blank = UTC.
+  it("accepts an IANA zone or empty for eventTimeZone, nothing else", () => {
+    expect(checkEventIdentityValue("eventTimeZone", " America/Argentina/Buenos_Aires ")).toEqual({ ok: true, value: "America/Argentina/Buenos_Aires" });
+    expect(checkEventIdentityValue("eventTimeZone", "utc")).toEqual({ ok: true, value: "UTC" });
+    expect(checkEventIdentityValue("eventTimeZone", "")).toEqual({ ok: true, value: "" });
+    expect(checkEventIdentityValue("eventTimeZone", "Mars/Olympus")).toMatchObject({ ok: false, message: expect.stringContaining("time zone") });
+    expect(checkEventIdentityValue("eventTimeZone", "x".repeat(65))).toMatchObject({ ok: false, message: expect.stringContaining("64") });
+  });
+
   it("accepts an https URL or empty for eventLogoUrl, nothing else", () => {
     expect(checkEventIdentityValue("eventLogoUrl", " https://redteamspace.team/ctf ")).toEqual({ ok: true, value: "https://redteamspace.team/ctf" });
     expect(checkEventIdentityValue("eventLogoUrl", "")).toEqual({ ok: true, value: "" });

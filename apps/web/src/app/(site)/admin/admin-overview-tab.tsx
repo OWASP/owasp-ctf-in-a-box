@@ -89,7 +89,7 @@ export default function AdminOverviewTab({
   visible?: boolean;
 }) {
   const resolution = phaseFromSettings(settings, nowMs);
-  const boundary = phaseBoundaryLabel(resolution.phase, resolution.startsAt, resolution.endsAt);
+  const boundary = phaseBoundaryLabel(resolution.phase, resolution.startsAt, resolution.endsAt, resolution.timeZone);
   const boundaryMs =
     resolution.phase === "registration" && resolution.startsAt
       ? Date.parse(resolution.startsAt)

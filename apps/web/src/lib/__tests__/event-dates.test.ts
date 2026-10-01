@@ -49,3 +49,16 @@ describe("formatDateRange", () => {
     expect(formatDateRange("2026-10-01T09:00:00Z", "nope")).toBe("From Oct 1, 2026");
   });
 });
+
+// #547: the dates line follows the event's zone. Without one it stays UTC.
+describe("formatDateRange in the event's zone", () => {
+  it("prints the event's own calendar day, not UTC's", () => {
+    // 01:00Z on Oct 2 is still Oct 1 in Buenos Aires (GMT-3).
+    expect(formatDateRange("2026-10-02T01:00:00Z", null)).toBe("From Oct 2, 2026");
+    expect(formatDateRange("2026-10-02T01:00:00Z", null, "America/Argentina/Buenos_Aires")).toBe("From Oct 1, 2026");
+  });
+  it("judges same-year by the event's calendar", () => {
+    // Jan 1 01:00Z is Dec 31 in Buenos Aires: one year there, two in UTC.
+    expect(formatDateRange("2026-12-30T12:00:00Z", "2027-01-01T01:00:00Z", "America/Argentina/Buenos_Aires")).toBe("Dec 30 – Dec 31, 2026");
+  });
+});

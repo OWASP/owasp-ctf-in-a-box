@@ -9,3 +9,8 @@ allowBuilds:
 # Drop once every dependant's own range starts at or above 4.28.7.
 overrides:
   browserslist: ">=4.28.7"
+  # Security floor for minimatch@10's brace-expansion (eslint → minimatch).
+  # pnpm keeps 5.0.9 within ^5.0.8 on its own. GHSA-q2hr-2g5m-vwhr (the 1.x
+  # copy is fixed in range, at 1.1.21). Drop once minimatch's range starts at
+  # or above 5.0.12.
+  "brace-expansion@^5": ">=5.0.12"

@@ -429,6 +429,13 @@ describe("aiCooldownSec", () => {
 });
 
 describe("getSyncStatus", () => {
+  // #499: an error reply used to read as "the poller has never written",
+  // which /admin and /health/deep show as no heartbeat at all.
+  it("throws on an error reply instead of reading as no heartbeat", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }]);
+    await expect(getSyncStatus()).rejects.toThrow(/NOAUTH/);
+  });
+
   it("returns null when the poller has never written", async () => {
     mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
     expect(await getSyncStatus()).toBeNull();

@@ -32,6 +32,9 @@ export const ADMIN_ADMINS_KEY = "ctf:admin:admins";
  *  for the wrong reason. `requireAdmin` catches it explicitly. */
 export async function listStoredAdmins(): Promise<string[]> {
   const [res] = await upstashPipeline([["SMEMBERS", ADMIN_ADMINS_KEY]]);
+  // An error REPLY throws too (#499) — read as an empty roster it would deny
+  // for the wrong reason, which the doc comment above promises it does not.
+  if (res.error) throw new Error(`Upstash SMEMBERS admins failed: ${res.error}`);
   const arr = Array.isArray(res.result) ? (res.result as string[]) : [];
   return arr.map((a) => String(a).toLowerCase()).sort();
 }

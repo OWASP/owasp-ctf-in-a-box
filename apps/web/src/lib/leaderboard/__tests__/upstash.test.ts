@@ -36,4 +36,18 @@ describe("upstashSource.getLeaderboard", () => {
     expect(data.capabilities.teams).toBe(false);
     expect(data.teams).toEqual([]);
   });
+
+  // #499: a per-command error reply used to read as an empty board (ZRANGE)
+  // or as zero patched for that player (HGETALL). It throws now, so the
+  // caller's own fail direction applies and the log says which read failed.
+  it("throws on an error reply from the ranking read", async () => {
+    pipelineMock.mockResolvedValueOnce([{ error: "WRONGTYPE" }]);
+    await expect(upstashSource.getLeaderboard()).rejects.toThrow(/WRONGTYPE/);
+  });
+
+  it("throws on an error reply from a player's totals read", async () => {
+    pipelineMock.mockResolvedValueOnce([{ result: ["alice", "10", "bob", "5"] }]);
+    pipelineMock.mockResolvedValueOnce([{ result: ["patched", "1"] }, { error: "NOAUTH" }]);
+    await expect(upstashSource.getLeaderboard()).rejects.toThrow(/NOAUTH/);
+  });
 });

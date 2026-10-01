@@ -102,7 +102,11 @@ export function wallToInstant(wall: string, zone: string): string | null {
   if (!Number.isFinite(guess)) return null;
   const first = guess - offsetAt(guess, zone);
   const second = guess - offsetAt(first, zone);
-  // Across a transition the two estimates disagree; the later one keeps the
-  // typed wall time (or, in a gap, moves it forward rather than back).
-  return new Date(Math.max(first, second)).toISOString();
+  // Near a transition the two estimates can disagree: keep the one that
+  // reads back as the typed wall time. Only inside a spring-forward gap does
+  // neither — then take the later, moving the time forward rather than back.
+  const typed = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}`;
+  const roundTrips = (ms: number) => instantToWall(new Date(ms).toISOString(), zone) === typed;
+  const pick = roundTrips(first) ? first : roundTrips(second) ? second : Math.max(first, second);
+  return new Date(pick).toISOString();
 }

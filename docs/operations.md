@@ -294,8 +294,8 @@ The panel offers:
   IANA zone such as `America/Argentina/Buenos_Aires`, suggested as you type;
   every date and time the event shows — the landing page's dates, the phase
   line, the score chart's axis and the schedule inputs below — reads on this
-  clock, labelled with its offset, e.g. "9:00 AM GMT-3"; blank means UTC, the
-  output before this setting existed), **Contact e-mail**
+  clock; the phase line and the launch status name its offset, e.g. "9:00 AM
+  GMT-3"; blank means UTC, the output before this setting existed), **Contact e-mail**
   (≤254; the organizers' own inbox, rendered as a `mailto:` link on the
   privacy and terms pages; blank hides it), and **Discord invite** (≤200;
   must be an `https://` URL; the header, hero, rules, how-to-play, FAQ and

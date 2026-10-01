@@ -57,6 +57,14 @@ describe("wall clock <-> instant", () => {
       expect(instantToWall(wallToInstant(wall, "America/New_York")!, "America/New_York")).toBe(wall);
     }
   });
+  // CodeRabbit CLI: just after spring-forward the first estimate uses the
+  // pre-change offset and lands an hour late; the one that round-trips wins.
+  it("reads a time just after a spring-forward change at its real offset", () => {
+    expect(wallToInstant("2026-03-08T03:30", "America/New_York")).toBe("2026-03-08T07:30:00.000Z");
+    expect(wallToInstant("2026-03-08T01:30", "America/New_York")).toBe("2026-03-08T06:30:00.000Z");
+    expect(wallToInstant("2026-11-01T03:30", "America/New_York")).toBe("2026-11-01T08:30:00.000Z");
+  });
+
   it("lands a time inside a spring-forward gap on a real instant, an hour on", () => {
     // 02:30 does not exist in New York on 2026-03-08: the clock jumps 02:00 -> 03:00.
     const iso = wallToInstant("2026-03-08T02:30", "America/New_York")!;

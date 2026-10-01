@@ -28,6 +28,8 @@ export type Site = {
   // funnel contestants here. "" (the default) means pages hide their Discord
   // links and mentions entirely, same pattern as contactEmail below.
   discordUrl: string;
+  /** Where the hero's event logo links (#545). "" = not clickable. */
+  logoUrl: string;
   // The CTF team's own inbox: the one address on this site that reaches the
   // organizers rather than the Foundation. Use it for anything that
   // needs a private, written channel and shouldn't go in a public Discord.
@@ -84,6 +86,7 @@ export function resolveSite(
     location: o.eventLocation ?? DEFAULT_EVENT_IDENTITY.eventLocation,
     contactEmail: o.eventContact ?? DEFAULT_EVENT_IDENTITY.eventContact,
     discordUrl: o.eventDiscord ?? DEFAULT_EVENT_IDENTITY.eventDiscord,
+    logoUrl: o.eventLogoUrl ?? DEFAULT_EVENT_IDENTITY.eventLogoUrl,
     dates: formatDateRange(schedule?.scoringStartsAt ?? null, schedule?.scoringEndsAt ?? null),
     ctfStartsAt: schedule?.scoringStartsAt ?? null,
     secureAgentPlaybookUrl: SECURE_AGENT_PLAYBOOK_URL,

@@ -87,6 +87,8 @@ export type EventBundleEvent = {
   dates?: string;
   location?: string;
   ctfStartsAt?: string | null;
+  /** The hero logo's link (#545); travels with the logo. */
+  logoUrl?: string;
 };
 
 export type EventPolicySettings = Partial<Record<(typeof EVENT_POLICY_FIELDS)[number], unknown>>;
@@ -199,6 +201,9 @@ export function parseEventBundle(raw: string): EventParseResult {
     }
     if (parsed.event.location !== undefined && typeof parsed.event.location !== "string") {
       errors.push({ where: "event.location", message: '"event.location" must be a string' });
+    }
+    if (parsed.event.logoUrl !== undefined && typeof parsed.event.logoUrl !== "string") {
+      errors.push({ where: "event.logoUrl", message: '"event.logoUrl" must be a string' });
     }
     if (parsed.event.dates !== undefined && typeof parsed.event.dates !== "string") {
       errors.push({ where: "event.dates", message: '"event.dates" must be a string' });

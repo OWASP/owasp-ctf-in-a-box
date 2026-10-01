@@ -164,6 +164,7 @@ describe("parseEventBundle", () => {
     ["location", 42, "event.location"],
     ["dates", 42, "event.dates"],
     ["ctfStartsAt", 42, "event.ctfStartsAt"],
+    ["logoUrl", 42, "event.logoUrl"],
   ])("rejects a non-string event.%s", (field, badValue, where) => {
     const bad = { ...valid, event: { ...valid.event, [field]: badValue } };
     const res = parseEventBundle(JSON.stringify(bad));

@@ -300,6 +300,8 @@ export type SettingsPatch = {
   eventLocation?: string;
   eventContact?: string;
   eventDiscord?: string;
+  /** The hero logo's click-through link (#545). */
+  eventLogoUrl?: string;
   /** Which of the six secure-development targets this event runs (issue
    *  #386, PR 2). Replaces the whole set, like `enabledModules`; never
    *  clears — see updateAdminSettings for why there is no empty state. */
@@ -655,7 +657,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       // marker (CodeRabbit round 2): eventDiscord can embed an invite/join
       // token in its URL, and eventContact is PII — recording either verbatim
       // in an admin-visible log persists a secret/PII where "who changed
-      // what" only needs the field name. All five identity keys use the same
+      // what" only needs the field name. Every identity key uses the same
       // marker for uniformity rather than special-casing just those two.
       const check = checkEventIdentityValue(k, v);
       if (!check.ok) throw new AdminValidationError(k, check.message);

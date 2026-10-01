@@ -746,10 +746,10 @@ describe("event identity fields (issue #386)", () => {
     expect(strArgs).toContain("https://discord.gg/SECRETTOKEN");
   });
 
-  it("marks a cleared identity field as \"cleared\" in the audit record, for all five keys", async () => {
+  it("marks a cleared identity field as \"cleared\" in the audit record, for every identity key", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-09-10T00:00:00Z"]);
     await updateAdminSettings(
-      { eventName: "", eventTheme: "", eventLocation: "", eventContact: "", eventDiscord: "" },
+      { eventName: "", eventTheme: "", eventLocation: "", eventContact: "", eventDiscord: "", eventLogoUrl: "" },
       "alice",
     );
     const auditLine = String(mocks.upstashEval.mock.calls[0][2][2]);
@@ -760,6 +760,7 @@ describe("event identity fields (issue #386)", () => {
       eventLocation: "cleared",
       eventContact: "cleared",
       eventDiscord: "cleared",
+      eventLogoUrl: "cleared",
     });
   });
 });

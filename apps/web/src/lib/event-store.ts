@@ -42,7 +42,7 @@ const LIVE_WARNING = "This event is live — do not publish this bundle while co
  *  challenge/question definitions, never solves/attempts), the
  *  `EVENT_POLICY_FIELDS`-picked subset of `getAdminSettings()`, and the
  *  runtime identity fields (`name`, `theme`, `dates`, `location`,
- *  `ctfStartsAt`) resolved via `resolveSite` over that SAME settings read
+ *  `ctfStartsAt`, and `logoUrl` when set — #545) resolved via `resolveSite` over that SAME settings read
  *  (see below — no second HGETALL, no fail-open in an export). No
  *  `ctf:user:*`/
  *  `ctf:team:*`/solve/attempt/hint/audit key is ever touched here.
@@ -138,6 +138,9 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
       dates: site.dates,
       location: site.location,
       ctfStartsAt: site.ctfStartsAt,
+      // #545: the logo's link rides with the logo (eventImages below); a
+      // public page, unlike contact/Discord. Omitted when unset.
+      ...(site.logoUrl ? { logoUrl: site.logoUrl } : {}),
     },
     settings: policySettings,
     ...(isEnabled("classic") ? { classic: await exportClassic() } : {}),
@@ -318,10 +321,12 @@ export async function importEventBundle(
   // The bundle's identity block is applied like any other setting (issue
   // #386): through the one validated patch, before anything destructive.
   // contact/Discord never travel in a bundle (organizer PII — see the
-  // header comment), so only these three can come back.
+  // header comment), so only these four can come back (#545 added the
+  // logo link, which travels with the logo).
   patch.eventName = bundle.event.name;
   if (typeof bundle.event.theme === "string") patch.eventTheme = bundle.event.theme;
   if (typeof bundle.event.location === "string") patch.eventLocation = bundle.event.location;
+  if (typeof bundle.event.logoUrl === "string") patch.eventLogoUrl = bundle.event.logoUrl;
   await updateAdminSettings(patch, actor);
 
   // The images are identity too, so they land with the identity patch. A

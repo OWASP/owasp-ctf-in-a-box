@@ -261,7 +261,7 @@ export default async function Home({
               Project Policy wants OWASP branding prominent on any domain the
               kit runs on, so an organizer adds a logo, never removes OWASP's. */}
           {eventLogo ? (
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-4">
+            <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-6">
               {/* The event's logo is the main presence (#538): bounded by a
                   box, not a fixed height, so a portrait badge, a square and a
                   wide wordmark each fill it. A plain <img>, as for the sponsor

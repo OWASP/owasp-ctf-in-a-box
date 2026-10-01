@@ -611,6 +611,17 @@ describe("the hero logo (#529)", () => {
     expect(link).toMatch(/<img[^>]*src="\/owasp-logo\.png"[^>]*class="[^"]*invert/);
   });
 
+  // PR #540 review: flex-wrap alone leaves a narrow portrait badge and the
+  // attribution side by side on a phone; the stack below `sm` is explicit.
+  it("stacks the OWASP credit under the logo on phones and beside it from sm up", async () => {
+    const markup = await render({ logo: { ...logo, w: 482, h: 603 } });
+    const row = markup.match(/<div class="([^"]*)"><img[^>]*api\/event\/logo/)?.[1] ?? "";
+    for (const cls of ["flex", "flex-col", "items-start", "sm:flex-row", "sm:items-center"]) {
+      expect(row.split(/\s+/)).toContain(cls);
+    }
+    expect(row).not.toContain("flex-wrap");
+  });
+
   it("keeps the default hero unchanged when no logo is set: the OWASP mark alone, no caption", () => {
     expect(html).not.toContain("Built with OWASP CTF in a Box");
     const owasp = imgTags(html).filter((t) => t.includes('src="/owasp-logo.png"'));

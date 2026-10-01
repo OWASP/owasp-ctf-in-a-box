@@ -10,6 +10,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: the projector board shows the event's logo and a clock, and the
+  landing page's main button is back above the fold (#543).** The projector
+  view (`/leaderboard?display=1`) puts the uploaded event logo beside the name
+  and adds a clock read from the scoring window: "starts in …" before scoring
+  opens, "ends in …" while it is open, "final" after it closes, and "not
+  launched" until a start is set. On the landing page the sponsor strip moves
+  below the primary button, and the hero has less padding on top.
+
 - **Security: the app, sync and scorer images move to a patched Alpine base
   (#539).** All three pinned a `node:22-alpine` digest whose OpenSSL
   (`libssl3`/`libcrypto3` 3.5.7-r0) carries 2 critical and 7 high CVEs, as

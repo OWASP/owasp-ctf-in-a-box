@@ -21,6 +21,8 @@ import { getResolvedModules } from "@/lib/resolved-modules";
 import { getEnabledApps } from "@/lib/enabled-apps";
 import { listSponsors } from "@/lib/sponsors-store";
 import { getAdminSettingsSnapshot } from "@/lib/enabled-modules";
+import { getEventImages } from "@/lib/event-images-site";
+import { eventImageUrl } from "@/lib/event-images-keys";
 
 export async function generateMetadata(): Promise<Metadata> {
   const event = await getSite();
@@ -92,10 +94,13 @@ export default async function LeaderboardPage({
     // the landing strip reads, so one /admin control sizes both surfaces.
     // `getAdminSettingsSnapshot` already fails open to null internally, and
     // DisplayBoard's own `?? "md"` covers "nothing stored yet".
-    const [phaseInfo, sponsors, settings] = await Promise.all([
+    const [phaseInfo, sponsors, settings, images] = await Promise.all([
       resolvePhase(),
       listSponsors().catch(() => []),
       getAdminSettingsSnapshot(),
+      // The event's logo for the wall (#543). getEventImages fails open to
+      // "none stored", so a read error leaves the header as the name alone.
+      getEventImages(),
     ]);
     // Teams when the event has them, individuals otherwise — the same
     // primary view the interactive board defaults to.
@@ -120,6 +125,9 @@ export default async function LeaderboardPage({
         eventName={event.name}
         phaseLabel={phaseInfo ? phaseInfo.phase : null}
         logoSize={settings?.sponsorLogoSize ?? undefined}
+        eventLogo={images.logo ? { src: eventImageUrl("logo", images.logo), w: images.logo.w, h: images.logo.h } : null}
+        scoringStartsAt={settings?.scoringStartsAt ?? null}
+        scoringEndsAt={settings?.scoringEndsAt ?? null}
         sponsors={sponsors.map((s) => ({
           key: s.id,
           name: s.name,

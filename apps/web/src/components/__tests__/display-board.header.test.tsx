@@ -1,0 +1,112 @@
+// The projector header (#543): the event's own logo beside its name (P1) and
+// the scoring-window clock (P2). Static render, like display-board.size.test.
+import { describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { isValidElement, type ReactElement, type ReactNode } from "react";
+
+vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ refresh: () => {} }) }));
+
+const { default: DisplayBoard } = await import("@/components/display-board");
+
+const rows = [{ key: "a", rank: 1, name: "Byte Me", points: 2108 }];
+const header = (html: string) => html.slice(0, html.indexOf("Byte Me"));
+
+function render(props: Partial<Parameters<typeof DisplayBoard>[0]> = {}) {
+  return renderToStaticMarkup(<DisplayBoard rows={rows} eventName="Red Team Space CTF" phaseLabel="live" {...props} />);
+}
+
+describe("DisplayBoard header — event logo (P1)", () => {
+  it("shows the uploaded logo beside the name, sized for the wall", () => {
+    const h = header(render({ eventLogo: { src: "/api/event/logo?v=0123456789abcdef", w: 482, h: 603 } }));
+    const img = h.match(/<img[^>]*>/)?.[0] ?? "";
+    expect(img).toContain('src="/api/event/logo?v=0123456789abcdef"');
+    expect(img).toContain('alt="Red Team Space CTF logo"');
+    expect(img).toContain("h-[6vh]");
+    expect(img).toContain("max-w-[20vw]");
+    expect(img).toContain("object-contain");
+    expect(h).toContain("Red Team Space CTF");
+  });
+
+  it("is the name alone when no logo is set", () => {
+    const h = header(render());
+    expect(h).not.toMatch(/<img/);
+    expect(h).toContain("Red Team Space CTF");
+  });
+});
+
+describe("DisplayBoard header — scoring clock (P2)", () => {
+  it("says not launched when no scoring start is set", () => {
+    expect(header(render({ scoringStartsAt: null, scoringEndsAt: null }))).toContain("not launched");
+  });
+
+  it("counts down to a start that is still ahead", () => {
+    const far = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    expect(header(render({ scoringStartsAt: far, scoringEndsAt: null }))).toMatch(/starts in \d+d \d{2}h/);
+  });
+
+  it("counts down to the end while live", () => {
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    const soon = new Date(Date.now() + 2 * 3_600_000).toISOString();
+    expect(header(render({ scoringStartsAt: past, scoringEndsAt: soon }))).toMatch(/ends in \d{2}:\d{2}:\d{2}/);
+  });
+
+  it("uses tabular figures so the ticking digits do not jitter", () => {
+    const html = header(render({ scoringStartsAt: null, scoringEndsAt: null }));
+    expect(html).toMatch(/<span[^>]*class="[^"]*tabular-nums[^"]*"[^>]*>not launched</);
+  });
+});
+
+// CLI review: the span is ALWAYS rendered, empty text included. The server
+// may render "starts in 00:00:01" and the browser hydrate a moment later into
+// "live, no end" (empty text); a span that vanished would be an element
+// mismatch, which suppressHydrationWarning does not cover (text only).
+describe("DisplayBoard header — the clock keeps its element when its text is empty", () => {
+  it("renders an empty clock span while live with no end", () => {
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    expect(header(render({ scoringStartsAt: past, scoringEndsAt: null }))).toMatch(/<span[^>]*tabular-nums[^>]*><\/span>/);
+  });
+});
+
+// PR #544 review: metadata can load while the image itself fails (a 503 from
+// the route, unreadable bytes) — the wall must not show a broken-image icon.
+// No DOM here (no @testing-library, see admin-event-identity.test.tsx), so
+// the element is captured and its onError called directly.
+describe("DisplayBoard header — a logo that fails to load is hidden", () => {
+  type ImgEl = ReactElement<{ src: string; onError?: (e: { currentTarget: { hidden: boolean } }) => void }>;
+  // Walks the raw children (not Children.toArray, which rewrites keys).
+  function findImg(node: ReactNode): ImgEl | null {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const hit = findImg(child);
+        if (hit) return hit;
+      }
+      return null;
+    }
+    if (!isValidElement(node)) return null;
+    const el = node as ReactElement<{ children?: ReactNode; src?: string }>;
+    if (el.type === "img" && typeof el.props.src === "string" && el.props.src.startsWith("/api/event/logo")) return el as ImgEl;
+    return findImg(el.props.children);
+  }
+  function captureLogo(src: string): ImgEl {
+    let tree: ReactNode = null;
+    function Probe() {
+      tree = DisplayBoard({ rows, eventName: "Red Team Space CTF", phaseLabel: "live", eventLogo: { src, w: 482, h: 603 } });
+      return null;
+    }
+    renderToStaticMarkup(<Probe />);
+    const img = findImg(tree);
+    if (!img) throw new Error("no event logo <img> in the header");
+    return img;
+  }
+
+  it("hides the image on a load error, leaving the name", () => {
+    const img = captureLogo("/api/event/logo?v=0123456789abcdef");
+    const target = { hidden: false };
+    img.props.onError?.({ currentTarget: target });
+    expect(target.hidden).toBe(true);
+  });
+
+  it("keys the image by its src, so a replaced logo remounts and is shown again", () => {
+    expect(captureLogo("/api/event/logo?v=aaaaaaaaaaaaaaaa").key).toBe("/api/event/logo?v=aaaaaaaaaaaaaaaa");
+  });
+});

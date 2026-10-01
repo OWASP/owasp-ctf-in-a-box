@@ -14,6 +14,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import DisplayClock from "@/components/display-clock";
 import type { SponsorLogoSize } from "@/lib/sponsors-keys";
 
 export type DisplayRow = {
@@ -77,10 +78,19 @@ export default function DisplayBoard({
   phaseLabel,
   sponsors = [],
   logoSize,
+  eventLogo = null,
+  scoringStartsAt = null,
+  scoringEndsAt = null,
 }: {
   rows: DisplayRow[];
   eventName: string;
   phaseLabel: string | null;
+  /** The event's uploaded logo (#529), shown beside the name on the wall
+   *  (#543 P1). Null: no logo stored, or the read failed — name only. */
+  eventLogo?: { src: string; w: number; h: number } | null;
+  /** The scoring window, for the clock (#543 P2). */
+  scoringStartsAt?: string | null;
+  scoringEndsAt?: string | null;
   /** Empty on a box with no sponsors configured — the credit row renders
    *  nothing at all in that case, same "render iff non-empty" rule the other
    *  three sponsor surfaces follow. */
@@ -101,12 +111,33 @@ export default function DisplayBoard({
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-[#1a1a2e] px-[4vw] py-[3vh]">
       <div className="flex items-baseline justify-between gap-6">
-        <div className="flex min-w-0 items-baseline gap-[1.5vw]">
+        <div className="flex min-w-0 items-center gap-[1.5vw]">
+          {eventLogo && (
+            // Native <img>, as for the sponsor credits below: next/image would
+            // re-fetch our own image route through its optimizer. A failed
+            // load (the route's 503, unreadable bytes) hides the element so
+            // the wall never shows a broken-image icon — the name stays. Keyed
+            // by src: a replaced logo remounts and is shown again.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={eventLogo.src}
+              onError={(e) => {
+                e.currentTarget.hidden = true;
+              }}
+              src={eventLogo.src}
+              alt={`${eventName} logo`}
+              width={eventLogo.w}
+              height={eventLogo.h}
+              decoding="async"
+              className="h-[6vh] w-auto max-w-[20vw] object-contain"
+            />
+          )}
           <h1 className="truncate font-display text-[3.5vh] font-black tracking-tight text-white">
             {eventName}
           </h1>
         </div>
         <div className="flex items-baseline gap-6">
+          <DisplayClock startsAt={scoringStartsAt} endsAt={scoringEndsAt} />
           {phaseLabel && (
             <span className="font-mono text-[2vh] uppercase tracking-widest text-[#8f8f9b]">
               {phaseLabel}

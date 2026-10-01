@@ -29,7 +29,7 @@ export async function serveEventImage(slot: EventImageSlot, request: Request): P
   }
   if (!meta) return new NextResponse(null, { status: 404 });
 
-  if (request.headers.get("if-none-match") === meta.etag) {
+  if (etagMatches(request.headers.get("if-none-match"), meta.etag)) {
     return new NextResponse(null, { status: 304, headers: { ETag: meta.etag } });
   }
 
@@ -53,4 +53,16 @@ export async function serveEventImage(slot: EventImageSlot, request: Request): P
       "Content-Disposition": "inline",
     },
   });
+}
+
+/** Whether an If-None-Match header names this etag: a list of entity-tags,
+ *  each optionally weak (`W/`) and quoted, or `*`. The stored etag is bare
+ *  hex and is sent back as-is (the sponsor route's format), so a client that
+ *  echoes the header verbatim matches too. Weak comparison, as RFC 9110 asks
+ *  of If-None-Match. */
+export function etagMatches(header: string | null, etag: string): boolean {
+  if (!header) return false;
+  if (header.trim() === "*") return true;
+  const tags = header.match(/(?:W\/)?"[^"]*"|[^\s,]+/g) ?? [];
+  return tags.some((t) => t.replace(/^W\//, "").replace(/^"|"$/g, "") === etag);
 }

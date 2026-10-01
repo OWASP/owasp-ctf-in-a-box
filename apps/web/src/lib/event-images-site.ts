@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import type { Metadata } from "next";
 import { getEventImagesMeta } from "@/lib/event-images-store";
+import { errorLabel } from "@/lib/error-label";
 import { eventImageUrl, type EventImagesMeta } from "@/lib/event-images-keys";
 
 /**
@@ -15,7 +16,7 @@ export const getEventImages = cache(async (): Promise<EventImagesMeta> => {
   try {
     return await getEventImagesMeta();
   } catch (err) {
-    console.error("[event-images] read failed; rendering the built-in images:", err instanceof Error ? err.message : "non-Error throw");
+    console.error("[event-images] read failed; rendering the built-in images:", errorLabel(err));
     return {};
   }
 });

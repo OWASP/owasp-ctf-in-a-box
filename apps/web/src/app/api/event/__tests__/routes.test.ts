@@ -64,4 +64,27 @@ describe.each([
     getEventImagesMeta.mockRejectedValue(new Error("NOAUTH"));
     expect((await GET(req())).status).toBe(503);
   });
+
+  it("answers 503 when the metadata is readable but the bytes are not", async () => {
+    getEventImagesMeta.mockResolvedValue({ [slot]: meta });
+    getEventImageData.mockRejectedValue(new Error("NOAUTH"));
+    expect((await GET(req())).status).toBe(503);
+  });
+
+  it.each([
+    ["a quoted tag", `"${meta.etag}"`],
+    ["a weak tag", `W/"${meta.etag}"`],
+    ["a list that holds it", `"aaaaaaaaaaaaaaaa", "${meta.etag}"`],
+    ["the wildcard", "*"],
+  ])("answers 304 for If-None-Match carrying %s", async (_n, header) => {
+    getEventImagesMeta.mockResolvedValue({ [slot]: meta });
+    expect((await GET(req({ "if-none-match": header }))).status).toBe(304);
+    expect(getEventImageData).not.toHaveBeenCalled();
+  });
+
+  it("answers 200 for a list that does not hold the current tag", async () => {
+    getEventImagesMeta.mockResolvedValue({ [slot]: meta });
+    getEventImageData.mockResolvedValue(bytes.toString("base64"));
+    expect((await GET(req({ "if-none-match": '"aaaaaaaaaaaaaaaa", W/"bbbbbbbbbbbbbbbb"' }))).status).toBe(200);
+  });
 });

@@ -1276,3 +1276,123 @@ run "ecs_exec_off_grants_nothing" {
   }
 }
 
+
+// --- task sizes (#531) -------------------------------------------------------
+//
+// srh, the scorer and sync were hard-coded, so the first real event had to
+// edit ecs.tf to give srh — the whole data path — more than 0.25 vCPU. The
+// sizes are variables now, with today's values as defaults, and a CPU/memory
+// pair Fargate does not run is refused at PLAN rather than at task start.
+
+run "default_task_sizes_are_unchanged" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+  }
+
+  assert {
+    condition = (
+      aws_ecs_task_definition.srh.cpu == "256" && aws_ecs_task_definition.srh.memory == "512" &&
+      aws_ecs_task_definition.scorer[0].cpu == "512" && aws_ecs_task_definition.scorer[0].memory == "1024" &&
+      aws_ecs_task_definition.sync[0].cpu == "256" && aws_ecs_task_definition.sync[0].memory == "512"
+    )
+    error_message = "The defaults must be the sizes every existing deploy already runs."
+  }
+
+  assert {
+    condition     = aws_ecs_service.srh.desired_count == 2
+    error_message = "srh runs two tasks by default (the failover reasoning in ecs.tf)."
+  }
+}
+
+run "task_size_variables_reach_the_task_definitions" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    srh_cpu                   = 512
+    srh_memory                = 1024
+    srh_desired_count         = 3
+    scorer_cpu                = 1024
+    scorer_memory             = 2048
+    sync_cpu                  = 512
+    sync_memory               = 1024
+  }
+
+  assert {
+    condition     = aws_ecs_task_definition.srh.cpu == "512" && aws_ecs_task_definition.srh.memory == "1024"
+    error_message = "srh_cpu / srh_memory must size the srh task."
+  }
+
+  assert {
+    condition     = aws_ecs_service.srh.desired_count == 3
+    error_message = "srh_desired_count must set the srh service's count."
+  }
+
+  assert {
+    condition     = aws_ecs_task_definition.scorer[0].cpu == "1024" && aws_ecs_task_definition.scorer[0].memory == "2048"
+    error_message = "scorer_cpu / scorer_memory must size the scorer task."
+  }
+
+  assert {
+    condition     = aws_ecs_task_definition.sync[0].cpu == "512" && aws_ecs_task_definition.sync[0].memory == "1024"
+    error_message = "sync_cpu / sync_memory must size the sync task."
+  }
+}
+
+run "fewer_than_two_srh_tasks_is_refused" {
+  command = plan
+
+  variables {
+    srh_desired_count = 1
+  }
+
+  expect_failures = [var.srh_desired_count]
+}
+
+run "an_srh_size_fargate_does_not_run_is_refused_at_plan" {
+  command = plan
+
+  variables {
+    srh_cpu    = 256
+    srh_memory = 4096
+  }
+
+  expect_failures = [aws_ecs_task_definition.srh]
+}
+
+run "an_app_size_fargate_does_not_run_is_refused_at_plan" {
+  command = plan
+
+  variables {
+    app_cpu    = 1024
+    app_memory = 1024
+  }
+
+  expect_failures = [aws_ecs_task_definition.app]
+}
+
+run "a_scorer_size_fargate_does_not_run_is_refused_at_plan" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    scorer_cpu                = 512
+    scorer_memory             = 5120
+  }
+
+  expect_failures = [aws_ecs_task_definition.scorer]
+}
+
+run "a_sync_size_fargate_does_not_run_is_refused_at_plan" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    sync_cpu                  = 300
+    sync_memory               = 512
+  }
+
+  expect_failures = [aws_ecs_task_definition.sync]
+}

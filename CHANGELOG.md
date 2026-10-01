@@ -27,6 +27,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   workflow fails any security group or rule description EC2 would refuse,
   since `validate` and the mocked `terraform test` never call EC2.
 
+- **Added: srh, scorer and sync task sizes are AWS Terraform variables (#531).**
+  `srh_cpu`, `srh_memory`, `srh_desired_count`, `scorer_cpu`,
+  `scorer_memory`, `sync_cpu` and `sync_memory` join the app's existing
+  three. The defaults are the sizes every deploy already runs, so nothing
+  changes unless you set them. A CPU/memory pair Fargate does not run (for the
+  app too) is refused at plan, and `srh_desired_count` must stay at 2 or
+  more. The module README has a sizing note for a bigger event.
+
 - **Fixed: a failed Redis read no longer zeroes quiz, Jeopardy or AI points
   in silence (#523).** The per-contestant totals, and the hint-penalty total,
   read their hashes without checking the reply's error, so a `WRONGTYPE`,

@@ -82,6 +82,15 @@ Order-of-magnitude only — check the AWS calculator for your region, and note
 these are *monthly* figures for a stack you are expected to `destroy` after a
 weekend event, where the real bill is hours, not months.
 
+**Sizing a bigger event.** The table is the default sizing. For roughly
+300–1000 contestants, the first real event ran `app_desired_count = 3`,
+`srh_cpu = 512` / `srh_memory = 1024` and `cache_node_type =
+"cache.t4g.small"` (about USD 0.12/hr more than the defaults): srh carries
+every Redis call the app makes, so it grows with the app, while the scorer
+(`scorer_cpu`/`scorer_memory`) and sync (`sync_cpu`/`sync_memory`) rarely
+need to. A CPU/memory pair Fargate does not run is refused at plan, and
+`srh_desired_count` cannot go below 2.
+
 Turn the dials if that is too much: `app_desired_count = 1` (loses zero-downtime
 deploys), `cache_replica_count = 0` (loses automatic failover, single-AZ). What
 the money buys is managed durability, no instance to patch, and a load balancer

@@ -110,6 +110,16 @@ sync_image   = "PLACEHOLDER-deploy.sh-overwrites-this"
 # app_memory        = 2048   # MiB
 # app_desired_count = 2      # 2 keeps the event up through a deployment; 1 is cheaper
 
+# srh carries every Redis call the app makes, so it scales with the app.
+# A CPU/memory pair Fargate does not run is refused at plan.
+# srh_cpu           = 256
+# srh_memory        = 512
+# srh_desired_count = 2      # at least 2: srh is the whole data path
+# scorer_cpu        = 512    # Secure Development events only
+# scorer_memory     = 1024
+# sync_cpu          = 256    # Secure Development events only
+# sync_memory       = 512
+
 # ElastiCache. t4g.micro carries an event of this size comfortably.
 # cache_node_type     = "cache.t4g.micro"
 # cache_replica_count = 1    # 1 gives automatic failover across two AZs; 0 is cheaper

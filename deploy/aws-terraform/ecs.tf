@@ -148,10 +148,19 @@ resource "aws_ecs_task_definition" "srh" {
   family                   = "${var.name}-srh"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = 256
-  memory                   = 512
-  execution_role_arn       = aws_iam_role.execution.arn
-  task_role_arn            = aws_iam_role.task.arn
+  cpu                      = var.srh_cpu
+  memory                   = var.srh_memory
+
+  // A CPU/memory pair Fargate does not run fails here, at plan (#531),
+  // instead of as a RegisterTaskDefinition error mid-apply.
+  lifecycle {
+    precondition {
+      condition     = local.fargate_size_ok["srh"]
+      error_message = "srh_cpu / srh_memory is not a CPU/memory pair Fargate runs: ${local.fargate_size_rule}"
+    }
+  }
+  execution_role_arn = aws_iam_role.execution.arn
+  task_role_arn      = aws_iam_role.task.arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -249,7 +258,7 @@ resource "aws_ecs_service" "srh" {
   // attempt, so the task goes UNHEALTHY about two and a half minutes in, and
   // the circuit breaker below rolls the deployment back. Size it again from
   // the rehearsal's failover drill if that measures longer.
-  desired_count = 2
+  desired_count = var.srh_desired_count
   launch_type   = "FARGATE"
 
   // A deployment whose tasks never go healthy (bad image, missing secret,
@@ -300,6 +309,12 @@ resource "aws_ecs_task_definition" "app" {
   }
 
   lifecycle {
+    // A CPU/memory pair Fargate does not run fails here, at plan (#531),
+    // instead of as a RegisterTaskDefinition error mid-apply.
+    precondition {
+      condition     = local.fargate_size_ok["app"]
+      error_message = "app_cpu / app_memory is not a CPU/memory pair Fargate runs: ${local.fargate_size_rule}"
+    }
     precondition {
       condition     = var.app_image != local.image_placeholder
       error_message = "app_image is still the terraform.tfvars.example placeholder. Run ./deploy.sh after the bootstrap apply (docs/aws.md): it pushes the image and writes the real ref into image.auto.tfvars."
@@ -397,8 +412,8 @@ resource "aws_ecs_task_definition" "scorer" {
   family                   = "${var.name}-scorer"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = 512
-  memory                   = 1024
+  cpu                      = var.scorer_cpu
+  memory                   = var.scorer_memory
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
@@ -408,6 +423,12 @@ resource "aws_ecs_task_definition" "scorer" {
   }
 
   lifecycle {
+    // A CPU/memory pair Fargate does not run fails here, at plan (#531),
+    // instead of as a RegisterTaskDefinition error mid-apply.
+    precondition {
+      condition     = local.fargate_size_ok["scorer"]
+      error_message = "scorer_cpu / scorer_memory is not a CPU/memory pair Fargate runs: ${local.fargate_size_rule}"
+    }
     precondition {
       condition     = var.scorer_image != local.image_placeholder
       error_message = "scorer_image is still the terraform.tfvars.example placeholder. Run ./deploy.sh after the bootstrap apply (docs/aws.md): it pushes the image and writes the real ref into image.auto.tfvars."
@@ -469,8 +490,8 @@ resource "aws_ecs_task_definition" "sync" {
   family                   = "${var.name}-sync"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = 256
-  memory                   = 512
+  cpu                      = var.sync_cpu
+  memory                   = var.sync_memory
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
@@ -480,6 +501,12 @@ resource "aws_ecs_task_definition" "sync" {
   }
 
   lifecycle {
+    // A CPU/memory pair Fargate does not run fails here, at plan (#531),
+    // instead of as a RegisterTaskDefinition error mid-apply.
+    precondition {
+      condition     = local.fargate_size_ok["sync"]
+      error_message = "sync_cpu / sync_memory is not a CPU/memory pair Fargate runs: ${local.fargate_size_rule}"
+    }
     precondition {
       condition     = var.sync_image != local.image_placeholder
       error_message = "sync_image is still the terraform.tfvars.example placeholder. Run ./deploy.sh after the bootstrap apply (docs/aws.md): it pushes the image and writes the real ref into image.auto.tfvars."
@@ -547,4 +574,32 @@ resource "aws_ecs_service" "sync" {
   deployment_maximum_percent         = 100
 
   depends_on = [aws_ecs_service.srh]
+}
+
+// --- Fargate task sizes (#531) -------------------------------------------------
+//
+// The CPU/memory pairs Fargate runs (Linux), from AWS's task-size table. Each
+// task definition's precondition reads its own row, so a bad pair is a plan
+// error naming the variables, not a RegisterTaskDefinition failure halfway
+// through an apply.
+locals {
+  task_sizes = {
+    app    = { cpu = var.app_cpu, memory = var.app_memory }
+    srh    = { cpu = var.srh_cpu, memory = var.srh_memory }
+    scorer = { cpu = var.scorer_cpu, memory = var.scorer_memory }
+    sync   = { cpu = var.sync_cpu, memory = var.sync_memory }
+  }
+
+  fargate_size_ok = { for k, s in local.task_sizes : k => (
+    s.cpu == 256 ? contains([512, 1024, 2048], s.memory) :
+    s.cpu == 512 ? s.memory >= 1024 && s.memory <= 4096 && s.memory % 1024 == 0 :
+    s.cpu == 1024 ? s.memory >= 2048 && s.memory <= 8192 && s.memory % 1024 == 0 :
+    s.cpu == 2048 ? s.memory >= 4096 && s.memory <= 16384 && s.memory % 1024 == 0 :
+    s.cpu == 4096 ? s.memory >= 8192 && s.memory <= 30720 && s.memory % 1024 == 0 :
+    s.cpu == 8192 ? s.memory >= 16384 && s.memory <= 61440 && s.memory % 4096 == 0 :
+    s.cpu == 16384 ? s.memory >= 32768 && s.memory <= 122880 && s.memory % 8192 == 0 :
+    false
+  ) }
+
+  fargate_size_rule = "CPU 256 takes 512/1024/2048 MiB; 512 takes 1024-4096; 1024 takes 2048-8192; 2048 takes 4096-16384; 4096 takes 8192-30720 (all in 1024 steps); 8192 takes 16384-61440 (4096 steps); 16384 takes 32768-122880 (8192 steps)."
 }

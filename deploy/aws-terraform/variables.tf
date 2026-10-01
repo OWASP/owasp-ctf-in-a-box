@@ -300,6 +300,59 @@ variable "app_desired_count" {
   }
 }
 
+// srh, the scorer and sync were fixed sizes until the first real event had to
+// edit ecs.tf to give srh more than a quarter vCPU (#531). Defaults are the
+// sizes every existing deploy already runs. A pair Fargate does not run is
+// refused at PLAN by the task definitions' preconditions (ecs.tf,
+// local.fargate_size_ok), not at task start.
+
+variable "srh_cpu" {
+  description = "Fargate CPU units for each srh task. srh carries every Redis call the app makes; raise it with app_desired_count."
+  type        = number
+  default     = 256
+}
+
+variable "srh_memory" {
+  description = "Fargate memory (MiB) for each srh task."
+  type        = number
+  default     = 512
+}
+
+variable "srh_desired_count" {
+  description = "How many srh tasks to run. At least 2: srh is the whole data path (see ecs.tf's srh service)."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.srh_desired_count >= 2
+    error_message = "srh_desired_count must be at least 2 — one srh task is one host retirement from the event being down."
+  }
+}
+
+variable "scorer_cpu" {
+  description = "Fargate CPU units for the scorer task (Secure Development events only)."
+  type        = number
+  default     = 512
+}
+
+variable "scorer_memory" {
+  description = "Fargate memory (MiB) for the scorer task."
+  type        = number
+  default     = 1024
+}
+
+variable "sync_cpu" {
+  description = "Fargate CPU units for the sync task (Secure Development events only)."
+  type        = number
+  default     = 256
+}
+
+variable "sync_memory" {
+  description = "Fargate memory (MiB) for the sync task."
+  type        = number
+  default     = 512
+}
+
 variable "cache_node_type" {
   description = "ElastiCache node type. t4g.micro carries an event of this size comfortably."
   type        = string

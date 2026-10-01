@@ -614,8 +614,12 @@ cmd_doctor() {
         # the advice for one (#496 M18).
         forks="$(gh api "repos/$org/$name" --jq '.forks_count' 2>/dev/null)" || forks=""
         case "$forks" in
-          ''|0|*[!0-9]*)
+          0)
             printf '%s⚠️  %s is public before launch — contestants can see its ctf branch; detach it and run '"'"'ctf-setup.sh private'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET" ;;
+          ''|*[!0-9]*)
+            # Unread is neither "no forks" (run private) nor "has forks" (leave
+            # it): advise nothing, like an unreadable visibility above.
+            printf '%s⚠️  %s is public before launch, and GitHub did not answer how many forks it has — could not read %s'"'"'s fork count, so no advice; re-run doctor.%s\n' "$C_YELLOW" "$name" "$name" "$C_RESET" ;;
           *)
             printf '%s⚠️  %s is public before launch and already has %s — leave it public: '"'"'ctf-setup.sh private'"'"' skips it on purpose, since making it private would cut those forks off.%s\n' "$C_YELLOW" "$name" "$(plural "$forks" fork forks)" "$C_RESET" ;;
         esac

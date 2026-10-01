@@ -2389,3 +2389,14 @@ EOF2
   printf '%s' "$output" | grep -qF -- "DRY-RUN: would check"
   [ ! -s "$BATS_TEST_TMPDIR/gh.calls" ]
 }
+
+# CLI review of #536: an unreadable fork count must not become advice. It is
+# neither "no forks" (run private) nor "has forks" (leave it) — say it is unread.
+@test "doctor gives no 'private' advice when a public fork's fork count cannot be read (#496 M18)" {
+  vis_env
+  echo false > state/launched
+  echo garbage > state/forks_DVWA
+  run_vis doctor
+  printf '%s' "$output" | grep -qF -- "could not read DVWA's fork count"
+  [ -z "$(printf '%s' "$output" | grep -F -- "DVWA is public before launch — contestants can see its ctf branch; detach it and run")" ]
+}

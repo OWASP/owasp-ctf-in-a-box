@@ -13,4 +13,4 @@ overrides:
   # pnpm keeps 5.0.9 within ^5.0.8 on its own. GHSA-q2hr-2g5m-vwhr (the 1.x
   # copy is fixed in range, at 1.1.21). Drop once minimatch's range starts at
   # or above 5.0.12.
-  "brace-expansion@^5": ">=5.0.12"
+  "brace-expansion@^5": "^5.0.12"

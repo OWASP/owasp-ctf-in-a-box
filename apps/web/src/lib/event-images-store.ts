@@ -12,6 +12,7 @@ import {
   EVENT_LOGO_MAX_DIMENSION,
   isEventImageSlot,
   type EventImageMeta,
+  type EventImagesBundle,
   type EventImageSlot,
   type EventImagesMeta,
 } from "@/lib/event-images-keys";
@@ -42,9 +43,7 @@ export class EventImageValidationError extends Error {
  *  sharpens a refusal message and never decides acceptance. */
 export type EventImageInput = { data: string; declaredType?: string };
 
-/** The archive's shape for this feature: just the bytes, per slot. The
- *  metadata is derived again on import, never trusted from the file. */
-export type EventImagesBundle = Partial<Record<EventImageSlot, { data: string }>>;
+export type { EventImagesBundle };
 
 const LABEL: Record<EventImageSlot, string> = { logo: "logo", icon: "favicon" };
 

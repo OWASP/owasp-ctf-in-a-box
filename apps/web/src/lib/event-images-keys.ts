@@ -58,6 +58,10 @@ export type EventImageMeta = {
 
 export type EventImagesMeta = Partial<Record<EventImageSlot, EventImageMeta>>;
 
+/** The event archive's `eventImages` section: just the bytes, per slot. The
+ *  metadata is derived again on import, never trusted from the file. */
+export type EventImagesBundle = Partial<Record<EventImageSlot, { data: string }>>;
+
 /** The public URL a slot is served from. */
 export const EVENT_IMAGE_PATH: Record<EventImageSlot, string> = {
   logo: "/api/event/logo",

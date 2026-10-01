@@ -8,6 +8,7 @@ import {
   importBundle as importSponsors,
   validateBundleLogos,
 } from "@/lib/sponsors-store";
+import { exportEventImages, importEventImages, validateEventImagesBundle } from "@/lib/event-images-store";
 import {
   AdminValidationError,
   effectivePaused,
@@ -156,6 +157,11 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
   const sponsorsBundle = await exportSponsors();
   if (sponsorsBundle) bundle.sponsors = sponsorsBundle;
 
+  // #529: the event's own logo and favicon, iff one is stored — same
+  // "render iff non-empty" rule as sponsors.
+  const eventImages = await exportEventImages();
+  if (eventImages) bundle.eventImages = eventImages;
+
   // #186: the classic section names its uploads; their bytes ride here.
   if (bundle.classic) {
     const attachmentFiles = await exportAttachmentFiles();
@@ -231,6 +237,8 @@ export type EventImportSummary = {
    *  already-cleared store (see `importEventBundle`'s sponsors branch), so
    *  every row is a create. */
   sponsors?: { created: number };
+  /** The image slots the archive carried (#529), sorted. */
+  eventImages?: { slots: string[] };
 };
 
 /** Replace-all import of a whole-EVENT archive bundle. Destructive: it wipes
@@ -299,6 +307,10 @@ export async function importEventBundle(
   // with the current event still intact.
   const decodedFiles = decodeAttachmentFiles(bundle);
 
+  // #529: and for the event images — sniffed here, before the reset, so a
+  // tampered image refuses the import with the current event intact.
+  if (bundle.eventImages) validateEventImagesBundle(bundle.eventImages);
+
   // Apply (and validate) the settings patch BEFORE any destructive step. A
   // bad bundle throws `AdminValidationError` here, before `resetEvent` or any
   // clear/import has run — see the fail-fast note above.
@@ -311,6 +323,12 @@ export async function importEventBundle(
   if (typeof bundle.event.theme === "string") patch.eventTheme = bundle.event.theme;
   if (typeof bundle.event.location === "string") patch.eventLocation = bundle.event.location;
   await updateAdminSettings(patch, actor);
+
+  // The images are identity too, so they land with the identity patch. A
+  // slot the archive does not carry keeps what the box has — the same rule
+  // as an absent tagline. `resetEvent` below never touches them.
+  let importedImages: string[] | undefined;
+  if (bundle.eventImages) importedImages = Object.keys(await importEventImages(bundle.eventImages)).sort();
 
   // Sweep run-state before touching content, so a mid-import failure never
   // leaves stale team/solve/hint state pointing at content that no longer
@@ -328,6 +346,7 @@ export async function importEventBundle(
   await clearAiChallenges();
 
   const summary: EventImportSummary = {};
+  if (importedImages) summary.eventImages = { slots: importedImages };
 
   if (bundle.classic) {
     const c = await importClassic(bundle.classic);

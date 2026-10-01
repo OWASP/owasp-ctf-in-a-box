@@ -131,7 +131,7 @@ resource "aws_vpc_security_group_ingress_rule" "app_from_alb" {
 
 resource "aws_vpc_security_group_ingress_rule" "srh_from_app" {
   security_group_id            = aws_security_group.srh.id
-  description                  = "app -> srh (Upstash REST)"
+  description                  = "app to srh (Upstash REST)"
   ip_protocol                  = "tcp"
   from_port                    = 80
   to_port                      = 80
@@ -140,7 +140,7 @@ resource "aws_vpc_security_group_ingress_rule" "srh_from_app" {
 
 resource "aws_vpc_security_group_ingress_rule" "srh_from_worker" {
   security_group_id            = aws_security_group.srh.id
-  description                  = "sync -> srh (Upstash REST)"
+  description                  = "sync to srh (Upstash REST)"
   ip_protocol                  = "tcp"
   from_port                    = 80
   to_port                      = 80
@@ -151,7 +151,7 @@ resource "aws_vpc_security_group_ingress_rule" "srh_from_scorer" {
   count = local.run_scorer ? 1 : 0
 
   security_group_id            = aws_security_group.srh.id
-  description                  = "scorer -> srh (Upstash REST)"
+  description                  = "scorer to srh (Upstash REST)"
   ip_protocol                  = "tcp"
   from_port                    = 80
   to_port                      = 80
@@ -162,7 +162,7 @@ resource "aws_vpc_security_group_ingress_rule" "scorer_from_app" {
   count = local.run_scorer ? 1 : 0
 
   security_group_id            = aws_security_group.scorer[0].id
-  description                  = "app -> scorer (leaderboard, challenge catalogue)"
+  description                  = "app to scorer (leaderboard, challenge catalogue)"
   ip_protocol                  = "tcp"
   from_port                    = 4000
   to_port                      = 4000
@@ -173,7 +173,7 @@ resource "aws_vpc_security_group_ingress_rule" "scorer_from_sync" {
   count = local.run_scorer ? 1 : 0
 
   security_group_id            = aws_security_group.scorer[0].id
-  description                  = "sync -> scorer (POST /score)"
+  description                  = "sync to scorer (POST /score)"
   ip_protocol                  = "tcp"
   from_port                    = 4000
   to_port                      = 4000
@@ -184,7 +184,7 @@ resource "aws_vpc_security_group_ingress_rule" "scorer_from_sync" {
 // else — not the app's, not the workers', not a CIDR.
 resource "aws_vpc_security_group_ingress_rule" "cache_from_srh" {
   security_group_id            = aws_security_group.cache.id
-  description                  = "srh -> ElastiCache. The only path to Redis."
+  description                  = "srh to ElastiCache. The only path to Redis."
   ip_protocol                  = "tcp"
   from_port                    = 6379
   to_port                      = 6379

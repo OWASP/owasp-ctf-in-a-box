@@ -66,3 +66,9 @@ jobs:
         env:
           SRH_HEALTHCHECK_REQUIRED: "1"
         run: bats deploy/aws-terraform/test/srh-healthcheck.bats
+      # EC2 checks a security group (rule) description's character set only at
+      # apply, which nothing above reaches — six `->` descriptions passed every
+      # gate here and failed the first real apply (#530). A static scan of the
+      # module's own .tf source; it shares this job only for the bats install.
+      - name: every security group description is one EC2 accepts
+        run: bats deploy/aws-terraform/test/descriptions.bats

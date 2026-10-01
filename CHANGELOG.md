@@ -18,6 +18,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   served from the box itself, kept by a master reset, and carried by the
   event archive. No rebuild is needed to brand an event any more.
 
+- **Fixed: the AWS module's first `terraform apply` no longer comes up with
+  no route to Redis (#530).** Six security group rule descriptions were
+  written `app -> srh`, and EC2 refuses `>` in a rule description. Those
+  rules failed to create, including the only ingress to ElastiCache, so srh
+  could not reach Redis and the ECS deployment stopped with "No rollback
+  candidate". They now read `app to srh`. A new check in the Terraform
+  workflow fails any security group or rule description EC2 would refuse,
+  since `validate` and the mocked `terraform test` never call EC2.
+
 - **Fixed: a failed Redis read no longer zeroes quiz, Jeopardy or AI points
   in silence (#523).** The per-contestant totals, and the hint-penalty total,
   read their hashes without checking the reply's error, so a `WRONGTYPE`,

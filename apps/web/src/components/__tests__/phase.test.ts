@@ -67,6 +67,18 @@ describe("phaseBoundaryLabel", () => {
     expect(phaseBoundaryLabel("live", null, "2099-08-24T18:00:00.000Z")).toMatch(/^until Aug 24, 6:00 PM UTC$/);
   });
 
+  // #547: in the event's zone, labelled with its offset.
+  it("states the boundary on the event's clock, labelled with its offset", () => {
+    expect(phaseBoundaryLabel("live", null, "2099-08-24T18:00:00.000Z", "America/Argentina/Buenos_Aires")).toBe("until Aug 24, 3:00 PM GMT-3");
+    expect(phaseBoundaryLabel("registration", "2026-10-03T12:00:00.000Z", null, "America/Argentina/Buenos_Aires")).toBe("scoring opens Oct 3, 9:00 AM GMT-3");
+  });
+
+  it("carries the event zone from settings into the resolution", () => {
+    const s = { paused: false, scoringStartsAt: null, scoringEndsAt: null };
+    expect(phaseFromSettings(s).timeZone).toBe("UTC");
+    expect(phaseFromSettings({ ...s, eventIdentity: { eventTimeZone: "America/Argentina/Buenos_Aires" } }).timeZone).toBe("America/Argentina/Buenos_Aires");
+  });
+
   // A freeze means nothing before the event has started: the phase is still
   // the pre-launch lobby (otherwise the hero points at standings that the
   // launch lock just bounces back to the landing page).

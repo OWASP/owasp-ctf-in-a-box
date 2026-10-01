@@ -21,6 +21,7 @@ import type { AdminSettings } from "@/lib/admin-store";
 import { launchState, outsideScoringWindow, outsideWindow, serverFloorNow } from "@/lib/schedule-window";
 import { TEAM_MAX_MEMBERS, TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
 import { DEFAULT_EVENT_IDENTITY, EVENT_IDENTITY_MAX, type EventIdentityKey } from "@/lib/event-identity";
+import { DEFAULT_EVENT_TIME_ZONE, instantToWall, resolveTimeZone, wallToInstant, zoneLabel } from "@/lib/event-time";
 import AdminEventControls from "@/components/admin-event-controls";
 import AdminNumberField, { FieldStatusLine, type FieldStatus } from "@/components/admin-number-field";
 import AdminSwitch from "@/components/admin-switch";
@@ -61,6 +62,13 @@ export const EVENT_IDENTITY_ROWS: readonly {
     maxLength: EVENT_IDENTITY_MAX.eventLocation,
   },
   {
+    key: "eventTimeZone",
+    label: "Timezone",
+    help: "The IANA zone every date and time is shown in, e.g. America/Argentina/Buenos_Aires — the landing page's dates, the phase line, the score chart and the schedule inputs below. Blank means UTC.",
+    placeholder: "UTC",
+    maxLength: EVENT_IDENTITY_MAX.eventTimeZone,
+  },
+  {
     key: "eventContact",
     label: "Contact e-mail",
     help: "The organizers' inbox; the privacy and terms pages render it as a mailto: link. Blank hides it.",
@@ -84,29 +92,40 @@ export const EVENT_IDENTITY_ROWS: readonly {
 ];
 
 // datetime-local <-> ISO. The <input type="datetime-local"> value is a naive
-// local wall-clock string; JS parses it as local time, and we store the
-// absolute instant as ISO. Empty input clears the bound (null).
-function toLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-function fromLocalInput(s: string): string | null {
-  if (!s) return null;
-  const ms = Date.parse(s);
-  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+// wall-clock string, read on the EVENT's clock (#547) — not the organizer's
+// laptop — and stored as the absolute ISO instant. Empty clears (null).
+const toZoneInput = (iso: string | null, zone: string): string => instantToWall(iso, zone);
+const fromZoneInput = (s: string, zone: string): string | null => (s ? wallToInstant(s, zone) : null);
+
+/** The Timezone row's suggestions, filled after mount: the server's and the
+ *  browser's Intl zone lists can differ, and a datalist rendered on both
+ *  would not hydrate. */
+function TimeZoneOptions({ id }: { id: string }) {
+  const [zones, setZones] = useState<string[]>([]);
+  useEffect(() => {
+    const timeout = setTimeout(() => setZones(["UTC", ...Intl.supportedValuesOf("timeZone")]), 0);
+    return () => clearTimeout(timeout);
+  }, []);
+  return (
+    <datalist id={id}>
+      {zones.map((z) => (
+        <option key={z} value={z} />
+      ))}
+    </datalist>
+  );
 }
 
 function ScheduleField({
   label,
   value,
+  zone,
   disabled,
   status,
   onCommit,
 }: {
   label: string;
+  /** The event's zone (#547): what the input reads and writes in. */
+  zone: string;
   value: string | null;
   disabled: boolean;
   /** The shell's save status for this field (UX audit F2), shown under it. */
@@ -128,10 +147,10 @@ function ScheduleField({
   useEffect(() => {
     // Deferred so this reads as subscribing to the applied value rather than
     // a render-time computation — satisfies react-hooks/set-state-in-effect.
-    const timeout = setTimeout(() => setInput(toLocalInput(value)), 0);
+    const timeout = setTimeout(() => setInput(toZoneInput(value, zone)), 0);
     return () => clearTimeout(timeout);
-  }, [value]);
-  const canonical = toLocalInput(value);
+  }, [value, zone]);
+  const canonical = toZoneInput(value, zone);
   const rejected = status.state === "rejected";
   const line =
     status.state === "pending" ? "Saving…" : status.state === "saved" ? "Saved" : status.state === "rejected" ? status.message : null;
@@ -149,7 +168,7 @@ function ScheduleField({
           onChange={(e) => setInput(e.target.value)}
           onBlur={() => {
             if (input === canonical) return;
-            void onCommit(fromLocalInput(input)).then((ok) => {
+            void onCommit(fromZoneInput(input, zone)).then((ok) => {
               if (!ok) setInput(canonical);
             });
           }}
@@ -169,10 +188,15 @@ function ScheduleField({
   );
 }
 
-/** "2026-10-01 12:00 UTC" — a fixed format, so the server render and the
- *  client's first paint agree (a locale-formatted time would not). */
-function utcLabel(iso: string): string {
-  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+/** "2026-10-01 12:00 UTC" — a fixed format with the zone named, so the
+ *  server render and the client's first paint agree (a locale-formatted time
+ *  would not). Off UTC (#547) it reads on the event's clock with UTC beside
+ *  it: "2026-10-01 09:00 GMT-3 (12:00 UTC)". */
+function eventTimeLabel(iso: string, zone: string): string {
+  const utc = `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+  const ms = Date.parse(iso);
+  if (zone === DEFAULT_EVENT_TIME_ZONE || !Number.isFinite(ms)) return utc;
+  return `${instantToWall(iso, zone).replace("T", " ")} ${zoneLabel(zone, ms)} (${iso.slice(11, 16)} UTC)`;
 }
 
 export type AdminEventTabProps = {
@@ -250,6 +274,8 @@ export default function AdminEventTab({
   // the "Right now" line can never disagree.
   const effectiveNow = serverFloorNow(nowMs, settings.updatedAt);
   const launch = launchState(effectiveNow, settings.scoringStartsAt);
+  // #547: the zone every time on this tab reads and writes in.
+  const zone = resolveTimeZone(settings.eventIdentity.eventTimeZone);
   // Launch now under a Scoring closes already past would open nothing; the
   // server refuses it too — the panel says why before anyone clicks.
   const endMs = settings.scoringEndsAt ? Date.parse(settings.scoringEndsAt) : NaN;
@@ -295,7 +321,9 @@ export default function AdminEventTab({
                 apply={(patch) => applyField(row.key, patch, row.label)}
                 ariaDescribedBy={describedBy}
                 ariaInvalid={status.state === "rejected"}
+                list={row.key === "eventTimeZone" ? "event-time-zones" : undefined}
               />
+              {row.key === "eventTimeZone" && <TimeZoneOptions id="event-time-zones" />}
               <p id={helpId} className="text-xs text-muted">{row.help}</p>
               <FieldStatusLine id={statusId} status={status} />
             </div>
@@ -414,9 +442,9 @@ export default function AdminEventTab({
           <span className="uppercase tracking-wider text-muted">Status: </span>
           {launch.kind === "not-launched" && <span className="text-[#d4a017]">Not launched</span>}
           {launch.kind === "scheduled" && (
-            <span className="text-[#2563eb]">Scheduled for {utcLabel(launch.at)}</span>
+            <span className="text-[#2563eb]">Scheduled for {eventTimeLabel(launch.at, zone)}</span>
           )}
-          {launch.kind === "live" && <span className="text-[#22c55e]">Live since {utcLabel(launch.since)}</span>}
+          {launch.kind === "live" && <span className="text-[#22c55e]">Live since {eventTimeLabel(launch.since, zone)}</span>}
           {settings.paused && (
             <span className="block text-muted">
               Scoring is frozen — unfreeze it above for anything to score, launched or not.
@@ -476,7 +504,7 @@ export default function AdminEventTab({
         <div>
           <span className="text-white">Schedule (auto dates)</span>
           <span className="block text-sm text-muted">
-            Times are your local time. <strong className="text-white">Scoring opens is required</strong>{" "}
+            Times are in {zone} (the Timezone above), whatever your own clock says. <strong className="text-white">Scoring opens is required</strong>{" "}
             to launch: until it is set and has passed, the event is not launched
             and nothing scores. The other three are optional — leave one blank for
             no bound. Scoring auto-freezes outside its window; registration
@@ -510,6 +538,7 @@ export default function AdminEventTab({
           key={`ss-${settings.scoringStartsAt ?? ""}`}
           label="Scoring opens"
           value={settings.scoringStartsAt}
+          zone={zone}
           disabled={pending}
           status={statusOf("scoringStartsAt")}
           onCommit={(iso) => applyField("scoringStartsAt", { scoringStartsAt: iso }, "Scoring opens")}
@@ -518,6 +547,7 @@ export default function AdminEventTab({
           key={`se-${settings.scoringEndsAt ?? ""}`}
           label="Scoring closes"
           value={settings.scoringEndsAt}
+          zone={zone}
           disabled={pending}
           status={statusOf("scoringEndsAt")}
           onCommit={(iso) => applyField("scoringEndsAt", { scoringEndsAt: iso }, "Scoring closes")}
@@ -526,6 +556,7 @@ export default function AdminEventTab({
           key={`rs-${settings.registrationStartsAt ?? ""}`}
           label="Registration opens"
           value={settings.registrationStartsAt}
+          zone={zone}
           disabled={pending}
           status={statusOf("registrationStartsAt")}
           onCommit={(iso) => applyField("registrationStartsAt", { registrationStartsAt: iso }, "Registration opens")}
@@ -534,6 +565,7 @@ export default function AdminEventTab({
           key={`re-${settings.registrationEndsAt ?? ""}`}
           label="Registration closes"
           value={settings.registrationEndsAt}
+          zone={zone}
           disabled={pending}
           status={statusOf("registrationEndsAt")}
           onCommit={(iso) => applyField("registrationEndsAt", { registrationEndsAt: iso }, "Registration closes")}

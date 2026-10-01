@@ -107,6 +107,7 @@ beforeEach(() => {
       eventContact: "org@example.org",
       eventDiscord: "https://discord.gg/x",
       eventLogoUrl: "https://runtime.example/",
+      eventTimeZone: "America/Argentina/Buenos_Aires",
     },
   });
   m.effectivePaused.mockReturnValue(true);
@@ -627,10 +628,11 @@ describe("event identity in the archive (issue #386)", () => {
     expect(bundle.event).toEqual({
       name: "Runtime CTF",
       theme: "Ship",
-      dates: "From Jan 1, 2026",
+      dates: "From Dec 31, 2025",
       location: "Online",
       ctfStartsAt: "2026-01-01T00:00:00Z",
       logoUrl: "https://runtime.example/",
+      timeZone: "America/Argentina/Buenos_Aires",
     });
     expect(JSON.stringify(bundle)).not.toContain("discord.gg");
     expect(JSON.stringify(bundle)).not.toContain("org@example.org");
@@ -640,6 +642,7 @@ describe("event identity in the archive (issue #386)", () => {
     m.getAdminSettings.mockResolvedValue({ paused: true, eventIdentity: { eventName: "No Link CTF" } });
     const { bundle } = await exportEventBundle();
     expect("logoUrl" in bundle.event).toBe(false);
+    expect("timeZone" in bundle.event).toBe(false);
   });
 
   // The schedule fields come off the SAME `getAdminSettings()` read as
@@ -684,6 +687,13 @@ describe("event identity in the archive (issue #386)", () => {
       expect(patch).toMatchObject({ eventName: "Imported CTF", eventLogoUrl: "https://imported.example/" });
     });
 
+    // #547: the zone travels like location.
+    it("applies the bundle's time zone through the same patch", async () => {
+      await importEventBundle({ ...bundleFixture(), event: { name: "Imported CTF", timeZone: "Europe/Madrid" } }, "alice");
+      const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
+      expect(patch).toMatchObject({ eventTimeZone: "Europe/Madrid" });
+    });
+
     it("leaves theme/location untouched when the bundle omits them", async () => {
       await importEventBundle({ ...bundleFixture(), event: { name: "Only Name" } }, "alice");
       const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
@@ -691,6 +701,7 @@ describe("event identity in the archive (issue #386)", () => {
       expect(patch).not.toHaveProperty("eventTheme");
       expect(patch).not.toHaveProperty("eventLocation");
       expect(patch).not.toHaveProperty("eventLogoUrl");
+      expect(patch).not.toHaveProperty("eventTimeZone");
     });
 
     it("no longer reports branding as skipped", async () => {

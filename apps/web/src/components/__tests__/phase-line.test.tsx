@@ -95,6 +95,16 @@ describe("PhaseLine", () => {
     expect(html).toMatch(/until Aug 24, 6:00 PM UTC/);
   });
 
+  it("states the boundary in the event's zone when one is set (#547)", async () => {
+    const html = await render({
+      scoringStartsAt: "2020-01-01T00:00:00.000Z",
+      scoringEndsAt: "2099-08-24T18:00:00.000Z",
+      eventIdentity: { eventTimeZone: "America/Argentina/Buenos_Aires" },
+    });
+    expect(html).toMatch(/until Aug 24, 3:00 PM GMT-3/);
+    expect(html).not.toContain("UTC");
+  });
+
   it("promises nothing for a manual freeze — no boundary line", async () => {
     const html = await render({ paused: true, scoringEndsAt: "2099-08-24T18:00:00.000Z" });
     expect(html).not.toContain("until");

@@ -46,14 +46,14 @@ const STOPS: { id: EventPhase; label: string }[] = [
 export default async function PhaseLine() {
   const resolved = await resolvePhase();
   if (!resolved) return null;
-  const { phase, startsAt, endsAt } = resolved;
+  const { phase, startsAt, endsAt, timeZone } = resolved;
   // A live event that was never frozen skips the "frozen" stop entirely —
   // showing a phase that may never happen invites "when does it freeze?".
   const stops = phase === "frozen" ? STOPS : STOPS.filter((s) => s.id !== "frozen");
   const activeIn = stops.findIndex((s) => s.id === phase);
   const color = PHASE_COLOR[phase];
 
-  const boundary = phaseBoundaryLabel(phase, startsAt, endsAt);
+  const boundary = phaseBoundaryLabel(phase, startsAt, endsAt, timeZone);
 
   return (
     <div className="border-b border-white/[0.09] bg-[#12121e]">

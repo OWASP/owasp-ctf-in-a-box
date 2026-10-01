@@ -9,6 +9,7 @@
 // `lib/schedule-window.ts` makes for `outsideWindow`, for the same reason.
 
 import { outsideScoringWindow } from "@/lib/schedule-window";
+import { DEFAULT_EVENT_TIME_ZONE, formatInZone, resolveTimeZone, zoneLabel } from "@/lib/event-time";
 
 export type EventPhase = "registration" | "live" | "frozen" | "results";
 
@@ -16,11 +17,18 @@ export type PhaseResolution = {
   phase: EventPhase;
   startsAt: string | null;
   endsAt: string | null;
+  /** The event's zone (#547), for the boundary label; absent = UTC. */
+  timeZone?: string;
 };
 
 /** not launched > results > before start > manual freeze > scheduled gap > live. */
 export function phaseFromSettings(
-  s: { paused: boolean; scoringStartsAt: string | null; scoringEndsAt: string | null },
+  s: {
+    paused: boolean;
+    scoringStartsAt: string | null;
+    scoringEndsAt: string | null;
+    eventIdentity?: { eventTimeZone?: string };
+  },
   now: number = Date.now(),
 ): PhaseResolution {
   const start = s.scoringStartsAt ? Date.parse(s.scoringStartsAt) : NaN;
@@ -36,7 +44,7 @@ export function phaseFromSettings(
   else if (s.paused) phase = "frozen";
   else if (outsideScoringWindow(now, s.scoringStartsAt, s.scoringEndsAt)) phase = "frozen";
   else phase = "live";
-  return { phase, startsAt: s.scoringStartsAt, endsAt: s.scoringEndsAt };
+  return { phase, startsAt: s.scoringStartsAt, endsAt: s.scoringEndsAt, timeZone: resolveTimeZone(s.eventIdentity?.eventTimeZone) };
 }
 
 /** The current phase's node/chip color: green while scoring runs, amber for
@@ -48,34 +56,34 @@ export const PHASE_COLOR: Record<EventPhase, string> = {
   results: "#d4d4d8", // --foreground: the event's final, settled state
 };
 
-/** UTC pinned explicitly: whatever the box's clock renders is what every
- *  visitor sees — an unlabeled local time would just be UTC wearing no
- *  badge. Saying "UTC" makes it honest. */
-function fmt(iso: string | null): string | null {
+/** The event's zone, pinned explicitly (#547; UTC when unset) and always
+ *  labelled — an unlabeled time would just be the box's clock wearing no
+ *  badge. */
+function fmt(iso: string | null, zone: string): string | null {
   if (!iso) return null;
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return null;
-  return new Date(ms).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "UTC",
-  });
+  const at = formatInZone(ms, zone, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return `${at} ${zoneLabel(zone, ms)}`;
 }
 
 /** One boundary time, attached to the CURRENT phase — the moment a visitor
  *  would actually plan around. A manual freeze has no known end, so it makes
  *  no promise (`null`). */
-export function phaseBoundaryLabel(phase: EventPhase, startsAt: string | null, endsAt: string | null): string | null {
-  return phase === "registration" && fmt(startsAt)
-    ? `scoring opens ${fmt(startsAt)} UTC`
+export function phaseBoundaryLabel(
+  phase: EventPhase,
+  startsAt: string | null,
+  endsAt: string | null,
+  zone: string = DEFAULT_EVENT_TIME_ZONE,
+): string | null {
+  return phase === "registration" && fmt(startsAt, zone)
+    ? `scoring opens ${fmt(startsAt, zone)}`
     : phase === "registration"
       ? // No start to name (#464): the event has simply not launched yet.
         "not launched yet"
-    : phase === "live" && fmt(endsAt)
-      ? `until ${fmt(endsAt)} UTC`
-      : phase === "results" && fmt(endsAt)
-        ? `ended ${fmt(endsAt)} UTC`
+    : phase === "live" && fmt(endsAt, zone)
+      ? `until ${fmt(endsAt, zone)}`
+      : phase === "results" && fmt(endsAt, zone)
+        ? `ended ${fmt(endsAt, zone)}`
         : null;
 }

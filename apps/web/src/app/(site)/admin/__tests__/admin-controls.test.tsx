@@ -587,7 +587,7 @@ describe("AdminControls event identity section", () => {
   it("renders one input per identity field, ahead of the module switches", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
     const eventPanel = panelFor(html, "event");
-    for (const name of ["eventName", "eventTheme", "eventLocation", "eventContact", "eventDiscord", "eventLogoUrl"]) {
+    for (const name of ["eventName", "eventTheme", "eventLocation", "eventTimeZone", "eventContact", "eventDiscord", "eventLogoUrl"]) {
       expect(eventPanel).toContain(`name="${name}"`);
     }
     const identityAt = eventPanel.indexOf(">Identity<");
@@ -883,6 +883,21 @@ describe("the Launch block (#464)", () => {
     const html = render({ scoringStartsAt: "2999-01-01T00:00:00.000Z" });
     expect(html).toContain("Scheduled for");
     expect(html).toContain("Launch now");
+  });
+
+  // #547: the panel states launch and schedule times on the event's clock,
+  // with UTC beside them; a UTC event reads exactly as before.
+  it("states the scheduled launch in the event's zone, with UTC beside it", () => {
+    const tz = { ...settings.eventIdentity, eventTimeZone: "America/Argentina/Buenos_Aires" };
+    const html = render({ scoringStartsAt: "2999-10-03T12:00:00.000Z", eventIdentity: tz });
+    expect(html).toContain("Scheduled for 2999-10-03 09:00 GMT-3 (12:00 UTC)");
+    expect(html).toMatch(/Times are in America\/Argentina\/Buenos_Aires/);
+  });
+
+  it("keeps the UTC launch label when no zone is set", () => {
+    const html = render({ scoringStartsAt: "2999-10-03T12:00:00.000Z" });
+    expect(html).toContain("Scheduled for 2999-10-03 12:00 UTC");
+    expect(html).not.toContain("GMT");
   });
 
   // CodeRabbit #469: the panel says why Launch now cannot work, instead of

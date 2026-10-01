@@ -19,6 +19,7 @@
 // 9-10 fold into a single shared muted "Other" entry instead.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PlayerSeries, SeriesPoint, TeamSeries } from "@/lib/leaderboard/types";
+import { DEFAULT_EVENT_TIME_ZONE, formatInZone } from "@/lib/event-time";
 
 const SERIES_COLORS = [
   "#2563eb", // 1 blue
@@ -52,14 +53,9 @@ function niceMax(value: number): number {
   return step * magnitude;
 }
 
-function formatTimeTick(ms: number): string {
-  return new Date(ms).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-  });
+/** On the event's clock (#547; UTC when unset). */
+function formatTimeTick(ms: number, zone: string): string {
+  return formatInZone(ms, zone, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 /** Series-agnostic input to the shared chart core: a player's login or a
@@ -83,7 +79,7 @@ type PlottedLine = {
  *  axis logic stay in one place regardless of what's being plotted.
  *  `noun` is the singular unit name used in the heading/legend copy
  *  ("contestant" or "team"). */
-function renderChart(entries: ChartSeries[], noun: string, note?: string) {
+function renderChart(entries: ChartSeries[], noun: string, note: string | undefined, zone: string) {
   const withPoints = entries.filter((s) => s.points.length > 0);
   if (withPoints.length === 0) return null;
 
@@ -159,6 +155,7 @@ function renderChart(entries: ChartSeries[], noun: string, note?: string) {
       maxScore={maxScore}
       noun={noun}
       note={note}
+      zone={zone}
     />
   );
 }
@@ -188,6 +185,7 @@ function InteractiveChart({
   maxScore,
   noun,
   note,
+  zone,
 }: {
   lines: PlottedLine[];
   foldedCount: number;
@@ -198,6 +196,7 @@ function InteractiveChart({
   maxScore: number;
   noun: string;
   note?: string;
+  zone: string;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -338,7 +337,7 @@ function InteractiveChart({
               className="fill-current text-muted"
               fontSize={10}
             >
-              {formatTimeTick(t)}
+              {formatTimeTick(t, zone)}
             </text>
           ))}
 
@@ -387,7 +386,7 @@ function InteractiveChart({
               transform: tooltipLeftSide ? "translateX(calc(-100% - 10px))" : "translateX(10px)",
             }}
           >
-            <p className="mb-1 font-mono text-[10px] text-muted">{formatTimeTick(hoverT)}</p>
+            <p className="mb-1 font-mono text-[10px] text-muted">{formatTimeTick(hoverT, zone)}</p>
             <ul className="flex flex-col gap-0.5">
               {rows.map((r) => (
                 <li key={r.key} className="flex items-center gap-1.5">
@@ -433,6 +432,7 @@ export default function ScoreTimeChart({
   series,
   teamSeries,
   note,
+  timeZone = DEFAULT_EVENT_TIME_ZONE,
 }: {
   series?: PlayerSeries[];
   teamSeries?: TeamSeries[];
@@ -440,12 +440,15 @@ export default function ScoreTimeChart({
    *  under the heading. The leaderboard passes it on multi-module events,
    *  where the plotted history is narrower than the totals beside it. */
   note?: string;
+  /** The event's zone (#547): the time axis reads on its clock. */
+  timeZone?: string;
 }) {
   if (teamSeries) {
     return renderChart(
       teamSeries.map((t) => ({ key: t.slug, label: t.name, points: t.points })),
       "team",
       note,
+      timeZone,
     );
   }
   // No rubric (declarative-only deployment) or an older scorer that doesn't
@@ -455,5 +458,6 @@ export default function ScoreTimeChart({
     series.map((s) => ({ key: s.login, label: s.login, points: s.points })),
     "contestant",
     note,
+    timeZone,
   );
 }

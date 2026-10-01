@@ -147,6 +147,7 @@ export default function Leaderboard({
   viewerLogin,
   modules,
   enabledApps,
+  timeZone,
 }: {
   data: LeaderboardData;
   viewerLogin: string | null;
@@ -154,6 +155,8 @@ export default function Leaderboard({
   /** The event's live target list (lib/enabled-apps.ts), resolved server-side
    *  and threaded down to every row's `AppBreakdown`/`ModuleDetail`. */
   enabledApps: readonly AppMeta[];
+  /** The event's zone (#547), for the chart's time axis. */
+  timeZone?: string;
 }) {
   // Teams are the primary competitive unit once they exist — default there
   // and let individual standings be the secondary, opt-in view.
@@ -259,6 +262,7 @@ export default function Leaderboard({
         series={activeView === "individual" ? data.series : undefined}
         teamSeries={activeView === "teams" ? data.teamSeries : undefined}
         note={chartNote}
+        timeZone={timeZone}
       />
 
       {/* Controls */}

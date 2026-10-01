@@ -89,6 +89,8 @@ export type EventBundleEvent = {
   ctfStartsAt?: string | null;
   /** The hero logo's link (#545); travels with the logo. */
   logoUrl?: string;
+  /** The event's IANA zone (#547); travels like location. */
+  timeZone?: string;
 };
 
 export type EventPolicySettings = Partial<Record<(typeof EVENT_POLICY_FIELDS)[number], unknown>>;
@@ -204,6 +206,9 @@ export function parseEventBundle(raw: string): EventParseResult {
     }
     if (parsed.event.logoUrl !== undefined && typeof parsed.event.logoUrl !== "string") {
       errors.push({ where: "event.logoUrl", message: '"event.logoUrl" must be a string' });
+    }
+    if (parsed.event.timeZone !== undefined && typeof parsed.event.timeZone !== "string") {
+      errors.push({ where: "event.timeZone", message: '"event.timeZone" must be a string' });
     }
     if (parsed.event.dates !== undefined && typeof parsed.event.dates !== "string") {
       errors.push({ where: "event.dates", message: '"event.dates" must be a string' });

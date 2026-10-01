@@ -164,6 +164,7 @@ export default async function LeaderboardPage({
         viewerLogin={session?.user?.login ?? null}
         modules={modules}
         enabledApps={enabledApps}
+        timeZone={event.timeZone}
       />
     </div>
   );

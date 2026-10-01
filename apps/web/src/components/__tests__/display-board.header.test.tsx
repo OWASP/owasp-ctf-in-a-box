@@ -54,3 +54,14 @@ describe("DisplayBoard header — scoring clock (P2)", () => {
     expect(html).toMatch(/<span[^>]*class="[^"]*tabular-nums[^"]*"[^>]*>not launched</);
   });
 });
+
+// CLI review: the span is ALWAYS rendered, empty text included. The server
+// may render "starts in 00:00:01" and the browser hydrate a moment later into
+// "live, no end" (empty text); a span that vanished would be an element
+// mismatch, which suppressHydrationWarning does not cover (text only).
+describe("DisplayBoard header — the clock keeps its element when its text is empty", () => {
+  it("renders an empty clock span while live with no end", () => {
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    expect(header(render({ scoringStartsAt: past, scoringEndsAt: null }))).toMatch(/<span[^>]*tabular-nums[^>]*><\/span>/);
+  });
+});

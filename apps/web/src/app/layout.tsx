@@ -6,6 +6,7 @@ import { getSite } from "@/lib/site";
 import { moduleDefById } from "@/lib/modules";
 import { getEnabledModuleIds } from "@/lib/enabled-modules";
 import { getNavGroups } from "@/lib/resolved-modules";
+import { getEventImages, iconsMetadata } from "@/lib/event-images-site";
 import "./globals.css";
 
 const poppins = Poppins({
@@ -33,6 +34,7 @@ const geistMono = Geist_Mono({
 export async function generateMetadata(): Promise<Metadata> {
   const live = await getEnabledModuleIds();
   const event = await getSite();
+  const images = await getEventImages();
   const moduleTaglines = [...live]
     .map((id) => moduleDefById(id)?.home?.tagline)
     .filter(Boolean)
@@ -40,6 +42,9 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: { default: event.name, template: `%s · ${event.name}` },
     description: `${event.name}${moduleTaglines ? ` — ${moduleTaglines}` : ""}${event.dates ? ` — ${event.dates}` : ""}${event.location ? `, ${event.location}` : ""}.`,
+    // The organizer's favicon when one is stored (#529), else the built-in
+    // ones in public/ — see event-images-site.ts for why they moved there.
+    icons: iconsMetadata(images),
   };
 }
 

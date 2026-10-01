@@ -63,3 +63,10 @@ export const EVENT_IMAGE_PATH: Record<EventImageSlot, string> = {
   logo: "/api/event/logo",
   icon: "/api/event/icon",
 };
+
+/** The URL a page links to: the route plus `?v=<etag>`, so a replaced image
+ *  is fetched at once instead of after the route's five-minute cache (and,
+ *  for the favicon, instead of whenever the browser feels like it). */
+export function eventImageUrl(slot: EventImageSlot, meta: EventImageMeta): string {
+  return `${EVENT_IMAGE_PATH[slot]}?v=${meta.etag}`;
+}

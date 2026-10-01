@@ -37,6 +37,8 @@ import { getLaunchAccess } from "@/lib/launch";
 import { hasTeam } from "@/lib/team-store";
 import { sanitizeNext } from "@/lib/post-signin";
 import { getSite } from "@/lib/site";
+import { getEventImages } from "@/lib/event-images-site";
+import { eventImageUrl } from "@/lib/event-images-keys";
 
 /** The one action this visitor should take, by auth × team × phase. */
 function primaryAction(
@@ -100,6 +102,8 @@ export default async function Home({
   }>;
 } = {}) {
   const event = await getSite();
+  // The organizer's hero logo (#529), or none — fails open to the default.
+  const eventLogo = (await getEventImages()).logo;
   const params = await searchParams;
   const oauthError = firstOf(params?.error) ?? null;
   // Re-validated here with the SAME rule the outgoing leg used
@@ -250,15 +254,34 @@ export default async function Home({
       <div className="border-b border-white/[0.09] bg-[#1a1a2e]">
         <main id="main-content" className="mx-auto flex w-full max-w-5xl flex-col items-start gap-6 px-6 py-16 sm:py-24">
           {/* OWASP brand mark — four of the six targets are OWASP projects
-              and the event format comes from the OWASP-CTF work. */}
-          <Image
-            src="/owasp-logo.png"
-            alt="OWASP"
-            width={200}
-            height={69}
-            priority
-            className="invert"
-          />
+              and the event format comes from the OWASP-CTF work. An event
+              with its own logo (#529, /admin → Event) leads with that, as
+              uploaded (no invert: the admin hint asks for a version made for
+              this navy hero), and keeps a smaller OWASP mark beside it — the
+              Project Policy wants OWASP branding prominent on any domain the
+              kit runs on, so an organizer adds a logo, never removes OWASP's. */}
+          {eventLogo ? (
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+              <img
+                src={eventImageUrl("logo", eventLogo)}
+                alt={`${event.name} logo`}
+                width={eventLogo.w}
+                height={eventLogo.h}
+                decoding="async"
+                className="h-16 w-auto max-w-full object-contain sm:h-20"
+              />
+              <Image src="/owasp-logo.png" alt="OWASP" width={100} height={35} className="invert opacity-80" />
+            </div>
+          ) : (
+            <Image
+              src="/owasp-logo.png"
+              alt="OWASP"
+              width={200}
+              height={69}
+              priority
+              className="invert"
+            />
+          )}
           {taglines && (
             <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#14b8a6]">{taglines}</p>
           )}

@@ -252,7 +252,7 @@ export default async function Home({
 
       {/* Hero: the event, its games in one breath, ONE action. */}
       <div className="border-b border-white/[0.09] bg-[#1a1a2e]">
-        <main id="main-content" className="mx-auto flex w-full max-w-5xl flex-col items-start gap-6 px-6 py-16 sm:py-24">
+        <main id="main-content" className="mx-auto flex w-full max-w-5xl flex-col items-start gap-6 px-6 py-12 sm:py-16">
           {/* OWASP brand mark — four of the six targets are OWASP projects
               and the event format comes from the OWASP-CTF work. An event
               with its own logo (#529, /admin → Event) leads with that, as
@@ -318,8 +318,6 @@ export default async function Home({
             </p>
           )}
 
-          {sponsorStrip}
-
           {phaseInfo?.phase === "registration" && event.ctfStartsAt && (
             <EventCountdown startsAt={event.ctfStartsAt} />
           )}
@@ -345,6 +343,10 @@ export default async function Home({
               How it works
             </Link>
           </div>
+
+          {/* After the primary action, not before it (#543): the credits
+              pushed the button below the fold on a laptop. */}
+          {sponsorStrip}
 
           {/* The top of the board, in the hero. The kicker names WHAT the
               rows are (teams vs players) — "Right now" alone described the

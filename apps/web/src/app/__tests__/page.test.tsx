@@ -534,6 +534,31 @@ describe("the landing page before launch (#464)", () => {
   });
 });
 
+// #543 L1: the primary action sits above the sponsor strip, so it stays
+// above the fold on a laptop instead of being pushed down by the credits.
+describe("the hero puts its primary action before the sponsor strip (#543)", () => {
+  it("renders the CTA before the sponsor credit", async () => {
+    sponsorList.data = [
+      { id: "zzyzx-sec-ab12cd", name: "Zzyzx Security Labs", url: "https://zzyzx.example", blurb: "", tier: "gold", order: 0 },
+    ];
+    try {
+      const markup = await Home().then(renderToStaticMarkup);
+      const cta = markup.indexOf("Sign in and play");
+      const credit = markup.indexOf("Sponsored by");
+      expect(cta).toBeGreaterThan(-1);
+      expect(credit).toBeGreaterThan(-1);
+      expect(cta).toBeLessThan(credit);
+    } finally {
+      sponsorList.data = [];
+    }
+  });
+
+  it("uses the tighter hero padding", () => {
+    expect(html).toContain("py-12 sm:py-16");
+    expect(html).not.toContain("py-16 sm:py-24");
+  });
+});
+
 describe("the landing page credits its sponsors once (#474)", () => {
   it("names a sponsor in the hero strip and not again in the footer", async () => {
     sponsorList.data = [

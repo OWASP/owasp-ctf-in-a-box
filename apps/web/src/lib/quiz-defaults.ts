@@ -15,5 +15,8 @@
 export const QUIZ_MAX_ATTEMPTS = 3;
 
 /** Minutes after a login's last attempt on a question before it may try
- *  again. 0 would mean no cooldown — which is NOT the default. */
-export const QUIZ_RETRY_AFTER_MIN = 5;
+ *  again. 0 would mean no cooldown — which is NOT the default. One minute
+ *  keeps a brute-force deterrent on few-option questions without locking a
+ *  contestant out for long after an honest wrong guess (#549); organizers
+ *  raise it per event in /admin. */
+export const QUIZ_RETRY_AFTER_MIN = 1;

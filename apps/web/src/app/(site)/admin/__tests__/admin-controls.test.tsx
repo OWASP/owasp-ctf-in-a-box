@@ -725,7 +725,7 @@ describe("AdminControls reset confirmation — post-rename save", () => {
 // The stored value is the organizer's OVERRIDE, which is null until they touch
 // it — so `value={…}` alone renders an empty box. Beside help text reading
 // "0 = unlimited" and "0 = no cooldown", an empty box states the opposite of
-// the truth: the real defaults are 3 attempts, 5 minutes and 5 seconds.
+// the truth: the real defaults are 3 attempts, 1 minute and 5 seconds.
 //
 // hint-defaults.ts already exists for exactly this bug on the hints TOGGLE
 // (#89): "the admin toggle has to render the same default the server resolves,

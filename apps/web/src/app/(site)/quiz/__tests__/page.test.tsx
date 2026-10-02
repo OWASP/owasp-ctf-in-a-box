@@ -42,7 +42,7 @@ vi.mock("@/lib/quiz-store", () => ({
   listQuestions,
   getViewerQuiz,
   QUIZ_MAX_ATTEMPTS: 3,
-  QUIZ_RETRY_AFTER_MIN: 5,
+  QUIZ_RETRY_AFTER_MIN: 1,
 }));
 
 import QuizPage from "@/app/(site)/quiz/page";
@@ -108,7 +108,7 @@ describe("quiz page view model", () => {
       answered: { q1: { points: 10, at: "2026-08-18T00:00:00.000Z" } },
       attempts: {
         q2: { attempts: 2, lastAt: "2026-08-18T00:00:00.000Z" }, // hit the 2-attempt cap
-        q3: { attempts: 1, lastAt: new Date().toISOString() }, // fresh — inside the 5-minute cooldown
+        q3: { attempts: 1, lastAt: new Date().toISOString() }, // fresh — inside the 1-minute cooldown
       },
     });
 

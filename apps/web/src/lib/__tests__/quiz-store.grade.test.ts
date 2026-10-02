@@ -335,7 +335,7 @@ describe("quizGate", () => {
 
   it("falls back to the baked defaults when no admin override is set", async () => {
     expect(QUIZ_MAX_ATTEMPTS).toBe(3);
-    expect(QUIZ_RETRY_AFTER_MIN).toBe(5);
+    expect(QUIZ_RETRY_AFTER_MIN).toBe(1);
     gateReads(null, attemptRow(3, new Date().toISOString()));
     expect(await quizGate("octocat", "q1")).toMatchObject({ allowed: false, reason: "exhausted" });
   });

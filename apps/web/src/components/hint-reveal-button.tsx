@@ -33,6 +33,10 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
   const [text, setText] = useState<string | null>(null);
   const revealedRef = useRef<HTMLParagraphElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const idleRef = useRef<HTMLButtonElement>(null);
+  // Tracks the state we are leaving, so a return to "idle" can be told apart
+  // from the first mount: only a return (prev was confirm/pending) moves focus.
+  const prevState = useRef(state);
 
   // The revealed hint REPLACES the button that was just pressed, and the HTML
   // focus fixup rule does not hand focus to a replacement — it drops it on
@@ -41,11 +45,17 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
   // Announcing the text (role="status", below) fixes what is heard; this fixes
   // where the user IS. tabIndex={-1} makes the paragraph a programmatic focus
   // target without adding it to the tab order. The same replaced-while-focused
-  // problem applies when the idle button swaps for the confirm pair, so the
-  // confirm button is focused in turn.
+  // problem applies in both directions: the idle button swaps for the confirm
+  // pair (focus the confirm button), and Cancel or a failed reveal swaps the
+  // confirm pair back for the idle button (focus the idle button). Neither is
+  // run on first mount — `prevState` guards the return so initial render does
+  // not steal focus.
   useEffect(() => {
+    const returning = prevState.current === "confirm" || prevState.current === "pending";
+    prevState.current = state;
     if (text) revealedRef.current?.focus();
     else if (state === "confirm") confirmRef.current?.focus();
+    else if (state === "idle" && returning) idleRef.current?.focus();
   }, [text, state]);
 
   async function reveal() {
@@ -133,6 +143,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
   return (
     <div className="flex flex-col gap-1">
       <button
+        ref={idleRef}
         type="button"
         onClick={() => setState("confirm")}
         className="w-fit rounded-md border border-[#d4a017]/40 px-3 py-1.5 text-sm text-[#d4a017] transition-colors hover:bg-[#d4a017]/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"

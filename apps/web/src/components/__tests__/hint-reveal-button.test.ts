@@ -51,4 +51,13 @@ describe("HintRevealButton confirms before charging and acknowledges the cost (#
     // The revealed block shows the cost deduction, not just the hint text.
     expect(src).toMatch(/−\{cost\} pts spent/);
   });
+
+  it("restores focus to the idle button when Cancel or a failed reveal returns to idle", () => {
+    // The confirm pair unmounts on the way back to idle; without this the
+    // focus fixup rule drops focus on <body>. Guarded so the first mount
+    // (initial idle) does not steal focus.
+    expect(src).toMatch(/ref=\{idleRef\}/);
+    expect(src).toMatch(/idleRef\.current\?\.focus\(\)/);
+    expect(src).toMatch(/prevState/);
+  });
 });

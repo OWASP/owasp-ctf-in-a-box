@@ -153,7 +153,7 @@ describe("revealHint", () => {
     const store = await loadStore();
     mocks.upstashEval.mockResolvedValueOnce(["owned", "Check the admin route.", "10"]);
     const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
-    expect(result).toEqual({ ok: true, hint: "Check the admin route.", alreadyOwned: true, spent: 10, cost: 10, balance: 1000 });
+    expect(result).toEqual({ ok: true, hint: "Check the admin route.", alreadyOwned: true, spent: 10, cost: 10, balance: 990 });
   });
 
   it("checks the hint exists and guards with SADD BEFORE charging (atomic)", async () => {
@@ -318,17 +318,37 @@ describe("revealHint", () => {
   // contestant's net score AFTER the charge, from the same balance the gate
   // just read, so the page can say "your score is now N" without a second
   // fold. An owned re-view charges nothing, so it reports the unchanged net.
-  it("reports the net score after a charge, and the unchanged net for an owned re-view", async () => {
+  it("reports the net score from the spend the SCRIPT saw after the charge, not the gate's earlier read", async () => {
     const store = await loadStore();
+    // The gate read net 40 (gross 50, spent 10). By the time the script ran,
+    // a parallel reveal had landed: the script's post-charge total is 30,
+    // so the truthful net is 50 − 30 = 20 — not the 40 − 10 = 30 the gate's
+    // figures alone would give.
     mocks.hintBalance.mockResolvedValue({ gross: 50, spent: 10, net: 40 });
-    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 20]);
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 30]);
     await expect(store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section")).resolves.toMatchObject({
-      balance: 30,
+      balance: 20,
     });
-    mocks.upstashEval.mockResolvedValueOnce(["owned", "text", "20"]);
+    // An owned re-view charges nothing; the script still reports the
+    // current total, and the net follows it.
+    mocks.upstashEval.mockResolvedValueOnce(["owned", "text", "30"]);
     await expect(store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section")).resolves.toMatchObject({
-      balance: 40,
+      balance: 20,
     });
+  });
+
+  it("the script's spend total is the case-folded sum, taken before the SADD guard", async () => {
+    // One person's spend can sit under two case variants of their login
+    // (a mid-event rename). The script sums the hash case-insensitively —
+    // the figure both the re-check and the returned total are built on.
+    const store = await loadStore();
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    const [script] = mocks.upstashEval.mock.calls[0];
+    const hgetall = script.indexOf("HGETALL");
+    expect(hgetall).toBeGreaterThan(-1);
+    expect(hgetall).toBeLessThan(script.indexOf("SADD"));
+    expect(script.slice(hgetall)).toMatch(/string\.lower/);
   });
 
   it("re-views an owned hint for free when the balance no longer covers the price, reporting the clamped net", async () => {

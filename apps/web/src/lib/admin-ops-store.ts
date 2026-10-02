@@ -2,6 +2,7 @@ import "server-only";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-store";
 import { LOGIN_RE } from "@/lib/admin-admins";
+import { invalidateFoldedLeaderboard } from "@/lib/leaderboard/fold-cache";
 import { sumAttempts } from "@/lib/attempt-row";
 import {
   HINTS_SPENT_KEY,
@@ -489,6 +490,11 @@ export async function resetUserProgress(rawLogin: string, actor: string): Promis
   }
 
   await audit("ops:user-reset", actor, { login, cleared });
+  // This player's score just dropped; the leaderboard memo (~10 s) must not
+  // keep serving the old one — the hint gate reads their gross from it
+  // (#553). After the last write, so a fold racing the wipe cannot refill the
+  // memo with the pre-reset keys.
+  invalidateFoldedLeaderboard();
   return { cleared, warnings };
 }
 

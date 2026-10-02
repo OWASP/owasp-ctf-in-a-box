@@ -22,6 +22,7 @@ import type { AppId } from "@/lib/apps";
 // `server-only`, so calling it with `process.env` here is safe.
 import { defaultEnabledModules, secureDevAvailable } from "@/lib/module-defaults";
 import { errorLabel } from "@/lib/error-label";
+import { invalidateFoldedLeaderboard } from "@/lib/leaderboard/fold-cache";
 import {
   DEMO_CONTESTANTS,
   DEMO_TEAMS,
@@ -876,6 +877,11 @@ export async function resetEvent(actor: string): Promise<{ cleared: Record<strin
     [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
     [actor, at, resetAt, audit, String(AUDIT_CAP - 1)],
   );
+  // Every score just went to zero; the leaderboard memo (~10 s) must not
+  // keep serving the old ones — the hint gate reads a contestant's gross from
+  // it (#553). After the last write, so a fold racing the wipe cannot refill
+  // the memo with the pre-reset keys.
+  invalidateFoldedLeaderboard();
   return { cleared, resetAt };
 }
 

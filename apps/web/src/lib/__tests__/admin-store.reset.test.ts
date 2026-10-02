@@ -3,8 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(s: string, k: string[], a: (string | number)[]) => Promise<unknown>>(),
   upstashPipeline: vi.fn<(c: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
+  invalidateFoldedLeaderboard: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
+// #553: the reset lowers scores, and the hint gate reads gross from the fold
+// memo; the store drops it through this leaf (it cannot import the fold —
+// admin-store is upstream of it).
+vi.mock("@/lib/leaderboard/fold-cache", () => ({ invalidateFoldedLeaderboard: mocks.invalidateFoldedLeaderboard }));
 // `parseScanPage` is the REAL parser — see the note in team-store.test.ts.
 vi.mock("@/lib/upstash", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/upstash")>();
@@ -21,6 +26,7 @@ import { resetEvent } from "@/lib/admin-store";
 beforeEach(() => {
   mocks.upstashEval.mockReset();
   mocks.upstashPipeline.mockReset();
+  mocks.invalidateFoldedLeaderboard.mockReset();
   mocks.upstashEval.mockResolvedValue([]);
 });
 
@@ -44,6 +50,22 @@ function pipelineImpl(scanKeys: (pattern: string) => string[][]) {
 }
 
 describe("resetEvent", () => {
+  // #553 review: the wipe lowers every score, and the hint gate reads gross
+  // from the fold memo (~10 s). Without this a reset contestant could buy a
+  // hint against their pre-reset points. After the LAST write, not before —
+  // an invalidation that runs first can be refilled by a fold that still
+  // sees the old keys.
+  it("invalidates the folded leaderboard memo once, after the wipe and the audit eval", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    await resetEvent("alice");
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
+    const lastWrite = Math.max(
+      ...mocks.upstashPipeline.mock.invocationCallOrder,
+      ...mocks.upstashEval.mock.invocationCallOrder,
+    );
+    expect(mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder[0]).toBeGreaterThan(lastWrite);
+  });
+
   it("wipes every event-data prefix, then freezes + audits in one eval", async () => {
     // two keys for every prefix, single SCAN page each
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1", "k2"]]));

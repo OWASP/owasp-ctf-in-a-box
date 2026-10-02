@@ -4,6 +4,7 @@ import { withModuleContributions } from "./module-contributions";
 import { withTeamStandings } from "./team-standings";
 import { withModuleSeries } from "./module-series";
 import { withHintPenalties } from "./hint-penalties";
+import { foldGeneration } from "./fold-cache";
 import type { LeaderboardData } from "./types";
 
 /**
@@ -76,8 +77,12 @@ const defaultFold: Fold = async () =>
     .then(withModuleSeries)
     .then(withHintPenalties);
 
-let cached: { at: number; data: LeaderboardData } | null = null;
+// `gen` is the fold-cache generation the fold STARTED under (#553): the two
+// admin resets that lower scores bump it, and nothing stamped older is served
+// — not a memo, and not a fold still in flight when the reset came.
+let cached: { at: number; data: LeaderboardData; gen: number } | null = null;
 let inflight: Promise<LeaderboardData> | null = null;
+let inflightGen = -1;
 
 /** Test seam: the memo is module state by design, so tests reset it. */
 export function resetFoldedLeaderboardCache(): void {
@@ -98,16 +103,22 @@ export async function getFoldedLeaderboard({
   now = Date.now,
   fold = defaultFold,
 }: { now?: Clock; fold?: Fold } = {}): Promise<LeaderboardData> {
-  if (cached && now() - cached.at < LEADERBOARD_FOLD_TTL_MS) return cached.data;
-  if (inflight) return inflight;
-  inflight = fold()
+  const gen = foldGeneration();
+  if (cached && cached.gen === gen && now() - cached.at < LEADERBOARD_FOLD_TTL_MS) return cached.data;
+  if (inflight && inflightGen === gen) return inflight;
+  inflightGen = gen;
+  const run: Promise<LeaderboardData> = fold()
     .then((data) => {
-      // Stamped on completion, not on request — see the header.
-      cached = { at: now(), data };
+      // Stamped on completion, not on request — see the header. Memoized only
+      // if no invalidation came while it ran: a fold that started before a
+      // reset read the pre-reset keys, and its caller gets it, but nobody else.
+      if (gen === foldGeneration()) cached = { at: now(), data, gen };
       return data;
     })
     .finally(() => {
-      inflight = null;
+      // A superseded (stale) fold finishing must not clear the newer one.
+      if (inflight === run) inflight = null;
     });
-  return inflight;
+  inflight = run;
+  return run;
 }

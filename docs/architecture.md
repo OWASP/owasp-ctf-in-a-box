@@ -1124,9 +1124,15 @@ request, with no rebuild and no restart.
 a priced hint when the contestant's net score does not cover it (#553):
 `hint-balance.ts` takes gross from the contestant's row on the folded board
 (`points + hintPenalty` — the one place every module's points are already
-summed per login) and the spend fresh from `ctf:hints:spent`, because the
-fold is memoized for ~10 s and two quick purchases must not both pass on the
-same stale figure. It fails **closed** like the progress gate, and exempts an
+summed per login) and the spend fresh from `ctf:hints:spent`, as the
+case-folded sum of the hash (a case-only login rename splits one person's
+spend across two fields), because the fold is memoized for ~10 s and a
+second purchase must not pass on the row's stale penalty. The gross side can
+go down too — the per-player and master resets wipe points — so both resets
+invalidate the fold memo through `leaderboard/fold-cache.ts` (a leaf, since
+`admin-store` sits upstream of the fold); the next balance read folds fresh,
+and a fold already running when the reset came is discarded, not memoized.
+It fails **closed** like the progress gate, and exempts an
 already-owned hint (a re-view charges nothing). The gate's read and the charge
 are still two round-trips, so the reveal script makes the limit **atomic**: it
 takes the gate's gross as an argument, re-reads the spend inside the script,

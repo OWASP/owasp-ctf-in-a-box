@@ -28,6 +28,10 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/admin-store", () => ({ ADMIN_AUDIT_KEY: "ctf:admin:audit", AUDIT_CAP: 500 }));
+// #553: a per-player reset lowers that player's score, and the hint gate
+// reads gross from the fold memo; the store drops it through this leaf.
+const foldCache = vi.hoisted(() => ({ invalidateFoldedLeaderboard: vi.fn() }));
+vi.mock("@/lib/leaderboard/fold-cache", () => foldCache);
 
 import {
   OpsValidationError,
@@ -92,6 +96,23 @@ function mockQuizAndHintsPipeline() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("resetUserProgress invalidates the folded leaderboard (#553)", () => {
+  it("drops the fold memo once, after the last write, so the hint gate cannot read the pre-reset gross", async () => {
+    mockNoSecureDevKeys();
+    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockQuizAndHintsPipeline();
+    await resetUserProgress("octocat", "admin");
+    expect(foldCache.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
+    // After the writes, not before: an invalidation that runs first can be
+    // refilled by a fold that still sees the old points.
+    const lastWrite = Math.max(
+      ...mocks.upstashPipeline.mock.invocationCallOrder,
+      ...mocks.upstashEval.mock.invocationCallOrder,
+    );
+    expect(foldCache.invalidateFoldedLeaderboard.mock.invocationCallOrder[0]).toBeGreaterThan(lastWrite);
+  });
 });
 
 describe("input validation", () => {

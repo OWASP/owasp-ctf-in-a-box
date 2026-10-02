@@ -16,6 +16,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   module, net of hints already bought) does not cover the price — checked
   once at the gate and again atomically inside the charge script, so two
   simultaneous purchases cannot both squeeze through on the same balance.
+  The per-player and master resets now also drop the leaderboard's ~10 s
+  memo, so a freshly reset contestant cannot buy against their old score.
   Before, the board floored a net score at 0 and the shortfall was quietly
   forgiven, so a hint was cheaper for whoever had the least to lose.
   Re-viewing a hint already bought stays free whatever the balance, a free

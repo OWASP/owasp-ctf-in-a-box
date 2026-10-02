@@ -23,16 +23,22 @@ import { upstashPipeline } from "@/lib/upstash";
  * penalty) it is an upper bound, which still yields net ≤ 0: a broke row is
  * reported broke, never as owed its penalty back.
  *
- * SPENT is read fresh. The fold is memoized for ~10 s
- * (`LEADERBOARD_FOLD_TTL_MS`), so a hint bought a second ago is in
- * `ctf:hints:spent` but not yet in the row — a second, SEQUENTIAL purchase
- * must not pass on the row's stale penalty. (Two PARALLEL purchases are the
- * reveal script's problem: it re-reads the spend inside the charge, see
- * `REVEAL_SCRIPT`'s ARGV[8].) The larger of the fresh read and the
- * row's penalty is used: the row's figure is the case-variant SUM
- * `withHintPenalties` computes, which a single HGET by the session's spelling
- * can undercount, and the fresh read is ahead of it right after a purchase.
- * They never disagree in the other direction.
+ * SPENT is read fresh, as the CASE-FOLDED SUM of the whole spend hash — one
+ * HGETALL, the same read `getHintPenalties` makes per fold — never a single
+ * HGET by the session's spelling. One person's purchases can sit under two
+ * spellings of their login (a case-only GitHub rename mid-event), and the
+ * single-field read undercounts exactly when it matters: a new purchase
+ * under the current spelling could pass on that undercount even though the
+ * row's summed penalty was already larger. Fresh is authoritative in BOTH
+ * directions: ahead of the row's penalty right after a purchase (the fold
+ * is memoized ~10 s, `LEADERBOARD_FOLD_TTL_MS`), and below it right after
+ * Support's per-player reset deletes the spend. Two PARALLEL purchases are
+ * the reveal script's problem: it re-reads the spend inside the charge, see
+ * `REVEAL_SCRIPT`'s ARGV[8].
+ *
+ * The gross side CAN go down too — the per-player and master resets wipe
+ * points — which is why those ops invalidate the fold memo
+ * (`leaderboard/fold-cache.ts`): the next balance read folds fresh.
  *
  * FAILS BY THROWING. A fold or spend read that errors rejects, and the gate
  * fails CLOSED on it (a hint is a paid reveal — see `hintGate`). A row that
@@ -43,17 +49,21 @@ export type HintBalance = { gross: number; spent: number; net: number };
 export async function hintBalance(login: string): Promise<HintBalance> {
   const [board, [spentRes]] = await Promise.all([
     getFoldedLeaderboard(),
-    upstashPipeline([["HGET", HINTS_SPENT_KEY, login]]),
+    upstashPipeline([["HGETALL", HINTS_SPENT_KEY]]),
   ]);
   // upstashPipeline reports a per-command error positionally rather than
   // throwing (AGENTS.md); an unchecked `.result` would read NOAUTH as 0 spent.
   if (spentRes.error !== undefined) throw new Error(`hint spend read failed: ${spentRes.error}`);
   // Logins join case-insensitively everywhere (AGENTS.md): the scorer keeps
-  // the PR author's spelling, the session its own.
+  // the PR author's spelling, the session its own, the spend hash whatever
+  // the session had at each purchase.
   const key = login.toLowerCase();
   const row = board.entries.find((e) => e.login.toLowerCase() === key);
-  const penalty = row?.hintPenalty ?? 0;
-  const gross = row ? row.points + penalty : 0;
-  const spent = Math.max(penalty, Number(spentRes.result) || 0);
+  const gross = row ? row.points + (row.hintPenalty ?? 0) : 0;
+  const flat = Array.isArray(spentRes.result) ? (spentRes.result as string[]) : [];
+  let spent = 0;
+  for (let i = 0; i < flat.length; i += 2) {
+    if (flat[i].toLowerCase() === key) spent += Number(flat[i + 1]) || 0;
+  }
   return { gross, spent, net: gross - spent };
 }

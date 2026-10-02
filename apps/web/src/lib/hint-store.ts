@@ -111,7 +111,12 @@ export function isHintTarget(value: string): value is HintTarget {
 //       could both pass it on the same figure and both charge — this re-check
 //       is what makes the limit atomic. A hint already in KEYS[1] is exempt
 //       (a re-view charges nothing). Gross may be ~10 s stale (the fold's
-//       memo); points only grow, so stale is conservative.
+//       memo) — and the admin resets that LOWER a score invalidate the memo
+//       (leaderboard/fold-cache.ts), so stale can only mean points not yet
+//       counted: conservative. The spend side is never stale: read here.
+//
+// Every non-preview verdict's third element is the spend TOTAL after the
+// call (case-folded, see the script) — what `balance` is derived from.
 // Exported for the live suite only.
 export const REVEAL_SCRIPT = `
 -- The story lock (#463) comes FIRST: a locked step's hint is never read.
@@ -125,16 +130,25 @@ end
 local hint = redis.call('HGET', KEYS[3], ARGV[1])
 if not hint then return {'missing'} end
 if ARGV[6] == '1' then return {'preview', hint, '0'} end
+-- The spend total, CASE-FOLDED: one person's purchases can sit under two
+-- spellings of their login (a case-only rename), and a single-field read by
+-- the session's spelling would undercount. Read once, before the set guard,
+-- for both the affordability re-check and the total every verdict returns.
+local spent = 0
+local all = redis.call('HGETALL', KEYS[2])
+local me = string.lower(ARGV[3])
+for i = 1, #all, 2 do
+  if string.lower(all[i]) == me then spent = spent + (tonumber(all[i + 1]) or 0) end
+end
 if ARGV[8] and ARGV[8] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 0 then
-  local spent = tonumber(redis.call('HGET', KEYS[2], ARGV[3]) or '0')
   if tonumber(ARGV[8]) - spent < tonumber(ARGV[4]) then return {'insufficient', '', tostring(spent)} end
 end
 if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
-  local spent = redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
+  redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
   redis.call('HSETNX', KEYS[4], ARGV[2], ARGV[5])
-  return {'charged', hint, spent}
+  return {'charged', hint, tostring(spent + tonumber(ARGV[4]))}
 end
-return {'owned', hint, redis.call('HGET', KEYS[2], ARGV[3]) or '0'}`;
+return {'owned', hint, tostring(spent)}`;
 
 export type RevealResult =
   // `dryRun`: an admin-preview reveal (#464) — nothing was charged or recorded.
@@ -383,9 +397,11 @@ export async function revealHint(
   }
   if ((status === "charged" || status === "owned") && typeof hint === "string") {
     const alreadyOwned = status === "owned";
-    // The resulting score (#553): the gate's net less what THIS reveal
-    // charged, clamped like the board. Absent when no balance was read.
-    const balance = gate.balance ? Math.max(0, gate.balance.net - (alreadyOwned ? 0 : cost)) : undefined;
+    // The resulting score (#553): the gate's gross less the spend total the
+    // SCRIPT saw after this reveal (post-charge, case-folded) — not the gate's
+    // own earlier read, which a parallel reveal may have outdated. Clamped
+    // like the board. Absent when no balance was read (a free hint).
+    const balance = gate.balance ? Math.max(0, gate.balance.gross - (Number(spent) || 0)) : undefined;
     return {
       ok: true,
       hint,

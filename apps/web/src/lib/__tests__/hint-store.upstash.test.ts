@@ -150,8 +150,9 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
       alreadyOwned: true,
       spent: COST,
       cost: COST,
-      // A re-view charges nothing, so the net it reports is unchanged.
-      balance: BALANCE.net,
+      // A re-view charges nothing: the script reports the same total as the
+      // charge did, so the net is unchanged from after the purchase.
+      balance: BALANCE.gross - COST,
     });
     const [spent] = await pipeline([["HGET", "ctf:hints:spent", PLAYER]]);
     expect(Number(spent.result)).toBe(COST);

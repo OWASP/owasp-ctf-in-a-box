@@ -47,7 +47,11 @@ beforeEach(() => {
   requireLaunchedApi.mockResolvedValue(null);
   launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
   consumeRateLimit.mockResolvedValue({ allowed: true });
-  resolveHintConfig.mockResolvedValue({ enabled: true, cost: 10 });
+  // Deliberately DIFFERENT from the revealHint fixture's charged cost (10):
+  // the response must echo the amount revealHint actually charged, so if the
+  // route regressed to a second resolveHintConfig() read this mock's 999 would
+  // surface and fail the `cost: 10` assertion below.
+  resolveHintConfig.mockResolvedValue({ enabled: true, cost: 999 });
 });
 
 describe("POST /api/hints/reveal rate limiting", () => {

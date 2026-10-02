@@ -47,14 +47,20 @@ describe("HintRevealButton confirms before charging and acknowledges the cost (#
   });
 
   it("offers a cancel that returns to idle without charging", () => {
-    expect(src).toMatch(/setState\("idle"\)/);
+    // Scoped to the Cancel button's own handler — a bare `setState("idle")`
+    // also appears on the error paths, so matching that alone would stay green
+    // even if the Cancel control were deleted.
+    expect(src).toMatch(/onClick=\{\(\) => setState\("idle"\)\}/);
+    expect(src).toMatch(/>\s*Cancel\s*</);
   });
 
-  it("acknowledges the points spent only when the reveal actually charged", () => {
-    // Uses the server's charged amount, and shows it only when something was
-    // deducted — a preview (dryRun) or already-owned reveal charges nothing.
+  it("acknowledges the points spent only when the reveal actually deducted points", () => {
+    // Uses the server's charged amount, and shows it only when a POSITIVE
+    // deduction happened — a preview (dryRun), an already-owned reveal, and a
+    // configured cost of 0 all charge nothing and must not render "−0 pts".
     expect(src).toMatch(/−\{chargedCost\} pts spent/);
     expect(src).toMatch(/chargedCost !== null/);
+    expect(src).toMatch(/deducted > 0/);
     expect(src).toMatch(/data\.dryRun/);
     expect(src).toMatch(/data\.alreadyOwned/);
   });

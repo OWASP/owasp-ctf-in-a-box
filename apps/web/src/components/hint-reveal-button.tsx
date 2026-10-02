@@ -84,8 +84,12 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         // but deduct nothing — only a real charge is acknowledged, with the
         // server's authoritative cost rather than the render-time prop (the
         // organizer may have changed the price since this page loaded).
-        const charged = !data.dryRun && !data.alreadyOwned;
-        setChargedCost(charged ? (typeof data.cost === "number" ? data.cost : cost) : null);
+        // Only a positive deduction is acknowledged: a preview (dryRun) and an
+        // already-owned reveal charge nothing, and a configured cost of 0
+        // deducts nothing either — none of those should render "−0 pts spent".
+        const deducted =
+          !data.dryRun && !data.alreadyOwned ? (typeof data.cost === "number" ? data.cost : cost) : 0;
+        setChargedCost(deducted > 0 ? deducted : null);
         setText(data.hint);
         // Resync the page's server state (spent total, owned set) — the
         // revealed text itself stays in local state so it shows instantly.

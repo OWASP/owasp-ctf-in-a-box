@@ -544,3 +544,35 @@ describe("leaderboard edge cases (#481)", () => {
     expect(needsTeamsViewReset(true, "individual")).toBe(false);
   });
 });
+
+// #552: Secure Development points — and a newly-joined member's existing
+// points — fold into a team total only on the next sync sweep (~1 min, ADR 64),
+// while classic/quiz fold live. A player who just solved can briefly see a
+// stale total and read it as broken. A one-line cadence note sets the
+// expectation. It is scoped to events that actually run Secure Development,
+// since that is the only module whose totals lag.
+describe("Leaderboard score-cadence note (#552)", () => {
+  it("shows a cadence note on an event that runs Secure Development", () => {
+    const board = data({ entries: [entry()] });
+    const html = renderToStaticMarkup(
+      <Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
+    );
+    expect(html).toMatch(/about once a minute/i);
+  });
+
+  it("omits the note when Secure Development is not a live module", () => {
+    const quizOnly: readonly ResolvedModule[] = [{ id: "quiz", title: "Quiz", blurb: "" }];
+    const board = data({ entries: [entry()] });
+    const html = renderToStaticMarkup(
+      <Leaderboard data={board} viewerLogin={null} modules={quizOnly} enabledApps={apps} />,
+    );
+    expect(html).not.toMatch(/about once a minute/i);
+  });
+
+  it("omits the note on an empty board", () => {
+    const html = renderToStaticMarkup(
+      <Leaderboard data={data({ entries: [], teams: [] })} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
+    );
+    expect(html).not.toMatch(/about once a minute/i);
+  });
+});

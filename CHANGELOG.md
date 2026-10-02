@@ -10,6 +10,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: the leaderboard explains its ~1-minute score cadence (#552).** On
+  an event that runs Secure Development, a one-line note tells contestants that
+  SD points and team totals land on the next scoring sweep (about once a
+  minute), so a solve — or a teammate who just joined — can take a moment to
+  appear, rather than reading as a broken board. Events whose totals fold live
+  (classic-/quiz-only) don't show it.
+
 - **Changed: the default quiz retry cooldown is now 1 minute, down from 5
   (#549).** A wrong answer used to lock a question for five minutes (with a
   three-attempt cap); the default is now one minute, which still deters rapid

@@ -10,6 +10,19 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: a master reset no longer resurrects Secure Development scores on
+  the next poll (#551).** The reset already bumped a `resetAt` epoch that the
+  `sync` poller honoured by dropping its cursor — but dropping the cursor also
+  cleared the seen-set, so the next poll re-read every bot comment on the
+  still-open PRs and re-banked the pre-reset scores within a minute of the
+  wipe. The epoch is now also the ingestion **watermark**: a score comment
+  last edited before the reset is marked seen and skipped (reported once in
+  the poll log as `N preReset`), while a PR re-scored after the reset edits
+  its comment past the epoch and lands as normal. An epoch written as ISO by
+  an older state file is read too, and an unparseable one skips nothing —
+  losing every score on a junk value would be the worse failure. Organizers
+  no longer need to delete the source PR comments for a wipe to hold.
+
 - **Changed: a paid hint confirms before it charges, and acknowledges the
   cost afterward (#550).** The challenge page's **Reveal hint** button now
   opens a **Confirm / Cancel** step on the first press instead of charging

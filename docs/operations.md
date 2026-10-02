@@ -652,13 +652,16 @@ The panel offers:
   single click can't fire it).
 
   The reset also **returns the event to not launched** (it clears Scoring
-  opens, #464 — launch again when ready), **freezes scoring** and bumps a reset epoch that the sync poller
-  honours by dropping its cursor. This is what makes a reset stick in **poll
-  mode**: without it, the poller would re-ingest the same PR comments within a
-  cycle and undo the wipe. So the intended flow is *reset → box is frozen →
-  unfreeze when ready*. If you reset **after** real PRs exist and then unfreeze,
-  the poller re-reads those still-present comments — for a post-event wipe that
-  stays gone, also delete (or the org, archive) the source PR comments.
+  opens, #464 — launch again when ready), **freezes scoring** and bumps a reset
+  epoch that the sync poller honours as a **watermark**: it drops its cursor
+  and re-reads the PR comments, but skips every score comment last edited
+  *before* the reset (#551), so the points from a rehearsal PR do not come
+  back on the first poll after the wipe. This is what makes a reset stick in
+  **poll mode**. So the intended flow is *reset → box is frozen → unfreeze
+  when ready*. A PR that is re-scored **after** the reset (its score comment
+  is edited forward past the epoch) is ingested as normal — that is a fresh
+  result, not a resurrected one. The poller's log reports the skip once, as
+  `poll <repo>: N preReset`.
 
 - **Quiz controls** (Quiz tab, present only when the `quiz` module is enabled) — the two
   retry-gate knobs (max attempts, accepted from 0 to **100**; retry cooldown,

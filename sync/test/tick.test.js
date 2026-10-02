@@ -237,3 +237,82 @@ test("recovers a score dropped by an older build's id-only seen entry", async ()
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
   assert.equal(posts.length, 1, "a bare id from an older build must not suppress the comment forever");
 });
+
+// ── issue #551: a master reset must not resurrect pre-reset scores ──────────
+//
+// The admin panel's reset bumps `resetAt`, and the tick drops its cursor when
+// the epoch advances (tick-redis.test.js) so the next poll re-reads every bot
+// comment from scratch — INCLUDING the ones scored before the reset. Those
+// still carry real markers, the seen-set that would have deduped them was just
+// cleared, and the scorer re-banks them: a wipe that un-wipes itself one poll
+// later. Observed on the rehearsal box: reset, then the old PR's points were
+// back on the leaderboard within a minute.
+//
+// The epoch IS the watermark. A comment last edited before it predates the
+// reset and is skipped (and marked seen, so it is skipped once, not every
+// tick); a re-run after the reset edits the comment forward past the epoch and
+// that revision is ingested as normal.
+const mona = `<!-- ctf-score: {"author":"mona","target":"dvwa","solved":["xss"],"pr":8,"sha":"def"} -->`;
+const withReset = (resetAt) => ({ ...redisStub, getResetAt: async () => resetAt });
+
+test("after a reset, a bot comment last edited before the epoch is skipped and one edited after is ingested (#551)", async () => {
+  const posts = [];
+  const old = ghComment(1); // updated_at 11:00 — scored before the reset
+  const fresh = ghComment(2, mona);
+  fresh.updated_at = "2026-08-13T11:20:00Z"; // re-run after the reset
+  const resetAt = String(Date.parse("2026-08-13T11:10:00Z")); // what resetEvent writes: epoch ms
+  const f = routes(() => new Response(JSON.stringify([old, fresh]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis: withReset(resetAt) });
+  assert.equal(posts.length, 1, "only the post-reset revision reaches the scorer");
+  assert.equal(posts[0].author, "mona");
+  // The skipped comment is still marked seen: the next tick must not re-walk it.
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), true);
+});
+
+test("a pre-reset comment that is later edited past the epoch is ingested as a new revision (#551)", async () => {
+  const posts = [];
+  const resetAt = String(Date.parse("2026-08-13T11:10:00Z"));
+  let current = ghComment(1); // 11:00, before
+  const f = routes(() => new Response(JSON.stringify([current]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis: withReset(resetAt) });
+  assert.equal(posts.length, 0, "the stale revision is skipped");
+  current = { ...current, updated_at: "2026-08-13T11:30:00Z" }; // the workflow re-scored the PR
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis: withReset(resetAt) });
+  assert.equal(posts.length, 1, "the post-reset revision of the SAME comment lands");
+});
+
+test("an epoch older than the comment does not skip it — the watermark only hides the past (#551)", async () => {
+  const posts = [];
+  const resetAt = String(Date.parse("2026-08-13T10:00:00Z")); // reset happened an hour before the score
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis: withReset(resetAt) });
+  assert.equal(posts.length, 1);
+});
+
+// Older state files (state.test.js) carry the epoch as an ISO string; the
+// admin panel writes epoch milliseconds. Both are honoured, and a value that
+// is neither is NOT a watermark: skipping on a junk epoch would silently lose
+// every score, so it ingests as if no reset had happened (the same direction
+// `getResetAt` takes on a read error).
+test("the epoch is read as ISO or epoch-ms, and an unparseable one skips nothing (#551)", async () => {
+  for (const [resetAt, expected] of [
+    ["2026-08-13T11:10:00Z", 0],
+    [String(Date.parse("2026-08-13T11:10:00Z")), 0],
+    ["not-a-date", 1],
+  ]) {
+    const posts = [];
+    const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, posts);
+    await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis: withReset(resetAt) });
+    assert.equal(posts.length, expected, `resetAt=${resetAt}`);
+  }
+});
+
+test("the first poll after a reset reports how many stale comments it skipped (#551)", async () => {
+  const logs = [];
+  const resetAt = String(Date.parse("2026-08-13T11:10:00Z"));
+  const f = routes(() => new Response(JSON.stringify([ghComment(1), ghComment(2, mona)]), { status: 200, headers: {} }), 202);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: (m) => logs.push(m), redis: withReset(resetAt) });
+  assert.ok(logs.some((l) => /poll DVWA: 2 preReset/.test(l)), JSON.stringify(logs));
+});

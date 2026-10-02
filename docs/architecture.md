@@ -1081,11 +1081,18 @@ the wipe. So the reset also freezes scoring **and bumps a `resetAt` epoch
 field in the settings hash**.
 `sync/src/index.js`'s `tick()` reads it (`redis.getResetAt()`) *before* the
 pause check and, when it advances, drops its per-repo cursor/seen state — so the
-wipe sticks even while frozen, and an unfreeze re-polls from scratch. This
-`resetAt` signal is the app→sync coordination that lets a wipe cross the
-container boundary without the app touching sync's state-file volume. A
-post-event wipe also needs the source PR comments gone (there is no way to
-un-post them from here). Every disruptive control prompts for confirmation
+wipe sticks even while frozen, and an unfreeze re-polls from scratch. On its
+own that re-poll would re-bank every pre-reset score (the seen-set that would
+have deduped them was just cleared), so the epoch is also the ingestion
+**watermark** (#551): a bot comment whose `updated_at` predates `resetAt` is
+marked seen and skipped (tallied once as `preReset` in the poll summary), while
+a re-run that edits the comment past the epoch is a new revision and lands as
+normal. The epoch is epoch-milliseconds from `resetEvent` (an ISO string from
+an older state file is read too); an unparseable value is no watermark —
+skipping on junk would silently lose every score, the same fail-open direction
+`getResetAt` takes on a read error. This `resetAt` signal is the app→sync
+coordination that lets a wipe cross the container boundary without the app
+touching sync's state-file volume. Every disruptive control prompts for confirmation
 (type-to-confirm for the reset; one-click for the freeze/registration toggles).
 
 **Demo seed.** `seedDemoData()` + `POST /api/admin/seed` populate a

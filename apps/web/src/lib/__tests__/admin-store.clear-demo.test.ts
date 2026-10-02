@@ -38,10 +38,10 @@ describe("clearDemoData", () => {
     );
   });
 
-  it("does not invalidate when the clear itself failed", async () => {
+  it("invalidates even when the clear failed — a per-command failure leaves the other deletions standing", async () => {
     mocks.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }]);
     await expect(clearDemoData("alice")).rejects.toThrow(/NOAUTH/);
-    expect(mocks.invalidateFoldedLeaderboard).not.toHaveBeenCalled();
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
   });
 
   it("issues exactly one pipeline call — no settings read, unlike seedDemoData", async () => {

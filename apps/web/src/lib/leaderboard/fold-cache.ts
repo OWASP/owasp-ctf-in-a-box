@@ -1,42 +1,74 @@
 import "server-only";
+import { errorLabel } from "@/lib/error-label";
+import { upstashPipeline } from "@/lib/upstash";
 
 /**
- * The folded leaderboard's invalidation token (#553).
+ * The folded leaderboard's invalidation token (#553), in two halves.
  *
- * The fold is memoized for ~10 s (`folded.ts`). That is fine while scores
- * only grow — a stale read undercounts, which every reader tolerates — but
- * the admin operations that LOWER a folded score must not leave the board
- * serving the old one for a TTL on the instance that did the write. Every
- * such operation calls `invalidateFoldedLeaderboard()` after its LAST write
- * (an earlier call can be refilled by a fold racing the writes): the master
- * reset and every settings write (`admin-store.ts` — the fold counts only
- * the ENABLED modules' points, so switching one off lowers scores), the demo
- * clear (`admin-store.ts`), Support's per-player reset and delete
- * (`admin-ops-store.ts`). An archive import goes through the master reset
- * first and then adds content only.
+ * 1. A PROCESS-local generation. The fold is memoized for ~10 s
+ *    (`folded.ts`); that is fine while scores only grow — a stale read
+ *    undercounts, which every reader tolerates — but the admin operations
+ *    that LOWER a folded score must not leave the board on the instance that
+ *    did the write serving the old one for a TTL. `folded.ts` stamps each
+ *    fold with the generation it STARTED under and serves nothing stamped
+ *    older — a fold already running when the invalidation came is discarded
+ *    too, since it read the old keys.
  *
- * This is PROCESS-local, and the AWS module runs two app tasks — a write on
- * one never reaches the other's memo. So the hint affordability gate does
- * NOT rely on it: `hint-balance.ts` folds fresh (`fresh: true`) every time.
- * The invalidation is for the board; the gate pays for its own read.
+ * 2. A Redis-backed SCORE REVISION (`ctf:admin:score-rev`, under the admin
+ *    prefix the master reset keeps) that every app task can see. The AWS
+ *    module runs two app tasks, so a process-local signal never reaches the
+ *    other one — and even a fresh fold on the right task can finish AFTER a
+ *    write on the other task lowered the score. So the hint gate's gross
+ *    travels with the revision it was folded under (`hint-balance.ts` reads
+ *    it BEFORE folding), and the reveal script compares it to the current
+ *    one before it reads the spend or charges: moved means stale, and the
+ *    store re-reads and retries once (`REVEAL_SCRIPT`, ARGV[9]).
+ *
+ * Every operation that can lower a folded score calls
+ * `invalidateFoldedLeaderboard()` — in a `finally`, after its LAST write
+ * (an earlier call can be refilled by a fold racing the writes; a failure
+ * midway leaves the earlier destructive stages standing, so the drop must
+ * happen on that path too): the master reset and every settings write
+ * (`admin-store.ts` — the fold counts only the ENABLED modules' points, so
+ * switching one off lowers scores), the demo clear (`admin-store.ts`),
+ * Support's per-player reset and delete (`admin-ops-store.ts`). An archive
+ * import goes through the master reset first and then adds content only.
  *
  * A leaf on purpose: `admin-store` sits UPSTREAM of the fold (the fold's
  * penalty stage reads the hint config, which reads admin settings), so it
- * cannot import `folded.ts` without a cycle. Callers bump the generation
- * here; `folded.ts` stamps each fold with the generation it STARTED under
- * and serves nothing stamped older — a fold already running when the
- * invalidation came is discarded too, since it read the old keys.
+ * cannot import `folded.ts` without a cycle.
  */
+export const SCORE_REV_KEY = "ctf:admin:score-rev";
+
 let generation = 0;
 
-/** Drop the memo: the next read folds fresh. Call AFTER the last write of a
- *  score-lowering operation, or a fold racing it refills the memo with the
- *  old points. */
-export function invalidateFoldedLeaderboard(): void {
+/** Drop this instance's memo and bump the shared revision. The Redis bump
+ *  failing is logged, not thrown: this instance's memo drops regardless, and
+ *  the caller's own error (if any) is the one worth surfacing — but the other
+ *  tasks lose the signal for this one write, which the log line records. */
+export async function invalidateFoldedLeaderboard(): Promise<void> {
   generation++;
+  try {
+    const [res] = await upstashPipeline([["INCR", SCORE_REV_KEY]]);
+    if (res.error !== undefined) throw new Error(res.error);
+  } catch (err) {
+    console.error(
+      "fold-cache: score revision bump failed (other app tasks will not see this write):",
+      errorLabel(err),
+    );
+  }
 }
 
 /** The current generation, for `folded.ts` to stamp and compare. */
 export function foldGeneration(): number {
   return generation;
+}
+
+/** The shared revision as the script will compare it: the stored string,
+ *  "0" when nothing has ever bumped it. Throws on a read error — a gross
+ *  nobody can vouch for is refused by the gate (closed), not guessed. */
+export async function currentScoreRevision(): Promise<string> {
+  const [res] = await upstashPipeline([["GET", SCORE_REV_KEY]]);
+  if (res.error !== undefined) throw new Error(`score revision read failed: ${res.error}`);
+  return res.result == null ? "0" : String(res.result);
 }

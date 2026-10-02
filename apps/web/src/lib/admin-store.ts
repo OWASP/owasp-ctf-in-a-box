@@ -719,21 +719,28 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
   }
   const at = new Date().toISOString();
   const audit = JSON.stringify({ at, by: actor, changed });
-  const result = await upstashEval(
-    UPDATE_SCRIPT,
-    [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
-    [actor, at, audit, String(AUDIT_CAP - 1), String(dels.length), ...dels, ...fields],
-  );
+  let result: unknown;
+  try {
+    result = await upstashEval(
+      UPDATE_SCRIPT,
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
+      [actor, at, audit, String(AUDIT_CAP - 1), String(dels.length), ...dels, ...fields],
+    );
+  } finally {
+    // A settings write can LOWER a contestant's folded score: the fold counts
+    // only the ENABLED modules' points (`withModuleContributions`), so a
+    // module switched off takes its points out, and the hint gate's gross is
+    // checked against the fold's revision (#553). Every attempt that reached
+    // Redis drops the memo and bumps the revision — rather than enumerating
+    // which keys can shrink a score, and whether the reply said "refused" or
+    // never came: once the eval was sent, the transport cannot tell "wrote
+    // nothing" from "wrote, then the reply was lost". Admin-only and rare, so
+    // one extra fold is nothing; a missed one is a hint bought on points
+    // that no longer count. After the write, never before.
+    await invalidateFoldedLeaderboard();
+  }
   // The script refused a window that could never open, writing nothing.
   if (Array.isArray(result) && result[0] === "__window_refused__") throw windowRefusal(String(result[1]), String(result[2]));
-  // A settings write can LOWER a contestant's folded score: the fold counts
-  // only the ENABLED modules' points (`withModuleContributions`), so a module
-  // switched off takes its points out, and the hint gate reads gross from the
-  // ~10 s fold memo (#553). Every successful write drops the memo rather than
-  // enumerating which keys can shrink a score — admin-only and rare, so one
-  // extra fold is nothing; a missed key would be a hint bought on points
-  // that no longer count. After the write, never before.
-  invalidateFoldedLeaderboard();
   return decodeSettings(flatToObject(result));
 }
 
@@ -874,23 +881,27 @@ redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
  */
 export async function resetEvent(actor: string): Promise<{ cleared: Record<string, number>; resetAt: string }> {
   const cleared: Record<string, number> = {};
-  for (const [label, pattern] of RESET_PREFIXES) {
-    cleared[label] = await scanDelByPrefix(pattern);
+  try {
+    for (const [label, pattern] of RESET_PREFIXES) {
+      cleared[label] = await scanDelByPrefix(pattern);
+    }
+    const at = new Date().toISOString();
+    const resetAt = String(Date.now());
+    const audit = JSON.stringify({ at, by: actor, action: "reset", cleared });
+    await upstashEval(
+      RESET_SCRIPT,
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
+      [actor, at, resetAt, audit, String(AUDIT_CAP - 1)],
+    );
+    return { cleared, resetAt };
+  } finally {
+    // Every score just went to zero — or some did, if a later prefix or the
+    // freeze/audit eval threw after earlier deletes stood (`scanDelByPrefix`
+    // does not undo): the leaderboard memo must not keep serving the old
+    // ones to the hint gate either way (#553). In a finally, after the last
+    // write, so a fold racing the wipe cannot refill it.
+    await invalidateFoldedLeaderboard();
   }
-  const at = new Date().toISOString();
-  const resetAt = String(Date.now());
-  const audit = JSON.stringify({ at, by: actor, action: "reset", cleared });
-  await upstashEval(
-    RESET_SCRIPT,
-    [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
-    [actor, at, resetAt, audit, String(AUDIT_CAP - 1)],
-  );
-  // Every score just went to zero; the leaderboard memo (~10 s) must not
-  // keep serving the old ones — the hint gate reads a contestant's gross from
-  // it (#553). After the last write, so a fold racing the wipe cannot refill
-  // the memo with the pre-reset keys.
-  invalidateFoldedLeaderboard();
-  return { cleared, resetAt };
 }
 
 // --- demo seed / clear (admin-gated dangerous settings, issue #419) ---------
@@ -1626,15 +1637,20 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
   // Same reasoning as seedDemoData's own pipeline check: a per-command
   // failure doesn't throw on its own (AGENTS.md), so an unchecked call would
   // report a cheerful "cleared" count for a clear that only partly happened.
-  const results = await upstashPipeline(cmds);
+  let results: Awaited<ReturnType<typeof upstashPipeline>>;
+  try {
+    results = await upstashPipeline(cmds);
+  } finally {
+    // The demo rows' points just left the board — some of them, if a command
+    // in the pipeline failed while its neighbours ran: the fold memo must not
+    // keep serving them to the hint gate either way (#553). In a finally,
+    // after the pipeline.
+    await invalidateFoldedLeaderboard();
+  }
   const failed = results.slice(0, cleanupCommandCount).find((r) => r.error);
   if (failed) throw new Error(`Clear demo data failed: ${failed.error}`);
   const auditFailed = results.slice(cleanupCommandCount).find((r) => r.error);
   if (auditFailed) console.error("[admin] clear-demo audit write failed:", adminErrorLabel(new Error(auditFailed.error)));
-  // The demo rows' points just left the board; the fold memo (~10 s) must
-  // not keep serving them to the hint gate (#553). After the pipeline, and
-  // only once it succeeded — a failed clear changed nothing.
-  invalidateFoldedLeaderboard();
   return { contestants: DEMO_CONTESTANTS.length, teams: DEMO_TEAMS.length, sponsors: DEMO_SPONSORS.length };
 }
 

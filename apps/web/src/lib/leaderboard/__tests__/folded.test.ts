@@ -7,6 +7,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+// fold-cache's invalidation also bumps a Redis revision; these tests are
+// about the process-local memo, so the bump lands in a stub.
+vi.mock("@/lib/upstash", () => ({ upstashPipeline: async () => [{ result: 1 }] }));
 
 import { getFoldedLeaderboard, LEADERBOARD_FOLD_TTL_MS, resetFoldedLeaderboardCache } from "@/lib/leaderboard/folded";
 import { invalidateFoldedLeaderboard } from "@/lib/leaderboard/fold-cache";

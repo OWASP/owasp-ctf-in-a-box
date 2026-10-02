@@ -5,6 +5,7 @@ import { errorLabel } from "@/lib/error-label";
 // dependency-free defaults file and both sides read the same constant.
 export { HINT_COST, HINT_MIN_SOLVES, HINT_UNLOCK_AFTER_MIN } from "./hint-defaults";
 import { hintBalance, type HintBalance } from "@/lib/hint-balance";
+import { SCORE_REV_KEY } from "@/lib/leaderboard/fold-cache";
 import { HINTS_AVAILABLE, resolveHintConfig } from "@/lib/hint-config";
 import { appsById, type AppId } from "@/lib/apps";
 import { AI_HINTS_KEY, aiSolvesKey } from "@/lib/ai-keys";
@@ -100,6 +101,8 @@ export function isHintTarget(value: string): value is HintTarget {
 // can never charge twice. `hint` is re-checked inside the script — a stale
 // availability cache can't charge for a hint that no longer exists.
 // KEYS: [1]=user's hint set [2]=spend hash [3]=app hint catalogue [4]=purchase times
+//       [5]=the shared score revision (#553, fold-cache.ts); [6..]=the story
+//       lock's teammate solves hashes (#463), when any.
 // ARGV: [1]=challengeId [2]=<app>/<id> [3]=login [4]=cost [5]=now (ISO)
 //       [6]="1" for a DRY RUN (#464 admin preview): read the text, write
 //       nothing — no SADD, no charge, no purchase time.
@@ -111,9 +114,14 @@ export function isHintTarget(value: string): value is HintTarget {
 //       could both pass it on the same figure and both charge — this re-check
 //       is what makes the limit atomic. A hint already in KEYS[1] is exempt
 //       (a re-view charges nothing). Gross may be ~10 s stale (the fold's
-//       memo) — and the admin resets that LOWER a score invalidate the memo
-//       (leaderboard/fold-cache.ts), so stale can only mean points not yet
-//       counted: conservative. The spend side is never stale: read here.
+//       memo) — stale can only mean points not yet counted, conservative,
+//       EXCEPT when a score-lowering write landed meanwhile, which [9] catches.
+//       The spend side is never stale: read here.
+//       [9]=the score revision the gross in [8] was folded under (fold-cache.ts
+//       bumps KEYS[5] on every score-lowering write, on any app task). If it
+//       has moved, the gross may be too high: the script answers `stale`
+//       before reading the spend or charging, and the caller re-reads and
+//       retries once. "" (no gross) skips the check.
 //
 // Every non-preview verdict's third element is the spend TOTAL after the
 // call (case-folded, see the script) — what `balance` is derived from.
@@ -122,7 +130,7 @@ export const REVEAL_SCRIPT = `
 -- The story lock (#463) comes FIRST: a locked step's hint is never read.
 if ARGV[6] ~= '1' and ARGV[7] and ARGV[7] ~= '' then
   local open = false
-  for i = 5, #KEYS do
+  for i = 6, #KEYS do
     if redis.call('HEXISTS', KEYS[i], ARGV[7]) == 1 then open = true break end
   end
   if not open then return {'locked'} end
@@ -130,6 +138,11 @@ end
 local hint = redis.call('HGET', KEYS[3], ARGV[1])
 if not hint then return {'missing'} end
 if ARGV[6] == '1' then return {'preview', hint, '0'} end
+-- The gross in ARGV[8] was folded under the score revision in ARGV[9]. A
+-- score-lowering write on ANY app task bumps KEYS[5]; if it has moved, that
+-- gross may be too high — refuse before reading the spend or charging, and
+-- let the caller re-read and retry.
+if ARGV[9] and ARGV[9] ~= '' and (redis.call('GET', KEYS[5]) or '0') ~= ARGV[9] then return {'stale'} end
 -- The spend total, CASE-FOLDED: one person's purchases can sit under two
 -- spellings of their login (a case-only rename), and a single-field read by
 -- the session's spelling would undercount. Read once, before the set guard,
@@ -314,6 +327,22 @@ export async function revealHint(
   if (!isHintTarget(target)) return { ok: false, error: "Unknown app" };
   if (!CHALLENGE_ID_RE.test(id)) return { ok: false, error: "Invalid challenge id" };
 
+  // One attempt = gate, story lock, script. Re-run ONCE when the script
+  // answers `stale` (a score-lowering write on some app task landed between
+  // the gate's fold and the charge): the second attempt folds afresh under
+  // the new revision. Twice stale is an event in the middle of a reset — tell
+  // the contestant to try again rather than spin.
+  return attemptReveal(login, target, id, cost, dryRun, false);
+}
+
+async function attemptReveal(
+  login: string,
+  target: HintTarget,
+  id: string,
+  cost: number,
+  dryRun: boolean,
+  retried: boolean,
+): Promise<RevealResult> {
   // Gate BEFORE the charge script. Enforced here (not just in the route) so
   // every caller goes through it — the UI hides locked hints, but the API is
   // the boundary that actually decides.
@@ -358,7 +387,7 @@ export async function revealHint(
   try {
     verdict = await upstashEval(
       REVEAL_SCRIPT,
-      [userHintsKey(login), HINTS_SPENT_KEY, hintHashKey(target), userHintTimesKey(login), ...lockKeys],
+      [userHintsKey(login), HINTS_SPENT_KEY, hintHashKey(target), userHintTimesKey(login), SCORE_REV_KEY, ...lockKeys],
       [
         id,
         `${target}/${id}`,
@@ -367,9 +396,11 @@ export async function revealHint(
         new Date().toISOString(),
         dryRun ? "1" : "0",
         prereq,
-        // ARGV[8]: the gross the gate read, for the script's atomic re-check.
-        // Absent (free hint / preview) the script skips it.
+        // ARGV[8]: the gross the gate read, for the script's atomic re-check;
+        // ARGV[9]: the score revision it was folded under. Absent (free hint
+        // / preview) the script skips both.
         gate.balance ? gate.balance.gross : "",
+        gate.balance ? gate.balance.rev : "",
       ],
     );
   } catch (err) {
@@ -385,6 +416,12 @@ export async function revealHint(
   // confirm that a guessed id is a locked story step.
   if (status === "locked") {
     return { ok: false, missing: true, error: "No hint available for this challenge" };
+  }
+  // The score revision moved between the gate's fold and the charge (ARGV[9]):
+  // the gross may be too high. Fold again under the new revision, once.
+  if (status === "stale") {
+    if (!retried) return attemptReveal(login, target, id, cost, dryRun, true);
+    return { ok: false, error: "Your score changed while buying this hint. Try again" };
   }
   // The script's own re-check lost a race to a parallel purchase (ARGV[8]):
   // the same refusal the gate gives, from the spend the script actually saw.

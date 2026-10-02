@@ -51,10 +51,16 @@ describe("updateAdminSettings invalidates the folded leaderboard (#553)", () => 
     expect(mocks.invalidateFoldedLeaderboard).not.toHaveBeenCalled();
   });
 
-  it("does not drop it when the script refused the write (an impossible window)", async () => {
-    mocks.upstashEval.mockResolvedValue(["__window_refused__", "2026-08-14T10:00:00Z", "2026-08-14T09:00:00Z"]);
+  it("drops it after any attempt that reached Redis — even one the script refused, or one that threw", async () => {
+    // Once the eval was sent, the transport cannot tell "refused, wrote
+    // nothing" from "wrote, then the reply was lost"; an extra fold is
+    // harmless, a missed one is a hint bought on points that no longer count.
+    mocks.upstashEval.mockResolvedValueOnce(["__window_refused__", "2026-08-14T10:00:00Z", "2026-08-14T09:00:00Z"]);
     await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
-    expect(mocks.invalidateFoldedLeaderboard).not.toHaveBeenCalled();
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
+    mocks.upstashEval.mockRejectedValueOnce(new Error("down"));
+    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toThrow("down");
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
   });
 });
 

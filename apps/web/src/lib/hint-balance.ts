@@ -1,4 +1,5 @@
 import "server-only";
+import { currentScoreRevision } from "@/lib/leaderboard/fold-cache";
 import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { HINTS_SPENT_KEY } from "@/lib/team-keys";
 import { upstashPipeline } from "@/lib/upstash";
@@ -48,13 +49,21 @@ import { upstashPipeline } from "@/lib/upstash";
  * (a burner with no solves never folds), and the reveal route is
  * rate-limited per login, so paying the fold every time is affordable.
  *
- * FAILS BY THROWING. A fold or spend read that errors rejects, and the gate
- * fails CLOSED on it (a hint is a paid reveal — see `hintGate`). A row that
- * is simply absent is not an error: that contestant has no points anywhere.
+ * THE REVISION TRAVELS WITH THE GROSS. Even a fresh fold can finish after a
+ * write on the other task lowered the score. So the shared score revision
+ * (`fold-cache.ts`, bumped by every score-lowering write) is read BEFORE the
+ * fold and returned as `rev`; the reveal script compares it to the current
+ * one before charging and refuses `stale` when it moved. Before, not after:
+ * read after the fold, it would vouch for a gross that predates the write.
+ *
+ * FAILS BY THROWING. A fold, spend or revision read that errors rejects, and
+ * the gate fails CLOSED on it (a hint is a paid reveal — see `hintGate`). A
+ * row that is simply absent is not an error: no points anywhere.
  */
-export type HintBalance = { gross: number; spent: number; net: number };
+export type HintBalance = { gross: number; spent: number; net: number; rev: string };
 
 export async function hintBalance(login: string): Promise<HintBalance> {
+  const rev = await currentScoreRevision();
   const [board, [spentRes]] = await Promise.all([
     getFoldedLeaderboard({ fresh: true }),
     upstashPipeline([["HGETALL", HINTS_SPENT_KEY]]),
@@ -73,5 +82,5 @@ export async function hintBalance(login: string): Promise<HintBalance> {
   for (let i = 0; i < flat.length; i += 2) {
     if (flat[i].toLowerCase() === key) spent += Number(flat[i + 1]) || 0;
   }
-  return { gross, spent, net: gross - spent };
+  return { gross, spent, net: gross - spent, rev };
 }

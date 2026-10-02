@@ -113,6 +113,15 @@ describe("resetUserProgress invalidates the folded leaderboard (#553)", () => {
     );
     expect(foldCache.invalidateFoldedLeaderboard.mock.invocationCallOrder[0]).toBeGreaterThan(lastWrite);
   });
+
+  it("drops the memo even when a later stage fails — the earlier destructive stages stand", async () => {
+    // The secure-dev sweep ran; the classic module reset then throws. Those
+    // solves are gone, so the memo must go too, before the error propagates.
+    mockNoSecureDevKeys();
+    mocks.upstashEval.mockRejectedValueOnce(new Error("eval down"));
+    await expect(resetUserProgress("octocat", "admin")).rejects.toThrow("eval down");
+    expect(foldCache.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("input validation", () => {

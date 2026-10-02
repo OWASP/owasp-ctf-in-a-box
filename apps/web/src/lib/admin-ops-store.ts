@@ -406,6 +406,19 @@ async function resetModuleSolves(login: string, keys: ModuleResetKeys): Promise<
  */
 export async function resetUserProgress(rawLogin: string, actor: string): Promise<ResetScope> {
   const login = requireLogin(rawLogin);
+  try {
+    return await resetProgressOf(login, actor);
+  } finally {
+    // This player's score just dropped — or PARTLY dropped, if a later stage
+    // threw after an earlier one deleted: the leaderboard memo must not keep
+    // serving the old one to the hint gate either way (#553). In a finally,
+    // after the last write, so a fold racing the wipe cannot refill it.
+    await invalidateFoldedLeaderboard();
+  }
+}
+
+/** The reset itself; `resetUserProgress` wraps it with the memo drop. */
+async function resetProgressOf(login: string, actor: string): Promise<ResetScope> {
   const secureDev = await clearSecureDevSolves(login);
 
   // MIND WHAT EACH AGGREGATE IS KEYED BY — they are not alike, and treating
@@ -490,11 +503,6 @@ export async function resetUserProgress(rawLogin: string, actor: string): Promis
   }
 
   await audit("ops:user-reset", actor, { login, cleared });
-  // This player's score just dropped; the leaderboard memo (~10 s) must not
-  // keep serving the old one — the hint gate reads their gross from it
-  // (#553). After the last write, so a fold racing the wipe cannot refill the
-  // memo with the pre-reset keys.
-  invalidateFoldedLeaderboard();
   return { cleared, warnings };
 }
 
@@ -526,18 +534,22 @@ export async function deleteUser(
 
   const reset = await resetUserProgress(login, actor);
 
-  const leftTeam = detail.team?.slug ?? null;
-  const cmds: (string | number)[][] = [];
-  if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), login]);
-  cmds.push(["DEL", userKey(login)]);
-  await upstashPipeline(cmds);
+  try {
+    const leftTeam = detail.team?.slug ?? null;
+    const cmds: (string | number)[][] = [];
+    if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), login]);
+    cmds.push(["DEL", userKey(login)]);
+    await upstashPipeline(cmds);
 
-  await audit("ops:user-delete", actor, { login, leftTeam });
-  // The inner reset already dropped the fold memo, but this wrote more after
-  // it (membership, account record): drop it again after the LAST write, so
-  // a fold racing the tail end is not memoized (#553).
-  invalidateFoldedLeaderboard();
-  return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };
+    await audit("ops:user-delete", actor, { login, leftTeam });
+    return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };
+  } finally {
+    // The inner reset already dropped the fold memo, but this writes more
+    // after it (membership, account record): drop it again after the LAST
+    // write — on the failure path too — so a fold racing the tail end is
+    // not memoized (#553).
+    await invalidateFoldedLeaderboard();
+  }
 }
 
 // --- team operations --------------------------------------------------------

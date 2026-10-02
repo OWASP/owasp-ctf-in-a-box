@@ -66,6 +66,13 @@ describe("resetEvent", () => {
     expect(mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder[0]).toBeGreaterThan(lastWrite);
   });
 
+  it("invalidates even when the freeze/audit eval throws — the prefix deletes already stand", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    mocks.upstashEval.mockRejectedValue(new Error("down"));
+    await expect(resetEvent("alice")).rejects.toThrow("down");
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
+  });
+
   it("wipes every event-data prefix, then freezes + audits in one eval", async () => {
     // two keys for every prefix, single SCAN page each
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1", "k2"]]));

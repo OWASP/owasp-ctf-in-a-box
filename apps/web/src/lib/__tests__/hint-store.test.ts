@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   upstashPipeline: vi.fn<(commands: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
   getAdminSettings: vi.fn(),
   isModuleLive: vi.fn<(id: string) => Promise<boolean>>(),
-  hintBalance: vi.fn<(login: string) => Promise<{ gross: number; spent: number; net: number }>>(),
+  hintBalance: vi.fn<(login: string) => Promise<{ gross: number; spent: number; net: number; rev?: string }>>(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -22,7 +22,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/hint-balance", () => ({ hintBalance: mocks.hintBalance }));
 /** A contestant who can afford anything — the default so every purchase-path
  *  test below is unaffected by the gate; the gate's own cases override it. */
-const RICH = { gross: 1000, spent: 0, net: 1000 };
+const RICH = { gross: 1000, spent: 0, net: 1000, rev: "7" };
 // #463: no stories on this board unless a test says otherwise.
 const storyMocks = vi.hoisted(() => ({ listStories: vi.fn(async () => [] as unknown[]), teamSolveKeys: vi.fn(async () => [] as string[]) }));
 vi.mock("@/lib/classic-store", () => ({
@@ -112,6 +112,7 @@ describe("revealHint", () => {
       "ctf:hints:spent",
       "ctf:classic:hints",
       "ctf:hints:at:octocat",
+      "ctf:admin:score-rev",
     ]);
     expect(argv[1]).toBe("classic/web-robots-only");
   });
@@ -135,7 +136,7 @@ describe("revealHint", () => {
     const result = await store.revealHint("octocat", "ai", "prompt-injection-1");
     expect(result).toEqual({ ok: true, hint: "Ignore prior instructions.", alreadyOwned: false, spent: 10, cost: 10, balance: 990 });
     const [, keys, argv] = mocks.upstashEval.mock.calls[0];
-    expect(keys).toEqual(["ctf:user:octocat:hints", "ctf:hints:spent", "ctf:ai:hints", "ctf:hints:at:octocat"]);
+    expect(keys).toEqual(["ctf:user:octocat:hints", "ctf:hints:spent", "ctf:ai:hints", "ctf:hints:at:octocat", "ctf:admin:score-rev"]);
     expect(argv[1]).toBe("ai/prompt-injection-1");
   });
 
@@ -181,6 +182,9 @@ describe("revealHint", () => {
       // When it was bought (issue #169). A separate key, not a conversion of
       // the SET above — that would be a WRONGTYPE on every live event.
       "ctf:hints:at:octocat",
+      // The shared score revision (#553): the script refuses a charge whose
+      // gross was folded under a revision that has since moved.
+      "ctf:admin:score-rev",
     ]);
     expect(args.slice(0, 4)).toEqual([
       "Challenge-5-Admin-Section",
@@ -390,6 +394,48 @@ describe("revealHint", () => {
     expect(script.slice(0, check)).toContain("SISMEMBER");
   });
 
+  // A process-local memo invalidation cannot reach another app task, and even
+  // a fresh fold can finish AFTER a write on another task lowered the score.
+  // So the gross travels with the score REVISION it was folded under
+  // (fold-cache.ts bumps it in Redis on every score-lowering write), the
+  // script compares it to the current one before charging, and a mismatch is
+  // `stale`: the store re-reads and retries once, then gives up without a
+  // charge.
+  it("hands the script the revision the gross was folded under, as ARGV[9] against KEYS[5]", async () => {
+    const store = await loadStore();
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(keys[4]).toBe("ctf:admin:score-rev");
+    expect(args[8]).toBe(RICH.rev);
+    // Checked before the spend is read or anything is charged.
+    const stale = script.indexOf("'stale'");
+    expect(stale).toBeGreaterThan(-1);
+    expect(stale).toBeLessThan(script.indexOf("HGETALL"));
+    expect(script.slice(0, stale)).toMatch(/GET', KEYS\[5\]/);
+  });
+
+  it("retries ONCE on a stale verdict, with a fresh gate read, then charges", async () => {
+    const store = await loadStore();
+    mocks.hintBalance.mockResolvedValueOnce({ gross: 1000, spent: 0, net: 1000, rev: "7" });
+    mocks.hintBalance.mockResolvedValueOnce({ gross: 900, spent: 0, net: 900, rev: "8" });
+    mocks.upstashEval.mockResolvedValueOnce(["stale"]);
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(result).toMatchObject({ ok: true, balance: 890 });
+    expect(mocks.hintBalance).toHaveBeenCalledTimes(2);
+    expect(mocks.upstashEval).toHaveBeenCalledTimes(2);
+    expect(mocks.upstashEval.mock.calls[1][2][8]).toBe("8");
+  });
+
+  it("gives up without charging when the second attempt is stale too", async () => {
+    const store = await loadStore();
+    mocks.upstashEval.mockResolvedValue(["stale"]);
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(result).toEqual({ ok: false, error: "Your score changed while buying this hint. Try again" });
+    expect(mocks.upstashEval).toHaveBeenCalledTimes(2);
+  });
+
   it("hands the script no gross when hints are free, so it skips the balance check", async () => {
     const store = await loadStore();
     mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 0 });
@@ -397,6 +443,7 @@ describe("revealHint", () => {
     await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
     const [, , args] = mocks.upstashEval.mock.calls[0];
     expect(args[7]).toBe("");
+    expect(args[8]).toBe(""); // no gross, no revision to vouch for
   });
 
   it("maps the script's insufficient verdict to the same 403 message, from the spend it saw", async () => {
@@ -988,7 +1035,8 @@ describe("the story lock on classic hints (#463)", () => {
     // from a challenge with no hint.
     expect(result).toEqual({ ok: false, missing: true, error: "No hint available for this challenge" });
     const [, keys, argv] = mocks.upstashEval.mock.calls.at(-1)!;
-    expect(keys.slice(4)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    // After the four fixed keys and the score revision (KEYS[5], #553).
+    expect(keys.slice(5)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
     expect(argv[6]).toBe("recon");
   });
 

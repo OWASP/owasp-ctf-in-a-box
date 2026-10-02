@@ -86,7 +86,7 @@ describe("revealHint", () => {
     const store = await loadStore();
     mocks.upstashEval.mockResolvedValueOnce(["charged", "Check the admin route.", 10]);
     const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
-    expect(result).toEqual({ ok: true, hint: "Check the admin route.", alreadyOwned: false, spent: 10 });
+    expect(result).toEqual({ ok: true, hint: "Check the admin route.", alreadyOwned: false, spent: 10, cost: 10 });
   });
 
   // The classic target (#190): same charge machinery, its own hint hash and
@@ -96,7 +96,7 @@ describe("revealHint", () => {
     const store = await loadStore();
     mocks.upstashEval.mockResolvedValueOnce(["charged", "Look at robots.txt.", 10]);
     const result = await store.revealHint("octocat", "classic", "web-robots-only");
-    expect(result).toEqual({ ok: true, hint: "Look at robots.txt.", alreadyOwned: false, spent: 10 });
+    expect(result).toEqual({ ok: true, hint: "Look at robots.txt.", alreadyOwned: false, spent: 10, cost: 10 });
     const [, keys, argv] = mocks.upstashEval.mock.calls[0];
     expect(keys).toEqual([
       "ctf:user:octocat:hints",
@@ -124,7 +124,7 @@ describe("revealHint", () => {
     const store = await loadStore();
     mocks.upstashEval.mockResolvedValueOnce(["charged", "Ignore prior instructions.", 10]);
     const result = await store.revealHint("octocat", "ai", "prompt-injection-1");
-    expect(result).toEqual({ ok: true, hint: "Ignore prior instructions.", alreadyOwned: false, spent: 10 });
+    expect(result).toEqual({ ok: true, hint: "Ignore prior instructions.", alreadyOwned: false, spent: 10, cost: 10 });
     const [, keys, argv] = mocks.upstashEval.mock.calls[0];
     expect(keys).toEqual(["ctf:user:octocat:hints", "ctf:hints:spent", "ctf:ai:hints", "ctf:hints:at:octocat"]);
     expect(argv[1]).toBe("ai/prompt-injection-1");
@@ -144,7 +144,7 @@ describe("revealHint", () => {
     const store = await loadStore();
     mocks.upstashEval.mockResolvedValueOnce(["owned", "Check the admin route.", "10"]);
     const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
-    expect(result).toEqual({ ok: true, hint: "Check the admin route.", alreadyOwned: true, spent: 10 });
+    expect(result).toEqual({ ok: true, hint: "Check the admin route.", alreadyOwned: true, spent: 10, cost: 10 });
   });
 
   it("checks the hint exists and guards with SADD BEFORE charging (atomic)", async () => {

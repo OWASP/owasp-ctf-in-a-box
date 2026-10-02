@@ -138,7 +138,10 @@ return {'owned', hint, redis.call('HGET', KEYS[2], ARGV[3]) or '0'}`;
 
 export type RevealResult =
   // `dryRun`: an admin-preview reveal (#464) — nothing was charged or recorded.
-  | { ok: true; hint: string; alreadyOwned: boolean; spent: number; dryRun?: true }
+  // `cost` is the price THIS reveal resolved and charged the Lua with, so a
+  // caller reports the amount actually deducted — never a second
+  // `resolveHintConfig()` read that an organizer could have changed in between.
+  | { ok: true; hint: string; alreadyOwned: boolean; spent: number; cost: number; dryRun?: true }
   | { ok: false; error: string; missing?: boolean; forbidden?: boolean };
 
 /** Resolves the effective hint config for this request: an admin override
@@ -342,10 +345,10 @@ export async function revealHint(
     return { ok: false, missing: true, error: "No hint available for this challenge" };
   }
   if (status === "preview" && typeof hint === "string") {
-    return { ok: true, hint, alreadyOwned: false, spent: 0, dryRun: true };
+    return { ok: true, hint, alreadyOwned: false, spent: 0, cost, dryRun: true };
   }
   if ((status === "charged" || status === "owned") && typeof hint === "string") {
-    return { ok: true, hint, alreadyOwned: status === "owned", spent: Number(spent) || 0 };
+    return { ok: true, hint, alreadyOwned: status === "owned", spent: Number(spent) || 0, cost };
   }
   return { ok: false, error: "Hint reveal failed. Try again" };
 }

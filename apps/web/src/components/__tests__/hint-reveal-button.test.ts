@@ -25,3 +25,30 @@ describe("HintRevealButton posts the target app in its reveal request", () => {
     expect(src).not.toMatch(new RegExp(`app:\\s*"${app}"`));
   });
 });
+
+// #550: a paid reveal is irreversible, so it must not fire on the first click.
+// The control confirms first (idle → confirm → reveal), mirroring the in-row
+// `hint-button.tsx` chip, and then acknowledges the deduction so the contestant
+// is not left to discover the −cost silently on the leaderboard later. These
+// are SOURCE-level assertions for the same reason as the suite above: no DOM.
+describe("HintRevealButton confirms before charging and acknowledges the cost (#550)", () => {
+  it("opens a confirm step on the first press rather than revealing immediately", () => {
+    // The idle button moves to the confirm state; it must NOT call reveal() directly.
+    expect(src).toMatch(/onClick=\{\(\) => setState\("confirm"\)\}/);
+  });
+
+  it("only fires the reveal request from the confirm step", () => {
+    // reveal() is the handler for the confirm button, reached after the gate above.
+    expect(src).toMatch(/state === "confirm"/);
+    expect(src).toMatch(/onClick=\{reveal\}/);
+  });
+
+  it("offers a cancel that returns to idle without charging", () => {
+    expect(src).toMatch(/setState\("idle"\)/);
+  });
+
+  it("acknowledges the points spent once the hint is revealed", () => {
+    // The revealed block shows the cost deduction, not just the hint text.
+    expect(src).toMatch(/−\{cost\} pts spent/);
+  });
+});

@@ -10,11 +10,17 @@
 // `HintTarget`) — originally hardcoded to "classic", now the caller's prop so
 // flags/[id] and ai/[id] share one component instead of a copy each.
 //
+// A reveal is a PAID, irreversible deduction, so the first press does not
+// charge: it opens a confirm step (idle → confirm → pending), mirroring the
+// in-row `hint-button.tsx` chip, and only the confirm button fires the request
+// (#550). Once revealed, the block acknowledges the −cost so the contestant is
+// not left to discover the deduction silently on the leaderboard later.
+//
 // NOT the secure-development row control: that one lives in hint-button.tsx
 // (a compact confirm-then-reveal chip embedded in a 110-row list, driven by
 // `onPurchased` so the parent can update its own purchased map). This is the
-// single challenge page's own control — reveal happens on click, no separate
-// confirm step, and the revealed text renders in place of the button.
+// single challenge page's own control — the revealed text renders in place of
+// the button.
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -22,10 +28,11 @@ import type { HintTarget } from "@/lib/hint-store";
 
 export default function HintRevealButton({ app, id, cost }: { app: HintTarget; id: string; cost: number }) {
   const router = useRouter();
-  const [pending, setPending] = useState(false);
+  const [state, setState] = useState<"idle" | "confirm" | "pending">("idle");
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
   const revealedRef = useRef<HTMLParagraphElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
 
   // The revealed hint REPLACES the button that was just pressed, and the HTML
   // focus fixup rule does not hand focus to a replacement — it drops it on
@@ -33,14 +40,17 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
   // the page, and the next Tab restarted from the top of the document.
   // Announcing the text (role="status", below) fixes what is heard; this fixes
   // where the user IS. tabIndex={-1} makes the paragraph a programmatic focus
-  // target without adding it to the tab order.
+  // target without adding it to the tab order. The same replaced-while-focused
+  // problem applies when the idle button swaps for the confirm pair, so the
+  // confirm button is focused in turn.
   useEffect(() => {
     if (text) revealedRef.current?.focus();
-  }, [text]);
+    else if (state === "confirm") confirmRef.current?.focus();
+  }, [text, state]);
 
   async function reveal() {
-    if (pending) return;
-    setPending(true);
+    if (state === "pending") return;
+    setState("pending");
     setError(null);
     try {
       const res = await fetch("/api/hints/reveal", {
@@ -55,18 +65,21 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         // revealed text itself stays in local state so it shows instantly.
         router.refresh();
       } else {
+        // A failed reveal charges nothing; drop back to idle so the contestant
+        // can retry, with the reason shown below the button.
         setError(data.error === "not-launched" ? "The event hasn't launched yet." : typeof data.error === "string" ? data.error : "Couldn't reveal the hint. Try again.");
+        setState("idle");
       }
     } catch {
       setError("Couldn't reveal the hint. Try again.");
-    } finally {
-      setPending(false);
+      setState("idle");
     }
   }
 
   // Announced, because this text REPLACES the button that was focused: without
   // a live region the click consumed points and produced silence for a
-  // screen-reader user, with focus dropped to the document body.
+  // screen-reader user, with focus dropped to the document body. The spent
+  // acknowledgement rides in the same region so the deduction is heard too.
   if (text) {
     return (
       <p
@@ -77,7 +90,43 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
       >
         <span aria-hidden="true">💡</span> <span className="sr-only">Hint: </span>
         {text}
+        <span className="mt-1 block text-xs text-[#d4a017]/70">−{cost} pts spent</span>
       </p>
+    );
+  }
+
+  if (state === "confirm" || state === "pending") {
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="sr-only" role="status">
+          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${cost} points on this hint.`}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            ref={confirmRef}
+            type="button"
+            onClick={reveal}
+            disabled={state === "pending"}
+            className="w-fit rounded-md border border-[#d4a017]/60 px-3 py-1.5 text-sm text-[#d4a017] transition-colors hover:bg-[#d4a017]/10 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
+          >
+            {state === "pending" ? (
+              "Revealing…"
+            ) : (
+              <>
+                <span aria-hidden="true">💡</span> Confirm (−{cost} pts)
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setState("idle")}
+            disabled={state === "pending"}
+            className="w-fit rounded-md border border-white/10 px-3 py-1.5 text-sm text-muted transition-colors hover:text-white disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -85,17 +134,10 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
     <div className="flex flex-col gap-1">
       <button
         type="button"
-        onClick={reveal}
-        disabled={pending}
-        className="w-fit rounded-md border border-[#d4a017]/40 px-3 py-1.5 text-sm text-[#d4a017] transition-colors hover:bg-[#d4a017]/10 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
+        onClick={() => setState("confirm")}
+        className="w-fit rounded-md border border-[#d4a017]/40 px-3 py-1.5 text-sm text-[#d4a017] transition-colors hover:bg-[#d4a017]/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
       >
-        {pending ? (
-          "Revealing…"
-        ) : (
-          <>
-            <span aria-hidden="true">💡</span> Reveal hint (−{cost} pts)
-          </>
-        )}
+        <span aria-hidden="true">💡</span> Reveal hint (−{cost} pts)
       </button>
       {error && (
         <p role="alert" className="text-xs text-[#e53e3e]">

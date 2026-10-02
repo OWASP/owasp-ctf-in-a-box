@@ -141,14 +141,14 @@ for i = 1, #all, 2 do
   if string.lower(all[i]) == me then spent = spent + (tonumber(all[i + 1]) or 0) end
 end
 if ARGV[8] and ARGV[8] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 0 then
-  if tonumber(ARGV[8]) - spent < tonumber(ARGV[4]) then return {'insufficient', '', tostring(spent)} end
+  if tonumber(ARGV[8]) - spent < tonumber(ARGV[4]) then return {'insufficient', '', spent} end
 end
 if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
   redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
   redis.call('HSETNX', KEYS[4], ARGV[2], ARGV[5])
-  return {'charged', hint, tostring(spent + tonumber(ARGV[4]))}
+  return {'charged', hint, spent + tonumber(ARGV[4])}
 end
-return {'owned', hint, tostring(spent)}`;
+return {'owned', hint, spent}`;
 
 export type RevealResult =
   // `dryRun`: an admin-preview reveal (#464) — nothing was charged or recorded.

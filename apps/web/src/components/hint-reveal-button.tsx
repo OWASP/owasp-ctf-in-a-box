@@ -31,6 +31,10 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
   const [state, setState] = useState<"idle" | "confirm" | "pending">("idle");
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
+  // The points actually deducted by THIS reveal, or null when it charged
+  // nothing (an admin preview, or an already-owned reveal). Only a real charge
+  // gets the "−N pts spent" acknowledgement, and it uses the server's figure.
+  const [chargedCost, setChargedCost] = useState<number | null>(null);
   const revealedRef = useRef<HTMLParagraphElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const idleRef = useRef<HTMLButtonElement>(null);
@@ -68,8 +72,20 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ app, id }),
       });
-      const data = (await res.json().catch(() => ({}))) as { hint?: string; error?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        hint?: string;
+        error?: string;
+        cost?: number;
+        alreadyOwned?: boolean;
+        dryRun?: boolean;
+      };
       if (res.ok && typeof data.hint === "string") {
+        // A preview (dryRun) and an already-owned reveal both return the hint
+        // but deduct nothing — only a real charge is acknowledged, with the
+        // server's authoritative cost rather than the render-time prop (the
+        // organizer may have changed the price since this page loaded).
+        const charged = !data.dryRun && !data.alreadyOwned;
+        setChargedCost(charged ? (typeof data.cost === "number" ? data.cost : cost) : null);
         setText(data.hint);
         // Resync the page's server state (spent total, owned set) — the
         // revealed text itself stays in local state so it shows instantly.
@@ -100,7 +116,9 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
       >
         <span aria-hidden="true">💡</span> <span className="sr-only">Hint: </span>
         {text}
-        <span className="mt-1 block text-xs text-[#d4a017]/70">−{cost} pts spent</span>
+        {chargedCost !== null && (
+          <span className="mt-1 block text-xs text-[#d4a017]/70">−{chargedCost} pts spent</span>
+        )}
       </p>
     );
   }

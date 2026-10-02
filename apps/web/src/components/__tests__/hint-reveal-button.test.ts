@@ -37,19 +37,26 @@ describe("HintRevealButton confirms before charging and acknowledges the cost (#
     expect(src).toMatch(/onClick=\{\(\) => setState\("confirm"\)\}/);
   });
 
-  it("only fires the reveal request from the confirm step", () => {
-    // reveal() is the handler for the confirm button, reached after the gate above.
+  it("only fires the reveal request from the confirm step, never the idle button", () => {
+    // reveal() is the handler for the confirm button, reached after the gate
+    // above. Asserting it is wired EXACTLY once is the negative half: a second
+    // `onClick={reveal}` (e.g. retained on the idle button) would make the
+    // first press charge immediately and fail this count.
     expect(src).toMatch(/state === "confirm"/);
-    expect(src).toMatch(/onClick=\{reveal\}/);
+    expect((src.match(/onClick=\{reveal\}/g) ?? []).length).toBe(1);
   });
 
   it("offers a cancel that returns to idle without charging", () => {
     expect(src).toMatch(/setState\("idle"\)/);
   });
 
-  it("acknowledges the points spent once the hint is revealed", () => {
-    // The revealed block shows the cost deduction, not just the hint text.
-    expect(src).toMatch(/−\{cost\} pts spent/);
+  it("acknowledges the points spent only when the reveal actually charged", () => {
+    // Uses the server's charged amount, and shows it only when something was
+    // deducted — a preview (dryRun) or already-owned reveal charges nothing.
+    expect(src).toMatch(/−\{chargedCost\} pts spent/);
+    expect(src).toMatch(/chargedCost !== null/);
+    expect(src).toMatch(/data\.dryRun/);
+    expect(src).toMatch(/data\.alreadyOwned/);
   });
 
   it("restores focus to the idle button when Cancel or a failed reveal returns to idle", () => {

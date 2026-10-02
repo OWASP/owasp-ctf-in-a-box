@@ -39,15 +39,31 @@ async function writeStatusSafely(redis, log, status) {
  *   - `retried` is a submission that failed transiently and was deliberately
  *     un-marked; the next tick re-presents it. Worth logging, not worth
  *     counting as lost.
+ *   - `preReset` is a comment last edited BEFORE the master-reset epoch
+ *     (#551): a score the organizer wiped on purpose. Skipped once (it is
+ *     marked seen), and reported once, so the first poll after a reset says
+ *     how much of the past it declined to re-bank.
  */
-const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, retried: 0 });
+const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, retried: 0, preReset: 0 });
+
+/** The master-reset epoch as milliseconds, or null when there is none. The
+ *  admin panel writes it as epoch milliseconds (`resetEvent`); a state file
+ *  from an older build may carry an ISO string — both are read. A value that
+ *  is neither is NOT a watermark: skipping on a junk epoch would silently lose
+ *  every score, so it is treated as "no reset", the same direction
+ *  `getResetAt` takes on a read error. */
+function resetEpochMs(resetAt) {
+  if (typeof resetAt !== "string" || resetAt === "") return null;
+  const ms = /^\d+$/.test(resetAt) ? Number(resetAt) : Date.parse(resetAt);
+  return Number.isFinite(ms) ? ms : null;
+}
 
 /** The tally as a log line, listing only what actually happened. Returns null
  *  when the tick was routine (nothing at all, or only the expected boundary
  *  re-read), so a quiet poller stays quiet and any line it does print means
  *  something. */
 function summarize(repo, tally) {
-  if (tally.noMarker + tally.invalid + tally.rejected + tally.retried === 0) return null;
+  if (tally.noMarker + tally.invalid + tally.rejected + tally.retried + tally.preReset === 0) return null;
   const parts = Object.entries(tally)
     .filter(([, n]) => n > 0)
     .map(([name, n]) => `${n} ${name}`);
@@ -119,6 +135,12 @@ export async function tick(cfg, state, deps = {}) {
       state.resetAt = resetAt;
     }
   }
+  // Dropping the cursor re-reads EVERY bot comment, including the ones scored
+  // before the reset — and the seen-set that would have deduped them was just
+  // cleared, so without this the scorer re-banks them and the wipe un-wipes
+  // itself one poll later (#551). The epoch is the watermark the loop below
+  // applies: a comment last edited before it is the past the organizer wiped.
+  const resetMs = resetEpochMs(state.resetAt);
 
   if (redis && paused) {
     await writeStatusSafely(redis, log, {
@@ -154,6 +176,15 @@ export async function tick(cfg, state, deps = {}) {
       // comment per target, so the id alone made a re-scored PR unreachable.
       if (!markSeen(rs, c.id, c.updated_at)) {
         tally.duplicate++;
+        continue;
+      }
+      // After markSeen on purpose: a pre-reset revision is skipped ONCE and
+      // then deduped like any other, while a re-run that edits the comment
+      // past the epoch is a new revision key and lands as normal. An
+      // unparseable `updated_at` compares NaN < x → false, so it is ingested
+      // rather than lost.
+      if (resetMs !== null && Date.parse(c.updated_at) < resetMs) {
+        tally.preReset++;
         continue;
       }
       const payload = parseScoreComment(c.body, { targets });

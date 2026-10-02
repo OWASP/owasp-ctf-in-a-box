@@ -5,16 +5,20 @@ import "server-only";
  *
  * The fold is memoized for ~10 s (`folded.ts`). That is fine while scores
  * only grow — a stale read undercounts, which every reader tolerates — but
- * the admin operations that LOWER a folded score must not leave the memo
- * serving the old one: the hint gate reads a contestant's gross from it, so
- * a contestant could otherwise buy a hint against points that no longer
- * count. Every such operation calls `invalidateFoldedLeaderboard()` after
- * its LAST write (an earlier call can be refilled by a fold racing the
- * writes): the master reset and every settings write (`admin-store.ts` —
- * the fold counts only the ENABLED modules' points, so switching one off
- * lowers scores), the demo clear (`admin-store.ts`), Support's per-player
- * reset and delete (`admin-ops-store.ts`). An archive import goes through
- * the master reset first and then adds content only.
+ * the admin operations that LOWER a folded score must not leave the board
+ * serving the old one for a TTL on the instance that did the write. Every
+ * such operation calls `invalidateFoldedLeaderboard()` after its LAST write
+ * (an earlier call can be refilled by a fold racing the writes): the master
+ * reset and every settings write (`admin-store.ts` — the fold counts only
+ * the ENABLED modules' points, so switching one off lowers scores), the demo
+ * clear (`admin-store.ts`), Support's per-player reset and delete
+ * (`admin-ops-store.ts`). An archive import goes through the master reset
+ * first and then adds content only.
+ *
+ * This is PROCESS-local, and the AWS module runs two app tasks — a write on
+ * one never reaches the other's memo. So the hint affordability gate does
+ * NOT rely on it: `hint-balance.ts` folds fresh (`fresh: true`) every time.
+ * The invalidation is for the board; the gate pays for its own read.
  *
  * A leaf on purpose: `admin-store` sits UPSTREAM of the fold (the fold's
  * penalty stage reads the hint config, which reads admin settings), so it

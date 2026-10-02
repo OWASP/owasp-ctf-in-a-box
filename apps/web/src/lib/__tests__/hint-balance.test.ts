@@ -36,6 +36,17 @@ describe("hintBalance (#553)", () => {
     expect(mocks.upstashPipeline).toHaveBeenCalledWith([["HGETALL", "ctf:hints:spent"]]);
   });
 
+  it("folds FRESH, never from the process-local memo", async () => {
+    // The memo's invalidation is process-local and the AWS module runs two
+    // app tasks: a score-lowering write on one task never reaches the other's
+    // memo, which could serve a pre-write gross for up to the TTL. A purchase
+    // is rare and rate-limited, so the fold is paid for every time.
+    board([{ login: "octocat", points: 50 }]);
+    spentReply();
+    await hintBalance("octocat");
+    expect(mocks.getFoldedLeaderboard).toHaveBeenCalledWith({ fresh: true });
+  });
+
   it("uses the fresh spend when it is ahead of the cached fold (a purchase inside the TTL)", async () => {
     // The fold is memoized for ~10 s; a hint bought a second ago is in the
     // spend hash but not yet in the row's penalty. The fresh figure is the

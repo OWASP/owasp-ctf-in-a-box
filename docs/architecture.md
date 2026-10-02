@@ -1127,14 +1127,19 @@ a priced hint when the contestant's net score does not cover it (#553):
 summed per login) and the spend fresh from `ctf:hints:spent`, as the
 case-folded sum of the hash (a case-only login rename splits one person's
 spend across two fields), because the fold is memoized for ~10 s and a
-second purchase must not pass on the row's stale penalty. The gross side can
-go down too — the master and per-player resets and the delete wipe points,
-the demo clear removes rows, and a settings write that switches a module off
-takes its points out of the fold — so every one of those invalidates the
-fold memo after its last write, through `leaderboard/fold-cache.ts` (a leaf,
-since `admin-store` sits upstream of the fold); the next balance read folds
-fresh, and a fold already running when the invalidation came is discarded,
-not memoized.
+second purchase must not pass on the row's stale penalty. The gross side is
+folded **fresh** for this read (`fresh: true`), never from the ~10 s memo:
+the memo is process-local and the AWS module runs two app tasks, so a
+score-lowering write on one task could leave the other serving a pre-write
+gross for a TTL. The read is rare — it sits behind the module, enabled, time
+and progress gates, and the route is rate-limited per login — so it pays for
+its own fold. The memo is still invalidated after every admin operation that
+lowers a score (the master and per-player resets and the delete, the demo
+clear, any settings write — a module switched off takes its points out of
+the fold), through `leaderboard/fold-cache.ts` (a leaf, since `admin-store`
+sits upstream of the fold), so the *board* on the writing instance does not
+show wiped scores for a TTL; a fold already running when the invalidation
+came is discarded, not memoized.
 It fails **closed** like the progress gate, and exempts an
 already-owned hint (a re-view charges nothing). The gate's read and the charge
 are still two round-trips, so the reveal script makes the limit **atomic**: it

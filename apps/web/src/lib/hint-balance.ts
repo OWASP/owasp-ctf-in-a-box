@@ -39,9 +39,14 @@ import { upstashPipeline } from "@/lib/upstash";
  * the reveal script's problem: it re-reads the spend inside the charge, see
  * `REVEAL_SCRIPT`'s ARGV[8].
  *
- * The gross side CAN go down too — the per-player and master resets wipe
- * points — which is why those ops invalidate the fold memo
- * (`leaderboard/fold-cache.ts`): the next balance read folds fresh.
+ * GROSS IS FOLDED FRESH, never from the memo (`fresh: true`). The memo and
+ * its invalidation (`leaderboard/fold-cache.ts`, bumped by every admin op
+ * that lowers a score) are PROCESS-local, and the AWS module runs two app
+ * tasks: a settings write or reset on one task never reaches the other's
+ * memo, which could then serve a pre-write gross for up to the TTL. The gate
+ * reaches this read only after the module, enabled, time and progress gates
+ * (a burner with no solves never folds), and the reveal route is
+ * rate-limited per login, so paying the fold every time is affordable.
  *
  * FAILS BY THROWING. A fold or spend read that errors rejects, and the gate
  * fails CLOSED on it (a hint is a paid reveal — see `hintGate`). A row that
@@ -51,7 +56,7 @@ export type HintBalance = { gross: number; spent: number; net: number };
 
 export async function hintBalance(login: string): Promise<HintBalance> {
   const [board, [spentRes]] = await Promise.all([
-    getFoldedLeaderboard(),
+    getFoldedLeaderboard({ fresh: true }),
     upstashPipeline([["HGETALL", HINTS_SPENT_KEY]]),
   ]);
   // upstashPipeline reports a per-command error positionally rather than

@@ -91,6 +91,40 @@ describe("getFoldedLeaderboard", () => {
     expect(fold).toHaveBeenCalledTimes(2);
   });
 
+  // #553 review: the memo and its invalidation are PROCESS-local, and the AWS
+  // module runs two app tasks — a score-lowering write on one task never
+  // reaches the other's memo. The hint gate therefore folds fresh: never
+  // served from the memo, never stored into it, never shared.
+  it("fresh: true folds every time and leaves the memo untouched", async () => {
+    const fold = vi
+      .fn()
+      .mockResolvedValueOnce(board("memo"))
+      .mockResolvedValueOnce(board("fresh-1"))
+      .mockResolvedValueOnce(board("fresh-2"));
+    await getFoldedLeaderboard({ now: at(NOW), fold });
+    expect((await getFoldedLeaderboard({ now: at(NOW + 1), fold, fresh: true })).generatedAt).toBe("fresh-1");
+    expect((await getFoldedLeaderboard({ now: at(NOW + 2), fold, fresh: true })).generatedAt).toBe("fresh-2");
+    // The memo still holds the first fold: a fresh read neither replaced it…
+    expect((await getFoldedLeaderboard({ now: at(NOW + 3), fold })).generatedAt).toBe("memo");
+    expect(fold).toHaveBeenCalledTimes(3);
+  });
+
+  it("a fresh read does not join a fold already in flight for the memo", async () => {
+    // …nor shares one: an in-flight memo fold may have started before the
+    // write the fresh reader is reacting to.
+    let release!: (b: LeaderboardData) => void;
+    const fold = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<LeaderboardData>((r) => (release = r)))
+      .mockResolvedValueOnce(board("fresh"));
+    const memo = getFoldedLeaderboard({ now: at(NOW), fold });
+    const fresh = await getFoldedLeaderboard({ now: at(NOW + 1), fold, fresh: true });
+    expect(fresh.generatedAt).toBe("fresh");
+    release(board("memo"));
+    expect((await memo).generatedAt).toBe("memo");
+    expect(fold).toHaveBeenCalledTimes(2);
+  });
+
   // Fail-open, never cache a failure: the next caller retries immediately.
   it("does not cache a fold that threw, and retries on the next call", async () => {
     const fold = vi.fn().mockRejectedValueOnce(new Error("redis blip")).mockResolvedValueOnce(board("ok"));

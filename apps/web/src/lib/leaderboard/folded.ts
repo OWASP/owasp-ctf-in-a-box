@@ -98,11 +98,20 @@ export function resetFoldedLeaderboardCache(): void {
  *
  * Callers must treat the result as read-only — it is the same object handed
  * to every concurrent request.
+ *
+ * `fresh: true` folds now and bypasses the memo entirely: not served from
+ * it, not stored into it, not shared with a fold in flight. The memo and its
+ * invalidation are PROCESS-local, and the AWS module runs two app tasks, so a
+ * score-lowering write on one task never reaches the other's memo — the hint
+ * affordability gate (`hint-balance.ts`) is the one reader that must not pay
+ * that staleness, and it is rare and rate-limited enough to fold every time.
  */
 export async function getFoldedLeaderboard({
   now = Date.now,
   fold = defaultFold,
-}: { now?: Clock; fold?: Fold } = {}): Promise<LeaderboardData> {
+  fresh = false,
+}: { now?: Clock; fold?: Fold; fresh?: boolean } = {}): Promise<LeaderboardData> {
+  if (fresh) return fold();
   const gen = foldGeneration();
   if (cached && cached.gen === gen && now() - cached.at < LEADERBOARD_FOLD_TTL_MS) return cached.data;
   if (inflight && inflightGen === gen) return inflight;

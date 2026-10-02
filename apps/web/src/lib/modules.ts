@@ -980,7 +980,7 @@ git push -u origin fix/<short-description>`,
         {
           title: "Set the retry gate",
           where: "panel",
-          body: "Max attempts (default 3; 0 is unlimited) and Retry after (default 5 minutes; 0 is no cooldown), below. Both are global — there is no per-question override.",
+          body: "Max attempts (default 3; 0 is unlimited) and Retry after (default 1 minute; 0 is no cooldown), below. Both are global — there is no per-question override.",
         },
         {
           title: "Schedule scoring, if the event has a window",

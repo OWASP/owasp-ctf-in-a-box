@@ -1197,7 +1197,7 @@ partial credit for either question type.
   contestant gets on one question before the retry gate refuses further
   submissions. `0` means unlimited. Both settings are global — there is no
   per-question override.
-- **Retry after** (`quizRetryAfterMin`, default **5**) — minutes a
+- **Retry after** (`quizRetryAfterMin`, default **1**) — minutes a
   contestant must wait after an attempt before trying that question again.
   `0` means no cooldown.
 

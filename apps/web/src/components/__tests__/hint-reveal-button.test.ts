@@ -65,6 +65,17 @@ describe("HintRevealButton confirms before charging and acknowledges the cost (#
     expect(src).toMatch(/data\.alreadyOwned/);
   });
 
+  // #553 (the "resulting score" deferred from #550): the ack also says where
+  // the contestant stands now, from the server's post-charge `balance` — only
+  // alongside a real deduction, since a preview or re-view moved nothing.
+  it("acknowledges the resulting score next to the deduction, from the server's balance", () => {
+    expect(src).toMatch(/typeof data\.balance === "number"/);
+    expect(src).toMatch(/your score is now \{balance\}/);
+    // Never shown without a deduction: the balance state is set inside the
+    // same positive-deduction branch that sets chargedCost.
+    expect(src).toMatch(/deducted > 0 && typeof data\.balance === "number" \? data\.balance : null/);
+  });
+
   it("restores focus to the idle button when Cancel or a failed reveal returns to idle", () => {
     // The confirm pair unmounts on the way back to idle; without this the
     // focus fixup rule drops focus on <body>. Guarded so the first mount

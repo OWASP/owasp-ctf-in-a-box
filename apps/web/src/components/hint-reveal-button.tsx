@@ -35,6 +35,9 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
   // nothing (an admin preview, or an already-owned reveal). Only a real charge
   // gets the "−N pts spent" acknowledgement, and it uses the server's figure.
   const [chargedCost, setChargedCost] = useState<number | null>(null);
+  // The contestant's net score after this reveal, from the server (#553) —
+  // shown only beside a real deduction; a preview or re-view moved nothing.
+  const [balance, setBalance] = useState<number | null>(null);
   const revealedRef = useRef<HTMLParagraphElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const idleRef = useRef<HTMLButtonElement>(null);
@@ -76,6 +79,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         hint?: string;
         error?: string;
         cost?: number;
+        balance?: number;
         alreadyOwned?: boolean;
         dryRun?: boolean;
       };
@@ -90,6 +94,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         const deducted =
           !data.dryRun && !data.alreadyOwned ? (typeof data.cost === "number" ? data.cost : cost) : 0;
         setChargedCost(deducted > 0 ? deducted : null);
+        setBalance(deducted > 0 && typeof data.balance === "number" ? data.balance : null);
         setText(data.hint);
         // Resync the page's server state (spent total, owned set) — the
         // revealed text itself stays in local state so it shows instantly.
@@ -121,7 +126,9 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         <span aria-hidden="true">💡</span> <span className="sr-only">Hint: </span>
         {text}
         {chargedCost !== null && (
-          <span className="mt-1 block text-xs text-[#d4a017]/70">−{chargedCost} pts spent</span>
+          <span className="mt-1 block text-xs text-[#d4a017]/70">
+            −{chargedCost} pts spent{balance !== null && <> · your score is now {balance}</>}
+          </span>
         )}
       </p>
     );

@@ -1120,6 +1120,20 @@ and `getHintPenalties` (the read-time leaderboard penalty). Flipping
 `hintsEnabled` in `/admin` therefore changes all of them on the next
 request, with no rebuild and no restart.
 
+**The affordability gate reads the folded leaderboard.** `hintGate` refuses
+a priced hint when the contestant's net score does not cover it (#553):
+`hint-balance.ts` takes gross from the contestant's row on the folded board
+(`points + hintPenalty` — the one place every module's points are already
+summed per login) and the spend fresh from `ctf:hints:spent`, because the
+fold is memoized for ~10 s and two quick purchases must not both pass on the
+same stale figure. It fails **closed** like the progress gate, and exempts an
+already-owned hint (a re-view charges nothing). The reveal reports `net −
+cost` back as `balance`, which the challenge page shows beside the deduction.
+That read is why the policy helpers the fold needs — `HINTS_AVAILABLE`,
+`resolveHintConfig`, `getHintPenalties` — live in `hint-config.ts`: the fold's
+last stage imports them, the store imports the fold, and one module cannot
+sit on both sides of that without a cycle. `hint-store.ts` re-exports them.
+
 Two things stay separate from that override on purpose. `HINTS_AVAILABLE`
 is a **capability** check — Upstash credentials present — since hint text
 lives only there and no organizer setting can conjure it; the read paths

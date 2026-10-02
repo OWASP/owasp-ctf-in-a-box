@@ -32,6 +32,13 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/enabled-modules", () => ({
   isModuleLive: async (id: string) => id === "secure-development",
 }));
+// The affordability gate (#553) reads the FOLDED leaderboard, which needs a
+// scorer and every module's stores — none of which this suite stands up. It
+// pins the Lua script and the settings gates, so the balance is stood in for
+// with a contestant who can afford anything; hint-balance.test.ts and
+// hint-store.test.ts cover the gate itself.
+const BALANCE = { gross: 1000, spent: 0, net: 1000 };
+vi.mock("@/lib/hint-balance", () => ({ hintBalance: async () => BALANCE }));
 
 const PLAYER = `vt-${RUN}-hints-p1`;
 const TARGET = "juice-shop";
@@ -127,6 +134,8 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
       alreadyOwned: false,
       spent: COST,
       cost: COST,
+      // The resulting score (#553): the stood-in net less what was charged.
+      balance: BALANCE.net - COST,
     });
   });
 
@@ -138,6 +147,8 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
       alreadyOwned: true,
       spent: COST,
       cost: COST,
+      // A re-view charges nothing, so the net it reports is unchanged.
+      balance: BALANCE.net,
     });
     const [spent] = await pipeline([["HGET", "ctf:hints:spent", PLAYER]]);
     expect(Number(spent.result)).toBe(COST);

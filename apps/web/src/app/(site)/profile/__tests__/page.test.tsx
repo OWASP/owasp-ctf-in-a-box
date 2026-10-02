@@ -63,6 +63,10 @@ vi.mock("@/lib/team-store", () => ({
   TEAM_WRITES_ENABLED: false,
 }));
 vi.mock("@/lib/hint-store", () => ({ getViewerHints, getHintPenalties, HINTS_AVAILABLE: true }));
+// The leaderboard penalty fold reads these from hint-config, not hint-store
+// (#553 moved them so the store can import the fold); mock both or the fold
+// sees the real, credential-less module and applies no penalty.
+vi.mock("@/lib/hint-config", () => ({ getHintPenalties, HINTS_AVAILABLE: true }));
 // The per-module block list is driven off this, not off `@/lib/modules`
 // directly — these tests don't exercise the breakdown blocks, so an empty
 // list is enough to keep the page from rendering any.

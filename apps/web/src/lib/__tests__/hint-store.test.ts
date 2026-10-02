@@ -12,9 +12,17 @@ const mocks = vi.hoisted(() => ({
   upstashPipeline: vi.fn<(commands: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
   getAdminSettings: vi.fn(),
   isModuleLive: vi.fn<(id: string) => Promise<boolean>>(),
+  hintBalance: vi.fn<(login: string) => Promise<{ gross: number; spent: number; net: number }>>(),
 }));
 
 vi.mock("server-only", () => ({}));
+// #553: the affordability gate reads the contestant's folded score through
+// hint-balance.ts (its own leaf, see that module's header). Mocked here so
+// these tests stay about the store; hint-balance.test.ts covers the read.
+vi.mock("@/lib/hint-balance", () => ({ hintBalance: mocks.hintBalance }));
+/** A contestant who can afford anything — the default so every purchase-path
+ *  test below is unaffected by the gate; the gate's own cases override it. */
+const RICH = { gross: 1000, spent: 0, net: 1000 };
 // #463: no stories on this board unless a test says otherwise.
 const storyMocks = vi.hoisted(() => ({ listStories: vi.fn(async () => [] as unknown[]), teamSolveKeys: vi.fn(async () => [] as string[]) }));
 vi.mock("@/lib/classic-store", () => ({
@@ -74,6 +82,7 @@ beforeEach(() => {
   // Default: no admin override present, so every test not exercising the
   // override sees only the baked env default (as before this override existed).
   mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS });
+  mocks.hintBalance.mockResolvedValue(RICH);
 });
 
 afterEach(() => {
@@ -86,7 +95,7 @@ describe("revealHint", () => {
     const store = await loadStore();
     mocks.upstashEval.mockResolvedValueOnce(["charged", "Check the admin route.", 10]);
     const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
-    expect(result).toEqual({ ok: true, hint: "Check the admin route.", alreadyOwned: false, spent: 10, cost: 10 });
+    expect(result).toEqual({ ok: true, hint: "Check the admin route.", alreadyOwned: false, spent: 10, cost: 10, balance: 990 });
   });
 
   // The classic target (#190): same charge machinery, its own hint hash and
@@ -96,7 +105,7 @@ describe("revealHint", () => {
     const store = await loadStore();
     mocks.upstashEval.mockResolvedValueOnce(["charged", "Look at robots.txt.", 10]);
     const result = await store.revealHint("octocat", "classic", "web-robots-only");
-    expect(result).toEqual({ ok: true, hint: "Look at robots.txt.", alreadyOwned: false, spent: 10, cost: 10 });
+    expect(result).toEqual({ ok: true, hint: "Look at robots.txt.", alreadyOwned: false, spent: 10, cost: 10, balance: 990 });
     const [, keys, argv] = mocks.upstashEval.mock.calls[0];
     expect(keys).toEqual([
       "ctf:user:octocat:hints",
@@ -124,7 +133,7 @@ describe("revealHint", () => {
     const store = await loadStore();
     mocks.upstashEval.mockResolvedValueOnce(["charged", "Ignore prior instructions.", 10]);
     const result = await store.revealHint("octocat", "ai", "prompt-injection-1");
-    expect(result).toEqual({ ok: true, hint: "Ignore prior instructions.", alreadyOwned: false, spent: 10, cost: 10 });
+    expect(result).toEqual({ ok: true, hint: "Ignore prior instructions.", alreadyOwned: false, spent: 10, cost: 10, balance: 990 });
     const [, keys, argv] = mocks.upstashEval.mock.calls[0];
     expect(keys).toEqual(["ctf:user:octocat:hints", "ctf:hints:spent", "ctf:ai:hints", "ctf:hints:at:octocat"]);
     expect(argv[1]).toBe("ai/prompt-injection-1");
@@ -144,7 +153,7 @@ describe("revealHint", () => {
     const store = await loadStore();
     mocks.upstashEval.mockResolvedValueOnce(["owned", "Check the admin route.", "10"]);
     const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
-    expect(result).toEqual({ ok: true, hint: "Check the admin route.", alreadyOwned: true, spent: 10, cost: 10 });
+    expect(result).toEqual({ ok: true, hint: "Check the admin route.", alreadyOwned: true, spent: 10, cost: 10, balance: 1000 });
   });
 
   it("checks the hint exists and guards with SADD BEFORE charging (atomic)", async () => {
@@ -305,6 +314,46 @@ describe("revealHint", () => {
     expect(mocks.upstashPipeline).toHaveBeenCalled();
   });
 
+  // #553 (absorbing #550's deferred "resulting score"): the reveal reports the
+  // contestant's net score AFTER the charge, from the same balance the gate
+  // just read, so the page can say "your score is now N" without a second
+  // fold. An owned re-view charges nothing, so it reports the unchanged net.
+  it("reports the net score after a charge, and the unchanged net for an owned re-view", async () => {
+    const store = await loadStore();
+    mocks.hintBalance.mockResolvedValue({ gross: 50, spent: 10, net: 40 });
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 20]);
+    await expect(store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section")).resolves.toMatchObject({
+      balance: 30,
+    });
+    mocks.upstashEval.mockResolvedValueOnce(["owned", "text", "20"]);
+    await expect(store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section")).resolves.toMatchObject({
+      balance: 40,
+    });
+  });
+
+  it("re-views an owned hint for free when the balance no longer covers the price, reporting the clamped net", async () => {
+    const store = await loadStore();
+    mocks.hintBalance.mockResolvedValue({ gross: 0, spent: 10, net: -10 });
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }]); // SISMEMBER: owned
+    mocks.upstashEval.mockResolvedValueOnce(["owned", "text", "10"]);
+    await expect(store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section")).resolves.toEqual({
+      ok: true,
+      hint: "text",
+      alreadyOwned: true,
+      spent: 10,
+      cost: 10,
+      balance: 0,
+    });
+  });
+
+  it("reports no balance for a preview — nothing was charged and nothing was read", async () => {
+    const store = await loadStore();
+    mocks.upstashEval.mockResolvedValueOnce(["preview", "text", "0"]);
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section", { dryRun: true });
+    expect(result).toEqual({ ok: true, hint: "text", alreadyOwned: false, spent: 0, cost: 10, dryRun: true });
+    expect(mocks.hintBalance).not.toHaveBeenCalled();
+  });
+
   it("degrades to a friendly error when Upstash fails", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const store = await loadStore();
@@ -378,14 +427,14 @@ describe("hintGate", () => {
 
     // Positive twin: ai on (secure-development irrelevant).
     mocks.isModuleLive.mockImplementation(async (id) => id === "ai");
-    expect(await store.hintGate("octocat", "ai")).toEqual({ allowed: true });
+    expect(await store.hintGate("octocat", "ai")).toEqual({ allowed: true, balance: RICH });
   });
 
   it("counts ai solves with HLEN ctf:ai:solves:<login>, and the anti-burner gate consumes it", async () => {
     const store = await loadStore();
     mocks.getAdminSettings.mockResolvedValue(settings());
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }]);
-    expect(await store.hintGate("octocat", "ai")).toEqual({ allowed: true });
+    expect(await store.hintGate("octocat", "ai")).toEqual({ allowed: true, balance: RICH });
     expect(mocks.upstashPipeline).toHaveBeenCalledWith([["HLEN", "ctf:ai:solves:octocat"]]);
   });
 
@@ -405,14 +454,14 @@ describe("hintGate", () => {
     const store = await loadStore();
     mocks.getAdminSettings.mockResolvedValue(settings());
     solves("octocat:challenge-1", "other:challenge-2");
-    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: true });
+    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: true, balance: RICH });
   });
 
   it("matches the login case-insensitively (GitHub logins are)", async () => {
     const store = await loadStore();
     mocks.getAdminSettings.mockResolvedValue(settings());
     solves("OctoCat:challenge-1");
-    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: true });
+    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: true, balance: RICH });
   });
 
   it("counts solves per target, so progress elsewhere does not unlock this one", async () => {
@@ -442,20 +491,20 @@ describe("hintGate", () => {
     const startsAt = new Date(Date.now() - 90 * 60_000).toISOString(); // started 90m ago
     mocks.getAdminSettings.mockResolvedValue(settings({ hintsUnlockAfterMin: 60, scoringStartsAt: startsAt }));
     solves("octocat:challenge-1");
-    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: true });
+    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: true, balance: RICH });
   });
 
   it("ignores the time phase when no scoring start is configured", async () => {
     const store = await loadStore();
     mocks.getAdminSettings.mockResolvedValue(settings({ hintsUnlockAfterMin: 60, scoringStartsAt: null }));
     solves("octocat:challenge-1");
-    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: true });
+    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: true, balance: RICH });
   });
 
   it("skips the progress gate entirely when hintsMinSolves is 0", async () => {
     const store = await loadStore();
     mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
-    expect(await store.hintGate("burner", "juice-shop")).toEqual({ allowed: true });
+    expect(await store.hintGate("burner", "juice-shop")).toEqual({ allowed: true, balance: RICH });
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
@@ -474,6 +523,140 @@ describe("hintGate", () => {
     solves("someone-else:challenge-1");
     const result = await store.revealHint("burner", "juice-shop", "Challenge-5-Admin-Section");
     expect(result).toMatchObject({ ok: false, forbidden: true });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  // ── affordability (#553) ────────────────────────────────────────────────
+  //
+  // A hint's price used to be charged regardless of the contestant's score:
+  // the leaderboard floors the net at 0, so a contestant at 5 pts could buy a
+  // 10-pt hint, show 0, and have the other 5 pts quietly forgiven. The gate
+  // now refuses what cannot be paid for, against the folded all-module total
+  // net of spend (hint-balance.ts) — the same figure the board shows.
+  it("refuses a hint the contestant cannot afford, naming the price and the balance", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
+    mocks.hintBalance.mockResolvedValue({ gross: 20, spent: 15, net: 5 });
+    expect(await store.hintGate("octocat", "juice-shop")).toEqual({
+      allowed: false,
+      reason: "insufficient",
+      needed: 10,
+      have: 5,
+    });
+  });
+
+  it("allows a hint the contestant can exactly afford, and hands the balance on", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
+    const exact = { gross: 30, spent: 20, net: 10 };
+    mocks.hintBalance.mockResolvedValue(exact);
+    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: true, balance: exact });
+  });
+
+  it("clamps a negative balance to 0 in the refusal — nobody is told they owe points", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
+    mocks.hintBalance.mockResolvedValue({ gross: 0, spent: 10, net: -10 });
+    expect(await store.hintGate("octocat", "juice-shop")).toMatchObject({ reason: "insufficient", have: 0 });
+  });
+
+  it("checks affordability against the organizer's configured price, not the baked default", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0, hintCost: 25 }));
+    mocks.hintBalance.mockResolvedValue({ gross: 20, spent: 0, net: 20 });
+    expect(await store.hintGate("octocat", "juice-shop")).toMatchObject({ reason: "insufficient", needed: 25, have: 20 });
+  });
+
+  it("skips the balance read when hints are free (cost 0)", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0, hintCost: 0 }));
+    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: true });
+    expect(mocks.hintBalance).not.toHaveBeenCalled();
+  });
+
+  it("runs the progress gate first, so a burner is told about solves, not points", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings());
+    solves("someone-else:challenge-1");
+    expect(await store.hintGate("burner", "juice-shop")).toMatchObject({ reason: "no-progress" });
+    expect(mocks.hintBalance).not.toHaveBeenCalled();
+  });
+
+  it("does not read the balance for a preview — nothing is being bought", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
+    expect(await store.hintGate("octocat", "juice-shop", { dryRun: true })).toEqual({ allowed: true });
+    expect(mocks.hintBalance).not.toHaveBeenCalled();
+  });
+
+  it("fails CLOSED when the balance lookup errors — a hint is a paid reveal", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
+    mocks.hintBalance.mockRejectedValueOnce(new Error("scorer down"));
+    expect(await store.hintGate("octocat", "juice-shop")).toEqual({
+      allowed: false,
+      reason: "insufficient",
+      needed: 10,
+      have: 0,
+    });
+    consoleError.mockRestore();
+  });
+
+  // A reveal of a hint ALREADY BOUGHT charges nothing (the script's `owned`
+  // branch), so the price must not stand in its way: with the id in hand the
+  // gate checks ownership when the balance is short, and lets an owned hint
+  // through. Without an id (no specific hint) it stays a plain refusal.
+  it("lets an owned hint through the affordability gate — a re-view is free, not a purchase", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
+    const broke = { gross: 20, spent: 15, net: 5 };
+    mocks.hintBalance.mockResolvedValue(broke);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }]); // SISMEMBER: owned
+    expect(await store.hintGate("octocat", "juice-shop", { id: "Challenge-5-Admin-Section" })).toEqual({
+      allowed: true,
+      balance: broke,
+    });
+    expect(mocks.upstashPipeline).toHaveBeenCalledWith([
+      ["SISMEMBER", "ctf:user:octocat:hints", "juice-shop/Challenge-5-Admin-Section"],
+    ]);
+  });
+
+  it("still refuses an unowned hint when the id is given and the balance is short", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
+    mocks.hintBalance.mockResolvedValue({ gross: 20, spent: 15, net: 5 });
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 0 }]); // SISMEMBER: not owned
+    expect(await store.hintGate("octocat", "juice-shop", { id: "Challenge-5-Admin-Section" })).toMatchObject({
+      allowed: false,
+      reason: "insufficient",
+    });
+  });
+
+  it("refuses when the ownership check itself fails — closed, like every other hint read", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
+    mocks.hintBalance.mockResolvedValue({ gross: 20, spent: 15, net: 5 });
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+    expect(await store.hintGate("octocat", "juice-shop", { id: "Challenge-5-Admin-Section" })).toMatchObject({
+      allowed: false,
+      reason: "insufficient",
+    });
+    consoleError.mockRestore();
+  });
+
+  it("revealHint refuses an unaffordable hint as forbidden, with a plain message, before the charge script", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
+    mocks.hintBalance.mockResolvedValue({ gross: 20, spent: 15, net: 5 });
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 0 }]); // not owned
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(result).toEqual({
+      ok: false,
+      forbidden: true,
+      error: "Not enough points: this hint costs 10 and you have 5",
+    });
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 });

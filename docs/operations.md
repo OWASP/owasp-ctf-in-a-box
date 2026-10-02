@@ -481,10 +481,19 @@ The panel offers:
     game is decided on unaided work. Needs a scoring start (the **Scoring
     opens** field under **Schedule** above) to have any effect; `0` means
     hints are available immediately.
+  - **Affordability** (no knob — it follows **Hint cost**) — a contestant
+    can only buy a hint they can pay for: their score on the leaderboard
+    (every module, net of hints already bought) must cover the price, or the
+    reveal is refused with "Not enough points: this hint costs N and you have
+    M" (#553). Before this, the board floored a net score at 0 and the
+    difference was quietly forgiven. Re-viewing a hint already bought is
+    always free, whatever the balance. After a purchase the reveal also tells
+    the contestant their resulting score. A free hint (cost `0`) skips the
+    check.
 
-  Both fail **closed**: if the solve lookup errors, the hint is refused
-  rather than handed out unverified. Denials return `403` with a message
-  naming what's missing. The module check is **per target**: a hint on a
+  All three fail **closed**: if the solve or balance lookup errors, the hint
+  is refused rather than handed out unverified. Denials return `403` with a
+  message naming what's missing. The module check is **per target**: a hint on a
   secure-development target requires that module enabled, a classic hint
   requires `classic`, an ai hint requires `ai`, and each refuses outright
   when its module is off (`hint-store.ts`'s `hintGate`). In practice only

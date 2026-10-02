@@ -546,11 +546,12 @@ describe("leaderboard edge cases (#481)", () => {
 });
 
 // #552: Secure Development points — and a newly-joined member's existing
-// points — fold into a team total only on the next sync sweep (~1 min, ADR 64),
-// while classic/quiz fold live. A player who just solved can briefly see a
-// stale total and read it as broken. A one-line cadence note sets the
-// expectation. It is scoped to events that actually run Secure Development,
-// since that is the only module whose totals lag.
+// points — fold into a team total only on the next sync poll (~1 min), while
+// classic/quiz (and ai) fold app-side and show live. A player who just solved
+// can briefly see a stale total and read it as broken. A one-line cadence note
+// sets the expectation. It is scoped to events that actually run Secure
+// Development, since that is the only module whose totals lag, and it names the
+// module by its organizer-configured title.
 describe("Leaderboard score-cadence note (#552)", () => {
   it("shows a cadence note on an event that runs Secure Development", () => {
     const board = data({ entries: [entry()] });
@@ -558,6 +559,17 @@ describe("Leaderboard score-cadence note (#552)", () => {
       <Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
     );
     expect(html).toMatch(/about once a minute/i);
+  });
+
+  it("names the Secure Development module by its organizer-configured title", () => {
+    const renamed: readonly ResolvedModule[] = [{ id: "secure-development", title: "Patch Track", blurb: "" }];
+    const board = data({ entries: [entry()] });
+    const html = renderToStaticMarkup(
+      <Leaderboard data={board} viewerLogin={null} modules={renamed} enabledApps={apps} />,
+    );
+    expect(html).toMatch(/about once a minute/i);
+    expect(html).toContain("Patch Track points and team totals");
+    expect(html).not.toContain("Secure Development points and team totals");
   });
 
   it("omits the note when Secure Development is not a live module", () => {

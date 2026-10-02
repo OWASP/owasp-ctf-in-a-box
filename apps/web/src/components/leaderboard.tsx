@@ -232,13 +232,15 @@ export default function Leaderboard({
    *  this checks both collections rather than just `entries`. */
   const boardIsEmpty = data.entries.length === 0 && data.teams.length === 0;
 
-  // Secure Development totals fold in on the next sync sweep (~1 min, ADR 64),
-  // unlike classic/quiz which fold live — so a just-earned SD point or a
-  // teammate who just joined can briefly leave a team total looking stale. A
-  // cadence note sets that expectation, but only on an event that actually
-  // runs Secure Development, since that is the only module whose totals lag
-  // (#552). Not shown on an empty board, which has its own standalone state.
-  const secureDevLive = modules.some((m) => m.id === "secure-development");
+  // Secure Development totals fold in on the next sync poll (~1 min), unlike
+  // classic/quiz (and ai), which fold app-side and show live — so a just-earned
+  // SD point or a teammate who just joined can briefly leave a team total
+  // looking stale. A cadence note sets that expectation, but only on an event
+  // that actually runs Secure Development, since that is the only module whose
+  // totals lag (#552). Not shown on an empty board, which has its own
+  // standalone state. The note names the module by its organizer-configured
+  // title (ResolvedModule.title), not the hardcoded default.
+  const secureDevModule = modules.find((m) => m.id === "secure-development");
 
   const boardState = individualBoardState(data.entries.length, query, visibleEntries.length);
 
@@ -328,11 +330,11 @@ export default function Leaderboard({
       </div>
       )}
 
-      {secureDevLive && !boardIsEmpty && (
+      {secureDevModule && !boardIsEmpty && (
         <p className="px-1 text-xs text-muted">
-          Secure Development points and team totals land on the next scoring
-          sweep — about once a minute — so a solve or team change you just made
-          can take a moment to appear here.
+          {secureDevModule.title} points and team totals land on the next
+          scoring sweep — about once a minute — so a solve or team change you
+          just made can take a moment to appear here.
         </p>
       )}
 

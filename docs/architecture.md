@@ -1127,8 +1127,13 @@ a priced hint when the contestant's net score does not cover it (#553):
 summed per login) and the spend fresh from `ctf:hints:spent`, because the
 fold is memoized for ~10 s and two quick purchases must not both pass on the
 same stale figure. It fails **closed** like the progress gate, and exempts an
-already-owned hint (a re-view charges nothing). The reveal reports `net −
-cost` back as `balance`, which the challenge page shows beside the deduction.
+already-owned hint (a re-view charges nothing). The gate's read and the charge
+are still two round-trips, so the reveal script makes the limit **atomic**: it
+takes the gate's gross as an argument, re-reads the spend inside the script,
+and refuses before its `SADD` when `gross − spend < cost` — two parallel
+reveals against a balance that covers one land exactly one. The reveal
+reports `net − cost` back as `balance`, which the challenge page shows beside
+the deduction.
 That read is why the policy helpers the fold needs — `HINTS_AVAILABLE`,
 `resolveHintConfig`, `getHintPenalties` — live in `hint-config.ts`: the fold's
 last stage imports them, the store imports the fold, and one module cannot

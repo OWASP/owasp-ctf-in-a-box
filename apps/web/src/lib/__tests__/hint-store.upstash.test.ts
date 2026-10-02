@@ -37,8 +37,11 @@ vi.mock("@/lib/enabled-modules", () => ({
 // pins the Lua script and the settings gates, so the balance is stood in for
 // with a contestant who can afford anything; hint-balance.test.ts and
 // hint-store.test.ts cover the gate itself.
-const BALANCE = { gross: 1000, spent: 0, net: 1000 };
-vi.mock("@/lib/hint-balance", () => ({ hintBalance: async () => BALANCE }));
+// Hoisted and mutable so the concurrency test below can narrow it to "affords
+// exactly one hint" and restore it.
+const balanceRef = vi.hoisted(() => ({ value: { gross: 1000, spent: 0, net: 1000 } }));
+const BALANCE = balanceRef.value;
+vi.mock("@/lib/hint-balance", () => ({ hintBalance: async () => balanceRef.value }));
 
 const PLAYER = `vt-${RUN}-hints-p1`;
 const TARGET = "juice-shop";
@@ -206,6 +209,46 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
   // #463: a locked story step's hint is refused INSIDE the reveal script —
   // before any charge — unless a teammate (a solves hash handed in as
   // KEYS[5..]) holds the prerequisite. Run on throwaway keys.
+  // #553 review: the gate's balance read and the script's charge are two
+  // round-trips, so two parallel reveals could both pass the gate on the same
+  // spend and both charge. The script re-checks `gross − spent ≥ cost`
+  // atomically before its SADD, so of two simultaneous purchases against a
+  // balance that covers ONE, exactly one lands — the other gets the same 403
+  // the gate would have given, from the spend the script actually saw.
+  it("REVEAL_SCRIPT lets exactly one of two concurrent reveals charge when the balance covers one", async () => {
+    const P2 = `vt-${RUN}-hints-p2`;
+    const ID_A = `vt-${RUN}-race-a`;
+    const ID_B = `vt-${RUN}-race-b`;
+    const P2_SOLVE = `${P2}:vt-${RUN}-solved`;
+    const prior = balanceRef.value;
+    balanceRef.value = { gross: COST, spent: 0, net: COST }; // affords exactly one hint
+    try {
+      await pipeline([
+        ["HSET", HINT_HASH, ID_A, "a"],
+        ["HSET", HINT_HASH, ID_B, "b"],
+        ["HSET", SOLVES_HASH, P2_SOLVE, new Date().toISOString()],
+      ]);
+      const [a, b] = await Promise.all([store.revealHint(P2, TARGET, ID_A), store.revealHint(P2, TARGET, ID_B)]);
+      const outcomes = [a, b].map((r) => (r.ok ? "charged" : r.error)).sort();
+      expect(outcomes).toEqual([`Not enough points: this hint costs ${COST} and you have 0`, "charged"]);
+      const [spent, owned] = await pipeline([
+        ["HGET", "ctf:hints:spent", P2],
+        ["SCARD", `ctf:user:${P2}:hints`],
+      ]);
+      expect(Number(spent.result)).toBe(COST);
+      expect(owned.result).toBe(1);
+    } finally {
+      balanceRef.value = prior;
+      await pipeline([
+        ["HDEL", HINT_HASH, ID_A, ID_B],
+        ["HDEL", SOLVES_HASH, P2_SOLVE],
+        ["HDEL", "ctf:hints:spent", P2],
+        ["DEL", `ctf:user:${P2}:hints`],
+        ["DEL", `ctf:hints:at:${P2}`],
+      ]);
+    }
+  });
+
   it("REVEAL_SCRIPT refuses a locked story step's hint, charging nothing, and reveals it once a teammate solved the prerequisite", async () => {
     const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
     const { upstashEval } = await import("@/lib/upstash");

@@ -105,6 +105,13 @@ export function isHintTarget(value: string): value is HintTarget {
 //       nothing — no SADD, no charge, no purchase time.
 //       [7]=story prerequisite (#463), "" when none — open only if a TEAMMATE
 //       (a solves hash in KEYS[5..]) holds it; checked before any charge.
+//       [8]=the contestant's gross score (#553), "" when hints are free. The
+//       charge is refused unless gross − the spend read HERE ≥ cost: the
+//       gate's own read is a separate round-trip, so two parallel reveals
+//       could both pass it on the same figure and both charge — this re-check
+//       is what makes the limit atomic. A hint already in KEYS[1] is exempt
+//       (a re-view charges nothing). Gross may be ~10 s stale (the fold's
+//       memo); points only grow, so stale is conservative.
 // Exported for the live suite only.
 export const REVEAL_SCRIPT = `
 -- The story lock (#463) comes FIRST: a locked step's hint is never read.
@@ -118,6 +125,10 @@ end
 local hint = redis.call('HGET', KEYS[3], ARGV[1])
 if not hint then return {'missing'} end
 if ARGV[6] == '1' then return {'preview', hint, '0'} end
+if ARGV[8] and ARGV[8] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 0 then
+  local spent = tonumber(redis.call('HGET', KEYS[2], ARGV[3]) or '0')
+  if tonumber(ARGV[8]) - spent < tonumber(ARGV[4]) then return {'insufficient', '', tostring(spent)} end
+end
 if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
   local spent = redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
   redis.call('HSETNX', KEYS[4], ARGV[2], ARGV[5])
@@ -170,6 +181,10 @@ export type HintGate =
   | { allowed: false; reason: "no-progress"; needed: number; have: number }
   /** Caller cannot pay the price (#553): `have` is their net score, clamped at 0. */
   | { allowed: false; reason: "insufficient"; needed: number; have: number };
+
+/** The affordability refusal (#553), worded once: the gate and the script's
+ *  atomic re-check both end here. */
+const notEnough = (needed: number, have: number) => `Not enough points: this hint costs ${needed} and you have ${have}`;
 
 /** Whether `login` already bought `<target>/<id>` — the same set membership
  *  the reveal script's SADD guard decides on. Redis trouble reads as NOT
@@ -301,11 +316,7 @@ export async function revealHint(
       };
     }
     if (gate.reason === "insufficient") {
-      return {
-        ok: false,
-        forbidden: true,
-        error: `Not enough points: this hint costs ${gate.needed} and you have ${gate.have}`,
-      };
+      return { ok: false, forbidden: true, error: notEnough(gate.needed, gate.have) };
     }
     return { ok: false, error: "Hints are not enabled" };
   }
@@ -334,7 +345,18 @@ export async function revealHint(
     verdict = await upstashEval(
       REVEAL_SCRIPT,
       [userHintsKey(login), HINTS_SPENT_KEY, hintHashKey(target), userHintTimesKey(login), ...lockKeys],
-      [id, `${target}/${id}`, login, cost, new Date().toISOString(), dryRun ? "1" : "0", prereq],
+      [
+        id,
+        `${target}/${id}`,
+        login,
+        cost,
+        new Date().toISOString(),
+        dryRun ? "1" : "0",
+        prereq,
+        // ARGV[8]: the gross the gate read, for the script's atomic re-check.
+        // Absent (free hint / preview) the script skips it.
+        gate.balance ? gate.balance.gross : "",
+      ],
     );
   } catch (err) {
     console.error("Hint reveal failed:", errorLabel(err));
@@ -349,6 +371,12 @@ export async function revealHint(
   // confirm that a guessed id is a locked story step.
   if (status === "locked") {
     return { ok: false, missing: true, error: "No hint available for this challenge" };
+  }
+  // The script's own re-check lost a race to a parallel purchase (ARGV[8]):
+  // the same refusal the gate gives, from the spend the script actually saw.
+  if (status === "insufficient") {
+    const have = gate.balance ? Math.max(0, gate.balance.gross - (Number(spent) || 0)) : 0;
+    return { ok: false, forbidden: true, error: notEnough(cost, have) };
   }
   if (status === "preview" && typeof hint === "string") {
     return { ok: true, hint, alreadyOwned: false, spent: 0, cost, dryRun: true };

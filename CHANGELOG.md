@@ -13,7 +13,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 - **Fixed: a hint can no longer be bought with points the contestant does not
   have (#553).** The reveal is refused — `403`, "Not enough points: this hint
   costs N and you have M" — when the contestant's leaderboard score (every
-  module, net of hints already bought, read fresh) does not cover the price.
+  module, net of hints already bought) does not cover the price — checked
+  once at the gate and again atomically inside the charge script, so two
+  simultaneous purchases cannot both squeeze through on the same balance.
   Before, the board floored a net score at 0 and the shortfall was quietly
   forgiven, so a hint was cheaper for whoever had the least to lose.
   Re-viewing a hint already bought stays free whatever the balance, a free

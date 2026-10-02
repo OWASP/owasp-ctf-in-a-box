@@ -25,8 +25,10 @@ import { upstashPipeline } from "@/lib/upstash";
  *
  * SPENT is read fresh. The fold is memoized for ~10 s
  * (`LEADERBOARD_FOLD_TTL_MS`), so a hint bought a second ago is in
- * `ctf:hints:spent` but not yet in the row — two quick purchases must not
- * both pass on the same stale balance. The larger of the fresh read and the
+ * `ctf:hints:spent` but not yet in the row — a second, SEQUENTIAL purchase
+ * must not pass on the row's stale penalty. (Two PARALLEL purchases are the
+ * reveal script's problem: it re-reads the spend inside the charge, see
+ * `REVEAL_SCRIPT`'s ARGV[8].) The larger of the fresh read and the
  * row's penalty is used: the row's figure is the case-variant SUM
  * `withHintPenalties` computes, which a single HGET by the session's spelling
  * can undercount, and the fresh read is ahead of it right after a purchase.

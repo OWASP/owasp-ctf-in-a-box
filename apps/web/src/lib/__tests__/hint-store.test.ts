@@ -346,6 +346,52 @@ describe("revealHint", () => {
     });
   });
 
+  // The gate's read and the script's HINCRBY are two round-trips, so two
+  // parallel reveals (two tabs, two hints) could both read the same spend and
+  // both charge — the forgiveness case #553 closes, reopened by a race. The
+  // script therefore re-checks `gross − HGET spent ≥ cost` ATOMICALLY before
+  // its SADD, from the gross the gate hands it; a hint already in the set is
+  // exempt there too (a re-view charges nothing).
+  it("hands the gate's gross to the script so the charge re-checks the balance atomically", async () => {
+    const store = await loadStore();
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    const [script, , args] = mocks.upstashEval.mock.calls[0];
+    expect(args[7]).toBe(RICH.gross);
+    // Ordering is the invariant: hint existence first, then the balance
+    // check, then the SADD guard that charges — and the check exempts an
+    // owned hint by set membership, not by trusting the caller.
+    const hget = script.indexOf("HGET");
+    const check = script.indexOf("insufficient");
+    const sadd = script.indexOf("SADD");
+    expect(hget).toBeGreaterThan(-1);
+    expect(hget).toBeLessThan(check);
+    expect(check).toBeLessThan(sadd);
+    expect(script.slice(0, check)).toContain("SISMEMBER");
+  });
+
+  it("hands the script no gross when hints are free, so it skips the balance check", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 0 });
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 0]);
+    await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    const [, , args] = mocks.upstashEval.mock.calls[0];
+    expect(args[7]).toBe("");
+  });
+
+  it("maps the script's insufficient verdict to the same 403 message, from the spend it saw", async () => {
+    const store = await loadStore();
+    // The gate saw net 1000 (RICH) — then a parallel purchase landed first and
+    // the script read 995 spent against gross 1000: 5 left, 10 asked.
+    mocks.upstashEval.mockResolvedValueOnce(["insufficient", "", "995"]);
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(result).toEqual({
+      ok: false,
+      forbidden: true,
+      error: "Not enough points: this hint costs 10 and you have 5",
+    });
+  });
+
   it("reports no balance for a preview — nothing was charged and nothing was read", async () => {
     const store = await loadStore();
     mocks.upstashEval.mockResolvedValueOnce(["preview", "text", "0"]);

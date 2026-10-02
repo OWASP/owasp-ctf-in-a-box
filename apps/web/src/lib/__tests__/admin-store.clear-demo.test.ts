@@ -30,18 +30,22 @@ describe("clearDemoData", () => {
   // #553 review: the clear removes folded points; the hint gate reads gross
   // from the ~10 s fold memo. Dropped once, after the pipeline that did the
   // removing — and not at all when that pipeline failed and nothing changed.
-  it("invalidates the folded leaderboard memo once, after the clear landed", async () => {
+  it("bumps the score revision before the clearing pipeline and again after it", async () => {
+    // Before: a hint fold that read the demo points under revision R finds
+    // R moved by the time its charge runs. After: a fold started mid-clear
+    // is outdated too.
     await clearDemoData("alice");
-    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
-    expect(mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder[0]).toBeGreaterThan(
-      mocks.upstashPipeline.mock.invocationCallOrder[0],
-    );
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
+    const [first, last] = mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder;
+    const write = mocks.upstashPipeline.mock.invocationCallOrder[0];
+    expect(first).toBeLessThan(write);
+    expect(last).toBeGreaterThan(write);
   });
 
-  it("invalidates even when the clear failed — a per-command failure leaves the other deletions standing", async () => {
+  it("still bumps after the attempt when the clear failed — a per-command failure leaves the other deletions standing", async () => {
     mocks.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }]);
     await expect(clearDemoData("alice")).rejects.toThrow(/NOAUTH/);
-    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
   });
 
   it("issues exactly one pipeline call — no settings read, unlike seedDemoData", async () => {

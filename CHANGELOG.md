@@ -19,9 +19,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   The gate folds the score fresh rather than reading the leaderboard's ~10 s
   memo (the memo is per app instance, and the AWS module runs two), and the
   charge is stamped with a shared score revision that every score-lowering
-  admin operation bumps — a reset or a module switched off on another
-  instance while the fold ran makes the charge come back `stale` and retry
-  — so nobody can buy against points that no longer count. Those operations
+  admin operation bumps before its first write and after its last — a reset
+  or a module switched off on another instance while the fold ran, or still
+  running when the charge lands, makes the charge come back `stale` and
+  retry — so nobody can buy against points that no longer count. Those operations
   (the master and per-player resets, a contestant delete, the demo clear,
   any settings write) also drop the memo, on their failure paths too, so the
   board itself stops showing wiped scores at once.

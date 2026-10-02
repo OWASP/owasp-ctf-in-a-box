@@ -25,14 +25,19 @@ import { upstashPipeline } from "@/lib/upstash";
  *    store re-reads and retries once (`REVEAL_SCRIPT`, ARGV[9]).
  *
  * Every operation that can lower a folded score calls
- * `invalidateFoldedLeaderboard()` — in a `finally`, after its LAST write
- * (an earlier call can be refilled by a fold racing the writes; a failure
- * midway leaves the earlier destructive stages standing, so the drop must
- * happen on that path too): the master reset and every settings write
- * (`admin-store.ts` — the fold counts only the ENABLED modules' points, so
- * switching one off lowers scores), the demo clear (`admin-store.ts`),
- * Support's per-player reset and delete (`admin-ops-store.ts`). An archive
- * import goes through the master reset first and then adds content only.
+ * `invalidateFoldedLeaderboard()` TWICE: once BEFORE its first write and
+ * once in a `finally` AFTER its last. Before, because the writes are not
+ * atomic with the bump: a hint fold that read the old points under revision
+ * R, and whose charge reaches the script while the (multi-step) wipe is
+ * still running, must already find R moved. After, because a fold that
+ * started mid-wipe read a mix and must be outdated too — and a failure
+ * midway leaves the earlier destructive stages standing, so that bump has
+ * to happen on the failure path as well. The callers: the master reset and
+ * every settings write (`admin-store.ts` — the fold counts only the ENABLED
+ * modules' points, so switching one off lowers scores), the demo clear
+ * (`admin-store.ts`), Support's per-player reset and delete
+ * (`admin-ops-store.ts`). An archive import goes through the master reset
+ * first and then adds content only.
  *
  * A leaf on purpose: `admin-store` sits UPSTREAM of the fold (the fold's
  * penalty stage reads the hint config, which reads admin settings), so it

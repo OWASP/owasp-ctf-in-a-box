@@ -406,13 +406,16 @@ async function resetModuleSolves(login: string, keys: ModuleResetKeys): Promise<
  */
 export async function resetUserProgress(rawLogin: string, actor: string): Promise<ResetScope> {
   const login = requireLogin(rawLogin);
+  // Bump the score revision BEFORE the first write (#553): a hint fold that
+  // read this player's old points under revision R must find R already moved
+  // by the time its charge reaches the script, however long this takes.
+  await invalidateFoldedLeaderboard();
   try {
     return await resetProgressOf(login, actor);
   } finally {
-    // This player's score just dropped — or PARTLY dropped, if a later stage
-    // threw after an earlier one deleted: the leaderboard memo must not keep
-    // serving the old one to the hint gate either way (#553). In a finally,
-    // after the last write, so a fold racing the wipe cannot refill it.
+    // …and AFTER the last write — or after a stage threw with the earlier
+    // ones standing: a fold that started mid-reset read a mix, and this
+    // outdates it too; the process-local memo is dropped on both calls.
     await invalidateFoldedLeaderboard();
   }
 }

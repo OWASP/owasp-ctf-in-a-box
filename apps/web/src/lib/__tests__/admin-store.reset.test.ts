@@ -55,22 +55,26 @@ describe("resetEvent", () => {
   // hint against their pre-reset points. After the LAST write, not before —
   // an invalidation that runs first can be refilled by a fold that still
   // sees the old keys.
-  it("invalidates the folded leaderboard memo once, after the wipe and the audit eval", async () => {
+  // Bumped BEFORE the first write and AFTER the last. Before: a hint fold
+  // that read the old points under revision R must find R already moved by
+  // the time its charge reaches the script, however long the wipe takes.
+  // After: a fold that started mid-wipe read a mix, and the trailing bump
+  // outdates it too. One bump at either end alone leaves a window.
+  it("bumps the score revision before the first delete and again after the audit eval", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
     await resetEvent("alice");
-    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
-    const lastWrite = Math.max(
-      ...mocks.upstashPipeline.mock.invocationCallOrder,
-      ...mocks.upstashEval.mock.invocationCallOrder,
-    );
-    expect(mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder[0]).toBeGreaterThan(lastWrite);
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
+    const writes = [...mocks.upstashPipeline.mock.invocationCallOrder, ...mocks.upstashEval.mock.invocationCallOrder];
+    const [first, last] = mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder;
+    expect(first).toBeLessThan(Math.min(...writes));
+    expect(last).toBeGreaterThan(Math.max(...writes));
   });
 
-  it("invalidates even when the freeze/audit eval throws — the prefix deletes already stand", async () => {
+  it("still bumps after the attempt when the freeze/audit eval throws — the prefix deletes already stand", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
     mocks.upstashEval.mockRejectedValue(new Error("down"));
     await expect(resetEvent("alice")).rejects.toThrow("down");
-    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
   });
 
   it("wipes every event-data prefix, then freezes + audits in one eval", async () => {

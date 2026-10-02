@@ -37,30 +37,34 @@ beforeEach(() => {
 // write drops the memo (cheap: admin-only, rare); a refused one writes
 // nothing and drops nothing.
 describe("updateAdminSettings invalidates the folded leaderboard (#553)", () => {
-  it("drops the fold memo once, after the write lands", async () => {
+  it("bumps the score revision before the write and again after it lands", async () => {
+    // Before: a hint fold that read the old points under revision R finds R
+    // moved by the time its charge runs. After: a fold started during the
+    // write is outdated too.
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
     await updateAdminSettings({ enabledModules: ["quiz"] }, "alice");
-    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
-    expect(mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder[0]).toBeGreaterThan(
-      mocks.upstashEval.mock.invocationCallOrder[0],
-    );
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
+    const [first, last] = mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder;
+    const write = mocks.upstashEval.mock.invocationCallOrder[0];
+    expect(first).toBeLessThan(write);
+    expect(last).toBeGreaterThan(write);
   });
 
-  it("does not drop it on a patch refused before Redis", async () => {
+  it("does not bump on a patch refused before Redis", async () => {
     await expect(updateAdminSettings({ hintCost: -1 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
     expect(mocks.invalidateFoldedLeaderboard).not.toHaveBeenCalled();
   });
 
-  it("drops it after any attempt that reached Redis — even one the script refused, or one that threw", async () => {
+  it("bumps around any attempt that reached Redis — even one the script refused, or one that threw", async () => {
     // Once the eval was sent, the transport cannot tell "refused, wrote
     // nothing" from "wrote, then the reply was lost"; an extra fold is
     // harmless, a missed one is a hint bought on points that no longer count.
     mocks.upstashEval.mockResolvedValueOnce(["__window_refused__", "2026-08-14T10:00:00Z", "2026-08-14T09:00:00Z"]);
     await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
-    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
     mocks.upstashEval.mockRejectedValueOnce(new Error("down"));
     await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toThrow("down");
-    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(4);
   });
 });
 

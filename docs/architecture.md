@@ -1142,9 +1142,12 @@ re-reads and retries once. Every admin operation that lowers a score (the
 master and per-player resets and the delete, the demo clear, any settings
 write — a module switched off takes its points out of the fold) does both
 halves through `leaderboard/fold-cache.ts` (a leaf, since `admin-store` sits
-upstream of the fold), in a `finally` after its last write — a failure midway
-leaves the earlier deletes standing: it bumps the shared revision, and drops
-the process-local memo so the *board* on the writing instance does not show
+upstream of the fold), **before its first write and again in a `finally`
+after its last** — before, because the writes are not atomic with the bump
+and a charge can reach the script while a multi-step wipe is still running;
+after, for a fold that started mid-wipe, and because a failure midway leaves
+the earlier deletes standing: it bumps the shared revision, and drops the
+process-local memo so the *board* on the writing instance does not show
 wiped scores for a TTL (a fold already running when the invalidation came is
 discarded, not memoized).
 It fails **closed** like the progress gate, and exempts an

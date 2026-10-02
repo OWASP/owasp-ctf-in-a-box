@@ -719,6 +719,19 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
   }
   const at = new Date().toISOString();
   const audit = JSON.stringify({ at, by: actor, changed });
+  // A settings write can LOWER a contestant's folded score: the fold counts
+  // only the ENABLED modules' points (`withModuleContributions`), so a module
+  // switched off takes its points out, and the hint gate's gross is checked
+  // against the score revision (#553). Bumped BEFORE the write — a hint fold
+  // that read the old points under revision R must find R moved by the time
+  // its charge runs — and AFTER it, for a fold that started during the
+  // write. Every attempt that reached Redis, whether the reply said
+  // "refused" or never came: once the eval was sent, the transport cannot
+  // tell "wrote nothing" from "wrote, then the reply was lost". Rather than
+  // enumerating which keys can shrink a score: admin-only and rare, so an
+  // extra fold is nothing; a missed one is a hint bought on points that no
+  // longer count.
+  await invalidateFoldedLeaderboard();
   let result: unknown;
   try {
     result = await upstashEval(
@@ -727,16 +740,6 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       [actor, at, audit, String(AUDIT_CAP - 1), String(dels.length), ...dels, ...fields],
     );
   } finally {
-    // A settings write can LOWER a contestant's folded score: the fold counts
-    // only the ENABLED modules' points (`withModuleContributions`), so a
-    // module switched off takes its points out, and the hint gate's gross is
-    // checked against the fold's revision (#553). Every attempt that reached
-    // Redis drops the memo and bumps the revision — rather than enumerating
-    // which keys can shrink a score, and whether the reply said "refused" or
-    // never came: once the eval was sent, the transport cannot tell "wrote
-    // nothing" from "wrote, then the reply was lost". Admin-only and rare, so
-    // one extra fold is nothing; a missed one is a hint bought on points
-    // that no longer count. After the write, never before.
     await invalidateFoldedLeaderboard();
   }
   // The script refused a window that could never open, writing nothing.
@@ -881,6 +884,11 @@ redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
  */
 export async function resetEvent(actor: string): Promise<{ cleared: Record<string, number>; resetAt: string }> {
   const cleared: Record<string, number> = {};
+  // Bump the score revision BEFORE the first delete (#553): a hint fold that
+  // read the old points under revision R must find R already moved by the
+  // time its charge reaches the script, however long the wipe takes. The
+  // trailing bump (finally) covers a fold that started mid-wipe.
+  await invalidateFoldedLeaderboard();
   try {
     for (const [label, pattern] of RESET_PREFIXES) {
       cleared[label] = await scanDelByPrefix(pattern);
@@ -1637,14 +1645,16 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
   // Same reasoning as seedDemoData's own pipeline check: a per-command
   // failure doesn't throw on its own (AGENTS.md), so an unchecked call would
   // report a cheerful "cleared" count for a clear that only partly happened.
+  // The demo rows' points are about to leave the board (#553): bump the score
+  // revision BEFORE the pipeline, so a hint fold that read them under
+  // revision R finds R moved by the time its charge runs — and AFTER it, for
+  // a fold that started mid-clear, including when a command failed while its
+  // neighbours ran.
+  await invalidateFoldedLeaderboard();
   let results: Awaited<ReturnType<typeof upstashPipeline>>;
   try {
     results = await upstashPipeline(cmds);
   } finally {
-    // The demo rows' points just left the board — some of them, if a command
-    // in the pipeline failed while its neighbours ran: the fold memo must not
-    // keep serving them to the hint gate either way (#553). In a finally,
-    // after the pipeline.
     await invalidateFoldedLeaderboard();
   }
   const failed = results.slice(0, cleanupCommandCount).find((r) => r.error);

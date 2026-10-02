@@ -42,7 +42,7 @@ vi.mock("@/lib/quiz-store", () => ({
   listQuestions,
   getViewerQuiz,
   QUIZ_MAX_ATTEMPTS: 3,
-  QUIZ_RETRY_AFTER_MIN: 5,
+  QUIZ_RETRY_AFTER_MIN: 1,
 }));
 
 import QuizPage from "@/app/(site)/quiz/page";

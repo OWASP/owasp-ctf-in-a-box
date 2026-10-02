@@ -10,6 +10,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: the default quiz retry cooldown is now 1 minute, down from 5
+  (#549).** A wrong answer used to lock a question for five minutes (with a
+  three-attempt cap); the default is now one minute, which still deters rapid
+  guessing on few-option questions without a long lockout after an honest
+  wrong guess. Organizers can still set any value in /admin → Quiz; only the
+  baked default changed.
+
 - **Changed: an event names its time zone, and every date and time follows
   it (#547).** A new **Timezone** field in /admin → Event → Identity
   (`eventTimeZone`, an IANA zone; blank = UTC) sets the clock for the landing

@@ -533,6 +533,10 @@ export async function deleteUser(
   await upstashPipeline(cmds);
 
   await audit("ops:user-delete", actor, { login, leftTeam });
+  // The inner reset already dropped the fold memo, but this wrote more after
+  // it (membership, account record): drop it again after the LAST write, so
+  // a fold racing the tail end is not memoized (#553).
+  invalidateFoldedLeaderboard();
   return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };
 }
 

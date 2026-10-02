@@ -3,9 +3,13 @@ import { vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   upstashPipeline: vi.fn<(c: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
+  invalidateFoldedLeaderboard: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: mocks.upstashPipeline }));
+// #553: clearing the demo rows lowers (removes) folded scores, and the hint
+// gate reads gross from the fold memo; the store drops it through this leaf.
+vi.mock("@/lib/leaderboard/fold-cache", () => ({ invalidateFoldedLeaderboard: mocks.invalidateFoldedLeaderboard }));
 
 import { clearDemoData } from "@/lib/admin-store";
 import { DEMO_CONTESTANTS, DEMO_TEAMS, DEMO_SPONSORS } from "@/lib/demo-fixture";
@@ -15,6 +19,7 @@ type Cmd = (string | number)[];
 beforeEach(() => {
   mocks.upstashPipeline.mockReset();
   mocks.upstashPipeline.mockResolvedValue([]);
+  mocks.invalidateFoldedLeaderboard.mockReset();
 });
 
 function cmds(): Cmd[] {
@@ -22,6 +27,23 @@ function cmds(): Cmd[] {
 }
 
 describe("clearDemoData", () => {
+  // #553 review: the clear removes folded points; the hint gate reads gross
+  // from the ~10 s fold memo. Dropped once, after the pipeline that did the
+  // removing — and not at all when that pipeline failed and nothing changed.
+  it("invalidates the folded leaderboard memo once, after the clear landed", async () => {
+    await clearDemoData("alice");
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.upstashPipeline.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not invalidate when the clear itself failed", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }]);
+    await expect(clearDemoData("alice")).rejects.toThrow(/NOAUTH/);
+    expect(mocks.invalidateFoldedLeaderboard).not.toHaveBeenCalled();
+  });
+
   it("issues exactly one pipeline call — no settings read, unlike seedDemoData", async () => {
     await clearDemoData("alice");
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);

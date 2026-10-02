@@ -726,6 +726,14 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
   );
   // The script refused a window that could never open, writing nothing.
   if (Array.isArray(result) && result[0] === "__window_refused__") throw windowRefusal(String(result[1]), String(result[2]));
+  // A settings write can LOWER a contestant's folded score: the fold counts
+  // only the ENABLED modules' points (`withModuleContributions`), so a module
+  // switched off takes its points out, and the hint gate reads gross from the
+  // ~10 s fold memo (#553). Every successful write drops the memo rather than
+  // enumerating which keys can shrink a score — admin-only and rare, so one
+  // extra fold is nothing; a missed key would be a hint bought on points
+  // that no longer count. After the write, never before.
+  invalidateFoldedLeaderboard();
   return decodeSettings(flatToObject(result));
 }
 
@@ -1623,6 +1631,10 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
   if (failed) throw new Error(`Clear demo data failed: ${failed.error}`);
   const auditFailed = results.slice(cleanupCommandCount).find((r) => r.error);
   if (auditFailed) console.error("[admin] clear-demo audit write failed:", adminErrorLabel(new Error(auditFailed.error)));
+  // The demo rows' points just left the board; the fold memo (~10 s) must
+  // not keep serving them to the hint gate (#553). After the pipeline, and
+  // only once it succeeded — a failed clear changed nothing.
+  invalidateFoldedLeaderboard();
   return { contestants: DEMO_CONTESTANTS.length, teams: DEMO_TEAMS.length, sponsors: DEMO_SPONSORS.length };
 }
 

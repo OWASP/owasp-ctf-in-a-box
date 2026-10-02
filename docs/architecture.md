@@ -1128,18 +1128,23 @@ summed per login) and the spend fresh from `ctf:hints:spent`, as the
 case-folded sum of the hash (a case-only login rename splits one person's
 spend across two fields), because the fold is memoized for ~10 s and a
 second purchase must not pass on the row's stale penalty. The gross side can
-go down too — the per-player and master resets wipe points — so both resets
-invalidate the fold memo through `leaderboard/fold-cache.ts` (a leaf, since
-`admin-store` sits upstream of the fold); the next balance read folds fresh,
-and a fold already running when the reset came is discarded, not memoized.
+go down too — the master and per-player resets and the delete wipe points,
+the demo clear removes rows, and a settings write that switches a module off
+takes its points out of the fold — so every one of those invalidates the
+fold memo after its last write, through `leaderboard/fold-cache.ts` (a leaf,
+since `admin-store` sits upstream of the fold); the next balance read folds
+fresh, and a fold already running when the invalidation came is discarded,
+not memoized.
 It fails **closed** like the progress gate, and exempts an
 already-owned hint (a re-view charges nothing). The gate's read and the charge
 are still two round-trips, so the reveal script makes the limit **atomic**: it
 takes the gate's gross as an argument, re-reads the spend inside the script,
 and refuses before its `SADD` when `gross − spend < cost` — two parallel
-reveals against a balance that covers one land exactly one. The reveal
-reports `net − cost` back as `balance`, which the challenge page shows beside
-the deduction.
+reveals against a balance that covers one land exactly one. Every verdict
+returns the post-call, case-folded spend total, and the reveal reports
+`balance = gross − that total` — not the gate's `net − cost`, which a reveal
+landing in between would have outdated — and the challenge page shows it
+beside the deduction.
 That read is why the policy helpers the fold needs — `HINTS_AVAILABLE`,
 `resolveHintConfig`, `getHintPenalties` — live in `hint-config.ts`: the fold's
 last stage imports them, the store imports the fold, and one module cannot

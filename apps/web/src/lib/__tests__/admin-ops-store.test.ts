@@ -533,6 +533,12 @@ describe("deleteUser", () => {
     const cmds = allCommands();
     expect(cmds).toContainEqual(["SREM", "ctf:team:red-team:members", "octocat"]);
     expect(cmds).toContainEqual(["DEL", "ctf:user:octocat"]);
+    // #553: the inner reset drops the fold memo, but the delete writes more
+    // afterwards (membership, account record), so it drops it again after
+    // ITS last write — a fold racing the tail end must not be memoized.
+    const drops = foldCache.invalidateFoldedLeaderboard.mock.invocationCallOrder;
+    expect(drops).toHaveLength(2);
+    expect(drops[1]).toBeGreaterThan(Math.max(...mocks.upstashPipeline.mock.invocationCallOrder));
   });
 });
 

@@ -3,9 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(s: string, k: string[], a: (string | number)[]) => Promise<unknown>>(),
   upstashPipeline: vi.fn<(c: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
+  invalidateFoldedLeaderboard: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
+// #553: a settings write can LOWER a contestant's folded score (a module
+// switched off takes its points out of the fold), and the hint gate reads
+// gross from the fold memo; the store drops it through this leaf.
+vi.mock("@/lib/leaderboard/fold-cache", () => ({ invalidateFoldedLeaderboard: mocks.invalidateFoldedLeaderboard }));
 
 import {
   AdminValidationError,
@@ -23,6 +28,34 @@ import { SECURE_DEV_TARGETS_MESSAGE } from "@/lib/secure-dev-targets";
 beforeEach(() => {
   mocks.upstashEval.mockReset();
   mocks.upstashPipeline.mockReset();
+  mocks.invalidateFoldedLeaderboard.mockReset();
+});
+
+// #553 review: `withModuleContributions` folds only the ENABLED modules'
+// points, so switching a module off lowers every contestant's gross — and the
+// hint gate reads gross from the ~10 s fold memo. Any successful settings
+// write drops the memo (cheap: admin-only, rare); a refused one writes
+// nothing and drops nothing.
+describe("updateAdminSettings invalidates the folded leaderboard (#553)", () => {
+  it("drops the fold memo once, after the write lands", async () => {
+    mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
+    await updateAdminSettings({ enabledModules: ["quiz"] }, "alice");
+    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.upstashEval.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not drop it on a patch refused before Redis", async () => {
+    await expect(updateAdminSettings({ hintCost: -1 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    expect(mocks.invalidateFoldedLeaderboard).not.toHaveBeenCalled();
+  });
+
+  it("does not drop it when the script refused the write (an impossible window)", async () => {
+    mocks.upstashEval.mockResolvedValue(["__window_refused__", "2026-08-14T10:00:00Z", "2026-08-14T09:00:00Z"]);
+    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    expect(mocks.invalidateFoldedLeaderboard).not.toHaveBeenCalled();
+  });
 });
 
 describe("getAdminSettings", () => {

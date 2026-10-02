@@ -5,17 +5,23 @@ import "server-only";
  *
  * The fold is memoized for ~10 s (`folded.ts`). That is fine while scores
  * only grow — a stale read undercounts, which every reader tolerates — but
- * two admin operations LOWER scores: Support's per-player reset
- * (`admin-ops-store.ts`) and the master reset (`admin-store.ts`). The hint
- * gate reads a contestant's gross from the memo, so without this a freshly
- * reset contestant could buy a hint against points that no longer exist.
+ * the admin operations that LOWER a folded score must not leave the memo
+ * serving the old one: the hint gate reads a contestant's gross from it, so
+ * a contestant could otherwise buy a hint against points that no longer
+ * count. Every such operation calls `invalidateFoldedLeaderboard()` after
+ * its LAST write (an earlier call can be refilled by a fold racing the
+ * writes): the master reset and every settings write (`admin-store.ts` —
+ * the fold counts only the ENABLED modules' points, so switching one off
+ * lowers scores), the demo clear (`admin-store.ts`), Support's per-player
+ * reset and delete (`admin-ops-store.ts`). An archive import goes through
+ * the master reset first and then adds content only.
  *
  * A leaf on purpose: `admin-store` sits UPSTREAM of the fold (the fold's
  * penalty stage reads the hint config, which reads admin settings), so it
- * cannot import `folded.ts` without a cycle. Both resets bump the generation
+ * cannot import `folded.ts` without a cycle. Callers bump the generation
  * here; `folded.ts` stamps each fold with the generation it STARTED under
- * and serves nothing stamped older — a fold already running when the reset
- * came is discarded too, since it read the pre-reset keys.
+ * and serves nothing stamped older — a fold already running when the
+ * invalidation came is discarded too, since it read the old keys.
  */
 let generation = 0;
 

@@ -6,8 +6,11 @@ import { upstashPipeline } from "@/lib/upstash";
 /**
  * What a contestant can spend on hints (#553): their folded, all-module score
  * net of hint spend. The affordability gate in `hint-store.ts`'s `hintGate`
- * refuses a reveal when `net < cost`, and the reveal reports `net - cost`
- * back as the resulting score.
+ * refuses a reveal when `net < cost`. The resulting score the reveal reports
+ * is NOT `net - cost` from these figures: it is `gross` minus the spend total
+ * the reveal script saw after the charge (post-call, case-folded), because a
+ * parallel reveal can land between this read and the script. `gross` is the
+ * only figure of these three that outlives the call.
  *
  * WHY ITS OWN MODULE. The folded leaderboard (`leaderboard/folded.ts`) ends
  * in `withHintPenalties`, which imports the hint config — so `hint-store.ts`

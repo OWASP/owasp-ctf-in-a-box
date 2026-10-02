@@ -47,7 +47,11 @@ beforeEach(() => {
   requireLaunchedApi.mockResolvedValue(null);
   launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
   consumeRateLimit.mockResolvedValue({ allowed: true });
-  resolveHintConfig.mockResolvedValue({ enabled: true, cost: 10 });
+  // Deliberately DIFFERENT from the revealHint fixture's charged cost (10):
+  // the response must echo the amount revealHint actually charged, so if the
+  // route regressed to a second resolveHintConfig() read this mock's 999 would
+  // surface and fail the `cost: 10` assertion below.
+  resolveHintConfig.mockResolvedValue({ enabled: true, cost: 999 });
 });
 
 describe("POST /api/hints/reveal rate limiting", () => {
@@ -62,7 +66,7 @@ describe("POST /api/hints/reveal rate limiting", () => {
   });
 
   it("charges the budget against the session login, not anything client-supplied", async () => {
-    revealHint.mockResolvedValue({ ok: true, hint: "look at the query", alreadyOwned: false, spent: 10 });
+    revealHint.mockResolvedValue({ ok: true, hint: "look at the query", alreadyOwned: false, spent: 10, cost: 10 });
     await POST(req({ app: "quiz", id: "q1", login: "someone-else" }));
     expect(consumeRateLimit).toHaveBeenCalledWith("hint-reveal", "alice", 30, 60);
   });
@@ -109,7 +113,7 @@ describe("POST /api/hints/reveal", () => {
   // is exercised directly in lib/__tests__/launch.test.ts.
   it("proceeds normally once launched (or for an admin preview)", async () => {
     requireLaunchedApi.mockResolvedValue(null);
-    revealHint.mockResolvedValue({ ok: true, hint: "look under the rug", alreadyOwned: false, spent: 10 });
+    revealHint.mockResolvedValue({ ok: true, hint: "look under the rug", alreadyOwned: false, spent: 10, cost: 10 });
     const res = await POST(req({ app: "quiz", id: "q1" }));
     expect(res.status).toBe(200);
     expect(revealHint).toHaveBeenCalledWith("alice", "quiz", "q1", { dryRun: false });

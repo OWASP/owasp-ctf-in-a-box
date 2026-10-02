@@ -10,6 +10,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: a paid hint confirms before it charges, and acknowledges the
+  cost afterward (#550).** The challenge page's **Reveal hint** button now
+  opens a **Confirm / Cancel** step on the first press instead of charging
+  immediately — an accidental click no longer spends points — and once the
+  hint is revealed the block shows "−N pts spent" so the deduction is
+  acknowledged in place rather than discovered later on the leaderboard. The
+  in-row Secure Development hint chip already worked this way; this brings the
+  single-challenge control in line.
+
 - **Changed: the leaderboard explains its ~1-minute score cadence (#552).** On
   an event that runs Secure Development, a one-line note tells contestants that
   SD points and team totals land on the next scoring sweep (about once a

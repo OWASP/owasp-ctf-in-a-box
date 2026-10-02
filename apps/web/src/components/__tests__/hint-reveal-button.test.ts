@@ -25,3 +25,52 @@ describe("HintRevealButton posts the target app in its reveal request", () => {
     expect(src).not.toMatch(new RegExp(`app:\\s*"${app}"`));
   });
 });
+
+// #550: a paid reveal is irreversible, so it must not fire on the first click.
+// The control confirms first (idle → confirm → reveal), mirroring the in-row
+// `hint-button.tsx` chip, and then acknowledges the deduction so the contestant
+// is not left to discover the −cost silently on the leaderboard later. These
+// are SOURCE-level assertions for the same reason as the suite above: no DOM.
+describe("HintRevealButton confirms before charging and acknowledges the cost (#550)", () => {
+  it("opens a confirm step on the first press rather than revealing immediately", () => {
+    // The idle button moves to the confirm state; it must NOT call reveal() directly.
+    expect(src).toMatch(/onClick=\{\(\) => setState\("confirm"\)\}/);
+  });
+
+  it("only fires the reveal request from the confirm step, never the idle button", () => {
+    // reveal() is the handler for the confirm button, reached after the gate
+    // above. Asserting it is wired EXACTLY once is the negative half: a second
+    // `onClick={reveal}` (e.g. retained on the idle button) would make the
+    // first press charge immediately and fail this count.
+    expect(src).toMatch(/state === "confirm"/);
+    expect((src.match(/onClick=\{reveal\}/g) ?? []).length).toBe(1);
+  });
+
+  it("offers a cancel that returns to idle without charging", () => {
+    // Scoped to the Cancel button's own handler — a bare `setState("idle")`
+    // also appears on the error paths, so matching that alone would stay green
+    // even if the Cancel control were deleted.
+    expect(src).toMatch(/onClick=\{\(\) => setState\("idle"\)\}/);
+    expect(src).toMatch(/>\s*Cancel\s*</);
+  });
+
+  it("acknowledges the points spent only when the reveal actually deducted points", () => {
+    // Uses the server's charged amount, and shows it only when a POSITIVE
+    // deduction happened — a preview (dryRun), an already-owned reveal, and a
+    // configured cost of 0 all charge nothing and must not render "−0 pts".
+    expect(src).toMatch(/−\{chargedCost\} pts spent/);
+    expect(src).toMatch(/chargedCost !== null/);
+    expect(src).toMatch(/deducted > 0/);
+    expect(src).toMatch(/data\.dryRun/);
+    expect(src).toMatch(/data\.alreadyOwned/);
+  });
+
+  it("restores focus to the idle button when Cancel or a failed reveal returns to idle", () => {
+    // The confirm pair unmounts on the way back to idle; without this the
+    // focus fixup rule drops focus on <body>. Guarded so the first mount
+    // (initial idle) does not steal focus.
+    expect(src).toMatch(/ref=\{idleRef\}/);
+    expect(src).toMatch(/idleRef\.current\?\.focus\(\)/);
+    expect(src).toMatch(/prevState/);
+  });
+});

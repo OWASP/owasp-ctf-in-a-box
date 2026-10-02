@@ -107,7 +107,7 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
   // anti-vacuous half: the same reveal without dry run DOES write.
   it("a dry-run (preview) reveal returns the text and charges nothing", async () => {
     const result = await store.revealHint(PLAYER, TARGET, HINT_ID, { dryRun: true });
-    expect(result).toEqual({ ok: true, hint: HINT_TEXT, alreadyOwned: false, spent: 0, dryRun: true });
+    expect(result).toEqual({ ok: true, hint: HINT_TEXT, alreadyOwned: false, spent: 0, cost: COST, dryRun: true });
     const [spent, owned, at] = await pipeline([
       ["HGET", "ctf:hints:spent", PLAYER],
       ["SCARD", `ctf:user:${PLAYER}:hints`],
@@ -126,6 +126,7 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
       hint: HINT_TEXT,
       alreadyOwned: false,
       spent: COST,
+      cost: COST,
     });
   });
 
@@ -136,6 +137,7 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
       hint: HINT_TEXT,
       alreadyOwned: true,
       spent: COST,
+      cost: COST,
     });
     const [spent] = await pipeline([["HGET", "ctf:hints:spent", PLAYER]]);
     expect(Number(spent.result)).toBe(COST);

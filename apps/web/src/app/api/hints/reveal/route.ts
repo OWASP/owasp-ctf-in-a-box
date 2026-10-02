@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { launchApiAccess } from "@/lib/launch";
-import { resolveHintConfig, revealHint } from "@/lib/hint-store";
+import { revealHint } from "@/lib/hint-store";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 
 /** Buys (or re-views) one hint. Charging is atomic and idempotent in Redis —
@@ -52,12 +52,14 @@ export async function POST(request: Request) {
     const status = result.missing ? 404 : result.forbidden ? 403 : 400;
     return NextResponse.json({ error: result.error }, { status });
   }
-  const { cost } = await resolveHintConfig();
   return NextResponse.json({
     hint: result.hint,
     alreadyOwned: result.alreadyOwned,
     spent: result.spent,
-    cost,
+    // The price THIS reveal charged (from `revealHint`), not a second
+    // `resolveHintConfig()` read an organizer could have changed between the
+    // charge and now — so the acknowledgement shows what was actually deducted.
+    cost: result.cost,
     // An admin preview (#464): the text is shown, nothing was charged.
     ...(result.dryRun ? { dryRun: true } : {}),
   });

@@ -17,7 +17,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   and once the scheduled end has passed with "Scoring has closed — the event
   has ended, so hints can no longer be bought" (`403`, from the same gate
   the other refusals come from, before the time, progress and affordability
-  checks). Before, a contestant could buy a hint after the event ended and
+  checks, and re-checked inside the atomic charge script against Redis's
+  own clock and the live freeze flag, so a reveal that passed the gate a
+  moment before the end cannot charge after it). Before, a contestant could
+  buy a hint after the event ended and
   move the final standings. Re-viewing a hint already bought stays free, and
   the admin preview is unaffected.
 - **Fixed: after the scheduled end, a refused submission says the event has

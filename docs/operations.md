@@ -501,7 +501,10 @@ The panel offers:
     can no longer be bought". Final standings cannot move after the end.
     Re-viewing a hint already bought stays free and allowed (nothing to
     charge), and an admin preview is exempt. Checked right after "hints
-    on", before the time, progress and affordability gates.
+    on", before the time, progress and affordability gates — and re-checked
+    inside the atomic charge script against Redis's own clock and the live
+    freeze flag, so a reveal that passed the gate a moment before the end
+    still cannot charge after it.
 
   All of them fail **closed**: if the solve or balance lookup errors, the hint
   is refused rather than handed out unverified. A refused purchase never

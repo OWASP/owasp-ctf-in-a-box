@@ -10,6 +10,24 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: a hint can no longer be bought while scoring is closed (#566).**
+  A paid reveal lowers the buyer's net, so it now closes with scoring the way
+  a flag or quiz submit does: while scoring is frozen the reveal is refused
+  with "Scoring is paused right now — hints can't be bought until it resumes",
+  and once the scheduled end has passed with "Scoring has closed — the event
+  has ended, so hints can no longer be bought" (`403`, from the same gate
+  the other refusals come from, before the time, progress and affordability
+  checks). Before, a contestant could buy a hint after the event ended and
+  move the final standings. Re-viewing a hint already bought stays free, and
+  the admin preview is unaffected.
+- **Fixed: after the scheduled end, a refused submission says the event has
+  ended instead of "Scoring is paused right now. Try again later" (#567).**
+  The classic, quiz and AI gates now answer `ended` (not `paused`) once
+  `Scoring closes` has passed — a freeze toggled on after the close still
+  reads as the end — and both refusal messages say "Scoring has closed — the
+  event has ended." The external AI site receives `403 {"error": "ended"}`
+  for the same case (see docs/ai-module.md's error table); `paused` keeps
+  its meaning for the manual freeze, a start still ahead, and not launched.
 - **Fixed: the paid-hint "−N pts spent · M pts left" acknowledgement stays on
   the page after the reveal's refresh (#560).** A successful reveal calls
   `router.refresh()`, and both challenge pages then rendered the now-owned

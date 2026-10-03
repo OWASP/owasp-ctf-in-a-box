@@ -492,7 +492,18 @@ The panel offers:
     the charge; a solve landing in the same instant shows on the refresh
     that follows). A free hint (cost `0`) skips the check.
 
-  All three fail **closed**: if the solve or balance lookup errors, the hint
+  - **Scoring window** (no knob — it follows **Freeze scoring** and the
+    **Scoring closes** schedule) — a hint purchase lowers the buyer's net,
+    so it is a scoring action and closes with scoring (#566): while scoring
+    is frozen the reveal is refused with "Scoring is paused right now —
+    hints can't be bought until it resumes", and once the scheduled end
+    has passed with "Scoring has closed — the event has ended, so hints
+    can no longer be bought". Final standings cannot move after the end.
+    Re-viewing a hint already bought stays free and allowed (nothing to
+    charge), and an admin preview is exempt. Checked right after "hints
+    on", before the time, progress and affordability gates.
+
+  All of them fail **closed**: if the solve or balance lookup errors, the hint
   is refused rather than handed out unverified. A refused purchase never
   reads the hint text either: the charge script checks that the hint
   exists by field, runs every check that can refuse, and only then reads
@@ -1884,10 +1895,11 @@ carries:
     token, rate limit, team and schedule. Before launch the test runs as an
     admin preview, which skips the team and schedule gates, so the verdict
     vouches for signature, token and rate limit only.
-  - **`paused`**, **`solved`**, **`no-team`** — the signature and token
-    were fine and a gate refused the award, relayed as-is. `solved`: the
-    organizer's own login already holds this challenge. After launch only:
-    `paused` means scoring is frozen or outside its scheduled window, and
+  - **`paused`**, **`ended`**, **`solved`**, **`no-team`** — the signature
+    and token were fine and a gate refused the award, relayed as-is.
+    `solved`: the organizer's own login already holds this challenge. After
+    launch only: `paused` means scoring is frozen or before its scheduled
+    start, `ended` that the scheduled scoring end has passed (#567), and
     `no-team` means the organizer is on no team (the event route refuses a
     teamless login before the award, organizers included). Before launch a
     preview skips both of those gates. None of these is a fault on the

@@ -3,7 +3,8 @@ import "server-only";
 // module, so the value lives in the dependency-free defaults file.
 export { QUIZ_MAX_ATTEMPTS, QUIZ_RETRY_AFTER_MIN } from "./quiz-defaults";
 import { QUIZ_MAX_ATTEMPTS, QUIZ_RETRY_AFTER_MIN } from "./quiz-defaults";
-import { effectivePaused, getAdminSettings } from "@/lib/admin-store";
+import { getAdminSettings } from "@/lib/admin-store";
+import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { QUIZ_BUNDLE_VERSION, type QuizBundle, type QuizBundleQuestion } from "@/lib/quiz-io";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
@@ -661,7 +662,7 @@ export type QuizGate =
   | { allowed: true }
   | {
       allowed: false;
-      reason: "paused" | "answered" | "exhausted" | "cooldown" | "unavailable";
+      reason: "paused" | "ended" | "answered" | "exhausted" | "cooldown" | "unavailable";
       retryAt?: string;
       attemptsLeft?: number;
     };
@@ -693,7 +694,12 @@ async function evaluateGate(
   // classic-store's gate and the manual-freeze fail-open in scorer and sync.
   // A dry run (#464 admin preview) happens exactly while scoring is closed —
   // before launch — so the pause is what is being previewed, not a refusal.
-  if (!dryRun && settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
+  // `scoringClosure` (#567) is `effectivePaused` with the WHY kept: a passed
+  // scheduled end answers `ended`, every other closure `paused`.
+  if (!dryRun && settings) {
+    const closure = scoringClosure(Date.now(), settings.paused, settings.scoringStartsAt, settings.scoringEndsAt);
+    if (closure) return { allowed: false, reason: closure };
+  }
 
   const maxAttempts = settings?.quizMaxAttempts ?? QUIZ_MAX_ATTEMPTS;
   const retryAfterMin = settings?.quizRetryAfterMin ?? QUIZ_RETRY_AFTER_MIN;
@@ -910,7 +916,7 @@ export type AnswerResult =
   // `dryRun`: an admin-preview grade (#464) — nothing was written.
   | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
   | { ok: true; correct: false; dryRun?: true }
-  | { ok: false; reason: "paused" | "answered" | "exhausted" | "cooldown"; retryAt?: string }
+  | { ok: false; reason: "paused" | "ended" | "answered" | "exhausted" | "cooldown"; retryAt?: string }
   // The gate's lookup itself failed (fail-closed) — kept distinct from
   // "exhausted" so a caller-facing message can say the check couldn't be
   // completed (try again) instead of falsely claiming attempts are spent.

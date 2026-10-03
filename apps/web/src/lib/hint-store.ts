@@ -1,5 +1,6 @@
 import "server-only";
 import { errorLabel } from "@/lib/error-label";
+import { scoringEnded } from "@/lib/schedule-window";
 // Re-exported, not redeclared: the admin UI is a Client Component and cannot
 // import from this server-only module, so the values live in the
 // dependency-free defaults file and both sides read the same constant.
@@ -219,6 +220,10 @@ export type HintGate =
    *  not a preview): the figures `revealHint` reports the resulting score from. */
   | { allowed: true; balance?: HintBalance }
   | { allowed: false; reason: "disabled" }
+  // #566: scoring is closed — the manual freeze, or a passed scheduled end
+  // (`ended`). A paid reveal lowers the buyer's net, so it closes with
+  // scoring exactly as a flag or quiz submit does.
+  | { allowed: false; reason: "paused" | "ended" }
   /** The event's hint phase hasn't opened yet. */
   | { allowed: false; reason: "locked"; unlocksAt: string }
   /** Caller hasn't earned enough on this target yet (the anti-burner gate). */
@@ -273,12 +278,29 @@ export async function hintGate(
     return { allowed: false, reason: "disabled" };
   }
 
-  const { enabled, cost, minSolves, unlockAfterMin, scoringStartsAt } = await resolveHintConfig();
+  const { enabled, cost, minSolves, unlockAfterMin, scoringStartsAt, paused, scoringEndsAt } =
+    await resolveHintConfig();
   if (!enabled) return { allowed: false, reason: "disabled" };
   // A preview (#464: an admin before launch) is not buying anything, so the
   // time and anti-burner gates — both about when a PURCHASE is fair — do not
   // apply to it. Module-live and hints-enabled still do.
   if (opts.dryRun) return { allowed: true };
+
+  // Scoring window (#566). A purchase lowers the buyer's net, so it is a
+  // scoring action and closes with scoring: the manual freeze, and the
+  // scheduled END once it has passed (`ended`, so the contestant reads
+  // "over", not "try again later" — #567). NOT the not-launched case: the
+  // route's launch lock (#464) owns that, and an unset start is also every
+  // pre-launch admin preview's state. Before the time/progress/affordability
+  // gates on purpose — a closed event answers "closed", not "solve more" or
+  // "not enough", and no fold is read for a refusal the schedule already
+  // made. The one exemption is a hint this login already owns: a re-view
+  // charges nothing, so there is nothing to freeze.
+  const closedBecause = paused ? "paused" : scoringEnded(Date.now(), scoringEndsAt) ? "ended" : null;
+  if (closedBecause) {
+    if (opts.id && (await ownsHint(login, target, opts.id))) return { allowed: true };
+    return { allowed: false, reason: closedBecause };
+  }
 
   // Time phase: only meaningful once the organizer has set a scoring start.
   if (unlockAfterMin > 0 && scoringStartsAt) {
@@ -378,6 +400,14 @@ async function attemptReveal(
   // the boundary that actually decides.
   const gate = await hintGate(login, target, { dryRun, id });
   if (!gate.allowed) {
+    // #566/#567: a closed event, worded apart — a pause is temporary, the
+    // end is final — and `forbidden` so the route answers 403 like a submit.
+    if (gate.reason === "paused") {
+      return { ok: false, forbidden: true, error: "Scoring is paused right now — hints can't be bought until it resumes" };
+    }
+    if (gate.reason === "ended") {
+      return { ok: false, forbidden: true, error: "Scoring has closed — the event has ended, so hints can no longer be bought" };
+    }
     if (gate.reason === "locked") {
       return { ok: false, forbidden: true, error: `Hints unlock at ${gate.unlocksAt}` };
     }

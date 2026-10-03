@@ -1,6 +1,6 @@
 import "server-only";
 import { errorLabel } from "@/lib/error-label";
-import { upstashPipeline } from "@/lib/upstash";
+import { upstashEval, upstashPipeline } from "@/lib/upstash";
 
 /**
  * The folded leaderboard's invalidation token (#553), in three parts.
@@ -40,6 +40,19 @@ import { upstashPipeline } from "@/lib/upstash";
  *    charge a hint against a gross this operation is about to lower. `end`
  *    never throws — the operation's own outcome is what the caller reports
  *    — but logs, since the other tasks then keep refusing until the TTL.
+ *
+ *    Both are ONE Lua script each, because a pipeline is not atomic: an
+ *    INCR that lands while the EXPIRE fails would leave a positive counter
+ *    with no stuck-guard, the caller would never reach `end`, and every
+ *    purchase would be refused until someone noticed. The stuck-guard is
+ *    armed only when the key has no TTL yet, and `end` DELETES the key once
+ *    no bracket is open: a counter left stuck by a dead task expires
+ *    `SCORE_LOWERING_TTL_S` after the FIRST begin however many later
+ *    operations run, and the next begin after a clean close arms a fresh
+ *    guard. The accepted trade-off: a bracket that opens in the last seconds
+ *    of a guard armed by an operation STILL running after ~5 minutes is
+ *    guarded only until that guard expires — no wipe this kit performs takes
+ *    a hundredth of that.
  *
  * The brackets: the master reset and every settings write (`admin-store.ts`
  * — the fold counts only the ENABLED modules' points, so switching one off
@@ -84,34 +97,43 @@ export function foldGeneration(): number {
   return generation;
 }
 
+// KEYS: [1]=in-progress counter [2]=score revision. ARGV: [1]=stuck-guard TTL (s).
+// Atomic: raise the counter, arm the stuck-guard only if none is armed (a
+// later begin must not keep renewing a guard a dead task left behind), bump
+// the revision. Exported for the tests and the live suite.
+export const BEGIN_SCORE_LOWERING_SCRIPT = `
+local n = redis.call('INCR', KEYS[1])
+if redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+redis.call('INCR', KEYS[2])
+return n`;
+
+// KEYS: [1]=in-progress counter [2]=score revision.
+// Atomic: lower the counter and, once no bracket is open (or the guard
+// already expired it below zero), DELETE the key so the next begin arms a
+// fresh guard rather than inheriting a stale one; bump the revision.
+export const END_SCORE_LOWERING_SCRIPT = `
+local n = redis.call('DECR', KEYS[1])
+if n <= 0 then redis.call('DEL', KEYS[1]) n = 0 end
+redis.call('INCR', KEYS[2])
+return n`;
+
 /** Open a score-lowering bracket: raise the shared in-progress counter (with
- *  the stuck-guard TTL), bump the shared revision, drop this memo. THROWS on
- *  any failure — the caller must not proceed to its first write. */
+ *  the stuck-guard TTL), bump the shared revision, drop this memo — in one
+ *  atomic script. THROWS on any failure — the caller must not proceed to
+ *  its first write. Atomic, so a throw means nothing landed. */
 export async function beginScoreLowering(): Promise<void> {
   invalidateFoldedLeaderboard();
-  const replies = await upstashPipeline([
-    ["INCR", SCORE_LOWERING_KEY],
-    ["EXPIRE", SCORE_LOWERING_KEY, SCORE_LOWERING_TTL_S],
-    ["INCR", SCORE_REV_KEY],
-  ]);
-  const failed = replies.find((r) => r.error !== undefined);
-  if (failed) throw new Error(`score-lowering marker could not be set: ${failed.error}`);
+  await upstashEval(BEGIN_SCORE_LOWERING_SCRIPT, [SCORE_LOWERING_KEY, SCORE_REV_KEY], [SCORE_LOWERING_TTL_S]);
 }
 
-/** Close the bracket: lower the counter, bump the revision, drop this memo.
- *  Never throws — logs — so the operation's own outcome is what the caller
- *  reports. A counter already expired by the stuck-guard is clamped at 0
- *  rather than going negative. */
+/** Close the bracket: lower the counter (deleting the key once no bracket is
+ *  open), bump the revision, drop this memo — in one atomic script. Never
+ *  throws — logs — so the operation's own outcome is what the caller
+ *  reports. */
 export async function endScoreLowering(): Promise<void> {
   invalidateFoldedLeaderboard();
   try {
-    const [decr, incr] = await upstashPipeline([
-      ["DECR", SCORE_LOWERING_KEY],
-      ["INCR", SCORE_REV_KEY],
-    ]);
-    const failed = [decr, incr].find((r) => r.error !== undefined);
-    if (failed) throw new Error(failed.error);
-    if (Number(decr.result) < 0) await upstashPipeline([["SET", SCORE_LOWERING_KEY, 0]]);
+    await upstashEval(END_SCORE_LOWERING_SCRIPT, [SCORE_LOWERING_KEY, SCORE_REV_KEY], []);
   } catch (err) {
     console.error(
       "fold-cache: score-lowering bracket could not be closed (other app tasks refuse hint purchases until the stuck-guard expires):",

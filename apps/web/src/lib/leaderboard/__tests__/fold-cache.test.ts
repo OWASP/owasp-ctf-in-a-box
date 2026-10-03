@@ -4,16 +4,24 @@
 // against, and an operation-in-progress COUNTER that both the balance read
 // and the script reject while any score-lowering operation is running (the
 // revision alone cannot cover the middle of a multi-step wipe).
+//
+// begin/end are single Lua scripts, because a pipeline is not atomic: an
+// INCR that lands while the EXPIRE fails would leave a positive counter with
+// no stuck-guard, the caller would never reach `end`, and every purchase
+// would be refused until someone noticed.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
   upstashPipeline: vi.fn<(c: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
 }));
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/upstash", () => ({ upstashPipeline: mocks.upstashPipeline }));
+vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
 
 import {
+  BEGIN_SCORE_LOWERING_SCRIPT,
+  END_SCORE_LOWERING_SCRIPT,
   SCORE_LOWERING_KEY,
   SCORE_LOWERING_TTL_S,
   SCORE_REV_KEY,
@@ -26,7 +34,8 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.upstashPipeline.mockImplementation(async (cmds) => cmds.map(() => ({ result: 1 })));
+  mocks.upstashEval.mockResolvedValue(1);
+  mocks.upstashPipeline.mockResolvedValue([{ result: null }, { result: null }]);
 });
 
 describe("invalidateFoldedLeaderboard (process-local)", () => {
@@ -34,20 +43,36 @@ describe("invalidateFoldedLeaderboard (process-local)", () => {
     const before = foldGeneration();
     invalidateFoldedLeaderboard();
     expect(foldGeneration()).toBe(before + 1);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 });
 
 describe("beginScoreLowering", () => {
-  it("raises the in-progress counter (with a stuck-guard TTL), bumps the revision, and drops the memo", async () => {
+  it("runs ONE atomic script over the counter and the revision, and drops the memo", async () => {
     const before = foldGeneration();
     await beginScoreLowering();
     expect(foldGeneration()).toBe(before + 1);
-    expect(mocks.upstashPipeline).toHaveBeenCalledWith([
-      ["INCR", SCORE_LOWERING_KEY],
-      ["EXPIRE", SCORE_LOWERING_KEY, SCORE_LOWERING_TTL_S],
-      ["INCR", SCORE_REV_KEY],
-    ]);
+    expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
+    expect(mocks.upstashEval).toHaveBeenCalledWith(
+      BEGIN_SCORE_LOWERING_SCRIPT,
+      [SCORE_LOWERING_KEY, SCORE_REV_KEY],
+      [SCORE_LOWERING_TTL_S],
+    );
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+  });
+
+  it("the script raises the counter, bumps the revision, and arms the stuck-guard only when none is armed", () => {
+    // INCR + EXPIRE + INCR in one EVAL: nothing can land halfway. The TTL is
+    // set only when the key has none (TTL == -1), so a counter left stuck by
+    // a dead task expires 300 s after the FIRST begin, however many later
+    // operations run — a later begin must not keep renewing a stale guard.
+    const s = BEGIN_SCORE_LOWERING_SCRIPT;
+    expect(s).toMatch(/INCR', KEYS\[1\]/);
+    expect(s).toMatch(/INCR', KEYS\[2\]/);
+    expect(s).toMatch(/TTL', KEYS\[1\]/);
+    expect(s).toMatch(/EXPIRE', KEYS\[1\], ARGV\[1\]/);
+    expect(s.indexOf("TTL")).toBeLessThan(s.indexOf("EXPIRE"));
   });
 
   it("keeps both keys out of the master reset's sweep", () => {
@@ -58,37 +83,38 @@ describe("beginScoreLowering", () => {
     expect(SCORE_LOWERING_KEY).toMatch(/^ctf:admin:/);
   });
 
-  it("THROWS when the marker cannot be set — the caller must not write", async () => {
+  it("THROWS when the script cannot run — the caller must not write", async () => {
     // Fail CLOSED: without the marker, another app task still sees the old
     // revision and no in-progress flag, and could charge a hint against a
-    // gross this operation is about to lower.
-    mocks.upstashPipeline.mockRejectedValueOnce(new Error("upstash down"));
+    // gross this operation is about to lower. Atomic, so a throw means
+    // NOTHING landed — no rollback to attempt.
+    mocks.upstashEval.mockRejectedValueOnce(new Error("upstash down"));
     await expect(beginScoreLowering()).rejects.toThrow("upstash down");
-    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }, { result: 1 }, { result: 1 }]);
-    await expect(beginScoreLowering()).rejects.toThrow(/NOAUTH/);
   });
 });
 
 describe("endScoreLowering", () => {
-  it("lowers the counter, bumps the revision, and drops the memo", async () => {
+  it("runs ONE atomic script that lowers the counter and bumps the revision, and drops the memo", async () => {
     const before = foldGeneration();
     await endScoreLowering();
     expect(foldGeneration()).toBe(before + 1);
-    expect(mocks.upstashPipeline).toHaveBeenCalledWith([
-      ["DECR", SCORE_LOWERING_KEY],
-      ["INCR", SCORE_REV_KEY],
-    ]);
+    expect(mocks.upstashEval).toHaveBeenCalledWith(END_SCORE_LOWERING_SCRIPT, [SCORE_LOWERING_KEY, SCORE_REV_KEY], []);
   });
 
-  it("clamps the counter at 0 if the stuck-guard already expired it", async () => {
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: -1 }, { result: 9 }]);
-    await endScoreLowering();
-    expect(mocks.upstashPipeline).toHaveBeenCalledWith([["SET", SCORE_LOWERING_KEY, 0]]);
+  it("the script deletes the counter key once no bracket is open, so the next begin arms a fresh guard", () => {
+    // DECR to 0 (or below, if the stuck-guard already expired it) → DEL, not
+    // "leave a 0 with a stale TTL": the next begin then finds no TTL and
+    // arms a full one. Revision bumped in the same EVAL.
+    const s = END_SCORE_LOWERING_SCRIPT;
+    expect(s).toMatch(/DECR', KEYS\[1\]/);
+    expect(s).toMatch(/<= 0/);
+    expect(s).toMatch(/DEL', KEYS\[1\]/);
+    expect(s).toMatch(/INCR', KEYS\[2\]/);
   });
 
   it("never throws — the operation's own outcome is what the caller reports — but logs", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.upstashPipeline.mockRejectedValueOnce(new Error("upstash down"));
+    mocks.upstashEval.mockRejectedValueOnce(new Error("upstash down"));
     const before = foldGeneration();
     await expect(endScoreLowering()).resolves.toBeUndefined();
     expect(foldGeneration()).toBe(before + 1);

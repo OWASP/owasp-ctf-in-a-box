@@ -1,6 +1,9 @@
 import "server-only";
 import { errorLabel } from "@/lib/error-label";
-import { getHintPenalties, HINTS_AVAILABLE } from "@/lib/hint-store";
+// From hint-config, not hint-store: the store imports this fold (through
+// hint-balance.ts, for the affordability gate, #553), so the policy reads the
+// fold needs live in a leaf both can import without a cycle.
+import { getHintPenalties, HINTS_AVAILABLE } from "@/lib/hint-config";
 import { compareStanding } from "./rank";
 import type { LeaderboardData } from "./types";
 

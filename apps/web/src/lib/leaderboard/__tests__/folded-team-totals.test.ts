@@ -54,7 +54,7 @@ vi.mock("@/lib/ai-store", () => ({
   listAiChallenges: mocks.listAiChallenges,
 }));
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
-vi.mock("@/lib/hint-store", () => ({
+vi.mock("@/lib/hint-config", () => ({
   getHintPenalties: async () => mocks.penalties,
   HINTS_AVAILABLE: true,
 }));

@@ -1120,6 +1120,58 @@ and `getHintPenalties` (the read-time leaderboard penalty). Flipping
 `hintsEnabled` in `/admin` therefore changes all of them on the next
 request, with no rebuild and no restart.
 
+**The affordability gate reads the folded leaderboard.** `hintGate` refuses
+a priced hint when the contestant's net score does not cover it (#553):
+`hint-balance.ts` takes gross from the contestant's row on the folded board
+(`points + hintPenalty` — the one place every module's points are already
+summed per login) and the spend fresh from `ctf:hints:spent`, as the
+case-folded sum of the hash (a case-only login rename splits one person's
+spend across two fields), because the fold is memoized for ~10 s and a
+second purchase must not pass on the row's stale penalty. The gross side is
+folded **fresh** for this read (`fresh: true`), never from the ~10 s memo:
+the memo is process-local and the AWS module runs two app tasks, so a
+score-lowering write on one task could leave the other serving a pre-write
+gross for a TTL. The read is rare — it sits behind the module, enabled, time
+and progress gates, and the route is rate-limited per login — so it pays for
+its own fold. Even a fresh fold can finish after a write on the *other* task
+lowered the score, so the gross travels with a **score revision**
+(`ctf:admin:score-rev`, read *before* the fold): the reveal script compares
+it to the current one before reading the spend or charging, answers `stale`
+when it moved, and the store re-reads and retries once. The revision alone
+cannot cover the *middle* of a multi-step wipe, so every admin operation
+that lowers a score (the master and per-player resets and the delete, the
+demo clear, any settings write — a module switched off takes its points out
+of the fold) is **bracketed** through `leaderboard/fold-cache.ts` (a leaf,
+since `admin-store` sits upstream of the fold): `beginScoreLowering()`
+before its first write raises a shared **in-progress counter**
+(`ctf:admin:score-lowering`, with a TTL stuck-guard) and bumps the revision
+— and *throws* if it cannot, in which case nothing is written —
+`endScoreLowering()` in a `finally` after its last write lowers the counter
+and bumps again (a failure midway leaves the earlier deletes standing).
+While the counter is up, the balance read refuses without folding (the gate
+answers `busy`: "Scores are being updated. Try again in a moment") and the
+script refuses `stale`. Both calls also drop the process-local memo, so the
+*board* on the writing instance does not show wiped scores for a TTL (a fold
+already running when the invalidation came is discarded, not memoized).
+It fails **closed** like the progress gate, and exempts an
+already-owned hint (a re-view charges nothing). The gate's read and the charge
+are still two round-trips, so the reveal script makes the limit **atomic**: it
+takes the gate's gross as an argument, re-reads the spend inside the script,
+and refuses before its `SADD` when `gross − spend < cost` — two parallel
+reveals against a balance that covers one land exactly one. Every verdict
+returns the post-call, case-folded spend total, and the reveal reports
+`balance = gross − that total` — not the gate's `net − cost`, which a reveal
+landing in between would have outdated — and the challenge page shows it
+beside the deduction as "N pts left". It is a **lower bound**: gross is the
+fold's figure, and a solve landing between the fold and the charge is not in
+it (score *awards* do not bump the revision — every solve would otherwise
+force concurrent buyers to retry); awards only add, so it is never
+overstated, and the page refresh after the reveal shows the live score.
+That read is why the policy helpers the fold needs — `HINTS_AVAILABLE`,
+`resolveHintConfig`, `getHintPenalties` — live in `hint-config.ts`: the fold's
+last stage imports them, the store imports the fold, and one module cannot
+sit on both sides of that without a cycle. `hint-store.ts` re-exports them.
+
 Two things stay separate from that override on purpose. `HINTS_AVAILABLE`
 is a **capability** check — Upstash credentials present — since hint text
 lives only there and no organizer setting can conjure it; the read paths

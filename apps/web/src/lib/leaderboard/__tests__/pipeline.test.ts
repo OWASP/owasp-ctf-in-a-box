@@ -50,7 +50,7 @@ vi.mock("@/lib/team-store", () => ({ listTeams: teamStore.listTeams }));
 // Mutable so a single module graph can cover both the hints-off and hints-on
 // pipelines (vi.mock is hoisted and applies for the whole file).
 const hints = { enabled: false, penalties: new Map<string, number>() };
-vi.mock("@/lib/hint-store", () => ({
+vi.mock("@/lib/hint-config", () => ({
   // Policy now lives inside getHintPenalties (it consults resolveHintConfig),
   // so an "off" event yields an empty map rather than a false capability flag.
   getHintPenalties: async () => (hints.enabled ? hints.penalties : new Map<string, number>()),

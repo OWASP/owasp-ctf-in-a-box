@@ -3,8 +3,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(s: string, k: string[], a: (string | number)[]) => Promise<unknown>>(),
   upstashPipeline: vi.fn<(c: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
+  beginScoreLowering: vi.fn(),
+  endScoreLowering: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
+// #553: the reset lowers scores. It brackets its writes with the leaf's
+// begin/end — a shared in-progress marker + revision bump — so no app task
+// charges a hint against a gross the wipe is removing (admin-store cannot
+// import the fold itself: it is upstream of it).
+vi.mock("@/lib/leaderboard/fold-cache", () => ({
+  beginScoreLowering: mocks.beginScoreLowering,
+  endScoreLowering: mocks.endScoreLowering,
+}));
 // `parseScanPage` is the REAL parser — see the note in team-store.test.ts.
 vi.mock("@/lib/upstash", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/upstash")>();
@@ -21,6 +31,8 @@ import { resetEvent } from "@/lib/admin-store";
 beforeEach(() => {
   mocks.upstashEval.mockReset();
   mocks.upstashPipeline.mockReset();
+  mocks.beginScoreLowering.mockReset();
+  mocks.endScoreLowering.mockReset();
   mocks.upstashEval.mockResolvedValue([]);
 });
 
@@ -44,6 +56,45 @@ function pipelineImpl(scanKeys: (pattern: string) => string[][]) {
 }
 
 describe("resetEvent", () => {
+  // #553 review: the wipe lowers every score, and the hint gate reads gross
+  // from the fold memo (~10 s). Without this a reset contestant could buy a
+  // hint against their pre-reset points. After the LAST write, not before —
+  // an invalidation that runs first can be refilled by a fold that still
+  // sees the old keys.
+  // Bumped BEFORE the first write and AFTER the last. Before: a hint fold
+  // that read the old points under revision R must find R already moved by
+  // the time its charge reaches the script, however long the wipe takes.
+  // After: a fold that started mid-wipe read a mix, and the trailing bump
+  // outdates it too. One bump at either end alone leaves a window.
+  it("opens the score-lowering bracket before the first delete and closes it after the audit eval", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    await resetEvent("alice");
+    expect(mocks.beginScoreLowering).toHaveBeenCalledTimes(1);
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
+    const writes = [...mocks.upstashPipeline.mock.invocationCallOrder, ...mocks.upstashEval.mock.invocationCallOrder];
+    expect(mocks.beginScoreLowering.mock.invocationCallOrder[0]).toBeLessThan(Math.min(...writes));
+    expect(mocks.endScoreLowering.mock.invocationCallOrder[0]).toBeGreaterThan(Math.max(...writes));
+  });
+
+  it("still closes the bracket when the freeze/audit eval throws — the prefix deletes already stand", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    mocks.upstashEval.mockRejectedValue(new Error("down"));
+    await expect(resetEvent("alice")).rejects.toThrow("down");
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+
+  it("ABORTS before any delete when the bracket cannot be opened — fail closed", async () => {
+    // Without the marker another app task still sees the old revision and
+    // no in-progress flag, and could charge a hint against a gross this
+    // wipe is about to remove. Nothing may be deleted in that state.
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    mocks.beginScoreLowering.mockRejectedValue(new Error("upstash down"));
+    await expect(resetEvent("alice")).rejects.toThrow("upstash down");
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(mocks.endScoreLowering).not.toHaveBeenCalled();
+  });
+
   it("wipes every event-data prefix, then freezes + audits in one eval", async () => {
     // two keys for every prefix, single SCAN page each
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1", "k2"]]));

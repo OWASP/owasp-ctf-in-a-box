@@ -60,6 +60,10 @@ export async function POST(request: Request) {
     // `resolveHintConfig()` read an organizer could have changed between the
     // charge and now — so the acknowledgement shows what was actually deducted.
     cost: result.cost,
+    // The contestant's net score after this reveal (#553), when the store
+    // read one — so the page can say what is left next to the deduction. A
+    // lower bound: a solve landing during the purchase is not in it yet.
+    ...(result.balance !== undefined ? { balance: result.balance } : {}),
     // An admin preview (#464): the text is shown, nothing was charged.
     ...(result.dryRun ? { dryRun: true } : {}),
   });

@@ -3,9 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(s: string, k: string[], a: (string | number)[]) => Promise<unknown>>(),
   upstashPipeline: vi.fn<(c: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
+  beginScoreLowering: vi.fn(),
+  endScoreLowering: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
+// #553: a settings write can LOWER a contestant's folded score (a module
+// switched off takes its points out of the fold); the store brackets the
+// write with the leaf's begin/end (shared in-progress marker + revision bump).
+vi.mock("@/lib/leaderboard/fold-cache", () => ({
+  beginScoreLowering: mocks.beginScoreLowering,
+  endScoreLowering: mocks.endScoreLowering,
+}));
 
 import {
   AdminValidationError,
@@ -23,6 +32,49 @@ import { SECURE_DEV_TARGETS_MESSAGE } from "@/lib/secure-dev-targets";
 beforeEach(() => {
   mocks.upstashEval.mockReset();
   mocks.upstashPipeline.mockReset();
+  mocks.beginScoreLowering.mockReset();
+  mocks.endScoreLowering.mockReset();
+});
+
+// #553 review: `withModuleContributions` folds only the ENABLED modules'
+// points, so switching a module off lowers every contestant's gross. Any
+// settings write that reaches Redis is bracketed (cheap: admin-only, rare);
+// a patch refused before Redis writes nothing and opens nothing.
+describe("updateAdminSettings brackets the write as score-lowering (#553)", () => {
+  it("opens the bracket before the write and closes it after it lands", async () => {
+    mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
+    await updateAdminSettings({ enabledModules: ["quiz"] }, "alice");
+    expect(mocks.beginScoreLowering).toHaveBeenCalledTimes(1);
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
+    const write = mocks.upstashEval.mock.invocationCallOrder[0];
+    expect(mocks.beginScoreLowering.mock.invocationCallOrder[0]).toBeLessThan(write);
+    expect(mocks.endScoreLowering.mock.invocationCallOrder[0]).toBeGreaterThan(write);
+  });
+
+  it("opens nothing on a patch refused before Redis", async () => {
+    await expect(updateAdminSettings({ hintCost: -1 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    expect(mocks.beginScoreLowering).not.toHaveBeenCalled();
+    expect(mocks.endScoreLowering).not.toHaveBeenCalled();
+  });
+
+  it("closes the bracket after any attempt that reached Redis — even one the script refused, or one that threw", async () => {
+    // Once the eval was sent, the transport cannot tell "refused, wrote
+    // nothing" from "wrote, then the reply was lost"; an extra fold is
+    // harmless, a missed one is a hint bought on points that no longer count.
+    mocks.upstashEval.mockResolvedValueOnce(["__window_refused__", "2026-08-14T10:00:00Z", "2026-08-14T09:00:00Z"]);
+    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
+    mocks.upstashEval.mockRejectedValueOnce(new Error("down"));
+    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toThrow("down");
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(2);
+  });
+
+  it("ABORTS before the write when the bracket cannot be opened — fail closed", async () => {
+    mocks.beginScoreLowering.mockRejectedValue(new Error("upstash down"));
+    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toThrow("upstash down");
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(mocks.endScoreLowering).not.toHaveBeenCalled();
+  });
 });
 
 describe("getAdminSettings", () => {

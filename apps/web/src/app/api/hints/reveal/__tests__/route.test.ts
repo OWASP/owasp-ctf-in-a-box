@@ -113,11 +113,50 @@ describe("POST /api/hints/reveal", () => {
   // is exercised directly in lib/__tests__/launch.test.ts.
   it("proceeds normally once launched (or for an admin preview)", async () => {
     requireLaunchedApi.mockResolvedValue(null);
-    revealHint.mockResolvedValue({ ok: true, hint: "look under the rug", alreadyOwned: false, spent: 10, cost: 10 });
+    revealHint.mockResolvedValue({ ok: true, hint: "look under the rug", alreadyOwned: false, spent: 10, cost: 10, balance: 90 });
     const res = await POST(req({ app: "quiz", id: "q1" }));
     expect(res.status).toBe(200);
     expect(revealHint).toHaveBeenCalledWith("alice", "quiz", "q1", { dryRun: false });
-    expect(await res.json()).toEqual({ hint: "look under the rug", alreadyOwned: false, spent: 10, cost: 10 });
+    // `balance` (#553) is the store's post-charge net score, passed through so
+    // the page can acknowledge the resulting score next to the deduction.
+    expect(await res.json()).toEqual({ hint: "look under the rug", alreadyOwned: false, spent: 10, cost: 10, balance: 90 });
+  });
+
+  it("omits balance when the store reports none, rather than sending null or 0", async () => {
+    revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10, cost: 10 });
+    const res = await POST(req({ app: "quiz", id: "q1" }));
+    expect(await res.json()).not.toHaveProperty("balance");
+  });
+
+  it("403s an unaffordable hint with the store's message intact (#553)", async () => {
+    revealHint.mockResolvedValue({
+      ok: false,
+      forbidden: true,
+      error: "Not enough points: this hint costs 10 and you have 5",
+    });
+    const res = await POST(req({ app: "quiz", id: "q1" }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Not enough points: this hint costs 10 and you have 5" });
+  });
+
+  // Contestant secrecy boundary: a refusal is the error and nothing else —
+  // even if the store's result object ever carried a `hint` field alongside
+  // `ok: false`, the response must not. The contestant-facing shape is
+  // pinned here, the script's no-read ordering in hint-store.test.ts.
+  it("a refused reveal's body carries only the error, never a hint, cost or balance", async () => {
+    revealHint.mockResolvedValue({
+      ok: false,
+      forbidden: true,
+      error: "Not enough points: this hint costs 10 and you have 5",
+      hint: "LEAKED",
+      cost: 10,
+      balance: 5,
+    } as never);
+    const res = await POST(req({ app: "quiz", id: "q1" }));
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(Object.keys(body)).toEqual(["error"]);
+    expect(JSON.stringify(body)).not.toContain("LEAKED");
   });
 
   it("404s when the hint is missing", async () => {

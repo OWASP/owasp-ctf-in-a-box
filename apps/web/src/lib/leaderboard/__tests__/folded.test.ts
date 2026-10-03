@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { getFoldedLeaderboard, LEADERBOARD_FOLD_TTL_MS, resetFoldedLeaderboardCache } from "@/lib/leaderboard/folded";
+import { invalidateFoldedLeaderboard } from "@/lib/leaderboard/fold-cache";
 import type { LeaderboardData } from "@/lib/leaderboard/types";
 
 const board = (tag: string): LeaderboardData => ({
@@ -53,6 +54,77 @@ describe("getFoldedLeaderboard", () => {
     const results = await Promise.all(calls);
     expect(fold).toHaveBeenCalledTimes(1);
     expect(results[0]).toBe(results[2]);
+  });
+
+  // #553 review: a score can go DOWN — Support's per-player reset and the
+  // master reset delete points — and the hint gate reads gross from this
+  // memo. Those ops invalidate it through fold-cache.ts (a leaf, because
+  // admin-store sits upstream of the fold and cannot import this module).
+  it("drops the memo when invalidated, inside the TTL", async () => {
+    const fold = vi.fn().mockResolvedValueOnce(board("before")).mockResolvedValueOnce(board("after"));
+    await getFoldedLeaderboard({ now: at(NOW), fold });
+    invalidateFoldedLeaderboard();
+    const after = await getFoldedLeaderboard({ now: at(NOW + 1), fold });
+    expect(fold).toHaveBeenCalledTimes(2);
+    expect(after.generatedAt).toBe("after");
+  });
+
+  it("discards a fold that was already running when the invalidation came", async () => {
+    // That fold read pre-reset data. Stamping it fresh on completion would
+    // serve the wiped scores for a full TTL; sharing it with callers who
+    // arrive after the invalidation would too.
+    let release!: (b: LeaderboardData) => void;
+    const fold = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<LeaderboardData>((r) => (release = r)))
+      .mockResolvedValueOnce(board("after"));
+    const inflight = getFoldedLeaderboard({ now: at(NOW), fold });
+    invalidateFoldedLeaderboard();
+    const next = getFoldedLeaderboard({ now: at(NOW + 1), fold }); // must not join the stale fold
+    release(board("stale"));
+    expect((await inflight).generatedAt).toBe("stale"); // the caller that started it still gets it
+    expect((await next).generatedAt).toBe("after");
+    expect(fold).toHaveBeenCalledTimes(2);
+    // …and the stale result was never memoized.
+    const later = await getFoldedLeaderboard({ now: at(NOW + 2), fold });
+    expect(later.generatedAt).toBe("after");
+    expect(fold).toHaveBeenCalledTimes(2);
+  });
+
+  // #553 review: the memo and its invalidation are PROCESS-local, and the AWS
+  // module runs two app tasks — a score-lowering write on one task never
+  // reaches the other's memo. The hint gate therefore folds fresh: never
+  // served from the memo, never stored into it, never shared.
+  it("fresh: true folds every time and leaves the memo untouched", async () => {
+    const fold = vi
+      .fn()
+      .mockResolvedValueOnce(board("memo"))
+      .mockResolvedValueOnce(board("fresh-1"))
+      .mockResolvedValueOnce(board("fresh-2"));
+    await getFoldedLeaderboard({ now: at(NOW), fold });
+    expect((await getFoldedLeaderboard({ now: at(NOW + 1), fold, fresh: true })).generatedAt).toBe("fresh-1");
+    expect((await getFoldedLeaderboard({ now: at(NOW + 2), fold, fresh: true })).generatedAt).toBe("fresh-2");
+    expect(fold).toHaveBeenNthCalledWith(2, { fresh: true });
+    expect(fold).toHaveBeenNthCalledWith(3, { fresh: true });
+    // The memo still holds the first fold: a fresh read neither replaced it…
+    expect((await getFoldedLeaderboard({ now: at(NOW + 3), fold })).generatedAt).toBe("memo");
+    expect(fold).toHaveBeenCalledTimes(3);
+  });
+
+  it("a fresh read does not join a fold already in flight for the memo", async () => {
+    // …nor shares one: an in-flight memo fold may have started before the
+    // write the fresh reader is reacting to.
+    let release!: (b: LeaderboardData) => void;
+    const fold = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<LeaderboardData>((r) => (release = r)))
+      .mockResolvedValueOnce(board("fresh"));
+    const memo = getFoldedLeaderboard({ now: at(NOW), fold });
+    const fresh = await getFoldedLeaderboard({ now: at(NOW + 1), fold, fresh: true });
+    expect(fresh.generatedAt).toBe("fresh");
+    release(board("memo"));
+    expect((await memo).generatedAt).toBe("memo");
+    expect(fold).toHaveBeenCalledTimes(2);
   });
 
   // Fail-open, never cache a failure: the next caller retries immediately.

@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/hint-store", () => ({
+vi.mock("@/lib/hint-config", () => ({
   getHintPenalties: mocks.getHintPenalties,
   HINTS_AVAILABLE: true,
 }));

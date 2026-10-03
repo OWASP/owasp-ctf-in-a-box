@@ -10,6 +10,38 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: a hint can no longer be bought with points the contestant does not
+  have (#553).** The reveal is refused — `403`, "Not enough points: this hint
+  costs N and you have M" — when the contestant's leaderboard score (every
+  module, net of hints already bought) does not cover the price — checked
+  once at the gate and again atomically inside the charge script, so two
+  simultaneous purchases cannot both squeeze through on the same balance —
+  and a refused purchase never reads the hint text, which the script
+  fetches only after every check that can refuse has passed.
+  The gate folds the score fresh rather than reading the leaderboard's ~10 s
+  memo (the memo is per app instance, and the AWS module runs two); fresh reads
+  also bypass the Lambda source's 30 s fetch cache. The charge is stamped with
+  a shared score revision, and every score-lowering
+  admin operation is bracketed by a shared in-progress marker (raised before
+  its first write, lowered after its last, with a stuck-guard) — a reset or a
+  module switched off on another instance while the fold ran makes the
+  charge come back `stale` and retry, and while one is still running the
+  purchase is refused with "Scores are being updated. Try again in a moment"
+  — so nobody can buy against points that no longer count. Those operations
+  (the master and per-player resets, a contestant delete, the demo clear,
+  any settings write) also drop the memo, on their failure paths too, so the
+  board itself stops showing wiped scores at once.
+  Before, the board floored a net score at 0 and the shortfall was quietly
+  forgiven, so a hint was cheaper for whoever had the least to lose.
+  Re-viewing a hint already bought stays free whatever the balance, a free
+  hint (cost 0) skips the check, and an unreadable balance refuses rather
+  than reveals — with "Couldn't check your score right now. Try again", not
+  an invented figure. After a purchase the challenge page now also says "N pts
+  left" next to the "−N pts spent" acknowledgement (the follow-up deferred
+  from #550) — the balance at the moment of the charge; a solve landing in
+  the same instant shows on the refresh that follows. Internally the hint policy reads the leaderboard's
+  penalty fold needs moved to `hint-config.ts`; `hint-store.ts` re-exports
+  them, so nothing outside the leaderboard changes its imports.
 - **Fixed: a master reset no longer resurrects Secure Development scores on
   the next poll (#551).** The reset already bumped a `resetAt` epoch that the
   `sync` poller honoured by dropping its cursor — but dropping the cursor also

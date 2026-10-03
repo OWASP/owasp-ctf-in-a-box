@@ -4,6 +4,7 @@ import { withModuleContributions } from "./module-contributions";
 import { withTeamStandings } from "./team-standings";
 import { withModuleSeries } from "./module-series";
 import { withHintPenalties } from "./hint-penalties";
+import { foldGeneration } from "./fold-cache";
 import type { LeaderboardData } from "./types";
 
 /**
@@ -43,7 +44,7 @@ import type { LeaderboardData } from "./types";
 
 export const LEADERBOARD_FOLD_TTL_MS = 10_000;
 
-type Fold = () => Promise<LeaderboardData>;
+type Fold = (options?: { fresh?: boolean }) => Promise<LeaderboardData>;
 type Clock = () => number;
 
 // Stage order is load-bearing (this commentary moved here from the page with
@@ -68,16 +69,20 @@ type Clock = () => number;
 // `points` untouched, so it neither needs to run before the penalty fold nor
 // disturbs it: the chart is gross, the row net.
 /** The production fold: the leaderboard source through every overlay stage. */
-const defaultFold: Fold = async () =>
+const defaultFold: Fold = async ({ fresh = false } = {}) =>
   (await getLeaderboardSource())
-    .getLeaderboard()
+    .getLeaderboard({ fresh })
     .then(withModuleContributions)
     .then(withTeamStandings)
     .then(withModuleSeries)
     .then(withHintPenalties);
 
-let cached: { at: number; data: LeaderboardData } | null = null;
+// `gen` is the fold-cache generation the fold STARTED under (#553): the two
+// admin resets that lower scores bump it, and nothing stamped older is served
+// — not a memo, and not a fold still in flight when the reset came.
+let cached: { at: number; data: LeaderboardData; gen: number } | null = null;
 let inflight: Promise<LeaderboardData> | null = null;
+let inflightGen = -1;
 
 /** Test seam: the memo is module state by design, so tests reset it. */
 export function resetFoldedLeaderboardCache(): void {
@@ -93,21 +98,36 @@ export function resetFoldedLeaderboardCache(): void {
  *
  * Callers must treat the result as read-only — it is the same object handed
  * to every concurrent request.
+ *
+ * `fresh: true` folds now and bypasses the memo entirely: not served from
+ * it, not stored into it, not shared with a fold in flight. The memo and its
+ * invalidation are PROCESS-local, and the AWS module runs two app tasks, so a
+ * score-lowering write on one task never reaches the other's memo — the hint
+ * affordability gate (`hint-balance.ts`) is the one reader that must not pay
+ * that staleness, and it is rare and rate-limited enough to fold every time.
  */
 export async function getFoldedLeaderboard({
   now = Date.now,
   fold = defaultFold,
-}: { now?: Clock; fold?: Fold } = {}): Promise<LeaderboardData> {
-  if (cached && now() - cached.at < LEADERBOARD_FOLD_TTL_MS) return cached.data;
-  if (inflight) return inflight;
-  inflight = fold()
+  fresh = false,
+}: { now?: Clock; fold?: Fold; fresh?: boolean } = {}): Promise<LeaderboardData> {
+  if (fresh) return fold({ fresh: true });
+  const gen = foldGeneration();
+  if (cached && cached.gen === gen && now() - cached.at < LEADERBOARD_FOLD_TTL_MS) return cached.data;
+  if (inflight && inflightGen === gen) return inflight;
+  inflightGen = gen;
+  const run: Promise<LeaderboardData> = fold()
     .then((data) => {
-      // Stamped on completion, not on request — see the header.
-      cached = { at: now(), data };
+      // Stamped on completion, not on request — see the header. Memoized only
+      // if no invalidation came while it ran: a fold that started before a
+      // reset read the pre-reset keys, and its caller gets it, but nobody else.
+      if (gen === foldGeneration()) cached = { at: now(), data, gen };
       return data;
     })
     .finally(() => {
-      inflight = null;
+      // A superseded (stale) fold finishing must not clear the newer one.
+      if (inflight === run) inflight = null;
     });
-  return inflight;
+  inflight = run;
+  return run;
 }

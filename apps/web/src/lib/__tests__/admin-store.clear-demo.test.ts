@@ -3,9 +3,18 @@ import { vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   upstashPipeline: vi.fn<(c: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
+  beginScoreLowering: vi.fn(),
+  endScoreLowering: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: mocks.upstashPipeline }));
+// #553: clearing the demo rows lowers (removes) folded scores; the store
+// brackets the clear with the leaf's begin/end (shared in-progress marker +
+// revision bump) so no app task charges a hint against those points meanwhile.
+vi.mock("@/lib/leaderboard/fold-cache", () => ({
+  beginScoreLowering: mocks.beginScoreLowering,
+  endScoreLowering: mocks.endScoreLowering,
+}));
 
 import { clearDemoData } from "@/lib/admin-store";
 import { DEMO_CONTESTANTS, DEMO_TEAMS, DEMO_SPONSORS } from "@/lib/demo-fixture";
@@ -15,6 +24,8 @@ type Cmd = (string | number)[];
 beforeEach(() => {
   mocks.upstashPipeline.mockReset();
   mocks.upstashPipeline.mockResolvedValue([]);
+  mocks.beginScoreLowering.mockReset();
+  mocks.endScoreLowering.mockReset();
 });
 
 function cmds(): Cmd[] {
@@ -22,6 +33,31 @@ function cmds(): Cmd[] {
 }
 
 describe("clearDemoData", () => {
+  // #553 review: the clear removes folded points; the hint gate reads gross
+  // from the ~10 s fold memo. Dropped once, after the pipeline that did the
+  // removing — and not at all when that pipeline failed and nothing changed.
+  it("opens the score-lowering bracket before the clearing pipeline and closes it after", async () => {
+    await clearDemoData("alice");
+    expect(mocks.beginScoreLowering).toHaveBeenCalledTimes(1);
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
+    const write = mocks.upstashPipeline.mock.invocationCallOrder[0];
+    expect(mocks.beginScoreLowering.mock.invocationCallOrder[0]).toBeLessThan(write);
+    expect(mocks.endScoreLowering.mock.invocationCallOrder[0]).toBeGreaterThan(write);
+  });
+
+  it("still closes the bracket when the clear failed — a per-command failure leaves the other deletions standing", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }]);
+    await expect(clearDemoData("alice")).rejects.toThrow(/NOAUTH/);
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+
+  it("ABORTS before the pipeline when the bracket cannot be opened — fail closed", async () => {
+    mocks.beginScoreLowering.mockRejectedValue(new Error("upstash down"));
+    await expect(clearDemoData("alice")).rejects.toThrow("upstash down");
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+    expect(mocks.endScoreLowering).not.toHaveBeenCalled();
+  });
+
   it("issues exactly one pipeline call — no settings read, unlike seedDemoData", async () => {
     await clearDemoData("alice");
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);

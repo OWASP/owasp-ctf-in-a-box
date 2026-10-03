@@ -2,6 +2,7 @@ import "server-only";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-store";
 import { LOGIN_RE } from "@/lib/admin-admins";
+import { beginScoreLowering, endScoreLowering } from "@/lib/leaderboard/fold-cache";
 import { sumAttempts } from "@/lib/attempt-row";
 import {
   HINTS_SPENT_KEY,
@@ -405,6 +406,23 @@ async function resetModuleSolves(login: string, keys: ModuleResetKeys): Promise<
  */
 export async function resetUserProgress(rawLogin: string, actor: string): Promise<ResetScope> {
   const login = requireLogin(rawLogin);
+  // Score-lowering bracket (#553, fold-cache.ts): BEFORE the first write,
+  // raise the shared in-progress marker and bump the revision — a hint
+  // charge on any app task is refused until this ends, however long it
+  // takes, and a fold that read the old points finds its revision moved. It
+  // THROWS if the marker cannot be set, and nothing is written in that
+  // state. AFTER the last write — or after a stage threw with the earlier
+  // ones standing — the finally closes it.
+  await beginScoreLowering();
+  try {
+    return await resetProgressOf(login, actor);
+  } finally {
+    await endScoreLowering();
+  }
+}
+
+/** The reset itself; `resetUserProgress` wraps it with the memo drop. */
+async function resetProgressOf(login: string, actor: string): Promise<ResetScope> {
   const secureDev = await clearSecureDevSolves(login);
 
   // MIND WHAT EACH AGGREGATE IS KEYED BY — they are not alike, and treating
@@ -518,16 +536,25 @@ export async function deleteUser(
     );
   }
 
-  const reset = await resetUserProgress(login, actor);
+  // One score-lowering bracket around the WHOLE delete (#553): the inner
+  // reset nests its own — the marker is a counter — so the in-progress flag
+  // stays up through the tail writes (membership, account record), and the
+  // last close comes after the last write, on the failure path too.
+  await beginScoreLowering();
+  try {
+    const reset = await resetUserProgress(login, actor);
 
-  const leftTeam = detail.team?.slug ?? null;
-  const cmds: (string | number)[][] = [];
-  if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), login]);
-  cmds.push(["DEL", userKey(login)]);
-  await upstashPipeline(cmds);
+    const leftTeam = detail.team?.slug ?? null;
+    const cmds: (string | number)[][] = [];
+    if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), login]);
+    cmds.push(["DEL", userKey(login)]);
+    await upstashPipeline(cmds);
 
-  await audit("ops:user-delete", actor, { login, leftTeam });
-  return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };
+    await audit("ops:user-delete", actor, { login, leftTeam });
+    return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };
+  } finally {
+    await endScoreLowering();
+  }
 }
 
 // --- team operations --------------------------------------------------------

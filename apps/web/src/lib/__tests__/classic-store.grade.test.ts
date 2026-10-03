@@ -232,6 +232,28 @@ describe("the gate (checked before the grading script ever runs)", () => {
     expect(evalCalls()).toHaveLength(0);
   });
 
+  // #567: after the scheduled END the refusal is its own reason, so the
+  // contestant reads "the event has ended" rather than "paused, try again
+  // later". A freeze toggled on top of a passed end is still the end.
+  it("refuses with `ended` once the scheduled scoring end has passed — distinct from a pause", async () => {
+    mocks.getAdminSettings.mockResolvedValue(
+      settings({
+        scoringStartsAt: new Date(Date.now() - 7_200_000).toISOString(),
+        scoringEndsAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "ended" });
+    expect(evalCalls()).toHaveLength(0);
+    mocks.getAdminSettings.mockResolvedValue(
+      settings({
+        paused: true,
+        scoringStartsAt: new Date(Date.now() - 7_200_000).toISOString(),
+        scoringEndsAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "ended" });
+  });
+
   it("refuses a challenge this login already solved, without spending an attempt", async () => {
     gateReads(solveRow(50, "2026-08-19T10:00:00.000Z"), null);
     expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "solved" });

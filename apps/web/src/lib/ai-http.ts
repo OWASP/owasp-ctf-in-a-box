@@ -176,6 +176,9 @@ export async function readRawBody(request: Request): Promise<RawBody> {
  *  here is a compile error, not a silently-500 refusal. */
 const REFUSAL_STATUS: Record<Extract<AiSubmitResult, { ok: false }>["reason"], number> = {
   paused: 403,
+  // #567: the scheduled end has passed — same status as a pause, its own
+  // code so the external site (and the in-box page) can say "over".
+  ended: 403,
   solved: 409,
   cooldown: 429,
   unavailable: 503,

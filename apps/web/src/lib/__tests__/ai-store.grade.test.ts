@@ -117,6 +117,21 @@ describe("submitAiFlag", () => {
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 
+  // #567: a passed scheduled END is its own reason, distinct from a pause.
+  it("refuses with `ended` once the scheduled scoring end has passed", async () => {
+    mocks.getAdminSettings.mockResolvedValue(
+      settings({
+        scoringStartsAt: new Date(Date.now() - 7_200_000).toISOString(),
+        scoringEndsAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+    expect(await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}")).toEqual({
+      ok: false,
+      reason: "ended",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
   it("treats scoring as LIVE when the settings read fails — fail open", async () => {
     mocks.getAdminSettings.mockRejectedValue(new Error("redis down"));
     cleanGateReply();

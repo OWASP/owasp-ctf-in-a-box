@@ -15,7 +15,8 @@ import type { BundleAttachment } from "@/lib/classic-io";
 // module, so the value lives in the dependency-free defaults file.
 export { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
 import { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
-import { effectivePaused, getAdminSettings } from "@/lib/admin-store";
+import { getAdminSettings } from "@/lib/admin-store";
+import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
 import { CLASSIC_BUNDLE_VERSION, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
@@ -1020,10 +1021,11 @@ type ResolvedAdminSettings = Awaited<ReturnType<typeof getAdminSettings>>;
 
 type ClassicGate =
   | { allowed: true }
-  | { allowed: false; reason: "paused" | "solved" | "cooldown" | "unavailable"; retryAt?: string };
+  | { allowed: false; reason: "paused" | "ended" | "solved" | "cooldown" | "unavailable"; retryAt?: string };
 
 /** The submission gate, checked in this order (each short-circuits the rest):
- *    1. scoring paused, or outside the scheduled scoring window
+ *    1. scoring paused, or outside the scheduled scoring window (`ended`
+ *       once the scheduled end has passed, #567)
  *    2. `login` has already solved this challenge
  *    3. `login` is still inside the cooldown since its last submission
  *
@@ -1058,7 +1060,12 @@ async function evaluateGate(
 ): Promise<ClassicGate> {
   // A dry run (admin preview) happens exactly while scoring is closed —
   // before launch — so the pause is what is being previewed, not a refusal.
-  if (!dryRun && settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
+  // `scoringClosure` (#567) is `effectivePaused` with the WHY kept: a passed
+  // scheduled end answers `ended`, every other closure `paused`.
+  if (!dryRun && settings) {
+    const closure = scoringClosure(Date.now(), settings.paused, settings.scoringStartsAt, settings.scoringEndsAt);
+    if (closure) return { allowed: false, reason: closure };
+  }
 
   let solve: Solve | null;
   let attempt: Attempt | null;
@@ -1223,7 +1230,7 @@ export type SubmitResult =
   // wrote NOTHING, so `points` is what the flag is worth, not what was banked.
   | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
   | { ok: true; correct: false; dryRun?: true }
-  | { ok: false; reason: "paused" | "solved" | "cooldown" | "locked"; retryAt?: string }
+  | { ok: false; reason: "paused" | "ended" | "solved" | "cooldown" | "locked"; retryAt?: string }
   // The gate's lookup itself failed (fail-closed), the submission was
   // malformed / named an unknown challenge, or the script blew up. Kept
   // distinct from the gate reasons above so a caller-facing message can say

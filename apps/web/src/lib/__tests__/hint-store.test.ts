@@ -114,6 +114,9 @@ describe("revealHint", () => {
       "ctf:hints:at:octocat",
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
+      // The settings hash (#566): the script reads the live `paused` flag
+      // at the charge boundary. Lock keys, when any, follow it.
+      "ctf:admin:settings",
     ]);
     expect(argv[1]).toBe("classic/web-robots-only");
   });
@@ -144,6 +147,9 @@ describe("revealHint", () => {
       "ctf:hints:at:octocat",
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
+      // The settings hash (#566): the script reads the live `paused` flag
+      // at the charge boundary. Lock keys, when any, follow it.
+      "ctf:admin:settings",
     ]);
     expect(argv[1]).toBe("ai/prompt-injection-1");
   });
@@ -195,6 +201,9 @@ describe("revealHint", () => {
       // in-progress counter: refused while any score-lowering op is running.
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
+      // The settings hash (#566): the script reads the live `paused` flag
+      // at the charge boundary. Lock keys, when any, follow it.
+      "ctf:admin:settings",
     ]);
     expect(args.slice(0, 4)).toEqual([
       "Challenge-5-Admin-Section",
@@ -592,6 +601,148 @@ describe("hintGate", () => {
       "settings unreachable",
     );
     expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  // #566: a paid reveal is a scoring action — it lowers the buyer's net — so
+  // it closes with the scoring window exactly as a flag or quiz submit does.
+  // Checked right after "hints on" and before the time/progress/affordability
+  // gates: a closed event answers "closed", not "solve more" or "not enough".
+  // Order matters for cost too — no fold is read for a refusal the schedule
+  // already made. The ONE exemption: an already-owned hint stays viewable
+  // (a re-view charges nothing, so there is nothing to freeze).
+  describe("scoring window (#566)", () => {
+    it("refuses while scoring is manually paused, before reading progress or balance", async () => {
+      const store = await loadStore();
+      mocks.getAdminSettings.mockResolvedValue(settings({ paused: true, hintsMinSolves: 1, hintCost: 10 }));
+      expect(await store.hintGate("octocat", "classic")).toEqual({ allowed: false, reason: "paused" });
+      expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+      expect(mocks.hintBalance).not.toHaveBeenCalled();
+    });
+
+    it("refuses with `ended` once the scheduled scoring end has passed", async () => {
+      const store = await loadStore();
+      mocks.getAdminSettings.mockResolvedValue(
+        settings({
+          hintsMinSolves: 0,
+          hintCost: 10,
+          scoringStartsAt: new Date(Date.now() - 7_200_000).toISOString(),
+          scoringEndsAt: new Date(Date.now() - 60_000).toISOString(),
+        }),
+      );
+      expect(await store.hintGate("octocat", "classic")).toEqual({ allowed: false, reason: "ended" });
+      expect(mocks.hintBalance).not.toHaveBeenCalled();
+    });
+
+    it("does NOT refuse before launch — the route's launch lock owns that case (#464)", async () => {
+      // `scoringStartsAt: null` is every other test's default here; an admin
+      // preview and a not-yet-launched box must keep working as before.
+      const store = await loadStore();
+      mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0, hintCost: 0, scoringStartsAt: null }));
+      expect(await store.hintGate("octocat", "classic")).toEqual({ allowed: true });
+    });
+
+    it("lets an already-owned hint through while paused — a re-view charges nothing", async () => {
+      const store = await loadStore();
+      mocks.getAdminSettings.mockResolvedValue(settings({ paused: true, hintsMinSolves: 0, hintCost: 10 }));
+      mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }]); // SISMEMBER: owned
+      expect(await store.hintGate("octocat", "classic", { id: "web" })).toEqual({ allowed: true });
+      expect(mocks.hintBalance).not.toHaveBeenCalled();
+    });
+
+    it("still refuses an UNOWNED hint while paused when the caller names it", async () => {
+      const store = await loadStore();
+      mocks.getAdminSettings.mockResolvedValue(settings({ paused: true, hintsMinSolves: 0, hintCost: 10 }));
+      mocks.upstashPipeline.mockResolvedValueOnce([{ result: 0 }]); // SISMEMBER: not owned
+      expect(await store.hintGate("octocat", "classic", { id: "web" })).toEqual({ allowed: false, reason: "paused" });
+    });
+
+    it("gives the end precedence over the freeze — both at once is still the end (CodeRabbit #568)", async () => {
+      const store = await loadStore();
+      mocks.getAdminSettings.mockResolvedValue(
+        settings({
+          paused: true,
+          hintsMinSolves: 0,
+          hintCost: 10,
+          scoringStartsAt: new Date(Date.now() - 7_200_000).toISOString(),
+          scoringEndsAt: new Date(Date.now() - 60_000).toISOString(),
+        }),
+      );
+      expect(await store.hintGate("octocat", "classic")).toEqual({ allowed: false, reason: "ended" });
+    });
+
+    // The gate's check is a separate round-trip, so the SCRIPT re-checks the
+    // window at the charge boundary (CodeRabbit #568): it gets the scheduled
+    // end as epoch ms (ARGV[10]) to compare against Redis's own clock, and
+    // the settings hash (KEYS[7]) for the live `paused` flag.
+    it("hands the script the scheduled end as ARGV[10] and the settings hash as KEYS[7], lock keys after it", async () => {
+      const store = await loadStore();
+      const endsAt = new Date(Date.now() + 3_600_000).toISOString();
+      mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0, scoringEndsAt: endsAt }));
+      mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+      await store.revealHint("octocat", "classic", "web-robots-only");
+      const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+      expect(keys[6]).toBe("ctf:admin:settings");
+      expect(keys[6]).toBe(store.HINT_SETTINGS_KEY);
+      expect(args[9]).toBe(String(Date.parse(endsAt)));
+      // The lock loop starts AFTER the settings key.
+      expect(script).toContain("for i = 8, #KEYS");
+      expect(script).toMatch(/HGET', KEYS\[7\], 'paused'/);
+      expect(script).toContain("redis.call('TIME')");
+      // Checked before the spend is read and before the text is read.
+      const closed = script.indexOf("'closed'");
+      expect(closed).toBeGreaterThan(-1);
+      expect(closed).toBeLessThan(script.indexOf("HGETALL"));
+      expect(closed).toBeLessThan(script.lastIndexOf("HGET', KEYS[3]"));
+    });
+
+    it("hands the script an empty ARGV[10] when no end is scheduled", async () => {
+      const store = await loadStore();
+      mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+      await store.revealHint("octocat", "classic", "web-robots-only");
+      expect(mocks.upstashEval.mock.calls[0][2][9]).toBe("");
+    });
+
+    it("maps the script's `closed` verdict to the same two messages, as forbidden", async () => {
+      const store = await loadStore();
+      mocks.upstashEval.mockResolvedValueOnce(["closed", "ended"]);
+      expect(await store.revealHint("octocat", "classic", "web-robots-only")).toEqual({
+        ok: false,
+        forbidden: true,
+        error: "Scoring has closed — the event has ended, so hints can no longer be bought",
+      });
+      mocks.upstashEval.mockResolvedValueOnce(["closed", "paused"]);
+      expect(await store.revealHint("octocat", "classic", "web-robots-only")).toEqual({
+        ok: false,
+        forbidden: true,
+        error: "Scoring is paused right now — hints can't be bought until it resumes",
+      });
+    });
+
+    it("exempts an admin dry run — the preview happens exactly while scoring is closed", async () => {
+      const store = await loadStore();
+      mocks.getAdminSettings.mockResolvedValue(settings({ paused: true, hintsMinSolves: 1, hintCost: 10 }));
+      expect(await store.hintGate("octocat", "classic", { dryRun: true })).toEqual({ allowed: true });
+    });
+
+    it("revealHint words the two closures apart and charges nothing", async () => {
+      const store = await loadStore();
+      mocks.getAdminSettings.mockResolvedValue(settings({ paused: true, hintsMinSolves: 0, hintCost: 10 }));
+      mocks.upstashPipeline.mockResolvedValueOnce([{ result: 0 }]); // SISMEMBER in the gate: not owned
+      const paused = await store.revealHint("octocat", "classic", "web");
+      expect(paused).toEqual({ ok: false, forbidden: true, error: "Scoring is paused right now — hints can't be bought until it resumes" });
+      mocks.getAdminSettings.mockResolvedValue(
+        settings({
+          hintsMinSolves: 0,
+          hintCost: 10,
+          scoringStartsAt: new Date(Date.now() - 7_200_000).toISOString(),
+          scoringEndsAt: new Date(Date.now() - 60_000).toISOString(),
+        }),
+      );
+      mocks.upstashPipeline.mockResolvedValueOnce([{ result: 0 }]);
+      const ended = await store.revealHint("octocat", "classic", "web");
+      expect(ended).toEqual({ ok: false, forbidden: true, error: "Scoring has closed — the event has ended, so hints can no longer be bought" });
+      expect(mocks.upstashEval).not.toHaveBeenCalled();
+    });
   });
 
   it("gates the ai target on the AI module directly, not secure-development", async () => {
@@ -1114,7 +1265,7 @@ describe("the story lock on classic hints (#463)", () => {
     const [, keys, argv] = mocks.upstashEval.mock.calls.at(-1)!;
     // After the four fixed keys, the score revision and the in-progress
     // counter (KEYS[5..6], #553).
-    expect(keys.slice(6)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    expect(keys.slice(7)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
     expect(argv[6]).toBe("recon");
   });
 

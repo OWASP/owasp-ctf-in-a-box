@@ -265,6 +265,8 @@ describe("POST /api/ai/submit", () => {
   it("maps every store refusal to its documented status", async () => {
     for (const [reason, status, extra] of [
       ["paused", 403, {}],
+      // #567: a passed scheduled end is its own code, same status as a pause.
+      ["ended", 403, {}],
       ["solved", 409, {}],
       ["unavailable", 503, {}],
       ["error", 503, {}],

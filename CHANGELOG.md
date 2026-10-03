@@ -10,6 +10,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: the paid-hint "−N pts spent · M pts left" acknowledgement stays on
+  the page after the reveal's refresh (#560).** A successful reveal calls
+  `router.refresh()`, and both challenge pages then rendered the now-owned
+  hint as a separate server-side `<p>` — an element swap that unmounted the
+  reveal control and destroyed the acknowledgement it held, so the ack
+  vanished in under a second while the hint text stayed. The pages now pass
+  the owned text into the same control as a prop, which renders it both
+  before and after the refresh. An unowned viewer still never receives the
+  text, and a hint loaded already-owned shows no acknowledgement (nothing
+  was charged on that page load).
 - **Fixed: a hint can no longer be bought with points the contestant does not
   have (#553).** The reveal is refused — `403`, "Not enough points: this hint
   costs N and you have M" — when the contestant's leaderboard score (every

@@ -488,8 +488,9 @@ The panel offers:
     M" (#553). Before this, the board floored a net score at 0 and the
     difference was quietly forgiven. Re-viewing a hint already bought is
     always free, whatever the balance. After a purchase the reveal also tells
-    the contestant their resulting score. A free hint (cost `0`) skips the
-    check.
+    the contestant what is left ("N pts left" — the balance at the moment of
+    the charge; a solve landing in the same instant shows on the refresh
+    that follows). A free hint (cost `0`) skips the check.
 
   All three fail **closed**: if the solve or balance lookup errors, the hint
   is refused rather than handed out unverified. Denials return `403` with a

@@ -176,7 +176,12 @@ export type RevealResult =
   // `resolveHintConfig()` read that an organizer could have changed in between.
   // `balance` (#553): the contestant's net score AFTER this reveal, clamped
   // at 0 like the board, when the affordability gate read one (a priced hint,
-  // not a preview) — so the page can say where they stand next to the cost.
+  // not a preview) — so the page can say what is left next to the cost. A
+  // LOWER BOUND: gross is the fold's figure, and a solve landing between the
+  // fold and the charge is not in it (score awards do not bump the score
+  // revision — every solve would otherwise force concurrent buyers to retry).
+  // Awards only add, so the figure is never overstated; the page refresh
+  // after the reveal shows the live score.
   | { ok: true; hint: string; alreadyOwned: boolean; spent: number; cost: number; balance?: number; dryRun?: true }
   | { ok: false; error: string; missing?: boolean; forbidden?: boolean };
 

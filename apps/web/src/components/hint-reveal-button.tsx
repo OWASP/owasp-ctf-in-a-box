@@ -35,8 +35,12 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
   // nothing (an admin preview, or an already-owned reveal). Only a real charge
   // gets the "−N pts spent" acknowledgement, and it uses the server's figure.
   const [chargedCost, setChargedCost] = useState<number | null>(null);
-  // The contestant's net score after this reveal, from the server (#553) —
-  // shown only beside a real deduction; a preview or re-view moved nothing.
+  // What the contestant has left after this reveal, from the server (#553)
+  // — shown only beside a real deduction; a preview or re-view moved nothing.
+  // The balance AT THE CHARGE, a lower bound: a solve landing in the same
+  // instant is not in it yet (awards do not bump the score revision), which
+  // is why the copy says "N pts left" rather than claiming the current
+  // score; the router.refresh() below brings the page's live figure.
   const [balance, setBalance] = useState<number | null>(null);
   const revealedRef = useRef<HTMLParagraphElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
@@ -127,7 +131,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         {text}
         {chargedCost !== null && (
           <span className="mt-1 block text-xs text-[#d4a017]/70">
-            −{chargedCost} pts spent{balance !== null && <> · your score is now {balance}</>}
+            −{chargedCost} pts spent{balance !== null && <> · {balance} pts left</>}
           </span>
         )}
       </p>

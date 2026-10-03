@@ -65,12 +65,17 @@ describe("HintRevealButton confirms before charging and acknowledges the cost (#
     expect(src).toMatch(/data\.alreadyOwned/);
   });
 
-  // #553 (the "resulting score" deferred from #550): the ack also says where
-  // the contestant stands now, from the server's post-charge `balance` — only
-  // alongside a real deduction, since a preview or re-view moved nothing.
-  it("acknowledges the resulting score next to the deduction, from the server's balance", () => {
+  // #553 (the "resulting score" deferred from #550): the ack also says what is
+  // left, from the server's post-charge `balance` — only alongside a real
+  // deduction, since a preview or re-view moved nothing. Worded as "N pts
+  // left", not "your score is now N": the figure is the balance AT THE
+  // CHARGE — a solve landing between the fold and the charge is not in it
+  // (awards do not bump the score revision, by design), so it is a lower
+  // bound; the page refresh that follows shows the live figure.
+  it("acknowledges the points left next to the deduction, from the server's balance", () => {
     expect(src).toMatch(/typeof data\.balance === "number"/);
-    expect(src).toMatch(/your score is now \{balance\}/);
+    expect(src).toMatch(/\{balance\} pts left/);
+    expect(src).not.toMatch(/your score is now/);
     // Never shown without a deduction: the balance state is set inside the
     // same positive-deduction branch that sets chargedCost.
     expect(src).toMatch(/deducted > 0 && typeof data\.balance === "number" \? data\.balance : null/);

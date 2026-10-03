@@ -32,9 +32,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   forgiven, so a hint was cheaper for whoever had the least to lose.
   Re-viewing a hint already bought stays free whatever the balance, a free
   hint (cost 0) skips the check, and an unreadable balance refuses rather
-  than reveals. After a purchase the challenge page now also says "your score
-  is now N" next to the "−N pts spent" acknowledgement (the follow-up
-  deferred from #550). Internally the hint policy reads the leaderboard's
+  than reveals. After a purchase the challenge page now also says "N pts
+  left" next to the "−N pts spent" acknowledgement (the follow-up deferred
+  from #550) — the balance at the moment of the charge; a solve landing in
+  the same instant shows on the refresh that follows. Internally the hint policy reads the leaderboard's
   penalty fold needs moved to `hint-config.ts`; `hint-store.ts` re-exports
   them, so nothing outside the leaderboard changes its imports.
 - **Fixed: a master reset no longer resurrects Secure Development scores on

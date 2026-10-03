@@ -1162,7 +1162,11 @@ reveals against a balance that covers one land exactly one. Every verdict
 returns the post-call, case-folded spend total, and the reveal reports
 `balance = gross − that total` — not the gate's `net − cost`, which a reveal
 landing in between would have outdated — and the challenge page shows it
-beside the deduction.
+beside the deduction as "N pts left". It is a **lower bound**: gross is the
+fold's figure, and a solve landing between the fold and the charge is not in
+it (score *awards* do not bump the revision — every solve would otherwise
+force concurrent buyers to retry); awards only add, so it is never
+overstated, and the page refresh after the reveal shows the live score.
 That read is why the policy helpers the fold needs — `HINTS_AVAILABLE`,
 `resolveHintConfig`, `getHintPenalties` — live in `hint-config.ts`: the fold's
 last stage imports them, the store imports the fold, and one module cannot

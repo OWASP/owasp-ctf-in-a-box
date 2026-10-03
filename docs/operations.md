@@ -672,6 +672,12 @@ The panel offers:
   result, not a resurrected one. The poller's log reports the skip once, as
   `poll <repo>: N preReset`.
 
+  While the reset (or any other score-lowering control — a per-player reset
+  or delete, the demo clear, a settings save) is running, a hint purchase is
+  refused with "Scores are being updated. Try again in a moment" (#553): the
+  price is checked against a score that is being rewritten. It is a matter
+  of seconds.
+
 - **Quiz controls** (Quiz tab, present only when the `quiz` module is enabled) — the two
   retry-gate knobs (max attempts, accepted from 0 to **100**; retry cooldown,
   from 0 to **100000** minutes) plus full question

@@ -1135,21 +1135,24 @@ gross for a TTL. The read is rare — it sits behind the module, enabled, time
 and progress gates, and the route is rate-limited per login — so it pays for
 its own fold. Even a fresh fold can finish after a write on the *other* task
 lowered the score, so the gross travels with a **score revision**
-(`ctf:admin:score-rev`, bumped by every score-lowering operation and read
-*before* the fold): the reveal script compares it to the current one before
-reading the spend or charging, answers `stale` when it moved, and the store
-re-reads and retries once. Every admin operation that lowers a score (the
-master and per-player resets and the delete, the demo clear, any settings
-write — a module switched off takes its points out of the fold) does both
-halves through `leaderboard/fold-cache.ts` (a leaf, since `admin-store` sits
-upstream of the fold), **before its first write and again in a `finally`
-after its last** — before, because the writes are not atomic with the bump
-and a charge can reach the script while a multi-step wipe is still running;
-after, for a fold that started mid-wipe, and because a failure midway leaves
-the earlier deletes standing: it bumps the shared revision, and drops the
-process-local memo so the *board* on the writing instance does not show
-wiped scores for a TTL (a fold already running when the invalidation came is
-discarded, not memoized).
+(`ctf:admin:score-rev`, read *before* the fold): the reveal script compares
+it to the current one before reading the spend or charging, answers `stale`
+when it moved, and the store re-reads and retries once. The revision alone
+cannot cover the *middle* of a multi-step wipe, so every admin operation
+that lowers a score (the master and per-player resets and the delete, the
+demo clear, any settings write — a module switched off takes its points out
+of the fold) is **bracketed** through `leaderboard/fold-cache.ts` (a leaf,
+since `admin-store` sits upstream of the fold): `beginScoreLowering()`
+before its first write raises a shared **in-progress counter**
+(`ctf:admin:score-lowering`, with a TTL stuck-guard) and bumps the revision
+— and *throws* if it cannot, in which case nothing is written —
+`endScoreLowering()` in a `finally` after its last write lowers the counter
+and bumps again (a failure midway leaves the earlier deletes standing).
+While the counter is up, the balance read refuses without folding (the gate
+answers `busy`: "Scores are being updated. Try again in a moment") and the
+script refuses `stale`. Both calls also drop the process-local memo, so the
+*board* on the writing instance does not show wiped scores for a TTL (a fold
+already running when the invalidation came is discarded, not memoized).
 It fails **closed** like the progress gate, and exempts an
 already-owned hint (a re-view charges nothing). The gate's read and the charge
 are still two round-trips, so the reveal script makes the limit **atomic**: it

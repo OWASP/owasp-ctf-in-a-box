@@ -28,9 +28,10 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/admin-store", () => ({ ADMIN_AUDIT_KEY: "ctf:admin:audit", AUDIT_CAP: 500 }));
-// #553: a per-player reset lowers that player's score, and the hint gate
-// reads gross from the fold memo; the store drops it through this leaf.
-const foldCache = vi.hoisted(() => ({ invalidateFoldedLeaderboard: vi.fn() }));
+// #553: a per-player reset lowers that player's score; the store brackets
+// its writes with the leaf's begin/end (shared in-progress marker + revision
+// bump) so no app task charges a hint against a gross the reset is removing.
+const foldCache = vi.hoisted(() => ({ beginScoreLowering: vi.fn(), endScoreLowering: vi.fn() }));
 vi.mock("@/lib/leaderboard/fold-cache", () => foldCache);
 
 import {
@@ -98,29 +99,34 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("resetUserProgress invalidates the folded leaderboard (#553)", () => {
-  it("bumps the score revision before the first destructive write and again after the last", async () => {
-    // Before: a hint fold that read the old points under revision R finds R
-    // moved by the time its charge runs, however long the reset takes.
-    // After: a fold started mid-reset read a mix, and is outdated too.
+describe("resetUserProgress brackets its writes as score-lowering (#553)", () => {
+  it("opens the bracket before the first destructive write and closes it after the last", async () => {
     mockNoSecureDevKeys();
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     await resetUserProgress("octocat", "admin");
-    expect(foldCache.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
+    expect(foldCache.beginScoreLowering).toHaveBeenCalledTimes(1);
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
     const writes = [...mocks.upstashPipeline.mock.invocationCallOrder, ...mocks.upstashEval.mock.invocationCallOrder];
-    const [first, last] = foldCache.invalidateFoldedLeaderboard.mock.invocationCallOrder;
-    expect(first).toBeLessThan(Math.min(...writes));
-    expect(last).toBeGreaterThan(Math.max(...writes));
+    expect(foldCache.beginScoreLowering.mock.invocationCallOrder[0]).toBeLessThan(Math.min(...writes));
+    expect(foldCache.endScoreLowering.mock.invocationCallOrder[0]).toBeGreaterThan(Math.max(...writes));
   });
 
-  it("still bumps after the attempt when a later stage fails — the earlier destructive stages stand", async () => {
+  it("still closes the bracket when a later stage fails — the earlier destructive stages stand", async () => {
     // The secure-dev sweep ran; the classic module reset then throws. Those
-    // solves are gone, so the memo must go too, before the error propagates.
+    // solves are gone, so the bracket closes before the error propagates.
     mockNoSecureDevKeys();
     mocks.upstashEval.mockRejectedValueOnce(new Error("eval down"));
     await expect(resetUserProgress("octocat", "admin")).rejects.toThrow("eval down");
-    expect(foldCache.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+
+  it("ABORTS before any write when the bracket cannot be opened — fail closed", async () => {
+    foldCache.beginScoreLowering.mockRejectedValueOnce(new Error("upstash down"));
+    await expect(resetUserProgress("octocat", "admin")).rejects.toThrow("upstash down");
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(foldCache.endScoreLowering).not.toHaveBeenCalled();
   });
 });
 
@@ -542,19 +548,22 @@ describe("deleteUser", () => {
     const cmds = allCommands();
     expect(cmds).toContainEqual(["SREM", "ctf:team:red-team:members", "octocat"]);
     expect(cmds).toContainEqual(["DEL", "ctf:user:octocat"]);
-    // #553: the inner reset bumps before its first and after its last write;
-    // the delete writes more afterwards (membership, account record), so it
-    // bumps once more after ITS last write — a fold racing the tail end must
-    // not be memoized.
-    const drops = foldCache.invalidateFoldedLeaderboard.mock.invocationCallOrder;
-    expect(drops).toHaveLength(3);
-    // The lookup before the reset is a READ; the bound is the first WRITE —
-    // the reset's own sweep comes after the inner reset's leading bump, and
-    // the tail's SREM certainly does.
+    // #553: the delete brackets the WHOLE thing (the inner reset nests its
+    // own bracket — the marker is a counter), so the in-progress flag stays
+    // up through the tail writes (membership, account record) and the last
+    // close comes after the last write.
+    expect(foldCache.beginScoreLowering).toHaveBeenCalledTimes(2);
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(2);
+    // The lookup before the reset is a READ; the bound is the first WRITE
+    // (the tail's SREM certainly is one).
     const srem = mocks.upstashPipeline.mock.calls.findIndex((c) => c[0].some((cmd) => cmd[0] === "SREM"));
     expect(srem).toBeGreaterThan(-1);
-    expect(drops[0]).toBeLessThan(mocks.upstashPipeline.mock.invocationCallOrder[srem]);
-    expect(drops[2]).toBeGreaterThan(Math.max(...mocks.upstashPipeline.mock.invocationCallOrder));
+    expect(foldCache.beginScoreLowering.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.upstashPipeline.mock.invocationCallOrder[srem],
+    );
+    expect(Math.max(...foldCache.endScoreLowering.mock.invocationCallOrder)).toBeGreaterThan(
+      Math.max(...mocks.upstashPipeline.mock.invocationCallOrder),
+    );
   });
 });
 

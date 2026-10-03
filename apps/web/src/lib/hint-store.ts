@@ -5,7 +5,7 @@ import { errorLabel } from "@/lib/error-label";
 // dependency-free defaults file and both sides read the same constant.
 export { HINT_COST, HINT_MIN_SOLVES, HINT_UNLOCK_AFTER_MIN } from "./hint-defaults";
 import { hintBalance, type HintBalance } from "@/lib/hint-balance";
-import { SCORE_REV_KEY } from "@/lib/leaderboard/fold-cache";
+import { SCORE_LOWERING_KEY, SCORE_REV_KEY } from "@/lib/leaderboard/fold-cache";
 import { HINTS_AVAILABLE, resolveHintConfig } from "@/lib/hint-config";
 import { appsById, type AppId } from "@/lib/apps";
 import { AI_HINTS_KEY, aiSolvesKey } from "@/lib/ai-keys";
@@ -101,8 +101,9 @@ export function isHintTarget(value: string): value is HintTarget {
 // can never charge twice. `hint` is re-checked inside the script — a stale
 // availability cache can't charge for a hint that no longer exists.
 // KEYS: [1]=user's hint set [2]=spend hash [3]=app hint catalogue [4]=purchase times
-//       [5]=the shared score revision (#553, fold-cache.ts); [6..]=the story
-//       lock's teammate solves hashes (#463), when any.
+//       [5]=the shared score revision and [6]=the score-lowering in-progress
+//       counter (#553, fold-cache.ts); [7..]=the story lock's teammate solves
+//       hashes (#463), when any.
 // ARGV: [1]=challengeId [2]=<app>/<id> [3]=login [4]=cost [5]=now (ISO)
 //       [6]="1" for a DRY RUN (#464 admin preview): read the text, write
 //       nothing — no SADD, no charge, no purchase time.
@@ -118,10 +119,11 @@ export function isHintTarget(value: string): value is HintTarget {
 //       EXCEPT when a score-lowering write landed meanwhile, which [9] catches.
 //       The spend side is never stale: read here.
 //       [9]=the score revision the gross in [8] was folded under (fold-cache.ts
-//       bumps KEYS[5] on every score-lowering write, on any app task). If it
-//       has moved, the gross may be too high: the script answers `stale`
-//       before reading the spend or charging, and the caller re-reads and
-//       retries once. "" (no gross) skips the check.
+//       bumps KEYS[5] before and after every score-lowering operation, on any
+//       app task, and holds KEYS[6] up while one runs). If the revision has
+//       moved, or an operation is running, the gross may be too high: the
+//       script answers `stale` before reading the spend or charging, and the
+//       caller re-reads and retries once. "" (no gross) skips the check.
 //
 // Every non-preview verdict's third element is the spend TOTAL after the
 // call (case-folded, see the script) — what `balance` is derived from.
@@ -130,7 +132,7 @@ export const REVEAL_SCRIPT = `
 -- The story lock (#463) comes FIRST: a locked step's hint is never read.
 if ARGV[6] ~= '1' and ARGV[7] and ARGV[7] ~= '' then
   local open = false
-  for i = 6, #KEYS do
+  for i = 7, #KEYS do
     if redis.call('HEXISTS', KEYS[i], ARGV[7]) == 1 then open = true break end
   end
   if not open then return {'locked'} end
@@ -139,10 +141,14 @@ local hint = redis.call('HGET', KEYS[3], ARGV[1])
 if not hint then return {'missing'} end
 if ARGV[6] == '1' then return {'preview', hint, '0'} end
 -- The gross in ARGV[8] was folded under the score revision in ARGV[9]. A
--- score-lowering write on ANY app task bumps KEYS[5]; if it has moved, that
--- gross may be too high — refuse before reading the spend or charging, and
--- let the caller re-read and retry.
-if ARGV[9] and ARGV[9] ~= '' and (redis.call('GET', KEYS[5]) or '0') ~= ARGV[9] then return {'stale'} end
+-- score-lowering operation on ANY app task bumps KEYS[5] before its first
+-- write and after its last, and holds KEYS[6] up in between; if the revision
+-- has moved, or an operation is running, that gross may be too high — refuse
+-- before reading the spend or charging, and let the caller re-read and retry.
+if ARGV[9] and ARGV[9] ~= '' then
+  if (tonumber(redis.call('GET', KEYS[6]) or '0') or 0) > 0 then return {'stale'} end
+  if (redis.call('GET', KEYS[5]) or '0') ~= ARGV[9] then return {'stale'} end
+end
 -- The spend total, CASE-FOLDED: one person's purchases can sit under two
 -- spellings of their login (a case-only rename), and a single-field read by
 -- the session's spelling would undercount. Read once, before the set guard,
@@ -207,7 +213,10 @@ export type HintGate =
   /** Caller hasn't earned enough on this target yet (the anti-burner gate). */
   | { allowed: false; reason: "no-progress"; needed: number; have: number }
   /** Caller cannot pay the price (#553): `have` is their net score, clamped at 0. */
-  | { allowed: false; reason: "insufficient"; needed: number; have: number };
+  | { allowed: false; reason: "insufficient"; needed: number; have: number }
+  /** A score-lowering admin operation is running somewhere (#553): no gross
+   *  can be vouched for until it ends. Closed, and not an affordability answer. */
+  | { allowed: false; reason: "busy" };
 
 /** The affordability refusal (#553), worded once: the gate and the script's
  *  atomic re-check both end here. */
@@ -297,6 +306,10 @@ export async function hintGate(
     try {
       balance = await hintBalance(login);
     } catch (err) {
+      // A reset or module switch mid-flight on some app task: not a balance
+      // answer, and the contestant is told what is going on. By NAME — the
+      // tests reload modules, and a class identity does not survive that.
+      if (err instanceof Error && err.name === "ScoreLoweringInProgress") return { allowed: false, reason: "busy" };
       console.error("hint gate: balance lookup failed:", errorLabel(err));
       return { allowed: false, reason: "insufficient", needed: cost, have: 0 };
     }
@@ -361,6 +374,9 @@ async function attemptReveal(
     if (gate.reason === "insufficient") {
       return { ok: false, forbidden: true, error: notEnough(gate.needed, gate.have) };
     }
+    if (gate.reason === "busy") {
+      return { ok: false, error: "Scores are being updated. Try again in a moment" };
+    }
     return { ok: false, error: "Hints are not enabled" };
   }
 
@@ -387,7 +403,15 @@ async function attemptReveal(
   try {
     verdict = await upstashEval(
       REVEAL_SCRIPT,
-      [userHintsKey(login), HINTS_SPENT_KEY, hintHashKey(target), userHintTimesKey(login), SCORE_REV_KEY, ...lockKeys],
+      [
+        userHintsKey(login),
+        HINTS_SPENT_KEY,
+        hintHashKey(target),
+        userHintTimesKey(login),
+        SCORE_REV_KEY,
+        SCORE_LOWERING_KEY,
+        ...lockKeys,
+      ],
       [
         id,
         `${target}/${id}`,

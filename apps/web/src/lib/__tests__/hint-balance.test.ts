@@ -22,9 +22,14 @@ const REV = "7";
 const board = (entries: Array<{ login: string; points: number; hintPenalty?: number }>) =>
   mocks.getFoldedLeaderboard.mockResolvedValue({ entries, teams: [] });
 
-/** Routes the two pipeline reads: GET of the score revision, HGETALL of
- *  ctf:hints:spent (a flat [field, value, …] list). */
-const replies = { rev: REV as string | null, spent: [] as string[], spentError: undefined as string | undefined };
+/** Routes the pipeline reads: [GET revision, GET in-progress counter], and
+ *  HGETALL of ctf:hints:spent (a flat [field, value, …] list). */
+const replies = {
+  rev: REV as string | null,
+  lowering: null as string | null,
+  spent: [] as string[],
+  spentError: undefined as string | undefined,
+};
 const spentReply = (...pairs: Array<[string, string]>) => {
   replies.spent = pairs.flat();
 };
@@ -32,11 +37,12 @@ const spentReply = (...pairs: Array<[string, string]>) => {
 beforeEach(() => {
   vi.clearAllMocks();
   replies.rev = REV;
+  replies.lowering = null;
   replies.spent = [];
   replies.spentError = undefined;
   mocks.upstashPipeline.mockImplementation(async (cmds) => {
     const verb = String(cmds[0][0]);
-    if (verb === "GET") return [{ result: replies.rev }];
+    if (verb === "GET") return [{ result: replies.rev }, { result: replies.lowering }];
     if (verb === "HGETALL") return replies.spentError ? [{ error: replies.spentError }] : [{ result: replies.spent }];
     throw new Error(`unexpected command ${verb}`);
   });
@@ -140,8 +146,19 @@ describe("hintBalance (#553)", () => {
   it("rejects when the revision cannot be read — no revision, no vouching for the gross", async () => {
     board([{ login: "octocat", points: 40 }]);
     mocks.upstashPipeline.mockImplementation(async (cmds) =>
-      String(cmds[0][0]) === "GET" ? [{ error: "NOAUTH" }] : [{ result: [] }],
+      String(cmds[0][0]) === "GET" ? [{ error: "NOAUTH" }, { result: null }] : [{ result: [] }],
     );
     await expect(hintBalance("octocat")).rejects.toThrow(/NOAUTH/);
+  });
+
+  it("rejects with ScoreLoweringInProgress while a score-lowering operation is running, before folding", async () => {
+    // A reset or module switch on ANY app task raises the in-progress
+    // counter before its first write and lowers it after its last. The
+    // revision alone cannot cover the middle of that: a fold started after
+    // the leading bump reads points that are still being deleted.
+    board([{ login: "octocat", points: 40 }]);
+    replies.lowering = "1";
+    await expect(hintBalance("octocat")).rejects.toMatchObject({ name: "ScoreLoweringInProgress" });
+    expect(mocks.getFoldedLeaderboard).not.toHaveBeenCalled();
   });
 });

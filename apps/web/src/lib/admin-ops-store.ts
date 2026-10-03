@@ -2,7 +2,7 @@ import "server-only";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-store";
 import { LOGIN_RE } from "@/lib/admin-admins";
-import { invalidateFoldedLeaderboard } from "@/lib/leaderboard/fold-cache";
+import { beginScoreLowering, endScoreLowering } from "@/lib/leaderboard/fold-cache";
 import { sumAttempts } from "@/lib/attempt-row";
 import {
   HINTS_SPENT_KEY,
@@ -406,17 +406,18 @@ async function resetModuleSolves(login: string, keys: ModuleResetKeys): Promise<
  */
 export async function resetUserProgress(rawLogin: string, actor: string): Promise<ResetScope> {
   const login = requireLogin(rawLogin);
-  // Bump the score revision BEFORE the first write (#553): a hint fold that
-  // read this player's old points under revision R must find R already moved
-  // by the time its charge reaches the script, however long this takes.
-  await invalidateFoldedLeaderboard();
+  // Score-lowering bracket (#553, fold-cache.ts): BEFORE the first write,
+  // raise the shared in-progress marker and bump the revision — a hint
+  // charge on any app task is refused until this ends, however long it
+  // takes, and a fold that read the old points finds its revision moved. It
+  // THROWS if the marker cannot be set, and nothing is written in that
+  // state. AFTER the last write — or after a stage threw with the earlier
+  // ones standing — the finally closes it.
+  await beginScoreLowering();
   try {
     return await resetProgressOf(login, actor);
   } finally {
-    // …and AFTER the last write — or after a stage threw with the earlier
-    // ones standing: a fold that started mid-reset read a mix, and this
-    // outdates it too; the process-local memo is dropped on both calls.
-    await invalidateFoldedLeaderboard();
+    await endScoreLowering();
   }
 }
 
@@ -535,9 +536,14 @@ export async function deleteUser(
     );
   }
 
-  const reset = await resetUserProgress(login, actor);
-
+  // One score-lowering bracket around the WHOLE delete (#553): the inner
+  // reset nests its own — the marker is a counter — so the in-progress flag
+  // stays up through the tail writes (membership, account record), and the
+  // last close comes after the last write, on the failure path too.
+  await beginScoreLowering();
   try {
+    const reset = await resetUserProgress(login, actor);
+
     const leftTeam = detail.team?.slug ?? null;
     const cmds: (string | number)[][] = [];
     if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), login]);
@@ -547,11 +553,7 @@ export async function deleteUser(
     await audit("ops:user-delete", actor, { login, leftTeam });
     return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };
   } finally {
-    // The inner reset already dropped the fold memo, but this writes more
-    // after it (membership, account record): drop it again after the LAST
-    // write — on the failure path too — so a fold racing the tail end is
-    // not memoized (#553).
-    await invalidateFoldedLeaderboard();
+    await endScoreLowering();
   }
 }
 

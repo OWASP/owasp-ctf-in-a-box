@@ -113,6 +113,7 @@ describe("revealHint", () => {
       "ctf:classic:hints",
       "ctf:hints:at:octocat",
       "ctf:admin:score-rev",
+      "ctf:admin:score-lowering",
     ]);
     expect(argv[1]).toBe("classic/web-robots-only");
   });
@@ -136,7 +137,14 @@ describe("revealHint", () => {
     const result = await store.revealHint("octocat", "ai", "prompt-injection-1");
     expect(result).toEqual({ ok: true, hint: "Ignore prior instructions.", alreadyOwned: false, spent: 10, cost: 10, balance: 990 });
     const [, keys, argv] = mocks.upstashEval.mock.calls[0];
-    expect(keys).toEqual(["ctf:user:octocat:hints", "ctf:hints:spent", "ctf:ai:hints", "ctf:hints:at:octocat", "ctf:admin:score-rev"]);
+    expect(keys).toEqual([
+      "ctf:user:octocat:hints",
+      "ctf:hints:spent",
+      "ctf:ai:hints",
+      "ctf:hints:at:octocat",
+      "ctf:admin:score-rev",
+      "ctf:admin:score-lowering",
+    ]);
     expect(argv[1]).toBe("ai/prompt-injection-1");
   });
 
@@ -183,8 +191,10 @@ describe("revealHint", () => {
       // the SET above — that would be a WRONGTYPE on every live event.
       "ctf:hints:at:octocat",
       // The shared score revision (#553): the script refuses a charge whose
-      // gross was folded under a revision that has since moved.
+      // gross was folded under a revision that has since moved — and the
+      // in-progress counter: refused while any score-lowering op is running.
       "ctf:admin:score-rev",
+      "ctf:admin:score-lowering",
     ]);
     expect(args.slice(0, 4)).toEqual([
       "Challenge-5-Admin-Section",
@@ -407,12 +417,30 @@ describe("revealHint", () => {
     await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(keys[4]).toBe("ctf:admin:score-rev");
+    expect(keys[5]).toBe("ctf:admin:score-lowering");
     expect(args[8]).toBe(RICH.rev);
-    // Checked before the spend is read or anything is charged.
+    // Checked before the spend is read or anything is charged: the revision
+    // AND the in-progress counter (a wipe still running on another task).
+    const spendRead = script.indexOf("HGETALL");
     const stale = script.indexOf("'stale'");
     expect(stale).toBeGreaterThan(-1);
-    expect(stale).toBeLessThan(script.indexOf("HGETALL"));
-    expect(script.slice(0, stale)).toMatch(/GET', KEYS\[5\]/);
+    expect(stale).toBeLessThan(spendRead);
+    expect(script.slice(0, spendRead)).toMatch(/GET', KEYS\[5\]/);
+    expect(script.slice(0, spendRead)).toMatch(/GET', KEYS\[6\]/);
+  });
+
+  it("refuses as busy — closed, no retry — while a score-lowering operation is running", async () => {
+    // hint-balance rejects with ScoreLoweringInProgress when the in-progress
+    // counter is up (a reset mid-flight on any app task). Not an affordability
+    // answer and not a retry: the operation may take a while, and the
+    // contestant is told what is going on.
+    const store = await loadStore();
+    mocks.hintBalance.mockRejectedValueOnce(Object.assign(new Error("in progress"), { name: "ScoreLoweringInProgress" }));
+    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: false, reason: "busy" });
+    mocks.hintBalance.mockRejectedValueOnce(Object.assign(new Error("in progress"), { name: "ScoreLoweringInProgress" }));
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(result).toEqual({ ok: false, error: "Scores are being updated. Try again in a moment" });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 
   it("retries ONCE on a stale verdict, with a fresh gate read, then charges", async () => {
@@ -1035,8 +1063,9 @@ describe("the story lock on classic hints (#463)", () => {
     // from a challenge with no hint.
     expect(result).toEqual({ ok: false, missing: true, error: "No hint available for this challenge" });
     const [, keys, argv] = mocks.upstashEval.mock.calls.at(-1)!;
-    // After the four fixed keys and the score revision (KEYS[5], #553).
-    expect(keys.slice(5)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    // After the four fixed keys, the score revision and the in-progress
+    // counter (KEYS[5..6], #553).
+    expect(keys.slice(6)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
     expect(argv[6]).toBe("recon");
   });
 

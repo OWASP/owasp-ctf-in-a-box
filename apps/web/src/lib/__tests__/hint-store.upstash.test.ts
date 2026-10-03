@@ -260,11 +260,12 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
     const { upstashEval } = await import("@/lib/upstash");
     const k = (n: string) => `ctf-test:hint-lock:${RUN}:${n}`;
-    // KEYS[5] is the score revision (#553); the lock keys follow it.
-    const [set, spent, hints, at, rev, teammate] = ["set", "spent", "hints", "at", "rev", "bob"].map(k);
+    // KEYS[5..6] are the score revision and the in-progress counter (#553);
+    // the lock keys follow them.
+    const [set, spent, hints, at, rev, lowering, teammate] = ["set", "spent", "hints", "at", "rev", "lowering", "bob"].map(k);
     await pipeline([["HSET", hints, "web", "look at the cookie"]]);
     const reveal = () =>
-      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, teammate], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon", "", ""]);
+      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, teammate], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon", "", ""]);
 
     expect(await reveal()).toEqual(["locked"]);
     const [s1, sp1] = await pipeline([["SCARD", set], ["HGET", spent, "alice"]]);
@@ -273,34 +274,39 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
 
     await pipeline([["HSET", teammate, "recon", '{"points":1,"at":"x"}']]);
     expect(await reveal()).toEqual(["charged", "look at the cookie", 10]);
-    await pipeline([["DEL", set, spent, hints, at, rev, teammate]]);
+    await pipeline([["DEL", set, spent, hints, at, rev, lowering, teammate]]);
   });
 
   // #553 review: the gross the gate folded can be outdated by a write on
   // ANOTHER app task while the fold ran. The gross therefore travels with the
   // score revision it was folded under, and the script refuses — before it
-  // reads the spend or charges — when the revision has moved.
-  it("REVEAL_SCRIPT refuses a gross folded under a revision that has since moved, charging nothing", async () => {
+  // reads the spend or charges — when the revision has moved, or while a
+  // score-lowering operation is still running (the in-progress counter).
+  it("REVEAL_SCRIPT refuses a gross folded under a moved revision, or during a score-lowering op, charging nothing", async () => {
     const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
     const { upstashEval } = await import("@/lib/upstash");
     const k = (n: string) => `ctf-test:hint-rev:${RUN}:${n}`;
-    const [set, spent, hints, at, rev] = ["set", "spent", "hints", "at", "rev"].map(k);
+    const [set, spent, hints, at, rev, lowering] = ["set", "spent", "hints", "at", "rev", "lowering"].map(k);
     try {
       await pipeline([["HSET", hints, "web", "x"], ["SET", rev, "5"]]);
       // ARGV[8] = gross 100 (affordable), ARGV[9] = the revision the gross was folded under.
       const revealWithRev = (revSeen: string) =>
-        upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "", "100", revSeen]);
+        upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "", "100", revSeen]);
       expect(await revealWithRev("4")).toEqual(["stale"]);
+      // The current revision, but an operation in progress: still refused.
+      await pipeline([["SET", lowering, "1"]]);
+      expect(await revealWithRev("5")).toEqual(["stale"]);
       const [s1, sp1] = await pipeline([["SCARD", set], ["HGET", spent, "alice"]]);
       expect(s1.result).toBe(0);
       expect(sp1.result).toBeNull();
-      // The current revision passes, and charges.
+      // Operation over (counter back to 0), current revision: charges.
+      await pipeline([["SET", lowering, "0"]]);
       expect(await revealWithRev("5")).toEqual(["charged", "x", 10]);
-      // An absent revision key reads as "0" — a gross folded under "0" still passes.
-      await pipeline([["DEL", rev, set, spent, at]]);
+      // Absent keys read as "0" — a gross folded under "0" with nothing running passes.
+      await pipeline([["DEL", rev, lowering, set, spent, at]]);
       expect(await revealWithRev("0")).toEqual(["charged", "x", 10]);
     } finally {
-      await pipeline([["DEL", set, spent, hints, at, rev]]);
+      await pipeline([["DEL", set, spent, hints, at, rev, lowering]]);
     }
   });
 
@@ -310,9 +316,9 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
     const { upstashEval } = await import("@/lib/upstash");
     const k = (n: string) => `ctf-test:hint-lock2:${RUN}:${n}`;
-    const [set, spent, hints, at, rev, teammate] = ["set", "spent", "hints", "at", "rev", "bob"].map(k);
+    const [set, spent, hints, at, rev, lowering, teammate] = ["set", "spent", "hints", "at", "rev", "lowering", "bob"].map(k);
     expect(
-      await upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, teammate], ["nohint", "classic/nohint", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon", "", ""]),
+      await upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, teammate], ["nohint", "classic/nohint", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon", "", ""]),
     ).toEqual(["locked"]);
   });
 });

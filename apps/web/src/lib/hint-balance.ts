@@ -51,10 +51,15 @@ import { upstashPipeline } from "@/lib/upstash";
  *
  * THE REVISION TRAVELS WITH THE GROSS. Even a fresh fold can finish after a
  * write on the other task lowered the score. So the shared score revision
- * (`fold-cache.ts`, bumped by every score-lowering write) is read BEFORE the
- * fold and returned as `rev`; the reveal script compares it to the current
- * one before charging and refuses `stale` when it moved. Before, not after:
- * read after the fold, it would vouch for a gross that predates the write.
+ * (`fold-cache.ts`, bumped by every score-lowering operation before its
+ * first write and after its last) is read BEFORE the fold and returned as
+ * `rev`; the reveal script compares it to the current one before charging
+ * and refuses `stale` when it moved. Before, not after: read after the fold,
+ * it would vouch for a gross that predates the write. And while such an
+ * operation is RUNNING (its in-progress counter is up) the read throws
+ * `ScoreLoweringInProgress` without folding at all — the gate answers
+ * `busy` — because a fold started mid-wipe reads points still being deleted
+ * under a revision that will not move again until the wipe ends.
  *
  * FAILS BY THROWING. A fold, spend or revision read that errors rejects, and
  * the gate fails CLOSED on it (a hint is a paid reveal — see `hintGate`). A

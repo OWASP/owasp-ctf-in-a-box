@@ -3,14 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(s: string, k: string[], a: (string | number)[]) => Promise<unknown>>(),
   upstashPipeline: vi.fn<(c: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
-  invalidateFoldedLeaderboard: vi.fn(),
+  beginScoreLowering: vi.fn(),
+  endScoreLowering: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
 // #553: a settings write can LOWER a contestant's folded score (a module
-// switched off takes its points out of the fold), and the hint gate reads
-// gross from the fold memo; the store drops it through this leaf.
-vi.mock("@/lib/leaderboard/fold-cache", () => ({ invalidateFoldedLeaderboard: mocks.invalidateFoldedLeaderboard }));
+// switched off takes its points out of the fold); the store brackets the
+// write with the leaf's begin/end (shared in-progress marker + revision bump).
+vi.mock("@/lib/leaderboard/fold-cache", () => ({
+  beginScoreLowering: mocks.beginScoreLowering,
+  endScoreLowering: mocks.endScoreLowering,
+}));
 
 import {
   AdminValidationError,
@@ -28,43 +32,48 @@ import { SECURE_DEV_TARGETS_MESSAGE } from "@/lib/secure-dev-targets";
 beforeEach(() => {
   mocks.upstashEval.mockReset();
   mocks.upstashPipeline.mockReset();
-  mocks.invalidateFoldedLeaderboard.mockReset();
+  mocks.beginScoreLowering.mockReset();
+  mocks.endScoreLowering.mockReset();
 });
 
 // #553 review: `withModuleContributions` folds only the ENABLED modules'
-// points, so switching a module off lowers every contestant's gross — and the
-// hint gate reads gross from the ~10 s fold memo. Any successful settings
-// write drops the memo (cheap: admin-only, rare); a refused one writes
-// nothing and drops nothing.
-describe("updateAdminSettings invalidates the folded leaderboard (#553)", () => {
-  it("bumps the score revision before the write and again after it lands", async () => {
-    // Before: a hint fold that read the old points under revision R finds R
-    // moved by the time its charge runs. After: a fold started during the
-    // write is outdated too.
+// points, so switching a module off lowers every contestant's gross. Any
+// settings write that reaches Redis is bracketed (cheap: admin-only, rare);
+// a patch refused before Redis writes nothing and opens nothing.
+describe("updateAdminSettings brackets the write as score-lowering (#553)", () => {
+  it("opens the bracket before the write and closes it after it lands", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
     await updateAdminSettings({ enabledModules: ["quiz"] }, "alice");
-    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
-    const [first, last] = mocks.invalidateFoldedLeaderboard.mock.invocationCallOrder;
+    expect(mocks.beginScoreLowering).toHaveBeenCalledTimes(1);
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
     const write = mocks.upstashEval.mock.invocationCallOrder[0];
-    expect(first).toBeLessThan(write);
-    expect(last).toBeGreaterThan(write);
+    expect(mocks.beginScoreLowering.mock.invocationCallOrder[0]).toBeLessThan(write);
+    expect(mocks.endScoreLowering.mock.invocationCallOrder[0]).toBeGreaterThan(write);
   });
 
-  it("does not bump on a patch refused before Redis", async () => {
+  it("opens nothing on a patch refused before Redis", async () => {
     await expect(updateAdminSettings({ hintCost: -1 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
-    expect(mocks.invalidateFoldedLeaderboard).not.toHaveBeenCalled();
+    expect(mocks.beginScoreLowering).not.toHaveBeenCalled();
+    expect(mocks.endScoreLowering).not.toHaveBeenCalled();
   });
 
-  it("bumps around any attempt that reached Redis — even one the script refused, or one that threw", async () => {
+  it("closes the bracket after any attempt that reached Redis — even one the script refused, or one that threw", async () => {
     // Once the eval was sent, the transport cannot tell "refused, wrote
     // nothing" from "wrote, then the reply was lost"; an extra fold is
     // harmless, a missed one is a hint bought on points that no longer count.
     mocks.upstashEval.mockResolvedValueOnce(["__window_refused__", "2026-08-14T10:00:00Z", "2026-08-14T09:00:00Z"]);
     await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
-    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(2);
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
     mocks.upstashEval.mockRejectedValueOnce(new Error("down"));
     await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toThrow("down");
-    expect(mocks.invalidateFoldedLeaderboard).toHaveBeenCalledTimes(4);
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(2);
+  });
+
+  it("ABORTS before the write when the bracket cannot be opened — fail closed", async () => {
+    mocks.beginScoreLowering.mockRejectedValue(new Error("upstash down"));
+    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toThrow("upstash down");
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(mocks.endScoreLowering).not.toHaveBeenCalled();
   });
 });
 

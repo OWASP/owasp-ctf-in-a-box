@@ -98,23 +98,30 @@ export function foldGeneration(): number {
 }
 
 // KEYS: [1]=in-progress counter [2]=score revision. ARGV: [1]=stuck-guard TTL (s).
-// Atomic: raise the counter, arm the stuck-guard only if none is armed (a
-// later begin must not keep renewing a guard a dead task left behind), bump
-// the revision. Exported for the tests and the live suite.
+// Atomic: bump the revision, raise the counter, arm the stuck-guard only if
+// none is armed (a later begin must not keep renewing a guard a dead task
+// left behind). THE REVISION GOES FIRST: a script does not roll back, and
+// an INCR on a key that somehow holds a non-integer throws — were the
+// counter raised before that, it would stay raised (blocking every
+// purchase) until the guard expired, with no `end` ever running. Ordered
+// this way, a throw means nothing landed. Exported for the tests and the
+// live suite.
 export const BEGIN_SCORE_LOWERING_SCRIPT = `
+redis.call('INCR', KEYS[2])
 local n = redis.call('INCR', KEYS[1])
 if redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
-redis.call('INCR', KEYS[2])
 return n`;
 
 // KEYS: [1]=in-progress counter [2]=score revision.
-// Atomic: lower the counter and, once no bracket is open (or the guard
-// already expired it below zero), DELETE the key so the next begin arms a
-// fresh guard rather than inheriting a stale one; bump the revision.
+// Atomic: bump the revision, then lower the counter and, once no bracket is
+// open (or the guard already expired it below zero), DELETE the key so the
+// next begin arms a fresh guard rather than inheriting a stale one. The
+// revision first here too: the trailing bump is what outdates a fold that
+// started mid-operation, and must land even if the counter key is junk.
 export const END_SCORE_LOWERING_SCRIPT = `
+redis.call('INCR', KEYS[2])
 local n = redis.call('DECR', KEYS[1])
 if n <= 0 then redis.call('DEL', KEYS[1]) n = 0 end
-redis.call('INCR', KEYS[2])
 return n`;
 
 /** Open a score-lowering bracket: raise the shared in-progress counter (with

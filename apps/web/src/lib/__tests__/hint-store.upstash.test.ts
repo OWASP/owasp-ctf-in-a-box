@@ -256,6 +256,44 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     }
   });
 
+  // #553 review: the score-lowering bracket's begin/end are single Lua
+  // scripts, and a script does not roll back — so the one command that can
+  // fail on a sane key (INCR of the revision, if it ever held a non-integer)
+  // must run first, leaving nothing written when it throws. Otherwise the
+  // counter would stay raised, blocking every purchase, until the stuck-guard
+  // expired. Exercised against the real scripts; the keys are the real
+  // ones, so the revision is saved and restored around the junk.
+  it("beginScoreLowering writes NOTHING when the revision key holds junk, and a clean bracket round-trips", async () => {
+    const { SCORE_LOWERING_KEY, SCORE_REV_KEY, beginScoreLowering, endScoreLowering } = await import(
+      "@/lib/leaderboard/fold-cache"
+    );
+    const [saved] = await pipeline([["GET", SCORE_REV_KEY]]);
+    try {
+      await pipeline([["DEL", SCORE_LOWERING_KEY], ["SET", SCORE_REV_KEY, "not-a-number"]]);
+      await expect(beginScoreLowering()).rejects.toThrow();
+      const [counter, ttl] = await pipeline([["GET", SCORE_LOWERING_KEY], ["TTL", SCORE_LOWERING_KEY]]);
+      expect(counter.result).toBeNull(); // not raised
+      expect(ttl.result).toBe(-2); // no key, no guard
+      // Sane revision again: begin raises + arms, end lowers + deletes, and
+      // the revision moved twice.
+      await pipeline([["SET", SCORE_REV_KEY, "10"]]);
+      await beginScoreLowering();
+      const [c1, t1, r1] = await pipeline([["GET", SCORE_LOWERING_KEY], ["TTL", SCORE_LOWERING_KEY], ["GET", SCORE_REV_KEY]]);
+      expect(c1.result).toBe("1");
+      expect(Number(t1.result)).toBeGreaterThan(0);
+      expect(r1.result).toBe("11");
+      await endScoreLowering();
+      const [c2, r2] = await pipeline([["GET", SCORE_LOWERING_KEY], ["GET", SCORE_REV_KEY]]);
+      expect(c2.result).toBeNull();
+      expect(r2.result).toBe("12");
+    } finally {
+      await pipeline([
+        ["DEL", SCORE_LOWERING_KEY],
+        saved.result == null ? ["DEL", SCORE_REV_KEY] : ["SET", SCORE_REV_KEY, String(saved.result)],
+      ]);
+    }
+  });
+
   it("REVEAL_SCRIPT refuses a locked story step's hint, charging nothing, and reveals it once a teammate solved the prerequisite", async () => {
     const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
     const { upstashEval } = await import("@/lib/upstash");

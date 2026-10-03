@@ -75,6 +75,17 @@ describe("beginScoreLowering", () => {
     expect(s.indexOf("TTL")).toBeLessThan(s.indexOf("EXPIRE"));
   });
 
+  it("the script bumps the revision FIRST, so a failure there leaves the counter untouched", () => {
+    // A Lua script does not roll back: if the revision key ever held a
+    // non-integer, an INCR on it throws — and were the counter raised before
+    // that, it would stay raised (and blocking purchases) until the
+    // stuck-guard expired, with no `end` ever running. The revision INCR is
+    // the only command here that can fail on a sane key, so it goes first:
+    // a throw then means NOTHING landed.
+    const s = BEGIN_SCORE_LOWERING_SCRIPT;
+    expect(s.indexOf("INCR', KEYS[2]")).toBeLessThan(s.indexOf("INCR', KEYS[1]"));
+  });
+
   it("keeps both keys out of the master reset's sweep", () => {
     // The reset wipes `ctf:solves:*`, `ctf:user:*`, `ctf:hints:*`, … but
     // keeps `ctf:admin:*` — the marker must survive the very operation it
@@ -110,6 +121,9 @@ describe("endScoreLowering", () => {
     expect(s).toMatch(/<= 0/);
     expect(s).toMatch(/DEL', KEYS\[1\]/);
     expect(s).toMatch(/INCR', KEYS\[2\]/);
+    // Revision first here too: the trailing bump is what outdates a fold that
+    // started mid-operation, and must land even if the counter key is junk.
+    expect(s.indexOf("INCR', KEYS[2]")).toBeLessThan(s.indexOf("DECR', KEYS[1]"));
   });
 
   it("never throws — the operation's own outcome is what the caller reports — but logs", async () => {

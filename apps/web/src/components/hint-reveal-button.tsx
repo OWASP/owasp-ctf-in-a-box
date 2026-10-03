@@ -4,9 +4,11 @@
 // one button that charges and reveals through the SAME /api/hints/reveal
 // endpoint the secure-development rows use — the server is the boundary that
 // gates, charges idempotently, and never sends a text that wasn't paid for.
-// Already-owned hints never reach this component: the page renders their
-// text server-side and this button only exists while there is something to
-// buy. `app` is the target this reveal is charged against (Task 1's
+// An already-owned hint reaches this component too, as `ownedText` (#560):
+// the page hands the server-known text over so this SAME element renders it,
+// before and after router.refresh() — swapping in a plain <p> there unmounted
+// the component and took the spend/balance acknowledgement with it. `app` is
+// the target this reveal is charged against (Task 1's
 // `HintTarget`) — originally hardcoded to "classic", now the caller's prop so
 // flags/[id] and ai/[id] share one component instead of a copy each.
 //
@@ -26,7 +28,20 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { HintTarget } from "@/lib/hint-store";
 
-export default function HintRevealButton({ app, id, cost }: { app: HintTarget; id: string; cost: number }) {
+export default function HintRevealButton({
+  app,
+  id,
+  cost,
+  ownedText,
+}: {
+  app: HintTarget;
+  id: string;
+  cost: number;
+  // The hint text the SERVER already knows this viewer owns (#560). Rendered
+  // by this same component so a post-reveal refresh never replaces the
+  // element (and never unmounts the acknowledgement below).
+  ownedText?: string | null;
+}) {
   const router = useRouter();
   const [state, setState] = useState<"idle" | "confirm" | "pending">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -119,7 +134,10 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
   // a live region the click consumed points and produced silence for a
   // screen-reader user, with focus dropped to the document body. The spent
   // acknowledgement rides in the same region so the deduction is heard too.
-  if (text) {
+  // `text` (this reveal's response) wins over the prop (a server-known
+  // ownership from before this component mounted).
+  const shown = text ?? ownedText;
+  if (shown) {
     return (
       <p
         ref={revealedRef}
@@ -128,7 +146,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         className="rounded border-l-2 border-[#d4a017]/50 bg-[#d4a017]/[0.06] px-3 py-2 text-sm leading-relaxed text-[#d4a017]/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
       >
         <span aria-hidden="true">💡</span> <span className="sr-only">Hint: </span>
-        {text}
+        {shown}
         {chargedCost !== null && (
           <span className="mt-1 block text-xs text-[#d4a017]/70">
             −{chargedCost} pts spent{balance !== null && <> · {balance} pts left</>}

@@ -11,6 +11,7 @@ import { generateLaunchKeyPair, generateSigningKey, type AiLaunchKeyPair } from 
 import { AI_BUNDLE_VERSION, type AiBundle, type AiBundleChallenge } from "@/lib/ai-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   AI_CATEGORIES_KEY as CATEGORIES_KEY,
   AI_CATEGORIES_MAX,
@@ -403,26 +404,8 @@ function extractAttempt(v: Record<string, unknown>): Attempt | null {
   return { attempts: v.attempts, lastAt: v.lastAt };
 }
 
-function parseHashEntries<T>(flat: unknown, extract: (parsed: Record<string, unknown>) => T | null): Record<string, T> {
-  const arr = Array.isArray(flat) ? (flat as string[]) : [];
-  const out: Record<string, T> = {};
-  for (let i = 0; i < arr.length; i += 2) {
-    const value = parseJsonValue(arr[i + 1], extract);
-    if (value !== null) out[arr[i]] = value;
-  }
-  return out;
-}
-
-function parseJsonValue<T>(raw: unknown, extract: (parsed: Record<string, unknown>) => T | null): T | null {
-  if (typeof raw !== "string") return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== "object" || parsed === null) return null;
-    return extract(parsed as Record<string, unknown>);
-  } catch {
-    return null;
-  }
-}
+// `parseJsonValue` / `parseHashEntries` / `parseCounterHash` come from
+// lib/redis-decode.ts — the one copy quiz, classic and ai share (#504 M13).
 
 export type ViewerAi = {
   solved: Record<string, Solve>;
@@ -440,16 +423,6 @@ export async function getViewerAi(login: string): Promise<ViewerAi> {
     solved: parseHashEntries(solvesRes.result, extractSolve),
     attempts: parseHashEntries(attemptsRes.result, extractAttempt),
   };
-}
-
-function parseCounterHash(flat: unknown): Map<string, number> {
-  const arr = Array.isArray(flat) ? (flat as string[]) : [];
-  const out = new Map<string, number>();
-  for (let i = 0; i < arr.length; i += 2) {
-    const n = Number(arr[i + 1]);
-    if (Number.isFinite(n)) out.set(arr[i], n);
-  }
-  return out;
 }
 
 /** Distinct solvers per challenge — distinct by construction, because
@@ -897,6 +870,14 @@ async function evaluateGate(
 //
 // ARGV[9] (the solve source) is interpolated into stored JSON, so it must only
 // ever be a module-internal literal — never caller input.
+//
+// The shared attempt-row read (#504 M13) is indented one level here because
+// this script pastes it INSIDE the graded `if ARGV[8] == '1' then`. Its `end`
+// has to sit at column 2 like every other nested one: at column 0 it would be
+// read for the end of that `if`, which is exactly what
+// ai-store.grade.test.ts's branch-close scan keys off. quiz and classic paste
+// it at column 0 and take it verbatim.
+const ATTEMPT_ROW_LUA_INDENTED = ATTEMPT_ROW_LUA.replace(/\n/g, "\n  ");
 export const AWARD_SCRIPT = `
 local cRaw = redis.call('HGET', KEYS[4], ARGV[1])
 if not cRaw then return {'missing'} end
@@ -921,17 +902,10 @@ if ARGV[8] == '1' then
 
   local cooldownMs = tonumber(ARGV[5])
   local nowMs = tonumber(ARGV[6])
-  local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
-  local attempts = 0
-  local lastAtMs = nil
-  local firstAt = nil
-  if attemptsRaw then
-    local foundAttempts = string.match(attemptsRaw, '"attempts":(%d+)[,}]')
-    if foundAttempts then attempts = tonumber(foundAttempts) end
-    local foundLastAtMs = string.match(attemptsRaw, '"lastAtMs":(%d+)[,}]')
-    if foundLastAtMs then lastAtMs = tonumber(foundLastAtMs) end
-    firstAt = string.match(attemptsRaw, '"firstAt":"([^"]*)"')
-  end
+  -- The shared attempt-row read (#504 M13) — attempts, lastAtMs and firstAt —
+  -- declared as ATTEMPT_ROW_LUA so quiz's and classic's scripts read the same
+  -- three fields out of the same row shape.
+  ${ATTEMPT_ROW_LUA_INDENTED}
 
   if not dry and cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
     return {'cooldown', tostring(lastAtMs + cooldownMs)}

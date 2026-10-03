@@ -10,12 +10,15 @@
 // of those: three modules sell hints through the same four settings, so it
 // sits on Event, where it is reachable whatever the event enables.
 //
-// This component owns ALL the settings state (`settings`, the draft input
-// strings, `pending`, `error`, `confirm`) plus the `apply`/`commitNumber`
-// helpers, and hands them to the tab bodies as props; the tabs are
-// presentational. All writes go through POST /api/admin/settings (auth +
-// validation enforced server-side — see src/app/api/admin/settings/route.ts);
-// this component is display + dispatch only.
+// The settings state machine (`settings`, the draft input strings,
+// `pending`, `error`, `confirm`) and the `apply`/`commitNumber` write path
+// live in use-admin-settings.ts (`useAdminSettingsDrafts`, called once
+// below), the destination list and active-tab state in use-admin-nav.ts, and
+// the audit line's clock in admin-changed-at.tsx — this component threads
+// them to the tab bodies as props and stays display + dispatch only, the
+// tabs presentational. All writes go through POST /api/admin/settings (auth
+// + validation enforced server-side — see src/app/api/admin/settings/
+// route.ts).
 //
 // Every panel is rendered into the DOM and hidden with the `hidden`
 // attribute rather than conditionally unmounted. That is deliberate: it keeps
@@ -29,11 +32,8 @@
 // `tabIndex`, `aria-selected`/`aria-controls`/`aria-labelledby` wiring, and
 // ArrowLeft/ArrowRight/Home/End movement with wraparound.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { formatRelativeTime } from "@/lib/relative-time";
+import { useCallback, useMemo, useState } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
-import { restampPlan, type ReadoutStamp } from "@/lib/schedule-window";
-import { DEFAULT_EVENT_IDENTITY } from "@/lib/event-identity";
 import { phaseFromSettings } from "@/components/phase";
 import {
   ALL_MODULE_IDS,
@@ -43,12 +43,11 @@ import {
 } from "@/lib/modules";
 import ConfirmModal from "@/components/confirm-modal";
 import type { ModuleInventory } from "@/components/admin-module-setup";
-import { describeFieldError, parseNumberCommit, type FieldStatus } from "@/components/admin-number-field";
 import AdminQuizControls from "@/components/admin-quiz-controls";
 import AdminClassicControls from "@/components/admin-classic-controls";
 import AdminAiControls from "@/components/admin-ai-controls";
 import type { SyncStatus } from "@/lib/admin-store";
-import AdminSidebar, { type SidebarGroup } from "./admin-sidebar";
+import AdminSidebar from "./admin-sidebar";
 import AdminOverviewTab from "./admin-overview-tab";
 import AdminAdminsTab from "./admin-admins-tab";
 import AdminActivityTab from "./admin-activity-tab";
@@ -61,8 +60,19 @@ import AdminSettingsCard from "@/components/admin/settings-card";
 import AdminSecureDevTab from "./admin-secure-dev-tab";
 import AdminModulePanel from "./admin-module-panel";
 import { moduleChoices } from "./module-toggle";
-import type { CommitNumber, ConfirmState } from "./types";
-import { adminTabHref, tabFromLocation } from "@/app/(site)/admin/admin-tabs";
+import { ChangedAt } from "./admin-changed-at";
+import { useAdminSettingsDrafts } from "./use-admin-settings";
+import {
+  ACTIVITY_TAB,
+  ADMINS_TAB,
+  EVENT_TAB,
+  HINTS_TAB,
+  INSIGHTS_TAB,
+  OVERVIEW_TAB,
+  SPONSORS_TAB,
+  SUPPORT_TAB,
+  useAdminNav,
+} from "./use-admin-nav";
 
 // Registry defaults (displayName/description) keyed by id, for the identity
 // form's placeholders. Not the `modules` prop — a `ResolvedModule`
@@ -87,94 +97,12 @@ const MODULE_DEFAULTS = new Map(
 // client callers.
 export { adminTabHref, resolveAdminTab, tabFromLocation } from "@/app/(site)/admin/admin-tabs";
 
-// The landing destination (admin-redesign.md PR 1): "is scoring on, how many
-// teams, is anything stuck" answered in one screen rather than three tabs.
-// Also the fallback for a deep link this shell doesn't recognise — a stale
-// bookmark or a typo lands an organizer somewhere real, not on nothing.
-const OVERVIEW_TAB = "overview";
-/** The always-present control-plane tab. Module tabs follow it, in the order
- *  the event config lists them. */
-const EVENT_TAB = "event";
-// The hint policy's own destination (admin-redesign.md's Event/Hints/Admins
-// split) — see admin-hints-tab.tsx for why it isn't a module's or Event's.
-const HINTS_TAB = "hints";
-/** Runtime admin management (issue #147). Sits beside Event rather than
- *  inside it: it manages WHO may use the panel, not what the event does. */
-const ADMINS_TAB = "admins";
-// Sponsor recognition (issue #405) — a platform feature, not a module, so it
-// sits beside Event/Hints/Admins rather than in the module tab row.
-const SPONSORS_TAB = "sponsors";
-// Live-event support (issue #168). Sits after Admins and before the module
-// tabs: it is control-plane, not module-specific, and an organizer reaching
-// for it is mid-incident rather than mid-configuration.
-const SUPPORT_TAB = "support";
-// Engagement metrics (issue #169). Control-plane like Event/Admins/Support,
-// and last of the four because it is read-only — an organizer reaches for it
-// after the event more often than during it.
-const INSIGHTS_TAB = "insights";
-// The activity log (issue #212). Read-only like Insights but LIVE — an
-// organizer reaches for it mid-event ("did anyone sign in yet?", "who just
-// solved that?"), so it sits between Support and Insights.
-const ACTIVITY_TAB = "activity";
-
-async function postSettings(patch: Record<string, unknown>): Promise<{ settings?: AdminSettings; error?: string }> {
-  const res = await fetch("/api/admin/settings", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  const data = (await res.json().catch(() => ({}))) as { settings?: AdminSettings; error?: string };
-  if (!res.ok) return { error: data.error ?? "Request failed" };
-  return { settings: data.settings };
-}
-
-/** The audit line's timestamp, as "4m ago" rather than a raw ISO instant.
- *
- *  Renders nothing until mounted, for the same reason the countdowns do: this
- *  is a Client Component that still server-renders, and relative time read
- *  from a live clock during render disagrees with the server's render. So the
- *  server paints "last changed by alice" and the time appears on hydration.
- *
- *  The exact instant stays available on hover via `title` — an organizer
- *  reconciling an audit trail wants the precise value, just not in their face. */
-function ChangedAt({ iso }: { iso: string }) {
-  const [label, setLabel] = useState<string | null>(null);
-
-  useEffect(() => {
-    const tick = () => setLabel(formatRelativeTime(iso));
-    const timeout = setTimeout(tick, 0);
-    // 30s, not 1s: this line ages in minutes and nobody is watching it count.
-    const interval = setInterval(tick, 30_000);
-    return () => {
-      clearTimeout(timeout);
-      clearInterval(interval);
-    };
-  }, [iso]);
-
-  if (!label) return null;
-  return <time dateTime={iso} title={iso}>{label}</time>;
-}
-
-/** After a settings write: the name the Event tab's master-reset
- *  confirmation should ask for. Unchanged unless the just-saved patch
- *  touched `eventName` — in which case this reads the STORED value back off
- *  the server's own response (never the raw patch value: a patch of
- *  `{ eventName: "" }` is stored as "restore the default", not literally
- *  ""), falling back to the spec default the same way `resolveSite` does.
- *  Pulled out as a pure function — like `parseNumberCommit`/
- *  `describeFieldError` elsewhere in this file's orbit — so
- *  admin-controls.test.tsx can pin the derivation directly: this repo has no
- *  jsdom/testing-library, so a live re-render of a stateful component can't
- *  be observed from a test (see that file's header comment), but this
- *  decision itself is pure and needs none. */
-export function nextEventNameAfterSave(
-  key: string,
-  current: string,
-  saved: Pick<AdminSettings, "eventIdentity">,
-): string {
-  if (key !== "eventName") return current;
-  return saved.eventIdentity.eventName ?? DEFAULT_EVENT_IDENTITY.eventName;
-}
+// …and the rename-after-save decision, which the write path in
+// use-admin-settings.ts implements. Re-exported for the same reason: this is
+// where its callers (admin-controls.test.tsx today, any future client caller
+// tomorrow) import it from, and moving the implementation must not move the
+// import site.
+export { nextEventNameAfterSave } from "./use-admin-settings";
 
 export default function AdminControls({
   initial,
@@ -226,86 +154,46 @@ export default function AdminControls({
    *  Event tab, which uses it for the master-reset confirmation phrase. */
   eventName: string;
 }) {
-  const [settings, setSettings] = useState(initial);
-  // The name the Event tab's master-reset confirmation asks for. Seeded from
-  // the server-resolved `eventName` prop, then re-derived (below, in
-  // `applyField`) from the POST response whenever the saved patch renamed the
-  // event — otherwise a rename left this stale at the pre-rename name, so a
-  // reset typed against the NEW name (shown everywhere else on this very
-  // panel) failed `getSite()`'s server-side check with "confirmation does not
-  // match the event name" (CodeRabbit round 1, #389).
-  const [currentEventName, setCurrentEventName] = useState(eventName);
-  // The "now" the Event tab's schedule readout is evaluated at (epoch ms).
-  // Stamped at mount, in the handlers that change settings, and — below — by
-  // a timer at the next instant a scoring/registration window opens or
-  // closes, so an organizer parked on the tab across a boundary sees the
-  // flip without touching anything. Never read from the clock in render:
-  // that is the impure read the compiler lint rejects.
-  const [stamp, setStamp] = useState<ReadoutStamp>(() => {
-    const now = Date.now();
-    return { at: now, client: now };
-  });
-  const settingsAt = stamp.at;
-  const restampNow = () => {
-    const now = Date.now();
-    setStamp({ at: now, client: now });
-  };
-  useEffect(() => {
-    // The same floored "now" the readouts use (serverFloorNow), so a client
-    // clock behind the server re-stamps at the boundary the READOUT crosses.
-    const plan = restampPlan(
-      stamp,
-      settings.updatedAt,
-      [
-        { startsAt: settings.scoringStartsAt, endsAt: settings.scoringEndsAt },
-        { startsAt: settings.registrationStartsAt, endsAt: settings.registrationEndsAt },
-      ],
-      Date.now(),
-    );
-    if (plan === null) return;
-    // setState in a timer callback, not in the effect body: the clock is the
-    // external system this effect subscribes to. Re-stamping re-runs the
-    // effect, which arms the timer for the following boundary, if any. The
-    // stamp is the boundary itself, never a client clock that may trail it.
-    const id = setTimeout(() => setStamp({ at: plan.stampAt, client: Date.now() }), plan.delayMs);
-    return () => clearTimeout(id);
-  }, [
-    stamp,
-    settings.updatedAt,
-    settings.scoringStartsAt,
-    settings.scoringEndsAt,
-    settings.registrationStartsAt,
-    settings.registrationEndsAt,
-  ]);
-  const [hintCostInput, setHintCostInput] = useState(initial.hintCost === null ? "" : String(initial.hintCost));
-  const [minSolvesInput, setMinSolvesInput] = useState(
-    initial.hintsMinSolves === null ? "" : String(initial.hintsMinSolves),
-  );
-  const [unlockAfterInput, setUnlockAfterInput] = useState(
-    initial.hintsUnlockAfterMin === null ? "" : String(initial.hintsUnlockAfterMin),
-  );
-  const [quizMaxAttemptsInput, setQuizMaxAttemptsInput] = useState(
-    initial.quizMaxAttempts === null ? "" : String(initial.quizMaxAttempts),
-  );
-  const [quizRetryAfterInput, setQuizRetryAfterInput] = useState(
-    initial.quizRetryAfterMin === null ? "" : String(initial.quizRetryAfterMin),
-  );
-  const [classicCooldownSecInput, setClassicCooldownSecInput] = useState(
-    initial.classicCooldownSec === null ? "" : String(initial.classicCooldownSec),
-  );
-  const [aiCooldownSecInput, setAiCooldownSecInput] = useState(
-    initial.aiCooldownSec === null ? "" : String(initial.aiCooldownSec),
-  );
-  const [cooldownInput, setCooldownInput] = useState(
-    initial.scoreCooldownMin === null ? "" : String(initial.scoreCooldownMin),
-  );
-  const [teamMaxMembersInput, setTeamMaxMembersInput] = useState(
-    initial.teamMaxMembers === null ? "" : String(initial.teamMaxMembers),
-  );
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const [resetInfo, setResetInfo] = useState<string | null>(null);
+  // The whole settings state machine in one call: stored settings, the nine
+  // numeric drafts, pending/error/confirm/resetInfo, and the write path
+  // (use-admin-settings.ts). What this component does with the result is
+  // dispatch only — hand each tab the slice it renders.
+  const {
+    settings,
+    settingsAt,
+    currentEventName,
+    pending,
+    error,
+    confirm,
+    setConfirm,
+    resetInfo,
+    runConfirm,
+    doReset,
+    doSeed,
+    doClearDemo,
+    apply,
+    applyField,
+    commitNumber,
+    statusOf,
+    hintCostInput,
+    setHintCostInput,
+    minSolvesInput,
+    setMinSolvesInput,
+    unlockAfterInput,
+    setUnlockAfterInput,
+    quizMaxAttemptsInput,
+    setQuizMaxAttemptsInput,
+    quizRetryAfterInput,
+    setQuizRetryAfterInput,
+    classicCooldownSecInput,
+    setClassicCooldownSecInput,
+    aiCooldownSecInput,
+    setAiCooldownSecInput,
+    cooldownInput,
+    setCooldownInput,
+    teamMaxMembersInput,
+    setTeamMaxMembersInput,
+  } = useAdminSettingsDrafts({ initial, eventName });
 
   // What each module's list panel has reported about its own content (how
   // many questions/challenges/categories exist), so the setup checklist above
@@ -335,293 +223,14 @@ export default function AdminControls({
     [modules, reportInventory],
   );
 
-  const tabs = [
-    { id: OVERVIEW_TAB, label: "Overview" },
-    { id: EVENT_TAB, label: "Event" },
-    { id: HINTS_TAB, label: "Hints" },
-    { id: ADMINS_TAB, label: "Admins" },
-    { id: SPONSORS_TAB, label: "Sponsors" },
-    { id: SUPPORT_TAB, label: "Support" },
-    { id: ACTIVITY_TAB, label: "Activity" },
-    { id: INSIGHTS_TAB, label: "Insights" },
-    ...modules.map((mod) => ({ id: mod.id as string, label: mod.title })),
-  ];
-  const [active, setActive] = useState<string>(
-    tabs.some((t) => t.id === initialTab) ? (initialTab as string) : OVERVIEW_TAB,
-  );
-
-  // Switching tabs is client-side state (instant, no server round-trip), so
-  // the address bar has to be told about it — otherwise the panel shows
-  // Activity while the URL still reads /admin/overview, and an organizer
-  // pasting "the link I'm looking at" sends the wrong screen. pushState keeps
-  // the two in step and leaves a real history entry, so Back walks the tabs.
-  const selectTab = useCallback((id: string) => {
-    setActive(id);
-    window.history.pushState(null, "", adminTabHref(id));
-  }, []);
-
-  // …and Back/Forward has to move the panel, not just the URL.
-  const tabIds = tabs.map((t) => t.id).join(",");
-  useEffect(() => {
-    const onPop = () => {
-      const id = tabFromLocation(window.location.pathname, window.location.search);
-      setActive(tabIds.split(",").includes(id) ? id : OVERVIEW_TAB);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [tabIds]);
-
-  // The sidebar's three groups (admin-redesign.md). CONTENT is every enabled
-  // module, in the order `modules` lists them — the same order the flat tab
-  // row used.
-  const sidebarGroups: readonly SidebarGroup[] = [
-    {
-      heading: "Run",
-      items: [
-        { id: OVERVIEW_TAB, label: "Overview" },
-        { id: ACTIVITY_TAB, label: "Activity" },
-        { id: INSIGHTS_TAB, label: "Insights" },
-        { id: SUPPORT_TAB, label: "Support" },
-      ],
-    },
-    {
-      heading: "Content",
-      items: modules.map((mod) => ({ id: mod.id as string, label: mod.title })),
-    },
-    {
-      heading: "Setup",
-      items: [
-        { id: EVENT_TAB, label: "Event" },
-        { id: HINTS_TAB, label: "Hints" },
-        { id: ADMINS_TAB, label: "Admins" },
-        { id: SPONSORS_TAB, label: "Sponsors" },
-      ],
-    },
-  ];
-
-  const runConfirm = async () => {
-    if (!confirm) return;
-    setPending(true);
-    try {
-      await confirm.onConfirm();
-    } finally {
-      setPending(false);
-      setConfirm(null);
-    }
-  };
-
-  // Master reset: wipes all event data. Type-to-confirm gated in the modal;
-  // the server re-checks the phrase and requires admin. On success the box is
-  // frozen (the reset freezes scoring), so reflect that + show the counts.
-  const doReset = async (confirmValue: string) => {
-    setError(null);
-    setResetInfo(null);
-    const res = await fetch("/api/admin/reset", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm: confirmValue }),
-    });
-    const data = (await res.json().catch(() => ({}))) as {
-      cleared?: Record<string, number>;
-      error?: string;
-    };
-    if (!res.ok) {
-      setError(data.error ?? "Reset failed");
-      return;
-    }
-    // The server reset freezes AND relocks (#464: clears the scoring start),
-    // so local state follows — or the Launch block would still say "Live".
-    setSettings((s) => ({ ...s, paused: true, scoringStartsAt: null }));
-    restampNow();
-    const total = Object.values(data.cleared ?? {}).reduce((a, b) => a + b, 0);
-    setResetInfo(`Wiped ${total} keys — the event is frozen and not launched. Launch and unfreeze when you're ready.`);
-  };
-
-  // No DEMO_MODE gate any more (issue #419): populate a demo leaderboard
-  // (fake contestants + teams). Type-to-confirm gated in the modal; the
-  // server re-checks the phrase and requires admin, same pattern as reset.
-  const doSeed = async () => {
-    setError(null);
-    setResetInfo(null);
-    const res = await fetch("/api/admin/seed", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm: "SEED" }),
-    });
-    const data = (await res.json().catch(() => ({}))) as {
-      contestants?: number;
-      teams?: number;
-      solves?: number;
-      error?: string;
-    };
-    if (!res.ok) {
-      setError(data.error ?? "Seed failed");
-      return;
-    }
-    setResetInfo(
-      `Seeded ${data.contestants} contestants, ${data.teams} teams, ${data.solves} solves. The board revalidates within ~30s.`,
-    );
-  };
-
-  // The inverse: removes exactly the rows doSeed above wrote (issue #419).
-  // Same type-to-confirm + admin gate; see clearDemoData's own doc comment
-  // for what it deliberately leaves behind (authored demo challenges).
-  const doClearDemo = async () => {
-    setError(null);
-    setResetInfo(null);
-    const res = await fetch("/api/admin/seed", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm: "CLEAR DEMO DATA" }),
-    });
-    const data = (await res.json().catch(() => ({}))) as {
-      contestants?: number;
-      teams?: number;
-      sponsors?: number;
-      error?: string;
-    };
-    if (!res.ok) {
-      setError(data.error ?? "Clear failed");
-      return;
-    }
-    setResetInfo(
-      `Cleared demo rows for ${data.contestants} contestants, ${data.teams} teams, ${data.sponsors} sponsors. Demo questions/challenges/categories are left as authored content — remove those by hand if you don't want them.`,
-    );
-  };
-
-  /** Re-seeds every numeric draft string from the settings the server just
-   *  confirmed, so what the fields show is what is stored. */
-  const syncInputs = (s: AdminSettings) => {
-    setSettings(s);
-    restampNow();
-    setHintCostInput(s.hintCost === null ? "" : String(s.hintCost));
-    setMinSolvesInput(s.hintsMinSolves === null ? "" : String(s.hintsMinSolves));
-    setUnlockAfterInput(s.hintsUnlockAfterMin === null ? "" : String(s.hintsUnlockAfterMin));
-    setQuizMaxAttemptsInput(s.quizMaxAttempts === null ? "" : String(s.quizMaxAttempts));
-    setQuizRetryAfterInput(s.quizRetryAfterMin === null ? "" : String(s.quizRetryAfterMin));
-    setClassicCooldownSecInput(s.classicCooldownSec === null ? "" : String(s.classicCooldownSec));
-    setAiCooldownSecInput(s.aiCooldownSec === null ? "" : String(s.aiCooldownSec));
-    setTeamMaxMembersInput(s.teamMaxMembers === null ? "" : String(s.teamMaxMembers));
-    setCooldownInput(s.scoreCooldownMin === null ? "" : String(s.scoreCooldownMin));
-  };
-
-  /** Returns whether the patch was accepted, so a caller with its own local
-   *  draft state (AdminModuleIdentity) can snap back on rejection instead of
-   *  leaving rejected text sitting in the field. Every tab's `apply` prop
-   *  type was widened to `Promise<boolean>` to match (a `Promise<T>` is not
-   *  assignable to `Promise<void>` just because `T` goes unused — that's
-   *  only true for a bare `void`-returning function type, not one nested
-   *  inside a generic); callers that only need fire-and-forget keep calling
-   *  it exactly the same way (`void apply(...)`), just ignoring the result.
-   *
-   *  This is the path for writes that have no field of their own to report
-   *  into — the toggles, the module switches — so a failure lands on the
-   *  panel-wide error line. A write that belongs to one field goes through
-   *  `applyField` below, which reports beside that field instead. */
-  const apply = async (patch: Record<string, unknown>): Promise<boolean> => {
-    setPending(true);
-    setError(null);
-    try {
-      const result = await postSettings(patch);
-      if (result.error) {
-        setError(result.error);
-        return false;
-      }
-      if (result.settings) syncInputs(result.settings);
-      return true;
-    } catch {
-      // A network-level failure (fetch itself rejected) must not leave the
-      // whole panel disabled behind a `pending` that never clears.
-      setError("Couldn't reach the server — try again.");
-      return false;
-    } finally {
-      setPending(false);
-    }
-  };
-
-  // Per-field save status (UX audit F2). Keyed by the stored setting key —
-  // the same key the patch carries — and read by the field that owns it, so
-  // an organizer sees "Saving…", "Saved" or the reason for a refusal beside
-  // the box they typed in, never only on a line under the whole panel.
-  // "Saved" is transient: it clears itself after a moment unless a newer
-  // status has replaced it.
-  const [fieldStatus, setFieldStatus] = useState<Record<string, FieldStatus>>({});
-  const setStatus = useCallback((key: string, status: FieldStatus) => {
-    setFieldStatus((prev) => ({ ...prev, [key]: status }));
-  }, []);
-  const flashSaved = useCallback(
-    (key: string) => {
-      setStatus(key, { state: "saved" });
-      setTimeout(() => {
-        setFieldStatus((prev) => (prev[key]?.state === "saved" ? { ...prev, [key]: { state: "idle" } } : prev));
-      }, 2500);
-    },
-    [setStatus],
-  );
-
-  /** A write that belongs to ONE field. Same POST as `apply`, but the outcome
-   *  is reported into `fieldStatus[key]` — pending, then saved or rejected
-   *  with the server's message rewritten through `label` — and never onto the
-   *  panel-wide error line. Returns whether it was accepted, like `apply`, so
-   *  a caller can snap its draft back. */
-  const applyField = async (key: string, patch: Record<string, unknown>, label: string): Promise<boolean> => {
-    setPending(true);
-    setStatus(key, { state: "pending" });
-    try {
-      const result = await postSettings(patch);
-      if (result.error) {
-        setStatus(key, { state: "rejected", message: describeFieldError(label, result.error) });
-        return false;
-      }
-      const saved = result.settings;
-      if (saved) {
-        syncInputs(saved);
-        // The reset modal's confirmation phrase must follow a rename
-        // immediately — the server's own name is the only source of truth
-        // for it (`getSite()` on the reset route).
-        setCurrentEventName((prev) => nextEventNameAfterSave(key, prev, saved));
-      }
-      flashSaved(key);
-      return true;
-    } catch {
-      // Same as `apply`: a fetch that rejects outright must still release
-      // `pending` and tell the field why nothing saved.
-      setStatus(key, { state: "rejected", message: `${label} could not be saved: couldn't reach the server — try again.` });
-      return false;
-    } finally {
-      setPending(false);
-    }
-  };
-
-  /** Shared commit for the numeric knobs: a no-op when unchanged; junk, a
-   *  fraction, a negative or a blanked field snaps back to the stored value
-   *  WITH the reason shown beside the field; otherwise the value is posted
-   *  through `applyField`, which re-validates server-side (admin-store) and
-   *  snaps the draft back if that refuses. The decision itself is the pure
-   *  `parseNumberCommit`, so it is tested without a DOM. */
-  // Typed as the shared `CommitNumber` rather than repeating its key union
-  // here. The inline copy had already drifted once by the time a seventh key
-  // was added, and a mismatch shows up as a type error at the call site rather
-  // than anywhere near the cause.
-  const commitNumber: CommitNumber = (key, raw, reset, label) => {
-    const current = settings[key];
-    const decision = parseNumberCommit(raw, current);
-    if (decision.kind === "noop") return;
-    if (decision.kind === "snapback") {
-      reset(current === null ? "" : String(current));
-      setStatus(key, { state: "rejected", message: decision.message });
-      return;
-    }
-    void applyField(key, { [key]: decision.value }, label).then((ok) => {
-      if (!ok) reset(current === null ? "" : String(current));
-    });
-  };
-  const statusOf = (key: string): FieldStatus => fieldStatus[key] ?? { state: "idle" };
+  // The destination list, the sidebar's groups and the active-tab state (with
+  // the pushState/popstate wiring) — use-admin-nav.ts.
+  const { tabs, sidebarGroups, active, setActive, selectTab } = useAdminNav({ modules, initialTab });
 
   // Whether the live views (Overview, Activity, Insights) keep polling — see
-  // use-live-poll.ts. Evaluated at `settingsAt`, which the boundary timer
-  // above re-stamps when a scheduled window opens or closes, so the loop
-  // starts and stops with the phase without a page reload.
+  // use-live-poll.ts. Evaluated at `settingsAt`, which the boundary timer in
+  // use-admin-restamp.ts re-stamps when a scheduled window opens or closes,
+  // so the loop starts and stops with the phase without a page reload.
   const eventLive = phaseFromSettings(settings, settingsAt).phase === "live";
 
   // The row set for the module switches (Event's rows and each module

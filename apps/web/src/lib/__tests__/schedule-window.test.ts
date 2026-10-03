@@ -9,7 +9,15 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { launchState, nextScheduleBoundary, outsideScoringWindow, outsideWindow, restampPlan, serverFloorNow } from "@/lib/schedule-window";
+import {
+  launchState,
+  nextScheduleBoundary,
+  outsideScoringWindow,
+  outsideWindow,
+  restampPlan,
+  scoringClosure,
+  serverFloorNow,
+} from "@/lib/schedule-window";
 
 // Shared differential corpus (issue #232): the same cases run verbatim in
 // scorer/test/store.test.js and sync/test/redis.test.js against their own
@@ -50,6 +58,43 @@ describe("outsideScoringWindow: shared scoring-window corpus (#464)", () => {
 const T = Date.parse("2026-10-01T12:00:00Z");
 const iso = (ms: number) => new Date(ms).toISOString();
 const w = (startsAt: string | null, endsAt: string | null) => ({ startsAt, endsAt });
+
+// #567: the ONE place that says WHY scoring is closed. `effectivePaused`
+// folds the manual freeze and the schedule into a boolean, which is right for
+// the scorer/sync readers but leaves the contestant-facing copy unable to
+// tell a pause ("try again later") from the end of the event (final). An END
+// that has passed wins over everything else: a freeze toggled on after the
+// close is still the end of the event.
+describe("scoringClosure (#567)", () => {
+  it("is null while scoring is live", () => {
+    expect(scoringClosure(T, false, iso(T - 60_000), null)).toBeNull();
+    expect(scoringClosure(T, false, iso(T - 60_000), iso(T + 60_000))).toBeNull();
+  });
+
+  it("is 'paused' for the manual freeze", () => {
+    expect(scoringClosure(T, true, iso(T - 60_000), null)).toBe("paused");
+  });
+
+  it("is 'paused' before launch and before a scheduled start — not 'ended'", () => {
+    expect(scoringClosure(T, false, null, null)).toBe("paused");
+    expect(scoringClosure(T, false, iso(T + 60_000), null)).toBe("paused");
+  });
+
+  it("is 'ended' once the scheduled end has passed, even when the freeze is also on", () => {
+    expect(scoringClosure(T, false, iso(T - 7_200_000), iso(T - 60_000))).toBe("ended");
+    expect(scoringClosure(T, true, iso(T - 7_200_000), iso(T - 60_000))).toBe("ended");
+  });
+
+  it("flips to 'ended' one ms after the end, matching outsideWindow's `now > e`", () => {
+    const end = T + 60_000;
+    expect(scoringClosure(end, false, iso(T), iso(end))).toBeNull();
+    expect(scoringClosure(end + 1, false, iso(T), iso(end))).toBe("ended");
+  });
+
+  it("ignores an unparseable end, like outsideWindow does", () => {
+    expect(scoringClosure(T, false, iso(T - 60_000), "not a date")).toBeNull();
+  });
+});
 
 describe("nextScheduleBoundary", () => {
   it("returns the earliest instant after now at which any window flips", () => {

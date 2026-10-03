@@ -730,17 +730,28 @@ describe("hintGate", () => {
     expect(mocks.hintBalance).not.toHaveBeenCalled();
   });
 
-  it("fails CLOSED when the balance lookup errors — a hint is a paid reveal", async () => {
+  it("fails CLOSED when the balance lookup errors — as `unavailable`, never a fabricated balance", async () => {
+    // A fold or Redis failure must refuse (a hint is a paid reveal), but
+    // "you have 0" would be an invented figure: the contestant may well have
+    // the points, the server just could not verify it. A distinct reason,
+    // and a retry-oriented message downstream.
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const store = await loadStore();
     mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
     mocks.hintBalance.mockRejectedValueOnce(new Error("scorer down"));
-    expect(await store.hintGate("octocat", "juice-shop")).toEqual({
-      allowed: false,
-      reason: "insufficient",
-      needed: 10,
-      have: 0,
-    });
+    expect(await store.hintGate("octocat", "juice-shop")).toEqual({ allowed: false, reason: "unavailable" });
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("revealHint reports an unverifiable balance as a retry, not as a shortfall, before the charge script", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue(settings({ hintsMinSolves: 0 }));
+    mocks.hintBalance.mockRejectedValueOnce(new Error("scorer down"));
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(result).toEqual({ ok: false, error: "Couldn't check your score right now. Try again" });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });
 

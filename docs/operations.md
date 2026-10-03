@@ -493,8 +493,10 @@ The panel offers:
     that follows). A free hint (cost `0`) skips the check.
 
   All three fail **closed**: if the solve or balance lookup errors, the hint
-  is refused rather than handed out unverified. Denials return `403` with a
-  message naming what's missing. The module check is **per target**: a hint on a
+  is refused rather than handed out unverified. A denial on the gate's own
+  terms returns `403` with a message naming what's missing; a lookup the
+  server could not complete answers "Couldn't check your score right now.
+  Try again" instead of inventing a balance. The module check is **per target**: a hint on a
   secure-development target requires that module enabled, a classic hint
   requires `classic`, an ai hint requires `ai`, and each refuses outright
   when its module is off (`hint-store.ts`'s `hintGate`). In practice only

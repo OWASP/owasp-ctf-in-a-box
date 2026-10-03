@@ -33,7 +33,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   forgiven, so a hint was cheaper for whoever had the least to lose.
   Re-viewing a hint already bought stays free whatever the balance, a free
   hint (cost 0) skips the check, and an unreadable balance refuses rather
-  than reveals. After a purchase the challenge page now also says "N pts
+  than reveals — with "Couldn't check your score right now. Try again", not
+  an invented figure. After a purchase the challenge page now also says "N pts
   left" next to the "−N pts spent" acknowledgement (the follow-up deferred
   from #550) — the balance at the moment of the charge; a solve landing in
   the same instant shows on the refresh that follows. Internally the hint policy reads the leaderboard's

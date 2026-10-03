@@ -221,7 +221,11 @@ export type HintGate =
   | { allowed: false; reason: "insufficient"; needed: number; have: number }
   /** A score-lowering admin operation is running somewhere (#553): no gross
    *  can be vouched for until it ends. Closed, and not an affordability answer. */
-  | { allowed: false; reason: "busy" };
+  | { allowed: false; reason: "busy" }
+  /** The balance could not be read at all — a fold or Redis failure (#553).
+   *  Closed, like every hint read, but NOT reported as a balance: "you have
+   *  0" would be an invented figure. The caller says "try again". */
+  | { allowed: false; reason: "unavailable" };
 
 /** The affordability refusal (#553), worded once: the gate and the script's
  *  atomic re-check both end here. */
@@ -315,8 +319,10 @@ export async function hintGate(
       // answer, and the contestant is told what is going on. By NAME — the
       // tests reload modules, and a class identity does not survive that.
       if (err instanceof Error && err.name === "ScoreLoweringInProgress") return { allowed: false, reason: "busy" };
+      // Closed — but as "could not check", not as a balance of 0: the
+      // contestant may well have the points, the server just cannot verify it.
       console.error("hint gate: balance lookup failed:", errorLabel(err));
-      return { allowed: false, reason: "insufficient", needed: cost, have: 0 };
+      return { allowed: false, reason: "unavailable" };
     }
     if (balance.net < cost) {
       if (opts.id && (await ownsHint(login, target, opts.id))) return { allowed: true, balance };
@@ -381,6 +387,9 @@ async function attemptReveal(
     }
     if (gate.reason === "busy") {
       return { ok: false, error: "Scores are being updated. Try again in a moment" };
+    }
+    if (gate.reason === "unavailable") {
+      return { ok: false, error: "Couldn't check your score right now. Try again" };
     }
     return { ok: false, error: "Hints are not enabled" };
   }

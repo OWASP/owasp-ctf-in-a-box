@@ -254,6 +254,16 @@ describe("describeRefusal", () => {
     expect(describeRefusal("something-new")).toBe(generic);
   });
 
+  // #567: after the scheduled end the server answers `ended`, not `paused`.
+  // The copy must say the event is over — no "try again later", which is
+  // the pause's promise and false once the end has passed.
+  it("names the end of the event as final, not as a pause", () => {
+    expect(describeRefusal("ended")).not.toBe(generic);
+    expect(describeRefusal("ended")).toMatch(/ended|over|closed/i);
+    expect(describeRefusal("ended")).not.toMatch(/try again/i);
+    expect(describeRefusal("ended")).not.toBe(describeRefusal("paused"));
+  });
+
   // Reachable, unlike `gate`: a session can expire while the page stays open,
   // and the action's own session re-check (ai/[id]/actions.ts) then returns
   // this slug for a submit made from an already-rendered form. Names the fix

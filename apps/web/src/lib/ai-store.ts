@@ -1,7 +1,8 @@
 import "server-only";
 export { AI_COOLDOWN_SEC } from "./ai-defaults";
 
-import { effectivePaused, getAdminSettings } from "@/lib/admin-store";
+import { getAdminSettings } from "@/lib/admin-store";
+import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
 import { AI_COOLDOWN_SEC, AI_NONCE_TTL_SEC } from "@/lib/ai-defaults";
@@ -777,7 +778,7 @@ type ResolvedAdminSettings = Awaited<ReturnType<typeof getAdminSettings>>;
 
 type AiGate =
   | { allowed: true }
-  | { allowed: false; reason: "paused" | "solved" | "cooldown" | "unavailable"; retryAt?: string };
+  | { allowed: false; reason: "paused" | "ended" | "solved" | "cooldown" | "unavailable"; retryAt?: string };
 
 /** The cheap, NON-ATOMIC pre-check.
  *
@@ -799,7 +800,12 @@ async function evaluateGate(
 ): Promise<AiGate> {
   // A preview (#464: an admin before launch) is graded exactly while scoring
   // is closed, so the pause is what is being previewed, not a refusal.
-  if (!preview && settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
+  // `scoringClosure` (#567) is `effectivePaused` with the WHY kept: a passed
+  // scheduled end answers `ended`, every other closure `paused`.
+  if (!preview && settings) {
+    const closure = scoringClosure(Date.now(), settings.paused, settings.scoringStartsAt, settings.scoringEndsAt);
+    if (closure) return { allowed: false, reason: closure };
+  }
 
   let solve: Solve | null;
   let attempt: Attempt | null;
@@ -940,7 +946,7 @@ export type AiSubmitResult =
   // Callers must render the two apart.
   | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
   | { ok: true; correct: false; dryRun?: true }
-  | { ok: false; reason: "paused" | "solved" | "cooldown"; retryAt?: string }
+  | { ok: false; reason: "paused" | "ended" | "solved" | "cooldown"; retryAt?: string }
   // `wrong-mode`: a signed event was asserted against a challenge the organizer
   // authored as `mode: "flag"`. Refused by AWARD_SCRIPT itself, so it holds
   // even if a route forgets to check.

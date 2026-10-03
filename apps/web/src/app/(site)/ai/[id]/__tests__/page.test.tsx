@@ -19,6 +19,10 @@
 // src/components/__tests__/challenge-detail.test.tsx; this file's job is only
 // to check the PAGE passes the right props to it.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #560 source-level regression: this suite renders static markup, which
+// cannot observe a component unmounting across router.refresh().
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 // #464 pre-launch lock: launched by default in this file; the "pre-launch
 // lock" test below drives the refused path. The lock itself is unit-tested in
 // lib/__tests__/launch.test.ts.
@@ -465,6 +469,18 @@ describe("ai challenge page hint", () => {
     const html = renderToStaticMarkup(await AiChallengePage(params("a2")));
     expect(challengeDetailSpy).not.toHaveBeenCalled();
     expect(html).toMatch(/Reveal hint \(−25 pts\)/);
+  });
+
+  // #560: after a paid reveal the button calls router.refresh(), and the
+  // server then reports the hint owned. The owned state must be this SAME
+  // component receiving the text as a prop — a separate owned <p> at this
+  // slot is an element-type change that unmounts HintRevealButton and the
+  // "−N pts spent · M pts left" ack with it. Static markup cannot see an
+  // unmount, so this pin is SOURCE-level. Mirrors flags/[id]'s suite.
+  it("hands the owned text to HintRevealButton instead of swapping in a separate <p> (#560)", () => {
+    const src = readFileSync(fileURLToPath(new URL("../page.tsx", import.meta.url)), "utf8");
+    expect(src).toMatch(/<HintRevealButton[\s\S]*?ownedText=\{viewerHints\?\.ai\[challenge\.id\]/);
+    expect(src).not.toMatch(/viewerHints\?\.ai\[challenge\.id\] \? \(/);
   });
 });
 

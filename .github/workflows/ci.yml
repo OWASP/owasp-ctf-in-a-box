@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 # Two rules hold for every step below, and a new job is expected to follow
-# them (#291):
+# them:
 #
 #   - Every `uses:` is pinned to a full 40-character commit, with the tag kept
 #     as a trailing comment. That comment is not decoration: it is what
@@ -76,10 +76,10 @@ jobs:
             # guard that would catch the drift stays silent on the exact commit
             # that causes it.
             # The shared window corpora (test/fixtures/window-corpus.json and
-            # scoring-window-corpus.json, #232 and #464) are read by the app,
+            # scoring-window-corpus.json) are read by the app,
             # scorer AND sync suites — each runs every row against its own
             # copy of the three-reader contract. A corpus-only edit must run
-            # all three, and before this line it ran none.
+            # all three.
             # caddy/Caddyfile.poll is here because the app's
             # security-headers.test.ts pins Caddy's header block to the same
             # values next.config.ts sends (audit S1); a Caddy-only edit must
@@ -96,8 +96,7 @@ jobs:
             # name, and sync keeps a copy pinned to it by
             # sync/test/repo-names.differential.test.js — the one guard that
             # catches the drift, which must therefore run on the commit that
-            # causes it. (The event.yaml reader corpus the two used to share
-            # went with the config file itself in #386.)
+            # causes it.
             echo "sync=$(m "^sync/|^setup/targets\.tsv|^test/fixtures/(scoring-)?window-corpus\.json\$$CI")"
             # deploy/fly is here because its checks ARE shell: a bats suite
             # plus a shellcheck'd deploy script. There is no `terraform
@@ -114,7 +113,7 @@ jobs:
             # and each checks the half the other cannot see.
             # docs/decisions.md, the Makefile, AGENTS.md and CONTRIBUTING.md
             # are here because scripts/test/check-docs-drift.bats pins the ADR
-            # index and the local copies of this job's own commands (#501).
+            # index and the local copies of this job's own commands.
             # .nvmrc and every workflow are here for the same check's third
             # rule: each workflow's node-version must equal .nvmrc.
             echo "shell=$(m "^scripts/|^setup/|^deploy/fly/|^deploy/aws-terraform/deploy\.sh$|^deploy/aws-terraform/test/|^sync/Dockerfile$|^docker-compose\.yml$|^scorer/consumer-workflow\.example\.yml$|^scorer/entrypoint|^docs/decisions\.md$|^Makefile$|^AGENTS\.md$|^CONTRIBUTING\.md$|^\.nvmrc$|^\.github/workflows/$CI")"
@@ -122,9 +121,8 @@ jobs:
             # docker-compose.smoke.yml overrides only its environment. It is
             # the one end-to-end proof the poll pipeline works, so the area
             # most able to break it has to trigger it.
-            # Without this a change to the poller's own state handling merged
-            # with the poll-pipeline test skipped, which is how it shipped the
-            # crash-loop in #63.
+            # Without this a change to the poller's own state handling can
+            # merge with the poll-pipeline test skipped.
             #
             # `^scorer/` is deliberately NOT here: the same override file
             # replaces the scorer with test/fixtures/mock-scorer.mjs
@@ -156,11 +154,11 @@ jobs:
             echo "docs=$(m "^docs/|^\.github/workflows/pages\.yml$CI")"
             # The three independently-maintained TARGET lists this check
             # compares, plus the check script itself and this workflow file
-            # (either is a behavior change). It no longer compares any
-            # MODULE list: config v2 (#386) deleted the duplicated
-            # KNOWN_MODULES in setup/ctf-setup.sh and left module
-            # registration to apps/web alone, so neither that script nor
-            # apps/web/src/lib/modules.ts is an input here any more.
+            # (either is a behavior change). It compares no MODULE list:
+            # config v2 deleted the duplicated KNOWN_MODULES in
+            # setup/ctf-setup.sh and left module registration to apps/web
+            # alone, so neither that script nor apps/web/src/lib/modules.ts
+            # is an input here.
             echo "registries=$(m "^(sync/src/config\.js|apps/web/src/lib/apps\.ts|scorer/src/targets\.js|scripts/check-module-registries\.mjs|\.github/workflows/ci\.yml)$")"
           } >> "$GITHUB_OUTPUT"
 
@@ -251,16 +249,16 @@ jobs:
       - run: bats deploy/fly/test/
       # The AWS module's stack is checked by `terraform test` in its own job.
       # This covers the one part Terraform cannot see: deploy.sh, which builds
-      # and pushes the app image and hands Terraform the tag to apply. Config
-      # v2 (#386) removed its build-time config bake entirely — the app now
-      # reads GITHUB_ORG/ADMIN_LOGINS from the container's runtime environment,
-      # so the script has nothing left to bake. Stubs stand in for docker/aws/
+      # and pushes the app image and hands Terraform the tag to apply. There
+      # is no build-time config bake (config v2): the app reads
+      # GITHUB_ORG/ADMIN_LOGINS from the container's runtime environment, so
+      # the script has nothing to bake. Stubs stand in for docker/aws/
       # terraform, so --dry-run's "makes no real call" is asserted rather than
       # assumed, and no AWS account is used here either.
       - run: bats deploy/aws-terraform/test/
-      # scripts/check-changelog.sh, the rule changelog.yml enforces on every PR
-      # (#483). Each case builds a throwaway git repo, so it needs no fixture.
-      # And scripts/check-docs-drift.mjs (#501): the ADR index and the local
+      # scripts/check-changelog.sh, the rule changelog.yml enforces on every
+      # PR. Each case builds a throwaway git repo, so it needs no fixture.
+      # And scripts/check-docs-drift.mjs: the ADR index and the local
       # copies of this job's commands. It is plain Node, pinned to 22 like the
       # rest of the repo.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -290,9 +288,8 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
         working-directory: apps/web
-      # Lint before test: it needs no Redis and no build, and `pnpm lint` sat
-      # red for months because nothing ran it (hygiene audit T1) — a check
-      # only a human remembers to run is not a check.
+      # Lint before test: it needs no Redis and no build — a check only a
+      # human remembers to run is not a check.
       - run: corepack pnpm lint
         working-directory: apps/web
       - run: corepack pnpm test
@@ -301,7 +298,7 @@ jobs:
       # AWARD_SCRIPT) is the scoring authority; the mocked suites pin what the
       # stores HAND it, not what it does. Every live suite runs here — the
       # three `*.lua.upstash.test.ts` grading suites and the admin-store,
-      # hint-store and team-store `.upstash` suites (repaired in #235) — against
+      # hint-store and team-store `.upstash` suites — against
       # a real Redis behind the same SRH image the box ships, digest-pinned
       # like docker-compose.yml. Throwaway containers on the runner's loopback,
       # so no requirepass. Serial (`--no-file-parallelism`): admin-store wipes
@@ -335,7 +332,7 @@ jobs:
           # `upstash` filter matches every `*.upstash.test.ts` suite plus the
           # two mocked `upstash.test.ts` files, which need no Redis and are
           # harmless here. The app needs no generated config for any of this —
-          # config v2 (#386) reads GITHUB_ORG/ADMIN_LOGINS from the environment
+          # config v2 reads GITHUB_ORG/ADMIN_LOGINS from the environment
           # at runtime, so there is nothing here for an earlier step to have
           # generated.
           corepack pnpm exec vitest run upstash --no-file-parallelism
@@ -409,8 +406,7 @@ jobs:
 
   # Builds the docs site with the SAME action pages.yml publishes with, so a
   # docs change that breaks the site fails the PR instead of landing on main
-  # and taking the site down. Before this job existed, pages.yml ran only on
-  # push to main — the first sign of a bad build was a broken published site.
+  # and taking the site down.
   docs:
     needs: changes
     if: needs.changes.outputs.docs == 'true'
@@ -429,7 +425,7 @@ jobs:
       # wraps across two source lines is silently skipped and ships a literal
       # `.md` href into a site that contains no `.md` files. That renders fine
       # in the GitHub repo view and 404s for every site visitor, and the build
-      # itself reports zero warnings. Two of these shipped before this check.
+      # itself reports zero warnings.
       - name: No unrewritten .md links survived the build
         run: |
           set -euo pipefail

@@ -21,7 +21,10 @@
 //   provenance     (issue #N), (#N), "issue #N", "see #N", "closes #N", a
 //                  comment opening "#N:" — a ref that carries no rationale
 // A parenthetical that ALSO names an ADR or a docs path (e.g. "#464, ADR 59")
-// is a pointer to current rationale, so it is not matched.
+// is a pointer to current rationale, so it is not matched. So is one glued to
+// a backticked identifier (`scoringClosure` (#567)): the ref sits on the
+// symbol as its label, not behind the sentence's claim, and the same ref
+// anywhere else on the line is still provenance.
 //
 // Comment lines are found without a parser: a line whose first non-space is
 // the language's comment marker, minus shebangs and directive comments
@@ -84,7 +87,10 @@ const RULES = [
   ["history", /\b(?:since|after|before|as of) #\d+\b/i],
   ["history", /\b(?:added|removed|deleted|moved|introduced|changed|switched|dropped|rewritten|fixed) in #\d+\b/i],
   ["restatement", /\bnow (?:returns|reads|writes|throws|sets|calls|holds|takes|means|uses|runs|matches|does)\b/i],
-  ["provenance", /\(\s*(?:issue\s+)?#\d+(?:\s*,\s*(?:issue\s+)?#\d+)*\s*\)/i],
+  // The lookbehind exempts only a parenthetical directly attached to a
+  // backticked identifier (see the header); a ref separated from the
+  // identifier by other words, or carrying no identifier at all, still matches.
+  ["provenance", /(?<!`[^`]*`\s*)\(\s*(?:issue\s+)?#\d+(?:\s*,\s*(?:issue\s+)?#\d+)*\s*\)/i],
   ["provenance", /\b(?:issue|see|closes|fixes|fixed in|part of) #\d+\b/i],
   ["provenance", /^#\d+\s*:/],
 ];

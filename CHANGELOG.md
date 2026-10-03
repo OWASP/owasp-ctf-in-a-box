@@ -17,8 +17,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   once at the gate and again atomically inside the charge script, so two
   simultaneous purchases cannot both squeeze through on the same balance.
   The gate folds the score fresh rather than reading the leaderboard's ~10 s
-  memo (the memo is per app instance, and the AWS module runs two), and the
-  charge is stamped with a shared score revision, and every score-lowering
+  memo (the memo is per app instance, and the AWS module runs two); fresh reads
+  also bypass the Lambda source's 30 s fetch cache. The charge is stamped with
+  a shared score revision, and every score-lowering
   admin operation is bracketed by a shared in-progress marker (raised before
   its first write, lowered after its last, with a stuck-guard) — a reset or a
   module switched off on another instance while the fold ran makes the

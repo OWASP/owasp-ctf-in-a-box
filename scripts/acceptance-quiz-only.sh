@@ -71,35 +71,14 @@ APP_GITHUB_ORG=acceptance-quiz-org
 APP_ADMIN_LOGINS=acceptance-quiz-admin
 
 SYNC_OVERRIDE="$TMP/docker-compose.sync-override.yml"
-cat > "$SYNC_OVERRIDE" <<'OVERRIDE'
-services:
-  sync:
-    # `restart: "no"`, against the base file's `on-failure`: the refusal
-    # asserted below is a non-zero exit, and on-failure would keep bringing
-    # the container back underneath the exit-code and log checks — a race,
-    # not a test. The deployed policy is deliberately the other way round
-    # (an organizer wants the missing-key line to repeat until it is fixed).
-    restart: "no"
-    environment:
-      # Pinned empty rather than merely left unset: `${GITHUB_ORG:-}` in the
-      # base file would otherwise pick up a real org from the operator's
-      # shell or from a `.env` beside docker-compose.yml, and the refusal
-      # under test would silently become a live poller.
-      GITHUB_ORG: ""
-OVERRIDE
+acc_write_sync_override "$SYNC_OVERRIDE"
 
 SYNC_PROJECT=ctf-quiz-only-sync-acceptance
-sync_compose() {
-  # Same requirement as compose_services above — the real docker-compose.yml
-  # will not resolve without REDIS_PASSWORD.
-  REDIS_PASSWORD="${REDIS_PASSWORD:-acceptance}" \
-    docker compose -p "$SYNC_PROJECT" -f docker-compose.yml -f "$SYNC_OVERRIDE" "$@"
-}
 
 cleanup() {
   docker rm -f qo-app qo-redis qo-srh >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
-  sync_compose down -v --remove-orphans >/dev/null 2>&1 || true
+  acc_sync_compose "$SYNC_PROJECT" "$SYNC_OVERRIDE" down -v --remove-orphans >/dev/null 2>&1 || true
   # `compose down` was observed to silently no-op in local testing (exits 0,
   # prints nothing, container survives) — belt-and-suspenders direct removal
   # so a stray sync container/volume/network never outlives this script even
@@ -126,61 +105,14 @@ trap cleanup EXIT
 # services, and the scored line-up must still contain them (a fix that merely
 # hid the scorer everywhere would break every real event instead).
 # ---------------------------------------------------------------------------
-echo "--- the documented quiz-only profile set pulls no secure-development services"
-compose_services() {
-  # REDIS_PASSWORD is REQUIRED, not decorative: docker-compose.yml uses `:?`
-  # on it, so without a value `config` fails — and stderr is discarded here,
-  # which would turn that into an empty service list and a silently vacuous
-  # comparison below.
-  SRH_TOKEN=acceptance SCORER_TOKEN=acceptance BETTER_AUTH_SECRET=acceptance \
-    REDIS_PASSWORD=acceptance \
-    GITHUB_CLIENT_ID=acceptance GITHUB_CLIENT_SECRET=acceptance \
-    docker compose -f docker-compose.yml "$@" config --services 2>/dev/null | sort | tr '\n' ' '
-}
-QUIZ_SERVICES=$(compose_services --profile app)
-SCORED_SERVICES=$(compose_services --profile secdev --profile app)
-echo "    quiz-only (--profile app):            $QUIZ_SERVICES"
-echo "    scored    (--profile secdev + app):   $SCORED_SERVICES"
-for svc in scorer sync; do
-  case " $QUIZ_SERVICES " in
-    *" $svc "*) echo "FAIL: '$svc' is in the quiz-only line-up — a quiz-only event has no $svc"; exit 1 ;;
-  esac
-done
-for svc in app redis srh; do
-  case " $QUIZ_SERVICES " in
-    *" $svc "*) ;;
-    *) echo "FAIL: '$svc' is missing from the quiz-only line-up"; exit 1 ;;
-  esac
-done
-for svc in app redis srh scorer sync; do
-  case " $SCORED_SERVICES " in
-    *" $svc "*) ;;
-    *) echo "FAIL: '$svc' is missing from the scored (secdev) line-up"; exit 1 ;;
-  esac
-done
+acc_assert_module_lineups quiz
 
 # ---------------------------------------------------------------------------
 # redis + srh (the exact images/config docker-compose.yml pins), on a private
 # network. No scorer: a quiz-only event never resolves to a scored
 # leaderboard source, so there is nothing here for it to serve.
 # ---------------------------------------------------------------------------
-docker network rm "$NET" >/dev/null 2>&1 || true
-docker network create "$NET" >/dev/null
-
-echo "--- booting redis + srh"
-docker rm -f qo-redis qo-srh >/dev/null 2>&1 || true
-docker run -d --name qo-redis --network "$NET" --network-alias redis \
-  redis:7-alpine redis-server --appendonly yes >/dev/null
-docker run -d --name qo-srh --network "$NET" --network-alias srh \
-  -e SRH_MODE=env -e SRH_TOKEN="$SRH_TOKEN" -e SRH_CONNECTION_STRING=redis://redis:6379 \
-  hiett/serverless-redis-http:latest@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150 >/dev/null
-
-echo "--- waiting for redis"
-redis_deadline=$((SECONDS + 30))
-until docker exec qo-redis redis-cli ping 2>/dev/null | grep -q PONG; do
-  [ "$SECONDS" -ge "$redis_deadline" ] && { echo "FAIL: redis never answered"; exit 1; }
-  sleep 1
-done
+acc_boot_redis_srh "$NET" qo "$SRH_TOKEN"
 
 # ---------------------------------------------------------------------------
 # Seed the quiz's real Redis schema directly (see header comment for why).
@@ -235,16 +167,9 @@ docker exec qo-redis redis-cli HSET ctf:admin:settings enabledModules quiz >/dev
 echo "--- building app (no build-time config at all)"
 docker build -f apps/web/Dockerfile -t ctf-web:quiz-only-acceptance .
 
-echo "--- booting the app"
-docker rm -f qo-app >/dev/null 2>&1 || true
-docker run -d --name qo-app --network "$NET" -p "$APP_PORT:3000" \
-  -e BETTER_AUTH_SECRET=quiz-only-acceptance-secret-32-characters-min \
-  -e BETTER_AUTH_URL="http://localhost:$APP_PORT" \
-  -e UPSTASH_REDIS_REST_URL=http://srh:80 \
-  -e UPSTASH_REDIS_REST_TOKEN="$SRH_TOKEN" \
-  -e GITHUB_ORG="$APP_GITHUB_ORG" \
-  -e ADMIN_LOGINS="$APP_ADMIN_LOGINS" \
-  ctf-web:quiz-only-acceptance >/dev/null
+acc_boot_app qo-app "$APP_PORT" ctf-web:quiz-only-acceptance "$NET" \
+  http://srh:80 "$SRH_TOKEN" "$APP_GITHUB_ORG" "$APP_ADMIN_LOGINS" \
+  quiz-only-acceptance-secret-32-characters-min
 
 APP_URL="http://localhost:$APP_PORT"
 echo "--- before launch, /quiz redirects to the landing page (#464)"
@@ -281,36 +206,10 @@ echo "    not just be hidden from the nav)"
 CHALLENGES_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/challenges")
 [ "$CHALLENGES_CODE" = "404" ] || { echo "FAIL: /challenges returned $CHALLENGES_CODE, want 404"; exit 1; }
 
-echo "--- /leaderboard shows the seeded contestant by login, with their quiz points"
-LEADERBOARD_HTML=$(curl -sf "$APP_URL/leaderboard")
-if ! echo "$LEADERBOARD_HTML" | grep -qF "$CONTESTANT_LOGIN"; then
-  echo "FAIL: /leaderboard has no row for $CONTESTANT_LOGIN — a contestant whose" >&2
-  echo "      only points are quiz points did not get a row created at all." >&2
-  exit 1
-fi
-
-# The formatted TOTAL, matched across the whole page rather than inside a
-# window around the login.
-#
-# This used to extract a fixed-width window (chained `.{0,200}` quantifiers,
-# sized from an empirically measured ~350-char gap between the login and the
-# total) and search inside it. That measurement is a property of one machine's
-# rendered markup, not of the app: it held locally and broke in CI, where the
-# gap falls outside the window and the assertion failed with no message at all
-# — the job printed the step banner and died under `set -e`.
-#
-# A whole-page match is safe here because the expected string carries a
-# thousands separator (`4,321`). The coincidence the window was defending
-# against is a digit run in a chunk id, hash or asset query — none of which
-# contain commas. And CONTESTANT_POINTS is deliberately chosen to differ from
-# every seeded question price, so this still cannot be satisfied by the
-# questions hash rendering instead of the totals hash.
-if ! echo "$LEADERBOARD_HTML" | grep -qF "$CONTESTANT_POINTS_FORMATTED"; then
-  echo "FAIL: /leaderboard shows $CONTESTANT_LOGIN but not their quiz total" >&2
-  echo "      ($CONTESTANT_POINTS_FORMATTED) — the row exists, so the module" >&2
-  echo "      overlay ran, but the points did not reach it." >&2
-  exit 1
-fi
+# The row-by-login + formatted-total assertion (the anti-vacuous overlay check
+# the header describes) is shared with the classic/ai gates — its whole-page
+# match rationale lives with acc_assert_leaderboard_contrib.
+acc_assert_leaderboard_contrib "$APP_URL" quiz "$CONTESTANT_LOGIN" "$CONTESTANT_POINTS_FORMATTED"
 
 # ---------------------------------------------------------------------------
 # Identity is a runtime setting (issue #386), not a build-time bake: rename
@@ -334,44 +233,9 @@ fi
 # sync: through the real docker-compose.yml (see header comment for why),
 # overriding only GITHUB_ORG and the restart policy. With no org it must
 # REFUSE at start-up — naming the key, with a non-zero exit — rather than
-# come up and poll nothing.
+# come up and poll nothing. The whole check is shared with the classic/ai
+# gates (acc_assert_sync_refuses_no_org), which assert the same refusal.
 # ---------------------------------------------------------------------------
-echo "--- bringing up sync (secdev profile) with no GITHUB_ORG"
-sync_compose --profile secdev up -d --build --no-deps sync
-
-# `ps -q` (running only) races a fast-exiting container — exactly what this
-# script expects sync to do — and can come back empty even though sync
-# started and already refused, misreporting a PASS as "never started".
-# `ps -aq` includes exited containers too.
-SYNC_CID=$(sync_compose ps -aq sync)
-[ -n "$SYNC_CID" ] || { echo "FAIL: sync container never started"; exit 1; }
-
-echo "--- waiting for sync to refuse and exit"
-exit_deadline=$((SECONDS + 30))
-until [ "$(docker inspect -f '{{.State.Running}}' "$SYNC_CID")" = "false" ]; do
-  [ "$SECONDS" -ge "$exit_deadline" ] && {
-    echo "FAIL: sync never exited — it is still running with no GITHUB_ORG"
-    sync_compose logs sync
-    exit 1
-  }
-  sleep 1
-done
-
-# Non-zero, not pinned to 1 exactly: what this proves is that the refusal is
-# a FAILURE — visible to the restart policy, to CI and to an organizer's
-# `compose ps` — not which number it picked.
-SYNC_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' "$SYNC_CID")
-[ "$SYNC_EXIT_CODE" != "0" ] || {
-  echo "FAIL: sync exited 0 with no GITHUB_ORG — a missing org must be a refusal, not a silent no-op"
-  sync_compose logs sync
-  exit 1
-}
-
-echo "--- sync named the missing key (not a swallowed crash)"
-if ! sync_compose logs sync 2>&1 | grep -qF "ctf-sync: GITHUB_ORG is not set"; then
-  echo "FAIL: sync exited $SYNC_EXIT_CODE but never logged 'ctf-sync: GITHUB_ORG is not set' — the refusal must name the key it wants"
-  sync_compose logs sync
-  exit 1
-fi
+acc_assert_sync_refuses_no_org "$SYNC_PROJECT" "$SYNC_OVERRIDE"
 
 echo "ACCEPTANCE PASS (quiz-only event)"

@@ -25,6 +25,7 @@ on:
       - 'scorer/src/catalogue.js'
       - 'scorer/src/targets.js'
       - 'scripts/acceptance-target.sh'
+      - 'scripts/lib/acceptance-lib.sh'
       - '.github/workflows/stock-scores-zero.yml'
   workflow_dispatch:
 

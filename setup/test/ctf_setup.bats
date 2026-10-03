@@ -2414,3 +2414,66 @@ EOF2
   done
   [ -z "$(printf '%s' "$output" | grep -F 'would check whether the sync App')" ]
 }
+
+# --- #504 M16: cmd_doctor / cmd_wizard are drivers over per-check helpers ---
+
+# Body line count of `name()`: from its `name() {` definition line to the
+# closing `}` at column 0 (no function in this file is nested in another).
+# Prints empty when the definition is not found, so a caller can say so.
+_fn_body_lines() {
+  awk -v fn="$1" '
+    $0 == fn "() {" { found = 1; inside = 1; n = 0; next }
+    inside && $0 == "}" { print n; exit }
+    inside { n++ }
+    END { if (!found) print "" }
+  ' "$SCRIPT"
+}
+
+@test "cmd_doctor is a short driver over doctor_check_* helpers (#504 M16)" {
+  local lines helpers calls
+  lines="$(_fn_body_lines cmd_doctor)"
+  if [ -z "$lines" ]; then
+    echo "cmd_doctor() { definition (or its closing }) not found in $SCRIPT"
+    return 1
+  fi
+  if [ "$lines" -ge 150 ]; then
+    echo "cmd_doctor is $lines lines — want < 150; extract each check into its own doctor_check_* helper"
+    return 1
+  fi
+  helpers="$(awk '/^doctor_check_[a-z_]*\(\) \{/ { n++ } END { print n + 0 }' "$SCRIPT")"
+  if [ "$helpers" -lt 6 ]; then
+    echo "only $helpers doctor_check_* helpers are defined in $SCRIPT — want >= 6"
+    return 1
+  fi
+  calls="$(awk '/^cmd_doctor\(\) \{/,/^}/ { if (index($0, "doctor_check_")) n++ } END { print n + 0 }' "$SCRIPT")"
+  [ "$calls" -ge 6 ] || { echo "cmd_doctor calls doctor_check_* only $calls time(s) — want >= 6"; return 1; }
+}
+
+@test "cmd_wizard is a short driver over wiz_* step helpers (#504 M16)" {
+  local lines helpers calls
+  lines="$(_fn_body_lines cmd_wizard)"
+  if [ -z "$lines" ]; then
+    echo "cmd_wizard() { definition (or its closing }) not found in $SCRIPT"
+    return 1
+  fi
+  if [ "$lines" -ge 150 ]; then
+    echo "cmd_wizard is $lines lines — want < 150; extract each step into its own wiz_* helper"
+    return 1
+  fi
+  helpers="$(awk '/^wiz_[a-z_]*\(\) \{/ { n++ } END { print n + 0 }' "$SCRIPT")"
+  if [ "$helpers" -lt 10 ]; then
+    echo "only $helpers wiz_* helpers are defined in $SCRIPT — want >= 10"
+    return 1
+  fi
+  # Distinct wiz_* calls in the driver, minus the primitives every step body
+  # (not the driver) uses: wiz_step, wiz_banner, wiz_ask.
+  calls="$(sed -n '/^cmd_wizard() {/,/^}/p' "$SCRIPT" | awk '{
+      s = $0
+      while (match(s, /wiz_[a-z_]+/)) {
+        t = substr(s, RSTART, RLENGTH)
+        if (t != "wiz_step" && t != "wiz_banner" && t != "wiz_ask") seen[t] = 1
+        s = substr(s, RSTART + RLENGTH)
+      }
+    } END { n = 0; for (k in seen) n++; print n }')"
+  [ "$calls" -ge 8 ] || { echo "cmd_wizard calls only $calls distinct wiz_* step helpers — want >= 8"; return 1; }
+}

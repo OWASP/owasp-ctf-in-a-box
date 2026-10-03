@@ -10,6 +10,23 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: the maintainability follow-ups from the pre-v0.7.0 audit
+  (#504).** Refactors with no behavior change: the demo seed and clear body
+  moved out of `admin-store.ts` (43% of that file) into `lib/demo-seed.ts`,
+  with the settings read it needs staying behind a two-line wrapper there so
+  the two modules do not import each other in a loop; the four-module registry
+  literal in `lib/modules.ts` (71% of it) split one file per module under
+  `lib/module-defs/`, with the docs/playbook/scoring-branch URLs it linked to
+  in `lib/module-urls.ts`; the attempt-row decode helpers and the Lua read of
+  an attempt row shared by quiz, classic and ai through `lib/redis-decode.ts`;
+  the admin controls' settings/nav/restamp logic split into hooks beside
+  `admin-controls.tsx`; the classic and ai admin panels rebuilt on one shared
+  `ChallengeFrame`; the acceptance gates sourcing their shared helpers from
+  `scripts/lib/acceptance-lib.sh` instead of each carrying a copy (and
+  `acceptance-target.sh` sourcing it too); and `ctf-setup.sh`'s doctor and
+  setup wizard split into one helper per check. Each has a regression test
+  that fails if the duplication grows back.
+
 - **Fixed: a hint can no longer be bought with points the contestant does not
   have (#553).** The reveal is refused — `403`, "Not enough points: this hint
   costs N and you have M" — when the contestant's leaderboard score (every

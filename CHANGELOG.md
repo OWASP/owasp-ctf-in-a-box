@@ -15,7 +15,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   costs N and you have M" — when the contestant's leaderboard score (every
   module, net of hints already bought) does not cover the price — checked
   once at the gate and again atomically inside the charge script, so two
-  simultaneous purchases cannot both squeeze through on the same balance.
+  simultaneous purchases cannot both squeeze through on the same balance —
+  and a refused purchase never reads the hint text, which the script
+  fetches only after every check that can refuse has passed.
   The gate folds the score fresh rather than reading the leaderboard's ~10 s
   memo (the memo is per app instance, and the AWS module runs two); fresh reads
   also bypass the Lambda source's 30 s fetch cache. The charge is stamped with

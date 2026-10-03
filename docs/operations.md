@@ -493,7 +493,11 @@ The panel offers:
     that follows). A free hint (cost `0`) skips the check.
 
   All three fail **closed**: if the solve or balance lookup errors, the hint
-  is refused rather than handed out unverified. A denial on the gate's own
+  is refused rather than handed out unverified. A refused purchase never
+  reads the hint text either: the charge script checks that the hint
+  exists by field, runs every check that can refuse, and only then reads
+  the text it is about to hand over — a refusal carries nothing of it, not
+  even server-side. A denial on the gate's own
   terms returns `403` with a message naming what's missing; a lookup the
   server could not complete answers "Couldn't check your score right now.
   Try again" instead of inventing a balance. The module check is **per target**: a hint on a

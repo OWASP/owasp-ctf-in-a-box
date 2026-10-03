@@ -350,6 +350,39 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
 
   // CodeRabbit #470: the lock comes BEFORE the hint read — a locked step with
   // no hint at all answers `locked`, not `missing`.
+  // Contestant secrecy boundary (CodeRabbit pre-merge check on #553): a
+  // refusal carries no text, and the existence check that precedes the
+  // balance check is a field check, so a missing hint still answers
+  // `missing` (not `insufficient`) with an empty balance — nothing about
+  // the catalogue leaks through either verdict.
+  it("REVEAL_SCRIPT refuses an unaffordable hint with NO text, and still reports a missing one as missing", async () => {
+    const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const k = (n: string) => `ctf-test:hint-secrecy:${RUN}:${n}`;
+    const [set, spent, hints, at, rev, lowering] = ["set", "spent", "hints", "at", "rev", "lowering"].map(k);
+    try {
+      await pipeline([["HSET", hints, "web", "the secret text"]]);
+      const call = (id: string, gross: string) =>
+        upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering], [id, `classic/${id}`, "alice", 10, "2026-10-01T00:00:00Z", "0", "", gross, "0"]);
+      // Gross 5 against cost 10: refused, verdict text EMPTY, nothing written.
+      expect(await call("web", "5")).toEqual(["insufficient", "", 0]);
+      // Same empty balance, hint that does not exist: `missing`, not a
+      // balance answer — existence is checked first, without reading text.
+      expect(await call("nohint", "5")).toEqual(["missing"]);
+      const [owned, spentNow] = await pipeline([
+        ["SCARD", set],
+        ["HGET", spent, "alice"],
+      ]);
+      expect(owned.result).toBe(0);
+      expect(spentNow.result).toBeNull();
+      // And once affordable, the same call reveals and charges — the reorder
+      // did not break the happy path.
+      expect(await call("web", "100")).toEqual(["charged", "the secret text", 10]);
+    } finally {
+      await pipeline([["DEL", set, spent, hints, at]]);
+    }
+  });
+
   it("REVEAL_SCRIPT checks the lock before reading the hint", async () => {
     const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
     const { upstashEval } = await import("@/lib/upstash");

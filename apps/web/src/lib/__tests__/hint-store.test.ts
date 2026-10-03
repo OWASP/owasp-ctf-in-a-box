@@ -170,11 +170,11 @@ describe("revealHint", () => {
     mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
     await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
     const [script] = mocks.upstashEval.mock.calls[0];
-    const hget = script.indexOf("HGET");
+    const exists = script.indexOf("HEXISTS', KEYS[3]");
     const sadd = script.indexOf("SADD");
     const charge = script.indexOf("HINCRBY");
-    expect(hget).toBeGreaterThan(-1);
-    expect(hget).toBeLessThan(sadd);
+    expect(exists).toBeGreaterThan(-1);
+    expect(exists).toBeLessThan(sadd);
     expect(sadd).toBeLessThan(charge);
   });
 
@@ -392,16 +392,54 @@ describe("revealHint", () => {
     await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
     const [script, , args] = mocks.upstashEval.mock.calls[0];
     expect(args[7]).toBe(RICH.gross);
-    // Ordering is the invariant: hint existence first, then the balance
-    // check, then the SADD guard that charges — and the check exempts an
-    // owned hint by set membership, not by trusting the caller.
-    const hget = script.indexOf("HGET");
-    const check = script.indexOf("insufficient");
+    // Ordering is the invariant: hint EXISTENCE first (a field check, not a
+    // read of the text), then the balance check, then the SADD guard that
+    // charges — and the check exempts an owned hint by set membership, not
+    // by trusting the caller.
+    const exists = script.indexOf("HEXISTS', KEYS[3]");
+    const check = script.indexOf("'insufficient'");
     const sadd = script.indexOf("SADD");
-    expect(hget).toBeGreaterThan(-1);
-    expect(hget).toBeLessThan(check);
+    expect(exists).toBeGreaterThan(-1);
+    expect(exists).toBeLessThan(check);
     expect(check).toBeLessThan(sadd);
     expect(script.slice(0, check)).toContain("SISMEMBER");
+  });
+
+  // Contestant secrecy boundary (CodeRabbit pre-merge check on #553): a
+  // reveal the script refuses — stale gross, or a parallel purchase that used
+  // the balance first — must not have READ the hint text on its way to the
+  // refusal. The text is the protected thing; a refused buyer gets nothing of
+  // it, not even into a Lua local. So the charge path's only `HGET` of the
+  // catalogue sits AFTER every check that can refuse, and the preview (admin
+  // dry-run) branch is the one place a read precedes them.
+  it("never reads the hint text before the stale and affordability checks have passed (secrecy boundary)", async () => {
+    const store = await loadStore();
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    const [script] = mocks.upstashEval.mock.calls[0];
+    const textRead = script.lastIndexOf("HGET', KEYS[3]");
+    const stale = script.lastIndexOf("'stale'");
+    const insufficient = script.indexOf("'insufficient'");
+    const sadd = script.indexOf("SADD");
+    expect(textRead).toBeGreaterThan(-1);
+    expect(stale).toBeLessThan(textRead);
+    expect(insufficient).toBeLessThan(textRead);
+    expect(textRead).toBeLessThan(sadd);
+    // Exactly one read on the charge/owned path; any other HGET of KEYS[3]
+    // belongs to the preview branch, which returns before the checks.
+    const reads = script.split("HGET', KEYS[3]").length - 1;
+    expect(reads).toBeLessThanOrEqual(2);
+    if (reads === 2) {
+      const previewLine = script.split("\n").find((l) => l.includes("'preview'")) ?? "";
+      expect(previewLine).toContain("HGET', KEYS[3]");
+      expect(script.indexOf("HGET', KEYS[3]")).toBe(script.indexOf("HGET', KEYS[3]", script.indexOf(previewLine)));
+    }
+    // Nothing reads the text between the preview return and the last refusal.
+    const afterPreview = script.indexOf("\n", script.indexOf("'preview'"));
+    expect(script.slice(afterPreview, insufficient)).not.toContain("HGET', KEYS[3]");
+    // The refusal verdict carries no text, by shape.
+    expect(script).toMatch(/return \{'insufficient', '', spent\}/);
+    expect(script).toMatch(/return \{'stale'\}/);
   });
 
   // A process-local memo invalidation cannot reach another app task, and even

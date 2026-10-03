@@ -139,6 +139,26 @@ describe("POST /api/hints/reveal", () => {
     expect(await res.json()).toEqual({ error: "Not enough points: this hint costs 10 and you have 5" });
   });
 
+  // Contestant secrecy boundary: a refusal is the error and nothing else —
+  // even if the store's result object ever carried a `hint` field alongside
+  // `ok: false`, the response must not. The contestant-facing shape is
+  // pinned here, the script's no-read ordering in hint-store.test.ts.
+  it("a refused reveal's body carries only the error, never a hint, cost or balance", async () => {
+    revealHint.mockResolvedValue({
+      ok: false,
+      forbidden: true,
+      error: "Not enough points: this hint costs 10 and you have 5",
+      hint: "LEAKED",
+      cost: 10,
+      balance: 5,
+    } as never);
+    const res = await POST(req({ app: "quiz", id: "q1" }));
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(Object.keys(body)).toEqual(["error"]);
+    expect(JSON.stringify(body)).not.toContain("LEAKED");
+  });
+
   it("404s when the hint is missing", async () => {
     revealHint.mockResolvedValue({ ok: false, error: "missing", missing: true });
     const res = await POST(req({ app: "quiz", id: "nope" }));

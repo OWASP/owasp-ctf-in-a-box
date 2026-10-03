@@ -81,6 +81,20 @@ describe("HintRevealButton confirms before charging and acknowledges the cost (#
     expect(src).toMatch(/deducted > 0 && typeof data\.balance === "number" \? data\.balance : null/);
   });
 
+  // Contestant secrecy boundary: a refused reveal renders the server's error
+  // and nothing else. The text state is set only inside the `res.ok` branch,
+  // and the else-branch touches only the error — so a 403 body can never
+  // put anything but its message on the page.
+  it("renders only the error on a refused reveal — the text state is set from an ok response alone", () => {
+    expect(src).toMatch(/if \(res\.ok && typeof data\.hint === "string"\) \{/);
+    const okBranch = src.slice(src.indexOf('if (res.ok && typeof data.hint === "string") {'), src.indexOf("} else {"));
+    const elseBranch = src.slice(src.indexOf("} else {"), src.indexOf("} catch {"));
+    expect(okBranch).toContain("setText(data.hint)");
+    expect(elseBranch).not.toMatch(/setText|setChargedCost|setBalance/);
+    expect(elseBranch).toMatch(/setError\(/);
+    expect((src.match(/setText\(/g) ?? []).length).toBe(1);
+  });
+
   it("restores focus to the idle button when Cancel or a failed reveal returns to idle", () => {
     // The confirm pair unmounts on the way back to idle; without this the
     // focus fixup rule drops focus on <body>. Guarded so the first mount

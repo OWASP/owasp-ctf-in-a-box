@@ -137,9 +137,13 @@ if ARGV[6] ~= '1' and ARGV[7] and ARGV[7] ~= '' then
   end
   if not open then return {'locked'} end
 end
-local hint = redis.call('HGET', KEYS[3], ARGV[1])
-if not hint then return {'missing'} end
-if ARGV[6] == '1' then return {'preview', hint, '0'} end
+-- Existence is a FIELD check, not a read: the text is the protected thing,
+-- and a buyer the checks below refuse must not have read it on the way —
+-- not even into a Lua local (the contestant secrecy boundary). The admin
+-- preview (dry run, #464) is the one path that reads before the checks: it
+-- runs behind the admin gate and charges nothing.
+if redis.call('HEXISTS', KEYS[3], ARGV[1]) == 0 then return {'missing'} end
+if ARGV[6] == '1' then return {'preview', redis.call('HGET', KEYS[3], ARGV[1]), '0'} end
 -- The gross in ARGV[8] was folded under the score revision in ARGV[9]. A
 -- score-lowering operation on ANY app task bumps KEYS[5] before its first
 -- write and after its last, and holds KEYS[6] up in between; if the revision
@@ -162,6 +166,8 @@ end
 if ARGV[8] and ARGV[8] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 0 then
   if tonumber(ARGV[8]) - spent < tonumber(ARGV[4]) then return {'insufficient', '', spent} end
 end
+-- Every check that can refuse has passed: only now is the text read.
+local hint = redis.call('HGET', KEYS[3], ARGV[1])
 if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
   redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
   redis.call('HSETNX', KEYS[4], ARGV[2], ARGV[5])

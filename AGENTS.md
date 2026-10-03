@@ -246,6 +246,22 @@ suggestions.
 - **Commits.** Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`,
   `chore:`, `ci:`, ...). No AI attribution — no "Generated with", no
   `Co-authored-by:` trailers for an AI tool or agent.
+- **Comments explain the present, not the past, and not the code.** A comment
+  earns its place by saying what the code cannot: why this shape, what must
+  stay true, what breaks if it changes, where a security or fail-closed
+  boundary sits. Three things are not that (#505 — the pre-v0.7.0 audit found
+  about a quarter of comment lines were): **history** — "previously", "used
+  to", "renamed from", "no longer", "added in #N", a bare `(issue #N)`. That
+  belongs to the commit that made the change and, once it is a decision, to
+  an ADR in `docs/decisions.md`, where it stays true instead of rotting next
+  to code it no longer describes. **Change restatement** — "now returns ..."
+  narrating a diff the reader can see. **Narration** — restating what the
+  next line plainly does. Pointers to *current* facts stay (key layouts,
+  invariants, `see <file>`, an ADR number). Directive comments are not
+  comments: never delete a shebang, `// eslint-disable…`, `# shellcheck
+  disable…` or `// @ts-expect-error`. `scripts/check-comment-policy.mjs` (run
+  by `bats scripts/test/`) holds the pre-v0.7.0 audit's top 20 files to the
+  first two; narration is a reviewer's call.
 - **Bash (`setup/`, `scripts/`) must be bash-3.2/macOS compatible.** No
   `jq` or `python` on the provisioning path (`gh api --jq ...` is fine —
   that's `gh`'s own built-in JSON filtering, not a `jq` dependency). Quote

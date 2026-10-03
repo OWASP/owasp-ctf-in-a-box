@@ -42,13 +42,13 @@ const LIVE_WARNING = "This event is live — do not publish this bundle while co
  *  challenge/question definitions, never solves/attempts), the
  *  `EVENT_POLICY_FIELDS`-picked subset of `getAdminSettings()`, and the
  *  runtime identity fields (`name`, `theme`, `dates`, `location`,
- *  `ctfStartsAt`, and `logoUrl` / `timeZone` when set — #545, #547) resolved via `resolveSite` over that SAME settings read
+ *  `ctfStartsAt`, and `logoUrl` / `timeZone` when set) resolved via `resolveSite` over that SAME settings read
  *  (see below — no second HGETALL, no fail-open in an export). No
  *  `ctf:user:*`/
  *  `ctf:team:*`/solve/attempt/hint/audit key is ever touched here.
  *
  *  `bundle.event` deliberately omits `contactEmail` and `discordUrl` even
- *  though both are runtime settings now (issue #386) — they are organizer
+ *  though both are runtime settings — they are organizer
  *  PII: a private inbox and an invite link, neither needed to replay the
  *  event, and not safe to hand out in a bundle an organizer might publish or
  *  share. `dates`/`ctfStartsAt` are informational-only: a snapshot of what
@@ -138,22 +138,22 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
       dates: site.dates,
       location: site.location,
       ctfStartsAt: site.ctfStartsAt,
-      // #545: the logo's link rides with the logo (eventImages below); a
+      // The logo's link rides with the logo (eventImages below); a
       // public page, unlike contact/Discord. Omitted when unset.
       ...(site.logoUrl ? { logoUrl: site.logoUrl } : {}),
-      // #547: the zone travels like location; omitted when unset (UTC).
+      // The zone travels like location; omitted when unset (UTC).
       ...(settings.eventIdentity?.eventTimeZone ? { timeZone: site.timeZone } : {}),
     },
     settings: policySettings,
     ...(isEnabled("classic") ? { classic: await exportClassic() } : {}),
     ...(isEnabled("quiz") ? { quiz: await exportQuiz() } : {}),
-    // #250: the ai catalogue rides along like the other two. Its own
+    // The ai catalogue rides along like the other two. Its own
     // `exportBundle` reads challenges, flags, hints, signing keys and
     // categories — never `ctf:ai:launchkey`, which is module identity.
     ...(isEnabled("ai") ? { ai: await exportAi() } : {}),
   };
 
-  // Sponsors (#405) are a PLATFORM feature, not a module — there is no
+  // Sponsors are a PLATFORM feature, not a module — there is no
   // `isEnabled` gate for them. `exportBundle` itself returns null on an
   // empty sponsor list, which is what actually decides whether this field
   // appears; a box with no sponsors configured ships an archive with no
@@ -162,12 +162,12 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
   const sponsorsBundle = await exportSponsors();
   if (sponsorsBundle) bundle.sponsors = sponsorsBundle;
 
-  // #529: the event's own logo and favicon, iff one is stored — same
+  // The event's own logo and favicon, iff one is stored — same
   // "render iff non-empty" rule as sponsors.
   const eventImages = await exportEventImages();
   if (eventImages) bundle.eventImages = eventImages;
 
-  // #186: the classic section names its uploads; their bytes ride here.
+  // The classic section names its uploads; their bytes ride here.
   if (bundle.classic) {
     const attachmentFiles = await exportAttachmentFiles();
     if (attachmentFiles.length > 0) bundle.attachmentFiles = attachmentFiles;
@@ -176,7 +176,7 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
   return { bundle, warnings };
 }
 
-/** Every stored classic upload's bytes, base64 (#186) — the classic bundle
+/** Every stored classic upload's bytes, base64 — the classic bundle
  *  carries only metadata. A missing upload and a link carry no bytes. */
 async function exportAttachmentFiles(): Promise<AttachmentFile[]> {
   const out: AttachmentFile[] = [];
@@ -242,7 +242,7 @@ export type EventImportSummary = {
    *  already-cleared store (see `importEventBundle`'s sponsors branch), so
    *  every row is a create. */
   sponsors?: { created: number };
-  /** The image slots the archive carried (#529), sorted. */
+  /** The image slots the archive carried, sorted. */
   eventImages?: { slots: string[] };
 };
 
@@ -283,7 +283,7 @@ export type EventImportSummary = {
  *  identity fields ride the same patch and so get the same guarantee.
  *  `resetEvent` is safe to run after: it keeps `ctf:admin:settings` (see its
  *  own doc comment in admin-store.ts) — it only freezes scoring, bumps the
- *  reset epoch and clears the scoring start (#464: an imported event is not
+ *  reset epoch and clears the scoring start (an imported event is not
  *  launched until an organizer launches it) — so it can never clobber the
  *  policy fields just written.
  *
@@ -307,12 +307,12 @@ export async function importEventBundle(
   // logo throws with the current event still intact.
   if (bundle.sponsors) validateBundleLogos(bundle.sponsors);
 
-  // #186: same fail-fast rule for attachment bytes — decode and check every
+  // Same fail-fast rule for attachment bytes — decode and check every
   // sha256 now, before `resetEvent`, so a tampered file refuses the import
   // with the current event still intact.
   const decodedFiles = decodeAttachmentFiles(bundle);
 
-  // #529: and for the event images — sniffed here, before the reset, so a
+  // And for the event images — sniffed here, before the reset, so a
   // tampered image refuses the import with the current event intact.
   if (bundle.eventImages) validateEventImagesBundle(bundle.eventImages);
 
@@ -320,11 +320,11 @@ export async function importEventBundle(
   // bad bundle throws `AdminValidationError` here, before `resetEvent` or any
   // clear/import has run — see the fail-fast note above.
   const { patch, skipped: moduleSkipped } = buildPolicyPatch(bundle.settings);
-  // The bundle's identity block is applied like any other setting (issue
-  // #386): through the one validated patch, before anything destructive.
+  // The bundle's identity block is applied like any other setting: through
+  // the one validated patch, before anything destructive.
   // contact/Discord never travel in a bundle (organizer PII — see the
-  // header comment), so only these can come back (#545 added the logo
-  // link, which travels with the logo; #547 the time zone).
+  // header comment), so only these can come back (the logo link travels
+  // with the logo; the time zone likewise).
   patch.eventName = bundle.event.name;
   if (typeof bundle.event.theme === "string") patch.eventTheme = bundle.event.theme;
   if (typeof bundle.event.location === "string") patch.eventLocation = bundle.event.location;
@@ -339,7 +339,7 @@ export async function importEventBundle(
   if (bundle.eventImages) importedImages = Object.keys(await importEventImages(bundle.eventImages)).sort();
 
   // Sweep run-state before touching content, so a mid-import failure never
-  // leaves stale team/solve/hint state pointing at content that no longer
+  // leaves stale team/solve/hint state pointing at content that does not
   // exists.
   await resetEvent(actor);
 
@@ -360,7 +360,7 @@ export async function importEventBundle(
     const c = await importClassic(bundle.classic);
     summary.classic = { created: c.created, updated: c.updated };
     // The classic import recorded each named upload as "missing"; the
-    // archive's bytes fill them (#186). Matched by (challenge, sha256).
+    // archive's bytes fill them. Matched by (challenge, sha256).
     await fillAttachmentFiles(decodedFiles);
   }
 
@@ -390,8 +390,8 @@ export async function importEventBundle(
 
 /** Reconciles a bundle's `enabledModuleIds` against what THIS deployment can
  *  actually run before it ever reaches `updateAdminSettings`. Every module
- *  besides `secure-development` is a plain runtime toggle now (issue #386) —
- *  there is no build-time set to match against any more. The only remaining
+ *  besides `secure-development` is a plain runtime toggle — there is no
+ *  build-time set to match against. The only remaining
  *  availability constraint is `secureDevAvailable`: a deployment with no
  *  scorer image has no scorer/sync containers to score Secure Development's
  *  board, so `updateAdminSettings` refuses to enable it there
@@ -437,9 +437,8 @@ function reconcileEnabledModuleIds(incoming: readonly string[]): { ids: ModuleId
  *  either (settings' "no override" shape) is treated as "nothing to apply"
  *  rather than forwarded. An explicitly empty `enabledModuleIds` array IS
  *  forwarded, though — `[]` is a meaningful "no modules enabled" and every
- *  module besides secure-development is a plain runtime toggle now (issue
- *  #386), so there is no longer a build-time floor that makes an empty set
- *  invalid.
+ *  module besides secure-development is a plain runtime toggle, so no
+ *  build-time floor makes an empty set invalid.
  *
  *  `enabledModuleIds` is additionally reconciled against this deployment's
  *  actual availability via `reconcileEnabledModuleIds` before landing in the

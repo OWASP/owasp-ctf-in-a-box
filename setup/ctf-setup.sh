@@ -24,12 +24,12 @@
 #             reaches an event that is ALREADY provisioned (`org` does this
 #             too, but also re-mirrors the scorer image)
 #   private   set each DETACHED fork private while the event is not launched
-#             (#465; `org` runs this too — re-run it after detaching)
+#             (`org` runs this too — re-run it after detaching)
 #   launch    launch-day for Secure Development: check every fork is detached
 #             and the scorer package private, wait for Launch in /admin
 #             (polls EVENT_URL/health/deep), then flip every fork PUBLIC
 #   teardown  archive event repos after the event
-#   doctor    read-only status check: verify a previously-provisioned org
+#   doctor    read-only status check: verify an already-provisioned org
 #             matches targets.tsv (no mutation, no --dry-run needed)
 #   app-manifest  open a self-submitting form to create the sync GitHub App
 #                 from sync/app-manifest.json against the event org (removes
@@ -46,7 +46,7 @@
 # open /admin, and SCORE_IMAGE being NON-EMPTY is how a box says "this event
 # runs Secure Development" — with it empty there are no forks to provision, no
 # scorer to mirror and nothing to poll. Which modules run, and which Secure
-# Development targets, are runtime settings in /admin (config v2, #386).
+# Development targets, are runtime settings in /admin (config v2).
 #
 # Global flags: --dry-run (print mutating commands), --out <path> (default .env)
 set -euo pipefail
@@ -135,12 +135,12 @@ STEPS="fork ctf-branch drop-old protect workflow disable-inherited pr-template v
 fork_detached() { [ "$(gh api "repos/$1" --jq '.fork' 2>/dev/null)" = "false" ]; }
 package_private() { [ "$(gh api "orgs/$1/packages/container/score" --jq '.visibility' 2>/dev/null)" = "private" ]; }
 
-# #465: a fork's visibility ("public"/"private"; empty on a gh error — the
+# A fork's visibility ("public"/"private"; empty on a gh error — the
 # caller treats that as unknown, never as either answer) and the flip.
 fork_visibility() { gh api "repos/$1" --jq '.visibility' 2>/dev/null; }
 set_fork_visibility() { gh api -X PATCH "repos/$1" -f "visibility=$2" >/dev/null 2>&1; }
 
-# The box's launch state from its public /health/deep (#464): echoes
+# The box's launch state from its public /health/deep: echoes
 # `launched`, `not-launched`, or `unknown` (no EVENT_URL, no answer, or the
 # box could not read its own settings). No -f: a degraded box answers 503
 # and that body still carries `launched`. Never called under --dry-run.
@@ -159,7 +159,7 @@ box_launch_state() {
 
 # The per-fork package Read grant has no API to read back — but it has an
 # OBSERVABLE consequence, which is nearly as good and a great deal better than
-# the bare reminder this replaced: the fork's own scoring workflow either
+# the bare reminder: the fork's own scoring workflow either
 # pulled the image or was refused. `ctf-score.yml` runs that pull in a step
 # named "Pull scorer image" for exactly this reason.
 #
@@ -173,7 +173,7 @@ box_launch_state() {
 #            missing, and the doctor line must not say it does.
 #   error    GitHub did not answer (the runs or a run's jobs could not be
 #            read), so nothing was observed. Distinct from `unknown` because
-#            `launch` must refuse on it (#477 review): "no run yet" is a fact
+#            `launch` must refuse on it: "no run yet" is a fact
 #            about the fork, "could not ask" is not. doctor, advisory, shows
 #            both as unverified.
 #
@@ -185,8 +185,8 @@ box_launch_state() {
 # Only the newest few runs are inspected: a grant, once given, is not taken
 # back, so an old refusal under a recent success is history rather than news —
 # hence first-success-wins over first-failure-wins in the loop below. But a
-# run whose jobs cannot be READ stops the walk (#496): it may have been the
-# refusal, and an older success no longer proves anything (a re-mirrored
+# run whose jobs cannot be READ stops the walk: it may have been the
+# refusal, and an older success proves nothing (a re-mirrored
 # package starts with no grants), so that answers `error`, not `granted`.
 # "1 fork", "3 forks": $1 the count, $2 singular, $3 plural.
 plural() {
@@ -220,9 +220,9 @@ pull_grant_status() {
 # The rendered `ctf-score.yml` carries `# ctf-workflow-version: N`, copied
 # verbatim from the template. Comparing a fork's number against the
 # template's is what makes a fix to the scoring workflow reachable on an
-# event that is already provisioned: before this, `org`'s workflow step
-# checked only that the file EXISTED, so it skipped every fork that had any
-# version of it, and a fix could only be delivered by hand, per fork.
+# event that is already provisioned: a presence-only check would skip every
+# fork that has any version of it, and a fix could only be delivered by
+# hand, per fork.
 
 # The template's version. A template with no marker is a bug in this repo,
 # not a condition to tolerate — every comparison below depends on it, and a
@@ -389,13 +389,13 @@ do_step() {
 
 # Read-only per-step status. Non-manual missing steps make it exit non-zero so
 # CI / the future admin wizard can gate on a clean provision.
-# Check (c) of `doctor`, a function so the --dry-run path (#496 M20) can
+# Check (c) of `doctor`, a function so the --dry-run path can
 # run it — it narrates under --dry-run — before returning ahead of every gh
 # read. Returns 1 when the check fails.
 doctor_check_sync_app() {
   local org="$1" crc=0
-  # Check (c) — the sync GitHub App (GITHUB_APP_ID) is installed on the org
-  # (issue #382). Only meaningful when Secure Development runs at all: an
+  # Check (c) — the sync GitHub App (GITHUB_APP_ID) is installed on the org.
+  # Only meaningful when Secure Development runs at all: an
   # app-only event has no poller/pusher that needs a token, so there is
   # nothing to verify — but we are past the `runs_secdev` early-return above,
   # so it is always true here.
@@ -405,8 +405,8 @@ doctor_check_sync_app() {
       "$C_RED" "${OUT:-.env}" "$C_RESET"
     crc=1
   elif case "$sync_app_id" in *[!0-9]*|0*) true ;; *) false ;; esac; then
-    # Malformed is a configuration error, found before any call (#536
-    # review): an App id is a positive decimal, never 0 or a leading zero.
+    # Malformed is a configuration error, found before any call: an App id
+    # is a positive decimal, never 0 or a leading zero.
     printf '%s❌ GITHUB_APP_ID must be a positive number in %s (got %s)%s\n' \
       "$C_RED" "${OUT:-.env}" "$sync_app_id" "$C_RESET"
     crc=1
@@ -418,7 +418,7 @@ doctor_check_sync_app() {
     # installed": a non-zero exit (missing admin:org scope, network, a
     # revoked token) and empty output from an otherwise-successful call —
     # both are treated as UNVERIFIED, never as "installed", so a broken token
-    # never reads as a clean bill of health (R4 / #382).
+    # never reads as a clean bill of health.
     local sync_rows sync_found_id="" sync_found_slug=""
     if sync_rows="$(gh api "orgs/$org/installations" \
         --jq '.installations[] | "\(.app_id) \(.app_slug)"' 2>/dev/null)" && [ -n "$sync_rows" ]; then
@@ -455,7 +455,7 @@ cmd_doctor() {
   local org; org="$(env_val GITHUB_ORG)"
   local rc=0 t id cell name want_v have vis forks
 
-  # Check (a) — ADMIN_LOGINS (issue #382). Always checked, regardless of
+  # Check (a) — ADMIN_LOGINS. Always checked, regardless of
   # Secure Development: an event with no admins is broken either way, and the
   # failure (every login 403s on /admin) is otherwise silent until someone
   # tries the panel.
@@ -485,9 +485,9 @@ cmd_doctor() {
   fi
   echo
 
-  # Redis now requires a password, and docker-compose.yml uses `${REDIS_PASSWORD:?}`
-  # — so an .env written before this change does not bring up a weaker stack,
-  # it fails to bring up at all. Checked HERE because doctor is where an
+  # Redis requires a password, and docker-compose.yml uses `${REDIS_PASSWORD:?}`
+  # — so an .env that lacks one does not bring up a weaker stack, it fails to
+  # bring up at all. Checked HERE because doctor is where an
   # organizer looks when something is wrong, and compose's own error names a
   # variable without saying where it comes from. Advisory (no `rc=1`): this is
   # a local .env concern, not a provisioning defect, and doctor's exit code
@@ -498,14 +498,14 @@ cmd_doctor() {
     printf '    Add:  REDIS_PASSWORD=%s\n\n' "$(openssl rand -hex 24)"
   fi
 
-  # Every event needs an official launch (#464): until then contestants see
+  # Every event needs an official launch: until then contestants see
   # the landing page only and nothing scores. Asked of the box itself (the
   # public /health/deep carries `launched`), and only when this .env names the
   # box. Advisory like the notices above: a box that is not launched YET is
   # the normal state before kickoff, and an unreachable one is named once,
   # neutrally — doctor is not a monitor.
   local event_url; event_url="$(env_val EVENT_URL)"
-  # Kept for the fork-visibility check below (#465): launched | not-launched
+  # Kept for the fork-visibility check below: launched | not-launched
   # | unknown. Unknown judges nothing.
   local doctor_launch=unknown
   if [ -n "$event_url" ] && [ "$DRY_RUN" -eq 1 ]; then
@@ -575,7 +575,7 @@ cmd_doctor() {
   fi
 
   # Secure Development IS on: every event provisions all six targets.tsv
-  # targets (config v2 PR2, #386) — which ones actually RUN is chosen at
+  # targets (config v2) — which ones actually RUN is chosen at
   # runtime in /admin -> Secure Development.
   # One row per target, one column per provisioning step (+ fork-detach). Each
   # cell: ✅ done · ❌ missing (automatable — fails the exit code) · ⚠️ manual
@@ -605,7 +605,7 @@ cmd_doctor() {
   echo "        disI=disable-inherited pr=pr-template vapp=vapp-dockerfile detch=fork-detached (–=n/a)"
   echo "❌ = automatable step missing (fails exit); ⚠️ = UI-only step to finish by hand"
 
-  # Fork visibility against the launch (#465): private until launch, public
+  # Fork visibility against the launch: private until launch, public
   # after. Advisory — the organizer's launch-day sequence fixes both — and
   # silent while the launch state is unknown.
   if [ "$doctor_launch" != unknown ]; then
@@ -617,7 +617,7 @@ cmd_doctor() {
         [ "$vis_note" -eq 1 ] || echo; vis_note=1
         # `private` deliberately leaves a fork contestants already forked
         # public (making it private would cut their forks off), so it is not
-        # the advice for one (#496 M18).
+        # the advice for one.
         forks="$(gh api "repos/$org/$name" --jq '.forks_count' 2>/dev/null)" || forks=""
         case "$forks" in
           0)
@@ -699,7 +699,7 @@ cmd_doctor() {
           "$t" "$C_RED" "$C_RESET"
         rc=1 ;;
       error)
-        # GitHub did not answer (#536 review): fails the exit like any
+        # GitHub did not answer: fails the exit like any
         # check_step that cannot read its evidence — not the advisory below.
         printf '  %-18s %s❌ unreadable%s — GitHub did not answer for its scoring runs, so the grant is unchecked; re-run doctor\n' \
           "$t" "$C_RED" "$C_RESET"
@@ -832,15 +832,14 @@ require_env_file() {
 
 # EVENT_URL, out of the env file — never out of an event config (ADR 43).
 #
-# It used to be an `event.url` field in the event config file config v2
-# deleted, which put a DEPLOYMENT fact in the EVENT file. One event is
-# deployed to a box, to AWS and to fly.io on three
+# A `url:` in an event file would put a DEPLOYMENT fact in the EVENT file
+# (ADR 43). One event is deployed to a box, to AWS and to fly.io on three
 # different hostnames — that is why .env and .env.fly hold different
 # EVENT_URLs for one event — so a single `url:` could not be right for all of
-# them. Worse, it lost silently: EVENT_URL is what BETTER_AUTH_URL, the app's
-# HTTPS start-up guard and the CSRF origin check read, so a stale `event.url`
-# left sign-in working perfectly while every fork's score comment pointed
-# contestants at a dead leaderboard.
+# them. Worse, it would be read silently: EVENT_URL is what BETTER_AUTH_URL,
+# the app's HTTPS start-up guard and the CSRF origin check read, so a stale
+# `event.url` leaves sign-in working perfectly while every fork's score
+# comment points contestants at a dead leaderboard.
 env_url() {
   env_val EVENT_URL
 }
@@ -861,7 +860,7 @@ score_image() {
 }
 
 # Does this event run Secure Development? NON-EMPTY SCORE_IMAGE in the env
-# file is the whole switch (config v2, #386): its containers only exist when
+# file is the whole switch (config v2): its containers only exist when
 # an image reference does, so the same value that names the image also says
 # whether there is anything to fork, mirror, poll or verify. Empty is not an
 # error — an event can run quiz, classic or ai alone, and those are app-side
@@ -998,10 +997,10 @@ cmd_secrets() {
     echo "GITHUB_APP_PRIVATE_KEY="
     echo "GITHUB_APP_INSTALLATION_ID="
     echo "EVENT_URL=http://localhost"
-    # The two keys the deleted event config file used to carry (config v2,
-    # #386). Emitted even though they are empty: a key that is absent is a
-    # key nobody knows to fill in, and both fail CLOSED — no org means
-    # nothing to poll or fork, and no admin means a /admin nobody can open.
+    # GITHUB_ORG and ADMIN_LOGINS are emitted even though they are empty:
+    # a key that is absent is a key nobody knows to fill in, and both fail
+    # CLOSED — no org means nothing to poll or fork, and no admin means a
+    # /admin nobody can open.
     echo "# GITHUB_ORG: the disposable per-event GitHub org. The app links forks"
     echo "# there, sync polls its repos, and ctf-setup provisions it."
     echo "GITHUB_ORG="
@@ -1052,7 +1051,7 @@ cmd_org() {
 
   mirror_image "$org" "$src"
 
-  # Forks stay private until launch (#465). A fork still in its fork network
+  # Forks stay private until launch. A fork still in its fork network
   # cannot be made private, so this skips it by name — re-run
   # `ctf-setup.sh private` after the detach below.
   privatize_forks "$org" || echo "   (fork visibility: see the errors above; re-run 'ctf-setup.sh private')"
@@ -1071,7 +1070,7 @@ cmd_org() {
 EOF
 }
 
-# #465: keep Secure Development forks private until launch, so nobody sees
+# Keep Secure Development forks private until launch, so nobody sees
 # the event's branch, workflow or PR template — or forks and opens PRs —
 # before it starts. Only a DETACHED fork can be private, and only while the
 # event is not launched: a launched event's forks stay public, and when the
@@ -1154,14 +1153,14 @@ cmd_private() {
   privatize_forks "$org"
 }
 
-# #465: launch day for an event running Secure Development, with the
+# Launch day for an event running Secure Development, with the
 # organizer's own `gh` login — the box never holds a GitHub admin credential.
 #   1. Pre-flight, fail closed: every fork detached, the scorer package
 #      private, and no fork refused the scorer image. A gh error counts as a
 #      problem, never as "OK". Anything wrong refuses BEFORE any change.
 #   2. Wait for Launch: the organizer presses it in /admin → Event, and this
 #      polls EVENT_URL/health/deep until the box reports `launched`. The forks
-#      stay private throughout (#477 review): they ARE the event's content —
+#      stay private throughout: they ARE the event's content —
 #      the ctf branch, the workflow, the PR template — and opening them first
 #      handed everyone a head start for as long as the press took.
 #   3. Flip every fork public (an already-public one is skipped), within one
@@ -1411,7 +1410,6 @@ cmd_app_manifest() {
   fi
 
   local manifest_json; manifest_json="$(cat "$manifest")"
-  # Insert redirect_url as the first field, right after the opening brace.
   manifest_json="{
   \"redirect_url\": \"${redirect}\",${manifest_json#\{}"
 
@@ -1536,11 +1534,10 @@ wiz_step() { echo; printf '%s── %s%s\n' "$C_BOLD$C_CYAN" "$1" "$C_RESET"; }
 # ASCII banner shown at the top of the wizard. It is a LOGOTYPE — it spells the
 # project's brand, "OWASP CTF in a Box", so it moves whenever the brand does. It
 # names nothing in anyone's GitHub account, unlike the `OWASP CTF sync` App name
-# below, which is why that one keeps the pre-September-2026 brand and this one
-# does not. One line, in figlet's `small` font: the full name in the `standard`
-# font the old "OWASP CTF" banner used runs ~91 columns, and the wizard has to
-# read on an 80-column terminal; `small` fits it in 76 at four rows, one row
-# shorter than before. The brand's own casing ("in a Box"), which is also what
+# below, which exists in GitHub accounts and cannot follow the brand as freely.
+# One line, in figlet's `small` font: the full name in the `standard` font runs
+# ~91 columns, and the wizard has to read on an 80-column terminal; `small` fits
+# it in 76 at four rows. The brand's own casing ("in a Box"), which is also what
 # keeps it under 80 — all caps lands on exactly 80, one wrap away from garbage.
 # Quoted heredoc — every backslash and backtick below is art, not an escape.
 wiz_banner() {
@@ -1666,10 +1663,10 @@ require_targets() {
 # where nothing was written.
 #
 # Three keys, and only three: GITHUB_ORG, ADMIN_LOGINS and SCORE_IMAGE.
-# Everything an organizer used to put in the deleted event config file — the
-# event's name and branding, which modules run, which Secure Development
-# targets run, the schedule — is a RUNTIME setting in /admin now (config v2,
-# #386), so it is neither asked here nor written anywhere on disk.
+# Everything else an event needs — the event's name and branding, which
+# modules run, which Secure Development targets run, the schedule — is a
+# RUNTIME setting in /admin (config v2), so it is neither asked here nor
+# written anywhere on disk.
 #
 # Its own function, not inline in cmd_wizard, so the suite can drive the
 # questions with piped answers instead of walking nine steps to reach one
@@ -1752,16 +1749,15 @@ wiz_event_basics() {
   WIZ_SCORE_IMAGE="$ev_score"
 }
 
-# The optional step after the nine: put this same event on fly.io (issue #371).
+# The optional step after the nine: put this same event on fly.io.
 #
 # The nine steps stand up a LOCAL box — $1 is its bootstrap file and step 8
 # brings compose up against it. Fly is a SECOND deployment of the same event,
 # on a different hostname, with its own env file: that is why
 # `deploy/fly/deploy.sh init` copies $1 to .env.fly and rewrites EVENT_URL
-# there rather than sharing one file (ADR 43, and `env_url`'s comment). An
-# organizer used to have to discover that whole sequence — init, the hostname,
-# the second OAuth callback, the certificate — out of docs/fly.md; this offers
-# it inline instead.
+# there rather than sharing one file (ADR 43, and `env_url`'s comment). The
+# whole sequence — init, the hostname, the second OAuth callback, the
+# certificate — otherwise lives only in docs/fly.md; this offers it inline.
 #
 # Default NO, and non-fatal in EVERY direction. Answering no, having no
 # flyctl, or abandoning the deploy half-way must all leave the run exactly as
@@ -2042,7 +2038,7 @@ cmd_wizard() {
 
   # Everything from here on that touches forks, the scorer image or the poll
   # App belongs to Secure Development, and SCORE_IMAGE is the one fact that
-  # says whether this event runs it (config v2, #386). An app-only event has
+  # says whether this event runs it (config v2). An app-only event has
   # no repos to fork, no image to build and nothing to poll, so those steps
   # are reported as not-applicable rather than asking an organizer for
   # credentials they will never use.
@@ -2133,7 +2129,7 @@ cmd_wizard() {
   #
   # The org exists for ONE reason: Secure Development forks into it. An
   # app-only event has no org (GITHUB_ORG is legitimately empty), so this
-  # whole step — including the "create it, then re-run" stop, which used to
+  # whole step — including the "create it, then re-run" stop, which would
   # end such a run at step 7 with steps 8 and 9 never reached — is skipped
   # rather than asked.
   wiz_step "7/9  Event org (${org:-<none>})"
@@ -2168,11 +2164,9 @@ cmd_wizard() {
       echo "  Skipped. Run 'ctf-setup.sh org' (preview with --dry-run) when ready."
     fi
   fi
-  # The UI-only steps come NOW, before verification, not after it. doctor used
-  # to run right here, the instant provisioning finished, and only then did the
-  # wizard say "finish the UI-only steps" — so every first run ended on a
-  # table of ⚠️ for steps the organizer had not yet been given the chance to
-  # do, and had to re-run doctor by hand to see it clean (issue #370). cmd_org
+  # The UI-only steps come NOW, before verification, not after it. Running
+  # doctor right after provisioning would end every first run on a table of
+  # ⚠️ for steps the organizer has not yet been given the chance to do. cmd_org
   # has just printed the checklist; pause on it, bring the stack up, and
   # verify once at the very end (step 9).
   #
@@ -2197,12 +2191,11 @@ cmd_wizard() {
   # Compose profiles follow SCORE_IMAGE: `app` always, plus `secdev` — the
   # scorer AND the poller — only when this event runs Secure Development. An
   # app-only event needs neither: it has nothing to poll and no scorer image
-  # to pull, and asking for one would fail the bring-up outright. There is no
-  # second branch here any more: push ingest and its profile are REMOVED
-  # (#377, ADR 56), so poll is the transport and `secdev` is the only answer.
+  # to pull, and asking for one would fail the bring-up outright. Poll is the
+  # transport (#377, ADR 56), so `secdev` is the only answer.
   #
   # No build-arg: the app reads GITHUB_ORG and ADMIN_LOGINS from the env file
-  # at RUN time now (config v2, #386) — nothing is baked into the image, so
+  # at RUN time (config v2) — nothing is baked into the image, so
   # changing an admin is an edit and a restart, not a rebuild.
   wiz_step "8/9  Bring the containers up"
   local profiles=(--profile app)
@@ -2214,7 +2207,7 @@ cmd_wizard() {
     docker compose "${profiles[@]}" up -d --build
   fi
 
-  # 9. Verify — last, on purpose (issue #370). This is the wizard's closing
+  # 9. Verify — last, on purpose. This is the wizard's closing
   # screen: after the UI-only steps have had their pause and the stack is up,
   # a clean doctor table here means the event is ready, and a ⚠️ names the
   # one thing still to do. --dry-run makes zero gh calls, so it narrates.
@@ -2230,8 +2223,8 @@ cmd_wizard() {
   fi
 
   # Optional, and deliberately NOT a tenth numbered step: the nine above stand
-  # up the local box, and this offers to put the same event on fly.io as well
-  # (issue #371). Default no, so a run that just wants the box is unchanged.
+  # up the local box, and this offers to put the same event on fly.io as well.
+  # Default no, so a run that just wants the box is unchanged.
   # `|| true` because an abandoned or failed Fly deploy must never take the
   # wizard down after its .env work is already done — the function returns 0
   # on every skip itself, and this is the belt to that braces.

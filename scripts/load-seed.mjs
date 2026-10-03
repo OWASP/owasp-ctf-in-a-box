@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Synthetic contestants for a load test (issue #439).
+// Synthetic contestants for a load test.
 //
 // RUNS INSIDE THE APP CONTAINER, not on a laptop: srh sits on the machine's
 // private network, and the app container already carries the URL and token
@@ -13,7 +13,7 @@
 //     (team, joinedAt, firstTeamAt)
 //   ctf:solves:<target>  <login>:<challengeId> -> ISO   (Secure Development)
 //   ctf:quiz:answers:<login> / ctf:quiz:attempts:<login> + ctf:quiz:points /
-//     ctf:quiz:answered aggregates + ctf:quiz:lastAt (latest award, #522)
+//     ctf:quiz:answered aggregates + ctf:quiz:lastAt (latest award)
 //   ctf:classic:solves:<login> / ctf:classic:attempts:<login> +
 //     ctf:classic:points / ctf:classic:solved aggregates + ctf:classic:lastAt
 // It attaches solves to the CATALOGUE THE BOX ALREADY HAS (quiz questions,
@@ -518,7 +518,7 @@ export function errorLabel(err) {
 // I/O
 // ---------------------------------------------------------------------------
 
-/** fetch with a hard deadline; the timer is unref'd so it never keeps the process alive (the #256 lesson). */
+/** fetch with a hard deadline; the timer is unref'd so it never keeps the process alive. */
 async function boundedFetch(url, init = {}, ms = FETCH_TIMEOUT_MS) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(new Error(`request exceeded ${ms} ms`)), ms);

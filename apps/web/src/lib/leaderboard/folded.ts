@@ -44,7 +44,7 @@ import type { LeaderboardData } from "./types";
 
 export const LEADERBOARD_FOLD_TTL_MS = 10_000;
 
-type Fold = () => Promise<LeaderboardData>;
+type Fold = (options?: { fresh?: boolean }) => Promise<LeaderboardData>;
 type Clock = () => number;
 
 // Stage order is load-bearing (this commentary moved here from the page with
@@ -69,9 +69,9 @@ type Clock = () => number;
 // `points` untouched, so it neither needs to run before the penalty fold nor
 // disturbs it: the chart is gross, the row net.
 /** The production fold: the leaderboard source through every overlay stage. */
-const defaultFold: Fold = async () =>
+const defaultFold: Fold = async ({ fresh = false } = {}) =>
   (await getLeaderboardSource())
-    .getLeaderboard()
+    .getLeaderboard({ fresh })
     .then(withModuleContributions)
     .then(withTeamStandings)
     .then(withModuleSeries)
@@ -111,7 +111,7 @@ export async function getFoldedLeaderboard({
   fold = defaultFold,
   fresh = false,
 }: { now?: Clock; fold?: Fold; fresh?: boolean } = {}): Promise<LeaderboardData> {
-  if (fresh) return fold();
+  if (fresh) return fold({ fresh: true });
   const gen = foldGeneration();
   if (cached && cached.gen === gen && now() - cached.at < LEADERBOARD_FOLD_TTL_MS) return cached.data;
   if (inflight && inflightGen === gen) return inflight;

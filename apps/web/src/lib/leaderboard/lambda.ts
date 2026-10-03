@@ -236,11 +236,11 @@ function toEntry(raw: LambdaEntry, catalog: LambdaCatalog): LeaderboardEntry {
 }
 
 export const lambdaSource: LeaderboardSource = {
-  async getLeaderboard(): Promise<LeaderboardData> {
+  async getLeaderboard({ fresh = false }: { fresh?: boolean } = {}): Promise<LeaderboardData> {
     const base = process.env.LEADERBOARD_API_URL;
     if (!base) throw new Error("LEADERBOARD_API_URL is not set");
     const res = await fetch(`${base.replace(/\/$/, "")}/leaderboard`, {
-      next: { revalidate: 30 },
+      ...(fresh ? { cache: "no-store" as const } : { next: { revalidate: 30 } }),
     });
     if (!res.ok) throw new Error(`Lambda leaderboard fetch failed: HTTP ${res.status}`);
     const data = (await res.json()) as LambdaResponse;

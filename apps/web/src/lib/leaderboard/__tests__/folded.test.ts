@@ -104,6 +104,8 @@ describe("getFoldedLeaderboard", () => {
     await getFoldedLeaderboard({ now: at(NOW), fold });
     expect((await getFoldedLeaderboard({ now: at(NOW + 1), fold, fresh: true })).generatedAt).toBe("fresh-1");
     expect((await getFoldedLeaderboard({ now: at(NOW + 2), fold, fresh: true })).generatedAt).toBe("fresh-2");
+    expect(fold).toHaveBeenNthCalledWith(2, { fresh: true });
+    expect(fold).toHaveBeenNthCalledWith(3, { fresh: true });
     // The memo still holds the first fold: a fresh read neither replaced it…
     expect((await getFoldedLeaderboard({ now: at(NOW + 3), fold })).generatedAt).toBe("memo");
     expect(fold).toHaveBeenCalledTimes(3);

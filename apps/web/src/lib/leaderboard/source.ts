@@ -7,7 +7,7 @@ import { upstashSource } from "./upstash";
 import { emptySource } from "./empty";
 
 export interface LeaderboardSource {
-  getLeaderboard(): Promise<LeaderboardData>;
+  getLeaderboard(options?: { fresh?: boolean }): Promise<LeaderboardData>;
   getUser(login: string): Promise<UserProfile | null>;
 }
 

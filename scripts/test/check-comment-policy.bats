@@ -50,6 +50,14 @@ _append() {
   _has "history:"
 }
 
+@test "a history comment with a verb no rule lists fails" {
+  _append "apps/web/src/lib/classic-store.ts" "// Used to calculate the score here."
+  run node "$SCRIPT" "$ROOT"
+  [ "$status" -eq 1 ]
+  _has "apps/web/src/lib/classic-store.ts:"
+  _has "history:"
+}
+
 @test "an issue/PR provenance ref fails" {
   _append "scripts/load-seed.mjs" "// Synthetic load, fixed by issue #439."
   run node "$SCRIPT" "$ROOT"

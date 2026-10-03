@@ -14,7 +14,7 @@
 // it that earns its place.
 //
 // What is flagged, per comment line:
-//   history        previously, formerly, used to <be/return/...>, no longer,
+//   history        previously, formerly, used to <any verb>, no longer,
 //                  anymore, (was|were) renamed, renamed from,
 //                  (since|after|before|as of) #N, <verb> in #N
 //   restatement    now (returns|reads|writes|throws|sets|calls|...)
@@ -77,7 +77,7 @@ const POLICY_LEAD = "**Comments explain the present, not the past, and not the c
 const RULES = [
   ["history", /\bpreviously\b/i],
   ["history", /\bformerly\b/i],
-  ["history", /\bused to (?:be|have|hold|return|read|write|mean|contain|live|sit|work|call|take|do|support|look|store|carry|leave|skip|run)\b/i],
+  ["history", /\bused to\b/i],
   ["history", /\bno longer\b/i],
   ["history", /\banymore\b/i],
   ["history", /\b(?:was|were) renamed\b|\brenamed from\b/i],

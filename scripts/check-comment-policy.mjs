@@ -93,11 +93,12 @@ const RULES = [
   ["provenance", /(?<!`[^`]*`\s*)\(\s*(?:issue\s+)?#\d+(?:\s*,\s*(?:issue\s+)?#\d+)*\s*\)/i],
   ["provenance", /\b(?:issue|see|closes|fixes|fixed in|part of) #\d+\b/i],
   ["provenance", /^#\d+\s*:/],
+  ["provenance", /(?:\s|^)#\d+[.!?\s]*$/],
 ];
 
 const DIRECTIVE = /^(?:#!|\/\/\s*(?:eslint-disable|@ts-|ts-ignore|ts-expect-error)\b|#\s*shellcheck\b|\*\s*(?:eslint-disable|@ts-))/i;
 
-const HEREDOC = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1\s*(?:[|>&].*)?$/;
+const HEREDOC = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1\s*(?:[|>&;#].*)?$/;
 
 // The text a rule sees: the line without its comment marker, so `^#N:` means
 // a comment that opens with an issue number rather than a shell marker.

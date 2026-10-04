@@ -66,6 +66,14 @@ _append() {
   _has "provenance:"
 }
 
+@test "a bare issue reference at the end of a comment fails" {
+  _append "apps/web/src/lib/team-store.ts" "// Keep the seed stable for repeatable runs #505"
+  run node "$SCRIPT" "$ROOT"
+  [ "$status" -eq 1 ]
+  _has "apps/web/src/lib/team-store.ts:"
+  _has "provenance:"
+}
+
 @test "a change restatement fails" {
   _append "apps/web/src/lib/team-store.ts" "// The reader now returns the stored count instead."
   run node "$SCRIPT" "$ROOT"
@@ -96,6 +104,19 @@ render_manifest() {
 # previously this line is output of the generated document
 EOF
 }
+OUTER
+  run node "$SCRIPT" "$ROOT"
+  [ "$status" -eq 0 ]
+}
+
+@test "a shell heredoc opener followed by a comment or semicolon is recognized" {
+  cat >> "$ROOT/setup/ctf-setup.sh" <<'OUTER'
+cat <<'EOF' # explanation
+# previously this line is output
+EOF
+cat <<'EOF'; next_command
+# previously this one too
+EOF
 OUTER
   run node "$SCRIPT" "$ROOT"
   [ "$status" -eq 0 ]

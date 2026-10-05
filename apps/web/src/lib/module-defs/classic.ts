@@ -1,7 +1,6 @@
-// `classic` module's definition (#504 M10) — one entry of the
-// REGISTRY literal that was ~1230 lines of lib/modules.ts, split out so that
-// file is about the types and the accessors again and a copy edit to one
-// module stops touching all four.
+// `classic` module's definition — one entry of the REGISTRY literal in
+// lib/modules.ts, held in its own file so that file stays about the types
+// and the accessors, and a copy edit to one module stops touching all four.
 //
 // `ModuleDef` comes back as a TYPE import — erased at compile time, so
 // modules.ts -> this file -> modules.ts is not a runtime edge. The URLs the
@@ -36,7 +35,7 @@ export const CLASSIC_DEF: ModuleDef = {
   // Every claim below is checked against the implementation, same
   // discipline as quiz's: `flagComparisonForm` (classic-keys.ts) trims and
   // NFC-normalizes both sides, and lowercases them UNLESS the challenge is
-  // marked case-sensitive (issue #193; the board badges those) — so the
+  // marked case-sensitive (the board badges those) — so the
   // case-insensitivity claim must always carry that qualifier. Stating it
   // unconditionally shipped in v0.3.0 and contradicted the badge. There is NO attempt cap anywhere in classic-store.ts's
   // `evaluateGate`; it only ever refuses on paused/already-solved/cooldown,

@@ -1,7 +1,7 @@
-// `secure-development` module's definition (#504 M10) — one entry of the
-// REGISTRY literal that was ~1230 lines of lib/modules.ts, split out so that
-// file is about the types and the accessors again and a copy edit to one
-// module stops touching all four.
+// `secure-development` module's definition — one entry of the REGISTRY
+// literal in lib/modules.ts, held in its own file so that file stays about
+// the types and the accessors, and a copy edit to one module stops touching
+// all four.
 //
 // `ModuleDef` comes back as a TYPE import — erased at compile time, so
 // modules.ts -> this file -> modules.ts is not a runtime edge. The URLs the
@@ -264,11 +264,11 @@ git push -u origin fix/<short-description>`,
   // platform's own list.
   rules: (ctx) => ({
     // The generic "your GitHub login is your identity" sentence lives in
-    // the platform's own Teams list now — three modules each restating it
-    // rendered as three near-identical adjacent bullets (issue #200,
-    // tier 4). This module keeps only the nuance the generic sentence
-    // cannot carry: points credit the PULL REQUEST'S author, which is not
-    // automatically the signed-in session.
+    // the platform's own Teams list — three modules each restating it
+    // rendered as three near-identical adjacent bullets. This module keeps
+    // only the nuance the generic sentence cannot carry: points credit the
+    // PULL REQUEST'S author, which is not automatically the signed-in
+    // session.
     teams: [
       "Points for a patch credit the pull request's author — open every PR from the same GitHub account you sign in with, or your score lands on a row you can't see.",
     ],

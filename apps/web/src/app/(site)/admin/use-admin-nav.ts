@@ -1,15 +1,14 @@
 "use client";
 
-// The admin shell's destinations and which one is open (issue #504, M11,
-// extracted from admin-controls.tsx): the tab ids with the comments saying
-// where each sits and why, the tab list, the sidebar's three groups, the
-// active-tab state, the pushState that keeps the address bar in step with a
-// click, and the popstate handler that moves the panel when Back/Forward
-// walk the history.
+// The admin shell's destinations and which one is open: the tab ids with
+// the comments saying where each sits and why, the tab list, the sidebar's
+// three groups, the active-tab state, the pushState that keeps the address
+// bar in step with a click, and the popstate handler that moves the panel
+// when Back/Forward walk the history.
 //
 // The URL⇄tab rules themselves stay in admin-tabs.ts — a module with no
-// `"use client"`, because the two routes CALL them on the server (issue
-// #312); this file only consumes them on the client side of that boundary.
+// `"use client"`, because the two routes CALL them on the server; this file
+// only consumes them on the client side of that boundary.
 
 import { useCallback, useEffect, useState } from "react";
 import type { ResolvedModule } from "@/lib/modules";
@@ -27,21 +26,21 @@ export const EVENT_TAB = "event";
 // The hint policy's own destination (admin-redesign.md's Event/Hints/Admins
 // split) — see admin-hints-tab.tsx for why it isn't a module's or Event's.
 export const HINTS_TAB = "hints";
-/** Runtime admin management (issue #147). Sits beside Event rather than
+/** Runtime admin management. Sits beside Event rather than
  *  inside it: it manages WHO may use the panel, not what the event does. */
 export const ADMINS_TAB = "admins";
-// Sponsor recognition (issue #405) — a platform feature, not a module, so it
+// Sponsor recognition — a platform feature, not a module, so it
 // sits beside Event/Hints/Admins rather than in the module tab row.
 export const SPONSORS_TAB = "sponsors";
-// Live-event support (issue #168). Sits after Admins and before the module
+// Live-event support. Sits after Admins and before the module
 // tabs: it is control-plane, not module-specific, and an organizer reaching
 // for it is mid-incident rather than mid-configuration.
 export const SUPPORT_TAB = "support";
-// Engagement metrics (issue #169). Control-plane like Event/Admins/Support,
+// Engagement metrics. Control-plane like Event/Admins/Support,
 // and last of the four because it is read-only — an organizer reaches for it
 // after the event more often than during it.
 export const INSIGHTS_TAB = "insights";
-// The activity log (issue #212). Read-only like Insights but LIVE — an
+// The activity log. Read-only like Insights but LIVE — an
 // organizer reaches for it mid-event ("did anyone sign in yet?", "who just
 // solved that?"), so it sits between Support and Insights.
 export const ACTIVITY_TAB = "activity";

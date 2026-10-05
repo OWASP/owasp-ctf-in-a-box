@@ -1,13 +1,13 @@
 "use client";
 
-// The admin shell's settings state machine (issue #504, M11, extracted from
-// admin-controls.tsx): the stored settings, the nine numeric draft strings,
-// the panel-wide `pending`/`error`, the single `confirm` request, the
-// `resetInfo` line, the per-field status map, and the whole write path —
-// `apply`, `applyField`, `commitNumber`, `statusOf` — plus the three Danger
-// zone writes. `AdminControls` calls this once and threads the results to
-// the tab bodies as props; the tabs stay presentational and this is still
-// the shell's single writer of settings state across all of them.
+// The admin shell's settings state machine: the stored settings, the nine
+// numeric draft strings, the panel-wide `pending`/`error`, the single
+// `confirm` request, the `resetInfo` line, the per-field status map, and the
+// whole write path — `apply`, `applyField`, `commitNumber`, `statusOf` —
+// plus the three Danger zone writes. `AdminControls` calls this once and
+// threads the results to the tab bodies as props; the tabs stay
+// presentational and this is still the shell's single writer of settings
+// state across all of them.
 //
 // Every write goes through POST /api/admin/settings (auth + validation
 // enforced server-side — see src/app/api/admin/settings/route.ts) via
@@ -66,7 +66,7 @@ export function useAdminSettingsDrafts({
   /** The settings as the server handed them down — the seed for the stored
    *  state and for every numeric draft string below. */
   initial: AdminSettings;
-  /** The resolved runtime event name (issue #386): resolved server-side by
+  /** The resolved runtime event name — resolved server-side by
    *  getSite(); a client bundle cannot read settings. Seeded into
    *  `currentEventName` and re-derived from each save's response — see the
    *  comment on that state below. */
@@ -80,7 +80,7 @@ export function useAdminSettingsDrafts({
   // event — otherwise a rename left this stale at the pre-rename name, so a
   // reset typed against the NEW name (shown everywhere else on this very
   // panel) failed `getSite()`'s server-side check with "confirmation does not
-  // match the event name" (CodeRabbit round 1, #389).
+  // match the event name".
   const [currentEventName, setCurrentEventName] = useState(eventName);
   const [hintCostInput, setHintCostInput] = useState(initial.hintCost === null ? "" : String(initial.hintCost));
   const [minSolvesInput, setMinSolvesInput] = useState(
@@ -143,8 +143,8 @@ export function useAdminSettingsDrafts({
     }
   };
 
-  // The three Danger zone writes — no DEMO_MODE gate on seed/clear any more
-  // (issue #419); each reports through `error`/`resetInfo` here rather than
+  // The three Danger zone writes — seed/clear carry no DEMO_MODE gate
+  // (ADR 58); each reports through `error`/`resetInfo` here rather than
   // beside a field. See admin-danger-actions.ts for the fetches themselves.
   const { doReset, doSeed, doClearDemo } = createDangerActions({
     setError,

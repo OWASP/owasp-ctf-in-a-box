@@ -1,13 +1,12 @@
-// The Event tab's Danger zone writes (issue #504, M11, extracted from
-// admin-controls.tsx): master reset, demo seed and demo clear. Three fetches
-// that report through the shell's `error`/`resetInfo` state rather than the
-// per-field write path — they have no field to report beside.
+// The Event tab's Danger zone writes: master reset, demo seed and demo
+// clear. Three fetches that report through the shell's `error`/`resetInfo`
+// state rather than the per-field write path — they have no field to report
+// beside.
 //
 // A plain factory, not a hook: each action closes over the setters the caller
 // (`useAdminSettingsDrafts` in use-admin-settings.ts) owns, so nothing here
-// holds state of its own. Returned fresh on every call, the same way these
-// three closures were recreated on every shell render before the move — no
-// memoization, so behaviour is unchanged.
+// holds state of its own, and it returns fresh on every call with no
+// memoization.
 
 import type { Dispatch, SetStateAction } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
@@ -47,7 +46,7 @@ export function createDangerActions({
       setError(data.error ?? "Reset failed");
       return;
     }
-    // The server reset freezes AND relocks (#464: clears the scoring start),
+    // The server reset freezes AND relocks (it clears the scoring start),
     // so local state follows — or the Launch block would still say "Live".
     setSettings((s) => ({ ...s, paused: true, scoringStartsAt: null }));
     restampNow();
@@ -55,7 +54,7 @@ export function createDangerActions({
     setResetInfo(`Wiped ${total} keys — the event is frozen and not launched. Launch and unfreeze when you're ready.`);
   };
 
-  // No DEMO_MODE gate any more (issue #419): populate a demo leaderboard
+  // No DEMO_MODE gate (ADR 58): populate a demo leaderboard
   // (fake contestants + teams). Type-to-confirm gated in the modal; the
   // server re-checks the phrase and requires admin, same pattern as reset.
   const doSeed = async (): Promise<void> => {
@@ -81,7 +80,7 @@ export function createDangerActions({
     );
   };
 
-  // The inverse: removes exactly the rows doSeed above wrote (issue #419).
+  // The inverse: removes exactly the rows doSeed above wrote.
   // Same type-to-confirm + admin gate; see clearDemoData's own doc comment
   // for what it deliberately leaves behind (authored demo challenges).
   const doClearDemo = async (): Promise<void> => {

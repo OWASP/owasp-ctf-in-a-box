@@ -1,6 +1,6 @@
-// Demo seeding and clearing — the section that was 43% of admin-store.ts
-// (#504 M9), moved out whole so the store stays about the settings, the audit
-// trail and the runtime admins everything else reads.
+// Demo seeding and clearing, held apart from admin-store.ts so the store
+// stays about the settings, the audit trail and the runtime admins
+// everything else reads.
 //
 // Two of the things this body needs live in admin-store.ts, so it is handed
 // rather than imported:
@@ -13,9 +13,9 @@
 //   - the audit trail's key and cap, from the dependency-free
 //     `admin-audit-keys.ts` leaf, so this stays importable without the store.
 //
-// `adminErrorLabel` in the old home was `errorLabel` re-exported under a
-// different name (#500), so the three log sites here call `errorLabel`
-// directly — same function object, same output.
+// The three log sites here call `errorLabel` directly; admin-store.ts's
+// `adminErrorLabel` is the same function object re-exported under another
+// name, so the output is identical.
 import "server-only";
 import { createHash } from "node:crypto";
 
@@ -82,7 +82,7 @@ import {
 } from "@/lib/ai-keys";
 import { SPONSORS_KEY, SPONSORS_LOGO_KEY } from "@/lib/sponsors-keys";
 
-// --- demo seed / clear (admin-gated dangerous settings, issue #419) ---------
+// --- demo seed / clear (admin-gated dangerous settings) ---------------------
 
 /**
  * One attempt row in the shape quiz-store's and classic-store's live attempt
@@ -92,9 +92,9 @@ import { SPONSORS_KEY, SPONSORS_LOGO_KEY } from "@/lib/sponsors-keys";
  * without this it produced an event in which nobody had ever *tried* anything:
  * the Insights tab showed a 100% solve rate, "1.0" average tries and a blank
  * median time on every single challenge. That is the same class of gap as the
- * membership timestamps the seed used to skip (ADR 49) — a fixture that
- * bypasses the live write path also bypasses the telemetry that path records,
- * and the first event a new organizer looks at is a seeded one.
+ * membership timestamps (ADR 49) — a fixture that bypasses the live write
+ * path also bypasses the telemetry that path records, and the first event a
+ * new organizer looks at is a seeded one.
  *
  * `firstAt` is derived BACKWARDS from the known earn time, so the ordering the
  * metrics fold guards against (an item earned before its own first attempt)
@@ -131,7 +131,7 @@ function demoAttemptRow(tries: number, earnedAt: string, gapMinutes: number, flo
 // CHALLENGE and counts distinct solvers across everyone, so the fixture's
 // number is a floor, not the truth. Writing it absolutely rewrote a real
 // contestant's solve out of the public count on every re-seed — silently, since
-// their own per-login row survived and still said "Solved" (issue #335).
+// their own per-login row survived and still said "Solved".
 //
 // One EVAL rather than read-then-write so the raise is atomic: a solve landing
 // mid-seed is counted, not lost to a stale read.
@@ -150,24 +150,24 @@ return 1
 // `solvecount` above is raised rather than set: the fixture's value is a
 // floor, not the truth.
 //
-// The seed used to `SET` both lists to the demo fixture's, which deleted every
-// category an organizer had authored. Their challenges survived (they are
-// written per-field, keyed by id) and the admin panel kept listing them, but
-// the contestant board renders only categories present in the list, so three
-// authored AI challenges and 850 points of content silently left the board
-// while "1 category · 5 challenges" read like a healthy setup (issue #344).
-// Master reset is no way back: it deliberately preserves authored categories,
-// so the list it preserves is the seeded one.
+// Setting both lists to the demo fixture's would delete every category an
+// organizer had authored: their challenges survive (they are written
+// per-field, keyed by id) and the admin panel keeps listing them, but the
+// contestant board renders only categories present in the list, so three
+// authored AI challenges and 850 points of content silently leave the board
+// while "1 category · 5 challenges" reads like a healthy setup. Master reset
+// is no way back: it deliberately preserves authored categories, so the list
+// it preserves is the seeded one.
 //
 // ONE SCRIPT, not read-then-write. Upstash's `/pipeline` is not transactional,
 // so a GET here and a SET later leaves a window in which an organizer's own
 // category edit is read, ignored and overwritten. Worse, the fixture's
 // challenge rows have to name a category the list actually holds, so a rename
 // landing inside that window would orphan every row this seed just wrote —
-// exactly the failure #344 is about. Both halves therefore happen inside the
-// same EVAL, which Redis runs atomically: the union is computed against the
-// list as it is at that instant, and the challenge records are written under
-// whichever spelling that union kept.
+// exactly the failure an absolute SET causes. Both halves therefore happen
+// inside the same EVAL, which Redis runs atomically: the union is computed
+// against the list as it is at that instant, and the challenge records are
+// written under whichever spelling that union kept.
 //
 // Membership is case-INSENSITIVE, mirroring `setCategories` and classic's
 // `importBundle`: "AI" and "ai" as two headings is never what anyone meant,
@@ -275,7 +275,7 @@ function raiseSolveCounts(cmds: (string | number)[][], key: string, counts: Map<
  * across the same contestants (timestamped inside the same ~6h window) so
  * the demo shows a genuinely combined two-module leaderboard. Additive —
  * does not clear first. Gated by the route on requireAdmin plus a
- * type-to-confirm (no DEMO_MODE env var since issue #419, ADR 58). It stays
+ * type-to-confirm (no DEMO_MODE env var — ADR 58). It stays
  * reachable on a production box, so do not run it during a live event: the
  * demo contestants and solves land on the real board.
  */
@@ -309,12 +309,12 @@ export async function runDemoSeed(
   // clamp to, so it falls back to the unclamped window — future-dated solves
   // would be a worse lie than a mistimed one.
   // Fail closed: the snapshot admin-store hands us now also decides WHICH
-  // modules get demo rows (issue #386), so it gates a write. A settings blip
+  // modules get demo rows, so it gates a write. A settings blip
   // must abort the seed, not fall back to seeding every module's data
   // regardless of what the organizer actually enabled — let that read throw
   // and propagate.
   // The live module set, same read: which of quiz/classic/ai to seed demo
-  // data for must follow what this event is actually serving (issue #386),
+  // data for must follow what this event is actually serving,
   // not what happened to be baked at build time.
   const live = new Set(settings.enabledModuleIds ?? defaultEnabledModules(process.env));
   // Secure Development demo data — only when the module is live, same gate
@@ -364,7 +364,7 @@ export async function runDemoSeed(
     // is the one path that can produce a member with no `joinedAt` and no
     // `firstTeamAt` — which made the Insights funnel report "ever on a team:
     // 0" beside "on a team: 6" on exactly the event a new organizer looks at
-    // first (issue #169 / ADR 49).
+    // first (ADR 49).
     for (const m of t.members) {
       cmds.push([
         "HSET",
@@ -451,7 +451,7 @@ export async function runDemoSeed(
     for (const [login, agg] of aggregates) {
       cmds.push(["HSET", QUIZ_POINTS_KEY, login, agg.points]);
       cmds.push(["HSET", QUIZ_ANSWERED_KEY, login, agg.answered]);
-      // The latest row's time: what GRADE_SCRIPT would have left (#522).
+      // The latest row's time: what GRADE_SCRIPT would have left.
       cmds.push(["HSET", QUIZ_LAST_AT_KEY, login, agg.lastAt]);
     }
   }
@@ -703,7 +703,7 @@ export async function runDemoSeed(
   if (failed) throw new Error(`Seed failed: ${failed.error}`);
   const auditFailed = results.slice(cleanupCommandCount).find((r) => r.error);
   if (auditFailed) console.error("[admin] seed audit write failed:", errorLabel(new Error(auditFailed.error)));
-  // #186: the forensics challenges' artifacts, through the attachments store
+  // The forensics challenges' artifacts, through the attachments store
   // (so the caps and locks apply). Keyed by sha256 — a re-seed adds nothing.
   if (classicEnabled) {
     // After the seed landed: a failure here is logged, like the audit write
@@ -720,7 +720,7 @@ export async function runDemoSeed(
 
 /**
  * The inverse of `seedDemoData`, for the same DEMO_MODE-free "dangerous
- * setting" surface (issue #419) — admin-gated + type-to-confirm at the
+ * setting" surface — admin-gated + type-to-confirm at the
  * route, same as `resetEvent`. No live-event guard, also matching
  * `resetEvent`: an admin who explicitly typed the confirmation phrase is
  * trusted the same way here as there.
@@ -760,7 +760,7 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
   }
 
   // Teams, their member sets, and the membership fields seeding stamped onto
-  // each member's user hash (issue #169 / ADR 49) — never the whole user
+  // each member's user hash (ADR 49) — never the whole user
   // hash, which may carry fields this action didn't write.
   for (const t of DEMO_TEAMS) {
     cmds.push(["DEL", `ctf:team:${t.slug}`]);
@@ -816,7 +816,7 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
   // Same reasoning as seedDemoData's own pipeline check: a per-command
   // failure doesn't throw on its own (AGENTS.md), so an unchecked call would
   // report a cheerful "cleared" count for a clear that only partly happened.
-  // The demo rows' points are about to leave the board (#553): a
+  // The demo rows' points are about to leave the board: a
   // score-lowering bracket (fold-cache.ts) around the pipeline — the shared
   // in-progress marker up and the revision bumped BEFORE it, so a hint
   // charge on any app task is refused meanwhile and a fold that read those

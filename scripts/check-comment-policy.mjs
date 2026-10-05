@@ -6,9 +6,11 @@
 // and, once the change is a decision, to an ADR in docs/decisions.md.
 //
 // Scope is deliberately the pre-v0.7.0 audit's top 20 files (the 20 files
-// with the most comment lines at the commit the audit read, 09a48384): that
-// is the set the trim cleaned, and a repo-wide sweep would fail on files the
-// trim never reached. AGENTS.md governs the rest until they are trimmed.
+// with the most comment lines at the commit the audit read, 09a48384) plus
+// the files that now hold code extracted from them: moved code keeps the rule
+// it was held to where it came from, so a split is not a way out of the
+// policy. Beyond that set, a repo-wide sweep would fail on files the trim
+// never reached; AGENTS.md governs the rest until they are trimmed.
 // Narration — a comment that restates what the next line does — is left to
 // reviewers: no regex can tell "loop over the teams" from the sentence above
 // it that earns its place.
@@ -42,9 +44,13 @@ import { fileURLToPath } from "node:url";
 const root = resolve(process.argv[2] ?? join(fileURLToPath(import.meta.url), "..", ".."));
 const read = (rel) => readFileSync(join(root, rel), "utf8");
 
-// The audited top 20, ranked by comment-line count at 09a48384 (the
-// pre-v0.7.0 audit's commit). A file that is gone is a problem, not a skip:
-// the list is only useful while it still names real files.
+// The audited set: the pre-v0.7.0 audit's top 20, ranked by comment-line
+// count at 09a48384, then the files holding code extracted out of those 20 —
+// demo seed/clear out of admin-store.ts, the admin shell's settings and
+// navigation halves out of admin-controls.tsx, and one file per module out of
+// the registry in modules.ts. The second group is in registry order for the
+// module-defs. A file that is gone is a problem, not a skip: the list is only
+// useful while it still names real files.
 const AUDITED = [
   "setup/ctf-setup.sh",
   "apps/web/src/lib/classic-store.ts",
@@ -66,6 +72,14 @@ const AUDITED = [
   "apps/web/src/app/(site)/admin/__tests__/admin-controls.test.tsx",
   "scripts/load-seed.mjs",
   "apps/web/src/lib/admin-ops-store.ts",
+  "apps/web/src/lib/demo-seed.ts",
+  "apps/web/src/app/(site)/admin/use-admin-settings.ts",
+  "apps/web/src/app/(site)/admin/use-admin-nav.ts",
+  "apps/web/src/app/(site)/admin/admin-danger-actions.ts",
+  "apps/web/src/lib/module-defs/secure-development.ts",
+  "apps/web/src/lib/module-defs/quiz.ts",
+  "apps/web/src/lib/module-defs/classic.ts",
+  "apps/web/src/lib/module-defs/ai.ts",
 ];
 
 // The manifest doubles as the copy list for scripts/test/check-comment-policy.bats,

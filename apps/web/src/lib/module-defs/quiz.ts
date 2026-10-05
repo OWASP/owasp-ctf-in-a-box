@@ -1,7 +1,6 @@
-// `quiz` module's definition (#504 M10) — one entry of the
-// REGISTRY literal that was ~1230 lines of lib/modules.ts, split out so that
-// file is about the types and the accessors again and a copy edit to one
-// module stops touching all four.
+// `quiz` module's definition — one entry of the REGISTRY literal in
+// lib/modules.ts, held in its own file so that file stays about the types
+// and the accessors, and a copy edit to one module stops touching all four.
 //
 // `ModuleDef` comes back as a TYPE import — erased at compile time, so
 // modules.ts -> this file -> modules.ts is not a runtime edge. The URLs the

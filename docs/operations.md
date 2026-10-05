@@ -956,7 +956,8 @@ leaderboard's projector display (`?display=1`) if and only if at least one
 sponsor is configured. The footer's credit is left out on the landing page,
 where the strip above the fold already names them. An event with no sponsors
 ships zero sponsor pixels anywhere. The leaderboard also shows the event logo
-beside its title when one is uploaded in `/admin` → Event.
+beside its title when one is uploaded in `/admin` → Event, and the default
+OWASP mark otherwise, as the landing page does.
 
 **The tab is the list.** Each sponsor is a card showing its logo as it will
 actually appear — on the site's own dark background, untreated — next to its

@@ -3891,7 +3891,9 @@ footer's text line.
 its title and the landing page's `SponsorStrip` under its header, above the
 board. The strip is reused unchanged: same order, same organizer
 `sponsorLogoSize` setting, nothing when the list is empty, grayscale credit
-row rather than an ad rail. The logo hides itself if it fails to load, as on
+row rather than an ad rail. With no uploaded logo the header shows the
+default OWASP mark, the same fallback as the landing page's hero, so the
+title never stands without a mark. The logo hides itself if it fails to load, as on
 the projector. Both reads fail open, so a Redis blip costs the decoration and
 never the standings. This makes it a fifth sponsor surface; ADR 57's other
 rules (recognition only, logos from our own origin, raster only, the fixed

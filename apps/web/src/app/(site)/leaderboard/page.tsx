@@ -23,6 +23,7 @@ import { listSponsors } from "@/lib/sponsors-store";
 import { getAdminSettingsSnapshot } from "@/lib/enabled-modules";
 import { getEventImages } from "@/lib/event-images-site";
 import { eventImageUrl } from "@/lib/event-images-keys";
+import Image from "next/image";
 import HeaderLogo from "@/components/header-logo";
 import SponsorStrip from "@/components/sponsor-strip";
 
@@ -175,7 +176,17 @@ export default async function LeaderboardPage({
               h={images.logo.h}
               alt={`${event.name} logo`}
             />
-          ) : undefined
+          ) : (
+            // No uploaded logo: the default OWASP mark, the same one the
+            // landing page's hero falls back to.
+            <Image
+              src="/owasp-logo.png"
+              alt="OWASP"
+              width={200}
+              height={69}
+              className="h-auto w-28 shrink-0 invert sm:w-36"
+            />
+          )
         }
       />
       {sponsorStrip}

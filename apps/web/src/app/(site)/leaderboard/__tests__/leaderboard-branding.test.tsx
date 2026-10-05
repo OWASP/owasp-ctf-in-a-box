@@ -15,6 +15,12 @@ import type { ReactElement } from "react";
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/leaderboard", useRouter: () => ({ refresh: () => {} }) }));
+vi.mock("next/image", () => ({
+  default: ({ src, alt, className }: { src: string; alt: string; className?: string }) => (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={src} alt={alt} className={className} />
+  ),
+}));
 vi.mock("@/lib/enabled-modules", async () =>
   (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
 );
@@ -81,10 +87,19 @@ describe("leaderboard header — event logo", () => {
     expect(head.indexOf(img)).toBeLessThan(head.indexOf("Leaderboard</h1>"));
   });
 
-  it("is the title alone when no logo is uploaded", async () => {
+  it("shows the uploaded logo instead of the default mark", async () => {
+    imagesState.logo = LOGO;
     const head = aboveBoard(await render());
-    expect(head).not.toContain("logo\"");
-    expect(head).toContain("Leaderboard</h1>");
+    expect(head).not.toContain("owasp-logo.png");
+  });
+
+  it("falls back to the default OWASP mark, as the landing page does, when no logo is uploaded", async () => {
+    const head = aboveBoard(await render());
+    const img = head.match(/<img[^>]*alt="OWASP"[^>]*>/)?.[0] ?? "";
+    expect(img).toContain("owasp-logo.png");
+    expect(img).toContain("invert");
+    expect(head.indexOf(img)).toBeLessThan(head.indexOf("Leaderboard</h1>"));
+    expect(head).not.toContain("/api/event/logo");
   });
 });
 

@@ -71,7 +71,7 @@ import { adminTabHref, tabFromLocation } from "@/app/(site)/admin/admin-tabs";
 // needs the pre-override default alongside it.
 //
 // Built from the WHOLE registry rather than the baked set: a module enabled at
-// runtime (issue #175) is renameable like any other, and keying this off
+// runtime is renameable like any other, and keying this off
 // event.yaml would leave its identity form with no placeholder to show.
 const MODULE_DEFAULTS = new Map(
   ALL_MODULE_IDS.map((id) => {
@@ -82,7 +82,7 @@ const MODULE_DEFAULTS = new Map(
 
 // The URL⇄tab rules live in admin-tabs.ts, which carries no `"use client"`,
 // because the two routes CALL them on the server and a function exported from
-// a Client Component is a client reference rather than a callable (issue #312).
+// a Client Component is a client reference rather than a callable.
 // Re-exported here so this module stays the one import site for its own
 // client callers.
 export { adminTabHref, resolveAdminTab, tabFromLocation } from "@/app/(site)/admin/admin-tabs";
@@ -98,21 +98,21 @@ const EVENT_TAB = "event";
 // The hint policy's own destination (admin-redesign.md's Event/Hints/Admins
 // split) — see admin-hints-tab.tsx for why it isn't a module's or Event's.
 const HINTS_TAB = "hints";
-/** Runtime admin management (issue #147). Sits beside Event rather than
+/** Runtime admin management. Sits beside Event rather than
  *  inside it: it manages WHO may use the panel, not what the event does. */
 const ADMINS_TAB = "admins";
-// Sponsor recognition (issue #405) — a platform feature, not a module, so it
+// Sponsor recognition — a platform feature, not a module, so it
 // sits beside Event/Hints/Admins rather than in the module tab row.
 const SPONSORS_TAB = "sponsors";
-// Live-event support (issue #168). Sits after Admins and before the module
+// Live-event support. Sits after Admins and before the module
 // tabs: it is control-plane, not module-specific, and an organizer reaching
 // for it is mid-incident rather than mid-configuration.
 const SUPPORT_TAB = "support";
-// Engagement metrics (issue #169). Control-plane like Event/Admins/Support,
+// Engagement metrics. Control-plane like Event/Admins/Support,
 // and last of the four because it is read-only — an organizer reaches for it
 // after the event more often than during it.
 const INSIGHTS_TAB = "insights";
-// The activity log (issue #212). Read-only like Insights but LIVE — an
+// The activity log. Read-only like Insights but LIVE — an
 // organizer reaches for it mid-event ("did anyone sign in yet?", "who just
 // solved that?"), so it sits between Support and Insights.
 const ACTIVITY_TAB = "activity";
@@ -189,7 +189,7 @@ export default function AdminControls({
 }: {
   initial: AdminSettings;
   /** The module set this deployment starts with, when nothing is stored in
-   *  ctf:admin:settings — computed server-side from SCORE_IMAGE (issue #386),
+   *  ctf:admin:settings — computed server-side from SCORE_IMAGE,
    *  since a client bundle has no access to that env var. */
   defaultModuleIds: readonly string[];
   /** Whether this deployment has a scorer image, computed server-side from
@@ -215,13 +215,13 @@ export default function AdminControls({
    *  gate that rendered this page. The Admins tab uses it to warn before
    *  someone revokes their own access. */
   viewerLogin: string;
-  /** The poller's own heartbeat — page.tsx already fetches this for the old
-   *  Status card; Overview folds it into its "Sync" line instead. `null`
+  /** The poller's own heartbeat — page.tsx already fetches this; Overview
+   *  folds it into its "Sync" line instead. `null`
    *  when no poller has ever reported in (poll mode not configured, or push
    *  mode, which has no poller at all) — the default for callers (most
    *  tests) that don't care about it. */
   sync?: SyncStatus | null;
-  /** The resolved runtime event name (issue #386): resolved server-side by
+  /** The resolved runtime event name: resolved server-side by
    *  getSite(); a client bundle cannot read settings. Threaded through to the
    *  Event tab, which uses it for the master-reset confirmation phrase. */
   eventName: string;
@@ -233,7 +233,7 @@ export default function AdminControls({
   // event — otherwise a rename left this stale at the pre-rename name, so a
   // reset typed against the NEW name (shown everywhere else on this very
   // panel) failed `getSite()`'s server-side check with "confirmation does not
-  // match the event name" (CodeRabbit round 1, #389).
+  // match the event name".
   const [currentEventName, setCurrentEventName] = useState(eventName);
   // The "now" the Event tab's schedule readout is evaluated at (epoch ms).
   // Stamped at mount, in the handlers that change settings, and — below — by
@@ -429,7 +429,7 @@ export default function AdminControls({
       setError(data.error ?? "Reset failed");
       return;
     }
-    // The server reset freezes AND relocks (#464: clears the scoring start),
+    // The server reset freezes AND relocks (clears the scoring start),
     // so local state follows — or the Launch block would still say "Live".
     setSettings((s) => ({ ...s, paused: true, scoringStartsAt: null }));
     restampNow();
@@ -437,7 +437,7 @@ export default function AdminControls({
     setResetInfo(`Wiped ${total} keys — the event is frozen and not launched. Launch and unfreeze when you're ready.`);
   };
 
-  // No DEMO_MODE gate any more (issue #419): populate a demo leaderboard
+  // Populate a demo leaderboard
   // (fake contestants + teams). Type-to-confirm gated in the modal; the
   // server re-checks the phrase and requires admin, same pattern as reset.
   const doSeed = async () => {
@@ -463,7 +463,7 @@ export default function AdminControls({
     );
   };
 
-  // The inverse: removes exactly the rows doSeed above wrote (issue #419).
+  // The inverse: removes exactly the rows doSeed above wrote.
   // Same type-to-confirm + admin gate; see clearDemoData's own doc comment
   // for what it deliberately leaves behind (authored demo challenges).
   const doClearDemo = async () => {
@@ -600,9 +600,8 @@ export default function AdminControls({
    *  snaps the draft back if that refuses. The decision itself is the pure
    *  `parseNumberCommit`, so it is tested without a DOM. */
   // Typed as the shared `CommitNumber` rather than repeating its key union
-  // here. The inline copy had already drifted once by the time a seventh key
-  // was added, and a mismatch shows up as a type error at the call site rather
-  // than anywhere near the cause.
+  // here. A mismatch between them shows up as a type error at the call site
+  // rather than anywhere near the cause.
   const commitNumber: CommitNumber = (key, raw, reset, label) => {
     const current = settings[key];
     const decision = parseNumberCommit(raw, current);

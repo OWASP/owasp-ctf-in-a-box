@@ -1,6 +1,6 @@
 // CTF module registry. Registration is deliberate: a new vertical is code —
 // an entry here, and nothing else. There is no config-file namespace to
-// declare one in (config v2, #386); enablement is a runtime /admin setting on
+// declare one in; enablement is a runtime /admin setting on
 // top of this list. See the kit's docs/modules.md for the full contract.
 export type ModuleId = "secure-development" | "quiz" | "classic" | "ai";
 
@@ -45,8 +45,8 @@ export const DOCS_URL = "https://owasp.github.io/owasp-ctf-in-a-box/";
 /** The branch every provisioned target repo scores from — `ctf-setup.sh`'s
  *  `ctf-branch` step creates it and `drop-old` deletes `master`/`main`, so a
  *  PR against `main` has no base branch to land on. Written down once here so
- *  the How to Play / FAQ / Terms copy below can't drift from it again
- *  (issue #379); `ctf-setup.sh` has no equivalent named constant of its own
+ *  the How to Play / FAQ / Terms copy below can't drift from it;
+ *  `ctf-setup.sh` has no equivalent named constant of its own
  *  (it compares the literal string), so this is the only place the value is
  *  written down on the app side. */
 export const SCORING_BRANCH = "ctf";
@@ -102,10 +102,9 @@ export type GuideContext = OrgContext & {
  *  Passed in rather than read here for the same reason `githubOrg` is — the
  *  registry's copy stays a pure function of its context — and passed in at all
  *  because `hintCost` is an /admin runtime setting in `[0, HINT_COST_MAX]`,
- *  not a constant. The FAQ used to state it as a literal "10 points", so every
- *  organizer who moved the price shipped a FAQ that misquoted it (issue #315)
- *  while `/challenges`, the reveal button and the challenge pages all showed
- *  the real one. */
+ *  not a constant. A FAQ hardcoding a literal "10 points" would misquote it
+ *  for every organizer who moves the price, while `/challenges`, the reveal
+ *  button and the challenge pages all show the real one. */
 export type FaqContext = OrgContext & {
   /** `hintCost` as resolved for this request — `getHintNotice().cost`. */
   hintCost: number;
@@ -329,17 +328,16 @@ const REGISTRY: Record<ModuleId, ModuleDef> = {
     displayName: "Secure Development",
     description: "Find the vulnerability, patch it for real, ship the fix as a PR.",
     nav: { href: "/challenges", label: "Challenges" },
-    // Moved VERBATIM off the leaderboard's EmptyBoard, curly apostrophe
-    // included (the JSX spelled it `&rsquo;`, which React emits as U+2019, so
-    // the rendered bytes are unchanged).
+    // Curly apostrophe included: the JSX spelled it `&rsquo;`, which React
+    // emits as U+2019, so the rendered bytes are unchanged.
     emptyBoard: {
       line: "No flags captured yet. Every rank is unclaimed. Patch your first challenge and you’ll be the one everyone else is chasing.",
       cta: { href: "/challenges", label: "$ pick a challenge" },
     },
-    // Moved VERBATIM off app/page.tsx, curly apostrophes included: the JSX
-    // spelled them `&rsquo;`, which React emits as a literal U+2019, so the
-    // rendered bytes are unchanged. Retyping them as ASCII "'" would be a
-    // silent copy change no test would notice.
+    // Curly apostrophes included: the JSX spelled them `&rsquo;`, which
+    // React emits as a literal U+2019, so the rendered bytes are unchanged.
+    // Retyping them as ASCII "'" would be a silent copy change no test would
+    // notice.
     home: {
       tagline: "Secure Development",
       intro: (ctx) =>
@@ -375,10 +373,10 @@ const REGISTRY: Record<ModuleId, ModuleDef> = {
         body: "This isn’t tolerated, it’s the point. Reviewing code, finding the flaw, and writing the patch with an AI agent is the skill this event exists to build. Bring whatever you already use (Claude Code, Copilot, Cursor, your own harness) and let it read the target.",
       },
     },
-    // Moved VERBATIM off app/(site)/how-to-play/page.tsx. Same rule as `home`
-    // above: where the JSX spelled a character as `&rsquo;`/`&apos;`, this
-    // holds the character React actually emitted (U+2019 and ASCII ' — they
-    // are NOT interchangeable), so the rendered bytes are unchanged.
+    // Same rule as `home` above: where the JSX spelled a character as
+    // `&rsquo;`/`&apos;`, this holds the character React actually emitted
+    // (U+2019 and ASCII ' — they are NOT interchangeable), so the rendered
+    // bytes are unchanged.
     guide: {
       lede: "New to the competition? Here's everything you need to go from a GitHub sign-in to your first patched challenge.",
       metaDescription:
@@ -571,17 +569,16 @@ git push -u origin fix/<short-description>`,
         "Every challenge is worth a fixed number of points based on difficulty, and harder vulnerabilities pay out more. Points are awarded the moment your PR’s regression test passes, and your best-ever result for each challenge is what counts, so a later fix always replaces an earlier miss. Your live total, per-app breakdown, and patched and non-patched counts are visible on your profile once you’re signed in.",
       cta: { href: "/challenges", label: "Browse challenges" },
     },
-    // Moved VERBATIM off app/(site)/rules/page.tsx. Every bullet here names
-    // something only this module has — targets, forks, pull requests,
-    // patches, hints — which is exactly why none of them can stay in the
-    // platform's own list.
+    // Every bullet here names something only this module has — targets,
+    // forks, pull requests, patches, hints — which is exactly why none of
+    // them can stay in the platform's own list.
     rules: (ctx) => ({
       // The generic "your GitHub login is your identity" sentence lives in
-      // the platform's own Teams list now — three modules each restating it
-      // rendered as three near-identical adjacent bullets (issue #200,
-      // tier 4). This module keeps only the nuance the generic sentence
-      // cannot carry: points credit the PULL REQUEST'S author, which is not
-      // automatically the signed-in session.
+      // the platform's own Teams list — three modules each restating it
+      // render as three near-identical adjacent bullets. This module keeps
+      // only the nuance the generic sentence cannot carry: points credit
+      // the PULL REQUEST'S author, which is not automatically the
+      // signed-in session.
       teams: [
         "Points for a patch credit the pull request's author — open every PR from the same GitHub account you sign in with, or your score lands on a row you can't see.",
       ],
@@ -605,12 +602,11 @@ git push -u origin fix/<short-description>`,
         "Revealing a hint deducts points from your total, and hint purchases are final.",
       ],
     }),
-    // Moved VERBATIM off app/(site)/faq/page.tsx, which was 100%
-    // secure-development — and is in the HEADER NAV, so a quiz-only event
-    // linked contestants straight to a page telling them to fork a target and
-    // open a pull request. The platform keeps only the questions that hold on
-    // any event (solo play, prizes, finding an organizer); everything that
-    // names a fork, a PR, a hint or a scoring run is here.
+    // The FAQ page is in the HEADER NAV, so its platform section must hold
+    // only questions that hold on any event — otherwise a quiz-only event
+    // links contestants straight to a page telling them to fork a target
+    // and open a pull request. Everything that names a fork, a PR, a hint
+    // or a scoring run is here.
     faq: (ctx) => ({
       gettingStarted: [
         {
@@ -667,11 +663,11 @@ git push -u origin fix/<short-description>`,
         },
       ],
     }),
-    // Moved VERBATIM off app/(site)/terms/page.tsx. The scope statement is the
-    // reason this block exists: on an event with no targets it rendered as
-    // "your authorization to test covers the 0 challenge targets only: ," — a
-    // legal scope clause that authorized nothing and read as broken, on the
-    // page that tells contestants what they are permitted to attack.
+    // The scope statement is the reason this block exists: on an event with
+    // no targets it renders as "your authorization to test covers the 0
+    // challenge targets only: ," — a legal scope clause that authorizes
+    // nothing and reads as broken, on the page that tells contestants what
+    // they are permitted to attack.
     terms: (ctx) => ({
       eligibility: [
         "You need a GitHub account. Your GitHub login is your identity for scoring, so open every pull request from the account you sign in with. Points are credited to the PR author and cannot be moved between accounts afterwards.",
@@ -694,9 +690,8 @@ git push -u origin fix/<short-description>`,
         "Revealing a hint deducts points from your leaderboard total. Hint purchases are final. There is no refund.",
       ],
     }),
-    // Moved VERBATIM off app/not-found.tsx, where it was hardcoded alongside
-    // a card linking to /challenges — a route that 404s on an event without
-    // this module, reached from the 404 page itself.
+    // A card linking to /challenges would 404 on an event without this
+    // module — and contestants reach it from the 404 page itself.
     routeCard: (ctx) =>
       `Every challenge across the ${ctx.appCount} ${ctx.appCount === 1 ? "target" : "targets"}.`,
     // Organizer-facing setup checklist (module contract §5.9). Every step
@@ -803,9 +798,7 @@ git push -u origin fix/<short-description>`,
     // takes the board's login set as the UNION of the scoring source's logins
     // and the ones holding module points, so a contestant whose only points
     // are quiz points gets a row CREATED for them rather than being invisible.
-    // The promise was pulled once, while row creation was still an open gap;
-    // it is back because the code changed. Check that function before pulling
-    // it again.
+    // Check that function before pulling the promise from the copy.
     home: {
       tagline: "Quiz",
       intro: () =>
@@ -874,8 +867,8 @@ git push -u origin fix/<short-description>`,
       cta: { href: "/quiz", label: "Take the quiz" },
     },
     rules: () => ({
-      // No teams bullet: the identity rule is the platform's one sentence
-      // now, and quiz had no module-specific nuance to add to it.
+      // No teams bullet: the identity rule is the platform's one sentence,
+      // and quiz has no module-specific nuance to add to it.
       teams: [],
       fairPlay: [
         "The published questions are the whole game. Do not attack the scoring pipeline, the leaderboard, or other contestants' accounts.",
@@ -1035,9 +1028,9 @@ git push -u origin fix/<short-description>`,
     // Every claim below is checked against the implementation, same
     // discipline as quiz's: `flagComparisonForm` (classic-keys.ts) trims and
     // NFC-normalizes both sides, and lowercases them UNLESS the challenge is
-    // marked case-sensitive (issue #193; the board badges those) — so the
-    // case-insensitivity claim must always carry that qualifier. Stating it
-    // unconditionally shipped in v0.3.0 and contradicted the badge. There is NO attempt cap anywhere in classic-store.ts's
+    // marked case-sensitive (the board badges those) — so the
+    // case-insensitivity claim must always carry that qualifier.
+    // There is NO attempt cap anywhere in classic-store.ts's
     // `evaluateGate`; it only ever refuses on paused/already-solved/cooldown,
     // never on a spent allowance, so never promise or imply one. There IS a
     // cooldown (`CLASSIC_COOLDOWN_SEC`, organizer-configurable in seconds via
@@ -1119,8 +1112,8 @@ git push -u origin fix/<short-description>`,
       cta: { href: "/flags", label: "Browse the flags" },
     },
     rules: () => ({
-      // No teams bullet: the identity rule is the platform's one sentence
-      // now, and classic had no module-specific nuance to add to it.
+      // No teams bullet: the identity rule is the platform's one sentence,
+      // and classic has no module-specific nuance to add to it.
       teams: [],
       fairPlay: [
         "The published flags are the whole game. Do not attack the scoring pipeline, the leaderboard, or other contestants' accounts.",
@@ -1269,7 +1262,7 @@ git push -u origin fix/<short-description>`,
     id: "ai",
     displayName: "AI",
     description: "Prompt-injection and guardrail challenges hosted outside the box, scored inside it.",
-    // /ai exists now (the pages PR), so the module gets its nav entry — and
+    // /ai exists, so the module gets its nav entry — and
     // the 404's route directory.
     nav: { href: "/ai", label: "AI" },
     emptyBoard: {
@@ -1277,11 +1270,7 @@ git push -u origin fix/<short-description>`,
       cta: { href: "/ai", label: "$ open a challenge" },
     },
     // Deliberately plain and factual, same discipline as quiz's and classic's
-    // copy: every claim below is checked against the implementation — this
-    // block predates the admin panel and hints shipping, so it stuck to what
-    // was true at the time rather than promising either. Both have since
-    // shipped (admin-ai-controls.tsx; hint-store.ts's ai target) and neither
-    // needed this copy to change, since it never claimed they didn't exist.
+    // copy: every claim below is checked against the implementation.
     // Specifically checked against ai-store.ts, ai-token.ts and
     // ai-launch.ts, and the /api/ai routes:
     //
@@ -1311,11 +1300,7 @@ git push -u origin fix/<short-description>`,
     //     only on paused/already-solved/cooldown, same as classic. There IS a
     //     cooldown (`AI_COOLDOWN_SEC`), applied to the GRADED path only — a
     //     signed event has no wrong answer to rate-limit (`awardAiEvent` passes
-    //     cooldown 0). Hints and the admin control panel have since shipped
-    //     (`admin-ai-controls.tsx`, `hint-store.ts`'s `ai` target) — nothing
-    //     in this copy claims otherwise, so nothing here needed to change for
-    //     that; this note just retires the "not yet" framing now that both are
-    //     real.
+    //     cooldown 0).
     home: {
       tagline: "AI",
       intro: () =>
@@ -1377,8 +1362,8 @@ git push -u origin fix/<short-description>`,
       cta: { href: "/ai", label: "Browse the challenges" },
     },
     rules: () => ({
-      // No teams bullet: the identity rule is the platform's one sentence
-      // now, and the link-sharing nuance belongs to fair play, not team
+      // No teams bullet: the identity rule is the platform's one sentence,
+      // and the link-sharing nuance belongs to fair play, not team
       // crediting.
       teams: [],
       fairPlay: [
@@ -1557,21 +1542,18 @@ git push -u origin fix/<short-description>`,
   },
 };
 
-/** A full `ModuleDef` for EVERY registered module — just `REGISTRY` itself
- *  now. Which targets secure-development runs is no longer part of a
- *  `ModuleDef` at all (issue #386, PR 2): it moved to the admin panel and
+/** A full `ModuleDef` for EVERY registered module — `REGISTRY` itself.
+ *  Which targets secure-development runs is not part of a `ModuleDef`:
+ *  it lives on the admin panel in
  *  `ctf:admin:settings.secureDevTargets` (see lib/secure-dev-targets.ts and
  *  lib/enabled-apps.ts), read per request rather than baked at build time. */
 const MODULE_DEFS: Record<ModuleId, ModuleDef> = REGISTRY;
 
-// There is deliberately no "enabled modules' routes" list here. One existed
-// (`enabledModuleRoutes`) for the pre-event gate, but the gate stopped using
-// it when enablement became a runtime setting (#175, commit 2201188):
+// There is deliberately no "enabled modules' routes" list here:
 // proxy.ts gates ALL_MODULE_ROUTES below — the superset, needing no Redis
 // read from middleware — and /gate computes its own destination from the
-// live resolved list. With no caller left, the list came out rather than
-// stay as a second, baked-only answer to "which routes are live" that could
-// drift from the runtime one.
+// live resolved list. A baked list would be a second answer to "which
+// routes are live" that could drift from the runtime one.
 
 /** EVERY route the registry knows about, enabled or not.
  *
@@ -1587,7 +1569,7 @@ export const ALL_MODULE_ROUTES: readonly string[] = (Object.values(REGISTRY) as 
 );
 
 /** Every module id the registry knows about, enabled or not — the vocabulary
- *  a runtime enablement set is validated against (issue #175). Derived from
+ *  a runtime enablement set is validated against. Derived from
  *  REGISTRY rather than restated, so registering a module cannot forget it. */
 export const ALL_MODULE_IDS: readonly ModuleId[] = Object.keys(REGISTRY) as ModuleId[];
 
@@ -1676,10 +1658,9 @@ export type ResolvedModule = Omit<
   titleOverride?: string;
 };
 
-/** The module defs this event is serving, in registry order. There is no
- *  baked order any more (issue #386): the registry's order is the one
- *  organizers and tests can predict, and toggling a module off and on lands
- *  it back in the same slot. */
+/** The module defs this event is serving, in registry order. The order is
+ *  the registry's — the one organizers and tests can predict, and toggling
+ *  a module off and on lands it back in the same slot. */
 function moduleDefsFor(enabled: ReadonlySet<ModuleId>): readonly ModuleDef[] {
   return ALL_MODULE_IDS.filter((id) => enabled.has(id)).map((id) => MODULE_DEFS[id]);
 }
@@ -1690,8 +1671,8 @@ function moduleDefsFor(enabled: ReadonlySet<ModuleId>): readonly ModuleDef[] {
  *  simply absent from the result; an empty string is treated as unset so
  *  clearing a field in the admin UI restores the registry default.
  *
- *  `enabled` is the LIVE module set (issue #175) and is now required — there
- *  is no baked set left to fall back to (issue #386). */
+ *  `enabled` is the LIVE module set and is required — there is no baked
+ *  set to fall back to. */
 export function resolveModules(
   overrides: ModuleOverrides,
   enabled: ReadonlySet<ModuleId>,

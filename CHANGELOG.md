@@ -10,6 +10,24 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: a comment policy, and the audit's top 20 files trimmed to it
+  (#505).** AGENTS.md now says what a comment is for — the present: why this
+  shape, what must stay true, what breaks if it changes, where a security or
+  fail-closed boundary sits — and what it is not: **history** ("previously",
+  "used to", "renamed from", "no longer", a bare `(issue #N)`), which belongs
+  to the commit that made the change and, once it is a decision, to an ADR in
+  `docs/decisions.md`; a **change restatement** narrating a diff the reader
+  can see; and **narration** of what the next line plainly does. Directive
+  comments (`// eslint-disable…`, `# shellcheck disable…`, `@ts-expect-error`,
+  shebangs) are not comments and are never deleted. The pre-v0.7.0 audit's
+  top 20 files by comment count were walked to that rule — offending comments
+  removed or rewritten, every rationale, invariant, fail direction, key
+  layout and security boundary left standing — and
+  `scripts/check-comment-policy.mjs` (run by `bats scripts/test/`) holds them
+  there: it fails on a history, restatement or provenance comment in any of
+  those files, on the policy going missing from AGENTS.md, or on an audited
+  file dropping out of its manifest. No code changed with any of it.
+
 - **Fixed: a hint can no longer be bought while scoring is closed (#566).**
   A paid reveal lowers the buyer's net, so it now closes with scoring the way
   a flag or quiz submit does: while scoring is frozen the reveal is refused

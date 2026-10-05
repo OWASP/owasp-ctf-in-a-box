@@ -28,7 +28,7 @@ const MOCK_TEAM_COOKIE = "ctf-mock-team";
  *                second join never overwrites it, and no path deletes it short
  *                of deleting the contestant.
  *
- * `firstTeamAt` exists for the engagement funnel (issue #169): signed in ->
+ * `firstTeamAt` exists for the engagement funnel: signed in ->
  * got on a team -> first solve. Reusing `joinedAt` for that would undercount
  * every contestant who switched teams, silently reporting their conversion as
  * having happened later than it did.
@@ -88,7 +88,7 @@ const JOIN_CODE_MAX_ATTEMPTS = 5;
 /** Each symbol is an unbiased draw over the alphabet: randomInt rejection-
  *  samples internally. A raw byte reduced `% 31` would not be — 256 % 31 = 8,
  *  so the first eight symbols would land at 9/256 and the rest at 8/256
- *  (CodeQL js/biased-cryptographic-random, #435). */
+ *  (CodeQL js/biased-cryptographic-random). */
 function generateJoinCodeCandidate(): string {
   let code = "";
   for (let i = 0; i < JOIN_CODE_LENGTH; i++) {
@@ -192,7 +192,7 @@ async function setMockTeam(slug: string): Promise<TeamActionResult> {
  *  are exempt — players can always leave — so this guard is only applied to
  *  team-forming and captain roster mutations.
  *
- *  Fails OPEN on either read-error shape (issue #232): a transport failure
+ *  Fails OPEN on either read-error shape: a transport failure
  *  (`upstashPipeline` throws) or a resolved per-command error (decodes as
  *  every field absent, same as the `Array.isArray` guard below). Same
  *  reasoning as `resolveTeamMaxMembers` above it — a Redis blip must not
@@ -244,10 +244,10 @@ export async function resolveTeamMaxMembers(): Promise<number> {
 }
 
 /** The login's team slug, or null when it has none. THROWS on a failed read,
- *  error reply included (#499): read as null, an error looked like "on no
- *  team" — which made `hasTeam` fail CLOSED on live submissions and
- *  `leaveTeam` report a leave that never happened. Each caller now applies
- *  its own documented direction. */
+ *  error reply included: read as null, an error looks like "on no
+ *  team" — which makes `hasTeam` fail CLOSED on live submissions and
+ *  `leaveTeam` report a leave that never happened. Each caller
+ *  applies its own documented direction. */
 async function getUserTeamSlug(login: string): Promise<string | null> {
   const [current] = await upstashPipeline([["HGET", userKey(login), "team"]]);
   if (current.error) throw new Error(`Upstash HGET user team failed: ${current.error}`);
@@ -256,7 +256,7 @@ async function getUserTeamSlug(login: string): Promise<string | null> {
 
 /**
  * Is this login on a team? The gate every scoring path asks before banking
- * points (issue #153).
+ * points.
  *
  * Scoring is per TEAM: the leaderboard's per-team total is the union of its
  * members' earned items (`foldTeamTotals`), so points banked by a login that
@@ -321,7 +321,7 @@ export async function createTeam(login: string, name: string): Promise<TeamActio
   const verdict = await attemptCreate(login, trimmed, slug);
   if (verdict === "already-on-team") return { ok: false, error: "Leave your current team before creating one" };
   if (verdict === NAME_TAKEN) return { ok: false, error: `Team "${slug}" already exists. Join it instead` };
-  // Activity log (issue #212), success paths only, real writes only (the mock
+  // Activity log, success paths only, real writes only (the mock
   // cookie path above records a browser-local choice, not an event fact).
   // Fail-open — a lost log line never fails the mutation it describes.
   await logActivity("team-create", login, slug);
@@ -335,8 +335,7 @@ export async function createTeam(login: string, name: string): Promise<TeamActio
 const SOLO_NAME_MAX_ATTEMPTS = 4;
 
 /**
- * Creates a team of one, named after the contestant, in a single click
- * (issue #153).
+ * Creates a team of one, named after the contestant, in a single click.
  *
  * Every contestant must be on a team to be scored, and the docs have always
  * said a solo player is simply a team of one. Without this, "play alone" means
@@ -390,7 +389,7 @@ export async function joinTeam(login: string, code: string): Promise<TeamActionR
 
   const normalizedCode = trimmedCode.toLowerCase();
   const [codeRes] = await upstashPipeline([["GET", joinCodeKey(normalizedCode)]]);
-  // An error reply is not a bad code (#499): never tell a contestant their
+  // An error reply is not a bad code: never tell a contestant their
   // valid code is invalid because Redis hiccupped.
   if (codeRes.error) throw new Error(`Upstash GET join code failed: ${codeRes.error}`);
   const slug = typeof codeRes.result === "string" && codeRes.result ? codeRes.result : null;
@@ -608,7 +607,7 @@ export async function getViewerTeam(login: string): Promise<TeamInfo | null> {
 }
 
 /**
- * Resolve a join code to the team it belongs to, for DISPLAY only (issue #45).
+ * Resolve a join code to the team it belongs to, for DISPLAY only.
  *
  * The shareable `/join/<code>` link needs to show a contestant which team they
  * are about to join before they commit. It deliberately does NOT join: that
@@ -628,7 +627,7 @@ export async function lookupJoinCode(
   if (!TEAM_WRITES_ENABLED) return null;
 
   const [codeRes] = await upstashPipeline([["GET", joinCodeKey(normalized)]]);
-  // Error replies throw (#499); the join page catches and shows its own
+  // Error replies throw; the join page catches and shows its own
   // unreadable state instead of "this code has expired".
   if (codeRes.error) throw new Error(`Upstash GET join code failed: ${codeRes.error}`);
   const slug = typeof codeRes.result === "string" && codeRes.result ? codeRes.result : null;

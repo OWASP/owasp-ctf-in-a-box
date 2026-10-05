@@ -1,6 +1,6 @@
 // CTF module registry. Registration is deliberate: a new vertical is code —
 // an entry here, and nothing else. There is no config-file namespace to
-// declare one in (config v2, #386); enablement is a runtime /admin setting on
+// declare one in; enablement is a runtime /admin setting on
 // top of this list. See the kit's docs/modules.md for the full contract.
 export type ModuleId = "secure-development" | "quiz" | "classic" | "ai";
 
@@ -87,10 +87,9 @@ export type GuideContext = OrgContext & {
  *  Passed in rather than read here for the same reason `githubOrg` is — the
  *  registry's copy stays a pure function of its context — and passed in at all
  *  because `hintCost` is an /admin runtime setting in `[0, HINT_COST_MAX]`,
- *  not a constant. The FAQ used to state it as a literal "10 points", so every
- *  organizer who moved the price shipped a FAQ that misquoted it (issue #315)
- *  while `/challenges`, the reveal button and the challenge pages all showed
- *  the real one. */
+ *  not a constant. A FAQ hardcoding a literal "10 points" would misquote it
+ *  for every organizer who moves the price, while `/challenges`, the reveal
+ *  button and the challenge pages all show the real one. */
 export type FaqContext = OrgContext & {
   /** `hintCost` as resolved for this request — `getHintNotice().cost`. */
   hintCost: number;
@@ -326,21 +325,18 @@ const REGISTRY: Record<ModuleId, ModuleDef> = {
   ai: AI_DEF,
 };
 
-/** A full `ModuleDef` for EVERY registered module — just `REGISTRY` itself
- *  now. Which targets secure-development runs is no longer part of a
- *  `ModuleDef` at all (issue #386, PR 2): it moved to the admin panel and
+/** A full `ModuleDef` for EVERY registered module — `REGISTRY` itself.
+ *  Which targets secure-development runs is not part of a `ModuleDef`:
+ *  it lives on the admin panel in
  *  `ctf:admin:settings.secureDevTargets` (see lib/secure-dev-targets.ts and
  *  lib/enabled-apps.ts), read per request rather than baked at build time. */
 const MODULE_DEFS: Record<ModuleId, ModuleDef> = REGISTRY;
 
-// There is deliberately no "enabled modules' routes" list here. One existed
-// (`enabledModuleRoutes`) for the pre-event gate, but the gate stopped using
-// it when enablement became a runtime setting (#175, commit 2201188):
+// There is deliberately no "enabled modules' routes" list here:
 // proxy.ts gates ALL_MODULE_ROUTES below — the superset, needing no Redis
 // read from middleware — and /gate computes its own destination from the
-// live resolved list. With no caller left, the list came out rather than
-// stay as a second, baked-only answer to "which routes are live" that could
-// drift from the runtime one.
+// live resolved list. A baked list would be a second answer to "which
+// routes are live" that could drift from the runtime one.
 
 /** EVERY route the registry knows about, enabled or not.
  *
@@ -356,7 +352,7 @@ export const ALL_MODULE_ROUTES: readonly string[] = (Object.values(REGISTRY) as 
 );
 
 /** Every module id the registry knows about, enabled or not — the vocabulary
- *  a runtime enablement set is validated against (issue #175). Derived from
+ *  a runtime enablement set is validated against. Derived from
  *  REGISTRY rather than restated, so registering a module cannot forget it. */
 export const ALL_MODULE_IDS: readonly ModuleId[] = Object.keys(REGISTRY) as ModuleId[];
 
@@ -445,10 +441,9 @@ export type ResolvedModule = Omit<
   titleOverride?: string;
 };
 
-/** The module defs this event is serving, in registry order. There is no
- *  baked order any more (issue #386): the registry's order is the one
- *  organizers and tests can predict, and toggling a module off and on lands
- *  it back in the same slot. */
+/** The module defs this event is serving, in registry order. The order is
+ *  the registry's — the one organizers and tests can predict, and toggling
+ *  a module off and on lands it back in the same slot. */
 function moduleDefsFor(enabled: ReadonlySet<ModuleId>): readonly ModuleDef[] {
   return ALL_MODULE_IDS.filter((id) => enabled.has(id)).map((id) => MODULE_DEFS[id]);
 }
@@ -459,8 +454,8 @@ function moduleDefsFor(enabled: ReadonlySet<ModuleId>): readonly ModuleDef[] {
  *  simply absent from the result; an empty string is treated as unset so
  *  clearing a field in the admin UI restores the registry default.
  *
- *  `enabled` is the LIVE module set (issue #175) and is now required — there
- *  is no baked set left to fall back to (issue #386). */
+ *  `enabled` is the LIVE module set and is required — there is no baked
+ *  set to fall back to. */
 export function resolveModules(
   overrides: ModuleOverrides,
   enabled: ReadonlySet<ModuleId>,

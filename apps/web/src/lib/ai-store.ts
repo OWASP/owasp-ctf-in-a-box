@@ -436,13 +436,12 @@ export async function getAiSolveCounts(): Promise<Map<string, number>> {
  *  item id — the aggregate per-login path has running counters with no memory
  *  of which items produced them. Where it is present a caller can union it
  *  with the live catalogue for a denominator that survives an organizer
- *  deleting a solved item (#348); where it is absent the caller clamps, which
- *  is what every row did before. */
+ *  deleting a solved item; where it is absent the caller clamps. */
 export type AiTotal = { points: number; solved: number; lastAt: string | null; itemIds?: string[] };
 
 /** Per-login totals off the two aggregate hashes plus `ctf:ai:lastAt`, in
  *  one pipeline whose cost does not grow with the board. `lastAt` is the
- *  login's latest award time (#522), the leaderboard's "whoever got there
+ *  login's latest award time, the leaderboard's "whoever got there
  *  first" tiebreak; null for a login that last scored before the time was
  *  recorded, and for everyone when that read fails (`readLastAt` fails
  *  open: the points stand). */
@@ -452,7 +451,7 @@ export async function getAiTotals(): Promise<Map<string, AiTotal>> {
     ["HGETALL", SOLVED_KEY],
     ["HGETALL", LAST_AT_KEY],
   ]);
-  // An errored counter read is not "nobody has points" (#523): throw, so the
+  // An errored counter read is not "nobody has points": throw, so the
   // leaderboard's own handling applies (it logs and leaves the module off the
   // board) instead of every row silently losing these points.
   const failed = pointsRes.error ?? solvedRes.error;
@@ -520,7 +519,7 @@ export async function setAiCategories(names: string[]): Promise<string[]> {
 export type CategoryRename = { categories: string[]; moved: number };
 
 /**
- * Renames one category and carries every challenge in it across (#304).
+ * Renames one category and carries every challenge in it across.
  *
  * Mirrors `renameCategory` in classic-store.ts — read that one's comment for
  * why the challenges are written BEFORE the list (the resulting partial state
@@ -528,10 +527,8 @@ export type CategoryRename = { categories: string[]; moved: number };
  * rather than merged.
  *
  * The collision check folds case, exactly as classic's does, even though
- * `setAiCategories` dedupes case-SENSITIVELY (`cleaned.includes`). An earlier
- * draft mirrored that dedupe instead, on the reasoning that a rename should
- * refuse exactly what its own list would refuse to hold. That was wrong in
- * effect: it let a rename land `["Web", "web"]`, which the panel's own
+ * `setAiCategories` dedupes case-SENSITIVELY (`cleaned.includes`). Without the
+ * fold a rename could land `["Web", "web"]`, which the panel's own
  * `renameCategoryDecision` forbids and which would split one category's
  * challenges across two headings. The stricter rule is the right one on both
  * sides; a case-only rename of the SAME entry stays allowed, which is what the
@@ -798,7 +795,7 @@ async function evaluateGate(
   cooldownSec: number,
   preview = false,
 ): Promise<AiGate> {
-  // A preview (#464: an admin before launch) is graded exactly while scoring
+  // A preview (an admin before launch) is graded exactly while scoring
   // is closed, so the pause is what is being previewed, not a refusal.
   // `scoringClosure` (#567) is `effectivePaused` with the WHY kept: a passed
   // scheduled end answers `ended`, every other closure `paused`.
@@ -852,7 +849,7 @@ async function evaluateGate(
 //      -> {'mode'}. The graded path is refused for an event-only challenge
 //      ACCIDENTALLY (there is no `flagnorm` row, so step 4 returns {'missing'});
 //      without this line the mirror did not hold, because the event path never
-//      looks at a flag hash and so had nothing to trip over. PR 2's route
+//      looks at a flag hash and so had nothing to trip over. The route
 //      checks the mode first; this is the copy that cannot be bypassed by a
 //      missed check or a later reorder. Matched off `cRaw`, the record the
 //      script already holds — no caller string is interpolated — and anchored
@@ -976,7 +973,7 @@ function gateToResult(gate: Exclude<AiGate, { allowed: true }>): AiSubmitResult 
 function readVerdict(verdict: unknown): AiSubmitResult {
   const [status, value, marker] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") return { ok: false, reason: "invalid" };
-  // A dry verdict carries a trailing 'dry' from the script itself (#464).
+  // A dry verdict carries a trailing 'dry' from the script itself.
   if (marker === "dry") {
     if (status === "correct") return { ok: true, correct: true, points: Number(value) || 0, dryRun: true };
     if (status === "incorrect") return { ok: true, correct: false, dryRun: true };
@@ -1016,7 +1013,7 @@ async function runAward(
         POINTS_KEY, // KEYS[5]
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
-        LAST_AT_KEY, // KEYS[8] — login -> latest award time (#522)
+        LAST_AT_KEY, // KEYS[8] — login -> latest award time
       ],
       [
         challengeId, // ARGV[1]
@@ -1028,7 +1025,7 @@ async function runAward(
         grade ? caseSensitiveFlagForm(flag) : "", // ARGV[7] — case preserved
         grade ? "1" : "0", // ARGV[8]
         source, // ARGV[9] — literal, never caller input
-        dryRun ? "1" : "0", // ARGV[10] — dry run: grade, write nothing (#464)
+        dryRun ? "1" : "0", // ARGV[10] — dry run: grade, write nothing
       ],
     );
     return readVerdict(verdict);
@@ -1049,7 +1046,7 @@ export async function submitAiFlag(
 ): Promise<AiSubmitResult> {
   if (!AI_ID_RE.test(challengeId)) return { ok: false, reason: "invalid" };
   if (typeof flag !== "string" || !flag.trim()) return { ok: false, reason: "invalid" };
-  // `dryRun` here is ONLY ever an admin preview (#464): the callers derive it
+  // `dryRun` here is ONLY ever an admin preview: the callers derive it
   // from the launch lock or a signed preview token, never from a request field.
   const dryRun = opts.dryRun === true;
 
@@ -1080,7 +1077,7 @@ export async function awardAiEvent(
   opts: { dryRun?: boolean; preview?: boolean } = {},
 ): Promise<AiSubmitResult> {
   if (!AI_ID_RE.test(challengeId)) return { ok: false, reason: "invalid" };
-  // `preview` (#464: a token minted for an admin before launch) is always a
+  // `preview` (a token minted for an admin before launch) is always a
   // dry run AND is graded while scoring is closed. A plain `dryRun` (the
   // external side's Send test) still honours the schedule, as documented.
   const preview = opts.preview === true;
@@ -1092,7 +1089,7 @@ export async function awardAiEvent(
   const gate = await evaluateGate(settings, login, challengeId, 0, preview);
   if (!gate.allowed) return gateToResult(gate);
 
-  // A dry run goes through the SAME script, told to write nothing (#464) —
+  // A dry run goes through the SAME script, told to write nothing —
   // so its missing/mode/already checks apply exactly as on a real award.
   if (opts.dryRun || preview) return runAward(login, challengeId, "", cooldownSec, false, "event", true);
 
@@ -1100,7 +1097,7 @@ export async function awardAiEvent(
 }
 
 // ---------------------------------------------------------------------------
-// Bundle export/import — the ai half of the whole-event archive (#250).
+// Bundle export/import — the ai half of the whole-event archive.
 // Mirrors classic-store.ts's `exportBundle`/`importBundle` contract exactly;
 // see ai-io.ts for the bundle shape and the rules a bundle must satisfy.
 

@@ -74,7 +74,7 @@ export const AI_COOLDOWN_SEC_MAX = 3600;
  *  request it failed on, and an admin write's arguments can include a flag
  *  or a signing key, so a bare `console.error(err)` could turn an outage into
  *  a secret in the log. It IS `errorLabel` — re-exported under the name the
- *  admin routes already import, not a second copy of the body (#500), so a
+ *  admin routes already import, not a second copy of the body, so a
  *  change to the shared label reaches these routes too. */
 export const adminErrorLabel: (err: unknown) => string = errorLabel;
 
@@ -103,8 +103,7 @@ export async function writeAdminAudit(actor: string, action: string, detail: Rec
 // fields' `max`. None is re-exported here: every consumer imports from the
 // origin module, and a second import path to the same constant is exactly
 // the kind of dead surface a later change could silently drift out of sync
-// with. (The first two used to be re-exported "for server callers"; no
-// server caller ever took them from here.)
+// with.
 const MODULE_FIELD_RE = /^module(Title|Blurb):(.+)$/;
 // Organizer-authored text rendered on pages every contestant loads. Plain text
 // only — reject C0 control characters (so nothing can smuggle a terminal
@@ -153,7 +152,7 @@ export type AdminSettings = {
   teamRegistrationOpen: boolean;
   // Scheduled "auto dates" — nullable ISO instants. scoring* gates the freeze
   // through outsideScoringWindow (before start / after end = paused, and an
-  // absent start = not launched, so paused — issue #464); registration* gates
+  // absent start = not launched, so paused); registration* gates
   // team create/join through outsideWindow (absent bound = open). Enforced at
   // READ time (no scheduler on the box): see effectivePaused below and
   // effectiveRegistrationOpen in schedule-window.ts, mirrored in the scorer
@@ -167,21 +166,21 @@ export type AdminSettings = {
   /** Organizer-authored title/blurb overrides, keyed by module id. Unknown or
    *  disabled module ids are dropped on read (see decodeSettings). */
   moduleOverrides: ModuleOverrides;
-  /** The modules this event actually serves (issue #386). Three states:
+  /** The modules this event actually serves. Three states:
    *  - absent (`null`) — nothing stored, the deployment default applies
    *    (`defaultEnabledModules`: secure-development alone when a scorer
    *    image is configured, otherwise nothing).
    *  - `[]` — the organizer explicitly switched every module off.
-   *  - a list — those ids, with any the registry no longer knows dropped;
+   *  - a list — those ids, with any the registry does not know dropped;
    *    if that drop empties the list, it decodes back to `null` (a stale
    *    field is not a decision to show nothing). */
   enabledModuleIds: ModuleId[] | null;
-  /** The organizer's event identity fields (issue #386) — only the fields
+  /** The organizer's event identity fields — only the fields
    *  actually stored; `resolveSite()` in lib/site.ts lays them over the
    *  defaults. Absent field = default. */
   eventIdentity: EventIdentityOverrides;
-  /** Which of the six secure-development targets this event runs (issue
-   *  #386, PR 2), read by `lib/enabled-apps.ts` per request. `null` means
+  /** Which of the six secure-development targets this event runs, read by
+   *  `lib/enabled-apps.ts` per request. `null` means
    *  nothing stored (or the stored value decoded to nothing survivable) —
    *  the deployment default (`DEFAULT_SECURE_DEV_TARGETS`, all six) applies.
    *  Unlike `enabledModuleIds`, there is no explicit-empty state: emptying
@@ -205,7 +204,7 @@ import { outsideScoringWindow, outsideWindow } from "@/lib/schedule-window";
 export { outsideScoringWindow, outsideWindow };
 
 /** Effective scoring freeze: the manual toggle OR the scheduled scoring
- *  window — which includes "not launched" (no scoring start, #464). */
+ *  window — which includes "not launched" (no scoring start). */
 export function effectivePaused(s: AdminSettings, nowMs: number = Date.now()): boolean {
   return s.paused || outsideScoringWindow(nowMs, s.scoringStartsAt, s.scoringEndsAt);
 }
@@ -246,7 +245,7 @@ export type SettingsPatch = {
   scoreCooldownMin?: number;
   teamMaxMembers?: number;
   teamRegistrationOpen?: boolean;
-  /** The modules this event serves. Replaces the set wholesale (issue #175);
+  /** The modules this event serves. Replaces the set wholesale;
    *  see updateAdminSettings for the two things it refuses. */
   enabledModules?: ModuleId[];
   // ISO instant to set the bound, or null/"" to clear it.
@@ -254,19 +253,19 @@ export type SettingsPatch = {
   scoringEndsAt?: string | null;
   registrationStartsAt?: string | null;
   registrationEndsAt?: string | null;
-  /** Event identity (issue #386). "" clears the field back to its default,
+  /** Event identity. "" clears the field back to its default,
    *  the same contract as `moduleTitle:<id>`. */
   eventName?: string;
   eventTheme?: string;
   eventLocation?: string;
   eventContact?: string;
   eventDiscord?: string;
-  /** The hero logo's click-through link (#545). */
+  /** The hero logo's click-through link. */
   eventLogoUrl?: string;
-  /** The event's IANA time zone (#547); "" = UTC. */
+  /** The event's IANA time zone; "" = UTC. */
   eventTimeZone?: string;
-  /** Which of the six secure-development targets this event runs (issue
-   *  #386, PR 2). Replaces the whole set, like `enabledModules`; never
+  /** Which of the six secure-development targets this event runs.
+   *  Replaces the whole set, like `enabledModules`; never
    *  clears — see updateAdminSettings for why there is no empty state. */
   secureDevTargets?: string[];
   /** null/"" clears back to the default ("md") — same contract as the
@@ -308,11 +307,9 @@ function decodeSettings(h: Record<string, string>): AdminSettings {
     const m = MODULE_FIELD_RE.exec(field);
     if (!m) continue;
     const [, which, id] = m;
-    // Filtered against the REGISTRY, not against what event.yaml baked in.
-    // It used to drop overrides for anything outside the baked set, which was
-    // right while enablement was a build-time fact and wrong the moment it
-    // became a runtime one (issue #175): an organizer who enables classic and
-    // renames it would have had the rename silently dropped on every read.
+    // Filtered against the REGISTRY, not against what event.yaml baked in:
+    // enablement is a runtime fact, so an organizer who enables classic and
+    // renames it must not have the rename silently dropped on every read.
     // An id the registry does not know is still dropped — it can never render.
     if (!isModuleId(id)) continue;
     const slot = (moduleOverrides[id as ModuleId] ??= {});
@@ -355,7 +352,7 @@ function decodeSettings(h: Record<string, string>): AdminSettings {
 /** Decodes the runtime enablement set.
  *
  *  - absent            → null: nothing stored, the deployment default applies
- *  - ""                → []:   the organizer switched every module off (#386)
+ *  - ""                → []:   the organizer switched every module off
  *  - "quiz, classic"   → ["quiz","classic"], unknown ids dropped
  *  - only unknown ids  → null: a stale field is not a decision to show nothing */
 function decodeEnabledModuleIds(raw: string | undefined): ModuleId[] | null {
@@ -369,7 +366,7 @@ function decodeEnabledModuleIds(raw: string | undefined): ModuleId[] | null {
 }
 
 /** `timeoutMs` bounds the read itself (the pipeline's default otherwise) —
- *  the public /health/deep probe passes its own deadline (#464). */
+ *  the public /health/deep probe passes its own deadline. */
 export async function getAdminSettings(timeoutMs?: number): Promise<AdminSettings> {
   const [res] = await upstashPipeline([["HGETALL", ADMIN_SETTINGS_KEY]], timeoutMs === undefined ? undefined : { timeoutMs });
   // A command-level failure resolves as { error } rather than rejecting.
@@ -383,7 +380,7 @@ export async function getAdminSettings(timeoutMs?: number): Promise<AdminSetting
 
 export async function getSyncStatus(): Promise<SyncStatus | null> {
   const [res] = await upstashPipeline([["HGETALL", SYNC_STATUS_KEY]]);
-  // An error reply is not "never polled" (#499): throw, so /admin and
+  // An error reply is not "never polled": throw, so /admin and
   // /health/deep report the read as failed rather than as no heartbeat.
   if (res.error) throw new Error(`Upstash HGETALL sync status failed: ${res.error}`);
   const h = flatToObject(res.result);
@@ -550,7 +547,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
         changed[k] = null as unknown as boolean;
       } else {
         if (typeof v !== "string") throw new AdminValidationError(k, `${k} must be an ISO date string or null`);
-        // #464 Launch now: "now" means THIS server's clock, so an organizer's
+        // Launch now: "now" means THIS server's clock, so an organizer's
         // skewed laptop clock can never launch into the future. The one
         // sentinel, and only for the scoring start.
         const ms = k === "scoringStartsAt" && v === "now" ? Date.now() : Date.parse(v);
@@ -568,7 +565,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       }
       let requested = [...new Set(v as ModuleId[])];
 
-      // The one refusal left (issue #386): Secure Development needs the scorer
+      // The one refusal left: Secure Development needs the scorer
       // and sync containers, which exist only when the stack was brought up
       // with a SCORE_IMAGE. Enabling it here would show a board no run can
       // ever score. Fail closed; the panel disables the switch for the same
@@ -587,11 +584,11 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       // WRITTEN when unavailable, carried-forward or not — a stale read
       // between this check and the write below must never be able to
       // re-store it. The read here only ever picks refuse-vs-strip: on a
-      // genuinely new enable it refuses (as before); on a carry-forward it
+      // genuinely new enable it refuses; on a carry-forward it
       // STRIPS the id from what gets written instead of passing it through.
       // A concurrent SD-disable landing between this read and our write can
       // therefore at worst turn a strip into a refusal (the stale read still
-      // sees it "stored", so this write silently drops it same as before) —
+      // sees it "stored", so this write silently drops it) —
       // it can never turn a strip back into a store, because stripping never
       // depends on the read succeeding: this whole branch only ever removes
       // the id from `requested`, never adds it back.
@@ -612,7 +609,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       fields.push(k, requested.join(","));
       changed[k] = requested.join(",") as unknown as boolean;
     } else if (isEventIdentityKey(k)) {
-      // Event identity (issue #386). Validation lives in event-identity.ts so
+      // Event identity. Validation lives in event-identity.ts so
       // the Event tab can share the limits; "" clears (HDEL) — the default is
       // what blank restores, exactly like a module title override.
       //
@@ -632,8 +629,8 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
         changed[k] = "set" as unknown as boolean;
       }
     } else if (k === "secureDevTargets") {
-      // Which of the six secure-development targets this event runs (issue
-      // #386, PR 2). Replaces the whole set, like `enabledModules` — an
+      // Which of the six secure-development targets this event runs.
+      // Replaces the whole set, like `enabledModules` — an
       // organizer's intent is "these are the targets", not a per-id toggle.
       // Unlike `enabledModules`/the event identity fields, there is NO
       // clear/HDEL path: `checkSecureDevTargets` never returns an empty
@@ -690,7 +687,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
   // transport cannot tell "wrote nothing" from "wrote, then the reply was
   // lost". Rather than enumerating which keys can shrink a score: admin-only
   // and rare, so an extra fold is nothing; a missed one is a hint bought on
-  // points that no longer count. `begin` throws if the marker cannot be set,
+  // points that do not count. `begin` throws if the marker cannot be set,
   // and nothing is written in that state.
   await beginScoreLowering();
   let result: unknown;
@@ -744,8 +741,8 @@ const RESET_PREFIXES: readonly [string, string][] = [
   ["quizAttempts", `${QUIZ_ATTEMPTS_PREFIX}*`],
   ["quizPoints", QUIZ_POINTS_KEY],
   ["quizAnswered", QUIZ_ANSWERED_KEY],
-  // The award times (#522) go with the totals they order: a reset contestant
-  // left with an old time would be ranked by a solve that no longer counts.
+  // The award times go with the totals they order: a reset contestant
+  // left with an old time would be ranked by a solve that does not count.
   ["quizLastAt", QUIZ_LAST_AT_KEY],
   ["classicSolves", `${CLASSIC_SOLVES_PREFIX}*`],
   ["classicAttempts", `${CLASSIC_ATTEMPTS_PREFIX}*`],
@@ -779,7 +776,7 @@ const RESET_PREFIXES: readonly [string, string][] = [
   // every already-issued token is invalidated for a wipe that was only ever
   // meant to replace the challenge list.
   ["aiLaunchKey", AI_LAUNCHKEY_KEY],
-  // The activity log (issue #212) is contestant PROGRESS in the same sense as
+  // The activity log is contestant PROGRESS in the same sense as
   // solves — a record of what people did during the event — so a reset wipes
   // it. Leaving it would let a "fresh" event open with last event's sign-ins.
   ["activity", ACTIVITY_LOG_KEY],
@@ -800,20 +797,19 @@ async function scanDelByPrefix(pattern: string): Promise<number> {
   let total = 0;
   do {
     const [scan] = await upstashPipeline([["SCAN", cursor, "MATCH", pattern, "COUNT", 1000]]);
-    // Throws on a failed page rather than ending the walk (issue #358). This
-    // one is the reset: the old fallback still returned a COUNT — "cleared 412
-    // keys" — for a sweep that had stopped early, so an organizer opening a
-    // "fresh" event would find last event's solves in it with nothing having
-    // reported a problem. Failing loudly is the only honest answer. The
-    // deletions already made stand, and re-running the reset is safe: deleting
-    // an absent key is a no-op.
+    // Throws on a failed page rather than ending the walk. This
+    // one is the reset: a walk that stops early would still report a COUNT
+    // — "cleared 412 keys" — for a sweep that never finished, so an
+    // organizer opening a "fresh" event would find last event's solves in
+    // it with nothing having reported a problem. Failing loudly is the only
+    // honest answer. The deletions already made stand, and re-running the
+    // reset is safe: deleting an absent key is a no-op.
     const [next, keys] = parseScanPage(scan, `reset ${pattern}`);
     cursor = next;
     if (keys.length > 0) {
       // The DEL is checked too: `total` is incremented from `keys.length`, so
       // an unchecked failure here reports keys as cleared that are still
-      // there — the same false "done" the SCAN fallback gave, one command
-      // later (issue #358).
+      // there — a false "done", one command later.
       assertPipelineOk(await upstashPipeline([["DEL", ...keys]]), `reset ${pattern}`);
       total += keys.length;
     }
@@ -823,7 +819,7 @@ async function scanDelByPrefix(pattern: string): Promise<number> {
 
 // Freeze scoring, bump the reset epoch (sync reads `resetAt` and clears its
 // cursor when it advances — the poll-mode re-ingest fix), RELOCK the event
-// (clear the scoring start, #464: a reset event is not launched until an
+// (clear the scoring start — a reset event is not launched until an
 // organizer launches it again), and append the audit record. One atomic script
 // so a reset can never land without its audit line. Exported for the live
 // suite only.
@@ -872,7 +868,7 @@ export async function resetEvent(actor: string): Promise<{ cleared: Record<strin
   }
 }
 
-// --- demo seed / clear (admin-gated dangerous settings, issue #419) ---------
+// --- demo seed / clear (admin-gated dangerous settings) ---------------------
 //
 // The body lives in lib/demo-seed.ts (#504 M9) — it was 43% of this file and
 // shares no state with the settings/admin code around it. It reads this
@@ -891,7 +887,7 @@ export async function seedDemoData(
 }
 
 
-// --- runtime admins (issue #147) ---------------------------------------------
+// --- runtime admins ----------------------------------------------------------
 
 // The key, the login pattern and the READ live in admin-admins.ts so the
 // authorization path can import them without pulling in this module and the

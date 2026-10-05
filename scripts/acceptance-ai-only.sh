@@ -15,12 +15,12 @@
 #     pull, no poller — while the secure-development line-up (`--profile
 #     secdev --profile app`, what a non-empty SCORE_IMAGE derives) still
 #     contains both
-#   - the app builds and comes up with NO build-time config at all (config v2,
-#     issue #386: the image takes no config build-arg; which modules run is an
+#   - the app builds and comes up with NO build-time config at all (config v2:
+#     the image takes no config build-arg; which modules run is an
 #     /admin setting in Redis, and GITHUB_ORG/ADMIN_LOGINS are runtime env)
 #   - /ai serves and shows a seeded challenge BY TITLE
-#   - /ai/<id> 200s for that challenge, and /ai/<bad-id> 404s (issue #209's
-#     dual-cause not-found — an unknown id must 404 same as a disabled module)
+#   - /ai/<id> 200s for that challenge, and /ai/<bad-id> 404s (dual-cause
+#     not-found — an unknown id must 404 same as a disabled module)
 #   - /challenges, /flags and /quiz all 404 (module contract §5.4 — those
 #     routes must not exist, not just disappear from the nav; an ai-only
 #     event never enables classic, quiz or secure-development)
@@ -42,9 +42,8 @@
 #   - `sync` REFUSES to start with no `GITHUB_ORG` — it logs
 #     `ctf-sync: GITHUB_ORG is not set` and exits non-zero, rather than
 #     polling nothing in silence (sync/src/config.js + index.js's main()).
-#     Config v2 (#386) retired the old "nothing to poll, exit 0" path: the
-#     poller reads its whole config from the environment now, so an empty
-#     org is a misconfiguration, not an ai-only event
+#     The poller reads its whole config from the environment (config v2), so
+#     an empty org is a misconfiguration, not an ai-only event
 #
 # Seeding: no OAuth app exists in CI, and the 'Seed demo data'
 # button is admin-session-gated (apps/web/src/app/api/admin/seed/route.ts) —
@@ -112,8 +111,8 @@ NET=ctf-ai-only-acceptance-net
 TMP=$(mktemp -d)
 SRH_TOKEN="ai-only-acceptance-srh-token"
 APP_PORT=3113
-# Runtime env for the app container (config v2, #386) — there is no config
-# file to put these in any more.
+# Runtime env for the app container (config v2) — there is no config
+# file to put these in.
 APP_GITHUB_ORG=acceptance-ai-org
 APP_ADMIN_LOGINS=acceptance-ai-admin
 
@@ -211,14 +210,14 @@ docker exec ao-redis redis-cli HSET ctf:ai:solvecount "$CHALLENGE_ID" 1 >/dev/nu
 docker exec ao-redis redis-cli HSET "ctf:ai:solves:$CONTESTANT_LOGIN" "$CHALLENGE_ID" \
   '{"points":'"$CHALLENGE_POINTS"',"at":"2026-08-19T00:00:00.000Z","source":"flag"}' >/dev/null
 
-# Config v2 (#386): modules are switched on in ctf:admin:settings, and that
-# hash is now the ONLY thing that enables one. Without this the board is OFF
+# Modules are switched on in ctf:admin:settings (config v2), and that
+# hash is the ONLY thing that enables one. Without this the board is OFF
 # and /ai 404s.
 docker exec ao-redis redis-cli HSET ctf:admin:settings enabledModules ai >/dev/null
 
 # ---------------------------------------------------------------------------
-# Build + boot the app. NO build-args: config v2 (#386) removed the config
-# bake, so which modules run comes from the Redis hash seeded above and
+# Build + boot the app. NO build-args: there is no config bake (config v2), so
+# which modules run comes from the Redis hash seeded above and
 # GITHUB_ORG/ADMIN_LOGINS are passed as runtime env below — the same shape
 # scripts/acceptance-app.sh uses.
 # ---------------------------------------------------------------------------

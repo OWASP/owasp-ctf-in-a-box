@@ -38,13 +38,12 @@ import {
 } from "@/lib/ai-keys";
 
 /**
- * Per-contestant and per-team support operations for a LIVE event (issue #168).
+ * Per-contestant and per-team support operations for a LIVE event.
  *
- * Before this, the only destructive lever an organizer had was the master
- * reset, which wipes the whole event. So the answer to "one person is wedged,
- * mid-event" was either *do nothing* or *wipe everyone*. Everything here is
- * the missing middle: act on one contestant, or one team, without touching
- * anybody else.
+ * The master reset wipes the whole event, so without these operations the
+ * answer to "one person is wedged, mid-event" would be either *do nothing*
+ * or *wipe everyone*. Everything here is the missing middle: act on one
+ * contestant, or one team, without touching anybody else.
  *
  * Every function takes `actor` and writes an audit line naming BOTH the actor
  * and the target. Support actions are precisely the ones that have to be
@@ -102,15 +101,15 @@ export type UserDetail = {
   /** null when this login is on no team. `joinedAt` is when they joined THIS
    *  team, and is null for a record written before the field existed. */
   team: { slug: string; name: string; captain: string | null; isCaptain: boolean; joinedAt: string | null } | null;
-  /** First time this login was ever on a team — the funnel's conversion moment
-   *  (issue #169). Survives leaving, being removed, and their team being
+  /** First time this login was ever on a team — the funnel's conversion moment.
+   *  Survives leaving, being removed, and their team being
    *  disbanded; null for a contestant who converted before the field existed. */
   firstTeamAt: string | null;
   quiz: { answered: number; points: number; attempts: number };
   classic: { solved: number; points: number; attempts: number };
   /** Same shape as classic — the two modules' per-login stores are identical
-   *  (see the reset below). Absent until UX audit F4: the card showed no AI
-   *  figures for a contestant whose AI solves the reset then cleared. */
+   *  (see the reset below). Without it the card shows no AI figures for a
+   *  contestant whose AI solves the reset cleared. */
   ai: { solved: number; points: number; attempts: number };
   /** Secure Development solves, counted from `ctf:solves:<target>`. */
   secureDev: { solves: number };
@@ -137,14 +136,14 @@ async function countSecureDevSolves(login: string): Promise<number> {
     const [scan] = await upstashPipeline([
       ["SCAN", cursor, "MATCH", "ctf:solves:*", "COUNT", 1000],
     ]);
-    // Throws rather than ending the walk on a failed page (issue #358). This
+    // Throws rather than ending the walk on a failed page. This
     // count is shown to an organizer deciding whether to wipe a contestant's
     // progress, so a truncated walk understates what is about to be deleted.
     const [next, keys] = parseScanPage(scan, "count secure-dev solves");
     cursor = next;
     if (keys.length) {
       // The HKEYS replies BECOME the count, so a failed one silently
-      // understates what the organizer is about to delete (issue #358).
+      // understates what the organizer is about to delete.
       const replies = assertPipelineOk(
         await upstashPipeline(keys.map((k) => ["HKEYS", k])),
         "count secure-dev solves",
@@ -160,8 +159,7 @@ async function countSecureDevSolves(login: string): Promise<number> {
 
 /**
  * Everything the organizer needs to see about one contestant before deciding
- * what to do to them. Read-only, and the first thing a support flow needs —
- * there was previously no way to look at a single contestant at all.
+ * what to do to them. Read-only, and the first thing a support flow needs.
  */
 export async function lookupUser(rawLogin: string): Promise<UserDetail> {
   const login = requireLogin(rawLogin);
@@ -291,14 +289,14 @@ async function clearSecureDevSolves(login: string): Promise<number> {
     const [scan] = await upstashPipeline([
       ["SCAN", cursor, "MATCH", "ctf:solves:*", "COUNT", 1000],
     ]);
-    // Throws rather than ending the walk on a failed page (issue #358). A
+    // Throws rather than ending the walk on a failed page. A
     // partial clear reported as a completed one is the worst of the five: the
     // organizer is told the contestant's progress is gone, and some of it is
     // still there to be scored.
     const [next, keys] = parseScanPage(scan, "clear secure-dev solves");
     cursor = next;
     for (const key of keys) {
-      // Both commands are checked (issue #358). A failed HKEYS reads as "this
+      // Both commands are checked. A failed HKEYS reads as "this
       // contestant has nothing here" and skips the key; a failed HDEL leaves
       // the rows in place while `removed` counts them gone. Either way the
       // organizer is told a contestant's progress was cleared when some of it
@@ -323,7 +321,7 @@ async function clearSecureDevSolves(login: string): Promise<number> {
 }
 
 // KEYS: [1]=solves(login) [2]=attempts(login) [3]=points [4]=solved
-//       [5]=solvecount   [6]=lastAt (#522)   ARGV: [1]=login
+//       [5]=solvecount   [6]=lastAt   ARGV: [1]=login
 //
 // Classic's and ai's per-login shape is IDENTICAL — a solves hash keyed by
 // challenge id, an attempts hash, a points aggregate and a solved aggregate
@@ -445,7 +443,7 @@ async function resetProgressOf(login: string, actor: string): Promise<ResetScope
   // challenge this login had solved — and the read of "which challenges" and
   // every decrement it drives happen inside `RESET_MODULE_SOLVES_SCRIPT`, one
   // atomic EVAL per module, so a solve landing between "read" and "decrement"
-  // is no longer possible: there is no gap for it to land in.
+  // is impossible: there is no gap for it to land in.
   //
   // NOT touched here: `ctf:ai:launchkey` (module-wide identity, not per-user
   // state), any `ctf:ai:nonce:*` replay guard, and the challenge catalogue —
@@ -478,7 +476,7 @@ async function resetProgressOf(login: string, actor: string): Promise<ResetScope
     ["DEL", userHintsKey(login)],
     ["DEL", userHintTimesKey(login)],
     ["HDEL", HINTS_SPENT_KEY, login],
-    // Last, so the counts below keep their positions (#522).
+    // Last, so the counts below keep their positions.
     ["HDEL", QUIZ_LAST_AT_KEY, login],
   ]);
   const n = (i: number) => Number(replies[i]?.result) || 0;
@@ -536,7 +534,7 @@ export async function deleteUser(
     );
   }
 
-  // One score-lowering bracket around the WHOLE delete (#553): the inner
+  // One score-lowering bracket around the WHOLE delete: the inner
   // reset nests its own — the marker is a counter — so the in-progress flag
   // stays up through the tail writes (membership, account record), and the
   // last close comes after the last write, on the failure path too.
@@ -668,7 +666,7 @@ export async function forceDisbandTeam(
   cmds.push(["DEL", membersKey(slug)]);
   cmds.push(["DEL", teamKey(slug)]);
   // The reverse index must go too, or the code keeps resolving to a team that
-  // no longer exists and `/join/<code>` shows a card for a ghost.
+  // does not exist and `/join/<code>` shows a card for a ghost.
   if (code) cmds.push(["DEL", joinCodeKey(code.toLowerCase())]);
   await upstashPipeline(cmds);
 

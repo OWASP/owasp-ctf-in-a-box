@@ -81,7 +81,7 @@ import {
 // needs the pre-override default alongside it.
 //
 // Built from the WHOLE registry rather than the baked set: a module enabled at
-// runtime (issue #175) is renameable like any other, and keying this off
+// runtime is renameable like any other, and keying this off
 // event.yaml would leave its identity form with no placeholder to show.
 const MODULE_DEFAULTS = new Map(
   ALL_MODULE_IDS.map((id) => {
@@ -92,7 +92,7 @@ const MODULE_DEFAULTS = new Map(
 
 // The URL⇄tab rules live in admin-tabs.ts, which carries no `"use client"`,
 // because the two routes CALL them on the server and a function exported from
-// a Client Component is a client reference rather than a callable (issue #312).
+// a Client Component is a client reference rather than a callable.
 // Re-exported here so this module stays the one import site for its own
 // client callers.
 export { adminTabHref, resolveAdminTab, tabFromLocation } from "@/app/(site)/admin/admin-tabs";
@@ -117,7 +117,7 @@ export default function AdminControls({
 }: {
   initial: AdminSettings;
   /** The module set this deployment starts with, when nothing is stored in
-   *  ctf:admin:settings — computed server-side from SCORE_IMAGE (issue #386),
+   *  ctf:admin:settings — computed server-side from SCORE_IMAGE,
    *  since a client bundle has no access to that env var. */
   defaultModuleIds: readonly string[];
   /** Whether this deployment has a scorer image, computed server-side from
@@ -143,13 +143,13 @@ export default function AdminControls({
    *  gate that rendered this page. The Admins tab uses it to warn before
    *  someone revokes their own access. */
   viewerLogin: string;
-  /** The poller's own heartbeat — page.tsx already fetches this for the old
-   *  Status card; Overview folds it into its "Sync" line instead. `null`
+  /** The poller's own heartbeat — page.tsx already fetches this; Overview
+   *  folds it into its "Sync" line instead. `null`
    *  when no poller has ever reported in (poll mode not configured, or push
    *  mode, which has no poller at all) — the default for callers (most
    *  tests) that don't care about it. */
   sync?: SyncStatus | null;
-  /** The resolved runtime event name (issue #386): resolved server-side by
+  /** The resolved runtime event name: resolved server-side by
    *  getSite(); a client bundle cannot read settings. Threaded through to the
    *  Event tab, which uses it for the master-reset confirmation phrase. */
   eventName: string;

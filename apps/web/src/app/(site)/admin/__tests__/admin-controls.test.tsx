@@ -65,8 +65,8 @@ function captureTree<P>(Component: (props: P) => ReactElement | null, props: P):
   return captured;
 }
 
-// AdminControls now takes its modules as a prop (already resolved
-// server-side), so it no longer reads the registry itself. The mock stays so
+// AdminControls takes its modules as a prop (already resolved
+// server-side), so it does not read the registry itself. The mock stays so
 // this suite is never coupled to whatever `event.yaml` happens to enable for
 // anything else that resolves `@/lib/modules` in this import graph.
 const { enabledModules } = vi.hoisted(() => ({
@@ -90,7 +90,7 @@ const { enabledModules } = vi.hoisted(() => ({
 // MODULE_TITLE_MAX/MODULE_BLURB_MAX live in @/lib/modules (client-safe — see
 // that file's comment on why they aren't defined in admin-store.ts), so this
 // full-module mock has to supply them too. `ALL_MODULE_IDS` and
-// `moduleDefById` came with runtime enablement (issue #175): the panel builds
+// `moduleDefById` came with runtime enablement: the panel builds
 // its module toggle rows off the WHOLE registry, not the enabled subset, so
 // it can offer a disabled module's switch at all.
 vi.mock("@/lib/modules", () => ({
@@ -142,7 +142,7 @@ const settings: AdminSettings = {
   aiCooldownSec: null,
   teamMaxMembers: null,
   scoreCooldownMin: null,
-  // A LAUNCHED event (#464: no scoring start = not launched = registration
+  // A LAUNCHED event (no scoring start = not launched = registration
   // phase), so the live-event renders below keep describing a live event.
   scoringStartsAt: "2000-01-01T00:00:00.000Z",
   scoringEndsAt: null,
@@ -213,11 +213,11 @@ describe("AdminControls tab shell", () => {
     expect(panelFor(html, "secure-development")).not.toContain("Setting up");
   });
 
-  // UX audit F3: the blurb help used to say "Not shown on any page … which
+  // UX audit F3: the blurb help must not say "Not shown on any page … which
   // today means the quiz". The blurb IS rendered — as the page-header lede on
   // /quiz, /flags and /ai, and as those pages' meta description — so the one
-  // sentence the field carried about itself was the one false claim on the
-  // panel. The help now names the surfaces the docs name.
+  // sentence about the field would be the one false claim on the panel. The
+  // help names the surfaces the docs name.
   it("tells the truth about where the blurb renders", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
     const quiz = panelFor(html, "quiz");
@@ -303,16 +303,16 @@ describe("AdminControls panel contents", () => {
     const hintsPanel = panelFor(html, "hints");
     expect(hintsPanel).toMatch(/Jeopardy and AI sell their hints/);
     // Secure Development is named as having none, and the wording that sent
-    // organizers to a tab with no hint field must not survive (issue #334).
+    // organizers to a tab with no hint field must not survive.
     expect(hintsPanel).toMatch(/Secure Development have no hints/);
     expect(hintsPanel).not.toMatch(/Secure Development, Jeopardy and AI/);
     expect(hintsPanel).not.toMatch(/Each module.s own tab holds the hint text/);
   });
 
-  // UX audit F6: the unlock-after help used to say "a scoring start below",
-  // a leftover from the flat layout. Now that Hints is its own destination
-  // (not a section of Event), the field names WHERE to find Scoring opens
-  // instead of pointing at a field on the same panel.
+  // UX audit F6: the unlock-after help must not say "a scoring start below".
+  // Hints is its own destination (not a section of Event), so the field
+  // names WHERE to find Scoring opens instead of pointing at a field on the
+  // same panel.
   it("points the unlock-after help at the Event tab, not 'below'", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
     const hintsPanel = panelFor(html, "hints");
@@ -360,7 +360,7 @@ describe("AdminControls panel contents", () => {
 
   // The schedule section states the EFFECTIVE state — toggle AND window,
   // through the shared outsideWindow — so the organizer never computes it in
-  // their head from four datetime fields plus two toggles (issue #200, 3.3).
+  // their head from four datetime fields plus two toggles.
   it("states whether scoring and registration are live right now", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
     const eventPanel = panelFor(html, "event");
@@ -370,8 +370,8 @@ describe("AdminControls panel contents", () => {
     expect(eventPanel).toContain("registration is open");
   });
 
-  // #464: a blank Scoring opens now means "not launched", so the help text
-  // must not tell an organizer every date is optional.
+  // A blank Scoring opens means "not launched", so the help text must not
+  // tell an organizer every date is optional.
   it("says Scoring opens is required to launch, the other dates optional", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
     const eventPanel = panelFor(html, "event");
@@ -385,7 +385,7 @@ describe("AdminControls panel contents", () => {
     );
     expect(panelFor(manuallyFrozen, "event")).toContain("scoring is frozen (manual)");
 
-    // #464: no scoring start at all reads as "not launched", distinct from a
+    // No scoring start at all reads as "not launched", distinct from a
     // closed window — the organizer's fix differs (set a start vs move it).
     const notLaunched = renderToStaticMarkup(
       <AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={{ ...settings, scoringStartsAt: null }} modules={twoModules} />,
@@ -577,12 +577,12 @@ describe("AdminControls module identity fields", () => {
   });
 });
 
-// Issue #386: nothing else in this file proves the Event tab's Identity
-// section is actually mounted — admin-event-identity.test.tsx pins
-// EVENT_IDENTITY_ROWS and probes IdentityField directly, neither of which
-// touches admin-event-tab.tsx's own JSX, so deleting the whole `<section>`
-// there would leave every other suite green (finding from Task 5 review
-// round 1). These two assert on the real rendered panel instead.
+// Nothing else in this file proves the Event tab's Identity section is
+// actually mounted — admin-event-identity.test.tsx pins EVENT_IDENTITY_ROWS
+// and probes IdentityField directly, neither of which touches
+// admin-event-tab.tsx's own JSX, so deleting the whole `<section>` there
+// would leave every other suite green. These two assert on the real
+// rendered panel instead.
 describe("AdminControls event identity section", () => {
   it("renders one input per identity field, ahead of the module switches", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
@@ -604,17 +604,17 @@ describe("AdminControls event identity section", () => {
   });
 });
 
-// Issue #386, Task 5 review round 1, Important 2: nothing pinned that
-// AdminControls' own `eventName` prop (threaded down from admin-panel.tsx's
-// getSite() — see page.test.tsx/tab-page.test.tsx for the header half of
-// this chain) is what the Event tab's master-reset modal asks the organizer
-// to type. `renderToStaticMarkup` never mounts that modal — it is gated
-// behind `useState` (see this file's header comment) — so there is no
-// rendered string to assert against; a revert to a hardcoded default name
-// would leave every markup-only assertion in this file exactly as green as
-// it is today. This calls AdminControls, then AdminEventTab, directly
-// (bypassing JSX/reconciliation via `captureTree`/`findElement` above) to
-// reach the real `onClick` closure and read the object it hands `setConfirm`.
+// Nothing pinned that AdminControls' own `eventName` prop (threaded down
+// from admin-panel.tsx's getSite() — see page.test.tsx/tab-page.test.tsx
+// for the header half of this chain) is what the Event tab's master-reset
+// modal asks the organizer to type. `renderToStaticMarkup` never mounts that
+// modal — it is gated behind `useState` (see this file's header comment) —
+// so there is no rendered string to assert against; a revert to a hardcoded
+// default name would leave every markup-only assertion in this file exactly
+// as green as it is today. This calls AdminControls, then AdminEventTab,
+// directly (bypassing JSX/reconciliation via `captureTree`/`findElement`
+// above) to reach the real `onClick` closure and read the object it hands
+// `setConfirm`.
 describe("AdminControls reset confirmation — eventName plumbing", () => {
   it("threads AdminControls' eventName prop into the Event tab's reset confirmation phrase", () => {
     const tree = captureTree(AdminControls, {
@@ -653,13 +653,12 @@ describe("AdminControls reset confirmation — eventName plumbing", () => {
   });
 });
 
-// CodeRabbit round 1, #389 (id 3985696440): the reset confirmation phrase
-// above is only correct AT MOUNT. A rename saved through the Identity
-// section must update it too, or an organizer who just renamed the event can
-// type the (correct, freshly-shown) new name into the reset modal and still
-// get "confirmation does not match the event name" back from the server,
-// which checks against `getSite()` — the STORED name, not the stale prop
-// admin-panel.tsx resolved before the rename.
+// The reset confirmation phrase above is only correct AT MOUNT. A rename
+// saved through the Identity section must update it too, or an organizer
+// who just renamed the event can type the (correct, freshly-shown) new name
+// into the reset modal and still get "confirmation does not match the event
+// name" back from the server, which checks against `getSite()` — the STORED
+// name, not the stale prop admin-panel.tsx resolved before the rename.
 //
 // `nextEventNameAfterSave` is the pure decision `applyField` defers to, so
 // it's pinned directly here (repo has no jsdom/testing-library, so a live
@@ -727,10 +726,10 @@ describe("AdminControls reset confirmation — post-rename save", () => {
 // "0 = unlimited" and "0 = no cooldown", an empty box states the opposite of
 // the truth: the real defaults are 3 attempts, 1 minute and 5 seconds.
 //
-// hint-defaults.ts already exists for exactly this bug on the hints TOGGLE
-// (#89): "the admin toggle has to render the same default the server resolves,
-// or it misreports the effective state". The number inputs were never brought
-// along. This pins that they were.
+// hint-defaults.ts already exists for exactly this bug on the hints TOGGLE:
+// "the admin toggle has to render the same default the server resolves, or
+// it misreports the effective state". The number inputs need the same rule:
+// every one of them must show its default, and this pins that it does.
 describe("numeric inputs advertise their default", () => {
   const allModules = [
     { id: "secure-development", title: "Secure Development", blurb: "" },
@@ -761,10 +760,10 @@ describe("numeric inputs advertise their default", () => {
   });
 });
 
-// Runtime module enablement (issue #175) — the panel half. Secure Development
-// is a normal switch now (issue #386): it locks only without a scorer image,
-// and — like every other module — the last live one can still be switched
-// off; an empty event is legal (module-toggle.test.ts covers the pure rule).
+// Runtime module enablement — the panel half. Secure Development is a
+// normal switch: it locks only without a scorer image, and — like every
+// other module — the last live one can still be switched off; an empty
+// event is legal (module-toggle.test.ts covers the pure rule).
 describe("module toggles", () => {
   const render = (overrides: Partial<typeof settings> = {}, secureDevAvailable = true) =>
     renderToStaticMarkup(
@@ -794,12 +793,11 @@ describe("module toggles", () => {
     expect(html).not.toMatch(/no scorer image/);
   });
 
-  // Final-review finding #1, part 3 (issue #386); help text updated for
   // CodeRabbit round 1 finding B: a deployment can have secure-development
   // STORED as on while SCORE_IMAGE is unset (carried forward from when it
   // had one — admin-store's rule). Locking that switch would leave the
   // organizer no way to turn it back off, so it stays switchable off
-  // directly AND the server now strips it on the next write to any module.
+  // directly AND the server strips it on the next write to any module.
   it("does not lock secure-development when it is already ON, even with no scorer image — it can be switched off", () => {
     const html = panelFor(render({ enabledModuleIds: ["secure-development"] }, false), "event");
     const input = html.match(/<input id="module-secure-development"[^>]*>/)?.[0];
@@ -885,7 +883,7 @@ describe("the Launch block (#464)", () => {
     expect(html).toContain("Launch now");
   });
 
-  // #547: the panel states launch and schedule times on the event's clock,
+  // The panel states launch and schedule times on the event's clock,
   // with UTC beside them; a UTC event reads exactly as before.
   it("states the scheduled launch in the event's zone, with UTC beside it", () => {
     const tz = { ...settings.eventIdentity, eventTimeZone: "America/Argentina/Buenos_Aires" };
@@ -900,7 +898,7 @@ describe("the Launch block (#464)", () => {
     expect(html).not.toContain("GMT");
   });
 
-  // CodeRabbit #469: the panel says why Launch now cannot work, instead of
+  // The panel says why Launch now cannot work, instead of
   // leaving the refusal to the save.
   it("holds Launch now while Scoring closes has already passed, and says what to fix", () => {
     const html = render({ scoringStartsAt: null, scoringEndsAt: "2000-01-01T00:00:00.000Z" });
@@ -926,7 +924,7 @@ describe("the Launch block (#464)", () => {
   it("treats a start at or before the last server save as live, whatever the client clock says", () => {
     const html = render({ scoringStartsAt: "2999-01-01T00:00:00.000Z", updatedAt: "2999-01-01T00:00:05.000Z" });
     expect(html).toContain("Live since");
-    // CodeRabbit #469: the "Right now" scoring readout uses the SAME floored
+    // The "Right now" scoring readout uses the SAME floored
     // now — it must not say "outside its window" beside "Live since".
     expect(html).toContain("scoring is live");
   });

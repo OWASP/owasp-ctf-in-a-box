@@ -10,7 +10,7 @@ import { getLeaderboardSource, getLeaderboardSourceMode } from "@/lib/leaderboar
 import { errorLabel } from "@/lib/error-label";
 
 /**
- * Event engagement metrics (issue #169), computed ENTIRELY from data the box
+ * Event engagement metrics, computed ENTIRELY from data the box
  * already stores.
  *
  * There is no collection step and no new write path. Every number below is a
@@ -25,7 +25,7 @@ import { errorLabel } from "@/lib/error-label";
  * per-login SD total is read from the leaderboard source (the scorer's own
  * `GET /leaderboard`, or its ZSET), whose `entry.points` is exactly that
  * number before the module overlays add theirs (module-contributions.ts).
- * Issue #432: without it every team here read lower than the board by
+ * Without it every team here read lower than the board by
  * precisely its SD points, under a caveat promising SD was counted.
  *
  * WHY NOT COLLECT FROM FORKS. A fork could report far more — pages opened,
@@ -60,7 +60,7 @@ export type ChallengeStat = {
   module: "quiz" | "classic" | "ai";
   id: string;
   /** What the organizer called it — a challenge's title, a question's prompt.
-   *  `null` when the catalogue no longer holds it (a challenge deleted after
+   *  `null` when the catalogue does not hold it (a challenge deleted after
    *  it was solved still has metrics) or when the catalogue read failed; the
    *  id is always there to fall back on. See `readTitles` (audit F7). */
   title: string | null;
@@ -80,7 +80,7 @@ export type ChallengeStat = {
    *  otherwise dominate the figure. Null until enough rows carry `firstAt`. */
   medianSecondsToSolve: number | null;
   /** Contestants who bought this item's hint before earning it. Classic and
-   *  ai are per-challenge contributors here (#190, and its ai counterpart);
+   *  ai are per-challenge contributors here;
    *  quiz has no hints by design, so this is always 0 there. */
   solvedAfterHint: number;
 };
@@ -153,7 +153,7 @@ function hashEntries(result: unknown): [string, unknown][] {
 
 // Returns UpstashResult, not `{ result?: unknown }`: the narrower type erased
 // the `error` field, so a caller checking it would be reading a property
-// TypeScript believed could never be set (issue #358).
+// TypeScript believed could never be set.
 async function batched(commands: (string | number)[][]): Promise<UpstashResult[]> {
   const out: UpstashResult[] = [];
   for (let i = 0; i < commands.length; i += BATCH) {
@@ -175,7 +175,7 @@ async function readSecureDevSolves(): Promise<Map<string, string>> {
   const keys: string[] = [];
   do {
     const [scan] = await upstashPipeline([["SCAN", cursor, "MATCH", "ctf:solves:*", "COUNT", 1000]]);
-    // Throws rather than ending the walk on a failed page (issue #358). An
+    // Throws rather than ending the walk on a failed page. An
     // undercount presented as a measurement is worse than a failed one, and
     // this module already has a way to say so — see the caller's caveats.
     const [next, found] = parseScanPage(scan, "metrics secure-dev solves");
@@ -184,7 +184,7 @@ async function readSecureDevSolves(): Promise<Map<string, string>> {
   } while (cursor !== "0");
   const out = new Map<string, string>();
   if (!keys.length) return out;
-  // Checked, like the SCAN above (issue #358): a failed HGETALL reads as an
+  // Checked, like the SCAN above: a failed HGETALL reads as an
   // empty hash, so the target's solves vanish from every figure computed
   // from this map — silently, and the caller has a caveat for exactly this.
   const replies = assertPipelineOk(
@@ -279,7 +279,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   const aiPoints = new Map(hashEntries(aiPointsRes.result).map(([k, v]) => [k.toLowerCase(), Number(v) || 0]));
   const hintsSpent = hashEntries(hintsSpentRes.result).map(([k, v]) => [k.toLowerCase(), Number(v) || 0] as const);
 
-  // Secure Development points per login (issue #432), from the leaderboard
+  // Secure Development points per login, from the leaderboard
   // source — see the file header for why no Redis key of ours holds them.
   // Gated on the source MODE, not just on whether a fetch works:
   //   - "empty" is the source's own answer when the module is off; there is
@@ -310,7 +310,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     }
   }
 
-  // A SCAN page that cannot be read now throws (issue #358) instead of
+  // A SCAN page that cannot be read throws instead of
   // silently truncating the walk. Caught here rather than failing the whole
   // panel: every other figure on it is still valid, and this module's own
   // convention is to SAY a number is short rather than quietly present it.
@@ -396,7 +396,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   >();
   // Per-challenge "solved after buying its hint" counts, keyed like
   // solvesById (`classic:<id>` or `ai:<id>`) — fed by the hint-timing loop
-  // below (#190).
+  // below.
   const hintHelpedById = new Map<string, number>();
   const pointsByLogin = new Map<string, number>();
 
@@ -415,9 +415,9 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     // bought nothing, and counting the two together turns "hints are used"
     // into a claim that "hints help" — which the data would not support.
     // Secure-development slots compare against the scorer's solve times;
-    // classic and ai slots (#190, and ai's own hints) against this login's
-    // own solve rows, already loaded above. The target stays in the key so
-    // two targets sharing a challenge id cannot cross-match.
+    // classic and ai slots against this login's own solve rows, already
+    // loaded above. The target stays in the key so two targets sharing a
+    // challenge id cannot cross-match.
     for (const [slot, boughtAt] of hintTimes) {
       const slash = String(slot).indexOf("/");
       if (slash <= 0) continue;
@@ -470,7 +470,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     if (hasEarned) scored += 1;
 
     // Every module the funnel above counts as scoring, including Secure
-    // Development (issue #432) — `hasEarned` and this sum must agree on what
+    // Development — `hasEarned` and this sum must agree on what
     // a point is, or a team of SD-only solvers reads as "scored" with 0.
     // Gross points throughout: the module hashes hold pre-penalty totals and
     // so does the source's `points`, so hint penalties are not applied here
@@ -497,7 +497,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         stat.solvers += 1;
         // How many tries THIS contestant took to earn it, and how long it took
         // them. The attempt row survives the solve, so both are available
-        // after the fact — `firstAt` (issue #169) is what makes the duration
+        // after the fact — `firstAt` is what makes the duration
         // knowable at all; before it, only the LAST attempt had a time.
         const attemptRow = (mod === "quiz" ? quizAttempts : mod === "classic" ? classicAttempts : aiAttempts).find(
           ([aid]) => aid === id,
@@ -557,7 +557,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         solveRate: triers > 0 ? solves / triers : null,
         avgAttemptsToSolve: solves > 0 ? (solved as { attemptSum: number }).attemptSum / solves : null,
         medianSecondsToSolve: median(solved?.durations ?? []),
-        solvedAfterHint: hintHelpedById.get(key) ?? 0, // classic + ai per-challenge (#190); quiz has no hints
+        solvedAfterHint: hintHelpedById.get(key) ?? 0, // classic + ai per-challenge; quiz has no hints
       };
     })
     .sort((a, b) => a.solves - b.solves || a.id.localeCompare(b.id));

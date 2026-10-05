@@ -87,6 +87,13 @@ describe("leaderboard header — event logo", () => {
     expect(head.indexOf(img)).toBeLessThan(head.indexOf("Leaderboard</h1>"));
   });
 
+  it("lets the logo wrap above the title on a narrow screen rather than widen the page", async () => {
+    imagesState.logo = LOGO;
+    const head = aboveBoard(await render());
+    const row = head.match(/<div class="([^"]*)"><img[^>]*alt="Red Team Space CTF logo"/)?.[1] ?? "";
+    expect(row.split(/\s+/)).toContain("flex-wrap");
+  });
+
   it("shows the uploaded logo instead of the default mark", async () => {
     imagesState.logo = LOGO;
     const head = aboveBoard(await render());

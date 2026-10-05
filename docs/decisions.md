@@ -3899,17 +3899,22 @@ never the standings. This makes it a fifth sponsor surface; ADR 57's other
 rules (recognition only, logos from our own origin, raster only, the fixed
 disclaimer) are unchanged.
 
-The footer keeps its text-only credit on this page.
+The footer's text credit steps aside on this page, as
 [ADR 62](#adr-62-the-landing-pages-footer-does-not-repeat-the-sponsor-credit)
-has a page with its own sponsor block pass `creditSponsors: false`, but the
-leaderboard's footer is rendered by the shared `(site)` layout, which cannot
-tell which page it wraps. Turning it off here would mean threading the
-request path into that layout for one line of text; logos at the top and one
-text line at the bottom is not the double credit ADR 62 was about.
+asks of a page with its own sponsor block. The landing page does that with
+`creditSponsors: false`, but the leaderboard's footer is rendered by the
+shared `(site)` layout, which cannot tell which page it wraps. So the credit
+line decides for itself: it sits inside `HideOnPaths`, a client component
+that reads `usePathname` (resolved during server rendering, so nothing
+flashes) and renders nothing on the routes in
+`PAGES_WITH_OWN_SPONSOR_CREDIT` (`/leaderboard`, exact match). Every other
+route, and a route that cannot be read, keeps the credit.
 
 **Consequences.** Sponsors and the event appear on the page that is on screen
-most of an event. Each leaderboard render now reads the sponsor list twice
-(the strip and the footer line; `listSponsors` is not cached) and the event
-image metadata once (cached per request). Both are small metadata reads, the
-logo bytes are fetched by the browser from their own routes. Other pages are
+most of an event, credited once. Each leaderboard render reads the sponsor
+list twice (the strip, and the footer, which still reads before its line
+steps aside; `listSponsors` is not cached) and the event image metadata once
+(cached per request). Both are small metadata reads; the logo bytes are
+fetched by the browser from their own routes. Another page that adds its own
+sponsor block joins `PAGES_WITH_OWN_SPONSOR_CREDIT`. Other pages are
 unchanged; a further surface is still its own decision.

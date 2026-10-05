@@ -27,7 +27,9 @@ export default function PageHeader({
         {eyebrow}
       </p>
       {logo ? (
-        <div className="flex min-w-0 items-center gap-4">
+        // Wraps rather than overflows: on a phone a wide logo moves above the
+        // title instead of pushing the row past the viewport.
+        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
           {logo}
           {heading}
         </div>

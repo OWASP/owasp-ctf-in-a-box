@@ -987,9 +987,10 @@ the list snaps back to the order the box actually holds and says why — so a
 move that looks like it stuck, stuck.
 
 **Sponsor logo size.** One control at the top of the tab — Small, Medium
-(the default) or Large — sizes sponsor logos on the two surfaces where they
+(the default) or Large — sizes sponsor logos on the three surfaces where they
 are a credit row rather than the content: the landing page's strip below the
-hero, and the leaderboard's projector display (`?display=1`). Each surface
+hero, the same strip under the leaderboard's header, and the leaderboard's
+projector display (`?display=1`). Each surface
 scales it for its own viewing distance, so Large on a projector is much
 bigger than Large on the landing page. The `/sponsors` page is deliberately
 not affected: it is the page that exists to show sponsors, and it keeps its

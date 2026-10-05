@@ -149,7 +149,25 @@ function commentLines(path, text) {
       if (!raw.includes("*/")) inBlock = true;
       return;
     }
-    if (raw.startsWith("//")) out.push([i + 1, uncomment("slash", raw), raw]);
+    if (raw.startsWith("//")) {
+      out.push([i + 1, uncomment("slash", raw), raw]);
+      return;
+    }
+    let inString = null;
+    for (let c = 0; c < line.length - 1; c++) {
+      const char = line[c];
+      if (inString === null) {
+        if (char === '"' || char === "'" || char === '`') {
+          inString = char;
+        } else if (char === '/' && line[c + 1] === '/') {
+          out.push([i + 1, line.slice(c + 2).trim(), raw]);
+          break;
+        }
+      } else {
+        if (char === '\\') c++;
+        else if (char === inString) inString = null;
+      }
+    }
   });
   return out;
 }

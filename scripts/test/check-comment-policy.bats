@@ -137,3 +137,11 @@ OUTER
   [ "$status" -eq 1 ]
   _has "scripts/load-seed.mjs: listed as audited but not readable"
 }
+
+@test "a trailing provenance comment is caught without misclassifying strings" {
+  _append "apps/web/src/lib/team-store.ts" "const url = \"http://example.com/\"; // issue #999"
+  run node "$SCRIPT" "$ROOT"
+  [ "$status" -eq 1 ]
+  _has "apps/web/src/lib/team-store.ts:"
+  _has "provenance:"
+}

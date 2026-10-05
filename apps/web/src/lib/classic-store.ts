@@ -1334,8 +1334,8 @@ export async function submitFlag(
         POINTS_KEY, // KEYS[5]
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
-        LAST_AT_KEY, // KEYS[8] — login -> latest award time (#522)
-        ...lockKeys, // KEYS[9..] — teammates' solves hashes, for the story lock (#463)
+        LAST_AT_KEY, // KEYS[8] — login -> latest award time
+        ...lockKeys, // KEYS[9..] — teammates' solves hashes, for the story lock
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the
@@ -1349,9 +1349,9 @@ export async function submitFlag(
         login,
         cooldownMs,
         now.getTime(),
-        caseSensitiveFlagForm(flag), // ARGV[7] — case preserved (issue #193)
-        dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing (#464)
-        prereq, // ARGV[9] — story prerequisite, "" when none (#463)
+        caseSensitiveFlagForm(flag), // ARGV[7] — case preserved
+        dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing
+        prereq, // ARGV[9] — story prerequisite, "" when none
       ],
     );
   } catch (err) {

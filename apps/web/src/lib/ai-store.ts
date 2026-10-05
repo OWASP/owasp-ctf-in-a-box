@@ -1039,7 +1039,7 @@ async function runAward(
         POINTS_KEY, // KEYS[5]
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
-        LAST_AT_KEY, // KEYS[8] — login -> latest award time (#522)
+        LAST_AT_KEY, // KEYS[8] — login -> latest award time
       ],
       [
         challengeId, // ARGV[1]
@@ -1051,7 +1051,7 @@ async function runAward(
         grade ? caseSensitiveFlagForm(flag) : "", // ARGV[7] — case preserved
         grade ? "1" : "0", // ARGV[8]
         source, // ARGV[9] — literal, never caller input
-        dryRun ? "1" : "0", // ARGV[10] — dry run: grade, write nothing (#464)
+        dryRun ? "1" : "0", // ARGV[10] — dry run: grade, write nothing
       ],
     );
     return readVerdict(verdict);

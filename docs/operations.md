@@ -951,10 +951,12 @@ short blurb. Sponsors get no sponsored challenges, no prizes wired into
 scoring, no contestant data, and no lead capture — anything past that is out
 of scope for this tab entirely. It is a platform feature, not a module: there
 is no toggle to turn it off, and it renders on the landing page, the footer,
-`/sponsors`, and the leaderboard's projector display (`?display=1`) if and
-only if at least one sponsor is configured. The footer's credit is left out
-on the landing page, where the strip above the fold already names them. An event with no sponsors ships
-zero sponsor pixels anywhere.
+`/sponsors`, the leaderboard (a strip under its header, ADR 66), and the
+leaderboard's projector display (`?display=1`) if and only if at least one
+sponsor is configured. The footer's credit is left out on the landing page,
+where the strip above the fold already names them. An event with no sponsors
+ships zero sponsor pixels anywhere. The leaderboard also shows the event logo
+beside its title when one is uploaded in `/admin` → Event.
 
 **The tab is the list.** Each sponsor is a card showing its logo as it will
 actually appear — on the site's own dark background, untreated — next to its

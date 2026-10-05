@@ -5,21 +5,35 @@ export default function PageHeader({
   eyebrow,
   title,
   description,
+  logo,
 }: {
   eyebrow: string;
   title: string;
   // ReactNode rather than string so a lede can carry an inline link — several
   // pages point at the Discord or a policy document from the header copy.
   description?: React.ReactNode;
+  /** Shown beside the title, e.g. the event logo on the leaderboard (ADR 66).
+   *  Absent, the header renders exactly as it always has. */
+  logo?: React.ReactNode;
 }) {
+  const heading = (
+    <h1 className="text-balance text-4xl font-bold tracking-tight text-white sm:text-5xl">
+      {title}
+    </h1>
+  );
   return (
     <div className="flex flex-col gap-3">
       <p className="text-xs font-medium uppercase tracking-[0.25em] text-[#14b8a6]">
         {eyebrow}
       </p>
-      <h1 className="text-balance text-4xl font-bold tracking-tight text-white sm:text-5xl">
-        {title}
-      </h1>
+      {logo ? (
+        <div className="flex min-w-0 items-center gap-4">
+          {logo}
+          {heading}
+        </div>
+      ) : (
+        heading
+      )}
       {description && (
         <p className="max-w-2xl text-base leading-relaxed text-zinc-400">
           {description}

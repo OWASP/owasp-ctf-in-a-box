@@ -23,6 +23,8 @@ import { listSponsors } from "@/lib/sponsors-store";
 import { getAdminSettingsSnapshot } from "@/lib/enabled-modules";
 import { getEventImages } from "@/lib/event-images-site";
 import { eventImageUrl } from "@/lib/event-images-keys";
+import HeaderLogo from "@/components/header-logo";
+import SponsorStrip from "@/components/sponsor-strip";
 
 export async function generateMetadata(): Promise<Metadata> {
   const event = await getSite();
@@ -144,7 +146,17 @@ export default async function LeaderboardPage({
     updatedAgo: entry.updatedAt ? formatRelativeTime(entry.updatedAt, generatedAtMs) : undefined,
   }));
 
-  const sourceMode = await getLeaderboardSourceMode();
+  // The event's identity on the regular board (ADR 66), not only on the
+  // projector: its logo beside the title and the sponsor strip under the
+  // header. Both reads fail open (getEventImages to "none stored",
+  // SponsorStrip to null), so a Redis blip costs the decoration, never the
+  // standings. SponsorStrip is called rather than mounted for the reason its
+  // own header gives.
+  const [sourceMode, images, sponsorStrip] = await Promise.all([
+    getLeaderboardSourceMode(),
+    getEventImages(),
+    SponsorStrip(),
+  ]);
 
   return (
     <div className="flex flex-col gap-8">
@@ -154,7 +166,19 @@ export default async function LeaderboardPage({
         eyebrow="Standings"
         title="Leaderboard"
         description={session ? BASE_DESCRIPTION : BASE_DESCRIPTION + SIGNED_OUT_CLAUSE}
+        logo={
+          images.logo ? (
+            <HeaderLogo
+              key={eventImageUrl("logo", images.logo)}
+              src={eventImageUrl("logo", images.logo)}
+              w={images.logo.w}
+              h={images.logo.h}
+              alt={`${event.name} logo`}
+            />
+          ) : undefined
+        }
       />
+      {sponsorStrip}
       {sourceMode === "mock" && <MockDataNotice startsAt={event.ctfStartsAt} />}
       {/* data.series/teamSeries pass straight through this spread — the
           chart itself lives inside <Leaderboard> now, so it can switch

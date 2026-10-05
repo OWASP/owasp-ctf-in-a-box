@@ -212,7 +212,7 @@ export default function AdminSponsorsTab({
           <AdminSelectField
             id="sponsor-logo-size"
             label="Sponsor logo size"
-            help="How big sponsor logos render on the landing page's credit row and on the leaderboard's projector display (?display=1). The /sponsors page keeps its own fixed size."
+            help="How big sponsor logos render on the landing page's credit row, the leaderboard's sponsor strip and the leaderboard's projector display (?display=1). The /sponsors page keeps its own fixed size."
             value={settings.sponsorLogoSize ?? "md"}
             options={LOGO_SIZE_OPTIONS}
             disabled={settingsPending}

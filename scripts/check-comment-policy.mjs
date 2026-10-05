@@ -46,9 +46,12 @@ const read = (rel) => readFileSync(join(root, rel), "utf8");
 
 // The audited set: the pre-v0.7.0 audit's top 20, ranked by comment-line
 // count at 09a48384, then the files holding code extracted out of those 20 —
-// demo seed/clear out of admin-store.ts, the admin shell's settings and
-// navigation halves out of admin-controls.tsx, and one file per module out of
-// the registry in modules.ts. The second group is in registry order for the
+// demo seed/clear and the audit keys out of admin-store.ts, the admin
+// shell's settings, navigation, danger-action, schedule-clock and
+// audit-line halves out of admin-controls.tsx, the module URLs and one file
+// per module out of the registry in modules.ts, the shared Redis decoders
+// out of the three stores, and the acceptance-gate helpers out of the
+// module-only gate scripts. The second group is in registry order for the
 // module-defs. A file that is gone is a problem, not a skip: the list is only
 // useful while it still names real files.
 const AUDITED = [
@@ -80,6 +83,12 @@ const AUDITED = [
   "apps/web/src/lib/module-defs/quiz.ts",
   "apps/web/src/lib/module-defs/classic.ts",
   "apps/web/src/lib/module-defs/ai.ts",
+  "apps/web/src/lib/admin-audit-keys.ts",
+  "apps/web/src/lib/module-urls.ts",
+  "apps/web/src/lib/redis-decode.ts",
+  "apps/web/src/app/(site)/admin/use-admin-restamp.ts",
+  "apps/web/src/app/(site)/admin/admin-changed-at.tsx",
+  "scripts/lib/acceptance-lib.sh",
 ];
 
 // The manifest doubles as the copy list for scripts/test/check-comment-policy.bats,

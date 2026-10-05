@@ -2,13 +2,11 @@
  * The ONE decoder for Upstash's flat Redis replies — and the ONE attempt-row
  * READ for the Lua grading scripts (#504 M13).
  *
- * quiz, classic and ai each used to carry their own copy of `parseJsonValue`,
- * `parseHashEntries` and `parseCounterHash`, byte-identical except that
- * quiz's `parseHashEntries` inlined the try/catch that the other two delegated
- * to `parseJsonValue`. Three copies of a parser is three places for the next
- * one to drift: the row-shape contract (`attempt-row.ts`'s header tells the
- * same story from the reader side) only holds while every store decodes the
- * same way.
+ * quiz, classic and ai all decode the same three shapes — `parseJsonValue`,
+ * `parseHashEntries` and `parseCounterHash` — and a parser kept per store is
+ * three places for the next one to drift: the row-shape contract
+ * (`attempt-row.ts`'s header tells the same story from the reader side) only
+ * holds while every store decodes the same way.
  *
  * The reply shapes these read:
  *

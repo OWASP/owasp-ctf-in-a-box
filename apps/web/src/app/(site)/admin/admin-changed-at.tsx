@@ -1,9 +1,9 @@
 "use client";
 
 // The settings audit line's clock: who last changed the settings, and when,
-// as "4m ago" rather than a raw ISO instant. Extracted from
-// admin-controls.tsx (issue #504, M11) so the shell stays a shell; the shell
-// still renders the line itself and passes the instant in.
+// as "4m ago" rather than a raw ISO instant. Its own component so the shell
+// stays a shell: the shell still renders the line itself and passes the
+// instant in.
 
 import { useEffect, useState } from "react";
 import { formatRelativeTime } from "@/lib/relative-time";

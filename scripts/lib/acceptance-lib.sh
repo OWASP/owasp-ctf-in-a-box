@@ -194,7 +194,7 @@ acc_wait_http() {
   return 1
 }
 
-# The pre-launch lock (#464): before launch a module page answers with a
+# The pre-launch lock: before launch a module page answers with a
 # redirect to the landing page. Asserts that for "$base$path", naming exactly
 # what it got when it fails. Anti-vacuous by pairing: the caller launches
 # (acc_launch) and then waits for the SAME page to answer 200, so the redirect

@@ -28,7 +28,7 @@ export const DOCS_URL = "https://owasp.github.io/owasp-ctf-in-a-box/";
  *  `ctf-branch` step creates it and `drop-old` deletes `master`/`main`, so a
  *  PR against `main` has no base branch to land on. Written down once here so
  *  the How to Play / FAQ / Terms copy in the module defs can't drift from it
- *  again (issue #379); `ctf-setup.sh` has no equivalent named constant of its
- *  own (it compares the literal string), so this is the only place the value
- *  is written down on the app side. */
+ *  again; `ctf-setup.sh` has no equivalent named constant of its own (it
+ *  compares the literal string), so this is the only place the value is
+ *  written down on the app side. */
 export const SCORING_BRANCH = "ctf";

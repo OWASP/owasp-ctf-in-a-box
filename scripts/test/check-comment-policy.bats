@@ -6,8 +6,9 @@
 # shell heredoc's body belongs to the document being generated, not to the
 # script. The first case runs the checker on the real repo; the rest copy
 # AGENTS.md and the audited files into a scratch root, break one thing, and
-# expect the checker to fail naming it. The decisive assertion is always the
-# test's last statement.
+# expect the checker to fail naming it — bar the manifest case, which asserts
+# the extracted files are in the copy list the scratch root is built from. The
+# decisive assertion is always the test's last statement.
 
 setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
@@ -136,6 +137,20 @@ OUTER
   run node "$SCRIPT" "$ROOT"
   [ "$status" -eq 1 ]
   _has "scripts/load-seed.mjs: listed as audited but not readable"
+}
+
+# The extracted files are the manifest's second group: a split out of an
+# audited source is not a way out of the policy, so the copy list has to name
+# them too.
+@test "the extracted files are in the --list manifest" {
+  run node "$SCRIPT" --list
+  [ "$status" -eq 0 ]
+  _has "apps/web/src/lib/admin-audit-keys.ts"
+  _has "apps/web/src/lib/module-urls.ts"
+  _has "apps/web/src/lib/redis-decode.ts"
+  _has "apps/web/src/app/(site)/admin/use-admin-restamp.ts"
+  _has "apps/web/src/app/(site)/admin/admin-changed-at.tsx"
+  _has "scripts/lib/acceptance-lib.sh"
 }
 
 @test "a trailing provenance comment is caught without misclassifying strings" {

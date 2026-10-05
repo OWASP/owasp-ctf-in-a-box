@@ -1,13 +1,12 @@
 "use client";
 
-// The Event tab's schedule readout clock (issue #504, M11, extracted from
-// admin-controls.tsx): the "now" the readout is evaluated at (epoch ms).
-// Stamped at mount, re-stamped by `restampNow` in the settings write path
-// (every successful save re-evaluates the readout), and — below — by a timer
-// at the next instant a scoring/registration window opens or closes, so an
-// organizer parked on the tab across a boundary sees the flip without
-// touching anything. Never read from the clock in render: that is the impure
-// read the compiler lint rejects.
+// The Event tab's schedule readout clock: the "now" the readout is
+// evaluated at (epoch ms). Stamped at mount, re-stamped by `restampNow` in
+// the settings write path (every successful save re-evaluates the readout),
+// and — below — by a timer at the next instant a scoring/registration
+// window opens or closes, so an organizer parked on the tab across a
+// boundary sees the flip without touching anything. Never read from the
+// clock in render: that is the impure read the compiler lint rejects.
 //
 // Lives one level below the shell: `useAdminSettingsDrafts`
 // (use-admin-settings.ts) composes it, because its writes are what call

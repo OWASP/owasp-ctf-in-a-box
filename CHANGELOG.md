@@ -10,6 +10,18 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Added: the event logo and the sponsor strip on the regular leaderboard
+  (#571, ADR 66).** The leaderboard is the page an event keeps on screen, and
+  it now carries the event's identity there too, not only on the projector
+  view: the uploaded event logo sits beside the "Leaderboard" title (hidden
+  if it fails to load; the default OWASP mark when none is uploaded, as on the
+  landing page), and the landing page's sponsor strip runs under the
+  header, above the board — same order, same `/admin` logo-size setting,
+  nothing when there are no sponsors. Both reads fail open, so a Redis blip
+  costs the decoration, never the standings. The footer's text sponsor line
+  steps aside on this page so sponsors are credited once, and a wide logo
+  wraps above the title on a phone. `PageHeader` gains an optional `logo`
+  slot; every other page renders exactly as before.
 - **Changed: a comment policy, and the audit's top 20 files trimmed to it
   (#505).** AGENTS.md now says what a comment is for — the present: why this
   shape, what must stay true, what breaks if it changes, where a security or

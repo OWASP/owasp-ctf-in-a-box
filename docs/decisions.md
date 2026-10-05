@@ -81,6 +81,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 63 — Service hops inside the stack are plain HTTP; the network is the boundary](#adr-63-service-hops-inside-the-stack-are-plain-http-the-network-is-the-boundary)
 - [ADR 64 — sync's cursor lives in Redis, and an unreadable cursor holds the poller](#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)
 - [ADR 65 — An event adds its own logo and favicon; the OWASP mark stays](#adr-65-an-event-adds-its-own-logo-and-favicon-the-owasp-mark-stays)
+- [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -3495,7 +3496,9 @@ at the store boundary needs no library and cannot regress.
 
 **Status.** Accepted; amended by
 [ADR 62](#adr-62-the-landing-pages-footer-does-not-repeat-the-sponsor-credit)
-(the landing page's footer leaves its credit out).
+(the landing page's footer leaves its credit out) and by
+[ADR 66](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
+(the regular leaderboard is a fifth surface).
 
 ## ADR 58. Demo seed/clear are admin-gated dangerous settings, not a `DEMO_MODE` env var
 
@@ -3873,3 +3876,45 @@ images are identity: a master reset keeps them and the event archive carries
 them. Two more routes join the public surface (docs/reviewing.md invariant
 11), both public before launch because every page shows them. A social share
 card and a header mark are not covered; each would be its own decision.
+
+## ADR 66. The regular leaderboard shows the event logo and the sponsor strip
+
+**Context.** Issue #571. [ADR 57](#adr-57-sponsors-are-recognition-only-appear-in-four-fixed-surfaces-and-the-disclaimer-is-not-configurable)
+fixed the sponsor surfaces at four, and the leaderboard carried its identity
+only on the projector view (`?display=1`). But the regular leaderboard is the
+page contestants keep open during an event, and the one most often put on a
+screen that is not running display mode. It showed neither the event logo
+nor a sponsor credit near the top; sponsors reached it only through the
+footer's text line.
+
+**Decision.** The regular leaderboard shows the uploaded event logo beside
+its title and the landing page's `SponsorStrip` under its header, above the
+board. The strip is reused unchanged: same order, same organizer
+`sponsorLogoSize` setting, nothing when the list is empty, grayscale credit
+row rather than an ad rail. With no uploaded logo the header shows the
+default OWASP mark, the same fallback as the landing page's hero, so the
+title never stands without a mark. The logo hides itself if it fails to load, as on
+the projector. Both reads fail open, so a Redis blip costs the decoration and
+never the standings. This makes it a fifth sponsor surface; ADR 57's other
+rules (recognition only, logos from our own origin, raster only, the fixed
+disclaimer) are unchanged.
+
+The footer's text credit steps aside on this page, as
+[ADR 62](#adr-62-the-landing-pages-footer-does-not-repeat-the-sponsor-credit)
+asks of a page with its own sponsor block. The landing page does that with
+`creditSponsors: false`, but the leaderboard's footer is rendered by the
+shared `(site)` layout, which cannot tell which page it wraps. So the credit
+line decides for itself: it sits inside `HideOnPaths`, a client component
+that reads `usePathname` (resolved during server rendering, so nothing
+flashes) and renders nothing on the routes in
+`PAGES_WITH_OWN_SPONSOR_CREDIT` (`/leaderboard`, exact match). Every other
+route, and a route that cannot be read, keeps the credit.
+
+**Consequences.** Sponsors and the event appear on the page that is on screen
+most of an event, credited once. Each leaderboard render reads the sponsor
+list twice (the strip, and the footer, which still reads before its line
+steps aside; `listSponsors` is not cached) and the event image metadata once
+(cached per request). Both are small metadata reads; the logo bytes are
+fetched by the browser from their own routes. Another page that adds its own
+sponsor block joins `PAGES_WITH_OWN_SPONSOR_CREDIT`. Other pages are
+unchanged; a further surface is still its own decision.

@@ -41,6 +41,8 @@ concurrency:
 
 jobs:
   stock:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     # Real cost here is image pulls, not compile time: Security Shepherd's own
     # Maven build measures ~35s and its whole gate ~86s. The slow, rate-limit-

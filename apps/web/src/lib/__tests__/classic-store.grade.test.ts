@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
   upstashPipeline: vi.fn<(commands: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
   getAdminSettings: vi.fn(),
-  getViewerTeam: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -26,14 +25,11 @@ vi.mock("@/lib/admin-store", async (orig) => ({
   ...(await orig<typeof import("@/lib/admin-store")>()),
   getAdminSettings: mocks.getAdminSettings,
 }));
-// The roster read behind `teamLogins` (team-members.ts) is mocked at its
-// source, so the real reader still runs: only the Redis-backed lookup is
-// faked. Every test defaults to a team of ONE (no team) unless it says so;
-// a test that needs a teammate sets `members` itself.
-vi.mock("@/lib/team-store", async (orig) => ({
-  ...(await orig<typeof import("@/lib/team-store")>()),
-  getViewerTeam: mocks.getViewerTeam,
-}));
+// NOTE: `@/lib/team-store` is deliberately NOT mocked. The roster behind the
+// grading read (`strictTeamLogins`, team-members.ts) runs for REAL here and
+// is answered through the pipeline mock below, so an Upstash `{ error }`
+// reply and a transport failure exercise the reader's own fail-closed
+// handling rather than a stubbed rejection that bypasses it (#576).
 
 import { CLASSIC_COOLDOWN_SEC, submitFlag, upsertChallenge } from "@/lib/classic-store";
 
@@ -70,6 +66,41 @@ function evalReturns(verdict: unknown[]) {
   mocks.upstashEval.mockResolvedValueOnce(verdict);
 }
 
+/** What the STRICT roster read (#576) should hit — reset before every test
+ *  to a successful read that finds no team (the team of one). A test sets
+ *  `slug`/`members` for the roster it wants, or `failure` for the failure it
+ *  wants the read to take. */
+const teamRead = {
+  slug: null as string | null,
+  members: [] as string[],
+  failure: null as null | "down" | "slug-error" | "members-error",
+};
+
+/** The pipeline's standing reply: the team fixture for the strict roster
+ *  read's two commands (`HGET ctf:user:<login> team`, then `SMEMBERS
+ *  ctf:team:<slug>:members`), and null for everything else — nothing
+ *  attempted, no story — which `gateReads` and the story replies then
+ *  override per test. `failure: "down"` rejects the whole call like a
+ *  transport failure; the other two answer that command with an Upstash
+ *  `{ error }` reply. */
+function redisReply(commands: (string | number)[][]) {
+  return commands.map((cmd) => {
+    const [op, key, field] = cmd as [string, string, string | undefined];
+    if (op === "HGET" && field === "team" && key.startsWith("ctf:user:")) {
+      if (teamRead.failure === "down") throw new Error("upstash down");
+      if (teamRead.failure === "slug-error") return { error: "NOAUTH invalid password" };
+      return { result: teamRead.slug };
+    }
+    if (op === "SMEMBERS" && key.startsWith("ctf:team:") && key.endsWith(":members")) {
+      if (teamRead.failure === "members-error") {
+        return { error: "WRONGTYPE Operation against a key holding the wrong kind of value" };
+      }
+      return { result: teamRead.members };
+    }
+    return { result: null };
+  });
+}
+
 const evalCalls = () => mocks.upstashEval.mock.calls;
 /** The most recent grading call, destructured. */
 const lastEval = () => {
@@ -82,11 +113,12 @@ beforeEach(() => {
   mocks.upstashPipeline.mockReset();
   mocks.getAdminSettings.mockReset();
   mocks.getAdminSettings.mockResolvedValue(settings());
-  mocks.getViewerTeam.mockReset();
   // No team: the viewer is a team of one, so no teammate keys are appended.
-  mocks.getViewerTeam.mockResolvedValue(null);
-  // Default gate reads: nothing solved, nothing attempted — the gate allows.
-  mocks.upstashPipeline.mockResolvedValue([{ result: null }, { result: null }]);
+  teamRead.slug = null;
+  teamRead.members = [];
+  teamRead.failure = null;
+  // Default gate/story reads: nothing solved, nothing attempted, no stories.
+  mocks.upstashPipeline.mockImplementation(async (commands) => redisReply(commands));
   mocks.upstashEval.mockResolvedValue(["incorrect", "1"]);
 });
 
@@ -237,6 +269,28 @@ describe("the gate (checked before the grading script ever runs)", () => {
     mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: null }));
     expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "paused" });
     expect(evalCalls()).toHaveLength(0);
+  });
+
+  // #567: after the scheduled END the refusal is its own reason, so the
+  // contestant reads "the event has ended" rather than "paused, try again
+  // later". A freeze toggled on top of a passed end is still the end.
+  it("refuses with `ended` once the scheduled scoring end has passed — distinct from a pause", async () => {
+    mocks.getAdminSettings.mockResolvedValue(
+      settings({
+        scoringStartsAt: new Date(Date.now() - 7_200_000).toISOString(),
+        scoringEndsAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "ended" });
+    expect(evalCalls()).toHaveLength(0);
+    mocks.getAdminSettings.mockResolvedValue(
+      settings({
+        paused: true,
+        scoringStartsAt: new Date(Date.now() - 7_200_000).toISOString(),
+        scoringEndsAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "ended" });
   });
 
   it("refuses a challenge this login already solved, without spending an attempt", async () => {
@@ -567,7 +621,8 @@ describe("story lock (#463)", () => {
   const storiesReply = (steps: string[]) => [{ result: JSON.stringify([{ id: "op", title: "Op", intro: "", steps }]) }];
 
   it("hands the script the step's prerequisite and every teammate's solves key", async () => {
-    mocks.getViewerTeam.mockResolvedValue({ slug: "t", name: "T", members: ["alice", "bob"] });
+    teamRead.slug = "t";
+    teamRead.members = ["alice", "bob"];
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["recon", "chal-1"]));
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["recon", "chal-1"] }]); // existing ids
@@ -636,7 +691,8 @@ describe("story lock (#463)", () => {
 
 describe("team-shared cooldown (#494)", () => {
   it("hands every CURRENT teammate's attempts hash to the script as KEYS[9..8+n], the viewer excluded", async () => {
-    mocks.getViewerTeam.mockResolvedValue({ slug: "t", name: "T", members: ["alice", "bob", "carol"] });
+    teamRead.slug = "t";
+    teamRead.members = ["alice", "bob", "carol"];
     await submitFlag("alice", "chal-1", "CTF{x}");
     const { keys, argv } = lastEval();
     expect(keys.slice(0, 8)).toEqual([
@@ -702,9 +758,38 @@ describe("team-shared cooldown (#494)", () => {
   it("refuses closed ('unavailable') when the team lookup fails, without grading", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     gateReads(null, null);
-    mocks.getViewerTeam.mockRejectedValueOnce(new Error("upstash down"));
+    // Transport failure: the membership read's own pipeline call rejects.
+    teamRead.failure = "down";
     // Downgrading to "team of one" here would hand this login its own
     // private cooldown — the exact bug the sum exists to close.
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "unavailable" });
+    expect(evalCalls()).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError.mock.calls[0][0]).toContain("story/team lookup failed");
+    consoleError.mockRestore();
+  });
+
+  it("refuses closed when the membership read answers with an Upstash error reply, without grading", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    gateReads(null, null);
+    // An `{ error }` reply is a FAILED read, never "no team": the lenient
+    // reader would hand this login its own private cooldown right here (#576).
+    teamRead.failure = "slug-error";
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "unavailable" });
+    expect(evalCalls()).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError.mock.calls[0][0]).toContain("story/team lookup failed");
+    consoleError.mockRestore();
+  });
+
+  it("refuses closed when SMEMBERS answers with an Upstash error reply, without grading", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    gateReads(null, null);
+    // The slug read SUCCEEDS here, so only the roster read can refuse — an
+    // empty roster in its place would let a teammate's fresh attempt go
+    // uncounted and grade a submission the team is still cooling down (#576).
+    teamRead.slug = "t";
+    teamRead.failure = "members-error";
     expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "unavailable" });
     expect(evalCalls()).toHaveLength(0);
     expect(consoleError).toHaveBeenCalledTimes(1);
@@ -715,13 +800,15 @@ describe("team-shared cooldown (#494)", () => {
   it("never pays for the roster when the gate has already refused the submission", async () => {
     mocks.getAdminSettings.mockResolvedValue(settings({ paused: true }));
     expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "paused" });
-    expect(mocks.getViewerTeam).not.toHaveBeenCalled();
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
     expect(evalCalls()).toHaveLength(0);
 
     mocks.getAdminSettings.mockResolvedValue(settings());
     gateReads(solveRow(50, "2026-08-19T10:00:00.000Z"), null);
     expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "solved" });
-    expect(mocks.getViewerTeam).not.toHaveBeenCalled();
+    // The gate alone was read: a refused submission never pays for stories,
+    // challenge ids, or the roster behind them.
+    expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
     expect(evalCalls()).toHaveLength(0);
   });
 });

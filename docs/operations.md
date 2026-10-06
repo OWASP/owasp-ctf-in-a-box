@@ -492,7 +492,21 @@ The panel offers:
     the charge; a solve landing in the same instant shows on the refresh
     that follows). A free hint (cost `0`) skips the check.
 
-  All three fail **closed**: if the solve or balance lookup errors, the hint
+  - **Scoring window** (no knob — it follows **Freeze scoring** and the
+    **Scoring closes** schedule) — a hint purchase lowers the buyer's net,
+    so it is a scoring action and closes with scoring (#566): while scoring
+    is frozen the reveal is refused with "Scoring is paused right now —
+    hints can't be bought until it resumes", and once the scheduled end
+    has passed with "Scoring has closed — the event has ended, so hints
+    can no longer be bought". Final standings cannot move after the end.
+    Re-viewing a hint already bought stays free and allowed (nothing to
+    charge), and an admin preview is exempt. Checked right after "hints
+    on", before the time, progress and affordability gates — and re-checked
+    inside the atomic charge script against Redis's own clock and the live
+    freeze flag, so a reveal that passed the gate a moment before the end
+    still cannot charge after it.
+
+  All of them fail **closed**: if the solve or balance lookup errors, the hint
   is refused rather than handed out unverified. A refused purchase never
   reads the hint text either: the charge script checks that the hint
   exists by field, runs every check that can refuse, and only then reads
@@ -937,10 +951,13 @@ short blurb. Sponsors get no sponsored challenges, no prizes wired into
 scoring, no contestant data, and no lead capture — anything past that is out
 of scope for this tab entirely. It is a platform feature, not a module: there
 is no toggle to turn it off, and it renders on the landing page, the footer,
-`/sponsors`, and the leaderboard's projector display (`?display=1`) if and
-only if at least one sponsor is configured. The footer's credit is left out
-on the landing page, where the strip above the fold already names them. An event with no sponsors ships
-zero sponsor pixels anywhere.
+`/sponsors`, the leaderboard (a strip under its header, ADR 66), and the
+leaderboard's projector display (`?display=1`) if and only if at least one
+sponsor is configured. The footer's credit is left out on the landing page,
+where the strip above the fold already names them. An event with no sponsors
+ships zero sponsor pixels anywhere. The leaderboard also shows the event logo
+beside its title when one is uploaded in `/admin` → Event, and the default
+OWASP mark otherwise, as the landing page does.
 
 **The tab is the list.** Each sponsor is a card showing its logo as it will
 actually appear — on the site's own dark background, untreated — next to its
@@ -970,9 +987,10 @@ the list snaps back to the order the box actually holds and says why — so a
 move that looks like it stuck, stuck.
 
 **Sponsor logo size.** One control at the top of the tab — Small, Medium
-(the default) or Large — sizes sponsor logos on the two surfaces where they
+(the default) or Large — sizes sponsor logos on the three surfaces where they
 are a credit row rather than the content: the landing page's strip below the
-hero, and the leaderboard's projector display (`?display=1`). Each surface
+hero, the same strip under the leaderboard's header, and the leaderboard's
+projector display (`?display=1`). Each surface
 scales it for its own viewing distance, so Large on a projector is much
 bigger than Large on the landing page. The `/sponsors` page is deliberately
 not affected: it is the page that exists to show sponsors, and it keeps its
@@ -1902,10 +1920,11 @@ carries:
     token, rate limit, team and schedule. Before launch the test runs as an
     admin preview, which skips the team and schedule gates, so the verdict
     vouches for signature, token and rate limit only.
-  - **`paused`**, **`solved`**, **`no-team`** — the signature and token
-    were fine and a gate refused the award, relayed as-is. `solved`: the
-    organizer's own login already holds this challenge. After launch only:
-    `paused` means scoring is frozen or outside its scheduled window, and
+  - **`paused`**, **`ended`**, **`solved`**, **`no-team`** — the signature
+    and token were fine and a gate refused the award, relayed as-is.
+    `solved`: the organizer's own login already holds this challenge. After
+    launch only: `paused` means scoring is frozen or before its scheduled
+    start, `ended` that the scheduled scoring end has passed (#567), and
     `no-team` means the organizer is on no team (the event route refuses a
     teamless login before the award, organizers included). Before launch a
     preview skips both of those gates. None of these is a fault on the

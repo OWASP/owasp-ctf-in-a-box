@@ -1,16 +1,17 @@
 // The sponsors guardrail (issue #405): sponsors must appear ONLY on their
-// designated surfaces — the landing-page strip, the footer's text-only
-// credit line, the /sponsors page, and (per this session's extension to the
-// issue) the leaderboard's projector display (`?display=1`) — and nowhere
-// else. A full multi-route render (header, hero, /challenges, /flags,
+// designated surfaces — the landing-page strip (also rendered under the
+// regular leaderboard's header, ADR 66, and pinned there by
+// leaderboard-branding.test.tsx), the footer's text-only credit line, the
+// /sponsors page, and the leaderboard's projector display (`?display=1`) —
+// and nowhere else. A full multi-route render (header, hero, /challenges, /flags,
 // /quiz, /ai, /rules, /how-to-play) would need each of those routes' own
 // heavy per-page mock rig duplicated into this one file; instead this file
 // pins the boundary at the COMPONENT layer, which is where every one of
 // those pages would actually receive sponsor data from if it ever did.
-// `leaderboard/page.tsx` itself only calls `listSponsors()` inside its
-// `if (wantsDisplay)` branch — a plain code-structure guarantee that the
-// non-display leaderboard render (the one every other page's <Leaderboard/>
-// overlay shares) never even reads sponsor data, let alone renders it.
+// `leaderboard/page.tsx` reads sponsors in two places only: `listSponsors()`
+// inside its `if (wantsDisplay)` branch, and `SponsorStrip()` for the regular
+// view's header. The <Leaderboard/> board itself (the component other pages'
+// overlays share) never receives sponsor data.
 //
 // @testing-library/react is not a dependency here — see site-header.test.tsx
 // for the same constraint. A static render via renderToStaticMarkup is

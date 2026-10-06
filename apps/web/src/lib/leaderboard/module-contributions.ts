@@ -33,10 +33,8 @@ import type { ModuleId } from "@/lib/modules";
  * `app/(site)/leaderboard/page.tsx`): every module block shows its GROSS
  * contribution, and the hint penalty nets the row's TOTAL exactly once, at
  * the end — the −N hints marker beside the header is what reconciles the
- * blocks against it. (Penalties used to run first, netting scorer points
- * alone, which made hints free for any row whose points arrive here — a
- * classic-only contestant, an upstash-path team.) This still re-ranks
- * UNCONDITIONALLY; withHintPenalties re-ranks again after deducting.
+ * blocks against it. This re-ranks UNCONDITIONALLY; withHintPenalties
+ * re-ranks again after deducting.
  *
  * Individuals read each app-side module's aggregate counters (`getQuizTotals`
  * / `getClassicTotals` / `getAiTotals` — two `HGETALL`s each, cost independent
@@ -52,7 +50,7 @@ import type { ModuleId } from "@/lib/modules";
  * run in `withTeamQuizPoints` / `withTeamClassicPoints` / `withTeamAiPoints`
  * below, which `withTeamStandings` calls once over every team on the board —
  * this function itself stamps only the secure-development chip on a team, so
- * that each module reaches each team's total exactly once (issue #520).
+ * that each module reaches each team's total exactly once.
  *
  * The board's login set is the UNION of the source's logins and the logins
  * holding module points, so a contestant with quiz, classic or ai points but
@@ -126,7 +124,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     // pair, which this mirrors: `getClassicTotals` carries the POINTS and the
     // ranking they drive, `listChallenges` only the "solved / total"
     // DENOMINATOR. Never collapse these two into one shared try/Promise.all —
-    // that is the shape that once deleted everyone's points on a blip in a
+    // that is the shape that deletes everyone's points on a blip in a
     // purely cosmetic read.
     const [totalsResult, challengesResult] = await classicReads;
     if (totalsResult.status === "fulfilled") {
@@ -200,11 +198,8 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   // app-side modules (quiz, classic, ai) are attributed to teams in exactly
   // one place, `withTeamStandings`, which runs next and applies
   // `withTeamQuizPoints` / `withTeamClassicPoints` / `withTeamAiPoints` over
-  // the UNION of the source's teams and the team store's (issue #413), on
-  // rosters merged from both records — which this stage does not have. This
-  // stage used to ADD them to the source's teams as well, so every scorer
-  // team's total carried its quiz, classic and ai points twice while the
-  // chips (each pass overwrote the same key) looked right (issue #520).
+  // the UNION of the source's teams and the team store's, on rosters merged
+  // from both records — which this stage does not have.
   let teams = data.teams;
   // secure-development is ATTRIBUTED for teams exactly as attributeEntry does
   // for entries: at this point team.points holds only the scorer's GROSS
@@ -268,7 +263,7 @@ type Overlay = {
 
 /**
  * The team half of this overlay — the ONLY place a team's quiz points are
- * added (issue #520). `withTeamStandings` calls it once over every team on the
+ * added. `withTeamStandings` calls it once over every team on the
  * board: the source's own (scorer/lambda) teams, on rosters merged with the
  * team store's, and the membership-only rows it synthesises on a source with
  * no team concept of its own (upstash, and the empty source a quiz-only event
@@ -285,8 +280,8 @@ type Overlay = {
  * `withModuleContributions → withTeamStandings → withHintPenalties` order is
  * load-bearing (see the page's pipeline comment), and the full team set does
  * not exist until the second of those runs. `withModuleContributions` must
- * NOT also add these points to the source's teams — it once did, and every
- * scorer team's total counted them twice.
+ * NOT also add these points to the source's teams: every scorer team's
+ * total would count them twice.
  *
  * Degrades like every other overlay: a failed totals read returns the teams
  * untouched (their quiz points are missing, never wrong), and a failed
@@ -354,9 +349,8 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
       challengesResult.status === "fulfilled" ? challengesResult.value.length : 0,
       // The live ids, like the quiz and ai counterparts: the chip's
       // denominator is the catalogue UNIONED with solved-then-deleted
-      // challenges (#350). This path used to leave them out, and since it ran
-      // last its chip won: a team's classic denominator read "4 / 6" beside
-      // the profile's "4 / 7".
+      // challenges. Omitting them shows a team's classic denominator as
+      // "4 / 6" beside the profile's "4 / 7".
       challengesResult.status === "fulfilled" ? new Set(challengesResult.value.map((c) => c.id)) : undefined,
     ),
   );
@@ -433,13 +427,13 @@ function secureDevelopmentModule(
  *
  *  `itemIds` arrives only on the TEAM path, whose fold already dedupes members'
  *  solves by id — so the board can show the same figure the profile does
- *  without a single extra read (#348). The individual path reads running
+ *  without a single extra read. The individual path reads running
  *  aggregate counters with no memory of which items produced them, so it
- *  clamps, exactly as every row did before.
+ *  clamps.
  *
  *  The clamp is still applied over the union: a catalogue read that failed
- *  leaves `liveIds` empty and the count at 0, and "1 / 0 flags" is the older
- *  bug this function also has to keep fixed. */
+ *  leaves `liveIds` empty and the count at 0, so "1 / 0 flags" must never
+ *  render. */
 function denominator(
   itemIds: readonly string[] | undefined,
   liveIds: ReadonlySet<string> | undefined,
@@ -651,9 +645,8 @@ type TeamContribution = { points: number; completed: number; progress: ModulePro
 /** A whole board's worth of one module's contributions, WITH the module id
  *  they belong under. The id travels with the data rather than as a second
  *  argument to `attributeTeams`, so it is not expressible to stamp one
- *  module's key over another module's numbers — a mistake the previous
- *  `(teams, moduleId, contributions)` signature type-checked happily. Only
- *  the builders below construct this, and each hard-codes its own id. */
+ *  module's key over another module's numbers. Only the builders below
+ *  construct this, and each hard-codes its own id. */
 type TeamContributions = { moduleId: ModuleId; contributions: readonly TeamContribution[] };
 
 function quizContributions(

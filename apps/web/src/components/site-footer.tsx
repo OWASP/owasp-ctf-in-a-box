@@ -15,8 +15,15 @@
 // reach for the static list here.
 
 import Link from "next/link";
+import HideOnPaths from "@/components/hide-on-paths";
 import { getSite, legalLinks, type NavLink } from "@/lib/site";
 import { listSponsors } from "@/lib/sponsors-store";
+
+// Routes in the shared (site) layout that credit the sponsors themselves, so
+// the footer's text line steps aside there (ADR 66): the regular leaderboard
+// carries the sponsor strip under its header. The landing page is not listed,
+// because it renders its own footer with `creditSponsors: false` instead.
+const PAGES_WITH_OWN_SPONSOR_CREDIT = ["/leaderboard"] as const;
 
 // Layout (#474): a main block plus ONE bottom bar, groups separated by
 // whitespace rather than dividers. It used to stack four rows, each drawing its
@@ -180,6 +187,7 @@ export default async function SiteFooter({
               shared), so a logo image here would cost every page load a fetch
               it doesn't need; a name and a link cost nothing extra. */}
           {credited.length > 0 && (
+            <HideOnPaths paths={PAGES_WITH_OWN_SPONSOR_CREDIT}>
             <p className="md:text-right">
               Sponsored by{" "}
               {credited.map((s, i) => (
@@ -200,6 +208,7 @@ export default async function SiteFooter({
                 About sponsors
               </Link>
             </p>
+            </HideOnPaths>
           )}
         </div>
       </div>

@@ -10,6 +10,67 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Added: the event logo and the sponsor strip on the regular leaderboard
+  (#571, ADR 66).** The leaderboard is the page an event keeps on screen, and
+  it now carries the event's identity there too, not only on the projector
+  view: the uploaded event logo sits beside the "Leaderboard" title (hidden
+  if it fails to load; the default OWASP mark when none is uploaded, as on the
+  landing page), and the landing page's sponsor strip runs under the
+  header, above the board — same order, same `/admin` logo-size setting,
+  nothing when there are no sponsors. Both reads fail open, so a Redis blip
+  costs the decoration, never the standings. The footer's text sponsor line
+  steps aside on this page so sponsors are credited once, and a wide logo
+  wraps above the title on a phone. `PageHeader` gains an optional `logo`
+  slot; every other page renders exactly as before.
+- **Changed: a comment policy, and the audit's top 20 files trimmed to it
+  (#505).** AGENTS.md now says what a comment is for — the present: why this
+  shape, what must stay true, what breaks if it changes, where a security or
+  fail-closed boundary sits — and what it is not: **history** ("previously",
+  "used to", "renamed from", "no longer", a bare `(issue #N)`), which belongs
+  to the commit that made the change and, once it is a decision, to an ADR in
+  `docs/decisions.md`; a **change restatement** narrating a diff the reader
+  can see; and **narration** of what the next line plainly does. Directive
+  comments (`// eslint-disable…`, `# shellcheck disable…`, `@ts-expect-error`,
+  shebangs) are not comments and are never deleted. The pre-v0.7.0 audit's
+  top 20 files by comment count were walked to that rule — offending comments
+  removed or rewritten, every rationale, invariant, fail direction, key
+  layout and security boundary left standing — and
+  `scripts/check-comment-policy.mjs` (run by `bats scripts/test/`) holds them
+  there: it fails on a history, restatement or provenance comment in any of
+  those files, on the policy going missing from AGENTS.md, or on an audited
+  file dropping out of its manifest. No code changed with any of it.
+
+- **Fixed: a hint can no longer be bought while scoring is closed (#566).**
+  A paid reveal lowers the buyer's net, so it now closes with scoring the way
+  a flag or quiz submit does: while scoring is frozen the reveal is refused
+  with "Scoring is paused right now — hints can't be bought until it resumes",
+  and once the scheduled end has passed with "Scoring has closed — the event
+  has ended, so hints can no longer be bought" (`403`, from the same gate
+  the other refusals come from, before the time, progress and affordability
+  checks, and re-checked inside the atomic charge script against Redis's
+  own clock and the live freeze flag, so a reveal that passed the gate a
+  moment before the end cannot charge after it). Before, a contestant could
+  buy a hint after the event ended and
+  move the final standings. Re-viewing a hint already bought stays free, and
+  the admin preview is unaffected.
+- **Fixed: after the scheduled end, a refused submission says the event has
+  ended instead of "Scoring is paused right now. Try again later" (#567).**
+  The classic, quiz and AI gates now answer `ended` (not `paused`) once
+  `Scoring closes` has passed — a freeze toggled on after the close still
+  reads as the end — and both refusal messages say "Scoring has closed — the
+  event has ended." The external AI site receives `403 {"error": "ended"}`
+  for the same case (see docs/ai-module.md's error table); `paused` keeps
+  its meaning for the manual freeze, a start still ahead, and not launched.
+- **Fixed: the paid-hint "−N pts spent · M pts left" acknowledgement stays on
+  the page after the reveal's refresh (#560).** A successful reveal calls
+  `router.refresh()`, and both challenge pages then rendered the now-owned
+  hint as a separate server-side `<p>` — an element swap that unmounted the
+  reveal control and destroyed the acknowledgement it held, so the ack
+  vanished in under a second while the hint text stayed. The pages now pass
+  the owned text into the same control as a prop, which renders it both
+  before and after the refresh. An unowned viewer still never receives the
+  text, and a hint loaded already-owned shows no acknowledgement (nothing
+  was charged on that page load).
 - **Fixed: the quiz attempt cap and the classic flag cooldown are enforced
   across the whole team, not just the login that happened to submit (#494).**
   Both modules score a team as the union of its members' rows, but the

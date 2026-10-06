@@ -64,6 +64,10 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
    *  another test's roster. */
   const mateKey = (mate: string) => `${K.attempts}:${mate}`;
 
+  /** Runs one GRADE_SCRIPT submission for this test: the seven fixed keys,
+   *  then `mates`' attempts hashes as KEYS[8..], with `login` the submitter
+   *  (defaults to this test's run-unique id). `dry` passes the probe flag;
+   *  `nowMs` pins the clock the script grades against. */
   async function answer(
     id: string,
     submitted: string,

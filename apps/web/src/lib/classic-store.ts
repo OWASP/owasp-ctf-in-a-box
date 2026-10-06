@@ -14,10 +14,11 @@ import type { BundleAttachment } from "@/lib/classic-io";
 // module, so the value lives in the dependency-free defaults file.
 export { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
 import { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
-import { effectivePaused, getAdminSettings } from "@/lib/admin-store";
+import { getAdminSettings } from "@/lib/admin-store";
+import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
-import { teamLogins } from "@/lib/team-members";
+import { strictTeamLogins } from "@/lib/team-members";
 import { CLASSIC_BUNDLE_VERSION, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
@@ -78,10 +79,10 @@ import {
  *                                 rewrites history.
  *   ctf:classic:attempts:<login> hash, id -> JSON {attempts, firstAt, lastAt, lastAtMs}
  *        firstAt is the FIRST submission's time and is carried forward across
- *        rewrites; absent on rows written before it existed (issue #169).
+ *        rewrites; absent on rows written before it existed.
  *                                 — every submission, right or wrong; the
  *                                 cooldown reads every CURRENT teammate's
- *                                 copy of this (#494), taking the latest, so
+ *                                 copy of this, taking the latest, so
  *                                 a team shares one cooldown per challenge
  *                                 while each row stays per login.
  *                                 `lastAtMs` (a plain epoch-ms mirror of
@@ -91,8 +92,8 @@ import {
  *                                 readers outside this file should use `lastAt`.
  *   ctf:classic:points           hash, login -> running points total
  *   ctf:classic:solved           hash, login -> running solve count
- *   ctf:classic:lastAt           hash, login -> ISO time of the latest award
- *                                 (#522), the leaderboard's tiebreak
+ *   ctf:classic:lastAt           hash, login -> ISO time of the latest award,
+ *                                 the leaderboard's tiebreak
  *   ctf:classic:solvecount       hash, challenge id -> DISTINCT solver count
  *
  * TWO flag hashes, on purpose. `flagnorm` is what grading compares; `flag` is
@@ -175,7 +176,7 @@ export type Challenge = {
   description: string;
   points: number;
   order: number;
-  /** Compare this challenge's flag with case intact (issue #193). Absent means
+  /** Compare this challenge's flag with case intact. Absent means
    *  false — the forgiving default every existing challenge already has.
    *
    *  PUBLIC on purpose, unlike the flag itself. The board has to tell a
@@ -232,7 +233,7 @@ function parseChallenge(raw: string): Challenge | null {
       order: c.order,
       // Carried back only when stored true, mirroring how it is written — an
       // absent field must stay absent, not become `false`, so a record that
-      // predates #193 parses to exactly what it did before.
+      // predates the field parses to exactly what it did before.
       //
       // This field is easy to leave out here and hard to notice missing:
       // grading reads the stored JSON in Lua and never sees this object, so
@@ -372,7 +373,7 @@ export async function setCategories(names: string[]): Promise<string[]> {
 export type CategoryRename = { categories: string[]; moved: number };
 
 /**
- * Renames one category and carries every challenge in it across (#304).
+ * Renames one category and carries every challenge in it across.
  *
  * `setCategories` cannot express this. It replaces the whole array, so a
  * renamed entry is indistinguishable from "one removed, one added" — which is
@@ -391,7 +392,7 @@ export type CategoryRename = { categories: string[]; moved: number };
  *     already-moved challenge is a no-op) and completes. **Idempotent.**
  *   - List first — a failure would leave the list naming `to` while challenges
  *     still say `from`, and a retry of the same rename would refuse, because
- *     `from` is no longer there to rename. The organizer would have to work
+ *     `from` is not there to rename. The organizer would have to work
  *     out the inverse rename themselves.
  *
  * Either partial state still RENDERS: `bucketRows` (components/admin) appends
@@ -435,7 +436,7 @@ export async function renameCategory(from: string, to: string): Promise<Category
   // VALUE), so a failed HGETALL comes back as an empty list — indistinguishable
   // from "no challenge uses this category". Renaming on top of that would
   // rewrite the list while moving nothing, orphaning every challenge in the
-  // category onto a name that no longer exists AND leaving a retry unable to
+  // category onto a name that does not exist AND leaving a retry unable to
   // find the source. Fail closed instead.
   const [challengesRes] = await upstashPipeline([["HGETALL", CHALLENGES_KEY]]);
   if (challengesRes.error) throw new Error(`Upstash HGETALL failed: ${challengesRes.error}`);
@@ -531,7 +532,7 @@ export type ImportSummary = { created: number; updated: number; categories: numb
 
 type AttachmentAddition = { itemId: string; meta: BundleAttachment };
 
-/** What an import adds (#186): a link the challenge lacks (same name and
+/** What an import adds: a link the challenge lacks (same name and
  *  URL = already there), an upload whose sha256 it lacks (created as
  *  "missing" until its bytes arrive — from the event archive, or a
  *  re-upload). THROWS `ClassicValidationError` when the challenge's stored
@@ -613,7 +614,7 @@ async function applyBundleAttachments(plan: readonly AttachmentAddition[]): Prom
  *  before its own write. */
 export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary> {
   // A v2 bundle's stories merge into the stored list, so that list is read
-  // with the rest; a v1 bundle (no `stories`) never touches it (#463).
+  // with the rest; a v1 bundle (no `stories`) never touches it.
   const [idsRes, categoriesRes, storiesRes] = await upstashPipeline([
     ["HKEYS", CHALLENGES_KEY],
     ["GET", CATEGORIES_KEY],
@@ -625,7 +626,7 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
   // write pipeline would replace the box's whole category list with only the
   // bundle's — and re-spell every stored challenge's category to the bundle's
   // casing, hiding them from the board's exact-match filter. A failed HKEYS
-  // would report every row `created`. Same guard as ai-store's (#260, #261).
+  // would report every row `created`. Same guard as ai-store's.
   const failedRead = [idsRes, categoriesRes, storiesRes].find((r) => r?.error);
   if (failedRead) throw new Error(`Upstash read failed before import: ${failedRead.error}`);
 
@@ -701,7 +702,7 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
       points: c.points,
       order: c.order,
       // Only written when true, so a bundle without the field produces a
-      // record byte-identical to what it produced before #193 — the export /
+      // record byte-identical to one predating the field — the export /
       // import round-trip test compares stored JSON, and an always-present
       // `"caseSensitive":false` would break it while changing nothing.
       ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
@@ -710,7 +711,7 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
     commands.push(["HSET", FLAG_KEY, c.id, c.flag.trim()]);
     // Hint written-or-cleared, same as upsertChallenge: re-importing a bundle
     // without the field removes a hint the earlier import created, so the
-    // round-trip stays faithful in both directions (#190).
+    // round-trip stays faithful in both directions.
     const hint = typeof c.hint === "string" && c.hint.trim() ? c.hint.trim() : null;
     commands.push(hint ? ["HSET", HINTS_KEY, c.id, hint] : ["HDEL", HINTS_KEY, c.id]);
     // The comparison form follows the record that was just built, NOT the raw
@@ -721,7 +722,7 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
   commands.push(["SET", CATEGORIES_KEY, JSON.stringify(unioned)]);
   if (mergedStories) commands.push(["SET", CLASSIC_STORIES_KEY, JSON.stringify(mergedStories)]);
 
-  // #186: work out each challenge's attachment additions BEFORE any write,
+  // Work out each challenge's attachment additions BEFORE any write,
   // so a bundle that would push a challenge past the per-challenge cap
   // refuses whole, never after its challenges already landed.
   const attachmentPlan = await planBundleAttachments(bundle);
@@ -757,14 +758,14 @@ export async function exportBundle(): Promise<ClassicBundle> {
     order: challenge.order,
     flag,
     // Emitted only when true, so a board with no case-sensitive challenge
-    // exports byte-identically to how it did before #193 — an organizer
+    // exports byte-identically to one predating the field — an organizer
     // diffing two exports should see the change they made, not a field that
     // appeared on every row.
     ...(challenge.caseSensitive ? { caseSensitive: true as const } : {}),
     // Same only-when-set rule as caseSensitive: a hint-less board exports
-    // byte-identically to a pre-#190 one.
+    // byte-identically to one that predates hints.
     ...(hint ? { hint } : {}),
-    // #186: metadata only (the bytes ride the event archive), and only when
+    // Metadata only (the bytes ride the event archive), and only when
     // there is some — the same byte-identical rule as hint.
     ...(files.get(challenge.id)?.length ? { attachments: files.get(challenge.id)!.map(attachmentMeta) } : {}),
   }));
@@ -780,7 +781,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
 /** Removes a challenge and both of its flag rows together — nothing else.
  *
  *  Scope, stated plainly because it is easy to assume otherwise: this retires
- *  the challenge (contestants stop seeing it, and it can no longer be
+ *  the challenge (contestants stop seeing it, and it cannot be
  *  submitted against — SUBMIT_SCRIPT's step 1 returns `missing` without the
  *  `flagnorm` row), but it deliberately does NOT touch contestant history.
  *  `ctf:classic:solves:<login>` / `ctf:classic:attempts:<login>` rows for the
@@ -806,13 +807,13 @@ export async function deleteChallenge(id: string): Promise<void> {
   ]);
   const failed = results.find((r) => r.error);
   if (failed) throw new Error(`Upstash HDEL failed: ${failed.error}`);
-  // A deleted step leaves its story (#463): the story shrinks, and the next
+  // A deleted step leaves its story: the story shrinks, and the next
   // step's prerequisite becomes the one before it — solves are kept, as above.
   const stories = await listStories();
   if (stories.some((st) => st.steps.includes(id))) {
     await setStories(stories.map((st) => ({ ...st, steps: st.steps.filter((step) => step !== id) })));
   }
-  // Its files go with it (#186). The download route already 404s them once
+  // Its files go with it. The download route already 404s them once
   // the challenge is gone; this frees their bytes from the event cap.
   await deleteItemAttachments("classic", id);
 }
@@ -841,7 +842,7 @@ export async function clearChallenges(): Promise<void> {
   // Same discipline as deleteChallenge above: surface it instead.
   const failed = results.find((r) => r.error);
   if (failed) throw new Error(`Upstash DEL failed: ${failed.error}`);
-  // Attachments are classic content too (#186) — classic is their only
+  // Attachments are classic content too — classic is their only
   // adopter today, so a clean board clears every one.
   await clearAllAttachments();
 }
@@ -941,8 +942,7 @@ export async function getSolveCounts(): Promise<Map<string, number>> {
  *  item id — the aggregate per-login path has running counters with no memory
  *  of which items produced them. Where it is present a caller can union it
  *  with the live catalogue for a denominator that survives an organizer
- *  deleting a solved item (#348); where it is absent the caller clamps, which
- *  is what every row did before. */
+ *  deleting a solved item; where it is absent the caller clamps. */
 export type ClassicTotal = { points: number; solved: number; lastAt: string | null; itemIds?: string[] };
 
 /** Per-login classic totals for every login that has solved at least one
@@ -951,7 +951,7 @@ export type ClassicTotal = { points: number; solved: number; lastAt: string | nu
  *  SUBMIT_SCRIPT alongside the per-login solve row. The cost does not grow
  *  with the board.
  *
- *  `lastAt` is the login's latest award time (#522), the leaderboard's
+ *  `lastAt` is the login's latest award time, the leaderboard's
  *  "whoever got there first" tiebreak. It is null for a login that last
  *  scored before the time was recorded, and for everyone when that read
  *  fails (`readLastAt` fails open: the points stand). */
@@ -961,7 +961,7 @@ export async function getClassicTotals(): Promise<Map<string, ClassicTotal>> {
     ["HGETALL", SOLVED_KEY],
     ["HGETALL", LAST_AT_KEY],
   ]);
-  // An errored counter read is not "nobody has points" (#523): throw, so the
+  // An errored counter read is not "nobody has points": throw, so the
   // leaderboard's own handling applies (it logs and leaves the module off the
   // board) instead of every row silently losing these points.
   const failed = pointsRes.error ?? solvedRes.error;
@@ -1025,10 +1025,11 @@ type ResolvedAdminSettings = Awaited<ReturnType<typeof getAdminSettings>>;
 
 type ClassicGate =
   | { allowed: true }
-  | { allowed: false; reason: "paused" | "solved" | "cooldown" | "unavailable"; retryAt?: string };
+  | { allowed: false; reason: "paused" | "ended" | "solved" | "cooldown" | "unavailable"; retryAt?: string };
 
 /** The submission gate, checked in this order (each short-circuits the rest):
- *    1. scoring paused, or outside the scheduled scoring window
+ *    1. scoring paused, or outside the scheduled scoring window (`ended`
+ *       once the scheduled end has passed, #567)
  *    2. `login` has already solved this challenge
  *    3. `login` is still inside the cooldown since its last submission
  *
@@ -1053,7 +1054,7 @@ type ClassicGate =
  *  IMPORTANT: this is a cheap, NON-ATOMIC pre-check. It reads solves/attempts
  *  over its own separate round trip, so two concurrent submissions can both
  *  observe "not cooling" before either writes. It also reads only `login`'s
- *  own rows: the cooldown is the TEAM's to share (#494) and is counted solely
+ *  own rows: the cooldown is the TEAM's to share and is counted solely
  *  by SUBMIT_SCRIPT, so a teammate still inside a cooldown makes this
  *  pre-check say "allowed" and the script say "cooldown". SUBMIT_SCRIPT
  *  re-checks both the already-solved guard and the cooldown against state
@@ -1065,9 +1066,14 @@ async function evaluateGate(
   cooldownSec: number,
   dryRun = false,
 ): Promise<ClassicGate> {
-  // A dry run (#464 admin preview) happens exactly while scoring is closed —
+  // A dry run (admin preview) happens exactly while scoring is closed —
   // before launch — so the pause is what is being previewed, not a refusal.
-  if (!dryRun && settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
+  // `scoringClosure` (#567) is `effectivePaused` with the WHY kept: a passed
+  // scheduled end answers `ended`, every other closure `paused`.
+  if (!dryRun && settings) {
+    const closure = scoringClosure(Date.now(), settings.paused, settings.scoringStartsAt, settings.scoringEndsAt);
+    if (closure) return { allowed: false, reason: closure };
+  }
 
   let solve: Solve | null;
   let attempt: Attempt | null;
@@ -1107,7 +1113,7 @@ async function evaluateGate(
 // pre-check reads over its own separate round trip, so two concurrent
 // submissions can both observe "not cooling" before either writes. It also
 // reads only the submitting login's own row, while the cooldown is the TEAM's
-// to share (#494): only this script counts the whole roster. Redis runs
+// to share: only this script counts the whole roster. Redis runs
 // one script to completion before starting the next, so each submission here
 // sees every effect of every submission that finished before it.
 //
@@ -1137,7 +1143,7 @@ async function evaluateGate(
 //      challenge nobody can solve.
 //   6. Equal: read points, write the solve row, bump the three counters.
 //
-// DRY RUN (ARGV[8] == "1", #464 admin preview): steps 1-2 and 5 run as
+// DRY RUN (ARGV[8] == "1", admin preview): steps 1-2 and 5 run as
 // normal; the cooldown refusal (3) is skipped and NOTHING is written — no
 // attempts row (4), no solve or counters (6). The verdict comes back with a
 // trailing 'dry' so the caller can never mistake it for a banked solve.
@@ -1262,11 +1268,11 @@ export type SubmitResult =
   // ALREADY banked (SUBMIT_SCRIPT's step-2 guard). It is still a correct flag,
   // but `points` is 0 because this call awarded nothing further — NOT because
   // the challenge is worth nothing. Callers must render the two apart.
-  // `dryRun` marks an admin-preview grade (#464): the script compared and
+  // `dryRun` marks an admin-preview grade: the script compared and
   // wrote NOTHING, so `points` is what the flag is worth, not what was banked.
   | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
   | { ok: true; correct: false; dryRun?: true }
-  | { ok: false; reason: "paused" | "solved" | "cooldown" | "locked"; retryAt?: string }
+  | { ok: false; reason: "paused" | "ended" | "solved" | "cooldown" | "locked"; retryAt?: string }
   // The gate's or the story/team lookup itself failed (fail-closed), the
   // submission was malformed / named an unknown challenge, or the script blew
   // up. Kept distinct from the gate reasons above so a caller-facing message
@@ -1283,7 +1289,7 @@ export type SubmitResult =
  *  SUBMIT_SCRIPT re-checks the already-solved guard and the cooldown
  *  authoritatively (see its comment) using the CURRENT admin settings resolved
  *  by THIS call, so a race that slips past the pre-check is still caught,
- *  atomically, by the script. The current team is resolved here too (#494):
+ *  atomically, by the script. The current team is resolved here too:
  *  its members' attempts hashes (and, when this is a later story step, their
  *  solves hashes) are handed to that SAME script execution, so the shared
  *  cooldown and the story lock are both decided inside one atomic step rather
@@ -1320,13 +1326,14 @@ export async function submitFlag(
 
   const gate = await evaluateGate(settings, login, challengeId, cooldownSec, dryRun);
 
-  // STORY LOCK (#463) and the TEAM's cooldown (#494) both need the roster, so
+  // The STORY LOCK and the TEAM's cooldown both need the roster, so
   // it is read ONCE here and enforced in the script (which is the authority
   // for both). The lock needs every teammate's solves hash when this challenge
   // is a later story step; the cooldown needs every teammate's attempts hash
   // on every submission. A stories or team read that fails is `unavailable` —
   // closed, never "no lock" and never "team of one", which would quietly hand
-  // this login its own private cooldown budget.
+  // this login its own private cooldown budget. The roster read is the STRICT
+  // one: an Upstash error reply is a failure, not an empty roster.
   let prereq = "";
   let members: string[] = [];
   if (gate.allowed || gate.reason === "cooldown") {
@@ -1334,7 +1341,7 @@ export async function submitFlag(
       const [stories, existing, roster] = await Promise.all([
         listStories(),
         listChallengeIds(),
-        teamLogins(login),
+        strictTeamLogins(login),
       ]);
       members = roster;
       const pos = storyPositions(stories, existing).get(challengeId);
@@ -1345,7 +1352,7 @@ export async function submitFlag(
     }
   }
 
-  // A later story step's cooldown is left to the script (CodeRabbit #470): it
+  // A later story step's cooldown is left to the script: it
   // checks the lock BEFORE the cooldown, so a locked step is answered like an
   // unknown challenge — never with a cooldown an unknown id cannot have. The
   // script still enforces the cooldown on an open step.
@@ -1367,7 +1374,7 @@ export async function submitFlag(
   // reads at execution time.
   const cooldownMs = cooldownSec * 1000;
 
-  // #494: the cooldown counts every CURRENT teammate's attempts row, handed to
+  // The cooldown counts every CURRENT teammate's attempts row, handed to
   // the SAME script call so the verdict stays one atomic read/check/write. The
   // viewer's own key is left out here because KEYS[1] already is it.
   const mateAttemptKeys = members.filter((m) => m !== login).map(attemptsKey);
@@ -1381,7 +1388,7 @@ export async function submitFlag(
       SUBMIT_SCRIPT,
       [
         attemptsKey(login), // KEYS[1] — the submitting login's own row: written, and the
-        //                        seed of the team's cooldown (#494)
+        //                        seed of the team's cooldown
         solvesKey(login), // KEYS[2]
         FLAGNORM_KEY, // KEYS[3] — the normalized flag; ctf:classic:flag is
         //                          never handed to the script at all
@@ -1389,10 +1396,10 @@ export async function submitFlag(
         POINTS_KEY, // KEYS[5]
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
-        LAST_AT_KEY, // KEYS[8] — login -> latest award time (#522)
-        ...mateAttemptKeys, // KEYS[9..8 + nMate] — teammates' attempts hashes (#494),
+        LAST_AT_KEY, // KEYS[8] — login -> latest award time
+        ...mateAttemptKeys, // KEYS[9..8 + nMate] — teammates' attempts hashes,
         //                                  counted into the shared cooldown
-        ...lockKeys, // KEYS[9 + nMate..] — solves hashes, for the story lock (#463)
+        ...lockKeys, // KEYS[9 + nMate..] — solves hashes, for the story lock
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the
@@ -1406,10 +1413,10 @@ export async function submitFlag(
         login,
         cooldownMs,
         now.getTime(),
-        caseSensitiveFlagForm(flag), // ARGV[7] — case preserved (issue #193)
-        dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing (#464)
-        prereq, // ARGV[9] — story prerequisite, "" when none (#463)
-        mateAttemptKeys.length, // ARGV[10] — where the solves hashes start (#494)
+        caseSensitiveFlagForm(flag), // ARGV[7] — case preserved
+        dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing
+        prereq, // ARGV[9] — story prerequisite, "" when none
+        mateAttemptKeys.length, // ARGV[10] — where the solves hashes start
       ],
     );
   } catch (err) {
@@ -1419,9 +1426,9 @@ export async function submitFlag(
 
   const [status, value, marker] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") return { ok: false, reason: "invalid" };
-  // A locked story step (#463): answered EXACTLY like an unknown challenge —
+  // A locked story step: answered EXACTLY like an unknown challenge —
   // a distinct refusal would confirm that a guessed id is a hidden step
-  // (CodeRabbit #470, secrecy boundary). Never a wrong answer either.
+  // (secrecy boundary). Never a wrong answer either.
   if (status === "locked") return { ok: false, reason: "invalid" };
   // A dry verdict carries a trailing 'dry' from the script itself, so a
   // preview result can never be read as a banked solve.
@@ -1443,7 +1450,7 @@ export async function submitFlag(
 }
 
 // ---------------------------------------------------------------------------
-// Stories (#463) — ordered chains of challenges a team unlocks step by step.
+// Stories — ordered chains of challenges a team unlocks step by step.
 // Stored like the category list: one JSON value. The lock itself is derived
 // (lib/story-lock.ts), never stored.
 
@@ -1533,7 +1540,7 @@ function canonicalStories(stories: Story[]): Story[] {
 }
 
 /** The ids of every challenge that exists — what `storyPositions` needs to
- *  drop a stale story step (#463). One HKEYS; THROWS on a read error. */
+ *  drop a stale story step. One HKEYS; THROWS on a read error. */
 export async function listChallengeIds(): Promise<Set<string>> {
   const [res] = await upstashPipeline([["HKEYS", CHALLENGES_KEY]]);
   if (res.error) throw new Error(`Upstash HKEYS failed: ${res.error}`);

@@ -89,8 +89,8 @@ export default async function ClassicChallengePage({ params }: { params: Promise
       getResolvedModules(),
       getClassicHintIds(),
       getHintNotice(),
-      // The viewer's owned hint TEXT renders server-side — the reveal button
-      // only exists while there is something left to buy.
+      // The viewer's owned hint text, read server-side (never for an
+      // unowned viewer) and handed to the reveal control as `ownedText`.
       login ? getViewerHints(login) : Promise.resolve(null),
     ]);
 
@@ -149,18 +149,22 @@ export default async function ClassicChallengePage({ params }: { params: Promise
         </h1>
       </div>
 
-      {/* Paid hint (#190): the owned text renders server-side; the buy
-          button (client) exists only while unowned, hints are on, and the
-          viewer is signed in — a signed-out visitor sees that a hint exists
-          without an affordance that would 401. */}
+      {/* Paid hint (#190): hints are on and this challenge has one; the
+          signed-in viewer gets the reveal control, with the server-known
+          owned text passed in as a prop so the SAME component renders it
+          before and after router.refresh() (#560) — a separate owned <p>
+          would unmount it and lose the spend/balance acknowledgement. A
+          signed-out visitor sees that a hint exists without an affordance
+          that would 401. */}
       {hintNotice.active && hintIds.includes(challenge.id) && (
         <div className="max-w-xl">
-          {viewerHints?.classic[challenge.id] ? (
-            <p className="rounded border-l-2 border-[#d4a017]/50 bg-[#d4a017]/[0.06] px-3 py-2 text-sm leading-relaxed text-[#d4a017]/90">
-              💡 {viewerHints.classic[challenge.id]}
-            </p>
-          ) : login ? (
-            <HintRevealButton app="classic" id={challenge.id} cost={hintNotice.cost} />
+          {login ? (
+            <HintRevealButton
+              app="classic"
+              id={challenge.id}
+              cost={hintNotice.cost}
+              ownedText={viewerHints?.classic[challenge.id] ?? null}
+            />
           ) : (
             <p className="text-xs text-muted">
               This one has a paid hint ({hintNotice.cost} pts) — sign in to reveal it.

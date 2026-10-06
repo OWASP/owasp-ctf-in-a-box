@@ -153,6 +153,10 @@ export function describeRefusal(reason: string): string {
   switch (reason) {
     case "paused":
       return "Scoring is paused right now. Try again later.";
+    case "ended":
+      // #567: the scheduled end has passed. Final — no "try again", which
+      // is the pause's promise and false once the event is over.
+      return "Scoring has closed — the event has ended.";
     case "solved":
       return "You already solved this one.";
     case "cooldown":

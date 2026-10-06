@@ -93,6 +93,12 @@
 // The pure model (types, validation, payload builders, confirmation copy) is
 // in admin-classic-model.ts and the form in admin-classic-form.tsx; both are
 // re-exported here so tests and callers keep one import path.
+//
+// The RENDERING frame this file used to carry — the settings-card slot, the
+// category editor wiring, the Challenges panel shell and list, the form and
+// both confirmations — is shared with admin-ai-controls.tsx in
+// components/admin/challenge-frame.tsx (issue #504). What is returned below
+// is classic's own config for that frame.
 
 import { useEffect, useState } from "react";
 import { CLASSIC_COOLDOWN_SEC } from "@/lib/classic-defaults";
@@ -103,18 +109,15 @@ import type { AdminChallenge, Challenge, ImportSummary } from "@/lib/classic-sto
 import type { Story } from "@/lib/story-lock";
 import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { parseBundle, serializeBundle } from "@/lib/classic-io";
-import ConfirmDelete from "@/components/admin/confirm-delete";
-import DiscardDraftConfirm from "@/components/admin/discard-draft-confirm";
 import ImportPanel from "@/components/admin/import-panel";
 import { downloadJson, useBundleImport } from "@/components/admin/use-bundle-import";
 import AdminClassicStories from "@/components/admin-classic-stories";
-import CategoryEditor from "@/components/admin/category-editor";
+import ChallengeFrame from "@/components/admin/challenge-frame";
 import { useCategoryEditor } from "@/components/admin/use-category-editor";
-import SortableList from "@/components/admin/sortable-list";
 import { useAdminResource } from "@/components/admin/use-admin-resource";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import AdminNumberField, { type FieldStatus } from "@/components/admin-number-field";
-import AdminSettingsCard, { type ModuleSettingsSlot } from "@/components/admin/settings-card";
+import type { ModuleSettingsSlot } from "@/components/admin/settings-card";
 import { ChallengeForm } from "@/components/admin-classic-form";
 import {
   CHALLENGE_ROWS,
@@ -226,8 +229,7 @@ export default function AdminClassicControls({
     // A summary of a write does not outlive the next write (#127).
     onWrite: () => bundleImport.retire(),
   });
-  const { rows: challenges, categories, loaded, listError, editing, formPending, deleteTarget, reorderPending, nextOrder } = resource;
-  const [flagRevealed, setFlagRevealed] = useState(false);
+  const { rows: challenges, categories, loaded, reorderPending } = resource;
 
   // Category editing (input, in-flight flag, refusal) and its writes; the
   // list itself is the resource's because the same GET and a bulk import own
@@ -267,8 +269,6 @@ export default function AdminClassicControls({
     if (loaded) onInventory?.(classicInventory(challenges, categories));
   }, [loaded, challenges, categories, onInventory]);
 
-  const confirmCopy = deleteTarget ? challengeDeleteConfirm(deleteTarget) : null;
-
   const knob = (
     <AdminNumberField
       id="classic-cooldown-sec"
@@ -285,147 +285,62 @@ export default function AdminClassicControls({
     />
   );
 
+  // The settings-card slot, the category editor, the Challenges panel
+  // (heading, Add, list-error line, the list) and the form plus both
+  // confirmations below it are the shared frame — see its header for why the
+  // pieces below are classic's and not the frame's.
   return (
-    <>
-      {moduleSettings ? (
-        <AdminSettingsCard identity={moduleSettings.identity} onHints={moduleSettings.onHints}>
-          {knob}
-        </AdminSettingsCard>
-      ) : (
-        knob
+    <ChallengeFrame
+      resource={resource}
+      categoryEditor={categoryEditor}
+      moduleSettings={moduleSettings}
+      knob={knob}
+      newEditor={newChallengeEditor}
+      editorFromRow={editorFromChallenge}
+      deleteConfirm={challengeDeleteConfirm}
+      meta={(row) => (
+        <>
+          {row.challenge.points} pt
+          {row.challenge.points === 1 ? "" : "s"}
+        </>
       )}
-
-      <CategoryEditor
-        loading={!resource.loaded}
-        categories={categories}
-        input={categoryEditor.input}
-        error={categoryEditor.error}
-        pending={categoryEditor.pending}
-        onInput={categoryEditor.setInput}
-        onAdd={categoryEditor.add}
-        onRemove={categoryEditor.remove}
-        onMove={categoryEditor.move}
-        renaming={categoryEditor.renaming}
-        renameInput={categoryEditor.renameInput}
-        onRenameInput={categoryEditor.setRenameInput}
-        onStartRename={categoryEditor.startRename}
-        onCancelRename={categoryEditor.cancelRename}
-        onCommitRename={categoryEditor.commitRename}
-      />
-
-      <AdminClassicStories
-        key={storiesRev}
-        loading={!resource.loaded}
-        challenges={challenges.map((row) => ({ id: row.challenge.id, title: row.challenge.title }))}
-        stories={stories}
-        onSaved={takeStories}
-      />
-
-      <div className="flex flex-col gap-3 border-t border-white/[0.06] pt-4">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-white">Challenges</span>
-          <button
-            type="button"
-            disabled={formPending || categories.length === 0}
-            onClick={() => {
-              setFlagRevealed(false);
-              resource.openEditor(newChallengeEditor(nextOrder, categories[0] ?? ""));
-            }}
-            className="rounded-md border border-[#2563eb]/45 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/[0.06] disabled:opacity-50"
-          >
-            Add challenge
-          </button>
-        </div>
-
-        {listError && <p className="text-sm text-[#e53e3e]">{listError}</p>}
-
-        {/* The collapsed list shows the public half only — the flag appears
-            when the organizer opens the edit form, not on a panel that might
-            be on a projector. */}
-        <SortableList<AdminChallenge>
-          rows={challenges}
-          keyOf={(row) => row.challenge.id}
-          titleOf={(row) => row.challenge.title}
-          // Grouped by category, as contestants see the board; the category
-          // is the heading, so the meta line does not repeat it.
-          groupOf={(row) => row.challenge.category}
-          groups={categories}
-          meta={(row) => (
-            <>
-              {row.challenge.points} pt
-              {row.challenge.points === 1 ? "" : "s"}
-            </>
-          )}
-          intro="Drag a challenge to reorder it, or use Move up / Move down from its ⋯ menu. Contestants see them in this order within each category."
-          emptyText="No challenges yet."
+      Form={ChallengeForm}
+      beforePanel={
+        <AdminClassicStories
+          key={storiesRev}
           loading={!resource.loaded}
-          reorderPending={reorderPending}
-          onMove={(from, to) => void resource.move(from, to)}
-          onEdit={(row) => {
-            setFlagRevealed(false);
-            resource.openEditor(editorFromChallenge(row));
-          }}
-          onDelete={(row) => resource.requestDelete(row.challenge)}
+          challenges={challenges.map((row) => ({ id: row.challenge.id, title: row.challenge.title }))}
+          stories={stories}
+          onSaved={takeStories}
         />
-      </div>
-
-      <ImportPanel
-        exportDescription="Downloads every challenge currently on the board as one JSON file, flags included."
-        exportLabel="Export challenges"
-        exportDisabled={challenges.length === 0}
-        onExport={() => downloadJson(serializeBundle(exportBundleFrom(challenges, categories, stories, attachmentMetaById)), "classic-challenges.json")}
-        notice={
-          <>
-            Import never deletes existing challenges — anything already on the board that isn&rsquo;t in the file
-            is left untouched. Categories the bundle mentions are added to the existing list, never used to
-            replace it.
-          </>
-        }
-        text={bundleImport.text}
-        pending={bundleImport.pending}
-        clientErrors={bundleImport.clientErrors}
-        importErrors={bundleImport.importErrors}
-        summary={bundleImport.result ? formatImportSummary(bundleImport.result) : null}
-        canImport={bundleImport.canImport}
-        onText={bundleImport.setText}
-        onFile={(e) => void bundleImport.handleFile(e)}
-        onSubmit={() => void bundleImport.submit()}
-      />
-
-      {editing && (
-        <ChallengeForm
-          key={editing.mode === "edit" ? editing.id : "new"}
-          editor={editing}
-          categories={categories}
-          pending={formPending}
-          error={resource.formError}
-          flagRevealed={flagRevealed}
-          setFlagRevealed={setFlagRevealed}
-          onChange={(draft) => resource.setEditing({ ...editing, draft })}
-          onCancel={resource.cancelEditor}
-          onSubmit={() => void resource.submitEditor(editing)}
+      }
+      afterPanel={
+        <ImportPanel
+          exportDescription="Downloads every challenge currently on the board as one JSON file, flags included."
+          exportLabel="Export challenges"
+          exportDisabled={challenges.length === 0}
+          onExport={() => downloadJson(serializeBundle(exportBundleFrom(challenges, categories, stories, attachmentMetaById)), "classic-challenges.json")}
+          notice={
+            <>
+              Import never deletes existing challenges — anything already on the board that isn&rsquo;t in the file
+              is left untouched. Categories the bundle mentions are added to the existing list, never used to
+              replace it.
+            </>
+          }
+          text={bundleImport.text}
+          pending={bundleImport.pending}
+          clientErrors={bundleImport.clientErrors}
+          importErrors={bundleImport.importErrors}
+          summary={bundleImport.result ? formatImportSummary(bundleImport.result) : null}
+          canImport={bundleImport.canImport}
+          onText={bundleImport.setText}
+          onFile={(e) => void bundleImport.handleFile(e)}
+          onSubmit={() => void bundleImport.submit()}
         />
-      )}
-
-      {/* Audit F17: Edit on another row, or Add, parks the new editor
-          here rather than replacing a half-written draft in silence. */}
-      {resource.pendingEditor && (
-        <DiscardDraftConfirm
-          noun="challenge"
-          onConfirm={resource.confirmDraftSwitch}
-          onCancel={resource.cancelDraftSwitch}
-        />
-      )}
-
-      {deleteTarget && confirmCopy && (
-        <ConfirmDelete
-          copy={confirmCopy}
-          error={resource.deleteError}
-          pending={resource.deletePending}
-          onConfirm={() => void resource.remove(deleteTarget.id)}
-          onCancel={resource.cancelDelete}
-        />
-      )}
-    </>
+      }
+      intro="Drag a challenge to reorder it, or use Move up / Move down from its ⋯ menu. Contestants see them in this order within each category."
+      reorderPending={reorderPending}
+      onMove={(from, to) => void resource.move(from, to)}
+    />
   );
 }

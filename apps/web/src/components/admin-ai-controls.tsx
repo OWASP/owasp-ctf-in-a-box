@@ -81,6 +81,12 @@
 // The pure model (types, validation, payload builders, confirmation copy) is
 // in admin-ai-model.ts and the form in admin-ai-form.tsx; both are
 // re-exported here so tests and callers keep one import path.
+//
+// The RENDERING frame this file used to carry — the settings-card slot, the
+// category editor wiring, the Challenges panel shell and list, the form and
+// both confirmations — is shared with admin-classic-controls.tsx in
+// components/admin/challenge-frame.tsx (issue #504). What is returned below
+// is ai's own config for that frame.
 
 import { useEffect, useState } from "react";
 import { AI_COOLDOWN_SEC } from "@/lib/ai-defaults";
@@ -88,18 +94,15 @@ import { AI_COOLDOWN_SEC } from "@/lib/ai-defaults";
 // fully erased at compile time — no runtime import ever reaches the client
 // bundle. Never change this to a value import.
 import type { AdminAiChallenge, AiChallenge } from "@/lib/ai-store";
-import ConfirmDelete from "@/components/admin/confirm-delete";
-import DiscardDraftConfirm from "@/components/admin/discard-draft-confirm";
-import CategoryEditor from "@/components/admin/category-editor";
+import ChallengeFrame from "@/components/admin/challenge-frame";
 import { useCategoryEditor } from "@/components/admin/use-category-editor";
 import { useAdminResource } from "@/components/admin/use-admin-resource";
 import { sendJson } from "@/components/admin/fetch";
-import SortableList from "@/components/admin/sortable-list";
 import AdminAiIntegration, { AiEndpointsBlock, useBrowserOrigin } from "@/components/admin-ai-integration";
 import AiExternalSetup from "@/components/admin-ai-external-setup";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import AdminNumberField, { type FieldStatus } from "@/components/admin-number-field";
-import AdminSettingsCard, { type ModuleSettingsSlot } from "@/components/admin/settings-card";
+import type { ModuleSettingsSlot } from "@/components/admin/settings-card";
 import { AiChallengeForm } from "@/components/admin-ai-form";
 import {
   AI_COOLDOWN_LABEL,
@@ -191,8 +194,7 @@ export default function AdminAiControls({
     initialLoaded,
     initialCategories,
   });
-  const { rows: challenges, categories, loaded, listError, editing, formPending, deleteTarget, nextOrder } = resource;
-  const [flagRevealed, setFlagRevealed] = useState(false);
+  const { rows: challenges, categories, loaded } = resource;
 
   // Report upward whenever the board changes, once it is real. A report to
   // the parent's subscriber, not a setState of this component's own.
@@ -257,8 +259,6 @@ export default function AdminAiControls({
     }
   }
 
-  const confirmCopy = deleteTarget ? aiChallengeDeleteConfirm(deleteTarget) : null;
-
   // Hydration-safe: "" on the server and on the first browser render, the
   // real origin after — see `useBrowserOrigin`. The per-row panel uses the
   // same hook, so both halves of the integration UI agree.
@@ -278,144 +278,60 @@ export default function AdminAiControls({
     />
   );
 
+  // The settings-card slot, the category editor, the Challenges panel
+  // (heading, Add, endpoints, list-error line, the list) and the form plus
+  // both confirmations below it are the shared frame — see its header for
+  // why the pieces below are ai's and not the frame's.
   return (
-    <>
-      {moduleSettings ? (
-        <AdminSettingsCard identity={moduleSettings.identity} onHints={moduleSettings.onHints}>
-          {knob}
-        </AdminSettingsCard>
-      ) : (
-        knob
+    <ChallengeFrame
+      resource={resource}
+      categoryEditor={categoryEditor}
+      moduleSettings={moduleSettings}
+      knob={knob}
+      newEditor={newAiChallengeEditor}
+      editorFromRow={editorFromAiChallenge}
+      deleteConfirm={aiChallengeDeleteConfirm}
+      meta={(row) => (
+        <>
+          {row.challenge.points} pt
+          {row.challenge.points === 1 ? "" : "s"} · {AI_MODE_LABELS[row.challenge.mode]}
+        </>
       )}
+      Form={AiChallengeForm}
+      onRetry={() => void resource.reload()}
+      panelIntro={
+        <>
+          {/* Once, for the whole board (UX audit F5) — every row used to
+              repeat these three URLs. */}
+          <AiEndpointsBlock origin={origin} />
 
-      <CategoryEditor
-        loading={!resource.loaded}
-        categories={categories}
-        input={categoryEditor.input}
-        error={categoryEditor.error}
-        pending={categoryEditor.pending}
-        onInput={categoryEditor.setInput}
-        onAdd={categoryEditor.add}
-        onRemove={categoryEditor.remove}
-        onMove={categoryEditor.move}
-        renaming={categoryEditor.renaming}
-        renameInput={categoryEditor.renameInput}
-        onRenameInput={categoryEditor.setRenameInput}
-        onStartRename={categoryEditor.startRename}
-        onCancelRename={categoryEditor.cancelRename}
-        onCommitRename={categoryEditor.commitRename}
-      />
-
-      <div className="flex flex-col gap-3 border-t border-white/[0.06] pt-4">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-white">Challenges</span>
-          <button
-            type="button"
-            disabled={formPending || categories.length === 0}
-            onClick={() => {
-              setFlagRevealed(false);
-              resource.openEditor(newAiChallengeEditor(nextOrder, categories[0] ?? ""));
-            }}
-            className="rounded-md border border-[#2563eb]/45 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/[0.06] disabled:opacity-50"
-          >
-            Add challenge
-          </button>
-        </div>
-
-        {/* Once, for the whole board (UX audit F5) — every row used to
-            repeat these three URLs. */}
-        <AiEndpointsBlock origin={origin} />
-
-        {/* …and what the far end does with them. Collapsed: it is read once,
-            while the external site is being wired up, and never again. */}
-        <AiExternalSetup origin={origin} />
-
-        {listError && (
-          <p className="text-sm text-[#e53e3e]">
-            {listError}{" "}
-            <button type="button" onClick={() => void resource.reload()} className="text-white hover:underline">
-              Retry
-            </button>
-          </p>
-        )}
-
-        {/* Rotate errors are global rather than per-row, same as every other
-            write in this component (listError, categoryError, deleteError) —
-            an organizer only ever has one rotate in flight at a time. */}
-        {rotateError && <p className="text-sm text-[#e53e3e]">{rotateError}</p>}
-
-        {/* The shared list, grouped by category like classic's — with no
-            `onMove` (this board has no reorder) and each row's integration
-            disclosure rendered under it. The flag and signing key stay out
-            of the list itself: the flag appears only once the organizer
-            opens the edit form, and the signing key is masked by default
-            inside the integration panel (Reveal is an explicit click) — the
-            raw key is absent from the row's markup until then, never sitting
-            exposed on a panel that might be on a projector. */}
-        <SortableList<AdminAiChallenge>
-          rows={challenges}
-          keyOf={(row) => row.challenge.id}
-          titleOf={(row) => row.challenge.title}
-          groupOf={(row) => row.challenge.category}
-          groups={categories}
-          meta={(row) => (
-            <>
-              {row.challenge.points} pt
-              {row.challenge.points === 1 ? "" : "s"} · {AI_MODE_LABELS[row.challenge.mode]}
-            </>
-          )}
-          emptyText="No challenges yet."
-          loading={!resource.loaded}
-          onEdit={(row) => {
-            setFlagRevealed(false);
-            resource.openEditor(editorFromAiChallenge(row));
-          }}
-          onDelete={(row) => resource.requestDelete(row.challenge)}
-          rowExtra={(row) => (
-            <AdminAiIntegration
-              challenge={row.challenge}
-              signingKey={row.signingKey}
-              pending={rotatingId === row.challenge.id}
-              onRotate={() => rotateSigningKey(row.challenge.id)}
-            />
-          )}
-        />
-      </div>
-
-      {editing && (
-        <AiChallengeForm
-          key={editing.mode === "edit" ? editing.id : "new"}
-          editor={editing}
-          categories={categories}
-          pending={formPending}
-          error={resource.formError}
-          flagRevealed={flagRevealed}
-          setFlagRevealed={setFlagRevealed}
-          onChange={(draft) => resource.setEditing({ ...editing, draft })}
-          onCancel={resource.cancelEditor}
-          onSubmit={() => void resource.submitEditor(editing)}
-        />
-      )}
-
-      {/* Audit F17: Edit on another row, or Add, parks the new editor
-          here rather than replacing a half-written draft in silence. */}
-      {resource.pendingEditor && (
-        <DiscardDraftConfirm
-          noun="challenge"
-          onConfirm={resource.confirmDraftSwitch}
-          onCancel={resource.cancelDraftSwitch}
-        />
-      )}
-
-      {deleteTarget && confirmCopy && (
-        <ConfirmDelete
-          copy={confirmCopy}
-          error={resource.deleteError}
-          pending={resource.deletePending}
-          onConfirm={() => void resource.remove(deleteTarget.id)}
-          onCancel={resource.cancelDelete}
-        />
-      )}
-    </>
+          {/* …and what the far end does with them. Collapsed: it is read once,
+              while the external site is being wired up, and never again. */}
+          <AiExternalSetup origin={origin} />
+        </>
+      }
+      panelNotice={
+        // Rotate errors are global rather than per-row, same as every other
+        // write in this component (listError, categoryError, deleteError) —
+        // an organizer only ever has one rotate in flight at a time.
+        rotateError && <p className="text-sm text-[#e53e3e]">{rotateError}</p>
+      }
+      rowExtra={
+        // The integration disclosure under each row — the flag and signing
+        // key stay OUT of the list itself: the flag appears only once the
+        // organizer opens the edit form, and the signing key is masked by
+        // default inside this panel (Reveal is an explicit click). The raw
+        // key is absent from the row's markup until then, never sitting
+        // exposed on a panel that might be on a projector.
+        (row) => (
+          <AdminAiIntegration
+            challenge={row.challenge}
+            signingKey={row.signingKey}
+            pending={rotatingId === row.challenge.id}
+            onRotate={() => rotateSigningKey(row.challenge.id)}
+          />
+        )
+      }
+    />
   );
 }

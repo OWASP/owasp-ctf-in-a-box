@@ -23,6 +23,7 @@ import { CLASSIC_BUNDLE_VERSION, type ClassicBundle, type ClassicBundleChallenge
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   CLASSIC_CHALLENGES_KEY as CHALLENGES_KEY,
   CLASSIC_HINTS_KEY as HINTS_KEY,
@@ -856,28 +857,8 @@ function extractAttempt(v: Record<string, unknown>): Attempt | null {
   return { attempts: v.attempts, lastAt: v.lastAt };
 }
 
-function parseHashEntries<T>(flat: unknown, extract: (parsed: Record<string, unknown>) => T | null): Record<string, T> {
-  const arr = Array.isArray(flat) ? (flat as string[]) : [];
-  const out: Record<string, T> = {};
-  for (let i = 0; i < arr.length; i += 2) {
-    const value = parseJsonValue(arr[i + 1], extract);
-    if (value !== null) out[arr[i]] = value;
-  }
-  return out;
-}
-
-/** Parses a single HGET reply (not a flat hash array) the same way
- *  `parseHashEntries` parses each row of one. */
-function parseJsonValue<T>(raw: unknown, extract: (parsed: Record<string, unknown>) => T | null): T | null {
-  if (typeof raw !== "string") return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== "object" || parsed === null) return null;
-    return extract(parsed as Record<string, unknown>);
-  } catch {
-    return null;
-  }
-}
+// `parseJsonValue` / `parseHashEntries` / `parseCounterHash` come from
+// lib/redis-decode.ts — the one copy quiz, classic and ai share (#504 M13).
 
 export type ViewerClassic = {
   /** Solves only, keyed by challenge id. Points are what the challenge was
@@ -908,16 +889,6 @@ export async function getViewerClassic(login: string): Promise<ViewerClassic> {
     solved: parseHashEntries(solvesRes.result, extractSolve),
     attempts: parseHashEntries(attemptsRes.result, extractAttempt),
   };
-}
-
-function parseCounterHash(flat: unknown): Map<string, number> {
-  const arr = Array.isArray(flat) ? (flat as string[]) : [];
-  const out = new Map<string, number>();
-  for (let i = 0; i < arr.length; i += 2) {
-    const n = Number(arr[i + 1]);
-    if (Number.isFinite(n)) out.set(arr[i], n);
-  }
-  return out;
 }
 
 /** How many DISTINCT logins have solved each challenge, keyed by challenge id
@@ -1159,21 +1130,10 @@ if not target then return {'missing'} end
 local cooldownMs = tonumber(ARGV[5])
 local nowMs = tonumber(ARGV[6])
 
-local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
-local attempts = 0
-local lastAtMs = nil
-local firstAt = nil
-if attemptsRaw then
-  local foundAttempts = string.match(attemptsRaw, '"attempts":(%d+)[,}]')
-  if foundAttempts then attempts = tonumber(foundAttempts) end
-  local foundLastAtMs = string.match(attemptsRaw, '"lastAtMs":(%d+)[,}]')
-  if foundLastAtMs then lastAtMs = tonumber(foundLastAtMs) end
-  -- Carried forward, never recomputed: this row is REWRITTEN on every
-  -- submission, so the first attempt's time survives only by being read back
-  -- out of the row it is being replaced by. Absent on rows written before
-  -- this field existed, which is why the write below falls back to now.
-  firstAt = string.match(attemptsRaw, '"firstAt":"([^"]*)"')
-end
+-- The shared attempt-row read (#504 M13) — attempts, lastAtMs and firstAt —
+-- declared here as ATTEMPT_ROW_LUA, so quiz's and ai's scripts read the same
+-- three fields out of the same row shape.
+${ATTEMPT_ROW_LUA}
 
 if not dry and cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
   return {'cooldown', tostring(lastAtMs + cooldownMs)}

@@ -37,7 +37,11 @@ export function parseJsonValue<T>(raw: unknown, extract: (parsed: Record<string,
  *  value is JSON, is an object, and survives `extract`. */
 export function parseHashEntries<T>(flat: unknown, extract: (parsed: Record<string, unknown>) => T | null): Record<string, T> {
   const arr = Array.isArray(flat) ? (flat as string[]) : [];
-  const out: Record<string, T> = {};
+  // Null-prototype, because a Redis hash field is attacker-shaped: on a plain
+  // `{}` a field named `__proto__` is not stored, the assignment reassigns the
+  // prototype instead, and the row would be absent from `out` while its value
+  // showed up in every lookup made through it.
+  const out: Record<string, T> = Object.create(null);
   for (let i = 0; i < arr.length; i += 2) {
     const value = parseJsonValue(arr[i + 1], extract);
     if (value !== null) out[arr[i]] = value;

@@ -53,6 +53,19 @@ describe("the store parse helpers have one implementation", () => {
     expect(parseHashEntries(undefined, extract)).toEqual({});
   });
 
+  it("keeps a `__proto__` hash field as an own property of the result", () => {
+    const extract = (v: Record<string, unknown>): { points: number } | null =>
+      typeof v.points === "number" ? { points: v.points } : null;
+    const out = parseHashEntries(["__proto__", '{"points":10}', "team", '{"points":5}'], extract);
+    // A plain `{}` object would take the first row's assignment as a
+    // prototype write: the field is never own, `Object.keys` loses it, and
+    // its value is inherited by every lookup made through the result.
+    expect(Object.hasOwn(out, "__proto__")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(out, "__proto__")?.value).toEqual({ points: 10 });
+    expect(Object.keys(out)).toEqual(["__proto__", "team"]);
+    expect(out.team).toEqual({ points: 5 });
+  });
+
   it("parses a single HGET reply the same way as one hash row", () => {
     const extract = (v: Record<string, unknown>): number | null => (typeof v.points === "number" ? v.points : null);
     expect(parseJsonValue('{"points":7}', extract)).toBe(7);

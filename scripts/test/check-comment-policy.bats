@@ -141,10 +141,24 @@ OUTER
 
 # The extracted files are the manifest's second group: a split out of an
 # audited source is not a way out of the policy, so the copy list has to name
-# them too.
+# them too. All 14 of them — the 8 the first split moved out of an audited
+# source, then the 6 later moves added. Each path is asserted individually so
+# dropping one from AUDITED fails here rather than quietly shrinking scope.
 @test "the extracted files are in the --list manifest" {
   run node "$SCRIPT" --list
   [ "$status" -eq 0 ]
+  # demo seed and the admin shell's settings/nav/danger-action halves, plus
+  # one file per module of the registry literal.
+  _has "apps/web/src/lib/demo-seed.ts"
+  _has "apps/web/src/app/(site)/admin/use-admin-settings.ts"
+  _has "apps/web/src/app/(site)/admin/use-admin-nav.ts"
+  _has "apps/web/src/app/(site)/admin/admin-danger-actions.ts"
+  _has "apps/web/src/lib/module-defs/secure-development.ts"
+  _has "apps/web/src/lib/module-defs/quiz.ts"
+  _has "apps/web/src/lib/module-defs/classic.ts"
+  _has "apps/web/src/lib/module-defs/ai.ts"
+  # the audit keys, module URLs, shared Redis decoders, restamp and changed-at
+  # hooks, and the acceptance-gate helpers.
   _has "apps/web/src/lib/admin-audit-keys.ts"
   _has "apps/web/src/lib/module-urls.ts"
   _has "apps/web/src/lib/redis-decode.ts"

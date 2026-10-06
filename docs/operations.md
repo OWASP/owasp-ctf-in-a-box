@@ -1976,9 +1976,10 @@ any browser or phone, no login:
 
 ### Admin state: through the API, not the rendered panel
 
-The `/admin` screens are client-rendered — the panel fetches its own data
-and draws it in the browser — so when verifying admin state, ask the API
-rather than the panel: an authenticated `GET` such as `/api/admin/sponsors`
+Most `/admin` tabs load their data client-side — the page shell and loading
+skeleton are server-rendered, while each tab's data is fetched in the
+browser — so when verifying admin state, ask the API rather than the panel:
+an authenticated `GET` such as `/api/admin/sponsors`
 or `/api/admin/metrics`, run from a logged-in browser tab — the session
 cookie carries the auth, and a cookie on a command line is readable by
 every local user. What the JSON says is the state; it also separates "the

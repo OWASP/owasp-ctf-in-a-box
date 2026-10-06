@@ -1218,13 +1218,15 @@ partial credit for either question type.
 
 **Retry gate** — two admin-panel knobs, next to the question list:
 
-- **Max attempts** (`quizMaxAttempts`, default **3**) — graded attempts a
-  contestant gets on one question before the retry gate refuses further
-  submissions. `0` means unlimited. Both settings are global — there is no
-  per-question override.
-- **Retry after** (`quizRetryAfterMin`, default **1**) — minutes a
-  contestant must wait after an attempt before trying that question again.
-  `0` means no cooldown.
+- **Max attempts** (`quizMaxAttempts`, default **3**) — graded attempts the
+  **team** gets on one question before the retry gate refuses further
+  submissions: every current member's attempts on that question are summed
+  against this cap. `0` means unlimited. Both settings are global — there is
+  no per-question override.
+- **Retry after** (`quizRetryAfterMin`, default **1**) — minutes the
+  **submitting contestant** must wait after an attempt before trying that
+  question again. It stays per login on purpose: a teammate's cooldown never
+  delays anyone else. `0` means no cooldown.
 
 Both are enforced by a server-side Redis script, not just a JS-side
 pre-check, so a burst of near-simultaneous submissions can't outrun the
@@ -1240,20 +1242,31 @@ same attempts row the gate itself reads. The chip is absent when **Max
 attempts** is `0` (nothing to ration) and once the question is answered.
 Lowering the cap mid-event can leave a contestant holding more spent
 attempts than the new cap allows; the chip floors at `0 of N` rather than
-reporting a negative budget.
+reporting a negative budget. The chip is deliberately **per contestant**: it
+counts down from that login's own attempts row while the cap it is measured
+against is the team's, so a teammate's attempts can exhaust the shared
+budget while this chip still shows attempts left — it answers "how many
+have *I* spent", not "what does the team have left".
 
-**Both knobs count per contestant, but points count per team.** The
-attempts and the cooldown are kept for each login. A team's quiz score is
-the union of its members' correct answers, so every member has their own
-**Max attempts** and their own **Retry after** on the same question. A team
-of N members therefore gets N times the cap. With the defaults (3 attempts,
-teams of up to 4), a team can try 12 answers on one question, so a question
-with 12 or fewer possible answers can always be solved. **Max attempts = 1**
-on a four-choice question does not stop guessing: four teammates can pick
-one choice each. The `2 of 3 attempts left` chip shows the contestant's own
-budget, not the team's. Take this into account when you set the cap, and
-prefer questions with more possible answers than the team's total budget.
-The team-size cap is under [Players per team](#players-per-team).
+**The cap counts the team; the cooldown counts the contestant.** Points
+already count per team — a quiz score is the union of its members' correct
+answers — and as of #494 the attempt budget does too: every current member's
+attempts on a question are summed against **Max attempts**, so a team of N
+does **not** get N times the cap. With the defaults (3 attempts, teams of up
+to 4) a team gets 3 answers on one question, not 12, and **Max attempts = 1**
+on a four-choice question does stop guessing — the whole team shares that
+one attempt. The **Retry after** cooldown stays per contestant, and the
+attempts chip (above) shows the contestant's own spend rather than the
+team's total — two per-login views of a team-wide cap. Two accepted
+limitations come with how the team is counted: the roster is read once per
+submission, just before the grading script runs, so a member who joins or
+leaves in that instant is counted as the team stood a moment earlier (the
+next submission re-reads it); and closing **Team registration** does not
+freeze membership — leaving a team is deliberately never gated (see
+[Teams](#teams)) — so rosters can still change during scoring. Take this
+into account when you set the cap, and prefer questions with more possible
+answers than the team's budget. The team-size cap is under
+[Players per team](#players-per-team).
 
 **Points and scoring.** A question's points are captured on the answer
 record at the moment it's answered correctly, so re-pricing a question
@@ -1456,19 +1469,24 @@ solve, and neither does capitalization unless the challenge is marked
 
 **There is no cap on attempts — only a cooldown, and it is set in
 SECONDS.** The **Submission cooldown (sec)** field (`classicCooldownSec`,
-default **5**, capped at **3600** — one hour) is the only throttle: a
-contestant can try a challenge as many times as they like, but must wait
-that many seconds between submissions on the *same* challenge once they've
+default **5**, capped at **3600** — one hour) is the only throttle: the
+team can try a challenge as often as it likes, but must wait that many
+seconds between submissions on the *same* challenge once anyone on it has
 made one. Set it to `0` to remove the cooldown entirely. This is worth
 calling out plainly because every other retry-gate setting on this platform
 (the quiz's retry cooldown, the hint gate's unlock delay) is in **minutes**
 — classic's own knob is not.
 
-**The cooldown is per contestant, but a solve counts for the team.** Each
-login has its own cooldown on each challenge, and a team's score is the
-union of its members' solves. So a team of N members can submit N flags per
-cooldown period on the same challenge. The cooldown slows one contestant
-down; it does not slow a team to one guess per period.
+**The cooldown is the team's to share, like the solve it guards.** The
+latest attempt any current member has made on a challenge — whenever they
+made it — cools the whole team until that time plus the current cooldown
+(both enforced by the grading script, which reads the roster once per
+submission). So a team gets **one** submission per cooldown period on a
+challenge, not one each; switching to a teammate's login mid-cooldown buys
+nothing. Attempts rows stay per login (Insights reads them individually),
+and the roster-timing window is accepted: a member who joins or leaves in
+the instant before a submission is counted as the team stood a moment
+earlier, and the next submission re-reads it.
 
 **Points are static.** A challenge's point value is fixed by whoever wrote
 it and is read off the challenge record at the instant of a correct solve;

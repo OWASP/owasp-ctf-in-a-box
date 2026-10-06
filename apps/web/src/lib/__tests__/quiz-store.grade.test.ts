@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
   upstashPipeline: vi.fn<(commands: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
   getAdminSettings: vi.fn(),
+  getViewerTeam: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -24,6 +25,13 @@ vi.mock("@/lib/admin-store", async (orig) => ({
   // `getAdminSettings` (the Redis read) is mocked.
   ...(await orig<typeof import("@/lib/admin-store")>()),
   getAdminSettings: mocks.getAdminSettings,
+}));
+// The roster read behind `teamLogins` (team-members.ts) is mocked at its
+// source, so the real reader still runs: only the Redis-backed lookup is
+// faked. Every test defaults to a team of ONE (no team) unless it says so.
+vi.mock("@/lib/team-store", async (orig) => ({
+  ...(await orig<typeof import("@/lib/team-store")>()),
+  getViewerTeam: mocks.getViewerTeam,
 }));
 
 import {
@@ -69,6 +77,9 @@ beforeEach(() => {
   mocks.upstashPipeline.mockReset();
   mocks.getAdminSettings.mockReset();
   mocks.getAdminSettings.mockResolvedValue(settings());
+  mocks.getViewerTeam.mockReset();
+  // No team: the viewer is a team of one, so no teammate keys are appended.
+  mocks.getViewerTeam.mockResolvedValue(null);
 });
 
 describe("grading (all-or-nothing, order-insensitive)", () => {
@@ -585,5 +596,97 @@ describe("dry run (#464 admin preview)", () => {
     await answerQuestion("octocat", "q1", ["a", "c"]);
     const [, , args] = mocks.upstashEval.mock.calls.at(-1)!;
     expect(args[7]).toBe("0");
+  });
+});
+
+// --- the attempt cap is the TEAM's budget (#494) -----------------------------
+//
+// Scoring is a per-team union, so a cap enforced on whichever login happened
+// to submit hands a team of N N× the budget. The roster travels in KEYS[8..]
+// of the SAME script call, so the sum is counted inside one atomic step —
+// never as a separate read that could see half a team. The cooldown's
+// semantics are deliberately unchanged: it stays the submitting login's own.
+
+describe("team-shared attempt cap (#494)", () => {
+  it("hands every CURRENT teammate's attempts hash to the script as KEYS[8..], the viewer excluded", async () => {
+    mocks.getViewerTeam.mockResolvedValue({ slug: "t", name: "T", members: ["octocat", "alice", "bob"] });
+    gateReads(null, null);
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "20"]);
+    await answerQuestion("octocat", "q1", ["a"]);
+    const [, keys] = mocks.upstashEval.mock.calls[0];
+    expect(keys.slice(0, 7)).toEqual([
+      "ctf:quiz:attempts:octocat",
+      "ctf:quiz:answers:octocat",
+      "ctf:quiz:key",
+      "ctf:quiz:questions",
+      "ctf:quiz:points",
+      "ctf:quiz:answered",
+      "ctf:quiz:lastAt",
+    ]);
+    expect(keys.slice(7)).toEqual(["ctf:quiz:attempts:alice", "ctf:quiz:attempts:bob"]);
+    // The submitting login's row is KEYS[1] — counting it again in the sum
+    // would double its own attempts.
+    expect(keys.filter((k) => k === "ctf:quiz:attempts:octocat")).toHaveLength(1);
+  });
+
+  it("passes the roster in KEYS and leaves ARGV at exactly its eight entries", async () => {
+    // A count of teammates in ARGV would be one more thing the script and the
+    // caller could disagree about; the range KEYS[8..#KEYS] needs no count.
+    mocks.getViewerTeam.mockResolvedValue({ slug: "t", name: "T", members: ["octocat", "alice", "bob", "carol"] });
+    gateReads(null, null);
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "20"]);
+    await answerQuestion("octocat", "q1", ["a"]);
+    const [, , args] = mocks.upstashEval.mock.calls[0];
+    expect(args).toHaveLength(8);
+  });
+
+  it("sums the whole team inside the script, before any attempt is spent", async () => {
+    gateReads(null, null);
+    mocks.upstashEval.mockResolvedValueOnce(["incorrect", "1"]);
+    await answerQuestion("octocat", "q1", ["a"]);
+    const [script] = mocks.upstashEval.mock.calls[0] as [string, string[], (string | number)[]];
+    const sumLoop = script.indexOf("for i = 8, #KEYS do");
+    const sum = script.indexOf("local teamAttempts = attempts");
+    const exhaustedReturn = script.indexOf("'exhausted'");
+    const attemptsWrite = script.indexOf("HSET', KEYS[1]");
+    for (const idx of [sumLoop, sum, exhaustedReturn, attemptsWrite]) expect(idx).toBeGreaterThan(-1);
+    // Exactly one loop over the teammate range: the cap's sum, nothing else
+    // (the cooldown deliberately does NOT iterate it).
+    expect(script.split("for i = 8, #KEYS do")).toHaveLength(2);
+    // The refusal lands before the attempt is spent, so a team at cap writes
+    // nothing at all.
+    expect(sumLoop).toBeLessThan(exhaustedReturn);
+    expect(exhaustedReturn).toBeLessThan(attemptsWrite);
+    expect(script).toContain("if teamAttempts >= maxAttempts then");
+  });
+
+  it("leaves the cooldown on the submitting login's own row — #494's finding is the cap, not the retry timer", async () => {
+    gateReads(null, null);
+    mocks.upstashEval.mockResolvedValueOnce(["incorrect", "1"]);
+    await answerQuestion("octocat", "q1", ["a"]);
+    const [script] = mocks.upstashEval.mock.calls[0] as [string, string[], (string | number)[]];
+    expect(script).toContain("cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs)");
+  });
+
+  it("refuses closed ('unavailable', never 'exhausted') when the team lookup fails, without grading", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    gateReads(null, null);
+    mocks.getViewerTeam.mockRejectedValueOnce(new Error("upstash down"));
+    const result = await answerQuestion("octocat", "q1", ["a"]);
+    // Downgrading to "team of one" here would hand this login a fresh budget
+    // of its own — the exact bug the sum exists to close.
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError.mock.calls[0][0]).toContain("team lookup failed");
+    consoleError.mockRestore();
+  });
+
+  it("never pays for the roster when the gate has already refused the answer", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ paused: true }));
+    const result = await answerQuestion("octocat", "q1", ["a"]);
+    expect(result).toEqual({ ok: false, reason: "paused" });
+    expect(mocks.getViewerTeam).not.toHaveBeenCalled();
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 });

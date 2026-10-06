@@ -8,6 +8,7 @@ import { errorLabel } from "@/lib/error-label";
 import { QUIZ_BUNDLE_VERSION, type QuizBundle, type QuizBundleQuestion } from "@/lib/quiz-io";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { readLastAt } from "@/lib/last-at";
+import { teamLogins } from "@/lib/team-members";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
 import {
   QUIZ_QUESTIONS_KEY as QUESTIONS_KEY,
@@ -58,11 +59,14 @@ import {
  *                                carried forward across rewrites; absent on
  *                                rows written before it existed (issue #169).
  *                                — every attempt, right or wrong; Task 3's
- *                                retry gate reads this. `lastAtMs` (a plain
- *                                epoch-ms mirror of `lastAt`) exists only so
- *                                GRADE_SCRIPT can do cooldown arithmetic in
- *                                Lua without parsing an ISO-8601 string;
- *                                readers outside this file should use `lastAt`.
+ *                                retry gate reads this, and GRADE_SCRIPT
+ *                                sums it across the whole team for the cap
+ *                                (#494) while the cooldown stays per login.
+ *                                `lastAtMs` (a plain epoch-ms mirror of
+ *                                `lastAt`) exists only so GRADE_SCRIPT can
+ *                                do cooldown arithmetic in Lua without
+ *                                parsing an ISO-8601 string; readers
+ *                                outside this file should use `lastAt`.
  *
  * Secrecy boundary — it is a CONTESTANT boundary, not an absolute one:
  * `ctf:quiz:key` is kept out of every contestant path the same way the scoring
@@ -678,7 +682,10 @@ type ResolvedAdminSettings = Awaited<ReturnType<typeof getAdminSettings>>;
  *  IMPORTANT: this pre-check is NOT the authority on the attempt cap or the
  *  cooldown — it reads attempts/answers with its own separate, non-atomic
  *  round trip, so two requests racing each other can both read "0 attempts
- *  spent" before either has written anything. It exists only to keep an
+ *  spent" before either has written anything. It also reads only `login`'s
+ *  own row: the cap is the TEAM's to share (#494) and is counted solely by
+ *  GRADE_SCRIPT, so a teammate at cap makes this pre-check say "allowed" and
+ *  the script say "exhausted". The pre-check exists only to keep an
  *  obviously-refused answer off the write path cheaply; GRADE_SCRIPT
  *  re-checks both, against state read fresh at script-execution time, and
  *  is what actually enforces them (see GRADE_SCRIPT's comment). */
@@ -790,11 +797,13 @@ async function readSettingsFailOpen(): Promise<ResolvedAdminSettings | null> {
 // trip and so CANNOT by itself stop two — or fifteen — concurrent requests
 // from all observing "0 attempts spent" before any of them writes), this
 // script is the sole AUTHORITY on the attempt cap and cooldown: it re-reads
-// attempts fresh at execution time, and Redis runs one script to completion
-// before starting the next, so each concurrent submission sees every effect
-// of every submission that finished before it. That's what actually closes
-// the race — no amount of care in the pre-check could, since the pre-check
-// and the script are necessarily two separate round trips.
+// attempts fresh at execution time — the whole team's, since KEYS[8..] carry
+// every current teammate's attempt hash and the cap is theirs to share
+// (#494) — and Redis runs one script to completion before starting the next,
+// so each concurrent submission sees every effect of every submission that
+// finished before it. That's what actually closes the race — no amount of
+// care in the pre-check could, since the pre-check and the script are
+// necessarily two separate round trips.
 //
 //   1. HGET the secret answer key for this question. Missing -> {'missing'}:
 //      there is nothing to grade (the caller passed a bad/deleted id).
@@ -807,12 +816,18 @@ async function readSettingsFailOpen(): Promise<ResolvedAdminSettings | null> {
 //      fully controls) and, WITHOUT WRITING ANYTHING YET, re-check the cap
 //      and cooldown against ARGV-supplied `maxAttempts`/`cooldownMs` (the
 //      admin setting, resolved by the caller from the CURRENT config on
-//      every call — never stored) and the freshly-read `attempts`/`lastAtMs`
-//      (never a value the caller read earlier and handed in, which is what
-//      would let a race bypass them):
-//        - `attempts >= maxAttempts` (when capped) -> {'exhausted'}
+//      every call — never stored) and the freshly-read state (never a value
+//      the caller read earlier and handed in, which is what would let a race
+//      bypass them):
+//        - the TEAM's attempts at this question — the submitting login's own
+//          count plus one HGET per teammate's row in KEYS[8..], summed —
+//          `>= maxAttempts` (when capped) -> {'exhausted'}. Scoring is a
+//          per-team union, so the budget is too: without the sum a team of
+//          N simply holds N× the cap, split across logins (#494).
 //        - still within `lastAtMs + cooldownMs` (when cooled down) ->
-//          {'cooldown', retryAtMs}
+//          {'cooldown', retryAtMs}. The cooldown deliberately stays PER
+//          LOGIN: #494's finding is the shared cap, and `retryAt` derived
+//          from this login's own row is the cooldown's established contract.
 //   4. Only past both checks does a submission spend an attempt: bump the
 //      count and HSET the new blob with `now`. This happens whether the
 //      submission turns out right or wrong.
@@ -864,8 +879,26 @@ if attemptsRaw then
   firstAt = string.match(attemptsRaw, '"firstAt":"([^"]*)"')
 end
 
-if not dry and maxAttempts > 0 and attempts >= maxAttempts then
-  return {'exhausted'}
+-- #494: the cap belongs to the TEAM, so the budget is what the whole team has
+-- spent on this question — the submitting login's own count (read above) plus
+-- one HGET per CURRENT teammate's row in KEYS[8..], summed. Splitting the same
+-- budget across logins is exactly the N× multiplier this closes: a row is read
+-- fresh, HERE, like every other value the verdict trusts. No cap set means
+-- this block never runs at all, and no teammates means the loop visits zero
+-- rows, leaving the per-login behaviour exactly as it was; the attempt WRITE
+-- below still lands on the submitting login's own row (KEYS[1]) alone.
+if not dry and maxAttempts > 0 then
+  local teamAttempts = attempts
+  for i = 8, #KEYS do
+    local mateRaw = redis.call('HGET', KEYS[i], ARGV[1])
+    if mateRaw then
+      local foundMate = string.match(mateRaw, '"attempts":(%d+)[,}]')
+      if foundMate then teamAttempts = teamAttempts + tonumber(foundMate) end
+    end
+  end
+  if teamAttempts >= maxAttempts then
+    return {'exhausted'}
+  end
 end
 if not dry and cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
   return {'cooldown', tostring(lastAtMs + cooldownMs)}
@@ -911,9 +944,10 @@ export type AnswerResult =
   | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
   | { ok: true; correct: false; dryRun?: true }
   | { ok: false; reason: "paused" | "answered" | "exhausted" | "cooldown"; retryAt?: string }
-  // The gate's lookup itself failed (fail-closed) — kept distinct from
-  // "exhausted" so a caller-facing message can say the check couldn't be
-  // completed (try again) instead of falsely claiming attempts are spent.
+  // The gate's or the team lookup itself failed (fail-closed) — kept
+  // distinct from "exhausted" so a caller-facing message can say the check
+  // couldn't be completed (try again) instead of falsely claiming attempts
+  // are spent.
   | { ok: false; reason: "unavailable" }
   | { ok: false; reason: "invalid" }
   | { ok: false; reason: "error" };
@@ -929,7 +963,12 @@ export type AnswerResult =
  *  but it is only a cheap pre-check; GRADE_SCRIPT re-checks the same cap and
  *  cooldown authoritatively (see its comment) using the current admin
  *  settings resolved by THIS call, so a race that slips past the pre-check
- *  is still caught, atomically, by the script. This function never returns
+ *  is still caught, atomically, by the script. The current team is resolved
+ *  here too (#494): its members' attempt hashes are handed to the SAME
+ *  script execution as KEYS[8..], so the shared cap is counted inside one
+ *  atomic step rather than as a separate read/check/write. A team read that
+ *  fails is `unavailable` (closed) — never "team of one", which would hand
+ *  this login a fresh budget of its own. This function never returns
  *  the answer key itself, only whether the submission was right. */
 export async function answerQuestion(
   login: string,
@@ -959,6 +998,20 @@ export async function answerQuestion(
       : { ok: false, reason: gate.reason };
   }
 
+  // #494: the cap is this TEAM's budget, so every teammate's attempt hash is
+  // handed to the SAME script call — one atomic read/check/write, never a
+  // separate round trip that could see half a team. Resolved AFTER the gate,
+  // so a refused answer never pays for it, and fail CLOSED: a team read that
+  // blows up must not quietly downgrade the budget to this login's own row.
+  // The viewer's own key is left out here because KEYS[1] already is it.
+  let mateAttemptKeys: string[];
+  try {
+    mateAttemptKeys = (await teamLogins(login)).filter((m) => m !== login).map(attemptsKey);
+  } catch (err) {
+    console.error("quiz: team lookup failed (failing closed):", errorLabel(err));
+    return { ok: false, reason: "unavailable" };
+  }
+
   // Order-insensitive: the same shared `canonicalizeChoices` recipe
   // `upsertQuestion` stores the correct set with, so an exact JSON-string
   // match inside the script is a valid stand-in for a set comparison.
@@ -977,7 +1030,18 @@ export async function answerQuestion(
   try {
     verdict = await upstashEval(
       GRADE_SCRIPT,
-      [attemptsKey(login), answersKey(login), KEY_KEY, QUESTIONS_KEY, POINTS_KEY, ANSWERED_KEY, LAST_AT_KEY],
+      [
+        attemptsKey(login), // KEYS[1] — the submitting login's own row: written, and the
+        //                        first member of the team's budget (#494)
+        answersKey(login),
+        KEY_KEY,
+        QUESTIONS_KEY,
+        POINTS_KEY,
+        ANSWERED_KEY,
+        LAST_AT_KEY,
+        ...mateAttemptKeys, // KEYS[8..] — every CURRENT teammate's attempt hash, summed
+        //                    into the cap by the script (#494)
+      ],
       // ARGV[8]: dry run — grade, write nothing (#464 admin preview).
       [questionId, submitted, nowIso, login, maxAttempts, cooldownMs, now.getTime(), dryRun ? "1" : "0"],
     );

@@ -63,7 +63,13 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     ]);
   }
 
-  /** Runs the script exactly as `submitFlag` does, with both comparison forms. */
+  /** Runs the script exactly as `submitFlag` does, with both comparison forms.
+   *
+   *  KEYS are laid out the way `submitFlag` builds them (#494): the eight
+   *  fixed ones, then the TEAMMATES' attempts hashes (count in ARGV[10]),
+   *  then the solves hashes the story lock reads. Passing teammates but no
+   *  solve keys (or the reverse) is how the boundary between the two ranges
+   *  is pinned below. */
   async function submit(
     id: string,
     flag: string,
@@ -73,13 +79,25 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
       login = LOGIN,
       dry = false,
       prereq = "",
+      mateAttemptKeys = [] as string[],
       teamSolveKeys = [] as string[],
     } = {},
   ) {
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...teamSolveKeys],
+      [
+        K.attempts,
+        K.solves,
+        K.flagnorm,
+        K.challenges,
+        K.points,
+        K.solvecount,
+        K.solved,
+        K.lastAt,
+        ...mateAttemptKeys,
+        ...teamSolveKeys,
+      ],
       [
         id,
         keys.normalizeFlag(flag),
@@ -90,6 +108,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
         keys.caseSensitiveFlagForm(flag),
         dry ? "1" : "0",
         prereq, // ARGV[9] — #463 story prerequisite ("" = none)
+        mateAttemptKeys.length, // ARGV[10] — #494 where the solves hashes start
       ],
     );
   }
@@ -313,5 +332,96 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     const id = freshId("dry-story");
     await seed(id, "flag{x}", 5);
     expect(await submit(id, "flag{x}", { prereq: freshId("p"), teamSolveKeys: [K.solves], dry: true })).toEqual(["correct", "5", "dry"]);
+  });
+
+  // #494: the cooldown is the TEAM's. A team of N that simply takes turns
+  // never feels a per-login cooldown at all, which is the bug these pin: the
+  // teammate rows are counted in the SAME script execution, latest attempt
+  // wins, and `retryAt` is derived from that row — not from the caller's.
+
+  it("cooldown: a teammate's recent attempt cools a login that never touched the challenge", async () => {
+    const id = freshId("chal");
+    await seed(id, "flag{right}", 10);
+    const mate = liveKey("classic", freshId("attempts-bob"));
+    await pipeline([["HSET", mate, id, attemptsRow(1, iso(T0), iso(T0), T0)]]);
+    // The submitting login has NEVER attempted this challenge: on its own row
+    // alone this would grade at once, with no retryAt to report.
+    expect(await hget(K.attempts, id)).toBeNull();
+    expect(await submit(id, "flag{nope}", { nowMs: T0 + 4_999, mateAttemptKeys: [mate] })).toEqual([
+      "cooldown",
+      String(T0 + 5_000),
+    ]);
+    // A refusal is not an attempt: neither row moved.
+    expect(await hget(K.attempts, id)).toBeNull();
+    expect(await hget(mate, id)).toBe(attemptsRow(1, iso(T0), iso(T0), T0));
+    // At the boundary it grades, and the attempt lands on the SUBMITTER's row
+    // alone — a teammate's row is read, never rewritten.
+    expect(await submit(id, "flag{right}", { nowMs: T0 + 5_000, mateAttemptKeys: [mate] })).toEqual(["correct", "10"]);
+    expect(await hget(K.attempts, id)).toBe(attemptsRow(1, iso(T0 + 5_000), iso(T0 + 5_000), T0 + 5_000));
+    expect(await hget(mate, id)).toBe(attemptsRow(1, iso(T0), iso(T0), T0));
+    await pipeline([["DEL", mate]]);
+  });
+
+  it("cooldown: the LATEST attempt across the roster wins, for every login on the team", async () => {
+    const id = freshId("chal");
+    await seed(id, "flag{right}", 10);
+    const older = liveKey("classic", freshId("attempts-carol"));
+    const newer = liveKey("classic", freshId("attempts-bob"));
+    // The submitter's own row is the OLDEST of the three: on that row alone
+    // it grades immediately, which is exactly the per-login bug.
+    await pipeline([
+      ["HSET", K.attempts, id, attemptsRow(1, iso(T0 - 60_000), iso(T0 - 60_000), T0 - 60_000)],
+      ["HSET", older, id, attemptsRow(1, iso(T0 - 60_000), iso(T0 - 60_000), T0 - 60_000)],
+      ["HSET", newer, id, attemptsRow(1, iso(T0 - 1_000), iso(T0 - 1_000), T0 - 1_000)],
+    ]);
+    const mates = [older, newer];
+    const retryAt = String(T0 - 1_000 + 5_000);
+    expect(await submit(id, "flag{right}", { nowMs: T0 - 1_001 + 5_000, mateAttemptKeys: mates })).toEqual([
+      "cooldown",
+      retryAt,
+    ]);
+    // Another teammate, submitting under ITS own login, is cooled by the same
+    // row — switching logins buys the team nothing.
+    const otherLogin = freshId("bob");
+    expect(
+      await submit(id, "flag{right}", { login: otherLogin, nowMs: T0 - 1_001 + 5_000, mateAttemptKeys: mates }),
+    ).toEqual(["cooldown", retryAt]);
+    expect(
+      await submit(id, "flag{right}", { login: otherLogin, nowMs: T0 - 1_000 + 5_000, mateAttemptKeys: mates }),
+    ).toEqual(["correct", "10"]);
+    await pipeline([["DEL", ...mates]]);
+  });
+
+  // #494 added ARGV[10] because the attempts range now precedes the solves
+  // range. The lock loop must start AFTER the attempt keys: an attempts row
+  // holding a field named like the prerequisite is an ATTEMPT, not a solve.
+  it("story lock: an attempts row in the teammate range never opens the lock", async () => {
+    const prereqId = freshId("recon");
+    const id = freshId("web");
+    await seed(id, "flag{web}", 40);
+    const mateAttempts = liveKey("classic", freshId("attempts-bob"));
+    await pipeline([["HSET", mateAttempts, prereqId, attemptsRow(1, iso(T0), iso(T0), T0)]]);
+    expect(
+      await submit(id, "flag{web}", {
+        prereq: prereqId,
+        mateAttemptKeys: [mateAttempts],
+        teamSolveKeys: [K.solves],
+        cooldownMs: 0,
+      }),
+    ).toEqual(["locked"]);
+    // Anti-vacuous half: the SAME field, seen in the SOLVES range, opens the
+    // step — so the refusal above came from the boundary, not from a story
+    // nothing could ever satisfy.
+    const mateSolves = liveKey("classic", freshId("solves-bob"));
+    await pipeline([["HSET", mateSolves, prereqId, '{"points":10,"at":"x"}']]);
+    expect(
+      await submit(id, "flag{web}", {
+        prereq: prereqId,
+        mateAttemptKeys: [mateAttempts],
+        teamSolveKeys: [mateSolves],
+        cooldownMs: 0,
+      }),
+    ).toEqual(["correct", "40"]);
+    await pipeline([["DEL", mateAttempts, mateSolves]]);
   });
 });

@@ -350,12 +350,18 @@ the current attempt count and cooldown, re-checking the cap and cooldown
 against the *current* admin settings, bumping the attempt counter, comparing
 the submission against the stored key, and — on a match — writing the answer
 row, incrementing both aggregate counters and stamping `ctf:quiz:lastAt`, all happen inside a single
-script execution. The JS-side `quizGate` pre-check that runs before the
-script is only a cheap early-out over its own separate, non-atomic read; the
-script is what actually closes the race, because Redis runs it to completion
-before starting the next one, so a burst of near-simultaneous submissions on
-the same question can't collectively spend more attempts than the cap
-allows.
+script execution. The cap is the whole team's (#494): the caller resolves
+the roster once per submission and the script sums every current teammate's
+attempts row (in `KEYS[8..]`) inside that same execution, so the team count
+and the verdict are one atomic step. The accepted caveat is that the roster
+identity itself is that one read from moments earlier — a member joining or
+leaving in the instant before the script runs is counted as the team stood
+a moment earlier, and the next submission re-reads it. The JS-side
+`quizGate` pre-check that runs before the script is only a cheap early-out
+over its own separate, non-atomic read; the script is what actually closes
+the race, because Redis runs it to completion before starting the next one,
+so a burst of near-simultaneous submissions on the same question can't
+collectively spend more attempts than the cap allows.
 
 **Fail-closed — deliberately the opposite of the scoring freeze.** If the
 gate's attempt/answer lookup itself errors, it refuses the answer (a
@@ -477,7 +483,9 @@ hint-store's reveal, exactly the flag hashes' rule; its name lives in
 `categories` (one JSON array, the organizer's chosen display order), `solves:<login>` (a contestant's banked solves —
 `{points, at}`, points captured at solve time so a later re-price never
 rewrites history), `attempts:<login>` (every submission, right or wrong —
-`{attempts, firstAt, lastAt, lastAtMs}`, the cooldown's own read; `firstAt`
+`{attempts, firstAt, lastAt, lastAtMs}`, the cooldown's own read: the
+script takes the LATEST row across the current roster, since the cooldown is
+the team's to share (#494); `firstAt`
 is what Insights' time-to-solve is measured from), and four running
 aggregates: `points` and `solved` (per-login totals the leaderboard overlay
 reads with flat `HGETALL`s regardless of board size), `lastAt` (each login's
@@ -494,12 +502,16 @@ make), already solved, or still inside the cooldown (fails **closed**, with
 its own `"unavailable"` reason, if the lookup itself errors). Past the
 pre-check, one atomic Lua script — `SUBMIT_SCRIPT`, not the pre-check — is
 the actual authority: it re-reads the already-solved guard and the cooldown
-against state read fresh at script-execution time (never a value the caller
-read earlier), so a race that slips past the pre-check is still caught,
-atomically. On a correct submission it reads the challenge's current price
-off the challenge hash, writes the solve row, bumps the three counters
-(`points`, `solved`, `solvecount`) and moves `lastAt` forward, all in the same
-script execution.
+against attempts rows read fresh at script-execution time — every current
+teammate's too, because the cooldown is the team's to share (#494) — so a
+race that slips past the pre-check is still caught, atomically. The one
+input older than the script is the roster itself: it is resolved once per
+submission just before the call, so a member joining or leaving inside that
+instant is counted as the team stood a moment earlier (accepted; the next
+submission re-reads it). On a correct submission it reads the challenge's
+current price off the challenge hash, writes the solve row, bumps the three
+counters (`points`, `solved`, `solvecount`) and moves `lastAt` forward, all
+in the same script execution.
 
 **There is no attempt cap anywhere in this gate — only a cooldown, in
 SECONDS.** `classicCooldownSec` (organizer-configurable, default `5`,

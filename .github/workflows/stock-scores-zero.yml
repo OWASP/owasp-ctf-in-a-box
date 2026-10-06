@@ -25,6 +25,7 @@ on:
       - 'scorer/src/catalogue.js'
       - 'scorer/src/targets.js'
       - 'scripts/acceptance-target.sh'
+      - 'scripts/lib/acceptance-lib.sh'
       - '.github/workflows/stock-scores-zero.yml'
   workflow_dispatch:
 
@@ -40,6 +41,8 @@ concurrency:
 
 jobs:
   stock:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     # Real cost here is image pulls, not compile time: Security Shepherd's own
     # Maven build measures ~35s and its whole gate ~86s. The slow, rate-limit-
@@ -62,13 +65,13 @@ jobs:
           - target: vampi
             image: "erev0s/vampi@sha256:0a5a224b6e14ae7da6a6ea265178ff71286ff903aec74adee98f660bb0e4ca12"
           - target: vulnerableapp
-            image: sasanlabs/owasp-vulnerableapp:2.1.37
+            image: sasanlabs/owasp-vulnerableapp:2.1.37@sha256:b10f8405e5f1c7bc3aaf832036c8faeea770ad4dd59c0f63845e0dbba4dbb66a
           - target: juice-shop
-            image: bkimminich/juice-shop:v20.0.0
+            image: bkimminich/juice-shop:v20.0.0@sha256:fd58bdc9745416afce8184ee0666278a436574633ea7880365153a63bfd418b0
           - target: dvwa
             image: "ghcr.io/digininja/dvwa@sha256:091498cedec31b4a3091a1262e6a5a0ce5ec32d4bd26486558818346ccc89d67"
           - target: webgoat
-            image: webgoat/webgoat:v2025.3
+            image: webgoat/webgoat:v2025.3@sha256:3101bd9e7bcfe122d7ef91e690ef3720de36cc4e86b3d06763a1ddf2e2751a4b
           # WebGoat is scored two ways and both have to stay honest: the row above
           # runs the published stock image, this one runs the SOURCE path a
           # contestant's PR takes (pinned upstream tree staged into the workspace ->

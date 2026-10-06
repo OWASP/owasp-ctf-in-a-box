@@ -11,6 +11,7 @@ import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { readLastAt } from "@/lib/last-at";
 import { strictTeamLogins } from "@/lib/team-members";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   QUIZ_QUESTIONS_KEY as QUESTIONS_KEY,
   QUIZ_KEY_KEY as KEY_KEY,
@@ -499,22 +500,6 @@ export type ViewerQuiz = {
   attempts: Record<string, { attempts: number; lastAt: string }>;
 };
 
-function parseHashEntries<T>(flat: unknown, extract: (parsed: Record<string, unknown>) => T | null): Record<string, T> {
-  const arr = Array.isArray(flat) ? (flat as string[]) : [];
-  const out: Record<string, T> = {};
-  for (let i = 0; i < arr.length; i += 2) {
-    try {
-      const parsed = JSON.parse(arr[i + 1]) as unknown;
-      if (typeof parsed !== "object" || parsed === null) continue;
-      const value = extract(parsed as Record<string, unknown>);
-      if (value !== null) out[arr[i]] = value;
-    } catch {
-      // Skip unparseable rows.
-    }
-  }
-  return out;
-}
-
 function extractAnswered(v: Record<string, unknown>): { points: number; at: string } | null {
   if (typeof v.points !== "number" || typeof v.at !== "string") return null;
   return { points: v.points, at: v.at };
@@ -540,19 +525,6 @@ export async function getViewerQuiz(login: string): Promise<ViewerQuiz> {
   };
 }
 
-/** Parses a single HGET reply (not a flat hash array) the same way
- *  `parseHashEntries` parses each row of one. */
-function parseJsonValue<T>(raw: unknown, extract: (parsed: Record<string, unknown>) => T | null): T | null {
-  if (typeof raw !== "string") return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== "object" || parsed === null) return null;
-    return extract(parsed as Record<string, unknown>);
-  } catch {
-    return null;
-  }
-}
-
 /** One login's (or one team's) quiz aggregate, as consumed by the leaderboard
  *  overlay (`leaderboard/module-contributions.ts`). */
 /** `itemIds` is present only on the TEAM path, whose fold already dedupes by
@@ -561,16 +533,6 @@ function parseJsonValue<T>(raw: unknown, extract: (parsed: Record<string, unknow
  *  with the live catalogue for a denominator that survives an organizer
  *  deleting a solved item; where it is absent the caller clamps. */
 export type QuizTotal = { points: number; answered: number; lastAt: string | null; itemIds?: string[] };
-
-function parseCounterHash(flat: unknown): Map<string, number> {
-  const arr = Array.isArray(flat) ? (flat as string[]) : [];
-  const out = new Map<string, number>();
-  for (let i = 0; i < arr.length; i += 2) {
-    const n = Number(arr[i + 1]);
-    if (Number.isFinite(n)) out.set(arr[i], n);
-  }
-  return out;
-}
 
 /** Per-login quiz totals for every login that has answered at least one
  *  question correctly — three `HGETALL`s in one pipeline (`ctf:quiz:points`,
@@ -865,21 +827,10 @@ local nowMs = tonumber(ARGV[7])
 -- budget and cooldown (nothing is recorded, so neither is being spent).
 local dry = ARGV[8] == '1'
 
-local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
-local attempts = 0
-local lastAtMs = nil
-local firstAt = nil
-if attemptsRaw then
-  local foundAttempts = string.match(attemptsRaw, '"attempts":(%d+)[,}]')
-  if foundAttempts then attempts = tonumber(foundAttempts) end
-  local foundLastAtMs = string.match(attemptsRaw, '"lastAtMs":(%d+)[,}]')
-  if foundLastAtMs then lastAtMs = tonumber(foundLastAtMs) end
-  -- Carried forward, never recomputed: this row is REWRITTEN on every
-  -- submission, so the first attempt's time survives only by being read back
-  -- out of the row it is being replaced by. Absent on rows written before
-  -- this field existed, which is why the write below falls back to now.
-  firstAt = string.match(attemptsRaw, '"firstAt":"([^"]*)"')
-end
+-- The shared attempt-row read (#504 M13) — attempts, lastAtMs and firstAt —
+-- declared here as ATTEMPT_ROW_LUA, so classic's and ai's scripts read the
+-- same three fields out of the same row shape.
+${ATTEMPT_ROW_LUA}
 
 -- #494: the cap belongs to the TEAM, so the budget is what the whole team has
 -- spent on this question — the submitting login's own count (read above) plus

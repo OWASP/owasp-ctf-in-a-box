@@ -1974,6 +1974,23 @@ any browser or phone, no login:
   polled — if that number keeps growing while Secure Development is live,
   score comments are piling up on GitHub and the leaderboard is not moving.
 
+### Admin state: through the API, not the rendered panel
+
+Most `/admin` tabs load their data client-side — the page shell and loading
+skeleton are server-rendered, while each tab's data is fetched in the
+browser — so when verifying admin state, ask the API rather than the panel:
+an authenticated `GET` such as `/api/admin/sponsors`
+or `/api/admin/metrics`, run from a logged-in browser tab — the session
+cookie carries the auth, and a cookie on a command line is readable by
+every local user. What the JSON says is the state; it also separates "the
+panel did not draw it" from "the box does not have it".
+
+If a client-rendered panel sits on `Loading…`, check
+`document.visibilityState` in that tab and bring it to the foreground
+**before** diagnosing a rendering failure: a panel driven from a backgrounded
+tab can sit there while a manual `fetch` from the same page's own JS context
+answers immediately (#433). The API answers; the tab is the variable.
+
 ### The box under load: `scripts/load-test.sh`
 
 Before content authoring, not after — the harness seeds synthetic contestants

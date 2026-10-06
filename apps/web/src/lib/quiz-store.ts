@@ -843,11 +843,8 @@ ${ATTEMPT_ROW_LUA}
 if not dry and maxAttempts > 0 then
   local teamAttempts = attempts
   for i = 8, #KEYS do
-    local mateRaw = redis.call('HGET', KEYS[i], ARGV[1])
-    if mateRaw then
-      local foundMate = string.match(mateRaw, '"attempts":(%d+)[,}]')
-      if foundMate then teamAttempts = teamAttempts + tonumber(foundMate) end
-    end
+    local mateAttempts = readAttemptRow(redis.call('HGET', KEYS[i], ARGV[1]))
+    teamAttempts = teamAttempts + mateAttempts
   end
   if teamAttempts >= maxAttempts then
     return {'exhausted'}

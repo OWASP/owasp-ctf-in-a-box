@@ -1167,13 +1167,9 @@ ${ATTEMPT_ROW_LUA}
 if not dry and cooldownMs > 0 then
   local latestMs = lastAtMs
   for i = 9, 8 + nMate do
-    local mateRaw = redis.call('HGET', KEYS[i], ARGV[1])
-    if mateRaw then
-      local mateMs = string.match(mateRaw, '"lastAtMs":(%d+)[,}]')
-      if mateMs then
-        mateMs = tonumber(mateMs)
-        if not latestMs or mateMs > latestMs then latestMs = mateMs end
-      end
+    local _, mateMs = readAttemptRow(redis.call('HGET', KEYS[i], ARGV[1]))
+    if mateMs then
+      if not latestMs or mateMs > latestMs then latestMs = mateMs end
     end
   end
   if latestMs and nowMs < (latestMs + cooldownMs) then

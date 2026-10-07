@@ -155,17 +155,19 @@ function mergeCumulative(existing: readonly SeriesPoint[], earned: readonly Earn
  *  events instead would re-introduce the double-count those totals avoid, and
  *  the line would end above the number in the team's own row. */
 function foldTeamEvents(members: readonly string[], byLogin: Map<string, Earned[]>): Earned[] {
+  return earliestPerItem(members.flatMap((member) => byLogin.get(member.toLowerCase()) ?? []));
+}
+
+function earliestPerItem(events: readonly Earned[]): Earned[] {
   const earliest = new Map<string, Earned>();
-  for (const member of members) {
-    for (const event of byLogin.get(member.toLowerCase()) ?? []) {
-      // Keyed by MODULE and item. Ids are unique within a module's namespace
-      // and nowhere else, so folding on the id alone would silently merge a
-      // quiz question with a same-named classic challenge and drop one of
-      // them from the team's line.
-      const key = `${event.moduleId}\u0000${event.itemId}`;
-      const held = earliest.get(key);
-      if (!held || Date.parse(event.at) < Date.parse(held.at)) earliest.set(key, event);
-    }
+  for (const event of events) {
+    // Keyed by MODULE and item. Ids are unique within a module's namespace
+    // and nowhere else, so folding on the id alone would silently merge a
+    // quiz question with a same-named classic challenge and drop one of
+    // them from the team's line.
+    const key = `${event.moduleId}\u0000${event.itemId}`;
+    const held = earliest.get(key);
+    if (!held || Date.parse(event.at) < Date.parse(held.at)) earliest.set(key, event);
   }
   return [...earliest.values()];
 }
@@ -175,19 +177,37 @@ export async function withModuleSeries(data: LeaderboardData): Promise<Leaderboa
   // plots every series handed to it, so computing a subset would silently drop
   // lines it draws today. Team members join even when they hold no entry of
   // their own, or their team's line would miss the items only they hold.
-  const logins = new Set<string>();
-  for (const entry of data.entries) logins.add(entry.login.toLowerCase());
-  for (const team of data.teams) for (const member of team.members) logins.add(member.toLowerCase());
-  if (logins.size === 0) return data;
+  //
+  // Two sets, because the stores and the join disagree on case. Each module's
+  // hash is keyed on the login exactly as the session spelled it, so the reads
+  // go out under every distinct SPELLING; a lowercased read of a mixed-case
+  // login finds an empty hash and drops all of that contestant's app-side
+  // points from the chart. The series themselves join case-insensitively, so
+  // a login stored under two spellings is one contestant with one line.
+  const spellings = new Set<string>();
+  for (const entry of data.entries) spellings.add(entry.login);
+  for (const team of data.teams) for (const member of team.members) spellings.add(member);
+  if (spellings.size === 0) return data;
 
-  const byLogin = await readModuleEvents([...logins]);
-  if (byLogin.size === 0) return data;
+  const bySpelling = await readModuleEvents([...spellings]);
+  if (bySpelling.size === 0) return data;
+
+  const display = new Map<string, string>();
+  const gathered = new Map<string, Earned[]>();
+  for (const spelling of spellings) {
+    const login = spelling.toLowerCase();
+    if (!display.has(login)) display.set(login, spelling);
+    gathered.set(login, [...(gathered.get(login) ?? []), ...(bySpelling.get(spelling) ?? [])]);
+  }
+  // The same item under two spellings of one login is one solve, kept at the
+  // earlier time — the rule a team's union applies across its members.
+  const byLogin = new Map([...gathered].map(([login, events]) => [login, earliestPerItem(events)]));
 
   const seriesByLogin = new Map((data.series ?? []).map((s) => [s.login.toLowerCase(), s]));
-  const series: PlayerSeries[] = [...logins].map((login) => {
+  const series: PlayerSeries[] = [...byLogin.keys()].map((login) => {
     const existing = seriesByLogin.get(login);
     return {
-      login: existing?.login ?? login,
+      login: existing?.login ?? display.get(login) ?? login,
       points: mergeCumulative(existing?.points ?? [], byLogin.get(login) ?? []),
     };
   });

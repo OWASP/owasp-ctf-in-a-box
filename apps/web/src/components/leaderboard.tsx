@@ -337,6 +337,21 @@ export default function Leaderboard({
           just made can take a moment to appear here.
         </p>
       )}
+      {/* #570: Story-lock disclaimer — only while some row on the board still
+          has locked story steps. Gated on `detail.locked > 0`, never on the
+          denominator being defined: a classic detail with nothing locked is
+          the ordinary case and must say nothing. Both row kinds are scanned —
+          the reachable count is computed per TEAM (withTeamClassicPoints),
+          so a board whose individuals clamp still carries it on its teams. */}
+      {modules.some((m) => m.id === "classic") &&
+        [...data.entries, ...data.teams].some((row) => {
+          const d = row.modules?.classic?.detail;
+          return d?.kind === "classic" && d.locked > 0;
+        }) && (
+        <p className="px-1 text-xs text-muted">
+          Totals count unlocked challenges only — story steps add to the total as your team unlocks them.
+        </p>
+      )}
 
       {activeView === "individual" && data.entries.length > 0 && (
         <div className="flex items-center gap-4 px-1 text-xs uppercase tracking-wider text-muted">
@@ -384,7 +399,6 @@ export default function Leaderboard({
                 onToggle={() => dispatch({ type: "toggleRow", key: entry.login })}
                 capabilities={data.capabilities}
                 modules={modules}
-                completable={data.completable}
                 enabledApps={enabledApps}
                 catalog={data.catalog}
               />

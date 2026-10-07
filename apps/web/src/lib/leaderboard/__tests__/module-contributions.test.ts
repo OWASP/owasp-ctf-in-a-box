@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getClassicTotals: vi.fn(),
   getTeamClassicTotalsBatch: vi.fn(),
   listChallenges: vi.fn(),
+  listStories: vi.fn(),
   getAiTotals: vi.fn(),
   getTeamAiTotalsBatch: vi.fn(),
   listAiChallenges: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("@/lib/classic-store", () => ({
   getClassicTotals: mocks.getClassicTotals,
   getTeamClassicTotalsBatch: mocks.getTeamClassicTotalsBatch,
   listChallenges: mocks.listChallenges,
+  listStories: mocks.listStories,
 }));
 
 vi.mock("@/lib/ai-store", () => ({
@@ -92,6 +94,7 @@ beforeEach(() => {
     Promise.resolve(teams.map(() => ({ points: 0, solved: 0, lastAt: null }))),
   );
   mocks.listChallenges.mockResolvedValue([]);
+  mocks.listStories.mockResolvedValue([]);
   mocks.getAiTotals.mockResolvedValue(new Map());
   mocks.getTeamAiTotalsBatch.mockImplementation((teams: readonly string[][]) =>
     Promise.resolve(teams.map(() => ({ points: 0, solved: 0, lastAt: null }))),
@@ -518,7 +521,7 @@ describe("withModuleContributions", () => {
       expect(out.entries[0].points).toBe(150); // 100 scored + 50 classic
       const classic = out.entries[0].modules!["classic"]!;
       expect(classic).toMatchObject({ points: 50, completed: 2 });
-      expect(classic.detail).toEqual({ kind: "classic", solved: 2, total: 3, points: 50 });
+      expect(classic.detail).toEqual({ kind: "classic", solved: 2, total: 3, points: 50, locked: 0 });
       // secure-development's own attribution is untouched by the addition.
       expect(out.entries[0].modules!["secure-development"]).toMatchObject({ points: 100, completed: 3 });
     });
@@ -574,6 +577,7 @@ describe("withModuleContributions", () => {
           solved: 2,
           total: 2,
           points: 50,
+          locked: 0,
         });
       } finally {
         err.mockRestore();
@@ -608,7 +612,7 @@ describe("withModuleContributions", () => {
       const detail = out.entries[0].modules?.classic?.detail;
       if (detail?.kind !== "classic") throw new Error("shape");
       expect(detail.total).toBeGreaterThanOrEqual(detail.solved);
-      expect(detail).toEqual({ kind: "classic", solved: 1, total: 1, points: 50 });
+      expect(detail).toEqual({ kind: "classic", solved: 1, total: 1, points: 50, locked: 0 });
       // Points already banked for the deleted challenge stay on the board.
       expect(out.entries[0].points).toBe(50);
     });

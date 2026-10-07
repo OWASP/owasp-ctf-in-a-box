@@ -25,7 +25,7 @@ describe("ModuleDetail", () => {
   it("renders the classic shape from a discriminated detail", () => {
     const progress: ModuleProgress = {
       points: 50, completed: 2, lastActivityAt: null,
-      detail: { kind: "classic", solved: 2, total: 5, points: 50 },
+      detail: { kind: "classic", solved: 2, total: 5, points: 50, locked: 0 },
     };
     const html = renderToStaticMarkup(<ModuleDetail moduleId="classic" progress={progress} entry={entry()} enabledApps={[]} />);
     expect(html).toMatch(/2\s*\/\s*5/);
@@ -41,7 +41,7 @@ describe("ModuleDetail", () => {
   it("renders from detail.kind rather than the moduleId prop", () => {
     const progress: ModuleProgress = {
       points: 50, completed: 2, lastActivityAt: null,
-      detail: { kind: "classic", solved: 2, total: 5, points: 50 },
+      detail: { kind: "classic", solved: 2, total: 5, points: 50, locked: 0 },
     };
     const html = renderToStaticMarkup(<ModuleDetail moduleId="quiz" progress={progress} entry={entry()} enabledApps={[]} />);
     expect(html).toContain("flags");

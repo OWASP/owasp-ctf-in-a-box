@@ -5,6 +5,8 @@
 
 import { getTeamClassicSolvedIds } from "@/lib/classic-team";
 import { isLocked, storyPositions } from "@/lib/story-lock";
+import type { Story } from "@/lib/story-lock";
+import { classicReachableDenominator } from "@/lib/leaderboard/denominators";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -15,7 +17,7 @@ import AppBreakdown from "@/components/app-breakdown";
 import ProgressRow, { moduleUnit } from "@/components/progress/progress-row";
 import ChallengeList from "@/components/progress/challenge-list";
 import RemainingLine from "@/components/progress/remaining-line";
-import { maxPointsAcrossModules, visibleClassic } from "@/app/(site)/profile/module-blocks";
+import { maxPointsAcrossModules } from "@/app/(site)/profile/module-blocks";
 import { fillStyle } from "@/components/progress/progress-bar";
 import ProfileStatTiles, { type StatTile } from "@/components/profile-stat-tiles";
 import { loadTeamStanding } from "@/app/(site)/profile/team-standing";
@@ -231,19 +233,42 @@ export default async function ProfilePage() {
   // #463: story steps still locked for this viewer's team never reach the
   // page — not their title, points or category (review C1). A stories read
   // that fails errors the page, like the challenge list would.
-  let classicLocked: Set<string> = new Set();
+  // #570: use the shared story-lock reachability helper so the profile and
+  // leaderboard agree on the reachable denominator.
+  const classicLocked: Set<string> = new Set();
+  let classicReachableTotal = 0;
+  let classicReachableMaxPoints = 0;
+  // #570's locked-step count for the disclaimer below — hoisted because the
+  // `moduleInput` literal sits outside this block, and because a disabled
+  // classic module must read 0 rather than an uninitialised name.
+  let classicLockedCount = 0;
   if (classicEnabled) {
     const stories = await listStories();
+    const teamSolved = await getTeamClassicSolvedIds(login);
+    const viewerSolved = viewerClassic.solved;
+    const solvedRecords: Record<string, { points?: number }> = {};
+    for (const [id, solve] of Object.entries(viewerSolved)) {
+      solvedRecords[id] = { points: solve.points };
+    }
+    const reachable = classicReachableDenominator(
+      classicChallenges,
+      stories as Story[],
+      teamSolved,
+      solvedRecords,
+    );
+    classicReachableTotal = reachable.total;
+    classicReachableMaxPoints = reachable.max;
+    classicLockedCount = reachable.locked;
+    // Build the locked set for moduleItemsFor filtering (locked live steps only).
     if (stories.length > 0) {
       const positions = storyPositions(stories, new Set(classicChallenges.map((c) => c.id)));
-      const teamSolved = await getTeamClassicSolvedIds(login);
-      classicLocked = new Set([...positions.values()].filter((pos) => isLocked(pos, teamSolved)).map((pos) => pos.id));
+      for (const pos of positions.values()) {
+        if (isLocked(pos, teamSolved) && !viewerSolved[pos.id]) {
+          classicLocked.add(pos.id);
+        }
+      }
     }
   }
-
-  // Locked steps are out of the ceiling too, not only the list (CodeRabbit #470).
-  const classicVisible = visibleClassic(classicChallenges, classicLocked);
-  const classicMaxPoints = classicVisible.maxPoints;
 
   const moduleInput: ProfileModuleInput = {
     profile,
@@ -253,7 +278,7 @@ export default async function ProfilePage() {
     secureDev: secureDevEnabled,
     quiz: quizEnabled ? { total: quizTotal, questions: quizQuestions, maxPoints: quizMaxPoints, viewer: viewerQuiz } : undefined,
     classic: classicEnabled
-      ? { total: classicTotal, challenges: classicVisible.challenges, maxPoints: classicMaxPoints, viewer: viewerClassic, locked: classicLocked }
+      ? { total: classicTotal, challenges: classicChallenges, maxPoints: classicReachableMaxPoints, viewer: viewerClassic, locked: classicLocked, reachableTotal: classicReachableTotal, lockedCount: classicLockedCount }
       : undefined,
     ai: aiEnabled ? { total: aiTotal, challenges: aiChallenges, maxPoints: aiMaxPoints, viewer: viewerAi } : undefined,
   };
@@ -313,7 +338,7 @@ export default async function ProfilePage() {
     classicEnabled && classicChallenges.length > 0 && {
       unit: moduleUnit("classic"),
       done: classicTotal?.solved ?? 0,
-      total: Math.max(classicVisible.challenges.length, classicTotal?.solved ?? 0),
+      total: Math.max(classicReachableTotal, classicTotal?.solved ?? 0),
     },
     aiEnabled && aiChallenges.length > 0 && {
       unit: moduleUnit("ai"),
@@ -418,6 +443,8 @@ export default async function ProfilePage() {
             const summary = moduleRow(moduleProgress[m.id]!, moduleInput);
             const list = moduleItemsFor(m.id, moduleInput);
             const isSecureDev = moduleProgress[m.id]!.detail.kind === "secure-development";
+            const isClassic = m.id === "classic";
+            const lockedCount = isClassic ? (summary.locked ?? 0) : 0;
             // One row shape at every level: the module row opens into its
             // targets (secure-development) or straight into its own grouped
             // list. The title is redundant on a single-module event, but the
@@ -432,6 +459,12 @@ export default async function ProfilePage() {
                     <ChallengeList items={list.items} unit={summary.unit} doneWord={list.doneWord} />
                   ) : undefined}
                 </ProgressRow>
+                {isClassic && lockedCount > 0 && (
+                  <p className="mt-2 text-xs text-muted">
+                    Totals count unlocked challenges only — story steps add to the total as your team unlocks them.
+                    <span className="ml-2">· {lockedCount} steps locked</span>
+                  </p>
+                )}
               </div>
             );
           })}

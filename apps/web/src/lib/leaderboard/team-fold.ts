@@ -15,6 +15,9 @@ export type FoldedTotal = {
   /** The deduped set's item ids — what lets a caller union them with a live
    *  catalogue instead of guessing a denominator from a count. */
   itemIds: string[];
+  /** Per-item points for the deduped set (earliest solve's points). Needed for
+   *  story-lock reachable denominator computation (#570). */
+  itemPoints: Record<string, number>;
 };
 
 /** The earned-item record every module stores as the JSON value of its
@@ -92,8 +95,10 @@ export function foldTeamItems(
 
   let points = 0;
   let lastAtMs = -Infinity;
-  for (const { points: itemPoints, at } of byItem.values()) {
-    points += itemPoints;
+  const itemPoints: Record<string, number> = {};
+  for (const [itemId, { points: itemPointsValue, at }] of byItem.entries()) {
+    points += itemPointsValue;
+    itemPoints[itemId] = itemPointsValue;
     const ms = Date.parse(at);
     if (Number.isFinite(ms) && ms > lastAtMs) lastAtMs = ms;
   }
@@ -102,5 +107,6 @@ export function foldTeamItems(
     completed: byItem.size,
     lastAt: Number.isFinite(lastAtMs) ? new Date(lastAtMs).toISOString() : null,
     itemIds: [...byItem.keys()],
+    itemPoints,
   };
 }

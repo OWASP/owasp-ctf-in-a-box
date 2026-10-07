@@ -38,7 +38,6 @@ export function EntryRow({
   onToggle,
   capabilities,
   modules,
-  completable,
   enabledApps,
   catalog,
 }: {
@@ -52,10 +51,6 @@ export function EntryRow({
   /** The event's live target list — forwarded to `ModuleDetail`/`AppBreakdown`.
    *  See app-breakdown.tsx's doc comment. */
   enabledApps: readonly AppMeta[];
-  /** The EVENT's total completable items, for the solved column's
-   *  denominator. Undefined when nothing stamped it — the column then shows a
-   *  bare count rather than inventing a total. */
-  completable?: number;
   /** `LeaderboardData.catalog`, joined against this row's `solvedIds` only
    *  when the row is open (issue #434). */
   catalog?: LeaderboardData["catalog"];
@@ -74,11 +69,17 @@ export function EntryRow({
   const multiModule = modules.length > 1;
   // The same function the comparator breaks points ties on — see `completedCount`.
   const solved = completedCount(entry);
-  // Clamped to the row's own numerator: a failed module-count read leaves
-  // `completable` short (see withModuleContributions), and "28 / 21" is worse
-  // than no denominator at all. Hidden entirely when there is nothing
-  // trustworthy to divide by.
-  const solvedTotal = completable && completable > 0 ? Math.max(completable, solved) : null;
+  // Use the classic module's per-row denominator (story-lock reachable count)
+  // instead of the event-wide `completable`. This ensures each row shows its
+  // own reachable total, which grows as the team unlocks story steps.
+  const classicModuleDetail = entry.modules?.classic?.detail;
+  const classicSolvedTotal = classicModuleDetail && classicModuleDetail.kind === "classic" 
+    ? Math.max(classicModuleDetail.total, classicModuleDetail.solved) 
+    : null;
+  // Fall back to the event-wide completable for non-classic modules
+  // (though the solved column is cross-module, so we use the classic denominator
+  // as the primary since it's the only one with story-lock reachability).
+  const solvedTotal = classicSolvedTotal ?? null;
   return (
     <li
       className={`ds-card group rounded-lg border bg-[#16162a] transition-all hover:border-[#2563eb]/40 hover:bg-[#1a1a30] ${

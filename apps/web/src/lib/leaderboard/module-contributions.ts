@@ -1,11 +1,12 @@
 import "server-only";
 import { errorLabel } from "@/lib/error-label";
 import { getAiTotals, getTeamAiTotalsBatch, listAiChallenges, type AiTotal } from "@/lib/ai-store";
-import { atLeast, unionTotal } from "@/lib/leaderboard/denominators";
+import { atLeast, unionTotal, classicReachableDenominator, type Story } from "@/lib/leaderboard/denominators";
 import {
   getClassicTotals,
   getTeamClassicTotalsBatch,
   listChallenges,
+  listStories,
   type ClassicTotal,
 } from "@/lib/classic-store";
 import { getEnabledModuleIds, isModuleLive } from "@/lib/enabled-modules";
@@ -331,8 +332,12 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
 
   // Settled INDEPENDENTLY — see the note in `withModuleContributions`: the
   // totals carry POINTS (and with them the team board's order), the challenge
-  // list only the DENOMINATOR.
-  const [totalsResult, challengesResult] = await Promise.allSettled([teamClassicTotals(teams), listChallenges()]);
+  // list only the DENOMINATOR. Stories are read for story-lock reachability.
+  const [totalsResult, challengesResult, storiesResult] = await Promise.allSettled([
+    teamClassicTotals(teams),
+    listChallenges(),
+    listStories(),
+  ]);
 
   if (totalsResult.status !== "fulfilled") {
     console.error("classic team totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
@@ -341,17 +346,46 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
   if (challengesResult.status !== "fulfilled") {
     console.error("classic challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
   }
+  if (storiesResult.status !== "fulfilled") {
+    console.error("classic stories unavailable for leaderboard denominator:", errorLabel(storiesResult.reason));
+  }
+
+  const challenges = challengesResult.status === "fulfilled" ? challengesResult.value : [];
+  const stories = storiesResult.status === "fulfilled" ? storiesResult.value : [];
+  const liveIds = challengesResult.status === "fulfilled" ? new Set(challenges.map((c) => c.id)) : undefined;
+
+  // If the challenge list read failed, fall back to the old union/clamp logic
+  // because we can't compute story-lock reachability without the catalogue.
+  const challengesReadFailed = challengesResult.status !== "fulfilled";
+
+  // Compute reachable denominator for each team.
+  const reachableDenominators = totalsResult.value.map((total) => {
+    const teamSolved = new Set(total.itemIds ?? []);
+    const solvedRecords: Record<string, { points?: number }> = {};
+    if (total.itemPoints) {
+      for (const [id, points] of Object.entries(total.itemPoints)) {
+        solvedRecords[id] = { points };
+      }
+    }
+    if (challengesReadFailed) {
+      // Fallback: union of live catalogue (unknown, so 0) with solved items = solved count,
+      // then clamp to at least solved. This matches the old `denominator` behavior.
+      return { total: Math.max(teamSolved.size, total.solved), max: total.points, locked: 0 };
+    }
+    return classicReachableDenominator(challenges, stories as Story[], teamSolved, solvedRecords);
+  });
 
   return attributeTeams(
     teams,
     classicContributions(
       totalsResult.value,
-      challengesResult.status === "fulfilled" ? challengesResult.value.length : 0,
+      challenges.length,
       // The live ids, like the quiz and ai counterparts: the chip's
       // denominator is the catalogue UNIONED with solved-then-deleted
       // challenges. Omitting them shows a team's classic denominator as
       // "4 / 6" beside the profile's "4 / 7".
-      challengesResult.status === "fulfilled" ? new Set(challengesResult.value.map((c) => c.id)) : undefined,
+      liveIds,
+      reachableDenominators,
     ),
   );
 }
@@ -474,7 +508,14 @@ function quizModule(total: QuizTotal, totalQuestions: number, liveIds?: Readonly
  *  flags"; (2) a failed `listChallenges` degrades the denominator to 0 while
  *  the points and solve counts survive intact. Clamping shows "1 / 1" —
  *  imprecise, but never nonsense. */
-function classicModule(total: ClassicTotal, totalChallenges: number, liveIds?: ReadonlySet<string>): ModuleProgress {
+function classicModule(
+  total: ClassicTotal,
+  totalChallenges: number,
+  liveIds?: ReadonlySet<string>,
+  reachable?: { total: number; max: number; locked: number },
+): ModuleProgress {
+  const denomTotal = reachable?.total ?? denominator(total.itemIds, liveIds, totalChallenges, total.solved);
+  const locked = reachable?.locked ?? 0;
   return {
     points: total.points,
     completed: total.solved,
@@ -482,8 +523,9 @@ function classicModule(total: ClassicTotal, totalChallenges: number, liveIds?: R
     detail: {
       kind: "classic",
       solved: total.solved,
-      total: denominator(total.itemIds, liveIds, totalChallenges, total.solved),
+      total: denomTotal,
       points: total.points,
+      locked,
     },
   };
 }
@@ -668,13 +710,14 @@ function classicContributions(
   totals: readonly ClassicTotal[],
   totalChallenges: number,
   liveIds?: ReadonlySet<string>,
+  reachableDenominators?: Array<{ total: number; max: number; locked: number }>,
 ): TeamContributions {
   return {
     moduleId: "classic",
-    contributions: totals.map((t) => ({
+    contributions: totals.map((t, i) => ({
       points: t.points,
       completed: t.solved,
-      progress: classicModule(t, totalChallenges, liveIds),
+      progress: classicModule(t, totalChallenges, liveIds, reachableDenominators?.[i]),
     })),
   };
 }

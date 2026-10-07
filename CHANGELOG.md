@@ -10,6 +10,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: the leaderboard's score chart dropped every quiz, Jeopardy and AI
+  point of a contestant whose GitHub login has an uppercase letter (#577).**
+  The chart read each module's solves hash under the lowercased login, while
+  the stores key it on the login as the session spelled it, so the read came
+  back empty; a team whose only scorer history was one PR showed "Not enough
+  score history yet to chart." with hundreds of points on the board. Scores,
+  ranks and the module rows were never affected.
+
 - **Added: the event logo and the sponsor strip on the regular leaderboard
   (#571, ADR 66).** The leaderboard is the page an event keeps on screen, and
   it now carries the event's identity there too, not only on the projector

@@ -8,9 +8,9 @@
 // 1 is always reachable and each later step unlocks only when the previous
 // step is solved by the team. Locked steps' titles and points must never be
 // exposed. The reachable denominator is computed from the team's solved IDs
-// using the same logic as `lib/story-lock.ts`, so the profile, the leaderboard
-// team row, and the graders all agree on what is reachable. A teamless
-// contestant sees only step 1 of each story.
+// through `lib/story-lock.ts`'s own `storyPositions`/`isLocked`, so the
+// profile, the leaderboard team row, and the graders all agree on what is
+// reachable. A teamless contestant sees only step 1 of each story.
 //
 // The rule: a module's numerator counts SOLVE RECORDS, which survive deletion
 // on purpose — the admin delete dialog promises it ("Points already banked for
@@ -33,6 +33,12 @@
 // Pure and client-safe: no store access, no server-only imports. The profile
 // draws its rows from a Server Component and the leaderboard's team row from a
 // Client one, and both have to be able to reach this.
+
+import { isLocked, storyPositions, type Story } from "@/lib/story-lock";
+
+/** Re-exported so `classicReachableDenominator`'s callers keep one import
+ *  site for the story-lock shapes. */
+export type { Story };
 
 /** A denominator that can never be smaller than its own numerator — the
  *  fallback for a caller with no per-item identity to union over. Prefer
@@ -81,43 +87,6 @@ export function unionDenominators(
     max += Number(solve?.points) || 0;
   }
   return { total, max };
-}
-
-export type Story = {
-  id: string;
-  title: string;
-  intro: string;
-  steps: string[];
-};
-
-type StoryPosition = {
-  id: string;
-  storyId: string;
-  position: number;
-  total: number;
-  prereq: string | null;
-};
-
-function storyPositions(stories: readonly Story[], existing?: ReadonlySet<string>): Map<string, StoryPosition> {
-  const out = new Map<string, StoryPosition>();
-  for (const story of stories) {
-    const steps = existing ? story.steps.filter((id) => existing.has(id)) : story.steps;
-    steps.forEach((id, i) => {
-      out.set(id, {
-        id,
-        storyId: story.id,
-        position: i + 1,
-        total: steps.length,
-        prereq: i === 0 ? null : steps[i - 1],
-      });
-    });
-  }
-  return out;
-}
-
-function isLocked(pos: StoryPosition, teamSolved: ReadonlySet<string>): boolean {
-  if (teamSolved.has(pos.id)) return false;
-  return pos.prereq !== null && !teamSolved.has(pos.prereq);
 }
 
 /** Reachable classic denominator for a team (or a solo contestant).

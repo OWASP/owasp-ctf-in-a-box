@@ -38,6 +38,7 @@ export function EntryRow({
   onToggle,
   capabilities,
   modules,
+  completable,
   enabledApps,
   catalog,
 }: {
@@ -48,6 +49,10 @@ export function EntryRow({
   onToggle: () => void;
   capabilities: LeaderboardData["capabilities"];
   modules: readonly ResolvedModule[];
+  /** The EVENT's total completable items, for the solved column's
+   *  denominator. Undefined when nothing stamped it — the column then shows a
+   *  bare count rather than inventing a total. */
+  completable?: number;
   /** The event's live target list — forwarded to `ModuleDetail`/`AppBreakdown`.
    *  See app-breakdown.tsx's doc comment. */
   enabledApps: readonly AppMeta[];
@@ -69,17 +74,17 @@ export function EntryRow({
   const multiModule = modules.length > 1;
   // The same function the comparator breaks points ties on — see `completedCount`.
   const solved = completedCount(entry);
-  // Use the classic module's per-row denominator (story-lock reachable count)
-  // instead of the event-wide `completable`. This ensures each row shows its
-  // own reachable total, which grows as the team unlocks story steps.
-  const classicModuleDetail = entry.modules?.classic?.detail;
-  const classicSolvedTotal = classicModuleDetail && classicModuleDetail.kind === "classic" 
-    ? Math.max(classicModuleDetail.total, classicModuleDetail.solved) 
-    : null;
-  // Fall back to the event-wide completable for non-classic modules
-  // (though the solved column is cross-module, so we use the classic denominator
-  // as the primary since it's the only one with story-lock reachability).
-  const solvedTotal = classicSolvedTotal ?? null;
+  // The solved column is cross-module, so it divides by the EVENT's
+  // completable count, discounted by this row's locked classic steps: a story
+  // step the row cannot reach yet is not something it can do, so it leaves the
+  // total. A row with no classic detail — or none locked — subtracts nothing.
+  const classicDetail = entry.modules?.classic?.detail;
+  const classicLocked = classicDetail?.kind === "classic" ? classicDetail.locked : 0;
+  // Clamped to the row's own numerator: a failed module-count read leaves
+  // `completable` short (see withModuleContributions), and "28 / 21" is worse
+  // than no denominator at all. Hidden entirely when there is nothing
+  // trustworthy to divide by.
+  const solvedTotal = completable && completable > 0 ? Math.max(completable - classicLocked, solved) : null;
   return (
     <li
       className={`ds-card group rounded-lg border bg-[#16162a] transition-all hover:border-[#2563eb]/40 hover:bg-[#1a1a30] ${

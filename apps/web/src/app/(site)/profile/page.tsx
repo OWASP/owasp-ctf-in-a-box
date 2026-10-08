@@ -96,6 +96,10 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
+/** The viewer's own progress page: the shared leaderboard pipeline for the
+ *  totals, plus the per-item reads no list row carries — the viewer's solve
+ *  records and their team's story locks — which set the classic reachable
+ *  denominator and keep locked steps' titles and points off the page. */
 export default async function ProfilePage() {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/");

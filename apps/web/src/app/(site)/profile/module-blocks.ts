@@ -76,6 +76,11 @@ export function visibleClassic(
   return { challenges: shown, maxPoints: shown.reduce((sum, c) => sum + (Number(c.points) || 0), 0) };
 }
 
+/** The per-module blocks (points, completed, detail) the profile renders,
+ *  one entry per module with progress to show and nothing for a disabled or
+ *  untouched one. `classic` divides by `reachableTotal` when the page supplies
+ *  it — the story-lock figure every other number on this page reads, so the
+ *  block, the row and the ceiling cannot drift apart. */
 export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<ModuleId, ModuleProgress>> {
   const { profile } = input;
   const blocks: Partial<Record<ModuleId, ModuleProgress>> = {};

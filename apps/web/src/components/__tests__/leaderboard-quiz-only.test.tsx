@@ -139,10 +139,25 @@ describe("the solved column", () => {
     return m[2] ? `${m[1]} / ${m[2]}` : m[1];
   }
 
-  // On a quiz-only event (no classic module), the solved column shows a bare
-  // count since there's no story-lock reachable denominator to display.
-  it("shows a bare count when no classic module is enabled", () => {
-    expect(solvedCell(render({}))).toBe("2");
+  // The whole point of the column: it is the number `compareStanding` breaks
+  // points ties on — 2 quiz completions here, NOT the row's `patched` (0).
+  it("shows the cross-module completion count the board breaks ties on", () => {
+    expect(solvedCell(render({ completable: 4 }))).toBe("2 / 4");
+  });
+
+  // `completable` comes from module counts that can fail their read and
+  // degrade to 0 (see withModuleContributions). A denominator smaller than the
+  // numerator would render "2 / 1", which is worse than no denominator.
+  it("never renders a denominator below the count", () => {
+    expect(solvedCell(render({ completable: 1 }))).toBe("2 / 2");
+  });
+
+  it("falls back to a bare count when nothing stamped a total", () => {
+    const html = render({ completable: undefined });
+    expect(html).toContain(">solved<");
+    // The denominator renders as " / <n>". Matched as that exact shape rather
+    // than a bare "/", which appears in every closing tag on the page.
+    expect(html).not.toMatch(/\s\/\s\d/);
   });
 });
 

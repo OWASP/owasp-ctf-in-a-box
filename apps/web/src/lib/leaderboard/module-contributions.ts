@@ -120,6 +120,10 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
 
   let classicTotals = new Map<string, ClassicTotal>();
   let classicTotalChallenges = 0;
+  // The live catalogue's ids, taken from the SAME `listChallenges` reply that
+  // supplies the count: the contestant path then hands `classicModule` the
+  // same union inputs the team path does, without a second read.
+  let classicLiveIds: ReadonlySet<string> | undefined;
   if (classicReads) {
     // Settled INDEPENDENTLY for exactly the reason spelled out above the quiz
     // pair, which this mirrors: `getClassicTotals` carries the POINTS and the
@@ -135,6 +139,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     }
     if (challengesResult.status === "fulfilled") {
       classicTotalChallenges = challengesResult.value.length;
+      classicLiveIds = new Set(challengesResult.value.map((c) => c.id));
     } else {
       console.error("classic challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
     }
@@ -178,6 +183,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     quizTotalQuestions,
     classicByLogin,
     classicTotalChallenges,
+    classicLiveIds,
     aiByLogin,
     aiTotalChallenges,
   };
@@ -192,6 +198,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
       quizTotalQuestions,
       classicTotalChallenges,
       aiTotalChallenges,
+      classicLiveIds,
     ),
   ]);
 
@@ -258,6 +265,9 @@ type Overlay = {
   quizTotalQuestions: number;
   classicByLogin: Map<string, ClassicTotal>;
   classicTotalChallenges: number;
+  /** Live classic ids, undefined when that read failed — the union input
+   *  `classicModule` shares with the team path. */
+  classicLiveIds?: ReadonlySet<string>;
   aiByLogin: Map<string, AiTotal>;
   aiTotalChallenges: number;
 };
@@ -351,6 +361,9 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
   }
 
   const challenges = challengesResult.status === "fulfilled" ? challengesResult.value : [];
+  // Fail OPEN: an unread story list degrades to `[]`, which counts every live
+  // step as reachable (union, locked 0) — a blip must never lock a challenge
+  // behind a story nobody could read.
   const stories = storiesResult.status === "fulfilled" ? storiesResult.value : [];
   const liveIds = challengesResult.status === "fulfilled" ? new Set(challenges.map((c) => c.id)) : undefined;
 
@@ -573,6 +586,7 @@ function createdEntries(
   quizTotalQuestions: number,
   classicTotalChallenges: number,
   aiTotalChallenges: number,
+  classicLiveIds?: ReadonlySet<string>,
 ): LeaderboardEntry[] {
   const seen = new Set(scored.map((entry) => entry.login.toLowerCase()));
   // Keyed by lowercased login so the three modules union onto one row;
@@ -602,7 +616,7 @@ function createdEntries(
   for (const { login, quiz, classic, ai } of pending.values()) {
     const modules: Partial<Record<ModuleId, ModuleProgress>> = {};
     if (quiz) modules["quiz"] = quizModule(quiz, quizTotalQuestions);
-    if (classic) modules["classic"] = classicModule(classic, classicTotalChallenges);
+    if (classic) modules["classic"] = classicModule(classic, classicTotalChallenges, classicLiveIds);
     if (ai) modules["ai"] = aiModule(ai, aiTotalChallenges);
     // The modules' own activity time is the only honest value for all three
     // (neither aggregate read has one to give today, so it is null in
@@ -666,7 +680,7 @@ function attributeEntry(entry: LeaderboardEntry, secureDev: boolean, overlay: Ov
 
   const classicTotal = overlay.classicByLogin.get(key);
   if (classicTotal && classicTotal.solved > 0) {
-    modules["classic"] = classicModule(classicTotal, overlay.classicTotalChallenges);
+    modules["classic"] = classicModule(classicTotal, overlay.classicTotalChallenges, overlay.classicLiveIds);
     points += classicTotal.points;
   }
 
@@ -706,6 +720,10 @@ function quizContributions(
   };
 }
 
+/** One contribution per team, positional with `totals` so each lands on its
+ *  own row. `reachableDenominators[i]` is the story-lock figure computed for
+ *  that team — itself the union/clamp fallback when the catalogue read failed
+ *  — and is what `classicModule` divides by in place of the raw count. */
 function classicContributions(
   totals: readonly ClassicTotal[],
   totalChallenges: number,

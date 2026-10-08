@@ -142,6 +142,10 @@ export function NoMatch({ noun, query, onClear, boardEmpty }: { noun: string; qu
   );
 }
 
+/** The board: search, sort, view toggle, empty states and the rows
+ *  themselves. Ordering and rendering only — `data` (including the
+ *  `completable` denominator the contestant rows divide by) arrives already
+ *  folded by the server-side pipeline. */
 export default function Leaderboard({
   data,
   viewerLogin,
@@ -399,6 +403,7 @@ export default function Leaderboard({
                 onToggle={() => dispatch({ type: "toggleRow", key: entry.login })}
                 capabilities={data.capabilities}
                 modules={modules}
+                completable={data.completable}
                 enabledApps={enabledApps}
                 catalog={data.catalog}
               />

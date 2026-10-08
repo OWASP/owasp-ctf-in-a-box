@@ -611,10 +611,15 @@ describe("the story-lock disclaimer (#570)", () => {
 
   it("says nothing when nothing is locked — a defined denominator is not a lock", () => {
     const html = render(
-      data({ entries: [entry({ modules: classicModules(0) })], capabilities: { apps: false, teams: false, challenges: false } }),
+      data({
+        entries: [entry({ modules: classicModules(0) })],
+        capabilities: { apps: false, teams: false, challenges: false },
+        completable: 6,
+      }),
     );
-    // The denominator is still there; only the note is withheld.
-    expect(html).toContain("/ 2");
+    // The cross-module denominator is still there (6 completable, nothing
+    // locked, 4 completed); only the note is withheld.
+    expect(html).toContain("/ 6");
     expect(html).not.toContain(DISCLAIMER);
   });
 

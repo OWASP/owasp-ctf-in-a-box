@@ -1664,9 +1664,11 @@ challenges. The denominator grows as your team unlocks story steps:
 - Challenges already solved by the team but since deleted from the
   catalogue are still counted (union with solve records), preserving
   banked points.
-- The leaderboard's "solved / total" column and the profile's progress
-  bar now reflect each row's own reachable total, not an event-wide
-  catalogue count. A disclaimer appears on the profile and the board while
+- On the leaderboard the reachable total applies to a TEAM row's classic
+  figures; a contestant row keeps the cross-module solved denominator —
+  the event's completable count, less the locked classic steps that row
+  carries — and the profile's progress bar divides by the viewer's own
+  reachable total. A disclaimer appears on the profile and the board while
   any row still has locked steps: "Totals count unlocked challenges only —
   story steps add to the total as your team unlocks them."
 

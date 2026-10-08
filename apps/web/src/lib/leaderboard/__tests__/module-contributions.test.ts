@@ -666,6 +666,34 @@ describe("withModuleContributions", () => {
       // A team with no solves gets no block rather than an empty one.
       expect(out.find((t) => t.slug === "grey")!.modules?.["classic"]).toBeUndefined();
     });
+
+    // A stories blip fails OPEN: with no story list every live step counts as
+    // reachable, so the denominator stays the union of the catalogue and the
+    // solve records (3 live + the deleted "gone" = 4) with nothing locked —
+    // never a catalogue-only or clamped figure, and never a locked step.
+    it("falls back to the union when the stories read fails", async () => {
+      mocks.listStories.mockRejectedValue(new Error("upstash blip"));
+      mocks.getTeamClassicTotalsBatch.mockResolvedValue([
+        { points: 60, solved: 2, lastAt: null, itemIds: ["c1", "gone"], itemPoints: { c1: 10, gone: 50 } },
+      ]);
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const teams: TeamStanding[] = [
+          { rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada"] },
+        ];
+        const out = await withTeamClassicPoints(teams);
+
+        expect(out[0].modules!["classic"]!.detail).toEqual({
+          kind: "classic",
+          solved: 2,
+          total: 4,
+          points: 60,
+          locked: 0,
+        });
+      } finally {
+        err.mockRestore();
+      }
+    });
   });
 
   // Both app-side modules on at once. The two are added independently and must

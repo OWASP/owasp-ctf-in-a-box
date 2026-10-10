@@ -187,3 +187,56 @@ describe("GET /api/board/items redacts for the VIEWER too (#463, review C2)", ()
     expect(body).toContain("Secret SQLi");
   });
 });
+
+// A step hidden from the viewer still has to read SOLVED when the queried
+// team solved it: a row that says "8 / 12 solved" over a list showing 3 is the
+// contradiction #584 reported. Only the solved state crosses — the row's own
+// count already says it. The step's points stay home (ADR 60): the caller
+// derives the hidden total from the row's points instead.
+describe("GET /api/board/items marks a hidden step the team solved (#584)", () => {
+  const setup = () => {
+    mocks.listChallenges.mockResolvedValue([
+      { id: "recon-ab12cd", title: "Recon", points: 10 },
+      { id: "secret-sqli-cd34ef", title: "Secret SQLi", points: 1337 },
+      { id: "final-ef56gh", title: "Final Boss", points: 4242 },
+    ]);
+    mocks.listStories.mockResolvedValue([
+      { id: "op", title: "Op", intro: "", steps: ["recon-ab12cd", "secret-sqli-cd34ef", "final-ef56gh"] },
+    ]);
+    // The queried team solved steps 1 and 2; step 3 is open to them but unsolved.
+    mocks.getViewerClassic.mockResolvedValue({
+      solved: { "recon-ab12cd": { points: 10, at: "x" }, "secret-sqli-cd34ef": { points: 1337, at: "y" } },
+      attempts: {},
+    });
+    mocks.getSession.mockResolvedValue(null);
+  };
+  const classicOf = async (logins: string) =>
+    ((await (await GET(req(logins))).json()) as { classic: { id: string; label: string; points: number; done: boolean; hidden?: boolean; earnedPoints?: number }[] }).classic;
+
+  it("shows a hidden step the team solved as solved, still redacted", async () => {
+    setup();
+    const step2 = (await classicOf("leader")).find((i) => i.label === "??? — step 2 of 3");
+    expect(step2).toMatchObject({ done: true, hidden: true });
+  });
+
+  it("never sends a hidden step's points, solved or not", async () => {
+    setup();
+    const body = JSON.stringify(await (await GET(req("leader"))).json());
+    expect(body).not.toContain("1337");
+    expect(body).not.toContain("4242");
+    expect(body).not.toContain("Secret SQLi");
+  });
+
+  it("keeps a hidden step the team has not solved unsolved", async () => {
+    setup();
+    const step3 = (await classicOf("leader")).find((i) => i.label === "??? — step 3 of 3");
+    expect(step3).toMatchObject({ done: false, hidden: true, points: 0 });
+  });
+
+  it("marks only hidden steps hidden", async () => {
+    setup();
+    const step1 = (await classicOf("leader")).find((i) => i.label === "Recon");
+    expect(step1?.hidden).toBeUndefined();
+    expect(step1).toMatchObject({ done: true, earnedPoints: 10 });
+  });
+});

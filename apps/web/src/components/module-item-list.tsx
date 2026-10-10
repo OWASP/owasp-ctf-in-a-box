@@ -22,14 +22,28 @@ export type ModuleItem = {
   /** What the viewer actually banked, when done — can differ from `points`
    *  if the item was re-priced after they completed it. */
   earnedPoints?: number;
+  /** A story step redacted for this viewer: placeholder label, no price. */
+  hidden?: true;
 };
+
+/** The row's points column: a dash for a hidden step, which carries no price
+ *  (ADR 60) and must not read as worth 0; the banked points for a done item;
+ *  the sticker price otherwise. */
+export function itemPointsLabel(item: ModuleItem): string {
+  if (item.hidden) return "—";
+  return `${item.done && item.earnedPoints != null ? item.earnedPoints : item.points}pt`;
+}
 
 export default function ModuleItemList({
   items,
   noun,
   doneLabel,
+  note,
 }: {
   items: ModuleItem[];
+  /** One line under the open list — the hidden-steps summary on a classic
+   *  row. */
+  note?: string | null;
   /** Plural item noun for the toggle: "questions", "flags". */
   noun: string;
   /** The done-state word: "Answered", "Solved". */
@@ -70,7 +84,7 @@ export default function ModuleItemList({
                 {item.label}
               </span>
               <span className="flex-none font-mono text-xs text-muted">
-                {item.done && item.earnedPoints != null ? item.earnedPoints : item.points}pt
+                {itemPointsLabel(item)}
               </span>
               <span
                 className={`w-20 flex-none text-right text-xs uppercase tracking-wide ${
@@ -83,6 +97,7 @@ export default function ModuleItemList({
           ))}
         </ul>
       )}
+      {open && note && <p className="mt-1 pl-3 text-xs text-muted">{note}</p>}
     </div>
   );
 }

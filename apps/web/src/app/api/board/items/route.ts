@@ -12,7 +12,10 @@ import { getViewerQuiz, listQuestions } from "@/lib/quiz-store";
 /** How many logins one request may union — a team's roster, not a scrape. */
 const MAX_LOGINS = 8;
 
-type Item = { id: string; label: string; points: number; done: boolean; earnedPoints?: number };
+/** `hidden` marks a story step redacted for this viewer: its label is the
+ *  placeholder, its points are 0, and `done` is the queried team's real
+ *  solved state — the row's own solved count already says it. */
+type Item = { id: string; label: string; points: number; done: boolean; earnedPoints?: number; hidden?: true };
 
 /**
  * Per-item quiz/classic/ai completion for a login (an expanded leaderboard
@@ -79,7 +82,11 @@ export async function GET(request: Request) {
     classic = challenges.map((c) => {
       const pos = positions.get(c.id);
       if (pos && (isLocked(pos, teamSolved) || isLocked(pos, viewerSolved))) {
-        return { id: `locked:${pos.storyId}:${pos.position}`, label: lockedLabel(pos), points: 0, done: false };
+        // The solved state crosses, the points never do (ADR 60): the row's
+        // own count already says the team solved it, while a step's value is
+        // part of what the lock keeps back. The caller derives the hidden
+        // total from the row's points instead.
+        return { id: `locked:${pos.storyId}:${pos.position}`, label: lockedLabel(pos), points: 0, done: teamSolved.has(c.id), hidden: true };
       }
       const hit = viewers.map((v) => v.solved[c.id]).find(Boolean);
       return { id: c.id, label: c.title, points: c.points, done: Boolean(hit), earnedPoints: hit?.points };

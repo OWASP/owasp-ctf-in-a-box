@@ -138,3 +138,24 @@ describe("TeamCard", () => {
     expect(classAttr).not.toMatch(/disabled:opacity-50/);
   });
 });
+
+// #599: "nothing counts without a team" is false for Secure Development, whose
+// PR scores are recorded for their author and count for the team they join.
+// The card says so when that module runs, and names no module otherwise.
+describe("TeamCard teamless copy follows the modules", () => {
+  it("tells a Secure Development event that PRs are kept until the player joins", () => {
+    const html = renderToStaticMarkup(
+      <TeamCard team={null} writesEnabled maxMembers={4} isCaptain={false} captain={null} joinCode={null} secureDevEnabled />,
+    );
+    expect(html).toContain("Secure Development PRs are kept and count for the team you join");
+    expect(html).not.toContain("before anything you solve counts");
+  });
+
+  it("names no module on an event without Secure Development", () => {
+    const html = renderToStaticMarkup(
+      <TeamCard team={null} writesEnabled maxMembers={4} isCaptain={false} captain={null} joinCode={null} />,
+    );
+    expect(html).toContain("You need a team before anything you solve counts.");
+    expect(html).not.toMatch(/Secure Development/);
+  });
+});

@@ -25,6 +25,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   Mortadela's, which the board now shows on the event's snapshot. The rules
   page and FAQ state the team rule, and Secure Development's rules say a PR
   counts from when the event receives it.
+- **Fixed: a numeric event setting could never be reset to its default
+  (#600), and two messages misstated when points count (#599).** Emptying
+  a number field in `/admin` (hint cost and gating, players per team, the
+  retry gate, the cooldowns) now removes the override so the default applies
+  again; the API takes `null` or `""` for the same, as the other optional
+  settings already did. The profile's team card no longer says nothing counts
+  without a team on a Secure Development event (PR scores are kept and count
+  for the team the player joins), and every PR score report now says points
+  count only while the event's scoring window is open.
 
 - **Changed: dependency batch (Dependabot #462, #563, #564, #565, #574,
   #575).** Next.js and `eslint-config-next` 16.3.6 → 16.4.0, better-auth

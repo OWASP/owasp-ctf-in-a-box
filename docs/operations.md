@@ -294,7 +294,8 @@ The panel offers:
   IANA zone such as `America/Argentina/Buenos_Aires`, suggested as you type;
   the landing page's dates, the phase line, the score chart's axis and the
   schedule inputs below and the admin activity times (Overview and the
-  Activity tab, to the second) read on this clock (the Insights and Support
+  Activity tab, to the second; a "Show UTC" switch beside each flips them
+  to UTC and is remembered per browser) read on this clock (the Insights and Support
   timestamps stay UTC, to the second, to match against logs); the phase line and the launch status name its offset, e.g. "9:00 AM
   GMT-3"; blank means UTC, the output before this setting existed), **Contact e-mail**
   (≤254; the organizers' own inbox, rendered as a `mailto:` link on the

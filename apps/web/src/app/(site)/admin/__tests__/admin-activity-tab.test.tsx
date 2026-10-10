@@ -16,6 +16,12 @@ import AdminActivityTab, {
 } from "@/app/(site)/admin/admin-activity-tab";
 
 describe("AdminActivityTab initial view", () => {
+  it("offers a Show UTC switch beside the toolbar, off by default", () => {
+    const html = renderToStaticMarkup(<AdminActivityTab />);
+    expect(html).toContain("Show UTC");
+    expect(html).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked/);
+  });
+
   it("offers the load button and says what the log holds, with no table yet", () => {
     const html = renderToStaticMarkup(<AdminActivityTab />);
     expect(html).toContain("Load activity");

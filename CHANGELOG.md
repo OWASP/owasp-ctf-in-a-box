@@ -10,6 +10,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: the leaderboard's score chart dropped every quiz, Jeopardy and AI
+  point of a contestant whose GitHub login has an uppercase letter (#577).**
+  The chart read each module's solves hash under the lowercased login, while
+  the stores key it on the login as the session spelled it, so the read came
+  back empty; a team whose only scorer history was one PR showed "Not enough
+  score history yet to chart." with hundreds of points on the board. Scores,
+  ranks and the module rows were never affected.
+
 - **Changed: the maintainability follow-ups from the pre-v0.7.0 audit
   (#504).** Refactors with no behavior change: the demo seed and clear body
   moved out of `admin-store.ts` (43% of that file) into `lib/demo-seed.ts`,

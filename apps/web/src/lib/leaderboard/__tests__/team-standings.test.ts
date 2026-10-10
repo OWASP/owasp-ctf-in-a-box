@@ -188,3 +188,35 @@ describe("withTeamStandings", () => {
     }
   });
 });
+
+// #586. At RTS the Teams view listed all 6 teams, three of them at 0, while
+// the Individual view said "3 of 3 contestants": a player who had not scored
+// had no row, so they could not find themselves. Every team member gets a
+// row; one with no points sits at 0 after everyone who scored, by name.
+describe("every team member has an Individual row", () => {
+  it("adds a 0-point row for a member who has not scored, after the scorers", async () => {
+    mocks.listTeams.mockResolvedValueOnce([
+      { slug: "red", name: "Red Team", members: ["bob", "Zed", "eve"] },
+      { slug: "blue", name: "Blue Team", members: ["ada"] },
+    ]);
+    const result = await withTeamStandings(data({ entries: [entry("ada", 100), entry("bob", 40)] }));
+    expect(result.entries.map((e) => [e.login, e.points, e.team, e.rank])).toEqual([
+      ["ada", 100, "blue", 1],
+      ["bob", 40, "red", 2],
+      ["eve", 0, "red", 3],
+      ["Zed", 0, "red", 4],
+    ]);
+  });
+
+  it("never duplicates a member who already has a row under another spelling", async () => {
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["Bob"] }]);
+    const result = await withTeamStandings(data({ entries: [entry("bob", 40)] }));
+    expect(result.entries.map((e) => e.login)).toEqual(["bob"]);
+  });
+
+  it("adds no row for a signed-in player on no team", async () => {
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["bob"] }]);
+    const result = await withTeamStandings(data({ entries: [entry("bob", 40), entry("solo", 10)] }));
+    expect(result.entries.map((e) => e.login)).toEqual(["bob", "solo"]);
+  });
+});

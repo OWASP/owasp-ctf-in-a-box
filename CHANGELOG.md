@@ -10,6 +10,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: the leaderboard's Individual view listed only contestants who had
+  scored (#586).** Every team member now has a row; one with no points sits
+  at 0 after everyone who scored, alphabetically, so a player who can find
+  their team on the Teams view can find themselves too. On the RTS event's
+  snapshot the view goes from 22 rows to all 41 team members. A signed-in
+  player on no team still gets no row.
+
 - **Changed: dependency batch (Dependabot #462, #563, #564, #565, #574,
   #575).** Next.js and `eslint-config-next` 16.3.6 → 16.4.0, better-auth
   1.7.5 → 1.7.7, `@types/node` 26.6.2 → 26.6.4, sharp 0.35.4 → 0.35.5,

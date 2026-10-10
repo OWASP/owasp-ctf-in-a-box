@@ -2,7 +2,8 @@ import "server-only";
 import { errorLabel } from "@/lib/error-label";
 import { listTeams } from "@/lib/team-store";
 import { withTeamAiPoints, withTeamClassicPoints, withTeamQuizPoints } from "./module-contributions";
-import type { LeaderboardData, TeamStanding } from "./types";
+import { rankByStanding } from "./rank";
+import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "./types";
 
 /**
  * Overlays live team MEMBERSHIP (from the team store's ctf:team:* records)
@@ -139,12 +140,44 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   // call on top every scorer team counted them twice (issue #520).
   const standings = await withAppModulePoints([...sourceTeams, ...membershipOnly]);
 
+  const entries = data.entries.map((entry) => {
+    const slug = teamByLogin.get(entry.login.toLowerCase());
+    return slug ? { ...entry, team: slug } : entry;
+  });
+  // Every team member gets an Individual row, a 0 one if they have not
+  // scored: the Teams view lists every team, so a player who could find their
+  // team there could not find themselves here. Store spelling, matched
+  // case-insensitively against the rows that exist; a signed-in player on no
+  // team is not playing and gets none. Named in order so the ties at 0 read
+  // alphabetically after everyone who scored.
+  const listed = new Set(entries.map((entry) => entry.login.toLowerCase()));
+  const unlisted: { login: string; slug: string }[] = [];
+  for (const team of teams) {
+    for (const login of team.members) {
+      if (listed.has(login.toLowerCase())) continue;
+      listed.add(login.toLowerCase());
+      unlisted.push({ login, slug: team.slug });
+    }
+  }
+  const zeroRows: LeaderboardEntry[] = unlisted
+    .sort((a, b) => a.login.toLowerCase().localeCompare(b.login.toLowerCase()))
+    .map(({ login, slug }) => ({
+      rank: 0,
+      login,
+      team: slug,
+      points: 0,
+      patched: 0,
+      failed: 0,
+      total: 0,
+      apps: {},
+      updatedAt: null,
+      lastSolveAt: null,
+      modules: {},
+    }));
+
   return {
     ...data,
-    entries: data.entries.map((entry) => {
-      const slug = teamByLogin.get(entry.login.toLowerCase());
-      return slug ? { ...entry, team: slug } : entry;
-    }),
+    entries: zeroRows.length ? rankByStanding([...entries, ...zeroRows]) : entries,
     teams: standings,
     capabilities: { ...data.capabilities, teams: true },
   };

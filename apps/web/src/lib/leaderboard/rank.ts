@@ -1,4 +1,4 @@
-import type { LeaderboardEntry } from "./types";
+import type { LeaderboardEntry, TeamStanding } from "./types";
 
 /** Standing order, most significant first (#522):
  *
@@ -75,4 +75,34 @@ export function rankByStanding(entries: LeaderboardEntry[]): LeaderboardEntry[] 
     .map((entry, i) => ({ entry, i }))
     .sort((a, b) => compareStanding(a.entry, b.entry) || a.i - b.i)
     .map(({ entry }, i) => ({ ...entry, rank: i + 1 }));
+}
+
+/** The team view's standing order, the same three keys as `compareStanding`:
+ *
+ *    1. total points descending;
+ *    2. items completed across modules descending;
+ *    3. whoever earned their LAST points first: the latest activity time over
+ *       every module's block and the scorer's Secure Development finish.
+ *
+ *  (3) has to read every module: the scorer's own order knows only Secure
+ *  Development, so three teams tied on points and items would otherwise be
+ *  ranked by who finished SD first, not by who finished. Hint purchases move
+ *  points, never this time. Teams without a
+ *  parseable time sort after those with one; the caller keeps remaining ties
+ *  stable. */
+export function compareTeamStanding(a: TeamStanding, b: TeamStanding): number {
+  return b.points - a.points || teamCompleted(b) - teamCompleted(a) || teamActivityMs(a) - teamActivityMs(b);
+}
+
+function teamCompleted(team: TeamStanding): number {
+  return Object.values(team.modules ?? {}).reduce((sum, m) => sum + (m?.completed ?? 0), 0);
+}
+
+function teamActivityMs(team: TeamStanding): number {
+  const stamps = Object.values(team.modules ?? {})
+    .map((m) => m?.lastActivityAt)
+    .concat(team.lastSolveAt ?? null)
+    .map((iso) => (iso ? Date.parse(iso) : NaN))
+    .filter((ms) => Number.isFinite(ms)) as number[];
+  return stamps.length > 0 ? Math.max(...stamps) : Number.MAX_SAFE_INTEGER;
 }

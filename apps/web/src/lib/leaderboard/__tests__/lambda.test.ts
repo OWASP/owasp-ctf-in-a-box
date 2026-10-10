@@ -185,7 +185,17 @@ describe("lambdaSource.getLeaderboard teams", () => {
     });
     const data = await lambdaSource.getLeaderboard();
     expect(data.teams).toEqual([
-      { rank: 1, slug: "red-team", name: "Red Team", captain: "dcotelo", members: ["dcotelo", "later-solver"], points: 817 },
+      {
+        rank: 1,
+        slug: "red-team",
+        name: "Red Team",
+        captain: "dcotelo",
+        members: ["dcotelo", "later-solver"],
+        points: 817,
+        // Kept (#583): the team's Secure Development finish is half of its
+        // tie-break once the app-side modules are folded in.
+        lastSolveAt: "2026-07-14T20:16:12.661Z",
+      },
     ]);
     expect(data.teamSeries).toEqual([
       {

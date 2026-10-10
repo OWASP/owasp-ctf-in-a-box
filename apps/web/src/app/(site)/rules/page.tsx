@@ -120,8 +120,8 @@ export default async function RulesPage() {
       heading: "Scoring & prizes",
       rules: [
         ...fromModules("scoring"),
-        // The same order rank.ts `compareStanding` applies (#522).
-        "Individuals are ranked by points; ties go to more items completed, then to whoever got there first. Teams are ranked by points.",
+        // The order rank.ts `compareStanding` and `compareTeamStanding` apply.
+        "Individuals and teams are ranked by points; ties go to more items completed, then to whoever earned their last points first, in any module.",
         "Prizes are awarded to the top individuals and top teams overall. Winners must be present to claim.",
         "Organizer decisions on scoring disputes are final.",
       ],

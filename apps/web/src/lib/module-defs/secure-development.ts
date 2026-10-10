@@ -287,7 +287,7 @@ git push -u origin fix/<short-description>`,
       "Found a bug in a challenge, the scorer, or the site itself? Report it to an organizer instead of exploiting it for an unfair edge.",
     ],
     scoring: [
-      "Each challenge is worth a fixed point value based on difficulty. Points post the moment your PR's regression test passes.",
+      "Each challenge is worth a fixed point value based on difficulty. Points post once the event receives your PR's passing result, usually a few minutes after the push, and that is the time a points tie is decided on.",
       "Your best-ever result per challenge counts. A later successful patch always replaces an earlier miss.",
       "Revealing a hint deducts points from your total, and hint purchases are final.",
     ],

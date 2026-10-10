@@ -110,6 +110,10 @@ export type TeamStanding = {
   captain: string;
   points: number;
   members: string[];
+  /** ISO time of the team's most recent Secure Development solve, from the
+   *  scorer: half of the team's points tie-break once the app-side modules'
+   *  own times are folded in (see `compareTeamStanding`). */
+  lastSolveAt?: string | null;
   /** Points deducted for hints its members revealed (see leaderboard/
    *  hint-penalties.ts). `points` is net — this is a transparency marker,
    *  mirroring `LeaderboardEntry.hintPenalty`. */

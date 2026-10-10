@@ -52,6 +52,7 @@ type RawTeam = {
   members?: unknown;
   points?: unknown;
   apps?: unknown;
+  lastSolveAt?: unknown;
 };
 type RawTeamSeries = { slug?: unknown; name?: unknown; points?: unknown };
 type LambdaResponse = {
@@ -107,7 +108,19 @@ function toTeams(raw: unknown, catalog: LambdaCatalog): TeamStanding[] {
       continue;
     }
     const validMembers = members.filter((m): m is string => typeof m === "string");
-    teams.push({ rank, slug, name, captain, members: validMembers, points, apps: toTeamApps(apps, catalog) });
+    // The team's Secure Development finish: kept for the points tie-break
+    // (`compareTeamStanding`), which re-sorts once the app-side modules land.
+    const lastSolveAt = typeof item.lastSolveAt === "string" && item.lastSolveAt ? item.lastSolveAt : undefined;
+    teams.push({
+      rank,
+      slug,
+      name,
+      captain,
+      members: validMembers,
+      points,
+      apps: toTeamApps(apps, catalog),
+      ...(lastSolveAt ? { lastSolveAt } : {}),
+    });
   }
   return teams;
 }

@@ -128,9 +128,9 @@ export default async function FaqPage() {
     ...fromModules("prep"),
     ...fromModules("playing"),
     {
-      // The same order rank.ts `compareStanding` applies (#522).
+      // The order rank.ts `compareStanding` and `compareTeamStanding` apply.
       q: "How is the leaderboard ranked?",
-      a: "By points. At equal points, whoever completed more items ranks higher, and after that whoever got there first. Teams are ranked by points.",
+      a: "By points, for individuals and teams alike. At equal points, whoever completed more items ranks higher, and after that whoever earned their last points first, in any module.",
     },
     {
       q: "Is there a prize?",

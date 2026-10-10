@@ -313,19 +313,75 @@ type Overlay = {
  *  it — the story-lock answer for one row's solve set. */
 type Reachable = { total: number; max: number; locked: number };
 
+/** Every team's COMPLETE roster on this board, plus the login index those
+ *  rosters imply.
+ *
+ *  The source's own teams and the team store's are two different records: the
+ *  source knows the teams it SCORED, the store the teams contestants actually
+ *  created. So a slug both records claim keeps the source's row and takes the
+ *  UNION of the two rosters, and a team only the store knows is a team all the
+ *  same — exactly the set `withTeamStandings` ranks, and exactly what a fold
+ *  over membership has to see. Reading `data.teams` alone would take a partial
+ *  roster for the whole team and leave a teammate's prerequisite solve out of
+ *  the fold, re-locking a step the team has already earned.
+ *
+ *  `teamByLogin` is lowercased like every other login join in this codebase,
+ *  with the TEAM STORE's attribution winning — the precedence
+ *  `withTeamStandings` applies — so a row's team chip and its fold can never
+ *  disagree. Pure over the already-fetched `storeTeams`: it reads nothing. */
+export function mergeTeamRosters(
+  data: LeaderboardData,
+  storeTeams: readonly { slug: string; members: string[] }[],
+): {
+  sourceTeams: TeamStanding[];
+  rosterBySlug: Map<string, string[]>;
+  teamByLogin: Map<string, string>;
+} {
+  const storeBySlug = new Map(storeTeams.map((team) => [team.slug, team]));
+  const rosterBySlug = new Map<string, string[]>();
+
+  const sourceTeams = (data.capabilities.teams ? data.teams : []).map((team) => {
+    const stored = storeBySlug.get(team.slug);
+    if (!stored) {
+      rosterBySlug.set(team.slug, team.members);
+      return team;
+    }
+    const byLower = new Map(team.members.map((member) => [member.toLowerCase(), member]));
+    for (const member of stored.members) byLower.set(member.toLowerCase(), member);
+    const members = [...byLower.values()].sort();
+    rosterBySlug.set(team.slug, members);
+    return { ...team, members };
+  });
+  for (const team of storeTeams) {
+    if (!rosterBySlug.has(team.slug)) rosterBySlug.set(team.slug, team.members);
+  }
+
+  const teamByLogin = new Map<string, string>();
+  for (const team of storeTeams) {
+    for (const member of team.members) teamByLogin.set(member.toLowerCase(), team.slug);
+  }
+  for (const [slug, members] of rosterBySlug) {
+    for (const member of members) {
+      const login = member.toLowerCase();
+      if (!teamByLogin.has(login)) teamByLogin.set(login, slug);
+    }
+  }
+
+  return { sourceTeams, rosterBySlug, teamByLogin };
+}
+
 /** Story-lock reachability for every contestant row that will carry a classic
  *  block, in ONE solves read for the whole board.
  *
- *  A row's team is looked up by LOGIN on the rosters the board already knows:
- *  the source's own teams where it has them (mock/lambda), otherwise one read
- *  of the team store — the same list `withTeamStandings` reads a stage later,
- *  and paid only on an event that actually has stories to lock. Looking the
- *  team up by login rather than by `entry.team` matters because the rows this
- *  is for are mostly CREATED here (`team: null` until that later stage
- *  overlays membership), so on a classic-only event the entry field alone
- *  would call every contestant teamless. A row no roster places is a team of
- *  one and uses its own solves, which is the same rule `/profile` applies to
- *  a viewer with no team.
+ *  A row's team is looked up by LOGIN through `mergeTeamRosters`, so it sees
+ *  the same complete membership `withTeamStandings` ranks a stage later and a
+ *  teammate's solve unlocks the same step for the player row and the team row.
+ *  Looking the team up by login rather than by `entry.team` matters because
+ *  the rows this is for are mostly CREATED here (`team: null` until that later
+ *  stage overlays membership), so on a classic-only event the entry field
+ *  alone would call every contestant teamless. A row no roster places is a
+ *  team of one and uses its own solves, which is the same rule `/profile`
+ *  applies to a viewer with no team.
  *
  *  Returns `undefined` rather than a partial answer: a failed roster or
  *  solves read leaves every row on the clamp it used before, which can
@@ -337,12 +393,7 @@ async function reachableByLogin(
   stories: readonly Story[],
 ): Promise<Map<string, Reachable> | undefined> {
   try {
-    const rosters = data.teams.length > 0 ? data.teams : await listTeams();
-    const rosterBySlug = new Map(rosters.map((team) => [team.slug, team.members]));
-    const teamByLogin = new Map<string, string>();
-    for (const team of rosters) {
-      for (const member of team.members) teamByLogin.set(member.toLowerCase(), team.slug);
-    }
+    const { rosterBySlug, teamByLogin } = mergeTeamRosters(data, await listTeams());
 
     const rows: { login: string; roster: string[] }[] = [];
     for (const [login, total] of classicTotals) {

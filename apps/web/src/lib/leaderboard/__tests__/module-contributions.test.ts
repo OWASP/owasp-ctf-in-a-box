@@ -56,6 +56,7 @@ import {
   withTeamClassicPoints,
   withTeamQuizPoints,
 } from "../module-contributions";
+import { withTeamStandings } from "../team-standings";
 import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 // Computed from the `apps` catalogue rather than hardcoded:
@@ -638,7 +639,7 @@ describe("withModuleContributions", () => {
       // still locked behind it.
       mocks.getClassicTotals.mockResolvedValue(new Map([["ada", { points: 30, solved: 1, lastAt: null }]]));
       mocks.getTeamClassicTotalsBatch.mockResolvedValue([
-        { points: 30, solved: 1, lastAt: null, itemIds: ["c3"], itemPoints: { c3: { points: 30 } } },
+        { points: 30, solved: 1, lastAt: null, itemIds: ["c3"], itemPoints: { c3: 30 } },
       ]);
 
       const out = await withModuleContributions(data([entry("ada", 0, 0)]));
@@ -670,7 +671,7 @@ describe("withModuleContributions", () => {
       mocks.getClassicTotals.mockResolvedValue(new Map([["ada", { points: 30, solved: 1, lastAt: null }]]));
       // cyd holds the prerequisite; the fold hands the row both members' ids.
       mocks.getTeamClassicTotalsBatch.mockResolvedValue([
-        { points: 40, solved: 2, lastAt: null, itemIds: ["c1", "c3"], itemPoints: { c1: { points: 10 }, c3: { points: 30 } } },
+        { points: 40, solved: 2, lastAt: null, itemIds: ["c1", "c3"], itemPoints: { c1: 10, c3: 30 } },
       ]);
 
       const out = await withModuleContributions(data([entry("ada", 0, 0)]));
@@ -712,6 +713,50 @@ describe("withModuleContributions", () => {
       } finally {
         err.mockRestore();
       }
+    });
+
+    // The source's team row and the team store's are two different records:
+    // the source knows the teams it SCORED, the store the roster contestants
+    // built. Folding the player over `data.teams` alone would take that
+    // partial roster for the whole team and drop cyd's prerequisite solve,
+    // leaving c2 locked on the player row while the team row — which merges —
+    // has already released it.
+    it("folds a player over the merged roster so a store-only teammate unlocks the step", async () => {
+      mocks.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["ada", "cyd"] }]);
+      mocks.listChallenges.mockResolvedValue([
+        { id: "c1", points: 10 },
+        { id: "c2", points: 20 },
+        { id: "c3", points: 30 },
+      ]);
+      mocks.listStories.mockResolvedValue([{ id: "s1", title: "Story", intro: "", steps: ["c1", "c2"] }]);
+      // ada holds only the standalone c3; cyd holds the story's step 1.
+      mocks.getClassicTotals.mockResolvedValue(new Map([["ada", { points: 30, solved: 1, lastAt: null }]]));
+      mocks.getTeamClassicTotalsBatch.mockImplementation((teams: readonly string[][]) =>
+        Promise.resolve(
+          teams.map((members) =>
+            members.includes("cyd")
+              ? { points: 40, solved: 2, lastAt: null, itemIds: ["c1", "c3"], itemPoints: { c1: 10, c3: 30 } }
+              : { points: 30, solved: 1, lastAt: null, itemIds: ["c3"], itemPoints: { c3: 30 } },
+          ),
+        ),
+      );
+
+      const sourceTeams: TeamStanding[] = [
+        { rank: 1, slug: "red", name: "Red", captain: "ada", points: 0, members: ["ada"] },
+      ];
+      const out = await withModuleContributions(data([entry("ada", 0, 0)], sourceTeams)).then(withTeamStandings);
+
+      expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledWith([["ada", "cyd"]]);
+      const playerDetail = out.entries.find((e) => e.login === "ada")?.modules?.classic?.detail;
+      const teamDetail = out.teams[0].modules?.classic?.detail;
+      if (playerDetail?.kind !== "classic" || teamDetail?.kind !== "classic") {
+        throw new Error("classic block missing from the pipeline's rows");
+      }
+      // c1, c2 and c3 reachable for both — cyd's solve is what releases c2.
+      expect(playerDetail.total).toBe(3);
+      expect(playerDetail.locked).toBe(0);
+      expect(teamDetail.total).toBe(3);
+      expect(teamDetail.locked).toBe(0);
     });
 
     it("gives a login with no solves no classic block", async () => {

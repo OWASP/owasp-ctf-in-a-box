@@ -114,6 +114,10 @@ export type TeamStanding = {
    *  scorer: half of the team's points tie-break once the app-side modules'
    *  own times are folded in (see `compareTeamStanding`). */
   lastSolveAt?: string | null;
+  /** The team's Secure Development solve count as the scorer reports it, kept
+   *  whether or not a catalogue came with it: the items tie-break falls back
+   *  to it when no secure-development block was stamped. */
+  patched?: number;
   /** Points deducted for hints its members revealed (see leaderboard/
    *  hint-penalties.ts). `points` is net — this is a transparency marker,
    *  mirroring `LeaderboardEntry.hintPenalty`. */

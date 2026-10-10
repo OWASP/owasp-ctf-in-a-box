@@ -94,8 +94,14 @@ export function compareTeamStanding(a: TeamStanding, b: TeamStanding): number {
   return b.points - a.points || teamCompleted(b) - teamCompleted(a) || teamActivityMs(a) - teamActivityMs(b);
 }
 
+/** Completion across modules, as `completedCount` reads it for a contestant:
+ *  the module blocks, plus the scorer's SD count when no secure-development
+ *  block was stamped (a scorer without a catalogue gives none), so SD solves
+ *  count exactly once either way. */
 function teamCompleted(team: TeamStanding): number {
-  return Object.values(team.modules ?? {}).reduce((sum, m) => sum + (m?.completed ?? 0), 0);
+  const modules = team.modules ?? {};
+  const blocks = Object.values(modules).reduce((sum, m) => sum + (m?.completed ?? 0), 0);
+  return modules["secure-development"] ? blocks : blocks + (team.patched ?? 0);
 }
 
 function teamActivityMs(team: TeamStanding): number {

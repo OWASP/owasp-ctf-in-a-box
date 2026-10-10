@@ -221,3 +221,32 @@ describe("compareTeamStanding", () => {
     expect([none, provart].sort(compareTeamStanding)[0].slug).toBe("provart");
   });
 });
+
+// A scorer that omits its catalogue gives teams no per-app breakdown, so no
+// secure-development block is stamped. The team's SD solve count still has to
+// enter the items tie-break, once: the same fallback to `patched` the
+// contestant comparator uses.
+describe("compareTeamStanding without a secure-development block", () => {
+  const team = (slug: string, patched: number | undefined, sd: boolean): TeamStanding => ({
+    rank: 0,
+    slug,
+    name: slug,
+    captain: "",
+    points: 100,
+    members: [],
+    ...(patched === undefined ? {} : { patched }),
+    modules: sd
+      ? { "secure-development": { points: 100, completed: patched ?? 0, lastActivityAt: null, detail: { kind: "secure-development", apps: {} } } }
+      : {},
+  });
+
+  it("counts the team's SD solves from `patched` when there is no block", () => {
+    expect([team("fewer", 2, false), team("more", 3, false)].sort(compareTeamStanding).map((t) => t.slug)).toEqual(["more", "fewer"]);
+  });
+
+  it("never counts SD solves twice when the block is there", () => {
+    // Block says 3 and patched says 3: the total is 3, so a team with a block
+    // of 3 ties a team with patched 3 and no block, and keeps input order.
+    expect([team("block", 3, true), team("bare", 3, false)].sort(compareTeamStanding).map((t) => t.slug)).toEqual(["block", "bare"]);
+  });
+});

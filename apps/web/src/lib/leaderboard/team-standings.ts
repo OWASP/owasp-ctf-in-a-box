@@ -146,13 +146,14 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   });
   // Every team member gets an Individual row, a 0 one if they have not
   // scored: the Teams view lists every team, so a player who could find their
-  // team there could not find themselves here. Store spelling, matched
-  // case-insensitively against the rows that exist; a signed-in player on no
-  // team is not playing and gets none. Named in order so the ties at 0 read
+  // team there could not find themselves here. Every roster counts, the team
+  // store's first (its spelling and placement win) and then the source's;
+  // logins match case-insensitively against the rows that exist. Signing in
+  // without a team creates no row. Named in order so the ties at 0 read
   // alphabetically after everyone who scored.
   const listed = new Set(entries.map((entry) => entry.login.toLowerCase()));
   const unlisted: { login: string; slug: string }[] = [];
-  for (const team of teams) {
+  for (const team of [...teams, ...sourceTeams]) {
     for (const login of team.members) {
       if (listed.has(login.toLowerCase())) continue;
       listed.add(login.toLowerCase());

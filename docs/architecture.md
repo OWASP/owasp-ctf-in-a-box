@@ -267,8 +267,10 @@ those are
 different verbs). `withTeamStandings` also gives every team member an
 Individual row: a member with no points yet gets a 0 row, ranked after
 everyone who scored and by name among the zeros, so a player who can find
-their team on the Teams view can find themselves too (a signed-in player on
-no team gets none). It does the same one step later for
+their team on the Teams view can find themselves too. The rosters are the
+team store's and the source's own; signing in without a team creates no row,
+though a player who scored before leaving their team keeps theirs. It does the
+same one step later for
 teams: every team row — the source's own, and the membership-only rows it
 synthesises from live team records the source does not know — gets quiz,
 classic and ai points added, once,

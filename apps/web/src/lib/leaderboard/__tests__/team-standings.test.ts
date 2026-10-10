@@ -214,6 +214,20 @@ describe("every team member has an Individual row", () => {
     expect(result.entries.map((e) => e.login)).toEqual(["bob"]);
   });
 
+  it("adds a row for a member only the source's roster names", async () => {
+    mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["bob"] }]);
+    const base = data({
+      entries: [entry("bob", 40)],
+      capabilities: { apps: true, teams: true, challenges: true },
+      teams: [{ rank: 1, slug: "blue", name: "Blue", captain: "ada", members: ["ada"], points: 0 }],
+    });
+    const result = await withTeamStandings(base);
+    expect(result.entries.map((e) => [e.login, e.points, e.team])).toEqual([
+      ["bob", 40, "red"],
+      ["ada", 0, "blue"],
+    ]);
+  });
+
   it("adds no row for a signed-in player on no team", async () => {
     mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["bob"] }]);
     const result = await withTeamStandings(data({ entries: [entry("bob", 40), entry("solo", 10)] }));

@@ -15,8 +15,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   1.7.5 → 1.7.7, `@types/node` 26.6.2 → 26.6.4, sharp 0.35.4 → 0.35.5,
   source-map-js 1.2.1 → 1.2.2, and the compose `redis:8-alpine` digest. One
   lockfile regenerated against current `main` instead of six PRs whose
-  lockfile hunks overlap; better-auth and `@types/node` resolve one patch
-  past Dependabot's targets within the same ranges.
+  lockfile hunks overlap. better-auth is now pinned exactly (1.7.7, one
+  patch past Dependabot's target), as `next` already is; `@types/node`
+  resolves one patch past its target inside the existing `^26` range.
 
 - **Fixed: the leaderboard's score chart dropped every quiz, Jeopardy and AI
   point of a contestant whose GitHub login has an uppercase letter (#577).**

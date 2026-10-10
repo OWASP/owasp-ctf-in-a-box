@@ -20,10 +20,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   resolves one patch past its target inside the existing `^26` range.
 - **Fixed: an expanded leaderboard row listed the story steps its team had
   solved, but that the viewer has not reached, as unsolved and worth 0
-  (#584).** The steps stay redacted (ADR 60) but now read as solved, with a
-  dash instead of a price, and one line under the list gives their count and
-  total ("5 hidden steps solved · 1,550 pts"): the row's own Jeopardy points
-  minus the visible items, so no single step's value is sent or shown.
+  (#584).** The steps stay redacted placeholders (ADR 60) and now read
+  "Locked" with a dash instead of "Open" and "0pt"; one line under the list
+  gives how many of them the team solved and their total ("5 hidden steps
+  solved · 1,550 pts"). The route sends only that count, never which steps;
+  the total is the row's own Jeopardy points minus the visible items, so no
+  single step's value is sent or shown.
 
 - **Fixed: the leaderboard's score chart dropped every quiz, Jeopardy and AI
   point of a contestant whose GitHub login has an uppercase letter (#577).**

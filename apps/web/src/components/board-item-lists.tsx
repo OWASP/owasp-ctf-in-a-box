@@ -12,7 +12,14 @@
 import { useEffect, useState } from "react";
 import ModuleItemList, { type ModuleItem } from "@/components/module-item-list";
 
-type ItemsResponse = { quiz: ModuleItem[] | null; classic: ModuleItem[] | null; ai: ModuleItem[] | null };
+type ItemsResponse = {
+  quiz: ModuleItem[] | null;
+  classic: ModuleItem[] | null;
+  ai: ModuleItem[] | null;
+  /** How many story steps hidden from the viewer the queried logins solved —
+   *  one count, nothing per position (ADR 60). */
+  classicHiddenSolved?: number;
+};
 
 /** The route unions at most 8 logins per request (its anti-scrape cap), but
  *  an organizer can raise the team size well past that — chunk the roster
@@ -34,16 +41,27 @@ function mergeItems(parts: (ModuleItem[] | null)[]): ModuleItem[] | null {
   return [...merged.values()];
 }
 
+/** A roster over the route's 8-login cap arrives in chunks, each counting the
+ *  hidden steps its own members hold. A step held in two chunks would count
+ *  twice if summed, so the largest chunk count is used: a floor that never
+ *  over-claims. */
+export function mergeHiddenSolved(counts: readonly (number | undefined)[]): number {
+  return counts.reduce<number>((max, c) => Math.max(max, c ?? 0), 0);
+}
+
 /** The line under a row's flag list for the story steps hidden from this
- *  viewer that the row's team solved (#584). Those arrive with no points
- *  (ADR 60), so their total is the row's own Jeopardy points minus the
+ *  viewer that the row's team solved (#584). The route sends only their
+ *  count (ADR 60), so their total is the row's own Jeopardy points minus the
  *  visible solved items — derivable from the row already, so no single
  *  step's value is revealed. Without the row's points, or if the subtraction
  *  comes out negative (a re-priced item), the total is left off rather than
  *  guessed. */
-export function hiddenSummary(items: readonly ModuleItem[], rowPoints: number | undefined): string | null {
-  const solved = items.filter((i) => i.hidden && i.done).length;
-  if (solved === 0) return null;
+export function hiddenSummary(
+  solved: number,
+  items: readonly ModuleItem[],
+  rowPoints: number | undefined,
+): string | null {
+  if (solved <= 0) return null;
   const noun = solved === 1 ? "hidden step" : "hidden steps";
   const visible = items
     .filter((i) => !i.hidden && i.done)
@@ -85,6 +103,7 @@ export default function BoardItemLists({
         quiz: mergeItems(ok.map((p) => p.quiz)),
         classic: mergeItems(ok.map((p) => p.classic)),
         ai: mergeItems(ok.map((p) => p.ai)),
+        classicHiddenSolved: mergeHiddenSolved(ok.map((p) => p.classicHiddenSolved)),
       });
     });
     return () => {
@@ -108,7 +127,7 @@ export default function BoardItemLists({
           items={classic}
           noun={classic.length === 1 ? "flag" : "flags"}
           doneLabel="Solved"
-          note={hiddenSummary(classic, classicPoints)}
+          note={hiddenSummary(data.classicHiddenSolved ?? 0, classic, classicPoints)}
         />
       )}
       {ai.length > 0 && (

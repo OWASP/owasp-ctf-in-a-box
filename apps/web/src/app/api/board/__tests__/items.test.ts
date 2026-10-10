@@ -188,12 +188,13 @@ describe("GET /api/board/items redacts for the VIEWER too (#463, review C2)", ()
   });
 });
 
-// A step hidden from the viewer still has to read SOLVED when the queried
-// team solved it: a row that says "8 / 12 solved" over a list showing 3 is the
-// contradiction #584 reported. Only the solved state crosses — the row's own
-// count already says it. The step's points stay home (ADR 60): the caller
-// derives the hidden total from the row's points instead.
-describe("GET /api/board/items marks a hidden step the team solved (#584)", () => {
+// A row that says "8 / 12 solved" over a list showing 3 is the contradiction
+// #584 reported. The hidden steps stay placeholders with nothing per position
+// (ADR 60: not which ones the team solved, not their points); what crosses is
+// ONE count of hidden steps the queried team solved, which the row's own
+// solved figure already implies. The caller derives their point total from
+// the row's points.
+describe("GET /api/board/items reports hidden solved steps as one count (#584)", () => {
   const setup = () => {
     mocks.listChallenges.mockResolvedValue([
       { id: "recon-ab12cd", title: "Recon", points: 10 },
@@ -210,13 +211,18 @@ describe("GET /api/board/items marks a hidden step the team solved (#584)", () =
     });
     mocks.getSession.mockResolvedValue(null);
   };
-  const classicOf = async (logins: string) =>
-    ((await (await GET(req(logins))).json()) as { classic: { id: string; label: string; points: number; done: boolean; hidden?: boolean; earnedPoints?: number }[] }).classic;
+  type Body = { classic: Record<string, unknown>[]; classicHiddenSolved?: number };
+  const bodyOf = async (logins: string) => (await (await GET(req(logins))).json()) as Body;
 
-  it("shows a hidden step the team solved as solved, still redacted", async () => {
+  it("counts the hidden steps the queried team solved, without saying which", async () => {
     setup();
-    const step2 = (await classicOf("leader")).find((i) => i.label === "??? — step 2 of 3");
-    expect(step2).toMatchObject({ done: true, hidden: true });
+    const body = await bodyOf("leader");
+    expect(body.classicHiddenSolved).toBe(1);
+    expect(body.classic).toEqual([
+      { id: "recon-ab12cd", label: "Recon", points: 10, done: true, earnedPoints: 10 },
+      { id: "locked:op:2", label: "??? — step 2 of 3", points: 0, done: false, hidden: true },
+      { id: "locked:op:3", label: "??? — step 3 of 3", points: 0, done: false, hidden: true },
+    ]);
   });
 
   it("never sends a hidden step's points, solved or not", async () => {
@@ -227,16 +233,9 @@ describe("GET /api/board/items marks a hidden step the team solved (#584)", () =
     expect(body).not.toContain("Secret SQLi");
   });
 
-  it("keeps a hidden step the team has not solved unsolved", async () => {
+  it("reports 0 when the team solved no hidden step", async () => {
     setup();
-    const step3 = (await classicOf("leader")).find((i) => i.label === "??? — step 3 of 3");
-    expect(step3).toMatchObject({ done: false, hidden: true, points: 0 });
-  });
-
-  it("marks only hidden steps hidden", async () => {
-    setup();
-    const step1 = (await classicOf("leader")).find((i) => i.label === "Recon");
-    expect(step1?.hidden).toBeUndefined();
-    expect(step1).toMatchObject({ done: true, earnedPoints: 10 });
+    mocks.getViewerClassic.mockResolvedValue({ solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} });
+    expect((await bodyOf("leader")).classicHiddenSolved).toBe(0);
   });
 });

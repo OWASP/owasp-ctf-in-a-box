@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import ModuleItemList, { itemPointsLabel, type ModuleItem } from "@/components/module-item-list";
+import ModuleItemList, { itemPointsLabel, itemStatusLabel, type ModuleItem } from "@/components/module-item-list";
 
 const items: ModuleItem[] = [
   { id: "q1", label: "What does XSS stand for?", points: 50, done: true, earnedPoints: 50 },
@@ -31,11 +31,24 @@ describe("ModuleItemList", () => {
 // claiming it is worth 0.
 describe("itemPointsLabel", () => {
   it("shows a dash, never 0pt, for a hidden step", () => {
-    expect(itemPointsLabel({ id: "locked:op:2", label: "??? — step 2 of 8", points: 0, done: true, hidden: true })).toBe("—");
+    expect(itemPointsLabel({ id: "locked:op:2", label: "??? — step 2 of 8", points: 0, done: false, hidden: true })).toBe("—");
   });
 
   it("shows the banked points for a done item and the price otherwise", () => {
     expect(itemPointsLabel({ id: "c1", label: "Recon", points: 50, done: true, earnedPoints: 40 })).toBe("40pt");
     expect(itemPointsLabel({ id: "c2", label: "Crypto", points: 100, done: false })).toBe("100pt");
+  });
+});
+
+// A hidden step is locked for the VIEWER, so "Open" would be false; the
+// route says nothing per position, so it is never "Solved" either.
+describe("itemStatusLabel", () => {
+  it("says Locked for a hidden step", () => {
+    expect(itemStatusLabel({ id: "locked:op:2", label: "??? — step 2 of 8", points: 0, done: false, hidden: true }, "Solved")).toBe("Locked");
+  });
+
+  it("says the done word or Open otherwise", () => {
+    expect(itemStatusLabel({ id: "c1", label: "Recon", points: 50, done: true }, "Solved")).toBe("Solved");
+    expect(itemStatusLabel({ id: "c2", label: "Crypto", points: 100, done: false }, "Solved")).toBe("Open");
   });
 });

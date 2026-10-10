@@ -34,6 +34,14 @@ export function itemPointsLabel(item: ModuleItem): string {
   return `${item.done && item.earnedPoints != null ? item.earnedPoints : item.points}pt`;
 }
 
+/** The row's status word: "Locked" for a hidden step, which is locked for the
+ *  viewer and carries no solved state (ADR 60); the done word or "Open"
+ *  otherwise. */
+export function itemStatusLabel(item: ModuleItem, doneLabel: string): string {
+  if (item.hidden) return "Locked";
+  return item.done ? doneLabel : "Open";
+}
+
 export default function ModuleItemList({
   items,
   noun,
@@ -91,7 +99,7 @@ export default function ModuleItemList({
                   item.done ? "text-[#22c55e]" : "text-[#8f8f9b]"
                 }`}
               >
-                {item.done ? doneLabel : "Open"}
+                {itemStatusLabel(item, doneLabel)}
               </span>
             </li>
           ))}

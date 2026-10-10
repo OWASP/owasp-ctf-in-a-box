@@ -70,12 +70,15 @@ export function parseCounterHash(flat: unknown): Map<string, number> {
  * `attempt-row.ts` for the shape and the TS-side reader).
  *
  * Quiz's `GRADE_SCRIPT`, classic's `SUBMIT_SCRIPT` and ai's `AWARD_SCRIPT`
- * all read exactly this, then rewrite the row with `attempts + 1`. Three
- * hand-copied blocks is three places for the cooldown or the attempt budget to
- * start reading a field the others still write: Redis runs the copy in the
- * calling script, so a divergence is silent (one module's cap checks a
- * different number than its neighbour's) and only shows up as a bug in one
- * module.
+ * all read the submitting login's row through this, then rewrite the row with
+ * `attempts + 1`. It declares `readAttemptRow` first, so a script can hand it
+ * ANY attempt row: quiz's attempt cap sums the whole team's rows and classic's
+ * cooldown takes the latest one, and a teammate's row has to be measured by
+ * the same three fields as the submitter's. A second hand-copied read is a
+ * place for the cooldown or the attempt budget to start measuring a field the
+ * write side stopped writing: Redis runs the copy in the calling script, so a
+ * divergence is silent (one module's cap checks a different number than its
+ * neighbour's) and only shows up as a bug in one module.
  *
  * Deliberately a regex read, not `cjson.decode`: these scripts only need three
  * scalars, and decoding the whole row would turn a malformed row from "reads
@@ -87,20 +90,25 @@ export function parseCounterHash(flat: unknown): Map<string, number> {
  * top level (quiz, classic) and one level in (ai), and Lua does not care.
  *
  * Interpolated into each script with `${ATTEMPT_ROW_LUA}`, so a change lands
- * in all three at once.
+ * in all three at once: `readAttemptRow` is what the team loops call, and the
+ * two lines after it are the submitter's own row, read through it.
  */
-export const ATTEMPT_ROW_LUA = `local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
-local attempts = 0
-local lastAtMs = nil
-local firstAt = nil
-if attemptsRaw then
-  local foundAttempts = string.match(attemptsRaw, '"attempts":(%d+)[,}]')
-  if foundAttempts then attempts = tonumber(foundAttempts) end
-  local foundLastAtMs = string.match(attemptsRaw, '"lastAtMs":(%d+)[,}]')
-  if foundLastAtMs then lastAtMs = tonumber(foundLastAtMs) end
-  -- Carried forward, never recomputed: this row is REWRITTEN on every
-  -- submission, so the first attempt's time survives only by being read back
-  -- out of the row it is being replaced by. Absent on rows written before
-  -- this field existed, which is why the write below falls back to now.
-  firstAt = string.match(attemptsRaw, '"firstAt":"([^"]*)"')
-end`;
+export const ATTEMPT_ROW_LUA = `local function readAttemptRow(attemptsRaw)
+  local attempts = 0
+  local lastAtMs = nil
+  local firstAt = nil
+  if attemptsRaw then
+    local foundAttempts = string.match(attemptsRaw, '"attempts":(%d+)[,}]')
+    if foundAttempts then attempts = tonumber(foundAttempts) end
+    local foundLastAtMs = string.match(attemptsRaw, '"lastAtMs":(%d+)[,}]')
+    if foundLastAtMs then lastAtMs = tonumber(foundLastAtMs) end
+    -- Carried forward, never recomputed: this row is REWRITTEN on every
+    -- submission, so the first attempt's time survives only by being read back
+    -- out of the row it is being replaced by. Absent on rows written before
+    -- this field existed, which is why the write below falls back to now.
+    firstAt = string.match(attemptsRaw, '"firstAt":"([^"]*)"')
+  end
+  return attempts, lastAtMs, firstAt
+end
+local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
+local attempts, lastAtMs, firstAt = readAttemptRow(attemptsRaw)`;

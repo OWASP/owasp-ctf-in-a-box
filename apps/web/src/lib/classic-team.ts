@@ -3,25 +3,20 @@
 // way the leaderboard folds team solves (the members' own solves hashes), so a
 // story unlock and a team's score never disagree about what the team solved.
 //
-// A viewer with no team is a team of one. The viewer's own spelling is always
-// included, and members are deduped on the EXACT string, not the lowercased
-// one: a solves hash is keyed on whatever spelling wrote it, so a member stored
-// in a different case keeps its own key alongside (an extra key costs one
-// HEXISTS; dropping the one holding the solves would wrongly lock a step).
-// A solves-read error THROWS, so callers fail closed. A TEAM-read error is
-// read as "team of one" by getViewerTeam itself — which is also closed (fewer
-// unlocks, never more).
+// The roster itself comes from `team-members.ts`, which owns the "team of one,
+// viewer first, deduped on the EXACT string" rule for every grading path (the
+// shared attempt cap and cooldown count the same team). A solves-read error
+// THROWS, so callers fail closed. A TEAM-read error is read as "team of one"
+// by getViewerTeam itself — which is also closed (fewer unlocks, never more).
 
 import "server-only";
 import { classicSolvesKey } from "@/lib/classic-keys";
-import { getViewerTeam } from "@/lib/team-store";
+import { teamLogins } from "@/lib/team-members";
 import { upstashPipeline } from "@/lib/upstash";
 
 /** The solves-hash keys of every current teammate (the viewer first). */
 export async function teamSolveKeys(login: string): Promise<string[]> {
-  const team = await getViewerTeam(login);
-  const logins = [...new Set([login, ...(team?.members ?? [])])];
-  return logins.map(classicSolvesKey);
+  return (await teamLogins(login)).map(classicSolvesKey);
 }
 
 /** Every classic challenge id any current teammate has solved. */

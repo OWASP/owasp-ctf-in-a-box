@@ -59,15 +59,26 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     ]);
   }
 
+  /** A teammate's attempts hash: the row GRADE_SCRIPT sums into the TEAM's
+   *  budget (#494). Run-unique per mate, so nothing here collides with
+   *  another test's roster. */
+  const mateKey = (mate: string) => `${K.attempts}:${mate}`;
+
+  /** Runs one GRADE_SCRIPT submission for this test: the seven fixed keys,
+   *  then `mates`' attempts hashes as KEYS[8..], with `login` the submitter
+   *  (defaults to this test's run-unique id). `dry` passes the probe flag;
+   *  `nowMs` pins the clock the script grades against. */
   async function answer(
     id: string,
     submitted: string,
-    { nowMs = T0, maxAttempts = 3, cooldownMs = 0, login = LOGIN, dry = false } = {},
+    { nowMs = T0, maxAttempts = 3, cooldownMs = 0, login = LOGIN, dry = false, mates = [] as string[] } = {},
   ) {
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.answers, K.key, K.questions, K.points, K.answered, K.lastAt],
+      // The seven fixed keys, then the teammates' attempts hashes as
+      // KEYS[8..] — the roster travels in KEYS, never ARGV.
+      [K.attempts, K.answers, K.key, K.questions, K.points, K.answered, K.lastAt, ...mates.map(mateKey)],
       [id, submitted, iso(nowMs), login, maxAttempts, cooldownMs, nowMs, dry ? "1" : "0"],
     );
   }
@@ -222,5 +233,93 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     await seed(id, 20);
     expect(await answer(id, CORRECT)).toEqual(["correct", "20"]);
     expect(await answer(id, CORRECT, { nowMs: T0 + 1, dry: true })).toEqual(["already"]);
+  });
+
+  // #494: the cap is the TEAM's budget, summed over KEYS[8..] inside the same
+  // script execution. Without the sum, a team of N takes turns and each member
+  // waits out a budget nobody else ever feels — every one of these fails if the
+  // loop is dropped, the sum is taken from a single row, or the comparison
+  // falls back to the submitter's own count.
+
+  it("the cap is the TEAM's: a teammate at cap exhausts a login that has never attempted the question", async () => {
+    const id = freshId("q");
+    await seed(id, 20);
+    const mate = freshId("bob");
+    await pipeline([["HSET", mateKey(mate), id, attemptsRow(3, iso(T0 - 3), iso(T0 - 1), T0 - 1)]]);
+    expect(await hget(K.attempts, id)).toBeNull(); // the submitter's own row: empty
+    expect(await answer(id, CORRECT, { maxAttempts: 3, mates: [mate] })).toEqual(["exhausted"]);
+    // A refusal writes NOTHING — no answer row, no attempt of its own.
+    expect(await hget(K.answers, id)).toBeNull();
+    expect(await hget(K.attempts, id)).toBeNull();
+
+    // One fewer attempt across the team and the SAME login grades, and the
+    // attempt lands on the SUBMITTER's row alone.
+    await pipeline([["HSET", mateKey(mate), id, attemptsRow(2, iso(T0 - 3), iso(T0 - 1), T0 - 1)]]);
+    expect(await answer(id, WRONG, { maxAttempts: 3, mates: [mate] })).toEqual(["incorrect", "1"]);
+    expect(await hget(K.attempts, id)).toBe(attemptsRow(1, iso(T0), iso(T0), T0));
+    expect(await hget(mateKey(mate), id)).toBe(attemptsRow(2, iso(T0 - 3), iso(T0 - 1), T0 - 1));
+    await pipeline([["DEL", mateKey(mate)]]);
+  });
+
+  it("adds the rows up: each login below the cap, the team over it", async () => {
+    const id = freshId("q");
+    await seed(id, 20);
+    const mate = freshId("bob");
+    // 1 + 2 = 3: over a cap of 3 even though NEITHER login is at it alone.
+    await pipeline([
+      ["HSET", K.attempts, id, attemptsRow(1, iso(T0 - 4), iso(T0 - 2), T0 - 2)],
+      ["HSET", mateKey(mate), id, attemptsRow(2, iso(T0 - 3), iso(T0 - 1), T0 - 1)],
+    ]);
+    expect(await answer(id, CORRECT, { maxAttempts: 3, mates: [mate] })).toEqual(["exhausted"]);
+
+    // 1 + 1 = 2: one fewer and it grades.
+    await pipeline([["HSET", mateKey(mate), id, attemptsRow(1, iso(T0 - 3), iso(T0 - 1), T0 - 1)]]);
+    expect(await answer(id, WRONG, { maxAttempts: 3, mates: [mate] })).toEqual(["incorrect", "2"]);
+    await pipeline([["DEL", mateKey(mate)]]);
+  });
+
+  it("treats maxAttempts 0 as uncapped, roster or no roster", async () => {
+    const id = freshId("q");
+    await seed(id, 5);
+    const mate = freshId("bob");
+    await pipeline([
+      ["HSET", K.attempts, id, attemptsRow(50, iso(T0 - 3), iso(T0 - 1), T0 - 1)],
+      ["HSET", mateKey(mate), id, attemptsRow(50, iso(T0 - 3), iso(T0 - 1), T0 - 1)],
+    ]);
+    expect(await answer(id, WRONG, { maxAttempts: 0, mates: [mate] })).toEqual(["incorrect", "51"]);
+    await pipeline([["DEL", mateKey(mate)]]);
+  });
+
+  // #494's finding is the CAP: the retry timer deliberately stays the
+  // submitting login's own, so `retryAt` keeps meaning "you, personally".
+  it("the cooldown stays the submitting login's own — a teammate's fresh attempt does not cool it", async () => {
+    const id = freshId("q");
+    await seed(id, 5);
+    const mate = freshId("bob");
+    await pipeline([["HSET", mateKey(mate), id, attemptsRow(1, iso(T0), iso(T0), T0)]]);
+    expect(await answer(id, WRONG, { nowMs: T0 + 1, cooldownMs: 300_000, mates: [mate] })).toEqual([
+      "incorrect",
+      "1",
+    ]);
+    // The teammate's row is read-only for this caller: it still says one
+    // attempt, made at T0.
+    expect(await hget(mateKey(mate), id)).toBe(attemptsRow(1, iso(T0), iso(T0), T0));
+    await pipeline([["DEL", mateKey(mate)]]);
+  });
+
+  it("dry run: a team already at cap still grades, and writes nothing", async () => {
+    const id = freshId("dry-team");
+    await seed(id, 20);
+    const mate = freshId("bob");
+    await pipeline([["HSET", mateKey(mate), id, attemptsRow(3, iso(T0 - 3), iso(T0 - 1), T0 - 1)]]);
+    const before = await snapshot();
+    expect(await answer(id, CORRECT, { maxAttempts: 3, mates: [mate], dry: true })).toEqual([
+      "correct",
+      "20",
+      "dry",
+    ]);
+    expect(await snapshot()).toEqual(before);
+    expect(await hget(mateKey(mate), id)).toBe(attemptsRow(3, iso(T0 - 3), iso(T0 - 1), T0 - 1));
+    await pipeline([["DEL", mateKey(mate)]]);
   });
 });

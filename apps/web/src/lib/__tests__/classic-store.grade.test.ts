@@ -7,11 +7,6 @@
 // quiz-store.grade.test.ts proves GRADE_SCRIPT's ordering.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-// #463: the team's solves keys come from the team store; pinned here.
-const classicTeam = vi.hoisted(() => ({
-  teamSolveKeys: vi.fn(async (login: string) => [`ctf:classic:solves:${login}`, "ctf:classic:solves:bob"]),
-}));
-vi.mock("@/lib/classic-team", () => classicTeam);
 
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
@@ -30,6 +25,11 @@ vi.mock("@/lib/admin-store", async (orig) => ({
   ...(await orig<typeof import("@/lib/admin-store")>()),
   getAdminSettings: mocks.getAdminSettings,
 }));
+// NOTE: `@/lib/team-store` is deliberately NOT mocked. The roster behind the
+// grading read (`strictTeamLogins`, team-members.ts) runs for REAL here and
+// is answered through the pipeline mock below, so an Upstash `{ error }`
+// reply and a transport failure exercise the reader's own fail-closed
+// handling rather than a stubbed rejection that bypasses it (#576).
 
 import { CLASSIC_COOLDOWN_SEC, submitFlag, upsertChallenge } from "@/lib/classic-store";
 
@@ -66,6 +66,41 @@ function evalReturns(verdict: unknown[]) {
   mocks.upstashEval.mockResolvedValueOnce(verdict);
 }
 
+/** What the STRICT roster read (#576) should hit — reset before every test
+ *  to a successful read that finds no team (the team of one). A test sets
+ *  `slug`/`members` for the roster it wants, or `failure` for the failure it
+ *  wants the read to take. */
+const teamRead = {
+  slug: null as string | null,
+  members: [] as string[],
+  failure: null as null | "down" | "slug-error" | "members-error",
+};
+
+/** The pipeline's standing reply: the team fixture for the strict roster
+ *  read's two commands (`HGET ctf:user:<login> team`, then `SMEMBERS
+ *  ctf:team:<slug>:members`), and null for everything else — nothing
+ *  attempted, no story — which `gateReads` and the story replies then
+ *  override per test. `failure: "down"` rejects the whole call like a
+ *  transport failure; the other two answer that command with an Upstash
+ *  `{ error }` reply. */
+function redisReply(commands: (string | number)[][]) {
+  return commands.map((cmd) => {
+    const [op, key, field] = cmd as [string, string, string | undefined];
+    if (op === "HGET" && field === "team" && key.startsWith("ctf:user:")) {
+      if (teamRead.failure === "down") throw new Error("upstash down");
+      if (teamRead.failure === "slug-error") return { error: "NOAUTH invalid password" };
+      return { result: teamRead.slug };
+    }
+    if (op === "SMEMBERS" && key.startsWith("ctf:team:") && key.endsWith(":members")) {
+      if (teamRead.failure === "members-error") {
+        return { error: "WRONGTYPE Operation against a key holding the wrong kind of value" };
+      }
+      return { result: teamRead.members };
+    }
+    return { result: null };
+  });
+}
+
 const evalCalls = () => mocks.upstashEval.mock.calls;
 /** The most recent grading call, destructured. */
 const lastEval = () => {
@@ -78,8 +113,12 @@ beforeEach(() => {
   mocks.upstashPipeline.mockReset();
   mocks.getAdminSettings.mockReset();
   mocks.getAdminSettings.mockResolvedValue(settings());
-  // Default gate reads: nothing solved, nothing attempted — the gate allows.
-  mocks.upstashPipeline.mockResolvedValue([{ result: null }, { result: null }]);
+  // No team: the viewer is a team of one, so no teammate keys are appended.
+  teamRead.slug = null;
+  teamRead.members = [];
+  teamRead.failure = null;
+  // Default gate/story reads: nothing solved, nothing attempted, no stories.
+  mocks.upstashPipeline.mockImplementation(async (commands) => redisReply(commands));
   mocks.upstashEval.mockResolvedValue(["incorrect", "1"]);
 });
 
@@ -582,6 +621,8 @@ describe("story lock (#463)", () => {
   const storiesReply = (steps: string[]) => [{ result: JSON.stringify([{ id: "op", title: "Op", intro: "", steps }]) }];
 
   it("hands the script the step's prerequisite and every teammate's solves key", async () => {
+    teamRead.slug = "t";
+    teamRead.members = ["alice", "bob"];
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["recon", "chal-1"]));
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["recon", "chal-1"] }]); // existing ids
@@ -589,9 +630,15 @@ describe("story lock (#463)", () => {
     await submitFlag("alice", "chal-1", "CTF{x}");
     const { keys, argv } = lastEval();
     expect(argv[8]).toBe("recon");
-    // KEYS[9..] (index 8 on): KEYS[8] is the lastAt hash (#522).
+    // KEYS[8] is the lastAt hash (#522); from KEYS[9] on come the teammate
+    // attempts hashes (#494) and then the solves hashes the lock reads (#463).
     expect(keys[7]).toBe("ctf:classic:lastAt");
-    expect(keys.slice(8)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    expect(keys.slice(8)).toEqual([
+      "ctf:classic:attempts:bob",
+      "ctf:classic:solves:alice",
+      "ctf:classic:solves:bob",
+    ]);
+    expect(argv[9]).toBe(1); // ARGV[10] — where the solves hashes start
   });
 
   it("reports the script's `locked` exactly as an unknown challenge — no oracle, never a wrong answer", async () => {
@@ -628,6 +675,140 @@ describe("story lock (#463)", () => {
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
     expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "unavailable" });
+    expect(evalCalls()).toHaveLength(0);
+  });
+});
+
+// --- the cooldown is the TEAM's to share (#494) ------------------------------
+//
+// The per-challenge cooldown is enforced per login, but scoring is a per-team
+// union: a team of N simply takes turns, so each member waits out a cooldown
+// nobody else ever feels. The roster travels in KEYS[9..8 + n] of the SAME
+// script call, so the "latest attempt wins" sum happens inside one atomic
+// step — never as a separate read that could see half a team. ARGV[10] says
+// where the teammate attempt hashes stop, because the story lock's solves
+// hashes (#463) follow them and must never be counted as attempts.
+
+describe("team-shared cooldown (#494)", () => {
+  it("hands every CURRENT teammate's attempts hash to the script as KEYS[9..8+n], the viewer excluded", async () => {
+    teamRead.slug = "t";
+    teamRead.members = ["alice", "bob", "carol"];
+    await submitFlag("alice", "chal-1", "CTF{x}");
+    const { keys, argv } = lastEval();
+    expect(keys.slice(0, 8)).toEqual([
+      "ctf:classic:attempts:alice",
+      "ctf:classic:solves:alice",
+      "ctf:classic:flagnorm",
+      "ctf:classic:challenges",
+      "ctf:classic:points",
+      "ctf:classic:solvecount",
+      "ctf:classic:solved",
+      "ctf:classic:lastAt",
+    ]);
+    expect(keys.slice(8)).toEqual(["ctf:classic:attempts:bob", "ctf:classic:attempts:carol"]);
+    // The submitting login's row is KEYS[1] — counting it again in the sum
+    // would make its own attempt the latest twice over.
+    expect(keys.filter((k) => k === "ctf:classic:attempts:alice")).toHaveLength(1);
+    // No story step here, so the solves range is empty: the count is what
+    // tells the script where it would have started.
+    expect(argv[8]).toBe("");
+    expect(argv[9]).toBe(2);
+  });
+
+  it("keeps a team of one at exactly the eight keys it always had, with ARGV[10] = 0", async () => {
+    await submitFlag("alice", "chal-1", "CTF{x}");
+    const { keys, argv } = lastEval();
+    expect(keys).toHaveLength(8);
+    expect(argv[9]).toBe(0);
+  });
+
+  it("takes the LATEST attempt across the roster inside the script, before any attempt is spent", async () => {
+    await submitFlag("alice", "chal-1", "CTF{x}");
+    const { script } = lastEval();
+    const sumLoop = script.indexOf("for i = 9, 8 + nMate do");
+    const seed = script.indexOf("local latestMs = lastAtMs");
+    const latest = script.indexOf("if not latestMs or mateMs > latestMs then latestMs = mateMs end");
+    const cooldownReturn = script.indexOf("'cooldown'");
+    const attemptsWrite = script.indexOf("HSET', KEYS[1]");
+    for (const idx of [sumLoop, seed, latest, cooldownReturn, attemptsWrite]) expect(idx).toBeGreaterThan(-1);
+    // The seed comes first (a team of one degrades to the old per-login
+    // behaviour), then the teammate rows widen it to the team's latest.
+    expect(seed).toBeLessThan(sumLoop);
+    expect(sumLoop).toBeLessThan(latest);
+    // The refusal lands before the attempt is spent, so a team inside a
+    // cooldown writes nothing at all.
+    expect(latest).toBeLessThan(cooldownReturn);
+    expect(cooldownReturn).toBeLessThan(attemptsWrite);
+    // Exactly one loop over the teammate range: the cooldown's sum, nothing
+    // else — the story lock iterates the SOLVES range instead.
+    expect(script.split("for i = 9, 8 + nMate do")).toHaveLength(2);
+  });
+
+  it("never reads an attempts row as a solve — the story lock iterates only the range after ARGV[10]", async () => {
+    await submitFlag("alice", "chal-1", "CTF{x}");
+    const { script } = lastEval();
+    expect(script).toContain("for i = 9 + nMate, #KEYS do");
+    // One occurrence only: the lock's loop. Reading KEYS[9..] wholesale (the
+    // pre-#494 layout) would both miss the boundary and let an attempt open
+    // a lock — attempting is not solving.
+    expect(script.split("for i = 9 + nMate, #KEYS do")).toHaveLength(2);
+    expect(script).not.toContain("for i = 9, #KEYS do");
+  });
+
+  it("refuses closed ('unavailable') when the team lookup fails, without grading", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    gateReads(null, null);
+    // Transport failure: the membership read's own pipeline call rejects.
+    teamRead.failure = "down";
+    // Downgrading to "team of one" here would hand this login its own
+    // private cooldown — the exact bug the sum exists to close.
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "unavailable" });
+    expect(evalCalls()).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError.mock.calls[0][0]).toContain("story/team lookup failed");
+    consoleError.mockRestore();
+  });
+
+  it("refuses closed when the membership read answers with an Upstash error reply, without grading", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    gateReads(null, null);
+    // An `{ error }` reply is a FAILED read, never "no team": the lenient
+    // reader would hand this login its own private cooldown right here (#576).
+    teamRead.failure = "slug-error";
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "unavailable" });
+    expect(evalCalls()).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError.mock.calls[0][0]).toContain("story/team lookup failed");
+    consoleError.mockRestore();
+  });
+
+  it("refuses closed when SMEMBERS answers with an Upstash error reply, without grading", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    gateReads(null, null);
+    // The slug read SUCCEEDS here, so only the roster read can refuse — an
+    // empty roster in its place would let a teammate's fresh attempt go
+    // uncounted and grade a submission the team is still cooling down (#576).
+    teamRead.slug = "t";
+    teamRead.failure = "members-error";
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "unavailable" });
+    expect(evalCalls()).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError.mock.calls[0][0]).toContain("story/team lookup failed");
+    consoleError.mockRestore();
+  });
+
+  it("never pays for the roster when the gate has already refused the submission", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ paused: true }));
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "paused" });
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+    expect(evalCalls()).toHaveLength(0);
+
+    mocks.getAdminSettings.mockResolvedValue(settings());
+    gateReads(solveRow(50, "2026-08-19T10:00:00.000Z"), null);
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "solved" });
+    // The gate alone was read: a refused submission never pays for stories,
+    // challenge ids, or the roster behind them.
+    expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
     expect(evalCalls()).toHaveLength(0);
   });
 });

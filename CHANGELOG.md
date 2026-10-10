@@ -95,6 +95,29 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   before and after the refresh. An unowned viewer still never receives the
   text, and a hint loaded already-owned shows no acknowledgement (nothing
   was charged on that page load).
+- **Fixed: the quiz attempt cap and the classic flag cooldown are enforced
+  across the whole team, not just the login that happened to submit (#494).**
+  Both modules score a team as the union of its members' rows, but the
+  throttles guarding those scores counted one login: a quiz team of N simply
+  took turns through N× the cap, and a classic team took turns through a
+  cooldown nobody else ever felt. The roster is now resolved once per
+  submission and handed to the SAME grading script — quiz sums every current
+  teammate's attempts for the question and refuses `exhausted` at the team's
+  total; classic takes the LATEST attempt across the roster and cools until
+  `latest + the current cooldown` — so the count happens inside one atomic
+  read/check/write rather than as a separate read that could see half a team.
+  A team read that fails refuses with `unavailable`, never a silent "team of
+  one" (which would hand the submitter a fresh budget of its own), and a
+  refused submission never pays for the lookup. Attempt rows and their format
+  are unchanged — they stay per login — and so is everything a contestant
+  sees: same results, same messages. Two things deliberately keep their old
+  scope: the quiz retry cooldown stays the submitting login's own, and the
+  cheap JS pre-checks stay per-login (only the script is authoritative — it
+  re-reads the team fresh at execution time). Classic's story lock now reads
+  the solves hashes that follow the teammate attempts range (the new
+  `ARGV[10]` count says where), so an attempt can never be mistaken for a
+  solve — attempting is not unlocking.
+
 - **Fixed: a hint can no longer be bought with points the contestant does not
   have (#553).** The reveal is refused — `403`, "Not enough points: this hint
   costs N and you have M" — when the contestant's leaderboard score (every

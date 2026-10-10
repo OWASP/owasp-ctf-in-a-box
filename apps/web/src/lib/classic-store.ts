@@ -1,6 +1,5 @@
 import "server-only";
 import { storyPositions, type Story } from "@/lib/story-lock";
-import { teamSolveKeys } from "@/lib/classic-team";
 import {
   addLink,
   addMissingUpload,
@@ -19,6 +18,7 @@ import { getAdminSettings } from "@/lib/admin-store";
 import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
+import { strictTeamLogins } from "@/lib/team-members";
 import { CLASSIC_BUNDLE_VERSION, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
@@ -82,8 +82,12 @@ import {
  *        firstAt is the FIRST submission's time and is carried forward across
  *        rewrites; absent on rows written before it existed.
  *                                 — every submission, right or wrong; the
- *                                 cooldown reads this. `lastAtMs` (a plain
- *                                 epoch-ms mirror of `lastAt`) exists only so
+ *                                 cooldown reads every CURRENT teammate's
+ *                                 copy of this, taking the latest, so
+ *                                 a team shares one cooldown per challenge
+ *                                 while each row stays per login.
+ *                                 `lastAtMs` (a plain epoch-ms mirror of
+ *                                 `lastAt`) exists only so
  *                                 SUBMIT_SCRIPT can do cooldown arithmetic in
  *                                 Lua without parsing an ISO-8601 string;
  *                                 readers outside this file should use `lastAt`.
@@ -1003,7 +1007,8 @@ type ClassicGate =
  *  `retryAt` is DERIVED from `lastAt + the CURRENT cooldown setting` on every
  *  call, never stored — so lowering the cooldown mid-event lifts a lock
  *  immediately instead of leaving it stale until some persisted unlock time
- *  catches up.
+ *  catches up. Here `lastAt` is the submitting login's own; the script's
+ *  team-wide `retryAt` (#494) takes the LATEST attempt across the roster.
  *
  *  Two different failure directions, on purpose:
  *
@@ -1019,9 +1024,12 @@ type ClassicGate =
  *
  *  IMPORTANT: this is a cheap, NON-ATOMIC pre-check. It reads solves/attempts
  *  over its own separate round trip, so two concurrent submissions can both
- *  observe "not cooling" before either writes. SUBMIT_SCRIPT re-checks both
- *  the already-solved guard and the cooldown against state read fresh at
- *  script-execution time, and is what actually enforces them. */
+ *  observe "not cooling" before either writes. It also reads only `login`'s
+ *  own rows: the cooldown is the TEAM's to share and is counted solely
+ *  by SUBMIT_SCRIPT, so a teammate still inside a cooldown makes this
+ *  pre-check say "allowed" and the script say "cooldown". SUBMIT_SCRIPT
+ *  re-checks both the already-solved guard and the cooldown against state
+ *  read fresh at script-execution time, and is what actually enforces them. */
 async function evaluateGate(
   settings: ResolvedAdminSettings | null,
   login: string,
@@ -1074,7 +1082,9 @@ async function evaluateGate(
 //
 // This script — NOT the JS pre-check — is the authority on the cooldown. The
 // pre-check reads over its own separate round trip, so two concurrent
-// submissions can both observe "not cooling" before either writes. Redis runs
+// submissions can both observe "not cooling" before either writes. It also
+// reads only the submitting login's own row, while the cooldown is the TEAM's
+// to share: only this script counts the whole roster. Redis runs
 // one script to completion before starting the next, so each submission here
 // sees every effect of every submission that finished before it.
 //
@@ -1085,10 +1095,15 @@ async function evaluateGate(
 //   3. Read {attempts,lastAtMs} and re-check the cooldown WITHOUT WRITING.
 //      The cooldown comes in as ARGV (the CURRENT admin setting, resolved by
 //      the caller on every call — never a stored cutoff) and is combined with
-//      the attempts row the script reads at execution time, never a value the
-//      caller read earlier and handed in, which is what would let a race
-//      bypass it.
-//   4. Only past the check: spend an attempt (right or wrong).
+//      the attempts rows the script reads at execution time — the submitting
+//      login's own (KEYS[1]) plus every CURRENT teammate's in KEYS[9..], the
+//      LATEST of them winning — never a value the caller read earlier and
+//      handed in, which is what would let a race bypass it. Switching logins
+//      mid-cooldown therefore buys nothing, while `retryAt` stays exactly
+//      `latest teammate attempt + the current cooldown`.
+//   4. Only past the check: spend an attempt (right or wrong) — written to
+//      the submitting login's OWN row (KEYS[1]) alone; teammates' rows are
+//      read, never rewritten.
 //   5. Compare whole values with `==`. A flag routinely contains braces,
 //      quotes and backslashes, so it is never pattern-matched out of a JSON
 //      blob the way quiz's points are — the value IS the whole hash field.
@@ -1108,18 +1123,26 @@ async function evaluateGate(
 // complete "points":<int> pair, not a digit run appearing earlier in the blob.
 export const SUBMIT_SCRIPT = `
 local dry = ARGV[8] == '1'
+-- #494: ARGV[10] says how many of KEYS[9..] are the TEAMMATES' attempts
+-- hashes (the submitting login's own row is KEYS[1], read below). The team's
+-- solves hashes, for the story lock, follow them. Never nil in practice: the
+-- caller always passes one number, but a zero keeps every range empty.
+local nMate = tonumber(ARGV[10]) or 0
 if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 -- STORY LOCK (#463): ARGV[9] names this step's prerequisite ("" when the
 -- challenge is not a later story step). It is open only if some TEAMMATE —
--- one of the solves hashes the caller handed in as KEYS[9..] — holds it.
--- (KEYS[8] is the lastAt hash, #522: never part of this loop.)
+-- one of the solves hashes the caller handed in AFTER the attempt ones —
+-- holds it.
+-- (KEYS[8] is the lastAt hash, #522, and KEYS[9..8 + nMate] are attempts
+-- hashes, #494: neither is ever part of this loop. Reading an attempts row
+-- here would let an attempt open a lock — attempting is not solving.)
 -- Checked FIRST, before the flag hash is read and before any read or write
 -- of attempts: a locked step touches no secret, spends no attempt and cannot
 -- be used to test a flag. The store reports it exactly like an unknown
 -- challenge (no oracle). A dry-run preview skips it.
 if not dry and ARGV[9] and ARGV[9] ~= '' then
   local open = false
-  for i = 9, #KEYS do
+  for i = 9 + nMate, #KEYS do
     if redis.call('HEXISTS', KEYS[i], ARGV[9]) == 1 then open = true break end
   end
   if not open then return {'locked'} end
@@ -1135,8 +1158,23 @@ local nowMs = tonumber(ARGV[6])
 -- three fields out of the same row shape.
 ${ATTEMPT_ROW_LUA}
 
-if not dry and cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
-  return {'cooldown', tostring(lastAtMs + cooldownMs)}
+-- #494: the cooldown is the TEAM's — the LATEST attempt any CURRENT
+-- teammate has made on this challenge cools all of them, so switching logins
+-- mid-cooldown buys nothing. The submitting login's own row (KEYS[1], read
+-- above) seeds the value, so a team of one — or a caller that passed no
+-- teammates — behaves exactly as before, and an empty range can never be
+-- read as "no cooldown".
+if not dry and cooldownMs > 0 then
+  local latestMs = lastAtMs
+  for i = 9, 8 + nMate do
+    local _, mateMs = readAttemptRow(redis.call('HGET', KEYS[i], ARGV[1]))
+    if mateMs then
+      if not latestMs or mateMs > latestMs then latestMs = mateMs end
+    end
+  end
+  if latestMs and nowMs < (latestMs + cooldownMs) then
+    return {'cooldown', tostring(latestMs + cooldownMs)}
+  end
 end
 
 attempts = attempts + 1
@@ -1191,11 +1229,11 @@ export type SubmitResult =
   | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
   | { ok: true; correct: false; dryRun?: true }
   | { ok: false; reason: "paused" | "ended" | "solved" | "cooldown" | "locked"; retryAt?: string }
-  // The gate's lookup itself failed (fail-closed), the submission was
-  // malformed / named an unknown challenge, or the script blew up. Kept
-  // distinct from the gate reasons above so a caller-facing message can say
-  // the check couldn't be completed instead of stating a fact about the
-  // contestant that was never established.
+  // The gate's or the story/team lookup itself failed (fail-closed), the
+  // submission was malformed / named an unknown challenge, or the script blew
+  // up. Kept distinct from the gate reasons above so a caller-facing message
+  // can say the check couldn't be completed instead of stating a fact about
+  // the contestant that was never established.
   | { ok: false; reason: "unavailable" | "invalid" | "error" };
 
 /** Grades `flag` against `challengeId` for `login`, and on success records the
@@ -1207,7 +1245,12 @@ export type SubmitResult =
  *  SUBMIT_SCRIPT re-checks the already-solved guard and the cooldown
  *  authoritatively (see its comment) using the CURRENT admin settings resolved
  *  by THIS call, so a race that slips past the pre-check is still caught,
- *  atomically, by the script.
+ *  atomically, by the script. The current team is resolved here too:
+ *  its members' attempts hashes (and, when this is a later story step, their
+ *  solves hashes) are handed to that SAME script execution, so the shared
+ *  cooldown and the story lock are both decided inside one atomic step rather
+ *  than as separate reads. A team read that fails is `unavailable` (closed) —
+ *  never "team of one", which would hand this login its own private cooldown.
  *
  *  Both sides of the comparison are normalized by `normalizeFlag` in JS: the
  *  authoring side when `upsertChallenge` writes `ctf:classic:flagnorm`, and
@@ -1239,22 +1282,28 @@ export async function submitFlag(
 
   const gate = await evaluateGate(settings, login, challengeId, cooldownSec, dryRun);
 
-  // STORY LOCK: a later story step names its prerequisite, and the
-  // script checks it against every teammate's solves hash. Resolved here and
-  // enforced THERE (the script is the authority). A stories or team read that
-  // fails is `unavailable` — closed, never "no lock".
+  // The STORY LOCK and the TEAM's cooldown both need the roster, so
+  // it is read ONCE here and enforced in the script (which is the authority
+  // for both). The lock needs every teammate's solves hash when this challenge
+  // is a later story step; the cooldown needs every teammate's attempts hash
+  // on every submission. A stories or team read that fails is `unavailable` —
+  // closed, never "no lock" and never "team of one", which would quietly hand
+  // this login its own private cooldown budget. The roster read is the STRICT
+  // one: an Upstash error reply is a failure, not an empty roster.
   let prereq = "";
-  let lockKeys: string[] = [];
+  let members: string[] = [];
   if (gate.allowed || gate.reason === "cooldown") {
     try {
-      const [stories, existing] = await Promise.all([listStories(), listChallengeIds()]);
+      const [stories, existing, roster] = await Promise.all([
+        listStories(),
+        listChallengeIds(),
+        strictTeamLogins(login),
+      ]);
+      members = roster;
       const pos = storyPositions(stories, existing).get(challengeId);
-      if (pos?.prereq) {
-        prereq = pos.prereq;
-        lockKeys = await teamSolveKeys(login);
-      }
+      if (pos?.prereq) prereq = pos.prereq;
     } catch (err) {
-      console.error("classic: story lock lookup failed (failing closed):", errorLabel(err));
+      console.error("classic: story/team lookup failed (failing closed):", errorLabel(err));
       return { ok: false, reason: "unavailable" };
     }
   }
@@ -1277,16 +1326,25 @@ export async function submitFlag(
   const now = new Date();
   const nowIso = now.toISOString();
   // A duration in ms, recomputed from the SAME settings the pre-check used —
-  // never a stored cutoff. The script combines it with the attempts row IT
+  // never a stored cutoff. The script combines it with the attempts rows IT
   // reads at execution time.
   const cooldownMs = cooldownSec * 1000;
+
+  // The cooldown counts every CURRENT teammate's attempts row, handed to
+  // the SAME script call so the verdict stays one atomic read/check/write. The
+  // viewer's own key is left out here because KEYS[1] already is it.
+  const mateAttemptKeys = members.filter((m) => m !== login).map(attemptsKey);
+  // The story lock's keys follow, and keep their #463 meaning exactly: every
+  // current member's solves hash INCLUDING the submitting login's own.
+  const lockKeys = prereq === "" ? [] : members.map(solvesKey);
 
   let verdict: unknown;
   try {
     verdict = await upstashEval(
       SUBMIT_SCRIPT,
       [
-        attemptsKey(login), // KEYS[1]
+        attemptsKey(login), // KEYS[1] — the submitting login's own row: written, and the
+        //                        seed of the team's cooldown
         solvesKey(login), // KEYS[2]
         FLAGNORM_KEY, // KEYS[3] — the normalized flag; ctf:classic:flag is
         //                          never handed to the script at all
@@ -1295,7 +1353,9 @@ export async function submitFlag(
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
         LAST_AT_KEY, // KEYS[8] — login -> latest award time
-        ...lockKeys, // KEYS[9..] — teammates' solves hashes, for the story lock
+        ...mateAttemptKeys, // KEYS[9..8 + nMate] — teammates' attempts hashes,
+        //                                  counted into the shared cooldown
+        ...lockKeys, // KEYS[9 + nMate..] — solves hashes, for the story lock
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the
@@ -1312,6 +1372,7 @@ export async function submitFlag(
         caseSensitiveFlagForm(flag), // ARGV[7] — case preserved
         dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing
         prereq, // ARGV[9] — story prerequisite, "" when none
+        mateAttemptKeys.length, // ARGV[10] — where the solves hashes start
       ],
     );
   } catch (err) {

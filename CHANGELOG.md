@@ -33,6 +33,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   solved · 1,550 pts"). The route sends only that count, never which steps;
   the total is the row's own Jeopardy points minus the visible items, so no
   single step's value is sent or shown.
+- **Fixed: admin activity times read in UTC with no label, and to the minute
+  (#587).** The Overview's Recent activity and the Activity tab now show each
+  entry on the event's clock, to the second, with the offset named
+  ("10-07 13:26:00 GMT-3"); at the RTS finish two solves 24 seconds apart
+  both read "16:59". Insights and Support keep UTC on purpose, to match
+  against logs, and now carry seconds too.
 
 - **Fixed: the leaderboard's score chart dropped every quiz, Jeopardy and AI
   point of a contestant whose GitHub login has an uppercase letter (#577).**

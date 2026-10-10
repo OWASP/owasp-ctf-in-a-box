@@ -28,6 +28,7 @@ import { moduleSummary, type ModuleInventory } from "@/components/admin-module-s
 import AdminSwitch from "@/components/admin-switch";
 import type { FieldStatus } from "@/components/admin-number-field";
 import { formatWhen, TYPE_LABELS, type ActivityEntry } from "./admin-activity-tab";
+import { DEFAULT_EVENT_TIME_ZONE } from "@/lib/event-time";
 import AdminLiveStamp from "./admin-live-stamp";
 import { FREEZE_HELP, freezeConfirm } from "./freeze-copy";
 import { LIVE_POLL_MS, useLivePoll } from "./use-live-poll";
@@ -322,7 +323,7 @@ export default function AdminOverviewTab({
           <ul className="flex flex-col gap-1 text-sm text-zinc-300">
             {activity.map((e, i) => (
               <li key={`${e.at}-${e.type}-${e.login}-${i}`} className="flex gap-2">
-                <span className="font-mono tabular-nums text-muted">{formatWhen(e.at)}</span>
+                <span className="font-mono tabular-nums text-muted">{formatWhen(e.at, resolution.timeZone ?? DEFAULT_EVENT_TIME_ZONE)}</span>
                 <span>{TYPE_LABELS[e.type] ?? e.type}</span>
                 <span className="font-mono text-white">{e.login}</span>
               </li>

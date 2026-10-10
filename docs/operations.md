@@ -293,8 +293,9 @@ The panel offers:
   page and in the page description; blank hides it), **Timezone** (≤64; an
   IANA zone such as `America/Argentina/Buenos_Aires`, suggested as you type;
   the landing page's dates, the phase line, the score chart's axis and the
-  schedule inputs below read on this clock (the Insights and Support
-  timestamps stay UTC, to match against logs); the phase line and the launch status name its offset, e.g. "9:00 AM
+  schedule inputs below and the admin activity times (Overview and the
+  Activity tab, to the second) read on this clock (the Insights and Support
+  timestamps stay UTC, to the second, to match against logs); the phase line and the launch status name its offset, e.g. "9:00 AM
   GMT-3"; blank means UTC, the output before this setting existed), **Contact e-mail**
   (≤254; the organizers' own inbox, rendered as a `mailto:` link on the
   privacy and terms pages; blank hides it), and **Discord invite** (≤200;

@@ -61,6 +61,7 @@ import AdminSecureDevTab from "./admin-secure-dev-tab";
 import AdminModulePanel from "./admin-module-panel";
 import { moduleChoices } from "./module-toggle";
 import { ChangedAt } from "./admin-changed-at";
+import { resolveTimeZone } from "@/lib/event-time";
 import { useAdminSettingsDrafts } from "./use-admin-settings";
 import {
   ACTIVITY_TAB,
@@ -243,6 +244,10 @@ export default function AdminControls({
   // module panel's header): the runtime set, or the default one when no
   // override is stored.
   const liveModuleIds: readonly string[] = settings.enabledModuleIds ?? defaultModuleIds;
+  // The activity rows read on the event's clock, resolved the way the phase
+  // line and the Event tab resolve it. Insights and Support stay UTC, to
+  // match against logs.
+  const eventZone = resolveTimeZone(settings.eventIdentity?.eventTimeZone);
 
   return (
     <div className="flex flex-col gap-4">
@@ -312,7 +317,7 @@ export default function AdminControls({
               ) : tab.id === SUPPORT_TAB ? (
                 <AdminSupportTab setConfirm={setConfirm} />
               ) : tab.id === ACTIVITY_TAB ? (
-                <AdminActivityTab visible={active === ACTIVITY_TAB} live={eventLive} />
+                <AdminActivityTab visible={active === ACTIVITY_TAB} live={eventLive} zone={eventZone} />
               ) : tab.id === INSIGHTS_TAB ? (
                 <AdminInsightsTab visible={active === INSIGHTS_TAB} live={eventLive} />
               ) : (

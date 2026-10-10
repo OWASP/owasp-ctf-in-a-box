@@ -98,8 +98,9 @@ describe("mergeRefresh", () => {
 });
 
 describe("formatWhen", () => {
-  it("renders a compact UTC stamp sliced from the ISO string, no clock read", () => {
-    expect(formatWhen("2026-08-24T18:03:27.000Z")).toBe("08-24 18:03");
+  it("renders on the event's clock, to the second, with the offset named", () => {
+    expect(formatWhen("2026-08-24T18:03:27.000Z", "UTC")).toBe("08-24 18:03:27 UTC");
+    expect(formatWhen("2026-08-24T18:03:27.000Z", "America/Argentina/Buenos_Aires")).toBe("08-24 15:03:27 GMT-3");
   });
 });
 

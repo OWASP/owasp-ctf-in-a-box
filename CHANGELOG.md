@@ -34,6 +34,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   without a team on a Secure Development event (PR scores are kept and count
   for the team the player joins), and every PR score report now says points
   count only while the event's scoring window is open.
+- **Changed: vitest 4.1.11 → 5.0.2 in `apps/web` (Dependabot #453).** No
+  test or config changes were needed: the full suite, the live grading-Lua
+  suites with `CTF_LUA_SUITES_REQUIRED=1`, lint, typecheck and the
+  production build all pass unchanged.
 
 - **Changed: dependency batch (Dependabot #462, #563, #564, #565, #574,
   #575).** Next.js and `eslint-config-next` 16.3.6 → 16.4.0, better-auth

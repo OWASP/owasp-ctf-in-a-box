@@ -1,11 +1,12 @@
 // #570: the story-lock reachable denominator has ONE owner
-// (`classicReachableDenominator` in leaderboard/denominators.ts) and both
-// surfaces that show classic progress have to read their answer out of it —
-// the profile through its own `moduleRow`/`buildModuleProgress`, the board
-// through `withTeamStandings` → `withTeamClassicPoints`. This pins that the
-// locked-step count reaches BOTH detail blocks, and that the two divide by
-// the same number: a surface that quietly fell back to the live catalogue (or
-// to the old union) would disagree with the other about the same contestant.
+// (`classicReachableDenominator` in leaderboard/denominators.ts) and every
+// surface that shows classic progress has to read their answer out of it —
+// the profile through its own `moduleRow`/`buildModuleProgress`, the board's
+// team rows through `withTeamStandings` → `withTeamClassicPoints`, and the
+// board's contestant rows through `withModuleContributions`. This pins that
+// the locked-step count reaches ALL of them, and that they divide by the same
+// number: a surface that quietly fell back to the live catalogue (or to the
+// old union) would disagree with the others about the same contestant.
 //
 // Own file because `vi.mock` is hoisted per file — same split the sibling
 // classic-only/quiz-only suites use.
@@ -77,7 +78,7 @@ beforeEach(() => {
 });
 
 describe("the locked count reaches the profile and the leaderboard (#570)", () => {
-  it("carries locked and the reachable denominator to BOTH detail blocks", async () => {
+  it("carries locked and the reachable denominator to every detail block", async () => {
     const board = await withModuleContributions(empty()).then(withTeamStandings);
     const teamDetail = board.teams[0].modules!.classic!.detail;
     if (teamDetail.kind !== "classic") throw new Error("classic block missing on the team row");
@@ -125,5 +126,28 @@ describe("the locked count reaches the profile and the leaderboard (#570)", () =
     expect(row.total).toBe(teamDetail.total);
     expect(row.locked).toBe(teamDetail.locked);
     expect(row.total).toBe(profileDetail.total);
+  });
+
+  // A contestant row divides by the whole catalogue unless its reachability
+  // input feeds it, and then the same viewer reads "1 / 3" on the board while
+  // /profile reads "1 / 2". Its solves fold through the same team roster the
+  // team row uses, so both rows and the profile agree — asserted off the real
+  // pipeline rather than a hand-plugged fixture, because the wiring is what
+  // breaks.
+  it("gives a contestant row the same reachable denominator as the team row", async () => {
+    mocks.getClassicTotals.mockResolvedValue(new Map([["ada", { points: 10, solved: 1, lastAt: null }]]));
+
+    const board = await withModuleContributions(empty()).then(withTeamStandings);
+
+    const teamDetail = board.teams[0].modules!.classic!.detail;
+    const contestant = board.entries.find((e) => e.login === "ada");
+    const contestantDetail = contestant?.modules?.classic?.detail;
+    if (teamDetail.kind !== "classic" || contestantDetail?.kind !== "classic") {
+      throw new Error("classic block missing from the pipeline's rows");
+    }
+
+    expect(contestantDetail).toEqual(teamDetail);
+    expect(contestantDetail.total).toBe(2);
+    expect(contestantDetail.locked).toBe(1);
   });
 });

@@ -591,8 +591,8 @@ describe("Leaderboard score-cadence note (#552)", () => {
 
 // #570: the story-lock disclaimer. Gated on `detail.locked > 0` — never on a
 // denominator merely being defined, which is the ordinary unlocked case every
-// classic row has. The reachable count is computed per TEAM
-// (withTeamClassicPoints), so the board scans teams as well as individuals.
+// classic row has. Contestant rows and team rows each carry their own locked
+// count, so the board scans both.
 describe("the story-lock disclaimer (#570)", () => {
   const CLASSIC: readonly ResolvedModule[] = [{ id: "classic", title: "Classic", blurb: "" }];
   const DISCLAIMER = "Totals count unlocked challenges only";

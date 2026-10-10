@@ -5,7 +5,6 @@
 
 import { getTeamClassicSolvedIds } from "@/lib/classic-team";
 import { isLocked, storyPositions } from "@/lib/story-lock";
-import type { Story } from "@/lib/story-lock";
 import { classicReachableDenominator } from "@/lib/leaderboard/denominators";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
@@ -237,14 +236,12 @@ export default async function ProfilePage() {
   // #463: story steps still locked for this viewer's team never reach the
   // page — not their title, points or category (review C1). A stories read
   // that fails errors the page, like the challenge list would.
-  // #570: use the shared story-lock reachability helper so the profile and
-  // leaderboard agree on the reachable denominator.
   const classicLocked: Set<string> = new Set();
   let classicReachableTotal = 0;
   let classicReachableMaxPoints = 0;
-  // #570's locked-step count for the disclaimer below — hoisted because the
-  // `moduleInput` literal sits outside this block, and because a disabled
-  // classic module must read 0 rather than an uninitialised name.
+  // Hoisted because the `moduleInput` literal sits outside this block, and
+  // because a disabled classic module must read 0 rather than an
+  // uninitialised name.
   let classicLockedCount = 0;
   if (classicEnabled) {
     const stories = await listStories();
@@ -254,12 +251,7 @@ export default async function ProfilePage() {
     for (const [id, solve] of Object.entries(viewerSolved)) {
       solvedRecords[id] = { points: solve.points };
     }
-    const reachable = classicReachableDenominator(
-      classicChallenges,
-      stories as Story[],
-      teamSolved,
-      solvedRecords,
-    );
+    const reachable = classicReachableDenominator(classicChallenges, stories, teamSolved, solvedRecords);
     classicReachableTotal = reachable.total;
     classicReachableMaxPoints = reachable.max;
     classicLockedCount = reachable.locked;
@@ -466,7 +458,7 @@ export default async function ProfilePage() {
                 {isClassic && lockedCount > 0 && (
                   <p className="mt-2 text-xs text-muted">
                     Totals count unlocked challenges only — story steps add to the total as your team unlocks them.
-                    <span className="ml-2">· {lockedCount} steps locked</span>
+                    <span className="ml-2">· {lockedCount} {lockedCount === 1 ? "step" : "steps"} locked</span>
                   </p>
                 )}
               </div>

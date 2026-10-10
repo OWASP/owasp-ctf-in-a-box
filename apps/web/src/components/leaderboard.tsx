@@ -341,12 +341,11 @@ export default function Leaderboard({
           just made can take a moment to appear here.
         </p>
       )}
-      {/* #570: Story-lock disclaimer — only while some row on the board still
+      {/* Story-lock disclaimer — only while some row on the board still
           has locked story steps. Gated on `detail.locked > 0`, never on the
           denominator being defined: a classic detail with nothing locked is
-          the ordinary case and must say nothing. Both row kinds are scanned —
-          the reachable count is computed per TEAM (withTeamClassicPoints),
-          so a board whose individuals clamp still carries it on its teams. */}
+          the ordinary case and must say nothing. Both row kinds are scanned
+          because either one can be the row holding the lock. */}
       {modules.some((m) => m.id === "classic") &&
         [...data.entries, ...data.teams].some((row) => {
           const d = row.modules?.classic?.detail;

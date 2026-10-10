@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   getTeamClassicTotalsBatch: vi.fn(),
   listChallenges: vi.fn(),
   listStories: vi.fn(),
+  listTeams: vi.fn(),
   getAiTotals: vi.fn(),
   getTeamAiTotalsBatch: vi.fn(),
   listAiChallenges: vi.fn(),
@@ -39,6 +40,9 @@ vi.mock("@/lib/classic-store", () => ({
   listChallenges: mocks.listChallenges,
   listStories: mocks.listStories,
 }));
+
+// Reachability reads rosters only when the source carries none of its own.
+vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
 
 vi.mock("@/lib/ai-store", () => ({
   getAiTotals: mocks.getAiTotals,
@@ -95,6 +99,7 @@ beforeEach(() => {
   );
   mocks.listChallenges.mockResolvedValue([]);
   mocks.listStories.mockResolvedValue([]);
+  mocks.listTeams.mockResolvedValue([]);
   mocks.getAiTotals.mockResolvedValue(new Map());
   mocks.getTeamAiTotalsBatch.mockImplementation((teams: readonly string[][]) =>
     Promise.resolve(teams.map(() => ({ points: 0, solved: 0, lastAt: null }))),
@@ -615,6 +620,98 @@ describe("withModuleContributions", () => {
       expect(detail).toEqual({ kind: "classic", solved: 1, total: 1, points: 50, locked: 0 });
       // Points already banked for the deleted challenge stay on the board.
       expect(out.entries[0].points).toBe(50);
+    });
+
+    // These two tests pin the reachability wiring for a CONTESTANT row: the
+    // same `classicReachableDenominator` /profile uses, fed by ONE batched
+    // solves read for the whole board rather than one per contestant. Without
+    // it the row divides by the whole catalogue and reads "1 / 3" on a step
+    // the lock has not released, while /profile reads "1 / 1".
+    it("gives a contestant row the story-lock denominator /profile shows", async () => {
+      mocks.listChallenges.mockResolvedValue([
+        { id: "c1", points: 10 },
+        { id: "c2", points: 20 },
+        { id: "c3", points: 30 },
+      ]);
+      mocks.listStories.mockResolvedValue([{ id: "s1", title: "Story", intro: "", steps: ["c1", "c2"] }]);
+      // Ada solved only the standalone c3: c1 is reachable as step 1, c2 is
+      // still locked behind it.
+      mocks.getClassicTotals.mockResolvedValue(new Map([["ada", { points: 30, solved: 1, lastAt: null }]]));
+      mocks.getTeamClassicTotalsBatch.mockResolvedValue([
+        { points: 30, solved: 1, lastAt: null, itemIds: ["c3"], itemPoints: { c3: { points: 30 } } },
+      ]);
+
+      const out = await withModuleContributions(data([entry("ada", 0, 0)]));
+
+      expect(out.entries[0].modules!["classic"]!.detail).toEqual({
+        kind: "classic",
+        solved: 1,
+        // c1 + c3; c2 is locked, so neither its slot nor its title is shown.
+        total: 2,
+        points: 30,
+        locked: 1,
+      });
+      expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledTimes(1);
+      expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledWith([["ada"]]);
+    });
+
+    // Reachability follows the TEAM's solves, because the story lock does: a
+    // teammate solving the prerequisite releases the step for everyone. An
+    // entry with no team of its own (`entry.team` is null until
+    // withTeamStandings runs a stage later) still has to find its roster.
+    it("resolves a contestant's team by login so a teammate's solve unlocks the step", async () => {
+      mocks.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["ada", "cyd"] }]);
+      mocks.listChallenges.mockResolvedValue([
+        { id: "c1", points: 10 },
+        { id: "c2", points: 20 },
+        { id: "c3", points: 30 },
+      ]);
+      mocks.listStories.mockResolvedValue([{ id: "s1", title: "Story", intro: "", steps: ["c1", "c2"] }]);
+      mocks.getClassicTotals.mockResolvedValue(new Map([["ada", { points: 30, solved: 1, lastAt: null }]]));
+      // cyd holds the prerequisite; the fold hands the row both members' ids.
+      mocks.getTeamClassicTotalsBatch.mockResolvedValue([
+        { points: 40, solved: 2, lastAt: null, itemIds: ["c1", "c3"], itemPoints: { c1: { points: 10 }, c3: { points: 30 } } },
+      ]);
+
+      const out = await withModuleContributions(data([entry("ada", 0, 0)]));
+
+      expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledWith([["ada", "cyd"]]);
+      expect(out.entries[0].modules!["classic"]!.detail).toEqual({
+        kind: "classic",
+        solved: 1,
+        total: 3, // nothing locked once the team holds the prerequisite
+        points: 30,
+        locked: 0,
+      });
+    });
+
+    // A failed roster or solves read must not INVENT a lock: the row keeps
+    // the clamp it always used (never below its own numerator) and reports
+    // nothing locked, so a blip costs precision and never hides a step.
+    it("falls back to the clamp when the batched reachability read fails", async () => {
+      mocks.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["ada"] }]);
+      mocks.listChallenges.mockResolvedValue([
+        { id: "c1", points: 10 },
+        { id: "c2", points: 20 },
+        { id: "c3", points: 30 },
+      ]);
+      mocks.listStories.mockResolvedValue([{ id: "s1", title: "Story", intro: "", steps: ["c1", "c2"] }]);
+      mocks.getClassicTotals.mockResolvedValue(new Map([["ada", { points: 30, solved: 1, lastAt: null }]]));
+      mocks.getTeamClassicTotalsBatch.mockRejectedValue(new Error("upstash blip"));
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const out = await withModuleContributions(data([entry("ada", 0, 0)]));
+
+        expect(out.entries[0].modules!["classic"]!.detail).toEqual({
+          kind: "classic",
+          solved: 1,
+          total: 3,
+          points: 30,
+          locked: 0,
+        });
+      } finally {
+        err.mockRestore();
+      }
     });
 
     it("gives a login with no solves no classic block", async () => {

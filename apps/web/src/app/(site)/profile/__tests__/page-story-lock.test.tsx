@@ -89,6 +89,14 @@ const CHALLENGES = [
 ];
 const STORY = { id: "s1", title: "Operation", intro: "", steps: ["step-1", "step-2", "step-3"] };
 
+/** A second, independent chain — so a fixture can hold more than one locked
+ *  step and pin the plural form of the marker. */
+const CHAIN2 = [
+  { id: "beta-1", title: "Beta One", category: "Web", description: "", points: 20, order: 3 },
+  { id: "beta-2", title: "Beta Two", category: "Web", description: "", points: 40, order: 4 },
+];
+const STORY2 = { id: "s2", title: "Second Operation", intro: "", steps: ["beta-1", "beta-2"] };
+
 /** The page's own reads, for a viewer whose team has solved `solvedIds`. */
 function givenTeam(solvedIds: readonly string[], classicPoints: number, classicSolved: number) {
   moduleLive.mockImplementation((id: string) => id === "classic");
@@ -112,6 +120,13 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+/** The same viewer, on an event with two independent stories. */
+function givenTwoChains(solvedIds: readonly string[]) {
+  givenTeam(solvedIds, 10, 1);
+  listChallenges.mockResolvedValue([...CHALLENGES, ...CHAIN2]);
+  listStories.mockResolvedValue([STORY, STORY2]);
+}
+
 describe("the profile's story-lock disclaimer (#570)", () => {
   it("shows the disclaimer and the locked-step count while steps are locked", async () => {
     // Only step one is solved: step two is reachable through it, step three
@@ -121,7 +136,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     const html = renderToStaticMarkup(await ProfilePage());
 
     expect(html).toContain(DISCLAIMER);
-    expect(html).toContain("· 1 steps locked");
+    expect(html).toContain("· 1 step locked");
     // The denominator is the REACHABLE count (2), never the full catalogue (3)…
     expect(html).toContain("/ 2 solved");
     expect(html).not.toContain("/ 3 solved");
@@ -129,6 +144,28 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     expect(html).toContain("10 of 60 pts available");
     // The locked step's title never reaches the page (#463, carried through).
     expect(html).not.toContain("Step Three");
+  });
+
+  // The marker and the denominator both come from ONE locked figure across
+  // every story on the event, so a second chain must add to both rather than
+  // overwrite the first.
+  it("counts locked steps across every story and names none of them", async () => {
+    // step-1 solved: step-2 opens through it, step-3 stays locked; beta-1 is
+    // step 1 of its own chain, beta-2 stays locked. 3 reachable, 2 locked.
+    givenTwoChains(["step-1"]);
+
+    const html = renderToStaticMarkup(await ProfilePage());
+
+    expect(html).toContain(DISCLAIMER);
+    expect(html).toContain("· 2 steps locked");
+    expect(html).toContain("/ 3 solved");
+    expect(html).not.toContain("/ 5 solved");
+    // 10 + 50 + 20 reachable; the two locked steps' 90 and 40 never offered.
+    expect(html).toContain("10 of 80 pts available");
+    expect(html).not.toContain("Step Three");
+    expect(html).not.toContain("Beta Two");
+    // Titles of steps the viewer CAN reach still render.
+    expect(html).toContain("Beta One");
   });
 
   it("says nothing once every step is reachable, and keeps solved/total as it was", async () => {

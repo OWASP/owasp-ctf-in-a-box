@@ -1652,8 +1652,8 @@ reorder can lock again if its new predecessor is unsolved. Deleting a
 challenge also removes it from its story, and the chain closes up around
 the gap.
 
-**Denominator counts only reachable challenges** (#570). Both the profile
-page and the leaderboard now show per-team reachable totals for classic
+**Denominator counts only reachable challenges**. Both the profile
+page and the leaderboard show per-team reachable totals for classic
 challenges. The denominator grows as your team unlocks story steps:
 - Step 1 of every story is always counted.
 - Each later step is added to the denominator only when its prerequisite
@@ -1664,13 +1664,13 @@ challenges. The denominator grows as your team unlocks story steps:
 - Challenges already solved by the team but since deleted from the
   catalogue are still counted (union with solve records), preserving
   banked points.
-- On the leaderboard the reachable total applies to a TEAM row's classic
-  figures; a contestant row keeps the cross-module solved denominator —
-  the event's completable count, less the locked classic steps that row
-  carries — and the profile's progress bar divides by the viewer's own
-  reachable total. A disclaimer appears on the profile and the board while
-  any row still has locked steps: "Totals count unlocked challenges only —
-  story steps add to the total as your team unlocks them."
+- A leaderboard row — team or contestant — divides by that row's own
+  reachable total, and the solved column subtracts that row's still-locked
+  steps from the event's completable count. The profile's progress bar
+  divides by the viewer's own reachable total. A disclaimer appears on
+  the profile and the board while any row still has locked steps: "Totals
+  count unlocked challenges only — story steps add to the total as your
+  team unlocks them."
 
 **Jeopardy has paid hints too** (#210, after the board itself shipped
 without them): a challenge can carry an optional `hint`, sold through the

@@ -79,12 +79,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   ("· 1 step locked", or "· N steps locked") when applicable, with a
   disclaimer: "Totals count unlocked challenges
   only — story steps add to the total as your team unlocks them." The
-  leaderboard's "solved / total" column and team rows now use each row's
-  own reachable denominator instead of the event-wide catalogue count, and
-  the same disclaimer appears on the board while any row still has locked
-  steps. This replaces the previous `visibleClassic` filtering and the
-  event-wide `completable` denominator with a single shared helper in
-  `lib/leaderboard/denominators.ts`.
+  leaderboard's "solved / total" column, its contestant rows and its team
+  rows each use that row's own reachable denominator instead of the
+  event-wide catalogue count, and the same disclaimer appears on the board
+  while any row still has locked steps. This replaces the previous
+  `visibleClassic` filtering and the event-wide `completable` denominator
+  with a single shared helper in `lib/leaderboard/denominators.ts`.
 
 - **Changed: the maintainability follow-ups from the pre-v0.7.0 audit
   (#504).** Refactors with no behavior change: the demo seed and clear body

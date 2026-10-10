@@ -44,11 +44,11 @@ export type ProfileModuleInput = {
     /** #463: story steps still locked for the viewer's team — left out of
      *  the list entirely, so nothing about them reaches the page. */
     locked?: ReadonlySet<string>;
-    /** #570: reachable count from the story-lock helper (includes
+    /** Reachable count from the story-lock helper (includes
      *  solved-but-deleted union). Used for the module row denominator and
      *  progress ceiling instead of unionDenominators. */
     reachableTotal?: number;
-    /** #570: number of locked story steps (for disclaimer display). */
+    /** Number of locked story steps, for the disclaimer under the row. */
     lockedCount?: number;
   };
   ai?: { total?: AiTotal; challenges: AiChallenge[]; maxPoints: number; viewer: ViewerAi };
@@ -118,7 +118,7 @@ export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<M
       detail: {
         kind: "classic",
         solved: classic.solved,
-        // #570: the same reachable denominator `moduleRow` shows — the full
+        // The same reachable denominator `moduleRow` shows — the full
         // catalogue count would put locked steps back in a total every other
         // figure on this page leaves out.
         total: Math.max(input.classic!.reachableTotal ?? input.classic!.challenges.length, classic.solved),
@@ -186,7 +186,8 @@ export function moduleRow(progress: ModuleProgress, input: ProfileModuleInput): 
       return { done: detail.answered, total: d.total, unit: moduleUnit("quiz"), earned: progress.points, max: d.max };
     }
     case "classic": {
-      // #570: use the story-lock reachable denominator when provided.
+      // The story-lock reachable denominator, floored at the viewer's own
+      // solved count for the same reason every other classic denominator is.
       if (input.classic?.reachableTotal != null) {
         return {
           done: detail.solved,

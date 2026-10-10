@@ -49,13 +49,13 @@ export function EntryRow({
   onToggle: () => void;
   capabilities: LeaderboardData["capabilities"];
   modules: readonly ResolvedModule[];
+  /** The event's live target list — forwarded to `ModuleDetail`/`AppBreakdown`.
+   *  See app-breakdown.tsx's doc comment. */
+  enabledApps: readonly AppMeta[];
   /** The EVENT's total completable items, for the solved column's
    *  denominator. Undefined when nothing stamped it — the column then shows a
    *  bare count rather than inventing a total. */
   completable?: number;
-  /** The event's live target list — forwarded to `ModuleDetail`/`AppBreakdown`.
-   *  See app-breakdown.tsx's doc comment. */
-  enabledApps: readonly AppMeta[];
   /** `LeaderboardData.catalog`, joined against this row's `solvedIds` only
    *  when the row is open (issue #434). */
   catalog?: LeaderboardData["catalog"];

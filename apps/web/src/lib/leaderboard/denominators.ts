@@ -4,13 +4,13 @@
 // cannot reach — so the two surfaces disagreed about the same contestant's
 // same module until someone noticed and filed it again.
 //
-// Story-lock reachability (#570): classic stories are ordered chains where step
+// Story-lock reachability: classic stories are ordered chains where step
 // 1 is always reachable and each later step unlocks only when the previous
 // step is solved by the team. Locked steps' titles and points must never be
 // exposed. The reachable denominator is computed from the team's solved IDs
 // through `lib/story-lock.ts`'s own `storyPositions`/`isLocked`, so the
-// profile, the leaderboard team row, and the graders all agree on what is
-// reachable. A teamless contestant sees only step 1 of each story.
+// profile, the leaderboard's player and team rows, and the graders all agree
+// on what is reachable. A teamless contestant sees only step 1 of each story.
 //
 // The rule: a module's numerator counts SOLVE RECORDS, which survive deletion
 // on purpose — the admin delete dialog promises it ("Points already banked for
@@ -120,7 +120,9 @@ export function classicReachableDenominator(
   const liveById = new Map(challenges.map((c) => [c.id, c]));
   const liveIds = new Set(liveById.keys());
 
-  // First pass: classify live steps as reachable or locked.
+  // `total` is accumulated over three DISJOINT id sets — live ids, deleted
+  // ids that still have a solve record, deleted ids that do not — so no step
+  // is counted twice. `locked` is tallied only from live ids.
   let total = 0;
   let max = 0;
   let locked = 0;
@@ -141,7 +143,6 @@ export function classicReachableDenominator(
     max += Number(challenge.points) || 0;
   }
 
-  // Second pass: add solved-but-deleted steps from solve records (union with solve records).
   for (const [id, solve] of Object.entries(solved)) {
     if (liveIds.has(id)) continue;
     // A solved step that was in a story but is now deleted: its prereq no
@@ -150,14 +151,13 @@ export function classicReachableDenominator(
     max += Number(solve?.points) || 0;
   }
 
-  // Third pass: add solved-but-deleted steps that are in teamSolved but not in solve records.
-  // This handles the case where the fold provides itemIds for deleted items but not itemPoints.
+  // A fold can carry `itemIds` for a deleted item without a matching
+  // `itemPoints` entry, so the record loop above would drop it entirely.
   for (const id of teamSolved) {
     if (liveIds.has(id)) continue;
-    if (solved[id]) continue; // already counted in second pass
-    // Deleted item solved by team but not in solve records (no points available).
+    if (solved[id]) continue; // already counted from its solve record
     total += 1;
-    // max unchanged (0 points)
+    // max unchanged — there are no points left to attribute to it.
   }
 
   return { total, max, locked };

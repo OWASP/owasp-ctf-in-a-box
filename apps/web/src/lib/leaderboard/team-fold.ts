@@ -15,8 +15,9 @@ export type FoldedTotal = {
   /** The deduped set's item ids — what lets a caller union them with a live
    *  catalogue instead of guessing a denominator from a count. */
   itemIds: string[];
-  /** Per-item points for the deduped set (earliest solve's points). Needed for
-   *  story-lock reachable denominator computation (#570). */
+  /** Per-item points for the deduped set (earliest solve's points). The
+   *  story-lock reachable denominator reads them for a solved-but-deleted
+   *  step, whose catalogue entry — and therefore points — no longer exists. */
   itemPoints: Record<string, number>;
 };
 

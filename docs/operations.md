@@ -564,15 +564,19 @@ The panel offers:
   Ns ago" stamp beside the "as of" time; **Refresh** is the same read for when
   you won't wait. You get:
 
-  ![The Insights tab: the five participation figures, a ten-minute-bucket solve timeline, and the hardest-first challenge table with solves, attempts, solve rate, average tries and median time to solve per challenge](assets/admin-insights.jpg)
+  ![The Insights tab: the five participation figures, a solve timeline, and the hardest-first challenge table with solves, attempts, solve rate, average tries and median time to solve per challenge](assets/admin-insights.jpg)
 
 
   - **Participation** — on a team / ever on a team / submitted / scored /
     **stuck** (submitted and never scored). The gap between the last two is the
     number worth watching during an event.
-  - **Solves over time**, in ten-minute buckets with a time axis (first,
+  - **Solves over time**: every bucket from the first solve to the last,
+    empty ones included, across the full width, with a time axis (first,
     middle and last bucket, UTC; dated once the buckets cross midnight), so
-    a room going quiet is visible and datable.
+    a room going quiet is a visible, datable gap. Buckets are ten minutes,
+    widened (30 min, 1 h, 2 h, …) to keep a long event within 120 bars; the
+    caption names the width and the busiest bucket, and each bar's tooltip
+    its date, range and count.
   - **Hardest first** — every challenge by solves, attempts, solve rate,
     *average tries taken by the people who did solve it*, and the *median time
     from their first attempt to their solve*. Those last two are the difficulty

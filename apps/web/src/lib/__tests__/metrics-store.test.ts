@@ -295,10 +295,45 @@ describe("timeline", () => {
       quizPoints: { alice: 15 },
     });
     const m = await computeEventMetrics();
+    expect(m.bucketMinutes).toBe(10);
     expect(m.timeline).toEqual([
       { at: "2026-08-22T10:00:00.000Z", solves: 2 },
+      { at: "2026-08-22T10:10:00.000Z", solves: 0 },
       { at: "2026-08-22T10:20:00.000Z", solves: 1 },
     ]);
+  });
+
+  // The RTS event ran 50 hours with ~45 busy ten-minute buckets out of ~300.
+  // Dropping the empty ones packed the busy ones side by side, so the chart
+  // could not show the room going quiet, which is what it is for.
+  it("keeps the quiet stretches as zero buckets, so the axis is real time", async () => {
+    mockStore({
+      perLogin: {
+        alice: { quizAnswers: { q1: earned(5, "2026-08-22T10:00:00Z"), q2: earned(5, "2026-08-22T13:00:00Z") } },
+      },
+      quizPoints: { alice: 10 },
+    });
+    const m = await computeEventMetrics();
+    expect(m.bucketMinutes).toBe(10);
+    expect(m.timeline).toHaveLength(19);
+    expect(m.timeline.filter((b) => b.solves > 0).map((b) => b.at)).toEqual([
+      "2026-08-22T10:00:00.000Z",
+      "2026-08-22T13:00:00.000Z",
+    ]);
+  });
+
+  it("widens the bucket on a long event so the chart stays within 120 bars", async () => {
+    mockStore({
+      perLogin: {
+        alice: { quizAnswers: { q1: earned(5, "2026-10-07T15:10:00Z"), q2: earned(5, "2026-10-09T17:40:00Z") } },
+      },
+      quizPoints: { alice: 10 },
+    });
+    const m = await computeEventMetrics();
+    expect(m.bucketMinutes).toBe(30);
+    expect(m.timeline[0]).toEqual({ at: "2026-10-07T15:00:00.000Z", solves: 1 });
+    expect(m.timeline.at(-1)).toEqual({ at: "2026-10-09T17:30:00.000Z", solves: 1 });
+    expect(m.timeline).toHaveLength(102);
   });
 
   it("skips an unparseable timestamp instead of poisoning the series", async () => {

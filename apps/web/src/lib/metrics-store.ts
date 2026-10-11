@@ -44,9 +44,34 @@ import { errorLabel } from "@/lib/error-label";
  * number, not one from a minute ago.
  */
 
-/** Solves-over-time bucket width. Ten minutes is the resolution at which a
- *  room going quiet is visible without the series becoming noise. */
-const BUCKET_MS = 10 * 60 * 1000;
+/** Solves-over-time bucket widths, in minutes. Ten is the resolution at which
+ *  a room going quiet is visible without the series becoming noise; a longer
+ *  event takes the first width that keeps it within `MAX_BUCKETS` bars, so a
+ *  three-day event still fits the panel instead of drawing ~400 slivers. */
+const BUCKET_MINUTES = [10, 30, 60, 120, 240, 360, 720, 1440] as const;
+const MAX_BUCKETS = 120;
+
+/** Every bucket from the first solve to the last, empty ones included: the
+ *  quiet stretches are what the chart is for, and dropping them packed the
+ *  busy buckets side by side on an axis that no longer meant time. */
+function solveTimeline(times: number[]): { bucketMinutes: number; timeline: { at: string; solves: number }[] } {
+  if (times.length === 0) return { bucketMinutes: BUCKET_MINUTES[0], timeline: [] };
+  const first = Math.min(...times);
+  const last = Math.max(...times);
+  const minutes =
+    BUCKET_MINUTES.find((m) => {
+      const ms = m * 60_000;
+      return Math.floor(last / ms) - Math.floor(first / ms) + 1 <= MAX_BUCKETS;
+    }) ?? BUCKET_MINUTES[BUCKET_MINUTES.length - 1];
+  const ms = minutes * 60_000;
+  const start = Math.floor(first / ms);
+  const counts = new Array<number>(Math.floor(last / ms) - start + 1).fill(0);
+  for (const t of times) counts[Math.floor(t / ms) - start] += 1;
+  return {
+    bucketMinutes: minutes,
+    timeline: counts.map((solves, i) => ({ at: new Date((start + i) * ms).toISOString(), solves })),
+  };
+}
 
 /** Hard ceiling on contestants folded in one pass. An event this size is far
  *  beyond what the kit targets; the cap exists so a runaway key space cannot
@@ -102,8 +127,11 @@ export type EventMetrics = {
     stuck: number;
   };
   challenges: ChallengeStat[];
-  /** Solves per 10-minute bucket, ascending. Quiz, classic and ai only; see caveats. */
+  /** Solves per bucket of `bucketMinutes`, ascending, every bucket from the
+   *  first solve to the last (empty ones at 0). Quiz, classic and ai only; see caveats. */
   timeline: { at: string; solves: number }[];
+  /** The timeline's bucket width: 10 minutes, wider on a long event. */
+  bucketMinutes: number;
   teams: { slug: string; name: string; size: number; points: number }[];
   modules: { quiz: number; classic: number; ai: number; secureDevelopment: number };
   hints: {
@@ -463,7 +491,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   let scored = 0;
   let hintsBeforeSolve = 0;
   let hintsAfterSolve = 0;
-  const buckets = new Map<number, number>();
+  const solveTimes: number[] = [];
   const solvesById = new Map<
     string,
     { module: "quiz" | "classic" | "ai"; solvers: number; attemptSum: number; durations: number[] }
@@ -566,10 +594,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         const earned = parseEarned(raw);
         if (!earned) continue;
         const ms = Date.parse(earned.at);
-        if (!Number.isNaN(ms)) {
-          const bucket = Math.floor(ms / BUCKET_MS) * BUCKET_MS;
-          buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
-        }
+        if (!Number.isNaN(ms)) solveTimes.push(ms);
         const key = `${mod}:${id}`;
         const stat = solvesById.get(key) ?? { module: mod, solvers: 0, attemptSum: 0, durations: [] as number[] };
         stat.solvers += 1;
@@ -640,9 +665,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     })
     .sort((a, b) => a.solves - b.solves || a.id.localeCompare(b.id));
 
-  const timeline = [...buckets.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([ms, solves]) => ({ at: new Date(ms).toISOString(), solves }));
+  const { bucketMinutes, timeline } = solveTimeline(solveTimes);
 
   // Team points are the leaderboard's own figures: the UNION fold over the
   // members' items, hint spend netted, read fresh like the rest of this panel.
@@ -689,6 +712,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     },
     challenges,
     timeline,
+    bucketMinutes,
     teams: teamRows,
     modules: {
       quiz: [...quizPoints.values()].filter((p) => p > 0).length,

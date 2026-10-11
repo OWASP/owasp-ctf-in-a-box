@@ -230,9 +230,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck bats
       # jq: the protection --jq filter tests replay recorded GitHub payloads
-      # through the script's real filter; pinned here so they never skip.
-      - run: sudo apt-get update && sudo apt-get install -y shellcheck bats jq
+      # through the script's real --jq filter, so they must never skip.
+      # Digest-pinned, not an apt package: apt versions drift with the runner
+      # image, and an unpinned OS package fails the pre-merge pin check. The
+      # sha256 pins the exact 1.7.1 linux-amd64 release asset.
+      - run: |
+          curl -fsSL -o "$RUNNER_TEMP/jq" https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+          echo "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5  $RUNNER_TEMP/jq" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/jq" /usr/local/bin/jq
+          jq --version
       # scripts/dev-stack is listed by name: it has no .sh suffix, so the glob
       # alone would leave the one developer entry point unlinted.
       - run: shellcheck scripts/*.sh scripts/lib/*.sh scripts/dev-stack setup/*.sh scorer/entrypoint.sh sync/docker-entrypoint.sh deploy/fly/deploy.sh deploy/fly/render-compose.sh deploy/aws-terraform/deploy.sh

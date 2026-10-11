@@ -2666,6 +2666,8 @@ case "$*" in
 esac
 EOF
   chmod +x "$BATS_TEST_TMPDIR/protstubs/gh"
+  # Run the script's real `check_step protect` under the payload stub: the
+  # filter must accept or reject $1 exactly as it would GitHub's reply.
   protect_verdict() {
     env PROT_PAYLOAD="$1" PATH="$BATS_TEST_TMPDIR/protstubs:$PATH" \
       bash -c 'CMD=__selftest source "$1"; if check_step protect dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi' _ "$SCRIPT"

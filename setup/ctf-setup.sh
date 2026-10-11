@@ -263,6 +263,8 @@ fork_workflow_version() {
 # make disable-inherited never settle (doctor stuck red, provisioning looping).
 INHERITED_JQ='.workflows[] | select(.path | startswith(".github/workflows/")) | select(.path != ".github/workflows/ctf-score.yml") | select(.state=="active") | .id'
 
+# One DRY-RUN narration line for a provisioning step: what apply_step would
+# do. Narration only — `org --dry-run` makes zero gh calls.
 plan_step() {
   local id="$1" t="$2" org="$3" name; name="$(prov_repo_name "$t")"
   case "$id" in
@@ -281,6 +283,9 @@ plan_step() {
   esac
 }
 
+# True when one provisioning step is already in its target state — the
+# idempotency probe behind org's skip-if-done and doctor's matrix cells.
+# Fails closed: an unreadable or unexpected reply is "not satisfied".
 check_step() {
   local id="$1" t="$2" org="$3" name; name="$(prov_repo_name "$t")"
   case "$id" in
@@ -379,6 +384,8 @@ JSON
   return 1
 }
 
+# Perform one provisioning step for a fork — the mutation plan_step only
+# narrates. Idempotent: re-running resumes where a partial run stopped.
 apply_step() {
   local id="$1" t="$2" org="$3" name; name="$(prov_repo_name "$t")"
   case "$id" in
@@ -782,6 +789,9 @@ doctor_check_pull_grants() {
   return $crc
 }
 
+# `doctor`: read-only health report — the box's launch state, the org, and
+# one cell per provisioning step per target. A real miss is ❌ and sets a
+# nonzero exit; ⏳ appears only while the box itself reports not-launched.
 cmd_doctor() {
   require_env_file
   local org; org="$(env_val GITHUB_ORG)"
@@ -1133,6 +1143,10 @@ cmd_secrets() {
   echo "wrote $out — fill in GITHUB_ORG, ADMIN_LOGINS, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY, SCORE_IMAGE"
 }
 
+# `org`: provision every target's fork — fork, ctf branch, branch
+# protection, workflow, inherited-workflow disable, PR template. Steps
+# already satisfied are skipped; a free-plan protection refusal on a
+# confirmed-private fork is recorded pending, not failed.
 cmd_org() {
   require_env_file
   # The switch first: with SCORE_IMAGE empty this event does not run Secure

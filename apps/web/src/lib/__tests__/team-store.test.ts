@@ -575,6 +575,19 @@ describe("listTeams", () => {
   // A failed SMEMBERS read as an empty roster puts a competing team on the
   // board with nobody on it, the short list the SCAN check above exists to
   // refuse.
+  // SMEMBERS of a key SCAN just found is a list, even if the team emptied in
+  // between; a missing reply or a non-list is a read that did not happen.
+  it.each([
+    ["a missing member reply", [{ result: "Red Team" }]],
+    ["a non-list member result", [{ result: "Red Team" }, { result: "abe" }]],
+  ])("rejects %s, rather than showing the team empty", async (_what, replies) => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline
+      .mockResolvedValueOnce([{ result: ["0", ["ctf:team:red:members"]] }])
+      .mockResolvedValueOnce(replies);
+    await expect(store.listTeams()).rejects.toThrow(/listTeams red/);
+  });
+
   it("rejects when a team's member read fails, rather than showing it empty", async () => {
     const store = await loadStore(true);
     mocks.upstashPipeline

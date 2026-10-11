@@ -194,7 +194,7 @@ describe("compareTeamStanding", () => {
     lastSolveAt: sdLast,
     modules: {
       "secure-development": { points: 668, completed: 321, lastActivityAt: sdLast, detail: { kind: "secure-development", apps: {} } },
-      classic: { points: 4650, completed, lastActivityAt: jeoLast, detail: { kind: "classic", solved: completed, total: 18, points: 4650 } },
+      classic: { points: 4650, completed, lastActivityAt: jeoLast, detail: { kind: "classic", solved: completed, total: 18, points: 4650, locked: 0 } },
     },
   });
   const provart = rts("provart", "2026-10-08T12:35:30.995Z", "2026-10-09T16:59:32.540Z");

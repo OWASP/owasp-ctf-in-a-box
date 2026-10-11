@@ -31,6 +31,10 @@ export default function HintButton({
 }) {
   const [state, setState] = useState<"idle" | "confirm" | "pending" | "error">("idle");
   const [error, setError] = useState("");
+  // The price on the chip, and the quote the purchase carries (#557): the
+  // render-time cost until the server answers that it changed. Not re-synced
+  // from the prop: a stale price is answered 409 with the current one.
+  const [price, setPrice] = useState(cost);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
 
@@ -63,7 +67,7 @@ export default function HintButton({
       <button
         type="button"
         disabled
-        title={`Sign in with GitHub to unlock hints (−${cost} pts each)`}
+        title={`Sign in with GitHub to unlock hints (−${price} pts each)`}
         aria-label="Sign in with GitHub to unlock hints"
         className={`${CHIP} cursor-not-allowed border-white/10 text-zinc-600`}
       >
@@ -78,9 +82,16 @@ export default function HintButton({
       const res = await fetch("/api/hints/reveal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ app, id }),
+        body: JSON.stringify({ app, id, quotedCost: price }),
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && typeof data.cost === "number") {
+        // The price changed since the board rendered (#557): nothing was
+        // charged. Show the new price and ask again rather than buying at it.
+        setPrice(data.cost);
+        setState("confirm");
+        return;
+      }
       if (!res.ok || typeof data.hint !== "string") {
         throw new Error(data.error === "not-launched" ? "The event hasn't launched yet." : typeof data.error === "string" ? data.error : "Hint reveal failed. Try again");
       }
@@ -95,7 +106,7 @@ export default function HintButton({
     return (
       <span className="flex flex-none items-center gap-1">
         <span className="sr-only" role="status">
-          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${cost} points on this hint.`}
+          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${price} points on this hint.`}
         </span>
         <button
           ref={confirmRef}
@@ -104,9 +115,9 @@ export default function HintButton({
           disabled={state === "pending"}
           className={`${CHIP} border-[#d4a017]/60 text-[#d4a017] hover:bg-[#d4a017]/10 disabled:opacity-50`}
         >
-          <span aria-hidden="true">{state === "pending" ? "…" : `−${cost} pts ✓`}</span>
+          <span aria-hidden="true">{state === "pending" ? "…" : `−${price} pts ✓`}</span>
           <span className="sr-only">
-            {state === "pending" ? "Revealing" : `Confirm, spend ${cost} points`}
+            {state === "pending" ? "Revealing" : `Confirm, spend ${price} points`}
           </span>
         </button>
         <button
@@ -127,11 +138,11 @@ export default function HintButton({
       ref={chipRef}
       type="button"
       onClick={() => setState("confirm")}
-      title={state === "error" ? `${error} (click to retry)` : `Reveal hint for ${cost} points`}
+      title={state === "error" ? `${error} (click to retry)` : `Reveal hint for ${price} points`}
       aria-label={
         state === "error"
-          ? `${error}. Retry revealing this hint for ${cost} points`
-          : `Reveal hint for ${cost} points`
+          ? `${error}. Retry revealing this hint for ${price} points`
+          : `Reveal hint for ${price} points`
       }
       className={`${CHIP} ${
         state === "error"
@@ -139,7 +150,7 @@ export default function HintButton({
           : "border-white/10 text-muted hover:border-[#d4a017]/60 hover:text-[#d4a017]"
       }`}
     >
-      <span aria-hidden="true">{state === "error" ? "⚠ retry" : `💡 −${cost}`}</span>
+      <span aria-hidden="true">{state === "error" ? "⚠ retry" : `💡 −${price}`}</span>
       {/* The failure is also announced once, politely: the chip's own name
           only reaches a screen reader if the user happens to be on it. */}
       {state === "error" && (

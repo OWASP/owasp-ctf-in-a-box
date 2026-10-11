@@ -443,6 +443,34 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     }
   });
 
+  // #557: ARGV[12] is the price the contestant confirmed. A quote that no
+  // longer matches the cost being charged is refused before any write, with
+  // the new price and no text; a matching quote charges; an owned hint is a
+  // free re-view, so a stale quote never blocks it.
+  it("REVEAL_SCRIPT refuses a stale quote with the new price, charging nothing, and exempts an owned hint", async () => {
+    const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const k = (n: string) => `ctf-test:hint-quote:${RUN}:${n}`;
+    const [set, spent, hints, at, rev, lowering, cfg] = ["set", "spent", "hints", "at", "rev", "lowering", "cfg"].map(k);
+    const call = (quoted: string) =>
+      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg], ["web", "classic/web", "alice", 25, "2026-10-01T00:00:00Z", "0", "", "", "", "", "", quoted]);
+    try {
+      await pipeline([["HSET", hints, "web", "the text"]]);
+      expect(await call("10")).toEqual(["repriced", "", 25]);
+      const [s1, sp1] = await pipeline([["SCARD", set], ["HGET", spent, "alice"]]);
+      expect(s1.result).toBe(0);
+      expect(sp1.result).toBeNull();
+      expect(await call("25")).toEqual(["charged", "the text", 25]);
+      // Owned now: a quote from an older page still re-views it for free.
+      expect(await call("10")).toEqual(["owned", "the text", 25]);
+      // No quote at all (an older client): the current price, as before.
+      await pipeline([["DEL", set, spent]]);
+      expect(await call("")).toEqual(["charged", "the text", 25]);
+    } finally {
+      await pipeline([["DEL", set, spent, hints, at, rev, lowering, cfg]]);
+    }
+  });
+
   it("REVEAL_SCRIPT checks the lock before reading the hint", async () => {
     const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
     const { upstashEval } = await import("@/lib/upstash");

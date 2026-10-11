@@ -44,6 +44,11 @@ export default function HintRevealButton({
 }) {
   const router = useRouter();
   const [state, setState] = useState<"idle" | "confirm" | "pending">("idle");
+  // The price on the buttons, and the quote the purchase carries (#557):
+  // the render-time cost until the server answers that it changed, then the
+  // server's new price, which the contestant confirms again. Not re-synced
+  // from the prop: a stale price is answered 409 with the current one.
+  const [price, setPrice] = useState(cost);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
   // The points actually deducted by THIS reveal, or null when it charged
@@ -92,7 +97,7 @@ export default function HintRevealButton({
       const res = await fetch("/api/hints/reveal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ app, id }),
+        body: JSON.stringify({ app, id, quotedCost: price }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         hint?: string;
@@ -111,13 +116,19 @@ export default function HintRevealButton({
         // already-owned reveal charge nothing, and a configured cost of 0
         // deducts nothing either — none of those should render "−0 pts spent".
         const deducted =
-          !data.dryRun && !data.alreadyOwned ? (typeof data.cost === "number" ? data.cost : cost) : 0;
+          !data.dryRun && !data.alreadyOwned ? (typeof data.cost === "number" ? data.cost : price) : 0;
         setChargedCost(deducted > 0 ? deducted : null);
         setBalance(deducted > 0 && typeof data.balance === "number" ? data.balance : null);
         setText(data.hint);
         // Resync the page's server state (spent total, owned set) — the
         // revealed text itself stays in local state so it shows instantly.
         router.refresh();
+      } else if (res.status === 409 && typeof data.cost === "number") {
+        // The price changed since the page rendered (#557): nothing was
+        // charged. Show the new price and ask again rather than buying at it.
+        setPrice(data.cost);
+        setError(typeof data.error === "string" ? data.error : `This hint now costs ${data.cost} pts.`);
+        setState("confirm");
       } else {
         // A failed reveal charges nothing; drop back to idle so the contestant
         // can retry, with the reason shown below the button.
@@ -160,7 +171,7 @@ export default function HintRevealButton({
     return (
       <div className="flex flex-col gap-1">
         <span className="sr-only" role="status">
-          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${cost} points on this hint.`}
+          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${price} points on this hint.`}
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -174,7 +185,7 @@ export default function HintRevealButton({
               "Revealing…"
             ) : (
               <>
-                <span aria-hidden="true">💡</span> Confirm (−{cost} pts)
+                <span aria-hidden="true">💡</span> Confirm (−{price} pts)
               </>
             )}
           </button>
@@ -187,6 +198,11 @@ export default function HintRevealButton({
             Cancel
           </button>
         </div>
+        {error && (
+          <p role="alert" className="text-xs text-[#e53e3e]">
+            {error}
+          </p>
+        )}
       </div>
     );
   }
@@ -199,7 +215,7 @@ export default function HintRevealButton({
         onClick={() => setState("confirm")}
         className="w-fit rounded-md border border-[#d4a017]/40 px-3 py-1.5 text-sm text-[#d4a017] transition-colors hover:bg-[#d4a017]/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
       >
-        <span aria-hidden="true">💡</span> Reveal hint (−{cost} pts)
+        <span aria-hidden="true">💡</span> Reveal hint (−{price} pts)
       </button>
       {error && (
         <p role="alert" className="text-xs text-[#e53e3e]">

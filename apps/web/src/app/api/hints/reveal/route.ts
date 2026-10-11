@@ -42,12 +42,26 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => ({}));
+  // The price on the contestant's confirm button (#557). Absent, the reveal
+  // charges the current price, as an older page did; present, it must be a
+  // whole, non-negative number of points, and the script charges exactly
+  // that or nothing.
+  const hasQuote = body !== null && typeof body === "object" && "quotedCost" in body;
+  const quotedCost: unknown = hasQuote ? body.quotedCost : undefined;
+  if (hasQuote && !(typeof quotedCost === "number" && Number.isInteger(quotedCost) && quotedCost >= 0)) {
+    return NextResponse.json({ error: "Invalid quoted cost" }, { status: 400 });
+  }
   const result = await revealHint(
     login,
     typeof body.app === "string" ? body.app : "",
     typeof body.id === "string" ? body.id : "",
-    { dryRun: preview },
+    typeof quotedCost === "number" ? { dryRun: preview, quotedCost } : { dryRun: preview },
   );
+  if (!result.ok && "repriced" in result) {
+    // 409: the confirmed price is stale. Only the new price goes back, so
+    // the control can ask again; nothing was charged.
+    return NextResponse.json({ error: result.error, cost: result.cost }, { status: 409 });
+  }
   if (!result.ok) {
     const status = result.missing ? 404 : result.forbidden ? 403 : 400;
     return NextResponse.json({ error: result.error }, { status });

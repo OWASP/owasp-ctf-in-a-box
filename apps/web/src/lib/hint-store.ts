@@ -137,6 +137,12 @@ export function isHintTarget(value: string): value is HintTarget {
 //       nothing, so there is nothing to close).
 //       [11]=the viewer's team slug for the story lock (#602), "" for a team
 //       of one.
+//       [12]=the price the contestant confirmed, "" when the caller sent none.
+//       A purchase is charged that price or not at all: a quote that differs
+//       from [4] (an organizer repriced hints after the page rendered) is
+//       answered `repriced` with the price [4] would have charged, before any
+//       write and without the text. An owned hint is exempt (a re-view
+//       charges nothing).
 //
 // Every non-preview verdict's third element is the spend TOTAL after the
 // call (case-folded, see the script) — what `balance` is derived from.
@@ -168,6 +174,10 @@ if not owned then
     if nowMs > tonumber(ARGV[10]) then return {'closed', 'ended'} end
   end
   if redis.call('HGET', KEYS[7], 'paused') == '1' then return {'closed', 'paused'} end
+  -- The price on the contestant's confirm button: charge it or nothing.
+  if ARGV[12] and ARGV[12] ~= '' and tonumber(ARGV[12]) ~= tonumber(ARGV[4]) then
+    return {'repriced', '', tonumber(ARGV[4])}
+  end
 end
 -- The gross in ARGV[8] was folded under the score revision in ARGV[9]. A
 -- score-lowering operation on ANY app task bumps KEYS[5] before its first
@@ -214,7 +224,10 @@ export type RevealResult =
   // Awards only add, so the figure is never overstated; the page refresh
   // after the reveal shows the live score.
   | { ok: true; hint: string; alreadyOwned: boolean; spent: number; cost: number; balance?: number; dryRun?: true }
-  | { ok: false; error: string; missing?: boolean; forbidden?: boolean };
+  | { ok: false; error: string; missing?: boolean; forbidden?: boolean }
+  // The price changed since the contestant confirmed it: nothing was charged,
+  // and `cost` is the current price to confirm again.
+  | { ok: false; repriced: true; cost: number; error: string };
 
 /** Solves `login` has recorded for `app`, counted straight off the scorer's
  *  `ctf:solves:<target>` hash (fields are `<author>:<challengeId>`). Compared
@@ -404,9 +417,10 @@ export async function revealHint(
   login: string,
   target: string,
   id: string,
-  opts: { dryRun?: boolean } = {},
+  opts: { dryRun?: boolean; quotedCost?: number } = {},
 ): Promise<RevealResult> {
   const dryRun = opts.dryRun === true;
+  const quoted = opts.quotedCost === undefined ? "" : String(opts.quotedCost);
   // Fails CLOSED: unlike the scoring freeze, a settings-read error here must
   // never let a purchase through unpriced/ungated — `resolveHintConfig`'s
   // `getAdminSettings` throws on any read failure (transport or per-command),
@@ -427,7 +441,7 @@ export async function revealHint(
   // the gate's fold and the charge): the second attempt folds afresh under
   // the new revision. Twice stale is an event in the middle of a reset — tell
   // the contestant to try again rather than spin.
-  return attemptReveal(login, target, id, cost, dryRun, endsAtMs, false);
+  return attemptReveal(login, target, id, cost, dryRun, endsAtMs, quoted, false);
 }
 
 async function attemptReveal(
@@ -437,6 +451,7 @@ async function attemptReveal(
   cost: number,
   dryRun: boolean,
   endsAtMs: number | null,
+  quoted: string,
   retried: boolean,
 ): Promise<RevealResult> {
   // Gate BEFORE the charge script. Enforced here (not just in the route) so
@@ -525,6 +540,8 @@ async function attemptReveal(
         // ARGV[11]: the viewer's team slug for the story lock, "" for a team
         // of one (#602).
         lockTeam,
+        // ARGV[12]: the price the contestant confirmed, "" when none was sent.
+        quoted,
       ],
     );
   } catch (err) {
@@ -544,8 +561,18 @@ async function attemptReveal(
   // The score revision moved between the gate's fold and the charge (ARGV[9]):
   // the gross may be too high. Fold again under the new revision, once.
   if (status === "stale") {
-    if (!retried) return attemptReveal(login, target, id, cost, dryRun, endsAtMs, true);
+    if (!retried) return attemptReveal(login, target, id, cost, dryRun, endsAtMs, quoted, true);
     return { ok: false, error: "Your score changed while buying this hint. Try again" };
+  }
+  if (status === "repriced") {
+    const now = Number(spent);
+    const price = Number.isFinite(now) ? now : cost;
+    return {
+      ok: false,
+      repriced: true,
+      cost: price,
+      error: `This hint now costs ${price} pts. Confirm again to buy it at the new price.`,
+    };
   }
   // The script's charge-boundary window check (#566): the gate passed a
   // round-trip ago, the end (or the freeze) landed since. Same two messages

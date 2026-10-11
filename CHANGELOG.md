@@ -10,6 +10,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: a hint could be charged a different price than the one confirmed
+  (#557).** If an organizer changed the hint cost after a contestant's page
+  loaded, Confirm (−10 pts) charged the new price. The purchase now carries
+  the confirmed price and the charging script refuses a mismatch atomically,
+  before any write; the button shows the new price and asks again. A hint
+  already bought is still re-viewed free.
 - **Fixed: admin Insights undercounted the event and disagreed with the
   leaderboard (#608).** Players whose GitHub login has a capital letter were
   read under the lowercased login and found empty; a player who left a team

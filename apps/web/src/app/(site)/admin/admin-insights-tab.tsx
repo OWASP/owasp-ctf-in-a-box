@@ -17,6 +17,7 @@
 import { useCallback, useState } from "react";
 import AdminLiveStamp from "./admin-live-stamp";
 import { moduleLabel } from "./vocabulary";
+import { adminTime } from "@/lib/event-time";
 import { SLOW_POLL_MS, useLivePoll } from "./use-live-poll";
 
 type ChallengeStat = {
@@ -159,7 +160,7 @@ export default function AdminInsightsTab({
               Download challenges CSV
             </a>
             <span className="text-sm text-muted">
-              as of {metrics.generatedAt.slice(0, 16).replace("T", " ")} UTC
+              as of {adminTime(metrics.generatedAt, "UTC", { year: true })}
             </span>
           </>
         )}

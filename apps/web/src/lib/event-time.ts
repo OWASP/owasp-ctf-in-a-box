@@ -65,6 +65,24 @@ export function zoneLabel(zone: string, at: number): string {
   return part?.value ?? zone;
 }
 
+/** An admin-panel timestamp: the event's clock, to the second, with the
+ *  offset named ("10-07 13:26:00 GMT-3"; `year` adds the year). Seconds
+ *  because two solves inside one minute have to read apart, and the offset
+ *  because an unlabelled time under a header in the event's zone reads as
+ *  that zone. Intl with a fixed zone, never the viewer's clock, so the
+ *  server render and hydration agree. An unparseable value comes back as
+ *  given. */
+export function adminTime(iso: string, zone: string, opts: { year?: boolean } = {}): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso;
+  const parts = formatter(zone, {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(ms);
+  const p = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
+  const date = `${opts.year ? `${p("year")}-` : ""}${p("month")}-${p("day")}`;
+  return `${date} ${p("hour")}:${p("minute")}:${p("second")} ${zoneLabel(zone, ms)}`;
+}
+
 type Wall = { y: number; mo: number; d: number; h: number; mi: number };
 
 function wallAt(ms: number, zone: string): Wall {

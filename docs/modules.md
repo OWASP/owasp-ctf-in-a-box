@@ -760,8 +760,9 @@ of one module's shape.
    The check lives in each page and route, **not** in `proxy.ts`: the proxy
    makes no Redis reads (its matcher is only `/profile` and `/api/*`, for
    the sign-in redirect and the cross-origin write assertion — minus
-   `/api/admin/event`, the archive import, which the proxy would truncate past
-   10 MB and which runs the same origin check itself), and a
+   `/api/admin/event`, the archive import, and `/api/admin/classic/bundle`,
+   the classic bundle import that carries files, which the proxy would
+   truncate past 10 MB and which run the same origin check themselves), and a
    page-level check runs on every request, soft navigations included, where a
    layout would not. The failure mode that design invites — a new module page
    or route that forgets the guard — is closed by

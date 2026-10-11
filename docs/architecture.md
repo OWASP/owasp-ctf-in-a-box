@@ -1369,11 +1369,13 @@ build.
   with a signed launch token, `POST /api/ai/event` with that token plus an
   HMAC event signature, and `GET /api/ai/launch-key` is intentionally public
   (see `AI_PREFIX` in `src/proxy.ts`). A missing `Origin` is allowed: it means a
-  non-browser client, which carries no ambient cookie to ride. One route runs
-  the assertion itself instead of through the proxy: `/api/admin/event`, the
-  event-archive import, is outside the proxy matcher because the proxy's body
-  clone cuts any request at 10 MB, and an archive with attachments can reach
-  about 75 MB. See ADR 40.
+  non-browser client, which carries no ambient cookie to ride. Two routes run
+  the assertion themselves instead of through the proxy:
+  `/api/admin/event`, the event-archive import, and
+  `/api/admin/classic/bundle`, the classic bundle import, are outside the
+  proxy matcher because the proxy's body clone cuts any request at 10 MB,
+  and an archive or bundle with attachments can reach about 75 MB. See
+  ADR 40.
 - **Baseline security headers come from the app.** `next.config.ts` sends
   `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`,
   `X-Content-Type-Options: nosniff`,

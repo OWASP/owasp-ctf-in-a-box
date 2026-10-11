@@ -1987,6 +1987,18 @@ the proxy, not from the assertion. `proxy-matcher.test.ts` compiles the
 matcher with Next's own code and pins that exactly this one path is outside
 it, and the route's test pins its own `403`.
 
+*Amended (the classic bundle with files):* `/api/admin/classic/bundle` is
+outside the matcher on the same terms
+(`"/api/((?!admin/event/?$|admin/classic/bundle/?$).*)"`). A classic bundle
+exported with **Include files** carries the uploads as base64, so it hits the
+same 10 MB cut. The route runs `originAllowed` first thing in `POST`, reads
+the body bounded with a `413` naming its limit, and takes the same
+`{ import }` shape as `/api/admin/classic`, through the same handler. The
+dedicated path keeps the rest of `/api/admin/classic` (upserts, deletes,
+categories, stories) behind the proxy rather than giving every one of its
+writes its own origin check. `proxy-matcher.test.ts` pins exactly these two
+paths outside the matcher.
+
 **Decision, part 2: rate-limit on the LOGIN, not the IP.** `gate-store.ts`'s
 throttle is keyed on the client IP its route (`app/api/gate/route.ts`)
 extracts, because the pre-event gate runs before anyone has an identity — and
@@ -3745,6 +3757,14 @@ the launch lock (#464) and a locked story step (#463).
   - The event archive embeds the bytes as base64 in `attachmentFiles`. Each
     sha256 is verified before the import resets anything, and the import
     body is read bounded at 50 MiB × 4/3 + 8 MiB.
+  - *Amended (the classic bundle with files):* a classic bundle can carry
+    the bytes too, opt-in. **Include files** on the export adds the same
+    `attachmentFiles` list and stamps the bundle version 3; without it the
+    bundle stays metadata only. Its import fills each missing upload whose
+    bytes it carries, skips one the box already holds, and refuses a
+    tampered file or a total past the event cap before writing anything.
+    The import body goes to `/api/admin/classic/bundle`, outside the proxy
+    and read bounded like the archive's (ADR 40).
 
 **Consequences.** Redis memory grows by up to about 67 MB of base64 at the
 event cap. The caps bound it, and an operator sizing a box counts it. An

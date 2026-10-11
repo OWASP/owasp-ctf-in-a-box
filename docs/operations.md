@@ -1710,6 +1710,8 @@ ids in order:
 ```
 
 A version 1 file still imports unchanged, but it cannot carry `stories`.
+(Today's export is stamped `"version": 3`, which adds the optional
+attachment files described under "Files in bundles and archives" below.)
 Every step must name a challenge **in the same file**, the same
 self-contained rule that applies to categories. Stories merge by id, the
 same way challenges do:
@@ -1794,20 +1796,56 @@ base64; count that when sizing the box. See
 [ADR 61](decisions.md#adr-61-challenge-attachments-live-in-redis-served-only-as-downloads-behind-the-challenges-own-visibility)
 for why the bytes live in Redis.
 
-**Files in bundles and archives.** A challenge bundle (version 2) carries
-each attachment's **metadata only**: `{ "name", "size", "sha256" }` for an
-upload, `{ "name", "url" }` for a link, in an `attachments` list on the
-challenge. The bytes travel in the **event archive**, whose import checks
-every file's sha256 before it replaces anything.
+**Files in bundles and archives.** A challenge bundle carries each
+attachment's **metadata** in an `attachments` list on the challenge:
+`{ "name", "size", "sha256" }` for an upload, `{ "name", "url" }` for a link.
+The bytes travel in one of two places:
 
-- Importing a bundle that names an upload the box does not have creates it
-  as **missing**. The Files section flags it ("re-upload `capture.pcap`
-  (sha256 …)") with a re-upload control, and contestants do not see it until
-  it has its bytes.
+- **The event archive** always carries them, in a top-level
+  `attachmentFiles` list. Its import checks every file's sha256 before it
+  replaces anything.
+- **A challenge bundle carries them only when you ask.** Tick **Include
+  files** next to **Export challenges** on the Jeopardy tab, and the export
+  adds the same top-level `attachmentFiles` list. Leave it unticked (the
+  default) and the bundle stays the small, metadata-only file.
+
+An exported bundle is stamped `"version": 3`. Each `attachmentFiles` entry
+is `{ "item", "sha256", "bytes" }`: the challenge id, the upload's sha256,
+and the file's bytes as base64. Every entry must name an upload in the same
+file by challenge id and sha256. Version 1 and 2 files still import
+unchanged, but only version 3 can carry `attachmentFiles`.
+
+```json
+"attachmentFiles": [
+  { "item": "web-warmup-x7k2", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "bytes": "dGVzdA==" }
+]
+```
+
+What a challenge-bundle import does with files:
+
+- An upload the box does not have is created as **missing**. If the bundle
+  carries its bytes, they fill it straight away. If it does not, the Files
+  section flags it ("re-upload `capture.pcap` (sha256 …)") with a re-upload
+  control, and contestants do not see it until it has its bytes.
+- An upload the box already holds with the same sha256 is skipped; its
+  bytes in the bundle are not used.
+- Before anything is written, the import checks each file's bytes against
+  its sha256 and recorded size. It also checks the caps: 5 MiB per file,
+  10 attachments per challenge, and 50 MiB for the whole event. A tampered
+  file, or a bundle whose files would push the event past 50 MiB, is
+  refused whole, and the refusal names the cap and the current usage.
 - A re-upload whose sha256 differs from the recorded one is refused.
 - A challenge-bundle import still never deletes: a file on the box that the
   bundle does not mention stays. A link matches by name and URL, an upload
   by sha256. (An event-archive import is a full replace, files included.)
+
+A bundle with files can be large: 50 MiB of uploads is about 67 MB of
+base64. The Jeopardy tab sends every import to
+`POST /api/admin/classic/bundle`, which accepts a body of up to 75 MB
+(the archive import's limit). A larger file is refused with a `413` that
+names the limit. A file too large to edit is loaded but not shown in the
+import box, the same way the event archive's import handles it. The file
+holds every flag and every attachment, so treat it like the archive.
 
 ## AI
 

@@ -311,22 +311,29 @@ describe("the gate (checked before the grading script ever runs)", () => {
     expect(evalCalls()).toHaveLength(0);
   });
 
-  it("refuses inside the cooldown and reports retryAt derived from the CURRENT setting", async () => {
+  it("refuses inside the cooldown with the script's team-aware verdict, and hands the script the CURRENT setting", async () => {
     mocks.getAdminSettings.mockResolvedValue(settings({ classicCooldownSec: 60 }));
     const lastAt = new Date(Date.now() - 10_000).toISOString();
     gateReads(null, attemptRow(1, lastAt));
+    // The pre-check's own cooldown read never answers: the script — which
+    // counts the WHOLE roster, latest attempt wins — derives retryAt from
+    // the current setting it is handed, and that verdict is passed through.
+    const retryAtMs = Date.parse(lastAt) + 60_000;
+    evalReturns(["cooldown", String(retryAtMs)]);
     expect(await submitFlag("alice", "chal-1", "x")).toEqual({
       ok: false,
       reason: "cooldown",
-      retryAt: new Date(Date.parse(lastAt) + 60_000).toISOString(),
+      retryAt: new Date(retryAtMs).toISOString(),
     });
-    expect(evalCalls()).toHaveLength(0);
+    expect(evalCalls()).toHaveLength(1);
+    expect(lastEval().argv[4]).toBe(60_000);
   });
 
   it("lifts the lock immediately when the organizer lowers the cooldown — retryAt is derived, never stored", async () => {
     const lastAt = new Date(Date.now() - 10_000).toISOString(); // unchanged
     mocks.getAdminSettings.mockResolvedValue(settings({ classicCooldownSec: 60 }));
     gateReads(null, attemptRow(1, lastAt));
+    evalReturns(["cooldown", String(Date.parse(lastAt) + 60_000)]);
     expect(await submitFlag("alice", "chal-1", "x")).toMatchObject({ ok: false, reason: "cooldown" });
 
     mocks.getAdminSettings.mockResolvedValue(settings({ classicCooldownSec: 5 }));
@@ -736,6 +743,35 @@ describe("team-shared cooldown (#494)", () => {
     const { keys, argv } = lastEval();
     expect(keys).toHaveLength(8);
     expect(argv[9]).toBe(0);
+  });
+
+  // The pre-check reads only the SUBMITTER's row, so its cooldown refusal —
+  // and the retryAt it derives — cannot be the TEAM's. A non-story challenge
+  // used to answer straight from that stale read: alice's earlier attempt
+  // returned alice's retryAt while the team actually cooled until bob's NEWER
+  // one, sending the contestant back to the gate too early to be refused
+  // again. The rejection is now deferred to the script, which counts the
+  // roster and answers with the latest teammate attempt + the setting.
+  it("defers the pre-check's cooldown to the script, so a teammate's NEWER attempt sets retryAt", async () => {
+    teamRead.slug = "t";
+    teamRead.members = ["alice", "bob"];
+    mocks.getAdminSettings.mockResolvedValue(settings({ classicCooldownSec: 60 }));
+    // Alice's own row is inside the cooldown — her retryAt would be +20s.
+    const aliceLastAt = Date.now() - 40_000;
+    gateReads(null, attemptRow(1, new Date(aliceLastAt).toISOString()));
+    // Bob's attempt is NEWER — the team's retryAt is bob's +60s, +55s from
+    // now — and the script, handed bob's attempts hash, is what says so.
+    const bobLastAtMs = Date.now() - 5_000;
+    evalReturns(["cooldown", String(bobLastAtMs + 60_000)]);
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({
+      ok: false,
+      reason: "cooldown",
+      retryAt: new Date(bobLastAtMs + 60_000).toISOString(),
+    });
+    // The script decided (it ran at all — the old early return never reached
+    // it), with the teammate roster in its keys, NOT alice's row alone.
+    expect(evalCalls()).toHaveLength(1);
+    expect(lastEval().keys[8]).toBe("ctf:classic:attempts:bob");
   });
 
   it("takes the LATEST attempt across the roster inside the script, before any attempt is spent", async () => {

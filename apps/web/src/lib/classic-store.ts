@@ -1314,11 +1314,16 @@ export async function submitFlag(
     }
   }
 
-  // A later story step's cooldown is left to the script: it
-  // checks the lock BEFORE the cooldown, so a locked step is answered like an
-  // unknown challenge — never with a cooldown an unknown id cannot have. The
-  // script still enforces the cooldown on an open step.
-  const cooldownDeferred = !gate.allowed && gate.reason === "cooldown" && prereq !== "";
+  // The pre-check reads only the SUBMITTER's own attempts row, so its
+  // cooldown verdict — and the retryAt it derives — cannot be the TEAM's: a
+  // teammate's newer attempt cools every login until the teammate's
+  // timestamp, not the submitter's earlier one. Every cooldown rejection is
+  // therefore left to the script, which counts the whole roster and answers
+  // with the LATEST attempt + the current setting. (The script checks the
+  // story lock before the cooldown too, so a locked step is still answered
+  // like an unknown challenge — never with a cooldown an unknown id cannot
+  // have.)
+  const cooldownDeferred = !gate.allowed && gate.reason === "cooldown";
   if (!gate.allowed && !cooldownDeferred) {
     // Kept as its own branch (not folded into the passthrough below) so its
     // caller-facing shape can never accidentally pick up a retryAt the lookup

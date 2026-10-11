@@ -3,6 +3,9 @@
 // locked. The disclaimer is gated on `locked > 0`: an unlocked event (or one
 // with no stories at all) must not carry a note about steps it has no locked
 // steps of, and the solved/total pair beside it must stay exactly what it was.
+// The last test also pins the parity rule behind that denominator: the
+// solved-id set and the point records come from ONE roster fold, so a
+// teammate's deleted solve counts in the ceiling exactly as the viewer's own.
 //
 // Same harness shape as `page.test.tsx` — renderToStaticMarkup of the real
 // Server Component, with the stores it reads stubbed.
@@ -19,7 +22,8 @@ const {
   listChallenges,
   listStories,
   getViewerClassic,
-  getTeamClassicSolvedIds,
+  getTeamClassicTotalsBatch,
+  getViewerTeam,
 } = vi.hoisted(() => ({
   getSession: vi.fn(),
   getUser: vi.fn(),
@@ -30,7 +34,8 @@ const {
   listChallenges: vi.fn(),
   listStories: vi.fn(),
   getViewerClassic: vi.fn(),
-  getTeamClassicSolvedIds: vi.fn(),
+  getTeamClassicTotalsBatch: vi.fn(),
+  getViewerTeam: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -47,7 +52,7 @@ vi.mock("@/lib/leaderboard/source", () => ({
   getLeaderboardSource: async () => ({ getUser, getLeaderboard: vi.fn() }),
 }));
 vi.mock("@/lib/team-store", () => ({
-  getViewerTeam: async () => null,
+  getViewerTeam,
   listTeams: async () => [],
   resolveTeamMaxMembers: async () => 4,
   TEAM_MAX_MEMBERS: 4,
@@ -71,12 +76,11 @@ vi.mock("@/lib/upstash", () => ({ upstashPipeline: vi.fn() }));
 // through `moduleLive` above and its reads are never reached.
 vi.mock("@/lib/classic-store", () => ({
   getClassicTotals,
-  getTeamClassicTotalsBatch: vi.fn(),
+  getTeamClassicTotalsBatch,
   listChallenges,
   listStories,
   getViewerClassic,
 }));
-vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds }));
 
 import ProfilePage from "@/app/(site)/profile/page";
 
@@ -113,11 +117,22 @@ function givenTeam(solvedIds: readonly string[], classicPoints: number, classicS
     solved: Object.fromEntries(solvedIds.map((id) => [id, { points: 10, at: "t" }])),
     attempts: {},
   });
-  getTeamClassicSolvedIds.mockResolvedValue(new Set(solvedIds));
+  getTeamClassicTotalsBatch.mockResolvedValue([
+    {
+      points: classicPoints,
+      solved: classicSolved,
+      lastAt: null,
+      itemIds: [...solvedIds],
+      itemPoints: Object.fromEntries(solvedIds.map((id) => [id, 10])),
+    },
+  ]);
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps implementations: the team must default back to
+  // teamless so a test that gives the viewer a team can't leak into the next.
+  getViewerTeam.mockResolvedValue(null);
 });
 
 /** The same viewer, on an event with two independent stories. */
@@ -178,5 +193,58 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     expect(html).toContain("/ 3 solved");
     // The whole story is on offer now: 10 + 50 + 90.
     expect(html).toContain("150 of 150 pts available");
+  });
+
+  // The denominator's two inputs must leave ONE roster fold: the solved-id set
+  // that unlocks steps and the per-item points the ceiling counts. Pairing a
+  // team-wide id set with only the viewer's own records leaves a teammate's
+  // solve of a since-deleted challenge in the count with no points behind it —
+  // the profile then advertises a ceiling missing banked team points. Locked
+  // titles and points stay off the page either way (#463).
+  it("folds a teammate's deleted solve into the ceiling at its solve-time points", async () => {
+    moduleLive.mockImplementation((id: string) => id === "classic");
+    getSession.mockResolvedValue({ user: { login: "ada", image: null } });
+    getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
+    getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
+    getResolvedModules.mockResolvedValue([
+      { id: "classic", nav: { href: "/challenges", label: "Challenges" }, targets: [], title: "Classic", blurb: "" },
+    ]);
+    // The roster resolves once, off the store team this page already read.
+    getViewerTeam.mockResolvedValue({ slug: "red", name: "Red", members: ["ada", "grace"] });
+    listChallenges.mockResolvedValue(CHALLENGES);
+    listStories.mockResolvedValue([STORY]);
+    getClassicTotals.mockResolvedValue(new Map([["ada", { points: 10, solved: 1, lastAt: null }]]));
+    getViewerClassic.mockResolvedValue({ solved: { "step-1": { points: 10, at: "t" } }, attempts: {} });
+    // grace solved step-1 (unlocking step-2 for the team) and gone-1 — a
+    // challenge since deleted from the catalogue, banked at 70 pts.
+    getTeamClassicTotalsBatch.mockResolvedValue([
+      {
+        points: 80,
+        solved: 2,
+        lastAt: null,
+        itemIds: ["step-1", "gone-1"],
+        itemPoints: { "step-1": 10, "gone-1": 70 },
+      },
+    ]);
+
+    const html = renderToStaticMarkup(await ProfilePage());
+
+    // One team read, and the fold is handed exactly that roster.
+    expect(getViewerTeam).toHaveBeenCalledTimes(1);
+    expect(getTeamClassicTotalsBatch).toHaveBeenCalledWith([["ada", "grace"]]);
+    // The ceiling carries the teammate's deleted solve at its solve-time
+    // points: step-1 (10) + step-2 (50) + gone-1 (70) = 130 — count and
+    // ceiling agree because they come from the same fold. A fold handed
+    // team-wide ids but viewer-only records advertises 60 here.
+    expect(html).toContain("10 of 130 pts available");
+    expect(html).not.toContain("10 of 60 pts available");
+    expect(html).toContain("/ 3 solved");
+    expect(html).toContain("/ 130 pts");
+    expect(html).toContain(DISCLAIMER);
+    expect(html).toContain("· 1 step locked");
+    // step-3 stays unreachable behind the fold: neither its title nor its
+    // 90 pts reach the page (nothing else on it renders those digits).
+    expect(html).not.toContain("Step Three");
+    expect(html).not.toContain("90 pts");
   });
 });

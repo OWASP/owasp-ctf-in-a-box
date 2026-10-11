@@ -3,7 +3,6 @@
 // contestant's progress from the active leaderboard source and renders their
 // dossier: identity, overall progress, per-app breakdown, and team control.
 
-import { getTeamClassicSolvedIds } from "@/lib/classic-team";
 import { isLocked, storyPositions } from "@/lib/story-lock";
 import { classicReachableDenominator } from "@/lib/leaderboard/denominators";
 import type { Metadata } from "next";
@@ -42,6 +41,7 @@ import {
 } from "@/lib/ai-store";
 import { listStories,
   getClassicTotals,
+  getTeamClassicTotalsBatch,
   getViewerClassic,
   listChallenges,
   type Challenge,
@@ -245,12 +245,22 @@ export default async function ProfilePage() {
   let classicLockedCount = 0;
   if (classicEnabled) {
     const stories = await listStories();
-    const teamSolved = await getTeamClassicSolvedIds(login);
-    const viewerSolved = viewerClassic.solved;
+    // ONE roster — the store team this page already read, the viewer leading
+    // it — and ONE fold for both halves of the denominator: the solved-id set
+    // that unlocks steps and the per-item points the ceiling counts. The two
+    // must come from the same read, or a teammate's solve of a challenge
+    // since deleted reaches the count with no points behind it (issue #570).
+    // The fold is the same `getTeamClassicTotalsBatch` the leaderboard rows
+    // use, so the profile and the board can't disagree about what the team
+    // solved. A viewer with no team folds as a team of one.
+    const roster = [...new Set([login, ...(storeTeam?.members ?? [])])];
+    const [teamClassic] = await getTeamClassicTotalsBatch([roster]);
+    const teamSolved = new Set(teamClassic?.itemIds ?? []);
     const solvedRecords: Record<string, { points?: number }> = {};
-    for (const [id, solve] of Object.entries(viewerSolved)) {
-      solvedRecords[id] = { points: solve.points };
+    for (const [id, points] of Object.entries(teamClassic?.itemPoints ?? {})) {
+      solvedRecords[id] = { points };
     }
+    const viewerSolved = viewerClassic.solved;
     const reachable = classicReachableDenominator(classicChallenges, stories, teamSolved, solvedRecords);
     classicReachableTotal = reachable.total;
     classicReachableMaxPoints = reachable.max;

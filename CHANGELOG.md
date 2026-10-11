@@ -75,7 +75,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   the points ceiling — their titles and points are never exposed. A solo
   contestant (no team) sees only step 1 of each story. The union with
   solve records is preserved, so challenges solved before deletion still
-  count. The profile shows "X of Y pts available" and a locked-step marker
+  count — and the profile takes its solved ids and those solve-time point
+  records from ONE fold of the roster it already resolved (the same
+  team-totals helper the leaderboard rows use), so a teammate's deleted
+  solve counts in the ceiling exactly as the viewer's own. The profile
+  shows "X of Y pts available" and a locked-step marker
   ("· 1 step locked", or "· N steps locked") when applicable, with a
   disclaimer: "Totals count unlocked challenges
   only — story steps add to the total as your team unlocks them." The

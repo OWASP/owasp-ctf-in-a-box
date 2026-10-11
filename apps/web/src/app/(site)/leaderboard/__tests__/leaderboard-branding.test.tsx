@@ -146,3 +146,29 @@ describe("HeaderLogo — a logo that fails to load is hidden", () => {
     expect(target.hidden).toBe(true);
   });
 });
+
+// #592: the QR code of the event URL is a projector-board thing only.
+describe("leaderboard — the event QR code", () => {
+  const renderDisplay = async () =>
+    renderToStaticMarkup((await LeaderboardPage({ searchParams: Promise.resolve({ display: "1" }) })) as ReactElement);
+
+  it("shows on the projector board, encoding the event's address", async () => {
+    vi.stubEnv("BETTER_AUTH_URL", "https://ctf.example.org");
+    try {
+      const html = await renderDisplay();
+      expect(html).toContain('aria-label="QR code: https://ctf.example.org"');
+      expect(html).toContain(">https://ctf.example.org<");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("never shows on the regular leaderboard", async () => {
+    vi.stubEnv("BETTER_AUTH_URL", "https://ctf.example.org");
+    try {
+      expect(await render()).not.toContain("QR code");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});

@@ -13,10 +13,11 @@ import { listActivity } from "@/lib/activity-log";
  * (see activity-log.ts, rule 2) — but "who was signed in when" is still
  * per-person data with no business on a public surface.
  *
- * Filtering (by type, by login) happens client-side in the Activity tab over
- * the pages it has loaded: the whole list is capped at a few thousand short
- * rows, and a server-side filter would mean a second pagination contract
- * ("offset within the filtered view") for no real saving.
+ * Filtering (by type, by a search over every field, by time) happens
+ * client-side in the Activity tab, which reads the whole list while a filter
+ * is on: the list is capped at a few thousand short rows, and a server-side
+ * filter would mean a second pagination contract ("offset within the
+ * filtered view") for no real saving.
  *
  * Uncached: an organizer refreshing this mid-event wants the current tail.
  */

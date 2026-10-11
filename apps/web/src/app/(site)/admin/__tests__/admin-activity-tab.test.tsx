@@ -9,6 +9,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import AdminActivityTab, {
   filterEntries,
+  rangeSince,
+  searchFromUrl,
+  typeCounts,
+  urlWithSearch,
   formatWhen,
   mergeRefresh,
   refreshLimit,
@@ -110,27 +114,110 @@ describe("formatWhen", () => {
   });
 });
 
+// #609. The box matched the login only, so "who solved crypto-1", "every
+// team-join" or "what happened at 16:5x" could not be asked; you scrolled.
 describe("filterEntries", () => {
   const entries: ActivityEntry[] = [
     { at: "2026-08-24T18:00:00.000Z", type: "login", login: "octocat" },
     { at: "2026-08-24T18:01:00.000Z", type: "classic-solve", login: "OctoCat", detail: "crypto-1" },
     { at: "2026-08-24T18:02:00.000Z", type: "login", login: "hubot" },
+    { at: "2026-08-24T18:40:00.000Z", type: "team-join", login: "hubot", detail: "octo-team" },
   ];
+  const q = (text: string, extra: Partial<Parameters<typeof filterEntries>[1]> = {}) =>
+    filterEntries(entries, { type: null, text, zone: "UTC", ...extra });
 
   it("passes everything through with no filters", () => {
-    expect(filterEntries(entries, null, "")).toEqual(entries);
+    expect(q("")).toEqual(entries);
   });
 
   it("filters by type", () => {
-    expect(filterEntries(entries, "login", "").map((e) => e.login)).toEqual(["octocat", "hubot"]);
+    expect(q("", { type: "login" }).map((e) => e.login)).toEqual(["octocat", "hubot"]);
   });
 
   it("matches login as a case-insensitive substring", () => {
-    expect(filterEntries(entries, null, "OCTO")).toHaveLength(2);
-    expect(filterEntries(entries, null, "  hub ").map((e) => e.login)).toEqual(["hubot"]);
+    expect(q("  hubot ").map((e) => e.type)).toEqual(["login", "team-join"]);
   });
 
-  it("applies both filters together", () => {
-    expect(filterEntries(entries, "classic-solve", "octo")).toEqual([entries[1]]);
+  it("finds a row by its detail alone", () => {
+    expect(q("crypto")).toEqual([entries[1]]);
+  });
+
+  it("finds a type by its label or its id", () => {
+    expect(q("joined")).toEqual([entries[3]]);
+    expect(q("team-join")).toEqual([entries[3]]);
+  });
+
+  it("finds a row by its time as displayed, on the panel's clock", () => {
+    expect(q("18:4")).toEqual([entries[3]]);
+    // 18:40 UTC is 15:40 in Buenos Aires; the panel shows, and so matches, 15:40.
+    expect(q("15:4", { zone: "America/Argentina/Buenos_Aires" })).toEqual([entries[3]]);
+    expect(q("18:4", { zone: "America/Argentina/Buenos_Aires" })).toEqual([]);
+  });
+
+  it("needs every word to match somewhere in the row", () => {
+    expect(q("octo solve")).toEqual([entries[1]]);
+    expect(q("hubot crypto")).toEqual([]);
+  });
+
+  it("restricts a prefixed word to that field", () => {
+    // "octo" is in octocat's login AND in hubot's team slug.
+    expect(q("octo").map((e) => e.login)).toEqual(["octocat", "OctoCat", "hubot"]);
+    expect(q("login:octo").map((e) => e.login)).toEqual(["octocat", "OctoCat"]);
+    expect(q("detail:octo")).toEqual([entries[3]]);
+    expect(q("type:solve")).toEqual([entries[1]]);
+  });
+
+  it("matches team: on team events only", () => {
+    expect(q("team:octo")).toEqual([entries[3]]);
+    expect(q("team:crypto")).toEqual([]);
+  });
+
+  it("ignores a prefix with nothing after it", () => {
+    expect(q("login:")).toEqual(entries);
+  });
+
+  it("keeps only rows inside the time range", () => {
+    const at = (iso: string) => Date.parse(iso);
+    expect(q("", { since: at("2026-08-24T18:01:00Z") })).toEqual(entries.slice(1));
+    expect(q("", { since: at("2026-08-24T18:01:00Z"), until: at("2026-08-24T18:02:00Z") })).toEqual(entries.slice(1, 3));
+  });
+
+  it("applies the type, the words and the range together", () => {
+    expect(q("octo", { type: "classic-solve", since: Date.parse("2026-08-24T18:00:30Z") })).toEqual([entries[1]]);
+  });
+});
+
+describe("typeCounts", () => {
+  it("counts each type within the current search, ignoring the type chip", () => {
+    const entries: ActivityEntry[] = [
+      { at: "2026-08-24T18:00:00.000Z", type: "login", login: "octocat" },
+      { at: "2026-08-24T18:01:00.000Z", type: "classic-solve", login: "octocat", detail: "crypto-1" },
+      { at: "2026-08-24T18:02:00.000Z", type: "login", login: "hubot" },
+    ];
+    expect(typeCounts(entries, { type: "login", text: "octocat", zone: "UTC" })).toEqual({ login: 1, "classic-solve": 1 });
+  });
+});
+
+describe("rangeSince", () => {
+  const now = Date.parse("2026-08-24T18:00:00Z");
+  it("turns a quick pick into a lower bound, and 'all' into none", () => {
+    expect(rangeSince("all", now)).toBeNull();
+    expect(rangeSince("15m", now)).toBe(now - 15 * 60_000);
+    expect(rangeSince("1h", now)).toBe(now - 3_600_000);
+    expect(rangeSince("6h", now)).toBe(now - 6 * 3_600_000);
+    expect(rangeSince("24h", now)).toBe(now - 24 * 3_600_000);
+  });
+});
+
+// A filtered view survives a refresh and can be handed to another organizer.
+describe("the search in the URL", () => {
+  it("reads ?q= back", () => {
+    expect(searchFromUrl("?tab=activity&q=octo+solve")).toBe("octo solve");
+    expect(searchFromUrl("?tab=activity")).toBe("");
+  });
+
+  it("writes ?q= beside the tab, and drops it when the box is cleared", () => {
+    expect(urlWithSearch("/admin?tab=activity", "login:octo")).toBe("/admin?tab=activity&q=login%3Aocto");
+    expect(urlWithSearch("/admin?tab=activity&q=old", "  ")).toBe("/admin?tab=activity");
   });
 });

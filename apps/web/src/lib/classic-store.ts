@@ -762,8 +762,9 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // Same only-when-set rule as caseSensitive: a hint-less board exports
     // byte-identically to one that predates hints.
     ...(hint ? { hint } : {}),
-    // Metadata only (the bytes ride the event archive), and only when
-    // there is some — the same byte-identical rule as hint.
+    // Metadata only (the bytes ride the event archive, or a panel export
+    // with "Include files"), and only when there is some — the same
+    // byte-identical rule as hint.
     ...(files.get(challenge.id)?.length ? { attachments: files.get(challenge.id)!.map(attachmentMeta) } : {}),
   }));
   // A stored step can outlive its challenge (deleteChallenge updates the story

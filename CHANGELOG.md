@@ -16,6 +16,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   starts with one. A title a spreadsheet would run as a formula (leading `=`,
   `+`, `-`, `@`) is written as text, and a cell with a carriage return is
   quoted.
+- **Added: a Jeopardy challenge bundle can carry its files (#625).** Tick
+  **Include files** next to **Export challenges** and the bundle embeds every
+  uploaded file's bytes (base64, `attachmentFiles`, bundle version 3), so
+  importing it on another box needs no re-upload. The import fills each
+  upload the box is missing, skips one it already holds with the same
+  sha256, and never deletes. A tampered file, or files that would push the
+  event past its 50 MiB, are refused before anything is written. Imports now
+  go to `/api/admin/classic/bundle`, outside the proxy's 10 MB body cut, and
+  a bundle over 75 MB gets a `413` naming the limit. Without the option the
+  export is the same metadata-only file, stamped version 3; version 1 and 2
+  bundles import as before.
 - **Fixed: a hint could be charged a different price than the one confirmed
   (#557).** If an organizer changed the hint cost after a contestant's page
   loaded, Confirm (−10 pts) charged the new price. The purchase now carries

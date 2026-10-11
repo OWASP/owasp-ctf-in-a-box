@@ -188,6 +188,32 @@ describe("AdminClassicControls", () => {
       const text = serializeBundle(exportBundleFrom([row1], ["Web"]));
       expect(parseBundle(text).ok).toBe(true);
     });
+
+    it("offers Include files next to Export, unticked by default", () => {
+      const html = renderControls([row1]);
+      expect(html).toContain("Include files");
+      expect(html).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked=""/);
+    });
+
+    it("leaves attachmentFiles out of an export without files", () => {
+      expect("attachmentFiles" in exportBundleFrom([row1], ["Web"])).toBe(false);
+    });
+
+    it("embeds the files of the uploads it exports, and its own parser accepts the result", () => {
+      const sha = "ab".repeat(32);
+      const meta = { [row1.challenge.id]: [{ name: "cap.pcap", size: 3, sha256: sha }] };
+      const files = [
+        { item: row1.challenge.id, sha256: sha, bytes: "AAAA" },
+        // A file for a challenge the export does not carry is left out:
+        // the parser refuses bytes for an upload the bundle does not name.
+        { item: "ghost-zz99zz", sha256: sha, bytes: "AAAA" },
+      ];
+      const bundle = exportBundleFrom([row1], ["Web"], [], meta, files);
+      expect(bundle.attachmentFiles).toEqual([{ item: row1.challenge.id, sha256: sha, bytes: "AAAA" }]);
+      const parsed = parseBundle(serializeBundle(bundle));
+      if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors));
+      expect(parsed.bundle.attachmentFiles).toHaveLength(1);
+    });
   });
 
   // `formatImportSummary` is the pure function behind the after-import
@@ -204,6 +230,13 @@ describe("AdminClassicControls", () => {
       expect(formatImportSummary({ created: 3, updated: 2, categories: 2 })).toBe(
         "Imported: 3 created, 2 updated. (2 categories listed in the file.)",
       );
+    });
+
+    it("says how many files the import filled, when the bundle carried any", () => {
+      expect(formatImportSummary({ created: 1, updated: 0, categories: 1, files: 2 })).toBe(
+        "Imported: 1 created, 0 updated. (1 category listed in the file.) 2 files filled from the bundle.",
+      );
+      expect(formatImportSummary({ created: 1, updated: 0, categories: 1, files: 1 })).toMatch(/1 file filled/);
     });
 
     it("uses the singular for exactly one category", () => {

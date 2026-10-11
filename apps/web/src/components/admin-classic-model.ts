@@ -6,7 +6,9 @@
 // component file stays readable; see that file's header for the design notes
 // these helpers implement.
 
-import type { AdminChallenge, Challenge, ImportSummary } from "@/lib/classic-store";
+import type { AdminChallenge, Challenge } from "@/lib/classic-store";
+import type { ClassicImportSummary } from "@/lib/attachment-files-store";
+import type { AttachmentFile } from "@/lib/attachment-files";
 import type { Story } from "@/lib/story-lock";
 import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
@@ -318,11 +320,18 @@ export function exportBundleFrom(
   categories: readonly string[],
   stories: readonly Story[] = [],
   attachments: Readonly<Record<string, readonly AttachmentMeta[]>> = {},
+  files?: readonly AttachmentFile[],
 ): ClassicBundle {
   // A step must name a challenge in the same file, or parseBundle refuses
   // the file this function just wrote (#463). The store drops a deleted
   // challenge from its story too; this is the same rule at the client door.
   const exported = new Set(rows.map((r) => r.challenge.id));
+  // "Include files": the bytes of the uploads this bundle names, and only
+  // those — parseBundle refuses a file for an upload the bundle lacks.
+  const named = new Set(
+    rows.flatMap(({ challenge: { id } }) => (attachments[id] ?? []).flatMap((m) => ("sha256" in m ? [`${id}\n${m.sha256}`] : []))),
+  );
+  const attachmentFiles = files?.filter((f) => named.has(`${f.item}\n${f.sha256}`));
   return {
     version: CLASSIC_BUNDLE_VERSION,
     categories: [...categories],
@@ -344,6 +353,7 @@ export function exportBundleFrom(
       // #186: metadata only, and only when present — the server export's rule.
       ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
     })),
+    ...(attachmentFiles ? { attachmentFiles } : {}),
   };
 }
 
@@ -353,11 +363,13 @@ export function exportBundleFrom(
  *  pluralization branch (and the created/updated interpolation next to it)
  *  has to live outside a render tree to be exercised by a test at all.
  *  Exported for direct testing. */
-export function formatImportSummary({ created, updated, categories, stories }: ImportSummary): string {
+export function formatImportSummary({ created, updated, categories, stories, files }: ClassicImportSummary): string {
   const categoryWord = categories === 1 ? "category" : "categories";
   // `stories` is present only for a v2 file (#463); a v1 summary reads as before.
   const storyPart = stories === undefined ? "" : `, ${stories} ${stories === 1 ? "story" : "stories"}`;
-  return `Imported: ${created} created, ${updated} updated. (${categories} ${categoryWord}${storyPart} listed in the file.)`;
+  // `files` is present only for a bundle that carried files.
+  const filePart = files === undefined ? "" : ` ${files} ${files === 1 ? "file" : "files"} filled from the bundle.`;
+  return `Imported: ${created} created, ${updated} updated. (${categories} ${categoryWord}${storyPart} listed in the file.)${filePart}`;
 }
 
 /** One challenge's solve counts as GET /api/admin/classic sends them (#595):

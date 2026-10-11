@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
-import { parseBundle } from "@/lib/classic-io";
 import {
   ClassicValidationError,
   deleteChallenge,
   getSolveCounts,
-  importBundle,
   listCategories,
   listChallengeIds,
   listChallengesForAdmin,
@@ -22,6 +20,7 @@ import type { Story } from "@/lib/story-lock";
 import { type Attachment, attachmentMeta } from "@/lib/attachments-keys";
 import { listAllAttachments } from "@/lib/attachments-store";
 import { teamSolveCounts } from "@/lib/team-solve-counts";
+import { importBundleResponse } from "@/app/api/admin/classic/import-response";
 
 /**
  * Organizer authoring surface for the classic (flag) module: list (GET),
@@ -66,13 +65,15 @@ import { teamSolveCounts } from "@/lib/team-solve-counts";
  * rather than a second bespoke assertion.
  *
  * The `import` shape carries the bundle as raw TEXT, never a pre-parsed
- * object: this route re-parses and re-validates it with `parseBundle` (the
- * same validator the admin bulk-import UI runs client-side) before ever
- * calling `importBundle`, so a client that skipped or weakened its own
- * validation cannot write anything the single-challenge path above would
- * have rejected. `importBundle` itself trusts its input completely — see its
- * own doc comment in classic-store.ts — which is exactly why this route must
- * never call it with anything that hasn't been through `parseBundle` first.
+ * object: `importBundleResponse` (import-response.ts) re-parses and
+ * re-validates it with `parseBundle` (the same validator the admin
+ * bulk-import UI runs client-side) before anything is imported, so a client
+ * that skipped or weakened its own validation cannot write anything the
+ * single-challenge path above would have rejected. The import trusts its
+ * input completely — see `importBundle`'s doc comment in classic-store.ts.
+ * This route's body passes through the Next proxy, which cuts it at 10 MB; a
+ * bundle with files goes to `/api/admin/classic/bundle`, which takes the same
+ * shape through the same handler, outside the proxy.
  */
 
 type ChallengePayload = Challenge & { flag: string; hint?: string };
@@ -327,30 +328,7 @@ export async function POST(request: Request) {
   }
 
   const importPayload = parseImportPayload(body);
-  if (importPayload !== null) {
-    // Re-parse and re-validate the raw text server-side with the SAME
-    // validator the client ran (or should have run) — this is what makes it
-    // safe to accept raw text from a client that skipped or weakened its own
-    // validation. `importBundle` itself does not re-check any of this; see
-    // its doc comment.
-    const parsedBundle = parseBundle(importPayload);
-    if (!parsedBundle.ok) return NextResponse.json({ errors: parsedBundle.errors }, { status: 400 });
-
-    let summary;
-    try {
-      summary = await importBundle(parsedBundle.bundle);
-    } catch (err) {
-      return errorResponse(err);
-    }
-
-    await writeAdminAudit(gate.login, "classic-import", {
-      created: summary.created,
-      updated: summary.updated,
-      categories: summary.categories,
-      ...(summary.stories !== undefined ? { stories: summary.stories } : {}),
-    });
-    return NextResponse.json(summary);
-  }
+  if (importPayload !== null) return importBundleResponse(importPayload, gate.login);
 
   const parsed = parseChallengePayload(body);
   if (!parsed) return NextResponse.json({ error: "invalid request payload" }, { status: 400 });

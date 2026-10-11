@@ -10,6 +10,7 @@
 // "checks requireAdmin BEFORE any store read" test actually enforces that,
 // rather than merely looking like it does.
 
+import { createHash } from "node:crypto";
 import { inspect } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -60,7 +61,10 @@ const {
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
 // #186: the panel's own Export needs each challenge's attachment metadata.
-const attachmentStore = vi.hoisted(() => ({ listAllAttachments: vi.fn(async () => new Map()) }));
+const attachmentStore = vi.hoisted(() => ({
+  listAllAttachments: vi.fn(async () => new Map()),
+  AttachmentError: class AttachmentError extends Error {},
+}));
 vi.mock("@/lib/attachments-store", () => attachmentStore);
 // #595: solve counts per challenge, teams and players.
 const counts = vi.hoisted(() => ({
@@ -489,6 +493,23 @@ describe("POST /api/admin/classic — import", () => {
     importBundle.mockResolvedValue({ created: 2, updated: 0, categories: 2 });
     await POST(adminReq("POST", { import: JSON.stringify(validBundle) }));
     expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-import", { created: 2, updated: 0, categories: 2 });
+  });
+
+  // A v3 bundle's files are checked server-side, through this door too:
+  // bytes that do not hash to the sha256 their upload records are refused
+  // before the challenges are imported.
+  it("400s a v3 bundle whose file bytes do not match their sha256, importing nothing", async () => {
+    const sha = createHash("sha256").update("pcap-bytes").digest("hex");
+    const tampered = {
+      ...validBundle,
+      version: 3,
+      challenges: [{ ...validBundle.challenges[0], attachments: [{ name: "cap.pcap", size: 10, sha256: sha }] }],
+      attachmentFiles: [{ item: "web-one-ab12cd", sha256: sha, bytes: Buffer.from("tampered!!").toString("base64") }],
+    };
+    const res = await POST(adminReq("POST", { import: JSON.stringify(tampered) }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toBe("attachmentFiles[0]");
+    expect(importBundle).not.toHaveBeenCalled();
   });
 });
 

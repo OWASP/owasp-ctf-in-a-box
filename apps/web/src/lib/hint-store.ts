@@ -190,6 +190,12 @@ if not owned then
   if ARGV[12] and ARGV[12] ~= '' and tonumber(ARGV[12]) ~= price then
     return {'repriced', '', price}
   end
+  -- The caller resolved the hint as free, so its gate read no balance (ARGV[8]
+  -- is empty). A price set since would be charged unchecked: ask again, and
+  -- the next request takes the paid gate.
+  if price > 0 and tonumber(ARGV[4]) == 0 and (not ARGV[8] or ARGV[8] == '') then
+    return {'repriced', '', price}
+  end
 end
 -- The gross in ARGV[8] was folded under the score revision in ARGV[9]. A
 -- score-lowering operation on ANY app task bumps KEYS[5] before its first

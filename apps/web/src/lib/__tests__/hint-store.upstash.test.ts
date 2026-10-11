@@ -503,6 +503,32 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     }
   });
 
+  // A caller that resolved the hint as free never read a balance (the gate
+  // reads one only for a paid price), so ARGV[8] is empty. If the hash now
+  // says it costs points, charging would skip affordability: answer
+  // repriced so the next request goes through the paid gate.
+  it("REVEAL_SCRIPT refuses a hint repriced from free to paid when no balance was read", async () => {
+    const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const k = (n: string) => `ctf-test:hint-free-to-paid:${RUN}:${n}`;
+    const [set, spent, hints, at, rev, lowering, cfg] = ["set", "spent", "hints", "at", "rev", "lowering", "cfg"].map(k);
+    const call = (quoted: string) =>
+      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg], ["web", "classic/web", "alice", 0, "2026-10-01T00:00:00Z", "0", "", "", "", "", "", quoted, "10"]);
+    try {
+      await pipeline([["HSET", hints, "web", "the text"], ["HSET", cfg, "hintCost", "25"]]);
+      expect(await call("")).toEqual(["repriced", "", 25]);
+      expect(await call("25")).toEqual(["repriced", "", 25]);
+      const [s1, sp1] = await pipeline([["SCARD", set], ["HGET", spent, "alice"]]);
+      expect(s1.result).toBe(0);
+      expect(sp1.result).toBeNull();
+      // Still free in the hash: the free path charges 0, as before.
+      await pipeline([["HSET", cfg, "hintCost", "0"]]);
+      expect(await call("0")).toEqual(["charged", "the text", 0, 0]);
+    } finally {
+      await pipeline([["DEL", set, spent, hints, at, rev, lowering, cfg]]);
+    }
+  });
+
   it("REVEAL_SCRIPT checks the lock before reading the hint", async () => {
     const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
     const { upstashEval } = await import("@/lib/upstash");

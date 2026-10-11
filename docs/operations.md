@@ -117,7 +117,8 @@ characters, counted after Unicode normalization (NFC). Any script and emoji
 may appear in it, but a new team's name needs at least one letter a–z or
 digit 0–9, because the team's id (its key and invite URL) is built from
 those; a rename keeps the id, so it has no such need. A name with nothing
-visible (zero-width characters alone) or
+visible (zero-width or control characters, or the blank Braille cell U+2800,
+alone) or
 with a text-direction control character (U+202E and the rest of the bidi
 controls) is refused on create and on rename, and every page shows a team
 name direction-isolated, so a name stored before that check cannot reorder

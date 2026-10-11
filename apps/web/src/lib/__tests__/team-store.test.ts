@@ -1229,7 +1229,7 @@ describe("hostile team names", () => {
     "⁦", "⁧", "⁨", "⁩",
   ];
 
-  it.each(["​", "﻿", "​‌‍", " ⁠ "])(
+  it.each(["​", "﻿", "​‌‍", " ⁠ ", "\u0000", "\u0007\u001b", "\u2800", "\u2800\u0000\u2800"])(
     "create and rename refuse a name with nothing visible (%j)",
     async (name) => {
       const store = await loadStore(true);

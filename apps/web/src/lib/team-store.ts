@@ -72,8 +72,10 @@ const REGISTRATION_CLOSED_ERROR = "Team registration is closed";
 /** The Unicode bidi controls: marks, embeddings, overrides and isolates. */
 const BIDI_CONTROLS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
 /** What renders as nothing: format characters (zero-width spaces and joiners,
- *  the BOM, word joiners) and every other default-ignorable code point. */
-const INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\s]/gu;
+ *  the BOM, word joiners), every other default-ignorable code point, control
+ *  characters (NUL, BEL, ESC: no glyph at all), and the blank Braille pattern
+ *  U+2800, a graphic character that draws an empty cell. */
+const INVISIBLE = /[\p{Cf}\p{Cc}\p{Default_Ignorable_Code_Point}\s\u2800]/gu;
 
 /** The one name check create and rename share. NFC first, so the
  *  length counts what is displayed. Bidi controls are refused rather than

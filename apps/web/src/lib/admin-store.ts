@@ -232,18 +232,29 @@ export type SyncStatus = {
 // catches a typo in any of the fixed field names above.
 type ModuleFieldKey = `moduleTitle:${string}` | `moduleBlurb:${string}`;
 
+/** The numeric event knobs and their accepted [min, max]. Each also takes
+ *  null/"" to clear back to its default. Two floors are deliberate:
+ *  `scoreCooldownMin` may be 0 ("no cooldown", reasonable for a short
+ *  workshop where the feedback loop matters more than the anti-gaming cap),
+ *  while `teamMaxMembers` starts at 1, because 0 would store a cap no team
+ *  can satisfy: every join refused, the captain's own included. */
+const NUMERIC_KNOBS = {
+  hintCost: [0, HINT_COST_MAX],
+  hintsMinSolves: [0, HINT_MIN_SOLVES_MAX],
+  hintsUnlockAfterMin: [0, HINT_UNLOCK_AFTER_MAX],
+  quizMaxAttempts: [0, QUIZ_MAX_ATTEMPTS_MAX],
+  quizRetryAfterMin: [0, QUIZ_RETRY_AFTER_MAX],
+  classicCooldownSec: [0, CLASSIC_COOLDOWN_SEC_MAX],
+  aiCooldownSec: [0, AI_COOLDOWN_SEC_MAX],
+  scoreCooldownMin: [0, SCORE_COOLDOWN_MIN_MAX],
+  teamMaxMembers: [1, TEAM_MAX_MEMBERS_MAX],
+} as const satisfies Record<string, readonly [number, number]>;
+type NumericKnob = keyof typeof NUMERIC_KNOBS;
+
 export type SettingsPatch = {
   paused?: boolean;
   hintsEnabled?: boolean;
-  hintCost?: number;
-  hintsMinSolves?: number;
-  hintsUnlockAfterMin?: number;
-  quizMaxAttempts?: number;
-  quizRetryAfterMin?: number;
-  classicCooldownSec?: number;
-  aiCooldownSec?: number;
-  scoreCooldownMin?: number;
-  teamMaxMembers?: number;
+} & { [K in NumericKnob]?: number | null | "" } & {
   teamRegistrationOpen?: boolean;
   /** The modules this event serves. Replaces the set wholesale;
    *  see updateAdminSettings for the two things it refuses. */
@@ -465,67 +476,21 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       if (v) dels.push(k);
       else fields.push(k, "0");
       changed[k] = v;
-    } else if (k === "hintCost") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > HINT_COST_MAX) {
-        throw new AdminValidationError(k, `hintCost must be an integer in [0, ${HINT_COST_MAX}]`);
+    } else if (k in NUMERIC_KNOBS) {
+      // null/"" clears back to the default (HDEL), the same two-state contract
+      // as sponsorLogoSize and the schedule bounds: once set, a knob must be
+      // able to follow the default again rather than only equal it.
+      const [min, max] = NUMERIC_KNOBS[k as NumericKnob];
+      if (v === null || v === "") {
+        dels.push(k);
+        changed[k] = null as unknown as boolean;
+      } else {
+        if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) {
+          throw new AdminValidationError(k, `${k} must be an integer in [${min}, ${max}]`);
+        }
+        fields.push(k, String(v));
+        changed[k] = v;
       }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "hintsMinSolves") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > HINT_MIN_SOLVES_MAX) {
-        throw new AdminValidationError(k, `hintsMinSolves must be an integer in [0, ${HINT_MIN_SOLVES_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "hintsUnlockAfterMin") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > HINT_UNLOCK_AFTER_MAX) {
-        throw new AdminValidationError(k, `hintsUnlockAfterMin must be an integer in [0, ${HINT_UNLOCK_AFTER_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "quizMaxAttempts") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > QUIZ_MAX_ATTEMPTS_MAX) {
-        throw new AdminValidationError(k, `quizMaxAttempts must be an integer in [0, ${QUIZ_MAX_ATTEMPTS_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "quizRetryAfterMin") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > QUIZ_RETRY_AFTER_MAX) {
-        throw new AdminValidationError(k, `quizRetryAfterMin must be an integer in [0, ${QUIZ_RETRY_AFTER_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "classicCooldownSec") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > CLASSIC_COOLDOWN_SEC_MAX) {
-        throw new AdminValidationError(k, `classicCooldownSec must be an integer in [0, ${CLASSIC_COOLDOWN_SEC_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "aiCooldownSec") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > AI_COOLDOWN_SEC_MAX) {
-        throw new AdminValidationError(k, `aiCooldownSec must be an integer in [0, ${AI_COOLDOWN_SEC_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "scoreCooldownMin") {
-      // 0 is VALID here, unlike teamMaxMembers: it means "no cooldown", which
-      // is a reasonable choice for a short workshop where the feedback loop
-      // matters more than the anti-gaming cap.
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > SCORE_COOLDOWN_MIN_MAX) {
-        throw new AdminValidationError(k, `scoreCooldownMin must be an integer in [0, ${SCORE_COOLDOWN_MIN_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "teamMaxMembers") {
-      // Floor of 1, not 0. Zero would store a cap no team can satisfy — every
-      // join refused, including the captain's own team, with the UI cheerfully
-      // advertising "0 players max". Rejecting it here is the difference
-      // between a validation error and an event nobody can form a team in.
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > TEAM_MAX_MEMBERS_MAX) {
-        throw new AdminValidationError(k, `teamMaxMembers must be an integer in [1, ${TEAM_MAX_MEMBERS_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
     } else if (k === "sponsorLogoSize") {
       // null/"" clears back to the default ("md") — same two-state contract
       // as the schedule fields below.

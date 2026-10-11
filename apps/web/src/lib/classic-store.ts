@@ -1,5 +1,6 @@
 import "server-only";
 import { storyPositions, type Story } from "@/lib/story-lock";
+import { storyLockLua, teamLockKeys } from "@/lib/classic-team";
 import {
   addLink,
   addMissingUpload,
@@ -1124,27 +1125,26 @@ async function evaluateGate(
 export const SUBMIT_SCRIPT = `
 local dry = ARGV[8] == '1'
 -- #494: ARGV[10] says how many of KEYS[9..] are the TEAMMATES' attempts
--- hashes (the submitting login's own row is KEYS[1], read below). The team's
--- solves hashes, for the story lock, follow them. Never nil in practice: the
--- caller always passes one number, but a zero keeps every range empty.
+-- hashes (the submitting login's own row is KEYS[1], read below). The story
+-- lock's (solves hash, user record) pairs follow them. Never nil in practice:
+-- the caller always passes one number, but a zero keeps every range empty.
 local nMate = tonumber(ARGV[10]) or 0
 if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 -- STORY LOCK (#463): ARGV[9] names this step's prerequisite ("" when the
--- challenge is not a later story step). It is open only if some TEAMMATE —
--- one of the solves hashes the caller handed in AFTER the attempt ones —
--- holds it.
--- (KEYS[8] is the lastAt hash, #522, and KEYS[9..8 + nMate] are attempts
--- hashes, #494: neither is ever part of this loop. Reading an attempts row
--- here would let an attempt open a lock — attempting is not solving.)
+-- challenge is not a later story step). It is open only if some TEAMMATE
+-- holds it, and made that solve while on this team (#602): after the
+-- teammate attempts hashes (KEYS[9..8 + nMate], #494) come (solves hash,
+-- user record) pairs, ARGV[11] the viewer's team slug — see storyLockLua in
+-- classic-team.ts, called with the pair start as the Lua expression
+-- "9 + nMate". (KEYS[8] is the lastAt hash, #522: never part of this loop.
+-- Reading an attempts row here would let an attempt open a lock — attempting
+-- is not solving.)
 -- Checked FIRST, before the flag hash is read and before any read or write
 -- of attempts: a locked step touches no secret, spends no attempt and cannot
 -- be used to test a flag. The store reports it exactly like an unknown
 -- challenge (no oracle). A dry-run preview skips it.
 if not dry and ARGV[9] and ARGV[9] ~= '' then
-  local open = false
-  for i = 9 + nMate, #KEYS do
-    if redis.call('HEXISTS', KEYS[i], ARGV[9]) == 1 then open = true break end
-  end
+${storyLockLua("9 + nMate", 9, 11)}
   if not open then return {'locked'} end
 end
 local target = redis.call('HGET', KEYS[3], ARGV[1])
@@ -1284,14 +1284,17 @@ export async function submitFlag(
 
   // The STORY LOCK and the TEAM's cooldown both need the roster, so
   // it is read ONCE here and enforced in the script (which is the authority
-  // for both). The lock needs every teammate's solves hash when this challenge
-  // is a later story step; the cooldown needs every teammate's attempts hash
-  // on every submission. A stories or team read that fails is `unavailable` —
-  // closed, never "no lock" and never "team of one", which would quietly hand
-  // this login its own private cooldown budget. The roster read is the STRICT
-  // one: an Upstash error reply is a failure, not an empty roster.
+  // for both). The lock needs every teammate's (solves hash, user record)
+  // pair when this challenge is a later story step; the cooldown needs every
+  // teammate's attempts hash on every submission. A stories or team read that
+  // fails is `unavailable` — closed, never "no lock" and never "team of one",
+  // which would quietly hand this login its own private cooldown budget. The
+  // roster read is the STRICT one: an Upstash error reply is a failure, not an
+  // empty roster.
   let prereq = "";
   let members: string[] = [];
+  let lockKeys: string[] = [];
+  let lockTeam = "";
   if (gate.allowed || gate.reason === "cooldown") {
     try {
       const [stories, existing, roster] = await Promise.all([
@@ -1301,7 +1304,10 @@ export async function submitFlag(
       ]);
       members = roster;
       const pos = storyPositions(stories, existing).get(challengeId);
-      if (pos?.prereq) prereq = pos.prereq;
+      if (pos?.prereq) {
+        prereq = pos.prereq;
+        ({ keys: lockKeys, team: lockTeam } = await teamLockKeys(login));
+      }
     } catch (err) {
       console.error("classic: story/team lookup failed (failing closed):", errorLabel(err));
       return { ok: false, reason: "unavailable" };
@@ -1332,11 +1338,11 @@ export async function submitFlag(
 
   // The cooldown counts every CURRENT teammate's attempts row, handed to
   // the SAME script call so the verdict stays one atomic read/check/write. The
-  // viewer's own key is left out here because KEYS[1] already is it.
+  // viewer's own key is left out here because KEYS[1] already is it. The story
+  // lock's pairs (`lockKeys`/`lockTeam`, from `teamLockKeys`, already declared
+  // above) follow them — every current member's solves hash AND user record,
+  // INCLUDING the submitting login's own pair.
   const mateAttemptKeys = members.filter((m) => m !== login).map(attemptsKey);
-  // The story lock's keys follow, and keep their #463 meaning exactly: every
-  // current member's solves hash INCLUDING the submitting login's own.
-  const lockKeys = prereq === "" ? [] : members.map(solvesKey);
 
   let verdict: unknown;
   try {
@@ -1355,7 +1361,7 @@ export async function submitFlag(
         LAST_AT_KEY, // KEYS[8] — login -> latest award time
         ...mateAttemptKeys, // KEYS[9..8 + nMate] — teammates' attempts hashes,
         //                                  counted into the shared cooldown
-        ...lockKeys, // KEYS[9 + nMate..] — solves hashes, for the story lock
+        ...lockKeys, // KEYS[9 + nMate..] — (solves hash, user record) pairs, for the story lock
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the
@@ -1372,7 +1378,8 @@ export async function submitFlag(
         caseSensitiveFlagForm(flag), // ARGV[7] — case preserved
         dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing
         prereq, // ARGV[9] — story prerequisite, "" when none
-        mateAttemptKeys.length, // ARGV[10] — where the solves hashes start
+        mateAttemptKeys.length, // ARGV[10] — #494 the teammate-attempt count; the pairs follow at KEYS[9 + nMate]
+        lockTeam, // ARGV[11] — the viewer's team slug, "" for a team of one
       ],
     );
   } catch (err) {

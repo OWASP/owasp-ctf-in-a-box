@@ -68,6 +68,18 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     expect(settings.paused).toBe(false);
   });
 
+  // #600: a numeric knob clears back to "follow the default" — the field is
+  // gone from the hash, not stored as a value equal to the default.
+  it("clears a numeric knob to absent when sent null", async () => {
+    await updateAdminSettings({ hintsMinSolves: 1, teamMaxMembers: 6 }, "alice");
+    await updateAdminSettings({ hintsMinSolves: null }, "alice");
+    const [res] = await upstashPipeline([["HMGET", "ctf:admin:settings", "hintsMinSolves", "teamMaxMembers"]]);
+    expect(res.result).toEqual([null, "6"]);
+    const s = await getAdminSettings();
+    expect(s.hintsMinSolves).toBeNull();
+    expect(s.teamMaxMembers).toBe(6);
+  });
+
   it("round-trips an explicitly empty module set", async () => {
     const s = await updateAdminSettings({ enabledModules: [] }, "alice");
     expect(s.enabledModuleIds).toEqual([]);

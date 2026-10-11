@@ -299,20 +299,45 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     const { upstashEval } = await import("@/lib/upstash");
     const k = (n: string) => `ctf-test:hint-lock:${RUN}:${n}`;
     // KEYS[5..6] are the score revision and the in-progress counter (#553),
-    // KEYS[7] the settings hash (#566); the lock keys follow them.
-    const [set, spent, hints, at, rev, lowering, cfg, teammate] = ["set", "spent", "hints", "at", "rev", "lowering", "cfg", "bob"].map(k);
-    await pipeline([["HSET", hints, "web", "look at the cookie"]]);
+    // KEYS[7] the settings hash (#566); the lock keys follow them, as
+    // (solves hash, user record) pairs, with the team slug in ARGV[11] (#602).
+    const [set, spent, hints, at, rev, lowering, cfg, teammate, bob] = ["set", "spent", "hints", "at", "rev", "lowering", "cfg", "bob", "user-bob"].map(k);
+    await pipeline([["HSET", hints, "web", "look at the cookie"], ["HSET", bob, "team", "t", "joinedAt", "2026-09-30T00:00:00.000Z"]]);
     const reveal = () =>
-      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg, teammate], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon", "", "", ""]);
+      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg, teammate, bob], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon", "", "", "", "t"]);
 
     expect(await reveal()).toEqual(["locked"]);
     const [s1, sp1] = await pipeline([["SCARD", set], ["HGET", spent, "alice"]]);
     expect(s1.result).toBe(0);
     expect(sp1.result).toBeNull();
 
-    await pipeline([["HSET", teammate, "recon", '{"points":1,"at":"x"}']]);
+    await pipeline([["HSET", teammate, "recon", '{"points":1,"at":"2026-09-30T12:00:00.000Z"}']]);
     expect(await reveal()).toEqual(["charged", "look at the cookie", 10]);
-    await pipeline([["DEL", set, spent, hints, at, rev, lowering, teammate]]);
+    await pipeline([["DEL", set, spent, hints, at, rev, lowering, teammate, bob]]);
+  });
+
+  // #602: a prerequisite solved on another team, before the member joined
+  // this one, does not open the next step's hint here either.
+  it("REVEAL_SCRIPT refuses a hint whose prerequisite was carried in from another team", async () => {
+    const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const k = (n: string) => `ctf-test:hint-carry:${RUN}:${n}`;
+    const [set, spent, hints, at, rev, lowering, cfg, xSolves, x] = ["set", "spent", "hints", "at", "rev", "lowering", "cfg", "x", "user-x"].map(k);
+    try {
+      await pipeline([
+        ["HSET", hints, "web", "look at the cookie"],
+        ["HSET", xSolves, "recon", '{"points":1,"at":"2026-09-30T12:00:00.000Z"}'],
+        ["HSET", x, "team", "b", "joinedAt", "2026-09-30T13:00:00.000Z"],
+      ]);
+      const reveal = () =>
+        upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg, xSolves, x], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon", "", "", "", "b"]);
+      expect(await reveal()).toEqual(["locked"]);
+      const [s1, sp1] = await pipeline([["SCARD", set], ["HGET", spent, "alice"]]);
+      expect(s1.result).toBe(0);
+      expect(sp1.result).toBeNull();
+    } finally {
+      await pipeline([["DEL", set, spent, hints, at, rev, lowering, xSolves, x]]);
+    }
   });
 
   // #553 review: the gross the gate folded can be outdated by a write on
@@ -422,9 +447,9 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
     const { upstashEval } = await import("@/lib/upstash");
     const k = (n: string) => `ctf-test:hint-lock2:${RUN}:${n}`;
-    const [set, spent, hints, at, rev, lowering, cfg, teammate] = ["set", "spent", "hints", "at", "rev", "lowering", "cfg", "bob"].map(k);
+    const [set, spent, hints, at, rev, lowering, cfg, teammate, bob] = ["set", "spent", "hints", "at", "rev", "lowering", "cfg", "bob", "user-bob"].map(k);
     expect(
-      await upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg, teammate], ["nohint", "classic/nohint", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon", "", "", ""]),
+      await upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg, teammate, bob], ["nohint", "classic/nohint", "alice", 10, "2026-10-01T00:00:00Z", "0", "recon", "", "", "", ""]),
     ).toEqual(["locked"]);
   });
 });

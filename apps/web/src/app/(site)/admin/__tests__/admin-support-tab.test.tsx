@@ -84,8 +84,8 @@ describe("resetProgressConfirm", () => {
 // began with retyping — and the card's `joined` stamp carried no timezone
 // while the line beneath it said UTC.
 describe("teamCardSummary", () => {
-  it("stamps the join time UTC, like every other timestamp on the tab", () => {
-    expect(teamCardSummary(detail).joined).toBe("joined 2026-09-03 01:45 UTC");
+  it("stamps the join time UTC to the second, to match against logs", () => {
+    expect(teamCardSummary(detail).joined).toBe("joined 2026-09-03 01:45:00 UTC");
   });
 
   it("offers the slug the card already knows, so nothing is retyped", () => {

@@ -112,7 +112,17 @@ routes would refuse.
 
 Captains
 manage the roster from the app: rename the team, remove a member, transfer the
-captaincy, regenerate the join code, or disband. The join code doubles as a
+captaincy, regenerate the join code, or disband. A team name is up to 32
+characters, counted after Unicode normalization (NFC). Any script and emoji
+may appear in it, but a new team's name needs at least one letter a–z or
+digit 0–9, because the team's id (its key and invite URL) is built from
+those; a rename keeps the id, so it has no such need. A name with nothing
+visible (zero-width or control characters, or the blank Braille cell U+2800,
+alone) or
+with a text-direction control character (U+202E and the rest of the bidi
+controls) is refused on create and on rename, and every page shows a team
+name direction-isolated, so a name stored before that check cannot reorder
+the row around it (#603). The join code doubles as a
 shareable link — **Copy invite link** on the team card yields
 `https://<your-event>/join/<code>`, which a teammate opens and joins in one
 click. Signing in mid-way keeps the invite: the code lives in the URL, so the
@@ -293,8 +303,12 @@ The panel offers:
   page and in the page description; blank hides it), **Timezone** (≤64; an
   IANA zone such as `America/Argentina/Buenos_Aires`, suggested as you type;
   the landing page's dates, the phase line, the score chart's axis and the
-  schedule inputs below read on this clock (the Insights and Support
-  timestamps stay UTC, to match against logs); the phase line and the launch status name its offset, e.g. "9:00 AM
+  schedule inputs below and the admin activity times (Overview and the
+  Activity tab, to the second; a "Show UTC" switch beside each flips them
+  to UTC and is remembered per browser) read on this clock (Insights' "as of"
+  time and Support's joined and first-on-a-team times stay UTC, to the second,
+  to match against logs; the Insights timeline counts ten-minute buckets, so
+  its labels stay at the minute); the phase line and the launch status name its offset, e.g. "9:00 AM
   GMT-3"; blank means UTC, the output before this setting existed), **Contact e-mail**
   (≤254; the organizers' own inbox, rendered as a `mailto:` link on the
   privacy and terms pages; blank hides it), and **Discord invite** (≤200;
@@ -535,8 +549,16 @@ The panel offers:
 
 - **Activity** (its own tab) — the live event log: sign-ins, quiz, classic
   and ai solves (an ai solve's entry also notes whether it came in via flag
-  or via event), and team create/join/leave/rename, newest first, with type
-  chips and a login filter. Backed by one capped Redis list
+  or via event), and team create/join/leave/rename, newest first. Type
+  chips (each with its count) and one search box narrow it: every word must
+  match somewhere in a row — login, event, detail (challenge, question or
+  team id) or the time as shown — and `login:`, `type:`, `detail:` and
+  `team:` restrict a word to one field; a time range (last 15 min to 24 h,
+  or from/to on the panel's clock) narrows it further. While any of these
+  is on, the tab reads the rest of the log so the search covers all of it,
+  and says how much it searched; the search rides in the URL
+  (`/admin/activity?q=…`), so a filtered view survives a reload and can be
+  shared. Backed by one capped Redis list
   (`ctf:activity:log`, newest ~5,000 entries — older ones drop
   automatically), written **fail-open** so a Redis blip can lose a log line
   but never fail the sign-in or solve it describes. Entries carry the
@@ -554,7 +576,9 @@ The panel offers:
   contestants' forks, and no new tracking was added: quiz answers and classic
   solves already carry a timestamp per item per login, Secure Development
   solves are timestamped as they are ingested, attempts are counted per login,
-  and `firstTeamAt` supplies the funnel's conversion moment.
+  and `firstTeamAt` supplies the funnel's conversion moment. Every per-login record is
+  read under the login as GitHub spells it, so a contestant whose login has
+  a capital letter counts like any other.
 
   It computes when you open the tab, not when the admin page loads — the fold
   is O(contestants) — and, while the event phase is live, recomputes every
@@ -562,15 +586,21 @@ The panel offers:
   Ns ago" stamp beside the "as of" time; **Refresh** is the same read for when
   you won't wait. You get:
 
-  ![The Insights tab: the five participation figures, a ten-minute-bucket solve timeline, and the hardest-first challenge table with solves, attempts, solve rate, average tries and median time to solve per challenge](assets/admin-insights.jpg)
+  ![The Insights tab: the five participation figures, a solve timeline, and the hardest-first challenge table with solves, attempts, solve rate, average tries and median time to solve per challenge](assets/admin-insights.jpg)
 
 
   - **Participation** — on a team / ever on a team / submitted / scored /
     **stuck** (submitted and never scored). The gap between the last two is the
     number worth watching during an event.
-  - **Solves over time**, in ten-minute buckets with a time axis (first,
+  - **Solves over time**: every bucket from the first solve to the last,
+    empty ones included, across the full width, with a time axis (first,
     middle and last bucket, UTC; dated once the buckets cross midnight), so
-    a room going quiet is visible and datable.
+    a room going quiet is a visible, datable gap. Buckets are ten minutes,
+    widened (30 min, 1 h, 2 h, … up to a day, then whole days) to keep any
+    span within 120 bars; the caption names the width and the busiest
+    bucket, and each bar's tooltip its date, range and count. The same
+    figures for every bucket with solves sit in a "Buckets with solves"
+    list under the chart, for keyboard and screen-reader use.
   - **Hardest first** — every challenge by solves, attempts, solve rate,
     *average tries taken by the people who did solve it*, and the *median time
     from their first attempt to their solve*. Those last two are the difficulty
@@ -593,7 +623,7 @@ The panel offers:
   | Figure | Counts | Does not count |
   |---|---|---|
   | **On a team** | Distinct logins on a team **right now** | Anyone who has since left |
-  | **Ever on a team** | Distinct logins that have **ever** joined one — survives leaving and switching | Signing in; that leaves no record at all |
+  | **Ever on a team** | Distinct logins that have **ever** joined one — survives leaving and switching, including a player who left without scoring (found through their user record) | Signing in; that leaves no record at all |
   | **Submitted** | Made at least one submission in any module | — |
   | **Scored** | Earned at least one point-bearing item in any module, Secure Development included | Submissions that never landed a point |
   | **Stuck** | Submitted **and never scored** | Anyone who has not submitted yet |
@@ -602,7 +632,7 @@ The panel offers:
   | **Solve rate** | solves ÷ **the people who tried it** | The rest of the event; this is not an event-wide difficulty figure |
   | **Avg tries** | Mean attempts taken by the contestants who **did** solve it | Everyone still stuck on it — which is why a low rate and a low average can coexist |
   | **Median time** | Median seconds from a contestant's **first attempt** to their solve | Items earned before `firstAt` existed; those carry no start time |
-  | **Team points** | The **sum** of each member's own totals | Nothing — and that is the catch: the leaderboard folds the **union** of their solves, so a challenge two teammates both solved counts once there and twice here |
+  | **Team points** | The leaderboard's own figure for the team: the **union** of its members' solves, hint spend netted | — the two screens agree. Only if the board can't be read does the tab fall back to the sum of members' totals, and it says so |
   | **Hints before solving** | Hints bought **before** the buyer earned that item | Hints bought afterwards, and hints for items never solved |
 
   Solve rate can never exceed 100%: its denominator is the larger of "people
@@ -613,9 +643,7 @@ The panel offers:
 
   The tab ends with **what these numbers do not measure**, and that list ships
   in the API payload too rather than living only here — a metric whose limits
-  travel separately from it gets quoted without them. In short: team points on
-  this tab *sum* each member's totals while the leaderboard folds the *union*
-  of their solves; attempt rows carry a first and a last time but not one per
+  travel separately from it gets quoted without them. In short: attempt rows carry a first and a last time but not one per
   try, so the timeline is solves rather than submissions; signing in leaves no record,
   so the funnel starts at "ever on a team"; Secure Development has no
   per-challenge attempt data, since its scores arrive already judged; and
@@ -774,8 +802,12 @@ not-enabled tab name, in either form, falls back to **Overview** rather than
 gating, players per team, the retry gate, the cooldowns) and the four
 schedule fields commit when you leave the field, and report beside it:
 **Saving…** while the write is in flight, **Saved** for a moment after, or the
-reason it was refused. Junk, a fraction, a negative, or a blanked field snaps
-back to the stored value with that reason ("Whole numbers only — kept 10.");
+reason it was refused. **Emptying a number field resets it to its default**:
+the stored override is removed and the field shows the default as its
+greyed placeholder again, so an overridden knob (a value in the box) reads
+differently from one following the default (an empty box). Junk, a
+fraction or a negative snaps back to the stored value with that reason
+("Whole numbers only — kept 10.");
 a value the server refuses is rewritten through the field's own label ("Hint
 cost must be a whole number between 0 and 100,000.") and the field snaps back
 too, so what you see is always what is stored. The switches — module on/off,
@@ -1635,7 +1667,9 @@ on its own.
 **Stories: challenges a team unlocks in order** (#463). A story is an
 ordered chain of challenges, such as an "Operation Red Dawn" that runs from
 recon to loot. Step 1 is always open. Each later step opens for a team once
-any member of that team solves the step before it. The board shows one lane
+any member of that team solves the step before it while on that team: a
+step solved on another team, before the player joined this one, still
+counts toward this team's points but opens nothing here (#602). The board shows one lane
 per story above the categories. A locked step appears there only as
 "??? — step N of M", and its page, hint and flag answer as if it did not
 exist. Points are plain: a step is worth what its challenge says, and a

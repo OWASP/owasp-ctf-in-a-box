@@ -24,12 +24,18 @@ vi.mock("@/lib/hint-balance", () => ({ hintBalance: mocks.hintBalance }));
  *  test below is unaffected by the gate; the gate's own cases override it. */
 const RICH = { gross: 1000, spent: 0, net: 1000, rev: "7" };
 // #463: no stories on this board unless a test says otherwise.
-const storyMocks = vi.hoisted(() => ({ listStories: vi.fn(async () => [] as unknown[]), teamSolveKeys: vi.fn(async () => [] as string[]) }));
+const storyMocks = vi.hoisted(() => ({
+  listStories: vi.fn(async () => [] as unknown[]),
+  teamLockKeys: vi.fn(async () => ({ keys: [] as string[], team: "" })),
+}));
 vi.mock("@/lib/classic-store", () => ({
   listStories: storyMocks.listStories,
   listChallengeIds: async () => new Set(["recon", "web", "web-robots-only"]),
 }));
-vi.mock("@/lib/classic-team", () => ({ teamSolveKeys: storyMocks.teamSolveKeys }));
+vi.mock("@/lib/classic-team", async (orig) => ({
+  storyLockLua: (await orig<typeof import("@/lib/classic-team")>()).storyLockLua,
+  teamLockKeys: storyMocks.teamLockKeys,
+}));
 vi.mock("@/lib/upstash", () => ({
   upstashEval: mocks.upstashEval,
   upstashPipeline: mocks.upstashPipeline,
@@ -1253,10 +1259,13 @@ describe("getHintAvailability", () => {
 });
 
 describe("the story lock on classic hints (#463)", () => {
-  it("hands the script the prerequisite and the teammates' solves keys, and reports `locked` exactly as a missing hint", async () => {
+  it("hands the script the prerequisite, the teammates' lock pairs and the team, and reports `locked` exactly as a missing hint", async () => {
     const store = await loadStore();
     storyMocks.listStories.mockResolvedValueOnce([{ id: "op", title: "Op", intro: "", steps: ["recon", "web"] }]);
-    storyMocks.teamSolveKeys.mockResolvedValueOnce(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    storyMocks.teamLockKeys.mockResolvedValueOnce({
+      team: "red",
+      keys: ["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"],
+    });
     mocks.upstashEval.mockResolvedValueOnce(["locked"]);
     const result = await store.revealHint("alice", "classic", "web");
     // No oracle (CodeRabbit #470): a locked step's hint is indistinguishable
@@ -1265,8 +1274,9 @@ describe("the story lock on classic hints (#463)", () => {
     const [, keys, argv] = mocks.upstashEval.mock.calls.at(-1)!;
     // After the four fixed keys, the score revision and the in-progress
     // counter (KEYS[5..6], #553).
-    expect(keys.slice(7)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    expect(keys.slice(7)).toEqual(["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"]);
     expect(argv[6]).toBe("recon");
+    expect(argv[10]).toBe("red");
   });
 
   it("refuses (closed) when the stories cannot be read, without running the script", async () => {

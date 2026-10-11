@@ -47,7 +47,9 @@ const storyMocks = vi.hoisted(() => ({
   listStories: vi.fn(async () => [] as { id: string; title: string; intro: string; steps: string[] }[]),
   getTeamClassicSolvedIds: vi.fn(async () => new Set<string>()),
 }));
-vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: storyMocks.getTeamClassicSolvedIds }));
+// storyLockLua: classic-store builds its grading script from it at load; no
+// script runs here.
+vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: storyMocks.getTeamClassicSolvedIds, storyLockLua: () => "" }));
 vi.mock("@/lib/classic-store", () => ({
   listStories: storyMocks.listStories,
   listChallenges,

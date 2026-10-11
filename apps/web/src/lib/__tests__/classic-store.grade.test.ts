@@ -7,6 +7,18 @@
 // quiz-store.grade.test.ts proves GRADE_SCRIPT's ordering.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #463/#602: the team's lock keys come from the team store; pinned here. The
+// Lua fragment is the real one, so SUBMIT_SCRIPT is the shipped script.
+const classicTeam = vi.hoisted(() => ({
+  teamLockKeys: vi.fn(async (login: string) => ({
+    team: "red",
+    keys: [`ctf:classic:solves:${login}`, `ctf:user:${login}`, "ctf:classic:solves:bob", "ctf:user:bob"],
+  })),
+}));
+vi.mock("@/lib/classic-team", async (orig) => ({
+  storyLockLua: (await orig<typeof import("@/lib/classic-team")>()).storyLockLua,
+  teamLockKeys: classicTeam.teamLockKeys,
+}));
 
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
@@ -620,7 +632,7 @@ describe("dry run (#464 admin preview)", () => {
 describe("story lock (#463)", () => {
   const storiesReply = (steps: string[]) => [{ result: JSON.stringify([{ id: "op", title: "Op", intro: "", steps }]) }];
 
-  it("hands the script the step's prerequisite and every teammate's solves key", async () => {
+  it("hands the script the step's prerequisite, the teammate attempts hashes and every teammate's (solves, user record) pair with the team", async () => {
     teamRead.slug = "t";
     teamRead.members = ["alice", "bob"];
     gateReads(null, null);
@@ -631,14 +643,18 @@ describe("story lock (#463)", () => {
     const { keys, argv } = lastEval();
     expect(argv[8]).toBe("recon");
     // KEYS[8] is the lastAt hash (#522); from KEYS[9] on come the teammate
-    // attempts hashes (#494) and then the solves hashes the lock reads (#463).
+    // attempts hashes (#494) and then the (solves, user) pairs the lock
+    // reads (#463/#602).
     expect(keys[7]).toBe("ctf:classic:lastAt");
     expect(keys.slice(8)).toEqual([
-      "ctf:classic:attempts:bob",
+      "ctf:classic:attempts:bob", // #494 — before the pairs, never part of the lock loop
       "ctf:classic:solves:alice",
+      "ctf:user:alice",
       "ctf:classic:solves:bob",
+      "ctf:user:bob",
     ]);
-    expect(argv[9]).toBe(1); // ARGV[10] — where the solves hashes start
+    expect(argv[9]).toBe(1); // ARGV[10] — the teammate-attempt count
+    expect(argv[10]).toBe("red"); // ARGV[11] — the team slug the lock checks against
   });
 
   it("reports the script's `locked` exactly as an unknown challenge — no oracle, never a wrong answer", async () => {
@@ -744,15 +760,15 @@ describe("team-shared cooldown (#494)", () => {
     expect(script.split("for i = 9, 8 + nMate do")).toHaveLength(2);
   });
 
-  it("never reads an attempts row as a solve — the story lock iterates only the range after ARGV[10]", async () => {
+  it("never reads an attempts row as a solve — the story lock iterates only the pair range after the teammate attempts", async () => {
     await submitFlag("alice", "chal-1", "CTF{x}");
     const { script } = lastEval();
-    expect(script).toContain("for i = 9 + nMate, #KEYS do");
-    // One occurrence only: the lock's loop. Reading KEYS[9..] wholesale (the
-    // pre-#494 layout) would both miss the boundary and let an attempt open
-    // a lock — attempting is not solving.
-    expect(script.split("for i = 9 + nMate, #KEYS do")).toHaveLength(2);
-    expect(script).not.toContain("for i = 9, #KEYS do");
+    expect(script).toContain("for i = 9 + nMate, #KEYS, 2 do");
+    // One occurrence only: the lock's pair loop. Reading KEYS[9..] wholesale
+    // (the pre-#494 layout) would both miss the boundary and let an attempt
+    // open a lock — attempting is not solving.
+    expect(script.split("for i = 9 + nMate, #KEYS, 2 do")).toHaveLength(2);
+    expect(script).not.toContain("for i = 9, #KEYS, 2 do");
   });
 
   it("refuses closed ('unavailable') when the team lookup fails, without grading", async () => {

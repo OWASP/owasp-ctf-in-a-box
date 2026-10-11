@@ -17,6 +17,7 @@
 import { useCallback, useState } from "react";
 import AdminLiveStamp from "./admin-live-stamp";
 import { moduleLabel } from "./vocabulary";
+import { adminTime } from "@/lib/event-time";
 import { SLOW_POLL_MS, useLivePoll } from "./use-live-poll";
 
 type ChallengeStat = {
@@ -39,6 +40,7 @@ type EventMetrics = {
   funnel: { onATeam: number; everOnATeam: number; attempted: number; scored: number; stuck: number };
   challenges: ChallengeStat[];
   timeline: { at: string; solves: number }[];
+  bucketMinutes: number;
   teams: { slug: string; name: string; size: number; points: number }[];
   modules: { quiz: number; classic: number; ai: number; secureDevelopment: number };
   hints: { buyers: number; totalSpend: number; boughtBeforeSolving: number; boughtAfterSolving: number };
@@ -85,6 +87,92 @@ export function axisLabels(timeline: readonly { at: string }[]): { start: string
   };
 }
 
+/** A bucket's tooltip: its date, its whole range and its count, in UTC like
+ *  the rest of this panel. Sliced from the stored ISO strings, like the axis.
+ *  The end carries its own date when the bucket crosses midnight, or
+ *  "23:00–00:00" would not say which night. */
+export function bucketTitle(b: { at: string; solves: number }, minutes: number): string {
+  const end = new Date(Date.parse(b.at) + minutes * 60_000).toISOString();
+  const endLabel = end.slice(0, 10) === b.at.slice(0, 10) ? end.slice(11, 16) : `${end.slice(5, 10)} ${end.slice(11, 16)}`;
+  return `${b.at.slice(5, 10)} ${b.at.slice(11, 16)}–${endLabel} UTC · ${b.solves} solve${b.solves === 1 ? "" : "s"}`;
+}
+
+/** A bar's height against the busiest bucket. An empty bucket draws nothing,
+ *  so a quiet stretch reads as a gap; a non-empty one never drops below a
+ *  sliver, so one solve stays visible beside a tall peak. */
+export function bucketHeight(solves: number, peak: number): string {
+  if (!solves || !peak) return "0%";
+  return `${Math.max(6, Math.round((solves / peak) * 100))}%`;
+}
+
+const WIDTH_WORDS: Record<number, string> = { 10: "Ten-minute", 30: "Thirty-minute", 60: "One-hour", 120: "Two-hour", 240: "Four-hour", 360: "Six-hour", 720: "Twelve-hour" };
+
+/** The caption's name for the bucket width the server chose. */
+export function bucketWidthLabel(minutes: number): string {
+  return WIDTH_WORDS[minutes] ?? (minutes % 60 === 0 ? `${minutes / 60}-hour` : `${minutes}-minute`);
+}
+
+/** Solves over time: one bar per bucket from the first solve to the last.
+ *  The bars carry their figures in a `title`, which needs a pointer, so the
+ *  same lines sit in a disclosure list a keyboard or screen reader reaches
+ *  without hovering. Only buckets with solves are listed: a hundred
+ *  "0 solves" rows would bury the ones that matter. Exported for direct
+ *  testing, since the tab only renders it after a fetch. */
+export function SolvesChart({
+  timeline,
+  bucketMinutes,
+}: {
+  timeline: readonly { at: string; solves: number }[];
+  bucketMinutes: number;
+}) {
+  const peak = timeline.reduce((max, b) => Math.max(max, b.solves), 0);
+  const axis = axisLabels(timeline);
+  const busy = timeline.filter((b) => b.solves > 0);
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold text-white">Solves over time</h3>
+      <div
+        className="flex h-16 items-end gap-px"
+        role="img"
+        aria-label={`${bucketWidthLabel(bucketMinutes)} solves${axis ? `, ${axis.start} to ${axis.end} UTC` : ""}, busiest bucket ${peak}`}
+      >
+        {/* Every bucket from the first solve to the last, empty ones
+            included, stretched across the full width: the axis below
+            is then real time, and a quiet stretch is a visible gap. */}
+        {timeline.map((b) => (
+          <div key={b.at} title={bucketTitle(b, bucketMinutes)} className="flex h-full min-w-0 flex-1 items-end">
+            <div style={{ height: bucketHeight(b.solves, peak) }} className="w-full rounded-sm bg-[#2563eb]/70" />
+          </div>
+        ))}
+      </div>
+      {/* The axis. Without it the bars say "when did the room go
+          quiet" only relative to each other; with it, at what time. */}
+      {axis && (
+        <div aria-hidden="true" className="flex justify-between border-t border-white/[0.06] pt-1 font-mono text-xs tabular-nums text-muted">
+          <span>{axis.start}</span>
+          <span>{axis.mid}</span>
+          <span>{axis.end} UTC</span>
+        </div>
+      )}
+      <p className="text-sm text-muted">
+        {bucketWidthLabel(bucketMinutes)} buckets, quiz, Jeopardy and AI; the tallest bar is{" "}
+        {peak} solve{peak === 1 ? "" : "s"}. Attempt rows carry a first and a last time but not one per
+        try, so this is solves, not submissions.
+      </p>
+      <details className="text-sm text-muted">
+        <summary className="cursor-pointer">
+          Buckets with solves ({busy.length})
+        </summary>
+        <ul className="mt-1 flex flex-col gap-0.5 font-mono text-xs tabular-nums">
+          {busy.map((b) => (
+            <li key={b.at}>{bucketTitle(b, bucketMinutes)}</li>
+          ))}
+        </ul>
+      </details>
+    </section>
+  );
+}
+
 export default function AdminInsightsTab({
   visible = false,
   live = false,
@@ -129,8 +217,6 @@ export default function AdminInsightsTab({
   // The timeline's tallest bucket sets the bar scale. A sparkline of absolute
   // counts with no reference is unreadable; relative height is the whole
   // signal here ("did the room go quiet, and when").
-  const peak = metrics?.timeline.reduce((max, b) => Math.max(max, b.solves), 0) ?? 0;
-  const axis = metrics ? axisLabels(metrics.timeline) : null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -159,7 +245,7 @@ export default function AdminInsightsTab({
               Download challenges CSV
             </a>
             <span className="text-sm text-muted">
-              as of {metrics.generatedAt.slice(0, 16).replace("T", " ")} UTC
+              as of {adminTime(metrics.generatedAt, "UTC", { year: true })}
             </span>
           </>
         )}
@@ -197,36 +283,7 @@ export default function AdminInsightsTab({
           </section>
 
           {metrics.timeline.length > 0 && (
-            <section className="flex flex-col gap-2">
-              <h3 className="text-sm font-semibold text-white">Solves over time</h3>
-              <div
-                className="flex h-16 items-end gap-px overflow-x-auto"
-                role="img"
-                aria-label={axis ? `Solves per ten minutes, ${axis.start} to ${axis.end} UTC` : "Solves per ten minutes"}
-              >
-                {metrics.timeline.map((b) => (
-                  <div
-                    key={b.at}
-                    title={`${b.at.slice(11, 16)} — ${b.solves} solve${b.solves === 1 ? "" : "s"}`}
-                    style={{ height: `${peak ? Math.max(4, (b.solves / peak) * 100) : 4}%` }}
-                    className="w-2 flex-none rounded-sm bg-[#2563eb]/70"
-                  />
-                ))}
-              </div>
-              {/* The axis. Without it the bars say "when did the room go
-                  quiet" only relative to each other; with it, at what time. */}
-              {axis && (
-                <div aria-hidden="true" className="flex justify-between border-t border-white/[0.06] pt-1 font-mono text-xs tabular-nums text-muted">
-                  <span>{axis.start}</span>
-                  <span>{axis.mid}</span>
-                  <span>{axis.end} UTC</span>
-                </div>
-              )}
-              <p className="text-sm text-muted">
-                Ten-minute buckets, quiz, Jeopardy and AI. Attempt rows carry a first and a last time but not
-                one per try, so this is solves, not submissions.
-              </p>
-            </section>
+            <SolvesChart timeline={metrics.timeline} bucketMinutes={metrics.bucketMinutes} />
           )}
 
           <section className="flex flex-col gap-2">

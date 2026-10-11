@@ -109,6 +109,14 @@ describe("AdminOverviewTab", () => {
     expect(html).toContain("Quiz");
   });
 
+  it("offers a Show UTC switch on Recent activity, off by default", () => {
+    const html = render();
+    const section = html.slice(html.indexOf("Recent activity"));
+    expect(section).toContain("Show UTC");
+    expect(section).toMatch(/<input[^>]*type="checkbox"/);
+    expect(section).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked/);
+  });
+
   it("shows Loading… for the activity preview before its fetch could resolve", () => {
     expect(render()).toContain("Loading…");
   });

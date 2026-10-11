@@ -17,6 +17,7 @@
 
 import { useRef, useState } from "react";
 import type { ConfirmState } from "./types";
+import { adminTime } from "@/lib/event-time";
 
 /** The shape `GET /api/admin/ops/user` answers with — mirrors `UserDetail` in
  *  lib/admin-ops-store.ts (a value import would drag `server-only` into the
@@ -94,7 +95,7 @@ export function resetProgressConfirm(detail: UserDetail): {
  *  testing. */
 export function teamCardSummary(detail: UserDetail): { joined: string | null; actionSlug: string | null } {
   return {
-    joined: detail.team?.joinedAt ? `joined ${detail.team.joinedAt.slice(0, 16).replace("T", " ")} UTC` : null,
+    joined: detail.team?.joinedAt ? `joined ${adminTime(detail.team.joinedAt, "UTC", { year: true })}` : null,
     actionSlug: detail.team?.slug ?? null,
   };
 }
@@ -244,7 +245,7 @@ export default function AdminSupportTab({
           <p className="text-sm text-zinc-400">
             {detail.team ? (
               <>
-                Team <span className="font-mono text-white">{detail.team.name}</span>
+                Team <bdi className="font-mono text-white">{detail.team.name}</bdi>
                 <span className="text-muted"> ({detail.team.slug})</span>
                 {detail.team.isCaptain && <span className="text-[#d4a017]"> — captain</span>}
               </>
@@ -283,7 +284,7 @@ export default function AdminSupportTab({
 
           {detail.firstTeamAt && (
             <p className="text-sm text-muted">
-              First on a team {detail.firstTeamAt.slice(0, 16).replace("T", " ")} UTC
+              First on a team {adminTime(detail.firstTeamAt, "UTC", { year: true })}
               {detail.team?.joinedAt && detail.firstTeamAt !== detail.team.joinedAt && " (has switched teams since)"}
             </p>
           )}
@@ -351,7 +352,7 @@ export default function AdminSupportTab({
                         <>
                           {" "}
                           <strong>
-                            They captain &ldquo;{detail.team.name}&rdquo; — transfer the captaincy or disband that team first.
+                            They captain &ldquo;<bdi>{detail.team.name}</bdi>&rdquo; — transfer the captaincy or disband that team first.
                           </strong>
                         </>
                       )}

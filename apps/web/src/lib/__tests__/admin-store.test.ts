@@ -465,13 +465,8 @@ describe("aiCooldownSec", () => {
     await expect(updateAdminSettings({ aiCooldownSec: "x" as never }, "alice")).rejects.toThrow(
       AdminValidationError,
     );
-    // No patch-level null-clear exists for this knob — same as classic's:
-    // the only route back to "no override" is never writing the field at
-    // all (decode reads absent as null). A `null` value is therefore just
-    // another non-number, rejected the same way "x" is.
-    await expect(updateAdminSettings({ aiCooldownSec: null as never }, "alice")).rejects.toThrow(
-      AdminValidationError,
-    );
+    // null is not a rejection: it clears the knob back to its default (see
+    // "numeric knobs accept null as clear" below).
     // Every rejection above refused BEFORE the store: the only Lua call in
     // this whole test is the one valid write at the top. A rejection that
     // still reached upstashEval would validate after writing — the exact
@@ -902,5 +897,44 @@ describe("sponsorLogoSize", () => {
 
     mocks.upstashPipeline.mockResolvedValue([{ result: ["sponsorLogoSize", "xl"] }]);
     expect((await getAdminSettings()).sponsorLogoSize).toBeNull();
+  });
+});
+
+// --- numeric knobs clear back to their default (#600) ---------------------
+// Once set, a numeric knob could never return to "unset": the rehearsal left
+// hintsMinSolves stored as 1 (equal to the default, but no longer following
+// it). null or "" now HDELs the field, the way sponsorLogoSize and the
+// schedule bounds already clear.
+describe("numeric knobs accept null as clear", () => {
+  const KNOBS = [
+    "hintCost",
+    "hintsMinSolves",
+    "hintsUnlockAfterMin",
+    "quizMaxAttempts",
+    "quizRetryAfterMin",
+    "classicCooldownSec",
+    "aiCooldownSec",
+    "scoreCooldownMin",
+    "teamMaxMembers",
+  ] as const;
+
+  it.each(KNOBS)("%s: null deletes the field instead of being refused", async (knob) => {
+    mocks.upstashEval.mockClear();
+    await expect(updateAdminSettings({ [knob]: null } as unknown as Parameters<typeof updateAdminSettings>[0], "alice")).resolves.toBeDefined();
+    const args = mocks.upstashEval.mock.calls[0][2] as string[];
+    const numDels = Number(args[4]);
+    expect(args.slice(5, 5 + numDels)).toContain(knob);
+    expect(args.slice(5 + numDels)).not.toContain(knob);
+  });
+
+  it("treats an empty string the same as null", async () => {
+    mocks.upstashEval.mockClear();
+    await updateAdminSettings({ hintsMinSolves: "" }, "alice");
+    const args = mocks.upstashEval.mock.calls[0][2] as string[];
+    expect(args.slice(5, 5 + Number(args[4]))).toContain("hintsMinSolves");
+  });
+
+  it("still refuses an out-of-range number", async () => {
+    await expect(updateAdminSettings({ teamMaxMembers: 0 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
   });
 });

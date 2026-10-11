@@ -91,6 +91,14 @@ describe("the assembled registry", () => {
     expect(moduleDefById("nope" as never)).toBeUndefined();
   });
 
+  // A Secure Development point posts when the event RECEIVES the passing
+  // result, minutes after the push, and that receipt time breaks a points tie.
+  // Copy promising it "immediately" contradicts the rule a tie is decided on.
+  it("never promises Secure Development points the instant a test passes", () => {
+    const copy = JSON.stringify(moduleDefById("secure-development"));
+    expect(copy).not.toMatch(/scores?( its)? points immediately|awarded the moment/i);
+  });
+
   it("does not value-import the module back out of its own def", () => {
     for (const id of ALL_MODULE_IDS) {
       const src = read(join(DEFS, `${id}.ts`));

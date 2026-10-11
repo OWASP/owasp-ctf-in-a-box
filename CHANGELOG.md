@@ -10,6 +10,99 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: admin Insights undercounted the event and disagreed with the
+  leaderboard (#608).** Players whose GitHub login has a capital letter were
+  read under the lowercased login and found empty; a player who left a team
+  without scoring was never found; team points summed members' own totals
+  instead of the board's. On the RTS event's snapshot "ever on a team" goes
+  from 30 to 42, Jeopardy solves from 59 to 119, attempts from 225 to 339,
+  and every team's points now equal the board. The solves chart keeps the
+  quiet stretches as empty buckets on a real time axis across the full
+  width, widening the bucket (10 min, 30 min, 1 h, …) on a long event.
+- **Added: search the admin Activity log on every field (#609).** One box
+  matches each word against the login, the event, the detail (challenge,
+  question or team id) and the time as shown, with `login:`, `type:`,
+  `detail:` and `team:` to pin a word to one field; a time range (quick
+  picks or from/to on the panel's clock) narrows it further, and each type
+  chip shows its count. A filter now searches the whole log, not only the
+  pages loaded, and the search is kept in the URL (`?q=`). Before, the box
+  matched the login only.
+- **Fixed: team names could be invisible or reverse the text around them
+  (#603).** Create and rename now refuse a name with nothing visible (a lone
+  zero-width space saved a nameless team through rename) and any
+  text-direction control character (a right-to-left override rendered a
+  name reversed over its neighbours), and measure the 32-character limit
+  after NFC. Every surface showing a team name isolates its direction, so a
+  name stored before the check cannot reorder its row.
+- **Fixed: a solved story step could be carried to another team (#602).**
+  A player who solved step N on one team and then joined another opened step
+  N+1 there, because unlocks read who is on the team now. A teammate's solve
+  now opens the next step only if they made it while on the team (solve time
+  on or after their join time), decided inside the grading and hint scripts
+  and applied the same way on the board, the challenge pages and
+  `/api/board/items`. Points are unaffected: a team's total is still the
+  union of its members' solves (ADR 60 amended).
+- **Fixed: the leaderboard's Individual view listed only contestants who had
+  scored (#586).** Every team member now has a row; one with no points sits
+  at 0 after everyone who scored, alphabetically, so a player who can find
+  their team on the Teams view can find themselves too. On the RTS event's
+  snapshot the view goes from 22 rows to all 41 team members. A signed-in
+  player on no team still gets no row.
+- **Fixed: a points tie between teams ignored when they finished Jeopardy
+  (#583).** Teams now rank like individuals: points, then items completed,
+  then whoever earned their last points first, in any module. The scorer's
+  order only knew Secure Development, and the app kept it on a tie, so at
+  the RTS event three teams tied at 5,308 were ranked by their Secure
+  Development finish; by the rule they finish Oxguardians, provart,
+  Mortadela's, which the board now shows on the event's snapshot. The rules
+  page and FAQ state the team rule, and Secure Development's rules say a PR
+  counts from when the event receives it.
+- **Fixed: a numeric event setting could never be reset to its default
+  (#600), and two messages misstated when points count (#599).** Emptying
+  a number field in `/admin` (hint cost and gating, players per team, the
+  retry gate, the cooldowns) now removes the override so the default applies
+  again; the API takes `null` or `""` for the same, as the other optional
+  settings already did. The profile's team card no longer says nothing counts
+  without a team on a Secure Development event (PR scores are kept and count
+  for the team the player joins), and every PR score report now says points
+  count only while the event's scoring window is open.
+- **Changed: vitest 4.1.11 → 5.0.2 in `apps/web` (Dependabot #453).** No
+  test or config changes were needed: the full suite, the live grading-Lua
+  suites with `CTF_LUA_SUITES_REQUIRED=1`, lint, typecheck and the
+  production build all pass unchanged.
+
+- **Changed: dependency batch (Dependabot #462, #563, #564, #565, #574,
+  #575).** Next.js and `eslint-config-next` 16.3.6 → 16.4.0, better-auth
+  1.7.5 → 1.7.7, `@types/node` 26.6.2 → 26.6.4, sharp 0.35.4 → 0.35.5,
+  source-map-js 1.2.1 → 1.2.2, and the compose `redis:8-alpine` digest. One
+  lockfile regenerated against current `main` instead of six PRs whose
+  lockfile hunks overlap. better-auth is now pinned exactly (1.7.7, one
+  patch past Dependabot's target), as `next` already is; `@types/node`
+  resolves one patch past its target inside the existing `^26` range.
+- **Fixed: an expanded leaderboard row listed the story steps its team had
+  solved, but that the viewer has not reached, as unsolved and worth 0
+  (#584).** The steps stay redacted placeholders (ADR 60) and now read
+  "Locked" with a dash instead of "Open" and "0pt"; one line under the list
+  gives how many of them the team solved and their total ("5 hidden steps
+  solved · 1,550 pts"). The route sends only that count, never which steps;
+  the total is the row's own Jeopardy points minus the visible items, so no
+  single step's value is sent or shown.
+- **Fixed: admin activity times read in UTC with no label, and to the minute
+  (#587).** The Overview's Recent activity and the Activity tab now show each
+  entry on the event's clock, to the second, with the offset named
+  ("10-07 13:26:00 GMT-3"), with a "Show UTC" switch, remembered per
+  browser, for matching a row against logs; at the RTS finish two solves 24
+  seconds apart both read "16:59". Insights and Support keep UTC on purpose, to match
+  against logs, and now carry seconds too.
+
+- **Fixed: the leaderboard's score chart dropped every quiz, Jeopardy and AI
+  point of a contestant whose GitHub login has an uppercase letter (#577).**
+  The chart read each module's solves hash under the lowercased login, while
+  the stores key it on the login as the session spelled it, so the read came
+  back empty; a team whose only scorer history was one PR showed "Not enough
+  score history yet to chart." with hundreds of points on the board. Scores,
+  ranks and the module rows were never affected.
+
 - **Changed: the maintainability follow-ups from the pre-v0.7.0 audit
   (#504).** Refactors with no behavior change: the demo seed and clear body
   moved out of `admin-store.ts` (43% of that file) into `lib/demo-seed.ts`,

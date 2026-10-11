@@ -366,3 +366,20 @@ test("judges a YAML target in a rubric dir that also holds an exec target siblin
   assert.equal(total, 3);
   assert.deepEqual(solved, ["reflected-xss-search"]);
 });
+
+// #599: the report posts after the scoring window closes (or while paused) the
+// same as during it, and its points read as counted when the event ignores
+// them. Every report carries one line saying when points count; the marker,
+// which is what the event actually ingests, is untouched.
+test("renderReport says points count only while the scoring window is open", () => {
+  const md = renderReport({
+    challenges: [{ id: "c1", name: "One", points: 3 }],
+    solved: ["c1"],
+    author: "ada",
+    target: "vampi",
+    pr: 7,
+    sha: "abc",
+  });
+  assert.match(md, /Points count only while the event's scoring window is open; see the event site for standings\./);
+  assert.ok(md.indexOf("scoring window is open") < md.indexOf("<!-- ctf-score:"), "the line sits above the marker");
+});

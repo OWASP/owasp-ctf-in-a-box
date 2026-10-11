@@ -215,8 +215,12 @@ state; everything else that touches scores goes through it.
    points descending, then items completed **across modules** descending,
    then earliest last-activity ascending (#522 — until v0.7 items came
    first), with a `patched`/`lastSolveAt` fallback for sources that carry no
-   per-module data (e.g. the legacy Upstash-schema source). Teams rank on
-   points too, so the two views agree. The Upstash source hands back rows
+   per-module data (e.g. the legacy Upstash-schema source). Teams rank by the
+   same three keys (`compareTeamStanding`): the activity time is the latest of
+   every module block's and the scorer's team `lastSolveAt`, so a points tie
+   goes to the team that earned its last points first in any module, not to
+   the scorer's Secure-Development-only order. A Secure Development time is
+   when the box received the score. The Upstash source hands back rows
    ordered by points descending (`ZRANGE`); points-first keeps that order and
    only breaks its ties on `patched`, the same way as on the lambda and mock
    sources. An
@@ -264,7 +268,13 @@ entry behind it — and its only points are the modules', added rather than
 attributed (see [Quiz data flow](#quiz-data-flow), [Jeopardy data
 flow](#jeopardy-data-flow) and [AI data flow](#ai-data-flow) below for why
 those are
-different verbs). `withTeamStandings` does the same one step later for
+different verbs). `withTeamStandings` also gives every team member an
+Individual row: a member with no points yet gets a 0 row, ranked after
+everyone who scored and by name among the zeros, so a player who can find
+their team on the Teams view can find themselves too. The rosters are the
+team store's and the source's own; signing in without a team creates no row,
+though a player who scored before leaving their team keeps theirs. It does the
+same one step later for
 teams: every team row — the source's own, and the membership-only rows it
 synthesises from live team records the source does not know — gets quiz,
 classic and ai points added, once,
@@ -934,13 +944,28 @@ solves, the three matching attempt hashes, `firstTeamAt` off
 round trip. Nothing else; the module contract for those row shapes is
 [docs/modules.md §10](modules.md#section-10-engagement-metrics-contract-insights).
 
-**Who counts as a contestant** is the union of everyone on a team and everyone
-with points in any module — cheaper than `SCAN`ning `ctf:user:*`, which also
-matches `ctf:user:<login>:hints`. Team membership is what makes `stuck`
-measurable: someone who attempted everything and solved nothing has no points
-row, so only their team knows they exist. That works because ADR 47 makes a
-team mandatory before anything scores. An event running without team writes
-would see only contestants who scored.
+**Who counts as a contestant** is the union of everyone on a team, everyone
+with points in any module, and everyone with a user record (`ctf:user:<login>`,
+found by `SCAN`; the `ctf:user:<login>:hints` sets the same pattern matches are
+skipped). Team membership is what makes `stuck` measurable: someone who
+attempted everything and solved nothing has no points row, so only their team
+knows they exist. The user records are what make "ever on a team" honest: a
+player who joined a team, left it and scored nothing is on no roster and in no
+points hash, so without them the figure missed exactly the people it exists to
+count. If the scan fails, the panel says so in `caveats` rather than serving
+the short count as a measurement.
+
+**Logins are read under every spelling the box holds.** Per-login hashes are
+keyed on the login as the session spelled it (`ctf:classic:solves:ChrisZoc`);
+only the joins between logins lowercase. So each contestant's rows are read
+under every stored spelling (rosters, the points and hint-spend hashes, the
+scorer's entries, user records) and merged. Reading under the lowercased login
+alone hid 12 of 42 RTS contestants from every figure on the panel.
+
+**Team points are the leaderboard's.** The per-team figure comes from the same
+folded leaderboard the board shows (`getFoldedLeaderboard({ fresh: true })`),
+so the two cannot disagree. When the board cannot be read, the panel falls
+back to summing members' totals and says so in `caveats`.
 
 **The fold is capped at 2000 contestants** (`MAX_CONTESTANTS`), far beyond
 what the kit targets — the cap exists so a runaway key space cannot turn an

@@ -11,7 +11,7 @@ import {
 import { getEnabledModuleIds, isModuleLive } from "@/lib/enabled-modules";
 import { getEnabledTotals } from "@/lib/enabled-apps";
 import { getQuizTotals, getTeamQuizTotalsBatch, listQuestions, type QuizTotal } from "@/lib/quiz-store";
-import { rankByStanding } from "./rank";
+import { compareTeamStanding, rankByStanding } from "./rank";
 import type { AppProgress, LeaderboardData, LeaderboardEntry, ModuleProgress, TeamStanding } from "./types";
 import type { AppId } from "@/lib/apps";
 import type { ModuleId } from "@/lib/modules";
@@ -222,7 +222,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
         ...team,
         modules: {
           ...(team.modules ?? {}),
-          "secure-development": secureDevelopmentModule(team.points, patched, null, apps),
+          "secure-development": secureDevelopmentModule(team.points, patched, team.lastSolveAt ?? null, apps),
         },
       };
     });
@@ -697,7 +697,8 @@ function aiContributions(
 /** Adds each team's already-deduped module total (`contributions[i]` belongs
  *  to `teams[i]`) to its points and stamps that module's block, then re-ranks
  *  the teams on the new totals — mirroring `withHintPenalties`'s team sort
- *  (points descending, original position breaking ties). Shared verbatim by
+ *  (`compareTeamStanding`: points, items, then whoever earned their last
+ *  points first in any module; original position breaking what is left). Shared verbatim by
  *  every caller and every module, so a source-provided team row and a
  *  synthesised one are attributed by exactly the same rule.
  *
@@ -718,6 +719,6 @@ function attributeTeams(teams: TeamStanding[], { moduleId, contributions }: Team
         },
       };
     })
-    .sort((a, b) => b.team.points - a.team.points || a.i - b.i)
+    .sort((a, b) => compareTeamStanding(a.team, b.team) || a.i - b.i)
     .map(({ team }, i) => ({ ...team, rank: i + 1 }));
 }

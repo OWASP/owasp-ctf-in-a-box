@@ -107,11 +107,12 @@ export async function recordCallbackLogin(path: string, newSession: unknown): Pr
  * One page of the log, newest first, plus the list's total length so the
  * admin tab can say how much more there is to load.
  *
- * No server-side type/login filtering, deliberately: the whole list is at
- * most `ACTIVITY_LOG_MAX` short JSON rows, so the tab filters the pages it
- * has loaded client-side instead of this read growing a second, subtler
- * pagination contract ("offset within the filtered view"). Malformed rows
- * are skipped, not fatal — one corrupt entry must not blank the whole tab.
+ * No server-side filtering, deliberately: the whole list is at most
+ * `ACTIVITY_LOG_MAX` short JSON rows, so the tab reads all of it while a
+ * filter is on and filters client-side, instead of this read growing a
+ * second, subtler pagination contract ("offset within the filtered view").
+ * Malformed rows are skipped, not fatal — one corrupt entry must not blank
+ * the whole tab.
  *
  * Unlike the writer this THROWS on Redis failure: a reader with no data has
  * nothing useful to degrade to, and the route maps the throw to a 503.

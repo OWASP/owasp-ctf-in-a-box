@@ -384,6 +384,7 @@ export default async function ProfilePage() {
           captain={teamMeta.captain}
           joinCode={teamMeta.joinCode}
           registrationOpen={adminSettings === null ? true : effectiveRegistrationOpen(adminSettings)}
+          secureDevEnabled={secureDevEnabled}
         />
         {teamStanding && teamMemberEntries.length > 0 && (
           <TeamProgress

@@ -1063,3 +1063,29 @@ describe("module-contributions log redaction (#500)", () => {
     }
   });
 });
+
+// The RTS tie, through the real team fold. The scorer hands the teams over in
+// ITS order, which knows only Secure Development (provart finished SD first);
+// once Jeopardy is added, a points tie must go to the team that earned its
+// last points first in any module, not keep the scorer's order.
+describe("team ties break on the last points earned in ANY module (#583)", () => {
+  it("re-orders the RTS three-way tie by the Jeopardy finish", async () => {
+    mocks.moduleLive.mockImplementation((id: string) => id === "secure-development" || id === "classic");
+    const teams: TeamStanding[] = [
+      { rank: 1, slug: "provart", name: "provart", captain: "a", points: 668, members: ["a"], lastSolveAt: "2026-10-08T12:35:30.995Z" },
+      { rank: 2, slug: "mortadela-s", name: "Mortadela's", captain: "b", points: 668, members: ["b"], lastSolveAt: "2026-10-09T05:15:55.389Z" },
+      { rank: 3, slug: "oxguardians", name: "Oxguardians", captain: "c", points: 668, members: ["c"], lastSolveAt: "2026-10-09T15:40:09.998Z" },
+    ];
+    mocks.getTeamClassicTotalsBatch.mockResolvedValue([
+      { points: 4650, solved: 18, lastAt: "2026-10-09T16:59:32.540Z" },
+      { points: 4650, solved: 18, lastAt: "2026-10-09T17:19:32.531Z" },
+      { points: 4650, solved: 18, lastAt: "2026-10-09T16:59:08.114Z" },
+    ]);
+    const out = await withTeamClassicPoints(teams);
+    expect(out.map((t) => [t.slug, t.points, t.rank])).toEqual([
+      ["oxguardians", 5318, 1],
+      ["provart", 5318, 2],
+      ["mortadela-s", 5318, 3],
+    ]);
+  });
+});

@@ -8,6 +8,7 @@
 // no denominator ("58 pts 38 patched"), and a target breakdown below it giving
 // counts with no points.
 
+import { adjustmentLabel } from "@/lib/leaderboard/adjustment-label";
 import type { ModuleId, ResolvedModule } from "@/lib/modules";
 import type { AppMeta } from "@/lib/apps";
 import AppBreakdown from "@/components/app-breakdown";
@@ -131,6 +132,11 @@ export function TeamRow({
                   contestant's own spend is still itemised on their profile,
                   where it is their own business to read. */}
               <p className="text-[11px] uppercase tracking-wide text-muted">net pts</p>
+              {/* An organizer's bonus or penalty is already in the figure
+                  above; the marker says so, so nobody wonders why it moved. */}
+              {typeof team.adjustment === "number" && team.adjustment !== 0 && (
+                <p className="text-[11px] tabular-nums text-[#d4a017]">{adjustmentLabel(team.adjustment)}</p>
+              )}
             </div>
             <div className="hidden sm:block">
               <p className="font-mono text-base tabular-nums text-zinc-300">{team.members.length}</p>

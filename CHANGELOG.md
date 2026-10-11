@@ -48,6 +48,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   other members refused, the player found by their signed-in spelling,
   written to the audit and activity logs. Reopening registration is no
   longer the only way back.
+- **Added: score adjustments for teams (#591).** `/admin → Support → Score
+  adjustments` adds a bonus or penalty to a team with a required reason, and
+  lists every one with who added it and a Remove. It is folded into the
+  team's total last, after hint spend, on the board, display mode and the
+  profile panel, marked "±N adjustment", floored at 0, never changing the
+  tie-break time. Its own ledger (`ctf:adjustments`), audited on add and
+  remove, cleared by the master reset, not carried by the event archive. It
+  replaces deducting points by writing hint spend into Redis by hand.
 - **Fixed: admin Insights undercounted the event and disagreed with the
   leaderboard (#608).** Players whose GitHub login has a capital letter were
   read under the lowercased login and found empty; a player who left a team

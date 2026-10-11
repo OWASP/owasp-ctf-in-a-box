@@ -34,9 +34,9 @@ describe("AdminSupportTab", () => {
     const html = renderToStaticMarkup(<AdminSupportTab setConfirm={() => {}} />);
     expect(html).toContain("Find a contestant");
     expect(html).toContain("Team actions");
-    // Look up, Transfer captaincy, Disband team — nothing is live before a
-    // lookup or a filled slug.
-    expect(html.match(/<button[^>]*disabled=""/g)?.length).toBe(3);
+    // Look up, Transfer captaincy, Disband team, Add adjustment: nothing is
+    // live before a lookup, a filled slug, or a complete adjustment.
+    expect(html.match(/<button[^>]*disabled=""/g)?.length).toBe(4);
   });
 });
 

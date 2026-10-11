@@ -131,13 +131,14 @@ describe("resetEvent", () => {
       activity: 2,
       sponsors: 2,
       sponsorsLogo: 2,
+      adjustments: 2,
     });
     expect(out.resetAt).toMatch(/^\d+$/);
 
-    // one SCAN + one DEL per prefix (29 prefixes) = 58 pipeline calls
+    // one SCAN + one DEL per prefix (30 prefixes) = 60 pipeline calls
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(29);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(29);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(30);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(30);
     // every wiped prefix, and NOT settings/audit/sync
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
@@ -172,6 +173,7 @@ describe("resetEvent", () => {
       "ctf:activity:log",
       "ctf:sponsors",
       "ctf:sponsors:logo",
+      "ctf:adjustments",
     ]);
 
     // the freeze + audit eval: settings + audit keys, and a reset audit line

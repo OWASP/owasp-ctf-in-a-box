@@ -1,4 +1,5 @@
 import "server-only";
+import { ADJUSTMENTS_KEY } from "@/lib/adjustment-keys";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ADMIN_ADMINS_KEY, LOGIN_RE } from "@/lib/admin-admins";
 import { TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
@@ -770,6 +771,9 @@ const RESET_PREFIXES: readonly [string, string][] = [
   // ADR in docs/decisions.md). So a master reset wipes both hashes outright.
   ["sponsors", SPONSORS_KEY],
   ["sponsorsLogo", SPONSORS_LOGO_KEY],
+  // The organizer's score adjustments are this event's scoring data, like
+  // the solves above, so they go with them.
+  ["adjustments", ADJUSTMENTS_KEY],
 ];
 
 // SCAN (never KEYS — non-blocking) a prefix and DEL matches in batches until the

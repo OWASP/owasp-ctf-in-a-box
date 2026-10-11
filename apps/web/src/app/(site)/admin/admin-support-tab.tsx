@@ -17,6 +17,7 @@
 
 import { useRef, useState } from "react";
 import type { ConfirmState } from "./types";
+import AdminAdjustments from "./admin-adjustments";
 import { adminTime } from "@/lib/event-time";
 
 /** The shape `GET /api/admin/ops/user` answers with — mirrors `UserDetail` in
@@ -568,6 +569,8 @@ export default function AdminSupportTab({
           </button>
         </div>
       </section>
+
+      <AdminAdjustments />
 
       {error && <p className="text-sm text-[#e53e3e]">{error}</p>}
       {notice && <p className="text-sm text-[#22c55e]">{notice}</p>}

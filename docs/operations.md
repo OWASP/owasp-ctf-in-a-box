@@ -730,6 +730,28 @@ The panel offers:
   can administer. And **disbanding deletes nobody's points**: solves are per
   contestant, so the players keep what they earned and can regroup.
 
+  **Score adjustments** (the last block on the tab) — a bonus or penalty for a
+  **team**, with a required reason: type the team slug, a whole number of
+  points (negative for a penalty, up to ±100000, never 0) and the reason, and
+  **Add adjustment**. The list below shows every adjustment with its team,
+  amount, reason and who added it, each with **Remove**. An adjustment:
+  - is applied to the team's total **last**, after hint spend, on every surface
+    that shows it (the board, display mode, the profile's team panel), marked
+    "±N adjustment" beside the total; the total **floors at 0**, like the hint
+    fold;
+  - never touches anyone's hint balance, survives hints being switched off,
+    and adjusts teams only (individual rows are unchanged);
+  - moves points, not time: two teams level after an adjustment are still
+    ordered by who earned their last points first;
+  - is written to the admin audit log on add and on remove (`adjustment:add`,
+    `adjustment:remove`, with who and why), and lives in its own ledger,
+    `ctf:adjustments`;
+  - is this event's scoring data: the **master reset** clears it, and the
+    **event archive does not carry it** (an archive carries content and
+    policy, never solves). The score chart stays gross, as it does for hints.
+  It replaces writing hint spend by hand in Redis, which the board labelled as
+  hints, took from one member's hint balance, and vanished with hints off.
+
   > **Secure Development solves come back.** The scorer writes them with
   > `HSETNX` so replays are no-ops, and the poller re-submits from the PR
   > comments it reads — so a per-contestant reset clears them, and the next
@@ -1130,7 +1152,8 @@ AI challenge's mode, launch URL template and **per-challenge signing key**
 plus **policy** settings: the hint controls (enabled, cost, and its two
 gating knobs), the quiz retry-gate knobs, Jeopardy's and AI's submission
 cooldowns, the re-run cooldown, the team-size cap and registration switch,
-module title/blurb overrides, and which modules are enabled. It also carries an informational **event
+module title/blurb overrides, and which modules are enabled. It carries no
+scoring data: no solves, attempts, team rosters or score adjustments. It also carries an informational **event
 identity** block — `name`, `theme`, `dates`, `location` and `ctfStartsAt` —
 read from the running box at export time.
 

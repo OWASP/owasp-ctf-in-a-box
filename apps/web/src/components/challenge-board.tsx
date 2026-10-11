@@ -16,7 +16,7 @@
 
 import Link from "next/link";
 import ProgressSummary from "@/components/progress-summary";
-import type { ChallengeView } from "@/components/challenge-detail";
+import { teamsLabel, type ChallengeView } from "@/components/challenge-detail";
 
 // Re-exported so every existing consumer of the view types keeps one import
 // path — the types themselves moved with the interactive surface. Both the
@@ -106,6 +106,7 @@ export default function ChallengeBoard({
                       <span className="flex items-baseline justify-between">
                         <span className={`font-mono text-xs tabular-nums ${solved ? "text-[#22c55e]/80" : "text-muted"}`}>
                           {challenge.points} pts
+                          {challenge.teamsSolved !== null && <> · {teamsLabel(challenge.teamsSolved)}</>}
                           {hintIds.includes(challenge.id) && (
                             <span title="A paid hint is available on this challenge's page." className="ml-1.5">
                               💡

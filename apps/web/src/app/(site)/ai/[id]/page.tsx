@@ -23,6 +23,7 @@
 // in `[id]/not-found.tsx`).
 
 import type { Metadata } from "next";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import Link from "next/link";
@@ -36,7 +37,6 @@ import { mintLaunchUrl } from "@/lib/ai-launch";
 import { resolveOrigin } from "@/lib/app-origin";
 import {
   AI_COOLDOWN_SEC,
-  getAiSolveCounts,
   getViewerAi,
   listAiChallenges,
   type ViewerAi,
@@ -93,7 +93,7 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
 
   const [challenges, solveCounts, viewerAi, modules, hintIds, hintNotice, viewerHints] = await Promise.all([
     listAiChallenges(),
-    getAiSolveCounts(),
+    teamSolveCounts("ai"),
     login ? getViewerAi(login) : Promise.resolve<ViewerAi>({ solved: {}, attempts: {} }),
     getResolvedModules(),
     getAiHintIds(),
@@ -119,7 +119,8 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
     category: challenge.category,
     description: challenge.description,
     points: challenge.points,
-    solveCount: solveCounts.get(challenge.id) ?? 0,
+    // Teams, not players (#595): scoring is per team. Null when unread.
+    teamsSolved: solveCounts ? (solveCounts.get(challenge.id) ?? 0) : null,
     caseSensitive: challenge.caseSensitive,
     ...deriveStatus(viewerAi.solved[challenge.id], viewerAi.attempts[challenge.id], cooldownMs),
   };

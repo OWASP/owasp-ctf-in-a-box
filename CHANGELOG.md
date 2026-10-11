@@ -19,7 +19,6 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   and every team's points now equal the board. The solves chart keeps the
   quiet stretches as empty buckets on a real time axis across the full
   width, widening the bucket (10 min, 30 min, 1 h, …) on a long event.
-
 - **Added: search the admin Activity log on every field (#609).** One box
   matches each word against the login, the event, the detail (challenge,
   question or team id) and the time as shown, with `login:`, `type:`,

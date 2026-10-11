@@ -62,6 +62,12 @@ vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
 // #186: the panel's own Export needs each challenge's attachment metadata.
 const attachmentStore = vi.hoisted(() => ({ listAllAttachments: vi.fn(async () => new Map()) }));
 vi.mock("@/lib/attachments-store", () => attachmentStore);
+// #595: solve counts per challenge, teams and players.
+const counts = vi.hoisted(() => ({
+  teamSolveCounts: vi.fn(async (): Promise<Map<string, number> | null> => new Map()),
+  getSolveCounts: vi.fn(async () => new Map<string, number>()),
+}));
+vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts: counts.teamSolveCounts }));
 vi.mock("@/lib/classic-store", () => ({
   listChallengesForAdmin,
   listCategories,
@@ -73,6 +79,7 @@ vi.mock("@/lib/classic-store", () => ({
   listStories,
   setStories,
   listChallengeIds,
+  getSolveCounts: counts.getSolveCounts,
   ClassicValidationError,
 }));
 // `adminErrorLabel` is the real (name+message, capped) implementation, not a
@@ -173,7 +180,25 @@ describe("GET /api/admin/classic", () => {
   it("returns challenges (with flags) and categories for an admin", async () => {
     const res = await GET(adminReq("GET"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [], attachments: {} });
+    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [], attachments: {}, solves: { [ADMIN_ROW.challenge.id]: { teams: 0, players: 0 } } });
+  });
+
+  // #595: an organizer spots a flag nobody can solve from the list itself.
+  it("returns how many teams and players solved each challenge", async () => {
+    counts.teamSolveCounts.mockResolvedValueOnce(new Map([[ADMIN_ROW.challenge.id, 2]]));
+    counts.getSolveCounts.mockResolvedValueOnce(new Map([[ADMIN_ROW.challenge.id, 3]]));
+    const body = await (await GET(adminReq("GET"))).json();
+    expect(body.solves).toEqual({ [ADMIN_ROW.challenge.id]: { teams: 2, players: 3 } });
+  });
+
+  it("still lists the challenges when the counts cannot be read, marking them unknown", async () => {
+    counts.teamSolveCounts.mockResolvedValueOnce(null);
+    counts.getSolveCounts.mockRejectedValueOnce(new Error("NOAUTH"));
+    const res = await GET(adminReq("GET"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.challenges).toEqual([ADMIN_ROW]);
+    expect(body.solves).toEqual({ [ADMIN_ROW.challenge.id]: { teams: null, players: null } });
   });
 
   // Finding B: the store reads were not wrapped in a try/catch, so a

@@ -1389,9 +1389,18 @@ entirely inside the app.
 
 ![The Jeopardy board as a contestant sees it: challenges grouped by category as compact tiles — title, points, and a green check once solved — with the solved-count and points progress bar above them](assets/flags.jpg)
 
-<sup>The board as a contestant sees it: every card says what it's worth and how
-many people have solved it, a badge marks the flags where casing matters, and
-grading answers the instant you submit.</sup>
+<sup>The board as a contestant sees it: every card says what it's worth, a
+badge marks the flags where casing matters, and grading answers the instant
+you submit.</sup>
+
+**Solve counts are teams** (#595). Every visible tile, open story step and
+challenge page says how many teams solved it ("3 teams"): scoring is per team,
+so two members solving one flag count once, and a solver on no team is not
+counted. The figure is folded from the current members' solves on each read,
+never stored, so a team change cannot leave it stale. A locked story step
+shows no count. In `/admin` the Jeopardy list gives each challenge both
+figures ("3 teams · 5 players", or "unsolved"), so a flag nobody can solve
+stands out; if a count cannot be read it is left off rather than shown as 0.
 
 **Authoring** happens in `/admin`, under the Jeopardy module's tab (see
 "Jeopardy controls" above). Before adding a challenge you need at least one

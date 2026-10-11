@@ -359,3 +359,21 @@ export function formatImportSummary({ created, updated, categories, stories }: I
   const storyPart = stories === undefined ? "" : `, ${stories} ${stories === 1 ? "story" : "stories"}`;
   return `Imported: ${created} created, ${updated} updated. (${categories} ${categoryWord}${storyPart} listed in the file.)`;
 }
+
+/** One challenge's solve counts as GET /api/admin/classic sends them (#595):
+ *  teams (the board's figure) and players; null where a count was unread. */
+export type ChallengeSolves = { teams: number | null; players: number | null };
+
+/** The list row's solve figure: "3 teams · 5 players", "unsolved" when
+ *  nobody has, so a flag nobody can solve stands out; only what is known when
+ *  a count was unread; null when nothing is. */
+export function solvesLabel(solves: ChallengeSolves | undefined): string | null {
+  if (!solves) return null;
+  const { teams, players } = solves;
+  if (teams === 0 && players === 0) return "unsolved";
+  const parts = [
+    teams === null ? null : `${teams} team${teams === 1 ? "" : "s"}`,
+    players === null ? null : `${players} player${players === 1 ? "" : "s"}`,
+  ].filter((p): p is string => p !== null);
+  return parts.length ? parts.join(" · ") : null;
+}

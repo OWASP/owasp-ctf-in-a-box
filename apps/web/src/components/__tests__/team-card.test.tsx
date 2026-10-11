@@ -158,4 +158,31 @@ describe("TeamCard teamless copy follows the modules", () => {
     expect(html).toContain("You need a team before anything you solve counts.");
     expect(html).not.toMatch(/Secure Development/);
   });
+
+  it("keeps the organizer direction when registration is closed, and says PRs are kept", () => {
+    const html = renderToStaticMarkup(
+      <TeamCard
+        team={null}
+        writesEnabled
+        maxMembers={4}
+        isCaptain={false}
+        captain={null}
+        joinCode={null}
+        registrationOpen={false}
+        secureDevEnabled
+      />,
+    );
+    expect(html).toMatch(/registration is closed/i);
+    expect(html).toContain("find an organizer");
+    expect(html).toContain("Secure Development PRs are kept");
+    expect(html).not.toContain("before anything you solve counts");
+  });
+
+  it("names no module in the closed-registration copy without Secure Development", () => {
+    const html = renderToStaticMarkup(
+      <TeamCard team={null} writesEnabled maxMembers={4} isCaptain={false} captain={null} joinCode={null} registrationOpen={false} />,
+    );
+    expect(html).toContain("before anything you solve counts");
+    expect(html).not.toMatch(/Secure Development/);
+  });
 });

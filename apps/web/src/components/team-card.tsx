@@ -290,8 +290,9 @@ export default function TeamCard({
         <div className="mt-3 flex flex-col gap-2">
           <p className="text-sm text-zinc-400">Team registration is closed for this event.</p>
           <p className="text-xs text-muted">
-            A team is still required before anything you solve counts — find an organizer if you
-            arrived after registration closed.
+            {secureDevEnabled
+              ? "A team is still required to compete: Secure Development PRs are kept and count for the team you join, everything else only while you're on one — find an organizer if you arrived after registration closed."
+              : "A team is still required before anything you solve counts — find an organizer if you arrived after registration closed."}
           </p>
         </div>
       ) : (

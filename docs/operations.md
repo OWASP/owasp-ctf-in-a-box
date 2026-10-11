@@ -1621,7 +1621,9 @@ on its own.
 **Stories: challenges a team unlocks in order** (#463). A story is an
 ordered chain of challenges, such as an "Operation Red Dawn" that runs from
 recon to loot. Step 1 is always open. Each later step opens for a team once
-any member of that team solves the step before it. The board shows one lane
+any member of that team solves the step before it while on that team: a
+step solved on another team, before the player joined this one, still
+counts toward this team's points but opens nothing here (#602). The board shows one lane
 per story above the categories. A locked step appears there only as
 "??? — step N of M", and its page, hint and flag answer as if it did not
 exist. Points are plain: a step is worth what its challenge says, and a

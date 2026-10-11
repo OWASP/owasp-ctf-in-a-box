@@ -245,7 +245,7 @@ export default function AdminSupportTab({
           <p className="text-sm text-zinc-400">
             {detail.team ? (
               <>
-                Team <span className="font-mono text-white">{detail.team.name}</span>
+                Team <bdi className="font-mono text-white">{detail.team.name}</bdi>
                 <span className="text-muted"> ({detail.team.slug})</span>
                 {detail.team.isCaptain && <span className="text-[#d4a017]"> — captain</span>}
               </>
@@ -352,7 +352,7 @@ export default function AdminSupportTab({
                         <>
                           {" "}
                           <strong>
-                            They captain &ldquo;{detail.team.name}&rdquo; — transfer the captaincy or disband that team first.
+                            They captain &ldquo;<bdi>{detail.team.name}</bdi>&rdquo; — transfer the captaincy or disband that team first.
                           </strong>
                         </>
                       )}

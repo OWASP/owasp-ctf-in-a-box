@@ -112,7 +112,13 @@ routes would refuse.
 
 Captains
 manage the roster from the app: rename the team, remove a member, transfer the
-captaincy, regenerate the join code, or disband. The join code doubles as a
+captaincy, regenerate the join code, or disband. A team name is up to 32
+characters, counted after Unicode normalization (NFC); any script and emoji
+are fine, but a name with nothing visible (zero-width characters alone) or
+with a text-direction control character (U+202E and the rest of the bidi
+controls) is refused on create and on rename, and every page shows a team
+name direction-isolated, so a name stored before that check cannot reorder
+the row around it (#603). The join code doubles as a
 shareable link — **Copy invite link** on the team card yields
 `https://<your-event>/join/<code>`, which a teammate opens and joins in one
 click. Signing in mid-way keeps the invite: the code lives in the URL, so the

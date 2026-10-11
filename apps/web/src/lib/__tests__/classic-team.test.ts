@@ -4,14 +4,22 @@
 // team to another and unlock the next step there. Points are unaffected.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ upstashPipeline: vi.fn(), getViewerTeam: vi.fn() }));
+const m = vi.hoisted(() => ({ upstashPipeline: vi.fn(), getViewerTeam: vi.fn(), teamWrites: true }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: m.upstashPipeline }));
-vi.mock("@/lib/team-store", () => ({ getViewerTeam: m.getViewerTeam }));
+vi.mock("@/lib/team-store", () => ({
+  getViewerTeam: m.getViewerTeam,
+  get TEAM_WRITES_ENABLED() {
+    return m.teamWrites;
+  },
+}));
 
 import { getTeamClassicSolvedIds, teamLockKeys, unlockingSolvedIds } from "@/lib/classic-team";
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  m.teamWrites = true;
+});
 
 const solve = (at: string) => JSON.stringify({ points: 10, at });
 /** One login's two replies: HGETALL of its solves, HMGET team/joinedAt. */
@@ -42,6 +50,23 @@ describe("teamLockKeys", () => {
   it("is just the viewer's own pair with no team (a team of one)", async () => {
     m.getViewerTeam.mockResolvedValue(null);
     expect(await teamLockKeys("carol")).toEqual({ team: "", keys: ["ctf:classic:solves:carol", "ctf:user:carol"] });
+  });
+});
+
+// With team writes off, the team is a cookie and no user record names it, so
+// read under its slug the viewer's own solves would open nothing.
+describe("mock teams (TEAM_WRITES_ENABLED unset)", () => {
+  it("hands the grading scripts no team, so the team-of-one rule applies", async () => {
+    m.teamWrites = false;
+    m.getViewerTeam.mockResolvedValue({ slug: "mock-team", name: "mock-team", members: ["carol"] });
+    expect(await teamLockKeys("carol")).toEqual({ team: "", keys: ["ctf:classic:solves:carol", "ctf:user:carol"] });
+  });
+
+  it("unlocks the viewer's own solves on the page", async () => {
+    m.teamWrites = false;
+    m.getViewerTeam.mockResolvedValue({ slug: "mock-team", name: "mock-team", members: ["carol"] });
+    m.upstashPipeline.mockResolvedValue([...member({ recon: solve("2026-10-07T12:00:00.000Z") }, null, null)]);
+    expect(await getTeamClassicSolvedIds("carol")).toEqual(new Set(["recon"]));
   });
 });
 

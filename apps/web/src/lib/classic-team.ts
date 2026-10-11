@@ -20,13 +20,17 @@
 import "server-only";
 import { classicSolvesKey } from "@/lib/classic-keys";
 import { userKey } from "@/lib/team-keys";
-import { getViewerTeam } from "@/lib/team-store";
+import { getViewerTeam, TEAM_WRITES_ENABLED } from "@/lib/team-store";
 import { upstashPipeline } from "@/lib/upstash";
 
-/** The viewer and every current teammate, viewer first, exact-string deduped. */
+/** The viewer and every current teammate, viewer first, exact-string deduped.
+ *  With team writes off the team is a cookie that no user record names, so
+ *  it is evaluated as a team of one: under its slug, the viewer's own solves
+ *  would open nothing. */
 async function viewerTeam(login: string): Promise<{ team: string; logins: string[] }> {
   const team = await getViewerTeam(login);
-  return { team: team?.slug ?? "", logins: [...new Set([login, ...(team?.members ?? [])])] };
+  const slug = TEAM_WRITES_ENABLED ? (team?.slug ?? "") : "";
+  return { team: slug, logins: [...new Set([login, ...(team?.members ?? [])])] };
 }
 
 /** What a grading script's story lock is handed: for each member, their

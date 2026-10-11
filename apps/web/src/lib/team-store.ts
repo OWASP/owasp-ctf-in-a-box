@@ -336,7 +336,9 @@ export async function createTeam(login: string, name: string): Promise<TeamActio
   if (!checked.ok) return checked;
   const trimmed = checked.name;
   const slug = slugify(trimmed);
-  if (!slug) return { ok: false, error: "Team name is required" };
+  // The team's id (its key and URL) keeps a-z and 0-9 only. A visible name
+  // with neither ("Команда", "赤") has no id; say so, not "required".
+  if (!slug) return { ok: false, error: "A team name needs at least one letter a–z or digit 0–9" };
   if (!TEAM_WRITES_ENABLED) return setMockTeam(slug);
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
 

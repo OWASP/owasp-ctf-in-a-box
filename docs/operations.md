@@ -113,8 +113,11 @@ routes would refuse.
 Captains
 manage the roster from the app: rename the team, remove a member, transfer the
 captaincy, regenerate the join code, or disband. A team name is up to 32
-characters, counted after Unicode normalization (NFC); any script and emoji
-are fine, but a name with nothing visible (zero-width characters alone) or
+characters, counted after Unicode normalization (NFC). Any script and emoji
+may appear in it, but a new team's name needs at least one letter a–z or
+digit 0–9, because the team's id (its key and invite URL) is built from
+those; a rename keeps the id, so it has no such need. A name with nothing
+visible (zero-width characters alone) or
 with a text-direction control character (U+202E and the rest of the bidi
 controls) is refused on create and on rename, and every page shows a team
 name direction-isolated, so a name stored before that check cannot reorder

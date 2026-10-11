@@ -87,6 +87,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   before and after the refresh. An unowned viewer still never receives the
   text, and a hint loaded already-owned shows no acknowledgement (nothing
   was charged on that page load).
+- **Fixed: `ctf-setup.sh org` no longer fails when GitHub's free plan refuses
+  branch protection on a private repo (#601).** That refusal — the state of
+  every fork between `org` and `launch` (#465) — is now recorded as
+  **pending until launch**: every remaining step and repo still runs, the
+  summary lists each pending `org/repo:ctf`, and it is never reported as
+  completed; any other protection error still fails the run. `launch` applies
+  the same idempotent protection as each fork goes public and verifies it
+  (one approving review required, force-pushes and deletions disabled) before
+  reporting success, and `doctor` shows it pending (⏳) on a private fork
+  before launch, clearing to ✅ only once protection is verified.
+
 - **Fixed: a hint can no longer be bought with points the contestant does not
   have (#553).** The reveal is refused — `403`, "Not enough points: this hint
   costs N and you have M" — when the contestant's leaderboard score (every

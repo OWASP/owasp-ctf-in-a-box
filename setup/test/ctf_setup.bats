@@ -2027,6 +2027,8 @@ echo "$*" >> "$S/gh.log"
 repo="$(printf '%s' "$*" | sed -n 's|.*repos/test-event-org/\([^ /?]*\).*|\1|p')"
 case "$*" in
   *"-X PATCH"*visibility=*) [ -f "$S/patch-fails" ] && exit 1; cat "$S/launched" 2>/dev/null >> "$S/patch_saw_launched" || echo none >> "$S/patch_saw_launched"; printf '%s' "$*" | sed 's/.*visibility=//' > "$S/vis_$repo"; exit 0 ;;
+  *"-X PUT"*"branches/ctf/protection"*) [ -f "$S/protect-fails" ] && { echo '{"message":"Validation Failed"}' >&2; exit 1; }; echo applied > "$S/prot_$repo"; exit 0 ;;
+  *"branches/ctf/protection"*) [ -f "$S/prot_$repo" ] || exit 1; if [ -f "$S/prot-bad_$repo" ]; then echo false; else echo true; fi; exit 0 ;;
   *packages/container/score*) cat "$S/package" 2>/dev/null || echo private ;;
   *actions/workflows/ctf-score.yml/runs*) if [ -f "$S/refused_$repo" ]; then echo 101; elif [ -f "$S/runs-broken_$repo" ]; then exit 1; fi ;;
   *actions/runs/101/jobs*) echo failure ;;
@@ -2183,6 +2185,8 @@ patched() {
   run_vis launch --dry-run
   printf '%s' "$output" | grep -qF -- 'DRY-RUN: gh api -X PATCH repos/test-event-org/DVWA -f visibility=public'
   printf '%s' "$output" | grep -qF -- 'DRY-RUN: would wait for'
+  # #601: the launch-time protection application is narrated too, with no call.
+  printf '%s' "$output" | grep -qF -- 'DRY-RUN: PUT branch protection on test-event-org/DVWA:ctf once public'
   [ ! -f state/gh.log ]
   [ ! -f state/curl.log ]
   [ ! -f state/docker.log ]
@@ -2476,4 +2480,213 @@ _fn_body_lines() {
       }
     } END { n = 0; for (k in seen) n++; print n }')"
   [ "$calls" -ge 8 ] || { echo "cmd_wizard calls only $calls distinct wiz_* step helpers — want >= 8"; return 1; }
+}
+
+# --- #601: ctf protection deferred on a free-plan private repo ----------------
+#
+# GitHub's free plan refuses branch protection on private repositories, which
+# is exactly the state every fork is in between `org` and `launch` (#465).
+# `org` must record that specific refusal as PENDING until launch — continue
+# every remaining step and repo, never report it completed — while any OTHER
+# protection error still fails. `launch` applies the same protection as each
+# fork goes public and verifies it (1 approving review, force-push and
+# deletion disabled) before reporting success; `doctor` shows it pending
+# before launch and clears it only once it is verified.
+
+# A full-`org` gh stub: every call succeeds with empty output, EXCEPT the
+# branch-protection PUT, which replays GitHub's answer ($1, free-plan
+# refusal by default) on stderr and fails. docker reports amd64 and
+# succeeds, so the mirror and privatize steps complete and the run reaches
+# the pending summary.
+org_protect_stub() {  # $1 = refusal message (optional)
+  mkdir -p stubs
+  local refusal="${1:-Upgrade to GitHub Pro or make this repository public to enable this feature.}"
+  cat > stubs/gh <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *"-X PUT"*"branches/ctf/protection"*)
+    printf '{"message":"%s"}\n' "$refusal" >&2
+    exit 1 ;;
+  *) exit 0 ;;
+esac
+EOF
+  cat > stubs/docker <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *"image inspect"*) echo amd64 ;;
+  *) exit 0 ;;
+esac
+EOF
+  chmod +x stubs/gh stubs/docker
+}
+
+@test "org defers ctf protection on the free-plan refusal, continues, and reports it pending (#601)" {
+  org_protect_stub
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -eq 0 ]
+  # Deferred per target, and every target's fork named in the pending summary.
+  [ "$(printf '%s' "$output" | grep -cF '⏳ protect (')" -eq 6 ]
+  for r in DVWA VAmPI juice-shop WebGoat VulnerableApp SecurityShepherd; do
+    printf '%s' "$output" | grep -qF -- "test-event-org/$r:ctf" \
+      || { echo "missing from the pending summary: $r"; return 1; }
+  done
+  printf '%s' "$output" | grep -qF -- 'branch protection PENDING until launch'
+  # Never reported as completed.
+  [ -z "$(printf '%s' "$output" | grep -F '✓ protect')" ]
+  # …and it did not stop the run: later steps, later repos, the image mirror
+  # and the privatize sweep all ran.
+  printf '%s' "$output" | grep -qF -- 'workflow (vampi)'
+  printf '%s' "$output" | grep -qF -- '== mirroring scorer image'
+  printf '%s' "$output" | grep -qF -- '== keep forks private until launch'
+}
+
+@test "org fails normally on a protection error that is not the plan refusal (#601)" {
+  org_protect_stub "Validation Failed"
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF -- 'Validation Failed'
+  # Not a deferral, and nothing past the failure ran.
+  [ -z "$(printf '%s' "$output" | grep -F 'PENDING until launch')" ]
+  [ -z "$(printf '%s' "$output" | grep -F '== mirroring scorer image')" ]
+}
+
+@test "org leaves an already-verified ctf protection alone, with no pending marker (#601)" {
+  mkdir -p stubs
+  cat > stubs/gh <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$BATS_TEST_TMPDIR/gh.log"
+case "$*" in
+  *"-X PUT"*"branches/ctf/protection"*) exit 0 ;;
+  *branches/ctf/protection*) echo true ;;
+  *) exit 0 ;;
+esac
+EOF
+  cat > stubs/docker <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *"image inspect"*) echo amd64 ;;
+  *) exit 0 ;;
+esac
+EOF
+  chmod +x stubs/gh stubs/docker
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -qF -- 'protect (juice-shop): already done'
+  [ -z "$(printf '%s' "$output" | grep -F 'PENDING until launch')" ]
+  # The decisive check, last: no protection PUT was ever issued.
+  [ -z "$(grep -F 'PUT' "$BATS_TEST_TMPDIR/gh.log" | grep -F 'branches/ctf/protection')" ]
+}
+
+@test "check_step protect is satisfied only by the full verified payload (#601)" {
+  mkdir -p "$BATS_TEST_TMPDIR/protstubs"
+  # Stands in for gh's --jq evaluation of the protection GET: PROT_JQ is the
+  # verdict it would print (no :- default — an empty verdict must stay empty).
+  cat > "$BATS_TEST_TMPDIR/protstubs/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *branches/ctf/protection*) echo "$PROT_JQ" ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/protstubs/gh"
+  # 1 review + no force-push + no deletion -> satisfied.
+  run env PROT_JQ=true PATH="$BATS_TEST_TMPDIR/protstubs:$PATH" \
+    bash -c 'CMD=__selftest source "$1"; if check_step protect dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi' _ "$SCRIPT"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx SATISFIED
+  # Any missing piece (force-pushes allowed, deletion allowed, no required
+  # review) — and an unreadable reply — fail closed.
+  for verdict in false ""; do
+    run env PROT_JQ="$verdict" PATH="$BATS_TEST_TMPDIR/protstubs:$PATH" \
+      bash -c 'CMD=__selftest source "$1"; if check_step protect dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi' _ "$SCRIPT"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -qx NOTSATISFIED
+  done
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$BATS_TEST_TMPDIR/protstubs/gh"
+  chmod +x "$BATS_TEST_TMPDIR/protstubs/gh"
+  run env PATH="$BATS_TEST_TMPDIR/protstubs:$PATH" \
+    bash -c 'CMD=__selftest source "$1"; if check_step protect dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi' _ "$SCRIPT"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+}
+
+@test "org --dry-run narrates the deferred protection and makes zero gh calls (#601)" {
+  mkdir -p "$BATS_TEST_TMPDIR/stubbin"
+  printf '#!/usr/bin/env bash\necho "gh $*" >> "%s/gh.calls"\nexit 1\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/stubbin/gh"
+  chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
+  run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" NO_COLOR=1 bash "$SCRIPT" org --dry-run
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -qF -- 'PUT branch protection on test-event-org/DVWA:ctf'
+  printf '%s' "$output" | grep -qF -- 'stays pending until launch'
+  [ ! -s "$BATS_TEST_TMPDIR/gh.calls" ]
+}
+
+@test "launch applies ctf protection as each fork goes public and verifies it (#601)" {
+  vis_env
+  echo true > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  run_vis launch
+  [ "$status" -eq 0 ]
+  local missing="" r
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do
+    [ -f "state/prot_$r" ] || missing="$missing $r"
+  done
+  [ -z "$missing" ] || { echo "unprotected:$missing"; false; }
+  printf '%s' "$output" | grep -qF -- 'ctf branch protection applied and verified on every fork'
+  # Applied IMMEDIATELY after each fork goes public: juice-shop's protection
+  # PUT is logged before the next fork (webgoat, in targets.tsv order) is
+  # even read for its flip.
+  local p_js p_wg
+  p_js="$(grep -n -F -- '-X PUT repos/test-event-org/juice-shop/branches/ctf/protection' state/gh.log | head -1 | cut -d: -f1)"
+  p_wg="$(grep -n -F -- '-X PATCH repos/test-event-org/WebGoat' state/gh.log | head -1 | cut -d: -f1)"
+  [ -n "$p_js" ] && [ -n "$p_wg" ] && [ "$p_js" -lt "$p_wg" ]
+}
+
+@test "launch stops when ctf protection cannot be applied, and says so (#601)" {
+  vis_env
+  echo true > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  touch state/protect-fails
+  run_vis launch
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF -- 'could not apply ctf branch protection on juice-shop'
+  [ -z "$(printf '%s' "$output" | grep -F 'launched ✓')" ]
+}
+
+@test "launch does not report success when protection fails verification (#601)" {
+  vis_env
+  echo true > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  # The PUT "succeeds" but DVWA's protection still reads back with
+  # force-pushes allowed — the required shape is not in place, so the
+  # pre-success verification must refuse.
+  touch state/prot-bad_DVWA
+  run_vis launch
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF -- 'DVWA: ctf branch protection is not verified'
+  [ -z "$(printf '%s' "$output" | grep -F 'launched ✓')" ]
+}
+
+@test "doctor reports ctf protection as pending on a private fork before launch (#601)" {
+  vis_env
+  echo false > state/launched
+  echo private > state/vis_DVWA
+  run_vis doctor
+  printf '%s' "$output" | grep -qF -- '⏳ = branch protection pending until launch'
+  local cell
+  cell="$(echo "$output" | awk '/^dvwa/{print $5}')"
+  echo "dvwa prot cell: $cell"
+  [ "$cell" = "⏳" ]
+}
+
+@test "doctor clears the pending marker only once ctf protection is verified (#601)" {
+  vis_env
+  echo false > state/launched
+  echo private > state/vis_DVWA
+  touch state/prot_DVWA
+  run_vis doctor
+  local cell
+  cell="$(echo "$output" | awk '/^dvwa/{print $5}')"
+  echo "dvwa prot cell: $cell"
+  [ "$cell" = "✅" ]
 }

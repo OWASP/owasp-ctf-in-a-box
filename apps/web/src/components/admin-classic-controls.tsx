@@ -123,6 +123,7 @@ import {
   CHALLENGE_ROWS,
   type ChallengeEditor,
   type ChallengePayload,
+  type ChallengeSolves,
   categoryUsageCount,
   challengeDeleteConfirm,
   classicInventory,
@@ -133,6 +134,7 @@ import {
   newChallengeEditor,
   payloadFromEditor,
   payloadFromRow,
+  solvesLabel,
 } from "@/components/admin-classic-model";
 
 export * from "@/components/admin-classic-model";
@@ -193,6 +195,8 @@ export default function AdminClassicControls({
   const [storiesRev, setStoriesRev] = useState(0);
   // #186: attachment metadata, for the Export button — same GET, same capture.
   const [attachmentMetaById, setAttachmentMetaById] = useState<Record<string, AttachmentMeta[]>>({});
+  // #595: how many teams and players solved each challenge — same GET.
+  const [solvesById, setSolvesById] = useState<Record<string, ChallengeSolves>>({});
   function takeStories(next: Story[]) {
     setStories(next);
     setStoriesRev((n) => n + 1);
@@ -207,6 +211,7 @@ export default function AdminClassicControls({
       if (data.attachments && typeof data.attachments === "object") {
         setAttachmentMetaById(data.attachments as Record<string, AttachmentMeta[]>);
       }
+      if (data.solves && typeof data.solves === "object") setSolvesById(data.solves as Record<string, ChallengeSolves>);
       return {
         rows: Array.isArray(data.challenges) ? (data.challenges as AdminChallenge[]) : [],
         categories: Array.isArray(data.categories) ? (data.categories as string[]) : [],
@@ -298,12 +303,16 @@ export default function AdminClassicControls({
       newEditor={newChallengeEditor}
       editorFromRow={editorFromChallenge}
       deleteConfirm={challengeDeleteConfirm}
-      meta={(row) => (
-        <>
-          {row.challenge.points} pt
-          {row.challenge.points === 1 ? "" : "s"}
-        </>
-      )}
+      meta={(row) => {
+        const solves = solvesLabel(solvesById[row.challenge.id]);
+        return (
+          <>
+            {row.challenge.points} pt
+            {row.challenge.points === 1 ? "" : "s"}
+            {solves && <> · {solves}</>}
+          </>
+        );
+      }}
       Form={ChallengeForm}
       beforePanel={
         <AdminClassicStories

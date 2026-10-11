@@ -5,6 +5,7 @@ import { parseBundle } from "@/lib/classic-io";
 import {
   ClassicValidationError,
   deleteChallenge,
+  getSolveCounts,
   importBundle,
   listCategories,
   listChallengeIds,
@@ -20,6 +21,7 @@ import {
 import type { Story } from "@/lib/story-lock";
 import { type Attachment, attachmentMeta } from "@/lib/attachments-keys";
 import { listAllAttachments } from "@/lib/attachments-store";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
 
 /**
  * Organizer authoring surface for the classic (flag) module: list (GET),
@@ -252,7 +254,24 @@ export async function GET(request: Request) {
   // #186: each challenge's attachment METADATA, for the panel's own Export —
   // the same shape the server export writes, no ids or chunk counts.
   const attachments = Object.fromEntries([...files].map(([id, list]) => [id, list.map(attachmentMeta)]));
-  return NextResponse.json({ challenges, categories, stories, attachments });
+  // #595: how many teams and how many players solved each challenge, so an
+  // organizer can spot a flag nobody solves without opening Insights. Read
+  // apart from the list: a count that cannot be read is null (unknown), and
+  // never fails the list the panel needs to work.
+  const [teams, players] = await Promise.all([
+    teamSolveCounts("classic"),
+    getSolveCounts().catch((err: unknown) => {
+      console.error("classic: player solve counts unavailable:", adminErrorLabel(err));
+      return null;
+    }),
+  ]);
+  const solves = Object.fromEntries(
+    challenges.map(({ challenge: { id } }) => [
+      id,
+      { teams: teams ? (teams.get(id) ?? 0) : null, players: players ? (players.get(id) ?? 0) : null },
+    ]),
+  );
+  return NextResponse.json({ challenges, categories, stories, attachments, solves });
 }
 
 export async function POST(request: Request) {

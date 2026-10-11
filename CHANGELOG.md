@@ -42,6 +42,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   and applied the same way on the board, the challenge pages and
   `/api/board/items`. Points are unaffected: a team's total is still the
   union of its members' solves (ADR 60 amended).
+- **Added: solve counts on the Jeopardy and AI boards and in admin (#595).**
+  Every visible tile, open story step and challenge page now says how many
+  teams solved it (scoring is per team: two members on one flag count once,
+  a teamless solver not at all), folded from current members' solves on
+  read. A locked story step shows none. The admin Jeopardy list shows teams
+  and players per challenge, "unsolved" when nobody has. Before, a count
+  (of players) appeared only on a challenge's own page.
 - **Fixed: the leaderboard's Individual view listed only contestants who had
   scored (#586).** Every team member now has a row; one with no points sits
   at 0 after everyone who scored, alphabetically, so a player who can find

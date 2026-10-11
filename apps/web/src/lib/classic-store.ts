@@ -1312,7 +1312,7 @@ export async function submitFlag(
         caseSensitiveFlagForm(flag), // ARGV[7] — case preserved
         dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing
         prereq, // ARGV[9] — story prerequisite, "" when none
-        lockTeam, // ARGV[10] — the viewer's team slug, "" for a team of one (#602)
+        lockTeam, // ARGV[10] — the viewer's team slug, "" for a team of one
       ],
     );
   } catch (err) {

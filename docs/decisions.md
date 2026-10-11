@@ -3651,7 +3651,10 @@ step by step while the free-pick board stays as it is.
 - **A locked step is invisible.** It never leaves the server: not in the
   board, not on its own page (a 404, like an unknown id), not in metadata,
   and not in `/api/board/items`. That includes its id, which is derived from
-  the title.
+  the title. An expanded leaderboard row may report how many steps hidden
+  from the viewer its team has solved, as one count (`classicHiddenSolved`,
+  #584): nothing per position, which the row's own solved figure already
+  implies.
 - **Fails closed.** An admin preview (ADR 59) skips the lock, because nothing
   is recorded. A stories read that fails errors the request rather than
   opening every step.

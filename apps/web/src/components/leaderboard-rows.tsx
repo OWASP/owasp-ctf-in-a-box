@@ -214,7 +214,7 @@ export function EntryRow({
               name it too. secure-development has its own AppBreakdown above,
               never BoardItemLists, so it's the one id excluded here. */}
           {Object.keys(entry.modules ?? {}).some((id) => id !== "secure-development") && (
-            <BoardItemLists logins={[entry.login]} />
+            <BoardItemLists logins={[entry.login]} classicPoints={entry.modules?.classic?.points} />
           )}
         </div>
       )}

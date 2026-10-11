@@ -206,7 +206,7 @@ export function TeamRow({
               hand-listed `quiz || classic || ai` check silently excluded ai
               once, and would do it again for the next module too. */}
           {Object.keys(team.modules ?? {}).some((id) => id !== "secure-development") && team.members.length > 0 && (
-            <BoardItemLists logins={team.members} />
+            <BoardItemLists logins={team.members} classicPoints={team.modules?.classic?.points} />
           )}
         </div>
       )}

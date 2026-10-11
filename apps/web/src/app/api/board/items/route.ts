@@ -12,7 +12,9 @@ import { getViewerQuiz, listQuestions } from "@/lib/quiz-store";
 /** How many logins one request may union — a team's roster, not a scrape. */
 const MAX_LOGINS = 8;
 
-type Item = { id: string; label: string; points: number; done: boolean; earnedPoints?: number };
+/** `hidden` marks a story step redacted for this viewer: placeholder label,
+ *  0 points, never `done` — nothing about it per position (ADR 60). */
+type Item = { id: string; label: string; points: number; done: boolean; earnedPoints?: number; hidden?: true };
 
 /**
  * Per-item quiz/classic/ai completion for a login (an expanded leaderboard
@@ -62,6 +64,7 @@ export async function GET(request: Request) {
   }
 
   let classic: Item[] | null = null;
+  let classicHiddenSolved = 0;
   if (classicLive) {
     const [challenges, viewers, stories] = await Promise.all([
       listChallenges(),
@@ -79,7 +82,11 @@ export async function GET(request: Request) {
     classic = challenges.map((c) => {
       const pos = positions.get(c.id);
       if (pos && (isLocked(pos, teamSolved) || isLocked(pos, viewerSolved))) {
-        return { id: `locked:${pos.storyId}:${pos.position}`, label: lockedLabel(pos), points: 0, done: false };
+        // Nothing per position crosses (ADR 60): not which hidden steps the
+        // team solved, not their points. Only the count below does, which
+        // the row's own solved figure already implies.
+        if (teamSolved.has(c.id)) classicHiddenSolved += 1;
+        return { id: `locked:${pos.storyId}:${pos.position}`, label: lockedLabel(pos), points: 0, done: false, hidden: true };
       }
       const hit = viewers.map((v) => v.solved[c.id]).find(Boolean);
       return { id: c.id, label: c.title, points: c.points, done: Boolean(hit), earnedPoints: hit?.points };
@@ -98,5 +105,5 @@ export async function GET(request: Request) {
     });
   }
 
-  return NextResponse.json({ quiz, classic, ai });
+  return NextResponse.json({ quiz, classic, ai, classicHiddenSolved });
 }

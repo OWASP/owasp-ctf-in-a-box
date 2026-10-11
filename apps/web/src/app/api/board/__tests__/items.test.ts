@@ -187,3 +187,55 @@ describe("GET /api/board/items redacts for the VIEWER too (#463, review C2)", ()
     expect(body).toContain("Secret SQLi");
   });
 });
+
+// A row that says "8 / 12 solved" over a list showing 3 is the contradiction
+// #584 reported. The hidden steps stay placeholders with nothing per position
+// (ADR 60: not which ones the team solved, not their points); what crosses is
+// ONE count of hidden steps the queried team solved, which the row's own
+// solved figure already implies. The caller derives their point total from
+// the row's points.
+describe("GET /api/board/items reports hidden solved steps as one count (#584)", () => {
+  const setup = () => {
+    mocks.listChallenges.mockResolvedValue([
+      { id: "recon-ab12cd", title: "Recon", points: 10 },
+      { id: "secret-sqli-cd34ef", title: "Secret SQLi", points: 1337 },
+      { id: "final-ef56gh", title: "Final Boss", points: 4242 },
+    ]);
+    mocks.listStories.mockResolvedValue([
+      { id: "op", title: "Op", intro: "", steps: ["recon-ab12cd", "secret-sqli-cd34ef", "final-ef56gh"] },
+    ]);
+    // The queried team solved steps 1 and 2; step 3 is open to them but unsolved.
+    mocks.getViewerClassic.mockResolvedValue({
+      solved: { "recon-ab12cd": { points: 10, at: "x" }, "secret-sqli-cd34ef": { points: 1337, at: "y" } },
+      attempts: {},
+    });
+    mocks.getSession.mockResolvedValue(null);
+  };
+  type Body = { classic: Record<string, unknown>[]; classicHiddenSolved?: number };
+  const bodyOf = async (logins: string) => (await (await GET(req(logins))).json()) as Body;
+
+  it("counts the hidden steps the queried team solved, without saying which", async () => {
+    setup();
+    const body = await bodyOf("leader");
+    expect(body.classicHiddenSolved).toBe(1);
+    expect(body.classic).toEqual([
+      { id: "recon-ab12cd", label: "Recon", points: 10, done: true, earnedPoints: 10 },
+      { id: "locked:op:2", label: "??? — step 2 of 3", points: 0, done: false, hidden: true },
+      { id: "locked:op:3", label: "??? — step 3 of 3", points: 0, done: false, hidden: true },
+    ]);
+  });
+
+  it("never sends a hidden step's points, solved or not", async () => {
+    setup();
+    const body = JSON.stringify(await (await GET(req("leader"))).json());
+    expect(body).not.toContain("1337");
+    expect(body).not.toContain("4242");
+    expect(body).not.toContain("Secret SQLi");
+  });
+
+  it("reports 0 when the team solved no hidden step", async () => {
+    setup();
+    mocks.getViewerClassic.mockResolvedValue({ solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} });
+    expect((await bodyOf("leader")).classicHiddenSolved).toBe(0);
+  });
+});

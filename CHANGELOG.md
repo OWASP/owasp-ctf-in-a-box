@@ -10,6 +10,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: a solved story step could be carried to another team (#602).**
+  A player who solved step N on one team and then joined another opened step
+  N+1 there, because unlocks read who is on the team now. A teammate's solve
+  now opens the next step only if they made it while on the team (solve time
+  on or after their join time), decided inside the grading and hint scripts
+  and applied the same way on the board, the challenge pages and
+  `/api/board/items`. Points are unaffected: a team's total is still the
+  union of its members' solves (ADR 60 amended).
 - **Fixed: the leaderboard's Individual view listed only contestants who had
   scored (#586).** Every team member now has a row; one with no points sits
   at 0 after everyone who scored, alphabetically, so a player who can find

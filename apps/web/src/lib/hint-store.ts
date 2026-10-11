@@ -15,7 +15,7 @@ import { isModuleLive } from "@/lib/enabled-modules";
 import { HINTS_SPENT_KEY, userHintTimesKey } from "@/lib/team-keys";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
 import { listChallengeIds, listStories } from "@/lib/classic-store";
-import { teamSolveKeys } from "@/lib/classic-team";
+import { storyLockLua, teamLockKeys } from "@/lib/classic-team";
 import { storyPositions } from "@/lib/story-lock";
 // Moved to hint-config.ts (#553): the leaderboard's penalty fold imports them
 // from there, because this store now imports the fold (through hint-balance)
@@ -104,13 +104,14 @@ export function isHintTarget(value: string): value is HintTarget {
 // KEYS: [1]=user's hint set [2]=spend hash [3]=app hint catalogue [4]=purchase times
 //       [5]=the shared score revision and [6]=the score-lowering in-progress
 //       counter (#553, fold-cache.ts); [7]=the admin settings hash (#566: the
-//       live `paused` flag); [8..]=the story lock's teammate solves hashes
-//       (#463), when any.
+//       live `paused` flag); [8..]=the story lock's (solves hash, user
+//       record) pair per teammate (#463, #602), when any.
 // ARGV: [1]=challengeId [2]=<app>/<id> [3]=login [4]=cost [5]=now (ISO)
 //       [6]="1" for a DRY RUN (#464 admin preview): read the text, write
 //       nothing — no SADD, no charge, no purchase time.
 //       [7]=story prerequisite (#463), "" when none — open only if a TEAMMATE
-//       (a solves hash in KEYS[5..]) holds it; checked before any charge.
+//       holds it and solved it while on this team (#602; see storyLockLua in
+//       classic-team.ts); checked before any charge.
 //       [8]=the contestant's gross score (#553), "" when hints are free. The
 //       charge is refused unless gross − the spend read HERE ≥ cost: the
 //       gate's own read is a separate round-trip, so two parallel reveals
@@ -134,6 +135,8 @@ export function isHintTarget(value: string): value is HintTarget {
 //       charge — the closure is enforced where the write happens. Answers
 //       `closed` with the reason; an owned hint is exempt (a re-view charges
 //       nothing, so there is nothing to close).
+//       [11]=the viewer's team slug for the story lock (#602), "" for a team
+//       of one.
 //
 // Every non-preview verdict's third element is the spend TOTAL after the
 // call (case-folded, see the script) — what `balance` is derived from.
@@ -141,10 +144,7 @@ export function isHintTarget(value: string): value is HintTarget {
 export const REVEAL_SCRIPT = `
 -- The story lock (#463) comes FIRST: a locked step's hint is never read.
 if ARGV[6] ~= '1' and ARGV[7] and ARGV[7] ~= '' then
-  local open = false
-  for i = 8, #KEYS do
-    if redis.call('HEXISTS', KEYS[i], ARGV[7]) == 1 then open = true break end
-  end
+${storyLockLua(8, 7, 11)}
   if not open then return {'locked'} end
 end
 -- Existence is a FIELD check, not a read: the text is the protected thing,
@@ -475,13 +475,14 @@ async function attemptReveal(
   // enforced there; a stories/team read failure refuses (closed).
   let prereq = "";
   let lockKeys: string[] = [];
+  let lockTeam = "";
   if (target === "classic") {
     try {
       const [stories, existing] = await Promise.all([listStories(), listChallengeIds()]);
       const pos = storyPositions(stories, existing).get(id);
       if (pos?.prereq) {
         prereq = pos.prereq;
-        lockKeys = await teamSolveKeys(login);
+        ({ keys: lockKeys, team: lockTeam } = await teamLockKeys(login));
       }
     } catch (err) {
       console.error("Hint reveal: story lock lookup failed (failing closed):", errorLabel(err));
@@ -521,6 +522,9 @@ async function attemptReveal(
         // ARGV[10]: the scheduled end as epoch ms, compared to Redis's clock
         // right before the charge (#566). "" when no end is set.
         endsAtMs === null ? "" : String(endsAtMs),
+        // ARGV[11]: the viewer's team slug for the story lock, "" for a team
+        // of one (#602).
+        lockTeam,
       ],
     );
   } catch (err) {

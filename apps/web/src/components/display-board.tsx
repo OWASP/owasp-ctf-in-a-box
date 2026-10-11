@@ -81,6 +81,7 @@ export default function DisplayBoard({
   eventLogo = null,
   scoringStartsAt = null,
   scoringEndsAt = null,
+  qr = null,
 }: {
   rows: DisplayRow[];
   eventName: string;
@@ -99,6 +100,9 @@ export default function DisplayBoard({
    *  with nothing stored) means the medium preset, matching the strip's own
    *  fallback direction. */
   logoSize?: SponsorLogoSize;
+  /** A QR code of the event URL (#592), encoded on the server (lib/qr-code.ts)
+   *  and drawn here as one path; null when the organizer turned it off. */
+  qr?: { size: number; path: string; url: string } | null;
 }) {
   const router = useRouter();
   const logoClasses = LOGO_SIZE_CLASSES[logoSize ?? "md"];
@@ -203,9 +207,29 @@ export default function DisplayBoard({
         ) : (
           <span />
         )}
-        {/* Not `text-[#8f8f9b]/60` — that composites to 2.86:1 (issue #316),
-            and this is a projector surface read from across a room. */}
-        <p className="flex-none text-right font-mono text-[1.4vh] text-muted">refreshes every 30s</p>
+        <div className="flex flex-none items-end gap-[1.5vw]">
+          {/* Not `text-[#8f8f9b]/60` — that composites to 2.86:1 (issue #316),
+              and this is a projector surface read from across a room. */}
+          <p className="text-right font-mono text-[1.4vh] text-muted">refreshes every 30s</p>
+          {qr && (
+            // Below the standings, never over them. Dark modules on a white
+            // card: phones read dark-on-light, and the path already carries
+            // the four-module quiet zone the white fills. crispEdges keeps
+            // module edges sharp at any projector scale.
+            <figure className="flex flex-col items-center gap-[0.6vh]">
+              <svg
+                role="img"
+                aria-label={`QR code: ${qr.url}`}
+                viewBox={`0 0 ${qr.size} ${qr.size}`}
+                shapeRendering="crispEdges"
+                className="h-[16vh] w-[16vh] rounded-md bg-white"
+              >
+                <path d={qr.path} fill="#1a1a2e" />
+              </svg>
+              <figcaption className="max-w-[22vw] truncate font-mono text-[1.6vh] text-white">{qr.url}</figcaption>
+            </figure>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -334,6 +334,22 @@ export default function AdminEventTab({
         <AdminEventImages setConfirm={setConfirm} />
       </section>
 
+      <section className="flex flex-col gap-3 border-b border-white/[0.06] pb-4">
+        <div>
+          <h3 className="text-white">Projector board</h3>
+          <p className="text-sm text-muted">What the leaderboard&rsquo;s display mode (/leaderboard?display=1) shows beside the standings.</p>
+        </div>
+        <AdminSwitch
+          id="event-display-qr"
+          label="QR code on the projector board"
+          help="A QR code of the event's address, with the address printed under it, in a corner below the standings, so anyone in the room can join from a phone. Uses the box's EVENT_URL; nothing is shown without one."
+          checked={settings.displayQr}
+          disabled={pending}
+          status={statusOf("displayQr")}
+          onChange={(next) => void applyField("displayQr", { displayQr: next }, "Projector QR code")}
+        />
+      </section>
+
       <section className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">
         <div>
           <h3 className="text-white">Modules</h3>

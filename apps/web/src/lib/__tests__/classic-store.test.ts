@@ -786,7 +786,8 @@ describe("exportBundle", () => {
   it("returns the current board in the importable shape", async () => {
     seedFullBoard();
     const bundle = await exportBundle();
-    expect(bundle.version).toBe(3);
+    // Carries no files, so it keeps the version an older box can import.
+    expect(bundle.version).toBe(2);
     // Metadata only: bytes ride the event archive, or an opt-in panel export.
     expect("attachmentFiles" in bundle).toBe(false);
     expect(bundle.stories).toEqual([]);

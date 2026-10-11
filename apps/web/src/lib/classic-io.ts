@@ -59,6 +59,12 @@ export const CLASSIC_BUNDLE_VERSION = 3;
 const SUPPORTED_VERSIONS = new Set([1, 2, 3]);
 /** The oldest version that knows `stories` and `attachments`. */
 const STORIES_VERSION = 2;
+
+/** The version an export is stamped with: 3 only when it carries files, so
+ *  a bundle without them stays importable on a box built before version 3. */
+export function bundleVersionFor(hasFiles: boolean): number {
+  return hasFiles ? CLASSIC_BUNDLE_VERSION : STORIES_VERSION;
+}
 const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
 

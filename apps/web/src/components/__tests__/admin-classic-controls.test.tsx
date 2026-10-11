@@ -178,7 +178,8 @@ describe("AdminClassicControls", () => {
 
     it("builds an export bundle from the loaded board, flags included", () => {
       const bundle = exportBundleFrom([row1], ["Web"]);
-      expect(bundle.version).toBe(CLASSIC_BUNDLE_VERSION);
+      // No files: version 2, so a box on an older build still imports it.
+      expect(bundle.version).toBe(2);
       expect(bundle.categories).toEqual(["Web"]);
       expect(bundle.challenges[0].flag).toBe(row1.flag);
       expect(bundle.challenges[0].id).toBe(row1.challenge.id);
@@ -199,6 +200,14 @@ describe("AdminClassicControls", () => {
       expect("attachmentFiles" in exportBundleFrom([row1], ["Web"])).toBe(false);
     });
 
+    // "Include files" ticked on a board whose challenges hold no uploads:
+    // nothing to embed, so the bundle is the version-2 file an older box reads.
+    it("stamps version 2 and omits the key when Include files finds no uploads", () => {
+      const bundle = exportBundleFrom([row1], ["Web"], [], {}, []);
+      expect(bundle.version).toBe(2);
+      expect("attachmentFiles" in bundle).toBe(false);
+    });
+
     it("embeds the files of the uploads it exports, and its own parser accepts the result", () => {
       const sha = "ab".repeat(32);
       const meta = { [row1.challenge.id]: [{ name: "cap.pcap", size: 3, sha256: sha }] };
@@ -210,6 +219,7 @@ describe("AdminClassicControls", () => {
       ];
       const bundle = exportBundleFrom([row1], ["Web"], [], meta, files);
       expect(bundle.attachmentFiles).toEqual([{ item: row1.challenge.id, sha256: sha, bytes: "AAAA" }]);
+      expect(bundle.version).toBe(CLASSIC_BUNDLE_VERSION);
       const parsed = parseBundle(serializeBundle(bundle));
       if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors));
       expect(parsed.bundle.attachmentFiles).toHaveLength(1);

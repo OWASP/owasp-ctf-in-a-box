@@ -12,7 +12,7 @@ import type { AttachmentFile } from "@/lib/attachment-files";
 import type { Story } from "@/lib/story-lock";
 import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
-import { CLASSIC_BUNDLE_VERSION, type ClassicBundle } from "@/lib/classic-io";
+import { bundleVersionFor, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import { describeAdminError } from "@/components/admin/fetch";
@@ -332,8 +332,9 @@ export function exportBundleFrom(
     rows.flatMap(({ challenge: { id } }) => (attachments[id] ?? []).flatMap((m) => ("sha256" in m ? [`${id}\n${m.sha256}`] : []))),
   );
   const attachmentFiles = files?.filter((f) => named.has(`${f.item}\n${f.sha256}`));
+  const withFiles = attachmentFiles?.length ? attachmentFiles : undefined;
   return {
-    version: CLASSIC_BUNDLE_VERSION,
+    version: bundleVersionFor(withFiles !== undefined),
     categories: [...categories],
     stories: stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) })),
     challenges: rows.map(({ challenge: c, flag, hint }) => ({
@@ -353,7 +354,7 @@ export function exportBundleFrom(
       // #186: metadata only, and only when present — the server export's rule.
       ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
     })),
-    ...(attachmentFiles ? { attachmentFiles } : {}),
+    ...(withFiles ? { attachmentFiles: withFiles } : {}),
   };
 }
 

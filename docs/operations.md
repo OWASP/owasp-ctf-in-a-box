@@ -1809,7 +1809,9 @@ The bytes travel in one of two places:
   adds the same top-level `attachmentFiles` list. Leave it unticked (the
   default) and the bundle stays the small, metadata-only file.
 
-An exported bundle is stamped `"version": 3`. Each `attachmentFiles` entry
+A bundle that carries files is stamped `"version": 3`. One without them
+(the option unticked, or nothing uploaded) stays `"version": 2`, so a box on
+an older build still imports it. Each `attachmentFiles` entry
 is `{ "item", "sha256", "bytes" }`: the challenge id, the upload's sha256,
 and the file's bytes as base64. Every entry must name an upload in the same
 file by challenge id and sha256. Version 1 and 2 files still import

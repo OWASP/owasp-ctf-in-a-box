@@ -24,9 +24,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   sha256, and never deletes. A tampered file, or files that would push the
   event past its 50 MiB, are refused before anything is written. Imports now
   go to `/api/admin/classic/bundle`, outside the proxy's 10 MB body cut, and
-  a bundle over 75 MB gets a `413` naming the limit. Without the option the
-  export is the same metadata-only file, stamped version 3; version 1 and 2
-  bundles import as before.
+  a bundle over 75 MB gets a `413` naming the limit. Without the option, or
+  with it on a board holding no uploads, the export is the same
+  metadata-only version 2 file as before, so a box on an older build still
+  imports it, and so does the classic section of an event archive. Version
+  1 and 2 bundles import as before.
 - **Fixed: a hint could be charged a different price than the one confirmed
   (#557).** If an organizer changed the hint cost after a contestant's page
   loaded, Confirm (−10 pts) charged the new price. The purchase now carries

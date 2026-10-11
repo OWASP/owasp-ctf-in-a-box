@@ -3760,7 +3760,7 @@ the launch lock (#464) and a locked story step (#463).
   - *Amended (the classic bundle with files):* a classic bundle can carry
     the bytes too, opt-in. **Include files** on the export adds the same
     `attachmentFiles` list and stamps the bundle version 3; without it the
-    bundle stays metadata only. Its import fills each missing upload whose
+    bundle stays the metadata-only version 2 file an older box imports. Its import fills each missing upload whose
     bytes it carries, skips one the box already holds, and refuses a
     tampered file or a total past the event cap before writing anything.
     The import body goes to `/api/admin/classic/bundle`, outside the proxy

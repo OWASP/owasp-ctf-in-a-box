@@ -19,7 +19,7 @@ import { getAdminSettings } from "@/lib/admin-store";
 import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
-import { CLASSIC_BUNDLE_VERSION, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
+import { bundleVersionFor, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
@@ -773,7 +773,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
   // would be a backup that does not restore — prune to the exported ids.
   const exported = new Set(challenges.map((c) => c.id));
   const kept = stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) }));
-  return { version: CLASSIC_BUNDLE_VERSION, categories, challenges, stories: kept };
+  return { version: bundleVersionFor(false), categories, challenges, stories: kept };
 }
 
 /** Removes a challenge and both of its flag rows together — nothing else.

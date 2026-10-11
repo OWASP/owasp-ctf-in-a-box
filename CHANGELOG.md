@@ -10,6 +10,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: admin Insights undercounted the event and disagreed with the
+  leaderboard (#608).** Players whose GitHub login has a capital letter were
+  read under the lowercased login and found empty; a player who left a team
+  without scoring was never found; team points summed members' own totals
+  instead of the board's. On the RTS event's snapshot "ever on a team" goes
+  from 30 to 42, Jeopardy solves from 59 to 119, attempts from 225 to 339,
+  and every team's points now equal the board. The solves chart keeps the
+  quiet stretches as empty buckets on a real time axis across the full
+  width, widening the bucket (10 min, 30 min, 1 h, …) on a long event.
 - **Fixed: the leaderboard's Individual view listed only contestants who had
   scored (#586).** Every team member now has a row; one with no points sits
   at 0 after everyone who scored, alphabetically, so a player who can find

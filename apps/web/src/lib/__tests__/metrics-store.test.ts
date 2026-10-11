@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   // the surface the store consumes (`getLeaderboardSource().getLeaderboard()`).
   getLeaderboardSourceMode: vi.fn<() => Promise<"mock" | "lambda" | "upstash" | "empty">>(),
   getLeaderboard: vi.fn<() => Promise<{ entries: { login: string; points: number }[] }>>(),
+  // The board's own fold, which team points now come from. Rejects by default,
+  // so the long-standing tests below exercise the labelled fallback sum.
+  getFoldedLeaderboard: vi.fn<() => Promise<{ teams: { slug: string; points: number }[] }>>(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -28,6 +31,7 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
     parseScanPage: actual.parseScanPage, upstashPipeline: mocks.upstashPipeline };
 });
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
+vi.mock("@/lib/leaderboard/folded", () => ({ getFoldedLeaderboard: mocks.getFoldedLeaderboard }));
 vi.mock("@/lib/leaderboard/source", () => ({
   getLeaderboardSourceMode: mocks.getLeaderboardSourceMode,
   getLeaderboardSource: async () => ({ getLeaderboard: mocks.getLeaderboard }),
@@ -46,6 +50,7 @@ const attempt = (attempts: number, lastAt = "2026-08-22T10:00:00Z") =>
  *   1. one pipeline: quiz points, classic points, ai points, hints spent
  *   2. SCAN ctf:solves:*        (secure-dev sweep; repeats until cursor 0)
  *   3. HGETALL of each solves key found
+ *   3b. SCAN ctf:user:*        (user-record sweep; empty in these tests)
  *   4. EIGHT commands per contestant, batched (answers, solves, ai solves,
  *      quiz attempts, classic attempts, ai attempts, firstTeamAt, hint
  *      purchase times)
@@ -125,6 +130,10 @@ function mockStore(opts: {
   if (keys.length) {
     mocks.upstashPipeline.mockResolvedValueOnce(keys.map((k) => ({ result: hash(sdKeys[k]) })));
   }
+  // The user-record sweep (`SCAN ctf:user:*`), which finds a player who left a
+  // team without scoring. Empty here: these tests find contestants through
+  // rosters and points, as before.
+  mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["0", []] }]);
 
   const logins = (opts.logins ?? Object.keys(opts.perLogin ?? {})).slice().sort();
   if (logins.length) {
@@ -160,6 +169,7 @@ function mockStore(opts: {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.listTeams.mockResolvedValue([]);
+  mocks.getFoldedLeaderboard.mockRejectedValue(new Error("fold unavailable"));
   // Default: every unqueued pipeline answers with one empty reply per command.
   // Queued `mockResolvedValueOnce` values still take precedence. Without this,
   // a fold large enough to be split across batches gets `undefined` back for
@@ -285,10 +295,45 @@ describe("timeline", () => {
       quizPoints: { alice: 15 },
     });
     const m = await computeEventMetrics();
+    expect(m.bucketMinutes).toBe(10);
     expect(m.timeline).toEqual([
       { at: "2026-08-22T10:00:00.000Z", solves: 2 },
+      { at: "2026-08-22T10:10:00.000Z", solves: 0 },
       { at: "2026-08-22T10:20:00.000Z", solves: 1 },
     ]);
+  });
+
+  // The RTS event ran 50 hours with ~45 busy ten-minute buckets out of ~300.
+  // Dropping the empty ones packed the busy ones side by side, so the chart
+  // could not show the room going quiet, which is what it is for.
+  it("keeps the quiet stretches as zero buckets, so the axis is real time", async () => {
+    mockStore({
+      perLogin: {
+        alice: { quizAnswers: { q1: earned(5, "2026-08-22T10:00:00Z"), q2: earned(5, "2026-08-22T13:00:00Z") } },
+      },
+      quizPoints: { alice: 10 },
+    });
+    const m = await computeEventMetrics();
+    expect(m.bucketMinutes).toBe(10);
+    expect(m.timeline).toHaveLength(19);
+    expect(m.timeline.filter((b) => b.solves > 0).map((b) => b.at)).toEqual([
+      "2026-08-22T10:00:00.000Z",
+      "2026-08-22T13:00:00.000Z",
+    ]);
+  });
+
+  it("widens the bucket on a long event so the chart stays within 120 bars", async () => {
+    mockStore({
+      perLogin: {
+        alice: { quizAnswers: { q1: earned(5, "2026-10-07T15:10:00Z"), q2: earned(5, "2026-10-09T17:40:00Z") } },
+      },
+      quizPoints: { alice: 10 },
+    });
+    const m = await computeEventMetrics();
+    expect(m.bucketMinutes).toBe(30);
+    expect(m.timeline[0]).toEqual({ at: "2026-10-07T15:00:00.000Z", solves: 1 });
+    expect(m.timeline.at(-1)).toEqual({ at: "2026-10-09T17:30:00.000Z", solves: 1 });
+    expect(m.timeline).toHaveLength(102);
   });
 
   it("skips an unparseable timestamp instead of poisoning the series", async () => {
@@ -907,5 +952,96 @@ describe("team points include Secure Development (issue #432)", () => {
     const m = await computeEventMetrics();
     expect(m.teams[0].points).toBe(100);
     expect(mocks.getLeaderboard).not.toHaveBeenCalled();
+  });
+});
+
+// Found validating Insights against the RTS event's final snapshot: every
+// per-login hash is keyed on the login as the session spelled it
+// (`ctf:classic:solves:ChrisZoc`), and the fold read them under the lowercased
+// login, so 12 of 42 players (every mixed-case login) contributed no solves,
+// attempts, team history or hint times. This fake answers BY KEY, the way
+// Redis does, so a read under the wrong spelling finds nothing.
+describe("a mixed-case login is read under its stored spelling", () => {
+  function fakeRedis(data: Record<string, Record<string, string>>) {
+    mocks.upstashPipeline.mockImplementation(async (cmds) =>
+      cmds.map(([op, key, ...rest]) => {
+        const h = data[String(key)];
+        if (op === "SCAN") {
+          const pattern = String(rest[1] ?? "*");
+          const re = new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
+          return { result: ["0", Object.keys(data).filter((k) => re.test(k))] };
+        }
+        if (op === "HGETALL") return { result: h ? hash(h) : [] };
+        if (op === "HMGET") return { result: rest.map((f) => (h ? (h[String(f)] ?? null) : null)) };
+        return { result: null };
+      }),
+    );
+  }
+
+  it("counts its solves, attempts, team history and hint timing", async () => {
+    mocks.getLeaderboardSourceMode.mockResolvedValue("empty");
+    mocks.listTeams.mockResolvedValue([{ slug: "ox", name: "Oxguardians", members: ["ChrisZoc"] }]);
+    fakeRedis({
+      "ctf:classic:points": { ChrisZoc: "50" },
+      "ctf:hints:spent": { ChrisZoc: "10" },
+      "ctf:classic:solves:ChrisZoc": { "village-1": earned(50, "2026-10-07T13:30:00.000Z") },
+      "ctf:classic:attempts:ChrisZoc": {
+        "village-1": JSON.stringify({ attempts: 2, lastAt: "2026-10-07T13:30:00.000Z", firstAt: "2026-10-07T13:10:00.000Z" }),
+      },
+      "ctf:user:ChrisZoc": { firstTeamAt: "2026-10-07T12:12:51.776Z" },
+      "ctf:hints:at:ChrisZoc": { "classic/village-1": "2026-10-07T13:20:00.000Z" },
+    });
+    const m = await computeEventMetrics();
+    expect(m.funnel).toMatchObject({ onATeam: 1, everOnATeam: 1, attempted: 1, scored: 1 });
+    expect(m.challenges).toEqual([
+      expect.objectContaining({ module: "classic", id: "village-1", solves: 1, attempts: 2, solvedAfterHint: 1 }),
+    ]);
+    expect(m.hints).toMatchObject({ boughtBeforeSolving: 1, boughtAfterSolving: 0 });
+    expect(m.timeline).toEqual([{ at: "2026-10-07T13:30:00.000Z", solves: 1 }]);
+  });
+});
+
+// Insights showed provart at 7,918 while the leaderboard showed 5,308: it
+// summed each member's own gross totals, so a flag two teammates both solved
+// counted twice and hint spend was ignored. Team points are now the board's
+// own fold, so the two screens give one number for the same team.
+describe("team points are the leaderboard's own figures", () => {
+  it("reports each team's folded leaderboard points and drops the sum caveat", async () => {
+    mockStore({ classicPoints: { ada: 100, bob: 100 }, logins: ["ada", "bob"] });
+    mocks.getFoldedLeaderboard.mockResolvedValue({ teams: [{ slug: "all", points: 90 }] });
+    const m = await computeEventMetrics();
+    expect(m.teams).toEqual([{ slug: "all", name: "All", size: 2, points: 90 }]);
+    expect(m.caveats.join(" ")).not.toMatch(/SUM each member/);
+  });
+
+  it("falls back to the labelled member sum when the board can't be read", async () => {
+    mockStore({ classicPoints: { ada: 100, bob: 100 }, logins: ["ada", "bob"] });
+    const m = await computeEventMetrics();
+    expect(m.teams[0].points).toBe(200);
+    expect(m.caveats.join(" ")).toMatch(/leaderboard could not be read/);
+  });
+});
+
+// "Ever on a team" exists to count people who LEFT (ADR 49): a leaver with no
+// points and no hints is on no roster and in no points hash, so finding
+// contestants only through those missed them. At RTS one player joined, left
+// and scored nothing; the funnel read 41 where the box held 42.
+describe("ever on a team counts a leaver who scored nothing", () => {
+  it("finds them through their user record", async () => {
+    mocks.getLeaderboardSourceMode.mockResolvedValue("empty");
+    mocks.listTeams.mockResolvedValue([{ slug: "ox", name: "Ox", members: ["ada"] }]);
+    mocks.upstashPipeline.mockImplementation(async (cmds) =>
+      cmds.map(([op, key, , pattern]) => {
+        if (op === "SCAN" && String(pattern) === "ctf:user:*") {
+          return { result: ["0", ["ctf:user:ada", "ctf:user:Leaver", "ctf:user:ada:hints"]] };
+        }
+        if (op === "SCAN") return { result: ["0", []] };
+        if (op === "HMGET" && key === "ctf:user:ada") return { result: ["2026-10-07T12:00:00.000Z"] };
+        if (op === "HMGET" && key === "ctf:user:Leaver") return { result: ["2026-10-07T12:30:00.000Z"] };
+        return { result: op === "HMGET" ? [null] : [] };
+      }),
+    );
+    const m = await computeEventMetrics();
+    expect(m.funnel).toMatchObject({ onATeam: 1, everOnATeam: 2 });
   });
 });

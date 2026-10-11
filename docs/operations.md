@@ -554,7 +554,9 @@ The panel offers:
   contestants' forks, and no new tracking was added: quiz answers and classic
   solves already carry a timestamp per item per login, Secure Development
   solves are timestamped as they are ingested, attempts are counted per login,
-  and `firstTeamAt` supplies the funnel's conversion moment.
+  and `firstTeamAt` supplies the funnel's conversion moment. Every per-login record is
+  read under the login as GitHub spells it, so a contestant whose login has
+  a capital letter counts like any other.
 
   It computes when you open the tab, not when the admin page loads — the fold
   is O(contestants) — and, while the event phase is live, recomputes every
@@ -562,15 +564,19 @@ The panel offers:
   Ns ago" stamp beside the "as of" time; **Refresh** is the same read for when
   you won't wait. You get:
 
-  ![The Insights tab: the five participation figures, a ten-minute-bucket solve timeline, and the hardest-first challenge table with solves, attempts, solve rate, average tries and median time to solve per challenge](assets/admin-insights.jpg)
+  ![The Insights tab: the five participation figures, a solve timeline, and the hardest-first challenge table with solves, attempts, solve rate, average tries and median time to solve per challenge](assets/admin-insights.jpg)
 
 
   - **Participation** — on a team / ever on a team / submitted / scored /
     **stuck** (submitted and never scored). The gap between the last two is the
     number worth watching during an event.
-  - **Solves over time**, in ten-minute buckets with a time axis (first,
+  - **Solves over time**: every bucket from the first solve to the last,
+    empty ones included, across the full width, with a time axis (first,
     middle and last bucket, UTC; dated once the buckets cross midnight), so
-    a room going quiet is visible and datable.
+    a room going quiet is a visible, datable gap. Buckets are ten minutes,
+    widened (30 min, 1 h, 2 h, …) to keep a long event within 120 bars; the
+    caption names the width and the busiest bucket, and each bar's tooltip
+    its date, range and count.
   - **Hardest first** — every challenge by solves, attempts, solve rate,
     *average tries taken by the people who did solve it*, and the *median time
     from their first attempt to their solve*. Those last two are the difficulty
@@ -593,7 +599,7 @@ The panel offers:
   | Figure | Counts | Does not count |
   |---|---|---|
   | **On a team** | Distinct logins on a team **right now** | Anyone who has since left |
-  | **Ever on a team** | Distinct logins that have **ever** joined one — survives leaving and switching | Signing in; that leaves no record at all |
+  | **Ever on a team** | Distinct logins that have **ever** joined one — survives leaving and switching, including a player who left without scoring (found through their user record) | Signing in; that leaves no record at all |
   | **Submitted** | Made at least one submission in any module | — |
   | **Scored** | Earned at least one point-bearing item in any module, Secure Development included | Submissions that never landed a point |
   | **Stuck** | Submitted **and never scored** | Anyone who has not submitted yet |
@@ -602,7 +608,7 @@ The panel offers:
   | **Solve rate** | solves ÷ **the people who tried it** | The rest of the event; this is not an event-wide difficulty figure |
   | **Avg tries** | Mean attempts taken by the contestants who **did** solve it | Everyone still stuck on it — which is why a low rate and a low average can coexist |
   | **Median time** | Median seconds from a contestant's **first attempt** to their solve | Items earned before `firstAt` existed; those carry no start time |
-  | **Team points** | The **sum** of each member's own totals | Nothing — and that is the catch: the leaderboard folds the **union** of their solves, so a challenge two teammates both solved counts once there and twice here |
+  | **Team points** | The leaderboard's own figure for the team: the **union** of its members' solves, hint spend netted | — the two screens agree. Only if the board can't be read does the tab fall back to the sum of members' totals, and it says so |
   | **Hints before solving** | Hints bought **before** the buyer earned that item | Hints bought afterwards, and hints for items never solved |
 
   Solve rate can never exceed 100%: its denominator is the larger of "people
@@ -613,9 +619,7 @@ The panel offers:
 
   The tab ends with **what these numbers do not measure**, and that list ships
   in the API payload too rather than living only here — a metric whose limits
-  travel separately from it gets quoted without them. In short: team points on
-  this tab *sum* each member's totals while the leaderboard folds the *union*
-  of their solves; attempt rows carry a first and a last time but not one per
+  travel separately from it gets quoted without them. In short: attempt rows carry a first and a last time but not one per
   try, so the timeline is solves rather than submissions; signing in leaves no record,
   so the funnel starts at "ever on a team"; Secure Development has no
   per-challenge attempt data, since its scores arrive already judged; and

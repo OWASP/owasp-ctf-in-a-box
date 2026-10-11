@@ -7,6 +7,7 @@ import { AI_CHALLENGES_KEY, AI_POINTS_KEY, aiAttemptsKey, aiSolvesKey } from "@/
 import { listTeams } from "@/lib/team-store";
 import { parseAttemptRow } from "@/lib/attempt-row";
 import { getLeaderboardSource, getLeaderboardSourceMode } from "@/lib/leaderboard/source";
+import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { errorLabel } from "@/lib/error-label";
 
 /**
@@ -43,9 +44,34 @@ import { errorLabel } from "@/lib/error-label";
  * number, not one from a minute ago.
  */
 
-/** Solves-over-time bucket width. Ten minutes is the resolution at which a
- *  room going quiet is visible without the series becoming noise. */
-const BUCKET_MS = 10 * 60 * 1000;
+/** Solves-over-time bucket widths, in minutes. Ten is the resolution at which
+ *  a room going quiet is visible without the series becoming noise; a longer
+ *  event takes the first width that keeps it within `MAX_BUCKETS` bars, so a
+ *  three-day event still fits the panel instead of drawing ~400 slivers. */
+const BUCKET_MINUTES = [10, 30, 60, 120, 240, 360, 720, 1440] as const;
+const MAX_BUCKETS = 120;
+
+/** Every bucket from the first solve to the last, empty ones included: the
+ *  quiet stretches are what the chart is for, and dropping them packed the
+ *  busy buckets side by side on an axis that no longer meant time. */
+function solveTimeline(times: number[]): { bucketMinutes: number; timeline: { at: string; solves: number }[] } {
+  if (times.length === 0) return { bucketMinutes: BUCKET_MINUTES[0], timeline: [] };
+  const first = Math.min(...times);
+  const last = Math.max(...times);
+  const minutes =
+    BUCKET_MINUTES.find((m) => {
+      const ms = m * 60_000;
+      return Math.floor(last / ms) - Math.floor(first / ms) + 1 <= MAX_BUCKETS;
+    }) ?? BUCKET_MINUTES[BUCKET_MINUTES.length - 1];
+  const ms = minutes * 60_000;
+  const start = Math.floor(first / ms);
+  const counts = new Array<number>(Math.floor(last / ms) - start + 1).fill(0);
+  for (const t of times) counts[Math.floor(t / ms) - start] += 1;
+  return {
+    bucketMinutes: minutes,
+    timeline: counts.map((solves, i) => ({ at: new Date((start + i) * ms).toISOString(), solves })),
+  };
+}
 
 /** Hard ceiling on contestants folded in one pass. An event this size is far
  *  beyond what the kit targets; the cap exists so a runaway key space cannot
@@ -101,8 +127,11 @@ export type EventMetrics = {
     stuck: number;
   };
   challenges: ChallengeStat[];
-  /** Solves per 10-minute bucket, ascending. Quiz, classic and ai only; see caveats. */
+  /** Solves per bucket of `bucketMinutes`, ascending, every bucket from the
+   *  first solve to the last (empty ones at 0). Quiz, classic and ai only; see caveats. */
   timeline: { at: string; solves: number }[];
+  /** The timeline's bucket width: 10 minutes, wider on a long event. */
+  bucketMinutes: number;
   teams: { slug: string; name: string; size: number; points: number }[];
   modules: { quiz: number; classic: number; ai: number; secureDevelopment: number };
   hints: {
@@ -170,6 +199,27 @@ async function batched(commands: (string | number)[][]): Promise<UpstashResult[]
  * hint bought on one target could otherwise be matched against a solve on
  * another that happens to share an id.
  */
+/** Every login with a user record (`ctf:user:<login>`), in its stored
+ *  spelling. The only index that holds a player who joined a team, left it
+ *  and scored nothing — no roster or points hash knows them, yet "ever on a
+ *  team" exists to count them. The same pattern also matches each player's
+ *  `ctf:user:<login>:hints` set, which is skipped. Throws on an unreadable
+ *  page, like the SD sweep below, so the caller can say the funnel is short. */
+async function readUserLogins(): Promise<string[]> {
+  let cursor = "0";
+  const logins: string[] = [];
+  do {
+    const [scan] = await upstashPipeline([["SCAN", cursor, "MATCH", "ctf:user:*", "COUNT", 1000]]);
+    const [next, found] = parseScanPage(scan, "metrics user records");
+    cursor = next;
+    for (const key of found) {
+      const login = key.slice("ctf:user:".length);
+      if (login && !login.includes(":")) logins.push(login);
+    }
+  } while (cursor !== "0");
+  return logins;
+}
+
 async function readSecureDevSolves(): Promise<Map<string, string>> {
   let cursor = "0";
   const keys: string[] = [];
@@ -290,6 +340,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   // The fail direction matches the solves sweep below: a scorer that cannot
   // be reached costs the SD share of the totals and SAYS so, never the panel.
   const sdPoints = new Map<string, number>();
+  const sdSpellings: string[] = [];
   const sourceMode = await getLeaderboardSourceMode();
   if (sourceMode === "mock") {
     caveats.push(
@@ -301,6 +352,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       for (const entry of data.entries) {
         const points = Number(entry.points);
         if (Number.isFinite(points)) sdPoints.set(entry.login.toLowerCase(), points);
+        sdSpellings.push(entry.login);
       }
     } catch (err) {
       console.error("secure-development points unavailable for metrics:", errorLabel(err));
@@ -355,6 +407,37 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     ...sdLogins,
     ...sdPoints.keys(),
   ]);
+
+  // Every per-login hash below is keyed on the login AS THE SESSION SPELLED IT
+  // (`ctf:classic:solves:ChrisZoc`); only the join between logins is
+  // case-insensitive. So each contestant is read under every spelling the box
+  // holds for them — team rosters, the points and hint-spend hashes, the
+  // scorer's entries — and their rows merged. Reading under the lowercased
+  // login alone found nothing for a mixed-case player, which at the RTS event
+  // hid 12 of 42 contestants from every figure on this panel.
+  const spellingsOf = new Map<string, Set<string>>();
+  const addSpelling = (raw: string) => {
+    const login = raw.toLowerCase();
+    const set = spellingsOf.get(login) ?? new Set<string>();
+    set.add(raw);
+    spellingsOf.set(login, set);
+  };
+  for (const t of teams) for (const m of t.members) addSpelling(m);
+  for (const res of [quizPointsRes, classicPointsRes, aiPointsRes, hintsSpentRes]) {
+    for (const [k] of hashEntries(res.result)) addSpelling(k);
+  }
+  for (const raw of sdSpellings) addSpelling(raw);
+  // Leavers who scored nothing are known only to their user record; without
+  // this sweep "ever on a team" missed exactly the people it exists to count.
+  try {
+    for (const raw of await readUserLogins()) {
+      addSpelling(raw);
+      contestants.add(raw.toLowerCase());
+    }
+  } catch (err) {
+    console.error("user records unavailable for metrics:", errorLabel(err));
+    caveats.push("Player records could not be read — \"ever on a team\" may miss players who left their team without scoring.");
+  }
   let logins = [...contestants].sort();
   if (logins.length > MAX_CONTESTANTS) {
     caveats.push(
@@ -363,12 +446,13 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     logins = logins.slice(0, MAX_CONTESTANTS);
   }
 
-  // Eight reads per contestant: their earned items (quiz, classic, ai), their
+  // Eight reads per spelling: their earned items (quiz, classic, ai), their
   // attempt rows (quiz, classic, ai), the firstTeamAt that anchors the funnel,
   // and when they bought each hint.
   const PER_LOGIN = 8;
-  const perLogin = await batched(
-    logins.flatMap((l) => [
+  const reads = logins.flatMap((login) => [...(spellingsOf.get(login) ?? [login])].map((spelling) => ({ login, spelling })));
+  const replies = await batched(
+    reads.flatMap(({ spelling: l }) => [
       ["HGETALL", quizAnswersKey(l)],
       ["HGETALL", classicSolvesKey(l)],
       ["HGETALL", aiSolvesKey(l)],
@@ -380,12 +464,34 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     ]),
   );
 
+  // One contestant's rows across their spellings. A single item held under
+  // two spellings of one login keeps its first row, which is enough: the
+  // figures below count an item once per contestant either way.
+  const merged = new Map<string, { result: unknown }[]>();
+  reads.forEach(({ login }, r) => {
+    const slots = merged.get(login) ?? Array.from({ length: PER_LOGIN }, () => ({ result: [] as unknown[] }));
+    for (let s = 0; s < PER_LOGIN; s++) {
+      const reply = replies[r * PER_LOGIN + s]?.result;
+      if (s === 6) {
+        const first = Array.isArray(reply) ? reply[0] : null;
+        const held = (slots[s].result as unknown[])[0];
+        if (!held && typeof first === "string" && first) slots[s] = { result: [first] };
+        continue;
+      }
+      const have = new Set(hashEntries(slots[s].result).map(([k]) => k));
+      const add = hashEntries(reply).filter(([k]) => !have.has(k));
+      slots[s] = { result: [...(slots[s].result as unknown[]), ...add.flat()] };
+    }
+    merged.set(login, slots);
+  });
+  const perLogin = logins.flatMap((login) => merged.get(login) ?? []);
+
   let everOnATeam = 0;
   let attempted = 0;
   let scored = 0;
   let hintsBeforeSolve = 0;
   let hintsAfterSolve = 0;
-  const buckets = new Map<number, number>();
+  const solveTimes: number[] = [];
   const solvesById = new Map<
     string,
     { module: "quiz" | "classic" | "ai"; solvers: number; attemptSum: number; durations: number[] }
@@ -488,10 +594,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         const earned = parseEarned(raw);
         if (!earned) continue;
         const ms = Date.parse(earned.at);
-        if (!Number.isNaN(ms)) {
-          const bucket = Math.floor(ms / BUCKET_MS) * BUCKET_MS;
-          buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
-        }
+        if (!Number.isNaN(ms)) solveTimes.push(ms);
         const key = `${mod}:${id}`;
         const stat = solvesById.get(key) ?? { module: mod, solvers: 0, attemptSum: 0, durations: [] as number[] };
         stat.solvers += 1;
@@ -562,25 +665,36 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     })
     .sort((a, b) => a.solves - b.solves || a.id.localeCompare(b.id));
 
-  const timeline = [...buckets.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([ms, solves]) => ({ at: new Date(ms).toISOString(), solves }));
+  const { bucketMinutes, timeline } = solveTimeline(solveTimes);
 
+  // Team points are the leaderboard's own figures: the UNION fold over the
+  // members' items, hint spend netted, read fresh like the rest of this panel.
+  // Summing the members' own totals instead counted a flag two teammates both
+  // solved twice and ignored hints, so this screen and the board gave two
+  // numbers for one team (provart: 7,918 here, 5,308 there, at RTS). Only if
+  // the board cannot be read does the rough sum come back, and it says so.
+  let boardPoints: Map<string, number> | null = null;
+  try {
+    const board = await getFoldedLeaderboard({ fresh: true });
+    boardPoints = new Map(board.teams.map((t) => [t.slug, t.points]));
+  } catch (err) {
+    console.error("leaderboard unavailable for metrics team points:", errorLabel(err));
+    caveats.push(
+      "The leaderboard could not be read, so team points here SUM each member's own totals; the leaderboard folds the UNION of their solves, so a challenge two teammates both solved counts once there and twice here.",
+    );
+  }
   const teamRows = teams
     .map((t) => ({
       slug: t.slug,
       name: t.name,
       size: t.members.length,
-      // The team's own leaderboard total is a UNION fold over its members'
-      // items; summing per-login aggregates would double count a challenge two
-      // teammates both solved. This is a rough per-team sum and is labelled as
-      // such, not presented as the leaderboard figure.
-      points: t.members.reduce((sum, m) => sum + (pointsByLogin.get(m.toLowerCase()) ?? 0), 0),
+      points:
+        boardPoints?.get(t.slug) ??
+        (boardPoints ? 0 : t.members.reduce((sum, m) => sum + (pointsByLogin.get(m.toLowerCase()) ?? 0), 0)),
     }))
     .sort((a, b) => b.points - a.points);
 
   caveats.push(
-    "Team points here SUM each member's own totals; the leaderboard folds the UNION of their solves, so a challenge two teammates both solved counts once there and twice here.",
     "The timeline plots solves, not submissions: attempt rows carry a first and a last time but not one per try.",
     "Time-to-solve and hint ordering are blank for anything earned before those timestamps were added, so early-event figures cover fewer contestants than late-event ones.",
     "Signing in leaves no record; the funnel starts at 'ever on a team'.",
@@ -598,6 +712,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     },
     challenges,
     timeline,
+    bucketMinutes,
     teams: teamRows,
     modules: {
       quiz: [...quizPoints.values()].filter((p) => p > 0).length,

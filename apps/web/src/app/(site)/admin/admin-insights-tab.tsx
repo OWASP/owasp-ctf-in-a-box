@@ -39,6 +39,7 @@ type EventMetrics = {
   funnel: { onATeam: number; everOnATeam: number; attempted: number; scored: number; stuck: number };
   challenges: ChallengeStat[];
   timeline: { at: string; solves: number }[];
+  bucketMinutes: number;
   teams: { slug: string; name: string; size: number; points: number }[];
   modules: { quiz: number; classic: number; ai: number; secureDevelopment: number };
   hints: { buyers: number; totalSpend: number; boughtBeforeSolving: number; boughtAfterSolving: number };
@@ -83,6 +84,28 @@ export function axisLabels(timeline: readonly { at: string }[]): { start: string
     mid: label(timeline[Math.floor((timeline.length - 1) / 2)].at),
     end: label(last),
   };
+}
+
+/** A bucket's tooltip: its date, its whole range and its count, in UTC like
+ *  the rest of this panel. Sliced from the stored ISO strings, like the axis. */
+export function bucketTitle(b: { at: string; solves: number }, minutes: number): string {
+  const end = new Date(Date.parse(b.at) + minutes * 60_000).toISOString();
+  return `${b.at.slice(5, 10)} ${b.at.slice(11, 16)}–${end.slice(11, 16)} UTC · ${b.solves} solve${b.solves === 1 ? "" : "s"}`;
+}
+
+/** A bar's height against the busiest bucket. An empty bucket draws nothing,
+ *  so a quiet stretch reads as a gap; a non-empty one never drops below a
+ *  sliver, so one solve stays visible beside a tall peak. */
+export function bucketHeight(solves: number, peak: number): string {
+  if (!solves || !peak) return "0%";
+  return `${Math.max(6, Math.round((solves / peak) * 100))}%`;
+}
+
+const WIDTH_WORDS: Record<number, string> = { 10: "Ten-minute", 30: "Thirty-minute", 60: "One-hour", 120: "Two-hour", 240: "Four-hour", 360: "Six-hour", 720: "Twelve-hour" };
+
+/** The caption's name for the bucket width the server chose. */
+export function bucketWidthLabel(minutes: number): string {
+  return WIDTH_WORDS[minutes] ?? (minutes % 60 === 0 ? `${minutes / 60}-hour` : `${minutes}-minute`);
 }
 
 export default function AdminInsightsTab({
@@ -200,17 +223,17 @@ export default function AdminInsightsTab({
             <section className="flex flex-col gap-2">
               <h3 className="text-sm font-semibold text-white">Solves over time</h3>
               <div
-                className="flex h-16 items-end gap-px overflow-x-auto"
+                className="flex h-16 items-end gap-px"
                 role="img"
-                aria-label={axis ? `Solves per ten minutes, ${axis.start} to ${axis.end} UTC` : "Solves per ten minutes"}
+                aria-label={`${bucketWidthLabel(metrics.bucketMinutes)} solves${axis ? `, ${axis.start} to ${axis.end} UTC` : ""}, busiest bucket ${peak}`}
               >
+                {/* Every bucket from the first solve to the last, empty ones
+                    included, stretched across the full width: the axis below
+                    is then real time, and a quiet stretch is a visible gap. */}
                 {metrics.timeline.map((b) => (
-                  <div
-                    key={b.at}
-                    title={`${b.at.slice(11, 16)} — ${b.solves} solve${b.solves === 1 ? "" : "s"}`}
-                    style={{ height: `${peak ? Math.max(4, (b.solves / peak) * 100) : 4}%` }}
-                    className="w-2 flex-none rounded-sm bg-[#2563eb]/70"
-                  />
+                  <div key={b.at} title={bucketTitle(b, metrics.bucketMinutes)} className="flex h-full min-w-0 flex-1 items-end">
+                    <div style={{ height: bucketHeight(b.solves, peak) }} className="w-full rounded-sm bg-[#2563eb]/70" />
+                  </div>
                 ))}
               </div>
               {/* The axis. Without it the bars say "when did the room go
@@ -223,8 +246,9 @@ export default function AdminInsightsTab({
                 </div>
               )}
               <p className="text-sm text-muted">
-                Ten-minute buckets, quiz, Jeopardy and AI. Attempt rows carry a first and a last time but not
-                one per try, so this is solves, not submissions.
+                {bucketWidthLabel(metrics.bucketMinutes)} buckets, quiz, Jeopardy and AI; the tallest bar is{" "}
+                {peak} solve{peak === 1 ? "" : "s"}. Attempt rows carry a first and a last time but not one per
+                try, so this is solves, not submissions.
               </p>
             </section>
           )}

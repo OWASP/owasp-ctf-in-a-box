@@ -29,10 +29,16 @@ export type ChallengeStatus =
  *  see challenge-board.tsx's re-export note. */
 export type ClassicStatus = ChallengeStatus;
 
+/** "1 team" / "3 teams": the solve count as the board and the detail page
+ *  both say it (#595). */
+export function teamsLabel(n: number): string {
+  return `${n} team${n === 1 ? "" : "s"}`;
+}
+
 /** What a challenge surface needs to render one challenge — deliberately just
- *  the public `Challenge` fields, this challenge's solve count, and this
- *  viewer's derived status. Built by the server pages from `listChallenges()`
- *  + `getViewerClassic()` + `getSolveCounts()`, field by field — never from a
+ *  the public `Challenge` fields, how many teams solved it, and this viewer's
+ *  derived status. Built by the server pages from `listChallenges()` +
+ *  `getViewerClassic()` + `teamSolveCounts()`, field by field — never from a
  *  spread of a raw store record, which is how a flag would leak. */
 export type ChallengeView = {
   id: string;
@@ -40,7 +46,9 @@ export type ChallengeView = {
   category: string;
   description: string;
   points: number;
-  solveCount: number;
+  /** Teams that solved it (#595): the board's figure, since scoring is per
+   *  team. Null when it could not be read; nothing is shown then. */
+  teamsSolved: number | null;
   /** Compared with capitalisation intact (issue #193). Public deliberately —
    *  see the badge below. Optional so every existing caller is unchanged. */
   caseSensitive?: boolean;
@@ -335,9 +343,9 @@ export function ChallengeCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-white">{challenge.title}</p>
-          <p className="mt-0.5 text-xs text-muted">
-            {challenge.solveCount} solve{challenge.solveCount === 1 ? "" : "s"}
-          </p>
+          {challenge.teamsSolved !== null && (
+            <p className="mt-0.5 text-xs text-muted">{teamsLabel(challenge.teamsSolved)} solved</p>
+          )}
         </div>
         <div className="flex flex-none items-center gap-1.5">
           {/* Case sensitivity is PUBLIC (issue #193). Without it a contestant

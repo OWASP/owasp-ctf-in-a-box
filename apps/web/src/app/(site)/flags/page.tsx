@@ -12,6 +12,7 @@
 // /api/classic/submit itself.
 
 import type { Metadata } from "next";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
@@ -24,7 +25,6 @@ import { auth } from "@/lib/auth";
 import { getAdminSettings } from "@/lib/admin-store";
 import { listStories,
   CLASSIC_COOLDOWN_SEC,
-  getSolveCounts,
   getViewerClassic,
   listCategories,
   listChallenges,
@@ -75,7 +75,7 @@ export default async function FlagsPage() {
   const [challenges, categories, solveCounts, viewerClassic, settings, modules, hintIds, stories] = await Promise.all([
     listChallenges(),
     listCategories(),
-    getSolveCounts(),
+    teamSolveCounts("classic"),
     login ? getViewerClassic(login) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
     // Fails OPEN, same doctrine as ai-store.ts's resolveSettings for this
     // exact read (see ai/page.tsx's identical fix): a Redis blip here must
@@ -111,7 +111,8 @@ export default async function FlagsPage() {
     category: c.category,
     description: c.description,
     points: c.points,
-    solveCount: solveCounts.get(c.id) ?? 0,
+    // Teams, not players (#595): scoring is per team. Null when unread.
+    teamsSolved: solveCounts ? (solveCounts.get(c.id) ?? 0) : null,
     // Listed explicitly, like every field above it — this map is deliberately
     // NOT a spread of the store record, because a spread is how a flag leaks.
     caseSensitive: c.caseSensitive,
@@ -135,7 +136,17 @@ export default async function FlagsPage() {
           // An admin preview (#464) sees every step open, to test the story.
           if (!launch.preview && isLocked(pos, teamSolved)) return { locked: true, key: `${st.id}:${pos.position}`, label: lockedLabel(pos) };
           const c = byId.get(id)!;
-          return { locked: false, id, title: c.title, category: c.category, points: c.points, solved: c.status === "solved", position: pos.position, total: pos.total };
+          return {
+            locked: false,
+            id,
+            title: c.title,
+            category: c.category,
+            points: c.points,
+            solved: c.status === "solved",
+            position: pos.position,
+            total: pos.total,
+            teamsSolved: c.teamsSolved,
+          };
         }),
     }))
     .filter((lane) => lane.steps.length > 0);

@@ -30,6 +30,7 @@ const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
   getLaunchAccess: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
+vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts }));
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -38,7 +39,7 @@ const {
   isAdminLogin,
   getSession,
   listAiChallenges,
-  getAiSolveCounts,
+  teamSolveCounts,
   getViewerAi,
   getResolvedModules,
   mintLaunchUrl,
@@ -53,7 +54,7 @@ const {
   isAdminLogin: vi.fn(),
   getSession: vi.fn(),
   listAiChallenges: vi.fn(),
-  getAiSolveCounts: vi.fn(),
+  teamSolveCounts: vi.fn(),
   getViewerAi: vi.fn(),
   getResolvedModules: vi.fn(),
   mintLaunchUrl: vi.fn(),
@@ -89,7 +90,7 @@ vi.mock("@/lib/require-team", () => ({ redirectIfTeamless }));
 vi.mock("@/lib/hint-store", () => ({ getAiHintIds, getHintNotice, getViewerHints }));
 vi.mock("@/lib/ai-store", () => ({
   listAiChallenges,
-  getAiSolveCounts,
+  teamSolveCounts,
   getViewerAi,
   AI_COOLDOWN_SEC: 5,
 }));
@@ -145,7 +146,7 @@ beforeEach(() => {
   isAdminLogin.mockReturnValue(false);
   getSession.mockResolvedValue({ user: { login: "alice" } });
   listAiChallenges.mockResolvedValue([flagChallenge, eventChallenge]);
-  getAiSolveCounts.mockResolvedValue(new Map([["a1", 3]]));
+  teamSolveCounts.mockResolvedValue(new Map([["a1", 3]]));
   getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });
   getResolvedModules.mockResolvedValue([
     { id: "ai", title: "AI", blurb: "Prompt-injection and guardrail challenges." },
@@ -214,15 +215,15 @@ describe("ai challenge page", () => {
     // ChallengeDetail's own card to draw (pinned in its own test file) — this
     // page's job is only to hand it the right view model, checked here.
     expect(challengeDetailSpy).toHaveBeenCalledTimes(1);
-    const [props] = challengeDetailSpy.mock.calls[0] as [{ challenge: { points: number; solveCount: number; description: string } }];
+    const [props] = challengeDetailSpy.mock.calls[0] as [{ challenge: { points: number; teamsSolved: number | null; description: string } }];
     expect(props.challenge.points).toBe(40);
-    expect(props.challenge.solveCount).toBe(3);
+    expect(props.challenge.teamsSolved).toBe(3);
     expect(props.challenge.description).toContain("**leak**");
   });
 
   it("decodes an encoded id from the URL", async () => {
     listAiChallenges.mockResolvedValue([{ ...flagChallenge, id: "web/one two" }]);
-    getAiSolveCounts.mockResolvedValue(new Map());
+    teamSolveCounts.mockResolvedValue(new Map());
     const html = renderToStaticMarkup(await AiChallengePage(params("web%2Fone%20two")));
     expect(html).toContain("Prompt Leak");
   });

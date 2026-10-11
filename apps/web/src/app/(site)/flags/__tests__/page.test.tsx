@@ -9,17 +9,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
+vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts }));
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { moduleLive, isAdminLogin, getSession, listChallenges, listCategories, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, deriveStatusSpy } =
+const { moduleLive, isAdminLogin, getSession, listChallenges, listCategories, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, deriveStatusSpy } =
   vi.hoisted(() => ({
     moduleLive: vi.fn(),
     isAdminLogin: vi.fn(),
     getSession: vi.fn(),
     listChallenges: vi.fn(),
     listCategories: vi.fn(),
-    getSolveCounts: vi.fn(),
+    teamSolveCounts: vi.fn(),
     getViewerClassic: vi.fn(),
     getAdminSettings: vi.fn(),
     getResolvedModules: vi.fn(),
@@ -52,7 +53,7 @@ vi.mock("@/lib/classic-store", () => ({
   listStories: storyMocks.listStories,
   listChallenges,
   listCategories,
-  getSolveCounts,
+  teamSolveCounts,
   getViewerClassic,
   CLASSIC_COOLDOWN_SEC: 5,
 }));
@@ -85,7 +86,7 @@ beforeEach(() => {
     { id: "classic", title: "Jeopardy", blurb: "Find the flag, submit the string, take the points." },
   ]);
   listCategories.mockResolvedValue(["Web", "Crypto"]);
-  getSolveCounts.mockResolvedValue(new Map());
+  teamSolveCounts.mockResolvedValue(new Map());
 });
 
 describe("flags page gate", () => {
@@ -326,6 +327,19 @@ describe("stories on the board (#463)", () => {
     expect(html.split('href="/flags/c1"').length - 1).toBe(1); // one tile, in the lane only
     // The lane comes before the category grid.
     expect(html.indexOf("Operation CTF")).toBeLessThan(html.indexOf("Crypto"));
+  });
+
+  // #595: the open step shows how many teams solved it; the locked step's
+  // count never leaves the server (ADR 60: a locked step is invisible).
+  it("shows the open step's team count and never the locked step's", async () => {
+    getSession.mockResolvedValue({ user: { login: "alice" } });
+    listChallenges.mockResolvedValue(baseChallenges);
+    storyMocks.listStories.mockResolvedValue([op]);
+    storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
+    teamSolveCounts.mockResolvedValue(new Map([["c1", 2], ["c2", 5]]));
+    const html = renderToStaticMarkup(await FlagsPage());
+    expect(html).toContain("2 teams");
+    expect(html).not.toContain("5 teams");
   });
 
   it("opens the next step once the team has solved the one before it", async () => {

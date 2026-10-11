@@ -493,7 +493,10 @@ aggregates: `points` and `solved` (per-login totals the leaderboard overlay
 reads with flat `HGETALL`s regardless of board size), `lastAt` (each login's
 latest award time, the leaderboard's tiebreak, #522) and `solvecount` (the
 per-challenge distinct-solver count the board displays, distinct by
-construction because the already-solved guard runs before any write).
+construction because the already-solved guard runs before any write). The
+contestant board shows a different figure, teams that solved each challenge
+(#595, `lib/team-solve-counts.ts`), folded from the members' solves hashes on
+read; `solvecount` (players) is what the admin list shows beside it.
 
 **Submission**: `POST /api/classic/submit` derives `login` from the session
 (never the request body) and calls `submitFlag(login, challengeId, flag)`.

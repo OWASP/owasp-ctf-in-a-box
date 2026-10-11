@@ -75,7 +75,7 @@ const BIDI_CONTROLS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
  *  the BOM, word joiners) and every other default-ignorable code point. */
 const INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\s]/gu;
 
-/** The one name check create and rename share (#603). NFC first, so the
+/** The one name check create and rename share. NFC first, so the
  *  length counts what is displayed. Bidi controls are refused rather than
  *  stripped, so a saved name never silently differs from what was typed: one
  *  could render a name reversed, or push it over the points column. A name

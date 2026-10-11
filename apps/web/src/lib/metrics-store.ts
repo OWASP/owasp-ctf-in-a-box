@@ -187,8 +187,11 @@ function timeToSolve(
   if (solved && solved.openDurations.length > 0) {
     return { medianSecondsToSolve: median(solved.openDurations), timeMeasure: "open" };
   }
-  if (solved && solved.durations.some((d) => d > 0)) {
-    return { medianSecondsToSolve: median(solved.durations), timeMeasure: "first-miss" };
+  // A first-try solve measures 0 by construction: unknown, not instant, so
+  // only the solvers who missed first count toward this median.
+  const missed = solved?.durations.filter((d) => d > 0) ?? [];
+  if (missed.length > 0) {
+    return { medianSecondsToSolve: median(missed), timeMeasure: "first-miss" };
   }
   return { medianSecondsToSolve: null, timeMeasure: null };
 }

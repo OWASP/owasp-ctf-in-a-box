@@ -628,8 +628,9 @@ The panel offers:
     to their solve (the box records the first open, once per player and
     challenge). Where no open was recorded (quiz, and solves from before the
     record existed) it falls back to their first submission and the cell is
-    starred; where every solver was right on their first submission it shows
-    —, because that fallback is 0 by construction, not fast. Those last two are the difficulty
+    starred and taken over the solvers who missed first; where every solver
+    was right on their first submission it shows —, because that fallback is
+    0 by construction, not fast. Those last two are the difficulty
     signal solve rate alone hides: a challenge everyone eventually solved on
     their fourth attempt, forty minutes in, is harder than its 100% rate
     suggests. Each row is named by its **title** — the quiz question's prompt,

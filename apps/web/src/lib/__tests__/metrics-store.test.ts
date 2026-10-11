@@ -679,6 +679,29 @@ describe("time to solve", () => {
     expect((await computeEventMetrics()).challenges[0]?.timeMeasure).toBe("first-miss");
   });
 
+  // A first-try solver's 0 is unknown, not instant, so it does not drag the
+  // first-miss median of the solvers who did miss down to 0.
+  it("takes the first-miss median over the solvers who missed first", async () => {
+    const firstTry = (at: string) => ({
+      classicSolves: { c1: earned(10, at) },
+      classicAttempts: { c1: attemptFrom(1, at) },
+    });
+    mockStore({
+      perLogin: {
+        alice: firstTry("2026-08-22T10:05:00Z"),
+        bob: firstTry("2026-08-22T10:06:00Z"),
+        carol: {
+          classicSolves: { c1: earned(10, "2026-08-22T10:05:00Z") },
+          classicAttempts: { c1: attemptFrom(2, "2026-08-22T10:00:00Z") },
+        },
+      },
+      classicPoints: { alice: 10, bob: 10, carol: 10 },
+    });
+    const c = (await computeEventMetrics()).challenges[0];
+    expect(c?.medianSecondsToSolve).toBe(300);
+    expect(c?.timeMeasure).toBe("first-miss");
+  });
+
   // Every solver right on their first submission, and no open records: the
   // duration is 0 by construction, which reads as "instant". It is unknown.
   it("is null, not 0s, when everyone solved on their first submission and no open was recorded", async () => {

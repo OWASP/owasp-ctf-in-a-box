@@ -462,6 +462,12 @@ export async function revealHint(
   return attemptReveal(login, target, id, cost, dryRun, endsAtMs, quoted, false);
 }
 
+/** The refusal for a purchase whose confirmed price is no longer the price:
+ *  nothing charged, and the current price to confirm again. */
+function repricedResult(price: number): RevealResult {
+  return { ok: false, repriced: true, cost: price, error: `This hint now costs ${price} pts. Confirm again to buy it at the new price.` };
+}
+
 async function attemptReveal(
   login: string,
   target: HintTarget,
@@ -492,6 +498,11 @@ async function attemptReveal(
       };
     }
     if (gate.reason === "insufficient") {
+      // A stale quote is answered with the current price first: the
+      // contestant confirmed a different figure, and "not enough points" at
+      // a price they never saw is no answer. The next request, quoting the
+      // new price, gets the affordability refusal if it still applies.
+      if (quoted !== "" && Number(quoted) !== gate.needed) return repricedResult(gate.needed);
       return { ok: false, forbidden: true, error: notEnough(gate.needed, gate.have) };
     }
     if (gate.reason === "busy") {
@@ -586,13 +597,7 @@ async function attemptReveal(
   }
   if (status === "repriced") {
     const now = Number(spent);
-    const price = Number.isFinite(now) ? now : cost;
-    return {
-      ok: false,
-      repriced: true,
-      cost: price,
-      error: `This hint now costs ${price} pts. Confirm again to buy it at the new price.`,
-    };
+    return repricedResult(Number.isFinite(now) ? now : cost);
   }
   // The script's charge-boundary window check (#566): the gate passed a
   // round-trip ago, the end (or the freeze) landed since. Same two messages

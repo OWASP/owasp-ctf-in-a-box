@@ -334,6 +334,26 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await pipeline([["DEL", me, xSolves, x]]);
   });
 
+  // ADR 60 (#602): only the current stint's joinedAt is kept, so leaving and
+  // rejoining the SAME team re-locks the steps that player's earlier solves
+  // had opened. Pinned so a change to it is a decision, not a drift.
+  it("story lock: a member who left and rejoined the same team no longer opens with a first-stint solve", async () => {
+    const prereqId = freshId("recon");
+    const id = freshId("web");
+    await seed(id, "flag{web}", 40);
+    const me = liveKey("classic", freshId("user-me"));
+    const xSolves = liveKey("classic", freshId("solves-x"));
+    const x = liveKey("classic", freshId("user-x"));
+    await pipeline([
+      ["HSET", me, "team", "t", "joinedAt", iso(T0 - 7_200_000)],
+      ["HSET", xSolves, prereqId, `{"points":10,"at":"${iso(T0 - 3_600_000)}"}`],
+      // Rejoined t after that solve: the stint the solve was made in is gone.
+      ["HSET", x, "team", "t", "joinedAt", iso(T0 - 600_000)],
+    ]);
+    expect(await submit(id, "flag{web}", { prereq: prereqId, team: "t", lockKeys: [K.solves, me, xSolves, x] })).toEqual(["locked"]);
+    await pipeline([["DEL", me, xSolves, x]]);
+  });
+
   it("story lock: a team of one opens the step with their own solve", async () => {
     const prereqId = freshId("recon");
     const id = freshId("web");

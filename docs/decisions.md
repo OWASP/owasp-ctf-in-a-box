@@ -3650,7 +3650,11 @@ step by step while the free-pick board stays as it is.
   player who joins mid-event still brings their points; only the unlock
   follows solve-time membership. A story and a team's score can therefore
   differ in one case: a carried-in solve scores for the new team but opens
-  nothing there.
+  nothing there. The record keeps only the CURRENT stint's `joinedAt`, so a
+  player who leaves and rejoins the same team is treated as new: their
+  first-stint solves stop opening steps (a teammate who stayed still opens
+  them). Keeping every stint would need a per-team join history; set aside
+  as rare for its cost.
 - **The lock lives in the scripts.** `SUBMIT_SCRIPT` and `REVEAL_SCRIPT`
   receive the prerequisite, a (solves hash, user record) pair per teammate
   and the team slug, decide the rule above inside the same call (one Lua

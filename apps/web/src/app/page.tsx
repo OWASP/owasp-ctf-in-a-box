@@ -385,7 +385,7 @@ export default async function Home({
                     >
                       {i + 1}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-white">{row.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-white"><bdi>{row.name}</bdi></span>
                     <span className="flex-none font-semibold tabular-nums text-white">
                       {row.points.toLocaleString("en-US")}
                       <span className="ml-1 text-xs font-normal text-[#8f8f9b]">pts</span>

@@ -1218,3 +1218,79 @@ describe("activity log", () => {
     expect(mocks.logActivity).not.toHaveBeenCalled();
   });
 });
+
+// #603. Found in the Oct 5 hostile-name tests: a rename to a lone zero-width
+// space saved a team with no visible name, and a right-to-left override let a
+// name render reversed over its neighbours on the board.
+describe("hostile team names", () => {
+  const BIDI = [
+    "؜", "‎", "‏",
+    "‪", "‫", "‬", "‭", "‮",
+    "⁦", "⁧", "⁨", "⁩",
+  ];
+
+  it.each(["​", "﻿", "​‌‍", " ⁠ "])(
+    "create and rename refuse a name with nothing visible (%j)",
+    async (name) => {
+      const store = await loadStore(true);
+      expect(await store.createTeam("octocat", name)).toEqual({ ok: false, error: "Team name is required" });
+      expect(await store.renameTeam("captain", "red-team", name)).toEqual({ ok: false, error: "Team name is required" });
+      expect(mocks.upstashEval).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(BIDI.map((c) => [c.codePointAt(0)!.toString(16).toUpperCase(), c]))(
+    "create and rename refuse the text-direction control U+%s",
+    async (_hex, c) => {
+      const store = await loadStore(true);
+      const error = "Team names can't contain text-direction control characters";
+      expect(await store.createTeam("octocat", `Red${c} Team`)).toEqual({ ok: false, error });
+      expect(await store.renameTeam("captain", "red-team", `Red${c} Team`)).toEqual({ ok: false, error });
+      expect(mocks.upstashEval).not.toHaveBeenCalled();
+    },
+  );
+
+  it("measures the length after NFC, and stores the composed name", async () => {
+    const store = await loadStore(true);
+    mockRegistrationOpen();
+    mockCodeCollisionCheck(false);
+    mocks.upstashEval.mockResolvedValueOnce("ok");
+    // 32 é's typed as e + combining acute: 64 code units, 32 characters.
+    const decomposed = "é".repeat(31) + "x";
+    expect((await store.createTeam("octocat", decomposed)).ok).toBe(true);
+    const [, , args] = mocks.upstashEval.mock.calls[0];
+    expect(args[1]).toBe(decomposed.normalize("NFC"));
+  });
+
+  it.each(["Équipe Rouge", "Команда red", "🚩 flag team", "赤 team", "فريق red"])(
+    "still accepts an ordinary name in any script (%s)",
+    async (name) => {
+      const store = await loadStore(true);
+      mockRegistrationOpen();
+      mockCodeCollisionCheck(false);
+      mocks.upstashEval.mockResolvedValueOnce("ok");
+      expect((await store.createTeam("octocat", name)).ok).toBe(true);
+    },
+  );
+
+  it("keeps a zero-width joiner inside an emoji sequence", async () => {
+    const store = await loadStore(true);
+    mockRegistrationOpen();
+    mocks.upstashEval.mockResolvedValueOnce("ok");
+    expect(await store.renameTeam("captain", "red-team", "🏳️‍🌈 crew")).toEqual({ ok: true, team: "red-team" });
+  });
+});
+
+describe("a create name with no letter or digit for its id", () => {
+  // The team's id (its key and URL) keeps a-z and 0-9 only, so "Команда" or
+  // "赤" alone has none; that refusal used to read "Team name is required",
+  // to someone who had typed a name.
+  it.each(["Команда", "赤", "🚩🚩"])("says why %s is refused", async (name) => {
+    const store = await loadStore(true);
+    expect(await store.createTeam("octocat", name)).toEqual({
+      ok: false,
+      error: "A team name needs at least one letter a–z or digit 0–9",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+});

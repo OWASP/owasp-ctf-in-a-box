@@ -76,7 +76,7 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
   return (
     <Shell title={`Join ${team.name}`}>
       <p className="text-sm text-zinc-400">
-        You have been invited to join <span className="font-mono text-white">{team.name}</span>
+        You have been invited to join <bdi className="font-mono text-white">{team.name}</bdi>
         {team.memberCount > 0 && (
           <>
             {" "}

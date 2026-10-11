@@ -159,7 +159,7 @@ export default function DisplayBoard({
               {row.rank}
             </span>
             <span className="min-w-0 flex-1 truncate font-display text-[4.2vh] font-bold text-white">
-              {row.name}
+              <bdi>{row.name}</bdi>
             </span>
             {row.solved !== undefined && (
               <span className="flex-none font-mono text-[2vh] tabular-nums text-[#22c55e]">

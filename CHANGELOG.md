@@ -10,6 +10,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: team names could be invisible or reverse the text around them
+  (#603).** Create and rename now refuse a name with nothing visible (a lone
+  zero-width space saved a nameless team through rename) and any
+  text-direction control character (a right-to-left override rendered a
+  name reversed over its neighbours), and measure the 32-character limit
+  after NFC. Every surface showing a team name isolates its direction, so a
+  name stored before the check cannot reorder its row.
 - **Fixed: the leaderboard's Individual view listed only contestants who had
   scored (#586).** Every team member now has a row; one with no points sits
   at 0 after everyone who scored, alphabetically, so a player who can find

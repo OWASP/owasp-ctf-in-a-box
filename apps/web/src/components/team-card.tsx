@@ -116,7 +116,7 @@ export default function TeamCard({
         <div className="mt-3 flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div className="min-w-0">
-              <p className="truncate font-mono text-white">{team.name}</p>
+              <p className="truncate font-mono text-white"><bdi>{team.name}</bdi></p>
               {team.slug !== team.name && (
                 <p className="truncate text-xs text-muted">slug: {team.slug}</p>
               )}

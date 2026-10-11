@@ -106,7 +106,7 @@ export function TeamRow({
         <div className="flex items-center gap-3 sm:gap-4">
           <RankChip rank={team.rank} />
           <div className="min-w-0 flex-1">
-            <span className="truncate font-medium text-white">{team.name}</span>
+            <span className="truncate font-medium text-white"><bdi>{team.name}</bdi></span>
             {/* Same reason as the contestant row: `members` is a
                 `hidden sm:block` on the right, so a phone lost the only
                 indication of how large the team behind a score is. */}

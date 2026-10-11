@@ -69,6 +69,29 @@ export type TeamInfo = {
 
 const REGISTRATION_CLOSED_ERROR = "Team registration is closed";
 
+/** The Unicode bidi controls: marks, embeddings, overrides and isolates. */
+const BIDI_CONTROLS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
+/** What renders as nothing: format characters (zero-width spaces and joiners,
+ *  the BOM, word joiners) and every other default-ignorable code point. */
+const INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\s]/gu;
+
+/** The one name check create and rename share (#603). NFC first, so the
+ *  length counts what is displayed. Bidi controls are refused rather than
+ *  stripped, so a saved name never silently differs from what was typed: one
+ *  could render a name reversed, or push it over the points column. A name
+ *  with nothing visible left once invisible characters are set aside is
+ *  refused too; a zero-width joiner INSIDE a visible name (an emoji sequence)
+ *  is kept. */
+function checkTeamName(raw: string): { ok: true; name: string } | { ok: false; error: string } {
+  const name = raw.normalize("NFC").trim();
+  if (BIDI_CONTROLS.test(name)) return { ok: false, error: "Team names can't contain text-direction control characters" };
+  if (!name.replace(INVISIBLE, "")) return { ok: false, error: "Team name is required" };
+  if (name.length > NAME_MAX_LENGTH) {
+    return { ok: false, error: `Team name must be ${NAME_MAX_LENGTH} characters or fewer` };
+  }
+  return { ok: true, name };
+}
+
 function slugify(value: string): string {
   return value
     .trim()
@@ -309,12 +332,11 @@ async function attemptCreate(login: string, name: string, slug: string): Promise
 }
 
 export async function createTeam(login: string, name: string): Promise<TeamActionResult> {
-  const trimmed = name.trim();
+  const checked = checkTeamName(name);
+  if (!checked.ok) return checked;
+  const trimmed = checked.name;
   const slug = slugify(trimmed);
   if (!slug) return { ok: false, error: "Team name is required" };
-  if (trimmed.length > NAME_MAX_LENGTH) {
-    return { ok: false, error: `Team name must be ${NAME_MAX_LENGTH} characters or fewer` };
-  }
   if (!TEAM_WRITES_ENABLED) return setMockTeam(slug);
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
 
@@ -463,11 +485,9 @@ export async function removeMember(
  *  collide with another team's slug. */
 export async function renameTeam(captainLogin: string, slug: string, newName: string): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
-  const trimmed = newName.trim();
-  if (!trimmed) return { ok: false, error: "Team name is required" };
-  if (trimmed.length > NAME_MAX_LENGTH) {
-    return { ok: false, error: `Team name must be ${NAME_MAX_LENGTH} characters or fewer` };
-  }
+  const checked = checkTeamName(newName);
+  if (!checked.ok) return checked;
+  const trimmed = checked.name;
   const newSlug = slugify(trimmed) || slug;
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
 

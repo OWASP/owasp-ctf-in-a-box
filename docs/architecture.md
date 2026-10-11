@@ -492,11 +492,11 @@ is what Insights' time-to-solve is measured from), and four running
 aggregates: `points` and `solved` (per-login totals the leaderboard overlay
 reads with flat `HGETALL`s regardless of board size), `lastAt` (each login's
 latest award time, the leaderboard's tiebreak, #522) and `solvecount` (the
-per-challenge distinct-solver count the board displays, distinct by
-construction because the already-solved guard runs before any write). The
-contestant board shows a different figure, teams that solved each challenge
-(#595, `lib/team-solve-counts.ts`), folded from the members' solves hashes on
-read; `solvecount` (players) is what the admin list shows beside it.
+per-challenge distinct-solver count, distinct by construction because the
+already-solved guard runs before any write; the admin list shows it as the
+players column). The contestant board shows a different figure, teams that
+solved each challenge (#595, `lib/team-solve-counts.ts`), folded from the
+members' solves hashes on read.
 
 **Submission**: `POST /api/classic/submit` derives `login` from the session
 (never the request body) and calls `submitFlag(login, challengeId, flag)`.

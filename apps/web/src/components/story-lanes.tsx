@@ -4,7 +4,7 @@
 // challenge itself (the view model never even carries it: see flags/page.tsx).
 
 import Link from "next/link";
-import { teamsLabel } from "@/components/challenge-detail";
+import { teamsLabel } from "@/lib/solve-labels";
 
 export type StoryStepView =
   | { locked: true; key: string; label: string }

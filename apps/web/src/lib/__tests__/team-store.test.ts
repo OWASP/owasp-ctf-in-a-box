@@ -571,6 +571,17 @@ describe("listTeams", () => {
       .mockResolvedValueOnce([{ result: "not-a-page" }]);
     await expect(store.listTeams()).rejects.toThrow(/unexpected shape/);
   });
+
+  // A failed SMEMBERS read as an empty roster puts a competing team on the
+  // board with nobody on it, the short list the SCAN check above exists to
+  // refuse.
+  it("rejects when a team's member read fails, rather than showing it empty", async () => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline
+      .mockResolvedValueOnce([{ result: ["0", ["ctf:team:red:members"]] }])
+      .mockResolvedValueOnce([{ result: "Red Team" }, { error: "WRONGTYPE Operation against a key holding the wrong kind of value" }]);
+    await expect(store.listTeams()).rejects.toThrow(/WRONGTYPE/);
+  });
 });
 
 describe("captain guard", () => {

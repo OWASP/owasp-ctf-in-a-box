@@ -568,6 +568,10 @@ describe("getSolveCounts", () => {
     ]);
     expect(pipelineCalls()[0]).toEqual([["HGETALL", "ctf:classic:solvecount"]]);
   });
+  it("throws on a failed read instead of reporting every count as zero", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH Authentication required." }]);
+    await expect(getSolveCounts()).rejects.toThrow(/NOAUTH/);
+  });
 });
 
 describe("getClassicTotals", () => {

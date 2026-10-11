@@ -593,6 +593,11 @@ export async function listTeams(): Promise<TeamInfo[]> {
   );
   return slugs.map((slug, i) => {
     const nameRes = results[i * 2]?.result;
+    // An empty roster is the same short list the SCAN check refuses: a
+    // competing team on the board with nobody on it. A failed name read only
+    // costs the display name, which falls back to the slug.
+    const membersError = results[i * 2 + 1]?.error;
+    if (membersError) throw new Error(`SMEMBERS failed (listTeams ${slug}): ${membersError}`);
     const membersRes = results[i * 2 + 1]?.result;
     return {
       slug,

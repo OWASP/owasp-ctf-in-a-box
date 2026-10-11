@@ -46,6 +46,17 @@ describe("teamSolveCounts", () => {
 
   // A count that is silently short reads as a real one; no count at all does
   // not. The board renders nothing for a null.
+  // A reply that is missing, or is not a list, is a read that did not
+  // happen; read as "no solves" it is a short count that looks real.
+  it.each([
+    ["a missing reply", [{ result: ["recon"] }]],
+    ["a non-list result", [{ result: ["recon"] }, { result: "recon" }]],
+  ])("is null for %s, never a short count", async (_what, replies) => {
+    m.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["alice", "bob"] }]);
+    m.upstashPipeline.mockResolvedValue(replies);
+    expect(await teamSolveCounts("classic")).toBeNull();
+  });
+
   it("is null when a read fails, never a short count", async () => {
     m.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["alice", "bob"] }]);
     m.upstashPipeline.mockResolvedValue([{ result: ["recon"] }, { error: "NOAUTH" }]);

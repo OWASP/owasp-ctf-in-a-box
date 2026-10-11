@@ -32,7 +32,10 @@ export async function teamSolveCounts(module: "classic" | "ai"): Promise<Map<str
     members.forEach(({ team }, i) => {
       const reply = replies[i];
       if (reply?.error) throw new Error(reply.error);
-      const ids = Array.isArray(reply?.result) ? (reply.result as unknown[]) : [];
+      // HKEYS of a missing hash is [], so anything else is a read that did
+      // not happen, not a member with no solves.
+      if (!Array.isArray(reply?.result)) throw new Error(`HKEYS reply ${i} missing or not a list`);
+      const ids = reply.result as unknown[];
       for (const id of ids) {
         if (typeof id !== "string") continue;
         const set = solvedBy.get(id) ?? new Set<string>();

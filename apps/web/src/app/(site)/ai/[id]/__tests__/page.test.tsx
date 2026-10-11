@@ -365,6 +365,20 @@ describe("ai challenge page form", () => {
     expect(challengeDetailSpy).toHaveBeenCalledTimes(1);
   });
 
+  // Event-only challenges skip ChallengeDetail, which is where the count is
+  // drawn for the other modes, so the page draws it itself.
+  it("shows how many teams solved an event-mode challenge", async () => {
+    teamSolveCounts.mockResolvedValue(new Map([["a2", 2]]));
+    const html = renderToStaticMarkup(await AiChallengePage(params("a2")));
+    expect(html).toContain("2 teams solved");
+  });
+
+  it("shows no count on an event-mode challenge when the counts could not be read", async () => {
+    teamSolveCounts.mockResolvedValue(null);
+    const html = renderToStaticMarkup(await AiChallengePage(params("a2")));
+    expect(html).not.toMatch(/teams? solved/);
+  });
+
   it("renders no ChallengeDetail at all for an event-mode challenge — the launcher is the whole page", async () => {
     const html = renderToStaticMarkup(await AiChallengePage(params("a2")));
     expect(challengeDetailSpy).not.toHaveBeenCalled();

@@ -16,7 +16,8 @@
 
 import Link from "next/link";
 import ProgressSummary from "@/components/progress-summary";
-import { teamsLabel, type ChallengeView } from "@/components/challenge-detail";
+import { type ChallengeView } from "@/components/challenge-detail";
+import { teamsLabel } from "@/lib/solve-labels";
 
 // Re-exported so every existing consumer of the view types keeps one import
 // path — the types themselves moved with the interactive surface. Both the

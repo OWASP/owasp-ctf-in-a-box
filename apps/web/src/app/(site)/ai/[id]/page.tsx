@@ -22,6 +22,7 @@
 // for an unknown or deleted challenge id (issue #209's dual-cause not-found,
 // in `[id]/not-found.tsx`).
 
+import { teamsLabel } from "@/lib/solve-labels";
 import type { Metadata } from "next";
 import { teamSolveCounts } from "@/lib/team-solve-counts";
 import PreviewBanner from "@/components/preview-banner";
@@ -150,6 +151,11 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
         <h1 className="text-balance text-4xl font-bold tracking-tight text-white sm:text-5xl">
           {challenge.title}
         </h1>
+        {/* flag and both modes show the count inside ChallengeDetail; an
+            event-only challenge has no ChallengeDetail, so it is drawn here. */}
+        {challenge.mode === "event" && view.teamsSolved !== null && (
+          <p className="text-xs text-muted">{teamsLabel(view.teamsSolved)} solved</p>
+        )}
       </div>
 
       <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] p-5">

@@ -900,6 +900,7 @@ export async function getViewerClassic(login: string): Promise<ViewerClassic> {
  *  returns `already` without ever reaching the increment. */
 export async function getSolveCounts(): Promise<Map<string, number>> {
   const [res] = await upstashPipeline([["HGETALL", SOLVECOUNT_KEY]]);
+  if (res.error) throw new Error(`Upstash HGETALL failed (classic solvecount): ${res.error}`);
   return parseCounterHash(res.result);
 }
 

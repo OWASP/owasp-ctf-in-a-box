@@ -12,6 +12,7 @@
 // ai-store.ts). This component never sees — and cannot render — a flag:
 // `ChallengeView` has no field that could carry one.
 
+import { teamsLabel } from "@/lib/solve-labels";
 import AttachmentList, { type AttachmentView } from "@/components/attachment-list";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -28,12 +29,6 @@ export type ChallengeStatus =
 /** Old name, kept importable for classic's existing call sites and tests —
  *  see challenge-board.tsx's re-export note. */
 export type ClassicStatus = ChallengeStatus;
-
-/** "1 team" / "3 teams": the solve count as the board and the detail page
- *  both say it (#595). */
-export function teamsLabel(n: number): string {
-  return `${n} team${n === 1 ? "" : "s"}`;
-}
 
 /** What a challenge surface needs to render one challenge — deliberately just
  *  the public `Challenge` fields, how many teams solved it, and this viewer's

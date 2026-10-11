@@ -1995,7 +1995,11 @@ carries:
 **graded flag path**: a signed event has no wrong answer to rate-limit, so
 it is never subject to this cooldown. `null` (the field left blank) means
 the **5-second default**; set a value in `[0, 3600]` seconds to override it,
-the same bounds classic's own cooldown enforces.
+the same bounds classic's own cooldown enforces. Like classic's, it is
+**per contestant, while a solve counts for the team**: each teammate has
+their own cooldown on each challenge, so a team of N can submit N flags per
+period on the same challenge. That is by design (one player's guessing never
+locks out the team); size the cooldown with the team cap in mind.
 
 **What contestants see:** the board (`/ai`) lists every challenge with its
 category, points, and a 💡 marker where a hint is on offer. Opening one

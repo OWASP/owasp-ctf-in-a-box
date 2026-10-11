@@ -97,6 +97,10 @@ describe("AdminAiControls", () => {
     expect(html).toContain("Submission cooldown (sec)");
     expect(html).toMatch(/value="5"/);
   });
+  // #494: the cooldown is per contestant while points are per team.
+  it("says on the cooldown that it is per contestant, not per team", () => {
+    expect(renderControls()).toContain("Counted per contestant, not per team");
+  });
 
   it("renders an Add challenge control and a placeholder when there are none", () => {
     const html = renderControls();

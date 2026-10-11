@@ -23,6 +23,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   existed. Both scripts now read the code they retire at the write. The
   captain-only team scripts, the organizer overrides, the admin-grant script
   and the rate limiter now run against a live Redis in CI.
+- **Changed: every attempt budget says it is per contestant (#494).** Quiz
+  **Retry after** and the AI **Submission cooldown** now say, next to the
+  field, what Max attempts and the Jeopardy cooldown already said: the
+  budget is kept per contestant while points count per team, so a team of N
+  gets N times it. Kept that way by decision; the AI docs say so too.
 - **Fixed: admin Insights undercounted the event and disagreed with the
   leaderboard (#608).** Players whose GitHub login has a capital letter were
   read under the lowercased login and found empty; a player who left a team

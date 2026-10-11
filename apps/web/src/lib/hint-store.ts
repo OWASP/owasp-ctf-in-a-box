@@ -5,6 +5,7 @@ import { scoringEnded } from "@/lib/schedule-window";
 // import from this server-only module, so the values live in the
 // dependency-free defaults file and both sides read the same constant.
 export { HINT_COST, HINT_MIN_SOLVES, HINT_UNLOCK_AFTER_MIN } from "./hint-defaults";
+import { HINT_COST } from "./hint-defaults";
 import { hintBalance, type HintBalance } from "@/lib/hint-balance";
 import { SCORE_LOWERING_KEY, SCORE_REV_KEY } from "@/lib/leaderboard/fold-cache";
 import { HINTS_AVAILABLE, resolveHintConfig } from "@/lib/hint-config";
@@ -139,10 +140,18 @@ export function isHintTarget(value: string): value is HintTarget {
 //       of one.
 //       [12]=the price the contestant confirmed, "" when the caller sent none.
 //       A purchase is charged that price or not at all: a quote that differs
-//       from [4] (an organizer repriced hints after the page rendered) is
-//       answered `repriced` with the price [4] would have charged, before any
+//       from the live price (an organizer repriced hints after the page
+//       rendered) is answered `repriced` with the live price, before any
 //       write and without the text. An owned hint is exempt (a re-view
 //       charges nothing).
+//       [13]=the default hint cost, "" to fall back to [4].
+//
+// THE PRICE is read here, from the settings hash (KEYS[7] `hintCost`), not
+// taken from [4]: the caller's settings read is a round-trip old, and the
+// quote check, the affordability check, the charge and the verdict must all
+// use the price at the moment of the write. [13] (the default) and then [4]
+// stand in only when the hash holds no price. A `charged` verdict carries
+// the price as its fourth element.
 //
 // Every non-preview verdict's third element is the spend TOTAL after the
 // call (case-folded, see the script) — what `balance` is derived from.
@@ -166,6 +175,9 @@ if ARGV[6] == '1' then return {'preview', redis.call('HGET', KEYS[3], ARGV[1]), 
 -- clock against ARGV[10] (the end, epoch ms) and the live freeze flag in the
 -- settings hash (KEYS[7]) decide HERE. The end wins over the freeze. An owned
 -- hint is exempt — a re-view charges nothing, so there is nothing to close.
+local price = tonumber(redis.call('HGET', KEYS[7], 'hintCost') or '')
+if not price and ARGV[13] and ARGV[13] ~= '' then price = tonumber(ARGV[13]) end
+if not price then price = tonumber(ARGV[4]) end
 local owned = redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 1
 if not owned then
   if ARGV[10] and ARGV[10] ~= '' then
@@ -175,8 +187,8 @@ if not owned then
   end
   if redis.call('HGET', KEYS[7], 'paused') == '1' then return {'closed', 'paused'} end
   -- The price on the contestant's confirm button: charge it or nothing.
-  if ARGV[12] and ARGV[12] ~= '' and tonumber(ARGV[12]) ~= tonumber(ARGV[4]) then
-    return {'repriced', '', tonumber(ARGV[4])}
+  if ARGV[12] and ARGV[12] ~= '' and tonumber(ARGV[12]) ~= price then
+    return {'repriced', '', price}
   end
 end
 -- The gross in ARGV[8] was folded under the score revision in ARGV[9]. A
@@ -199,14 +211,14 @@ for i = 1, #all, 2 do
   if string.lower(all[i]) == me then spent = spent + (tonumber(all[i + 1]) or 0) end
 end
 if ARGV[8] and ARGV[8] ~= '' and not owned then
-  if tonumber(ARGV[8]) - spent < tonumber(ARGV[4]) then return {'insufficient', '', spent} end
+  if tonumber(ARGV[8]) - spent < price then return {'insufficient', '', spent} end
 end
 -- Every check that can refuse has passed: only now is the text read.
 local hint = redis.call('HGET', KEYS[3], ARGV[1])
 if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
-  redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
+  redis.call('HINCRBY', KEYS[2], ARGV[3], price)
   redis.call('HSETNX', KEYS[4], ARGV[2], ARGV[5])
-  return {'charged', hint, spent + tonumber(ARGV[4])}
+  return {'charged', hint, spent + price, price}
 end
 return {'owned', hint, spent}`;
 
@@ -542,6 +554,8 @@ async function attemptReveal(
         lockTeam,
         // ARGV[12]: the price the contestant confirmed, "" when none was sent.
         quoted,
+        // ARGV[13]: the default price, for a settings hash with none.
+        String(HINT_COST),
       ],
     );
   } catch (err) {
@@ -549,7 +563,7 @@ async function attemptReveal(
     return { ok: false, error: "Hint reveal failed. Try again" };
   }
 
-  const [status, hint, spent] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
+  const [status, hint, spent, chargedPrice] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") {
     return { ok: false, missing: true, error: "No hint available for this challenge" };
   }
@@ -601,7 +615,9 @@ async function attemptReveal(
       hint,
       alreadyOwned,
       spent: Number(spent) || 0,
-      cost,
+      // What the script charged, read at the write; the caller's resolved
+      // figure only when the verdict does not carry one (an owned re-view).
+      cost: status === "charged" && Number.isFinite(Number(chargedPrice)) ? Number(chargedPrice) : cost,
       ...(balance !== undefined ? { balance } : {}),
     };
   }

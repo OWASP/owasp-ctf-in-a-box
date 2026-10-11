@@ -540,6 +540,15 @@ describe("revealHint", () => {
     expect(mocks.upstashEval.mock.calls[1][2][11]).toBe("");
   });
 
+  it("reports the price the script charged, not the one it read before the call", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 10 });
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 25, 25]);
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(result).toMatchObject({ ok: true, cost: 25 });
+    expect(mocks.upstashEval.mock.calls[0][2][12]).toBe(String(store.HINT_COST));
+  });
+
   it("maps a repriced verdict to a refusal carrying the new price, charging nothing", async () => {
     const store = await loadStore();
     mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 25 });

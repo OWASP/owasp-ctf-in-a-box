@@ -508,9 +508,11 @@ The panel offers:
 
   - **Price changes** (no knob — it follows **Hint cost**) — a contestant
     is charged the price their confirm button showed, or nothing. The
-    purchase carries that price, and the charging script compares it to the
-    current **Hint cost** in the same atomic step as the charge: if an
-    organizer changed the cost after the page rendered, nothing is charged,
+    purchase carries that price, and the charging script reads the current
+    **Hint cost** itself and compares the two in the same atomic step as the
+    charge (the affordability check and the charge use that same live
+    price): if an organizer changed the cost after the page rendered,
+    nothing is charged,
     the request answers 409 with the new price, and the button asks again
     at it ("This hint now costs N pts. Confirm again to buy it at the new
     price."). Re-viewing a hint already bought is free and never refused

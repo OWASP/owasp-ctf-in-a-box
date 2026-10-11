@@ -111,8 +111,8 @@ export async function recordCallbackLogin(path: string, newSession: unknown): Pr
  * `ACTIVITY_LOG_MAX` short JSON rows, so the tab reads all of it while a
  * filter is on and filters client-side, instead of this read growing a
  * second, subtler pagination contract ("offset within the filtered view").
- * Malformed rows
- * are skipped, not fatal — one corrupt entry must not blank the whole tab.
+ * Malformed rows are skipped, not fatal — one corrupt entry must not blank
+ * the whole tab.
  *
  * Unlike the writer this THROWS on Redis failure: a reader with no data has
  * nothing useful to degrade to, and the route maps the throw to a 503.

@@ -11,6 +11,7 @@ import AdminHintsTab from "@/app/(site)/admin/admin-hints-tab";
 const settings: AdminSettings = {
   paused: false,
   teamRegistrationOpen: true,
+  displayQr: true,
   hintsEnabled: null,
   hintCost: null,
   hintsMinSolves: null,

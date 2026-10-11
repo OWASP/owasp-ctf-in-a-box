@@ -3,6 +3,7 @@
 // both. Data (and auth) in, interactivity down.
 
 import type { Metadata } from "next";
+import { boardQr } from "@/lib/qr-code";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import PageHeader from "@/components/page-header";
@@ -131,6 +132,7 @@ export default async function LeaderboardPage({
         eventLogo={images.logo ? { src: eventImageUrl("logo", images.logo), w: images.logo.w, h: images.logo.h } : null}
         scoringStartsAt={settings?.scoringStartsAt ?? null}
         scoringEndsAt={settings?.scoringEndsAt ?? null}
+        qr={boardQr(settings, process.env.BETTER_AUTH_URL)}
         sponsors={sponsors.map((s) => ({
           key: s.id,
           name: s.name,

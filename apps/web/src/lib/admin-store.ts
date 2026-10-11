@@ -150,6 +150,9 @@ export type AdminSettings = {
    *  team that is already over the new cap. */
   teamMaxMembers: number | null;
   teamRegistrationOpen: boolean;
+  /** The projector board's QR code of the event URL (#592). On unless an
+   *  organizer turns it off: absent is on, a stored "0" is off. */
+  displayQr: boolean;
   // Scheduled "auto dates" — nullable ISO instants. scoring* gates the freeze
   // through outsideScoringWindow (before start / after end = paused, and an
   // absent start = not launched, so paused); registration* gates
@@ -245,6 +248,7 @@ export type SettingsPatch = {
   scoreCooldownMin?: number;
   teamMaxMembers?: number;
   teamRegistrationOpen?: boolean;
+  displayQr?: boolean;
   /** The modules this event serves. Replaces the set wholesale;
    *  see updateAdminSettings for the two things it refuses. */
   enabledModules?: ModuleId[];
@@ -335,6 +339,7 @@ function decodeSettings(h: Record<string, string>): AdminSettings {
     teamMaxMembers: h.teamMaxMembers === undefined ? null : Number(h.teamMaxMembers),
     scoreCooldownMin: h.scoreCooldownMin === undefined ? null : Number(h.scoreCooldownMin),
     teamRegistrationOpen: h.teamRegistrationOpen !== "0",
+    displayQr: h.displayQr !== "0",
     scoringStartsAt: h.scoringStartsAt ?? null,
     scoringEndsAt: h.scoringEndsAt ?? null,
     registrationStartsAt: h.registrationStartsAt ?? null,
@@ -462,6 +467,12 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       // opening HDELs the field and closing writes the string "0". The team
       // store reads this key with a presence-and-value check, so open must
       // equal absent.
+      if (v) dels.push(k);
+      else fields.push(k, "0");
+      changed[k] = v;
+    } else if (k === "displayQr") {
+      if (typeof v !== "boolean") throw new AdminValidationError(k, `${k} must be a boolean`);
+      // On by default, like registration: on HDELs, off writes "0" (#592).
       if (v) dels.push(k);
       else fields.push(k, "0");
       changed[k] = v;

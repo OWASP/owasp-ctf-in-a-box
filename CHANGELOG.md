@@ -10,6 +10,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Added: a QR code of the event's address on the projector board (#592).**
+  Display mode shows it in a corner below the standings, with the address
+  as text, so anyone in the room can join from a phone. Encoded on the
+  server into an inline SVG (new dependency: `qrcode-generator` 2.0.4,
+  pinned, encoding only, no dependencies of its own), from `EVENT_URL`. On by
+  default; **QR code on the projector board** in `/admin → Event` turns it
+  off. The regular leaderboard is unchanged.
 - **Fixed: the leaderboard's Individual view listed only contestants who had
   scored (#586).** Every team member now has a row; one with no points sits
   at 0 after everyone who scored, alphabetically, so a player who can find

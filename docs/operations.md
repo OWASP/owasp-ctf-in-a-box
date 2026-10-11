@@ -360,6 +360,15 @@ The panel offers:
   only deferred. The scorer reads the same flag and answers `POST /score`
   with `503` while it is set, so a submission that reaches the writer anyway
   is refused rather than written. Un-pausing picks up right where it left off.
+- **Projector board** (Event tab) — **QR code on the projector board**, on
+  by default: display mode (`/leaderboard?display=1`) shows a QR code of the
+  event's address, with the address printed under it, in the bottom-right
+  corner below the standings, so anyone in the room can join from a phone
+  (#592). The code is the box's own origin from `EVENT_URL` (compose passes it
+  as `BETTER_AUTH_URL`); with none set, no code is shown rather than one
+  guessed from the request. It is encoded on the server into an inline SVG,
+  with no third-party service and no request from the viewer's browser. The
+  regular `/leaderboard` never shows it.
 - **Modules** (Event tab) — which modules this event serves, switchable
   **during the event without a rebuild**. Switching one off removes its nav
   link and stops its board resolving on everyone's next page load; switching it

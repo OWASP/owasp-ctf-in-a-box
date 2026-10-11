@@ -10,6 +10,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: the Insights CSV garbled accented titles in Excel (#624).**
+  "¿Qué dice señor?" opened as "Â¿QuÃ© dice seÃ±or?": the file had no
+  byte-order mark, so Excel read it in the system code page. The export now
+  starts with one. A title a spreadsheet would run as a formula (leading `=`,
+  `+`, `-`, `@`) is written as text, and a cell with a carriage return is
+  quoted.
 - **Fixed: a hint could be charged a different price than the one confirmed
   (#557).** If an organizer changed the hint cost after a contestant's page
   loaded, Confirm (−10 pts) charged the new price. The purchase now carries

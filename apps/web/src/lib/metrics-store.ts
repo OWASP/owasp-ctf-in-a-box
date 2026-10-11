@@ -791,8 +791,9 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
 export function challengesToCsv(metrics: EventMetrics): string {
   const esc = (v: string | number | null) => {
     if (v === null) return "";
-    const s = String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    // A text cell a spreadsheet would run as a formula is written as text.
+    const s = typeof v === "string" && /^[=+\-@\t\r]/.test(v) ? `'${v}` : String(v);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const rows = [
     // `title` sits beside `id`, never instead of it: the id is what a support
@@ -811,5 +812,8 @@ export function challengesToCsv(metrics: EventMetrics): string {
       c.timeMeasure,
     ]),
   ];
-  return rows.map((r) => r.map(esc).join(",")).join("\n") + "\n";
+  // The byte-order mark is what makes Excel read the file as UTF-8: without
+  // it, it falls back to the system code page and every non-ASCII title is
+  // garbled. The response's charset does not survive the browser saving it.
+  return "\uFEFF" + rows.map((r) => r.map(esc).join(",")).join("\n") + "\n";
 }

@@ -645,6 +645,10 @@ The panel offers:
     be read out without decoding slugs; a challenge deleted since it was solved
     keeps its metrics and shows its id alone. **Download challenges CSV**
     exports the full table, `title` beside `id` rather than instead of it.
+    The file is UTF-8 with a byte-order mark, so Excel opens accented and
+    non-Latin titles intact, and a title beginning with `=`, `+`, `-` or `@`
+    is written with a leading `'` so a spreadsheet shows it as text instead
+    of running it as a formula.
   - **Where attention went** — scorers per module, hint buyers and spend, and
     how many hints were bought *before* the buyer solved the thing. A hint
     bought afterwards bought nothing, so that split is the difference between

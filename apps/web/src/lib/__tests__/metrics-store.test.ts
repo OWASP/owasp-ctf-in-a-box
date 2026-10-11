@@ -504,7 +504,7 @@ describe("challengesToCsv", () => {
   } as EventMetrics;
 
   it("emits a header and one row per challenge", () => {
-    const lines = challengesToCsv(metrics).trim().split("\n");
+    const lines = challengesToCsv(metrics).replace(/^\uFEFF/, "").trim().split("\n");
     expect(lines[0]).toBe(
       "module,id,title,solves,attempts,solve_rate,avg_attempts_to_solve,median_seconds_to_solve,median_time_measure",
     );
@@ -526,6 +526,34 @@ describe("challengesToCsv", () => {
     // what an organizer reads out at a closing ceremony. A CSV that dropped
     // the id to make room would be unusable for the first job (audit F7).
     expect(challengesToCsv(metrics)).toMatch(/classic,c1,Cookie jar,2,5,/);
+  });
+
+  // Excel reads a CSV with no byte-order mark in the system code page, so a
+  // UTF-8 title such as "¿Qué dice señor?" opens as "Â¿QuÃ© dice seÃ±or?".
+  // The response's charset header does not survive the browser saving the
+  // download, so the mark has to be in the body.
+  it("starts with a UTF-8 byte-order mark and keeps non-ASCII titles intact", () => {
+    const csv = challengesToCsv({
+      challenges: [{ ...metrics.challenges[0], title: "¿Qué dice señor? — 06" }],
+    } as EventMetrics);
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+    expect(csv).toContain("¿Qué dice señor? — 06");
+  });
+
+  // A cell a spreadsheet would run as a formula is written as text.
+  it.each(["=HYPERLINK(\"x\")", "+1", "-1", "@SUM(A1)", "\tx", "\rx"])(
+    "neutralizes a formula-leading title %j",
+    (title) => {
+      const csv = challengesToCsv({ challenges: [{ ...metrics.challenges[0], title }] } as EventMetrics);
+      const row = csv.replace(/^\uFEFF/, "").split("\n")[1];
+      const cell = row.split(",").slice(2).join(",").replace(/,2,5,.*$/, "");
+      expect(cell.replace(/^"/, "")).toMatch(/^'/);
+    },
+  );
+
+  it("quotes a field containing a carriage return", () => {
+    const csv = challengesToCsv({ challenges: [{ ...metrics.challenges[0], title: "a\rb" }] } as EventMetrics);
+    expect(csv).toContain('"a\rb"');
   });
 
   it("writes an EMPTY cell for null, never the string 'null'", () => {

@@ -565,7 +565,8 @@ export async function deleteUser(
 // path that races with a contestant clicking Leave.
 
 // KEYS: [1]=team [2]=members [3]=user  ARGV: [1]=login [2]=slug
-const FORCE_REMOVE_SCRIPT = `
+// Exported for the live suite only.
+export const FORCE_REMOVE_SCRIPT = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return 'no-team' end
 if redis.call('HGET', KEYS[1], 'captain') == ARGV[1] then return 'is-captain' end
 if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then return 'not-member' end
@@ -601,7 +602,8 @@ export async function forceRemoveFromTeam(
 }
 
 // KEYS: [1]=team [2]=members  ARGV: [1]=newCaptain
-const FORCE_TRANSFER_SCRIPT = `
+// Exported for the live suite only.
+export const FORCE_TRANSFER_SCRIPT = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return 'no-team' end
 if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then return 'not-member' end
 redis.call('HSET', KEYS[1], 'captain', ARGV[1])

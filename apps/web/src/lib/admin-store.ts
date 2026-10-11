@@ -873,7 +873,8 @@ export { ADMIN_ADMINS_KEY, listStoredAdmins } from "@/lib/admin-admins";
 
 // SADD/SREM plus one audit line, in a single script, so a grant can never
 // land without its record — the same guarantee updateAdminSettings gives.
-const ADMINS_SCRIPT = `
+// Exported for the live suite only.
+export const ADMINS_SCRIPT = `
 if ARGV[1] == 'add' then redis.call('SADD', KEYS[1], ARGV[2])
 else redis.call('SREM', KEYS[1], ARGV[2]) end
 redis.call('LPUSH', KEYS[2], ARGV[3])

@@ -189,18 +189,25 @@ if redis.call('SISMEMBER', KEYS[2], ARGV[2]) == 0 then return 'not-member' end
 redis.call('HSET', KEYS[1], 'captain', ARGV[2])
 return 'ok'`;
 
+// DISBAND and REGENERATE_CODE read the join code they retire INSIDE the
+// script, like LEAVE_SCRIPT: a code read by the caller a round-trip earlier
+// can already be stale (two regenerations racing), and deleting it leaves the
+// newer one resolving to the team, or to a deleted team.
 const DISBAND_SCRIPT = `
 if redis.call('HGET', KEYS[1], 'captain') ~= ARGV[1] then return 'not-captain' end
 local members = redis.call('SMEMBERS', KEYS[2])
 for _, login in ipairs(members) do
   redis.call('HDEL', 'ctf:user:' .. login, 'team', 'joinedAt')
 end
-redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])
+local code = redis.call('HGET', KEYS[1], 'joinCode')
+redis.call('DEL', KEYS[1], KEYS[2])
+if code then redis.call('DEL', 'ctf:joincode:' .. code) end
 return 'ok'`;
 
 const REGENERATE_CODE_SCRIPT = `
 if redis.call('HGET', KEYS[1], 'captain') ~= ARGV[1] then return 'not-captain' end
-redis.call('DEL', KEYS[3])
+local old = redis.call('HGET', KEYS[1], 'joinCode')
+if old then redis.call('DEL', 'ctf:joincode:' .. old) end
 redis.call('HSET', KEYS[1], 'joinCode', ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
 return 'ok'`;
@@ -531,14 +538,7 @@ export async function disbandTeam(captainLogin: string, slug: string): Promise<T
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
   // NOT gated by the registration window — disband is an exit for a captain (see
   // transferCaptain). Gating it would trap a captain when registration closes.
-  const [codeRes] = await upstashPipeline([["HGET", teamKey(slug), "joinCode"]]);
-  const currentCode = typeof codeRes.result === "string" && codeRes.result ? codeRes.result : "";
-
-  const verdict = await upstashEval(
-    DISBAND_SCRIPT,
-    [teamKey(slug), membersKey(slug), joinCodeKey(currentCode)],
-    [captainLogin],
-  );
+  const verdict = await upstashEval(DISBAND_SCRIPT, [teamKey(slug), membersKey(slug)], [captainLogin]);
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
   return { ok: true, team: null };
@@ -548,13 +548,11 @@ export async function disbandTeam(captainLogin: string, slug: string): Promise<T
 export async function regenerateCode(captainLogin: string, slug: string): Promise<JoinCodeResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
-  const [codeRes] = await upstashPipeline([["HGET", teamKey(slug), "joinCode"]]);
-  const oldCode = typeof codeRes.result === "string" && codeRes.result ? codeRes.result : "";
   const newCode = await generateUniqueJoinCode();
 
   const verdict = await upstashEval(
     REGENERATE_CODE_SCRIPT,
-    [teamKey(slug), joinCodeKey(newCode), joinCodeKey(oldCode)],
+    [teamKey(slug), joinCodeKey(newCode)],
     [captainLogin, newCode, slug],
   );
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };

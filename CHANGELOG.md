@@ -16,6 +16,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   the confirmed price and the charging script refuses a mismatch atomically,
   before any write; the button shows the new price and asks again. A hint
   already bought is still re-viewed free.
+- **Fixed: a regenerated or disbanded team could leave a stale join code
+  working (#497).** Regenerate and disband read the code to retire before
+  their script ran, so two regenerations at once (or one racing a disband)
+  left older codes resolving to the team, or to a team that no longer
+  existed. Both scripts now read the code they retire at the write. The
+  captain-only team scripts, the organizer overrides, the admin-grant script
+  and the rate limiter now run against a live Redis in CI.
 - **Fixed: admin Insights undercounted the event and disagreed with the
   leaderboard (#608).** Players whose GitHub login has a capital letter were
   read under the lowercased login and found empty; a player who left a team

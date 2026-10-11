@@ -632,7 +632,6 @@ describe("captain guard", () => {
   it("rejects regenerateCode from a non-captain", async () => {
     const store = await loadStore(true);
     mockRegistrationOpen();
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "old123" }]);
     mockCodeCollisionCheck(false);
     mocks.upstashEval.mockResolvedValueOnce("not-captain");
     const result = await store.regenerateCode("intruder", "red-team");
@@ -718,13 +717,16 @@ describe("captain roster actions", () => {
 
   it("disbands the team and clears its join code", async () => {
     const store = await loadStore(true);
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "abc123" }]);
     mocks.upstashEval.mockResolvedValueOnce("ok");
     const result = await store.disbandTeam("captain", "red-team");
     expect(result).toEqual({ ok: true, team: null });
     const [script, keys] = mocks.upstashEval.mock.calls[0];
-    expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members", "ctf:joincode:abc123"]);
+    // The code to retire is read inside the script, not handed in: a code
+    // read a round-trip earlier can be stale (team-captain.upstash.test.ts).
+    expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members"]);
     expect(script).toContain("SMEMBERS");
+    expect(script).toContain("HGET', KEYS[1], 'joinCode'");
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
   it("issues a new join code and clears the old one", async () => {
@@ -739,9 +741,10 @@ describe("captain roster actions", () => {
       expect(result.team).toBe("red-team");
       expect(result.code).toMatch(/^[a-z0-9]{6}$/);
     }
-    const [, keys, args] = mocks.upstashEval.mock.calls[0];
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(keys).toHaveLength(2);
     expect(keys[0]).toBe("ctf:team:red-team");
-    expect(keys[2]).toBe("ctf:joincode:old123");
+    expect(script).toContain("HGET', KEYS[1], 'joinCode'");
     expect(args[0]).toBe("captain");
   });
 

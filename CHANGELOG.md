@@ -19,6 +19,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   and every team's points now equal the board. The solves chart keeps the
   quiet stretches as empty buckets on a real time axis across the full
   width, widening the bucket (10 min, 30 min, 1 h, …) on a long event.
+
+- **Added: search the admin Activity log on every field (#609).** One box
+  matches each word against the login, the event, the detail (challenge,
+  question or team id) and the time as shown, with `login:`, `type:`,
+  `detail:` and `team:` to pin a word to one field; a time range (quick
+  picks or from/to on the panel's clock) narrows it further, and each type
+  chip shows its count. A filter now searches the whole log, not only the
+  pages loaded, and the search is kept in the URL (`?q=`). Before, the box
+  matched the login only.
 - **Fixed: the leaderboard's Individual view listed only contestants who had
   scored (#586).** Every team member now has a row; one with no points sits
   at 0 after everyone who scored, alphabetically, so a player who can find

@@ -539,8 +539,16 @@ The panel offers:
 
 - **Activity** (its own tab) — the live event log: sign-ins, quiz, classic
   and ai solves (an ai solve's entry also notes whether it came in via flag
-  or via event), and team create/join/leave/rename, newest first, with type
-  chips and a login filter. Backed by one capped Redis list
+  or via event), and team create/join/leave/rename, newest first. Type
+  chips (each with its count) and one search box narrow it: every word must
+  match somewhere in a row — login, event, detail (challenge, question or
+  team id) or the time as shown — and `login:`, `type:`, `detail:` and
+  `team:` restrict a word to one field; a time range (last 15 min to 24 h,
+  or from/to on the panel's clock) narrows it further. While any of these
+  is on, the tab reads the rest of the log so the search covers all of it,
+  and says how much it searched; the search rides in the URL
+  (`/admin/activity?q=…`), so a filtered view survives a reload and can be
+  shared. Backed by one capped Redis list
   (`ctf:activity:log`, newest ~5,000 entries — older ones drop
   automatically), written **fail-open** so a Redis blip can lose a log line
   but never fail the sign-in or solve it describes. Entries carry the

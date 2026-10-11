@@ -230,7 +230,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: sudo apt-get update && sudo apt-get install -y shellcheck bats
+      # jq: the protection --jq filter tests replay recorded GitHub payloads
+      # through the script's real filter; pinned here so they never skip.
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck bats jq
       # scripts/dev-stack is listed by name: it has no .sh suffix, so the glob
       # alone would leave the one developer entry point unlinted.
       - run: shellcheck scripts/*.sh scripts/lib/*.sh scripts/dev-stack setup/*.sh scorer/entrypoint.sh sync/docker-entrypoint.sh deploy/fly/deploy.sh deploy/fly/render-compose.sh deploy/aws-terraform/deploy.sh

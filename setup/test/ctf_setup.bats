@@ -2028,7 +2028,20 @@ repo="$(printf '%s' "$*" | sed -n 's|.*repos/test-event-org/\([^ /?]*\).*|\1|p')
 case "$*" in
   *"-X PATCH"*visibility=*) [ -f "$S/patch-fails" ] && exit 1; cat "$S/launched" 2>/dev/null >> "$S/patch_saw_launched" || echo none >> "$S/patch_saw_launched"; printf '%s' "$*" | sed 's/.*visibility=//' > "$S/vis_$repo"; exit 0 ;;
   *"-X PUT"*"branches/ctf/protection"*) [ -f "$S/protect-fails" ] && { echo '{"message":"Validation Failed"}' >&2; exit 1; }; echo applied > "$S/prot_$repo"; exit 0 ;;
-  *"branches/ctf/protection"*) [ -f "$S/prot_$repo" ] || exit 1; if [ -f "$S/prot-bad_$repo" ]; then echo false; else echo true; fi; exit 0 ;;
+  *"branches/ctf/protection"*)
+    [ -f "$S/prot_$repo" ] || exit 1
+    # Replay a recorded protection payload through the script's own --jq
+    # filter (gh's --jq is jq): the verified object shape by default, the
+    # force-push-enabled shape under prot-bad_<repo>. A canned `true`/`false`
+    # verdict would miss the payload shape the filter actually has to read.
+    filter=""; prev=""
+    for a in "$@"; do [ "$prev" = "--jq" ] && filter="$a"; prev="$a"; done
+    if [ -f "$S/prot-bad_$repo" ]; then
+      printf '%s' '{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_force_pushes":{"enabled":true},"allow_deletions":{"enabled":false}}' | jq -r "$filter"
+    else
+      printf '%s' '{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_force_pushes":{"enabled":false},"allow_deletions":{"enabled":false}}' | jq -r "$filter"
+    fi
+    exit 0 ;;
   *packages/container/score*) cat "$S/package" 2>/dev/null || echo private ;;
   *actions/workflows/ctf-score.yml/runs*) if [ -f "$S/refused_$repo" ]; then echo 101; elif [ -f "$S/runs-broken_$repo" ]; then exit 1; fi ;;
   *actions/runs/101/jobs*) echo failure ;;
@@ -2488,25 +2501,47 @@ _fn_body_lines() {
 # is exactly the state every fork is in between `org` and `launch` (#465).
 # `org` must record that specific refusal as PENDING until launch — continue
 # every remaining step and repo, never report it completed — while any OTHER
-# protection error still fails. `launch` applies the same protection as each
-# fork goes public and verifies it (1 approving review, force-push and
-# deletion disabled) before reporting success; `doctor` shows it pending
-# before launch and clears it only once it is verified.
+# protection error still fails, including the same refusal on a fork that is
+# not confirmed private. `launch` applies the same protection as each fork
+# goes public and verifies it (1 approving review, force-push and deletion
+# disabled) before reporting success; `doctor` shows it pending only while
+# the box reports not-launched, and fails on a miss otherwise.
+
+# The --jq filter check_step protect passes is gh's own jq, so a test that
+# wants to exercise it needs a real jq. Present on CI's ubuntu runners (and
+# installed by the shell job); a machine without one sees a visible skip
+# rather than a silently weakened gate.
+need_jq() {
+  command -v jq >/dev/null || skip "jq not installed — the protection --jq filter tests need a real jq"
+}
+
+# A recorded GitHub protection payload in the shape the API actually returns
+# (allow_force_pushes/allow_deletions are objects with .enabled, never
+# booleans) — the three verdicts a payload can carry for `check_step protect`.
+PROT_OK_PAYLOAD='{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_force_pushes":{"enabled":false},"allow_deletions":{"enabled":false}}'
+PROT_FORCEPUSH_PAYLOAD='{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_force_pushes":{"enabled":true},"allow_deletions":{"enabled":false}}'
+PROT_MISSING_PAYLOAD='{"url":"https://api.github.com/repos/o/r/branches/ctf/protection"}'
 
 # A full-`org` gh stub: every call succeeds with empty output, EXCEPT the
-# branch-protection PUT, which replays GitHub's answer ($1, free-plan
-# refusal by default) on stderr and fails. docker reports amd64 and
-# succeeds, so the mirror and privatize steps complete and the run reaches
-# the pending summary.
-org_protect_stub() {  # $1 = refusal message (optional)
+# branch-protection PUT, which replays GitHub's answer in gh's own stderr
+# shape — HTTP 403 + the complete free-plan refusal message by default — and
+# fails; and the visibility read, which answers $2 (private by default), the
+# confirmation apply_protect requires before it may defer. docker reports
+# amd64 and succeeds, so the mirror and privatize steps complete and the run
+# reaches the pending summary.
+org_protect_stub() {  # $1 = PUT stderr (optional), $2 = fork visibility (optional; "" = unreadable)
   mkdir -p stubs
-  local refusal="${1:-Upgrade to GitHub Pro or make this repository public to enable this feature.}"
+  local refusal="${1:-gh: HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature. (https://api.github.com/repos/test-event-org/DVWA/branches/ctf/protection)}"
+  # ${2-private}, not ${2:-private}: an EXPLICITLY empty second argument is
+  # the "GitHub did not answer" case the fail-closed test needs.
+  local vis="${2-private}"
   cat > stubs/gh <<EOF
 #!/usr/bin/env bash
 case "\$*" in
   *"-X PUT"*"branches/ctf/protection"*)
-    printf '{"message":"%s"}\n' "$refusal" >&2
+    printf '%s\n' "$refusal" >&2
     exit 1 ;;
+  *".visibility"*) echo "$vis" ;;
   *) exit 0 ;;
 esac
 EOF
@@ -2541,7 +2576,7 @@ EOF
 }
 
 @test "org fails normally on a protection error that is not the plan refusal (#601)" {
-  org_protect_stub "Validation Failed"
+  org_protect_stub "gh: HTTP 422: Validation Failed (https://api.github.com/repos/test-event-org/DVWA/branches/ctf/protection)"
   run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
   [ "$status" -ne 0 ]
   printf '%s' "$output" | grep -qF -- 'Validation Failed'
@@ -2550,14 +2585,48 @@ EOF
   [ -z "$(printf '%s' "$output" | grep -F '== mirroring scorer image')" ]
 }
 
+@test "org defers only the COMPLETE refusal on HTTP 403 — a partial phrase or a bare 403 fails (#601)" {
+  # The complete observed message, without the 403 that names this endpoint's
+  # refusal kind: not the deferral.
+  org_protect_stub "gh: HTTP 422: Upgrade to GitHub Pro or make this repository public to enable this feature. (https://api.github.com/repos/test-event-org/DVWA/branches/ctf/protection)"
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -ne 0 ]
+  # A 403 that does not carry the complete refusal: also not the deferral.
+  org_protect_stub "gh: HTTP 403: Resource not accessible by integration (https://api.github.com/repos/test-event-org/DVWA/branches/ctf/protection)"
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -ne 0 ]
+  [ -z "$(printf '%s' "$output" | grep -F 'PENDING until launch')" ]
+}
+
+@test "org fails closed on the plan refusal when the fork is not confirmed private (#601)" {
+  # The refusal says free-plan-private, but the fork reads back PUBLIC:
+  # the confirmation is missing, so this is a failure, not a deferral.
+  org_protect_stub "" public
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF -- 'Upgrade to GitHub Pro'
+  # And a visibility GitHub did not answer is not `private` either.
+  org_protect_stub "" ""
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -ne 0 ]
+  [ -z "$(printf '%s' "$output" | grep -F 'PENDING until launch')" ]
+}
+
 @test "org leaves an already-verified ctf protection alone, with no pending marker (#601)" {
+  need_jq
   mkdir -p stubs
-  cat > stubs/gh <<'EOF'
+  cat > stubs/gh <<EOF
 #!/usr/bin/env bash
-echo "$*" >> "$BATS_TEST_TMPDIR/gh.log"
-case "$*" in
+echo "\$*" >> "$BATS_TEST_TMPDIR/gh.log"
+case "\$*" in
   *"-X PUT"*"branches/ctf/protection"*) exit 0 ;;
-  *branches/ctf/protection*) echo true ;;
+  *branches/ctf/protection*)
+    # The verified payload, run through the script's OWN --jq filter — the
+    # skip org's idempotency check is allowed to make must survive GitHub's
+    # real payload shape, not a canned true.
+    filter=""; prev=""
+    for a in "\$@"; do [ "\$prev" = "--jq" ] && filter="\$a"; prev="\$a"; done
+    printf '%s' '$PROT_OK_PAYLOAD' | jq -r "\$filter" ;;
   *) exit 0 ;;
 esac
 EOF
@@ -2577,31 +2646,50 @@ EOF
   [ -z "$(grep -F 'PUT' "$BATS_TEST_TMPDIR/gh.log" | grep -F 'branches/ctf/protection')" ]
 }
 
-@test "check_step protect is satisfied only by the full verified payload (#601)" {
+@test "check_step protect runs its real --jq filter against GitHub's recorded payloads (#601)" {
+  need_jq
   mkdir -p "$BATS_TEST_TMPDIR/protstubs"
-  # Stands in for gh's --jq evaluation of the protection GET: PROT_JQ is the
-  # verdict it would print (no :- default — an empty verdict must stay empty).
+  # The stub replays a RECORDED protection payload through the --jq filter
+  # the script itself passes — gh's --jq IS jq, so this exercises the actual
+  # filter against the actual payload shape, not a canned verdict. The filter
+  # erroring (a boolean where an object belongs) reads as unsatisfied, as it
+  # does under gh.
   cat > "$BATS_TEST_TMPDIR/protstubs/gh" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-  *branches/ctf/protection*) echo "$PROT_JQ" ;;
+  *branches/ctf/protection*)
+    filter=""; prev=""
+    for a in "$@"; do [ "$prev" = "--jq" ] && filter="$a"; prev="$a"; done
+    printf '%s' "$PROT_PAYLOAD" | jq -r "$filter"
+    ;;
   *) exit 1 ;;
 esac
 EOF
   chmod +x "$BATS_TEST_TMPDIR/protstubs/gh"
-  # 1 review + no force-push + no deletion -> satisfied.
-  run env PROT_JQ=true PATH="$BATS_TEST_TMPDIR/protstubs:$PATH" \
-    bash -c 'CMD=__selftest source "$1"; if check_step protect dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi' _ "$SCRIPT"
+  protect_verdict() {
+    env PROT_PAYLOAD="$1" PATH="$BATS_TEST_TMPDIR/protstubs:$PATH" \
+      bash -c 'CMD=__selftest source "$1"; if check_step protect dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi' _ "$SCRIPT"
+  }
+  # 1 review + force-pushes disabled (as {enabled:false}) + deletions
+  # disabled -> satisfied.
+  run protect_verdict "$PROT_OK_PAYLOAD"
   [ "$status" -eq 0 ]
   echo "$output" | grep -qx SATISFIED
-  # Any missing piece (force-pushes allowed, deletion allowed, no required
-  # review) — and an unreadable reply — fail closed.
-  for verdict in false ""; do
-    run env PROT_JQ="$verdict" PATH="$BATS_TEST_TMPDIR/protstubs:$PATH" \
-      bash -c 'CMD=__selftest source "$1"; if check_step protect dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi' _ "$SCRIPT"
-    [ "$status" -eq 0 ]
-    echo "$output" | grep -qx NOTSATISFIED
-  done
+  # Force-pushes enabled in the object shape -> not satisfied.
+  run protect_verdict "$PROT_FORCEPUSH_PAYLOAD"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+  # Missing fields (no reviews, no allow_* objects) -> not satisfied.
+  run protect_verdict "$PROT_MISSING_PAYLOAD"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+  # The boolean-shaped payload the old filter accepted: .enabled on a
+  # boolean errors the filter, which fails closed.
+  run protect_verdict '{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_force_pushes":false,"allow_deletions":false}'
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+  # An unreadable reply — gh exiting nonzero — stays unsatisfied too. The
+  # decisive check, last.
   printf '#!/usr/bin/env bash\nexit 1\n' > "$BATS_TEST_TMPDIR/protstubs/gh"
   chmod +x "$BATS_TEST_TMPDIR/protstubs/gh"
   run env PATH="$BATS_TEST_TMPDIR/protstubs:$PATH" \
@@ -2622,6 +2710,7 @@ EOF
 }
 
 @test "launch applies ctf protection as each fork goes public and verifies it (#601)" {
+  need_jq
   vis_env
   echo true > state/launched
   for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
@@ -2654,12 +2743,13 @@ EOF
 }
 
 @test "launch does not report success when protection fails verification (#601)" {
+  need_jq
   vis_env
   echo true > state/launched
   for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
   # The PUT "succeeds" but DVWA's protection still reads back with
-  # force-pushes allowed — the required shape is not in place, so the
-  # pre-success verification must refuse.
+  # force-pushes allowed ({ "enabled": true }) — the required payload shape
+  # is not in place, so the pre-success verification must refuse.
   touch state/prot-bad_DVWA
   run_vis launch
   [ "$status" -ne 0 ]
@@ -2668,6 +2758,7 @@ EOF
 }
 
 @test "doctor reports ctf protection as pending on a private fork before launch (#601)" {
+  need_jq
   vis_env
   echo false > state/launched
   echo private > state/vis_DVWA
@@ -2680,6 +2771,7 @@ EOF
 }
 
 @test "doctor clears the pending marker only once ctf protection is verified (#601)" {
+  need_jq
   vis_env
   echo false > state/launched
   echo private > state/vis_DVWA
@@ -2689,4 +2781,33 @@ EOF
   cell="$(echo "$output" | awk '/^dvwa/{print $5}')"
   echo "dvwa prot cell: $cell"
   [ "$cell" = "✅" ]
+}
+
+@test "doctor fails on missing protection once the box reports launched — never pending (#601)" {
+  need_jq
+  vis_env
+  echo true > state/launched
+  echo private > state/vis_DVWA
+  # Launched: the free-plan deferral is over — a missing protection is a
+  # real miss, cell ❌, and doctor's exit code carries it.
+  run_vis doctor
+  local cell
+  cell="$(echo "$output" | awk '/^dvwa/{print $5}')"
+  echo "dvwa prot cell: $cell"
+  [ "$cell" = "❌" ]
+  [ "$status" -ne 0 ]
+}
+
+@test "doctor fails on missing protection when the launch state is unknown (#601)" {
+  need_jq
+  vis_env
+  # No state/launched: curl exits 7 and the box's launch state is unknown —
+  # which the box never answered, so it cannot earn the pending deferral.
+  echo private > state/vis_DVWA
+  run_vis doctor
+  local cell
+  cell="$(echo "$output" | awk '/^dvwa/{print $5}')"
+  echo "dvwa prot cell: $cell"
+  [ "$cell" = "❌" ]
+  [ "$status" -ne 0 ]
 }

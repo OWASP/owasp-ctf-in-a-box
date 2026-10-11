@@ -295,12 +295,16 @@ check_step() {
       # The full protection payload, not just the review count: `launch`
       # verifies all three properties before reporting success, and `org`'s
       # idempotency check must not skip a fork whose force-pushes or deletions
-      # were later enabled. Fails closed: an unreadable reply (404 = no
-      # protection, a gh error) never reads as satisfied, and a missing field
-      # (null == false is false) is not either.
+      # were later enabled. GitHub returns allow_force_pushes and
+      # allow_deletions as OBJECTS ({ "enabled": false }), not booleans, so
+      # the filter reads `.enabled`. Fails closed: an unreadable reply (404 =
+      # no protection, a gh error) never reads as satisfied; a missing field
+      # (null.enabled == false is false) is not either; and a boolean where
+      # the object belongs errors the filter itself, which `||` reads as
+      # unsatisfied.
       local ok
       ok="$(gh api "repos/$org/$name/branches/ctf/protection" \
-        --jq '(((.required_pull_request_reviews.required_approving_review_count // 0) >= 1) and (.allow_force_pushes == false) and (.allow_deletions == false))' 2>/dev/null)" || ok=false
+        --jq '(((.required_pull_request_reviews.required_approving_review_count // 0) >= 1) and (.allow_force_pushes.enabled == false) and (.allow_deletions.enabled == false))' 2>/dev/null)" || ok=false
       [ "$ok" = true ]
       ;;
     # Version-aware, not merely present. A fork carrying an OLDER workflow is
@@ -337,14 +341,19 @@ check_step() {
 # PUT the ctf branch protection — the one payload `org` and `launch` both
 # apply. Returns:
 #   0  applied (or already in place)
-#   2  REFUSED specifically because GitHub's free plan does not support
-#      branch protection on private repositories: not an error — the caller
-#      defers it until launch makes the fork public. No output: the refusal
-#      is the expected state of a private fork on a free org.
-#   1  any other failure — the caller fails on it, like every check_step.
-# The plan refusal is told apart by the message GitHub answers with, on the
-# only endpoint this runs against — never by exit status alone, or every
-# protection error would silently become a deferral.
+#   2  REFUSED specifically by GitHub's free plan on a private repository:
+#      the ONE observed refusal this defers — HTTP 403 carrying "Upgrade to
+#      GitHub Pro or make this repository public", on a fork that reads back
+#      private. Not an error — the caller defers it until launch makes the
+#      fork public. No output: the refusal is the expected state of a
+#      private fork on a free org.
+#   1  any other failure — including that same refusal when the fork is not
+#      CONFIRMED private (a visibility GitHub did not answer is not
+#      confirmation) — the caller fails on it, like every check_step.
+# The plan refusal is told apart by the status and the complete message
+# GitHub answers with, on the only endpoint this runs against, plus the
+# fork's actual visibility — never by exit status alone, or every protection
+# error would silently become a deferral.
 apply_protect() {
   local org="$1" name="$2" err
   if err="$(gh api -X PUT "repos/$org/$name/branches/ctf/protection" --input - 2>&1 >/dev/null <<'JSON'
@@ -356,8 +365,14 @@ JSON
     return 0
   fi
   case "$err" in
-    *"Branch protection is not supported on private"*|*"Upgrade to GitHub Pro"*)
-      return 2
+    *"HTTP 403"*"Upgrade to GitHub Pro or make this repository public"*)
+      # Only the complete, observed refusal counts — and only on a fork that
+      # reads back private, which is what makes this the free-plan state
+      # rather than a 403 of another kind. An unreadable visibility is not
+      # `private`, so it falls through and fails closed.
+      if [ "$(fork_visibility "$org/$name")" = private ]; then
+        return 2
+      fi
       ;;
   esac
   printf '%s\n' "${err:-gh api PUT branches/ctf/protection failed for $org/$name}" >&2
@@ -598,9 +613,12 @@ doctor_check_org_exists() {
 # runtime in /admin -> Secure Development.
 # One row per target, one column per provisioning step (+ fork-detach). Each
 # cell: ✅ done · ❌ missing (automatable — fails the exit code) · ⚠️ manual
-# step not yet done (advisory) · – not applicable to this target.
+# step not yet done (advisory) · – not applicable to this target. The second
+# argument is the box's launch state (doctor_check_launch's out-param):
+# only an explicit not-launched turns a missing protection on a private fork
+# into ⏳ pending; launched or unknown reports it ❌ like any other miss.
 doctor_check_matrix() {
-  local org="$1" crc=0 t id cell name
+  local org="$1" doctor_launch="${2:-unknown}" crc=0 t id cell name
   printf '%s%-18s %-5s %-5s %-5s %-5s %-5s %-5s %-5s %-5s %-5s%s\n' "$C_BOLD" \
     "target" fork ctf old prot wkfl disI pr vapp detch "$C_RESET"
   for t in $(all_targets); do
@@ -611,11 +629,13 @@ doctor_check_matrix() {
         cell="–"
       elif check_step "$id" "$t" "$org"; then
         cell="✅"
-      elif [ "$id" = protect ] && [ "$(fork_visibility "$org/$name")" = private ]; then
-        # The free plan refuses protection on a private repo, so `org` records
-        # this as pending until launch makes the fork public, not missing —
-        # and an unreadable visibility is not `private`, so a real miss stays
-        # ❌ (fail closed).
+      elif [ "$id" = protect ] && [ "$doctor_launch" = not-launched ] && [ "$(fork_visibility "$org/$name")" = private ]; then
+        # The free plan refuses protection on a private repo, so before
+        # launch `org` records this as pending until launch, not missing —
+        # and only a launch state the box itself reported as not-launched
+        # earns that: launched or unknown, a missing protection is a real
+        # miss (❌). An unreadable visibility is not `private` either, so a
+        # real miss stays ❌ (fail closed).
         cell="⏳"
       else
         cell="❌"; crc=1
@@ -631,7 +651,7 @@ doctor_check_matrix() {
   echo "legend: fork=forked ctf=ctf-branch old=drop-old prot=protected wkfl=workflow"
   echo "        disI=disable-inherited pr=pr-template vapp=vapp-dockerfile detch=fork-detached (–=n/a)"
   echo "❌ = automatable step missing (fails exit); ⚠️ = UI-only step to finish by hand"
-  echo "⏳ = branch protection pending until launch (GitHub's free plan cannot protect a private repo)"
+  echo "⏳ = branch protection pending until launch (GitHub's free plan cannot protect a private repo; shown only while not-launched)"
   return $crc
 }
 
@@ -808,7 +828,7 @@ cmd_doctor() {
     return $rc
   fi
 
-  doctor_check_matrix "$org" || rc=1
+  doctor_check_matrix "$org" "$doctor_launch" || rc=1
   doctor_check_fork_visibility "$org" "$doctor_launch"
   doctor_check_package_private "$org"
   doctor_check_sync_app "$org" || rc=1

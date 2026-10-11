@@ -9,7 +9,13 @@ export async function POST(request: Request) {
   const login = (session.user as { login?: string }).login;
   if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
 
-  const result = await leaveTeam(login);
+  // `confirm: true` is the player accepting the after-close warning;
+  // only a literal true counts.
+  const body = await request.json().catch(() => ({}));
+  const result = await leaveTeam(login, { confirmClosed: body?.confirm === true });
+  if (!result.ok && result.needsConfirm) {
+    return NextResponse.json({ error: result.error, needsConfirm: true }, { status: 409 });
+  }
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json({ team: result.team });
 }

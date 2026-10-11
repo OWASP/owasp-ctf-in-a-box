@@ -57,7 +57,11 @@ export { TEAM_MAX_MEMBERS } from "@/lib/team-limits";
 const NAME_MAX_LENGTH = 32;
 const NOT_AVAILABLE_IN_DEMO_MODE = "Not available in demo mode";
 
-export type TeamActionResult = { ok: true; team: string | null } | { ok: false; error: string };
+/** `needsConfirm`: refused only because the caller has not confirmed an exit
+ *  after registration closed; the same call with `confirmClosed` goes ahead. */
+export type TeamActionResult =
+  | { ok: true; team: string | null }
+  | { ok: false; error: string; needsConfirm?: true };
 
 export type JoinCodeResult = { ok: true; team: string; code: string } | { ok: false; error: string };
 
@@ -68,6 +72,16 @@ export type TeamInfo = {
 };
 
 const REGISTRATION_CLOSED_ERROR = "Team registration is closed";
+
+/** Leaving or being removed after registration closes is allowed, but it
+ *  cannot be undone by the player: they can't join any team again, and the
+ *  team's total (its members' union) loses their points. So the exit is
+ *  warned about and must be confirmed; an organizer can put them back from
+ *  /admin → Support. */
+const LEAVE_AFTER_CLOSE_WARNING =
+  "Registration is closed. You won't be able to join any team again, and your points leave the team.";
+const removeAfterCloseWarning = (login: string) =>
+  `Registration is closed. ${login} won't be able to join any team again, and their points leave the team.`;
 
 /** The Unicode bidi controls: marks, embeddings, overrides and isolates. */
 const BIDI_CONTROLS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
@@ -446,7 +460,7 @@ export async function joinTeam(login: string, code: string): Promise<TeamActionR
   return { ok: true, team: slug };
 }
 
-export async function leaveTeam(login: string): Promise<TeamActionResult> {
+export async function leaveTeam(login: string, opts: { confirmClosed?: boolean } = {}): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) {
     const store = await cookies();
     store.delete(MOCK_TEAM_COOKIE);
@@ -455,6 +469,9 @@ export async function leaveTeam(login: string): Promise<TeamActionResult> {
 
   const slug = await getUserTeamSlug(login);
   if (!slug) return { ok: true, team: null };
+  if (!opts.confirmClosed && (await isRegistrationClosed())) {
+    return { ok: false, needsConfirm: true, error: LEAVE_AFTER_CLOSE_WARNING };
+  }
 
   // A 'stale' verdict means the membership changed between the read and the
   // script — leaving is idempotent, so treat it as already left.
@@ -474,9 +491,12 @@ export async function removeMember(
   captainLogin: string,
   slug: string,
   memberLogin: string,
+  opts: { confirmClosed?: boolean } = {},
 ): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
-  if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
+  if (!opts.confirmClosed && (await isRegistrationClosed())) {
+    return { ok: false, needsConfirm: true, error: removeAfterCloseWarning(memberLogin) };
+  }
   const verdict = await upstashEval(
     REMOVE_MEMBER_SCRIPT,
     [teamKey(slug), membersKey(slug), userKey(memberLogin)],

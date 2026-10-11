@@ -374,7 +374,6 @@ describe("registration window", () => {
     const store = await loadStore(true);
     const closed = { ok: false, error: "Team registration is closed" };
     for (const call of [
-      () => store.removeMember("captain", "red-team", "member2"),
       () => store.renameTeam("captain", "red-team", "New Name"),
       () => store.regenerateCode("captain", "red-team"),
     ]) {
@@ -402,14 +401,55 @@ describe("registration window", () => {
     expect(await store.createTeam("octocat", "Red Team")).toEqual({ ok: true, team: "red-team" });
   });
 
-  it("never blocks leaveTeam — players can always leave", async () => {
+  it("lets a player leave freely while registration is open", async () => {
     const store = await loadStore(true);
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]); // getUserTeamSlug
+    mockRegistrationOpen();
     mocks.upstashEval.mockResolvedValueOnce("ok");
-    const result = await store.leaveTeam("captain");
-    expect(result).toEqual({ ok: true, team: null });
-    // Only the membership lookup ran — no registration HGET was issued.
-    expect(mocks.upstashPipeline).toHaveBeenCalledOnce();
+    expect(await store.leaveTeam("captain")).toEqual({ ok: true, team: null });
+  });
+
+  // #597: warn, don't refuse. After close a player who leaves can't join any
+  // team again and takes their points with them, so the leave must be
+  // confirmed; the server refuses an unconfirmed one so a hand-made request
+  // can't skip the warning.
+  it("asks for confirmation before a leave once registration is closed, writing nothing", async () => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
+    mockRegistrationClosed();
+    expect(await store.leaveTeam("octocat")).toEqual({
+      ok: false,
+      needsConfirm: true,
+      error: "Registration is closed. You won't be able to join any team again, and your points leave the team.",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("leaves after close once confirmed", async () => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
+    mocks.upstashEval.mockResolvedValueOnce("ok");
+    expect(await store.leaveTeam("octocat", { confirmClosed: true })).toEqual({ ok: true, team: null });
+  });
+
+  it("asks the captain to confirm removing a member once registration is closed, writing nothing", async () => {
+    const store = await loadStore(true);
+    mockRegistrationClosed();
+    expect(await store.removeMember("captain", "red-team", "member2")).toEqual({
+      ok: false,
+      needsConfirm: true,
+      error: "Registration is closed. member2 won't be able to join any team again, and their points leave the team.",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("removes a member after close once confirmed", async () => {
+    const store = await loadStore(true);
+    mocks.upstashEval.mockResolvedValueOnce("ok");
+    expect(await store.removeMember("captain", "red-team", "member2", { confirmClosed: true })).toEqual({
+      ok: true,
+      team: "red-team",
+    });
   });
 });
 

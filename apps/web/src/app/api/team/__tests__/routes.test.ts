@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   getSession, joinTeam, createSoloTeam, removeMember, renameTeam, transferCaptain, disbandTeam, regenerateCode,
-  consumeRateLimit,
+  consumeRateLimit, leaveTeam,
 } = vi.hoisted(
   () => ({
     getSession: vi.fn(),
@@ -20,12 +20,14 @@ const {
     disbandTeam: vi.fn(),
     regenerateCode: vi.fn(),
     consumeRateLimit: vi.fn(),
+    leaveTeam: vi.fn(),
   }),
 );
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/team-store", () => ({
+  leaveTeam,
   joinTeam,
   createSoloTeam,
   removeMember,
@@ -49,6 +51,7 @@ import { POST as transferPOST } from "@/app/api/team/transfer/route";
 import { POST as disbandPOST } from "@/app/api/team/disband/route";
 import { POST as regenPOST } from "@/app/api/team/regen-code/route";
 import { POST as soloPOST } from "@/app/api/team/solo/route";
+import { POST as leavePOST } from "@/app/api/team/leave/route";
 
 const req = (body?: unknown) => new Request("http://x/api/team/x", { method: "POST", body: JSON.stringify(body ?? {}) });
 
@@ -64,6 +67,7 @@ beforeEach(() => {
   disbandTeam.mockReset();
   regenerateCode.mockReset();
   consumeRateLimit.mockReset();
+  leaveTeam.mockReset();
   getSession.mockResolvedValue(SESSION);
   consumeRateLimit.mockResolvedValue({ allowed: true });
 });
@@ -141,7 +145,7 @@ describe("POST /api/team/remove", () => {
     removeMember.mockResolvedValue({ ok: false, error: "Only the team captain can do that" });
     const res = await removePOST(req({ slug: "s", member: "bob" }));
     expect(res.status).toBe(403);
-    expect(removeMember).toHaveBeenCalledWith("alice", "s", "bob");
+    expect(removeMember).toHaveBeenCalledWith("alice", "s", "bob", { confirmClosed: false });
   });
 
   it("200 on success", async () => {
@@ -149,6 +153,44 @@ describe("POST /api/team/remove", () => {
     const res = await removePOST(req({ slug: "s", member: "bob" }));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ team: "s" });
+  });
+});
+
+// #597: an exit after registration closes must be confirmed. The store says
+// so with `needsConfirm`; the route answers 409 with the warning, and passes
+// `confirm: true` from the body on the retry. Only a literal true confirms.
+describe("exits after registration closes (#597)", () => {
+  const CLOSED = "Registration is closed. You won't be able to join any team again, and your points leave the team.";
+
+  it("leave: 409 with the warning and needsConfirm when unconfirmed", async () => {
+    leaveTeam.mockResolvedValue({ ok: false, needsConfirm: true, error: CLOSED });
+    const res = await leavePOST(req({}));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: CLOSED, needsConfirm: true });
+    expect(leaveTeam).toHaveBeenCalledWith("alice", { confirmClosed: false });
+  });
+
+  it("leave: passes a confirmed exit through", async () => {
+    leaveTeam.mockResolvedValue({ ok: true, team: null });
+    const res = await leavePOST(req({ confirm: true }));
+    expect(res.status).toBe(200);
+    expect(leaveTeam).toHaveBeenCalledWith("alice", { confirmClosed: true });
+  });
+
+  it("leave: anything but a literal true does not confirm", async () => {
+    leaveTeam.mockResolvedValue({ ok: true, team: null });
+    await leavePOST(req({ confirm: "yes" }));
+    expect(leaveTeam).toHaveBeenCalledWith("alice", { confirmClosed: false });
+  });
+
+  it("remove: 409 with the warning when unconfirmed, and a confirmed retry goes through", async () => {
+    removeMember.mockResolvedValueOnce({ ok: false, needsConfirm: true, error: "Registration is closed. bob won't…" });
+    const res = await removePOST(req({ slug: "s", member: "bob" }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ needsConfirm: true });
+    removeMember.mockResolvedValueOnce({ ok: true, team: "s" });
+    expect((await removePOST(req({ slug: "s", member: "bob", confirm: true }))).status).toBe(200);
+    expect(removeMember).toHaveBeenLastCalledWith("alice", "s", "bob", { confirmClosed: true });
   });
 });
 

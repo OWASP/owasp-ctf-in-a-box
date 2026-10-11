@@ -139,9 +139,14 @@ double-counting them. Organizers open or close the registration window from
 the admin panel below — by hand with the **Team registration** switch, or on
 a timer with the **Registration opens** / **Registration closes** schedule
 fields. While it is closed nobody can create or join a team, and a captain
-cannot rename it, remove a member or regenerate its code; **transfer
-captaincy, disband and leave still work**, because those are exits and
-gating them would trap a captain behind a closed window.
+cannot rename it or regenerate its code; **transfer captaincy, disband,
+leave and remove member still work**, because those are exits and gating
+them would trap a player or a captain behind a closed window. Leave and
+remove member ask for confirmation first, though: a player who leaves (or is
+removed) after close **cannot join any team again on their own**, and their
+points leave the team's total. The warning says so, the request is refused
+until it is confirmed, and an organizer can put the player back from
+**Support → Add to team** (see below).
 
 ![A contestant's profile: the header shows their points plus one done-out-of-available stat per enabled module, and the team card below carries the join code, invite link and captain controls](assets/profile.jpg)
 
@@ -443,10 +448,12 @@ The panel offers:
 
 - **Team registration** — an open/close switch for the team-forming window.
   While closed, players cannot create or join teams (**Play solo** included),
-  and a captain cannot rename the team, remove a member or regenerate the
-  join code. **Transfer captaincy, disband and leave are deliberately not
+  and a captain cannot rename the team or regenerate the join code.
+  **Transfer captaincy, disband, leave and remove member are deliberately not
   gated** (`team-store.ts` says so at each one): they are exits, and gating
-  them would trap a captain the moment registration closes. Existing teams
+  them would trap a player the moment registration closes. Leave and remove
+  member require a confirmation that says the player cannot rejoin and their
+  points leave the team; **Support → Add to team** puts them back. Existing teams
   keep their scores. The switch is one of two things that close registration
   — the scheduled window below is the other.
 - **Schedule (auto dates)** — four optional date-time fields, on the Event
@@ -700,7 +707,19 @@ The panel offers:
   From there: **reset progress** (clears their Secure Development solves on
   every target, their quiz answers, classic and AI solves, attempts and hints;
   keeps the account and the team), **delete contestant** (all of that
-  plus the team membership and the account record), or **remove from team**.
+  plus the team membership and the account record), **remove from team**, or
+  **add to team** / **move to team**: type a team slug and the player goes
+  onto it, leaving their current team if they have one, whatever the
+  registration state. This is how a player who left after registration
+  closed gets back. The team-size cap applies unless you tick **over the
+  team-size cap**; a captain of a team with other members must hand it over
+  first, as with leaving; a team their move empties is deleted with its join
+  code, as when its last member leaves. The player is found by the spelling
+  they signed in with, so a login that has never signed in is refused. Their
+  points count for the new team on the next board read, and their `joinedAt`
+  is the move, so earlier solves do not open the new team's story steps. The
+  move is in the admin audit log (`ops:team-add-member`) and the activity log
+  (as a team join).
   Team-side, there is **transfer captaincy** and **disband** — the captain-only
   controls, available to an organizer for when the captain is unreachable. That
   is the common live ticket: a captainless team cannot rename, remove a member,

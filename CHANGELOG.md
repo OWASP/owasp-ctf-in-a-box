@@ -37,6 +37,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   submission and are starred; rows where every solver was right first time
   show —. The CSV gains `median_time_measure`. Master reset and a player's
   progress reset clear the new records.
+- **Fixed: leaving a team after registration closed stranded the player
+  (#597).** Leave and the captain's Remove member now ask for confirmation
+  once registration is closed, saying the player can't join any team again
+  and their points leave the team; the server refuses an unconfirmed request
+  (409). Remove member, refused outright after close until now, is allowed
+  with that confirmation. `/admin → Support` gains **Add to team** / **Move
+  to team** on a player's card, whatever the registration state: one atomic
+  script, the team-size cap unless overridden, a captain of a team with
+  other members refused, the player found by their signed-in spelling,
+  written to the audit and activity logs. Reopening registration is no
+  longer the only way back.
 - **Fixed: admin Insights undercounted the event and disagreed with the
   leaderboard (#608).** Players whose GitHub login has a capital letter were
   read under the lowercased login and found empty; a player who left a team

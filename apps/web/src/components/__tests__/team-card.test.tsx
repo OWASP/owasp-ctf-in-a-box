@@ -10,7 +10,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-import TeamCard from "@/components/team-card";
+import TeamCard, { ExitConfirm, NeedsConfirmError, postTeam } from "@/components/team-card";
 
 describe("TeamCard", () => {
   it("offers all three ways onto a team when the viewer has none", () => {
@@ -184,5 +184,40 @@ describe("TeamCard teamless copy follows the modules", () => {
     );
     expect(html).toContain("before anything you solve counts");
     expect(html).not.toMatch(/Secure Development/);
+  });
+});
+
+// #597: an exit after registration closes comes back 409 + needsConfirm; the
+// card shows the warning and resends with confirm: true. No DOM in this
+// suite, so the request helper and the confirm block are tested directly.
+describe("exits after registration closes (#597)", () => {
+  const WARNING = "Registration is closed. You won't be able to join any team again, and your points leave the team.";
+
+  it("postTeam turns a 409 needsConfirm into a NeedsConfirmError carrying the warning", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: WARNING, needsConfirm: true }), { status: 409 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const err = await postTeam("/leave").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NeedsConfirmError);
+    expect((err as Error).message).toBe(WARNING);
+    vi.unstubAllGlobals();
+  });
+
+  it("postTeam sends confirm: true when asked to", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ team: null }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await postTeam("/remove", { slug: "s", member: "bob", confirm: true });
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(JSON.parse(String(init.body))).toEqual({ slug: "s", member: "bob", confirm: true });
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the warning with a confirm and a cancel", () => {
+    const html = renderToStaticMarkup(
+      <ExitConfirm message={WARNING} confirmLabel="Leave anyway" pending={false} onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("won&#x27;t be able to join any team again");
+    expect(html).toContain("Leave anyway");
+    expect(html).toContain("Cancel");
   });
 });

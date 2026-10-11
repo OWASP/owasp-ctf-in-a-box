@@ -1280,3 +1280,17 @@ describe("hostile team names", () => {
     expect(await store.renameTeam("captain", "red-team", "🏳️‍🌈 crew")).toEqual({ ok: true, team: "red-team" });
   });
 });
+
+describe("a create name with no letter or digit for its id", () => {
+  // The team's id (its key and URL) keeps a-z and 0-9 only, so "Команда" or
+  // "赤" alone has none; that refusal used to read "Team name is required",
+  // to someone who had typed a name.
+  it.each(["Команда", "赤", "🚩🚩"])("says why %s is refused", async (name) => {
+    const store = await loadStore(true);
+    expect(await store.createTeam("octocat", name)).toEqual({
+      ok: false,
+      error: "A team name needs at least one letter a–z or digit 0–9",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+});

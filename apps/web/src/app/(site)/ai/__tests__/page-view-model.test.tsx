@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
+vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts }));
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -25,7 +26,7 @@ const {
   getSession,
   listAiChallenges,
   listAiCategories,
-  getAiSolveCounts,
+  teamSolveCounts,
   getViewerAi,
   getAdminSettings,
   getResolvedModules,
@@ -35,7 +36,7 @@ const {
   getSession: vi.fn(),
   listAiChallenges: vi.fn(),
   listAiCategories: vi.fn(),
-  getAiSolveCounts: vi.fn(),
+  teamSolveCounts: vi.fn(),
   getViewerAi: vi.fn(),
   getAdminSettings: vi.fn(),
   getResolvedModules: vi.fn(),
@@ -66,7 +67,7 @@ vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
 vi.mock("@/lib/ai-store", () => ({
   listAiChallenges,
   listAiCategories,
-  getAiSolveCounts,
+  teamSolveCounts,
   getViewerAi,
   AI_COOLDOWN_SEC: 5,
 }));
@@ -113,7 +114,7 @@ beforeEach(() => {
   getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });
   getAdminSettings.mockResolvedValue({ aiCooldownSec: null });
   listAiCategories.mockResolvedValue(["Prompt Injection"]);
-  getAiSolveCounts.mockResolvedValue(new Map());
+  teamSolveCounts.mockResolvedValue(new Map());
   redirectIfTeamless.mockResolvedValue(undefined);
   getResolvedModules.mockResolvedValue([
     {
@@ -158,7 +159,7 @@ describe("/ai view model", () => {
     renderToStaticMarkup(await AiPage());
 
     expect(Object.keys(captured.challenges[0]).sort()).toEqual(
-      ["caseSensitive", "category", "description", "id", "points", "solveCount", "status", "title"].sort(),
+      ["caseSensitive", "category", "description", "id", "points", "teamsSolved", "status", "title"].sort(),
     );
   });
 

@@ -15,6 +15,7 @@
 // and 404s for an unknown or deleted challenge id.
 
 import type { Metadata } from "next";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import Link from "next/link";
@@ -27,7 +28,6 @@ import { auth } from "@/lib/auth";
 import { getAdminSettings } from "@/lib/admin-store";
 import {
   CLASSIC_COOLDOWN_SEC,
-  getSolveCounts,
   getViewerClassic,
   listChallenges,
   type ViewerClassic,
@@ -83,7 +83,7 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   const [challenges, solveCounts, viewerClassic, settings, modules, hintIds, hintNotice, viewerHints] =
     await Promise.all([
       listChallenges(),
-      getSolveCounts(),
+      teamSolveCounts("classic"),
       login ? getViewerClassic(login) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
       getAdminSettings(),
       getResolvedModules(),
@@ -126,7 +126,8 @@ export default async function ClassicChallengePage({ params }: { params: Promise
     category: challenge.category,
     description: challenge.description,
     points: challenge.points,
-    solveCount: solveCounts.get(challenge.id) ?? 0,
+    // Teams, not players (#595): scoring is per team. Null when unread.
+    teamsSolved: solveCounts ? (solveCounts.get(challenge.id) ?? 0) : null,
     caseSensitive: challenge.caseSensitive,
     attachments,
     ...deriveStatus(viewerClassic.solved[challenge.id], viewerClassic.attempts[challenge.id], cooldownMs),

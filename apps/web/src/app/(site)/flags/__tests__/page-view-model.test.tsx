@@ -23,16 +23,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
+vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts }));
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { moduleLive, getSession, listChallenges, listCategories, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules } =
+const { moduleLive, getSession, listChallenges, listCategories, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules } =
   vi.hoisted(() => ({
     moduleLive: vi.fn(),
     getSession: vi.fn(),
     listChallenges: vi.fn(),
     listCategories: vi.fn(),
-    getSolveCounts: vi.fn(),
+    teamSolveCounts: vi.fn(),
     getViewerClassic: vi.fn(),
     getAdminSettings: vi.fn(),
     getResolvedModules: vi.fn(),
@@ -59,7 +60,7 @@ vi.mock("@/lib/classic-store", () => ({
   listStories: async () => [],
   listChallenges,
   listCategories,
-  getSolveCounts,
+  teamSolveCounts,
   getViewerClassic,
   CLASSIC_COOLDOWN_SEC: 5,
 }));
@@ -99,7 +100,7 @@ beforeEach(() => {
   getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
   getAdminSettings.mockResolvedValue({ classicCooldownSec: 5 });
   listCategories.mockResolvedValue(["Web"]);
-  getSolveCounts.mockResolvedValue(new Map());
+  teamSolveCounts.mockResolvedValue(new Map());
   getResolvedModules.mockResolvedValue([
     { id: "classic", title: "Jeopardy", blurb: "Find the flag, submit the string, take the points." },
   ]);
@@ -139,7 +140,7 @@ describe("/flags view model", () => {
     // that reveals nothing about the answer. It is copied by name in the page's
     // map like every other field here, which is what this test exists to force.
     expect(Object.keys(captured.challenges[0]).sort()).toEqual(
-      ["caseSensitive", "category", "description", "id", "points", "solveCount", "status", "title"].sort(),
+      ["caseSensitive", "category", "description", "id", "points", "teamsSolved", "status", "title"].sort(),
     );
   });
 });

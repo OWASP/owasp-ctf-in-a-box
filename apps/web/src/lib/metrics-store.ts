@@ -47,22 +47,32 @@ import { errorLabel } from "@/lib/error-label";
 /** Solves-over-time bucket widths, in minutes. Ten is the resolution at which
  *  a room going quiet is visible without the series becoming noise; a longer
  *  event takes the first width that keeps it within `MAX_BUCKETS` bars, so a
- *  three-day event still fits the panel instead of drawing ~400 slivers. */
+ *  three-day event still fits the panel instead of drawing ~400 slivers. Past
+ *  the last width the bucket grows by whole days until it fits, so the limit
+ *  holds for any span. */
 const BUCKET_MINUTES = [10, 30, 60, 120, 240, 360, 720, 1440] as const;
 const MAX_BUCKETS = 120;
+const DAY_MINUTES = 1440;
 
 /** Every bucket from the first solve to the last, empty ones included: the
- *  quiet stretches are what the chart is for, and dropping them packed the
- *  busy buckets side by side on an axis that no longer meant time. */
+ *  quiet stretches are what the chart is for, and the axis reads as time only
+ *  while every bucket is on it. The extrema come from one loop, not
+ *  `Math.min(...times)`: a spread call throws past ~125k arguments, and
+ *  nothing bounds how many solves a contestant holds. */
 function solveTimeline(times: number[]): { bucketMinutes: number; timeline: { at: string; solves: number }[] } {
   if (times.length === 0) return { bucketMinutes: BUCKET_MINUTES[0], timeline: [] };
-  const first = Math.min(...times);
-  const last = Math.max(...times);
-  const minutes =
-    BUCKET_MINUTES.find((m) => {
-      const ms = m * 60_000;
-      return Math.floor(last / ms) - Math.floor(first / ms) + 1 <= MAX_BUCKETS;
-    }) ?? BUCKET_MINUTES[BUCKET_MINUTES.length - 1];
+  let first = Infinity;
+  let last = -Infinity;
+  for (const t of times) {
+    if (t < first) first = t;
+    if (t > last) last = t;
+  }
+  const fits = (m: number) => {
+    const ms = m * 60_000;
+    return Math.floor(last / ms) - Math.floor(first / ms) + 1 <= MAX_BUCKETS;
+  };
+  let minutes: number = BUCKET_MINUTES.find(fits) ?? DAY_MINUTES;
+  while (!fits(minutes)) minutes += DAY_MINUTES;
   const ms = minutes * 60_000;
   const start = Math.floor(first / ms);
   const counts = new Array<number>(Math.floor(last / ms) - start + 1).fill(0);
@@ -463,6 +473,12 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       ["HGETALL", userHintTimesKey(l)],
     ]),
   );
+
+  // A per-command error comes back as a value, not a throw. Merged as an
+  // empty hash it would drop that contestant's rows from every figure with
+  // nothing saying so; failing the read sends the tab to its error state.
+  const failed = replies.find((reply) => reply?.error);
+  if (failed) throw new Error(`metrics per-login read failed: ${failed.error}`);
 
   // One contestant's rows across their spellings. A single item held under
   // two spellings of one login keeps its first row, which is enough: the

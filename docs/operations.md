@@ -574,9 +574,11 @@ The panel offers:
     empty ones included, across the full width, with a time axis (first,
     middle and last bucket, UTC; dated once the buckets cross midnight), so
     a room going quiet is a visible, datable gap. Buckets are ten minutes,
-    widened (30 min, 1 h, 2 h, …) to keep a long event within 120 bars; the
-    caption names the width and the busiest bucket, and each bar's tooltip
-    its date, range and count.
+    widened (30 min, 1 h, 2 h, … up to a day, then whole days) to keep any
+    span within 120 bars; the caption names the width and the busiest
+    bucket, and each bar's tooltip its date, range and count. The same
+    figures for every bucket with solves sit in a "Buckets with solves"
+    list under the chart, for keyboard and screen-reader use.
   - **Hardest first** — every challenge by solves, attempts, solve rate,
     *average tries taken by the people who did solve it*, and the *median time
     from their first attempt to their solve*. Those last two are the difficulty

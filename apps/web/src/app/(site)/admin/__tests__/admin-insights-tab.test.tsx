@@ -4,7 +4,7 @@
 // through the exported pure helper.
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import AdminInsightsTab, { axisLabels, bucketHeight, bucketTitle, bucketWidthLabel } from "@/app/(site)/admin/admin-insights-tab";
+import AdminInsightsTab, { SolvesChart, axisLabels, bucketHeight, bucketTitle, bucketWidthLabel } from "@/app/(site)/admin/admin-insights-tab";
 
 describe("AdminInsightsTab initial view", () => {
   it("offers the compute button, as primary, and says where the numbers come from", () => {
@@ -50,7 +50,26 @@ describe("axisLabels", () => {
 describe("the solves chart's buckets", () => {
   it("names the bucket's whole range and date in its tooltip", () => {
     expect(bucketTitle({ at: "2026-10-08T14:00:00.000Z", solves: 3 }, 30)).toBe("10-08 14:00–14:30 UTC · 3 solves");
-    expect(bucketTitle({ at: "2026-10-08T23:00:00.000Z", solves: 1 }, 60)).toBe("10-08 23:00–00:00 UTC · 1 solve");
+    expect(bucketTitle({ at: "2026-10-08T23:00:00.000Z", solves: 1 }, 60)).toBe("10-08 23:00–10-09 00:00 UTC · 1 solve");
+  });
+
+  // The bars' tooltips need a pointer. The same figures sit in a list a
+  // keyboard or screen reader reaches without hovering.
+  it("lists every bucket that has solves, readable without hovering", () => {
+    const html = renderToStaticMarkup(
+      <SolvesChart
+        bucketMinutes={30}
+        timeline={[
+          { at: "2026-10-08T14:00:00.000Z", solves: 3 },
+          { at: "2026-10-08T14:30:00.000Z", solves: 0 },
+          { at: "2026-10-08T15:00:00.000Z", solves: 1 },
+        ]}
+      />,
+    );
+    expect(html).toContain("<details");
+    expect(html).toContain("<li>10-08 14:00–14:30 UTC · 3 solves</li>");
+    expect(html).toContain("<li>10-08 15:00–15:30 UTC · 1 solve</li>");
+    expect(html).not.toContain("<li>10-08 14:30");
   });
 
   it("draws nothing for an empty bucket, so a quiet stretch reads as a gap", () => {

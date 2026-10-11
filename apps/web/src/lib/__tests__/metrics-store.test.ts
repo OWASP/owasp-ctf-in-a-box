@@ -80,6 +80,9 @@ function mockStore(opts: {
     }
   >;
   logins?: string[];
+  /** A per-command error in place of the first login's first per-login read
+   *  (the shape `upstashPipeline` returns for NOAUTH or WRONGTYPE). */
+  perLoginError?: string;
   /** Skip auto-registering the logins as a team. */
   noTeam?: boolean;
   /** Per-login Secure Development points, as the leaderboard source reports
@@ -137,8 +140,7 @@ function mockStore(opts: {
 
   const logins = (opts.logins ?? Object.keys(opts.perLogin ?? {})).slice().sort();
   if (logins.length) {
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      logins.flatMap((l) => {
+    const replies: { result?: unknown; error?: string }[] = logins.flatMap((l) => {
         const p = opts.perLogin?.[l] ?? {};
         return [
           { result: hash(p.quizAnswers ?? {}) },
@@ -150,8 +152,9 @@ function mockStore(opts: {
           { result: [p.firstTeamAt ?? null] },
           { result: hash(p.hintTimes ?? {}) },
         ];
-      }),
-    );
+      });
+    if (opts.perLoginError) replies[0] = { error: opts.perLoginError };
+    mocks.upstashPipeline.mockResolvedValueOnce(replies);
   }
 
   // The title join: HGETALL of the quiz, classic and ai catalogues, in that
@@ -336,6 +339,29 @@ describe("timeline", () => {
     expect(m.timeline).toHaveLength(102);
   });
 
+  it("holds a 121-day event to 120 bars by widening past one day", async () => {
+    mockStore({
+      perLogin: {
+        alice: { quizAnswers: { q1: earned(5, "2026-01-01T00:00:00Z"), q2: earned(5, "2026-05-01T00:00:00Z") } },
+      },
+      quizPoints: { alice: 10 },
+    });
+    const m = await computeEventMetrics();
+    expect(m.timeline.length).toBeLessThanOrEqual(120);
+    expect(m.bucketMinutes).toBe(2880);
+    expect(m.timeline.reduce((n, b) => n + b.solves, 0)).toBe(2);
+  });
+
+  // Math.min(...times) throws a RangeError past ~125k arguments on Node 22,
+  // and nothing bounds solves per contestant.
+  it("charts more solves than a spread call can take as arguments", async () => {
+    const quizAnswers: Record<string, string> = {};
+    for (let i = 0; i < 200_000; i++) quizAnswers[`q${i}`] = earned(1, "2026-08-22T10:00:00Z");
+    mockStore({ perLogin: { alice: { quizAnswers } }, quizPoints: { alice: 200_000 } });
+    const m = await computeEventMetrics();
+    expect(m.timeline).toEqual([{ at: "2026-08-22T10:00:00.000Z", solves: 200_000 }]);
+  });
+
   it("skips an unparseable timestamp instead of poisoning the series", async () => {
     mockStore({
       perLogin: { alice: { quizAnswers: { q1: earned(5, "not-a-date"), q2: earned(5, "2026-08-22T10:00:00Z") } } },
@@ -343,6 +369,20 @@ describe("timeline", () => {
     });
     const m = await computeEventMetrics();
     expect(m.timeline).toEqual([{ at: "2026-08-22T10:00:00.000Z", solves: 1 }]);
+  });
+});
+
+describe("per-login reads", () => {
+  // `upstashPipeline` returns a per-command error as a value. Read as an
+  // empty hash it would drop that contestant's solves from every figure with
+  // nothing on the tab saying so.
+  it("rejects the whole read when one contestant's command fails", async () => {
+    mockStore({
+      perLogin: { alice: { quizAnswers: { q1: earned(5, "2026-08-22T10:00:00Z") } } },
+      quizPoints: { alice: 5 },
+      perLoginError: "WRONGTYPE Operation against a key holding the wrong kind of value",
+    });
+    await expect(computeEventMetrics()).rejects.toThrow(/WRONGTYPE/);
   });
 });
 

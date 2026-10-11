@@ -150,7 +150,7 @@ export type AdminSettings = {
    *  team that is already over the new cap. */
   teamMaxMembers: number | null;
   teamRegistrationOpen: boolean;
-  /** The projector board's QR code of the event URL (#592). On unless an
+  /** The projector board's QR code of the event URL. On unless an
    *  organizer turns it off: absent is on, a stored "0" is off. */
   displayQr: boolean;
   // Scheduled "auto dates" — nullable ISO instants. scoring* gates the freeze

@@ -49,7 +49,7 @@ export const SECURE_DEVELOPMENT_DEF: ModuleDef = {
       },
       {
         title: "Get scored automatically",
-        body: "A GitHub Action runs that challenge's regression test against your patched app. A passing test scores points immediately, no manual grading.",
+        body: "A GitHub Action runs that challenge's regression test against your patched app. A passing test scores points automatically, no manual grading; they post once the event receives the result, usually a few minutes after the push.",
       },
     ],
     cta: { href: "/challenges", label: "Browse targets" },
@@ -113,7 +113,7 @@ export const SECURE_DEVELOPMENT_DEF: ModuleDef = {
       },
       {
         title: "Get scored automatically",
-        body: "A GitHub Action builds your patched app and runs the full regression suite against it. Every passing challenge test scores its points immediately: no manual grading, no waiting on an organizer. Pushing more fixes to the same PR re-scores it.",
+        body: "A GitHub Action builds your patched app and runs the full regression suite against it. Every passing challenge test scores its points automatically: no manual grading, no waiting on an organizer. Points post once the event receives the result, usually a few minutes after the push. Pushing more fixes to the same PR re-scores it.",
       },
     ],
     // Two variants of the same loop (fork, branch, find the flaw, patch,
@@ -255,7 +255,7 @@ git push -u origin fix/<short-description>`,
       "Points are credited to the GitHub account that authored the PR. A challenge patched by several teammates counts once for the team, so a team's total can be less than its members' points added together.",
     ],
     scoring:
-      "Every challenge is worth a fixed number of points based on difficulty, and harder vulnerabilities pay out more. Points are awarded the moment your PR’s regression test passes, and your best-ever result for each challenge is what counts, so a later fix always replaces an earlier miss. Your live total, per-app breakdown, and patched and non-patched counts are visible on your profile once you’re signed in.",
+      "Every challenge is worth a fixed number of points based on difficulty, and harder vulnerabilities pay out more. Points post once the event receives your PR’s passing result, usually a few minutes after the push, and your best-ever result for each challenge is what counts, so a later fix always replaces an earlier miss. Your live total, per-app breakdown, and patched and non-patched counts are visible on your profile once you’re signed in.",
     cta: { href: "/challenges", label: "Browse challenges" },
   },
   // Moved VERBATIM off app/(site)/rules/page.tsx. Every bullet here names
@@ -287,7 +287,7 @@ git push -u origin fix/<short-description>`,
       "Found a bug in a challenge, the scorer, or the site itself? Report it to an organizer instead of exploiting it for an unfair edge.",
     ],
     scoring: [
-      "Each challenge is worth a fixed point value based on difficulty. Points post the moment your PR's regression test passes.",
+      "Each challenge is worth a fixed point value based on difficulty. Points post once the event receives your PR's passing result, usually a few minutes after the push, and that is the time a points tie is decided on.",
       "Your best-ever result per challenge counts. A later successful patch always replaces an earlier miss.",
       "Revealing a hint deducts points from your total, and hint purchases are final.",
     ],

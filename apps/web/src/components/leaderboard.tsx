@@ -363,7 +363,7 @@ export default function Leaderboard({
           is active: the solved sort is self-describing. */}
       {activeView === "individual" && data.entries.length > 0 && sort === "points" && (
         <p className="px-1 text-xs leading-relaxed text-muted">
-          Ranked by points; ties go to more items completed, then to whoever got there first.
+          Ranked by points; ties go to more items completed, then to whoever earned their last points first.
         </p>
       )}
 

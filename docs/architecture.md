@@ -215,8 +215,12 @@ state; everything else that touches scores goes through it.
    points descending, then items completed **across modules** descending,
    then earliest last-activity ascending (#522 — until v0.7 items came
    first), with a `patched`/`lastSolveAt` fallback for sources that carry no
-   per-module data (e.g. the legacy Upstash-schema source). Teams rank on
-   points too, so the two views agree. The Upstash source hands back rows
+   per-module data (e.g. the legacy Upstash-schema source). Teams rank by the
+   same three keys (`compareTeamStanding`): the activity time is the latest of
+   every module block's and the scorer's team `lastSolveAt`, so a points tie
+   goes to the team that earned its last points first in any module, not to
+   the scorer's Secure-Development-only order. A Secure Development time is
+   when the box received the score. The Upstash source hands back rows
    ordered by points descending (`ZRANGE`); points-first keeps that order and
    only breaks its ties on `patched`, the same way as on the lambda and mock
    sources. An

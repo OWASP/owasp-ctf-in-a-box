@@ -231,7 +231,7 @@ describe("Leaderboard", () => {
     });
     const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
     // Default sort is "points", so the rule is visible on first paint.
-    expect(html).toContain("Ranked by points; ties go to more items completed, then to whoever got there first.");
+    expect(html).toContain("Ranked by points; ties go to more items completed, then to whoever earned their last points first.");
     expect(html).not.toContain("Rank rewards breadth");
   });
 });

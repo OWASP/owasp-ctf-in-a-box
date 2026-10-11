@@ -38,7 +38,9 @@ describe("/rules on a secure-development event", () => {
   // #522: the standing order is stated where contestants look for rules, not
   // only under the leaderboard's sort chips.
   it("states how the leaderboard is ranked", () => {
-    expect(html).toContain("Individuals are ranked by points; ties go to more items completed, then to whoever got there first. Teams are ranked by points.");
+    // #583: teams follow the same order, and the time compared is the last
+    // points earned in any module.
+    expect(html).toContain("Individuals and teams are ranked by points; ties go to more items completed, then to whoever earned their last points first, in any module.");
   });
 
   it("keeps the module's rules, verbatim", () => {

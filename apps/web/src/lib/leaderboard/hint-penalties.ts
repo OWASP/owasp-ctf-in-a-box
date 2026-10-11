@@ -4,7 +4,7 @@ import { errorLabel } from "@/lib/error-label";
 // hint-balance.ts, for the affordability gate, #553), so the policy reads the
 // fold needs live in a leaf both can import without a cycle.
 import { getHintPenalties, HINTS_AVAILABLE } from "@/lib/hint-config";
-import { compareStanding } from "./rank";
+import { compareStanding, compareTeamStanding } from "./rank";
 import type { LeaderboardData } from "./types";
 
 /**
@@ -95,9 +95,9 @@ export async function withHintPenalties(data: LeaderboardData): Promise<Leaderbo
             : team,
       };
     })
-    // TeamStanding carries no lastSolveAt, so points decide and the original
-    // position (the source's own tie-break) holds any tie.
-    .sort((a, b) => b.team.points - a.team.points || a.i - b.i)
+    // The team rule: points, items, then whoever earned their last
+    // points first in any module; the original position holds what is left.
+    .sort((a, b) => compareTeamStanding(a.team, b.team) || a.i - b.i)
     .map(({ team }, i) => ({ ...team, rank: i + 1 }));
 
   return { ...data, entries, teams };

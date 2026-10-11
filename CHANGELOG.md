@@ -16,6 +16,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   their team on the Teams view can find themselves too. On the RTS event's
   snapshot the view goes from 22 rows to all 41 team members. A signed-in
   player on no team still gets no row.
+- **Fixed: a points tie between teams ignored when they finished Jeopardy
+  (#583).** Teams now rank like individuals: points, then items completed,
+  then whoever earned their last points first, in any module. The scorer's
+  order only knew Secure Development, and the app kept it on a tie, so at
+  the RTS event three teams tied at 5,308 were ranked by their Secure
+  Development finish; by the rule they finish Oxguardians, provart,
+  Mortadela's, which the board now shows on the event's snapshot. The rules
+  page and FAQ state the team rule, and Secure Development's rules say a PR
+  counts from when the event receives it.
 
 - **Changed: dependency batch (Dependabot #462, #563, #564, #565, #574,
   #575).** Next.js and `eslint-config-next` 16.3.6 → 16.4.0, better-auth

@@ -67,6 +67,29 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   score history yet to chart." with hundreds of points on the board. Scores,
   ranks and the module rows were never affected.
 
+- **Changed: classic story-lock reachable totals in profile and leaderboard
+  (#570).** The classic module's denominator now counts only challenges
+  reachable under the story-lock rules: step 1 of every story is always
+  reachable; each later step unlocks only when the team solves its
+  prerequisite. Locked steps are excluded from both the challenge count and
+  the points ceiling — their titles and points are never exposed. A solo
+  contestant (no team) sees only step 1 of each story. The union with
+  solve records is preserved, so challenges solved before deletion still
+  count — and the profile takes its solved ids and those solve-time point
+  records from ONE fold of the roster it already resolved (the same
+  team-totals helper the leaderboard rows use), so a teammate's deleted
+  solve counts in the ceiling exactly as the viewer's own. The profile
+  shows "X of Y pts available" and a locked-step marker
+  ("· 1 step locked", or "· N steps locked") when applicable, with a
+  disclaimer: "Totals count unlocked challenges
+  only — story steps add to the total as your team unlocks them." The
+  leaderboard's "solved / total" column, its contestant rows and its team
+  rows each use that row's own reachable denominator instead of the
+  event-wide catalogue count, and the same disclaimer appears on the board
+  while any row still has locked steps. This replaces the previous
+  `visibleClassic` filtering and the event-wide `completable` denominator
+  with a single shared helper in `lib/leaderboard/denominators.ts`.
+
 - **Changed: the maintainability follow-ups from the pre-v0.7.0 audit
   (#504).** Refactors with no behavior change: the demo seed and clear body
   moved out of `admin-store.ts` (43% of that file) into `lib/demo-seed.ts`,

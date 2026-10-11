@@ -1,15 +1,18 @@
 import "server-only";
 import { errorLabel } from "@/lib/error-label";
 import { getAiTotals, getTeamAiTotalsBatch, listAiChallenges, type AiTotal } from "@/lib/ai-store";
-import { atLeast, unionTotal } from "@/lib/leaderboard/denominators";
+import { atLeast, unionTotal, classicReachableDenominator, type Story } from "@/lib/leaderboard/denominators";
 import {
   getClassicTotals,
   getTeamClassicTotalsBatch,
   listChallenges,
+  listStories,
+  type Challenge,
   type ClassicTotal,
 } from "@/lib/classic-store";
 import { getEnabledModuleIds, isModuleLive } from "@/lib/enabled-modules";
 import { getEnabledTotals } from "@/lib/enabled-apps";
+import { listTeams } from "@/lib/team-store";
 import { getQuizTotals, getTeamQuizTotalsBatch, listQuestions, type QuizTotal } from "@/lib/quiz-store";
 import { compareTeamStanding, rankByStanding } from "./rank";
 import type { AppProgress, LeaderboardData, LeaderboardEntry, ModuleProgress, TeamStanding } from "./types";
@@ -87,7 +90,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   // they hit disjoint key spaces and nothing orders one against another.
   // Each module still settles its OWN two reads independently; see below.
   const quizReads = quizEnabled ? Promise.allSettled([getQuizTotals(), listQuestions()]) : null;
-  const classicReads = classicEnabled ? Promise.allSettled([getClassicTotals(), listChallenges()]) : null;
+  const classicReads = classicEnabled ? Promise.allSettled([getClassicTotals(), listChallenges(), listStories()]) : null;
   const aiReads = aiEnabled ? Promise.allSettled([getAiTotals(), listAiChallenges()]) : null;
 
   let quizTotals = new Map<string, QuizTotal>();
@@ -119,6 +122,15 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
 
   let classicTotals = new Map<string, ClassicTotal>();
   let classicTotalChallenges = 0;
+  // The catalogue, its ids and its story chains all come from the SAME
+  // `listChallenges`/`listStories` replies that supply the count, so the
+  // contestant path hands `classicModule` the same union and reachability
+  // inputs the team path does — no second read of either. `classicLiveIds` is
+  // undefined exactly when that read failed, which is `classicModule`'s cue to
+  // fall back to the count.
+  let classicChallenges: Challenge[] = [];
+  let classicStories: Story[] = [];
+  let classicLiveIds: ReadonlySet<string> | undefined;
   if (classicReads) {
     // Settled INDEPENDENTLY for exactly the reason spelled out above the quiz
     // pair, which this mirrors: `getClassicTotals` carries the POINTS and the
@@ -126,18 +138,41 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     // DENOMINATOR. Never collapse these two into one shared try/Promise.all —
     // that is the shape that deletes everyone's points on a blip in a
     // purely cosmetic read.
-    const [totalsResult, challengesResult] = await classicReads;
+    const [totalsResult, challengesResult, storiesResult] = await classicReads;
     if (totalsResult.status === "fulfilled") {
       classicTotals = totalsResult.value;
     } else {
       console.error("classic totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
     }
     if (challengesResult.status === "fulfilled") {
+      classicChallenges = challengesResult.value;
       classicTotalChallenges = challengesResult.value.length;
+      classicLiveIds = new Set(challengesResult.value.map((c) => c.id));
     } else {
       console.error("classic challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
     }
+    // Fail OPEN, the same direction `withTeamClassicPoints` takes: an unread
+    // story list degrades to `[]`, which counts every live step as reachable
+    // (nothing locked) — a blip must never lock a challenge behind a story
+    // nobody could read.
+    if (storiesResult.status === "fulfilled") {
+      classicStories = storiesResult.value;
+    } else {
+      console.error("classic stories unavailable for leaderboard denominator:", errorLabel(storiesResult.reason));
+    }
   }
+
+  // Story-lock reachability for the CONTESTANT rows, keyed on the same
+  // case-insensitively folded rule as the maps below. KICKED OFF here rather
+  // than awaited, so its round trips overlap the ai reads; undefined whenever
+  // there is no story to lock anything behind — the ordinary event pays no
+  // extra read for this — and whenever the batched read could not settle, in
+  // which case `classicModule` falls back to the clamp it always used rather
+  // than inventing a locked step.
+  const classicReachableRead =
+    classicStories.length > 0 && classicChallenges.length > 0
+      ? reachableByLogin(data, classicTotals, classicChallenges, classicStories)
+      : Promise.resolve(undefined);
 
   let aiTotals = new Map<string, AiTotal>();
   let aiTotalChallenges = 0;
@@ -172,11 +207,15 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   const aiByLogin = new Map<string, AiTotal>();
   for (const [login, total] of aiTotals) aiByLogin.set(login.toLowerCase(), total);
 
+  const classicReachable = await classicReachableRead;
+
   const overlay: Overlay = {
     quizByLogin,
     quizTotalQuestions,
     classicByLogin,
     classicTotalChallenges,
+    classicLiveIds,
+    classicReachable,
     aiByLogin,
     aiTotalChallenges,
   };
@@ -191,6 +230,8 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
       quizTotalQuestions,
       classicTotalChallenges,
       aiTotalChallenges,
+      classicLiveIds,
+      classicReachable,
     ),
   ]);
 
@@ -257,9 +298,129 @@ type Overlay = {
   quizTotalQuestions: number;
   classicByLogin: Map<string, ClassicTotal>;
   classicTotalChallenges: number;
+  /** Live classic ids, undefined when that read failed — the union input
+   *  `classicModule` shares with the team path. */
+  classicLiveIds?: ReadonlySet<string>;
+  /** Story-lock reachability per contestant row, keyed by LOWERCASED login
+   *  and undefined when the event has no stories or the batched solves read
+   *  failed — `classicModule` then clamps like it always did. */
+  classicReachable?: ReadonlyMap<string, Reachable>;
   aiByLogin: Map<string, AiTotal>;
   aiTotalChallenges: number;
 };
+
+/** `{ total, max, locked }` exactly as `classicReachableDenominator` returns
+ *  it — the story-lock answer for one row's solve set. */
+type Reachable = { total: number; max: number; locked: number };
+
+/** Every team's COMPLETE roster on this board, plus the login index those
+ *  rosters imply.
+ *
+ *  The source's own teams and the team store's are two different records: the
+ *  source knows the teams it SCORED, the store the teams contestants actually
+ *  created. So a slug both records claim keeps the source's row and takes the
+ *  UNION of the two rosters, and a team only the store knows is a team all the
+ *  same — exactly the set `withTeamStandings` ranks, and exactly what a fold
+ *  over membership has to see. Reading `data.teams` alone would take a partial
+ *  roster for the whole team and leave a teammate's prerequisite solve out of
+ *  the fold, re-locking a step the team has already earned.
+ *
+ *  `teamByLogin` is lowercased like every other login join in this codebase,
+ *  with the TEAM STORE's attribution winning — the precedence
+ *  `withTeamStandings` applies — so a row's team chip and its fold can never
+ *  disagree. Pure over the already-fetched `storeTeams`: it reads nothing. */
+export function mergeTeamRosters(
+  data: LeaderboardData,
+  storeTeams: readonly { slug: string; members: string[] }[],
+): {
+  sourceTeams: TeamStanding[];
+  rosterBySlug: Map<string, string[]>;
+  teamByLogin: Map<string, string>;
+} {
+  const storeBySlug = new Map(storeTeams.map((team) => [team.slug, team]));
+  const rosterBySlug = new Map<string, string[]>();
+
+  const sourceTeams = (data.capabilities.teams ? data.teams : []).map((team) => {
+    const stored = storeBySlug.get(team.slug);
+    if (!stored) {
+      rosterBySlug.set(team.slug, team.members);
+      return team;
+    }
+    const byLower = new Map(team.members.map((member) => [member.toLowerCase(), member]));
+    for (const member of stored.members) byLower.set(member.toLowerCase(), member);
+    const members = [...byLower.values()].sort();
+    rosterBySlug.set(team.slug, members);
+    return { ...team, members };
+  });
+  for (const team of storeTeams) {
+    if (!rosterBySlug.has(team.slug)) rosterBySlug.set(team.slug, team.members);
+  }
+
+  const teamByLogin = new Map<string, string>();
+  for (const team of storeTeams) {
+    for (const member of team.members) teamByLogin.set(member.toLowerCase(), team.slug);
+  }
+  for (const [slug, members] of rosterBySlug) {
+    for (const member of members) {
+      const login = member.toLowerCase();
+      if (!teamByLogin.has(login)) teamByLogin.set(login, slug);
+    }
+  }
+
+  return { sourceTeams, rosterBySlug, teamByLogin };
+}
+
+/** Story-lock reachability for every contestant row that will carry a classic
+ *  block, in ONE solves read for the whole board.
+ *
+ *  A row's team is looked up by LOGIN through `mergeTeamRosters`, so it sees
+ *  the same complete membership `withTeamStandings` ranks a stage later and a
+ *  teammate's solve unlocks the same step for the player row and the team row.
+ *  Looking the team up by login rather than by `entry.team` matters because
+ *  the rows this is for are mostly CREATED here (`team: null` until that later
+ *  stage overlays membership), so on a classic-only event the entry field
+ *  alone would call every contestant teamless. A row no roster places is a
+ *  team of one and uses its own solves, which is the same rule `/profile`
+ *  applies to a viewer with no team.
+ *
+ *  Returns `undefined` rather than a partial answer: a failed roster or
+ *  solves read leaves every row on the clamp it used before, which can
+ *  overstate a denominator but never locks a step or exposes its title. */
+async function reachableByLogin(
+  data: LeaderboardData,
+  classicTotals: ReadonlyMap<string, ClassicTotal>,
+  challenges: readonly Challenge[],
+  stories: readonly Story[],
+): Promise<Map<string, Reachable> | undefined> {
+  try {
+    const { rosterBySlug, teamByLogin } = mergeTeamRosters(data, await listTeams());
+
+    const rows: { login: string; roster: string[] }[] = [];
+    for (const [login, total] of classicTotals) {
+      if (total.solved <= 0) continue;
+      const members = rosterBySlug.get(teamByLogin.get(login.toLowerCase()) ?? "");
+      // The login's own spelling leads: the solves hash is keyed on whatever
+      // spelling wrote it, so a roster stored in another case must add to it,
+      // never replace it (the rule `classic-team.ts` states for the profile).
+      rows.push({ login, roster: members ? [...new Set([login, ...members])] : [login] });
+    }
+    if (rows.length === 0) return undefined;
+
+    const folded = await getTeamClassicTotalsBatch(rows.map((row) => row.roster));
+    const reachable = new Map<string, Reachable>();
+    rows.forEach((row, i) => {
+      const total: ClassicTotal | undefined = folded[i];
+      const solved = new Set(total?.itemIds ?? []);
+      const records: Record<string, { points?: number }> = {};
+      for (const [id, points] of Object.entries(total?.itemPoints ?? {})) records[id] = { points };
+      reachable.set(row.login.toLowerCase(), classicReachableDenominator(challenges, stories, solved, records));
+    });
+    return reachable;
+  } catch (err) {
+    console.error("classic story-lock reachability unavailable for leaderboard:", errorLabel(err));
+    return undefined;
+  }
+}
 
 /**
  * The team half of this overlay — the ONLY place a team's quiz points are
@@ -331,8 +492,12 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
 
   // Settled INDEPENDENTLY — see the note in `withModuleContributions`: the
   // totals carry POINTS (and with them the team board's order), the challenge
-  // list only the DENOMINATOR.
-  const [totalsResult, challengesResult] = await Promise.allSettled([teamClassicTotals(teams), listChallenges()]);
+  // list only the DENOMINATOR. Stories are read for story-lock reachability.
+  const [totalsResult, challengesResult, storiesResult] = await Promise.allSettled([
+    teamClassicTotals(teams),
+    listChallenges(),
+    listStories(),
+  ]);
 
   if (totalsResult.status !== "fulfilled") {
     console.error("classic team totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
@@ -341,17 +506,49 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
   if (challengesResult.status !== "fulfilled") {
     console.error("classic challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
   }
+  if (storiesResult.status !== "fulfilled") {
+    console.error("classic stories unavailable for leaderboard denominator:", errorLabel(storiesResult.reason));
+  }
+
+  const challenges = challengesResult.status === "fulfilled" ? challengesResult.value : [];
+  // Fail OPEN: an unread story list degrades to `[]`, which counts every live
+  // step as reachable (union, locked 0) — a blip must never lock a challenge
+  // behind a story nobody could read.
+  const stories = storiesResult.status === "fulfilled" ? storiesResult.value : [];
+  const liveIds = challengesResult.status === "fulfilled" ? new Set(challenges.map((c) => c.id)) : undefined;
+
+  // If the challenge list read failed, fall back to the old union/clamp logic
+  // because we can't compute story-lock reachability without the catalogue.
+  const challengesReadFailed = challengesResult.status !== "fulfilled";
+
+  // Compute reachable denominator for each team.
+  const reachableDenominators = totalsResult.value.map((total) => {
+    const teamSolved = new Set(total.itemIds ?? []);
+    const solvedRecords: Record<string, { points?: number }> = {};
+    if (total.itemPoints) {
+      for (const [id, points] of Object.entries(total.itemPoints)) {
+        solvedRecords[id] = { points };
+      }
+    }
+    if (challengesReadFailed) {
+      // Fallback: union of live catalogue (unknown, so 0) with solved items = solved count,
+      // then clamp to at least solved. This matches the old `denominator` behavior.
+      return { total: Math.max(teamSolved.size, total.solved), max: total.points, locked: 0 };
+    }
+    return classicReachableDenominator(challenges, stories, teamSolved, solvedRecords);
+  });
 
   return attributeTeams(
     teams,
     classicContributions(
       totalsResult.value,
-      challengesResult.status === "fulfilled" ? challengesResult.value.length : 0,
+      challenges.length,
       // The live ids, like the quiz and ai counterparts: the chip's
       // denominator is the catalogue UNIONED with solved-then-deleted
       // challenges. Omitting them shows a team's classic denominator as
       // "4 / 6" beside the profile's "4 / 7".
-      challengesResult.status === "fulfilled" ? new Set(challengesResult.value.map((c) => c.id)) : undefined,
+      liveIds,
+      reachableDenominators,
     ),
   );
 }
@@ -473,8 +670,24 @@ function quizModule(total: QuizTotal, totalQuestions: number, liveIds?: Readonly
  *  list can be SHORTER than a login's solve count and would render "1 / 0
  *  flags"; (2) a failed `listChallenges` degrades the denominator to 0 while
  *  the points and solve counts survive intact. Clamping shows "1 / 1" —
- *  imprecise, but never nonsense. */
-function classicModule(total: ClassicTotal, totalChallenges: number, liveIds?: ReadonlySet<string>): ModuleProgress {
+ *  imprecise, but never nonsense.
+ *
+ *  `reachable` is the story-lock answer — the count of steps this row can
+ *  actually reach, plus the solved-but-deleted items, and how many live steps
+ *  are still locked. It supersedes the union/clamp for the COUNT whenever it
+ *  is present, and `locked` rides along so the row's cross-module denominator
+ *  can discount what it cannot do yet. Absent (no stories, or the batched
+ *  solves read failed) means the clamp above, and `locked: 0`. */
+function classicModule(
+  total: ClassicTotal,
+  totalChallenges: number,
+  liveIds?: ReadonlySet<string>,
+  reachable?: Reachable,
+): ModuleProgress {
+  const denomTotal = reachable
+    ? atLeast(reachable.total, total.solved)
+    : denominator(total.itemIds, liveIds, totalChallenges, total.solved);
+  const locked = reachable?.locked ?? 0;
   return {
     points: total.points,
     completed: total.solved,
@@ -482,8 +695,9 @@ function classicModule(total: ClassicTotal, totalChallenges: number, liveIds?: R
     detail: {
       kind: "classic",
       solved: total.solved,
-      total: denominator(total.itemIds, liveIds, totalChallenges, total.solved),
+      total: denomTotal,
       points: total.points,
+      locked,
     },
   };
 }
@@ -531,6 +745,8 @@ function createdEntries(
   quizTotalQuestions: number,
   classicTotalChallenges: number,
   aiTotalChallenges: number,
+  classicLiveIds?: ReadonlySet<string>,
+  classicReachable?: ReadonlyMap<string, Reachable>,
 ): LeaderboardEntry[] {
   const seen = new Set(scored.map((entry) => entry.login.toLowerCase()));
   // Keyed by lowercased login so the three modules union onto one row;
@@ -557,10 +773,10 @@ function createdEntries(
   }
 
   const created: LeaderboardEntry[] = [];
-  for (const { login, quiz, classic, ai } of pending.values()) {
+  for (const [key, { login, quiz, classic, ai }] of pending) {
     const modules: Partial<Record<ModuleId, ModuleProgress>> = {};
     if (quiz) modules["quiz"] = quizModule(quiz, quizTotalQuestions);
-    if (classic) modules["classic"] = classicModule(classic, classicTotalChallenges);
+    if (classic) modules["classic"] = classicModule(classic, classicTotalChallenges, classicLiveIds, classicReachable?.get(key));
     if (ai) modules["ai"] = aiModule(ai, aiTotalChallenges);
     // The modules' own activity time is the only honest value for all three
     // (neither aggregate read has one to give today, so it is null in
@@ -624,7 +840,12 @@ function attributeEntry(entry: LeaderboardEntry, secureDev: boolean, overlay: Ov
 
   const classicTotal = overlay.classicByLogin.get(key);
   if (classicTotal && classicTotal.solved > 0) {
-    modules["classic"] = classicModule(classicTotal, overlay.classicTotalChallenges);
+    modules["classic"] = classicModule(
+      classicTotal,
+      overlay.classicTotalChallenges,
+      overlay.classicLiveIds,
+      overlay.classicReachable?.get(key),
+    );
     points += classicTotal.points;
   }
 
@@ -664,17 +885,22 @@ function quizContributions(
   };
 }
 
+/** One contribution per team, positional with `totals` so each lands on its
+ *  own row. `reachableDenominators[i]` is the story-lock figure computed for
+ *  that team — itself the union/clamp fallback when the catalogue read failed
+ *  — and is what `classicModule` divides by in place of the raw count. */
 function classicContributions(
   totals: readonly ClassicTotal[],
   totalChallenges: number,
   liveIds?: ReadonlySet<string>,
+  reachableDenominators?: Array<{ total: number; max: number; locked: number }>,
 ): TeamContributions {
   return {
     moduleId: "classic",
-    contributions: totals.map((t) => ({
+    contributions: totals.map((t, i) => ({
       points: t.points,
       completed: t.solved,
-      progress: classicModule(t, totalChallenges, liveIds),
+      progress: classicModule(t, totalChallenges, liveIds, reachableDenominators?.[i]),
     })),
   };
 }

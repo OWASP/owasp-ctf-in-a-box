@@ -588,3 +588,61 @@ describe("Leaderboard score-cadence note (#552)", () => {
     expect(html).not.toMatch(/about once a minute/i);
   });
 });
+
+// #570: the story-lock disclaimer. Gated on `detail.locked > 0` — never on a
+// denominator merely being defined, which is the ordinary unlocked case every
+// classic row has. Contestant rows and team rows each carry their own locked
+// count, so the board scans both.
+describe("the story-lock disclaimer (#570)", () => {
+  const CLASSIC: readonly ResolvedModule[] = [{ id: "classic", title: "Classic", blurb: "" }];
+  const DISCLAIMER = "Totals count unlocked challenges only";
+
+  const classicModules = (locked: number) => ({
+    classic: {
+      points: 10,
+      completed: 1,
+      lastActivityAt: null,
+      detail: { kind: "classic" as const, solved: 1, total: 2, points: 10, locked },
+    },
+  });
+
+  const render = (d: LeaderboardData) =>
+    renderToStaticMarkup(<Leaderboard data={d} viewerLogin={null} modules={CLASSIC} enabledApps={apps} />);
+
+  it("says nothing when nothing is locked — a defined denominator is not a lock", () => {
+    const html = render(
+      data({
+        entries: [entry({ modules: classicModules(0) })],
+        capabilities: { apps: false, teams: false, challenges: false },
+        completable: 6,
+      }),
+    );
+    // The cross-module denominator is still there (6 completable, nothing
+    // locked, 4 completed); only the note is withheld.
+    expect(html).toContain("/ 6");
+    expect(html).not.toContain(DISCLAIMER);
+  });
+
+  it("says nothing when no row carries a classic block at all", () => {
+    const html = render(data({ entries: [entry()] }));
+    expect(html).not.toContain(DISCLAIMER);
+  });
+
+  it("shows the disclaimer when a contestant's row has locked steps", () => {
+    const html = render(
+      data({ entries: [entry({ modules: classicModules(2) })], capabilities: { apps: false, teams: false, challenges: false } }),
+    );
+    expect(html).toContain(DISCLAIMER);
+  });
+
+  it("shows it from a team's locked count, where the reachable count is computed", () => {
+    const html = render(
+      data({
+        entries: [entry({ modules: classicModules(0) })],
+        teams: [team({ modules: classicModules(1) })],
+        capabilities: { apps: false, teams: true, challenges: false },
+      }),
+    );
+    expect(html).toContain(DISCLAIMER);
+  });
+});

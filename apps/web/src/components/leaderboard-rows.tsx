@@ -74,11 +74,17 @@ export function EntryRow({
   const multiModule = modules.length > 1;
   // The same function the comparator breaks points ties on — see `completedCount`.
   const solved = completedCount(entry);
+  // The solved column is cross-module, so it divides by the EVENT's
+  // completable count, discounted by this row's locked classic steps: a story
+  // step the row cannot reach yet is not something it can do, so it leaves the
+  // total. A row with no classic detail — or none locked — subtracts nothing.
+  const classicDetail = entry.modules?.classic?.detail;
+  const classicLocked = classicDetail?.kind === "classic" ? classicDetail.locked : 0;
   // Clamped to the row's own numerator: a failed module-count read leaves
   // `completable` short (see withModuleContributions), and "28 / 21" is worse
   // than no denominator at all. Hidden entirely when there is nothing
   // trustworthy to divide by.
-  const solvedTotal = completable && completable > 0 ? Math.max(completable, solved) : null;
+  const solvedTotal = completable && completable > 0 ? Math.max(completable - classicLocked, solved) : null;
   return (
     <li
       className={`ds-card group rounded-lg border bg-[#16162a] transition-all hover:border-[#2563eb]/40 hover:bg-[#1a1a30] ${

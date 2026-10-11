@@ -50,8 +50,10 @@ export type SecureDevelopmentDetail = { kind: "secure-development"; apps: Partia
 export type QuizDetail = { kind: "quiz"; answered: number; total: number; points: number };
 /** classic's detail block: flags solved out of the challenges on offer.
  *  `total` is CLAMPED to at least `solved` by whoever builds it — see
- *  `classicModule` in module-contributions.ts. */
-export type ClassicDetail = { kind: "classic"; solved: number; total: number; points: number };
+ *  `classicModule` in module-contributions.ts.
+ *  `locked` is the number of live story steps still locked for this team
+ *  (zero when classic has no stories or all steps unlocked). */
+export type ClassicDetail = { kind: "classic"; solved: number; total: number; points: number; locked: number };
 /** ai's detail block: prompt-injection challenges solved out of the
  *  challenges on offer. Same shape and same clamp discipline as
  *  `ClassicDetail` — see `aiModule` in module-contributions.ts. */

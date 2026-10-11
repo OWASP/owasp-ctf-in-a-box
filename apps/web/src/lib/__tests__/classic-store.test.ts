@@ -605,7 +605,13 @@ describe("getTeamClassicTotalsBatch", () => {
       solves({ "chal-1": { points: 90, at: "2026-08-19T11:00:00.000Z" } }),
     ]);
     const [total] = await getTeamClassicTotalsBatch([["alice", "bob"]]);
-    expect(total).toEqual({ points: 50, solved: 1, lastAt: "2026-08-19T10:00:00.000Z", itemIds: ["chal-1"] });
+    expect(total).toEqual({
+      points: 50,
+      solved: 1,
+      lastAt: "2026-08-19T10:00:00.000Z",
+      itemIds: ["chal-1"],
+      itemPoints: { "chal-1": 50 },
+    });
   });
 
   it("issues ONE pipeline for the whole board and fetches a shared member once", async () => {
@@ -633,14 +639,22 @@ describe("getTeamClassicTotalsBatch", () => {
       ["bob", "carol"],
     ]);
     expect(totals).toEqual([
-      { points: 60, solved: 2, lastAt: "2026-08-19T10:00:00.000Z", itemIds: ["chal-1", "chal-2"] },
-      { points: 10, solved: 1, lastAt: "2026-08-19T09:00:00.000Z", itemIds: ["chal-2"] },
+      {
+        points: 60,
+        solved: 2,
+        lastAt: "2026-08-19T10:00:00.000Z",
+        itemIds: ["chal-1", "chal-2"],
+        itemPoints: { "chal-1": 50, "chal-2": 10 },
+      },
+      { points: 10, solved: 1, lastAt: "2026-08-19T09:00:00.000Z", itemIds: ["chal-2"], itemPoints: { "chal-2": 10 } },
     ]);
   });
 
   it("skips unparseable rows rather than throwing", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["chal-1", "not json"] }]);
-    expect(await getTeamClassicTotalsBatch([["alice"]])).toEqual([{ points: 0, solved: 0, lastAt: null, itemIds: [] }]);
+    expect(await getTeamClassicTotalsBatch([["alice"]])).toEqual([
+      { points: 0, solved: 0, lastAt: null, itemIds: [], itemPoints: {} },
+    ]);
   });
 
   it("costs no round trip at all when no team has a member", async () => {

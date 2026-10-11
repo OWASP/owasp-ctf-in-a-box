@@ -44,6 +44,12 @@ export type ProfileModuleInput = {
     /** #463: story steps still locked for the viewer's team — left out of
      *  the list entirely, so nothing about them reaches the page. */
     locked?: ReadonlySet<string>;
+    /** Reachable count from the story-lock helper (includes
+     *  solved-but-deleted union). Used for the module row denominator and
+     *  progress ceiling instead of unionDenominators. */
+    reachableTotal?: number;
+    /** Number of locked story steps, for the disclaimer under the row. */
+    lockedCount?: number;
   };
   ai?: { total?: AiTotal; challenges: AiChallenge[]; maxPoints: number; viewer: ViewerAi };
 };
@@ -70,6 +76,11 @@ export function visibleClassic(
   return { challenges: shown, maxPoints: shown.reduce((sum, c) => sum + (Number(c.points) || 0), 0) };
 }
 
+/** The per-module blocks (points, completed, detail) the profile renders,
+ *  one entry per module with progress to show and nothing for a disabled or
+ *  untouched one. `classic` divides by `reachableTotal` when the page supplies
+ *  it — the story-lock figure every other number on this page reads, so the
+ *  block, the row and the ceiling cannot drift apart. */
 export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<ModuleId, ModuleProgress>> {
   const { profile } = input;
   const blocks: Partial<Record<ModuleId, ModuleProgress>> = {};
@@ -107,8 +118,12 @@ export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<M
       detail: {
         kind: "classic",
         solved: classic.solved,
-        total: Math.max(input.classic!.challenges.length, classic.solved),
+        // The same reachable denominator `moduleRow` shows — the full
+        // catalogue count would put locked steps back in a total every other
+        // figure on this page leaves out.
+        total: Math.max(input.classic!.reachableTotal ?? input.classic!.challenges.length, classic.solved),
         points: classic.points,
+        locked: input.classic?.lockedCount ?? 0,
       },
     };
   }
@@ -129,7 +144,7 @@ export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<M
   return blocks;
 }
 
-export type ModuleRow = { done: number; total: number; unit: string; earned: number; max: number };
+export type ModuleRow = { done: number; total: number; unit: string; earned: number; max: number; locked?: number };
 
 /** One module's row numbers: its own unit word, its clamped done/total pair,
  *  and its earned/available points.
@@ -171,6 +186,18 @@ export function moduleRow(progress: ModuleProgress, input: ProfileModuleInput): 
       return { done: detail.answered, total: d.total, unit: moduleUnit("quiz"), earned: progress.points, max: d.max };
     }
     case "classic": {
+      // The story-lock reachable denominator, floored at the viewer's own
+      // solved count for the same reason every other classic denominator is.
+      if (input.classic?.reachableTotal != null) {
+        return {
+          done: detail.solved,
+          total: Math.max(input.classic.reachableTotal, detail.solved),
+          unit: moduleUnit("classic"),
+          earned: progress.points,
+          max: input.classic.maxPoints,
+          locked: input.classic.lockedCount ?? 0,
+        };
+      }
       const d = unionDenominators(input.classic?.challenges ?? [], input.classic?.viewer.solved ?? {});
       return { done: detail.solved, total: d.total, unit: moduleUnit("classic"), earned: progress.points, max: d.max };
     }
@@ -270,7 +297,9 @@ export function moduleItemsFor(id: ModuleId, input: ProfileModuleInput): { items
  *  `maxPointsAcrossModules` onto the union and left this reader behind). */
 export function remainingFor(modules: readonly ResolvedModule[], input: ProfileModuleInput): RemainingModule[] {
   const quiz = unionDenominators(input.quiz?.questions ?? [], input.quiz?.viewer.answered ?? {});
-  const classic = unionDenominators(input.classic?.challenges ?? [], input.classic?.viewer.solved ?? {});
+  const classic = input.classic?.reachableTotal != null
+    ? { total: input.classic.reachableTotal, max: input.classic.maxPoints }
+    : unionDenominators(input.classic?.challenges ?? [], input.classic?.viewer.solved ?? {});
   const ai = unionDenominators(input.ai?.challenges ?? [], input.ai?.viewer.solved ?? {});
   const pairs: Partial<Record<ModuleId, { earned: number; max: number }>> = {
     // Clamped rather than unioned, for the reason `atLeast` gives: this
@@ -305,7 +334,9 @@ export function remainingFor(modules: readonly ResolvedModule[], input: ProfileM
  *  what `moduleRow` and `remainingFor` show underneath it. */
 export function maxPointsAcrossModules(input: ProfileModuleInput, securePoints: number): number {
   const quiz = unionDenominators(input.quiz?.questions ?? [], input.quiz?.viewer.answered ?? {});
-  const classic = unionDenominators(input.classic?.challenges ?? [], input.classic?.viewer.solved ?? {});
+  const classic = input.classic?.reachableTotal != null
+    ? { total: input.classic.reachableTotal, max: input.classic.maxPoints }
+    : unionDenominators(input.classic?.challenges ?? [], input.classic?.viewer.solved ?? {});
   const ai = unionDenominators(input.ai?.challenges ?? [], input.ai?.viewer.solved ?? {});
   return secureDevCeiling(input, securePoints) + quiz.max + classic.max + ai.max;
 }

@@ -142,6 +142,10 @@ export function NoMatch({ noun, query, onClear, boardEmpty }: { noun: string; qu
   );
 }
 
+/** The board: search, sort, view toggle, empty states and the rows
+ *  themselves. Ordering and rendering only — `data` (including the
+ *  `completable` denominator the contestant rows divide by) arrives already
+ *  folded by the server-side pipeline. */
 export default function Leaderboard({
   data,
   viewerLogin,
@@ -335,6 +339,20 @@ export default function Leaderboard({
           {secureDevModule.title} points and team totals land on the next
           scoring sweep — about once a minute — so a solve or team change you
           just made can take a moment to appear here.
+        </p>
+      )}
+      {/* Story-lock disclaimer — only while some row on the board still
+          has locked story steps. Gated on `detail.locked > 0`, never on the
+          denominator being defined: a classic detail with nothing locked is
+          the ordinary case and must say nothing. Both row kinds are scanned
+          because either one can be the row holding the lock. */}
+      {modules.some((m) => m.id === "classic") &&
+        [...data.entries, ...data.teams].some((row) => {
+          const d = row.modules?.classic?.detail;
+          return d?.kind === "classic" && d.locked > 0;
+        }) && (
+        <p className="px-1 text-xs text-muted">
+          Totals count unlocked challenges only — story steps add to the total as your team unlocks them.
         </p>
       )}
 

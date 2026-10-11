@@ -14,7 +14,7 @@
 // fixture and asserts they land on the same denominator. A future surface that
 // invents its own count fails here rather than becoming the fourth filing.
 import { describe, expect, it } from "vitest";
-import { atLeast, unionDenominators, unionTotal } from "../denominators";
+import { atLeast, unionDenominators, unionTotal, classicReachableDenominator, type Story } from "../denominators";
 
 // Five live items worth 100 each. The viewer solved three of them, plus two an
 // organizer has since deleted — so two live items are still open, and two
@@ -103,5 +103,132 @@ describe("the board and the profile agree", () => {
     // only appears once an organizer deletes something a contestant solved.
     const solved = { "live-1": { points: 100 }, "live-2": { points: 100 } };
     expect(unionTotal(LIVE_IDS, Object.keys(solved))).toBe(unionDenominators(LIVE, solved).total);
+  });
+});
+
+// #570: Story-lock reachable denominator tests
+describe("classicReachableDenominator", () => {
+  const story: Story = {
+    id: "story-1",
+    title: "Operation CTF",
+    intro: "A story",
+    steps: ["step-1", "step-2", "step-3"],
+  };
+
+  const challenges = [
+    { id: "step-1", points: 50 },
+    { id: "step-2", points: 100 },
+    { id: "step-3", points: 150 },
+    { id: "standalone", points: 75 },
+  ];
+
+  const solvedRecords = {
+    "step-1": { points: 50 },
+    "step-2": { points: 100 },
+    "standalone": { points: 75 },
+  };
+
+  it("step 1 is always reachable; later steps locked until prereq solved", () => {
+    // Team solved nothing: only step-1 reachable
+    const teamSolved = new Set<string>();
+    const result = classicReachableDenominator(challenges, [story], teamSolved, {});
+    expect(result.total).toBe(2); // step-1 + standalone
+    expect(result.max).toBe(125); // 50 + 75
+    expect(result.locked).toBe(2); // step-2, step-3 locked
+  });
+
+  it("step 2 unlocks after step 1 is solved", () => {
+    const teamSolved = new Set(["step-1"]);
+    const result = classicReachableDenominator(challenges, [story], teamSolved, {});
+    expect(result.total).toBe(3); // step-1, step-2, standalone
+    expect(result.max).toBe(225); // 50 + 100 + 75
+    expect(result.locked).toBe(1); // step-3 locked
+  });
+
+  it("step 3 unlocks after step 2 is solved", () => {
+    const teamSolved = new Set(["step-1", "step-2"]);
+    const result = classicReachableDenominator(challenges, [story], teamSolved, {});
+    expect(result.total).toBe(4); // step-1, step-2, step-3, standalone
+    expect(result.max).toBe(375); // 50 + 100 + 150 + 75
+    expect(result.locked).toBe(0);
+  });
+
+  it("solved-but-deleted steps are unioned (counted as reachable)", () => {
+    // step-4 was solved but deleted from catalogue
+    const challengesWithDeleted = [...challenges];
+    const teamSolved = new Set(["step-1", "step-4"]);
+    const solvedWithDeleted = { ...solvedRecords, "step-4": { points: 200 } };
+    const result = classicReachableDenominator(
+      challengesWithDeleted,
+      [story],
+      teamSolved,
+      solvedWithDeleted,
+    );
+    // Reachable live: step-1 (reachable), step-2 (unlocked by step-1), standalone = 3
+    // step-3 stays locked because its prereq (step-2) is NOT in teamSolved
+    // Solved-but-deleted: step-4 (1)
+    // Total: 4
+    expect(result.total).toBe(4);
+    expect(result.max).toBe(425); // 50 + 100 + 75 + 200
+    expect(result.locked).toBe(1); // step-3 locked
+  });
+
+  it("teamless contestant (empty solved) sees only step 1 of each story", () => {
+    const teamSolved = new Set<string>();
+    const result = classicReachableDenominator(challenges, [story], teamSolved, {});
+    expect(result.total).toBe(2); // step-1 + standalone
+    expect(result.locked).toBe(2);
+  });
+
+  it("multiple stories: each story's step 1 is reachable", () => {
+    const story2: Story = { ...story, id: "story-2", steps: ["step-a", "step-b"] };
+    const challenges2 = [...challenges, { id: "step-a", points: 60 }, { id: "step-b", points: 80 }];
+    const teamSolved = new Set<string>();
+    const result = classicReachableDenominator(challenges2, [story, story2], teamSolved, {});
+    // story-1 step-1 reachable, story-1 step-2 locked, story-1 step-3 locked
+    // story-2 step-a reachable, story-2 step-b locked
+    // standalone reachable
+    // Total reachable: 3 (step-1, step-a, standalone)
+    // Locked: 3 (step-2, step-3, step-b)
+    expect(result.total).toBe(3);
+    expect(result.locked).toBe(3);
+  });
+
+  it("locked count is only for live challenges, not deleted ones", () => {
+    const teamSolved = new Set<string>();
+    const result = classicReachableDenominator(challenges, [story], teamSolved, {
+      "deleted-step": { points: 100 },
+    });
+    // Deleted steps don't count as locked
+    expect(result.locked).toBe(2);
+  });
+
+  it("locked step already solved by team is treated as reachable (banked points not hidden)", () => {
+    // Team has step-2 in teamSolved but not step-1 (teammate left)
+    // Since step-2 is in teamSolved, isLocked returns false (solved steps are never locked)
+    // This also unlocks step-3 because its prereq (step-2) is in teamSolved
+    const teamSolved = new Set(["step-2"]); // they have step-2 but not step-1
+    const result = classicReachableDenominator(challenges, [story], teamSolved, {
+      "step-2": { points: 100 },
+    });
+    // step-1 (always reachable), step-2 (in teamSolved), step-3 (prereq step-2 in teamSolved), standalone = 4
+    expect(result.total).toBe(4);
+    expect(result.max).toBe(375);
+  });
+
+  it("challenges not in any story are always reachable", () => {
+    const teamSolved = new Set<string>();
+    const result = classicReachableDenominator(challenges, [story], teamSolved, {});
+    // standalone is not in a story
+    expect(result.total).toBe(2);
+    expect(result.max).toBe(125);
+  });
+
+  it("empty stories list means all challenges reachable", () => {
+    const teamSolved = new Set<string>();
+    const result = classicReachableDenominator(challenges, [], teamSolved, {});
+    expect(result.total).toBe(4);
+    expect(result.max).toBe(375);
+    expect(result.locked).toBe(0);
   });
 });

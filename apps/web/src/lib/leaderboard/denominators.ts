@@ -4,6 +4,14 @@
 // cannot reach — so the two surfaces disagreed about the same contestant's
 // same module until someone noticed and filed it again.
 //
+// Story-lock reachability: classic stories are ordered chains where step
+// 1 is always reachable and each later step unlocks only when the previous
+// step is solved by the team. Locked steps' titles and points must never be
+// exposed. The reachable denominator is computed from the team's solved IDs
+// through `lib/story-lock.ts`'s own `storyPositions`/`isLocked`, so the
+// profile, the leaderboard's player and team rows, and the graders all agree
+// on what is reachable. A teamless contestant sees only step 1 of each story.
+//
 // The rule: a module's numerator counts SOLVE RECORDS, which survive deletion
 // on purpose — the admin delete dialog promises it ("Points already banked for
 // it stay on the leaderboard"). Its denominator therefore cannot be the live
@@ -25,6 +33,12 @@
 // Pure and client-safe: no store access, no server-only imports. The profile
 // draws its rows from a Server Component and the leaderboard's team row from a
 // Client one, and both have to be able to reach this.
+
+import { isLocked, storyPositions, type Story } from "@/lib/story-lock";
+
+/** Re-exported so `classicReachableDenominator`'s callers keep one import
+ *  site for the story-lock shapes. */
+export type { Story };
 
 /** A denominator that can never be smaller than its own numerator — the
  *  fallback for a caller with no per-item identity to union over. Prefer
@@ -73,4 +87,78 @@ export function unionDenominators(
     max += Number(solve?.points) || 0;
   }
   return { total, max };
+}
+
+/** Reachable classic denominator for a team (or a solo contestant).
+ *
+ *  A story step is REACHABLE when:
+ *    - it is step 1 of its story, OR
+ *    - its prerequisite step is in `teamSolved`.
+ *
+ *  Locked steps are excluded from both the count and the points ceiling —
+ *  their titles and points must never leak. A teamless contestant (empty
+ *  `teamSolved`) sees only step 1 of each story.
+ *
+ *  The union with `solved` is still applied: a step solved by the team but
+ *  since deleted from the catalogue is counted in `total` and its points from
+ *  the solve record are added to `max`. A step that is locked for the team
+ *  but appears in `solved` (a teammate left, or a reorder) is treated as
+ *  reachable — banked points are never hidden.
+ *
+ *  Returns { total, max, locked } where:
+ *    - total: reachable live steps + solved-but-deleted steps
+ *    - max:   points of reachable live steps + points of solved-but-deleted steps
+ *    - locked: number of live steps that are locked for this team */
+export function classicReachableDenominator(
+  challenges: readonly { id: string; points?: number }[],
+  stories: readonly Story[],
+  teamSolved: ReadonlySet<string>,
+  solved: Readonly<Record<string, { points?: number }>>,
+): { total: number; max: number; locked: number } {
+  const existing = new Set(challenges.map((c) => c.id));
+  const positions = storyPositions(stories, existing);
+  const liveById = new Map(challenges.map((c) => [c.id, c]));
+  const liveIds = new Set(liveById.keys());
+
+  // `total` is accumulated over three DISJOINT id sets — live ids, deleted
+  // ids that still have a solve record, deleted ids that do not — so no step
+  // is counted twice. `locked` is tallied only from live ids.
+  let total = 0;
+  let max = 0;
+  let locked = 0;
+  for (const challenge of challenges) {
+    const pos = positions.get(challenge.id);
+    if (!pos) {
+      // Not in a story: always reachable.
+      total += 1;
+      max += Number(challenge.points) || 0;
+      continue;
+    }
+    if (isLocked(pos, teamSolved)) {
+      locked += 1;
+      continue;
+    }
+    // Reachable (step 1, or prereq solved, or already solved by team).
+    total += 1;
+    max += Number(challenge.points) || 0;
+  }
+
+  for (const [id, solve] of Object.entries(solved)) {
+    if (liveIds.has(id)) continue;
+    // A solved step that was in a story but is now deleted: its prereq no
+    // longer exists, so it cannot be locked — count it as reachable.
+    total += 1;
+    max += Number(solve?.points) || 0;
+  }
+
+  // A fold can carry `itemIds` for a deleted item without a matching
+  // `itemPoints` entry, so the record loop above would drop it entirely.
+  for (const id of teamSolved) {
+    if (liveIds.has(id)) continue;
+    if (solved[id]) continue; // already counted from its solve record
+    total += 1;
+    // max unchanged — there are no points left to attribute to it.
+  }
+
+  return { total, max, locked };
 }

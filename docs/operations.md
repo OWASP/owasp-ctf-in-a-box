@@ -778,8 +778,12 @@ not-enabled tab name, in either form, falls back to **Overview** rather than
 gating, players per team, the retry gate, the cooldowns) and the four
 schedule fields commit when you leave the field, and report beside it:
 **Saving…** while the write is in flight, **Saved** for a moment after, or the
-reason it was refused. Junk, a fraction, a negative, or a blanked field snaps
-back to the stored value with that reason ("Whole numbers only — kept 10.");
+reason it was refused. **Emptying a number field resets it to its default**:
+the stored override is removed and the field shows the default as its
+greyed placeholder again, so an overridden knob (a value in the box) reads
+differently from one following the default (an empty box). Junk, a
+fraction or a negative snaps back to the stored value with that reason
+("Whole numbers only — kept 10.");
 a value the server refuses is rewritten through the field's own label ("Hint
 cost must be a whole number between 0 and 100,000.") and the field snaps back
 too, so what you see is always what is stored. The switches — module on/off,

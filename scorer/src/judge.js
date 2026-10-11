@@ -86,6 +86,10 @@ export function renderReport({ challenges, solved, author, target, pr, sha, disc
     "",
     `**${solved.length} / ${challenges.length}** challenges patched`,
     "",
+    // Static on purpose: the judge cannot see the event's window or pause, and
+    // this report posts the same after scoring closes as during it.
+    "_Points count only while the event's scoring window is open; see the event site for standings._",
+    "",
     ...detail,
     "",
     marker,

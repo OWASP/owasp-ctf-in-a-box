@@ -52,6 +52,7 @@ export default function TeamCard({
   captain,
   joinCode,
   registrationOpen = true,
+  secureDevEnabled = false,
 }: {
   team: TeamInfo | null;
   writesEnabled: boolean;
@@ -70,6 +71,10 @@ export default function TeamCard({
    *  refuse — the same read-and-explain the /join/<code> page does. Defaults
    *  open, matching the routes' own fail-open settings read. */
   registrationOpen?: boolean;
+  /** The event runs Secure Development, whose PR scores are recorded for
+   *  their author with or without a team and count for the team they join;
+   *  the teamless copy says so only then, and names no module otherwise. */
+  secureDevEnabled?: boolean;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -285,8 +290,9 @@ export default function TeamCard({
         <div className="mt-3 flex flex-col gap-2">
           <p className="text-sm text-zinc-400">Team registration is closed for this event.</p>
           <p className="text-xs text-muted">
-            A team is still required before anything you solve counts — find an organizer if you
-            arrived after registration closed.
+            {secureDevEnabled
+              ? "A team is still required to compete: Secure Development PRs are kept and count for the team you join, everything else only while you're on one — find an organizer if you arrived after registration closed."
+              : "A team is still required before anything you solve counts — find an organizer if you arrived after registration closed."}
           </p>
         </div>
       ) : (
@@ -296,7 +302,9 @@ export default function TeamCard({
               say so or a contestant reads this as an optional extra and
               wonders later why nothing counted. */}
           <p className="text-sm text-zinc-400">
-            You need a team before anything you solve counts. Join one, create one, or play solo.
+            {secureDevEnabled
+              ? "You need a team to compete. Secure Development PRs are kept and count for the team you join; everything else counts only while you're on one. Join one, create one, or play solo."
+              : "You need a team before anything you solve counts. Join one, create one, or play solo."}
           </p>
 
           <div className="flex flex-col gap-1">

@@ -7,11 +7,18 @@
 // quiz-store.grade.test.ts proves GRADE_SCRIPT's ordering.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-// #463: the team's solves keys come from the team store; pinned here.
+// #463/#602: the team's lock keys come from the team store; pinned here. The
+// Lua fragment is the real one, so SUBMIT_SCRIPT is the shipped script.
 const classicTeam = vi.hoisted(() => ({
-  teamSolveKeys: vi.fn(async (login: string) => [`ctf:classic:solves:${login}`, "ctf:classic:solves:bob"]),
+  teamLockKeys: vi.fn(async (login: string) => ({
+    team: "red",
+    keys: [`ctf:classic:solves:${login}`, `ctf:user:${login}`, "ctf:classic:solves:bob", "ctf:user:bob"],
+  })),
 }));
-vi.mock("@/lib/classic-team", () => classicTeam);
+vi.mock("@/lib/classic-team", async (orig) => ({
+  storyLockLua: (await orig<typeof import("@/lib/classic-team")>()).storyLockLua,
+  teamLockKeys: classicTeam.teamLockKeys,
+}));
 
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
@@ -581,7 +588,7 @@ describe("dry run (#464 admin preview)", () => {
 describe("story lock (#463)", () => {
   const storiesReply = (steps: string[]) => [{ result: JSON.stringify([{ id: "op", title: "Op", intro: "", steps }]) }];
 
-  it("hands the script the step's prerequisite and every teammate's solves key", async () => {
+  it("hands the script the step's prerequisite, every teammate's (solves, user record) pair and the team", async () => {
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["recon", "chal-1"]));
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["recon", "chal-1"] }]); // existing ids
@@ -591,7 +598,8 @@ describe("story lock (#463)", () => {
     expect(argv[8]).toBe("recon");
     // KEYS[9..] (index 8 on): KEYS[8] is the lastAt hash (#522).
     expect(keys[7]).toBe("ctf:classic:lastAt");
-    expect(keys.slice(8)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    expect(keys.slice(8)).toEqual(["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"]);
+    expect(argv[9]).toBe("red");
   });
 
   it("reports the script's `locked` exactly as an unknown challenge — no oracle, never a wrong answer", async () => {

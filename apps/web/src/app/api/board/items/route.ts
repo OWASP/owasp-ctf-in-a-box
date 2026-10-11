@@ -3,7 +3,7 @@ import { LOGIN_RE } from "@/lib/admin-admins";
 import { getViewerAi, listAiChallenges } from "@/lib/ai-store";
 import { getViewerClassic, listChallenges, listStories } from "@/lib/classic-store";
 import { isLocked, lockedLabel, storyPositions } from "@/lib/story-lock";
-import { getTeamClassicSolvedIds } from "@/lib/classic-team";
+import { getTeamClassicSolvedIds, unlockingSolvedIds } from "@/lib/classic-team";
 import { auth } from "@/lib/auth";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { requireLaunchedApi } from "@/lib/launch";
@@ -77,11 +77,21 @@ export async function GET(request: Request) {
     // VIEWER's own team. This route is public, so the queried team alone
     // would let anyone read the leader's unlocked steps by expanding a row.
     const positions = storyPositions(stories, new Set(challenges.map((c) => c.id)));
+    // What the team SOLVED (the union its points fold) is not what it has
+    // UNLOCKED: a member's solve opens the next step only if they made it
+    // while on their current team (#602, ADR 60), so a step carried in from
+    // another team counts toward the points and the done marks, not the lock.
     const teamSolved = new Set(viewers.flatMap((v) => Object.keys(v.solved)));
-    const viewerSolved = positions.size > 0 && viewerLogin ? await getTeamClassicSolvedIds(viewerLogin) : new Set<string>();
+    const [teamUnlocked, viewerSolved] =
+      positions.size > 0
+        ? await Promise.all([
+            unlockingSolvedIds(logins),
+            viewerLogin ? getTeamClassicSolvedIds(viewerLogin) : Promise.resolve(new Set<string>()),
+          ])
+        : [new Set<string>(), new Set<string>()];
     classic = challenges.map((c) => {
       const pos = positions.get(c.id);
-      if (pos && (isLocked(pos, teamSolved) || isLocked(pos, viewerSolved))) {
+      if (pos && (isLocked(pos, teamUnlocked) || isLocked(pos, viewerSolved))) {
         // Nothing per position crosses (ADR 60): not which hidden steps the
         // team solved, not their points. Only the count below does, which
         // the row's own solved figure already implies.

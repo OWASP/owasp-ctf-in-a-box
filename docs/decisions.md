@@ -3639,11 +3639,22 @@ step by step while the free-pick board stays as it is.
   - Deleting a step shrinks the story.
 - **The unlock is per team.** "Solved by the team" is the union of every
   current teammate's classic solves, which is the same fold the leaderboard
-  uses, so a story and a team's score never disagree. A solo player is a
-  team of one.
+  uses. A solo player is a team of one.
+- **A solve unlocks only for the team it was made on** (amended, #602). A
+  teammate's solve opens the next step only if its `at` is on or after
+  their `joinedAt` on the current team, and their user record still names
+  that team. Membership is otherwise read now, so without this a player
+  could solve step 3 on one team, join another and open step 4 there. A
+  member on a team with no `joinedAt` opens nothing (closed). **Points are
+  unaffected**: a team's total stays the union of its members' solves, so a
+  player who joins mid-event still brings their points; only the unlock
+  follows solve-time membership. A story and a team's score can therefore
+  differ in one case: a carried-in solve scores for the new team but opens
+  nothing there.
 - **The lock lives in the scripts.** `SUBMIT_SCRIPT` and `REVEAL_SCRIPT`
-  receive the prerequisite and the teammates' solves hashes, and check the
-  lock first — before they read the flag or hint hash, and before any
+  receive the prerequisite, a (solves hash, user record) pair per teammate
+  and the team slug, decide the rule above inside the same call (one Lua
+  fragment, `storyLockLua`, shared by both), and check the lock first — before they read the flag or hint hash, and before any
   write. A locked step therefore costs no attempt and can't be used as a
   flag oracle. The store then answers it exactly like an unknown challenge
   (a 404 on submit, "No hint available" on reveal), so a guessed id cannot
@@ -3663,7 +3674,8 @@ step by step while the free-pick board stays as it is.
 resolves the team, so the extra keys cost one pipeline. Story authoring (the
 editor and bundle v2) follows in #463's second PR.
 
-**Status.** Accepted (#463).
+**Status.** Accepted (#463); amended by #602 (solve-time membership for
+unlocks).
 
 ## ADR 61. Challenge attachments live in Redis, served only as downloads, behind the challenge's own visibility
 

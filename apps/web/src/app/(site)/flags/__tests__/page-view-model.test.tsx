@@ -54,7 +54,9 @@ vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
-vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: async () => new Set() }));
+// storyLockLua: classic-store builds its grading script from it at load; no
+// script runs here.
+vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: async () => new Set(), storyLockLua: () => "" }));
 vi.mock("@/lib/classic-store", () => ({
   listStories: async () => [],
   listChallenges,

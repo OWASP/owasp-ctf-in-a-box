@@ -16,8 +16,12 @@ const mocks = vi.hoisted(() => ({
   requireLaunchedApi: vi.fn(),
   listStories: vi.fn(async () => [] as { id: string; title: string; intro: string; steps: string[] }[]),
   getTeamClassicSolvedIds: vi.fn(async () => new Set<string>()),
+  unlockingSolvedIds: vi.fn(async () => new Set<string>()),
 }));
-vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: mocks.getTeamClassicSolvedIds }));
+vi.mock("@/lib/classic-team", () => ({
+  getTeamClassicSolvedIds: mocks.getTeamClassicSolvedIds,
+  unlockingSolvedIds: mocks.unlockingSolvedIds,
+}));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: mocks.getSession } } }));
 vi.mock("@/lib/launch", () => ({ requireLaunchedApi: mocks.requireLaunchedApi }));
@@ -155,8 +159,32 @@ describe("GET /api/board/items and a locked story step (#463)", () => {
     // The viewer is on that team (their own team has it open too — review C2).
     mocks.getSession.mockResolvedValue({ user: { login: "alice" } });
     mocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
+    mocks.unlockingSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
     const body = JSON.stringify(await (await GET(req("alice,bob"))).json());
     expect(body).toContain("Secret SQLi");
+    expect(mocks.unlockingSolvedIds).toHaveBeenCalledWith(["alice", "bob"]);
+  });
+
+  // #602: bob solved step 1 on another team and then joined this one. The
+  // solve still counts toward the team's points (bob's row is in the union),
+  // but it is older than bob's join here, so it opens step 2 for nobody.
+  it("keeps the next step hidden when the team's only solve of the one before it was carried in", async () => {
+    mocks.listChallenges.mockResolvedValue([
+      { id: "recon-ab12cd", title: "Recon", points: 10 },
+      { id: "secret-sqli-cd34ef", title: "Secret SQLi", points: 50 },
+    ]);
+    mocks.listStories.mockResolvedValue([{ id: "op", title: "Op", intro: "", steps: ["recon-ab12cd", "secret-sqli-cd34ef"] }]);
+    mocks.getViewerClassic.mockImplementation(async (l: string) =>
+      l === "bob" ? { solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} } : { solved: {}, attempts: {} },
+    );
+    // The viewer's OWN team has step 2 open, so only the queried team's
+    // carried solve is in question.
+    mocks.getSession.mockResolvedValue({ user: { login: "carol" } });
+    mocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
+    mocks.unlockingSolvedIds.mockResolvedValue(new Set());
+    const body = await (await GET(req("alice,bob"))).json();
+    expect(JSON.stringify(body)).not.toContain("Secret SQLi");
+    expect(body.classic[0]).toMatchObject({ id: "recon-ab12cd", done: true });
   });
 });
 
@@ -169,6 +197,7 @@ describe("GET /api/board/items redacts for the VIEWER too (#463, review C2)", ()
     mocks.listStories.mockResolvedValue([{ id: "op", title: "Op", intro: "", steps: ["recon-ab12cd", "secret-sqli-cd34ef"] }]);
     // The LEADING team has unlocked step 2…
     mocks.getViewerClassic.mockResolvedValue({ solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} });
+    mocks.unlockingSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
   };
 
   it("never shows a signed-out visitor a step the queried team unlocked but they have not", async () => {
@@ -209,6 +238,7 @@ describe("GET /api/board/items reports hidden solved steps as one count (#584)",
       solved: { "recon-ab12cd": { points: 10, at: "x" }, "secret-sqli-cd34ef": { points: 1337, at: "y" } },
       attempts: {},
     });
+    mocks.unlockingSolvedIds.mockResolvedValue(new Set(["recon-ab12cd", "secret-sqli-cd34ef"]));
     mocks.getSession.mockResolvedValue(null);
   };
   type Body = { classic: Record<string, unknown>[]; classicHiddenSolved?: number };

@@ -2,8 +2,8 @@ import "server-only";
 import { assertPipelineOk, parseScanPage, upstashPipeline, type UpstashResult } from "@/lib/upstash";
 import { userKey, userHintTimesKey, HINTS_SPENT_KEY } from "@/lib/team-keys";
 import { QUIZ_POINTS_KEY, QUIZ_QUESTIONS_KEY, quizAnswersKey, quizAttemptsKey } from "@/lib/quiz-keys";
-import { CLASSIC_CHALLENGES_KEY, CLASSIC_POINTS_KEY, classicAttemptsKey, classicSolvesKey } from "@/lib/classic-keys";
-import { AI_CHALLENGES_KEY, AI_POINTS_KEY, aiAttemptsKey, aiSolvesKey } from "@/lib/ai-keys";
+import { CLASSIC_CHALLENGES_KEY, CLASSIC_POINTS_KEY, classicAttemptsKey, classicOpenedKey, classicSolvesKey } from "@/lib/classic-keys";
+import { AI_CHALLENGES_KEY, AI_POINTS_KEY, aiAttemptsKey, aiOpenedKey, aiSolvesKey } from "@/lib/ai-keys";
 import { listTeams } from "@/lib/team-store";
 import { parseAttemptRow } from "@/lib/attempt-row";
 import { getLeaderboardSource, getLeaderboardSourceMode } from "@/lib/leaderboard/source";
@@ -111,10 +111,18 @@ export type ChallengeStat = {
    *  difficulty signal — a challenge solved by everyone on the fourth try is
    *  harder than its solve rate suggests. */
   avgAttemptsToSolve: number | null;
-  /** Median seconds from a contestant's FIRST attempt at this item to earning
-   *  it. Median, not mean: one contestant who left a tab open overnight would
-   *  otherwise dominate the figure. Null until enough rows carry `firstAt`. */
+  /** Median seconds to earn it, measured as `timeMeasure` says. Median, not
+   *  mean: one contestant who left a tab open overnight would otherwise
+   *  dominate the figure. */
   medianSecondsToSolve: number | null;
+  /** What `medianSecondsToSolve` measures. `"open"`: from the contestant first
+   *  opening the challenge's page to earning it, used whenever any solver has
+   *  that record (classic and ai, #616). `"first-miss"`: from their first
+   *  submission, when no open was recorded. Contestants work offline and
+   *  usually submit once they have the answer, so that figure is 0 for anyone
+   *  right first time: when it is 0 for EVERY solver the row is null, not
+   *  0s, because 0 there means "unknown", not "instant". */
+  timeMeasure: "open" | "first-miss" | null;
   /** Contestants who bought this item's hint before earning it. Classic and
    *  ai are per-challenge contributors here;
    *  quiz has no hints by design, so this is always 0 there. */
@@ -170,6 +178,19 @@ function parseEarned(raw: unknown): Earned | null {
   } catch {
     return null;
   }
+}
+
+/** The time-to-solve figure and what it measures; see `ChallengeStat`. */
+function timeToSolve(
+  solved: { durations: number[]; openDurations: number[] } | undefined,
+): Pick<ChallengeStat, "medianSecondsToSolve" | "timeMeasure"> {
+  if (solved && solved.openDurations.length > 0) {
+    return { medianSecondsToSolve: median(solved.openDurations), timeMeasure: "open" };
+  }
+  if (solved && solved.durations.some((d) => d > 0)) {
+    return { medianSecondsToSolve: median(solved.durations), timeMeasure: "first-miss" };
+  }
+  return { medianSecondsToSolve: null, timeMeasure: null };
 }
 
 /** Median, not mean, for durations: one contestant who left a tab open
@@ -456,10 +477,11 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     logins = logins.slice(0, MAX_CONTESTANTS);
   }
 
-  // Eight reads per spelling: their earned items (quiz, classic, ai), their
+  // Ten reads per spelling: their earned items (quiz, classic, ai), their
   // attempt rows (quiz, classic, ai), the firstTeamAt that anchors the funnel,
-  // and when they bought each hint.
-  const PER_LOGIN = 8;
+  // when they bought each hint, and when they first opened each classic and
+  // ai challenge.
+  const PER_LOGIN = 10;
   const reads = logins.flatMap((login) => [...(spellingsOf.get(login) ?? [login])].map((spelling) => ({ login, spelling })));
   const replies = await batched(
     reads.flatMap(({ spelling: l }) => [
@@ -471,6 +493,8 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       ["HGETALL", aiAttemptsKey(l)],
       ["HMGET", userKey(l), "firstTeamAt"],
       ["HGETALL", userHintTimesKey(l)],
+      ["HGETALL", classicOpenedKey(l)],
+      ["HGETALL", aiOpenedKey(l)],
     ]),
   );
 
@@ -510,7 +534,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   const solveTimes: number[] = [];
   const solvesById = new Map<
     string,
-    { module: "quiz" | "classic" | "ai"; solvers: number; attemptSum: number; durations: number[] }
+    { module: "quiz" | "classic" | "ai"; solvers: number; attemptSum: number; durations: number[]; openDurations: number[] }
   >();
   const attemptsById = new Map<
     string,
@@ -532,6 +556,10 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     const userFields = perLogin[i * PER_LOGIN + 6]?.result;
     const firstTeamAt = Array.isArray(userFields) ? userFields[0] : null;
     const hintTimes = hashEntries(perLogin[i * PER_LOGIN + 7]?.result);
+    const opened = {
+      classic: new Map(hashEntries(perLogin[i * PER_LOGIN + 8]?.result)),
+      ai: new Map(hashEntries(perLogin[i * PER_LOGIN + 9]?.result)),
+    };
 
     // Did the hint arrive in time to help? A hint bought AFTER the solve
     // bought nothing, and counting the two together turns "hints are used"
@@ -612,7 +640,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         const ms = Date.parse(earned.at);
         if (!Number.isNaN(ms)) solveTimes.push(ms);
         const key = `${mod}:${id}`;
-        const stat = solvesById.get(key) ?? { module: mod, solvers: 0, attemptSum: 0, durations: [] as number[] };
+        const stat = solvesById.get(key) ?? { module: mod, solvers: 0, attemptSum: 0, durations: [] as number[], openDurations: [] as number[] };
         stat.solvers += 1;
         // How many tries THIS contestant took to earn it, and how long it took
         // them. The attempt row survives the solve, so both are available
@@ -630,6 +658,13 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
           if (!Number.isNaN(startedMs) && ms >= startedMs) {
             stat.durations.push(Math.round((ms - startedMs) / 1000));
           }
+        }
+        // From first opening the page, when the box recorded it. An
+        // open recorded after the solve is corrupt ordering and is dropped.
+        const openedAt = mod === "quiz" ? undefined : opened[mod].get(id);
+        if (typeof openedAt === "string" && !Number.isNaN(ms)) {
+          const openedMs = Date.parse(openedAt);
+          if (!Number.isNaN(openedMs) && ms >= openedMs) stat.openDurations.push(Math.round((ms - openedMs) / 1000));
         }
         solvesById.set(key, stat);
       }
@@ -675,7 +710,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         attempts: tried?.attempts ?? 0,
         solveRate: triers > 0 ? solves / triers : null,
         avgAttemptsToSolve: solves > 0 ? (solved as { attemptSum: number }).attemptSum / solves : null,
-        medianSecondsToSolve: median(solved?.durations ?? []),
+        ...timeToSolve(solved),
         solvedAfterHint: hintHelpedById.get(key) ?? 0, // classic + ai per-challenge; quiz has no hints
       };
     })
@@ -760,7 +795,7 @@ export function challengesToCsv(metrics: EventMetrics): string {
     // `title` sits beside `id`, never instead of it: the id is what a support
     // question or a store key names, and a title can be blank for a challenge
     // deleted since it was solved (audit F7).
-    ["module", "id", "title", "solves", "attempts", "solve_rate", "avg_attempts_to_solve", "median_seconds_to_solve"],
+    ["module", "id", "title", "solves", "attempts", "solve_rate", "avg_attempts_to_solve", "median_seconds_to_solve", "median_time_measure"],
     ...metrics.challenges.map((c) => [
       c.module,
       c.id,
@@ -770,6 +805,7 @@ export function challengesToCsv(metrics: EventMetrics): string {
       c.solveRate === null ? null : c.solveRate.toFixed(4),
       c.avgAttemptsToSolve === null ? null : c.avgAttemptsToSolve.toFixed(2),
       c.medianSecondsToSolve,
+      c.timeMeasure,
     ]),
   ];
   return rows.map((r) => r.map(esc).join(",")).join("\n") + "\n";

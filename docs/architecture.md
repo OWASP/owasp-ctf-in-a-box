@@ -1090,9 +1090,11 @@ all event data — `SCAN`+`DEL` of `ctf:solves:*`, `ctf:team:*`, `ctf:user:*`,
 `ctf:quiz:answers:*`/`ctf:quiz:attempts:*`/`ctf:quiz:points`/
 `ctf:quiz:answered`/`ctf:quiz:lastAt`, and
 `ctf:classic:solves:*`/`ctf:classic:attempts:*`/`ctf:classic:points`/
-`ctf:classic:solved`/`ctf:classic:solvecount`/`ctf:classic:lastAt`,
+`ctf:classic:solved`/`ctf:classic:solvecount`/`ctf:classic:lastAt`/
+`ctf:classic:opened:*`,
 `ctf:ai:solves:*`/`ctf:ai:attempts:*`/`ctf:ai:points`/`ctf:ai:solved`/
-`ctf:ai:solvecount`/`ctf:ai:lastAt`, the spent replay nonces `ctf:ai:nonce:*`, the
+`ctf:ai:solvecount`/`ctf:ai:lastAt`/`ctf:ai:opened:*` (the first-open times
+Insights measures from, #616), the spent replay nonces `ctf:ai:nonce:*`, the
 module-wide `ctf:ai:launchkey` (so no launch token issued before the reset
 survives it — see "AI data flow" above), and the activity log
 (`ctf:activity:log`) — keeps `ctf:admin:settings`

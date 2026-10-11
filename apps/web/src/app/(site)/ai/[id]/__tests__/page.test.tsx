@@ -32,6 +32,9 @@ const launchLock = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts }));
 vi.mock("@/lib/launch", () => launchLock);
+// #616: the first-open record Insights measures time to solve from.
+const firstOpen = vi.hoisted(() => ({ recordFirstOpen: vi.fn(async () => {}) }));
+vi.mock("@/lib/first-open", () => firstOpen);
 import { renderToStaticMarkup } from "react-dom/server";
 
 const {
@@ -159,6 +162,23 @@ beforeEach(() => {
   getAiHintIds.mockResolvedValue([]);
   getHintNotice.mockResolvedValue({ active: false, cost: 10 });
   getViewerHints.mockResolvedValue({ purchased: {}, classic: {}, ai: {}, spent: 0, count: 0 });
+});
+
+describe("first-open record (#616)", () => {
+  it("records a signed-in contestant opening a challenge, event-only ones too", async () => {
+    renderToStaticMarkup(await AiChallengePage(params("a1")));
+    renderToStaticMarkup(await AiChallengePage(params("a2")));
+    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("ai", "alice", "a1");
+    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("ai", "alice", "a2");
+  });
+
+  it("records nothing for a signed-out visitor or an admin preview", async () => {
+    getSession.mockResolvedValueOnce(null);
+    renderToStaticMarkup(await AiChallengePage(params("a1")));
+    launchLock.redirectIfNotLaunched.mockResolvedValueOnce({ allowed: true, preview: true });
+    renderToStaticMarkup(await AiChallengePage(params("a1")));
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+  });
 });
 
 describe("ai challenge page gates", () => {

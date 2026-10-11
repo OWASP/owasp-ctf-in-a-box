@@ -28,6 +28,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   field, what Max attempts and the Jeopardy cooldown already said: the
   budget is kept per contestant while points count per team, so a team of N
   gets N times it. Kept that way by decision; the AI docs say so too.
+- **Fixed: Insights' median time read 0s for almost every challenge (#616).**
+  It measured from a player's first flag submission, and most players submit
+  once they have the flag, so it was 0 by construction. The box now records
+  when each player first opens a Jeopardy or AI challenge (`ctf:classic:opened:`
+  / `ctf:ai:opened:<login>`, once per challenge), and the median runs from
+  that open to the solve. Rows with no open recorded fall back to the first
+  submission and are starred; rows where every solver was right first time
+  show —. The CSV gains `median_time_measure`. Master reset and a player's
+  progress reset clear the new records.
 - **Fixed: admin Insights undercounted the event and disagreed with the
   leaderboard (#608).** Players whose GitHub login has a capital letter were
   read under the lowercased login and found empty; a player who left a team

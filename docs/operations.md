@@ -624,7 +624,12 @@ The panel offers:
     list under the chart, for keyboard and screen-reader use.
   - **Hardest first** — every challenge by solves, attempts, solve rate,
     *average tries taken by the people who did solve it*, and the *median time
-    from their first attempt to their solve*. Those last two are the difficulty
+    to solve*: from a player first opening a Jeopardy or AI challenge's page
+    to their solve (the box records the first open, once per player and
+    challenge). Where no open was recorded (quiz, and solves from before the
+    record existed) it falls back to their first submission and the cell is
+    starred; where every solver was right on their first submission it shows
+    —, because that fallback is 0 by construction, not fast. Those last two are the difficulty
     signal solve rate alone hides: a challenge everyone eventually solved on
     their fourth attempt, forty minutes in, is harder than its 100% rate
     suggests. Each row is named by its **title** — the quiz question's prompt,
@@ -652,7 +657,7 @@ The panel offers:
   | **Attempts** (per challenge) | Every submission against it, right or wrong | Secure Development items, which do not appear in this table at all |
   | **Solve rate** | solves ÷ **the people who tried it** | The rest of the event; this is not an event-wide difficulty figure |
   | **Avg tries** | Mean attempts taken by the contestants who **did** solve it | Everyone still stuck on it — which is why a low rate and a low average can coexist |
-  | **Median time** | Median seconds from a contestant's **first attempt** to their solve | Items earned before `firstAt` existed; those carry no start time |
+  | **Median time** | Median seconds from a contestant first **opening** the challenge to their solve; starred (*) when it falls back to their **first submission** because no open was recorded | Time spent before opening it (reading the board, working offline from a shared link); a row where everyone solved on their first submission and no open was recorded shows — |
   | **Team points** | The leaderboard's own figure for the team: the **union** of its members' solves, hint spend netted | — the two screens agree. Only if the board can't be read does the tab fall back to the sum of members' totals, and it says so |
   | **Hints before solving** | Hints bought **before** the buyer earned that item | Hints bought afterwards, and hints for items never solved |
 

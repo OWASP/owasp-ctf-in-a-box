@@ -17,6 +17,9 @@ const launchLock = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts }));
 vi.mock("@/lib/launch", () => launchLock);
+// #616: the first-open record Insights measures time to solve from.
+const firstOpen = vi.hoisted(() => ({ recordFirstOpen: vi.fn(async () => {}) }));
+vi.mock("@/lib/first-open", () => firstOpen);
 import { renderToStaticMarkup } from "react-dom/server";
 
 const { moduleLive, isAdminLogin, getSession, listChallenges, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints } =
@@ -100,6 +103,30 @@ beforeEach(() => {
   getClassicHintIds.mockResolvedValue([]);
   getHintNotice.mockResolvedValue({ active: false, cost: 10 });
   getViewerHints.mockResolvedValue({ purchased: {}, classic: {}, spent: 0, count: 0 });
+});
+
+describe("first-open record (#616)", () => {
+  it("records a signed-in contestant opening a visible challenge", async () => {
+    renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("classic", "alice", "c1");
+  });
+
+  it("records nothing for a signed-out visitor", async () => {
+    getSession.mockResolvedValue(null);
+    renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+  });
+
+  it("records nothing for an admin preview before launch", async () => {
+    launchLock.redirectIfNotLaunched.mockResolvedValueOnce({ allowed: true, preview: true });
+    renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+  });
+
+  it("records nothing for an unknown id", async () => {
+    await expect(ClassicChallengePage(params("nope"))).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+  });
 });
 
 describe("challenge page gates", () => {

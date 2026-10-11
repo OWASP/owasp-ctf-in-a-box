@@ -376,6 +376,9 @@ describe("resetUserProgress", () => {
       "ctf:hints:spent#octocat",
       // #522: the award time goes with the totals it orders.
       "ctf:quiz:lastAt#octocat",
+      // #616: the first-open times, which only time this login's solves.
+      "ctf:classic:opened:octocat",
+      "ctf:ai:opened:octocat",
     ]);
     // Classic's and ai's per-login keys are cleared through the atomic
     // scripts instead — assert those calls named exactly this login's keys.

@@ -23,6 +23,7 @@
 // in `[id]/not-found.tsx`).
 
 import { teamsLabel } from "@/lib/solve-labels";
+import { recordFirstOpen } from "@/lib/first-open";
 import type { Metadata } from "next";
 import { teamSolveCounts } from "@/lib/team-solve-counts";
 import PreviewBanner from "@/components/preview-banner";
@@ -106,6 +107,10 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
 
   const challenge = challenges.find((c) => c.id === challengeId);
   if (!challenge) notFound();
+  // When this contestant first opened it: the start of Insights'
+  // open-to-solve time. Never for a visitor or an admin preview; a failed
+  // write is logged, not thrown.
+  if (login && !launch.preview) await recordFirstOpen("ai", login, challenge.id);
 
   const moduleTitle = modules.find((m) => m.id === "ai")?.title ?? DEFAULT_TITLE;
   const cooldownMs = AI_COOLDOWN_SEC * 1000;

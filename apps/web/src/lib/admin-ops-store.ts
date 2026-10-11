@@ -26,6 +26,7 @@ import {
   CLASSIC_SOLVED_KEY,
   CLASSIC_POINTS_KEY,
   classicAttemptsKey,
+  classicOpenedKey,
   classicSolvesKey,
 } from "@/lib/classic-keys";
 import {
@@ -34,6 +35,7 @@ import {
   AI_LAST_AT_KEY,
   AI_SOLVED_KEY,
   aiAttemptsKey,
+  aiOpenedKey,
   aiSolvesKey,
 } from "@/lib/ai-keys";
 
@@ -478,6 +480,10 @@ async function resetProgressOf(login: string, actor: string): Promise<ResetScope
     ["HDEL", HINTS_SPENT_KEY, login],
     // Last, so the counts below keep their positions.
     ["HDEL", QUIZ_LAST_AT_KEY, login],
+    // When this login first opened each challenge: it only times
+    // their solves, so it goes with them. After the counted replies.
+    ["DEL", classicOpenedKey(login)],
+    ["DEL", aiOpenedKey(login)],
   ]);
   const n = (i: number) => Number(replies[i]?.result) || 0;
 

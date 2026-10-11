@@ -30,6 +30,7 @@ import {
   CLASSIC_LAST_AT_KEY,
   CLASSIC_SOLVES_PREFIX,
   CLASSIC_ATTEMPTS_PREFIX,
+  CLASSIC_OPENED_PREFIX,
 } from "@/lib/classic-keys";
 import {
   AI_POINTS_KEY,
@@ -38,6 +39,7 @@ import {
   AI_LAST_AT_KEY,
   AI_SOLVES_PREFIX,
   AI_ATTEMPTS_PREFIX,
+  AI_OPENED_PREFIX,
   AI_NONCE_PREFIX,
   AI_LAUNCHKEY_KEY,
 } from "@/lib/ai-keys";
@@ -726,6 +728,9 @@ const RESET_PREFIXES: readonly [string, string][] = [
   ["classicSolved", CLASSIC_SOLVED_KEY],
   ["classicSolveCount", CLASSIC_SOLVECOUNT_KEY],
   ["classicLastAt", CLASSIC_LAST_AT_KEY],
+  // When each contestant first opened each challenge: it only times
+  // this event's solves, so it goes with them.
+  ["classicOpened", `${CLASSIC_OPENED_PREFIX}*`],
   // ai scope mirrors classic's exactly, same PROGRESS/CONTENT split: solves,
   // attempts, the two per-login aggregate hashes, the award-time hash and the
   // per-challenge solvecount are wiped, while `ctf:ai:challenges` / `ctf:ai:flag` /
@@ -738,6 +743,7 @@ const RESET_PREFIXES: readonly [string, string][] = [
   ["aiSolved", AI_SOLVED_KEY],
   ["aiSolveCount", AI_SOLVECOUNT_KEY],
   ["aiLastAt", AI_LAST_AT_KEY],
+  ["aiOpened", `${AI_OPENED_PREFIX}*`],
   // The replay-guard nonces are also contestant PROGRESS in the same sense —
   // spent single-use markers from THIS event, not something a fresh one
   // should start carrying.

@@ -4,7 +4,7 @@
 // through the exported pure helper.
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import AdminInsightsTab, { SolvesChart, axisLabels, bucketHeight, bucketTitle, bucketWidthLabel } from "@/app/(site)/admin/admin-insights-tab";
+import AdminInsightsTab, { SolvesChart, axisLabels, bucketHeight, bucketTitle, bucketWidthLabel, medianTimeCell } from "@/app/(site)/admin/admin-insights-tab";
 
 describe("AdminInsightsTab initial view", () => {
   it("offers the compute button, as primary, and says where the numbers come from", () => {
@@ -88,5 +88,22 @@ describe("the solves chart's buckets", () => {
     expect(bucketWidthLabel(60)).toBe("One-hour");
     expect(bucketWidthLabel(120)).toBe("Two-hour");
     expect(bucketWidthLabel(1440)).toBe("24-hour");
+  });
+});
+
+// #616: the median names its measure. Open-to-solve shows plain; a figure
+// from the first wrong flag is starred and explained in the caption; a row
+// where everyone was right first time shows "—", never "0s".
+describe("medianTimeCell", () => {
+  it("shows an open-to-solve median plainly", () => {
+    expect(medianTimeCell(600, "open")).toBe("10m");
+  });
+
+  it("stars a first-miss median", () => {
+    expect(medianTimeCell(300, "first-miss")).toBe("5m*");
+  });
+
+  it("shows a dash when the time is not known", () => {
+    expect(medianTimeCell(null, null)).toBe("—");
   });
 });

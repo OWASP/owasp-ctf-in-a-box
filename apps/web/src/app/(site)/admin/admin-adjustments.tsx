@@ -6,7 +6,7 @@
 // move. Removing one is audited like adding one.
 
 import { useEffect, useState } from "react";
-import { ADJUSTMENT_MAX } from "@/lib/adjustment-keys";
+import { ADJUSTMENT_MAX, isTeamSlug } from "@/lib/adjustment-keys";
 
 export type AdjustmentRow = { id: string; slug: string; points: number; reason: string; by: string; at: string };
 
@@ -40,6 +40,25 @@ export async function fetchAdjustments(): Promise<AdjustmentRow[]> {
   return data.adjustments ?? [];
 }
 
+/** What a superseded read resolves to. */
+export const STALE = Symbol("stale read");
+
+/** Runs reads so that only the one started last reports: an earlier read
+ *  that lands after it (or fails after it) resolves to STALE instead. */
+export function latestRead<T>(): (read: () => Promise<T>) => Promise<T | typeof STALE> {
+  let latest = 0;
+  return async (read) => {
+    const mine = ++latest;
+    try {
+      const value = await read();
+      return mine === latest ? value : STALE;
+    } catch (err) {
+      if (mine !== latest) return STALE;
+      throw err;
+    }
+  };
+}
+
 /** What the list area shows: a read that never succeeded is a failure, not
  *  a load still in flight. */
 export function listState(rows: readonly AdjustmentRow[] | null, error: string | null): "loading" | "failed" | "list" {
@@ -59,10 +78,12 @@ export default function AdminAdjustments({
   const [reason, setReason] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [read] = useState(() => latestRead<AdjustmentRow[]>());
 
   async function load() {
     try {
-      setRows(await fetchAdjustments());
+      const list = await read(fetchAdjustments);
+      if (list !== STALE) setRows(list);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load adjustments");
     }
@@ -71,9 +92,9 @@ export default function AdminAdjustments({
   useEffect(() => {
     if (initial !== null) return;
     let cancelled = false;
-    fetchAdjustments()
+    read(fetchAdjustments)
       .then((list) => {
-        if (!cancelled) setRows(list);
+        if (!cancelled && list !== STALE) setRows(list);
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Could not load adjustments");
@@ -81,7 +102,7 @@ export default function AdminAdjustments({
     return () => {
       cancelled = true;
     };
-  }, [initial]);
+  }, [initial, read]);
 
   async function send(method: "POST" | "DELETE", body: Record<string, unknown>) {
     setPending(true);
@@ -108,7 +129,7 @@ export default function AdminAdjustments({
   }
 
   const parsed = parseAdjustmentPoints(points);
-  const ready = slug.trim() !== "" && reason.trim() !== "" && parsed !== null;
+  const ready = isTeamSlug(slug) && reason.trim() !== "" && parsed !== null;
 
   return (
     <section className="flex flex-col gap-3 border-t border-white/[0.06] pt-5">

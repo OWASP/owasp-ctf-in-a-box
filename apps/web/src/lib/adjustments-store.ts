@@ -16,7 +16,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-store";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
-import { ADJUSTMENT_MAX, ADJUSTMENTS_KEY } from "@/lib/adjustment-keys";
+import { ADJUSTMENT_MAX, ADJUSTMENTS_KEY, isTeamSlug } from "@/lib/adjustment-keys";
 
 export { ADJUSTMENT_MAX, ADJUSTMENTS_KEY };
 export const ADJUSTMENT_REASON_MAX = 200;
@@ -33,13 +33,17 @@ export class AdjustmentValidationError extends Error {
   }
 }
 
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+// A script's earlier writes stay when a later command fails, so each one
+// checks that the audit list can take its line before it touches the ledger:
+// a change and its audit line land together or not at all.
 
 // KEYS: [1]=ledger [2]=team hash [3]=audit list
 // ARGV: [1]=id [2]=row JSON [3]=audit line [4]=audit cap index
 // Exported for the live suite only.
 export const ADD_SCRIPT = `
 if redis.call('EXISTS', KEYS[2]) == 0 then return 'no-team' end
+local t = redis.call('TYPE', KEYS[3])['ok']
+if t ~= 'none' and t ~= 'list' then return 'audit-unwritable' end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 redis.call('LPUSH', KEYS[3], ARGV[3])
 redis.call('LTRIM', KEYS[3], 0, tonumber(ARGV[4]))
@@ -47,19 +51,24 @@ return 'ok'`;
 
 // KEYS: [1]=ledger [2]=audit list
 // ARGV: [1]=id [2]=actor [3]=at [4]=audit cap index
-// Answers the removed row, or nil when there was none.
+// Answers the removed row, or nil when there was none. A row that is not
+// valid JSON is still removed, and recorded as its text.
 // Exported for the live suite only.
 export const REMOVE_SCRIPT = `
 local row = redis.call('HGET', KEYS[1], ARGV[1])
 if not row then return nil end
+local t = redis.call('TYPE', KEYS[2])['ok']
+if t ~= 'none' and t ~= 'list' then return 'audit-unwritable' end
+local ok, decoded = pcall(cjson.decode, row)
+local line = cjson.encode({ at = ARGV[3], by = ARGV[2], action = 'adjustment:remove', id = ARGV[1], row = ok and decoded or row })
 redis.call('HDEL', KEYS[1], ARGV[1])
-redis.call('LPUSH', KEYS[2], cjson.encode({ at = ARGV[3], by = ARGV[2], action = 'adjustment:remove', id = ARGV[1], row = cjson.decode(row) }))
+redis.call('LPUSH', KEYS[2], line)
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]))
 return row`;
 
 export async function addAdjustment(rawSlug: string, points: number, rawReason: string, actor: string): Promise<Adjustment> {
   const slug = rawSlug.trim().toLowerCase();
-  if (!SLUG_RE.test(slug)) throw new AdjustmentValidationError("slug", `'${rawSlug}' is not a team slug`);
+  if (!isTeamSlug(slug)) throw new AdjustmentValidationError("slug", `'${rawSlug}' is not a team slug`);
   if (!Number.isInteger(points) || points === 0 || Math.abs(points) > ADJUSTMENT_MAX) {
     throw new AdjustmentValidationError("points", `points must be a whole number, not 0, between -${ADJUSTMENT_MAX} and ${ADJUSTMENT_MAX}`);
   }
@@ -76,12 +85,14 @@ export async function addAdjustment(rawSlug: string, points: number, rawReason: 
     [adj.id, JSON.stringify(adj), audit, String(AUDIT_CAP - 1)],
   );
   if (verdict === "no-team") throw new AdjustmentValidationError("slug", `No team "${slug}"`);
+  if (verdict === "audit-unwritable") throw new Error("the admin audit log is not writable; nothing was changed");
   if (verdict !== "ok") throw new Error(`unexpected verdict from the adjustment script: ${String(verdict)}`);
   return adj;
 }
 
 export async function removeAdjustment(id: string, actor: string): Promise<Adjustment> {
   const removed = await upstashEval(REMOVE_SCRIPT, [ADJUSTMENTS_KEY, ADMIN_AUDIT_KEY], [id, actor, new Date().toISOString(), String(AUDIT_CAP - 1)]);
+  if (removed === "audit-unwritable") throw new Error("the admin audit log is not writable; nothing was changed");
   if (typeof removed !== "string") throw new AdjustmentValidationError("id", `No adjustment "${id}"`);
   return JSON.parse(removed) as Adjustment;
 }

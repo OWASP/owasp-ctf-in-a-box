@@ -3,7 +3,8 @@
 // what each row says, and the empty state.
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import AdminAdjustments, { adjustmentRow, fetchAdjustments, listState, parseAdjustmentPoints } from "@/app/(site)/admin/admin-adjustments";
+import AdminAdjustments, { STALE, adjustmentRow, fetchAdjustments, latestRead, listState, parseAdjustmentPoints } from "@/app/(site)/admin/admin-adjustments";
+import { isTeamSlug } from "@/lib/adjustment-keys";
 
 const ROW = { id: "a1", slug: "red-team", points: -10, reason: "late flag sharing", by: "alice", at: "2026-10-09T17:00:00.000Z" };
 
@@ -68,5 +69,41 @@ describe("loading the ledger", () => {
     expect(listState(null, "unavailable")).toBe("failed");
     expect(listState(null, null)).toBe("loading");
     expect(listState([], "unavailable")).toBe("list");
+  });
+});
+
+// The initial read and the reload after an add can overlap; whichever was
+// started last is the ledger, so an earlier read that lands late is dropped.
+describe("latestRead", () => {
+  it("drops a read that resolves after a newer one was started", async () => {
+    const read = latestRead<string>();
+    let releaseFirst: (v: string) => void = () => {};
+    const first = read(() => new Promise<string>((r) => (releaseFirst = r)));
+    const second = read(async () => "after the add");
+    expect(await second).toBe("after the add");
+    releaseFirst("before the add");
+    expect(await first).toBe(STALE);
+  });
+
+  it("drops a stale read's failure too, and passes the newest one's", async () => {
+    const read = latestRead<string>();
+    let failFirst: (e: Error) => void = () => {};
+    const first = read(() => new Promise<string>((_, reject) => (failFirst = reject)));
+    const second = read(async () => {
+      throw new Error("unavailable");
+    });
+    await expect(second).rejects.toThrow("unavailable");
+    failFirst(new Error("old"));
+    expect(await first).toBe(STALE);
+  });
+});
+
+// Add is enabled only for a slug the server would accept.
+describe("isTeamSlug", () => {
+  it.each(["red-team", "RED-team", " red ", "a", "team-42"])("accepts %j", (text) => {
+    expect(isTeamSlug(text)).toBe(true);
+  });
+  it.each(["", "red team", "-red", "red_team", "équipe", "a".repeat(65)])("refuses %j", (text) => {
+    expect(isTeamSlug(text)).toBe(false);
   });
 });

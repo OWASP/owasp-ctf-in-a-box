@@ -9,7 +9,12 @@ import { liveConfigured, liveKey } from "./live-redis";
 vi.mock("server-only", () => ({}));
 
 describe.skipIf(!liveConfigured)("score-adjustment scripts against a live Redis", () => {
-  const K = { ledger: liveKey("adj", "ledger"), team: liveKey("adj", "team"), audit: liveKey("adj", "audit") };
+  const K = {
+    ledger: liveKey("adj", "ledger"),
+    team: liveKey("adj", "team"),
+    audit: liveKey("adj", "audit"),
+    badAudit: liveKey("adj", "bad-audit"),
+  };
 
   async function load() {
     const store = await import("@/lib/adjustments-store");
@@ -44,5 +49,33 @@ describe.skipIf(!liveConfigured)("score-adjustment scripts against a live Redis"
     expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.audit], ["nope", "admin", "t3", "1"])).toBeNull();
     const [a3] = await pipeline([["LLEN", K.audit]]);
     expect(a3.result).toBe(2);
+  });
+
+  // A ledger change and its audit line land together or not at all: Redis
+  // does not undo an earlier write when a later command in a script fails, so
+  // an audit key that cannot take the line is refused before anything moves.
+  it("refuses an add or a remove when the audit key is not a list, changing nothing", async () => {
+    const { store, upstashEval, pipeline } = await load();
+    const row = JSON.stringify({ id: "b1", slug: "red", points: 5, reason: "r", by: "admin", at: "t" });
+    await pipeline([["HSET", K.team, "name", "Red"], ["SET", K.badAudit, "not a list"]]);
+    expect(await upstashEval(store.ADD_SCRIPT, [K.ledger, K.team, K.badAudit], ["b1", row, "line", "1"])).toBe("audit-unwritable");
+    const [n] = await pipeline([["HEXISTS", K.ledger, "b1"]]);
+    expect(n.result).toBe(0);
+
+    await pipeline([["HSET", K.ledger, "b2", row]]);
+    expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.badAudit], ["b2", "admin", "t", "1"])).toBe("audit-unwritable");
+    const [kept] = await pipeline([["HEXISTS", K.ledger, "b2"]]);
+    expect(kept.result).toBe(1);
+  });
+
+  // A row that is not valid JSON is still removable, and the audit line
+  // carries it as text rather than the script failing after the delete.
+  it("removes an unparseable row and records it as text", async () => {
+    const { store, upstashEval, pipeline } = await load();
+    await pipeline([["DEL", K.audit], ["HSET", K.ledger, "c1", "{not json"]]);
+    expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.audit], ["c1", "admin", "t", "1"])).toBe("{not json");
+    const [gone, line] = await pipeline([["HEXISTS", K.ledger, "c1"], ["LINDEX", K.audit, 0]]);
+    expect(gone.result).toBe(0);
+    expect(JSON.parse(line.result as string)).toMatchObject({ action: "adjustment:remove", id: "c1", row: "{not json" });
   });
 });

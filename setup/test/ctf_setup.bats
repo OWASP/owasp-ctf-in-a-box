@@ -2508,11 +2508,16 @@ _fn_body_lines() {
 # the box reports not-launched, and fails on a miss otherwise.
 
 # The --jq filter check_step protect passes is gh's own jq, so a test that
-# wants to exercise it needs a real jq. Present on CI's ubuntu runners (and
-# installed by the shell job); a machine without one sees a visible skip
-# rather than a silently weakened gate.
+# wants to exercise it needs a real jq. A machine without one sees a visible
+# skip rather than a silently weakened gate; CI's shell job installs jq and
+# sets CTF_SETUP_REQUIRE_JQ=1, which turns that skip into a failure.
 need_jq() {
-  command -v jq >/dev/null || skip "jq not installed — the protection --jq filter tests need a real jq"
+  command -v jq >/dev/null && return 0
+  if [ "${CTF_SETUP_REQUIRE_JQ:-}" = "1" ]; then
+    echo "FAIL: jq is not installed, and CTF_SETUP_REQUIRE_JQ=1 forbids skipping the protection --jq filter tests" >&2
+    return 1
+  fi
+  skip "jq not installed — the protection --jq filter tests need a real jq (CI sets CTF_SETUP_REQUIRE_JQ=1, where this is a failure)"
 }
 
 # A recorded GitHub protection payload in the shape the API actually returns

@@ -60,11 +60,18 @@ ENV
     [ -s "$RENDERED" ]
   }
   # The render shells out to `docker compose`. Skipping is honest when docker
-  # is absent (a laptop without it running the rest of the suite); CI has it,
-  # so these never silently vanish where it counts.
+  # is absent (a laptop without it running the rest of the suite). CI sets
+  # FLY_BATS_REQUIRE_DOCKER=1, which turns that skip into a failure: a render
+  # test that skips there is a gate that proved nothing.
   need_docker() {
-    command -v docker >/dev/null || skip "docker not available"
-    docker compose version >/dev/null 2>&1 || skip "docker compose not available"
+    if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ "${FLY_BATS_REQUIRE_DOCKER:-}" = "1" ]; then
+      echo "FAIL: docker compose is not available, and FLY_BATS_REQUIRE_DOCKER=1 forbids skipping the render tests" >&2
+      return 1
+    fi
+    skip "docker compose not available (CI sets FLY_BATS_REQUIRE_DOCKER=1, where this is a failure)"
   }
 }
 

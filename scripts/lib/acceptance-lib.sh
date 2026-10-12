@@ -297,7 +297,7 @@ acc_boot_redis_srh() {
   echo "--- booting redis + srh"
   docker rm -f "$pfx-redis" "$pfx-srh" >/dev/null 2>&1 || true
   docker run -d --name "$pfx-redis" --network "$net" --network-alias redis \
-    redis:7-alpine redis-server --appendonly yes >/dev/null
+    redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 redis-server --appendonly yes >/dev/null
   docker run -d --name "$pfx-srh" --network "$net" --network-alias srh \
     -e SRH_MODE=env -e SRH_TOKEN="$token" -e SRH_CONNECTION_STRING=redis://redis:6379 \
     hiett/serverless-redis-http:latest@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150 >/dev/null
@@ -434,12 +434,12 @@ acc_assert_leaderboard_contrib() {
   lb_base="$1"; lb_module="$2"; lb_login="$3"; lb_points_fmt="$4"
   echo "--- /leaderboard shows the seeded contestant by login, with their $lb_module points"
   lb_html="$(curl -sf "$lb_base/leaderboard")"
-  if ! echo "$lb_html" | grep -qF "$lb_login"; then
+  if ! grep -qF "$lb_login" <<< "$lb_html"; then
     echo "FAIL: /leaderboard has no row for $lb_login — a contestant whose" >&2
     echo "      only points are $lb_module points did not get a row created at all." >&2
     return 1
   fi
-  if ! echo "$lb_html" | grep -qF "$lb_points_fmt"; then
+  if ! grep -qF "$lb_points_fmt" <<< "$lb_html"; then
     echo "FAIL: /leaderboard shows $lb_login but not their $lb_module total" >&2
     echo "      ($lb_points_fmt) — the row exists, so the module" >&2
     echo "      overlay ran, but the points did not reach it." >&2

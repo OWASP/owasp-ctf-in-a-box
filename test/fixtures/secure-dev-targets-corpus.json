@@ -1,0 +1,20 @@
+{
+  "_comment": "How each reader decodes ctf:admin:settings.secureDevTargets. Run verbatim by apps/web/src/lib/__tests__/secure-dev-targets.test.ts (normalizeSecureDevTargets) and sync/test/redis.test.js (getSecureDevTargets). The two readers fail in OPPOSITE directions on purpose: the app only DISPLAYS targets, so anything it cannot use reads as 'default' (all six, the fresh-box answer); the poller decides what SCORES, so anything it cannot use is 'refuse' (skip the tick and log why) rather than a guess. Where both accept a list they must agree on it exactly, in catalogue order. raw null means the field is absent. app: a list, or \"default\". sync: a list, \"all\" (every target), or \"refuse\".",
+  "cases": [
+    { "description": "absent field", "raw": null, "app": "default", "sync": "all" },
+    { "description": "empty string is absent, not an empty selection", "raw": "", "app": "default", "sync": "all" },
+    { "description": "one target", "raw": "[\"vampi\"]", "app": ["vampi"], "sync": ["vampi"] },
+    { "description": "stored order is not returned order: catalogue order wins", "raw": "[\"vampi\",\"webgoat\",\"juice-shop\"]", "app": ["juice-shop", "webgoat", "vampi"], "sync": ["juice-shop", "webgoat", "vampi"] },
+    { "description": "duplicates collapse", "raw": "[\"vampi\",\"vampi\",\"dvwa\"]", "app": ["dvwa", "vampi"], "sync": ["dvwa", "vampi"] },
+    { "description": "unknown ids are dropped when a known one survives", "raw": "[\"vampi\",\"not-a-target\"]", "app": ["vampi"], "sync": ["vampi"] },
+    { "description": "non-string entries are dropped", "raw": "[1,null,\"dvwa\",{\"id\":\"vampi\"}]", "app": ["dvwa"], "sync": ["dvwa"] },
+    { "description": "ids are case-sensitive", "raw": "[\"DVWA\",\"vampi\"]", "app": ["vampi"], "sync": ["vampi"] },
+    { "description": "every target, explicitly", "raw": "[\"juice-shop\",\"dvwa\",\"webgoat\",\"securityshepherd\",\"vulnerableapp\",\"vampi\"]", "app": ["juice-shop", "dvwa", "webgoat", "securityshepherd", "vulnerableapp", "vampi"], "sync": "all" },
+    { "description": "an empty array", "raw": "[]", "app": "default", "sync": "refuse" },
+    { "description": "only unknown ids", "raw": "[\"nope\",\"still-nope\"]", "app": "default", "sync": "refuse" },
+    { "description": "not JSON", "raw": "{not json", "app": "default", "sync": "refuse" },
+    { "description": "a JSON object, not an array", "raw": "{\"vampi\":true}", "app": "default", "sync": "refuse" },
+    { "description": "a bare JSON string, not an array", "raw": "\"vampi\"", "app": "default", "sync": "refuse" },
+    { "description": "whitespace only", "raw": "   ", "app": "default", "sync": "refuse" }
+  ]
+}

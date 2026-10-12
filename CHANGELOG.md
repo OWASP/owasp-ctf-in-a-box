@@ -17,6 +17,19 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   exact tie goes to the login that sorts first, ignoring case. A progress
   reset, a deleted contestant or a removal from a team passes their first
   bloods to the next solver. A locked story step shows none.
+- **Fixed: CI gates that could pass without proving anything (#498).** The
+  vacuous-pass sweep (`scorer/tools/vacuous-sweep.mjs`) now exits 1 when a
+  target's run aborted, got stuck behind a shared gate, or was not measured
+  at all; before, only a vacuous pass failed it, so an unmeasured target read
+  as clean. CI's path filter moved into `scripts/ci-changes.sh` with a bats
+  suite: it no longer skips an area when the changed-file list passes 64 KiB
+  (a SIGPIPE under `pipefail`), and it now runs the app suite for the rubric
+  catalogues and `caddy/`, where the app job also runs `caddy validate`. The
+  docker- and jq-dependent bats tests fail in CI instead of skipping, the
+  window corpora carry a row-count floor, `secureDevTargets` has a shared
+  corpus run by the app and the poller, every workflow action is pinned to a
+  commit, and the acceptance scripts' Redis images are digest-pinned.
+
 - **Fixed: the Insights CSV garbled accented titles in Excel (#624).**
   "¿Qué dice señor?" opened as "Â¿QuÃ© dice seÃ±or?": the file had no
   byte-order mark, so Excel read it in the system code page. The export now

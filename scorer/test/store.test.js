@@ -223,6 +223,9 @@ test("outsideWindow: before start / after end / inside / unbounded / bad", () =>
 test("outsideWindow: shared boundary-instant corpus", async (t) => {
   const url = new URL("../../test/fixtures/window-corpus.json", import.meta.url);
   const { cases } = JSON.parse(await readFile(url, "utf8"));
+  // A floor at the committed row count: an emptied or truncated corpus would
+  // otherwise run zero subtests here and pass.
+  assert.ok(Array.isArray(cases) && cases.length >= 16, `window-corpus.json has ${cases?.length} rows, expected at least 16`);
   for (const { description, nowMs, startsAt, endsAt, expected } of cases) {
     await t.test(description, () => {
       assert.equal(outsideWindow(nowMs, startsAt, endsAt), expected);
@@ -236,6 +239,9 @@ test("outsideWindow: shared boundary-instant corpus", async (t) => {
 test("outsideScoringWindow: shared scoring-window corpus (#464)", async (t) => {
   const url = new URL("../../test/fixtures/scoring-window-corpus.json", import.meta.url);
   const { cases } = JSON.parse(await readFile(url, "utf8"));
+  // A floor at the committed row count: an emptied or truncated corpus would
+  // otherwise run zero subtests here and pass.
+  assert.ok(Array.isArray(cases) && cases.length >= 10, `scoring-window-corpus.json has ${cases?.length} rows, expected at least 10`);
   for (const { description, nowMs, startsAt, endsAt, expected } of cases) {
     await t.test(description, () => {
       assert.equal(outsideScoringWindow(nowMs, startsAt, endsAt), expected);

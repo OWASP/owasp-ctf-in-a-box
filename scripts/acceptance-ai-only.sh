@@ -249,7 +249,7 @@ acc_wait_http "$APP_URL" 90 /ai || {
 
 echo "--- /ai shows the seeded challenge by title"
 AI_HTML=$(curl -sf "$APP_URL/ai")
-if ! echo "$AI_HTML" | grep -qF "$CHALLENGE_TITLE"; then
+if ! grep -qF "$CHALLENGE_TITLE" <<< "$AI_HTML"; then
   echo "FAIL: /ai does not show '$CHALLENGE_TITLE'" >&2
   exit 1
 fi
@@ -257,7 +257,7 @@ fi
 # The single most important property of this module: a real, seeded flag must
 # never reach a contestant.
 echo "--- /ai never leaks the seeded flag itself"
-if echo "$AI_HTML" | grep -qF "$CHALLENGE_FLAG"; then
+if grep -qF "$CHALLENGE_FLAG" <<< "$AI_HTML"; then
   echo "FAIL: /ai leaked the seeded flag ('$CHALLENGE_FLAG') to the page" >&2
   exit 1
 fi
@@ -304,11 +304,11 @@ LAUNCH_KEY_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/api/ai/launch
   exit 1
 }
 LAUNCH_KEY_BODY=$(curl -sf "$APP_URL/api/ai/launch-key")
-if ! echo "$LAUNCH_KEY_BODY" | grep -qF '"alg":"Ed25519"'; then
+if ! grep -qF '"alg":"Ed25519"' <<< "$LAUNCH_KEY_BODY"; then
   echo "FAIL: /api/ai/launch-key did not report alg:Ed25519 — got: $LAUNCH_KEY_BODY" >&2
   exit 1
 fi
-if ! echo "$LAUNCH_KEY_BODY" | grep -qF 'BEGIN PUBLIC KEY'; then
+if ! grep -qF 'BEGIN PUBLIC KEY' <<< "$LAUNCH_KEY_BODY"; then
   echo "FAIL: /api/ai/launch-key did not include a PEM public key — got: $LAUNCH_KEY_BODY" >&2
   exit 1
 fi

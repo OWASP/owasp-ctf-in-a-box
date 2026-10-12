@@ -25,7 +25,8 @@ trap cleanup EXIT
 compose up -d --build redis srh scorer mock-github sync
 
 echo "--- redis answers"
-compose exec -T redis redis-cli ping | grep -q PONG
+pong="$(compose exec -T redis redis-cli ping 2>&1 || true)"
+grep -qx PONG <<< "$pong" || { echo "FAIL: redis did not answer PING with PONG: $pong"; exit 1; }
 
 # The two halves of the Redis hardening, asserted rather than assumed. Both
 # are the kind of control that looks present in a compose file and is absent
@@ -82,13 +83,21 @@ until compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | 
   [ "$SECONDS" -ge "$prelaunch_deadline" ] && { echo "FAIL: sync heartbeat never reported paused before launch"; compose logs sync; exit 1; }
   sleep 1
 done
+# The board is read into a variable first: a failed read must not count as
+# "octocat absent", and at least one read has to succeed for the hold to have
+# looked at anything.
 hold_until=$((SECONDS + 6))
+hold_reads=0
 while [ "$SECONDS" -lt "$hold_until" ]; do
-  if curl -sf http://localhost:4000/leaderboard | grep -q '"octocat"'; then
-    echo "FAIL: sync ingested scores before launch (scoringStartsAt unset)"; compose logs sync; exit 1
+  if hold_board="$(curl -sf http://localhost:4000/leaderboard)"; then
+    hold_reads=$((hold_reads + 1))
+    if grep -qF '"octocat"' <<< "$hold_board"; then
+      echo "FAIL: sync ingested scores before launch (scoringStartsAt unset)"; compose logs sync; exit 1
+    fi
   fi
   sleep 2
 done
+[ "$hold_reads" -gt 0 ] || { echo "FAIL: the leaderboard never answered during the pre-launch hold, so it proved nothing"; compose logs scorer; exit 1; }
 
 echo "--- launch: write scoringStartsAt"
 # The app isn't in this profile, so write the field /admin's Launch writes
@@ -107,18 +116,22 @@ board=$(curl -sf http://localhost:4000/leaderboard)
 echo "$board"
 
 echo "--- scores match fixtures (1 point per solved id)"
-echo "$board" | grep -q '"author":"octocat","points":2'
-echo "$board" | grep -q '"author":"mona","points":1'
+# Here-strings, not `echo | grep -q`: under pipefail a large board can lose
+# the SIGPIPE race and fail on a line that matched.
+grep -qF '"author":"octocat","points":2' <<< "$board" \
+  || { echo "FAIL: leaderboard has no octocat at 2 points"; exit 1; }
+grep -qF '"author":"mona","points":1' <<< "$board" \
+  || { echo "FAIL: leaderboard has no mona at 1 point"; exit 1; }
 
 echo "--- forged comment from mallory was ignored (trust filter)"
-if echo "$board" | grep -q '"author":"mallory"'; then
+if grep -qF '"author":"mallory"' <<< "$board"; then
   echo "FAIL: forged comment was scored"; exit 1
 fi
 
 echo "--- unauthenticated POST /score rejected"
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:4000/score \
   -H 'content-type: application/json' -d '{"author":"evil","target":"dvwa","solved":["x"]}')
-[ "$code" = "401" ]
+[ "$code" = "401" ] || { echo "FAIL: unauthenticated POST /score answered $code, not 401"; exit 1; }
 
 echo "--- organizer freeze holds ingestion (poll mode)"
 # The app isn't in this smoke profile (only redis/srh/scorer/mock-github/sync
@@ -144,7 +157,7 @@ compose exec -T mock-github touch /tmp/extra-comment >/dev/null
 echo "--- paused poller does not ingest the queued score (holding 5s)"
 sleep 5
 board=$(curl -sf http://localhost:4000/leaderboard)
-if echo "$board" | grep -q '"author":"trinity"'; then
+if grep -qF '"author":"trinity"' <<< "$board"; then
   echo "FAIL: trinity was scored while paused"; exit 1
 fi
 compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | grep -q '^1$' \

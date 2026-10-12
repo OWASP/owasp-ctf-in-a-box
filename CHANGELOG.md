@@ -24,7 +24,6 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   67). Both lists are secret and masked like the flag. A bundle carrying them
   is version 4. A single-flag challenge, older bundles (versions 1 to 3) and
   event archives grade and import unchanged.
-
 - **Added: first blood on the Jeopardy board (#188).** Each visible tile and
   open story step names the contestant who solved it first. It is display
   only and changes no score. It is read from the current team members' solve

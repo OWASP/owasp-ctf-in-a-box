@@ -31,6 +31,22 @@ export function parseAdjustmentPoints(text: string): number | null {
   return n !== 0 && Math.abs(n) <= ADJUSTMENT_MAX ? n : null;
 }
 
+/** The ledger as the panel reads it; throws the server's error on a refused
+ *  read, so a failure surfaces instead of leaving the list loading. */
+export async function fetchAdjustments(): Promise<AdjustmentRow[]> {
+  const res = await fetch("/api/admin/adjustments");
+  const data = (await res.json().catch(() => ({}))) as { adjustments?: AdjustmentRow[]; error?: string };
+  if (!res.ok) throw new Error(data.error ?? "Could not load adjustments");
+  return data.adjustments ?? [];
+}
+
+/** What the list area shows: a read that never succeeded is a failure, not
+ *  a load still in flight. */
+export function listState(rows: readonly AdjustmentRow[] | null, error: string | null): "loading" | "failed" | "list" {
+  if (rows !== null) return "list";
+  return error ? "failed" : "loading";
+}
+
 export default function AdminAdjustments({
   initial = null,
 }: {
@@ -46,10 +62,7 @@ export default function AdminAdjustments({
 
   async function load() {
     try {
-      const res = await fetch("/api/admin/adjustments");
-      const data = (await res.json().catch(() => ({}))) as { adjustments?: AdjustmentRow[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Could not load adjustments");
-      setRows(data.adjustments ?? []);
+      setRows(await fetchAdjustments());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load adjustments");
     }
@@ -58,13 +71,12 @@ export default function AdminAdjustments({
   useEffect(() => {
     if (initial !== null) return;
     let cancelled = false;
-    void fetch("/api/admin/adjustments")
-      .then((res) => res.json().then((data: { adjustments?: AdjustmentRow[] }) => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!cancelled && ok) setRows(data.adjustments ?? []);
+    fetchAdjustments()
+      .then((list) => {
+        if (!cancelled) setRows(list);
       })
-      .catch(() => {
-        if (!cancelled) setError("Could not load adjustments");
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load adjustments");
       });
     return () => {
       cancelled = true;
@@ -117,7 +129,7 @@ export default function AdminAdjustments({
         </button>
       </div>
       {rows === null ? (
-        <p className="text-sm text-muted">Loading…</p>
+        listState(rows, error) === "loading" && <p className="text-sm text-muted">Loading…</p>
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted">No adjustments yet.</p>
       ) : (

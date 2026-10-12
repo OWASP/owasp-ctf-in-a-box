@@ -1,9 +1,9 @@
 // /admin → Support → Score adjustments (#591): the ledger an organizer adds
 // to and removes from. Static render with seeded rows (no DOM in this suite):
 // what each row says, and the empty state.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import AdminAdjustments, { adjustmentRow, parseAdjustmentPoints } from "@/app/(site)/admin/admin-adjustments";
+import AdminAdjustments, { adjustmentRow, fetchAdjustments, listState, parseAdjustmentPoints } from "@/app/(site)/admin/admin-adjustments";
 
 const ROW = { id: "a1", slug: "red-team", points: -10, reason: "late flag sharing", by: "alice", at: "2026-10-09T17:00:00.000Z" };
 
@@ -41,5 +41,32 @@ describe("parseAdjustmentPoints", () => {
 
   it.each(["", "   ", "0", "-0", "1e3", "1.5", "0x10", "abc", "100001", "-100001", "200000"])("refuses %j", (text) => {
     expect(parseAdjustmentPoints(text)).toBeNull();
+  });
+});
+
+// A ledger the panel cannot read must say so: "Loading…" forever hides it.
+describe("loading the ledger", () => {
+  it("fetchAdjustments throws the server's error on a refused read", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "unavailable" }), { status: 503 })));
+    await expect(fetchAdjustments()).rejects.toThrow("unavailable");
+    vi.unstubAllGlobals();
+  });
+
+  it("fetchAdjustments names the failure when the body has no error", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 403 })));
+    await expect(fetchAdjustments()).rejects.toThrow("Could not load adjustments");
+    vi.unstubAllGlobals();
+  });
+
+  it("fetchAdjustments returns the rows on success", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ adjustments: [ROW] }), { status: 200 })));
+    expect(await fetchAdjustments()).toEqual([ROW]);
+    vi.unstubAllGlobals();
+  });
+
+  it("listState is failed, not loading, when the first read failed", () => {
+    expect(listState(null, "unavailable")).toBe("failed");
+    expect(listState(null, null)).toBe("loading");
+    expect(listState([], "unavailable")).toBe("list");
   });
 });

@@ -245,22 +245,38 @@ export default async function ProfilePage() {
   let classicLockedCount = 0;
   if (classicEnabled) {
     const stories = await listStories();
-    // ONE roster — the store team this page already read, the viewer leading
-    // it — and ONE fold for both halves of the denominator: the solved-id set
-    // that unlocks steps and the per-item points the ceiling counts. The two
-    // must come from the same read, or a teammate's solve of a challenge
-    // since deleted reaches the count with no points behind it (issue #570).
-    // The fold is the same `getTeamClassicTotalsBatch` the leaderboard rows
-    // use, so the profile and the board can't disagree about what the team
-    // solved. A viewer with no team folds as a team of one.
-    const roster = [...new Set([login, ...(storeTeam?.members ?? [])])];
-    const [teamClassic] = await getTeamClassicTotalsBatch([roster]);
-    const teamSolved = new Set(teamClassic?.itemIds ?? []);
-    const solvedRecords: Record<string, { points?: number }> = {};
-    for (const [id, points] of Object.entries(teamClassic?.itemPoints ?? {})) {
-      solvedRecords[id] = { points };
-    }
     const viewerSolved = viewerClassic.solved;
+    // Both halves of the denominator — the solved-id set that unlocks steps
+    // and the per-item points the ceiling counts — come from ONE read per
+    // membership state, or they drift apart: pairing a team-wide id set with
+    // only the viewer's own records puts a teammate's solve of a
+    // since-deleted challenge in the count with no points behind it
+    // (issue #570).
+    const teamSolved = new Set<string>();
+    const solvedRecords: Record<string, { points?: number }> = {};
+    if (storeTeam) {
+      // The store team this page already read, the viewer leading it — folded
+      // through the same `getTeamClassicTotalsBatch` the leaderboard rows use,
+      // so the profile and the board can't disagree about what the team
+      // solved.
+      const roster = [...new Set([login, ...storeTeam.members])];
+      const [teamClassic] = await getTeamClassicTotalsBatch([roster]);
+      for (const id of teamClassic?.itemIds ?? []) teamSolved.add(id);
+      for (const [id, points] of Object.entries(teamClassic?.itemPoints ?? {})) {
+        solvedRecords[id] = { points };
+      }
+    } else {
+      // No team: story unlock is a TEAM property, so with no roster nothing
+      // unlocks past step 1 — a solve banked before leaving a team must not
+      // open the next step for a lone contestant. The viewer's OWN records
+      // still feed the union below, so a challenge they solved and an
+      // organizer has since deleted keeps its banked points in the ceiling.
+      // No fold read is needed for that half: those records are the same
+      // per-login hash this page already read for the Show-N lists.
+      for (const [id, solve] of Object.entries(viewerSolved)) {
+        solvedRecords[id] = { points: solve.points };
+      }
+    }
     const reachable = classicReachableDenominator(classicChallenges, stories, teamSolved, solvedRecords);
     classicReachableTotal = reachable.total;
     classicReachableMaxPoints = reachable.max;

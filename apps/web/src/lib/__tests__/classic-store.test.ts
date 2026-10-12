@@ -661,6 +661,20 @@ describe("getTeamClassicTotalsBatch", () => {
     ]);
   });
 
+  // `upstashPipeline` reports a per-command failure as a VALUE, not a throw.
+  // Folding it as empty data would score the member as having solved nothing
+  // — a misleading team total that also re-locks story steps the member's
+  // solves had opened. The reply's error must reject the whole batch.
+  it("rejects on a failed member read instead of folding it as empty", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      solves({ "chal-1": { points: 50, at: "2026-08-19T10:00:00.000Z" } }),
+      { error: "NOAUTH Authentication required." },
+    ]);
+    await expect(getTeamClassicTotalsBatch([["alice"], ["bob"]])).rejects.toThrow(
+      "classic team solves read failed: NOAUTH Authentication required.",
+    );
+  });
+
   it("costs no round trip at all when no team has a member", async () => {
     expect(await getTeamClassicTotalsBatch([[], []])).toEqual([
       { points: 0, solved: 0, lastAt: null, itemIds: [] },

@@ -3,12 +3,15 @@
 // locked. The disclaimer is gated on `locked > 0`: an unlocked event (or one
 // with no stories at all) must not carry a note about steps it has no locked
 // steps of, and the solved/total pair beside it must stay exactly what it was.
-// The last test also pins the parity rule behind that denominator: the
+// One test also pins the parity rule behind that denominator: the
 // solved-id set and the point records come from ONE roster fold, so a
 // teammate's deleted solve counts in the ceiling exactly as the viewer's own.
 //
 // Same harness shape as `page.test.tsx` — renderToStaticMarkup of the real
-// Server Component, with the stores it reads stubbed.
+// Server Component, with the stores it reads stubbed. A teamed fixture
+// carries a store roster (the fold reads one); the teamless fixture pins
+// that no roster means no unlock past step 1, while the viewer's own banked
+// records still feed the denominator's union.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -110,6 +113,10 @@ function givenTeam(solvedIds: readonly string[], classicPoints: number, classicS
   getResolvedModules.mockResolvedValue([
     { id: "classic", nav: { href: "/challenges", label: "Challenges" }, targets: [], title: "Classic", blurb: "" },
   ]);
+  // The fold reads the STORE team's roster, so a fixture standing in for a
+  // teamed viewer has to carry one — a viewer with no store team reaches the
+  // teamless path instead (pinned in its own test below).
+  getViewerTeam.mockResolvedValue({ slug: "red", name: "Red", members: ["ada"] });
   listChallenges.mockResolvedValue(CHALLENGES);
   listStories.mockResolvedValue([STORY]);
   getClassicTotals.mockResolvedValue(new Map([["ada", { points: classicPoints, solved: classicSolved, lastAt: null }]]));
@@ -246,5 +253,51 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     // 90 pts reach the page (nothing else on it renders those digits).
     expect(html).not.toContain("Step Three");
     expect(html).not.toContain("90 pts");
+  });
+
+  // Story unlock is a TEAM property. A viewer with no store team must not
+  // fold as a "team of one" — that let a solve banked before leaving a team
+  // unlock the next step for the lone contestant alone. Their OWN banked
+  // records still feed the union (a since-deleted challenge keeps its points
+  // in the ceiling), and no team fold read is issued at all.
+  it("keeps later steps locked for a teamless viewer, preserving their banked points", async () => {
+    moduleLive.mockImplementation((id: string) => id === "classic");
+    getSession.mockResolvedValue({ user: { login: "ada", image: null } });
+    getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
+    getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
+    getResolvedModules.mockResolvedValue([
+      { id: "classic", nav: { href: "/challenges", label: "Challenges" }, targets: [], title: "Classic", blurb: "" },
+    ]);
+    // No team (beforeEach's default). The viewer's OWN records hold step-1
+    // and gone-1 — a challenge since deleted, banked at 70 pts.
+    listChallenges.mockResolvedValue(CHALLENGES);
+    listStories.mockResolvedValue([STORY]);
+    getClassicTotals.mockResolvedValue(new Map([["ada", { points: 80, solved: 2, lastAt: null }]]));
+    getViewerClassic.mockResolvedValue({
+      solved: { "step-1": { points: 10, at: "t" }, "gone-1": { points: 70, at: "t" } },
+      attempts: {},
+    });
+
+    const html = renderToStaticMarkup(await ProfilePage());
+
+    // Nothing to fold: the team batch read is skipped entirely.
+    expect(getViewerTeam).toHaveBeenCalledTimes(1);
+    expect(getTeamClassicTotalsBatch).not.toHaveBeenCalled();
+    // Reachability is empty, so step-2 (behind step-1's solo solve) and
+    // step-3 (behind step-2) both stay locked — a team-of-one fold would
+    // have opened step-2 and reported one locked step.
+    expect(html).toContain(DISCLAIMER);
+    expect(html).toContain("· 2 steps locked");
+    // The reachable count is step 1 plus gone-1's identity, never step 2.
+    expect(html).toContain("/ 2 solved");
+    expect(html).not.toContain("/ 3 solved");
+    // Historical points preserved: step-1's 10 and gone-1's solve-time 70
+    // stay in the ceiling; the 130 a team-of-one fold would have advertised
+    // (adding step-2's 50) never appears.
+    expect(html).toContain("80 of 80 pts available");
+    expect(html).not.toContain("of 130 pts");
+    // Locked-step secrecy: neither locked title reaches the page.
+    expect(html).not.toContain("Step Two");
+    expect(html).not.toContain("Step Three");
   });
 });

@@ -353,8 +353,8 @@ answer both count as an "attempt" toward the graded-path cooldown.
 
 The organizer can also cap those attempts (`aiMaxAttempts` on the AI tab).
 The default is no cap. With a cap of N, each player gets N graded
-submissions per challenge. The next one answers `403 {"error": "exhausted"}`
-without the flag being checked, so the refusal never says whether that flag
+submissions per challenge. While the challenge is still unsolved, the next one
+answers `403 {"error": "exhausted"}` without the flag being checked, so the refusal never says whether that flag
 was right. The cap is decided inside the same atomic grading step as the
 cooldown, so two simultaneous submissions at N-1 cannot both get through.
 Like the cooldown, it counts per player, not per team, and a signed event

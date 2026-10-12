@@ -30,7 +30,7 @@
 #     before the `#` does not start one, and neither does a `#` at the very
 #     start of the value — so `SCORE_IMAGE= # none` is the value `# none` to
 #     compose, and therefore here too.
-#   - The LAST assignment of a key wins.
+#   - The LAST assignment of a key wins, an empty one included.
 #   - An absent key, or an absent file, reads as empty.
 #
 # What compose reads and this reader does not is REFUSED, never guessed: the
@@ -46,13 +46,17 @@
 #     does not. A `$` compose leaves alone (`pa$5word`, `a$`, `a $ b`, and
 #     anything in single quotes) is read literally, as compose reads it.
 #   - A backslash inside double quotes, where compose interprets escapes
-#     (`\n`, `\"`, `\$`). An unquoted backslash is literal to both.
+#     (`\n`, `\"`, `\$`), and `\'` inside single quotes, which compose reads
+#     as an escaped quote. Any other backslash in single quotes, and every
+#     unquoted one, is literal to both.
 #   - A file that exists but cannot be read (permissions, a directory). An
 #     ABSENT file is still "not set".
 #
 # The shared corpora that pin all of this are test/fixtures/dotenv-corpus.env
 # (read) and test/fixtures/dotenv-corpus-rejected.env (refused), run by
-# scripts/test/dotenv.bats.
+# scripts/test/dotenv.bats, which also diffs the reader against `docker
+# compose config` over every generated combination of key form, value form,
+# line ending and duplicate: each must read as compose reads it, or be refused.
 #
 # bash 3.2 (macOS) compatible, BSD and GNU userlands, no jq or python.
 
@@ -73,6 +77,10 @@ dotenv_value() {
     ;;
   "'"*)
     rest="${v#\'}"
+    # Compose reads `\'` as an escaped quote inside single quotes, and every
+    # other backslash there literally. Decoding the one and not the other is
+    # a second parser to keep in step, so the escape is refused.
+    case "$rest" in *"\\'"*) return 4 ;; esac
     case "$rest" in *"'"*) ;; *) return 2 ;; esac
     v="${rest%%\'*}"
     ;;
@@ -120,19 +128,24 @@ dotenv_get() {
   local file="$1" key="$2" raw rc=0
   [ -e "$file" ] || return 0
   dotenv_readable "$file" || return 1
+  # Each assignment is printed behind a `=` marker and the LAST one is kept
+  # inside the pipeline: `$(...)` strips trailing newlines, so selecting it
+  # afterwards would let an empty last assignment fall through to an earlier
+  # value. No marker means the key is absent.
   if ! raw="$(tr -d '\r' <"$file" | sed -n \
     -e "s/^[[:space:]]*export[[:space:]]\{1,\}//" \
-    -e "s/^[[:space:]]*${key}[[:space:]]*[:=]//p")"; then
+    -e "s/^[[:space:]]*${key}[[:space:]]*[:=]/=/p" | tail -1)"; then
     echo "dotenv: $file could not be read" >&2
     return 1
   fi
-  raw="$(printf '%s\n' "$raw" | tail -1)"
+  [ -n "$raw" ] || return 0
+  raw="${raw#=}"
   dotenv_value "$raw" || rc=$?
   case "$rc" in
   0) return 0 ;;
   2) echo "dotenv: $file: $key has an unterminated quote; close it on the same line" >&2 ;;
   3) echo "dotenv: $file: $key uses interpolation this reader does not resolve; set the literal value (single-quote it to keep a literal \$)" >&2 ;;
-  *) echo "dotenv: $file: $key uses a backslash escape inside double quotes, which this reader does not interpret; set the literal value" >&2 ;;
+  *) echo "dotenv: $file: $key uses a backslash escape (inside double quotes, or before a quote in single quotes), which this reader does not interpret; set the literal value" >&2 ;;
   esac
   return 1
 }

@@ -254,3 +254,162 @@ dev_stack_copy() {
   echo "$output" | grep -qF 'uses interpolation'
   [ ! -s docker.log ]
 }
+
+# ---------------------------------------------------------------------------
+# Differential: the reader against `docker compose config` itself.
+#
+# The corpora pin the cases someone thought of. This generates every
+# combination of key form, value form, line ending and "last of a duplicate"
+# into ONE env file, has compose read all of it in ONE `config` call, and
+# requires, for every key, that the reader either returns exactly compose's
+# value or refuses (non-zero). Returning a DIFFERENT value is the one outcome
+# that fails — that is a script and the box disagreeing about the event.
+#
+# Needs docker compose. Skips without it locally; CI sets
+# DOTENV_BATS_REQUIRE_DOCKER=1, where a skip is a failure.
+# ---------------------------------------------------------------------------
+
+need_compose() {
+  if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "${DOTENV_BATS_REQUIRE_DOCKER:-}" = "1" ]; then
+    echo "FAIL: docker compose is not available, and DOTENV_BATS_REQUIRE_DOCKER=1 forbids skipping the differential test" >&2
+    return 1
+  fi
+  skip "docker compose not available (CI sets DOTENV_BATS_REQUIRE_DOCKER=1, where this is a failure)"
+}
+
+# Every value form, one per line, as the raw text after the key's separator
+# (the first line is the empty value). Each must parse as ONE line to compose: an unterminated quote would make it
+# continue onto the next line (or reject the whole file), so those live in
+# dotenv-corpus-rejected.env instead.
+differential_values() {
+  cat <<'VALUES'
+
+v
+v w
+v #c
+v#c
+v	#c
+#c
+v   
+a\b
+a\\b
+a'b
+a"b
+$X
+${X}
+${X:-d}
+$$
+pa$5
+a$
+a$-b
+\$X
+'v'
+''
+'v #c'
+'v' #c
+'v'tail
+'a\b'
+'a\\b'
+'a\'b'
+'a"b'
+'$X'
+'${X}'
+'$$'
+"v"
+""
+"v #c"
+"v" #c
+"v"tail
+"a\b"
+"a\\b"
+"a\"b"
+"a'b"
+"a\nb"
+"$X"
+"${X}"
+"\$X"
+"$$"
+"pa$5"
+VALUES
+}
+
+# Writes diff.env and diff.yml, and the key list to keys.txt.
+generate_differential() {
+  local n=0 sep form value eol key
+  : > diff.env
+  : > keys.txt
+  while IFS= read -r value; do
+    for form in plain export spaced colon; do
+      for eol in lf crlf; do
+        n=$((n + 1))
+        key="$(printf 'K%04d' "$n")"
+        case "$form" in
+        plain) sep="$key=" ;;
+        export) sep="export $key=" ;;
+        spaced) sep="$key = " ;;
+        colon) sep="$key: " ;;
+        esac
+        if [ "$eol" = crlf ]; then
+          printf '%s%s\r\n' "$sep" "$value" >> diff.env
+        else
+          printf '%s%s\n' "$sep" "$value" >> diff.env
+        fi
+        echo "$key" >> keys.txt
+      done
+    done
+    # The same value as the LAST of two assignments, after a non-empty one.
+    n=$((n + 1))
+    key="$(printf 'K%04d' "$n")"
+    printf '%s=earlier-value\n%s=%s\n' "$key" "$key" "$value" >> diff.env
+    echo "$key" >> keys.txt
+  done < <(differential_values)
+  {
+    printf 'services:\n  x:\n    image: busybox\n    environment:\n'
+    while IFS= read -r key; do
+      printf '      %s: "[${%s-UNSET}]"\n' "$key" "$key"
+    done < keys.txt
+  } > diff.yml
+}
+
+@test "differential: the reader returns compose's value or refuses, never a different value" {
+  need_compose
+  generate_differential
+  # A clean environment: compose interpolates `$X` from the shell, and the
+  # reader refuses those, so nothing here may depend on what X happens to be.
+  env -i PATH="$PATH" HOME="$HOME" docker compose --env-file diff.env -f diff.yml \
+    config --format json > compose.json 2>compose.err
+  mkdir -p got
+  bash -c '
+    . "$1"
+    while IFS= read -r key; do
+      if v="$(dotenv_get diff.env "$key" 2>/dev/null)"; then
+        printf "%s" "$v" > "got/$key.ok"
+      else
+        : > "got/$key.refused"
+      fi
+    done < keys.txt
+  ' _ "$LIB"
+  run node -e '
+    const fs = require("fs");
+    const env = JSON.parse(fs.readFileSync("compose.json", "utf8")).services.x.environment;
+    const keys = fs.readFileSync("keys.txt", "utf8").trim().split("\n");
+    let matched = 0, refused = 0, bad = [];
+    for (const k of keys) {
+      // compose prints a literal `$` as `$$`; the brackets mark the value.
+      const want = env[k].slice(1, -1).split("$$").join("$");
+      if (fs.existsSync(`got/${k}.refused`)) { refused++; continue; }
+      const got = fs.readFileSync(`got/${k}.ok`, "utf8");
+      if (got === want) matched++;
+      else bad.push(`DIVERGES ${k}: reader ${JSON.stringify(got)} compose ${JSON.stringify(want)}`);
+    }
+    for (const b of bad) console.log(b);
+    console.log(`cases=${keys.length} matched=${matched} refused=${refused} diverged=${bad.length}`);
+  '
+  echo "$output"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qE '^cases=[0-9]{3,} matched=[1-9]'
+  echo "$output" | grep -q ' diverged=0$'
+}

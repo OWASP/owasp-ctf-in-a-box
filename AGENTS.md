@@ -408,7 +408,8 @@ suggestions.
   corpora (`window-corpus.json`, `scoring-window-corpus.json`) that the app,
   scorer and sync suites all run (the three-reader rule above); and
   `dotenv-corpus.env` (and `dotenv-corpus-rejected.env`, the values it must
-  refuse), which `scripts/test/dotenv.bats` runs through
+  refuse), which `scripts/test/dotenv.bats` runs, with a differential
+  against `docker compose config` itself, through
   `scripts/lib/dotenv.sh`, the one `.env` reader every shell entry point
   sources (`scripts/lib/redact.sh` is the deploy scripts' one dry-run
   redactor, the same way).

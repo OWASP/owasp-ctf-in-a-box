@@ -796,7 +796,8 @@ about the same file. Within the subset below, each value is read exactly as
   the `#` is not preceded by a space once the value is trimmed, so the value
   is `# none`, which is not empty. Leave the value blank, or write `""`.
 - **Line endings.** Windows (CRLF) line endings read the same as Unix ones.
-- **Repeated keys.** The last assignment of a key wins.
+- **Repeated keys.** The last assignment of a key wins, even when it is
+  empty.
 
 Some things compose reads differently on purpose, and the reader **refuses**
 them. The command stops with an error naming the key and the file, never the
@@ -807,8 +808,9 @@ and the literal text of an expression would switch it on.
   the `$$` escape. Compose fills these in from your shell; the scripts do not,
   so write the literal value. A `$` that compose leaves alone is fine, such as
   `pa$5word`, a trailing `$`, or anything inside single quotes.
-- **Backslash escapes inside double quotes**, such as `\n` or `\"`. Compose
-  interprets them and the scripts do not. Use single quotes, or no quotes.
+- **Backslash escapes inside double quotes**, such as `\n` or `\"`, and `\'`
+  inside single quotes. Compose interprets them and the scripts do not. Use
+  single quotes (without `\'`), or no quotes.
 - **An unterminated quote.** Compose carries a double-quoted value on to the
   next lines; the scripts read one line per key.
 - **An env file that exists but cannot be read**, because of its permissions
@@ -816,7 +818,10 @@ and the literal text of an expression would switch it on.
 
 `test/fixtures/dotenv-corpus.env` holds every accepted case, each checked
 against `docker compose config`, and
-`test/fixtures/dotenv-corpus-rejected.env` holds every refused one.
+`test/fixtures/dotenv-corpus-rejected.env` holds every refused one. A
+differential test also has `docker compose config` read every generated
+combination of key form, value form, line ending and duplicate key, and fails
+if the scripts would read any of them differently.
 
 ### What `/admin` owns
 

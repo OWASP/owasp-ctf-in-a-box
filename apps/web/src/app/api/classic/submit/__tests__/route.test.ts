@@ -34,6 +34,9 @@ vi.mock("@/lib/enabled-modules", () => ({ isModuleLive }));
 // does with it.
 const adminView = vi.hoisted(() => ({ adminSeesHidden: vi.fn<(login: string, id: string) => Promise<boolean>>(async () => false) }));
 vi.mock("@/lib/classic-visibility", () => adminView);
+// Admins are the only callers whose body is read before the team check.
+const adminAuth = vi.hoisted(() => ({ isAdminLogin: vi.fn<(login: string | undefined) => Promise<boolean>>(async () => false) }));
+vi.mock("@/lib/admin-auth", () => adminAuth);
 
 import { POST } from "@/app/api/classic/submit/route";
 
@@ -65,6 +68,9 @@ beforeEach(() => {
   hasTeam.mockResolvedValue(true);
   isModuleLive.mockReset();
   isModuleLive.mockResolvedValue(true);
+  adminAuth.isAdminLogin.mockReset();
+  adminAuth.isAdminLogin.mockResolvedValue(false);
+  adminView.adminSeesHidden.mockClear();
   activityLog.logActivity.mockClear();
 });
 
@@ -320,8 +326,18 @@ describe("a locked story step (#463)", () => {
 // An admin may open a hidden or scheduled challenge after launch, and submit
 // on it as a dry run: nothing is recorded for the admin, whatever the answer.
 describe("an admin on a hidden challenge after launch", () => {
+  it("refuses a teamless contestant before the body is read, and never looks up the challenge", async () => {
+    hasTeam.mockResolvedValue(false);
+    const request = req({ challengeId: "c-1", flag: "CTF{x}" });
+    const res = await POST(request);
+    expect(res.status).toBe(403);
+    expect(request.bodyUsed).toBe(false);
+    expect(adminView.adminSeesHidden).not.toHaveBeenCalled();
+  });
+
   it("is graded as a dry run, even without a team", async () => {
     session("boss");
+    adminAuth.isAdminLogin.mockResolvedValue(true);
     hasTeam.mockResolvedValue(false);
     adminView.adminSeesHidden.mockResolvedValueOnce(true);
     storeReturns({ ok: true, correct: true, points: 50, dryRun: true });

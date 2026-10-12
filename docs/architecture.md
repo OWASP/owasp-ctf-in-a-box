@@ -496,7 +496,11 @@ per-challenge distinct-solver count, distinct by construction because the
 already-solved guard runs before any write; the admin list shows it as the
 players column). The contestant board shows a different figure, teams that
 solved each challenge (#595, `lib/team-solve-counts.ts`), folded from the
-members' solves hashes on read.
+members' solves hashes on read. The same read names each challenge's first
+blood (#188, `teamSolveBoard` and `lib/first-blood.ts`): the member with the
+earliest solve row `at`, an exact tie going to the case-insensitively first
+login. It is display only and has no key of its own, so no grading script
+writes it and every reset that removes a solve row or a membership removes it.
 
 **Submission**: `POST /api/classic/submit` derives `login` from the session
 (never the request body) and calls `submitFlag(login, challengeId, flag)`.

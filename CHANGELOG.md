@@ -10,6 +10,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Added: first blood on the Jeopardy board (#188).** Each visible tile and
+  open story step names the contestant who solved it first. It is display
+  only and changes no score. It is read from the current team members' solve
+  rows on every load, with nothing stored: the earliest solve wins, and an
+  exact tie goes to the login that sorts first, ignoring case. A progress
+  reset, a deleted contestant or a removal from a team passes their first
+  bloods to the next solver. A locked story step shows none.
 - **Fixed: the Insights CSV garbled accented titles in Excel (#624).**
   "¿Qué dice señor?" opened as "Â¿QuÃ© dice seÃ±or?": the file had no
   byte-order mark, so Excel read it in the system code page. The export now

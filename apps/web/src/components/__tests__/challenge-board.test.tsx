@@ -175,3 +175,24 @@ describe("ChallengeBoard solve counts", () => {
     expect(html).not.toMatch(/\d+ teams?\b/);
   });
 });
+
+// #188: the first solver of a challenge, by login, on its tile — visible and
+// in the tile's accessible name (the link's aria-label replaces its text).
+describe("ChallengeBoard first blood", () => {
+  it("names the first solver on the tile and in its accessible name", () => {
+    const html = renderToStaticMarkup(
+      <ChallengeBoard categories={["Web"]} challenges={[{ ...web, firstBlood: "Alice-Dev" }]} authenticated basePath="/flags" />,
+    );
+    expect(html).toContain("First blood: Alice-Dev");
+    expect(html).toMatch(/aria-label="SQLi 101, 50 points, first blood by Alice-Dev"/);
+  });
+
+  it("shows nothing for a challenge nobody has solved, or whose first blood could not be read", () => {
+    for (const firstBlood of [null, undefined]) {
+      const html = renderToStaticMarkup(
+        <ChallengeBoard categories={["Web"]} challenges={[{ ...web, firstBlood }]} authenticated basePath="/flags" />,
+      );
+      expect(html).not.toMatch(/first blood/i);
+    }
+  });
+});

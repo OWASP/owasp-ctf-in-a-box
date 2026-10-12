@@ -1503,6 +1503,19 @@ shows no count. In `/admin` the Jeopardy list gives each challenge both
 figures ("3 teams · 5 players", or "unsolved"), so a flag nobody can solve
 stands out; if a count cannot be read it is left off rather than shown as 0.
 
+**First blood** (#188). Each visible tile and open story step names the
+contestant who solved it first ("🩸 First blood: alice"), by their GitHub
+login. It is display only and moves no points. Like the team count it is read
+off the current team members' own solve rows on every page load, never
+stored: the earliest solve time wins, and an exact tie goes to the login that
+sorts first, ignoring case. Nothing extra happens during a freeze: a frozen
+board records no solves, so first blood stays where the leaderboard does.
+Resetting a contestant's progress or deleting them in the Support tab, or
+removing them from their team, passes their first bloods to the next solver
+(or to nobody), with nothing to clean up. A master reset clears it with the
+solves. A locked story step shows none, and if the solves cannot be read
+neither the counts nor first blood are shown.
+
 **Authoring** happens in `/admin`, under the Jeopardy module's tab (see
 "Jeopardy controls" above). Before adding a challenge you need at least one
 **category** — categories are a row of chips in the order contestants see

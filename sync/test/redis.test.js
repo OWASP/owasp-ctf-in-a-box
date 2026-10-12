@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { makeRedis, outsideScoringWindow, outsideWindow } from "../src/redis.js";
+import { makeRedis, outsideScoringWindow, outsideWindow, pausedAt } from "../src/redis.js";
 import { TARGETS } from "../src/config.js";
 
 const PAST = "2000-01-01T00:00:00.000Z";
@@ -28,6 +28,9 @@ test("outsideWindow: before start / after end / inside / unbounded", () => {
 test("outsideWindow: shared boundary-instant corpus", async (t) => {
   const url = new URL("../../test/fixtures/window-corpus.json", import.meta.url);
   const { cases } = JSON.parse(await readFile(url, "utf8"));
+  // A floor at the committed row count: an emptied or truncated corpus would
+  // otherwise run zero subtests here and pass.
+  assert.ok(Array.isArray(cases) && cases.length >= 16, `window-corpus.json has ${cases?.length} rows, expected at least 16`);
   for (const { description, nowMs, startsAt, endsAt, expected } of cases) {
     await t.test(description, () => {
       assert.equal(outsideWindow(nowMs, startsAt, endsAt), expected);
@@ -41,9 +44,26 @@ test("outsideWindow: shared boundary-instant corpus", async (t) => {
 test("outsideScoringWindow: shared scoring-window corpus (#464)", async (t) => {
   const url = new URL("../../test/fixtures/scoring-window-corpus.json", import.meta.url);
   const { cases } = JSON.parse(await readFile(url, "utf8"));
+  // A floor at the committed row count: an emptied or truncated corpus would
+  // otherwise run zero subtests here and pass.
+  assert.ok(Array.isArray(cases) && cases.length >= 10, `scoring-window-corpus.json has ${cases?.length} rows, expected at least 10`);
   for (const { description, nowMs, startsAt, endsAt, expected } of cases) {
     await t.test(description, () => {
       assert.equal(outsideScoringWindow(nowMs, startsAt, endsAt), expected);
+    });
+  }
+});
+
+// Whether the manual freeze covered an instant. Same rows run against
+// apps/web's schedule-window.ts and scorer/src/store.js, which judges a
+// score's comment time with it.
+test("pausedAt: shared pause-interval corpus", async (t) => {
+  const url = new URL("../../test/fixtures/pause-interval-corpus.json", import.meta.url);
+  const { cases } = JSON.parse(await readFile(url, "utf8"));
+  assert.ok(cases.length > 0, "the corpus must not be empty");
+  for (const { description, tMs, paused, pausedSince, pauses, expected } of cases) {
+    await t.test(description, () => {
+      assert.equal(pausedAt(tMs, paused, pausedSince, pauses), expected);
     });
   }
 });
@@ -168,6 +188,25 @@ test("a per-command error longer than 200 characters is capped in the log", asyn
 // only assertion about "logs" is that there ISN'T one — this method never
 // calls `log` itself; the caller (tick) decides what to do with the throw.
 const hgetFetch = (result) => async () => new Response(JSON.stringify([{ result }]), { status: 200 });
+
+// Shared with apps/web's normalizeSecureDevTargets: the same stored value
+// must decode to the same list in both readers, and where either cannot use
+// it, each must fail in its own documented direction (the corpus's _comment).
+test("getSecureDevTargets: shared secure-dev-targets corpus", async (t) => {
+  const url = new URL("../../test/fixtures/secure-dev-targets-corpus.json", import.meta.url);
+  const { cases } = JSON.parse(await readFile(url, "utf8"));
+  assert.ok(Array.isArray(cases) && cases.length >= 15, `secure-dev-targets-corpus.json has ${cases?.length} rows, expected at least 15`);
+  for (const { description, raw, sync } of cases) {
+    await t.test(description, async () => {
+      const redis = makeRedis(env, hgetFetch(raw));
+      if (sync === "refuse") {
+        await assert.rejects(() => redis.getSecureDevTargets(), /secureDevTargets/);
+      } else {
+        assert.deepEqual(await redis.getSecureDevTargets(), sync === "all" ? TARGETS : sync);
+      }
+    });
+  }
+});
 
 test("getSecureDevTargets: absent field polls all six", async () => {
   const redis = makeRedis(env, hgetFetch(null));

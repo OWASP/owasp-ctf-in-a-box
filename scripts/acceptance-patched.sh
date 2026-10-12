@@ -285,7 +285,7 @@ run_probe() {
       [ "$code" = "200" ] || fail "positive control: GET /rest/user/whoami?fields=email returned $code, not 200 — the patch broke the endpoint."
       grep -q "$em" "$CTRL_BODY" || fail "positive control: whoami?fields=email served no email — the patch gutted the projection instead of allow-listing it."
       pwbody="$(curl -s -H "Cookie: token=$tok" "$1/rest/user/whoami?fields=password")"
-      if printf '%s' "$pwbody" | grep -q '"password"'; then fail "positive control: whoami?fields=password STILL returns a password field — the fix did not close the leak."; fi
+      if grep -q '"password"' <<< "$pwbody"; then fail "positive control: whoami?fields=password STILL returns a password field — the fix did not close the leak."; fi
       echo "  control OK: whoami?fields=email → 200 serving the user's email; whoami?fields=password no longer returns the hash."
       ;;
     challenge-23-sql-injection-dml-update)

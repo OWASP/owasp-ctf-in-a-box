@@ -62,6 +62,11 @@
 #      networks to join.
 set -euo pipefail
 
+# The env-file reader every shell entry point shares; resolved from this
+# script's own location because the cd to the repo root comes later.
+# shellcheck source=scripts/lib/dotenv.sh
+. "$(cd "$(dirname "$0")/../.." && pwd)/scripts/lib/dotenv.sh"
+
 ENV_FILE=".env.fly"
 OUT=""
 APP_IMAGE=""
@@ -159,53 +164,21 @@ esac
 # with `--profile app` only, since compose enables a named service's profile
 # on its own.
 #
-# The value is read with COMPOSE's .env semantics, not a bare `sed`, because
-# the same file is about to be handed to `docker compose --env-file`: to
-# compose, `SCORE_IMAGE=""` is empty, while a bare sed hands back the
+# The value is read with COMPOSE's .env semantics (scripts/lib/dotenv.sh, the
+# reader deploy.sh, dev-stack and ctf-setup.sh share), not a bare `sed`,
+# because the same file is about to be handed to `docker compose --env-file`:
+# to compose, `SCORE_IMAGE=""` is empty, while a bare sed hands back the
 # two-character string `""` — and this renderer would then add secdev, and
 # render a scorer and a sync, for an app-only event.
-dotenv_value() {
-  local v="$1"
-  v="${v#"${v%%[![:space:]]*}"}"
-  case "$v" in
-  '"'*)
-    # Quoted: the value ends at the closing quote, and `#` inside it is data.
-    v="${v#\"}"
-    v="${v%%\"*}"
-    ;;
-  "'"*)
-    v="${v#\'}"
-    v="${v%%\'*}"
-    ;;
-  *)
-    # Unquoted: a comment starts at the first whitespace-preceded `#`.
-    case "$v" in
-    *[[:space:]]#*) v="${v%%[[:space:]]#*}" ;;
-    esac
-    v="${v%"${v##*[![:space:]]}"}"
-    ;;
-  esac
-  printf '%s' "$v"
-}
-
 env_value() {
-  # `KEY = value` is legal too: compose's parser trims whitespace around the
-  # key and after the `=`, and hands back `value`. Matching only `KEY=` would
-  # make such a line invisible here — deploy.sh would call the key empty and
-  # refuse, render-compose.sh would drop secdev — while compose reads it fine.
-  # `KEY: value` and a leading `export ` go the same way; all were checked
-  # against `docker compose config` rather than guessed. deploy.sh reads the
-  # same grammar (there through dotenv_file_value, which takes the file as an
-  # argument); the two must agree, since they read the same file.
-  dotenv_value "$(sed -n \
-    -e "s/^[[:space:]]*export[[:space:]]\{1,\}//" \
-    -e "s/^[[:space:]]*$1[[:space:]]*[:=][[:space:]]*//p" \
-    "$ENV_FILE" | tail -1)"
+  dotenv_get "$ENV_FILE" "$1"
 }
 
 if [ -z "$PROFILES" ]; then
   PROFILES="--profile app"
-  SCORE_IMAGE_VAL="$(env_value SCORE_IMAGE)"
+  # A refused value (see scripts/lib/dotenv.sh) stops the render: secdev is
+  # neither added nor dropped on a guess.
+  SCORE_IMAGE_VAL="$(env_value SCORE_IMAGE)" || exit 1
   if [ -n "$SCORE_IMAGE_VAL" ]; then
     PROFILES="$PROFILES --profile secdev"
   fi

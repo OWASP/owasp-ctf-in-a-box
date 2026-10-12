@@ -180,7 +180,7 @@ describe("resetEvent", () => {
     expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(script).toContain("'paused', '1'");
-    expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit"]);
+    expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit", "ctf:admin:pauses"]);
     expect(args[0]).toBe("alice"); // actor
     const auditLine = JSON.parse(String(args[3]));
     expect(auditLine).toMatchObject({ by: "alice", action: "reset", cleared: { solves: 2, teams: 2 } });
@@ -193,6 +193,18 @@ describe("resetEvent", () => {
     await resetEvent("alice");
     const [script] = mocks.upstashEval.mock.calls[0];
     expect(script).toMatch(/redis\.call\('HDEL', KEYS\[1\], 'scoringStartsAt'\)/);
+  });
+
+  // The reset starts a fresh pause log: the old event's intervals go, and the
+  // freeze the reset sets is open from the reset instant.
+  it("clears the pause log and opens the reset's own freeze in the same eval", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [[]]));
+    await resetEvent("alice");
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(keys[2]).toBe("ctf:admin:pauses");
+    expect(script).toMatch(/redis\.call\('DEL', KEYS\[3\]\)/);
+    expect(script).toContain("'pausedSince', ARGV[2]");
+    expect(typeof args[1]).toBe("string");
   });
 
   it("wipes quiz answers and attempts", async () => {

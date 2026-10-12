@@ -82,6 +82,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 64 — sync's cursor lives in Redis, and an unreadable cursor holds the poller](#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)
 - [ADR 65 — An event adds its own logo and favicon; the OWASP mark stays](#adr-65-an-event-adds-its-own-logo-and-favicon-the-owasp-mark-stays)
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
+- [ADR 67 — A Secure Development solve is timed, and judged, by its score comment](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
 - [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
@@ -1434,7 +1435,7 @@ override and no config key — not back in `event.yaml`.
 
 ## ADR 32. Scheduled windows, evaluated at read time in three readers
 
-**Status.** Accepted; amended by [ADR 59](#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched): the scoring window now requires a start (`outsideScoringWindow`), so `effectivePaused` below reads `s.paused || outsideScoringWindow(...)`; the registration window is unchanged.
+**Status.** Accepted; amended by [ADR 59](#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched): the scoring window now requires a start (`outsideScoringWindow`), so `effectivePaused` below reads `s.paused || outsideScoringWindow(...)`; the registration window is unchanged. Amended by [ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment): for Secure Development the window and the freeze are judged at the score comment's time, which needs the freeze's intervals, so a fourth shared function (`pausedAt`) and the pause log join the contract.
 
 **Context.** [#19](#adr-19-organizer-admin-panel-runtime-override-layer) gave
 organizers a manual freeze. Manual is not enough for a real event: an
@@ -1841,6 +1842,7 @@ The taxonomy is the whole decision:
 | `invalid` | Marker **present** and unusable — schema drift, truncation, forgery | **Yes** |
 | `rejected` | Scorer returned `4xx`; the comment stays marked seen, so it is never retried | **Yes** |
 | `retried` | Submission failed transiently and was un-marked; next tick re-presents it | No — logged, not lost |
+| `refused` | Scorer returned `422`: posted before the launch, during a freeze, after the end or before a reset ([ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)); stays marked seen | No — the rule working, logged per PR |
 
 **Splitting `invalid` from `noMarker` required a parser change.**
 `parseScoreComment` returned `null` for both "ordinary comment" and "claims to
@@ -3321,7 +3323,9 @@ the admin allowlist cannot be stored behind the thing it guards access to.
 
 ## ADR 56. Poll is the score transport; push ingest is removed
 
-**Status.** Accepted 2026-09-12. Supersedes
+**Status.** Accepted 2026-09-12. Freeze semantics amended by
+[ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
+(sync no longer holds its cursor during a freeze). Supersedes
 [ADR 3](#adr-3-score-transport-poll-by-default-push-optional). Implements
 issue [#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377). Originally
 written as a two-release plan — deprecate in v0.6, remove in v0.7 — and
@@ -3826,14 +3830,78 @@ because that hop leaves our tasks for a managed service.
 - **What changes the answer.** Another tenant or workload sharing the
   network; a hop that crosses it (another VPC, another account, the public
   internet); or a stack that outlives an event. Any of these makes internal
-  TLS the right call, and
-  [#484](https://github.com/OWASP/owasp-ctf-in-a-box/issues/484) tracks doing it after the first event.
+  TLS the right call. [#484](https://github.com/OWASP/owasp-ctf-in-a-box/issues/484) was the promise to revisit this after the first event; the
+  rider below is that revisit, and the decision stands.
 
 **Consequences.** A review should not flag plaintext HTTP between the stack's
 own services as such, nor the scorer's open read routes. It should flag a new
 internal write or `srh` hop without a bearer token, a security-group rule
 wider than the one caller, and any internal hop exposed beyond the stack's
 network.
+
+### ADR 63 rider — Revisited after the first event: still no internal TLS
+
+**Status.** Accepted, October 2026. Resolves
+[#484](https://github.com/OWASP/owasp-ctf-in-a-box/issues/484) by recording why not.
+
+The first live event ran 7–9 October 2026 on the AWS module. Nothing in it
+argued for TLS on the internal hops, and the deploy shapes, read again, still
+give the answer above.
+
+- **compose.** Every internal hop is a container-to-container call on a
+  compose network on one host. `srh` and `redis` meet on `backend`, which is
+  `internal: true`, and the app never reaches `redis:6379`
+  ([ADR 41](#adr-41-authenticating-redis-and-cutting-the-app-tier-off-from-it)).
+  Only Caddy publishes ports, and it terminates TLS.
+- **Fly.** One machine, one network namespace: app, scorer, sync, `srh` and
+  redis reach each other over `localhost`
+  ([ADR 42](#adr-42-one-fly-machine-running-the-real-compose-file-not-five-fly-apps)).
+  Fly's proxy routes the public only to port 3000; `srh`, the scorer and
+  redis are not exposed off the machine. TLS on loopback protects nothing a
+  reader on the machine could not take from the processes directly.
+- **AWS.** The Fargate tasks sit in the event's own VPC, in its *public*
+  subnets with public IPs for egress (`deploy/aws-terraform/network.tf`
+  explains why: no NAT gateway). The boundary is the security groups, not
+  the subnet: each internal port admits only its intended callers' groups
+  (`srh`: the app, sync and the scorer; the scorer: the app and sync;
+  ElastiCache: `srh` alone, in `security.tf`), and nothing else in the VPC
+  runs. The hop that leaves our tasks, `srh` to
+  ElastiCache, is already TLS: the replication group sets
+  `transit_encryption_enabled = true` and an AUTH token, and `srh` connects
+  with `rediss://` to the primary endpoint hostname and verifies it
+  (`deploy/aws-terraform/elasticache.tf`). The cache itself sits in the
+  private subnets.
+- **Tokens.** Every `srh` hop carries `srh`'s bearer token and sync's
+  `POST /score` carries `SCORER_TOKEN`. The scorer's `GET /leaderboard` and
+  `GET /challenges` stay open by contract, as above. Reading any of these
+  hops already takes a foothold in a task that holds the tokens.
+- **Lifetime.** Each stack is applied for one event and destroyed after it.
+
+**What TLS would cost.** A private CA per stack, with certificates issued
+and rotated in two deploy targets (a Terraform `tls` CA and SSM on AWS, a
+generated CA in the compose bootstrap). The scorer would serve HTTPS, and
+`srh` would need a TLS terminator in front of it. The app, sync and the
+scorer would each need the root wired in (`NODE_EXTRA_CA_CERTS`) and every
+internal URL would change scheme. `srh` makes the trust side worse: as a
+client it verifies against CAStore's Mozilla bundle embedded in the pinned
+release, not the OS store
+([ADR 54](#adr-54-the-aws-module-is-ecs--managed-redis-the-events-data-stopped-being-ours-to-lose)),
+so a private CA on its redis hop in compose or Fly would mean rebuilding
+that third-party image. Each of these is a new way for a deploy to fail on
+event day, an expired or mistrusted certificate turning into a stack that
+does not score, to defend against an attacker who already holds the tokens.
+
+**What reopens it.** The same conditions as above, stated as triggers:
+
+- a multi-host or shared-network deployment, where another tenant or
+  workload can see the stack's traffic;
+- any internal hop that leaves the stack's private network, to another VPC,
+  another account or the public internet;
+- a stack kept running across events rather than destroyed after one;
+- a compliance requirement for encryption in transit on every hop.
+
+Any one of these makes internal TLS the right call, starting from the
+proposal recorded in #484.
 
 ## ADR 64. sync's cursor lives in Redis, and an unreadable cursor holds the poller
 
@@ -3958,6 +4026,96 @@ steps aside; `listSponsors` is not cached) and the event image metadata once
 fetched by the browser from their own routes. Another page that adds its own
 sponsor block joins `PAGES_WITH_OWN_SPONSOR_CREDIT`. Other pages are
 unchanged; a further surface is still its own decision.
+
+## ADR 67. A Secure Development solve is timed, and judged, by its score comment
+
+**Context.** A Secure Development solve was timestamped when the scorer
+received it. Between a contestant's push and that moment sit the Actions run,
+the score comment and the sync poll, about four to five minutes at the
+October 3 rehearsal, plus any backlog after a sync restart, which landed a
+whole batch with one late time. That time decides ties across modules
+(#583): a team whose last points were a PR was handicapped against one whose
+last points were a flag, which is timed when it is submitted. The window and
+the freeze were judged on arrival too. sync held its cursor while scoring was
+frozen and ingested after the resume, so a PR pushed during a freeze counted
+once it lifted (rehearsal finding F-N), and a comment posted before the end
+of the event but read after it was held forever.
+
+**Decision.** A Secure Development solve's time is its score comment's GitHub
+`updated_at`, and the scoring window, the manual freeze and the master-reset
+epoch are judged at that time.
+
+- **sync sends `at`.** Each score goes to the scorer's internal `POST /score`
+  with `at = comment.updated_at`. It is the comment's own field, read by sync
+  from a `github-actions[bot]` comment, never a field of the marker: no more
+  forgeable than the score itself (the chain of ADR 56). sync no longer holds
+  its cursor while scoring is frozen or outside the window. It still reads
+  the effective freeze, for its heartbeat only.
+- **The scorer judges each score at `at`.** In order: an `at` that does not
+  parse is refused (400); one more than five minutes ahead of the scorer's
+  clock is clamped to now (clock skew, not a time anyone earned); one before
+  the master-reset epoch is refused; one outside the scoring window
+  (`outsideScoringWindow(at, …)`, ADR 59) is refused; one inside the freeze
+  (`pausedAt(at)`) is refused. Each refusal is a **final** verdict, `422`
+  with a `refused` code (`pre-reset`, `outside-window`, `paused`). sync logs
+  it, marks the comment seen and never re-presents it, and does not count it
+  as dropped: it is the rule working, and a counter every pause bumped would
+  be a counter nobody reads. Otherwise the solve is recorded with that time,
+  `HSETNX` keeping the first one. The #583 tie-break reads the recorded times
+  and does not change.
+- **The freeze is recorded as intervals.** The settings hash held only a
+  flag, which cannot say whether a past instant was frozen. The settings
+  update script now keeps a pause log beside it, in the same atomic script:
+  pausing writes `pausedSince` (the write's own time), unpausing moves
+  `{from: pausedSince, to: now}` onto `ctf:admin:pauses` (newest first,
+  capped at 200) and clears `pausedSince`. The master reset clears the log
+  and opens its own freeze at the reset instant. `pausedAt(t)` is true inside
+  a logged interval `[from, to)` or at or after an open pause's start. Like
+  the window functions, it is implemented in all three readers
+  (`apps/web/src/lib/schedule-window.ts`, `scorer/src/store.js`,
+  `sync/src/redis.js`) and pinned by a shared corpus,
+  `test/fixtures/pause-interval-corpus.json`.
+- **A freeze with no recorded start answers `503`.** A flag set by hand, or
+  set before the pause log existed, has no `pausedSince`. Its start is
+  unknown, so a final refusal could throw away a score posted before it. The
+  scorer answers `503`, which sync retries, and judges the comment once the
+  freeze lifts; that one freeze then behaves as it did before (F-N), and it
+  logs no interval when it ends.
+- **The app's own modules are unchanged.** A Quiz, Jeopardy or AI submit is
+  judged when it arrives, which is when it happens, so `paused` alone answers
+  it. The app carries `pausedAt` for parity and its corpus test.
+- **Fail directions are unchanged.** The scorer reads the settings and the
+  pause log in one pipeline. A failed read is logged and the score is
+  recorded at its comment time, the open direction ADR 32 gives the freeze
+  read.
+
+**Known edge.** The score comment is upserted per PR, so `updated_at` is the
+time of its LAST run. A solve first ingested from a later re-run is timed by
+that re-run, not by the run that first passed. Solves ingested earlier keep
+their time (`HSETNX`). A PR re-run after the end of the event, carrying a
+solve that was never ingested, is refused as outside the window, even if its
+first passing run was in time. sync reads each comment within a poll or two
+of it being written, so this only bites when sync was down across a re-run.
+
+**Upgrade order.** Either service can be upgraded first. A new scorer with an
+old sync gets no `at` and keeps the arrival-time rule: the effective freeze
+is checked when the score arrives (`503`, retried) and the solve is timed
+then. A new sync with an old scorer sends `at`, which the old scorer ignores;
+since the new sync no longer holds, the old scorer's `503` during a freeze or
+outside the window is retried every tick until scoring reopens, as before.
+The intended path is to upgrade both together, which a compose bring-up does.
+
+**Alternatives rejected.** *Keep the arrival time and fix only the tie-break.*
+The handicap is in the time, not in the comparison, and the backlog case has
+no arrival-time fix. *Judge the window on comment time but the freeze on
+arrival.* sync would still have to hold during a freeze, which delays a
+comment posted before it and counts one posted during it after the resume,
+the F-N behavior the decision on the issue rejected. *Store the freeze as an
+event stream in the audit log.* The audit list is capped by entry count
+across every admin action and is not structured for an instant lookup; the
+pause log is one short list with one shape.
+
+**Status.** Accepted (#596). Amends [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers).
 
 ## ADR 68. A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock
 

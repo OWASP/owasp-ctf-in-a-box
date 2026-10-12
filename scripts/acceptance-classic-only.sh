@@ -214,7 +214,7 @@ acc_wait_http "$APP_URL" 90 /flags || {
 
 echo "--- /flags shows the seeded challenge by title"
 FLAGS_HTML=$(curl -sf "$APP_URL/flags")
-if ! echo "$FLAGS_HTML" | grep -qF "$CHALLENGE_TITLE"; then
+if ! grep -qF "$CHALLENGE_TITLE" <<< "$FLAGS_HTML"; then
   echo "FAIL: /flags does not show '$CHALLENGE_TITLE'" >&2
   exit 1
 fi
@@ -224,7 +224,7 @@ fi
 # is the only place in the whole suite where a real stored flag meets a real
 # rendered /flags page — this assertion is the entire point of that setup.
 echo "--- /flags never leaks the seeded flag itself"
-if echo "$FLAGS_HTML" | grep -qF "$CHALLENGE_FLAG"; then
+if grep -qF "$CHALLENGE_FLAG" <<< "$FLAGS_HTML"; then
   echo "FAIL: /flags leaked the seeded flag ('$CHALLENGE_FLAG') to the page" >&2
   exit 1
 fi

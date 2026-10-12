@@ -11,15 +11,25 @@ const baseState = () => ({ repos: {}, ingested: 0 });
 // (rather than absorbed by the per-repo try/catch as a poll failure).
 const pollableCfg = { ...cfg, apiUrl: "https://api.example", getToken: async () => "ghp_test" };
 
-test("a paused flag holds every cursor and still writes a paused heartbeat", async () => {
+// The scorer judges each score at its comment's time, so a freeze is no
+// reason to hold the cursor: a comment posted BEFORE the pause but read
+// during it must still score, and one posted during it is refused by the
+// scorer for good. The heartbeat still reports the freeze for /admin.
+test("a paused flag does not hold the cursor; the heartbeat still says paused", async () => {
   let status = null;
   const redis = { getSecureDevTargets: async () => ["vampi"], isPaused: async () => true, writeStatus: async (s) => { status = s; } };
   const state = baseState();
   state.repos["VAmPI"] = { since: "T0", etag: "E0", seen: ["x"] };
-  const fetchImpl = () => { throw new Error("must not poll while paused"); };
-  await tick(cfg, state, { redis, fetchImpl, log: () => {} });
-  assert.deepEqual(state.repos["VAmPI"], { since: "T0", etag: "E0", seen: ["x"] });
+  const polled = [];
+  const fetchImpl = async (url) => {
+    polled.push(String(url));
+    return { ok: true, status: 200, headers: { get: (h) => (h === "etag" ? "E1" : null) }, json: async () => [] };
+  };
+  await tick(pollableCfg, state, { redis, fetchImpl, log: () => {} });
+  assert.equal(polled.length, 1, "a paused tick must still poll");
+  assert.equal(state.repos["VAmPI"].etag, "E1");
   assert.equal(status.paused, true);
+  assert.equal(status.reposPolled, 1);
 });
 
 test("an unpaused tick writes a heartbeat with paused false", async () => {
@@ -39,7 +49,7 @@ test("a redis status-write failure does not throw out of the tick", async () => 
   await assert.doesNotReject(tick(cfg, baseState(), { redis, fetchImpl, log: () => {} }));
 });
 
-test("a bumped reset epoch drops the cursor even while paused (poll-mode wipe)", async () => {
+test("a bumped reset epoch drops the cursor, paused or not (poll-mode wipe)", async () => {
   const redis = {
     getSecureDevTargets: async () => ["vampi"],
     getResetAt: async () => "1001",
@@ -48,9 +58,14 @@ test("a bumped reset epoch drops the cursor even while paused (poll-mode wipe)",
   };
   const state = baseState();
   state.repos["VAmPI"] = { since: "T0", etag: "E0", seen: ["x"] };
-  const fetchImpl = () => { throw new Error("must not poll while paused"); };
-  await tick(cfg, state, { redis, fetchImpl, log: () => {} });
-  assert.deepEqual(state.repos, {}); // cursor + seen dropped so an unfreeze re-polls fresh
+  const sinces = [];
+  const fetchImpl = async (url) => {
+    sinces.push(new URL(String(url)).searchParams.get("since"));
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => [] };
+  };
+  await tick(pollableCfg, state, { redis, fetchImpl, log: () => {} });
+  assert.deepEqual(sinces, [null], "the poll after a reset re-reads from the beginning");
+  assert.deepEqual(state.repos["VAmPI"].seen, []); // seen dropped with the cursor
   assert.equal(state.resetAt, "1001");
 });
 
@@ -59,8 +74,14 @@ test("an unchanged reset epoch leaves the cursor intact", async () => {
   const state = baseState();
   state.resetAt = "1001";
   state.repos["VAmPI"] = { since: "T0", etag: "E0", seen: ["x"] };
-  await tick(cfg, state, { redis, fetchImpl: () => { throw new Error("no poll"); }, log: () => {} });
-  assert.deepEqual(state.repos["VAmPI"], { since: "T0", etag: "E0", seen: ["x"] });
+  const sinces = [];
+  const fetchImpl = async (url) => {
+    sinces.push(new URL(String(url)).searchParams.get("since"));
+    return { status: 304, headers: { get: () => null }, json: async () => [] };
+  };
+  await tick(pollableCfg, state, { redis, fetchImpl, log: () => {} });
+  assert.deepEqual(sinces, ["T0"]);
+  assert.deepEqual(state.repos["VAmPI"].seen, ["x"]);
 });
 
 // ── the admin panel's target selection, read fresh every tick ───────────────

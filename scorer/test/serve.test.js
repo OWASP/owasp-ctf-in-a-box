@@ -540,3 +540,166 @@ test("serve(): refuses a whitespace-only PORT (Number(' ') is 0, an ephemeral po
     /PORT must be an integer/,
   );
 });
+
+// --- solve time = the score comment's time (`at`) ---------------------------
+//
+// sync sends each score with `at`, the score comment's GitHub `updated_at`.
+// The scorer records that as the solve time, and judges the scoring window,
+// the manual freeze and the master-reset epoch against it, not against when
+// the score happened to arrive.
+
+const NOW = "2026-08-14T12:00:00.000Z";
+const LAUNCHED = { paused: false, pausedSince: null, startsAt: "2026-08-14T09:00:00.000Z", endsAt: null, resetAt: null, pauses: [] };
+
+async function bootWith(t, { policy = LAUNCHED, now = () => NOW, rubric = RUBRIC } = {}) {
+  const store = createMemoryStore();
+  if (policy) store.__setPolicy(policy);
+  const server = await startServer({ rubric, store, token: TOKEN, now });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (body) =>
+    fetch(`${base}/score`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const board = async () => (await fetch(`${base}/leaderboard`)).json();
+  return { store, post, board };
+}
+
+const timed = (author, target, solved, at) => ({ ...solve(author, target, solved), at });
+
+test("`at` is the recorded solve time, normalised to ISO-8601 with milliseconds", async (t) => {
+  const { store, post } = await bootWith(t);
+  // GitHub's updated_at carries no milliseconds; stored times are compared as
+  // strings, so the scorer stores one shape.
+  assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202);
+  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": "2026-08-14T10:00:00.000Z" });
+});
+
+test("a backlog ingested late keeps each solve's own comment time", async (t) => {
+  const { board, post } = await bootWith(t);
+  assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T09:30:00Z"))).status, 202);
+  assert.equal((await post(timed("hubot", "juice-shop", ["sql-injection-login"], "2026-08-14T09:45:00Z"))).status, 202);
+  const { leaderboard } = await board();
+  const at = Object.fromEntries(leaderboard.map((e) => [e.author, e.lastSolveAt]));
+  assert.deepEqual(at, { octocat: "2026-08-14T09:30:00.000Z", hubot: "2026-08-14T09:45:00.000Z" });
+});
+
+test("the first time a solve was seen is kept: a later comment time does not move it", async (t) => {
+  const { store, post } = await bootWith(t);
+  await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T11:00:00Z"));
+  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": "2026-08-14T10:00:00.000Z" });
+});
+
+test("a points tie goes to the earlier comment time, not the earlier arrival", async (t) => {
+  const { board, post } = await bootWith(t);
+  // zed's score ARRIVES first but its comment is later.
+  await post(timed("zed", "juice-shop", ["sql-injection-login"], "2026-08-14T10:30:00Z"));
+  await post(timed("abe", "juice-shop", ["sql-injection-login"], "2026-08-14T10:00:00Z"));
+  const { leaderboard } = await board();
+  assert.deepEqual(leaderboard.map((e) => [e.rank, e.author]), [[1, "abe"], [2, "zed"]]);
+});
+
+test("an absent `at` falls back to the arrival time (an older sync)", async (t) => {
+  const { store, post } = await bootWith(t);
+  assert.equal((await post(solve("octocat", "dvwa", ["sqli-low"]))).status, 202);
+  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": NOW });
+});
+
+test("an unparseable or non-string `at` is refused with 400 and records nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  for (const at of ["yesterday", "", 1755160000000, {}, true]) {
+    const res = await post(timed("octocat", "dvwa", ["sqli-low"], at));
+    assert.equal(res.status, 400, `at=${JSON.stringify(at)}`);
+    assert.deepEqual(await res.json(), { error: "invalid at" });
+  }
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
+test("an `at` more than five minutes ahead is clamped to now; within the skew it is kept", async (t) => {
+  const { store, post } = await bootWith(t);
+  assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T12:05:00.001Z"))).status, 202);
+  assert.equal((await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T12:05:00.000Z"))).status, 202);
+  assert.deepEqual(await store.getSolves("dvwa"), {
+    "octocat:sqli-low": NOW,
+    "hubot:sqli-low": "2026-08-14T12:05:00.000Z",
+  });
+});
+
+test("an `at` before the master-reset epoch is refused with a final 422", async (t) => {
+  const resetAt = String(Date.parse("2026-08-14T10:00:00.000Z"));
+  const { store, post } = await bootWith(t, { policy: { ...LAUNCHED, resetAt } });
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T09:59:59Z"));
+  assert.equal(res.status, 422);
+  assert.equal((await res.json()).refused, "pre-reset");
+  assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202);
+  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": "2026-08-14T10:00:00.000Z" });
+});
+
+test("an `at` outside the scoring window is refused with a final 422, judged on the comment time", async (t) => {
+  const window = { ...LAUNCHED, startsAt: "2026-08-14T09:00:00.000Z", endsAt: "2026-08-14T11:00:00.000Z" };
+  const { store, post } = await bootWith(t, { policy: window });
+  for (const at of ["2026-08-14T08:59:59Z", "2026-08-14T11:00:01Z"]) {
+    const res = await post(timed("octocat", "dvwa", ["sqli-low"], at));
+    assert.equal(res.status, 422, at);
+    assert.equal((await res.json()).refused, "outside-window");
+  }
+  // The window has closed by NOW (12:00), but this comment landed during
+  // play: it counts, however late it arrives.
+  assert.equal((await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T10:59:00Z"))).status, 202);
+  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), ["hubot:sqli-low"]);
+});
+
+test("an `at` on an event that was never launched is refused with a final 422", async (t) => {
+  const { post } = await bootWith(t, { policy: { ...LAUNCHED, startsAt: null } });
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 422);
+  assert.equal((await res.json()).refused, "outside-window");
+});
+
+test("an `at` inside a logged pause is refused with a final 422, even after the resume", async (t) => {
+  const pauses = ['{"from":"2026-08-14T10:00:00.000Z","to":"2026-08-14T10:30:00.000Z"}'];
+  const { store, post } = await bootWith(t, { policy: { ...LAUNCHED, pauses } });
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:15:00Z"));
+  assert.equal(res.status, 422);
+  assert.equal((await res.json()).refused, "paused");
+  assert.equal((await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T10:30:00Z"))).status, 202);
+  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), ["hubot:sqli-low"]);
+});
+
+test("while frozen, a comment from BEFORE the pause still scores; one from during it does not", async (t) => {
+  const policy = { ...LAUNCHED, paused: true, pausedSince: "2026-08-14T11:00:00.000Z" };
+  const { store, post } = await bootWith(t, { policy });
+  store.__setPaused(true); // the arrival-time freeze is on: it must not decide
+  assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:59:59Z"))).status, 202);
+  const res = await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T11:00:00Z"));
+  assert.equal(res.status, 422);
+  assert.equal((await res.json()).refused, "paused");
+  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), ["octocat:sqli-low"]);
+});
+
+// A freeze set with no recorded start (set by hand, or before the pause log
+// existed): when it began is unknown, so a final verdict could refuse a score
+// made before it. Answered 503 instead, which sync retries.
+test("a freeze with no recorded start answers 503 (retry), not a final refusal", async (t) => {
+  const { store, post } = await bootWith(t, { policy: { ...LAUNCHED, paused: true, pausedSince: null } });
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "scoring is paused" });
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
+test("the window and reset refusals stay final even under a freeze with no recorded start", async (t) => {
+  const { post } = await bootWith(t, { policy: { ...LAUNCHED, paused: true, pausedSince: null, startsAt: null } });
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 422);
+  assert.equal((await res.json()).refused, "outside-window");
+});
+
+test("an unreadable scoring policy fails OPEN: the score is recorded at its comment time", async (t) => {
+  const { store, post } = await bootWith(t, { policy: null });
+  assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202);
+  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": "2026-08-14T10:00:00.000Z" });
+});

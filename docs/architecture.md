@@ -466,6 +466,25 @@ never be live with a `flagnorm` belonging to a previous version of its flag.
 See [decisions.md's ADR on two flag hashes](decisions.md#adr-27-two-flag-hashes-rather-than-one)
 for why the store keeps both rather than one.
 
+**Other accepted flags and regex patterns (#192) add three more hashes**,
+written or cleared in that same pipeline and absent for a single-flag
+challenge, which therefore grades exactly as before:
+
+- `ctf:classic:flagalts` holds the other accepted flags as authored (JSON
+  array). Only the admin list and the export read it.
+- `ctf:classic:flagaltsnorm` holds their comparison forms, through the same
+  `flagComparisonForm`. Only `SUBMIT_SCRIPT` reads it, decoding it with
+  `cjson` and comparing each entry as a whole value after the primary form.
+- `ctf:classic:flagpatterns` holds the regex patterns as authored. Redis Lua
+  has no regex engine, so `submitFlag` matches them in JS
+  (`classic-flags.ts`) and passes the script a verdict bound to the stored
+  value's SHA-1 and the case mode. The script honours the verdict only if,
+  at execution time, the patterns are still there, hash to that digest, and
+  the record's case mode agrees. Otherwise it answers `stale` before it
+  spends an attempt. The cooldown, story lock and solved guards all run
+  first, unchanged. See
+  [ADR 67](decisions.md#adr-67-a-challenge-accepts-several-flags-and-regex-patterns-are-matched-in-js-under-a-bound-verdict).
+
 **Normalization happens in JS, on both the authoring and submission paths,
 and deliberately NEVER in Lua.** `normalizeFlag` is the one function either
 side may use, precisely so they can never independently drift; Lua's

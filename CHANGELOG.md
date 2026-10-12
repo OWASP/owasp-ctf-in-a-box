@@ -10,6 +10,21 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Added: a Jeopardy challenge can accept more than one flag, and regex
+  patterns (#192).** The edit form takes **Other accepted flags**, one per
+  line. Any of them is the same single solve at full points. An opt-in **Also
+  accept flags matching a pattern** adds up to 5 anchored regular
+  expressions. They follow the case-sensitive box, so `[A-F]` also matches
+  `a`–`f` while it is off. A submission over 128 characters is never
+  regex-matched. On save and import, the server refuses backreferences,
+  lookarounds, a repeated group holding a repeat or `|`, a pattern with too
+  many ways to match, and a pattern that matches an empty flag or any input.
+  The pattern is matched in the app, and the grading script accepts the
+  verdict only while the stored patterns still hash to what was matched (ADR
+  67). Both lists are secret and masked like the flag. A bundle carrying them
+  is version 4. A single-flag challenge, older bundles (versions 1 to 3) and
+  event archives grade and import unchanged.
+
 - **Added: first blood on the Jeopardy board (#188).** Each visible tile and
   open story step names the contestant who solved it first. It is display
   only and changes no score. It is read from the current team members' solve

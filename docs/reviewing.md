@@ -28,7 +28,9 @@ looks like in a diff.
 
 **1. The contestant secrecy boundary.** A contestant-reachable path must
 never obtain a quiz answer key (`ctf:quiz:key`), a classic flag
-(`ctf:classic:flag`, `ctf:classic:flagnorm`), or unpurchased hint text
+(`ctf:classic:flag`, `ctf:classic:flagnorm`, and #192's other accepted
+flags and patterns: `ctf:classic:flagalts`, `ctf:classic:flagaltsnorm`,
+`ctf:classic:flagpatterns`), or unpurchased hint text
 (`ctf:classic:hints`). The boundary is pinned independently at four layers —
 store, route, view-model, markup — and the tests inject a fake secret and
 assert it never renders. In a diff, the red flags are: a store function on

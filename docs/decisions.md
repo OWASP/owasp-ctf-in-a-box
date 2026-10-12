@@ -82,6 +82,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 64 — sync's cursor lives in Redis, and an unreadable cursor holds the poller](#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)
 - [ADR 65 — An event adds its own logo and favicon; the OWASP mark stays](#adr-65-an-event-adds-its-own-logo-and-favicon-the-owasp-mark-stays)
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
+- [ADR 67 — A challenge accepts several flags, and regex patterns are matched in JS under a bound verdict](#adr-67-a-challenge-accepts-several-flags-and-regex-patterns-are-matched-in-js-under-a-bound-verdict)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -3957,3 +3958,67 @@ steps aside; `listSponsors` is not cached) and the event image metadata once
 fetched by the browser from their own routes. Another page that adds its own
 sponsor block joins `PAGES_WITH_OWN_SPONSOR_CREDIT`. Other pages are
 unchanged; a further surface is still its own decision.
+
+## ADR 67. A challenge accepts several flags, and regex patterns are matched in JS under a bound verdict
+
+**Context.** Issue #192. A Jeopardy challenge had one flag, compared exactly
+after normalisation. Real boards need alternate spellings and pattern answers
+("any 32 hex characters"), and the only workaround was to split one puzzle
+into several challenges. `SUBMIT_SCRIPT` is the scoring authority (Lua runs
+every guard and the comparison atomically), and Redis Lua has no regex
+engine. A regex authored by an organizer runs on every submission, on the
+path contestants hit hardest on purpose, so it is a denial-of-service
+surface.
+
+**Decision.**
+
+- **Other accepted flags are graded in Lua.** They are stored like the
+  primary flag: as authored in `ctf:classic:flagalts` for the edit form, and
+  as comparison forms in `ctf:classic:flagaltsnorm`. The script tries the
+  primary form, then each other form, as whole values with `==`. Accepting
+  any of them is one solve, worth the challenge's points, counted once,
+  because the already-solved guard is unchanged.
+- **Patterns are matched in JS, and the script receives a bound verdict.**
+  `submitFlag` reads `ctf:classic:flagpatterns` and the record's case mode,
+  then matches. It passes `'1'`, the SHA-1 of the stored patterns value, and
+  the case mode. The script honours `'1'` only if, at execution time, the
+  challenge still has patterns, they hash to that digest
+  (`redis.sha1hex`), and the record's case mode agrees. Otherwise it returns
+  `stale` before spending an attempt, and the contestant gets `unavailable`.
+  A verdict therefore cannot stand for patterns that are not stored, nor
+  survive an edit made between the read and the script. The solved guard,
+  story lock, unknown-id check and cooldown all run first, unchanged. The
+  verdict only adds a way to match. The script's ARGV gets a digest, never a
+  pattern. The patterns read fails closed, as every grading lookup does.
+- **ReDoS is bounded at authoring, and what remains is accepted.** Every
+  pattern is compiled anchored (`^(?:p)$`, after compiling `p` alone, so an
+  unbalanced pattern cannot escape the anchors) with `u`, plus `i` unless the
+  challenge is case-sensitive. A pattern is at most 200 characters, with at
+  most 5 per challenge. A submission over 128 characters is never
+  regex-matched. Backreferences and lookarounds are refused. A repeated group
+  that holds a repeat or an alternation is refused, which removes the
+  exponential `(a+)+` shapes. The product of the remaining choice points has a
+  ceiling of 100,000: a `?` counts 2, an alternation counts its branches, an
+  unbounded repeat counts 129, and a `{n,m}` counts its span. Measured on
+  Node 22, a pattern at that ceiling costs well under a millisecond on its
+  worst 128-character input, and one just over it (three unbounded repeats in
+  a row) costs about 2 ms. The residual risk we accept is up to five
+  sub-millisecond matches per submission, already throttled by the
+  submission cooldown. A pattern that matches the empty flag, or accepts a
+  fixed set of unrelated probes (`.+`), is refused.
+- **Patterns follow the case-sensitive box**, and are matched against the
+  trimmed, NFC form with `i`, never the lowercased form exact flags use,
+  where `[A-F]` could never match. The admin form states this where the
+  pattern is typed.
+
+**Consequences.** Absent rows mean a single flag, so every existing
+challenge, bundle (versions 1 to 3) and archive grades unchanged with no
+migration. The classic bundle gains version 4, stamped only when a challenge
+carries a list. The grading call gains two keys and three arguments, and
+the story-lock loop now starts at `KEYS[11]`. A grade makes one more Redis
+round trip (the patterns read), skipped for a submission over the input cap.
+We did not choose a regex engine in Lua, a worker with a timeout, or
+`--enable-experimental-regexp-engine`. The first does not exist in Redis,
+the second adds a moving part for a bound we can enforce at save time, and
+the third is a runtime flag the deploys do not set.
+

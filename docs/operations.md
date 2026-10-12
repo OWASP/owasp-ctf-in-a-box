@@ -1556,6 +1556,44 @@ being told; that the flag is case-sensitive gives away nothing about what it
 says. A challenge authored before this existed, or left unticked, grades
 exactly as it always did.
 
+**A challenge can accept more than one flag** (#192). Under the flag, the
+edit form has **Other accepted flags**, one per line: a British and an
+American spelling, the answer with and without a trailing period. Any of
+them solves the challenge exactly like the main flag: one solve, full points,
+counted once, so the board and the solve count read as one puzzle. They are
+compared the same way as the main flag (trimmed, Unicode-normalised, and
+case-insensitive unless the challenge is case-sensitive). They are secret
+like the flag, masked with it, and hidden until you click **Reveal**. Up to
+20, each at most 512 characters, the longest flag a contestant can submit.
+An empty entry is refused.
+
+**Regex patterns, for answers you cannot list.** Tick **Also accept flags
+matching a pattern (regex)** (off by default) to add up to 5 JavaScript
+regular expressions, one per line, for a flag such as "any 32 hex
+characters" (`ctf\{[0-9a-f]{32}\}`). The form states the rules, and the
+server enforces them on save and on import:
+
+- A pattern matches the **whole** flag. It is anchored for you, so no `^`
+  or `$`. The submission is trimmed and Unicode-normalised first.
+- **Case follows the case-sensitive box.** While it is off, a pattern
+  ignores case: `[A-F]` also matches `a`–`f`. A pattern is never matched
+  against the lowercased form exact flags use, where `[A-F]` could never
+  match.
+- A submission longer than **128 characters** is only compared against the
+  flags, never a pattern.
+- To keep matching fast on the path contestants hit hardest, a pattern is at
+  most 200 characters and has no backreferences, no lookarounds, and no
+  repeated group that itself holds a repeat or an alternation (`(a+)+`,
+  `(a|b)*`). Each choice point multiplies the ways a pattern can match, and
+  that product has a ceiling. In practice that allows two unbounded `+`/`*`,
+  or bounded repeats such as `{1,32}`. At the ceiling, a worst-case input
+  costs well under a millisecond per pattern.
+- A pattern that matches an empty flag (`.*`, `a?`), or one that accepts
+  any input (`.+`), is refused.
+
+Unticking the box and saving removes the patterns. The reasoning is in
+[ADR 67](decisions.md#adr-67-a-challenge-accepts-several-flags-and-regex-patterns-are-matched-in-js-under-a-bound-verdict).
+
 **A flag is stored in plaintext, and it is visible to anyone with `/admin`
 access.** The flag input is masked by default (a Reveal toggle uncovers it,
 in case you're screen-sharing the panel), but there is no hashing and no
@@ -1723,9 +1761,24 @@ ids in order:
 ```
 
 A version 1 file still imports unchanged, but it cannot carry `stories`.
-(Today's export is stamped `"version": 2`, or `"version": 3` when it
+(Today's export is stamped `"version": 2`, `"version": 3` when it
 carries the optional attachment files described under "Files in bundles
-and archives" below.)
+and archives" below, or `"version": 4` when a challenge has other accepted
+flags or patterns, described just below.)
+
+**Version 4 carries other accepted flags and patterns** (#192). A challenge
+row may add `alternateFlags` and `flagPatterns`, each an array of strings,
+as secret as `flag` and validated by the same rules as the edit form. An
+error names the position (`challenges[2].flagPatterns[0]`) and the rule,
+never the value. The export uses version 4 only when some challenge has one
+of these lists, so a single-flag board's backup still imports on an older
+box. An older version that carries either key is refused rather than
+imported without them. A row without the keys clears any lists the
+challenge had, the same rule as `hint`.
+
+```json
+{ "id": "hash-crack-q1w2", "flag": "ctf{5f4dcc3b5aa765d61d8327deb882cf99}", "alternateFlags": ["5f4dcc3b5aa765d61d8327deb882cf99"], "flagPatterns": ["ctf\\{[0-9a-f]{32}\\}"] }
+```
 Every step must name a challenge **in the same file**, the same
 self-contained rule that applies to categories. Stories merge by id, the
 same way challenges do:
@@ -1829,7 +1882,7 @@ an older build still imports it. Each `attachmentFiles` entry
 is `{ "item", "sha256", "bytes" }`: the challenge id, the upload's sha256,
 and the file's bytes as base64. Every entry must name an upload in the same
 file by challenge id and sha256. Version 1 and 2 files still import
-unchanged, but only version 3 can carry `attachmentFiles`.
+unchanged, but only version 3 or later can carry `attachmentFiles`.
 
 ```json
 "attachmentFiles": [

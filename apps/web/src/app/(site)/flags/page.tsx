@@ -30,6 +30,7 @@ import { listStories,
   listChallenges,
   type ViewerClassic,
 } from "@/lib/classic-store";
+import { challengeCurrentValue } from "@/lib/classic-keys";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { redirectIfNotLaunched } from "@/lib/launch";
 import { getTeamClassicSolvedIds } from "@/lib/classic-team";
@@ -110,7 +111,7 @@ export default async function FlagsPage() {
     title: c.title,
     category: c.category,
     description: c.description,
-    points: c.points,
+    points: challengeCurrentValue(c, solveCounts.get(c.id) ?? 0),
     solveCount: solveCounts.get(c.id) ?? 0,
     // Listed explicitly, like every field above it — this map is deliberately
     // NOT a spread of the store record, because a spread is how a flag leaks.

@@ -36,6 +36,9 @@ import {
   CLASSIC_STORY_INTRO_MAX,
   CLASSIC_STORY_STEPS_MAX,
   CLASSIC_STORY_TITLE_MAX,
+  CLASSIC_DYNAMIC_MAX_MIN,
+  CLASSIC_DYNAMIC_MIN_MIN,
+  CLASSIC_DYNAMIC_DECAY_MIN,
 } from "@/lib/classic-keys";
 import {
   ATTACHMENTS_PER_ITEM_MAX,
@@ -74,6 +77,10 @@ export type ClassicBundleChallenge = {
    *  size and sha256, or a link. Bytes travel in the event archive; an
    *  import that names an upload the box lacks creates it as "missing". */
   attachments?: BundleAttachment[];
+  /** Dynamic scoring (#187). When present, all three must be present together. */
+  maxPoints?: number;
+  minPoints?: number;
+  decay?: number;
 };
 
 export type ClassicBundle = {
@@ -103,6 +110,9 @@ const CHALLENGE_KEYS = [
   "caseSensitive",
   "hint",
   "attachments",
+  "maxPoints",
+  "minPoints",
+  "decay",
 ] as const;
 const CHALLENGE_KEY_SET = new Set<string>(CHALLENGE_KEYS);
 
@@ -235,6 +245,45 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
   const flag = raw.flag;
   if (typeof flag !== "string" || !flag.trim()) {
     errors.push({ where: `${base}.flag`, message: "Flag is required" });
+  }
+
+  // Dynamic scoring (#187): validate all-or-nothing, mirroring upsertChallenge.
+  const hasDynamic = raw.maxPoints !== undefined || raw.minPoints !== undefined || raw.decay !== undefined;
+  if (hasDynamic) {
+    if (raw.maxPoints === undefined || raw.minPoints === undefined || raw.decay === undefined) {
+      errors.push({
+        where: `${base}.maxPoints`,
+        message: "Dynamic scoring requires maxPoints, minPoints, and decay together",
+      });
+    } else {
+      const maxP = raw.maxPoints;
+      const minP = raw.minPoints;
+      const decay = raw.decay;
+      if (typeof maxP !== "number" || !Number.isInteger(maxP) || maxP < CLASSIC_DYNAMIC_MAX_MIN || maxP > CLASSIC_POINTS_MAX) {
+        errors.push({
+          where: `${base}.maxPoints`,
+          message: `maxPoints must be an integer in [${CLASSIC_DYNAMIC_MAX_MIN}, ${CLASSIC_POINTS_MAX}]`,
+        });
+      }
+      if (typeof minP !== "number" || !Number.isInteger(minP) || minP < CLASSIC_DYNAMIC_MIN_MIN || (typeof maxP === "number" && minP > maxP)) {
+        errors.push({
+          where: `${base}.minPoints`,
+          message: `minPoints must be an integer in [${CLASSIC_DYNAMIC_MIN_MIN}, maxPoints]`,
+        });
+      }
+      if (typeof decay !== "number" || !Number.isInteger(decay) || decay < CLASSIC_DYNAMIC_DECAY_MIN) {
+        errors.push({
+          where: `${base}.decay`,
+          message: `decay must be an integer >= ${CLASSIC_DYNAMIC_DECAY_MIN}`,
+        });
+      }
+      if (typeof points === "number" && typeof maxP === "number" && points !== maxP) {
+        errors.push({
+          where: `${base}.points`,
+          message: "points must equal maxPoints for a dynamic challenge",
+        });
+      }
+    }
   }
 
   if (raw.attachments !== undefined) validateAttachments(raw.attachments, `${base}.attachments`, errors);

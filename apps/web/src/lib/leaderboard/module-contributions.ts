@@ -5,9 +5,11 @@ import { atLeast, unionTotal } from "@/lib/leaderboard/denominators";
 import {
   getClassicTotals,
   getTeamClassicTotalsBatch,
+  getSolveCounts,
   listChallenges,
   type ClassicTotal,
 } from "@/lib/classic-store";
+import { dynamicPoints } from "@/lib/classic-keys";
 import { getEnabledModuleIds, isModuleLive } from "@/lib/enabled-modules";
 import { getEnabledTotals } from "@/lib/enabled-apps";
 import { getQuizTotals, getTeamQuizTotalsBatch, listQuestions, type QuizTotal } from "@/lib/quiz-store";
@@ -337,7 +339,31 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
   // Settled INDEPENDENTLY — see the note in `withModuleContributions`: the
   // totals carry POINTS (and with them the team board's order), the challenge
   // list only the DENOMINATOR.
-  const [totalsResult, challengesResult] = await Promise.allSettled([teamClassicTotals(teams), listChallenges()]);
+  // Dynamic scoring (#187): when dynamic challenges exist, team scoring
+  // calculates points using current dynamic values over the deduped set of
+  // challenges.
+  const [challengesResult] = await Promise.allSettled([listChallenges()]);
+  const challenges = challengesResult.status === "fulfilled" ? challengesResult.value : [];
+
+  let currentValueById: Map<string, number> | null = null;
+  const hasDynamic = challenges.some(
+    (c) => c.maxPoints !== undefined && c.minPoints !== undefined && c.decay !== undefined,
+  );
+
+  if (hasDynamic) {
+    const solveCounts = await getSolveCounts().catch(() => new Map<string, number>());
+    currentValueById = new Map<string, number>();
+    for (const c of challenges) {
+      if (c.maxPoints !== undefined && c.minPoints !== undefined && c.decay !== undefined) {
+        const n = solveCounts.get(c.id) ?? 0;
+        currentValueById.set(c.id, dynamicPoints(c.maxPoints, c.minPoints, c.decay, n));
+      } else {
+        currentValueById.set(c.id, c.points);
+      }
+    }
+  }
+
+  const [totalsResult] = await Promise.allSettled([teamClassicTotals(teams, currentValueById)]);
 
   if (totalsResult.status !== "fulfilled") {
     console.error("classic team totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
@@ -408,8 +434,13 @@ function teamQuizTotals(teams: readonly TeamStanding[]): Promise<QuizTotal[]> {
 
 /** classic's counterpart, and ONE pipeline for the whole board for the same
  *  reason — see `getTeamClassicTotalsBatch`'s doc comment. */
-function teamClassicTotals(teams: readonly TeamStanding[]): Promise<ClassicTotal[]> {
-  return getTeamClassicTotalsBatch(teams.map((team) => team.members));
+function teamClassicTotals(
+  teams: readonly TeamStanding[],
+  currentValueById?: ReadonlyMap<string, number> | null,
+): Promise<ClassicTotal[]> {
+  return currentValueById
+    ? getTeamClassicTotalsBatch(teams.map((team) => team.members), currentValueById)
+    : getTeamClassicTotalsBatch(teams.map((team) => team.members));
 }
 
 /** ai's counterpart, and ONE pipeline for the whole board for the same

@@ -32,6 +32,7 @@ import {
   listChallenges,
   type ViewerClassic,
 } from "@/lib/classic-store";
+import { challengeCurrentValue } from "@/lib/classic-keys";
 import { classicVisibility } from "@/lib/classic-visibility";
 import { listAttachments } from "@/lib/attachments-store";
 import type { AttachmentView } from "@/components/attachment-list";
@@ -125,7 +126,7 @@ export default async function ClassicChallengePage({ params }: { params: Promise
     title: challenge.title,
     category: challenge.category,
     description: challenge.description,
-    points: challenge.points,
+    points: challengeCurrentValue(challenge, solveCounts.get(challenge.id) ?? 0),
     solveCount: solveCounts.get(challenge.id) ?? 0,
     caseSensitive: challenge.caseSensitive,
     attachments,

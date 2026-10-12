@@ -47,7 +47,15 @@ import {
   CLASSIC_POINTS_MAX,
   CLASSIC_CATEGORY_MAX_LEN,
   CLASSIC_CATEGORIES_MAX,
+  CLASSIC_DYNAMIC_MAX_MIN,
+  CLASSIC_DYNAMIC_MIN_MIN,
+  CLASSIC_DYNAMIC_DECAY_MIN,
+  dynamicPoints,
 } from "@/lib/classic-keys";
+
+// Re-exported so callers (the admin UI, the board display) can use the same
+// formula without importing server-only classic-store.
+export { dynamicPoints } from "@/lib/classic-keys";
 
 /**
  * The classic (jeopardy-style flag) module. This file is the only place that
@@ -145,8 +153,17 @@ import {
  *  `CLASSIC_CATEGORY_MAX_LEN` and `CLASSIC_CATEGORIES_MAX` are re-exported for
  *  the same reason: classic-io.ts (the bulk import/export parser) is also
  *  client-safe and needs these bounds to validate a pasted bundle without
- *  importing this `server-only` file. */
-export { CLASSIC_ID_RE, CLASSIC_POINTS_MAX, CLASSIC_CATEGORY_MAX_LEN, CLASSIC_CATEGORIES_MAX };
+ *  importing this `server-only` file. `CLASSIC_DYNAMIC_*` are re-exported so
+ *  the admin form can validate dynamic-scoring inputs client-side. */
+export {
+  CLASSIC_ID_RE,
+  CLASSIC_POINTS_MAX,
+  CLASSIC_CATEGORY_MAX_LEN,
+  CLASSIC_CATEGORIES_MAX,
+  CLASSIC_DYNAMIC_MAX_MIN,
+  CLASSIC_DYNAMIC_MIN_MIN,
+  CLASSIC_DYNAMIC_DECAY_MIN,
+};
 
 /** Thrown by the authoring functions for genuine input-validation failures
  *  (bad id, unknown category, non-integer points, empty flag) — mirroring
@@ -182,6 +199,24 @@ export type Challenge = {
    *  It is also what SUBMIT_SCRIPT reads to pick which form of the submission
    *  to compare — see that script's comment. */
   caseSensitive?: boolean;
+  /**
+   * Dynamic (decaying) scoring (#187). When present, ALL THREE fields must be
+   * present together. Absent means static scoring — `points` is the sole value
+   * for every solver.
+   *
+   * `points` on a dynamic challenge holds the authored MAXIMUM and is stored
+   * verbatim in the hash (SUBMIT_SCRIPT reads it for the initial award at
+   * solve time). The board and the leaderboard derive the CURRENT value from
+   * the live solve count at read time using `dynamicPoints()`, so they always
+   * reflect actual decay without touching stored history.
+   *
+   * All three are PUBLIC: a contestant needs to understand why a challenge
+   * decreases in value, and seeing max/min/decay explains it. They carry no
+   * secret analogous to the flag.
+   */
+  maxPoints?: number;
+  minPoints?: number;
+  decay?: number;
 };
 
 /** One challenge as the ADMIN-GATED surface sees it: the public-safe record
@@ -236,6 +271,20 @@ function parseChallenge(raw: string): Challenge | null {
       // challenge, the edit form unchecks its box, and `exportBundle` writes a
       // backup that restores as case-INsensitive.
       ...(c.caseSensitive === true ? { caseSensitive: true as const } : {}),
+      // Dynamic scoring (#187): all three fields present together or none.
+      // Carried back only when all three are finite positive integers and
+      // satisfy the authoring constraints — a malformed stored value produces
+      // a static challenge rather than a corrupt dynamic one, so existing
+      // data and truncated writes always degrade gracefully.
+      ...(typeof c.maxPoints === "number" &&
+        typeof c.minPoints === "number" &&
+        typeof c.decay === "number" &&
+        Number.isInteger(c.maxPoints) && c.maxPoints >= CLASSIC_DYNAMIC_MAX_MIN &&
+        Number.isInteger(c.minPoints) && c.minPoints >= CLASSIC_DYNAMIC_MIN_MIN &&
+        c.minPoints <= c.maxPoints &&
+        Number.isInteger(c.decay) && c.decay >= CLASSIC_DYNAMIC_DECAY_MIN
+        ? { maxPoints: c.maxPoints as number, minPoints: c.minPoints as number, decay: c.decay as number }
+        : {}),
     };
   } catch {
     return null;
@@ -469,6 +518,12 @@ export async function renameCategory(from: string, to: string): Promise<Category
  *  the authored copy exists to be read by a human; `normalizeFlag` owns what
  *  grading actually compares.
  *
+ *  Dynamic scoring (#187): when `maxPoints`/`minPoints`/`decay` are present,
+ *  all three must be present together and satisfy the authoring constraints.
+ *  `points` on a dynamic challenge holds the MAXIMUM (the initial value) so
+ *  SUBMIT_SCRIPT can read it verbatim when it awards the first solve; the
+ *  current decayed value is always derived at read time by `dynamicPoints()`.
+ *
  *  Returns what was STORED, as an `AdminChallenge`. Contestant-facing code
  *  never sees this value. */
 export async function upsertChallenge(c: Challenge, flag: string, hint?: string | null): Promise<AdminChallenge> {
@@ -498,6 +553,45 @@ export async function upsertChallenge(c: Challenge, flag: string, hint?: string 
   }
   if (hint != null && (typeof hint !== "string" || hint.length > CLASSIC_HINT_MAX)) {
     throw new ClassicValidationError("hint", `Hint must be at most ${CLASSIC_HINT_MAX} characters`);
+  }
+
+  // Dynamic scoring (#187): validate all-or-nothing. A challenge with any
+  // one of the three fields must carry all three, and the values must satisfy
+  // the ordering constraints.
+  const hasDynamic = c.maxPoints !== undefined || c.minPoints !== undefined || c.decay !== undefined;
+  if (hasDynamic) {
+    if (c.maxPoints === undefined || c.minPoints === undefined || c.decay === undefined) {
+      throw new ClassicValidationError(
+        "maxPoints",
+        "Dynamic scoring requires maxPoints, minPoints, and decay together",
+      );
+    }
+    if (!Number.isInteger(c.maxPoints) || c.maxPoints < CLASSIC_DYNAMIC_MAX_MIN || c.maxPoints > CLASSIC_POINTS_MAX) {
+      throw new ClassicValidationError(
+        "maxPoints",
+        `maxPoints must be an integer in [${CLASSIC_DYNAMIC_MAX_MIN}, ${CLASSIC_POINTS_MAX}]`,
+      );
+    }
+    if (!Number.isInteger(c.minPoints) || c.minPoints < CLASSIC_DYNAMIC_MIN_MIN || c.minPoints > c.maxPoints) {
+      throw new ClassicValidationError(
+        "minPoints",
+        `minPoints must be an integer in [${CLASSIC_DYNAMIC_MIN_MIN}, maxPoints]`,
+      );
+    }
+    if (!Number.isInteger(c.decay) || c.decay < CLASSIC_DYNAMIC_DECAY_MIN) {
+      throw new ClassicValidationError(
+        "decay",
+        `decay must be an integer >= ${CLASSIC_DYNAMIC_DECAY_MIN}`,
+      );
+    }
+    // points must equal maxPoints for dynamic challenges — it is what
+    // SUBMIT_SCRIPT awards the first solver (at n=0, dynamicPoints = max).
+    if (c.points !== c.maxPoints) {
+      throw new ClassicValidationError(
+        "points",
+        "points must equal maxPoints for a dynamic challenge",
+      );
+    }
   }
 
   const authored = flag.trim();
@@ -701,6 +795,7 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
       // import round-trip test compares stored JSON, and an always-present
       // `"caseSensitive":false` would break it while changing nothing.
       ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
+      ...(c.maxPoints !== undefined ? { maxPoints: c.maxPoints, minPoints: c.minPoints, decay: c.decay } : {}),
     };
     commands.push(["HSET", CHALLENGES_KEY, c.id, JSON.stringify(record)]);
     commands.push(["HSET", FLAG_KEY, c.id, c.flag.trim()]);
@@ -760,6 +855,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // Same only-when-set rule as caseSensitive: a hint-less board exports
     // byte-identically to a pre-#190 one.
     ...(hint ? { hint } : {}),
+    ...(challenge.maxPoints !== undefined ? { maxPoints: challenge.maxPoints, minPoints: challenge.minPoints, decay: challenge.decay } : {}),
     // #186: metadata only (the bytes ride the event archive), and only when
     // there is some — the same byte-identical rule as hint.
     ...(files.get(challenge.id)?.length ? { attachments: files.get(challenge.id)!.map(attachmentMeta) } : {}),
@@ -942,33 +1038,110 @@ export async function getSolveCounts(): Promise<Map<string, number>> {
 export type ClassicTotal = { points: number; solved: number; lastAt: string | null; itemIds?: string[] };
 
 /** Per-login classic totals for every login that has solved at least one
- *  challenge — three HGETALLs in one pipeline (`ctf:classic:points`,
- *  `ctf:classic:solved`, `ctf:classic:lastAt`), maintained atomically by
- *  SUBMIT_SCRIPT alongside the per-login solve row. The cost does not grow
- *  with the board.
+ *  challenge.
+ *
+ *  STATIC path (no dynamic challenges on the board): reads the pre-aggregated
+ *  hashes `ctf:classic:points`, `ctf:classic:solved`, `ctf:classic:lastAt` in
+ *  one pipeline — three HGETALLs, cost independent of board size and login
+ *  count. SUBMIT_SCRIPT maintains these atomically alongside the per-login
+ *  solve row.
+ *
+ *  DYNAMIC path (at least one challenge has maxPoints/minPoints/decay): the
+ *  aggregate `ctf:classic:points` goes stale the moment another solver lowers
+ *  a dynamic challenge's current value, so stored totals are discarded. This
+ *  function reads each login's `ctf:classic:solves:<login>` hash directly and
+ *  recomputes their total using CURRENT challenge values and current solve
+ *  counts — always consistent with the authoritative solve records.
  *
  *  `lastAt` is the login's latest award time (#522), the leaderboard's
  *  "whoever got there first" tiebreak. It is null for a login that last
  *  scored before the time was recorded, and for everyone when that read
  *  fails (`readLastAt` fails open: the points stand). */
 export async function getClassicTotals(): Promise<Map<string, ClassicTotal>> {
-  const [pointsRes, solvedRes, lastAtRes] = await upstashPipeline([
+  // Read aggregates, challenge catalogue and solve counts together so that the
+  // "is this a static-only board?" check costs no extra round trip.
+  const [pointsRes, solvedRes, lastAtRes, challengesRes, solvecountRes] = await upstashPipeline([
     ["HGETALL", POINTS_KEY],
     ["HGETALL", SOLVED_KEY],
     ["HGETALL", LAST_AT_KEY],
+    ["HGETALL", CHALLENGES_KEY],
+    ["HGETALL", SOLVECOUNT_KEY],
   ]);
   // An errored counter read is not "nobody has points" (#523): throw, so the
   // leaderboard's own handling applies (it logs and leaves the module off the
   // board) instead of every row silently losing these points.
   const failed = pointsRes.error ?? solvedRes.error;
   if (failed !== undefined) throw new Error(`classic totals read failed: ${failed}`);
-  const points = parseCounterHash(pointsRes.result);
-  const solved = parseCounterHash(solvedRes.result);
+
+  const challenges = parseChallengeHash(challengesRes?.result);
+  const solveCounts = parseCounterHash(solvecountRes?.result);
   const lastAt = readLastAt(lastAtRes, "classic");
 
+  const isDynamic = challenges.some(
+    (c) => c.maxPoints !== undefined && c.minPoints !== undefined && c.decay !== undefined,
+  );
+
+  if (!isDynamic) {
+    // Fast static path: exact same behaviour as before #187, no extra reads.
+    const points = parseCounterHash(pointsRes?.result);
+    const solved = parseCounterHash(solvedRes?.result);
+    const totals = new Map<string, ClassicTotal>();
+    for (const login of new Set([...points.keys(), ...solved.keys()])) {
+      totals.set(login, { points: points.get(login) ?? 0, solved: solved.get(login) ?? 0, lastAt: lastAt.get(login) ?? null });
+    }
+    return totals;
+  }
+
+  // Dynamic path: build a per-challenge current-value map, then recompute
+  // each login's total from their solve hashes.
+  const currentValueById = new Map<string, number>();
+  for (const c of challenges) {
+    if (c.maxPoints !== undefined && c.minPoints !== undefined && c.decay !== undefined) {
+      const n = solveCounts.get(c.id) ?? 0;
+      currentValueById.set(c.id, dynamicPoints(c.maxPoints, c.minPoints, c.decay, n));
+    } else {
+      currentValueById.set(c.id, c.points);
+    }
+  }
+
+  // Collect logins with any recorded activity from the aggregates.
+  const solved = parseCounterHash(solvedRes?.result);
+  const points = parseCounterHash(pointsRes?.result);
+  const loginSet = new Set([...solved.keys(), ...points.keys()]);
+  if (loginSet.size === 0) return new Map();
+
+  // One pipeline reads every login's solve hash.
+  const logins = [...loginSet];
+  const solveResults = await upstashPipeline(logins.map((login) => ["HGETALL", solvesKey(login)]));
+
   const totals = new Map<string, ClassicTotal>();
-  for (const login of new Set([...points.keys(), ...solved.keys()])) {
-    totals.set(login, { points: points.get(login) ?? 0, solved: solved.get(login) ?? 0, lastAt: lastAt.get(login) ?? null });
+  for (let i = 0; i < logins.length; i++) {
+    const login = logins[i];
+    const res = solveResults[i];
+    if (res?.error) {
+      // A failed individual solve-hash read degrades to the stored aggregate
+      // (stale but non-zero) rather than dropping the login from the board.
+      const fallbackPoints = points.get(login) ?? 0;
+      const fallbackSolved = solved.get(login) ?? 0;
+      if (fallbackPoints > 0 || fallbackSolved > 0) {
+        totals.set(login, { points: fallbackPoints, solved: fallbackSolved, lastAt: lastAt.get(login) ?? null });
+      }
+      continue;
+    }
+    const solves = parseHashEntries(res?.result, extractSolve);
+    let loginPoints = 0;
+    let loginSolved = 0;
+    for (const challengeId of Object.keys(solves)) {
+      // Use current dynamic value. For a deleted challenge (no catalogue
+      // entry) fall back to the solve-time points — banked points never
+      // vanish (mirrors deleteChallenge's doc comment).
+      const currentValue = currentValueById.get(challengeId) ?? solves[challengeId].points;
+      loginPoints += currentValue;
+      loginSolved += 1;
+    }
+    if (loginSolved > 0) {
+      totals.set(login, { points: loginPoints, solved: loginSolved, lastAt: lastAt.get(login) ?? null });
+    }
   }
   return totals;
 }
@@ -978,11 +1151,14 @@ export async function getClassicTotals(): Promise<Map<string, ClassicTotal>> {
  *  teammates both solved. The aggregates can't serve a team: they're running
  *  totals with no memory of WHICH challenges contributed, so there is no way
  *  to dedupe from them. Instead this reads each member's
- *  `ctf:classic:solves:<login>` hash directly and dedupes by challenge id,
- *  keeping the EARLIEST solve's stored points for any challenge two or more
- *  members hold (a later solve by a teammate — or a since-changed price
- *  recorded on someone else's row — never changes what the team already
- *  earned).
+ *  `ctf:classic:solves:<login>` hash directly and dedupes by challenge id.
+ *
+ *  Dynamic scoring (#187): when `currentValueById` is passed, after deduplication,
+ *  the team's point total is recomputed using the CURRENT dynamic value of each
+ *  solved challenge. This ensures two teammates solving the same dynamic
+ *  challenge produce the same team total as one teammate — deduplication
+ *  happens before the dynamic value is applied, so the value is read exactly
+ *  once per challenge per team.
  *
  *  Exactly ONE `upstashPipeline` round trip for the whole board: one team's
  *  members per entry in `teams`, one `ClassicTotal` per entry out, in the same
@@ -992,6 +1168,7 @@ export async function getClassicTotals(): Promise<Map<string, ClassicTotal>> {
  *  carries one HGETALL per DISTINCT member. */
 export async function getTeamClassicTotalsBatch(
   teams: readonly (readonly string[])[],
+  currentValueById: ReadonlyMap<string, number> | null = null,
 ): Promise<ClassicTotal[]> {
   const indexByLogin = new Map<string, number>();
   for (const members of teams) {
@@ -1003,18 +1180,69 @@ export async function getTeamClassicTotalsBatch(
   if (logins.length === 0) return teams.map(() => ({ points: 0, solved: 0, lastAt: null, itemIds: [] }));
 
   const results = await upstashPipeline(logins.map((login) => ["HGETALL", solvesKey(login)]));
-  return teams.map((members) => foldTeamSolves(members.map((login) => results[indexByLogin.get(login) ?? -1])));
+  return teams.map((members) =>
+    foldTeamSolves(
+      members.map((login) => results[indexByLogin.get(login) ?? -1]),
+      currentValueById,
+    ),
+  );
 }
 
 /** The union-by-challenge fold. Keeps the EARLIEST solve for any challenge
- *  more than one member holds.
+ *  more than one member holds, then applies the current dynamic value if
+ *  `currentValueById` is provided.
  *
- *  The rule itself lives in `leaderboard/team-fold.ts` and is shared verbatim
- *  with quiz-store's team fold — see the note there. All this wrapper does is
- *  rename the shared `completed` to classic's own noun. */
-function foldTeamSolves(memberReplies: ({ result?: unknown; error?: string } | undefined)[]): ClassicTotal {
-  const { points, completed, lastAt, itemIds } = foldTeamItems(memberReplies);
-  return { points, solved: completed, lastAt, itemIds };
+ *  The deduplication rule lives in `leaderboard/team-fold.ts` and is shared
+ *  verbatim with quiz-store's team fold. The dynamic override is applied HERE
+ *  after the fold, so the dynamic value is read exactly once per challenge per
+ *  team — no multiplication by team size. */
+function foldTeamSolves(
+  memberReplies: ({ result?: unknown; error?: string } | undefined)[],
+  currentValueById: Map<string, number> | null = null,
+): ClassicTotal {
+  const { points: rawPoints, completed, lastAt, itemIds } = foldTeamItems(memberReplies);
+
+  if (currentValueById === null || !itemIds) {
+    // Static path: the fold's own points are correct.
+    return { points: rawPoints, solved: completed, lastAt, itemIds };
+  }
+
+  // Dynamic path: recompute the team's total using current dynamic values,
+  // applied to the DEDUPED set of challenge ids the fold produced.
+  // For a deleted challenge (no entry in currentValueById), extract the earliest
+  // banked solve-time points from the member replies.
+  const deletedPointsById = new Map<string, number>();
+  for (const challengeId of itemIds) {
+    if (!currentValueById.has(challengeId)) {
+      let earliestAt = Infinity;
+      let earliestPoints = 0;
+      for (const res of memberReplies) {
+        const flat = Array.isArray(res?.result) ? (res.result as string[]) : [];
+        for (let i = 0; i < flat.length; i += 2) {
+          if (flat[i] === challengeId) {
+            try {
+              const parsed = JSON.parse(flat[i + 1]);
+              if (parsed && typeof parsed.points === "number" && typeof parsed.at === "string") {
+                const ms = Date.parse(parsed.at);
+                if (ms < earliestAt) {
+                  earliestAt = ms;
+                  earliestPoints = parsed.points;
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+      deletedPointsById.set(challengeId, earliestPoints);
+    }
+  }
+
+  let recomputedPoints = 0;
+  for (const challengeId of itemIds) {
+    recomputedPoints += currentValueById.get(challengeId) ?? deletedPointsById.get(challengeId) ?? 0;
+  }
+
+  return { points: recomputedPoints, solved: completed, lastAt, itemIds };
 }
 
 type ResolvedAdminSettings = Awaited<ReturnType<typeof getAdminSettings>>;

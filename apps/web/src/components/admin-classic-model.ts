@@ -140,6 +140,9 @@ export type ChallengePayload = {
   flag: string;
   caseSensitive?: boolean;
   hint?: string;
+  maxPoints?: number;
+  minPoints?: number;
+  decay?: number;
 };
 
 export function emptyDraft(defaultCategory: string = ""): ChallengeDraft {
@@ -256,6 +259,7 @@ export function payloadFromRow({ challenge: c, flag, hint }: AdminChallenge): Ch
     flag,
     hint: hint ?? "",
     ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
+    ...(c.maxPoints !== undefined ? { maxPoints: c.maxPoints, minPoints: c.minPoints, decay: c.decay } : {}),
   };
 }
 
@@ -341,6 +345,7 @@ export function exportBundleFrom(
       // re-import of such a bundle downgrades grading and deletes hints.
       ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
       ...(hint ? { hint } : {}),
+      ...(c.maxPoints !== undefined ? { maxPoints: c.maxPoints, minPoints: c.minPoints, decay: c.decay } : {}),
       // #186: metadata only, and only when present — the server export's rule.
       ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
     })),

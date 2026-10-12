@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   listQuestions: vi.fn(),
   getClassicTotals: vi.fn(),
   getTeamClassicTotalsBatch: vi.fn(),
+  getSolveCounts: vi.fn(),
   listChallenges: vi.fn(),
   getAiTotals: vi.fn(),
   getTeamAiTotalsBatch: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock("@/lib/quiz-store", () => ({
 vi.mock("@/lib/classic-store", () => ({
   getClassicTotals: mocks.getClassicTotals,
   getTeamClassicTotalsBatch: mocks.getTeamClassicTotalsBatch,
+  getSolveCounts: mocks.getSolveCounts,
   listChallenges: mocks.listChallenges,
 }));
 
@@ -91,6 +93,7 @@ beforeEach(() => {
   mocks.getTeamClassicTotalsBatch.mockImplementation((teams: readonly string[][]) =>
     Promise.resolve(teams.map(() => ({ points: 0, solved: 0, lastAt: null }))),
   );
+  mocks.getSolveCounts.mockResolvedValue(new Map());
   mocks.listChallenges.mockResolvedValue([]);
   mocks.getAiTotals.mockResolvedValue(new Map());
   mocks.getTeamAiTotalsBatch.mockImplementation((teams: readonly string[][]) =>

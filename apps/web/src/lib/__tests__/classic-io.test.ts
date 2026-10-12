@@ -288,3 +288,146 @@ describe("classic import errors never echo the submitted value (#500)", () => {
     );
   });
 });
+
+describe("dynamic scoring in a bundle (#187)", () => {
+  const dynamicChallenge = {
+    id: "web-dyn-ab12cd",
+    title: "Dynamic One",
+    category: "Web",
+    description: "solve fast",
+    points: 500,
+    maxPoints: 500,
+    minPoints: 100,
+    decay: 10,
+    order: 0,
+    flag: "ctfbox{dyn}",
+  };
+
+  it("accepts a well-formed dynamic challenge and round-trips it", () => {
+    const bundle: ClassicBundle = {
+      version: 1,
+      categories: ["Web"],
+      challenges: [dynamicChallenge],
+    };
+    const serialized = serializeBundle(bundle);
+    const parsed = parseBundle(serialized);
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors));
+    expect(parsed.bundle.challenges[0]).toEqual(dynamicChallenge);
+  });
+
+  it("rejects partial dynamic configurations", () => {
+    // Only maxPoints
+    const r1 = parseBundle(
+      JSON.stringify({
+        ...valid,
+        challenges: [{ ...valid.challenges[0], maxPoints: 500 }],
+      }),
+    );
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) {
+      expect(r1.errors.some((e) => /maxPoints, minPoints, and decay together/i.test(e.message))).toBe(true);
+    }
+
+    // Only minPoints and decay
+    const r2 = parseBundle(
+      JSON.stringify({
+        ...valid,
+        challenges: [{ ...valid.challenges[0], minPoints: 100, decay: 10 }],
+      }),
+    );
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) {
+      expect(r2.errors.some((e) => /maxPoints, minPoints, and decay together/i.test(e.message))).toBe(true);
+    }
+  });
+
+  it("enforces maxPoints >= minPoints", () => {
+    const res = parseBundle(
+      JSON.stringify({
+        ...valid,
+        challenges: [
+          {
+            ...valid.challenges[0],
+            points: 50,
+            maxPoints: 50,
+            minPoints: 100,
+            decay: 10,
+          },
+        ],
+      }),
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.errors.some((e) => e.where.endsWith(".minPoints"))).toBe(true);
+    }
+  });
+
+  it("enforces points === maxPoints for authoring consistency", () => {
+    const res = parseBundle(
+      JSON.stringify({
+        ...valid,
+        challenges: [
+          {
+            ...valid.challenges[0],
+            points: 200,
+            maxPoints: 500,
+            minPoints: 100,
+            decay: 10,
+          },
+        ],
+      }),
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.errors.some((e) => e.where.endsWith(".points"))).toBe(true);
+    }
+  });
+
+  it("rejects invalid decay values (< 1 or non-integer)", () => {
+    const resZero = parseBundle(
+      JSON.stringify({
+        ...valid,
+        challenges: [
+          {
+            ...valid.challenges[0],
+            points: 500,
+            maxPoints: 500,
+            minPoints: 100,
+            decay: 0,
+          },
+        ],
+      }),
+    );
+    expect(resZero.ok).toBe(false);
+    if (!resZero.ok) {
+      expect(resZero.errors.some((e) => e.where.endsWith(".decay"))).toBe(true);
+    }
+
+    const resFloat = parseBundle(
+      JSON.stringify({
+        ...valid,
+        challenges: [
+          {
+            ...valid.challenges[0],
+            points: 500,
+            maxPoints: 500,
+            minPoints: 100,
+            decay: 2.5,
+          },
+        ],
+      }),
+    );
+    expect(resFloat.ok).toBe(false);
+    if (!resFloat.ok) {
+      expect(resFloat.errors.some((e) => e.where.endsWith(".decay"))).toBe(true);
+    }
+  });
+
+  it("preserves static challenges without adding dynamic keys during serialization", () => {
+    const serialized = serializeBundle(valid);
+    expect(serialized).not.toContain("maxPoints");
+    expect(serialized).not.toContain("minPoints");
+    expect(serialized).not.toContain("decay");
+  });
+});
+

@@ -10,6 +10,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Added: dynamic challenge scoring for classic CTF (#187).** Classic challenges
+  can optionally configure decay (`maxPoints`, `minPoints`, and `decay`),
+  calculated deterministically via the CTFd dynamic formula
+  `ceil(max + ((min - max) / decay²) * solve_count²)` clamped to `minPoints`.
+  Both individual and team totals reflect current dynamic challenge values at
+  read time from authoritative solve records, with team solves deduplicated
+  before applying current values. Live solve counts are raised safely during
+  reseeding without overwriting higher counts.
 - **Fixed: a hint can no longer be bought with points the contestant does not
   have (#553).** The reveal is refused — `403`, "Not enough points: this hint
   costs N and you have M" — when the contestant's leaderboard score (every

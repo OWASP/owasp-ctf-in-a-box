@@ -301,6 +301,8 @@ ADR, not the code.
   `GET /leaderboard` and `GET /challenges` are open by contract and rely on
   the network alone. Flag a write or `srh` hop with no token, a rule wider
   than its caller, or a hop leaving the network, not the plaintext itself.
+  The decision was revisited after the first event and stands; the ADR 63
+  rider lists what would reopen it.
 - **The event import is not atomic** across reset and content replacement,
   matching the master reset it composes; it is bounded (admin-only,
   refused while live, double-confirmed) and recoverable by re-running.

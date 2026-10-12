@@ -3825,14 +3825,76 @@ because that hop leaves our tasks for a managed service.
 - **What changes the answer.** Another tenant or workload sharing the
   network; a hop that crosses it (another VPC, another account, the public
   internet); or a stack that outlives an event. Any of these makes internal
-  TLS the right call, and
-  [#484](https://github.com/OWASP/owasp-ctf-in-a-box/issues/484) tracks doing it after the first event.
+  TLS the right call. [#484](https://github.com/OWASP/owasp-ctf-in-a-box/issues/484) was the promise to revisit this after the first event; the
+  rider below is that revisit, and the decision stands.
 
 **Consequences.** A review should not flag plaintext HTTP between the stack's
 own services as such, nor the scorer's open read routes. It should flag a new
 internal write or `srh` hop without a bearer token, a security-group rule
 wider than the one caller, and any internal hop exposed beyond the stack's
 network.
+
+### ADR 63 rider — Revisited after the first event: still no internal TLS
+
+**Status.** Accepted, October 2026. Resolves
+[#484](https://github.com/OWASP/owasp-ctf-in-a-box/issues/484) by recording why not.
+
+The first live event ran 7–9 October 2026 on the AWS module. Nothing in it
+argued for TLS on the internal hops, and the deploy shapes, read again, still
+give the answer above.
+
+- **compose.** Every internal hop is a container-to-container call on a
+  compose network on one host. `srh` and `redis` meet on `backend`, which is
+  `internal: true`, and the app never reaches `redis:6379`
+  ([ADR 41](#adr-41-authenticating-redis-and-cutting-the-app-tier-off-from-it)).
+  Only Caddy publishes ports, and it terminates TLS.
+- **Fly.** One machine, one network namespace: app, scorer, sync, `srh` and
+  redis reach each other over `localhost`
+  ([ADR 42](#adr-42-one-fly-machine-running-the-real-compose-file-not-five-fly-apps)).
+  Fly's proxy routes the public only to port 3000; `srh`, the scorer and
+  redis are not exposed off the machine. TLS on loopback protects nothing a
+  reader on the machine could not take from the processes directly.
+- **AWS.** The Fargate tasks sit in the event's own VPC, in its *public*
+  subnets with public IPs for egress (`deploy/aws-terraform/network.tf`
+  explains why: no NAT gateway). The boundary is the security groups, not
+  the subnet: each internal port admits only its one caller's group, and
+  nothing else in the VPC runs. The hop that leaves our tasks, `srh` to
+  ElastiCache, is already TLS: the replication group sets
+  `transit_encryption_enabled = true` and an AUTH token, and `srh` connects
+  with `rediss://` to the primary endpoint hostname and verifies it
+  (`deploy/aws-terraform/elasticache.tf`). The cache itself sits in the
+  private subnets.
+- **Tokens.** Every `srh` hop carries `srh`'s bearer token and sync's
+  `POST /score` carries `SCORER_TOKEN`. The scorer's `GET /leaderboard` and
+  `GET /challenges` stay open by contract, as above. Reading any of these
+  hops already takes a foothold in a task that holds the tokens.
+- **Lifetime.** Each stack is applied for one event and destroyed after it.
+
+**What TLS would cost.** A private CA per stack, with certificates issued
+and rotated in two deploy targets (a Terraform `tls` CA and SSM on AWS, a
+generated CA in the compose bootstrap). The scorer would serve HTTPS, and
+`srh` would need a TLS terminator in front of it. The app, sync and the
+scorer would each need the root wired in (`NODE_EXTRA_CA_CERTS`) and every
+internal URL would change scheme. `srh` makes the trust side worse: as a
+client it verifies against CAStore's Mozilla bundle embedded in the pinned
+release, not the OS store
+([ADR 54](#adr-54-the-aws-module-is-ecs--managed-redis-the-events-data-stopped-being-ours-to-lose)),
+so a private CA on its redis hop in compose or Fly would mean rebuilding
+that third-party image. Each of these is a new way for a deploy to fail on
+event day, an expired or mistrusted certificate turning into a stack that
+does not score, to defend against an attacker who already holds the tokens.
+
+**What reopens it.** The same conditions as above, stated as triggers:
+
+- a multi-host or shared-network deployment, where another tenant or
+  workload can see the stack's traffic;
+- any internal hop that leaves the stack's private network, to another VPC,
+  another account or the public internet;
+- a stack kept running across events rather than destroyed after one;
+- a compliance requirement for encryption in transit on every hop.
+
+Any one of these makes internal TLS the right call, starting from the
+proposal recorded in #484.
 
 ## ADR 64. sync's cursor lives in Redis, and an unreadable cursor holds the poller
 

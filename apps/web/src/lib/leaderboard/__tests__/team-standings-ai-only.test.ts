@@ -117,8 +117,8 @@ describe("withTeamStandings on an ai-only event", () => {
       ["blue", 20],
       ["grey", 0],
     ]);
-    // A team with no solves gets no block rather than an empty one.
-    expect(out.teams.find((t) => t.slug === "grey")!.modules?.["ai"]).toBeUndefined();
+    // A team with no solves gets a zero block that adds nothing.
+    expect(out.teams.find((t) => t.slug === "grey")!.modules?.["ai"]).toMatchObject({ points: 0, completed: 0 });
   });
 
   it("attributes a member whose casing differs from the membership record", async () => {

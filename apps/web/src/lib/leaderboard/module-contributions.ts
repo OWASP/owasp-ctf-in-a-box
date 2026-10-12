@@ -75,6 +75,15 @@ import type { ModuleId } from "@/lib/modules";
  * `getQuizTotals`/`getClassicTotals`/`getAiTotals` degrades to that module's
  * absence from the board, never to invented or zero-point rows.
  *
+ * Every live module is on a row from the start: a row with nothing
+ * completed in it gets a ZERO block, `0 / N` and 0 pts, rather than no block,
+ * so a new team can see from the board which modules count. A zero block is
+ * stamped only when its module is live, its totals read succeeded (a failed
+ * read still degrades to absence) and its catalogue is non-empty — never
+ * "0 / 0". It adds no points, no completed items and no activity time, so
+ * totals, ranks and order are exactly what they were without it. It never
+ * creates a row: a login with nothing anywhere still has none here.
+ *
  * Hint penalties are applied by `withHintPenalties`, which runs AFTER this
  * (the pipeline's last stage), so created rows and synthesised team rows are
  * penalised like any other — the fix for hints being free on module-only
@@ -101,6 +110,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   const aiReads = aiEnabled ? Promise.allSettled([getAiTotals(), listAiChallenges()]) : null;
 
   let quizTotals = new Map<string, QuizTotal>();
+  let quizTotalsRead = false;
   let quizTotalQuestions = 0;
   if (quizReads) {
     // Settled INDEPENDENTLY, not under one shared `try`/`Promise.all`. The
@@ -115,6 +125,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     const [totalsResult, questionsResult] = await quizReads;
     if (totalsResult.status === "fulfilled") {
       quizTotals = totalsResult.value;
+      quizTotalsRead = true;
     } else {
       // Degrade to the quiz-less view rather than failing the whole board —
       // same pattern as withHintPenalties/withTeamStandings.
@@ -128,6 +139,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   }
 
   let classicTotals = new Map<string, ClassicTotal>();
+  let classicTotalsRead = false;
   let classicTotalChallenges = 0;
   // The catalogue, its ids and its story chains all come from the SAME
   // `listChallenges`/`listStories` replies that supply the count, so the
@@ -148,6 +160,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     const [totalsResult, challengesResult, storiesResult] = await classicReads;
     if (totalsResult.status === "fulfilled") {
       classicTotals = totalsResult.value;
+      classicTotalsRead = true;
     } else {
       console.error("classic totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
     }
@@ -180,6 +193,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
       : Promise.resolve(undefined);
 
   let aiTotals = new Map<string, AiTotal>();
+  let aiTotalsRead = false;
   let aiTotalChallenges = 0;
   if (aiReads) {
     // Settled INDEPENDENTLY for exactly the reason spelled out above the quiz
@@ -190,6 +204,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     const [totalsResult, challengesResult] = await aiReads;
     if (totalsResult.status === "fulfilled") {
       aiTotals = totalsResult.value;
+      aiTotalsRead = true;
     } else {
       console.error("ai totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
     }
@@ -214,6 +229,25 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
 
   const classicReachable = await classicReachableRead;
 
+  // The zero block each live module stamps on a row with nothing completed in
+  // it — only for a module whose totals were actually read, and only over a
+  // non-empty catalogue (`zeroed`). Jeopardy's counts what a row that has
+  // solved nothing can reach under the story lock (ADR 60): every unstoried
+  // challenge and step 1 of each story.
+  const zeros: ZeroBlocks = {};
+  const quizZero = quizTotalsRead ? zeroed(quizModule(NO_ANSWERS, quizTotalQuestions)) : undefined;
+  if (quizZero) zeros.quiz = quizZero;
+  const classicBase =
+    classicStories.length > 0 && classicChallenges.length > 0
+      ? classicReachableDenominator(classicChallenges, classicStories, new Set(), {})
+      : undefined;
+  const classicZero = classicTotalsRead
+    ? zeroed(classicModule(NO_SOLVES, classicTotalChallenges, classicLiveIds, classicBase))
+    : undefined;
+  if (classicZero) zeros.classic = classicZero;
+  const aiZero = aiTotalsRead ? zeroed(aiModule(NO_SOLVES, aiTotalChallenges)) : undefined;
+  if (aiZero) zeros.ai = aiZero;
+
   const overlay: Overlay = {
     quizByLogin,
     quizTotalQuestions,
@@ -223,6 +257,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     classicReachable,
     aiByLogin,
     aiTotalChallenges,
+    zeros,
   };
 
   const entries = rankByStanding([
@@ -235,6 +270,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
       quizTotalQuestions,
       classicTotalChallenges,
       aiTotalChallenges,
+      zeros,
       classicLiveIds,
       classicReachable,
     ),
@@ -261,9 +297,15 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
       const apps = team.apps;
       if (!apps || Object.keys(apps).length === 0) return team;
       const patched = Object.values(apps).reduce((n, app) => n + (app?.patched ?? 0), 0);
-      // Same nothing-to-show gate as every other module block: a team that
-      // hasn't scored here gets no chip, not a zero chip.
-      if (patched === 0 && team.points === 0) return team;
+      // A team that hasn't scored here still gets the block, at zero,
+      // whenever its targets have anything to patch: the row lists modules
+      // from `team.modules`, so a zero Jeopardy block beside NO Secure
+      // Development block would take the SD target breakdown off the row.
+      // Neutral to the order: `teamCompleted` then counts this block's
+      // `patched` (0) instead of the team's own (0), and its activity time is
+      // `team.lastSolveAt`, which `teamActivityMs` reads anyway.
+      const challenges = Object.values(apps).reduce((n, app) => n + (app?.total ?? 0), 0);
+      if (patched === 0 && team.points === 0 && challenges === 0) return team;
       return {
         ...team,
         modules: {
@@ -312,6 +354,9 @@ type Overlay = {
   classicReachable?: ReadonlyMap<string, Reachable>;
   aiByLogin: Map<string, AiTotal>;
   aiTotalChallenges: number;
+  /** The zero block each app-side module stamps on a row that has completed
+   *  nothing in it; a module without one (off, unread, empty) is absent. */
+  zeros: ZeroBlocks;
 };
 
 /** `{ total, max, locked }` exactly as `classicReachableDenominator` returns
@@ -432,6 +477,25 @@ async function reachableByLogin(
     console.error("classic story-lock reachability unavailable for leaderboard:", errorLabel(err));
     return undefined;
   }
+}
+
+/** App-side modules only: secure-development's block is attributed from the
+ *  scorer's row and never comes from here. */
+type ZeroBlocks = Partial<Record<"quiz" | "classic" | "ai", ModuleProgress>>;
+
+/** The totals of a login or team that has completed nothing, fed through the
+ *  same block builders (and so the same `denominator`) as a scoring row. */
+const NO_ANSWERS: QuizTotal = { points: 0, answered: 0, lastAt: null };
+const NO_SOLVES: ClassicTotal & AiTotal = { points: 0, solved: 0, lastAt: null };
+
+/** A zero block, or nothing when its denominator is 0: a row reads
+ *  "0 / N", never "0 / 0". Only ever handed a block built from `NO_ANSWERS`
+ *  / `NO_SOLVES`, so its points, completed count and activity time are all
+ *  zero or null and it cannot move a total or a tiebreak. */
+function zeroed(progress: ModuleProgress): ModuleProgress | undefined {
+  const { detail } = progress;
+  if (detail.kind === "secure-development") return undefined;
+  return detail.total > 0 ? progress : undefined;
 }
 
 /**
@@ -776,6 +840,7 @@ function createdEntries(
   quizTotalQuestions: number,
   classicTotalChallenges: number,
   aiTotalChallenges: number,
+  zeros: ZeroBlocks,
   classicLiveIds?: ReadonlySet<string>,
   classicReachable?: ReadonlyMap<string, Reachable>,
 ): LeaderboardEntry[] {
@@ -785,8 +850,8 @@ function createdEntries(
   const pending = new Map<string, { login: string; quiz?: QuizTotal; classic?: ClassicTotal; ai?: AiTotal }>();
 
   // `answered`/`solved` > 0 is the same gate `attributeEntry` uses to stamp a
-  // block: a login with no completed item has no module progress to show and
-  // must not become a row.
+  // scoring block: a login with no completed item has no module progress of
+  // its own and must not become a row (zero blocks never create one).
   for (const [login, total] of quizTotals) {
     const key = login.toLowerCase();
     if (seen.has(key) || total.answered <= 0) continue;
@@ -805,7 +870,10 @@ function createdEntries(
 
   const created: LeaderboardEntry[] = [];
   for (const [key, { login, quiz, classic, ai }] of pending) {
-    const modules: Partial<Record<ModuleId, ModuleProgress>> = {};
+    // The modules this login has not played yet sit on the row at zero. No
+    // secure-development block: a created row has no scorer entry and so no
+    // targets to show.
+    const modules: Partial<Record<ModuleId, ModuleProgress>> = { ...zeros };
     if (quiz) modules["quiz"] = quizModule(quiz, quizTotalQuestions);
     if (classic) modules["classic"] = classicModule(classic, classicTotalChallenges, classicLiveIds, classicReachable?.get(key));
     if (ai) modules["ai"] = aiModule(ai, aiTotalChallenges);
@@ -849,7 +917,9 @@ function laterOf(a: string | null, b: string | null): string | null {
  *  is silent: attributing an app-side module shows zero, adding the scorer's
  *  doubles it. */
 function attributeEntry(entry: LeaderboardEntry, secureDev: boolean, overlay: Overlay): LeaderboardEntry {
-  const modules: Partial<Record<ModuleId, ModuleProgress>> = {};
+  // Every live app-side module starts at zero; a module the login has
+  // completed something in replaces its zero block below.
+  const modules: Partial<Record<ModuleId, ModuleProgress>> = { ...overlay.zeros };
   let points = entry.points;
 
   if (secureDev && Object.keys(entry.apps).length > 0) {
@@ -890,9 +960,18 @@ function attributeEntry(entry: LeaderboardEntry, secureDev: boolean, overlay: Ov
 }
 
 /** One module's contribution to ONE team, already normalised out of that
- *  module's own vocabulary: `completed` is the gate (nothing completed means
- *  no block and no points) and `progress` the block to stamp. */
-type TeamContribution = { points: number; completed: number; progress: ModuleProgress };
+ *  module's own vocabulary: the points to add and the block to stamp. A team
+ *  that has completed nothing adds 0 points and stamps a zero block,
+ *  or no block at all when the catalogue is empty or unread. */
+type TeamContribution = { points: number; progress: ModuleProgress | undefined };
+
+/** A team's contribution in one module: its real total when it has completed
+ *  something, otherwise a zero block — built from the empty totals, never from
+ *  the team's own, so stray points or an activity time on a zero-completion
+ *  total can never reach the board. */
+function teamContribution(completed: number, points: number, real: () => ModuleProgress, zero: () => ModuleProgress): TeamContribution {
+  return completed > 0 ? { points, progress: real() } : { points: 0, progress: zeroed(zero()) };
+}
 
 /** A whole board's worth of one module's contributions, WITH the module id
  *  they belong under. The id travels with the data rather than as a second
@@ -908,11 +987,14 @@ function quizContributions(
 ): TeamContributions {
   return {
     moduleId: "quiz",
-    contributions: totals.map((t) => ({
-      points: t.points,
-      completed: t.answered,
-      progress: quizModule(t, totalQuestions, liveIds),
-    })),
+    contributions: totals.map((t) =>
+      teamContribution(
+        t.answered,
+        t.points,
+        () => quizModule(t, totalQuestions, liveIds),
+        () => quizModule(NO_ANSWERS, totalQuestions, liveIds),
+      ),
+    ),
   };
 }
 
@@ -928,11 +1010,14 @@ function classicContributions(
 ): TeamContributions {
   return {
     moduleId: "classic",
-    contributions: totals.map((t, i) => ({
-      points: t.points,
-      completed: t.solved,
-      progress: classicModule(t, totalChallenges, liveIds, reachableDenominators?.[i]),
-    })),
+    contributions: totals.map((t, i) =>
+      teamContribution(
+        t.solved,
+        t.points,
+        () => classicModule(t, totalChallenges, liveIds, reachableDenominators?.[i]),
+        () => classicModule(NO_SOLVES, totalChallenges, liveIds, reachableDenominators?.[i]),
+      ),
+    ),
   };
 }
 
@@ -943,11 +1028,14 @@ function aiContributions(
 ): TeamContributions {
   return {
     moduleId: "ai",
-    contributions: totals.map((t) => ({
-      points: t.points,
-      completed: t.solved,
-      progress: aiModule(t, totalChallenges, liveIds),
-    })),
+    contributions: totals.map((t) =>
+      teamContribution(
+        t.solved,
+        t.points,
+        () => aiModule(t, totalChallenges, liveIds),
+        () => aiModule(NO_SOLVES, totalChallenges, liveIds),
+      ),
+    ),
   };
 }
 
@@ -966,7 +1054,7 @@ function attributeTeams(teams: TeamStanding[], { moduleId, contributions }: Team
   return teams
     .map((team, i) => {
       const contribution = contributions[i];
-      if (!contribution || contribution.completed === 0) return { i, team };
+      if (!contribution?.progress) return { i, team };
       return {
         i,
         team: {

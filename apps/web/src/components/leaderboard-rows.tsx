@@ -11,9 +11,15 @@ import type { AppMeta } from "@/lib/apps";
 import ModuleDetail from "@/components/module-detail";
 import AppBreakdown from "@/components/app-breakdown";
 import BoardItemLists from "@/components/board-item-lists";
+import { hasAppSideProgress } from "@/lib/leaderboard/app-side-progress";
 import { Avatar, RankChip } from "@/components/leaderboard-chrome";
 import { fillStyle } from "@/components/progress/progress-bar";
 import type { LeaderboardData, LeaderboardEntry } from "@/lib/leaderboard/types";
+
+/** Whether any module block on the row has a completed item in it. */
+function hasCompleted(modules: LeaderboardEntry["modules"]): boolean {
+  return Object.values(modules ?? {}).some((m) => (m?.completed ?? 0) > 0);
+}
 
 function LegacyBreakdown({ entry }: { entry: LeaderboardEntry }) {
   return (
@@ -185,7 +191,7 @@ export function EntryRow({
             </span>
             {entry.updatedAgo && <span>Last update {entry.updatedAgo}</span>}
           </div>
-          {entry.modules && Object.keys(entry.modules).length > 0 ? (
+          {entry.modules && Object.keys(entry.modules).length > 0 &&
             modules
               .filter((m) => entry.modules?.[m.id])
               .map((m) => (
@@ -204,22 +210,24 @@ export function EntryRow({
                     catalog={catalog}
                   />
                 </div>
-              ))
-          ) : capabilities.apps ? (
-            <AppBreakdown entry={entry} enabledApps={enabledApps} catalog={catalog} />
-          ) : (
-            <LegacyBreakdown entry={entry} />
-          )}
+              ))}
+          {/* The source's own breakdown, for a row whose module blocks do
+              not carry it: no secure-development block and nothing
+              completed anywhere. A row holding only zero blocks is one of
+              these, and its zero blocks must not take the patched summary
+              off an upstash-shaped row. */}
+          {!entry.modules?.["secure-development"] && !hasCompleted(entry.modules) &&
+            (capabilities.apps ? (
+              <AppBreakdown entry={entry} enabledApps={enabledApps} catalog={catalog} />
+            ) : (
+              <LegacyBreakdown entry={entry} />
+            ))}
           {/* Which questions / which flags — the same Show-N lists the
               profile blocks carry, lazily fetched now that the row is
-              actually open. Only when the entry has app-side activity to
-              enumerate. */}
-          {/* Derived rather than hand-listed: a hardcoded `quiz || classic ||
-              ai` gate silently dropped a module's item list the moment a
-              fifth module (ai) shipped without the check being updated to
-              name it too. secure-development has its own AppBreakdown above,
-              never BoardItemLists, so it's the one id excluded here. */}
-          {Object.keys(entry.modules ?? {}).some((id) => id !== "secure-development") && (
+              actually open, and only when the entry has completed something
+              to enumerate. See `hasAppSideProgress` for why the gate is
+              derived and keyed on a completed item rather than a block. */}
+          {hasAppSideProgress(entry.modules) && (
             <BoardItemLists logins={[entry.login]} classicPoints={entry.modules?.classic?.points} />
           )}
         </div>

@@ -13,6 +13,7 @@ import type { ModuleId, ResolvedModule } from "@/lib/modules";
 import type { AppMeta } from "@/lib/apps";
 import AppBreakdown from "@/components/app-breakdown";
 import BoardItemLists from "@/components/board-item-lists";
+import { hasAppSideProgress } from "@/lib/leaderboard/app-side-progress";
 import ProgressRow, { moduleUnit } from "@/components/progress/progress-row";
 import { Avatar, RankChip } from "@/components/leaderboard-chrome";
 import { fillStyle } from "@/components/progress/progress-bar";
@@ -208,10 +209,10 @@ export function TeamRow({
           )}
           {/* The team's quiz/classic items — the members' UNION, matching how
               the team banks points. Same lazy fetch as the entry rows. */}
-          {/* Same derived gate as EntryRow's, and for the same reason: a
-              hand-listed `quiz || classic || ai` check silently excluded ai
-              once, and would do it again for the next module too. */}
-          {Object.keys(team.modules ?? {}).some((id) => id !== "secure-development") && team.members.length > 0 && (
+          {/* Same gate as EntryRow's (`hasAppSideProgress`): only once
+              something outside Secure Development is completed, since every
+              live module sits on the row from the start at 0 / N. */}
+          {hasAppSideProgress(team.modules) && team.members.length > 0 && (
             <BoardItemLists logins={team.members} classicPoints={team.modules?.classic?.points} />
           )}
         </div>

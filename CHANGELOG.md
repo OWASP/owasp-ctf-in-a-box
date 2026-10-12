@@ -20,6 +20,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: a module stayed off a leaderboard row until its first solve
+  (#585).** Expanding a team with no Jeopardy solves showed only its Secure
+  Development targets, so a new team could not tell from the board that
+  Jeopardy counted. An expanded team or contestant row now lists every
+  enabled module from the start, at `0 / N` and 0 pts; for Jeopardy
+  with stories, `N` is what a row that has solved nothing can reach (every
+  unstoried challenge and step 1 of each story). A module whose totals
+  could not be read, or whose catalogue is empty, still stays off the row
+  rather than reading `0 / 0`. Points, ranks and order are unchanged: a zero
+  row adds nothing.
 - **Fixed: every image the judge pulls is pinned by digest.** The target
   bring-up scripts in `scorer/entrypoints/` ran seven third-party images by
   a moving tag: DVWA's `mariadb:10`, the `alpine` and `alpine/git` staging

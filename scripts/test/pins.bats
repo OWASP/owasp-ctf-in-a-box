@@ -26,7 +26,8 @@ setup() {
 # `file:line:pinned|unpinned|exempt: <text>`. No option or name parsing: an
 # image reference is a whole `docker run|pull|create` command (backslash
 # continuations joined, so a digest on a later line counts) or an `image:`
-# value, and it is pinned when it contains @sha256:<64 hex> anywhere. The one
+# value, and it is pinned when a word of its own (not a KEY=value option, where
+# a digest says nothing about the image run) carries @sha256:<64 hex>. The one
 # way out is a `# pins: <reason>` comment on the line directly above, for an
 # image that is built locally or pinned by whoever passes it in.
 image_refs() {
@@ -41,7 +42,7 @@ image_refs() {
       buf = ""
       if (cmd ~ /^[ \t]*#/) next
       if (cmd !~ /docker[ \t]+(run|pull|create)([ \t]|$)/ && cmd !~ /^[ \t]*(-[ \t]+)?image:/) next
-      if (cmd ~ /@sha256:[0-9a-f]{64}/) state = "pinned"
+      if (cmd ~ /(^|[ \t"])[^= \t"]+@sha256:[0-9a-f]{64}/) state = "pinned"
       else if (above ~ /^[ \t]*# pins: [^ \t]/) state = "exempt"
       else state = "unpinned"
       sub(/^[ \t]+/, "", cmd)
@@ -72,12 +73,13 @@ unpinned_images() {
     echo '#'                                                              # 13
     echo 'docker create caddy'                                            # 14 flagged
     echo "    image: caddy$digest"                                        # 15 pinned
+    echo "docker run -e REF=redis$digest redis:latest"                     # 16 flagged
   } > "$f"
   flagged="$(unpinned_images "$f" | cut -d: -f2 | tr '\n' ' ')"
   states="$(image_refs "$f" | cut -d: -f2,3 | tr '\n' ' ')"
   echo "all: $states"
-  echo "flagged lines: '$flagged' (want '1 2 3 4 8 14 ')"
-  [ "$flagged" = "1 2 3 4 8 14 " ]
+  echo "flagged lines: '$flagged' (want '1 2 3 4 8 14 16 ')"
+  [ "$flagged" = "1 2 3 4 8 14 16 " ]
 }
 
 @test "every image a script, workflow or compose file runs is digest-pinned or says why not" {

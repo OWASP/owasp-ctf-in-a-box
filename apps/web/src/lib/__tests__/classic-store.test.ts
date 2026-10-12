@@ -18,7 +18,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ upstashEval: vi.fn(), upstashPipeline: vi.fn() }));
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
+// The real `assertPipelineOk` (pure), so a per-command error reply is judged
+// exactly as production judges it.
+vi.mock("@/lib/upstash", async (orig) => ({
+  ...(await orig<typeof import("@/lib/upstash")>()),
+  upstashEval: mocks.upstashEval,
+  upstashPipeline: mocks.upstashPipeline,
+}));
 // #186: a deleted challenge takes its attachments; clearing the board clears
 // them. The attachments store has its own suites — here, only that it is asked.
 const attachments = vi.hoisted(() => ({
@@ -274,6 +280,10 @@ describe("listChallengesForAdmin", () => {
       // organizer what they typed, casing included.
       ["HGETALL", "ctf:classic:flag"],
       ["HGETALL", "ctf:classic:hints"],
+      // #192: the other accepted flags AS AUTHORED (never their comparison
+      // forms) and the patterns, from the same instant.
+      ["HGETALL", "ctf:classic:flagalts"],
+      ["HGETALL", "ctf:classic:flagpatterns"],
     ]);
   });
 
@@ -354,8 +364,18 @@ describe("upsertChallenge", () => {
     const [call] = pipelineCalls().slice(-1);
     const keys = call.map((c) => c[1]);
     // The hint row rides in the SAME pipeline (written or cleared) — the
-    // fourth key is #190's, and a hint-less upsert clears it.
-    expect(keys).toEqual(["ctf:classic:challenges", "ctf:classic:flag", "ctf:classic:flagnorm", "ctf:classic:hints"]);
+    // fourth key is #190's, and a hint-less upsert clears it. So do #192's
+    // other accepted flags (as authored, then their comparison forms) and
+    // the patterns: written or cleared together, never left from an old save.
+    expect(keys).toEqual([
+      "ctf:classic:challenges",
+      "ctf:classic:flag",
+      "ctf:classic:flagnorm",
+      "ctf:classic:hints",
+      "ctf:classic:flagalts",
+      "ctf:classic:flagaltsnorm",
+      "ctf:classic:flagpatterns",
+    ]);
   });
 
   it("stores the flag as authored and the normalized form separately", async () => {
@@ -442,6 +462,10 @@ describe("deleteChallenge", () => {
       ["HDEL", "ctf:classic:flagnorm", "chal-1"],
       // The hint row retires with its challenge (#190).
       ["HDEL", "ctf:classic:hints", "chal-1"],
+      // So do its other accepted flags and patterns (#192).
+      ["HDEL", "ctf:classic:flagalts", "chal-1"],
+      ["HDEL", "ctf:classic:flagaltsnorm", "chal-1"],
+      ["HDEL", "ctf:classic:flagpatterns", "chal-1"],
     ]);
     // Deliberately NOT the per-login solve/attempt hashes or the aggregate
     // counters — see deleteChallenge's contract.
@@ -480,6 +504,9 @@ describe("clearChallenges", () => {
         "ctf:classic:flagnorm",
         "ctf:classic:categories",
         "ctf:classic:hints",
+        "ctf:classic:flagalts",
+        "ctf:classic:flagaltsnorm",
+        "ctf:classic:flagpatterns",
       ]),
     );
     expect(deleted).not.toContain("ctf:classic:points");
@@ -737,10 +764,12 @@ describe("importBundle", () => {
   it("leaves an existing challenge that the bundle does not mention untouched", async () => {
     seedChallenges(["legacy-zz99zz"]);
     await importBundle(twoRowBundle);
-    // The only HDELs are hint CLEARS for the bundle's own hint-less rows —
-    // never a delete of a challenge the bundle does not mention.
+    // The only HDELs are CLEARS for the bundle's own rows — a hint, other
+    // accepted flags or patterns it does not carry (#190, #192) — never a
+    // delete of a challenge the bundle does not mention.
     const deleted = pipelineCalls().flat().filter((c) => c[0] === "HDEL");
-    expect(deleted.every((c) => c[1] === "ctf:classic:hints")).toBe(true);
+    const clears = ["ctf:classic:hints", "ctf:classic:flagalts", "ctf:classic:flagaltsnorm", "ctf:classic:flagpatterns"];
+    expect(deleted.every((c) => clears.includes(String(c[1])))).toBe(true);
     expect(deleted.some((c) => String(c[2]).startsWith("legacy"))).toBe(false);
   });
 
@@ -1123,5 +1152,192 @@ describe("renameCategory", () => {
     await expect(renameCategory("Webb", "Web")).rejects.toThrow(/HSET failed/);
     // Three pipelines: two reads and the failed write. No list SET followed.
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(3);
+  });
+});
+
+// #192: a challenge accepts its flag OR any of N other authored flags, OR a
+// submission matching one of its optional regex patterns. The other flags
+// are stored like the primary one — as authored for the edit form, and as
+// comparison forms for grading — and the patterns as authored. All three are
+// SECRET, written or cleared in the same pipeline as the flag.
+describe("more than one accepted flag, and flag patterns (#192)", () => {
+  const ALTS = "ctf:classic:flagalts";
+  const ALTSNORM = "ctf:classic:flagaltsnorm";
+  const PATTERNS = "ctf:classic:flagpatterns";
+  const base = challenge();
+
+  async function upsertWith(lists: { alternateFlags?: string[]; flagPatterns?: string[] }, over: Partial<Challenge> = {}) {
+    categoriesReply(["Web"]);
+    writeReply(7);
+    return upsertChallenge({ ...base, ...over }, "CTF{Main}", null, lists);
+  }
+
+  it("stores the other flags as authored (trimmed), their comparison forms, and the patterns", async () => {
+    await upsertWith({ alternateFlags: ["  CTF{Alt}  ", "ctf{other}"], flagPatterns: ["  [0-9a-f]{32} "] });
+    expect(JSON.parse(valueFor(ALTS, base.id))).toEqual(["CTF{Alt}", "ctf{other}"]);
+    expect(JSON.parse(valueFor(ALTSNORM, base.id))).toEqual(["ctf{alt}", "ctf{other}"]);
+    expect(JSON.parse(valueFor(PATTERNS, base.id))).toEqual(["[0-9a-f]{32}"]);
+  });
+
+  it("keeps a case-sensitive challenge's other flags with case intact", async () => {
+    await upsertWith({ alternateFlags: ["CTF{Alt}"] }, { caseSensitive: true });
+    expect(JSON.parse(valueFor(ALTSNORM, base.id))).toEqual(["CTF{Alt}"]);
+  });
+
+  it("stores each comparison form once", async () => {
+    await upsertWith({ alternateFlags: ["CTF{Alt}", "ctf{alt}", " CTF{ALT} "] });
+    expect(JSON.parse(valueFor(ALTSNORM, base.id))).toEqual(["ctf{alt}"]);
+  });
+
+  // Re-saving a challenge without the lists is a deliberate clear (the same
+  // rule as the hint), so a challenge can never keep accepting a flag its
+  // organizer removed.
+  it("clears all three rows when the lists are empty or absent", async () => {
+    for (const lists of [{}, { alternateFlags: [], flagPatterns: [] }]) {
+      mocks.upstashPipeline.mockClear();
+      await upsertWith(lists);
+      const [call] = pipelineCalls().slice(-1);
+      expect(call.slice(4)).toEqual([
+        ["HDEL", ALTS, base.id],
+        ["HDEL", ALTSNORM, base.id],
+        ["HDEL", PATTERNS, base.id],
+      ]);
+    }
+  });
+
+  it("never writes another flag or a pattern into the public challenge record", async () => {
+    await upsertWith({ alternateFlags: ["CTF{AltSecret}"], flagPatterns: ["pat[0-9]{3}"] });
+    const record = valueFor("ctf:classic:challenges", base.id);
+    expect(record).not.toMatch(/AltSecret|altsecret|pat\[/);
+  });
+
+  it("returns the stored lists, and leaves them off when there are none — a single-flag challenge reads as before", async () => {
+    expect(await upsertWith({ alternateFlags: [" CTF{Alt} "], flagPatterns: [" x{3} "] })).toEqual({
+      challenge: base,
+      flag: "CTF{Main}",
+      hint: null,
+      alternateFlags: ["CTF{Alt}"],
+      flagPatterns: ["x{3}"],
+    });
+    expect(await upsertWith({})).toEqual({ challenge: base, flag: "CTF{Main}", hint: null });
+  });
+
+  // Anti-vacuous (#192): an empty accepted flag or pattern, or one that
+  // accepts anything, is refused before a single write — and the message
+  // names the position and rule, never the value.
+  it("refuses an empty other flag, an empty pattern and a catastrophic one before any write", async () => {
+    const cases: { lists: { alternateFlags?: string[]; flagPatterns?: string[] }; field: string; where: string }[] = [
+      { lists: { alternateFlags: ["CTF{SecretA}", "   "] }, field: "alternateFlags", where: "alternateFlags[1]" },
+      { lists: { flagPatterns: [""] }, field: "flagPatterns", where: "flagPatterns[0]" },
+      { lists: { flagPatterns: ["(SecretB+)+x"] }, field: "flagPatterns", where: "flagPatterns[0]" },
+      { lists: { flagPatterns: [".*"] }, field: "flagPatterns", where: "flagPatterns[0]" },
+    ];
+    for (const { lists, field, where } of cases) {
+      mocks.upstashPipeline.mockClear();
+      categoriesReply(["Web"]);
+      const err = await upsertChallenge(base, "CTF{Main}", null, lists).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ClassicValidationError);
+      expect((err as ClassicValidationError).field).toBe(field);
+      expect((err as Error).message).toContain(where);
+      expect((err as Error).message).not.toMatch(/Secret/);
+      // The categories read only: nothing was written.
+      expect(pipelineCalls()).toHaveLength(1);
+    }
+  });
+
+  it("listChallengesForAdmin returns the lists as authored for the edit form, absent when none", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: [...row(challenge({ id: "a" })), ...row(challenge({ id: "b", points: 60 }))] },
+      { result: ["a", "CTF{A}", "b", "CTF{B}"] },
+      { result: [] },
+      { result: ["a", JSON.stringify(["CTF{A2}", "CTF{A3}"])] },
+      { result: ["a", JSON.stringify(["[0-9]{4}"])] },
+    ]);
+    const [a, b] = await listChallengesForAdmin();
+    expect(a).toEqual({ challenge: challenge({ id: "a" }), flag: "CTF{A}", hint: null, alternateFlags: ["CTF{A2}", "CTF{A3}"], flagPatterns: ["[0-9]{4}"] });
+    expect(Object.keys(b)).toEqual(["challenge", "flag", "hint"]);
+    // The comparison forms are grading's alone: the admin read never asks.
+    expect(JSON.stringify(pipelineCalls())).not.toContain(ALTSNORM);
+  });
+
+  // `upstashPipeline` reports a per-command error as a value (AGENTS.md). A
+  // failed list read read as "none" would hand the edit form empty boxes, and
+  // the organizer's next save would delete every other accepted flag.
+  it("listChallengesForAdmin throws on a failed read instead of reporting no other flags", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: row(challenge({ id: "a" })) },
+      { result: ["a", "CTF{A}"] },
+      { result: [] },
+      { error: "WRONGTYPE Operation against a key holding the wrong kind of value" },
+      { result: [] },
+    ]);
+    await expect(listChallengesForAdmin()).rejects.toThrow(/WRONGTYPE/);
+  });
+
+  it("importBundle writes and clears the lists per row in its one write pipeline", async () => {
+    const bundle: ClassicBundle = {
+      ...twoRowBundle,
+      version: 4,
+      challenges: [
+        { ...twoRowBundle.challenges[0], alternateFlags: [" ctfbox{Alt} "], flagPatterns: ["one-[0-9]{2}"] },
+        twoRowBundle.challenges[1],
+      ],
+    };
+    await importBundle(bundle);
+    const [call] = pipelineCalls().slice(-1);
+    expect(call).toContainEqual(["HSET", ALTS, "web-one-ab12cd", JSON.stringify(["ctfbox{Alt}"])]);
+    expect(call).toContainEqual(["HSET", ALTSNORM, "web-one-ab12cd", JSON.stringify(["ctfbox{alt}"])]);
+    expect(call).toContainEqual(["HSET", PATTERNS, "web-one-ab12cd", JSON.stringify(["one-[0-9]{2}"])]);
+    // A row without the fields clears what an earlier import gave it, so a
+    // restored backup is faithful in both directions — the hint's rule.
+    expect(call).toContainEqual(["HDEL", ALTS, "crypto-two-cd34ef"]);
+    expect(call).toContainEqual(["HDEL", ALTSNORM, "crypto-two-cd34ef"]);
+    expect(call).toContainEqual(["HDEL", PATTERNS, "crypto-two-cd34ef"]);
+  });
+
+  it("exportBundle emits the lists and stamps version 4 — only when a challenge carries one", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: row(challenge({ id: FULL_BOARD_ID })) },
+      { result: [FULL_BOARD_ID, "ctfbox{One}"] },
+      { result: [] },
+      { result: [FULL_BOARD_ID, JSON.stringify(["ctfbox{Uno}"])] },
+      { result: [FULL_BOARD_ID, JSON.stringify(["one-[0-9]{2}"])] },
+    ]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
+    const bundle = await exportBundle();
+    expect(bundle.version).toBe(4);
+    expect(bundle.challenges[0].alternateFlags).toEqual(["ctfbox{Uno}"]);
+    expect(bundle.challenges[0].flagPatterns).toEqual(["one-[0-9]{2}"]);
+
+    // A single-flag board exports exactly as it did before #192.
+    seedFullBoard();
+    const plain = await exportBundle();
+    expect(plain.version).toBe(2);
+    expect("alternateFlags" in plain.challenges[0]).toBe(false);
+    expect("flagPatterns" in plain.challenges[0]).toBe(false);
+  });
+
+  it("round-trips: a v4 export re-imports to the same stored lists", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: row(challenge({ id: FULL_BOARD_ID })) },
+      { result: [FULL_BOARD_ID, "ctfbox{One}"] },
+      { result: [] },
+      { result: [FULL_BOARD_ID, JSON.stringify(["ctfbox{Uno}"])] },
+      { result: [FULL_BOARD_ID, JSON.stringify(["one-[0-9]{2}"])] },
+    ]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
+    const bundle = await exportBundle();
+    resetPipelineCalls();
+    await importBundle(bundle);
+    expect(JSON.parse(valueFor(ALTS, FULL_BOARD_ID))).toEqual(["ctfbox{Uno}"]);
+    expect(JSON.parse(valueFor(PATTERNS, FULL_BOARD_ID))).toEqual(["one-[0-9]{2}"]);
+  });
+
+  it("listChallenges (the contestant path) never reads the lists", async () => {
+    await listChallenges();
+    const sent = JSON.stringify(pipelineCalls());
+    for (const key of [ALTS, ALTSNORM, PATTERNS]) expect(sent).not.toContain(key);
   });
 });

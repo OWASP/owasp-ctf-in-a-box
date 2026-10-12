@@ -230,8 +230,9 @@ reviews:
         ⚠️ WARNING: <description> — <fix> for:
 
         Secrecy boundary — a contestant-reachable function issuing a command
-        against ctf:quiz:key, ctf:classic:flag, ctf:classic:flagnorm, or
-        ctf:classic:hints before purchase.
+        against ctf:quiz:key, ctf:classic:flag, ctf:classic:flagnorm,
+        ctf:classic:flagalts, ctf:classic:flagaltsnorm,
+        ctf:classic:flagpatterns, or ctf:classic:hints before purchase.
 
         Lua atomicity — moving the already-solved guard, attempt-cap check,
         cooldown check, or price read out of the atomic script into the JS
@@ -696,7 +697,9 @@ reviews:
           Flag ⚠️ WARNING: <description> — <fix> for:
 
           A contestant-reachable function issuing a Redis command against
-          ctf:quiz:key, ctf:classic:flag, ctf:classic:flagnorm, ctf:ai:flag,
+          ctf:quiz:key, ctf:classic:flag, ctf:classic:flagnorm,
+          ctf:classic:flagalts, ctf:classic:flagaltsnorm,
+          ctf:classic:flagpatterns, ctf:ai:flag,
           ctf:ai:flagnorm, ctf:ai:signkey, the private half of
           ctf:ai:launchkey, or ctf:classic:hints / ctf:ai:hints for an
           unpurchased hint.

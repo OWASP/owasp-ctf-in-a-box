@@ -123,6 +123,23 @@ describe("parseEventBundle", () => {
     expect(res.errors.some((e) => e.where.startsWith("classic"))).toBe(true);
   });
 
+  // #192: an archive's classic section may be a v4 bundle carrying other
+  // accepted flags and patterns, and they survive the archive parse — an
+  // archive that dropped them would replay an event whose answers no longer
+  // grade. A v1 section (the one above) still parses unchanged.
+  it("carries a v4 classic section's other flags and patterns through, and folds their errors under classic", () => {
+    const lists = { alternateFlags: ["ctfbox{Uno}"], flagPatterns: ["one-[0-9]{2}"] };
+    const v4 = { ...valid, classic: { ...valid.classic!, version: 4, challenges: [{ ...valid.classic!.challenges[0], ...lists }] } };
+    const res = parseEventBundle(JSON.stringify(v4));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.classic!.challenges[0]).toMatchObject(lists);
+
+    const bad = { ...valid, classic: { ...valid.classic!, version: 4, challenges: [{ ...valid.classic!.challenges[0], flagPatterns: [".*"] }] } };
+    const refused = parseEventBundle(JSON.stringify(bad));
+    if (refused.ok) throw new Error("expected a refusal");
+    expect(refused.errors).toContainEqual({ where: "classic.challenges[0].flagPatterns[0]", message: expect.stringMatching(/empty/) });
+  });
+
   it("folds embedded ai errors under an ai prefix", () => {
     const bad = { ...valid, ai: { ...valid.ai, challenges: [{ ...valid.ai!.challenges[0], urlTemplate: "https://no-token.example/" }] } };
     const res = parseEventBundle(JSON.stringify(bad));

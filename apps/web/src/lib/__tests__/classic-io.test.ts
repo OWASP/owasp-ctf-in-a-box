@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { CLASSIC_BUNDLE_VERSION, parseBundle, serializeBundle, type ClassicBundle } from "@/lib/classic-io";
+import {
+  CLASSIC_BUNDLE_VERSION,
+  bundleVersionFor,
+  hasFlagLists,
+  parseBundle,
+  serializeBundle,
+  type ClassicBundle,
+} from "@/lib/classic-io";
 
 const valid: ClassicBundle = {
   version: 1,
@@ -32,8 +39,8 @@ describe("parseBundle", () => {
   });
 
   it("rejects an unknown version rather than misparsing it", () => {
-    // 3 is the current version (attachment files); 4 is not.
-    const res = parseBundle(JSON.stringify({ ...valid, version: 4 }));
+    // 4 is the current version (#192's flag lists); 5 is not.
+    const res = parseBundle(JSON.stringify({ ...valid, version: 5 }));
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
     expect(res.errors.some((e) => e.where === "version")).toBe(true);
@@ -307,8 +314,10 @@ describe("attachment files in a v3 bundle", () => {
     return r.ok ? [] : r.errors.filter((e) => e.where.startsWith("attachmentFiles"));
   };
 
-  it("is the current version", () => {
-    expect(CLASSIC_BUNDLE_VERSION).toBe(3);
+  it("accepts files on a v4 bundle too — 4 is a superset of 3", () => {
+    const res = parseBundle(withFiles([{ item: c0.id, sha256: sha, bytes: b64 }], 4));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.attachmentFiles).toHaveLength(1);
   });
 
   it("accepts files that match an upload in the same bundle, and keeps them", () => {
@@ -345,5 +354,77 @@ describe("attachment files in a v3 bundle", () => {
     const errors = fileErrors(withFiles([{ item: PLANTED, sha256: sha, bytes: b64 }]));
     expect(errors).toContainEqual({ where: "attachmentFiles[0]", message: "No upload in this bundle matches this file's item and sha256" });
     expect(JSON.stringify(errors)).not.toContain(PLANTED);
+  });
+});
+
+// #192: version 4 carries a challenge's other accepted flags and its regex
+// patterns. Validated with the store's own rules (classic-flags.ts), refused
+// on an older version (a box that predates them would import the bundle and
+// silently stop accepting them), and never echoed in a message.
+describe("other accepted flags and flag patterns in a v4 bundle (#192)", () => {
+  const c0 = valid.challenges[0];
+  const bundleWith = (extra: Record<string, unknown>, version = 4) =>
+    JSON.stringify({ ...valid, version, challenges: [{ ...c0, ...extra }, valid.challenges[1]] });
+  const errorsOf = (text: string) => {
+    const r = parseBundle(text);
+    return r.ok ? [] : r.errors;
+  };
+
+  it("is the current version", () => {
+    expect(CLASSIC_BUNDLE_VERSION).toBe(4);
+  });
+
+  it("accepts and keeps both lists", () => {
+    const res = parseBundle(bundleWith({ alternateFlags: ["ctfbox{Uno}"], flagPatterns: ["one-[0-9]{2}"] }));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.challenges[0].alternateFlags).toEqual(["ctfbox{Uno}"]);
+    expect(res.bundle.challenges[0].flagPatterns).toEqual(["one-[0-9]{2}"]);
+  });
+
+  it("parses a v4 bundle without the keys exactly like a v2 one", () => {
+    const v2 = parseBundle(JSON.stringify({ ...valid, version: 2 }));
+    const v4 = parseBundle(JSON.stringify({ ...valid, version: 4 }));
+    if (!v2.ok || !v4.ok) throw new Error("expected both to parse");
+    expect(v4.bundle).toEqual({ ...v2.bundle, version: 4 });
+  });
+
+  it.each([1, 2, 3])("refuses either key on a version %i bundle, naming the position", (version) => {
+    const errors = errorsOf(bundleWith({ alternateFlags: ["ctfbox{Uno}"], flagPatterns: ["one-[0-9]{2}"] }, version));
+    expect(errors).toContainEqual({ where: "challenges[0].alternateFlags", message: '"alternateFlags" needs bundle version 4' });
+    expect(errors).toContainEqual({ where: "challenges[0].flagPatterns", message: '"flagPatterns" needs bundle version 4' });
+  });
+
+  it("refuses an empty flag, a non-array, and an unsafe or vacuous pattern, naming the position and rule", () => {
+    const errors = errorsOf(
+      bundleWith({ alternateFlags: ["ctfbox{Uno}", " "], flagPatterns: ["(SECRETPAT+)+", ".*", "SECRETPAT("] }),
+    );
+    expect(errors).toContainEqual({ where: "challenges[0].alternateFlags[1]", message: expect.stringMatching(/empty/) });
+    expect(errors).toContainEqual({ where: "challenges[0].flagPatterns[0]", message: expect.stringMatching(/repeated group/) });
+    expect(errors).toContainEqual({ where: "challenges[0].flagPatterns[1]", message: expect.stringMatching(/empty/) });
+    expect(errors).toContainEqual({ where: "challenges[0].flagPatterns[2]", message: expect.stringMatching(/valid regular expression/) });
+    expect(errorsOf(bundleWith({ alternateFlags: "ctfbox{SECRETALT}" }))).toContainEqual({
+      where: "challenges[0].alternateFlags",
+      message: expect.stringMatching(/array/),
+    });
+    // #500: the messages go back to the admin client verbatim.
+    expect(JSON.stringify(errors)).not.toContain("SECRETPAT");
+    expect(JSON.stringify(errorsOf(bundleWith({ alternateFlags: "ctfbox{SECRETALT}" })))).not.toContain("SECRETALT");
+  });
+});
+
+describe("bundleVersionFor", () => {
+  it("stamps the oldest version that knows what the bundle carries", () => {
+    expect(bundleVersionFor(false)).toBe(2);
+    expect(bundleVersionFor(true)).toBe(3);
+    expect(bundleVersionFor(false, true)).toBe(4);
+    expect(bundleVersionFor(true, true)).toBe(4);
+  });
+
+  it("counts a challenge as carrying lists only when one is non-empty", () => {
+    const c = valid.challenges[0];
+    expect(hasFlagLists([c])).toBe(false);
+    expect(hasFlagLists([{ ...c, alternateFlags: [], flagPatterns: [] }])).toBe(false);
+    expect(hasFlagLists([c, { ...c, alternateFlags: ["x"] }])).toBe(true);
+    expect(hasFlagLists([{ ...c, flagPatterns: ["x{2}"] }])).toBe(true);
   });
 });

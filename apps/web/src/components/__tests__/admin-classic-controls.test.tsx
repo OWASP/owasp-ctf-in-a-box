@@ -34,8 +34,10 @@ import AdminClassicControls, {
   emptyDraft,
   exportBundleFrom,
   formatImportSummary,
+  draftFlagListErrors,
   isDraftValid,
   newChallengeEditor,
+  rowFromUpsert,
   payloadFromEditor,
   payloadFromRow,
   reorderChallenges,
@@ -219,7 +221,9 @@ describe("AdminClassicControls", () => {
       ];
       const bundle = exportBundleFrom([row1], ["Web"], [], meta, files);
       expect(bundle.attachmentFiles).toEqual([{ item: row1.challenge.id, sha256: sha, bytes: "AAAA" }]);
-      expect(bundle.version).toBe(CLASSIC_BUNDLE_VERSION);
+      // Files alone need version 3; 4 is for #192's flag lists.
+      expect(bundle.version).toBe(3);
+      expect(CLASSIC_BUNDLE_VERSION).toBe(4);
       const parsed = parseBundle(serializeBundle(bundle));
       if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors));
       expect(parsed.bundle.attachmentFiles).toHaveLength(1);
@@ -373,6 +377,9 @@ describe("payloadFromEditor — an edit can never change a challenge's id", () =
       flag: "CTF{changed}",
       caseSensitive: false,
       hint: "",
+      alternateFlags: "",
+      regexEnabled: false,
+      flagPatterns: "",
     };
     const payload = payloadFromEditor({ ...editor, draft }, () => "generated-from-the-new-title");
     expect(payload.id).toBe(c1.id);
@@ -851,5 +858,159 @@ describe("classicInventory", () => {
     // row spelled "Web" against a stored "web" is invisible there. Counting it
     // as listed here would leave the organizer with no sign of it at all.
     expect(classicInventory([row1, row2], ["web"]).unlisted).toBe(2);
+  });
+});
+
+// #192: the edit form's other accepted flags and regex patterns. One entry per
+// line; patterns only when the organizer turns them on; every rule the store
+// enforces, refused before the request; and the reorder/export doors carry
+// both lists so neither can silently drop them.
+describe("other accepted flags and flag patterns (#192)", () => {
+  const listed: AdminChallenge = {
+    challenge: c1,
+    flag: "CTF{real}",
+    hint: null,
+    alternateFlags: ["CTF{alt-one}", "CTF{alt-two}"],
+    flagPatterns: ["ctf\\{[0-9a-f]{8}\\}"],
+  };
+
+  it("seeds the draft with one entry per line, and turns patterns on only when there are some", () => {
+    const draft = draftFromChallenge(listed);
+    expect(draft.alternateFlags).toBe("CTF{alt-one}\nCTF{alt-two}");
+    expect(draft.regexEnabled).toBe(true);
+    expect(draft.flagPatterns).toBe("ctf\\{[0-9a-f]{8}\\}");
+    // Off by default, and off for every challenge without patterns.
+    expect(emptyDraft().regexEnabled).toBe(false);
+    expect(draftFromChallenge(row1)).toMatchObject({ alternateFlags: "", regexEnabled: false, flagPatterns: "" });
+  });
+
+  it("sends each non-blank line, trimmed, and leaves both keys off when there are none", () => {
+    const editor = editorFromChallenge(row1);
+    const payload = payloadFromEditor({
+      ...editor,
+      draft: { ...editor.draft, alternateFlags: "  CTF{a}  \n\n CTF{b}\n", regexEnabled: true, flagPatterns: " x{3} \n" },
+    });
+    expect(payload.alternateFlags).toEqual(["CTF{a}", "CTF{b}"]);
+    expect(payload.flagPatterns).toEqual(["x{3}"]);
+    const plain = payloadFromEditor(editor);
+    expect("alternateFlags" in plain).toBe(false);
+    expect("flagPatterns" in plain).toBe(false);
+  });
+
+  // Turning the box off is how an organizer removes the patterns: the text
+  // stays in the draft (so turning it back on restores it), but is not sent,
+  // and the store clears what is not sent.
+  it("does not send the patterns while regex matching is off, even with text in the box", () => {
+    const editor = editorFromChallenge(listed);
+    const payload = payloadFromEditor({ ...editor, draft: { ...editor.draft, regexEnabled: false } });
+    expect("flagPatterns" in payload).toBe(false);
+    expect(payload.alternateFlags).toEqual(listed.alternateFlags);
+  });
+
+  // The #279 lesson: a reorder re-saves the row through the upsert route,
+  // which clears an absent list — so a drag must carry both.
+  it("payloadFromRow carries both lists, so a reorder cannot erase them", () => {
+    const payload = payloadFromRow(listed);
+    expect(payload.alternateFlags).toEqual(listed.alternateFlags);
+    expect(payload.flagPatterns).toEqual(listed.flagPatterns);
+    expect("alternateFlags" in payloadFromRow(row1)).toBe(false);
+  });
+
+  it("exportBundleFrom carries both lists as version 4, and its own parser accepts the file", () => {
+    const bundle = exportBundleFrom([listed, row2], ["Web"]);
+    expect(bundle.version).toBe(4);
+    expect(bundle.challenges[0]).toMatchObject({ alternateFlags: listed.alternateFlags, flagPatterns: listed.flagPatterns });
+    expect(bundle.challenges[1]).not.toHaveProperty("alternateFlags");
+    const parsed = parseBundle(serializeBundle(bundle));
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors));
+    expect(parsed.bundle.challenges[0].flagPatterns).toEqual(listed.flagPatterns);
+    // Without lists the client export keeps the version an older box reads.
+    expect(exportBundleFrom([row1], ["Web"]).version).toBe(2);
+  });
+
+  it("isDraftValid refuses what the store refuses: an unsafe or vacuous pattern, and regex on with no pattern", () => {
+    const base: ChallengeDraft = { ...emptyDraft("Web"), title: "t", flag: "f" };
+    expect(isDraftValid({ ...base, alternateFlags: "CTF{a}\nCTF{b}" }, ["Web"])).toBe(true);
+    expect(isDraftValid({ ...base, regexEnabled: true, flagPatterns: "[0-9]{4}" }, ["Web"])).toBe(true);
+    expect(isDraftValid({ ...base, regexEnabled: true, flagPatterns: "" }, ["Web"])).toBe(false);
+    expect(isDraftValid({ ...base, regexEnabled: true, flagPatterns: "(a+)+" }, ["Web"])).toBe(false);
+    expect(isDraftValid({ ...base, regexEnabled: true, flagPatterns: ".*" }, ["Web"])).toBe(false);
+    expect(isDraftValid({ ...base, alternateFlags: "x".repeat(600) }, ["Web"])).toBe(false);
+    // An unsafe pattern in the box does not block a save while regex is off:
+    // it is not sent.
+    expect(isDraftValid({ ...base, regexEnabled: false, flagPatterns: "(a+)+" }, ["Web"])).toBe(true);
+  });
+
+  it("explains a refusal by entry number and rule, never by echoing the entry", () => {
+    const base: ChallengeDraft = { ...emptyDraft("Web"), title: "t", flag: "f" };
+    const errors = draftFlagListErrors({ ...base, alternateFlags: "ok\n" + "SECRET".repeat(100), regexEnabled: true, flagPatterns: "fine{2}\n(SECRET+)+" });
+    expect(errors.alternateFlags).toMatch(/^Accepted flag 2: /);
+    expect(errors.flagPatterns).toMatch(/^Pattern 2: .*repeated group/);
+    expect(JSON.stringify(errors)).not.toContain("SECRET");
+    expect(draftFlagListErrors(base)).toEqual({ alternateFlags: null, flagPatterns: null });
+    expect(draftFlagListErrors({ ...base, regexEnabled: true })).toEqual({
+      alternateFlags: null,
+      flagPatterns: expect.stringMatching(/at least one pattern/),
+    });
+  });
+
+  it("rowFromUpsert keeps the lists the route echoed, and drops what it did not", () => {
+    const payload = payloadFromRow(listed);
+    const row = rowFromUpsert(
+      { challenge: c1, flag: "CTF{real}", hint: null, alternateFlags: ["CTF{alt-one}"], flagPatterns: ["x{2}"] },
+      payload,
+    );
+    expect(row).toEqual({ challenge: c1, flag: "CTF{real}", hint: null, alternateFlags: ["CTF{alt-one}"], flagPatterns: ["x{2}"] });
+    // The route leaves the keys off when the store kept none.
+    expect(rowFromUpsert({ challenge: c1, flag: "CTF{real}", hint: null }, payload)).toEqual({ challenge: c1, flag: "CTF{real}", hint: null });
+    expect(rowFromUpsert({}, payload)).toBeNull();
+  });
+
+  describe("ChallengeForm", () => {
+    function renderForm(row: AdminChallenge, flagRevealed: boolean) {
+      return renderToStaticMarkup(
+        <ChallengeForm
+          editor={editorFromChallenge(row)}
+          categories={["Web"]}
+          pending={false}
+          error={null}
+          flagRevealed={flagRevealed}
+          setFlagRevealed={noop}
+          onChange={noop}
+          onCancel={noop}
+          onSubmit={noop}
+        />,
+      );
+    }
+
+    // Masked like the flag: a screen-shared panel must not show them.
+    it("hides the other flags and the patterns until the flag is revealed, saying how many there are", () => {
+      const html = renderForm(listed, false);
+      expect(html).not.toContain("alt-one");
+      expect(html).not.toContain("[0-9a-f]");
+      expect(html).toMatch(/2 other accepted flags hidden/);
+      expect(html).toMatch(/1 pattern hidden/);
+    });
+
+    it("shows both, one per line, once revealed", () => {
+      const html = renderForm(listed, true);
+      expect(html).toContain("CTF{alt-one}\nCTF{alt-two}");
+      expect(html).toContain("ctf\\{[0-9a-f]{8}\\}");
+    });
+
+    it("offers regex matching as an opt-in, off for a challenge without patterns", () => {
+      const html = renderForm(row1, true);
+      expect(html).toMatch(/Also accept flags matching a pattern/);
+      expect(html).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked=""[^>]*>\s*<span[^>]*>\s*<span[^>]*>Also accept/);
+    });
+
+    // The issue's trap: normalisation lowercases, so the case interaction
+    // must be stated WHERE the organizer authors the pattern.
+    it("states, in the form, that patterns are anchored and follow the case-sensitive box", () => {
+      const html = renderForm(listed, true);
+      expect(html).toMatch(/whole flag/i);
+      expect(html).toMatch(/\[A-F\] also matches a.f/);
+      expect(html).toMatch(/128 characters/);
+    });
   });
 });

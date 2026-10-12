@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { storyPositions, type Story } from "@/lib/story-lock";
 import { storyLockLua, teamLockKeys } from "@/lib/classic-team";
 import {
@@ -19,10 +20,11 @@ import { getAdminSettings } from "@/lib/admin-store";
 import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
-import { bundleVersionFor, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
+import { bundleVersionFor, hasFlagLists, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
+import { CLASSIC_PATTERN_INPUT_MAX, flagListIssues, matchesFlagPattern } from "@/lib/classic-flags";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
-import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { assertPipelineOk, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   CLASSIC_CHALLENGES_KEY as CHALLENGES_KEY,
@@ -30,6 +32,9 @@ import {
   CLASSIC_HINT_MAX,
   CLASSIC_FLAG_KEY as FLAG_KEY,
   CLASSIC_FLAGNORM_KEY as FLAGNORM_KEY,
+  CLASSIC_FLAG_ALTS_KEY as FLAG_ALTS_KEY,
+  CLASSIC_FLAG_ALTSNORM_KEY as FLAG_ALTSNORM_KEY,
+  CLASSIC_FLAG_PATTERNS_KEY as FLAG_PATTERNS_KEY,
   CLASSIC_CATEGORIES_KEY as CATEGORIES_KEY,
   CLASSIC_STORIES_KEY,
   CLASSIC_STORIES_MAX,
@@ -72,6 +77,16 @@ import {
  *   ctf:classic:flagnorm         hash, id -> `normalizeFlag(flag)` (SECRET).
  *                                 The ONLY value grading ever compares
  *                                 against.
+ *   ctf:classic:flagalts         hash, id -> JSON array of the challenge's OTHER
+ *                                 accepted flags AS AUTHORED (SECRET, ADR 67).
+ *                                 Admin read only, like ctf:classic:flag.
+ *   ctf:classic:flagaltsnorm     hash, id -> JSON array of their comparison
+ *                                 forms (SECRET). Read only by SUBMIT_SCRIPT.
+ *   ctf:classic:flagpatterns     hash, id -> JSON array of regex patterns as
+ *                                 authored (SECRET). Read by the admin list,
+ *                                 by submitFlag's matcher, and by SUBMIT_SCRIPT
+ *                                 to bind a pattern verdict. All three rows
+ *                                 are ABSENT for a single-flag challenge.
  *   ctf:classic:categories       string, JSON array of category names in the
  *                                 organizer's chosen display order.
  *   ctf:classic:solves:<login>   hash, id -> JSON {points, at} — records ONLY
@@ -208,7 +223,66 @@ export type AdminChallenge = {
    *  never be solved, which is worth seeing in the edit form rather than
    *  hiding. */
   flag: string;
+  /** The other accepted flags AS AUTHORED (trimmed). Present only when
+   *  there is at least one — absent means a single-flag challenge, so every
+   *  row predating the field reads exactly as before. ADMIN SURFACES ONLY. */
+  alternateFlags?: string[];
+  /** The regex patterns as authored. Present only when there is at
+   *  least one. ADMIN SURFACES ONLY. */
+  flagPatterns?: string[];
 };
+
+/** A challenge's two flag lists, as the store keeps them. */
+export type FlagLists = { alternateFlags?: readonly string[]; flagPatterns?: readonly string[] };
+
+/** A stored list value: a JSON array of strings, or null for anything else
+ *  (absent, or a value nothing in this file wrote). */
+function parseStringList(raw: unknown): string[] | null {
+  if (typeof raw !== "string") return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) && parsed.every((v) => typeof v === "string") ? (parsed as string[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** id -> list, from an HGETALL reply of one of the list hashes. */
+function parseListHash(flat: unknown): Map<string, string[]> {
+  const arr = Array.isArray(flat) ? (flat as unknown[]) : [];
+  const out = new Map<string, string[]>();
+  for (let i = 0; i + 1 < arr.length; i += 2) {
+    const list = parseStringList(arr[i + 1]);
+    if (typeof arr[i] === "string" && list && list.length > 0) out.set(arr[i] as string, list);
+  }
+  return out;
+}
+
+/** The lists' fields for an `AdminChallenge` or a bundle row: each present
+ *  only when non-empty, so a single-flag challenge has neither key. */
+function listFields(alternateFlags: readonly string[] | undefined, flagPatterns: readonly string[] | undefined) {
+  return {
+    ...(alternateFlags?.length ? { alternateFlags: [...alternateFlags] } : {}),
+    ...(flagPatterns?.length ? { flagPatterns: [...flagPatterns] } : {}),
+  };
+}
+
+/** The three list rows for one challenge, WRITTEN when there is something to
+ *  store and CLEARED otherwise — so a re-save or re-import without the lists
+ *  removes them, and no challenge keeps accepting a flag its organizer took
+ *  away. The comparison forms follow the challenge's case mode, through the
+ *  same `flagComparisonForm` the primary flag uses, deduped. Callers put these
+ *  in the SAME pipeline as the flag pair. Entries must already be trimmed. */
+function flagListCommands(id: string, alternateFlags: readonly string[], flagPatterns: readonly string[], caseSensitive: boolean | undefined) {
+  const forms = [...new Set(alternateFlags.map((f) => flagComparisonForm(f, caseSensitive)))];
+  return [
+    alternateFlags.length ? ["HSET", FLAG_ALTS_KEY, id, JSON.stringify(alternateFlags)] : ["HDEL", FLAG_ALTS_KEY, id],
+    forms.length ? ["HSET", FLAG_ALTSNORM_KEY, id, JSON.stringify(forms)] : ["HDEL", FLAG_ALTSNORM_KEY, id],
+    flagPatterns.length ? ["HSET", FLAG_PATTERNS_KEY, id, JSON.stringify(flagPatterns)] : ["HDEL", FLAG_PATTERNS_KEY, id],
+  ];
+}
+
+const trimAll = (list: readonly string[] | undefined): string[] => (list ?? []).map((e) => e.trim());
 
 function parseChallenge(raw: string): Challenge | null {
   try {
@@ -286,11 +360,22 @@ export async function listChallenges(): Promise<Challenge[]> {
  *  Both hashes are read in ONE pipeline, so the challenges and their flags
  *  come from the same instant. */
 export async function listChallengesForAdmin(): Promise<AdminChallenge[]> {
-  const [challengesRes, flagRes, hintRes] = await upstashPipeline([
-    ["HGETALL", CHALLENGES_KEY],
-    ["HGETALL", FLAG_KEY],
-    ["HGETALL", HINTS_KEY],
-  ]);
+  // Every reply is checked: this list seeds the edit form, and a failed read
+  // taken as "none" would let the organizer's next save erase what it missed
+  // — a hint, or every other accepted flag. Throwing turns that into
+  // the route's 503 instead.
+  const [challengesRes, flagRes, hintRes, altsRes, patternsRes] = assertPipelineOk(
+    await upstashPipeline([
+      ["HGETALL", CHALLENGES_KEY],
+      ["HGETALL", FLAG_KEY],
+      ["HGETALL", HINTS_KEY],
+      // The other flags AS AUTHORED — never their comparison forms,
+      // which only grading reads — and the patterns.
+      ["HGETALL", FLAG_ALTS_KEY],
+      ["HGETALL", FLAG_PATTERNS_KEY],
+    ]),
+    "classic admin list",
+  );
 
   const flagFlat = Array.isArray(flagRes.result) ? (flagRes.result as string[]) : [];
   const flagById = new Map<string, string>();
@@ -303,10 +388,14 @@ export async function listChallengesForAdmin(): Promise<AdminChallenge[]> {
     if (typeof hintFlat[i + 1] === "string") hintById.set(hintFlat[i], hintFlat[i + 1]);
   }
 
-  const rows = parseChallengeHash(challengesRes.result).map((challenge) => ({
+  const altsById = parseListHash(altsRes?.result);
+  const patternsById = parseListHash(patternsRes?.result);
+
+  const rows: AdminChallenge[] = parseChallengeHash(challengesRes.result).map((challenge) => ({
     challenge,
     flag: flagById.get(challenge.id) ?? "",
     hint: hintById.get(challenge.id) ?? null,
+    ...listFields(altsById.get(challenge.id), patternsById.get(challenge.id)),
   }));
   rows.sort((a, b) => compareChallenges(a.challenge, b.challenge));
   return rows;
@@ -473,7 +562,12 @@ export async function renameCategory(from: string, to: string): Promise<Category
  *
  *  Returns what was STORED, as an `AdminChallenge`. Contestant-facing code
  *  never sees this value. */
-export async function upsertChallenge(c: Challenge, flag: string, hint?: string | null): Promise<AdminChallenge> {
+export async function upsertChallenge(
+  c: Challenge,
+  flag: string,
+  hint?: string | null,
+  lists: FlagLists = {},
+): Promise<AdminChallenge> {
   if (!CLASSIC_ID_RE.test(c.id)) throw new ClassicValidationError("id", `Invalid challenge id: ${c.id}`);
   if (typeof c.title !== "string" || !c.title.trim()) {
     throw new ClassicValidationError("title", "Challenge title is required");
@@ -501,22 +595,35 @@ export async function upsertChallenge(c: Challenge, flag: string, hint?: string 
   if (hint != null && (typeof hint !== "string" || hint.length > CLASSIC_HINT_MAX)) {
     throw new ClassicValidationError("hint", `Hint must be at most ${CLASSIC_HINT_MAX} characters`);
   }
+  // The same rules the bundle parser and the admin form run. The message
+  // names the position and the rule, never the entry: it reaches the client.
+  for (const field of ["alternateFlags", "flagPatterns"] as const) {
+    if (lists[field] === undefined) continue;
+    const [issue] = flagListIssues(field, lists[field]);
+    if (issue) throw new ClassicValidationError(field, `${issue.where}: ${issue.message}`);
+  }
+  const alternateFlags = trimAll(lists.alternateFlags);
+  const flagPatterns = trimAll(lists.flagPatterns);
 
   const authored = flag.trim();
   // The hint is written (or CLEARED — an empty/absent hint deletes the row)
   // in the same pipeline as the challenge, into its own SECRET hash: the
   // public record must never carry it, same storage rule as the flag pair.
   const authoredHint = typeof hint === "string" && hint.trim() ? hint.trim() : null;
-  const results = await upstashPipeline([
-    ["HSET", CHALLENGES_KEY, c.id, JSON.stringify(c)],
-    ["HSET", FLAG_KEY, c.id, authored],
-    ["HSET", FLAGNORM_KEY, c.id, flagComparisonForm(flag, c.caseSensitive)],
-    authoredHint ? ["HSET", HINTS_KEY, c.id, authoredHint] : ["HDEL", HINTS_KEY, c.id],
-  ]);
-  const failed = results.find((r) => r.error);
-  if (failed) throw new Error(`Upstash HSET failed: ${failed.error}`);
+  assertPipelineOk(
+    await upstashPipeline([
+      ["HSET", CHALLENGES_KEY, c.id, JSON.stringify(c)],
+      ["HSET", FLAG_KEY, c.id, authored],
+      ["HSET", FLAGNORM_KEY, c.id, flagComparisonForm(flag, c.caseSensitive)],
+      authoredHint ? ["HSET", HINTS_KEY, c.id, authoredHint] : ["HDEL", HINTS_KEY, c.id],
+      // Written or cleared with the flag pair, never left from an
+      // earlier save of this challenge.
+      ...flagListCommands(c.id, alternateFlags, flagPatterns, c.caseSensitive),
+    ]),
+    "classic upsert",
+  );
 
-  return { challenge: c, flag: authored, hint: authoredHint };
+  return { challenge: c, flag: authored, hint: authoredHint, ...listFields(alternateFlags, flagPatterns) };
 }
 
 /** Result of a bulk import: how many bundle rows were brand new vs. already
@@ -715,6 +822,9 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
     // bundle field — they are the same value, and reading it from the record
     // is what keeps them the same value if either ever gains a default.
     commands.push(["HSET", FLAGNORM_KEY, c.id, flagComparisonForm(c.flag, record.caseSensitive)]);
+    // Written or cleared, like the hint — a row without the fields
+    // drops lists an earlier import gave it, so a restore is faithful.
+    commands.push(...flagListCommands(c.id, trimAll(c.alternateFlags), trimAll(c.flagPatterns), record.caseSensitive));
   }
   commands.push(["SET", CATEGORIES_KEY, JSON.stringify(unioned)]);
   if (mergedStories) commands.push(["SET", CLASSIC_STORIES_KEY, JSON.stringify(mergedStories)]);
@@ -746,7 +856,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
     listStories(),
     listAllAttachments("classic"),
   ]);
-  const challenges: ClassicBundleChallenge[] = rows.map(({ challenge, flag, hint }) => ({
+  const challenges: ClassicBundleChallenge[] = rows.map(({ challenge, flag, hint, alternateFlags, flagPatterns }) => ({
     id: challenge.id,
     title: challenge.title,
     category: challenge.category,
@@ -766,6 +876,8 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // with "Include files"), and only when there is some — the same
     // byte-identical rule as hint.
     ...(files.get(challenge.id)?.length ? { attachments: files.get(challenge.id)!.map(attachmentMeta) } : {}),
+    // The flag lists only when set, the same byte-identical rule.
+    ...listFields(alternateFlags, flagPatterns),
   }));
   // A stored step can outlive its challenge (deleteChallenge updates the story
   // in a second call; read paths already drop such a step via storyPositions).
@@ -773,10 +885,13 @@ export async function exportBundle(): Promise<ClassicBundle> {
   // would be a backup that does not restore — prune to the exported ids.
   const exported = new Set(challenges.map((c) => c.id));
   const kept = stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) }));
-  return { version: bundleVersionFor(false), categories, challenges, stories: kept };
+  // Version 4 only when a challenge carries a flag list, so a single-flag
+  // board's backup still imports on a box built before them.
+  return { version: bundleVersionFor(false, hasFlagLists(challenges)), categories, challenges, stories: kept };
 }
 
-/** Removes a challenge and both of its flag rows together — nothing else.
+/** Removes a challenge and every flag row it has (its other accepted
+ *  flags and patterns too) together — nothing else.
  *
  *  Scope, stated plainly because it is easy to assume otherwise: this retires
  *  the challenge (contestants stop seeing it, and it cannot be
@@ -802,6 +917,9 @@ export async function deleteChallenge(id: string): Promise<void> {
     ["HDEL", FLAG_KEY, id],
     ["HDEL", FLAGNORM_KEY, id],
     ["HDEL", HINTS_KEY, id],
+    ["HDEL", FLAG_ALTS_KEY, id],
+    ["HDEL", FLAG_ALTSNORM_KEY, id],
+    ["HDEL", FLAG_PATTERNS_KEY, id],
   ]);
   const failed = results.find((r) => r.error);
   if (failed) throw new Error(`Upstash HDEL failed: ${failed.error}`);
@@ -816,8 +934,8 @@ export async function deleteChallenge(id: string): Promise<void> {
   await deleteItemAttachments("classic", id);
 }
 
-/** Deletes ONLY the content keys — challenges, both flag hashes, categories,
- *  and hints — never the run-state keys (points, solved, solvecount,
+/** Deletes ONLY the content keys — challenges, every flag hash (the flag lists'
+ *  three included), categories, and hints — never the run-state keys (points, solved, solvecount,
  *  solves:&lt;login&gt;, attempts:&lt;login&gt;).
  *
  *  For a replace-all import: the caller wipes the board clean before writing
@@ -833,6 +951,9 @@ export async function clearChallenges(): Promise<void> {
     ["DEL", CATEGORIES_KEY],
     ["DEL", CLASSIC_STORIES_KEY],
     ["DEL", HINTS_KEY],
+    ["DEL", FLAG_ALTS_KEY],
+    ["DEL", FLAG_ALTSNORM_KEY],
+    ["DEL", FLAG_PATTERNS_KEY],
   ]);
   // This runs on the destructive replace-all path (event-store's
   // importEventBundle) — a silently-swallowed per-command error here would
@@ -992,6 +1113,18 @@ function foldTeamSolves(memberReplies: ({ result?: unknown; error?: string } | u
 
 type ResolvedAdminSettings = Awaited<ReturnType<typeof getAdminSettings>>;
 
+/** Whether a stored challenge record says case-sensitive — the same fact
+ *  SUBMIT_SCRIPT reads off the same record, so the case mode a pattern
+ *  verdict is bound to agrees with the one the script checks. */
+function recordIsCaseSensitive(raw: unknown): boolean {
+  if (typeof raw !== "string") return false;
+  try {
+    return (JSON.parse(raw) as { caseSensitive?: unknown } | null)?.caseSensitive === true;
+  } catch {
+    return false;
+  }
+}
+
 type ClassicGate =
   | { allowed: true }
   | { allowed: false; reason: "paused" | "ended" | "solved" | "cooldown" | "unavailable"; retryAt?: string };
@@ -1101,6 +1234,25 @@ async function evaluateGate(
 //      challenge nobody can solve.
 //   6. Equal: read points, write the solve row, bump the three counters.
 //
+// MORE THAN ONE ACCEPTED FLAG (ADR 67). Step 5 is a membership test: the
+// primary comparison form first, then — only if it did not match — each of
+// the challenge's other accepted forms (KEYS[9], a JSON array decoded with
+// cjson; absent for a single-flag challenge, which therefore grades exactly as
+// before), each still compared as a WHOLE value with `==`. A corrupt array
+// decodes to nothing and accepts nothing.
+//
+// REGEX PATTERNS (ADR 67). Lua has no regex engine, so submitFlag matches the
+// patterns in JS and hands in a VERDICT: ARGV[11] '1' when a pattern matched,
+// with ARGV[12] the SHA-1 of the stored patterns value it matched against and
+// ARGV[13] the case mode it used ('1' case-sensitive). The script honours a '1'
+// only if, at execution time, the challenge still HAS patterns (KEYS[10]), they
+// hash to ARGV[12], and the record's case mode is ARGV[13] — a verdict cannot
+// stand for patterns that are not there, nor survive an edit made between
+// submitFlag's read and this script. A verdict that fails the binding returns
+// {'stale'} BEFORE an attempt is spent, writing nothing. Every other guard —
+// solved, story lock, missing, cooldown — runs first, unchanged, and the
+// verdict only ever adds to step 5's membership test.
+//
 // DRY RUN (ARGV[8] == "1", admin preview): steps 1-2 and 5 run as
 // normal; the cooldown refusal (3) is skipped and NOTHING is written — no
 // attempts row (4), no solve or counters (6). The verdict comes back with a
@@ -1113,16 +1265,17 @@ local dry = ARGV[8] == '1'
 if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 -- STORY LOCK (#463): ARGV[9] names this step's prerequisite ("" when the
 -- challenge is not a later story step). It is open only if some TEAMMATE
--- holds it, and made that solve while on this team (#602): KEYS[9..] are
+-- holds it, and made that solve while on this team (#602): KEYS[11..] are
 -- (solves hash, user record) pairs, ARGV[10] the viewer's team slug. See
--- storyLockLua in classic-team.ts. (KEYS[8] is the lastAt hash, #522: never
--- part of this loop.)
+-- storyLockLua in classic-team.ts. (KEYS[8] is the lastAt hash, #522, and
+-- KEYS[9..10] the other flags and the patterns: never part of this
+-- loop.)
 -- Checked FIRST, before the flag hash is read and before any read or write
 -- of attempts: a locked step touches no secret, spends no attempt and cannot
 -- be used to test a flag. The store reports it exactly like an unknown
 -- challenge (no oracle). A dry-run preview skips it.
 if not dry and ARGV[9] and ARGV[9] ~= '' then
-${storyLockLua(9, 9, 10)}
+${storyLockLua(11, 9, 10)}
   if not open then return {'locked'} end
 end
 local target = redis.call('HGET', KEYS[3], ARGV[1])
@@ -1140,16 +1293,12 @@ if not dry and cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) t
   return {'cooldown', tostring(lastAtMs + cooldownMs)}
 end
 
-attempts = attempts + 1
-if not firstAt then firstAt = ARGV[3] end
-if not dry then
-  redis.call('HSET', KEYS[1], ARGV[1], '{"attempts":' .. attempts .. ',"firstAt":"' .. firstAt .. '","lastAt":"' .. ARGV[3] .. '","lastAtMs":' .. ARGV[6] .. '}')
-end
-
 -- Fetched BEFORE the comparison, not after, because the record now decides
 -- WHICH submitted form to compare (issue #193) as well as what the solve is
 -- worth. Lua still performs no case handling of its own: both forms arrive
--- already normalized from JS, and this only chooses between them.
+-- already normalized from JS, and this only chooses between them. Read
+-- before the attempt is spent, too: the pattern binding below needs its case
+-- mode, and a stale verdict must refuse with nothing written.
 local cRaw = redis.call('HGET', KEYS[4], ARGV[1])
 local points = 0
 local caseSensitive = false
@@ -1161,10 +1310,45 @@ if cRaw then
   if string.match(cRaw, '"caseSensitive":true[,}]') then caseSensitive = true end
 end
 
+-- PATTERN VERDICT (ADR 67): honoured only when bound to the patterns stored
+-- NOW, hashed whole, and to the case mode the record says NOW.
+local patternMatched = false
+if ARGV[11] == '1' then
+  local patRaw = redis.call('HGET', KEYS[10], ARGV[1])
+  local mode = '0'
+  if caseSensitive then mode = '1' end
+  if not patRaw or redis.sha1hex(patRaw) ~= ARGV[12] or mode ~= ARGV[13] then return {'stale'} end
+  patternMatched = true
+end
+
+attempts = attempts + 1
+if not firstAt then firstAt = ARGV[3] end
+if not dry then
+  redis.call('HSET', KEYS[1], ARGV[1], '{"attempts":' .. attempts .. ',"firstAt":"' .. firstAt .. '","lastAt":"' .. ARGV[3] .. '","lastAtMs":' .. ARGV[6] .. '}')
+end
+
 local submitted = ARGV[2]
 if caseSensitive then submitted = ARGV[7] end
 
-if target ~= submitted then
+-- Whole values, every one: the primary form, then each other accepted form.
+local matched = target == submitted
+if not matched then
+  local altRaw = redis.call('HGET', KEYS[9], ARGV[1])
+  if altRaw then
+    local ok, alts = pcall(cjson.decode, altRaw)
+    if ok and type(alts) == 'table' then
+      for _, alt in ipairs(alts) do
+        if alt == submitted then
+          matched = true
+          break
+        end
+      end
+    end
+  end
+end
+if not matched then matched = patternMatched end
+
+if not matched then
   if dry then return {'incorrect', '0', 'dry'} end
   return {'incorrect', tostring(attempts)}
 end
@@ -1276,6 +1460,36 @@ export async function submitFlag(
       : { ok: false, reason: gate.reason };
   }
 
+  // REGEX PATTERNS (ADR 67): matched HERE, because the script has no regex
+  // engine, and handed to the script as a verdict bound to the stored value
+  // it was computed against (see SUBMIT_SCRIPT). A submission longer than the
+  // input cap is never regex-matched, so its patterns are not even read. The
+  // read is a grading lookup and fails CLOSED: `unavailable`, never a grade
+  // made without the patterns the organizer authored.
+  let patternVerdict: [string, string, string] = ["0", "", "0"];
+  if (caseSensitiveFlagForm(flag).length <= CLASSIC_PATTERN_INPUT_MAX) {
+    try {
+      const [patternsRes, recordRes] = assertPipelineOk(
+        await upstashPipeline([
+          ["HGET", FLAG_PATTERNS_KEY, challengeId],
+          ["HGET", CHALLENGES_KEY, challengeId],
+        ]),
+        "classic flag patterns",
+      );
+      const raw = patternsRes?.result;
+      const patterns = parseStringList(raw);
+      if (typeof raw === "string" && patterns?.length) {
+        const caseSensitive = recordIsCaseSensitive(recordRes?.result);
+        if (matchesFlagPattern(patterns, flag, caseSensitive)) {
+          patternVerdict = ["1", createHash("sha1").update(raw, "utf8").digest("hex"), caseSensitive ? "1" : "0"];
+        }
+      }
+    } catch (err) {
+      console.error("classic: flag pattern lookup failed (failing closed):", errorLabel(err));
+      return { ok: false, reason: "unavailable" };
+    }
+  }
+
   const now = new Date();
   const nowIso = now.toISOString();
   // A duration in ms, recomputed from the SAME settings the pre-check used —
@@ -1297,7 +1511,9 @@ export async function submitFlag(
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
         LAST_AT_KEY, // KEYS[8] — login -> latest award time
-        ...lockKeys, // KEYS[9..] — (solves hash, user record) per teammate, for the story lock
+        FLAG_ALTSNORM_KEY, // KEYS[9] — the other accepted flags' comparison forms
+        FLAG_PATTERNS_KEY, // KEYS[10] — the patterns a verdict is bound to
+        ...lockKeys, // KEYS[11..] — (solves hash, user record) per teammate, for the story lock
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the
@@ -1315,6 +1531,10 @@ export async function submitFlag(
         dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing
         prereq, // ARGV[9] — story prerequisite, "" when none
         lockTeam, // ARGV[10] — the viewer's team slug, "" for a team of one
+        // ARGV[11..13] — the pattern verdict ('1'/'0'), the SHA-1 of the
+        // stored patterns it matched ("" when none) and the case mode it used.
+        // A digest, never a pattern: nothing stored reaches the script's ARGV.
+        ...patternVerdict,
       ],
     );
   } catch (err) {
@@ -1324,6 +1544,10 @@ export async function submitFlag(
 
   const [status, value, marker] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") return { ok: false, reason: "invalid" };
+  // The patterns changed between the read above and the script: no
+  // attempt was spent and nothing was written, so the honest answer is that
+  // the check could not be completed — never a wrong answer.
+  if (status === "stale") return { ok: false, reason: "unavailable" };
   // A locked story step: answered EXACTLY like an unknown challenge —
   // a distinct refusal would confirm that a guessed id is a hidden step
   // (secrecy boundary). Never a wrong answer either.

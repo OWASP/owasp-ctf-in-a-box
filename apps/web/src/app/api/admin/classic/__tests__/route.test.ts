@@ -369,10 +369,42 @@ describe("POST /api/admin/classic — challenge upsert", () => {
     expect(res.status).toBe(200);
     // A payload without a hint passes `undefined` through — the store leaves
     // the hint row alone only via an explicit empty string, never a default.
-    expect(upsertChallenge).toHaveBeenCalledWith(CHALLENGE, "CTF{flag}", undefined);
+    // Nor any #192 list: absent lists reach the store as absent, which
+    // clears them — the same "absent = none" the hint follows.
+    expect(upsertChallenge).toHaveBeenCalledWith(CHALLENGE, "CTF{flag}", undefined, {});
     expect(await res.json()).toEqual({ challenge: CHALLENGE, flag: "CTF{flag}", hint: null });
 
     expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-upsert", { challengeId: "c-1" });
+  });
+
+  // #192: the other accepted flags and the patterns ride the same upsert.
+  it("passes the other flags and patterns to the store, and echoes what it stored", async () => {
+    const stored = { ...ADMIN_ROW, alternateFlags: ["CTF{alt}"], flagPatterns: ["[0-9]{4}"] };
+    upsertChallenge.mockResolvedValue(stored);
+    const res = await POST(adminReq("POST", { ...validPayload, alternateFlags: [" CTF{alt} "], flagPatterns: ["[0-9]{4}"] }));
+    expect(res.status).toBe(200);
+    expect(upsertChallenge).toHaveBeenCalledWith(CHALLENGE, "CTF{flag}", undefined, {
+      alternateFlags: [" CTF{alt} "],
+      flagPatterns: ["[0-9]{4}"],
+    });
+    expect(await res.json()).toEqual({ challenge: CHALLENGE, flag: "CTF{flag}", hint: null, alternateFlags: ["CTF{alt}"], flagPatterns: ["[0-9]{4}"] });
+    // The audit line names the challenge — never a flag or a pattern.
+    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-upsert", { challengeId: "c-1" });
+  });
+
+  it("400s a list that is not an array of strings, before the store sees it", async () => {
+    for (const extra of [{ alternateFlags: "CTF{x}" }, { flagPatterns: [1] }, { alternateFlags: [null] }]) {
+      const res = await POST(adminReq("POST", { ...validPayload, ...extra }));
+      expect(res.status).toBe(400);
+    }
+    expect(upsertChallenge).not.toHaveBeenCalled();
+  });
+
+  it("passes the store's position-and-rule refusal through as a 400", async () => {
+    upsertThrows(new ClassicValidationError("flagPatterns", "flagPatterns[0]: A flag pattern must not match an empty flag"));
+    const res = await POST(adminReq("POST", { ...validPayload, flagPatterns: [".*"] }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field: "flagPatterns" });
   });
 });
 

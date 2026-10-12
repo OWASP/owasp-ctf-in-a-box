@@ -139,6 +139,7 @@ import {
   newChallengeEditor,
   payloadFromEditor,
   payloadFromRow,
+  rowFromUpsert,
   solvesLabel,
 } from "@/components/admin-classic-model";
 
@@ -226,11 +227,8 @@ export default function AdminClassicControls({
     // The route echoes the STORED (trimmed) flag alongside the challenge;
     // falling back to the payload's own flag would leave the list holding
     // something the store never actually wrote.
-    parseUpsert: (data, payload) => {
-      const challenge = data.challenge as Challenge | undefined;
-      if (!challenge) return null;
-      return { challenge, flag: (data.flag as string | undefined) ?? payload.flag, hint: (data.hint as string | null | undefined) ?? null };
-    },
+    // So do #192's other accepted flags and patterns (`rowFromUpsert`).
+    parseUpsert: rowFromUpsert,
     toPayload: payloadFromEditor,
     rowPayload: payloadFromRow,
     initialRows: initialChallenges,

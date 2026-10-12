@@ -7,6 +7,18 @@
 export const CLASSIC_CHALLENGES_KEY = "ctf:classic:challenges";
 export const CLASSIC_FLAG_KEY = "ctf:classic:flag";
 export const CLASSIC_FLAGNORM_KEY = "ctf:classic:flagnorm";
+/** #192: a challenge's OTHER accepted flags, beyond `ctf:classic:flag`. Three
+ *  hashes, id -> JSON array, all SECRET like the flag pair and absent for a
+ *  single-flag challenge (which therefore grades exactly as before):
+ *    flagalts      the other flags AS AUTHORED (trimmed) — the edit form and
+ *                  the export read it, grading never does;
+ *    flagaltsnorm  their comparison forms — grading's alone, like flagnorm;
+ *    flagpatterns  the regex patterns as authored — the edit form, the
+ *                  export and submitFlag's matcher read it, and the grading
+ *                  script binds a pattern verdict to its digest. */
+export const CLASSIC_FLAG_ALTS_KEY = "ctf:classic:flagalts";
+export const CLASSIC_FLAG_ALTSNORM_KEY = "ctf:classic:flagaltsnorm";
+export const CLASSIC_FLAG_PATTERNS_KEY = "ctf:classic:flagpatterns";
 export const CLASSIC_CATEGORIES_KEY = "ctf:classic:categories";
 /** Stories (#463): a JSON list of `{id, title, intro, steps}` — content, like
  *  the categories list, so a master reset keeps it. */

@@ -12,7 +12,8 @@ import type { AttachmentFile } from "@/lib/attachment-files";
 import type { Story } from "@/lib/story-lock";
 import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
-import { bundleVersionFor, type ClassicBundle } from "@/lib/classic-io";
+import { bundleVersionFor, hasFlagLists, type ClassicBundle } from "@/lib/classic-io";
+import { flagListIssues, splitFlagLines, type FlagListField } from "@/lib/classic-flags";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import { describeAdminError } from "@/components/admin/fetch";
@@ -117,6 +118,15 @@ export type ChallengeDraft = {
   caseSensitive: boolean;
   /** Optional paid-hint text (#190). Empty = no hint (saving clears it). */
   hint: string;
+  /** #192: the other accepted flags, ONE PER LINE as the textarea holds them.
+   *  Blank lines are spacing, not entries. Empty = the flag alone. */
+  alternateFlags: string;
+  /** #192: whether regex matching is on. Off by default; off sends no
+   *  patterns (the store then clears them) while keeping `flagPatterns` in the
+   *  draft, so ticking it back on restores what was typed. */
+  regexEnabled: boolean;
+  /** #192: the regex patterns, one per line. */
+  flagPatterns: string;
 };
 
 /** The form's whole state: the editable draft plus the identity/position the
@@ -142,10 +152,24 @@ export type ChallengePayload = {
   flag: string;
   caseSensitive?: boolean;
   hint?: string;
+  /** #192: present only when non-empty — the route clears an absent list. */
+  alternateFlags?: string[];
+  flagPatterns?: string[];
 };
 
 export function emptyDraft(defaultCategory: string = ""): ChallengeDraft {
-  return { title: "", category: defaultCategory, description: "", points: "10", flag: "", caseSensitive: false, hint: "" };
+  return {
+    title: "",
+    category: defaultCategory,
+    description: "",
+    points: "10",
+    flag: "",
+    caseSensitive: false,
+    hint: "",
+    alternateFlags: "",
+    regexEnabled: false,
+    flagPatterns: "",
+  };
 }
 
 /** A brand-new challenge, positioned at the end of the list. No id: one is
@@ -159,7 +183,7 @@ export function newChallengeEditor(nextOrder: number, defaultCategory: string = 
  *  `Challenge`. Starting a typo fix with a blank flag box forces the
  *  organizer to retype the whole thing from memory, and a mistake there
  *  silently redefines what counts as solved for every contestant. */
-export function draftFromChallenge({ challenge: c, flag, hint }: AdminChallenge): ChallengeDraft {
+export function draftFromChallenge({ challenge: c, flag, hint, alternateFlags, flagPatterns }: AdminChallenge): ChallengeDraft {
   return {
     title: c.title,
     category: c.category,
@@ -171,6 +195,69 @@ export function draftFromChallenge({ challenge: c, flag, hint }: AdminChallenge)
     // needs a real boolean — an `undefined` here makes React switch the input
     // from controlled to uncontrolled the first time it is ticked.
     caseSensitive: c.caseSensitive === true,
+    // #192: prefilled for the same reason as the flag — an edit that starts
+    // empty would save the loss. One entry per line.
+    alternateFlags: (alternateFlags ?? []).join("\n"),
+    regexEnabled: (flagPatterns?.length ?? 0) > 0,
+    flagPatterns: (flagPatterns ?? []).join("\n"),
+  };
+}
+
+/** The draft's two lists as the payload will carry them: each non-blank line,
+ *  trimmed; no patterns at all while regex matching is off. */
+function draftLists(d: ChallengeDraft): { alternateFlags: string[]; flagPatterns: string[] } {
+  return { alternateFlags: splitFlagLines(d.alternateFlags), flagPatterns: d.regexEnabled ? splitFlagLines(d.flagPatterns) : [] };
+}
+
+const LIST_NOUN: Record<FlagListField, string> = { alternateFlags: "Accepted flag", flagPatterns: "Pattern" };
+
+/** What is wrong with the draft's lists, per field, in words for the form:
+ *  the FIRST problem, naming the entry by its number ("Pattern 2: …") and the
+ *  rule — never the entry, which is a secret on a screen that may be shared.
+ *  The same rules `upsertChallenge` enforces (classic-flags.ts), so the form
+ *  refuses before the request does. Exported for direct testing. */
+export function draftFlagListErrors(d: ChallengeDraft): Record<FlagListField, string | null> {
+  const lists = draftLists(d);
+  const first = (field: FlagListField): string | null => {
+    const [issue] = flagListIssues(field, lists[field]);
+    if (!issue) return null;
+    const at = /\[(\d+)\]$/.exec(issue.where);
+    return at ? `${LIST_NOUN[field]} ${Number(at[1]) + 1}: ${issue.message}` : issue.message;
+  };
+  return {
+    alternateFlags: first("alternateFlags"),
+    flagPatterns:
+      d.regexEnabled && lists.flagPatterns.length === 0
+        ? "Add at least one pattern, or turn pattern matching off"
+        : first("flagPatterns"),
+  };
+}
+
+/** The list fields of a payload or row: each present only when non-empty —
+ *  the shape the store returns and the route echoes, so a challenge without
+ *  lists is byte-identical to one saved before #192. */
+function listFields(alternateFlags: readonly string[] | undefined, flagPatterns: readonly string[] | undefined) {
+  return {
+    ...(alternateFlags?.length ? { alternateFlags: [...alternateFlags] } : {}),
+    ...(flagPatterns?.length ? { flagPatterns: [...flagPatterns] } : {}),
+  };
+}
+
+/** The list row the panel holds after a successful upsert, from the route's
+ *  echo of what was STORED (flag trimmed, lists trimmed and present only when
+ *  kept) — never the payload's own lists, which could differ from what the
+ *  store wrote. Null when the reply carries no challenge. Exported for direct
+ *  testing; `parseUpsert` is a closure a static render never reaches. */
+export function rowFromUpsert(data: Record<string, unknown>, payload: ChallengePayload): AdminChallenge | null {
+  const challenge = data.challenge as Challenge | undefined;
+  if (!challenge) return null;
+  const strings = (v: unknown): string[] | undefined =>
+    Array.isArray(v) && v.every((e) => typeof e === "string") ? (v as string[]) : undefined;
+  return {
+    challenge,
+    flag: (data.flag as string | undefined) ?? payload.flag,
+    hint: (data.hint as string | null | undefined) ?? null,
+    ...listFields(strings(data.alternateFlags), strings(data.flagPatterns)),
   };
 }
 
@@ -197,6 +284,10 @@ export function isDraftValid(d: ChallengeDraft, categories: readonly string[]): 
 
   if (d.flag.trim().length === 0) return false;
 
+  // #192: the lists, by the store's own rules.
+  const listErrors = draftFlagListErrors(d);
+  if (listErrors.alternateFlags !== null || listErrors.flagPatterns !== null) return false;
+
   return true;
 }
 
@@ -216,6 +307,7 @@ export function payloadFromEditor(
 ): ChallengePayload {
   const d = editor.draft;
   const title = d.title.trim();
+  const lists = draftLists(d);
   return {
     id: editor.mode === "edit" ? editor.id : newId(title),
     title,
@@ -232,6 +324,9 @@ export function payloadFromEditor(
     // through, so an unchanged challenge re-saved from this form produces a
     // byte-identical record.
     ...(d.caseSensitive ? { caseSensitive: true as const } : {}),
+    // #192: present only when non-empty. Absent clears, at the store — which
+    // is how emptying the box, or turning pattern matching off, removes them.
+    ...listFields(lists.alternateFlags, lists.flagPatterns),
   };
 }
 
@@ -241,7 +336,7 @@ export function payloadFromEditor(
  *  the same validation and audit line) as an edit. Carries the row's own
  *  flag: the upsert endpoint requires `flag` as one of `CHALLENGE_KEYS`, and a
  *  reorder must not silently blank or rewrite it. */
-export function payloadFromRow({ challenge: c, flag, hint }: AdminChallenge): ChallengePayload {
+export function payloadFromRow({ challenge: c, flag, hint, alternateFlags, flagPatterns }: AdminChallenge): ChallengePayload {
   // The hint and `caseSensitive` ride along for the same reason the flag
   // does: a reorder re-saves the row through the same endpoint, and omitting
   // a field would clear state the organizer never touched — the route stores
@@ -258,6 +353,9 @@ export function payloadFromRow({ challenge: c, flag, hint }: AdminChallenge): Ch
     flag,
     hint: hint ?? "",
     ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
+    // #192: same reason again — the route clears an absent list, so a drag
+    // that left these off would stop accepting every other flag.
+    ...listFields(alternateFlags, flagPatterns),
   };
 }
 
@@ -333,27 +431,31 @@ export function exportBundleFrom(
   );
   const attachmentFiles = files?.filter((f) => named.has(`${f.item}\n${f.sha256}`));
   const withFiles = attachmentFiles?.length ? attachmentFiles : undefined;
+  const challenges = rows.map(({ challenge: c, flag, hint, alternateFlags, flagPatterns }) => ({
+    id: c.id,
+    title: c.title,
+    category: c.category,
+    description: c.description,
+    points: c.points,
+    order: c.order,
+    flag,
+    // Present-only-when-set, mirroring the server's exportBundle exactly —
+    // this client-side path silently DROPPED both fields (CodeRabbit on
+    // #210 caught hint; caseSensitive had the same latent hole), and a
+    // re-import of such a bundle downgrades grading and deletes hints.
+    ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
+    ...(hint ? { hint } : {}),
+    // #186: metadata only, and only when present — the server export's rule.
+    ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
+    // #192: only when set, and the version below follows — the server
+    // export's rule, so this door cannot drop them either.
+    ...listFields(alternateFlags, flagPatterns),
+  }));
   return {
-    version: bundleVersionFor(withFiles !== undefined),
+    version: bundleVersionFor(withFiles !== undefined, hasFlagLists(challenges)),
     categories: [...categories],
     stories: stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) })),
-    challenges: rows.map(({ challenge: c, flag, hint }) => ({
-      id: c.id,
-      title: c.title,
-      category: c.category,
-      description: c.description,
-      points: c.points,
-      order: c.order,
-      flag,
-      // Present-only-when-set, mirroring the server's exportBundle exactly —
-      // this client-side path silently DROPPED both fields (CodeRabbit on
-      // #210 caught hint; caseSensitive had the same latent hole), and a
-      // re-import of such a bundle downgrades grading and deletes hints.
-      ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
-      ...(hint ? { hint } : {}),
-      // #186: metadata only, and only when present — the server export's rule.
-      ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
-    })),
+    challenges,
     ...(withFiles ? { attachmentFiles: withFiles } : {}),
   };
 }

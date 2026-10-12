@@ -9,7 +9,15 @@
 // points), `and lastAtMs` (a crash on every first-ever submission when a
 // cooldown is set), the cooldown comparison, solvecount keyed by the login
 // instead of the challenge, and the case-sensitive form selection.
+//
+// #192 adds the other accepted flags (KEYS[9], whole-value membership) and
+// the regex-pattern verdict (ARGV[11..13], bound to KEYS[10] by SHA-1 and
+// case mode). Those tests pin what the mocked suite cannot: that cjson really
+// decodes the stored array, that redis.sha1hex agrees with Node's SHA-1 over
+// the same stored string, that a stale or unbound verdict writes nothing, and
+// that the story-lock loop never reads the two new hashes as solves.
 
+import { createHash } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { attemptsRow, freshId, liveConfigured, liveKey } from "./live-redis";
 
@@ -28,6 +36,8 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     solvecount: liveKey("classic", "solvecount"),
     solved: liveKey("classic", "solved"),
     lastAt: liveKey("classic", "lastAt"),
+    flagaltsnorm: liveKey("classic", "flagaltsnorm"),
+    flagpatterns: liveKey("classic", "flagpatterns"),
   };
   // Per test, so no total asserted here can be inflated by an earlier test.
   let LOGIN = "";
@@ -54,14 +64,27 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
   /** Seeds a challenge the way `upsertChallenge` does: the comparison form of
    *  the flag into flagnorm, the record (points, optional caseSensitive) into
    *  challenges. */
-  async function seed(id: string, flag: string, points: number, caseSensitive?: true) {
+  async function seed(
+    id: string,
+    flag: string,
+    points: number,
+    caseSensitive?: true,
+    { alternateFlags = [] as string[], patterns = null as string | null } = {},
+  ) {
     await load();
     const record = caseSensitive ? { id, title: id, points, caseSensitive } : { id, title: id, points };
+    const forms = [...new Set(alternateFlags.map((f) => keys.flagComparisonForm(f, caseSensitive)))];
     await pipeline([
       ["HSET", K.flagnorm, id, keys.flagComparisonForm(flag, caseSensitive)],
       ["HSET", K.challenges, id, JSON.stringify(record)],
+      // #192, written the way upsertChallenge writes them: the comparison
+      // forms as a JSON array, the patterns as authored.
+      ...(forms.length ? [["HSET", K.flagaltsnorm, id, JSON.stringify(forms)]] : []),
+      ...(patterns !== null ? [["HSET", K.flagpatterns, id, patterns]] : []),
     ]);
   }
+
+  const sha1 = (s: string) => createHash("sha1").update(s, "utf8").digest("hex");
 
   /** Runs the script exactly as `submitFlag` does, with both comparison forms. */
   async function submit(
@@ -77,12 +100,27 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
       // viewer's team slug ("" for a team of one) — what teamLockKeys hands in.
       lockKeys = [] as string[],
       team = "",
+      // #192: the pattern verdict as submitFlag hands it in — '1'/'0', the
+      // SHA-1 of the stored patterns it matched, and the case mode it used.
+      verdict = ["0", "", "0"] as [string, string, string],
     } = {},
   ) {
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...lockKeys],
+      [
+        K.attempts,
+        K.solves,
+        K.flagnorm,
+        K.challenges,
+        K.points,
+        K.solvecount,
+        K.solved,
+        K.lastAt,
+        K.flagaltsnorm, // KEYS[9]
+        K.flagpatterns, // KEYS[10]
+        ...lockKeys,
+      ],
       [
         id,
         keys.normalizeFlag(flag),
@@ -94,6 +132,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
         dry ? "1" : "0",
         prereq, // ARGV[9] — #463 story prerequisite ("" = none)
         team, // ARGV[10] — #602 the viewer's team slug ("" = team of one)
+        ...verdict, // ARGV[11..13] — #192 the pattern verdict and its binding
       ],
     );
   }
@@ -399,5 +438,119 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     const id = freshId("dry-story");
     await seed(id, "flag{x}", 5);
     expect(await submit(id, "flag{x}", { prereq: freshId("p"), lockKeys: [K.solves, liveKey("classic", "user-none")], dry: true })).toEqual(["correct", "5", "dry"]);
+  });
+  // #192 — other accepted flags.
+  it("accepts any other accepted flag as ONE solve at full points, counted once", async () => {
+    const id = freshId("alts");
+    await seed(id, "flag{main}", 30, undefined, { alternateFlags: ["flag{other}", "FLAG{Third}"] });
+    expect(await submit(id, "  FLAG{OTHER} ")).toEqual(["correct", "30"]);
+    expect(await hget(K.solvecount, id)).toBe("1");
+    expect(await hget(K.points, LOGIN)).toBe("30");
+    // The primary, or another alternate, after that is the same solve.
+    expect(await submit(id, "flag{main}", { nowMs: T0 + 60_000 })).toEqual(["already"]);
+    expect(await submit(id, "flag{third}", { nowMs: T0 + 120_000 })).toEqual(["already"]);
+    expect(await hget(K.solvecount, id)).toBe("1");
+    expect(await hget(K.points, LOGIN)).toBe("30");
+  });
+
+  it("still refuses a flag that is none of them, and spends an attempt for it", async () => {
+    const id = freshId("alts-miss");
+    await seed(id, "flag{main}", 30, undefined, { alternateFlags: ["flag{other}"] });
+    expect(await submit(id, "flag{neither}")).toEqual(["incorrect", "1"]);
+    expect(await hget(K.solves, id)).toBeNull();
+  });
+
+  it("compares the other flags in the challenge's case mode, as whole values", async () => {
+    const id = freshId("alts-case");
+    await seed(id, "Main{X}", 12, true, { alternateFlags: ["Other{Y}"] });
+    expect(await submit(id, "other{y}")).toEqual(["incorrect", "1"]);
+    expect(await submit(id, "Other{Y}", { nowMs: T0 + 10_000 })).toEqual(["correct", "12"]);
+    // A prefix of an accepted flag is not the flag.
+    const loose = freshId("alts-prefix");
+    await seed(loose, "flag{main}", 5, undefined, { alternateFlags: ["flag{other}"] });
+    expect(await submit(loose, "flag{oth")).toEqual(["incorrect", "1"]);
+  });
+
+  it("a corrupt other-flags row accepts nothing and does not break the primary flag", async () => {
+    const id = freshId("alts-corrupt");
+    await seed(id, "flag{main}", 9);
+    await pipeline([["HSET", K.flagaltsnorm, id, "{not json"]]);
+    expect(await submit(id, "{not json")).toEqual(["incorrect", "1"]);
+    expect(await submit(id, "flag{main}", { nowMs: T0 + 10_000 })).toEqual(["correct", "9"]);
+  });
+
+  // #192 — the pattern verdict.
+  it("honours a pattern verdict bound to the stored patterns' digest and the case mode", async () => {
+    const id = freshId("pat");
+    const patterns = JSON.stringify(["[0-9a-f]{8}"]);
+    await seed(id, "flag{main}", 20, undefined, { patterns });
+    expect(await submit(id, "deadbeef", { verdict: ["1", sha1(patterns), "0"] })).toEqual(["correct", "20"]);
+    expect(await hget(K.solvecount, id)).toBe("1");
+  });
+
+  it("agrees with Node's SHA-1 over a non-ASCII stored value — the two hashes must see the same bytes", async () => {
+    const id = freshId("pat-utf8");
+    const patterns = JSON.stringify(["caf\u00e9-[0-9]{2}"]);
+    await seed(id, "flag{main}", 4, undefined, { patterns });
+    expect(await submit(id, "caf\u00e9-12", { verdict: ["1", sha1(patterns), "0"] })).toEqual(["correct", "4"]);
+  });
+
+  it("refuses a verdict as `stale`, writing nothing, when the patterns changed or are gone", async () => {
+    const id = freshId("pat-stale");
+    const patterns = JSON.stringify(["[0-9]{4}"]);
+    await seed(id, "flag{main}", 20, undefined, { patterns });
+    const before = await snapshot();
+    // Computed against an older value.
+    expect(await submit(id, "1234", { verdict: ["1", sha1(JSON.stringify(["[0-9]{3}"])), "0"] })).toEqual(["stale"]);
+    // Computed in the other case mode.
+    expect(await submit(id, "1234", { verdict: ["1", sha1(patterns), "1"] })).toEqual(["stale"]);
+    expect(await snapshot()).toEqual(before);
+    expect(await hget(K.attempts, id)).toBeNull();
+
+    // A challenge with no patterns at all: a verdict cannot stand for patterns
+    // that are not there, whatever digest it carries.
+    const bare = freshId("pat-none");
+    await seed(bare, "flag{main}", 20);
+    expect(await submit(bare, "1234", { verdict: ["1", sha1(""), "0"] })).toEqual(["stale"]);
+    expect(await hget(K.attempts, bare)).toBeNull();
+  });
+
+  it("checks the guards before the verdict: already, cooldown and the story lock still answer first", async () => {
+    const id = freshId("pat-guards");
+    const patterns = JSON.stringify(["[0-9]{4}"]);
+    await seed(id, "flag{main}", 20, undefined, { patterns });
+    const ok: [string, string, string] = ["1", sha1(patterns), "0"];
+    expect(await submit(id, "nope", { nowMs: T0, cooldownMs: 5_000 })).toEqual(["incorrect", "1"]);
+    expect(await submit(id, "1234", { nowMs: T0 + 1, cooldownMs: 5_000, verdict: ok })).toEqual(["cooldown", String(T0 + 5_000)]);
+    expect(await submit(id, "1234", { nowMs: T0 + 1, cooldownMs: 5_000, verdict: ok, prereq: freshId("p"), lockKeys: [K.solves, liveKey("classic", "user-none")] })).toEqual(["locked"]);
+    expect(await submit(id, "1234", { nowMs: T0 + 5_000, cooldownMs: 5_000, verdict: ok })).toEqual(["correct", "20"]);
+    expect(await submit(id, "1234", { nowMs: T0 + 9_000, cooldownMs: 5_000, verdict: ok })).toEqual(["already"]);
+  });
+
+  it("a verdict of 0 adds nothing: a non-matching submission is incorrect", async () => {
+    const id = freshId("pat-zero");
+    await seed(id, "flag{main}", 20, undefined, { patterns: JSON.stringify(["[0-9]{4}"]) });
+    expect(await submit(id, "12345")).toEqual(["incorrect", "1"]);
+  });
+
+  it("dry run: a pattern verdict grades correct and writes nothing", async () => {
+    const id = freshId("pat-dry");
+    const patterns = JSON.stringify(["[0-9]{4}"]);
+    await seed(id, "flag{main}", 20, undefined, { patterns });
+    const before = await snapshot();
+    expect(await submit(id, "1234", { dry: true, verdict: ["1", sha1(patterns), "0"] })).toEqual(["correct", "20", "dry"]);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  // KEYS[9] holds a field per challenge with other flags — including, often,
+  // the PREREQUISITE. If the lock loop started at 9 it would read that hash as
+  // a solves hash, find the prerequisite's field, then HMGET the patterns hash
+  // as a user record (no team) and open the step for a team of one.
+  it("story lock: the other-flags and patterns hashes are never read as a teammate's solves", async () => {
+    const prereqId = freshId("recon");
+    const id = freshId("web");
+    await seed(prereqId, "flag{recon}", 10, undefined, { alternateFlags: ["flag{recon2}"], patterns: JSON.stringify(["r[0-9]{2}"]) });
+    await seed(id, "flag{web}", 40);
+    expect(await submit(id, "flag{web}", { prereq: prereqId, team: "", lockKeys: [K.solves, liveKey("classic", "user-none")] })).toEqual(["locked"]);
   });
 });

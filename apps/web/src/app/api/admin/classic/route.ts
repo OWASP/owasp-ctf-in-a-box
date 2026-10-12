@@ -76,7 +76,7 @@ import { importBundleResponse } from "@/app/api/admin/classic/import-response";
  * shape through the same handler, outside the proxy.
  */
 
-type ChallengePayload = Challenge & { flag: string; hint?: string };
+type ChallengePayload = Challenge & { flag: string; hint?: string; alternateFlags?: string[]; flagPatterns?: string[] };
 
 /** The two POST shapes' allowed key sets. Exported (not just module-private)
  *  so a test can assert, structurally, that they stay disjoint — see the
@@ -96,6 +96,10 @@ export const CHALLENGE_KEYS = new Set([
   "flag",
   "caseSensitive",
   "hint",
+  // #192: the other accepted flags and the regex patterns, each an array of
+  // strings. Absent = none (a re-save without them clears them).
+  "alternateFlags",
+  "flagPatterns",
 ]);
 export const CATEGORIES_KEYS = new Set(["categories"]);
 /** The rename shape's outer and inner key sets (#304). */
@@ -134,6 +138,13 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
   // empty/whitespace hint is a deliberate CLEAR, passed through so the store
   // deletes the row.
   if (body.hint !== undefined && typeof body.hint !== "string") return null;
+  // #192: shape only — an array of strings. What an entry may BE (non-empty,
+  // capped, a safe pattern) is the store's rule (`upsertChallenge`), which
+  // answers a 400 naming the position.
+  for (const field of ["alternateFlags", "flagPatterns"] as const) {
+    const list = body[field];
+    if (list !== undefined && (!Array.isArray(list) || !list.every((e) => typeof e === "string"))) return null;
+  }
   return {
     id: body.id,
     title: body.title.trim(),
@@ -143,6 +154,8 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
     order: body.order,
     flag: body.flag,
     ...(body.hint !== undefined ? { hint: body.hint } : {}),
+    ...(body.alternateFlags !== undefined ? { alternateFlags: body.alternateFlags as string[] } : {}),
+    ...(body.flagPatterns !== undefined ? { flagPatterns: body.flagPatterns as string[] } : {}),
     // Normalized to "present only when true", the same shape the store writes
     // and the bundle exports, so one challenge has one representation
     // whichever door it came through.
@@ -333,20 +346,33 @@ export async function POST(request: Request) {
   const parsed = parseChallengePayload(body);
   if (!parsed) return NextResponse.json({ error: "invalid request payload" }, { status: 400 });
 
-  const { flag, hint, ...challenge } = parsed;
+  const { flag, hint, alternateFlags, flagPatterns, ...challenge } = parsed;
   const c: Challenge = challenge;
   let saved: AdminChallenge;
   try {
-    saved = await upsertChallenge(c, flag, hint);
+    saved = await upsertChallenge(c, flag, hint, {
+      ...(alternateFlags !== undefined ? { alternateFlags } : {}),
+      ...(flagPatterns !== undefined ? { flagPatterns } : {}),
+    });
   } catch (err) {
     return errorResponse(err);
   }
 
+  // The audit line names the challenge only — never a flag, an other
+  // accepted flag or a pattern (#192): the audit log is read by every admin
+  // and outlives the event.
   await writeAdminAudit(gate.login, "classic-upsert", { challengeId: c.id });
   // Echoes the STORED record (flag trimmed by `upsertChallenge`), not the raw
   // payload, so the authoring client's state matches what a subsequent GET
-  // would return rather than drifting from it.
-  return NextResponse.json({ challenge: saved.challenge, flag: saved.flag, hint: saved.hint });
+  // would return rather than drifting from it. The #192 lists ride along only
+  // when the store kept some, the same shape GET returns.
+  return NextResponse.json({
+    challenge: saved.challenge,
+    flag: saved.flag,
+    hint: saved.hint,
+    ...(saved.alternateFlags ? { alternateFlags: saved.alternateFlags } : {}),
+    ...(saved.flagPatterns ? { flagPatterns: saved.flagPatterns } : {}),
+  });
 }
 
 export async function DELETE(request: Request) {

@@ -4,7 +4,8 @@
 // pasted/uploaded bundle in the browser before it ever reaches the server, so
 // this file must NEVER import classic-store.ts (`server-only`) or anything
 // that pulls in Upstash. It may only import from classic-keys.ts and
-// markdown.ts, both dependency-free / client-safe for the same reason (see
+// markdown.ts (and classic-flags.ts, which imports only classic-keys.ts), all
+// dependency-free / client-safe for the same reason (see
 // classic-keys.ts's and quiz-keys.ts's header comments).
 //
 // Validation here MIRRORS `upsertChallenge` in classic-store.ts field for
@@ -50,20 +51,36 @@ import {
   type AttachmentMeta,
 } from "@/lib/attachments-keys";
 import { type AttachmentFile, validateAttachmentFiles } from "@/lib/attachment-files";
+import { flagListIssues } from "@/lib/classic-flags";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { Story } from "@/lib/story-lock";
 
 /** 2 added `stories` and per-challenge `attachments` (metadata); 3 adds the
- *  optional top-level `attachmentFiles`. 1 and 2 stay importable. */
-export const CLASSIC_BUNDLE_VERSION = 3;
-const SUPPORTED_VERSIONS = new Set([1, 2, 3]);
+ *  optional top-level `attachmentFiles`; 4 adds the per-challenge
+ *  `alternateFlags` and `flagPatterns` (#192). 1 to 3 stay importable. */
+export const CLASSIC_BUNDLE_VERSION = 4;
+const SUPPORTED_VERSIONS = new Set([1, 2, 3, 4]);
 /** The oldest version that knows `stories` and `attachments`. */
 const STORIES_VERSION = 2;
+/** The oldest version that knows `attachmentFiles`. */
+const FILES_VERSION = 3;
+/** The oldest version that knows `alternateFlags` and `flagPatterns`. */
+const FLAG_LISTS_VERSION = 4;
 
-/** The version an export is stamped with: 3 only when it carries files, so
- *  a bundle without them stays importable on a box built before version 3. */
-export function bundleVersionFor(hasFiles: boolean): number {
-  return hasFiles ? CLASSIC_BUNDLE_VERSION : STORIES_VERSION;
+/** The version an export is stamped with: the OLDEST that knows everything it
+ *  carries, so a bundle stays importable on any box that can grade it — 4
+ *  only when a challenge has other accepted flags or patterns (an older box
+ *  would import it and silently stop accepting them), 3 when it carries
+ *  files, 2 otherwise. */
+export function bundleVersionFor(hasFiles: boolean, hasFlagLists = false): number {
+  if (hasFlagLists) return FLAG_LISTS_VERSION;
+  return hasFiles ? FILES_VERSION : STORIES_VERSION;
+}
+
+/** Whether any challenge carries a non-empty `alternateFlags` or
+ *  `flagPatterns` — the input to `bundleVersionFor`'s second argument. */
+export function hasFlagLists(challenges: readonly ClassicBundleChallenge[]): boolean {
+  return challenges.some((c) => (c.alternateFlags?.length ?? 0) > 0 || (c.flagPatterns?.length ?? 0) > 0);
 }
 const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
@@ -90,6 +107,13 @@ export type ClassicBundleChallenge = {
    *  bundle's `attachmentFiles`; an import that names an upload the box
    *  lacks creates it as "missing" until bytes fill it. */
   attachments?: BundleAttachment[];
+  /** v4 (#192): other accepted flags, each as authored. Absent = none.
+   *  Secret like `flag`. */
+  alternateFlags?: string[];
+  /** v4 (#192): regex patterns a submission may match instead, each as
+   *  authored — see classic-flags.ts for what a pattern may be. Absent = none.
+   *  Secret like `flag`. */
+  flagPatterns?: string[];
 };
 
 export type ClassicBundle = {
@@ -122,6 +146,8 @@ const CHALLENGE_KEYS = [
   "caseSensitive",
   "hint",
   "attachments",
+  "alternateFlags",
+  "flagPatterns",
 ] as const;
 const CHALLENGE_KEY_SET = new Set<string>(CHALLENGE_KEYS);
 
@@ -257,6 +283,13 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
   }
 
   if (raw.attachments !== undefined) validateAttachments(raw.attachments, `${base}.attachments`, errors);
+
+  // #192: the same rules `upsertChallenge` runs (classic-flags.ts), each
+  // problem named by position — never by the entry, which is a secret.
+  for (const field of ["alternateFlags", "flagPatterns"] as const) {
+    if (raw[field] === undefined) continue;
+    for (const issue of flagListIssues(field, raw[field])) errors.push({ where: `${base}.${issue.where}`, message: issue.message });
+  }
 }
 
 const UPLOAD_META_KEYS = new Set(["name", "size", "sha256"]);
@@ -380,6 +413,20 @@ export function parseBundle(raw: string): ParseResult {
     });
   }
 
+  // v4 (#192): other accepted flags and patterns. On an older version the
+  // keys are an error, not ignored: a bundle stamped older would import on a
+  // box that does not grade them.
+  if (typeof parsed.version === "number" && parsed.version < FLAG_LISTS_VERSION) {
+    rawChallenges.forEach((c, i) => {
+      if (!isPlainObject(c)) return;
+      for (const field of ["alternateFlags", "flagPatterns"] as const) {
+        if (c[field] !== undefined) {
+          errors.push({ where: `challenges[${i}].${field}`, message: `"${field}" needs bundle version ${FLAG_LISTS_VERSION}` });
+        }
+      }
+    });
+  }
+
   // v2 (#463): stories. On a v1 bundle the key is an error, not ignored — an
   // older box ignoring it would serve every step unlocked, which is exactly
   // why the version bumped.
@@ -400,8 +447,8 @@ export function parseBundle(raw: string): ParseResult {
   // the bytes without a word.
   let attachmentFiles: AttachmentFile[] | undefined;
   if (parsed.attachmentFiles !== undefined) {
-    if (typeof parsed.version === "number" && parsed.version < CLASSIC_BUNDLE_VERSION) {
-      errors.push({ where: "attachmentFiles", message: `"attachmentFiles" needs bundle version ${CLASSIC_BUNDLE_VERSION}` });
+    if (typeof parsed.version === "number" && parsed.version < FILES_VERSION) {
+      errors.push({ where: "attachmentFiles", message: `"attachmentFiles" needs bundle version ${FILES_VERSION}` });
     } else {
       attachmentFiles = validateAttachmentFiles(
         parsed.attachmentFiles,

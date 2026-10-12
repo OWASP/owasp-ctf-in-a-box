@@ -6,6 +6,7 @@
 // on the script's own TEXT and on the args sent into it, the same way
 // quiz-store.grade.test.ts proves GRADE_SCRIPT's ordering.
 
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // #463/#602: the team's lock keys come from the team store; pinned here. The
 // Lua fragment is the real one, so SUBMIT_SCRIPT is the shipped script.
@@ -27,7 +28,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/upstash", () => ({
+vi.mock("@/lib/upstash", async (orig) => ({
+  // The real `assertPipelineOk` (pure): a per-command error is judged as in
+  // production.
+  ...(await orig<typeof import("@/lib/upstash")>()),
   upstashEval: mocks.upstashEval,
   upstashPipeline: mocks.upstashPipeline,
 }));
@@ -335,6 +339,10 @@ describe("the grading script's arguments", () => {
       "ctf:classic:solvecount",
       "ctf:classic:solved",
       "ctf:classic:lastAt",
+      // #192: the other accepted flags' comparison forms, and the patterns
+      // a regex verdict is bound to. Never the as-authored hashes.
+      "ctf:classic:flagaltsnorm",
+      "ctf:classic:flagpatterns",
     ]);
     expect(argv[0]).toBe("chal-1");
     expect(argv[2]).toBe(new Date(Number(argv[5])).toISOString());
@@ -420,7 +428,7 @@ describe("the grading script itself (text invariants)", () => {
     // rather than ARGV[2] directly — but it is still a whole-value `~=`, and
     // `target` itself is still never pattern-matched, which is the part that
     // would be an escaping bug.
-    expect(script).toContain("if target ~= submitted then");
+    expect(script).toContain("local matched = target == submitted");
     expect(script).toMatch(/local submitted = ARGV\[2\]/);
     expect(script).not.toContain('string.match(target');
   });
@@ -596,9 +604,11 @@ describe("story lock (#463)", () => {
     await submitFlag("alice", "chal-1", "CTF{x}");
     const { keys, argv } = lastEval();
     expect(argv[8]).toBe("recon");
-    // KEYS[9..] (index 8 on): KEYS[8] is the lastAt hash (#522).
+    // KEYS[11..] (index 10 on): KEYS[8] is the lastAt hash (#522), KEYS[9]
+    // and KEYS[10] the other flags and the patterns (#192).
     expect(keys[7]).toBe("ctf:classic:lastAt");
-    expect(keys.slice(8)).toEqual(["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"]);
+    expect(keys.slice(8, 10)).toEqual(["ctf:classic:flagaltsnorm", "ctf:classic:flagpatterns"]);
+    expect(keys.slice(10)).toEqual(["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"]);
     expect(argv[9]).toBe("red");
   });
 
@@ -639,3 +649,155 @@ describe("story lock (#463)", () => {
     expect(evalCalls()).toHaveLength(0);
   });
 });
+
+// #192: other accepted flags and regex patterns. The other flags are graded
+// IN the script, by whole-value membership, like the primary one. A pattern
+// cannot be (Redis Lua has no regex engine): JS matches it and hands the
+// script a verdict BOUND to the stored patterns it was computed against — the
+// SHA-1 of the stored value and the case mode — which the script re-checks
+// before it spends an attempt.
+describe("other accepted flags and flag patterns (#192)", () => {
+  const sha1 = (s: string) => createHash("sha1").update(s, "utf8").digest("hex");
+  const PATTERNS = JSON.stringify(["[a-f0-9]{8}"]);
+
+  /** Queues every read one grade makes before the script: the gate, the
+   *  stories and challenge ids (none), then the patterns and the record. */
+  function gradeReads(patternsRaw: string | null, record: Record<string, unknown> | null = { id: "chal-1", points: 50 }) {
+    gateReads(null, null);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]); // stories
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: [] }]); // challenge ids
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: patternsRaw },
+      { result: record ? JSON.stringify(record) : null },
+    ]);
+  }
+
+  it("reads the stored patterns and the record — the patterns hash, never a flag hash", async () => {
+    gradeReads(PATTERNS);
+    await submitFlag("alice", "chal-1", "deadbeef");
+    expect(pipelineCallsWith("ctf:classic:flagpatterns")).toEqual([
+      [
+        ["HGET", "ctf:classic:flagpatterns", "chal-1"],
+        ["HGET", "ctf:classic:challenges", "chal-1"],
+      ],
+    ]);
+  });
+
+  it("a matching submission passes verdict 1, bound to the digest of the stored patterns and the case mode", async () => {
+    gradeReads(PATTERNS);
+    evalReturns(["correct", "50"]);
+    expect(await submitFlag("alice", "chal-1", "  DEADBEEF  ")).toEqual({ ok: true, correct: true, points: 50 });
+    const { argv } = lastEval();
+    expect(argv[10]).toBe("1");
+    expect(argv[11]).toBe(sha1(PATTERNS));
+    expect(argv[12]).toBe("0");
+  });
+
+  it("a submission matching no pattern passes verdict 0 and no digest", async () => {
+    gradeReads(PATTERNS);
+    await submitFlag("alice", "chal-1", "not-hex!");
+    const { argv } = lastEval();
+    expect(argv[10]).toBe("0");
+    expect(argv[11]).toBe("");
+  });
+
+  it("a pattern follows the case-sensitive box, and the bound case mode says which applied", async () => {
+    gradeReads(PATTERNS, { id: "chal-1", points: 50, caseSensitive: true });
+    await submitFlag("alice", "chal-1", "DEADBEEF");
+    expect(lastEval().argv[10]).toBe("0");
+    gradeReads(PATTERNS, { id: "chal-1", points: 50, caseSensitive: true });
+    await submitFlag("alice", "chal-1", "deadbeef");
+    expect(lastEval().argv.slice(10)).toEqual(["1", sha1(PATTERNS), "1"]);
+  });
+
+  it("a challenge with no patterns passes verdict 0", async () => {
+    gradeReads(null);
+    await submitFlag("alice", "chal-1", "deadbeef");
+    expect(lastEval().argv.slice(10)).toEqual(["0", "", "0"]);
+  });
+
+  it("never sends a pattern to the script, only its digest", async () => {
+    gradeReads(PATTERNS);
+    await submitFlag("alice", "chal-1", "deadbeef");
+    expect(JSON.stringify(lastEval().argv)).not.toContain("[a-f0-9]");
+  });
+
+  it("never regex-matches — or even reads the patterns for — a submission over the input cap", async () => {
+    gateReads(null, null);
+    await submitFlag("alice", "chal-1", "a".repeat(129));
+    expect(pipelineCallsWith("ctf:classic:flagpatterns")).toEqual([]);
+    expect(lastEval().argv[10]).toBe("0");
+  });
+
+  it("fails CLOSED when the patterns read errors: `unavailable`, and the script never runs", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    gateReads(null, null);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: [] }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }, { result: null }]);
+    expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "unavailable" });
+    expect(evalCalls()).toHaveLength(0);
+    // The log line is a label: no flag, no Error object.
+    const logged = consoleError.mock.calls.flat();
+    expect(logged.some((a) => a instanceof Error)).toBe(false);
+    expect(JSON.stringify(logged)).not.toContain("CTF{x}");
+    consoleError.mockRestore();
+  });
+
+  it("reports the script's `stale` (the patterns changed under the verdict) as `unavailable`, never a wrong answer", async () => {
+    gradeReads(PATTERNS);
+    evalReturns(["stale"]);
+    expect(await submitFlag("alice", "chal-1", "deadbeef")).toEqual({ ok: false, reason: "unavailable" });
+  });
+
+  describe("the script text", () => {
+    async function script() {
+      await submitFlag("alice", "chal-1", "x");
+      return lastEval().script;
+    }
+
+    it("tries the other flags by whole-value membership, decoded with cjson, only when the primary did not match", async () => {
+      const s = await script();
+      expect(s).toContain("local matched = target == submitted");
+      expect(s).toContain("redis.call('HGET', KEYS[9], ARGV[1])");
+      expect(s).toContain("pcall(cjson.decode, altRaw)");
+      expect(s).toContain("if alt == submitted then");
+      expect(s.indexOf("local matched = target == submitted")).toBeLessThan(s.indexOf("KEYS[9], ARGV[1]"));
+    });
+
+    it("binds a pattern verdict to the stored patterns with sha1hex and the case mode, refusing a stale one before an attempt is spent", async () => {
+      const s = await script();
+      expect(s).toContain("if ARGV[11] == '1' then");
+      expect(s).toContain("redis.call('HGET', KEYS[10], ARGV[1])");
+      expect(s).toContain("redis.sha1hex(patRaw) ~= ARGV[12]");
+      expect(s).toContain("mode ~= ARGV[13]");
+      const stale = s.indexOf("'stale'");
+      expect(stale).toBeGreaterThan(s.indexOf("'cooldown'"));
+      expect(stale).toBeLessThan(s.indexOf("HSET', KEYS[1]"));
+    });
+
+    it("never treats a verdict as a match without the stored patterns present", async () => {
+      const s = await script();
+      expect(s).toContain("if not patRaw or");
+    });
+
+    it("starts the story-lock loop after the two new hashes, so neither is read as a teammate's solves", async () => {
+      const s = await script();
+      expect(s).toContain("for i = 11, #KEYS, 2 do");
+    });
+
+    it("still does no case handling and no pattern match on a flag", async () => {
+      const s = await script();
+      expect(s).not.toContain("string.lower");
+      expect(s).not.toContain("string.upper");
+      expect(s).not.toMatch(/string\.(match|find)\((target|submitted|alt)/);
+    });
+  });
+});
+
+/** Every pipeline call that touched `key`, oldest first. */
+function pipelineCallsWith(key: string): (string | number)[][][] {
+  return mocks.upstashPipeline.mock.calls
+    .map((c) => c[0] as (string | number)[][])
+    .filter((cmds) => cmds.some((c) => c[1] === key));
+}

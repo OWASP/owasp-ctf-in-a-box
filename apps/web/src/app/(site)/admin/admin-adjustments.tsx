@@ -6,6 +6,7 @@
 // move. Removing one is audited like adding one.
 
 import { useEffect, useState } from "react";
+import { ADJUSTMENT_MAX } from "@/lib/adjustment-keys";
 
 export type AdjustmentRow = { id: string; slug: string; points: number; reason: string; by: string; at: string };
 
@@ -20,6 +21,15 @@ const INPUT =
 const BTN =
   "flex-none rounded-md bg-[#2563eb] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8] " +
   "disabled:cursor-not-allowed disabled:border disabled:border-white/10 disabled:bg-transparent disabled:text-zinc-500";
+
+/** The points the form would send, or null when the server would refuse
+ *  them: a whole number written as digits, not 0, within ±ADJUSTMENT_MAX. */
+export function parseAdjustmentPoints(text: string): number | null {
+  const t = text.trim();
+  if (!/^[+-]?\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n !== 0 && Math.abs(n) <= ADJUSTMENT_MAX ? n : null;
+}
 
 export default function AdminAdjustments({
   initial = null,
@@ -85,8 +95,8 @@ export default function AdminAdjustments({
     }
   }
 
-  const parsed = Number(points);
-  const ready = slug.trim() !== "" && reason.trim() !== "" && Number.isInteger(parsed) && parsed !== 0;
+  const parsed = parseAdjustmentPoints(points);
+  const ready = slug.trim() !== "" && reason.trim() !== "" && parsed !== null;
 
   return (
     <section className="flex flex-col gap-3 border-t border-white/[0.06] pt-5">

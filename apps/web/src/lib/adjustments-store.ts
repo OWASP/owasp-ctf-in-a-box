@@ -16,11 +16,9 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-store";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
-import { ADJUSTMENTS_KEY } from "@/lib/adjustment-keys";
+import { ADJUSTMENT_MAX, ADJUSTMENTS_KEY } from "@/lib/adjustment-keys";
 
-export { ADJUSTMENTS_KEY };
-/** Same ceiling as a hint price: an adjustment is a correction, not a score. */
-export const ADJUSTMENT_MAX = 100_000;
+export { ADJUSTMENT_MAX, ADJUSTMENTS_KEY };
 export const ADJUSTMENT_REASON_MAX = 200;
 
 export type Adjustment = { id: string; slug: string; points: number; reason: string; by: string; at: string };

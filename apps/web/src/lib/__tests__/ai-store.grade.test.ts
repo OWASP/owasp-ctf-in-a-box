@@ -19,7 +19,7 @@ vi.mock("@/lib/admin-store", async (importOriginal) => ({
   getAdminSettings: mocks.getAdminSettings,
 }));
 
-import { AI_COOLDOWN_SEC, awardAiEvent, submitAiFlag } from "@/lib/ai-store";
+import { AI_COOLDOWN_SEC, AI_MAX_ATTEMPTS, awardAiEvent, submitAiFlag } from "@/lib/ai-store";
 
 /** The settings object `effectivePaused` (real, not mocked) reads, plus
  *  `aiCooldownSec` which `resolveSettings` reads directly. Every field it
@@ -30,13 +30,21 @@ type SettingsOverride = Partial<{
   scoringStartsAt: string | null;
   scoringEndsAt: string | null;
   aiCooldownSec: number | null;
+  aiMaxAttempts: number | null;
 }>;
 // The base fixture is a LAUNCHED event: since #464 a missing scoring start
 // means "not launched" and every grader refuses as paused, so the happy-path
 // tests below need an explicit start in the past.
 const LAUNCHED_AT = "2000-01-01T00:00:00.000Z";
 const settings = (over: SettingsOverride = {}) =>
-  ({ paused: false, scoringStartsAt: LAUNCHED_AT, scoringEndsAt: null, aiCooldownSec: null, ...over }) as never;
+  ({
+    paused: false,
+    scoringStartsAt: LAUNCHED_AT,
+    scoringEndsAt: null,
+    aiCooldownSec: null,
+    aiMaxAttempts: null,
+    ...over,
+  }) as never;
 
 /** No prior solve, no prior attempt — the gate's own pre-check reads. */
 function cleanGateReply() {
@@ -411,6 +419,104 @@ describe("aiCooldownSec resolution", () => {
     mocks.upstashEval.mockResolvedValueOnce(["correct", "300"]);
     await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}");
     expect(lastEval().argv[4]).toBe(0);
+  });
+});
+
+/** The gate's pre-check reads: no solve, and an attempts row at `attempts`. */
+function gateReplyWithAttempts(attempts: number) {
+  const row = JSON.stringify({ attempts, firstAt: "2026-01-01T00:00:00.000Z", lastAt: "2026-01-01T00:00:00.000Z" });
+  mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }, { result: row }]);
+}
+
+describe("aiMaxAttempts — the per-challenge attempt cap", () => {
+  it("ships uncapped: the module default is 0 (unlimited)", () => {
+    expect(AI_MAX_ATTEMPTS).toBe(0);
+  });
+
+  it("passes the CURRENT aiMaxAttempts setting to the script as ARGV[11]", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ aiMaxAttempts: 3 }));
+    cleanGateReply();
+    mocks.upstashEval.mockResolvedValueOnce(["incorrect", "1"]);
+    await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}");
+    expect(lastEval().argv[10]).toBe(3);
+  });
+
+  it("falls back to the module default (0) with no override, and when the settings read fails", async () => {
+    cleanGateReply();
+    mocks.upstashEval.mockResolvedValueOnce(["incorrect", "1"]);
+    await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}");
+    expect(lastEval().argv[10]).toBe(AI_MAX_ATTEMPTS);
+
+    mocks.getAdminSettings.mockRejectedValue(new Error("redis down"));
+    cleanGateReply();
+    mocks.upstashEval.mockResolvedValueOnce(["incorrect", "1"]);
+    await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}");
+    expect(lastEval().argv[10]).toBe(AI_MAX_ATTEMPTS);
+  });
+
+  it("surfaces the script's exhausted verdict as its own refusal, with nothing about the flag", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ aiMaxAttempts: 2 }));
+    cleanGateReply();
+    mocks.upstashEval.mockResolvedValueOnce(["exhausted"]);
+    expect(await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}")).toEqual({ ok: false, reason: "exhausted" });
+  });
+
+  it("the gate refuses a spent budget without running the script", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ aiMaxAttempts: 2, aiCooldownSec: 0 }));
+    gateReplyWithAttempts(2);
+    expect(await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}")).toEqual({ ok: false, reason: "exhausted" });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("anti-vacuous: one attempt under the cap reaches the script", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ aiMaxAttempts: 2, aiCooldownSec: 0 }));
+    gateReplyWithAttempts(1);
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "300"]);
+    expect(await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}")).toEqual({ ok: true, correct: true, points: 300 });
+  });
+
+  it("0 means unlimited: a long attempt history is never refused for its length", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ aiMaxAttempts: 0, aiCooldownSec: 0 }));
+    gateReplyWithAttempts(500);
+    mocks.upstashEval.mockResolvedValueOnce(["incorrect", "501"]);
+    expect(await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}")).toEqual({ ok: true, correct: false });
+    expect(lastEval().argv[10]).toBe(0);
+  });
+
+  it("an admin preview is not refused by a spent budget", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ aiMaxAttempts: 1, scoringStartsAt: null }));
+    gateReplyWithAttempts(5);
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "300", "dry"]);
+    expect(await submitAiFlag("alice", "prompt-leak-ab12cd", "CTF{leak}", { dryRun: true })).toEqual({
+      ok: true,
+      correct: true,
+      points: 300,
+      dryRun: true,
+    });
+  });
+
+  it("never caps the signed-event path: the gate lets it through and the script is told 0", async () => {
+    mocks.getAdminSettings.mockResolvedValue(settings({ aiMaxAttempts: 1 }));
+    gateReplyWithAttempts(5);
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "300"]);
+    expect(await awardAiEvent("alice", "prompt-leak-ab12cd")).toEqual({ ok: true, correct: true, points: 300 });
+    expect(lastEval().argv[10]).toBe(0);
+  });
+
+  it("the script decides the cap before it spends the attempt, inside the graded branch, and skips it on a dry run", async () => {
+    cleanGateReply();
+    mocks.upstashEval.mockResolvedValueOnce(["incorrect", "1"]);
+    await submitAiFlag("alice", "prompt-leak-ab12cd", "x");
+    const { script } = lastEval();
+    const gradedBranch = script.indexOf("if ARGV[8] == '1' then");
+    const exhaustedReturn = script.indexOf("return {'exhausted'}");
+    const cooldownReturn = script.indexOf("'cooldown'");
+    const attemptsWrite = script.indexOf("HSET', KEYS[1]");
+    expect(gradedBranch).toBeGreaterThan(-1);
+    expect(exhaustedReturn).toBeGreaterThan(gradedBranch);
+    expect(exhaustedReturn).toBeLessThan(cooldownReturn);
+    expect(exhaustedReturn).toBeLessThan(attemptsWrite);
+    expect(script).toMatch(/if not dry and maxAttempts > 0 and attempts >= maxAttempts then/);
   });
 });
 

@@ -237,6 +237,7 @@ describe("describeRefusal", () => {
       "paused",
       "solved",
       "cooldown",
+      "exhausted",
       "unavailable",
       "no-team",
       "unauthorized",
@@ -248,6 +249,13 @@ describe("describeRefusal", () => {
     ]) {
       expect(describeRefusal(reason)).not.toBe(generic);
     }
+  });
+
+  // The ai attempt cap: final for this challenge, so no "try again", and it
+  // says nothing about whether the refused flag was right.
+  it("names a spent attempt budget as final", () => {
+    expect(describeRefusal("exhausted")).toMatch(/no attempts left/i);
+    expect(describeRefusal("exhausted")).not.toMatch(/try again|correct|wrong/i);
   });
 
   it("falls back for anything it does not recognise", () => {

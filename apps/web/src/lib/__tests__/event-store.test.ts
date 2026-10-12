@@ -504,6 +504,18 @@ describe("importEventBundle", () => {
     expect(patch.aiCooldownSec).toBe(12);
   });
 
+  // The ai attempt cap is event policy like the cooldowns, so an archive
+  // restores it — 0 (unlimited) included, which is a value and not a clear.
+  it("carries aiMaxAttempts through export and applies it on import, 0 included", async () => {
+    m.getAdminSettings.mockResolvedValue({ hintCost: 50, teamMaxMembers: 4, enabledModuleIds: ["ai"], aiMaxAttempts: 0, paused: true });
+    const { bundle } = await exportEventBundle(new Date("2026-06-01T00:00:00Z"));
+    expect(bundle.settings.aiMaxAttempts).toBe(0);
+
+    await importEventBundle({ ...bundleFixture(), settings: { ...bundleFixture().settings, aiMaxAttempts: 7 } }, "alice");
+    const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
+    expect(patch.aiMaxAttempts).toBe(7);
+  });
+
   // Fail-fast ordering, the point of Finding 1: the settings patch is
   // validated and applied BEFORE anything destructive runs, so a bad bundle
   // (updateAdminSettings throwing AdminValidationError) is rejected with

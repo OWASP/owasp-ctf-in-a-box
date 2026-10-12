@@ -171,6 +171,9 @@ export function describeRefusal(reason: string): string {
       // a live countdown; a second, frozen copy of the same deadline in the
       // feedback area would be stale the moment it rendered.
       return "On cooldown right now — the timer above shows when you can retry.";
+    case "exhausted":
+      // The ai attempt cap. Final for this challenge, so no "try again".
+      return "No attempts left on this challenge.";
     case "unavailable":
       return "Couldn't verify that right now. Try again in a moment.";
     case "no-team":

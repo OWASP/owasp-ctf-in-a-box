@@ -69,6 +69,9 @@ export const CLASSIC_COOLDOWN_SEC_MAX = 3600;
  *  happen to agree on [0, 3600] today, but nothing ties them together, and a
  *  shared constant would make that agreement look load-bearing when it isn't. */
 export const AI_COOLDOWN_SEC_MAX = 3600;
+/** Cap for the ai-module attempt cap. Higher than QUIZ_MAX_ATTEMPTS_MAX: a
+ *  quiz question has a handful of choices, a typed flag is open-ended. */
+export const AI_MAX_ATTEMPTS_MAX = 1000;
 
 /** The ONLY thing an admin-authoring route may hand `console.error`. Shared
  *  by every `admin/*` route that writes secrets (a flag, a signing key).
@@ -143,6 +146,10 @@ export type AdminSettings = {
    *  exactly, including the module's own script re-enforcing whatever value
    *  this resolves to. */
   aiCooldownSec: number | null;
+  /** Graded flag submissions a login gets per ai challenge before the award
+   *  script refuses further ones. null = use the module default
+   *  (`AI_MAX_ATTEMPTS`, no cap); 0 = unlimited. */
+  aiMaxAttempts: number | null;
   /** Minutes a contestant must wait between SCORED runs on the same PR.
    *  Null = no override; the fork workflow's baked default applies. 0 disables
    *  the cooldown. Enforced by the Action inside each fork, which reads it
@@ -252,6 +259,7 @@ const NUMERIC_KNOBS = {
   quizRetryAfterMin: [0, QUIZ_RETRY_AFTER_MAX],
   classicCooldownSec: [0, CLASSIC_COOLDOWN_SEC_MAX],
   aiCooldownSec: [0, AI_COOLDOWN_SEC_MAX],
+  aiMaxAttempts: [0, AI_MAX_ATTEMPTS_MAX],
   scoreCooldownMin: [0, SCORE_COOLDOWN_MIN_MAX],
   teamMaxMembers: [1, TEAM_MAX_MEMBERS_MAX],
 } as const satisfies Record<string, readonly [number, number]>;
@@ -350,6 +358,7 @@ function decodeSettings(h: Record<string, string>): AdminSettings {
     quizRetryAfterMin: h.quizRetryAfterMin === undefined ? null : Number(h.quizRetryAfterMin),
     classicCooldownSec: h.classicCooldownSec === undefined ? null : Number(h.classicCooldownSec),
     aiCooldownSec: h.aiCooldownSec === undefined ? null : Number(h.aiCooldownSec),
+    aiMaxAttempts: h.aiMaxAttempts === undefined ? null : Number(h.aiMaxAttempts),
     teamMaxMembers: h.teamMaxMembers === undefined ? null : Number(h.teamMaxMembers),
     scoreCooldownMin: h.scoreCooldownMin === undefined ? null : Number(h.scoreCooldownMin),
     teamRegistrationOpen: h.teamRegistrationOpen !== "0",

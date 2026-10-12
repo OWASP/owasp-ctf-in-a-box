@@ -141,6 +141,7 @@ const settings: AdminSettings = {
   quizRetryAfterMin: null,
   classicCooldownSec: null,
   aiCooldownSec: null,
+  aiMaxAttempts: null,
   teamMaxMembers: null,
   scoreCooldownMin: null,
   // A LAUNCHED event (no scoring start = not launched = registration
@@ -859,6 +860,17 @@ describe("AdminControls ai panel", () => {
     const overridden = { ...settings, aiCooldownSec: 42 };
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={overridden} modules={withAi} />);
     expect(panelFor(html, "ai")).toContain('value="42"');
+  });
+
+  it("shows the ai attempt cap beside the cooldown, defaulting to 0 (unlimited)", () => {
+    const withDefault = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={withAi} />);
+    const aiPanel = panelFor(withDefault, "ai");
+    expect(aiPanel).toMatch(/id="ai-max-attempts"[^>]*placeholder="0"|placeholder="0"[^>]*id="ai-max-attempts"/);
+    expect(panelFor(withDefault, "quiz")).not.toContain('id="ai-max-attempts"');
+
+    const overridden = { ...settings, aiMaxAttempts: 7 };
+    const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={overridden} modules={withAi} />);
+    expect(panelFor(html, "ai")).toMatch(/id="ai-max-attempts"[^>]*value="7"|value="7"[^>]*id="ai-max-attempts"/);
   });
 });
 

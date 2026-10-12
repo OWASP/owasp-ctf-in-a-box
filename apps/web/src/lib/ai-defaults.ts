@@ -10,6 +10,12 @@
  *  the GRADED path only — a signed event has no wrong answer to rate-limit. */
 export const AI_COOLDOWN_SEC = 5;
 
+/** Graded flag submissions a contestant gets on one ai challenge. 0 means no
+ *  cap, which is the shipped default: an event that never sets `aiMaxAttempts`
+ *  is throttled by the cooldown alone. Counted per contestant, like the
+ *  cooldown, and on the GRADED path only — a signed event is never capped. */
+export const AI_MAX_ATTEMPTS = 0;
+
 /** How long a minted launch token stays valid. A fresh token is minted on
  *  every `/ai/[id]` render, so this is also the window in which a pre-event
  *  gate decision (checked at mint time, never on the cross-origin API routes)

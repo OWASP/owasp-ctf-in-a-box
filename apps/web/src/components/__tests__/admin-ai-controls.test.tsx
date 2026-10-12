@@ -30,6 +30,7 @@ import AdminAiControls, {
   aiChallengeDeleteConfirm,
   categoryUsageCount,
   commitAiCooldown,
+  commitAiMaxAttempts,
   describeAiError,
   draftFromAiChallenge,
   editorFromAiChallenge,
@@ -74,6 +75,8 @@ function renderControls(initialChallenges: AdminAiChallenge[] = [], initialCateg
       pending={false}
       aiCooldownSecInput="5"
       setAiCooldownSecInput={noop}
+      aiMaxAttemptsInput=""
+      setAiMaxAttemptsInput={noop}
       commitNumber={noop}
       initialChallenges={initialChallenges}
       initialCategories={initialCategories}
@@ -534,6 +537,25 @@ describe("aiChallengeDeleteConfirm", () => {
   });
 });
 
+describe("the attempt-cap field", () => {
+  it("renders with the unlimited default and says the budget is per contestant while points are per team", () => {
+    const html = renderControls([row1]);
+    expect(html).toContain('id="ai-max-attempts"');
+    expect(html).toContain("Max attempts");
+    expect(html).toMatch(/0 = unlimited/);
+    expect(html).toMatch(/per contestant, not per team/i);
+    expect(html).toMatch(/signed events?[^.]*never/i);
+  });
+});
+
+describe("commitAiMaxAttempts", () => {
+  it("commits under the exact key aiMaxAttempts", () => {
+    const spy = vi.fn();
+    commitAiMaxAttempts(spy, "3", noop);
+    expect(spy).toHaveBeenCalledWith("aiMaxAttempts", "3", noop, "Max attempts");
+  });
+});
+
 describe("commitAiCooldown", () => {
   it("commits under the exact key aiCooldownSec", () => {
     const spy = vi.fn();
@@ -713,7 +735,7 @@ describe("AdminAiControls — density", () => {
   it("renders the endpoint URLs once for the whole board, not once per row", async () => {
     const { default: Controls } = await import("@/components/admin-ai-controls");
     const html = renderToStaticMarkup(
-      <Controls pending={false} aiCooldownSecInput="" setAiCooldownSecInput={noop} commitNumber={noop} initialChallenges={[row1, row2]} initialCategories={["AI"]} />,
+      <Controls pending={false} aiCooldownSecInput="" setAiCooldownSecInput={noop} aiMaxAttemptsInput="" setAiMaxAttemptsInput={noop} commitNumber={noop} initialChallenges={[row1, row2]} initialCategories={["AI"]} />,
     );
     // The endpoints block is rendered ONCE for the board, so its content must
     // not scale with the number of challenge rows. Asserting a fixed count
@@ -722,7 +744,7 @@ describe("AdminAiControls — density", () => {
     // appears twice within the block itself: the copyable row, and again
     // inside that endpoint's own demo request.)
     const oneRow = renderToStaticMarkup(
-      <Controls pending={false} aiCooldownSecInput="" setAiCooldownSecInput={noop} commitNumber={noop} initialChallenges={[row1]} initialCategories={["AI"]} />,
+      <Controls pending={false} aiCooldownSecInput="" setAiCooldownSecInput={noop} aiMaxAttemptsInput="" setAiMaxAttemptsInput={noop} commitNumber={noop} initialChallenges={[row1]} initialCategories={["AI"]} />,
     );
     const count = (s: string) => s.match(/\/api\/ai\/submit/g)?.length ?? 0;
     expect(count(html)).toBe(count(oneRow));

@@ -231,6 +231,12 @@ describe("aiAwardResponse", () => {
     expect(await res.json()).toEqual({ error: "wrong-mode" });
   });
 
+  it("maps a spent attempt budget to 403 exhausted — no retry time, nothing about the flag", async () => {
+    const res = aiAwardResponse({ ok: false, reason: "exhausted" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "exhausted" });
+  });
+
   it("carries dryRun through a correct-solve result without altering its status", async () => {
     const res = aiAwardResponse({ ok: true, correct: true, points: 0, dryRun: true });
     expect(res.status).toBe(200);

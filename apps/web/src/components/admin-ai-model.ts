@@ -16,7 +16,7 @@ import { confirmPhrase } from "@/components/admin/confirm-phrase";
 import { categoriesRequestBody } from "@/components/admin/use-category-editor";
 import type { RowAccessors } from "@/components/admin/ordered-rows";
 
-export type NumericSettingKey = "aiCooldownSec";
+export type NumericSettingKey = "aiCooldownSec" | "aiMaxAttempts";
 
 /** What this panel tells the shell about its content — mirrors
  *  `classicInventory`, including the `unlisted` count of challenges the board
@@ -125,6 +125,18 @@ export function commitAiCooldown(
   reset: (v: string) => void,
 ): void {
   commitNumber("aiCooldownSec", raw, reset, AI_COOLDOWN_LABEL);
+}
+
+/** The attempt-cap field's `onBlur`, pure for the same reason as
+ *  `commitAiCooldown` above. */
+export const AI_MAX_ATTEMPTS_LABEL = "Max attempts";
+
+export function commitAiMaxAttempts(
+  commitNumber: (key: NumericSettingKey, raw: string, reset: (v: string) => void, label: string) => void,
+  raw: string,
+  reset: (v: string) => void,
+): void {
+  commitNumber("aiMaxAttempts", raw, reset, AI_MAX_ATTEMPTS_LABEL);
 }
 
 export function emptyAiDraft(defaultCategory: string = "", nextOrder: number = 1): AiChallengeDraft {

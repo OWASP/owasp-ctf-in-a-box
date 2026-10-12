@@ -181,6 +181,8 @@ const REFUSAL_STATUS: Record<Extract<AiSubmitResult, { ok: false }>["reason"], n
   ended: 403,
   solved: 409,
   cooldown: 429,
+  // The attempt cap is spent: a decision, not a rate, so no Retry-After.
+  exhausted: 403,
   unavailable: 503,
   invalid: 400,
   error: 503,

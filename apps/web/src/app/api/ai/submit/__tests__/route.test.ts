@@ -267,6 +267,8 @@ describe("POST /api/ai/submit", () => {
       ["paused", 403, {}],
       // #567: a passed scheduled end is its own code, same status as a pause.
       ["ended", 403, {}],
+      // The per-challenge attempt cap is spent: final, so no retryAt.
+      ["exhausted", 403, {}],
       ["solved", 409, {}],
       ["unavailable", 503, {}],
       ["error", 503, {}],

@@ -83,7 +83,7 @@ describe("getAdminSettings", () => {
     expect(await getAdminSettings()).toEqual({
       paused: false, hintsEnabled: null, hintCost: null, teamRegistrationOpen: true, displayQr: true,
       hintsMinSolves: null, hintsUnlockAfterMin: null,
-      quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
+      quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, aiMaxAttempts: null, teamMaxMembers: null, scoreCooldownMin: null,
       scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
       updatedBy: null, updatedAt: null, moduleOverrides: {},
   enabledModuleIds: null, eventIdentity: {}, secureDevTargets: null, sponsorLogoSize: null,
@@ -149,7 +149,7 @@ describe("getAdminSettings", () => {
     expect(await getAdminSettings()).toEqual({
       paused: true, hintsEnabled: false, hintCost: 25, teamRegistrationOpen: true, displayQr: true,
       hintsMinSolves: null, hintsUnlockAfterMin: null,
-      quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
+      quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, aiMaxAttempts: null, teamMaxMembers: null, scoreCooldownMin: null,
       scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
       updatedBy: "alice", updatedAt: "2026-08-14T00:00:00Z", moduleOverrides: {},
       // Absent from the hash => null => "no override, use the baked set".
@@ -503,6 +503,50 @@ describe("aiCooldownSec", () => {
   });
 });
 
+// The ai per-challenge attempt cap. Same shape as quizMaxAttempts: 0 is a
+// real value (unlimited), null clears back to the module default.
+describe("aiMaxAttempts", () => {
+  it("decodes an absent field as null and a stored one as a number, 0 included", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
+    expect((await getAdminSettings()).aiMaxAttempts).toBeNull();
+
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["aiMaxAttempts", "5"] }]);
+    expect((await getAdminSettings()).aiMaxAttempts).toBe(5);
+
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["aiMaxAttempts", "0"] }]);
+    expect((await getAdminSettings()).aiMaxAttempts).toBe(0);
+  });
+
+  it("stores a valid cap and rejects an out-of-range or non-integer one before the store", async () => {
+    mocks.upstashEval.mockResolvedValue([
+      "aiMaxAttempts", "5", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z",
+    ]);
+    await updateAdminSettings({ aiMaxAttempts: 5 }, "alice");
+    const [, , args] = mocks.upstashEval.mock.calls[0];
+    const strArgs = args.map(String);
+    const idx = strArgs.indexOf("aiMaxAttempts");
+    expect(idx).toBeGreaterThan(-1);
+    expect(strArgs[idx + 1]).toBe("5");
+
+    await expect(updateAdminSettings({ aiMaxAttempts: -1 }, "alice")).rejects.toThrow(
+      /aiMaxAttempts must be an integer in \[0, 1000\]/,
+    );
+    await expect(updateAdminSettings({ aiMaxAttempts: 1001 }, "alice")).rejects.toThrow(
+      /aiMaxAttempts must be an integer in \[0, 1000\]/,
+    );
+    await expect(updateAdminSettings({ aiMaxAttempts: 2.5 }, "alice")).rejects.toThrow(AdminValidationError);
+    expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts 0 — unlimited is a value, not a clear", async () => {
+    mocks.upstashEval.mockResolvedValue(["aiMaxAttempts", "0"]);
+    await updateAdminSettings({ aiMaxAttempts: 0 }, "alice");
+    const strArgs = (mocks.upstashEval.mock.calls[0][2] as unknown[]).map(String);
+    const idx = strArgs.indexOf("aiMaxAttempts");
+    expect(strArgs[idx + 1]).toBe("0");
+  });
+});
+
 describe("getSyncStatus", () => {
   // #499: an error reply used to read as "the poller has never written",
   // which /admin and /health/deep show as no heartbeat at all.
@@ -547,7 +591,7 @@ describe("scheduled windows", () => {
   const base: AdminSettings = {
     paused: false, hintsEnabled: null, hintCost: null, teamRegistrationOpen: true, displayQr: true,
     hintsMinSolves: null, hintsUnlockAfterMin: null,
-    quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
+    quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, aiMaxAttempts: null, teamMaxMembers: null, scoreCooldownMin: null,
     scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
     updatedBy: null, updatedAt: null, moduleOverrides: {}, enabledModuleIds: null,
     eventIdentity: {}, secureDevTargets: null, sponsorLogoSize: null,
@@ -942,6 +986,7 @@ describe("numeric knobs accept null as clear", () => {
     "quizRetryAfterMin",
     "classicCooldownSec",
     "aiCooldownSec",
+    "aiMaxAttempts",
     "scoreCooldownMin",
     "teamMaxMembers",
   ] as const;

@@ -190,6 +190,8 @@ export default function AdminControls({
     setClassicCooldownSecInput,
     aiCooldownSecInput,
     setAiCooldownSecInput,
+    aiMaxAttemptsInput,
+    setAiMaxAttemptsInput,
     cooldownInput,
     setCooldownInput,
     teamMaxMembersInput,
@@ -382,6 +384,8 @@ export default function AdminControls({
                         pending={pending}
                         aiCooldownSecInput={aiCooldownSecInput}
                         setAiCooldownSecInput={setAiCooldownSecInput}
+                        aiMaxAttemptsInput={aiMaxAttemptsInput}
+                        setAiMaxAttemptsInput={setAiMaxAttemptsInput}
                         commitNumber={commitNumber}
                         statusOf={statusOf}
                         onInventory={inventoryReporters[tab.id]}

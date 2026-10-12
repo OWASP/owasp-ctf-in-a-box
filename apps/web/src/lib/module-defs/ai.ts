@@ -52,11 +52,10 @@ export const AI_DEF: ModuleDef = {
   //     `new Date()` at award time — never a time the external side reports
   //     — so the box's clock decides when a solve happened, not the
   //     challenge's.
-  //   - There is NO attempt cap in `evaluateGate`/`AWARD_SCRIPT`: it refuses
-  //     only on paused/already-solved/cooldown, same as classic. There IS a
-  //     cooldown (`AI_COOLDOWN_SEC`), applied to the GRADED path only — a
-  //     signed event has no wrong answer to rate-limit (`awardAiEvent` passes
-  //     cooldown 0). Hints and the admin control panel have since shipped
+  //   - The GRADED path has a cooldown (`AI_COOLDOWN_SEC`) and an optional
+  //     per-challenge attempt cap (`aiMaxAttempts`, default 0 = none), both
+  //     enforced by `AWARD_SCRIPT`. Neither applies to a signed event, which
+  //     has no wrong answer to rate-limit (`awardAiEvent` passes 0 for both). Hints and the admin control panel have since shipped
   //     (`admin-ai-controls.tsx`, `hint-store.ts`'s `ai` target) — nothing
   //     in this copy claims otherwise, so nothing here needed to change for
   //     that; this note just retires the "not yet" framing now that both are

@@ -38,8 +38,9 @@
 //     client-side here exactly like classic (`setAiCategories` doesn't
 //     enforce it either).
 //
-// Settings: `aiCooldownSecInput` reuses `commitNumber` from
-// admin-controls.tsx exactly like classic's `classicCooldownSecInput`.
+// Settings: `aiCooldownSecInput` and `aiMaxAttemptsInput` reuse
+// `commitNumber` from admin-controls.tsx exactly like classic's
+// `classicCooldownSecInput`.
 //
 // Challenges: this component owns its own fetch of GET /api/admin/ai and its
 // own add/edit/delete state, independent of the settings machinery above.
@@ -89,7 +90,7 @@
 // is ai's own config for that frame.
 
 import { useEffect, useState } from "react";
-import { AI_COOLDOWN_SEC } from "@/lib/ai-defaults";
+import { AI_COOLDOWN_SEC, AI_MAX_ATTEMPTS } from "@/lib/ai-defaults";
 // Type-only import: `ai-store.ts` is `server-only`, but a `import type` is
 // fully erased at compile time — no runtime import ever reaches the client
 // bundle. Never change this to a value import.
@@ -106,6 +107,7 @@ import type { ModuleSettingsSlot } from "@/components/admin/settings-card";
 import { AiChallengeForm } from "@/components/admin-ai-form";
 import {
   AI_COOLDOWN_LABEL,
+  AI_MAX_ATTEMPTS_LABEL,
   AI_MODE_LABELS,
   AI_ROWS,
   type AiChallengeEditor,
@@ -115,6 +117,7 @@ import {
   aiInventory,
   categoryUsageCount,
   commitAiCooldown,
+  commitAiMaxAttempts,
   describeAiError,
   editorFromAiChallenge,
   newAiChallengeEditor,
@@ -130,6 +133,8 @@ export type AdminAiControlsProps = {
   pending: boolean;
   aiCooldownSecInput: string;
   setAiCooldownSecInput: (v: string) => void;
+  aiMaxAttemptsInput: string;
+  setAiMaxAttemptsInput: (v: string) => void;
   commitNumber: (key: NumericSettingKey, raw: string, reset: (v: string) => void, label: string) => void;
   /** The shell's per-field save status, by stored key (UX audit F2). Optional
    *  so a static render without a shell still works; idle when absent. */
@@ -151,6 +156,8 @@ export default function AdminAiControls({
   pending,
   aiCooldownSecInput,
   setAiCooldownSecInput,
+  aiMaxAttemptsInput,
+  setAiMaxAttemptsInput,
   commitNumber,
   statusOf = () => ({ state: "idle" }),
   moduleSettings,
@@ -265,17 +272,30 @@ export default function AdminAiControls({
   const origin = useBrowserOrigin();
 
   const knob = (
-    <AdminNumberField
-      id="ai-cooldown-sec"
-      label={AI_COOLDOWN_LABEL}
-      help="Seconds a contestant must wait between graded flag submissions on the same challenge. 0 = no cooldown. Counted per contestant, not per team: each teammate has their own. Signed events from the external side are never rate-limited by this — there is no wrong answer to throttle."
-      value={aiCooldownSecInput}
-      placeholder={String(AI_COOLDOWN_SEC)}
-      disabled={pending}
-      status={statusOf("aiCooldownSec")}
-      onChange={setAiCooldownSecInput}
-      onBlur={() => commitAiCooldown(commitNumber, aiCooldownSecInput, setAiCooldownSecInput)}
-    />
+    <>
+      <AdminNumberField
+        id="ai-cooldown-sec"
+        label={AI_COOLDOWN_LABEL}
+        help="Seconds a contestant must wait between graded flag submissions on the same challenge. 0 = no cooldown. Counted per contestant, not per team: each teammate has their own. Signed events from the external side are never rate-limited by this — there is no wrong answer to throttle."
+        value={aiCooldownSecInput}
+        placeholder={String(AI_COOLDOWN_SEC)}
+        disabled={pending}
+        status={statusOf("aiCooldownSec")}
+        onChange={setAiCooldownSecInput}
+        onBlur={() => commitAiCooldown(commitNumber, aiCooldownSecInput, setAiCooldownSecInput)}
+      />
+      <AdminNumberField
+        id="ai-max-attempts"
+        label={AI_MAX_ATTEMPTS_LABEL}
+        help="Graded flag submissions each contestant gets on a challenge; once they are spent, further flags are refused without being checked. 0 = unlimited. Counted per contestant, not per team: a team of N members gets N times this, while points still count once per team. Signed events from the external side are never capped by this."
+        value={aiMaxAttemptsInput}
+        placeholder={String(AI_MAX_ATTEMPTS)}
+        disabled={pending}
+        status={statusOf("aiMaxAttempts")}
+        onChange={setAiMaxAttemptsInput}
+        onBlur={() => commitAiMaxAttempts(commitNumber, aiMaxAttemptsInput, setAiMaxAttemptsInput)}
+      />
+    </>
   );
 
   // The settings-card slot, the category editor, the Challenges panel

@@ -64,7 +64,11 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
   const KEYS = () => [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt];
 
   /** The typed-flag path (`submitAiFlag` → runAward with grade=true). */
-  async function submitFlag(id: string, flag: string, { nowMs = T0, cooldownMs = 5_000, login = LOGIN, dry = false } = {}) {
+  async function submitFlag(
+    id: string,
+    flag: string,
+    { nowMs = T0, cooldownMs = 5_000, login = LOGIN, dry = false, maxAttempts = 0 } = {},
+  ) {
     await load();
     return upstashEval(script, KEYS(), [
       id,
@@ -77,6 +81,7 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
       "1",
       "flag",
       dry ? "1" : "0", // ARGV[10] — #464 admin preview dry run
+      maxAttempts, // ARGV[11] — attempt cap, 0 = unlimited
     ]);
   }
 
@@ -96,7 +101,7 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
   /** The signed-event path (`recordAiEvent` → runAward with grade=false). */
   async function recordEvent(id: string, { nowMs = T0, login = LOGIN, dry = false } = {}) {
     await load();
-    return upstashEval(script, KEYS(), [id, "", iso(nowMs), login, 5_000, nowMs, "", "0", "event", dry ? "1" : "0"]);
+    return upstashEval(script, KEYS(), [id, "", iso(nowMs), login, 5_000, nowMs, "", "0", "event", dry ? "1" : "0", 0]);
   }
 
   async function hget(key: string, field: string) {
@@ -235,5 +240,83 @@ describe.skipIf(!liveConfigured)("ai AWARD_SCRIPT against a live Redis", () => {
 
     expect(await recordEvent(id)).toEqual(["correct", "50"]); // anti-vacuous: a real event writes
     expect(await recordEvent(id, { dry: true })).toEqual(["already"]);
+  });
+  // The per-challenge attempt cap (ARGV[11]): decided inside the script, from
+  // the attempts row it reads at execution time, before the attempt is spent.
+  describe("attempt cap", () => {
+    it("refuses once the cap is spent — right flag or wrong, the same answer, and nothing written", async () => {
+      const id = freshId("cap");
+      await seed(id, "flag", 25, "ctf{capped}");
+      const opts = { cooldownMs: 0, maxAttempts: 2 };
+      expect(await submitFlag(id, "ctf{one}", opts)).toEqual(["incorrect", "1"]);
+      expect(await submitFlag(id, "ctf{two}", { ...opts, nowMs: T0 + 1 })).toEqual(["incorrect", "2"]);
+      const before = await snapshot();
+      // The refusal must not say whether the attempt would have been right.
+      expect(await submitFlag(id, "ctf{capped}", { ...opts, nowMs: T0 + 2 })).toEqual(["exhausted"]);
+      expect(await submitFlag(id, "ctf{three}", { ...opts, nowMs: T0 + 3 })).toEqual(["exhausted"]);
+      expect(await snapshot()).toEqual(before);
+      expect(await hget(K.solves, id)).toBeNull();
+    });
+
+    it("anti-vacuous: the same history with no cap (0) still grades the right flag", async () => {
+      const id = freshId("nocap");
+      await seed(id, "flag", 25, "ctf{capped}");
+      expect(await submitFlag(id, "ctf{one}", { cooldownMs: 0 })).toEqual(["incorrect", "1"]);
+      expect(await submitFlag(id, "ctf{two}", { cooldownMs: 0, nowMs: T0 + 1 })).toEqual(["incorrect", "2"]);
+      expect(await submitFlag(id, "ctf{capped}", { cooldownMs: 0, nowMs: T0 + 2 })).toEqual(["correct", "25"]);
+    });
+
+    it("the last attempt under the cap is still graded, and a right flag there awards", async () => {
+      const id = freshId("cap-last");
+      await seed(id, "flag", 25, "ctf{capped}");
+      expect(await submitFlag(id, "ctf{one}", { cooldownMs: 0, maxAttempts: 2 })).toEqual(["incorrect", "1"]);
+      expect(await submitFlag(id, "ctf{capped}", { cooldownMs: 0, maxAttempts: 2, nowMs: T0 + 1 })).toEqual(["correct", "25"]);
+    });
+
+    it("two concurrent submissions at cap-1: exactly one is graded, the other is refused", async () => {
+      const id = freshId("cap-race");
+      await seed(id, "flag", 25, "ctf{capped}");
+      const opts = { cooldownMs: 0, maxAttempts: 2 };
+      expect(await submitFlag(id, "ctf{one}", opts)).toEqual(["incorrect", "1"]);
+      const results = await Promise.all([
+        submitFlag(id, "ctf{a}", { ...opts, nowMs: T0 + 1 }),
+        submitFlag(id, "ctf{b}", { ...opts, nowMs: T0 + 1 }),
+      ]);
+      const graded = results.filter((r) => Array.isArray(r) && r[0] === "incorrect");
+      const refused = results.filter((r) => Array.isArray(r) && r[0] === "exhausted");
+      expect(graded).toEqual([["incorrect", "2"]]);
+      expect(refused).toEqual([["exhausted"]]);
+      expect(await hget(K.attempts, id)).toMatch(/^\{"attempts":2,/);
+    });
+
+    it("a lowered cap applies at once to a contestant already past it", async () => {
+      const id = freshId("cap-lowered");
+      await seed(id, "flag", 25, "ctf{capped}");
+      for (let i = 0; i < 3; i += 1) {
+        expect(await submitFlag(id, `ctf{w${i}}`, { cooldownMs: 0, nowMs: T0 + i })).toEqual(["incorrect", String(i + 1)]);
+      }
+      expect(await submitFlag(id, "ctf{capped}", { cooldownMs: 0, maxAttempts: 2, nowMs: T0 + 10 })).toEqual(["exhausted"]);
+      expect(await submitFlag(id, "ctf{capped}", { cooldownMs: 0, maxAttempts: 4, nowMs: T0 + 11 })).toEqual(["correct", "25"]);
+    });
+
+    it("is decided before the cooldown: a spent budget answers exhausted, never a retry time", async () => {
+      const id = freshId("cap-cool");
+      await seed(id, "flag", 25, "ctf{capped}");
+      expect(await submitFlag(id, "ctf{one}", { cooldownMs: 60_000, maxAttempts: 1 })).toEqual(["incorrect", "1"]);
+      expect(await submitFlag(id, "ctf{capped}", { cooldownMs: 60_000, maxAttempts: 1, nowMs: T0 + 1 })).toEqual(["exhausted"]);
+    });
+
+    it("never caps the signed-event path, and a dry run ignores it", async () => {
+      const id = freshId("cap-both");
+      await seed(id, "both", 25, "ctf{capped}");
+      expect(await submitFlag(id, "ctf{one}", { cooldownMs: 0, maxAttempts: 1 })).toEqual(["incorrect", "1"]);
+      expect(await submitFlag(id, "ctf{capped}", { cooldownMs: 0, maxAttempts: 1, nowMs: T0 + 1 })).toEqual(["exhausted"]);
+      expect(await submitFlag(id, "ctf{capped}", { cooldownMs: 0, maxAttempts: 1, nowMs: T0 + 2, dry: true })).toEqual([
+        "correct",
+        "25",
+        "dry",
+      ]);
+      expect(await recordEvent(id, { nowMs: T0 + 3 })).toEqual(["correct", "25"]);
+    });
   });
 });

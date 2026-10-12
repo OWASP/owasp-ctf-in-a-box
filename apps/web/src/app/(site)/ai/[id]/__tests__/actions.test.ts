@@ -155,7 +155,7 @@ describe("submitAiFlagAction results", () => {
       retryAt: "2026-09-02T00:00:00.000Z",
     });
 
-    for (const reason of ["paused", "solved", "unavailable", "invalid", "error", "wrong-mode"] as const) {
+    for (const reason of ["paused", "solved", "exhausted", "unavailable", "invalid", "error", "wrong-mode"] as const) {
       submitAiFlag.mockResolvedValue({ ok: false, reason });
       await expect(submitAiFlagAction("a1", "CTF{x}")).resolves.toEqual({ error: reason });
     }

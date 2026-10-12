@@ -1,11 +1,11 @@
 import "server-only";
-export { AI_COOLDOWN_SEC } from "./ai-defaults";
+export { AI_COOLDOWN_SEC, AI_MAX_ATTEMPTS } from "./ai-defaults";
 
 import { getAdminSettings } from "@/lib/admin-store";
 import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
-import { AI_COOLDOWN_SEC, AI_NONCE_TTL_SEC } from "@/lib/ai-defaults";
+import { AI_COOLDOWN_SEC, AI_MAX_ATTEMPTS, AI_NONCE_TTL_SEC } from "@/lib/ai-defaults";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { generateLaunchKeyPair, generateSigningKey, type AiLaunchKeyPair } from "@/lib/ai-token";
 import { AI_BUNDLE_VERSION, type AiBundle, type AiBundleChallenge } from "@/lib/ai-io";
@@ -775,7 +775,7 @@ type ResolvedAdminSettings = Awaited<ReturnType<typeof getAdminSettings>>;
 
 type AiGate =
   | { allowed: true }
-  | { allowed: false; reason: "paused" | "ended" | "solved" | "cooldown" | "unavailable"; retryAt?: string };
+  | { allowed: false; reason: "paused" | "ended" | "solved" | "exhausted" | "cooldown" | "unavailable"; retryAt?: string };
 
 /** The cheap, NON-ATOMIC pre-check.
  *
@@ -783,16 +783,18 @@ type AiGate =
  *    a Redis blip must never silently drop a live submission. Same fail-open
  *    the scorer and sync poller implement.
  *  - The solve/attempt lookup fails CLOSED with its OWN reason, "unavailable" —
- *    never "cooldown". Reporting an unverifiable lookup as a fact about the
- *    contestant's attempts turns a blip into a support argument.
+ *    never "cooldown" or "exhausted". Reporting an unverifiable lookup as a
+ *    fact about the contestant's attempts turns a blip into a support argument.
  *
- *  AWARD_SCRIPT re-checks the already-solved guard and the cooldown against
- *  state read at execution time and is what actually enforces them. */
+ *  AWARD_SCRIPT re-checks the already-solved guard, the attempt cap and the
+ *  cooldown against state read at execution time and is what actually
+ *  enforces them. `maxAttempts` 0 means no cap. */
 async function evaluateGate(
   settings: ResolvedAdminSettings | null,
   login: string,
   challengeId: string,
   cooldownSec: number,
+  maxAttempts: number,
   preview = false,
 ): Promise<AiGate> {
   // A preview (an admin before launch) is graded exactly while scoring
@@ -821,6 +823,13 @@ async function evaluateGate(
   }
 
   if (solve) return { allowed: false, reason: "solved" };
+
+  // Checked before the cooldown, as in the script: a spent budget is final,
+  // and answering it with a retry time would promise a retry that never comes.
+  // A preview spends nothing, so it has no budget to run out of.
+  if (!preview && maxAttempts > 0 && (attempt?.attempts ?? 0) >= maxAttempts) {
+    return { allowed: false, reason: "exhausted" };
+  }
 
   // Nothing a preview does is recorded, so there is nothing for it to cool.
   if (!preview && cooldownSec > 0 && attempt) {
@@ -854,10 +863,14 @@ async function evaluateGate(
 //      missed check or a later reorder. Matched off `cRaw`, the record the
 //      script already holds — no caller string is interpolated — and anchored
 //      with a trailing [,}] like the points match, for the same reason.
-//   4. Graded only: re-check the cooldown WITHOUT writing, then spend an
-//      attempt, then compare. The cooldown arrives as ARGV (the CURRENT admin
-//      setting, resolved on every call — never a stored cutoff) and is combined
-//      with the attempts row the script reads at execution time.
+//   4. Graded only: re-check the attempt cap and then the cooldown WITHOUT
+//      writing, then spend an attempt, then compare. Both arrive as ARGV (the
+//      CURRENT admin settings, resolved on every call — never a stored cutoff)
+//      and are combined with the attempts row the script reads at execution
+//      time, so two concurrent submissions at one-under-the-cap cannot both
+//      spend the last attempt. ARGV[11] is the cap; 0 (or absent) means none.
+//      A capped refusal returns {'exhausted'} and nothing else: it is decided
+//      before the comparison, so it cannot say whether the flag was right.
 //   5. Award: solve row + the three counters.
 //
 // The points match is anchored with a trailing [,}] so it can only match a
@@ -904,6 +917,10 @@ if ARGV[8] == '1' then
   -- three fields out of the same row shape.
   ${ATTEMPT_ROW_LUA_INDENTED}
 
+  local maxAttempts = tonumber(ARGV[11]) or 0
+  if not dry and maxAttempts > 0 and attempts >= maxAttempts then
+    return {'exhausted'}
+  end
   if not dry and cooldownMs > 0 and lastAtMs and nowMs < (lastAtMs + cooldownMs) then
     return {'cooldown', tostring(lastAtMs + cooldownMs)}
   end
@@ -944,29 +961,44 @@ export type AiSubmitResult =
   | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
   | { ok: true; correct: false; dryRun?: true }
   | { ok: false; reason: "paused" | "ended" | "solved" | "cooldown"; retryAt?: string }
+  // `exhausted`: the per-challenge attempt cap is spent. Final for this
+  // challenge, so no retry time, and decided before the flag is compared.
+  | { ok: false; reason: "exhausted" }
   // `wrong-mode`: a signed event was asserted against a challenge the organizer
   // authored as `mode: "flag"`. Refused by AWARD_SCRIPT itself, so it holds
   // even if a route forgets to check.
   | { ok: false; reason: "unavailable" | "invalid" | "error" | "wrong-mode" };
 
-/** Resolves the settings and the current cooldown, failing OPEN on a settings
- *  error — a Redis blip must not drop a submission a contestant is entitled to
- *  make. The cooldown honours the organizer's `aiCooldownSec` override
- *  (mirroring classic's `classicCooldownSec`) when the settings read
- *  succeeded, and falls back to the module default `AI_COOLDOWN_SEC`
- *  otherwise — the script still enforces whichever value comes back. */
-async function resolveSettings(): Promise<{ settings: ResolvedAdminSettings | null; cooldownSec: number }> {
+/** Resolves the settings, the current cooldown and the attempt cap, failing
+ *  OPEN on a settings error — a Redis blip must not drop a submission a
+ *  contestant is entitled to make. The cooldown honours the organizer's
+ *  `aiCooldownSec` override (mirroring classic's `classicCooldownSec`) and the
+ *  cap honours `aiMaxAttempts`, each when the settings read succeeded; each
+ *  falls back to its module default (`AI_COOLDOWN_SEC`, `AI_MAX_ATTEMPTS`)
+ *  otherwise — the script still enforces whichever values come back. The cap's
+ *  default is "no cap", so a failed read never refuses a submission the event
+ *  meant to allow. */
+async function resolveSettings(): Promise<{
+  settings: ResolvedAdminSettings | null;
+  cooldownSec: number;
+  maxAttempts: number;
+}> {
   let settings: ResolvedAdminSettings | null = null;
   try {
     settings = await getAdminSettings();
   } catch (err) {
     console.error("ai: admin settings read failed, treating scoring as live:", errorLabel(err));
   }
-  return { settings, cooldownSec: settings?.aiCooldownSec ?? AI_COOLDOWN_SEC };
+  return {
+    settings,
+    cooldownSec: settings?.aiCooldownSec ?? AI_COOLDOWN_SEC,
+    maxAttempts: settings?.aiMaxAttempts ?? AI_MAX_ATTEMPTS,
+  };
 }
 
 function gateToResult(gate: Exclude<AiGate, { allowed: true }>): AiSubmitResult {
   if (gate.reason === "unavailable") return { ok: false, reason: "unavailable" };
+  if (gate.reason === "exhausted") return { ok: false, reason: "exhausted" };
   return gate.retryAt ? { ok: false, reason: gate.reason, retryAt: gate.retryAt } : { ok: false, reason: gate.reason };
 }
 
@@ -980,6 +1012,7 @@ function readVerdict(verdict: unknown): AiSubmitResult {
     return { ok: false, reason: "error" };
   }
   if (status === "mode") return { ok: false, reason: "wrong-mode" };
+  if (status === "exhausted") return { ok: false, reason: "exhausted" };
   if (status === "cooldown") {
     return { ok: false, reason: "cooldown", retryAt: new Date(Number(value)).toISOString() };
   }
@@ -996,6 +1029,7 @@ async function runAward(
   challengeId: string,
   flag: string,
   cooldownSec: number,
+  maxAttempts: number,
   grade: boolean,
   source: AiSolveSource,
   dryRun = false,
@@ -1026,6 +1060,7 @@ async function runAward(
         grade ? "1" : "0", // ARGV[8]
         source, // ARGV[9] — literal, never caller input
         dryRun ? "1" : "0", // ARGV[10] — dry run: grade, write nothing
+        maxAttempts, // ARGV[11] — attempt cap, 0 = none
       ],
     );
     return readVerdict(verdict);
@@ -1050,11 +1085,11 @@ export async function submitAiFlag(
   // from the launch lock or a signed preview token, never from a request field.
   const dryRun = opts.dryRun === true;
 
-  const { settings, cooldownSec } = await resolveSettings();
-  const gate = await evaluateGate(settings, login, challengeId, cooldownSec, dryRun);
+  const { settings, cooldownSec, maxAttempts } = await resolveSettings();
+  const gate = await evaluateGate(settings, login, challengeId, cooldownSec, maxAttempts, dryRun);
   if (!gate.allowed) return gateToResult(gate);
 
-  return runAward(login, challengeId, flag, cooldownSec, true, "flag", dryRun);
+  return runAward(login, challengeId, flag, cooldownSec, maxAttempts, true, "flag", dryRun);
 }
 
 /** Records a solve asserted by the external side. The CALLER (the route) is
@@ -1083,17 +1118,18 @@ export async function awardAiEvent(
   const preview = opts.preview === true;
 
   const { settings, cooldownSec } = await resolveSettings();
-  // A signed event has no wrong answer, so the cooldown never applies to it —
-  // passing 0 keeps a contestant's flag-path cooldown from blocking a solve
-  // the external system already granted.
-  const gate = await evaluateGate(settings, login, challengeId, 0, preview);
+  // A signed event has no wrong answer, so neither the cooldown nor the
+  // attempt cap applies to it — passing 0 for both keeps a contestant's
+  // flag-path history from blocking a solve the external system already
+  // granted.
+  const gate = await evaluateGate(settings, login, challengeId, 0, 0, preview);
   if (!gate.allowed) return gateToResult(gate);
 
   // A dry run goes through the SAME script, told to write nothing —
   // so its missing/mode/already checks apply exactly as on a real award.
-  if (opts.dryRun || preview) return runAward(login, challengeId, "", cooldownSec, false, "event", true);
+  if (opts.dryRun || preview) return runAward(login, challengeId, "", cooldownSec, 0, false, "event", true);
 
-  return runAward(login, challengeId, "", cooldownSec, false, "event");
+  return runAward(login, challengeId, "", cooldownSec, 0, false, "event");
 }
 
 // ---------------------------------------------------------------------------

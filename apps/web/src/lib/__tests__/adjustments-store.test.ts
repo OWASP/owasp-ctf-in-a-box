@@ -63,6 +63,23 @@ describe("removeAdjustment", () => {
     expect(args[0]).toBe("a1");
   });
 
+  it("answers the removed row", async () => {
+    m.upstashEval.mockResolvedValueOnce(row("a1", "red", -10));
+    expect(await removeAdjustment("a1", "admin")).toMatchObject({ id: "a1", row: { slug: "red", points: -10 } });
+  });
+
+  // The script removed and audited it; an unreadable row must not turn that
+  // into an error the organizer would retry.
+  it("reports a malformed row's removal as done, with no row", async () => {
+    m.upstashEval.mockResolvedValueOnce("{not json");
+    expect(await removeAdjustment("a1", "admin")).toEqual({ id: "a1", row: null });
+  });
+
+  it("refuses with nothing changed when the audit log cannot take the line", async () => {
+    m.upstashEval.mockResolvedValueOnce("audit-unwritable");
+    await expect(removeAdjustment("a1", "admin")).rejects.toThrow(/nothing was changed/);
+  });
+
   it("says so when the id is not there", async () => {
     m.upstashEval.mockResolvedValueOnce(null);
     await expect(removeAdjustment("nope", "admin")).rejects.toThrow(/No adjustment/);

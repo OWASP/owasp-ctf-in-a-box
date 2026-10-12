@@ -90,11 +90,13 @@ export async function addAdjustment(rawSlug: string, points: number, rawReason: 
   return adj;
 }
 
-export async function removeAdjustment(id: string, actor: string): Promise<Adjustment> {
+/** Removes one adjustment and answers its row, or `row: null` when the stored
+ *  text was not a readable row: it was still removed and audited. */
+export async function removeAdjustment(id: string, actor: string): Promise<{ id: string; row: Adjustment | null }> {
   const removed = await upstashEval(REMOVE_SCRIPT, [ADJUSTMENTS_KEY, ADMIN_AUDIT_KEY], [id, actor, new Date().toISOString(), String(AUDIT_CAP - 1)]);
   if (removed === "audit-unwritable") throw new Error("the admin audit log is not writable; nothing was changed");
   if (typeof removed !== "string") throw new AdjustmentValidationError("id", `No adjustment "${id}"`);
-  return JSON.parse(removed) as Adjustment;
+  return { id, row: parseRow(removed) };
 }
 
 function parseRow(raw: unknown): Adjustment | null {

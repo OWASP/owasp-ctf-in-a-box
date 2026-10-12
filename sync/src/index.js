@@ -39,12 +39,16 @@ async function writeStatusSafely(redis, log, status) {
  *   - `retried` is a submission that failed transiently and was deliberately
  *     un-marked; the next tick re-presents it. Worth logging, not worth
  *     counting as lost.
+ *   - `refused` is the scorer's final verdict on WHEN the score was posted:
+ *     during a freeze, outside the scoring window, or before the last master
+ *     reset (ADR 67). The rule did its job, so it is logged, never counted as
+ *     dropped — a counter every pause would bump is a counter nobody reads.
  *   - `preReset` is a comment last edited BEFORE the master-reset epoch
  *     (#551): a score the organizer wiped on purpose. Skipped once (it is
  *     marked seen), and reported once, so the first poll after a reset says
  *     how much of the past it declined to re-bank.
  */
-const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, retried: 0, preReset: 0 });
+const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, retried: 0, preReset: 0, refused: 0 });
 
 /** The master-reset epoch as milliseconds, or null when there is none. The
  *  admin panel writes it as epoch milliseconds (`resetEvent`); a state file
@@ -63,7 +67,7 @@ function resetEpochMs(resetAt) {
  *  re-read), so a quiet poller stays quiet and any line it does print means
  *  something. */
 function summarize(repo, tally) {
-  if (tally.noMarker + tally.invalid + tally.rejected + tally.retried + tally.preReset === 0) return null;
+  if (tally.noMarker + tally.invalid + tally.rejected + tally.retried + tally.preReset + tally.refused === 0) return null;
   const parts = Object.entries(tally)
     .filter(([, n]) => n > 0)
     .map(([name, n]) => `${n} ${name}`);
@@ -85,14 +89,13 @@ export async function tick(cfg, state, deps = {}) {
     log(why);
   };
 
-  // Read the pause flag FIRST, before the target list — it is fail-open and
-  // cheap (unlike getSecureDevTargets below), and reading it up front means
-  // the heartbeat this tick writes always carries the REAL paused value, even
-  // on the early return below. It used to be read only after the targets
-  // fetch, which made an unreadable-targets tick lie and report `paused:
-  // false` unconditionally regardless of the actual setting. This does not
-  // change WHEN the tick acts on it — the early-return-if-paused check below
-  // is still after the reset-epoch check, for the reason given there.
+  // The effective freeze, for the heartbeat only. The poller does not act on
+  // it: every score goes to the scorer with its comment's time, and the
+  // scorer judges the window and the freeze AT that time (ADR 67). Holding
+  // the cursor here would be wrong both ways — a comment posted before the
+  // pause and read during it must still score, and one posted during it must
+  // not score after the resume. Read before the target list so even the
+  // unreadable-targets heartbeat below carries the real value.
   const paused = redis ? await redis.isPaused() : false;
 
   // Resolve THIS TICK's target list before anything else touches state or
@@ -124,10 +127,8 @@ export async function tick(cfg, state, deps = {}) {
     targets = TARGETS;
   }
 
-  // Master-reset epoch, BEFORE the pause check: a reset also freezes scoring,
-  // so we must drop the cursor even while paused, or an unfreeze would re-ingest
-  // from the cursor's old position. Clearing repos makes the next poll re-read
-  // from scratch; the caller persists `state` after this tick.
+  // Master-reset epoch: when it advances, drop the cursor so this poll
+  // re-reads from scratch; the caller persists `state` after this tick.
   if (redis?.getResetAt) {
     const resetAt = await redis.getResetAt();
     if (resetAt && resetAt !== state.resetAt) {
@@ -141,19 +142,6 @@ export async function tick(cfg, state, deps = {}) {
   // itself one poll later (#551). The epoch is the watermark the loop below
   // applies: a comment last edited before it is the past the organizer wiped.
   const resetMs = resetEpochMs(state.resetAt);
-
-  if (redis && paused) {
-    await writeStatusSafely(redis, log, {
-      lastPollAt: nowIso(),
-      ingested: state.ingested,
-      dropped: state.dropped,
-      lastDrop: state.lastDrop ?? null,
-      reposPolled: 0,
-      paused: true,
-      lastError: null,
-    });
-    return state;
-  }
 
   let reposPolled = 0;
   let lastError = null;
@@ -201,10 +189,16 @@ export async function tick(cfg, state, deps = {}) {
         continue;
       }
       try {
-        const ok = await submitScore(cfg, payload, fetchImpl);
-        if (ok) {
+        // The comment's own GitHub time, never a field of the marker: the
+        // scorer times the solve by it and judges the window and the freeze
+        // at it.
+        const verdict = await submitScore(cfg, { ...payload, at: c.updated_at }, fetchImpl);
+        if (verdict.outcome === "accepted") {
           state.ingested++;
           tally.ingested++;
+        } else if (verdict.outcome === "refused") {
+          tally.refused++;
+          log(`submit ${repo}#${payload.pr}: refused (${verdict.reason}), not scored`);
         } else {
           tally.rejected++;
           drop(`submit ${repo}#${payload.pr}: rejected (4xx), dropped`);
@@ -233,7 +227,7 @@ export async function tick(cfg, state, deps = {}) {
       dropped: state.dropped,
       lastDrop: state.lastDrop ?? null,
       reposPolled,
-      paused: false,
+      paused,
       lastError,
     });
   }

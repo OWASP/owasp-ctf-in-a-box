@@ -337,11 +337,25 @@ describe("updateAdminSettings write", () => {
     const out = await updateAdminSettings({ paused: true }, "alice");
     expect(mocks.upstashEval).toHaveBeenCalledOnce();
     const [, keys, args] = mocks.upstashEval.mock.calls[0];
-    expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit"]);
+    expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit", "ctf:admin:pauses"]);
     // args carry the actor, the cap, an audit JSON line, and the paused field
     expect(args).toContain("alice");
     expect(args.some((a) => String(a).includes('"paused":true'))).toBe(true);
     expect(out.paused).toBe(true);
+  });
+
+  // The pause log lives in the same script as the flag, so a freeze can never
+  // be recorded without its start or lifted without its interval. What the
+  // script DOES is pinned against a real Redis (admin-store.upstash.test.ts);
+  // this pins that the write path hands it the log's key and logic.
+  it("keeps the pause log in the same eval as the flag", async () => {
+    mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
+    await updateAdminSettings({ paused: false }, "alice");
+    const [script, keys] = mocks.upstashEval.mock.calls[0];
+    expect(keys[2]).toBe("ctf:admin:pauses");
+    expect(String(script)).toContain("'pausedSince'");
+    expect(String(script)).toMatch(/redis\.call\('LPUSH', KEYS\[3\], cjson\.encode/);
+    expect(String(script)).toMatch(/redis\.call\('LTRIM', KEYS\[3\], 0, 199\)/);
   });
 
   it("clears paused via HDEL instead of writing the string \"0\" when unpausing", async () => {

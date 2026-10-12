@@ -14,6 +14,7 @@ import {
   nextScheduleBoundary,
   outsideScoringWindow,
   outsideWindow,
+  pausedAt,
   restampPlan,
   scoringClosure,
   serverFloorNow,
@@ -59,6 +60,26 @@ describe("outsideScoringWindow: shared scoring-window corpus (#464)", () => {
   for (const { description, nowMs, startsAt, endsAt, expected } of scoringCorpus) {
     it(description, () => {
       expect(outsideScoringWindow(nowMs, startsAt, endsAt)).toBe(expected);
+    });
+  }
+});
+
+// Whether the manual freeze covered an instant: the pause log's closed
+// intervals plus the pause still open. Runs verbatim in
+// scorer/test/store.test.js, which judges a Secure Development score's
+// comment time with it, and sync/test/redis.test.js.
+const PAUSE_CORPUS_PATH = fileURLToPath(new URL("../../../../../test/fixtures/pause-interval-corpus.json", import.meta.url));
+const { cases: pauseCorpus } = JSON.parse(readFileSync(PAUSE_CORPUS_PATH, "utf8")) as {
+  cases: { description: string; tMs: number; paused: boolean; pausedSince: string | null; pauses: string[]; expected: boolean }[];
+};
+
+describe("pausedAt: shared pause-interval corpus", () => {
+  it("has rows", () => {
+    expect(pauseCorpus.length).toBeGreaterThan(0);
+  });
+  for (const { description, tMs, paused, pausedSince, pauses, expected } of pauseCorpus) {
+    it(description, () => {
+      expect(pausedAt(tMs, paused, pausedSince, pauses)).toBe(expected);
     });
   }
 });

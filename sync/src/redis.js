@@ -31,13 +31,42 @@ export function outsideWindow(nowMs, startsAt, endsAt) {
 
 // The SCORING window: outsideWindow plus a REQUIRED start (issue #464 —
 // every event needs an official launch). An absent or unparseable
-// scoringStartsAt means "not launched", so ingestion holds. Mirrors apps/web
+// scoringStartsAt means "not launched", so the heartbeat reports scoring as
+// paused. Mirrors apps/web
 // schedule-window.ts and scorer/src/store.js — change all three together;
 // test/fixtures/scoring-window-corpus.json pins them.
 export function outsideScoringWindow(nowMs, startsAt, endsAt) {
   const s = startsAt ? Date.parse(startsAt) : NaN;
   if (!Number.isFinite(s)) return true;
   return outsideWindow(nowMs, startsAt, endsAt);
+}
+
+// Whether the manual freeze covered the instant `tMs`: inside a closed
+// interval [from, to) from the pause log (`ctf:admin:pauses`, one JSON
+// {from, to} per entry), or at or after the start of the pause still open.
+// An open pause whose start is absent or unparseable covers every instant
+// (when it began is unknown); a log entry that does not parse covers nothing.
+// The scorer is what judges a score's comment time with it; this copy keeps
+// the poller's reading of the freeze identical to the other two. Mirrors
+// apps/web schedule-window.ts and scorer/src/store.js — change all three
+// together; test/fixtures/pause-interval-corpus.json pins them.
+export function pausedAt(tMs, paused, pausedSince, pauses) {
+  if (paused) {
+    const since = pausedSince ? Date.parse(pausedSince) : NaN;
+    if (!Number.isFinite(since) || tMs >= since) return true;
+  }
+  for (const raw of pauses ?? []) {
+    let entry;
+    try {
+      entry = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const from = typeof entry?.from === "string" ? Date.parse(entry.from) : NaN;
+    const to = typeof entry?.to === "string" ? Date.parse(entry.to) : NaN;
+    if (Number.isFinite(from) && Number.isFinite(to) && tMs >= from && tMs < to) return true;
+  }
+  return false;
 }
 
 // How long one /pipeline round trip may take before it is treated as a failed
@@ -55,8 +84,8 @@ export function redisErrorText(error) {
 }
 
 /** The poller's Redis client, or null when UPSTASH_REDIS_REST_URL/TOKEN are
- *  unset (a poller with no Redis still polls; it just cannot see the freeze
- *  or write its heartbeat). `fetchImpl`, `log` and `timeoutMs` are seams. */
+ *  unset (a poller with no Redis still polls; it just cannot report the
+ *  freeze or write its heartbeat). `fetchImpl`, `log` and `timeoutMs` are seams. */
 export function makeRedis(env = process.env, fetchImpl = fetch, log = console.error, { timeoutMs = PIPELINE_TIMEOUT_MS } = {}) {
   const url = env.UPSTASH_REDIS_REST_URL;
   const token = env.UPSTASH_REDIS_REST_TOKEN;
@@ -98,7 +127,7 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
         return outsideScoringWindow(Date.now(), startsAt, endsAt);
       } catch (err) {
         log(`redis isPaused: ${err.message}`);
-        return false; // fail open: a Redis blip must not freeze ingestion
+        return false; // fail open: a Redis blip must not report a freeze nobody set
       }
     },
     // The master-reset epoch. The admin panel bumps `resetAt` in the settings

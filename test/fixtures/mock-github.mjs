@@ -15,7 +15,7 @@ const comments = [
 
 // A 4th, initially-hidden comment — smoke.sh's freeze stage touches
 // EXTRA_COMMENT_FLAG to make it appear mid-run, simulating a fresh
-// contributor score landing while ingestion is paused, without needing to
+// contributor score landing while scoring is frozen, without needing to
 // rebuild this fixture (or the sync image) mid-test.
 const EXTRA_COMMENT_FLAG = "/tmp/extra-comment";
 const extraComment = { id: 4, user: { login: "github-actions[bot]" }, updated_at: "2026-08-13T10:15:00Z",

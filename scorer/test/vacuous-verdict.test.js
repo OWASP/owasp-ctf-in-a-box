@@ -71,6 +71,20 @@ test("a target with zero challenges fails", () => {
   assert.equal(v.ok, false);
 });
 
+// One cause, one message: no challenges is not also reported as a stuck run.
+test("a target with zero challenges is reported once, as having no challenges", () => {
+  const v = verdict(summarize([run("vampi", { total: 0, paths: [] })]), ["vampi"]);
+  assert.match(v.problems.join("\n"), /gave it no challenges/);
+  assert.doesNotMatch(v.problems.join("\n"), /shared gate/);
+});
+
+test("a result with no total counts as zero challenges, never NaN", () => {
+  const { total: _omit, ...noTotal } = run("vampi");
+  const v = verdict(summarize([noTotal]), ["vampi"]);
+  assert.equal(v.total, 0);
+  assert.match(v.problems.join("\n"), /nothing was swept/);
+});
+
 test("an empty sweep fails", () => {
   const v = verdict(summarize([]), []);
   assert.equal(v.ok, false);

@@ -17,7 +17,7 @@ export function summarize(results) {
   for (const r of results) {
     if (r.error) continue;
     const acc = byTarget.get(r.targetName) ?? {
-      total: r.total,
+      total: Number(r.total) || 0,
       ids: new Set(),
       aborted: false,
       stuck: false,
@@ -28,7 +28,7 @@ export function summarize(results) {
     // Judged per personality, before the paths are merged: a personality
     // stuck at /login would otherwise be hidden by another that reached /a
     // and /b, and the union would read as a target that got past the gate.
-    acc.stuck ||= isStuck({ total: r.total, paths: new Set(r.paths ?? []) });
+    acc.stuck ||= isStuck({ total: Number(r.total) || 0, paths: new Set(r.paths ?? []) });
     (r.paths ?? []).forEach((p) => acc.paths.add(p));
     byTarget.set(r.targetName, acc);
   }
@@ -64,7 +64,7 @@ export function verdict(byTarget, expected) {
     if (!(acc.total > 0)) problems.push(`${name}: the rubric gave it no challenges to run`);
     if (acc.ids.size > 0) problems.push(`${name}: ${acc.ids.size} of ${acc.total} pass against a useless target`);
     if (acc.aborted) problems.push(`${name}: run aborted — challenges were skipped, so a clean result proves nothing`);
-    else if (acc.ids.size === 0 && acc.stuck) {
+    else if (acc.ids.size === 0 && acc.stuck && acc.total > 0) {
       problems.push(
         `${name}: a personality reached at most one distinct path across ${acc.total} challenges — ` +
           "the rubric never got past a shared gate; NOT a clean bill",

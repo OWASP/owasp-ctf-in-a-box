@@ -3322,7 +3322,9 @@ the admin allowlist cannot be stored behind the thing it guards access to.
 
 ## ADR 56. Poll is the score transport; push ingest is removed
 
-**Status.** Accepted 2026-09-12. Supersedes
+**Status.** Accepted 2026-09-12. Freeze semantics amended by
+[ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
+(sync no longer holds its cursor during a freeze). Supersedes
 [ADR 3](#adr-3-score-transport-poll-by-default-push-optional). Implements
 issue [#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377). Originally
 written as a two-release plan — deprecate in v0.6, remove in v0.7 — and

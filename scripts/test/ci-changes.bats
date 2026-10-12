@@ -114,3 +114,9 @@ areas() {
   [ "$status" -eq 0 ]
   [ -z "$(grep -x '[a-z]*=false' <<< "$output")" ]
 }
+
+@test "docker-compose.smoke.yml runs shell (pins.bats checks its image: lines)" {
+  areas docker-compose.smoke.yml
+  echo "$output"
+  grep -qx 'shell=true' <<< "$output"
+}

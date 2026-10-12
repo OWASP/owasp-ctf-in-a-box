@@ -295,6 +295,7 @@ jobs:
           if [ -z "$img" ]; then
             echo "FAIL: no digest-pinned caddy image found in docker-compose.yml"; exit 1
           fi
+          # pins: $img is the digest-pinned caddy image read from docker-compose.yml above
           docker run --rm -v "$PWD/caddy:/etc/caddy:ro" -e EVENT_HOST=http://localhost \
             "$img" caddy validate --config /etc/caddy/Caddyfile.poll --adapter caddyfile
 

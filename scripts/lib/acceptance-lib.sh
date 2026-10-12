@@ -109,6 +109,7 @@ JSON
 # APP_IMAGE means "score from SOURCE" — the bring-up builds the staged
 # workspace Dockerfile, the same branch a contestant's PR takes.
 acc_run_judge() {
+  # pins: $IMG is the scorer image acc_build_scorer builds
   docker run --rm \
     --network "$NET" \
     -v /var/run/docker.sock:/var/run/docker.sock \
@@ -143,6 +144,7 @@ acc_score_counts() {
 acc_boot_standalone() {
   img="$1"; name="$2"; cport="${3:-5000}"; shift 3
   docker rm -f "$name" >/dev/null 2>&1 || true
+  # pins: the caller passes the target image; the workflows pin it
   docker run -d --rm --name "$name" -p "127.0.0.1::$cport" "$@" "$img" >/dev/null
   hp="$(docker port "$name" "$cport/tcp" | head -1 | sed 's/.*://')"
   [ -n "$hp" ] || return 1
@@ -164,12 +166,14 @@ acc_control_dvwa() {
   docker run -d --name "$CTRL_DB_NAME" --network "$cnet" --network-alias db \
     -e MYSQL_ROOT_PASSWORD=dvwa -e MYSQL_DATABASE=dvwa \
     -e MYSQL_USER=dvwa -e MYSQL_PASSWORD='p@ssw0rd' \
-    docker.io/library/mariadb:10 >/dev/null
+    docker.io/library/mariadb:10@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2 >/dev/null
+  # pins: $CTRL_IMG is the patched target the gate builds
   docker run -d --name "$CTRL_NAME" --network "$cnet" --network-alias dvwa \
     -e DB_SERVER=db -e DB_DATABASE=dvwa -e DB_USER=dvwa -e DB_PASSWORD='p@ssw0rd' \
     -e RECAPTCHA_PRIV_KEY='' -e RECAPTCHA_PUB_KEY='' -e DEFAULT_SECURITY_LEVEL=low \
     "$CTRL_IMG" >/dev/null
   rc=0
+  # pins: $IMG is the scorer image acc_build_scorer builds
   docker run --rm --network "$cnet" \
     -e APP_URL="http://dvwa" -e CHALLENGE="$CHALLENGE" \
     -v "$1:/dvwa-ctrl.js:ro" \
@@ -323,6 +327,7 @@ acc_boot_app() {
   org="$7"; logins="$8"; secret="$9"
   echo "--- booting the app"
   docker rm -f "$name" >/dev/null 2>&1 || true
+  # pins: the caller passes the app image it built
   docker run -d --name "$name" --network "$net" -p "$port:3000" \
     -e BETTER_AUTH_SECRET="$secret" \
     -e BETTER_AUTH_URL="http://localhost:$port" \

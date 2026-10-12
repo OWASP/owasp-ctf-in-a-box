@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 // CI runs the live-Redis suites by NAME: the app job's Lua step is
@@ -23,21 +24,42 @@ function testFiles(dir: string): string[] {
   return out;
 }
 
-// Only a RUNTIME import loads live-redis.ts and so arms its gate. TypeScript
-// erases `import type { … }` and an import whose every specifier is
-// `type X`, so a suite with only those would pass a textual check while never
-// loading the gate.
+// Only a RUNTIME import loads live-redis.ts and so arms its gate. The source
+// is parsed with the TypeScript compiler rather than matched as text, so a
+// commented-out import, one inside a string, and the forms TypeScript erases
+// (`import type`, a specifier list that is all `type X`, `export type … from`)
+// do not count, while a dynamic `import("./live-redis")` and a re-export do.
+const isLiveRedis = (spec: ts.Expression | undefined) =>
+  spec !== undefined && ts.isStringLiteral(spec) && /(^|\/)live-redis(\.[cm]?[jt]s)?$/.test(spec.text);
+
 function importsLiveRedis(source: string): boolean {
-  if (/^\s*import\s+["'][^"']*\/live-redis["']/m.test(source)) return true;
-  const re = /^\s*import\s+([^;]*?)\s+from\s+["'][^"']*\/live-redis["']/gm;
-  for (const [, clause] of source.matchAll(re)) {
-    if (/^type\s/.test(clause)) continue;
-    const named = /^\{([^}]*)\}$/.exec(clause.trim());
-    if (!named) return true; // a default or namespace import is a runtime import
-    const specifiers = named[1].split(",").map((x) => x.trim()).filter(Boolean);
-    if (specifiers.some((x) => !/^type\s/.test(x))) return true;
-  }
-  return false;
+  const file = ts.createSourceFile("suite.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isImportDeclaration(node) && isLiveRedis(node.moduleSpecifier)) {
+      const clause = node.importClause;
+      if (!clause) found = true; // a side-effect import
+      else if (!clause.isTypeOnly) {
+        const named = clause.namedBindings;
+        found =
+          clause.name !== undefined ||
+          (named !== undefined && (ts.isNamespaceImport(named) || named.elements.some((e) => !e.isTypeOnly)));
+      }
+    } else if (ts.isExportDeclaration(node) && isLiveRedis(node.moduleSpecifier) && !node.isTypeOnly) {
+      const clause = node.exportClause;
+      found = clause === undefined || !ts.isNamedExports(clause) || clause.elements.some((e) => !e.isTypeOnly);
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      isLiveRedis(node.arguments[0])
+    ) {
+      found = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
 }
 const fileImportsLiveRedis = (file: string) => importsLiveRedis(readFileSync(file, "utf8"));
 const files = testFiles(srcRoot);
@@ -55,6 +77,15 @@ describe("importsLiveRedis counts only runtime imports", () => {
     ['import { type Foo, type Bar } from "./live-redis";', false],
     ['export type { Foo } from "./live-redis";', false],
     ["// see live-redis.ts for the harness", false],
+    ['const live = await import("./live-redis");', true],
+    ['import("@/lib/__tests__/live-redis").then(() => {});', true],
+    ['import live from "./live-redis";', true],
+    ['export { liveKey } from "./live-redis";', true],
+    ['/* import { liveConfigured } from "./live-redis"; */', false],
+    ['// import { liveConfigured } from "./live-redis";', false],
+    ['/*\n import { liveConfigured } from "./live-redis";\n*/', false],
+    ['const s = \'import { liveConfigured } from "./live-redis";\';', false],
+    ['import { liveConfigured } from "./not-live-redis";', false],
   ])("%s -> %s", (source, expected) => {
     expect(importsLiveRedis(source)).toBe(expected);
   });

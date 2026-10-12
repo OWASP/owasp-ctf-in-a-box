@@ -83,6 +83,7 @@ services:
     # The fallback is the upstream image, which is private — it only pulls if
     # the OWASP-CTF maintainers granted you access. Kept as a fallback (not
     # required) so parse-time interpolation doesn't break the smoke override.
+    # pins: the event's own scorer image, chosen per box in .env
     image: ${SCORE_IMAGE:-ghcr.io/owasp-ctf/score:latest}
     command: ["score", "serve"]
     restart: unless-stopped

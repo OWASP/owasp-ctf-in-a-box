@@ -56,6 +56,7 @@ ACCEPTANCE_REV=abcdef123456
 docker build -f apps/web/Dockerfile -t ctf-web:acceptance \
   --build-arg APP_BUILD_REV="$ACCEPTANCE_REV" \
   --build-arg APP_BUILT_AT=2026-01-01T00:00:00Z .
+# pins: ctf-web:acceptance is built by this script
 docker run -d --name web-acceptance -p 3100:3000 \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3100 \
   -e SCORE_IMAGE=ghcr.io/example/score:acceptance \
@@ -93,6 +94,7 @@ done
 docker exec aa-redis redis-cli HSET ctf:admin:settings scoringStartsAt "2000-01-01T00:00:00Z" >/dev/null
 AA_REDIS_ENV="-e UPSTASH_REDIS_REST_URL=http://srh:80 -e UPSTASH_REDIS_REST_TOKEN=$AA_SRH_TOKEN"
 # shellcheck disable=SC2086  # AA_REDIS_ENV is two -e flags on purpose
+# pins: ctf-web:acceptance is built by this script
 docker run -d --name web-launched --network aa-net -p 3103:3000 $AA_REDIS_ENV \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3103 \
   -e SCORE_IMAGE=ghcr.io/example/score:acceptance \
@@ -207,6 +209,7 @@ for leak in BETTER_AUTH GITHUB_CLIENT SRH_TOKEN REDIS_PASSWORD UPSTASH http:// E
 done
 
 echo "--- without a scorer image, nothing is enabled and the landing page says so"
+# pins: ctf-web:acceptance is built by this script
 docker run -d --name web-noscorer -p 3102:3000 \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3102 ctf-web:acceptance
 NOSCORER_HTML=$(wait_for_html http://localhost:3102/)
@@ -220,6 +223,7 @@ echo "--- default run (no GITHUB_ORG) is neutral (no DEF CON, name OWASP CTF in 
 # rebuild: config v2 has nothing left for a second build to bake.
 # On the launched redis too, so its /challenges renders (see web-launched).
 # shellcheck disable=SC2086  # AA_REDIS_ENV is two -e flags on purpose
+# pins: ctf-web:acceptance is built by this script
 docker run -d --name web-default --network aa-net -p 3101:3000 $AA_REDIS_ENV \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3101 \
   -e SCORE_IMAGE=ghcr.io/example/score:acceptance ctf-web:acceptance

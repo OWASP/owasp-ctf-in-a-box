@@ -22,78 +22,70 @@ setup() {
   [ -z "$unpinned" ]
 }
 
-# image_refs <file>... — every redis/srh/caddy image a `docker run` or a
-# workflow `image:` names, tagged or not, as `file:line:pinned|unpinned`.
-# The image is found by position (the first argument after `docker run` and
-# its options), not by matching words: `redis` is also a service name, a
-# network alias and a hostname all over these scripts.
+# image_refs <file>... — one line per image reference, as
+# `file:line:pinned|unpinned|exempt: <text>`. No option or name parsing: an
+# image reference is a whole `docker run|pull|create` command (backslash
+# continuations joined, so a digest on a later line counts) or an `image:`
+# value, and it is pinned when it contains @sha256:<64 hex> anywhere. The one
+# way out is a `# pins: <reason>` comment on the line directly above, for an
+# image that is built locally or pinned by whoever passes it in.
 image_refs() {
   awk '
-    function report(img, ln,   repo) {
-      gsub(/["\047]/, "", img)
-      repo = img
-      sub(/@.*/, "", repo)
-      sub(/:[^\/]*$/, "", repo)
-      if (repo != "redis" && repo != "hiett/serverless-redis-http" && repo != "caddy") return
-      print FILENAME ":" ln ":" (img ~ /@sha256:[0-9a-f]{64}$/ ? "pinned" : "unpinned") ": " img
-    }
-    FNR == 1 { buf = ""; start = 0 }
+    FNR == 1 { buf = ""; prev = ""; above = "" }
     {
       line = $0
-      if (buf == "") start = FNR
+      if (buf == "") { start = FNR; above = prev }
+      prev = line
       if (line ~ /\\[ \t]*$/) { sub(/\\[ \t]*$/, " ", line); buf = buf line; next }
       cmd = buf line
       buf = ""
       if (cmd ~ /^[ \t]*#/) next
-      if (cmd ~ /^[ \t]*(-[ \t]+)?image:[ \t]*/) {
-        v = cmd
-        sub(/^[ \t]*(-[ \t]+)?image:[ \t]*/, "", v)
-        sub(/[ \t]+#.*$/, "", v)
-        report(v, start)
-        next
-      }
-      i = index(cmd, "docker run ")
-      if (i == 0) next
-      n = split(substr(cmd, i + 11), tok, /[ \t]+/)
-      for (k = 1; k <= n; k++) {
-        t = tok[k]
-        if (t == "") continue
-        if (t ~ /^-/) {
-          if (t !~ /=/ && t ~ /^(-e|--env|--env-file|-p|--publish|-v|--volume|--name|--network|--network-alias|--entrypoint|-w|--workdir|-u|--user|--add-host|-l|--label|--mount|--platform|-h|--hostname|--restart|--pull|--cpus|-m|--memory|--health-cmd|--health-interval|--health-retries|--health-timeout|--ulimit|--tmpfs|--cap-add|--cap-drop|--security-opt|--log-driver|--log-opt)$/) k++
-          continue
-        }
-        report(t, start)
-        break
-      }
+      if (cmd !~ /docker[ \t]+(run|pull|create)([ \t]|$)/ && cmd !~ /^[ \t]*(-[ \t]+)?image:/) next
+      if (cmd ~ /@sha256:[0-9a-f]{64}/) state = "pinned"
+      else if (above ~ /^[ \t]*# pins: [^ \t]/) state = "exempt"
+      else state = "unpinned"
+      sub(/^[ \t]+/, "", cmd)
+      print FILENAME ":" start ":" state ": " cmd
     }
   ' "$@"
 }
 unpinned_images() {
-  image_refs "$@" | grep ':unpinned: ' || true
+  image_refs "$@" | grep -E '^[^:]+:[0-9]+:unpinned: ' || true
 }
 
-@test "the image check flags untagged and tagged references alike, and passes pinned ones" {
+@test "the image check needs a digest on every docker run/pull/create and image: line" {
   digest="@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   f="$BATS_TEST_TMPDIR/fixture.sh"
   {
-    echo 'docker run -d --name r redis'
-    echo 'docker run -d --name s hiett/serverless-redis-http'
-    echo 'docker run -d --name c caddy:2-alpine'
-    echo "docker run -d --name ok1 --network-alias redis redis:8-alpine$digest redis-server"
-    echo "docker run -d --name ok2 hiett/serverless-redis-http$digest"
-    echo "            image: caddy"
-    echo "            image: caddy:2-alpine$digest"
+    echo 'docker run -d --device /dev/fuse redis:latest'                 # 1 flagged
+    echo 'docker run -d --name r redis'                                   # 2 flagged
+    echo 'docker pull docker.io/library/redis:8'                         # 3 flagged
+    echo '    image: docker.io/library/redis:8'                           # 4 flagged
+    echo 'docker run -d --name ok --network-alias redis \'                # 5 pinned
+    echo '  -e A=1 \'
+    echo "  redis:8-alpine$digest >/dev/null"
+    echo 'docker run -d --name bad --network-alias redis \'               # 8 flagged
+    echo '  -e A=1 \'
+    echo '  redis:8-alpine >/dev/null'
+    echo '# pins: built locally by this script'                           # 11
+    echo 'docker run -d "$IMG"'                                           # 12 exempt
+    echo '#'                                                              # 13
+    echo 'docker create caddy'                                            # 14 flagged
+    echo "    image: caddy$digest"                                        # 15 pinned
   } > "$f"
   flagged="$(unpinned_images "$f" | cut -d: -f2 | tr '\n' ' ')"
-  echo "flagged lines: '$flagged' (want '1 2 3 6 ')"
-  [ "$flagged" = "1 2 3 6 " ]
+  states="$(image_refs "$f" | cut -d: -f2,3 | tr '\n' ' ')"
+  echo "all: $states"
+  echo "flagged lines: '$flagged' (want '1 2 3 4 8 14 ')"
+  [ "$flagged" = "1 2 3 4 8 14 " ]
 }
 
-@test "every redis, srh and caddy image a script or workflow runs is digest-pinned" {
-  refs="$(image_refs "$ROOT"/scripts/*.sh "$ROOT"/scripts/lib/*.sh "$ROOT"/.github/workflows/*.yml)"
-  unpinned="$(unpinned_images "$ROOT"/scripts/*.sh "$ROOT"/scripts/lib/*.sh "$ROOT"/.github/workflows/*.yml)"
+@test "every image a script, workflow or compose file runs is digest-pinned or says why not" {
+  set -- "$ROOT"/scripts/*.sh "$ROOT"/scripts/lib/*.sh "$ROOT"/.github/workflows/*.yml "$ROOT"/docker-compose*.yml
+  refs="$(image_refs "$@")"
+  unpinned="$(unpinned_images "$@")"
   if [ -n "$unpinned" ]; then
-    echo "UNPINNED image(s):"
+    echo "UNPINNED image(s) — add @sha256:<digest>, or a '# pins: <reason>' line directly above:"
     echo "$unpinned"
   fi
   [ -n "$refs" ] || { echo "found no image references at all — the pattern no longer matches"; return 1; }

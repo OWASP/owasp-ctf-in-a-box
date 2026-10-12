@@ -114,6 +114,7 @@ docker build -t "$IMG" --build-arg RUBRIC_DIR=rubric.example scorer/
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
 
 echo "--- boot score serve (memory store)"
+# pins: $IMG is the scorer image this script builds
 docker run -d --name "$SERVE_CTR" --network "$NET" \
   -p "127.0.0.1:$SERVE_PORT:4000" -e SCORER_TOKEN=test-token "$IMG" >/dev/null
 
@@ -147,6 +148,7 @@ import("./sync/src/parse.js").then(({ parseScoreComment }) => {
 echo "--- run judge via the score-action contract"
 # No --network on purpose: score-action starts the scorer on the default
 # bridge and the entrypoint must self-attach to $NET over docker.sock.
+# pins: $IMG is the scorer image this script builds
 docker run --rm \
   --entrypoint /usr/local/bin/entrypoint.sh \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -242,6 +244,7 @@ JS
 )
 write_fake_app "$WS_STOCK" "$STOCK_APP_JS"
 
+# pins: $IMG is the scorer image this script builds
 docker run --rm \
   --entrypoint /usr/local/bin/entrypoint.sh \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -296,6 +299,7 @@ until docker exec "$FREEZE_SRH_CTR" wget -qO- \
   sleep 1
 done
 
+# pins: $IMG is the scorer image this script builds
 docker run -d --name "$FREEZE_SERVE_CTR" --network "$NET" \
   -p "127.0.0.1:$FREEZE_PORT:4000" \
   -e SCORER_TOKEN=test-token \

@@ -435,10 +435,35 @@ describe("registration window", () => {
   it("asks the captain to confirm removing a member once registration is closed, writing nothing", async () => {
     const store = await loadStore(true);
     mockRegistrationClosed();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 1 }]); // captain, member listed
     expect(await store.removeMember("captain", "red-team", "member2")).toEqual({
       ok: false,
       needsConfirm: true,
       error: "Registration is closed. member2 won't be able to join any team again, and their points leave the team.",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  // The warning names the member and says what removing them costs, so it
+  // goes only to the captain, about someone actually on the team.
+  it("refuses a non-captain after close without the warning, writing nothing", async () => {
+    const store = await loadStore(true);
+    mockRegistrationClosed();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 1 }]);
+    expect(await store.removeMember("intruder", "red-team", "member2")).toEqual({
+      ok: false,
+      error: "Only the team captain can do that",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("refuses a login not on the team after close without the warning", async () => {
+    const store = await loadStore(true);
+    mockRegistrationClosed();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 0 }]);
+    expect(await store.removeMember("captain", "red-team", "ghost")).toEqual({
+      ok: false,
+      error: '"ghost" is not on this team',
     });
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });

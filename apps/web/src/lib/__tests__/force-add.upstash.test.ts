@@ -93,6 +93,39 @@ describe.skipIf(!liveConfigured)("FORCE_ADD_SCRIPT against a live Redis", () => 
     expect(n2.result).toBe(3);
   });
 
+  // The member set and the player's record can disagree after a partial
+  // write. A player already in the set is not counted again against the cap,
+  // and the add repairs whichever side is missing.
+  it("adds a player listed in a full team's set but whose record names no team, and repairs the record", async () => {
+    const { script, upstashEval, pipeline } = await load();
+    const t = team("drift-set");
+    const erin = `fa-${RUN}-erin`;
+    const ek = user(erin);
+    await pipeline([
+      ["HSET", t.team, "name", "Drift", "captain", "a"],
+      ["SADD", t.members, "a", erin],
+    ]);
+    expect(await upstashEval(script, [t.team, t.members, ek], [erin, t.slug, "2", NOW])).toEqual(["ok", ""]);
+    const [n, tm] = await pipeline([["SCARD", t.members], ["HGET", ek, "team"]]);
+    expect([n.result, tm.result]).toEqual([2, t.slug]);
+  });
+
+  it("adds a player whose record names the team but who is missing from its set, keeping the team", async () => {
+    const { script, upstashEval, pipeline } = await load();
+    const t = team("drift-hash");
+    const finn = `fa-${RUN}-finn`;
+    const fk = user(finn);
+    await pipeline([
+      ["HSET", t.team, "name", "Drift", "captain", "a"],
+      ["SADD", t.members, "a"],
+      ["HSET", fk, "team", t.slug],
+    ]);
+    expect(await upstashEval(script, [t.team, t.members, fk], [finn, t.slug, "4", NOW])).toEqual(["ok", ""]);
+    const [members, exists] = await pipeline([["SMEMBERS", t.members], ["EXISTS", t.team]]);
+    expect((members.result as string[]).sort()).toEqual(["a", finn].sort());
+    expect(exists.result).toBe(1);
+  });
+
   it("refuses the captain of a team with other members, a player already there, and a missing team", async () => {
     const { script, upstashEval, pipeline } = await load();
     const home = team("home");

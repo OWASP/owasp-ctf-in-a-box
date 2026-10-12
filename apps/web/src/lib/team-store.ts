@@ -495,6 +495,16 @@ export async function removeMember(
 ): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
   if (!opts.confirmClosed && (await isRegistrationClosed())) {
+    // The warning names the member and what removing them costs, so only the
+    // captain gets it, and only about someone on the team. The script below
+    // stays the authority for the removal itself.
+    const [captain, listed] = await upstashPipeline([
+      ["HGET", teamKey(slug), "captain"],
+      ["SISMEMBER", membersKey(slug), memberLogin],
+    ]);
+    if (captain.error || listed.error) return { ok: false, error: "Team update failed. Try again" };
+    if (captain.result !== captainLogin) return { ok: false, error: "Only the team captain can do that" };
+    if (listed.result !== 1) return { ok: false, error: `"${memberLogin}" is not on this team` };
     return { ok: false, needsConfirm: true, error: removeAfterCloseWarning(memberLogin) };
   }
   const verdict = await upstashEval(

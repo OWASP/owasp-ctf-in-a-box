@@ -668,10 +668,11 @@ export async function forceTransferCaptain(
 export const FORCE_ADD_SCRIPT = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return {'no-team', ''} end
 local cur = redis.call('HGET', KEYS[3], 'team')
-if cur == ARGV[2] then return {'already-member', cur} end
-if ARGV[3] ~= '' and redis.call('SCARD', KEYS[2]) >= tonumber(ARGV[3]) then return {'full', ''} end
+local listed = redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1
+if cur == ARGV[2] and listed then return {'already-member', cur} end
+if not listed and ARGV[3] ~= '' and redis.call('SCARD', KEYS[2]) >= tonumber(ARGV[3]) then return {'full', ''} end
 local from = ''
-if cur and cur ~= '' then
+if cur and cur ~= '' and cur ~= ARGV[2] then
   local oldTeam = 'ctf:team:' .. cur
   local oldMembers = oldTeam .. ':members'
   if redis.call('HGET', oldTeam, 'captain') == ARGV[1] and redis.call('SCARD', oldMembers) > 1 then

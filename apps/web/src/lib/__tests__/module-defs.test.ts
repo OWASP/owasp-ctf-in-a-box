@@ -94,6 +94,14 @@ describe("the assembled registry", () => {
   // A Secure Development point posts when the event RECEIVES the passing
   // result, minutes after the push, and that receipt time breaks a points tie.
   // Copy promising it "immediately" contradicts the rule a tie is decided on.
+  // An organizer can cap AI attempts per challenge, so contestant copy that
+  // promises unlimited tries is wrong on any event that sets the cap.
+  it("never tells an AI contestant attempts are uncapped", () => {
+    const src = readFileSync(join(LIB, "module-defs", "ai.ts"), "utf8");
+    expect(src).not.toMatch(/no cap on attempts/i);
+    expect(src).toMatch(/organizers (may|can) (cap|limit|set a limit)/i);
+  });
+
   it("never promises Secure Development points the instant a test passes", () => {
     const copy = JSON.stringify(moduleDefById("secure-development"));
     expect(copy).not.toMatch(/scores?( its)? points immediately|awarded the moment/i);

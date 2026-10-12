@@ -175,7 +175,7 @@ export const AI_DEF: ModuleDef = {
       },
       {
         q: "Can I retry a challenge I haven't solved?",
-        a: "Yes. There's no cap on attempts, though a short, fixed cooldown sits between wrong tries on the same challenge; reopening the challenge page always gets you a fresh launch link.",
+        a: "Yes, unless the organizers set a limit on attempts for a challenge. A short, fixed cooldown sits between wrong tries on the same challenge; reopening the challenge page always gets you a fresh launch link.",
       },
     ],
   }),
@@ -197,7 +197,7 @@ export const AI_DEF: ModuleDef = {
     ],
     scoring: [
       "Each challenge is worth a fixed point value, set by whoever wrote it, awarded automatically when your solve is recorded — whether the external site reported it or you submitted a matching flag. Your best-ever result per challenge counts.",
-      "There is no cap on attempts. A short, fixed cooldown applies between wrong submissions on the same challenge.",
+      "Organizers may cap attempts per challenge; by default there is no cap. A short, fixed cooldown applies between wrong submissions on the same challenge.",
       "Revealing a hint deducts points from your leaderboard total. Hint purchases are final. There is no refund.",
     ],
   }),

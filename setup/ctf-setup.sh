@@ -1011,7 +1011,7 @@ env_url() {
 # configured for Secure Development when its env file says otherwise.
 score_image() {
   local v="${SCORE_IMAGE:-}"
-  [ -n "$v" ] || v="$(env_val SCORE_IMAGE)"
+  if [ -z "$v" ]; then v="$(env_val SCORE_IMAGE)" || exit 1; fi
   printf '%s' "$v"
 }
 
@@ -1022,8 +1022,13 @@ score_image() {
 # error — an event can run quiz, classic or ai alone, and those are app-side
 # only — so every caller says "this event does not run Secure Development"
 # rather than just "nothing to do".
+# A SCORE_IMAGE the reader refuses (an unterminated quote, interpolation, an
+# unreadable file) is neither answer: the script stops, with the reason
+# dotenv_get printed, instead of guessing on or off.
 runs_secdev() {
-  [ -n "$(env_val SCORE_IMAGE)" ]
+  local v
+  v="$(env_val SCORE_IMAGE)" || exit 1
+  [ -n "$v" ]
 }
 
 run() {
@@ -2522,7 +2527,17 @@ cmd_wizard() {
   wiz_done "$out" "$secdev"
 }
 
+# Every key this script reads out of the env file, checked once, here, in the
+# script's own shell: a refusal inside a `$(env_val ...)` stops only that
+# subshell, and a caller such as `[ -n "$(env_val X)" ]` would read it as
+# empty. `check` reads no env file, so a broken one does not block it.
+ENV_KEYS="SCORE_IMAGE GITHUB_ORG ADMIN_LOGINS EVENT_URL GITHUB_APP_ID
+GITHUB_APP_PRIVATE_KEY GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET"
 if [ "$CMD" != "__selftest" ]; then
+  if [ "$CMD" != check ]; then
+    # shellcheck disable=SC2086 # the key list is split into words on purpose
+    dotenv_check "${OUT:-.env}" $ENV_KEYS || exit 1
+  fi
   case "$CMD" in
     ""|wizard) cmd_wizard ;;
     check) cmd_check ;;

@@ -26,8 +26,6 @@
 #   - The value is trimmed at both ends.
 #   - Double- or single-quoted: the value is what is between the quotes, and a
 #     `#` inside them is data. Anything after the closing quote is ignored.
-#     Escapes inside double quotes are NOT interpreted (compose does; no key
-#     this kit reads needs them).
 #   - Unquoted: a comment starts at the first ` #` (a SPACE, then `#`). A tab
 #     before the `#` does not start one, and neither does a `#` at the very
 #     start of the value — so `SCORE_IMAGE= # none` is the value `# none` to
@@ -35,31 +33,66 @@
 #   - The LAST assignment of a key wins.
 #   - An absent key, or an absent file, reads as empty.
 #
-# The shared corpus that pins all of this is test/fixtures/dotenv-corpus.env,
-# run by scripts/test/dotenv.bats.
+# What compose reads and this reader does not is REFUSED, never guessed: the
+# reader prints nothing, names the key and the file (never the value) on
+# stderr, and returns 1. Guessing is how a script and the box disagree —
+# an empty SCORE_IMAGE turns Secure Development OFF, the literal text of an
+# expression turns it ON. Refused:
+#
+#   - An unterminated quote. Compose continues a double-quoted value onto
+#     the following lines; this reader reads one line per assignment.
+#   - Interpolation outside single quotes: `$NAME`, `${...}` and the `$$`
+#     escape. Compose resolves them from the shell environment; this reader
+#     does not. A `$` compose leaves alone (`pa$5word`, `a$`, `a $ b`, and
+#     anything in single quotes) is read literally, as compose reads it.
+#   - A backslash inside double quotes, where compose interprets escapes
+#     (`\n`, `\"`, `\$`). An unquoted backslash is literal to both.
+#   - A file that exists but cannot be read (permissions, a directory). An
+#     ABSENT file is still "not set".
+#
+# The shared corpora that pin all of this are test/fixtures/dotenv-corpus.env
+# (read) and test/fixtures/dotenv-corpus-rejected.env (refused), run by
+# scripts/test/dotenv.bats.
 #
 # bash 3.2 (macOS) compatible, BSD and GNU userlands, no jq or python.
 
 # dotenv_value <raw> — one value with compose's semantics. <raw> is everything
-# after the `=` (or `:`), untrimmed.
+# after the `=` (or `:`), untrimmed. Prints the value and returns 0, or prints
+# nothing and returns why it refused: 2 an unterminated quote, 3
+# interpolation, 4 a backslash escape inside double quotes.
 dotenv_value() {
-  local v="$1"
+  local v="$1" rest
   v="${v#"${v%%[![:space:]]*}"}"
   case "$v" in
   '"'*)
-    v="${v#\"}"
-    v="${v%%\"*}"
+    rest="${v#\"}"
+    case "$rest" in *'"'*) ;; *) return 2 ;; esac
+    v="${rest%%\"*}"
+    case "$v" in *\\*) return 4 ;; esac
+    dotenv_interpolates "$v" && return 3
     ;;
   "'"*)
-    v="${v#\'}"
-    v="${v%%\'*}"
+    rest="${v#\'}"
+    case "$rest" in *"'"*) ;; *) return 2 ;; esac
+    v="${rest%%\'*}"
     ;;
   *)
     v="${v%% #*}"
     v="${v%"${v##*[![:space:]]}"}"
+    dotenv_interpolates "$v" && return 3
     ;;
   esac
   printf '%s' "$v"
+}
+
+# dotenv_interpolates <value> — true when compose would rewrite a `$` in it:
+# `$$` (its escape for a literal `$`), `${`, or `$` before a letter or `_`.
+dotenv_interpolates() {
+  # shellcheck disable=SC2016 # literal `$` patterns, not expansions
+  case "$1" in
+  *'$$'* | *'${'* | *'$'[A-Za-z_]*) return 0 ;;
+  esac
+  return 1
 }
 
 # dotenv_key_ere <key> — an ERE matching any line that assigns <key>, in every
@@ -69,23 +102,60 @@ dotenv_key_ere() {
   printf '^[[:space:]]*(export[[:space:]]+)?%s[[:space:]]*[:=]' "$1"
 }
 
-# dotenv_get <file> <key> — the value compose would read, or empty. Never
-# fails: a missing file is "not set" to every caller, and under `set -euo
-# pipefail` a reader that exits nonzero takes the calling script down with it.
+# dotenv_readable <file> — 0 when the file is absent or readable; otherwise a
+# message on stderr and 1. /dev/null is readable, and reads as empty.
+dotenv_readable() {
+  [ -e "$1" ] || return 0
+  if [ -d "$1" ] || [ ! -r "$1" ]; then
+    echo "dotenv: $1 exists but cannot be read; fix its permissions or point at the right file" >&2
+    return 1
+  fi
+}
+
+# dotenv_get <file> <key> — the value compose would read, or empty when the
+# file or the key is absent. Anything it cannot read the way compose does is
+# refused (see the header): nothing on stdout, the reason on stderr, return 1.
+# A caller must not read that as empty — `v="$(dotenv_get ...)" || exit 1`.
 dotenv_get() {
-  local file="$1" key="$2" raw
-  [ -f "$file" ] || return 0
-  raw="$(tr -d '\r' <"$file" | sed -n \
+  local file="$1" key="$2" raw rc=0
+  [ -e "$file" ] || return 0
+  dotenv_readable "$file" || return 1
+  if ! raw="$(tr -d '\r' <"$file" | sed -n \
     -e "s/^[[:space:]]*export[[:space:]]\{1,\}//" \
-    -e "s/^[[:space:]]*${key}[[:space:]]*[:=]//p" | tail -1)" || raw=""
-  dotenv_value "$raw"
+    -e "s/^[[:space:]]*${key}[[:space:]]*[:=]//p")"; then
+    echo "dotenv: $file could not be read" >&2
+    return 1
+  fi
+  raw="$(printf '%s\n' "$raw" | tail -1)"
+  dotenv_value "$raw" || rc=$?
+  case "$rc" in
+  0) return 0 ;;
+  2) echo "dotenv: $file: $key has an unterminated quote; close it on the same line" >&2 ;;
+  3) echo "dotenv: $file: $key uses interpolation this reader does not resolve; set the literal value (single-quote it to keep a literal \$)" >&2 ;;
+  *) echo "dotenv: $file: $key uses a backslash escape inside double quotes, which this reader does not interpret; set the literal value" >&2 ;;
+  esac
+  return 1
+}
+
+# dotenv_check <file> <key>... — 0 when every key reads cleanly (an absent
+# file included), else 1 after dotenv_get's message for the first that does
+# not. For a script to run once, up front, in its own shell, where `exit`
+# stops the script: a refusal inside `$(...)` only stops the subshell.
+dotenv_check() {
+  local file="$1" key
+  shift
+  for key in "$@"; do
+    dotenv_get "$file" "$key" >/dev/null || return 1
+  done
 }
 
 # dotenv_has <file> <key> — true when the file assigns <key> at all, whatever
 # the value (`SCORE_IMAGE=` is a decided "no", which is not the same as never
-# having been asked).
+# having been asked). An unreadable file is 2, with a message: neither "yes"
+# nor "no".
 dotenv_has() {
-  [ -f "$1" ] || return 1
+  [ -e "$1" ] || return 1
+  dotenv_readable "$1" || return 2
   # No `grep -q`: it exits at the first match, and under pipefail the `tr` it
   # leaves writing into a closed pipe can turn a match into a failure.
   tr -d '\r' <"$1" | grep -E "$(dotenv_key_ere "$2")" >/dev/null

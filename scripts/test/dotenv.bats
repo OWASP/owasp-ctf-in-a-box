@@ -13,6 +13,7 @@ setup() {
   REPO="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
   LIB="$REPO/scripts/lib/dotenv.sh"
   CORPUS="$REPO/test/fixtures/dotenv-corpus.env"
+  REJECTED="$REPO/test/fixtures/dotenv-corpus-rejected.env"
   cd "$BATS_TEST_TMPDIR"
 }
 
@@ -127,4 +128,129 @@ EOF
   done
   [ -z "$bad" ] || echo "readers off the shared helper:$bad"
   [ -z "$bad" ]
+}
+
+# ---------------------------------------------------------------------------
+# Fail closed: a value the reader cannot read the way compose does is an
+# error, never a value. An empty SCORE_IMAGE turns Secure Development OFF and
+# a literal expression turns it ON, so neither may be guessed.
+# ---------------------------------------------------------------------------
+
+# Every `#! KEY|reason` case in the rejected corpus, run through dotenv_get
+# against <file>. Prints one BAD line per case that did not fail with a
+# message naming the key, the file and the reason, or that leaked the value.
+check_rejected() {
+  local file="$1"
+  bash -c '
+    . "$1"
+    file="$2"; corpus="$3"; n=0
+    while IFS= read -r line; do
+      key="${line#\#! }"; key="${key%%|*}"; why="${line#*|}"
+      raw="$(grep "^$key=" "$corpus" | tail -1)"; raw="${raw#*=}"
+      if out="$(dotenv_get "$file" "$key" 2>err)"; then
+        printf "BAD %s: accepted as [%s]\n" "$key" "$out"
+      elif [ -n "$out" ]; then
+        printf "BAD %s: printed a value on failure\n" "$key"
+      else
+        msg="$(cat err)"
+        case "$msg" in *"$key"*) ;; *) printf "BAD %s: message does not name the key: %s\n" "$key" "$msg" ;; esac
+        case "$msg" in *"$file"*) ;; *) printf "BAD %s: message does not name the file: %s\n" "$key" "$msg" ;; esac
+        case "$msg" in *"$why"*) ;; *) printf "BAD %s: message lacks [%s]: %s\n" "$key" "$why" "$msg" ;; esac
+        q="$(printf "\047")"; stripped="${raw#\"}"; stripped="${stripped#"$q"}"
+        if [ ${#stripped} -ge 4 ]; then
+          case "$msg" in *"$stripped"*) printf "BAD %s: message leaks the value\n" "$key" ;; esac
+        fi
+      fi
+      n=$((n + 1))
+    done < <(grep "^#! " "$corpus")
+    echo "cases=$n"
+  ' _ "$LIB" "$file" "$REJECTED"
+}
+
+@test "rejected corpus: every malformed or interpolated value is an error, never a value" {
+  run check_rejected "$REJECTED"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '^cases=[1-9]'
+  [ -z "$(echo "$output" | grep '^BAD')" ] || { echo "$output"; false; }
+}
+
+@test "rejected corpus: the CRLF form is rejected identically" {
+  awk '{ printf "%s\r\n", $0 }' "$REJECTED" > rejected-crlf.env
+  run check_rejected rejected-crlf.env
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '^cases=[1-9]'
+  [ -z "$(echo "$output" | grep '^BAD')" ] || { echo "$output"; false; }
+}
+
+@test "an existing but unreadable file is an error, not an empty value" {
+  printf 'SCORE_IMAGE=ghcr.io/fixture/score:latest\n' > locked.env
+  chmod 000 locked.env
+  target=locked.env
+  # root reads through mode 000, so the chmod proves nothing there: use a
+  # directory in the file's place, which nobody can read as an env file.
+  if [ -r locked.env ]; then
+    rm -f locked.env
+    mkdir locked.env
+  fi
+  run bash -c '. "$1"; v="$(dotenv_get "$2" SCORE_IMAGE)"; echo "rc=$? [$v]"' _ "$LIB" "$target"
+  chmod 600 locked.env 2>/dev/null || true
+  echo "$output" | grep -qF 'cannot be read'
+  echo "$output" | grep -qx 'rc=1 \[\]'
+}
+
+@test "a directory in place of the env file is an error, not an empty value" {
+  mkdir dir.env
+  run bash -c '. "$1"; v="$(dotenv_get dir.env SCORE_IMAGE)"; echo "rc=$? [$v]"' _ "$LIB"
+  echo "$output" | grep -qF 'cannot be read'
+  echo "$output" | grep -qx 'rc=1 \[\]'
+}
+
+@test "dotenv_check passes an absent file and a clean one, and fails on any bad key it is given" {
+  run bash -c '
+    . "$1"
+    dotenv_check ./absent.env SCORE_IMAGE || echo "FAIL absent"
+    dotenv_check "$2" SCORE_IMAGE PLAIN || echo "FAIL clean"
+    if dotenv_check "$3" PLAIN BRACE_DEFAULT 2>/dev/null; then echo "FAIL bad passed"; fi
+    echo done
+  ' _ "$LIB" "$CORPUS" "$REJECTED"
+  [ "$output" = done ]
+}
+
+# scripts/dev-stack runs from its own repo root, so it is exercised from a
+# copy of that layout with a stub `docker` that records every call. `down`
+# is the one subcommand that decides the compose profiles and then calls
+# docker without building anything.
+dev_stack_copy() {
+  mkdir -p ds/scripts/lib stubs
+  cp "$REPO/scripts/dev-stack" ds/scripts/dev-stack
+  cp "$LIB" ds/scripts/lib/dotenv.sh
+  printf '#!/bin/sh\necho "docker $*" >> "%s/docker.log"\nexit 0\n' "$PWD" > stubs/docker
+  chmod +x stubs/docker
+  : > docker.log
+}
+
+@test "dev-stack: a clean SCORE_IMAGE still adds the secdev profile (control)" {
+  dev_stack_copy
+  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > ds/.env
+  PATH="$PWD/stubs:$PATH" run env -u SCORE_IMAGE bash ds/scripts/dev-stack down
+  [ "$status" -eq 0 ]
+  grep -qF -- '--profile secdev' docker.log
+}
+
+@test "dev-stack: an unterminated SCORE_IMAGE quote stops it before any docker call" {
+  dev_stack_copy
+  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE="ghcr.io/fixture/score:latest\n' > ds/.env
+  PATH="$PWD/stubs:$PATH" run env -u SCORE_IMAGE bash ds/scripts/dev-stack down
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'unterminated quote'
+  [ ! -s docker.log ]
+}
+
+@test "dev-stack: an interpolated SCORE_IMAGE stops it before any docker call" {
+  dev_stack_copy
+  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE=${SCORER_IMAGE:-}\n' > ds/.env
+  PATH="$PWD/stubs:$PATH" run env -u SCORE_IMAGE bash ds/scripts/dev-stack down
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'uses interpolation'
+  [ ! -s docker.log ]
 }

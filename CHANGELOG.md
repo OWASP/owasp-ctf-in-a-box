@@ -12,7 +12,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 - **Fixed: setup and deploy script hygiene (#496).** `ctf-setup.sh`,
   `scripts/dev-stack` and both Fly scripts now read `.env` through one shared
-  reader, `scripts/lib/dotenv.sh`, that follows docker compose's rules.
+  reader, `scripts/lib/dotenv.sh`. It reads a subset of docker compose's
+  syntax exactly as compose does, and refuses the rest, stopping with the
+  key and file named: interpolation (`$NAME`, `${...}`, `$$`), backslash
+  escapes in double quotes, an unterminated quote, and an env file that
+  exists but cannot be read. Before, those read as empty or as literal text,
+  which could switch Secure Development off or on by accident.
   `SCORE_IMAGE=""` is now empty, so Secure Development is off, in every
   script. Before, `ctf-setup.sh` and `dev-stack` read it as the two-character
   string `""`, turned Secure Development on, and kept the quotes on any

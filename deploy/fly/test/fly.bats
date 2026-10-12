@@ -1403,3 +1403,37 @@ redact_shapes() {
   grep -qF 'redact_arg "$arg"' "$FLY/deploy.sh"
   [ -z "$(grep -nE '^[[:space:]]*redact_arg\(\)' "$FLY/deploy.sh")" ]
 }
+
+# ---------------------------------------------------------------------------
+# Fail closed on an env file the shared reader cannot read the way compose
+# does. Both checks stop before any docker or fly call, so neither needs docker.
+# ---------------------------------------------------------------------------
+
+@test "render: an interpolated SCORE_IMAGE stops the render — secdev neither added nor dropped" {
+  sed 's|^SCORE_IMAGE=.*|SCORE_IMAGE=${SCORER_IMAGE:-}|' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.interp"
+  out="$BATS_TEST_TMPDIR/interp.yml"
+  run "$FLY/render-compose.sh" --env-file "$BATS_TEST_TMPDIR/env.interp" --out "$out" \
+    --app-image reg/app:t --sync-image reg/sync:t --scorer-image reg/scorer:t
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE uses interpolation'
+  [ ! -e "$out" ]
+}
+
+@test "render: an unterminated SCORE_IMAGE quote stops the render" {
+  sed 's|^SCORE_IMAGE=.*|SCORE_IMAGE="ghcr.io/fixture-org/score:latest|' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.unterm"
+  out="$BATS_TEST_TMPDIR/unterm.yml"
+  run "$FLY/render-compose.sh" --env-file "$BATS_TEST_TMPDIR/env.unterm" --out "$out" \
+    --app-image reg/app:t --sync-image reg/sync:t --scorer-image reg/scorer:t
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE has an unterminated quote'
+  [ ! -e "$out" ]
+}
+
+@test "deploy --dry-run: a malformed key in the env file stops it before any step" {
+  cd "$REPO"
+  sed 's|^SCORE_IMAGE=.*|SCORE_IMAGE="ghcr.io/fixture-org/score:latest|' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.unterm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.unterm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE has an unterminated quote'
+  [ -z "$(echo "$output" | grep -F 'DRY-RUN: fly')" ]
+}

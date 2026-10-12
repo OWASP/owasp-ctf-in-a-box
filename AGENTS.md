@@ -407,7 +407,8 @@ suggestions.
   `docker-compose.smoke.yml` builds for `smoke.sh`; and the shared window
   corpora (`window-corpus.json`, `scoring-window-corpus.json`) that the app,
   scorer and sync suites all run (the three-reader rule above); and
-  `dotenv-corpus.env`, which `scripts/test/dotenv.bats` runs through
+  `dotenv-corpus.env` (and `dotenv-corpus-rejected.env`, the values it must
+  refuse), which `scripts/test/dotenv.bats` runs through
   `scripts/lib/dotenv.sh`, the one `.env` reader every shell entry point
   sources (`scripts/lib/redact.sh` is the deploy scripts' one dry-run
   redactor, the same way).

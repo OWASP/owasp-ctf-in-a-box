@@ -176,7 +176,9 @@ env_value() {
 
 if [ -z "$PROFILES" ]; then
   PROFILES="--profile app"
-  SCORE_IMAGE_VAL="$(env_value SCORE_IMAGE)"
+  # A refused value (see scripts/lib/dotenv.sh) stops the render: secdev is
+  # neither added nor dropped on a guess.
+  SCORE_IMAGE_VAL="$(env_value SCORE_IMAGE)" || exit 1
   if [ -n "$SCORE_IMAGE_VAL" ]; then
     PROFILES="$PROFILES --profile secdev"
   fi

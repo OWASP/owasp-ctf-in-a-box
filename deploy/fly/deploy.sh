@@ -170,6 +170,17 @@ SCORER_TOKEN SRH_TOKEN REDIS_PASSWORD SCORE_IMAGE GITHUB_ORG
 ADMIN_LOGINS GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID
 FLY_REGION FLY_AUTO_STOP REDIS_DIR STATE_PATH"
 
+# Both env files this script reads, checked once, here, in its own shell. A
+# value the shared reader refuses (an unterminated quote, interpolation, an
+# unreadable file; see scripts/lib/dotenv.sh) stops the script before any
+# step: inside a `$(env_value ...)` the refusal would stop only the subshell,
+# and a caller such as `require "$name" "$(env_value "$name")"` would read it
+# as empty. An absent file passes: `init` creates it.
+for checked_file in "$ENV_FILE" "$FROM_ENV"; do
+  # shellcheck disable=SC2086 # the key list is split into words on purpose
+  dotenv_check "$checked_file" $READ_KEYS || exit 1
+done
+
 # A key assigned twice is not an error — compose takes the last one and so does
 # every reader here — but it is nearly always a mistake, and a silent one: an
 # organizer editing the first occurrence changes nothing at all.

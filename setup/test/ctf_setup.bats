@@ -86,6 +86,47 @@ ENV
   echo "$output" | grep -qF "gh repo fork digininja/DVWA --org test-event-org --fork-name DVWA"
 }
 
+# Fail closed: a SCORE_IMAGE the reader cannot read the way compose does
+# stops the command. Read as empty it would skip Secure Development; read as
+# the literal text it would provision it. Neither may happen silently.
+@test "org: an unterminated SCORE_IMAGE quote stops the command, SD neither on nor off" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE="ghcr.io/fixture/score:latest\n' > .env
+  run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE has an unterminated quote'
+  [ -z "$(echo "$output" | grep -F -e 'gh repo fork' -e 'does not run Secure Development')" ]
+}
+
+@test "org: an interpolated SCORE_IMAGE stops the command, SD neither on nor off" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=${SCORER_IMAGE:-}\n' > .env
+  run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE uses interpolation'
+  [ -z "$(echo "$output" | grep -F -e 'gh repo fork' -e 'does not run Secure Development')" ]
+}
+
+@test "runs_secdev exits non-zero on an unreadable SCORE_IMAGE rather than answering" {
+  printf 'SCORE_IMAGE=$SCORER_IMAGE\n' > bad.env
+  run bash -c 'CMD=__selftest source "$1"; OUT=bad.env; if runs_secdev; then echo ON; else echo OFF; fi' _ "$SCRIPT"
+  [ "$status" -ne 0 ]
+  [ -z "$(echo "$output" | grep -x -e ON -e OFF)" ]
+}
+
+@test "org: an env file that exists but cannot be read stops the command" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > locked.env
+  chmod 000 locked.env
+  if [ -r locked.env ]; then
+    # root reads through mode 000; a directory is unreadable as an env file
+    # for everyone, and must fail the same way.
+    rm -f locked.env
+    mkdir locked.env
+  fi
+  run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run --out locked.env
+  chmod 600 locked.env 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [ -z "$(echo "$output" | grep -F -e 'gh repo fork' -e 'does not run Secure Development')" ]
+}
+
 # The switch is the value the BOX carries, not one an operator exported: an
 # exported SCORE_IMAGE overrides only the image to mirror (a one-off retag),
 # because docker compose reads the file to decide which services exist at

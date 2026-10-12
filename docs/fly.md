@@ -87,9 +87,14 @@ which is what a `.env.fly` written before configuration v2 looks like for
 `EVENT_URL`, `FLY_REGION`, `SRH_TOKEN` and `REDIS_PASSWORD` are left alone —
 they belong to this deployment, not the compose stack `.env` describes.
 
-Each value is read from `.env` in every form `docker compose` accepts —
-`KEY=value`, `KEY = value`, `KEY: value`, a quoted value, a leading
-`export ` — and written back as a canonical `KEY=value` line, replacing the
+Each value is read from `.env` by the reader every script shares, in the
+forms `docker compose` accepts: `KEY=value`, `KEY = value`, `KEY: value`, a
+quoted value, a leading `export `. A value compose would read differently
+(interpolation, a backslash escape in double quotes, an unterminated quote) or
+an unreadable file stops `init` and the deploy alike, naming the key and
+file. See
+[how the scripts read `.env`](hosting.md#the-four-bootstrap-keys). It is
+written back as a canonical `KEY=value` line, replacing the
 existing assignment whatever form *it* took rather than appending a second one.
 Which blank assignments it obeys, why a key absent from `.env` is left alone,
 and what it does about a key assigned twice, are below.

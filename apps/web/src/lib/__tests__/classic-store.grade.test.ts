@@ -744,6 +744,23 @@ describe("other accepted flags and flag patterns (#192)", () => {
     consoleError.mockRestore();
   });
 
+  // Present but unreadable is not "no patterns": grading without patterns
+  // the organizer authored would refuse a right answer as wrong.
+  it("fails CLOSED on a corrupt stored patterns value: `unavailable`, no script, the value never logged", async () => {
+    for (const raw of ["{not json SECRETPAT", JSON.stringify([]), JSON.stringify(["x{2}", 3]), JSON.stringify("SECRETPAT")]) {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      mocks.upstashEval.mockClear();
+      gradeReads(raw);
+      expect(await submitFlag("alice", "chal-1", "deadbeef")).toEqual({ ok: false, reason: "unavailable" });
+      expect(evalCalls()).toHaveLength(0);
+      const logged = consoleError.mock.calls.flat();
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(logged.some((a) => a instanceof Error)).toBe(false);
+      expect(JSON.stringify(logged)).not.toContain("SECRETPAT");
+      consoleError.mockRestore();
+    }
+  });
+
   it("reports the script's `stale` (the patterns changed under the verdict) as `unavailable`, never a wrong answer", async () => {
     gradeReads(PATTERNS);
     evalReturns(["stale"]);

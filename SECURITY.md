@@ -58,10 +58,12 @@ concern in the kit's own build/CI pipeline.
 ## Known properties, stated so they are not re-reported
 
 - **Jeopardy-module flags and quiz answer keys are stored in plaintext** in
-  Redis (`ctf:classic:flag`, `ctf:quiz:key`) and are **readable by every
+  Redis (`ctf:classic:flag`, a challenge's other accepted flags and regex
+  patterns in `ctf:classic:flagalts`, `ctf:classic:flagaltsnorm` and
+  `ctf:classic:flagpatterns`, and `ctf:quiz:key`) and are **readable by every
   `/admin` user** — the admin edit forms return them verbatim, deliberately,
   so an organizer can fix a typo'd flag mid-event. Contestant-facing code
-  paths never read either key. The secrecy boundary is `/admin` membership
+  paths never read any of these keys. The secrecy boundary is `/admin` membership
   and Redis access, not encryption; organizers should grant admin
   accordingly. A bypass that exposes these keys to a **non-admin** is very
   much in scope.

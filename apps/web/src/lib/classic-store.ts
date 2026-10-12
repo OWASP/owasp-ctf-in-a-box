@@ -21,7 +21,7 @@ import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
 import { bundleVersionFor, hasFlagLists, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
-import { CLASSIC_PATTERN_INPUT_MAX, flagListIssues, matchesFlagPattern } from "@/lib/classic-flags";
+import { CLASSIC_PATTERN_INPUT_MAX, canonicalFlagPattern, flagListIssues, matchesFlagPattern } from "@/lib/classic-flags";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { assertPipelineOk, upstashEval, upstashPipeline } from "@/lib/upstash";
@@ -235,25 +235,34 @@ export type AdminChallenge = {
 /** A challenge's two flag lists, as the store keeps them. */
 export type FlagLists = { alternateFlags?: readonly string[]; flagPatterns?: readonly string[] };
 
-/** A stored list value: a JSON array of strings, or null for anything else
- *  (absent, or a value nothing in this file wrote). */
+/** A stored list value: null when the row is absent (no list), else a
+ *  non-empty JSON array of strings — the only shape this file writes (an
+ *  empty list is an HDEL). Anything else THROWS rather than reading as "none":
+ *  the edit form would show empty boxes and the next save, reorder or
+ *  export-import would erase the row, and grading would refuse a right answer.
+ *  The message never carries the value, which is a secret. */
 function parseStringList(raw: unknown): string[] | null {
-  if (typeof raw !== "string") return null;
+  if (raw === null || raw === undefined) return null;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) && parsed.every((v) => typeof v === "string") ? (parsed as string[]) : null;
+    parsed = typeof raw === "string" ? JSON.parse(raw) : undefined;
   } catch {
-    return null;
+    parsed = undefined;
   }
+  if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every((v) => typeof v === "string")) {
+    throw new Error("classic: a stored flag list is not a non-empty JSON array of strings");
+  }
+  return parsed as string[];
 }
 
-/** id -> list, from an HGETALL reply of one of the list hashes. */
+/** id -> list, from an HGETALL reply of one of the list hashes. THROWS on a
+ *  corrupt row (see `parseStringList`). */
 function parseListHash(flat: unknown): Map<string, string[]> {
   const arr = Array.isArray(flat) ? (flat as unknown[]) : [];
   const out = new Map<string, string[]>();
   for (let i = 0; i + 1 < arr.length; i += 2) {
-    const list = parseStringList(arr[i + 1]);
-    if (typeof arr[i] === "string" && list && list.length > 0) out.set(arr[i] as string, list);
+    const list = parseStringList(arr[i + 1] ?? "");
+    if (typeof arr[i] === "string" && list) out.set(arr[i] as string, list);
   }
   return out;
 }
@@ -603,7 +612,7 @@ export async function upsertChallenge(
     if (issue) throw new ClassicValidationError(field, `${issue.where}: ${issue.message}`);
   }
   const alternateFlags = trimAll(lists.alternateFlags);
-  const flagPatterns = trimAll(lists.flagPatterns);
+  const flagPatterns = (lists.flagPatterns ?? []).map(canonicalFlagPattern);
 
   const authored = flag.trim();
   // The hint is written (or CLEARED — an empty/absent hint deletes the row)
@@ -824,7 +833,9 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
     commands.push(["HSET", FLAGNORM_KEY, c.id, flagComparisonForm(c.flag, record.caseSensitive)]);
     // Written or cleared, like the hint — a row without the fields
     // drops lists an earlier import gave it, so a restore is faithful.
-    commands.push(...flagListCommands(c.id, trimAll(c.alternateFlags), trimAll(c.flagPatterns), record.caseSensitive));
+    commands.push(
+      ...flagListCommands(c.id, trimAll(c.alternateFlags), (c.flagPatterns ?? []).map(canonicalFlagPattern), record.caseSensitive),
+    );
   }
   commands.push(["SET", CATEGORIES_KEY, JSON.stringify(unioned)]);
   if (mergedStories) commands.push(["SET", CLASSIC_STORIES_KEY, JSON.stringify(mergedStories)]);
@@ -1476,9 +1487,10 @@ export async function submitFlag(
         ]),
         "classic flag patterns",
       );
+      // A present but unreadable value throws into the catch below: closed.
       const raw = patternsRes?.result;
       const patterns = parseStringList(raw);
-      if (typeof raw === "string" && patterns?.length) {
+      if (typeof raw === "string" && patterns) {
         const caseSensitive = recordIsCaseSensitive(recordRes?.result);
         if (matchesFlagPattern(patterns, flag, caseSensitive)) {
           patternVerdict = ["1", createHash("sha1").update(raw, "utf8").digest("hex"), caseSensitive ? "1" : "0"];

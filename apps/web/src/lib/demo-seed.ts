@@ -54,6 +54,9 @@ import {
   CLASSIC_CHALLENGES_KEY,
   CLASSIC_FLAG_KEY,
   CLASSIC_FLAGNORM_KEY,
+  CLASSIC_FLAG_ALTS_KEY,
+  CLASSIC_FLAG_ALTSNORM_KEY,
+  CLASSIC_FLAG_PATTERNS_KEY,
   CLASSIC_CATEGORIES_KEY,
   CLASSIC_CATEGORIES_MAX,
   CLASSIC_POINTS_KEY,
@@ -494,6 +497,11 @@ export async function runDemoSeed(
     for (const dc of DEMO_CHALLENGES) {
       cmds.push(["HSET", CLASSIC_FLAG_KEY, dc.id, dc.flag]);
       cmds.push(["HSET", CLASSIC_FLAGNORM_KEY, dc.id, normalizeFlag(dc.flag)]);
+      // The demo challenge is the fixture's single flag: any other accepted
+      // flags or patterns left on its id would still be accepted (ADR 67).
+      cmds.push(["HDEL", CLASSIC_FLAG_ALTS_KEY, dc.id]);
+      cmds.push(["HDEL", CLASSIC_FLAG_ALTSNORM_KEY, dc.id]);
+      cmds.push(["HDEL", CLASSIC_FLAG_PATTERNS_KEY, dc.id]);
     }
 
     const challengesById = new Map(DEMO_CHALLENGES.map((c) => [c.id, c]));

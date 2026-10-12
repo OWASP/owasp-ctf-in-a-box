@@ -382,6 +382,14 @@ describe("seedDemoData", () => {
       expect(cmd[3]).toBe(normalizeFlag(dc.flag));
     }
 
+    // A seed rewrites each demo challenge's flag pair, so it also clears the
+    // other accepted flags and patterns (ADR 67): stale ones left on a demo
+    // id would still be accepted after the reseed.
+    for (const key of ["ctf:classic:flagalts", "ctf:classic:flagaltsnorm", "ctf:classic:flagpatterns"]) {
+      const cleared = cmds.filter((c) => c[0] === "HDEL" && c[1] === key).map((c) => c[2]);
+      expect(cleared.sort()).toEqual(DEMO_CHALLENGES.map((dc) => dc.id).sort());
+    }
+
     // the fixture's categories are handed to the script in display order, and
     // NOTHING writes the key with a bare SET
     expect(scriptArgs(cmds, "ctf:classic:challenges").fixtureCategories).toEqual(DEMO_CLASSIC_CATEGORIES);

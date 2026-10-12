@@ -11,6 +11,7 @@ import {
   CLASSIC_FLAG_PATTERN_MAX_LEN,
   CLASSIC_PATTERN_INPUT_MAX,
   flagListIssues,
+  canonicalFlagPattern,
   flagPatternProblem,
   matchesFlagPattern,
   splitFlagLines,
@@ -123,6 +124,15 @@ describe("matchesFlagPattern — how a submission is matched", () => {
     expect(matchesFlagPattern(["[A-F]{2}"], "ab", true)).toBe(false);
   });
 
+  // The input is NFC; a pattern holding a decomposed accent (e + U+0301)
+  // would otherwise never match it.
+  it("matches a pattern written with a decomposed accent against either spelling of the input", () => {
+    const decomposed = "cafe\u0301-[0-9]{2}";
+    expect(decomposed).not.toBe(decomposed.normalize("NFC"));
+    expect(matchesFlagPattern([decomposed], "caf\u00e9-12", false)).toBe(true);
+    expect(matchesFlagPattern([decomposed], "cafe\u0301-12", false)).toBe(true);
+  });
+
   it("accepts a match against any of several patterns", () => {
     expect(matchesFlagPattern(["x{3}", "y{3}"], "yyy", false)).toBe(true);
     expect(matchesFlagPattern(["x{3}", "y{3}"], "zzz", false)).toBe(false);
@@ -214,5 +224,11 @@ describe("splitFlagLines — the admin form's one-per-line text", () => {
   it("trims each line and drops blank ones", () => {
     expect(splitFlagLines("  CTF{a}  \n\n CTF{b}\r\n   \n")).toEqual(["CTF{a}", "CTF{b}"]);
     expect(splitFlagLines("")).toEqual([]);
+  });
+});
+
+describe("canonicalFlagPattern", () => {
+  it("trims and NFC-normalizes, the form a pattern is stored and matched in", () => {
+    expect(canonicalFlagPattern("  cafe\u0301{2}  ")).toBe("caf\u00e9{2}");
   });
 });

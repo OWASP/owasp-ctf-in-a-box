@@ -1340,4 +1340,49 @@ describe("more than one accepted flag, and flag patterns (#192)", () => {
     const sent = JSON.stringify(pipelineCalls());
     for (const key of [ALTS, ALTSNORM, PATTERNS]) expect(sent).not.toContain(key);
   });
+
+  // A stored list that is present but unreadable is not "none": read as
+  // none, the edit form would show empty boxes and the next save, reorder or
+  // export-import would erase it. The admin read throws instead (the route
+  // answers 503), and the error names the row, never the value.
+  it("listChallengesForAdmin and exportBundle throw on a corrupt stored list, never echoing it", async () => {
+    for (const [altsVal, patsVal] of [
+      ["{not json SECRETVAL", null],
+      [null, "[1, SECRETVAL"],
+      [JSON.stringify([]), null],
+      [null, JSON.stringify(["ok", 7])],
+      [JSON.stringify("SECRETVAL"), null],
+    ] as const) {
+      const reply = () => [
+        { result: row(challenge({ id: "a" })) },
+        { result: ["a", "CTF{A}"] },
+        { result: [] },
+        { result: altsVal === null ? [] : ["a", altsVal] },
+        { result: patsVal === null ? [] : ["a", patsVal] },
+      ];
+      mocks.upstashPipeline.mockResolvedValueOnce(reply());
+      const err = await listChallengesForAdmin().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(ClassicValidationError);
+      expect((err as Error).message).not.toContain("SECRETVAL");
+      mocks.upstashPipeline.mockResolvedValueOnce(reply());
+      mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+      mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
+      await expect(exportBundle()).rejects.toThrow();
+    }
+  });
+
+  // A pattern written with a decomposed accent is stored NFC, the form every
+  // submission is matched in.
+  it("stores patterns NFC-normalized, on upsert and on import", async () => {
+    await upsertWith({ flagPatterns: ["cafe\u0301-[0-9]{2}"] });
+    expect(JSON.parse(valueFor(PATTERNS, base.id))).toEqual(["caf\u00e9-[0-9]{2}"]);
+    mocks.upstashPipeline.mockClear();
+    await importBundle({
+      ...twoRowBundle,
+      version: 4,
+      challenges: [{ ...twoRowBundle.challenges[0], flagPatterns: ["cafe\u0301-[0-9]{2}"] }],
+    });
+    expect(JSON.parse(valueFor(PATTERNS, "web-one-ab12cd"))).toEqual(["caf\u00e9-[0-9]{2}"]);
+  });
 });

@@ -224,6 +224,14 @@ export function flagPatternProblem(pattern: string): string | null {
   return null;
 }
 
+/** The form a pattern is stored and matched in: trimmed and NFC-normalized,
+ *  the same normalization every submission gets — a pattern holding a
+ *  decomposed accent (e + U+0301) could otherwise never match an NFC input.
+ *  Normalizing the source can only merge sequences no NFC input contains. */
+export function canonicalFlagPattern(pattern: string): string {
+  return pattern.trim().normalize("NFC");
+}
+
 /** Whether `submission` matches any of `patterns`, as grading decides it: the
  *  submission trimmed and NFC-normalized, never regex-matched past
  *  CLASSIC_PATTERN_INPUT_MAX, and a stored pattern that fails today's
@@ -233,7 +241,7 @@ export function matchesFlagPattern(patterns: readonly string[], submission: stri
   if (input.length === 0 || input.length > CLASSIC_PATTERN_INPUT_MAX) return false;
   for (const raw of patterns) {
     if (typeof raw !== "string") continue;
-    const pattern = raw.trim();
+    const pattern = canonicalFlagPattern(raw);
     if (!pattern || flagPatternProblem(pattern) !== null) continue;
     if (compileFlagPattern(pattern, caseSensitive).test(input)) return true;
   }
@@ -241,7 +249,8 @@ export function matchesFlagPattern(patterns: readonly string[], submission: stri
 }
 
 /** Every problem with one list field, positions named, values never echoed.
- *  Entries are judged TRIMMED, the form the store keeps. */
+ *  Entries are judged in the form the store keeps: trimmed, and a pattern
+ *  also NFC-normalized (`canonicalFlagPattern`). */
 export function flagListIssues(field: FlagListField, raw: unknown): FlagListIssue[] {
   if (!Array.isArray(raw)) return [{ where: field, message: `${field} must be an array of strings` }];
   const issues: FlagListIssue[] = [];
@@ -268,7 +277,7 @@ export function flagListIssues(field: FlagListField, raw: unknown): FlagListIssu
       }
       return;
     }
-    const problem = flagPatternProblem(trimmed);
+    const problem = flagPatternProblem(canonicalFlagPattern(trimmed));
     if (problem) issues.push({ where, message: problem });
   });
   return issues;

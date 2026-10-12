@@ -1,6 +1,5 @@
 services:
   scorer:
-    # pins: removes the image; smoke builds the mock scorer instead
     image: !reset null
     build: ./test/fixtures
     command: ["node", "mock-scorer.mjs"]

@@ -29,7 +29,9 @@ setup() {
 # value, and it is pinned when a word of its own (not a KEY=value option, where
 # a digest says nothing about the image run) carries @sha256:<64 hex>. The one
 # way out is a `# pins: <reason>` comment on the line directly above, for an
-# image that is built locally or pinned by whoever passes it in.
+# image that is built locally or pinned by whoever passes it in. An `image:`
+# whose value is a `${…}` variable (chosen per box, e.g. SCORE_IMAGE) or
+# `!reset null` (no image at all) is exempt without a comment.
 image_refs() {
   awk '
     FNR == 1 { buf = ""; prev = ""; above = "" }
@@ -44,6 +46,7 @@ image_refs() {
       if (cmd !~ /docker[ \t]+(run|pull|create)([ \t]|$)/ && cmd !~ /^[ \t]*(-[ \t]+)?image:/) next
       if (cmd ~ /(^|[ \t"])[^= \t"]+@sha256:[0-9a-f]{64}/) state = "pinned"
       else if (above ~ /^[ \t]*# pins: [^ \t]/) state = "exempt"
+      else if (cmd ~ /^[ \t]*(-[ \t]+)?image:[ \t]*(\$\{|!reset[ \t]+null)/) state = "exempt"
       else state = "unpinned"
       sub(/^[ \t]+/, "", cmd)
       print FILENAME ":" start ":" state ": " cmd
@@ -74,7 +77,12 @@ unpinned_images() {
     echo 'docker create caddy'                                            # 14 flagged
     echo "    image: caddy$digest"                                        # 15 pinned
     echo "docker run -e REF=redis$digest redis:latest"                     # 16 flagged
+    echo '    image: ${SCORE_IMAGE:-ghcr.io/x/score:latest}'              # 17 exempt (per-box)
+    echo '    image: !reset null'                                         # 18 exempt (no image)
   } > "$f"
+  exempt="$(image_refs "$f" | grep -E '^[^:]+:[0-9]+:exempt: ' | cut -d: -f2 | tr '\n' ' ')"
+  echo "exempt lines: '$exempt' (want '12 17 18 ')"
+  [ "$exempt" = "12 17 18 " ] || return 1
   flagged="$(unpinned_images "$f" | cut -d: -f2 | tr '\n' ' ')"
   states="$(image_refs "$f" | cut -d: -f2,3 | tr '\n' ' ')"
   echo "all: $states"

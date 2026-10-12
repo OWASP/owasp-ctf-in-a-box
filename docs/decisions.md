@@ -82,7 +82,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 64 — sync's cursor lives in Redis, and an unreadable cursor holds the poller](#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)
 - [ADR 65 — An event adds its own logo and favicon; the OWASP mark stays](#adr-65-an-event-adds-its-own-logo-and-favicon-the-owasp-mark-stays)
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
-- [ADR 67 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-67-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
+- [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -3959,7 +3959,7 @@ fetched by the browser from their own routes. Another page that adds its own
 sponsor block joins `PAGES_WITH_OWN_SPONSOR_CREDIT`. Other pages are
 unchanged; a further surface is still its own decision.
 
-## ADR 67. A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock
+## ADR 68. A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock
 
 **Context.** Issue #189. A Jeopardy challenge had no visibility state: the
 moment an organizer saved one it was live for every contestant. A board

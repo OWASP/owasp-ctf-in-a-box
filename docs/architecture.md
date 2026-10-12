@@ -609,7 +609,7 @@ hidden challenge after launch: `classicVisibility` opens its page to them
 with a "Hidden from contestants" banner, and the submit and reveal routes
 grade their flag or hint as a dry run (`adminSeesHidden`). The admin list (`/api/admin/classic`)
 returns every challenge with its field, for the status chip and the form.
-See [ADR 67](decisions.md#adr-67-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock).
+See [ADR 68](decisions.md#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock).
 
 ## AI data flow
 

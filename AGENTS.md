@@ -406,7 +406,11 @@ suggestions.
 - `test/fixtures/` — `mock-github.mjs` and `mock-scorer.mjs`, the stand-ins
   `docker-compose.smoke.yml` builds for `smoke.sh`; and the shared window
   corpora (`window-corpus.json`, `scoring-window-corpus.json`) that the app,
-  scorer and sync suites all run (the three-reader rule above).
+  scorer and sync suites all run (the three-reader rule above); and
+  `dotenv-corpus.env`, which `scripts/test/dotenv.bats` runs through
+  `scripts/lib/dotenv.sh`, the one `.env` reader every shell entry point
+  sources (`scripts/lib/redact.sh` is the deploy scripts' one dry-run
+  redactor, the same way).
 - `deploy/` — optional cloud deploy modules: `aws-terraform/` (ECS Fargate +
   ElastiCache + ALB; `docs/aws.md`) and `fly/` (one Fly machine running the
   rendered compose file; `docs/fly.md`; its scripts and bats suite run under

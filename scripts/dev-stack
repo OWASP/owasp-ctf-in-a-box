@@ -20,6 +20,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# shellcheck source=scripts/lib/dotenv.sh
+. scripts/lib/dotenv.sh
+
 SCORER_IMAGE_TAG="ctf-dev-stack/scorer:local"
 DEV_ENV_FILE=.env.dev-stack
 
@@ -38,24 +41,14 @@ resolve_env_file() {
   fi
 }
 
-# Strip a trailing annotation and whitespace off an env value: a real .env may
-# read `GITHUB_ORG=myorg  # the disposable one`, the same shape
-# setup/ctf-setup.sh's reader tolerates. Only a `#` AFTER whitespace starts a
-# comment — `EVENT_URL=https://host/#/route` keeps its fragment, which is
-# also how compose reads the file.
-strip_comment() {
-  printf '%s' "$1" | sed -e 's/[[:space:]][[:space:]]*#.*$//' -e 's/[[:space:]]*$//'
-}
-
-# Read one KEY=value out of a named env file (BSD/GNU-safe sed, no -E). A
-# missing file is not an error — every caller has a fallback for "not set".
+# Read one KEY=value out of a named env file through the reader every shell
+# entry point shares (scripts/lib/dotenv.sh): docker compose's semantics, so
+# `GITHUB_ORG=myorg  # the disposable one` is the org,
+# `EVENT_URL=https://host/#/route` keeps its fragment, and `SCORE_IMAGE=""` is
+# empty here exactly as it is to the containers. A missing file is not an
+# error — every caller has a fallback for "not set".
 file_value() {
-  local key="$1" file="$2" v
-  if [ -z "$file" ] || [ ! -f "$file" ]; then
-    return 0
-  fi
-  v="$(sed -n "s/^${key}=//p" "$file" | tail -1)"
-  strip_comment "$v"
+  dotenv_get "$2" "$1"
 }
 
 # ADMIN_LOGINS and GITHUB_ORG are RUNTIME keys since config v2 (#386) — there
@@ -112,7 +105,7 @@ ensure_env() {
     # with a message about a variable, which is accurate but does not say
     # what to do. Say it here instead, and do not edit the file — it may be
     # the organizer's real .env.
-    if ! grep -q "^REDIS_PASSWORD=." "$ENV_FILE"; then
+    if [ -z "$(file_value REDIS_PASSWORD "$ENV_FILE")" ]; then
       echo "FAIL: $ENV_FILE has no REDIS_PASSWORD (Redis now requires one)." >&2
       echo "      Add a line like this and re-run:" >&2
       echo "" >&2

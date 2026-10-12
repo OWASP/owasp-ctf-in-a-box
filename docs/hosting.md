@@ -779,6 +779,21 @@ module, and three things read it as the answer.
 `ctf-setup.sh` reads it the same way: with no `SCORE_IMAGE` it skips every
 fork, mirror and poll step instead of failing.
 
+**Every script reads `.env` the way docker compose does.** `ctf-setup.sh`,
+`scripts/dev-stack` and both Fly scripts share one reader,
+`scripts/lib/dotenv.sh`, so they cannot disagree with each other or with the
+containers about the same file. `SCORE_IMAGE=""` and `SCORE_IMAGE=''` are
+empty, which means no Secure Development, everywhere. Quotes are stripped,
+and a `#` inside them is part of the value. A leading `export `,
+`KEY = value` and `KEY: value` all count as assignments. Windows (CRLF) line
+endings read the same as Unix ones. An unquoted value ends at the first
+` #`, a space followed by `#`. The last assignment of a key wins. One
+compose quirk carries over on purpose: in `SCORE_IMAGE= # none` the `#` is
+not preceded by a space once the value is trimmed, so the value is
+`# none`, which is not empty. Leave the value blank, or write `""`.
+`test/fixtures/dotenv-corpus.env` holds every case, each checked against
+`docker compose config`.
+
 ### What `/admin` owns
 
 Everything below is a runtime setting in `ctf:admin:settings`, changed from the

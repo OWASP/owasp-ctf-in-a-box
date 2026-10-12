@@ -10,6 +10,23 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: setup and deploy script hygiene (#496).** `ctf-setup.sh`,
+  `scripts/dev-stack` and both Fly scripts now read `.env` through one shared
+  reader, `scripts/lib/dotenv.sh`, that follows docker compose's rules.
+  `SCORE_IMAGE=""` is now empty, so Secure Development is off, in every
+  script. Before, `ctf-setup.sh` and `dev-stack` read it as the two-character
+  string `""`, turned Secure Development on, and kept the quotes on any
+  quoted value: `GITHUB_ORG="myorg"` forked into an org named `"myorg"`.
+  `export KEY=`, `KEY = value` and `KEY: value` lines now count in those two
+  as well. A tab before `#` no longer starts a comment, which matches
+  compose. The `drop-old` provisioning check asks GitHub for `main` and
+  `master` by name. It used to read the 30-branch first page of the branch
+  list, so a fork with more branches could pass the check while `main` was
+  still there. Only a 404 for both now counts as done, and any other error
+  fails closed. The AWS deploy's `--dry-run` now redacts with the Fly
+  deploy's rules from one shared `scripts/lib/redact.sh`, so it also hides
+  `PRIVATE_KEY`, `CONNECTION_STRING`, `*_KEY` and `*AUTH` values. Both now
+  mask credentials in any URL (`scheme://***@host`).
 - **Added: first blood on the Jeopardy board (#188).** Each visible tile and
   open story step names the contestant who solved it first. It is display
   only and changes no score. It is read from the current team members' solve

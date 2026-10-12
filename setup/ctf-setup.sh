@@ -60,6 +60,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 WORKFLOW_TEMPLATE="$SCRIPT_DIR/../scorer/consumer-workflow.example.yml"
 
+# The one env-file reader every shell entry point shares: env_val and env_has
+# below are thin wrappers over it.
+# shellcheck source=scripts/lib/dotenv.sh
+. "$SCRIPT_DIR/../scripts/lib/dotenv.sh"
+
 # ANSI colors — only when stdout is a TTY and NO_COLOR is unset (respect the
 # NO_COLOR convention + non-interactive/piped output stays plain for logs/CI).
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -283,6 +288,31 @@ plan_step() {
   esac
 }
 
+# Whether one branch exists on a repo: `present`, `absent`, or `unknown`.
+# Only GitHub's 404 is `absent`; any other failure (auth, rate limit, a 5xx,
+# no network) is `unknown`, which every caller treats as "not satisfied" —
+# an API blip must never read as "already deleted". The reply's name is
+# checked too: GitHub answers a request for a RENAMED branch with the branch
+# it became, and that is not the one asked for.
+branch_state() {
+  local slug="$1" branch="$2" got err
+  if got="$(gh api "repos/$slug/branches/$branch" --jq '.name' 2>/dev/null)"; then
+    if [ "$got" = "$branch" ]; then
+      echo present
+    elif [ -n "$got" ]; then
+      echo absent
+    else
+      echo unknown
+    fi
+    return 0
+  fi
+  err="$(gh api "repos/$slug/branches/$branch" 2>&1 >/dev/null)" || true
+  case "$err" in
+  *"HTTP 404"*) echo absent ;;
+  *) echo unknown ;;
+  esac
+}
+
 # True when one provisioning step is already in its target state — the
 # idempotency probe behind org's skip-if-done and doctor's matrix cells.
 # Fails closed: an unreadable or unexpected reply is "not satisfied".
@@ -292,9 +322,13 @@ check_step() {
     fork) gh_ok "repos/$org/$name" ;;
     ctf-branch) [ "$(gh api "repos/$org/$name" --jq '.default_branch' 2>/dev/null)" = "ctf" ] ;;
     drop-old)
-      local branches
-      branches="$(gh api "repos/$org/$name/branches" --jq '.[].name' 2>/dev/null)" || return 1
-      ! printf '%s\n' "$branches" | grep -qxE 'master|main'
+      # Each branch is asked for by name rather than read out of the branch
+      # list, which GitHub pages at 30: on a fork with more branches than
+      # that, `main` can sit on page two and the list reads as "gone". Only
+      # an answer of absent for BOTH counts as done; a branch that is present,
+      # or one GitHub did not answer for, is not.
+      [ "$(branch_state "$org/$name" main)" = absent ] || return 1
+      [ "$(branch_state "$org/$name" master)" = absent ]
       ;;
     protect)
       # The full protection payload, not just the review count: `launch`
@@ -402,7 +436,9 @@ apply_step() {
     drop-old)
       local b
       for b in master main; do
-        if gh_ok "repos/$org/$name/branches/$b"; then
+        # Anything but a confirmed absence gets the delete attempt: the
+        # check_step that follows is what decides whether it worked.
+        if [ "$(branch_state "$org/$name" "$b")" != absent ]; then
           gh api -X DELETE "repos/$org/$name/git/refs/heads/$b" >/dev/null 2>&1 || true
         fi
       done
@@ -916,20 +952,16 @@ app_url_for() {
 # substitution takes the whole script down — silently, with no output and exit
 # 1. `render` on a machine with no .env did exactly that.
 #
-# A trailing `# comment` and surrounding whitespace are stripped: organizers
-# annotate this file (`GITHUB_ORG=myorg  # the disposable one`), and the value
-# this script forks into, or prints as the org it inspected, must be the org
-# and not the org plus prose. docker compose's own .env reader does the same.
-# A `#` INSIDE the value is only stripped when whitespace precedes it, so a
-# token that legitimately contains one survives.
+# The value is read by scripts/lib/dotenv.sh, the reader dev-stack and the Fly
+# scripts share, with docker compose's semantics: quotes, a leading `export `,
+# `KEY = value`, CRLF and a trailing ` # comment` all read the way compose
+# reads them. Organizers annotate this file (`GITHUB_ORG=myorg  # the
+# disposable one`), and the value this script forks into must be the org, not
+# the org plus prose. Reading it any other way than compose
+# does would let `SCORE_IMAGE=""` — empty to compose, so no scorer starts —
+# read as the two-character string `""` here, and call Secure Development on.
 env_val() {
-  local out="${OUT:-.env}" v
-  [ -f "$out" ] || return 0
-  v="$(sed -n "s/^$1=//p" "$out" | tail -1)"
-  v="${v%%[[:space:]]#*}"
-  # Trim both ends without a subshell per call: bash 3.2-safe extglob-free.
-  v="${v#"${v%%[![:space:]]*}"}"
-  printf '%s' "${v%"${v##*[![:space:]]}"}"
+  dotenv_get "${OUT:-.env}" "$1"
 }
 
 # Is the key PRESENT in the env file, whatever its value? Distinct from
@@ -938,9 +970,7 @@ env_val() {
 # Development", while no such line at all is a file that has not been asked
 # the question yet — one the wizard must ask rather than resume past.
 env_has() {
-  local out="${OUT:-.env}"
-  [ -f "$out" ] || return 1
-  grep -q "^$1=" "$out"
+  dotenv_has "${OUT:-.env}" "$1"
 }
 
 # Refuse to act on an absent env file, for the commands whose whole input it

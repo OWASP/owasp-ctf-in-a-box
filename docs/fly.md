@@ -334,8 +334,13 @@ an older box's cursor over; it is then renamed `state.json.migrated`.
 
 **Credentials travel in the rendered compose file**, which is therefore a
 secret file: mode 600, gitignored, and deleted as soon as the deploy finishes.
-The dry run redacts every value it prints — it shows which variables get set,
-not what they are — and keeps the rendered file so you can review it.
+The dry run redacts every secret value it prints — it shows which variables get
+set, not what they are — and keeps the rendered file so you can review it. The
+rules are shared with the AWS deploy (`scripts/lib/redact.sh`): any variable
+whose name looks like a credential (`SECRET`, `TOKEN`, `PASSWORD`,
+`PRIVATE_KEY`, `CONNECTION_STRING`, `API_KEY`, a `_KEY` or `AUTH` suffix, and
+similar) has its value hidden, and any URL carrying credentials is printed as
+`scheme://***@host`.
 
 This is not the arrangement the module was built with. Fly's documentation says
 secrets set with `fly secrets` are "global and available to every container";

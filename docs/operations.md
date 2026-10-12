@@ -1574,7 +1574,9 @@ characters" (`ctf\{[0-9a-f]{32}\}`). The form states the rules, and the
 server enforces them on save and on import:
 
 - A pattern matches the **whole** flag. It is anchored for you, so no `^`
-  or `$`. The submission is trimmed and Unicode-normalised first.
+  or `$`. The submission is trimmed and Unicode-normalised (NFC) first,
+  and so is the pattern when you save it, so an accented letter typed either
+  way matches.
 - **Case follows the case-sensitive box.** While it is off, a pattern
   ignores case: `[A-F]` also matches `a`–`f`. A pattern is never matched
   against the lowercased form exact flags use, where `[A-F]` could never

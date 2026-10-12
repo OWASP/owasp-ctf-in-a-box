@@ -5,6 +5,7 @@ import { LOGIN_RE } from "@/lib/admin-admins";
 import { beginScoreLowering, endScoreLowering } from "@/lib/leaderboard/fold-cache";
 import { sumAttempts } from "@/lib/attempt-row";
 import { logActivity } from "@/lib/activity-log";
+import { errorLabel } from "@/lib/error-label";
 import { resolveTeamMaxMembers } from "@/lib/team-store";
 import {
   HINTS_SPENT_KEY,
@@ -90,12 +91,19 @@ function requireSlug(slug: string): string {
   return normalized;
 }
 
+/** Best-effort: every caller has already committed its write, so a failed
+ *  audit line is logged and the operation still reports what it did. A 503
+ *  there would send the organizer to retry something that already happened. */
 async function audit(action: string, actor: string, detail: Record<string, unknown>): Promise<void> {
   const line = JSON.stringify({ at: new Date().toISOString(), by: actor, action, ...detail });
-  await upstashPipeline([
-    ["LPUSH", ADMIN_AUDIT_KEY, line],
-    ["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1],
-  ]);
+  try {
+    await upstashPipeline([
+      ["LPUSH", ADMIN_AUDIT_KEY, line],
+      ["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1],
+    ]);
+  } catch (err) {
+    console.error(`[admin-ops] audit write failed for ${action}`, errorLabel(err));
+  }
 }
 
 // --- read -------------------------------------------------------------------

@@ -719,6 +719,21 @@ describe("forceAddToTeam (#597)", () => {
     expect(allCommands().some((c) => c[0] === "LPUSH" && String(c[2]).includes("ops:team-add-member"))).toBe(true);
   });
 
+  // The script has already moved the player when the audit line is written,
+  // so a failed audit write is logged and the add still reports success: a
+  // 503 would send the organizer to retry a move that already happened.
+  it("still succeeds, and logs the join, when the audit write fails", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:bob"));
+    mocks.upstashEval.mockResolvedValueOnce(["ok", "blue"]);
+    mocks.upstashPipeline.mockRejectedValueOnce(new Error("upstash down"));
+    const result = await forceAddToTeam("red-team", "bob", "admin");
+    expect(result).toEqual({ ok: true, login: "bob", from: "blue" });
+    expect(teamDeps.logActivity).toHaveBeenCalledWith("team-join", "bob", "red-team");
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("ops:team-add-member"), expect.anything());
+    spy.mockRestore();
+  });
+
   it("scans with a case-insensitive pattern rather than the whole keyspace", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:ab-1"));
     mocks.upstashEval.mockResolvedValueOnce(["ok", ""]);

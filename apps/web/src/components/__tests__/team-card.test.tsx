@@ -10,7 +10,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-import TeamCard, { ExitConfirm, NeedsConfirmError, postTeam } from "@/components/team-card";
+import TeamCard, { ExitConfirm, NeedsConfirmError, confirmExit, postTeam, requestExit } from "@/components/team-card";
 
 describe("TeamCard", () => {
   it("offers all three ways onto a team when the viewer has none", () => {
@@ -208,6 +208,49 @@ describe("exits after registration closes (#597)", () => {
     await postTeam("/remove", { slug: "s", member: "bob", confirm: true });
     const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
     expect(JSON.parse(String(init.body))).toEqual({ slug: "s", member: "bob", confirm: true });
+    vi.unstubAllGlobals();
+  });
+
+  // The card's exit transition, step by step: the 409 keeps the request,
+  // Confirm resends it with confirm: true, Cancel sends nothing more.
+  const reply = (status: number, body: Record<string, unknown>) => new Response(JSON.stringify(body), { status });
+
+  it("keeps a refused exit as a pending request instead of sending it again", async () => {
+    const fetchMock = vi.fn(async () => reply(409, { error: WARNING, needsConfirm: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    const outcome = await requestExit("/remove", { slug: "s", member: "bob" }, "Remove bob anyway");
+    expect(outcome).toEqual({
+      confirm: { message: WARNING, label: "Remove bob anyway", path: "/remove", body: { slug: "s", member: "bob" } },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body))).toEqual({ slug: "s", member: "bob" });
+    vi.unstubAllGlobals();
+  });
+
+  it("Confirm resends the kept request with confirm: true", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(reply(409, { error: WARNING, needsConfirm: true }))
+      .mockResolvedValueOnce(reply(200, { team: null }));
+    vi.stubGlobal("fetch", fetchMock);
+    const outcome = await requestExit("/leave", {}, "Leave anyway");
+    if (!("confirm" in outcome)) throw new Error("expected a pending exit");
+    expect(await confirmExit(outcome.confirm)).toEqual({ team: null });
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe("/api/team/leave");
+    expect(JSON.parse(String(init.body))).toEqual({ confirm: true });
+    vi.unstubAllGlobals();
+  });
+
+  it("an exit the server accepts outright needs no confirmation", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => reply(200, { team: null })));
+    expect(await requestExit("/leave", {}, "Leave anyway")).toEqual({ done: { team: null } });
+    vi.unstubAllGlobals();
+  });
+
+  it("any other refusal still throws, with the server's message", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => reply(403, { error: "Only the team captain can do that" })));
+    await expect(requestExit("/remove", { slug: "s", member: "bob" }, "x")).rejects.toThrow("Only the team captain can do that");
     vi.unstubAllGlobals();
   });
 

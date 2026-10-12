@@ -27,6 +27,31 @@ export async function postTeam(path: string, body?: Record<string, string | bool
   return data;
 }
 
+/** A Leave or Remove the server wants confirmed: its warning, and the request
+ *  to resend with `confirm: true`. */
+export type PendingExit = { message: string; label: string; path: string; body: Record<string, string> };
+
+/** Sends a Leave or Remove. A refusal that only wants confirmation comes back
+ *  as the request kept for the player, not as an error; any other refusal
+ *  throws as `postTeam` does. */
+export async function requestExit(
+  path: string,
+  body: Record<string, string>,
+  label: string,
+): Promise<{ done: TeamActionResponse } | { confirm: PendingExit }> {
+  try {
+    return { done: await postTeam(path, body) };
+  } catch (err) {
+    if (err instanceof NeedsConfirmError) return { confirm: { message: err.message, label, path, body } };
+    throw err;
+  }
+}
+
+/** Confirm on the warning: the kept request again, with `confirm: true`. */
+export function confirmExit(exit: PendingExit): Promise<TeamActionResponse> {
+  return postTeam(exit.path, { ...exit.body, confirm: true });
+}
+
 /** The after-close warning on Leave and Remove, with the choice kept by the
  *  player: confirm (the same request again, with `confirm: true`) or cancel. */
 export function ExitConfirm({
@@ -132,12 +157,7 @@ export default function TeamCard({
   const [latestCode, setLatestCode] = useState<string | null>(null);
   // An exit the server wants confirmed (registration closed): the warning,
   // and the request to resend with `confirm: true`.
-  const [exitConfirm, setExitConfirm] = useState<{
-    message: string;
-    label: string;
-    path: string;
-    body: Record<string, string>;
-  } | null>(null);
+  const [exitConfirm, setExitConfirm] = useState<PendingExit | null>(null);
 
   const run = async (fn: () => Promise<TeamActionResponse>) => {
     setPending(true);
@@ -161,12 +181,10 @@ export default function TeamCard({
    *  the warning is shown and the same request waits for the player. */
   const exit = (path: string, body: Record<string, string>, label: string) =>
     run(async () => {
-      try {
-        return await postTeam(path, body);
-      } catch (err) {
-        if (err instanceof NeedsConfirmError) setExitConfirm({ message: err.message, label, path, body });
-        throw err;
-      }
+      const outcome = await requestExit(path, body, label);
+      if ("done" in outcome) return outcome.done;
+      setExitConfirm(outcome.confirm);
+      throw new NeedsConfirmError(outcome.confirm.message);
     });
 
   const displayCode = latestCode ?? joinCode;
@@ -450,7 +468,7 @@ export default function TeamCard({
           message={exitConfirm.message}
           confirmLabel={exitConfirm.label}
           pending={pending}
-          onConfirm={() => run(() => postTeam(exitConfirm.path, { ...exitConfirm.body, confirm: true }))}
+          onConfirm={() => run(() => confirmExit(exitConfirm))}
           onCancel={() => setExitConfirm(null)}
         />
       )}

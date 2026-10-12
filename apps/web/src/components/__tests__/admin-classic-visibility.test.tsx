@@ -8,6 +8,8 @@ import { parseBundle } from "@/lib/classic-io";
 import type { AdminChallenge, Challenge } from "@/lib/classic-store";
 import AdminClassicControls, {
   ChallengeForm,
+  ClassicTimeZoneContext,
+  statusChip,
   draftFromChallenge,
   editorFromChallenge,
   emptyDraft,
@@ -94,5 +96,77 @@ describe("the status chip", () => {
     );
     expect(html).toMatch(/data-status="live"[^>]*>Live</);
     expect(html).toMatch(/data-status="disabled"[^>]*>Disabled</);
+  });
+});
+
+describe("a scheduled release", () => {
+  const FUTURE = "2099-10-08T13:00:00.000Z";
+  const scheduled: Challenge = { ...off, id: "later-ab12cd", title: "Later one", releaseAt: FUTURE };
+
+  it("seeds the draft from the stored schedule, and a passed one as plain live", () => {
+    expect(draftFromChallenge(row(scheduled))).toMatchObject({ enabled: false, releaseAt: FUTURE });
+    const passed = { ...scheduled, releaseAt: "2000-01-01T00:00:00.000Z" };
+    expect(draftFromChallenge(row(passed))).toMatchObject({ enabled: true, releaseAt: "" });
+    expect(emptyDraft("Web").releaseAt).toBe("");
+  });
+
+  it("sends the instant with enabled:false, and carries it through a reorder", () => {
+    const editor = editorFromChallenge(row(scheduled));
+    expect(payloadFromEditor(editor)).toMatchObject({ enabled: false, releaseAt: FUTURE });
+    expect(payloadFromRow(row(scheduled))).toMatchObject({ enabled: false, releaseAt: FUTURE });
+    expect("releaseAt" in payloadFromRow(row(live))).toBe(false);
+  });
+
+  it("exports the instant", () => {
+    const bundle = exportBundleFrom([row(scheduled)], ["Web"]);
+    expect(bundle.version).toBe(4);
+    expect(bundle.challenges[0]).toMatchObject({ enabled: false, releaseAt: FUTURE });
+    expect(parseBundle(JSON.stringify(bundle)).ok).toBe(true);
+  });
+
+  it("labels the chip with the release time on the event clock, its offset named", () => {
+    expect(statusChip(scheduled, Date.parse("2099-01-01T00:00:00Z"), "America/Argentina/Buenos_Aires")).toEqual({
+      kind: "scheduled",
+      label: "Releases Oct 8, 10:00 GMT-3",
+    });
+    expect(statusChip(scheduled, Date.parse("2099-01-01T00:00:00Z"), "UTC").label).toBe("Releases Oct 8, 13:00 UTC");
+  });
+
+  it("shows the chip on the admin list, read on the event's time zone", () => {
+    const html = renderToStaticMarkup(
+      <AdminClassicControls
+        initialLoaded
+        pending={false}
+        classicCooldownSecInput="5"
+        setClassicCooldownSecInput={noop}
+        commitNumber={noop}
+        initialChallenges={[row(scheduled)]}
+        initialCategories={["Web"]}
+        timeZone="America/Argentina/Buenos_Aires"
+      />,
+    );
+    expect(html).toMatch(/data-status="scheduled"[^>]*>Releases Oct 8, 10:00 GMT-3</);
+  });
+
+  it("offers a Release at field on the event clock, showing the UTC instant it stores", () => {
+    const html = renderToStaticMarkup(
+      <ClassicTimeZoneContext.Provider value="America/Argentina/Buenos_Aires">
+        <ChallengeForm
+          editor={editorFromChallenge(row(scheduled))}
+          categories={["Web"]}
+          pending={false}
+          error={null}
+          flagRevealed={false}
+          setFlagRevealed={noop}
+          onChange={noop}
+          onCancel={noop}
+          onSubmit={noop}
+        />
+      </ClassicTimeZoneContext.Provider>,
+    );
+    expect(html).toContain("Release at");
+    expect(html).toMatch(/type="datetime-local"[^>]*value="2099-10-08T10:00"/);
+    expect(html).toContain("2099-10-08T13:00:00.000Z");
+    expect(html).toContain("GMT-3");
   });
 });

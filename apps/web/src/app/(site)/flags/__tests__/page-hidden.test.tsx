@@ -110,4 +110,12 @@ describe("/flags and a hidden challenge", () => {
     expect(m.lanes[0].steps[1]).toMatchObject({ locked: false, id: "gone", position: 2, total: 3 });
     expect(m.lanes[0].steps[2]).toMatchObject({ locked: true });
   });
+  it("keeps a challenge off the board until its release time, and shows it from then on", async () => {
+    m.challenges = [c("open"), c("gone", { enabled: false, releaseAt: new Date(Date.now() + 3_600_000).toISOString() })];
+    renderToStaticMarkup(await FlagsPage());
+    expect(JSON.stringify(m.board)).not.toContain(SECRET_TITLE);
+    m.challenges = [c("open"), c("gone", { enabled: false, releaseAt: new Date(Date.now() - 1_000).toISOString() })];
+    renderToStaticMarkup(await FlagsPage());
+    expect(m.board.challenges.map((v) => v.id)).toEqual(["open", "gone"]);
+  });
 });

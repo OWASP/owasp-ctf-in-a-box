@@ -668,3 +668,25 @@ describe("POST /api/admin/classic — visibility", () => {
     expect(upsertChallenge).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/admin/classic — release time", () => {
+  it("passes a release instant to the store, and treats null or empty as none", async () => {
+    upsertChallenge.mockResolvedValue(ADMIN_ROW);
+    await POST(adminReq("POST", { ...validPayload, enabled: false, releaseAt: "2099-10-08T13:00:00.000Z" }));
+    expect(upsertChallenge).toHaveBeenLastCalledWith(
+      { ...CHALLENGE, enabled: false, releaseAt: "2099-10-08T13:00:00.000Z" },
+      "CTF{flag}",
+      undefined,
+    );
+    await POST(adminReq("POST", { ...validPayload, releaseAt: null }));
+    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", undefined);
+    await POST(adminReq("POST", { ...validPayload, releaseAt: "" }));
+    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", undefined);
+  });
+
+  it("400s an unreadable or non-string release time without writing", async () => {
+    expect((await POST(adminReq("POST", { ...validPayload, releaseAt: "soon" }))).status).toBe(400);
+    expect((await POST(adminReq("POST", { ...validPayload, releaseAt: 123 }))).status).toBe(400);
+    expect(upsertChallenge).not.toHaveBeenCalled();
+  });
+});

@@ -97,6 +97,7 @@ export const CHALLENGE_KEYS = new Set([
   "caseSensitive",
   "hint",
   "enabled",
+  "releaseAt",
 ]);
 export const CATEGORIES_KEYS = new Set(["categories"]);
 /** The rename shape's outer and inner key sets (#304). */
@@ -138,6 +139,11 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
   // Optional; a present non-boolean is malformed, for the caseSensitive
   // reason: a string "false" would publish the challenge.
   if (body.enabled !== undefined && typeof body.enabled !== "boolean") return null;
+  // Optional: an ISO instant, or null / "" for none. The store settles it
+  // (a future one hides the challenge until then, a passed one is live).
+  if (body.releaseAt !== undefined && body.releaseAt !== null && typeof body.releaseAt !== "string") return null;
+  const releaseAt = typeof body.releaseAt === "string" && body.releaseAt ? body.releaseAt : undefined;
+  if (releaseAt !== undefined && !Number.isFinite(Date.parse(releaseAt))) return null;
   return {
     id: body.id,
     title: body.title.trim(),
@@ -153,6 +159,7 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
     ...(body.caseSensitive ? { caseSensitive: true as const } : {}),
     // Same rule, the other way round: stored only when false.
     ...(body.enabled === false ? { enabled: false } : {}),
+    ...(releaseAt !== undefined ? { releaseAt } : {}),
   };
 }
 

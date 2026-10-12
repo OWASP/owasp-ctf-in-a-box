@@ -55,7 +55,7 @@ import type { Story } from "@/lib/story-lock";
 
 /** 2 added `stories` and per-challenge `attachments` (metadata); 3 adds the
  *  optional top-level `attachmentFiles`; 4 adds a challenge's visibility
- *  (`enabled`). 1 to 3 stay importable. */
+ *  (`enabled`, `releaseAt`). 1 to 3 stay importable. */
 export const CLASSIC_BUNDLE_VERSION = 4;
 const SUPPORTED_VERSIONS = new Set([1, 2, 3, 4]);
 /** The oldest version that knows `stories` and `attachments`. */
@@ -74,8 +74,8 @@ export function bundleVersionFor(hasFiles: boolean, hasVisibility = false): numb
 }
 
 /** Whether a bundle row carries a visibility field (and so needs version 4). */
-export function carriesVisibility(c: { enabled?: boolean }): boolean {
-  return c.enabled === false;
+export function carriesVisibility(c: { enabled?: boolean; releaseAt?: string | null }): boolean {
+  return c.enabled === false || typeof c.releaseAt === "string";
 }
 const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
@@ -105,6 +105,8 @@ export type ClassicBundleChallenge = {
   /** v4: false keeps the challenge off the contestant board. Absent means
    *  live, the same rule as the stored record. */
   enabled?: boolean;
+  /** v4: the ISO instant a disabled challenge goes live on its own. */
+  releaseAt?: string;
 };
 
 export type ClassicBundle = {
@@ -138,6 +140,7 @@ const CHALLENGE_KEYS = [
   "hint",
   "attachments",
   "enabled",
+  "releaseAt",
 ] as const;
 const CHALLENGE_KEY_SET = new Set<string>(CHALLENGE_KEYS);
 
@@ -222,6 +225,11 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
   // string "false" would be truthy downstream and publish the challenge.
   if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") {
     errors.push({ where: `${base}.enabled`, message: "enabled must be true or false" });
+  }
+  // Optional; an instant Date.parse reads. Never echoed: the message names
+  // the rule only.
+  if (raw.releaseAt !== undefined && (typeof raw.releaseAt !== "string" || !Number.isFinite(Date.parse(raw.releaseAt)))) {
+    errors.push({ where: `${base}.releaseAt`, message: "releaseAt must be an ISO 8601 date and time" });
   }
 
   // Optional paid-hint text (#190): a non-empty string within the cap.
@@ -406,8 +414,11 @@ export function parseBundle(raw: string): ParseResult {
   // a box built before it would import the challenge live.
   if (typeof parsed.version === "number" && parsed.version < VISIBILITY_VERSION) {
     rawChallenges.forEach((c, i) => {
-      if (isPlainObject(c) && c.enabled !== undefined) {
-        errors.push({ where: `challenges[${i}].enabled`, message: `"enabled" needs bundle version ${VISIBILITY_VERSION}` });
+      if (!isPlainObject(c)) return;
+      for (const key of ["enabled", "releaseAt"] as const) {
+        if (c[key] !== undefined) {
+          errors.push({ where: `challenges[${i}].${key}`, message: `"${key}" needs bundle version ${VISIBILITY_VERSION}` });
+        }
       }
     });
   }

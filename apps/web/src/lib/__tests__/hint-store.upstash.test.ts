@@ -571,4 +571,27 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
       await pipeline([["DEL", set, spent, hints, at, rev, lowering, cfg, recs]]);
     }
   });
+  // A scheduled Jeopardy challenge's hint: refused before its release instant
+  // (Redis's clock against the record's `releaseAtMs`), sold after it.
+  it("REVEAL_SCRIPT refuses a not-yet-released challenge's hint, charging nothing, and sells it once released", async () => {
+    const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const k = (n: string) => `ctf-test:hint-release:${RUN}:${n}`;
+    const [set, spent, hints, at, rev, lowering, cfg, recs] = ["set", "spent", "hints", "at", "rev", "lowering", "cfg", "recs"].map(k);
+    const call = () =>
+      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg, recs], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "", "", "", "", "", "", "", "1"]);
+    const record = (releaseAtMs: number) =>
+      JSON.stringify({ id: "web", title: "Web", points: 10, enabled: false, releaseAt: new Date(releaseAtMs).toISOString(), releaseAtMs });
+    try {
+      await pipeline([["HSET", hints, "web", "look at the cookie"], ["HSET", recs, "web", record(Date.now() + 3_600_000)]]);
+      expect(await call()).toEqual(["missing"]);
+      const [s1, sp1] = await pipeline([["SCARD", set], ["HGET", spent, "alice"]]);
+      expect(s1.result).toBe(0);
+      expect(sp1.result).toBeNull();
+      await pipeline([["HSET", recs, "web", record(Date.now() - 2_000)]]);
+      expect(await call()).toEqual(["charged", "look at the cookie", 10, 10]);
+    } finally {
+      await pipeline([["DEL", set, spent, hints, at, rev, lowering, cfg, recs]]);
+    }
+  });
 });

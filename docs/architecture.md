@@ -581,7 +581,13 @@ clears them.
 
 **Visibility is a field on the public record, decided where it is read.** A
 challenge stored with `enabled: false` is hidden from contestants: it does not
-exist on their side. Nothing is scheduled or stored per reader; every reader
+exist on their side, unless its `releaseAt` instant has come (`now >=
+releaseAt`, the instant itself released). The store keeps a release time only
+while it is in the future, always with `enabled: false`, next to
+`releaseAtMs`, its epoch-ms mirror, because the Lua scripts compare it with
+Redis's `TIME` and parse no ISO dates. Nothing is scheduled or stored per
+reader; pages read with the server's clock, the scripts with Redis's, and a
+page can lag the grader by at most the leaderboard fold's 10-second memo. Every reader
 asks one pure predicate, `isChallengeVisible` in `lib/classic-release.ts`,
 and filters before anything is built. `listChallenges` returns hidden
 challenges too, so each contestant caller filters through `visibleNow` (the
@@ -595,7 +601,8 @@ themselves from the record they read: `SUBMIT_SCRIPT` reads the challenge's
 record first and answers a hidden one `missing` before the already-solved
 guard or any write, and the hint `REVEAL_SCRIPT` does the same from
 `KEYS[8]` before the story lock, the text or any charge (`CLASSIC_HIDDEN_LUA`
-in `classic-keys.ts`). The JS pre-check leaves a hidden challenge's
+in `classic-keys.ts`, which reads `TIME` only for a disabled record with a
+release time). The JS pre-check leaves a hidden challenge's
 "solved" and "cooldown" to the script, so neither confirms it exists. An
 admin preview's dry run skips the check. The admin list (`/api/admin/classic`)
 returns every challenge with its field, for the status chip and the form.

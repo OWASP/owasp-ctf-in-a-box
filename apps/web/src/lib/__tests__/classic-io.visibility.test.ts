@@ -2,7 +2,7 @@
 // carries the field is refused: a box built before it would import the
 // challenge live, publishing something its organizer meant to keep hidden.
 import { describe, expect, it } from "vitest";
-import { CLASSIC_BUNDLE_VERSION, bundleVersionFor, parseBundle } from "@/lib/classic-io";
+import { CLASSIC_BUNDLE_VERSION, bundleVersionFor, carriesVisibility, parseBundle } from "@/lib/classic-io";
 
 const base = (version: number, extra: Record<string, unknown> = {}) => ({
   version,
@@ -57,5 +57,31 @@ describe("parseBundle and enabled", () => {
   it("still accepts attachment files on a version 3 bundle", () => {
     const res = parseBundle(JSON.stringify({ ...base(3), attachmentFiles: [] }));
     expect(res.ok).toBe(true);
+  });
+});
+
+describe("parseBundle and releaseAt", () => {
+  const at = "2099-10-08T13:00:00.000Z";
+
+  it("accepts a release instant on a version 4 bundle", () => {
+    const res = parseBundle(JSON.stringify(base(4, { enabled: false, releaseAt: at })));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.challenges[0].releaseAt).toBe(at);
+    expect(bundleVersionFor(false, carriesVisibility({ releaseAt: at }))).toBe(4);
+  });
+
+  it("refuses it on an older version, by position", () => {
+    const res = parseBundle(JSON.stringify(base(3, { releaseAt: at })));
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.errors).toContainEqual({ where: "challenges[0].releaseAt", message: '"releaseAt" needs bundle version 4' });
+  });
+
+  it("refuses an unreadable instant without echoing it", () => {
+    const res = parseBundle(JSON.stringify(base(4, { releaseAt: "next-tuesday-zz8" })));
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.errors).toContainEqual({ where: "challenges[0].releaseAt", message: "releaseAt must be an ISO 8601 date and time" });
+    expect(JSON.stringify(res.errors)).not.toContain("next-tuesday-zz8");
   });
 });

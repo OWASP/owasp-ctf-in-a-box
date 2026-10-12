@@ -375,6 +375,7 @@ describe("payloadFromEditor — an edit can never change a challenge's id", () =
       caseSensitive: false,
       hint: "",
       enabled: true,
+      releaseAt: "",
     };
     const payload = payloadFromEditor({ ...editor, draft }, () => "generated-from-the-new-title");
     expect(payload.id).toBe(c1.id);

@@ -10,16 +10,23 @@
 // past what the pages leave out.
 
 /** The visibility fields a stored challenge carries. `enabled` absent means
- *  live: every record written before the field existed stays on the board. */
-export type ReleaseFields = { enabled?: boolean };
+ *  live: every record written before the field existed stays on the board.
+ *  `releaseAt` (an ISO instant) releases a disabled challenge on its own:
+ *  evaluated at read time, with nothing scheduled on the box. */
+export type ReleaseFields = { enabled?: boolean; releaseAt?: string | null };
 
 /** What the admin list shows for a challenge. */
-export type ChallengeStatus = { kind: "live" } | { kind: "disabled" };
+export type ChallengeStatus = { kind: "live" } | { kind: "disabled" } | { kind: "scheduled"; releaseAt: string };
 
-/** The challenge's state at `nowMs` (epoch ms, the reader's clock). */
+/** The challenge's state at `nowMs` (epoch ms, the reader's clock). Visible
+ *  iff it is enabled, or its release instant has come: `nowMs >= releaseAt`,
+ *  so the instant itself is released. An unreadable release time is no
+ *  release time. */
 export function challengeStatus(c: ReleaseFields, nowMs: number): ChallengeStatus {
-  void nowMs;
-  return c.enabled === false ? { kind: "disabled" } : { kind: "live" };
+  if (c.enabled !== false) return { kind: "live" };
+  const releaseMs = typeof c.releaseAt === "string" ? Date.parse(c.releaseAt) : NaN;
+  if (!Number.isFinite(releaseMs)) return { kind: "disabled" };
+  return nowMs >= releaseMs ? { kind: "live" } : { kind: "scheduled", releaseAt: c.releaseAt as string };
 }
 
 /** Whether contestants may see the challenge at `nowMs`. */

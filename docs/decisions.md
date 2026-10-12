@@ -3971,6 +3971,21 @@ challenges in rounds without someone authoring live in front of the board.
 - **Visibility is a field on the challenge's public record.** `enabled`
   (absent means live, stored only when `false`), so every record, bundle and
   archive written before it behaves as before.
+- **A release is an instant, evaluated at read time.** `releaseAt`, entered
+  on the event's clock (the Event tab's time zone) and stored as UTC ISO.
+  Visible iff `enabled !== false` or `now >= releaseAt`; the instant itself
+  is released. No scheduler, cron or job on the box: like the scheduled
+  scoring window (ADRs 32 and 59), every reader compares the instant with its
+  own clock.
+  The write settles it once: a future instant is kept with `enabled: false`;
+  one already passed is stored as plain live. Release is per challenge; a
+  story releases together when its steps share an instant.
+- **Two clocks, one decision each.** Pages read with the server's clock. The
+  grading and hint scripts read Redis's `TIME` and the record's
+  `releaseAtMs` (an epoch-ms mirror the store writes beside the instant, so
+  Lua parses no ISO date, the attempt row's `lastAtMs` precedent), so a
+  request racing the release is decided once, where the write happens. A
+  page can lag the grader by at most the leaderboard fold's memo.
 - **Hidden means the challenge does not exist on the contestant side.** Not
   "not rendered": it is left out of every server payload. One pure
   predicate, `isChallengeVisible` (`lib/classic-release.ts`), answers it for
@@ -3999,19 +4014,28 @@ challenges in rounds without someone authoring live in front of the board.
   solver's lists too, and the profile names the points in one line ("+N pts
   from withdrawn challenges") so the list still adds up to the total.
 - **Bundles carry it.** Version 4, stamped only when some challenge is
-  hidden, so other exports stay importable on an older box. An older
-  version carrying the field is refused by position and rule, never by
-  value: an older box would otherwise import the challenge live.
+  hidden or scheduled, so other exports stay importable on an older box. An
+  older version carrying either field is refused by position and rule, never
+  by value: an older box would otherwise import the challenge live.
+- **The admin sees everything.** The list shows a status chip per challenge
+  (Live, Disabled, or "Releases Oct 8, 10:00 GMT-3" on the event's clock),
+  and the form edits the switch and the release time.
 
 This was chosen over a separate "draft" store (a second place for a
-challenge to live, and a copy step that can lose fields) and over hiding in
-the components (a hand-made request, or a payload a component happens not to
-render, would still carry the challenge). It is not a three-reader rule:
-only the app reads Jeopardy challenges, so scorer and sync are untouched.
+challenge to live, and a copy step that can lose fields), over hiding in the
+components (a hand-made request, or a payload a component happens not to
+render, would still carry the challenge), and over a release job on the box
+(one more process to keep alive, and a release that silently does not happen
+when it is down). It is not a three-reader rule: only the app reads Jeopardy
+challenges, so scorer and sync are untouched.
 
 **Consequences.** Every contestant reader pays one predicate call over a list
 it already read; the graders read the record they already read (the submit
-script) or one more `HGET` (the reveal script). The reveal script's lock
+script) or one more `HGET` (the reveal script), and a `TIME` only for a
+scheduled record. Every write of a record goes through one canonical form,
+so a rename or an import cannot drop `releaseAtMs` and leave a challenge the
+pages release and the grader never does. A release does not announce itself:
+the board shows the challenge on the next read. The reveal script's lock
 keys move from `KEYS[8..]` to `KEYS[9..]`. A future reader of the challenge
 list has to filter, and the source scan says so if it does not.
 

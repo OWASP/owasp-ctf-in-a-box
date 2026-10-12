@@ -449,4 +449,32 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await seedHidden(id, "flag{q}", 9, { description: 'set "enabled":false to hide it' });
     expect(await submit(id, "flag{q}", { cooldownMs: 0 })).toEqual(["correct", "9"]);
   });
+  // A scheduled release, decided by Redis's clock (TIME) from the record's
+  // `releaseAtMs` mirror. The exact boundary (released AT the instant) is
+  // pinned by the pure predicate's test and the script-text test in the
+  // mocked suite; a live clock cannot be stopped on the instant, so these
+  // pin either side of it with margin.
+  it("release: refuses a not-yet-released challenge as missing, writing nothing", async () => {
+    const id = freshId("later");
+    const releaseAtMs = Date.now() + 3_600_000;
+    await seedHidden(id, "flag{l}", 25, { enabled: false, releaseAt: new Date(releaseAtMs).toISOString(), releaseAtMs });
+    expect(await submit(id, "flag{l}", { cooldownMs: 0 })).toEqual(["missing"]);
+    expect(await hget(K.attempts, id)).toBeNull();
+    expect(await hget(K.solves, id)).toBeNull();
+    expect(await hget(K.solvecount, id)).toBeNull();
+  });
+
+  it("release: grades a challenge whose release instant has passed, as if it had always been live", async () => {
+    const id = freshId("released");
+    const releaseAtMs = Date.now() - 2_000;
+    await seedHidden(id, "flag{r}", 35, { enabled: false, releaseAt: new Date(releaseAtMs).toISOString(), releaseAtMs });
+    expect(await submit(id, "flag{r}", { cooldownMs: 0 })).toEqual(["correct", "35"]);
+    expect(await hget(K.solvecount, id)).toBe("1");
+  });
+
+  it("release: a disabled challenge with no release time stays hidden", async () => {
+    const id = freshId("no-release");
+    await seedHidden(id, "flag{n}", 6, { enabled: false, releaseAt: null });
+    expect(await submit(id, "flag{n}", { cooldownMs: 0 })).toEqual(["missing"]);
+  });
 });

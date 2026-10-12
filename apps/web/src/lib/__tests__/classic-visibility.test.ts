@@ -9,7 +9,7 @@ const m = vi.hoisted(() => ({
   access: { allowed: true, preview: false },
   admins: new Set<string>(),
   teamed: new Set<string>(),
-  challenges: [{ id: "one" }, { id: "two" }] as { id: string; enabled?: boolean }[],
+  challenges: [{ id: "one" }, { id: "two" }] as { id: string; enabled?: boolean; releaseAt?: string }[],
   stories: [] as { id: string; title: string; intro: string; steps: string[] }[],
   solved: new Set<string>(),
 }));
@@ -100,5 +100,11 @@ describe("classicVisibility and hidden challenges", () => {
     m.challenges = [{ id: "one" }, { id: "two" }, { id: "three" }];
     expect((await classicVisibility("alice", "three")).state).toBe("locked");
     expect((await classicVisibility("alice", "two")).state).toBe("visible");
+  });
+  it("answers missing before a release time and visible after it", async () => {
+    m.challenges = [{ id: "one", enabled: false, releaseAt: new Date(Date.now() + 3_600_000).toISOString() }];
+    expect((await classicVisibility("alice", "one")).state).toBe("missing");
+    m.challenges = [{ id: "one", enabled: false, releaseAt: new Date(Date.now() - 1_000).toISOString() }];
+    expect((await classicVisibility("alice", "one")).state).toBe("visible");
   });
 });

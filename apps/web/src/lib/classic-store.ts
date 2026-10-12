@@ -191,6 +191,12 @@ export type Challenge = {
    *  unknown id (classic-release.ts). Absent means live, so every record
    *  written before the field stays on the board. Stored only when false. */
   enabled?: boolean;
+  /** The UTC ISO instant a disabled challenge goes live on its own, read at
+   *  every request against the reader's clock (no scheduler). Stored only
+   *  while it is in the future, always with `enabled: false`; the stored JSON
+   *  also carries `releaseAtMs`, its epoch-ms mirror for the Lua scripts,
+   *  which never reaches this shape. */
+  releaseAt?: string;
 };
 
 /** One challenge as the ADMIN-GATED surface sees it: the public-safe record
@@ -249,6 +255,8 @@ function parseChallenge(raw: string): Challenge | null {
       // back. Dropping it here would publish a hidden challenge on the next
       // write that re-serializes the record (a rename, a reorder).
       ...(c.enabled === false ? { enabled: false } : {}),
+      // The instant only; the `releaseAtMs` mirror stays in storage.
+      ...(typeof c.releaseAt === "string" ? { releaseAt: c.releaseAt } : {}),
     };
   } catch {
     return null;
@@ -258,8 +266,17 @@ function parseChallenge(raw: string): Challenge | null {
 /** A challenge in the one shape the store writes: fields in a fixed order,
  *  the optional ones only when they say something. Every write of a record
  *  goes through here, so one challenge has one representation whichever door
- *  it came through, and a re-serialization never drops a field. */
-function canonicalChallenge(c: Challenge): Challenge {
+ *  it came through, and a re-serialization never drops a field.
+ *
+ *  The release instant is settled at write time, on the server's clock: a
+ *  future one is kept (as UTC ISO) and makes the challenge disabled until
+ *  then; one that has passed means the challenge is simply live, so both
+ *  fields are dropped. An unreadable one is dropped (the writers refuse it
+ *  first). */
+function canonicalChallenge(c: Challenge, nowMs: number): Challenge {
+  const releaseMs = typeof c.releaseAt === "string" ? Date.parse(c.releaseAt) : NaN;
+  const scheduled = Number.isFinite(releaseMs) && releaseMs > nowMs;
+  const released = Number.isFinite(releaseMs) && !scheduled;
   return {
     id: c.id,
     title: c.title,
@@ -268,13 +285,21 @@ function canonicalChallenge(c: Challenge): Challenge {
     points: c.points,
     order: c.order,
     ...(c.caseSensitive === true ? { caseSensitive: true as const } : {}),
-    ...(c.enabled === false ? { enabled: false } : {}),
+    ...(scheduled || (c.enabled === false && !released) ? { enabled: false } : {}),
+    ...(scheduled ? { releaseAt: new Date(releaseMs).toISOString() } : {}),
   };
 }
 
-/** The stored JSON for a challenge record. */
+/** The stored JSON for a canonical record: the record, plus `releaseAtMs`
+ *  (the instant as epoch ms) when it is scheduled, which is what the grading
+ *  and hint scripts compare to Redis's clock (CLASSIC_HIDDEN_LUA). */
+function serializeRecord(record: Challenge): string {
+  return JSON.stringify(record.releaseAt ? { ...record, releaseAtMs: Date.parse(record.releaseAt) } : record);
+}
+
+/** The stored JSON for a challenge record, canonicalized now. */
 function serializeChallenge(c: Challenge): string {
-  return JSON.stringify(canonicalChallenge(c));
+  return serializeRecord(canonicalChallenge(c, Date.now()));
 }
 
 /** The board's reading order: cheapest first (points ascending), then the
@@ -549,15 +574,18 @@ export async function upsertChallenge(c: Challenge, flag: string, hint?: string 
   if (hint != null && (typeof hint !== "string" || hint.length > CLASSIC_HINT_MAX)) {
     throw new ClassicValidationError("hint", `Hint must be at most ${CLASSIC_HINT_MAX} characters`);
   }
+  if (c.releaseAt !== undefined && (typeof c.releaseAt !== "string" || !Number.isFinite(Date.parse(c.releaseAt)))) {
+    throw new ClassicValidationError("releaseAt", "Release time must be an ISO 8601 date and time");
+  }
 
   const authored = flag.trim();
-  const record = canonicalChallenge(c);
+  const record = canonicalChallenge(c, Date.now());
   // The hint is written (or CLEARED — an empty/absent hint deletes the row)
   // in the same pipeline as the challenge, into its own SECRET hash: the
   // public record must never carry it, same storage rule as the flag pair.
   const authoredHint = typeof hint === "string" && hint.trim() ? hint.trim() : null;
   const results = await upstashPipeline([
-    ["HSET", CHALLENGES_KEY, c.id, JSON.stringify(record)],
+    ["HSET", CHALLENGES_KEY, c.id, serializeRecord(record)],
     ["HSET", FLAG_KEY, c.id, authored],
     ["HSET", FLAGNORM_KEY, c.id, flagComparisonForm(flag, c.caseSensitive)],
     authoredHint ? ["HSET", HINTS_KEY, c.id, authoredHint] : ["HDEL", HINTS_KEY, c.id],
@@ -753,6 +781,7 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
       // `"caseSensitive":false` would break it while changing nothing.
       ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
       ...(c.enabled === false ? { enabled: false } : {}),
+      ...(typeof c.releaseAt === "string" ? { releaseAt: c.releaseAt } : {}),
     };
     commands.push(["HSET", CHALLENGES_KEY, c.id, serializeChallenge(record)]);
     commands.push(["HSET", FLAG_KEY, c.id, c.flag.trim()]);
@@ -815,6 +844,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // Visibility, only when it says something (v4): a backup restores a
     // hidden challenge hidden, never live.
     ...(challenge.enabled === false ? { enabled: false } : {}),
+    ...(challenge.releaseAt ? { releaseAt: challenge.releaseAt } : {}),
     // Metadata only (the bytes ride the event archive, or a panel export
     // with "Include files"), and only when there is some — the same
     // byte-identical rule as hint.

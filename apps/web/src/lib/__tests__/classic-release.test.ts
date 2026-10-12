@@ -25,7 +25,37 @@ describe("visibleChallenges", () => {
   });
 });
 
+describe("isChallengeVisible with a release time", () => {
+  const at = new Date(NOW).toISOString();
+
+  it("hides a disabled challenge until its release instant, and shows it from that instant on", () => {
+    const c = { enabled: false, releaseAt: at };
+    expect(isChallengeVisible(c, NOW - 1)).toBe(false);
+    // The boundary instant itself is released (now >= releaseAt).
+    expect(isChallengeVisible(c, NOW)).toBe(true);
+    expect(isChallengeVisible(c, NOW + 1)).toBe(true);
+  });
+
+  it("keeps a disabled challenge with no release time hidden at any time", () => {
+    expect(isChallengeVisible({ enabled: false, releaseAt: null }, NOW + 1e12)).toBe(false);
+  });
+
+  it("treats an unreadable release time as no release time", () => {
+    expect(isChallengeVisible({ enabled: false, releaseAt: "not a date" }, NOW + 1e12)).toBe(false);
+  });
+
+  it("shows an enabled challenge whatever its release time says", () => {
+    expect(isChallengeVisible({ enabled: true, releaseAt: new Date(NOW + 60_000).toISOString() }, NOW)).toBe(true);
+  });
+});
+
 describe("challengeStatus", () => {
+  it("names a disabled challenge with a future release Scheduled, carrying the instant, and Live once it has passed", () => {
+    const releaseAt = new Date(NOW + 60_000).toISOString();
+    expect(challengeStatus({ enabled: false, releaseAt }, NOW)).toEqual({ kind: "scheduled", releaseAt });
+    expect(challengeStatus({ enabled: false, releaseAt }, NOW + 60_000)).toEqual({ kind: "live" });
+  });
+
   it("names a live challenge Live and a disabled one Disabled", () => {
     expect(challengeStatus({}, NOW)).toEqual({ kind: "live" });
     expect(challengeStatus({ enabled: false }, NOW)).toEqual({ kind: "disabled" });

@@ -1591,10 +1591,22 @@ challenge's own title to confirm (falling back to its id for a
 blank/whitespace-only title), the same pattern the quiz's delete and the
 master reset use.
 
-**A challenge can be hidden without deleting it.** Each challenge's form has
-a **Visible to contestants** switch (on for a new challenge), and every row in
-the list carries a status chip: **Live** or **Disabled**. Switch it off to
-stage a challenge before it goes up, or to pull a broken one mid-event. A
+**A challenge can be hidden without deleting it, or released on a
+schedule.** Each challenge's form has a **Visible to contestants** switch (on
+for a new challenge) and an optional **Release at** time, and every row in
+the list carries a status chip: **Live**, **Disabled**, or **Releases Oct 8,
+10:00 GMT-3**. Switch it off to stage a challenge before it goes up, or to
+pull a broken one mid-event. Set a release time for the day-2 and day-3
+drops: the challenge stays hidden until that instant and then goes live on
+its own. Nothing runs on the box to do it: every page read compares the
+release time with the server's clock, and grading and hint purchases compare
+it with Redis's clock, so a submission racing the instant is decided once.
+The time is entered on the event's clock (Event tab → Timezone, the same zone
+the schedule uses) and the form shows the UTC instant it stores. Setting a
+release time switches the challenge off until then; switching it on clears
+the release time; saving a time that has already passed saves it live.
+Give the steps of a story the same release time to release the story
+together: release is per challenge. A
 hidden challenge does not exist on the contestant side: it is left out of the
 board, its page is the same 404 an unknown id gets, its flag is refused like
 an unknown challenge's (no attempt spent, no cooldown, decided by the grading

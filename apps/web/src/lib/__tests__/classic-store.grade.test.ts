@@ -733,6 +733,38 @@ describe("hidden challenges", () => {
     expect(lastEval().argv[8]).toBe("web");
   });
 
+  it("decides a release by Redis's clock in the script, released AT the instant (strict < for hidden)", async () => {
+    await submitFlag("alice", "chal-1", "x");
+    const { script } = lastEval();
+    expect(script).toContain(`string.match(raw, '"releaseAtMs":(%d+)[,}]')`);
+    expect(script).toContain("redis.call('TIME')");
+    expect(script).toContain("return nowMs < tonumber(releaseMs)");
+    // The clock is read inside the visibility check, before any write.
+    expect(script.indexOf("redis.call('TIME')")).toBeLessThan(script.indexOf("HSET', KEYS[1]"));
+  });
+
+  it("defers a not-yet-released challenge's 'solved' to the script, and answers a released one early", async () => {
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    store({ solve: solveRow(10, "2026-10-01T00:00:00.000Z"), records: record("chal-1", { enabled: false, releaseAt: future }) });
+    evalReturns(["missing"]);
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "invalid" });
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    store({ solve: solveRow(10, "2026-10-01T00:00:00.000Z"), records: record("chal-1", { enabled: false, releaseAt: past }) });
+    mocks.upstashEval.mockClear();
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "solved" });
+    expect(evalCalls()).toHaveLength(0);
+  });
+
+  it("puts a story step back in the chain once its release time has passed", async () => {
+    const past = new Date(Date.now() - 1_000).toISOString();
+    store({
+      records: [...record("recon"), ...record("web", { enabled: false, releaseAt: past }), ...record("crypto")],
+      stories: JSON.stringify([{ id: "op", title: "Op", intro: "", steps: ["recon", "web", "crypto"] }]),
+    });
+    await submitFlag("alice", "crypto", "x");
+    expect(lastEval().argv[8]).toBe("web");
+  });
+
   it("fails closed when the records cannot be read", async () => {
     store({ recordsError: "NOAUTH" });
     expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "unavailable" });

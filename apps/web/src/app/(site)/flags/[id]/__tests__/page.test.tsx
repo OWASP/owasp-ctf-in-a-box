@@ -356,3 +356,25 @@ describe("a locked story step's own page (#463)", () => {
     expect(renderToStaticMarkup(await ClassicChallengePage(params("c1")))).toContain(record.title);
   });
 });
+
+// A hidden challenge does not exist on its own URL: the page is the same 404
+// an unknown id gets, the metadata carries nothing, and nothing is recorded.
+describe("a hidden challenge", () => {
+  it("is a 404 like an unknown id, records no first open, and has no metadata", async () => {
+    listChallenges.mockResolvedValue([{ ...record, enabled: false }]);
+    await expect(ClassicChallengePage(params("c1"))).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+    expect(attachmentMocks.listAttachments).not.toHaveBeenCalled();
+    expect(await generateMetadata(params("c1"))).toEqual({});
+  });
+
+  it("opens for an admin preview, so an organizer can check it before it goes live", async () => {
+    isAdminLogin.mockReturnValue(true);
+    launchLock.redirectIfNotLaunched.mockResolvedValue({ allowed: true, preview: true });
+    launchLock.getLaunchAccess.mockResolvedValue({ allowed: true, preview: true });
+    listChallenges.mockResolvedValue([{ ...record, enabled: false }]);
+    expect(renderToStaticMarkup(await ClassicChallengePage(params("c1")))).toContain("Robots Only");
+    launchLock.redirectIfNotLaunched.mockResolvedValue({ allowed: true, preview: false });
+    launchLock.getLaunchAccess.mockResolvedValue({ allowed: true, preview: false });
+  });
+});

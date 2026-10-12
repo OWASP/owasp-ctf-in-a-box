@@ -138,3 +138,19 @@ export function generateChallengeId(title: string, suffix: string = randomIdSuff
   if (CLASSIC_ID_RE.test(candidate)) return candidate;
   return `c-${randomIdSuffix()}`;
 }
+
+/** Lua: `classicHidden(raw)`, whether a stored challenge record (the JSON in
+ *  `ctf:classic:challenges`) is hidden from contestants. The grading and hint
+ *  scripts call it on the record they read, so the decision is made where
+ *  the write happens; `isChallengeVisible` (classic-release.ts) is the same
+ *  rule for the pages. A nil record is not "hidden": the caller's own
+ *  existence check answers it.
+ *
+ *  A plain find, not a JSON parse: every quote inside a stored string value
+ *  is escaped (`\"`), so the unescaped `"enabled":false` can only be the
+ *  field itself, the same reasoning as the `"caseSensitive":true` match in
+ *  SUBMIT_SCRIPT. */
+export const CLASSIC_HIDDEN_LUA = `local function classicHidden(raw)
+  if not raw then return false end
+  return string.find(raw, '"enabled":false', 1, true) ~= nil
+end`;

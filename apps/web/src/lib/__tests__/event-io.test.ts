@@ -354,3 +354,24 @@ describe("the eventImages section", () => {
     expect(JSON.stringify(errors)).not.toContain(PLANTED);
   });
 });
+
+// The event archive carries a Jeopardy challenge's visibility through the same
+// classic parser: a v4 section keeps it, an older one carrying it is refused
+// by position, never by value.
+describe("parseEventBundle and Jeopardy visibility", () => {
+  it("keeps enabled:false on a version 4 classic section", () => {
+    const bundle = { ...valid, classic: { ...valid.classic!, version: 4, challenges: [{ ...valid.classic!.challenges[0], enabled: false }] } };
+    const res = parseEventBundle(serializeEventBundle(bundle));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.classic?.challenges[0].enabled).toBe(false);
+  });
+
+  it("refuses the field on an older classic section", () => {
+    const bundle = { ...valid, classic: { ...valid.classic!, version: 3, challenges: [{ ...valid.classic!.challenges[0], enabled: false }] } };
+    const res = parseEventBundle(serializeEventBundle(bundle));
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.errors).toContainEqual({ where: "classic.challenges[0].enabled", message: '"enabled" needs bundle version 4' });
+    expect(JSON.stringify(res.errors)).not.toContain("ctfbox{One}");
+  });
+});

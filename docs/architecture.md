@@ -579,6 +579,28 @@ aggregate counters alone, mirroring `deleteQuestion`. Points already banked
 for a deleted challenge stay on the leaderboard; only the master reset
 clears them.
 
+**Visibility is a field on the public record, decided where it is read.** A
+challenge stored with `enabled: false` is hidden from contestants: it does not
+exist on their side. Nothing is scheduled or stored per reader; every reader
+asks one pure predicate, `isChallengeVisible` in `lib/classic-release.ts`,
+and filters before anything is built. `listChallenges` returns hidden
+challenges too, so each contestant caller filters through `visibleNow` (the
+board, the board-items API, the profile, the landing count, the leaderboard
+and display-mode denominators, the `/api/hints` texts) or asks
+`classicVisibility` (the challenge page, its metadata, the attachment
+download); `classic-release-coverage.test.ts` fails a caller that does
+neither. Story positions are built over the visible challenges, so a hidden
+step is skipped like a deleted one. The two scripts that write decide for
+themselves from the record they read: `SUBMIT_SCRIPT` reads the challenge's
+record first and answers a hidden one `missing` before the already-solved
+guard or any write, and the hint `REVEAL_SCRIPT` does the same from
+`KEYS[8]` before the story lock, the text or any charge (`CLASSIC_HIDDEN_LUA`
+in `classic-keys.ts`). The JS pre-check leaves a hidden challenge's
+"solved" and "cooldown" to the script, so neither confirms it exists. An
+admin preview's dry run skips the check. The admin list (`/api/admin/classic`)
+returns every challenge with its field, for the status chip and the form.
+See [ADR 67](decisions.md#adr-67-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock).
+
 ## AI data flow
 
 <img src="assets/diagrams/ai-data-flow.svg" alt="Animated diagram. The challenge page mints an Ed25519 launch token after four gates and embeds it in the launcher href. A solve can arrive three ways: an in-box Server Action that re-runs the gate order, an external submit endpoint authenticated by the token alone, or an external event endpoint authenticated by an HMAC signature then the token then a replay nonce. All three funnel into one shared atomic AWARD_SCRIPT. AI points are then ADDED to the leaderboard, never attributed, and a team's total is the union of its members' solved challenges, never their sum.">

@@ -4,13 +4,15 @@
 // reaches every one of them. A download route that re-derived this would let a
 // guessable URL skip whichever lock it forgot.
 //
-// Order mirrors the page: module → launch → team → exists → story lock. Reads
+// Order mirrors the page: module → launch → team → exists (and is visible)
+// → story lock. Reads
 // that fail THROW: the caller answers "not visible" (a page errors, a download
 // 404s) rather than serve what it cannot prove is open.
 
 import "server-only";
 import { isAdminLogin } from "@/lib/admin-auth";
 import { listChallenges, listStories } from "@/lib/classic-store";
+import { visibleChallenges } from "@/lib/classic-release";
 import { getTeamClassicSolvedIds } from "@/lib/classic-team";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { getLaunchAccess } from "@/lib/launch";
@@ -34,10 +36,15 @@ export async function classicVisibility(login: string | undefined, id: string): 
   // content; an admin is only told. Signed-out visitors read the board.
   if (login && !(await isAdminLogin(login)) && !(await hasTeam(login))) return { state: "teamless", preview };
   const all = await listChallenges();
-  if (!all.some((c) => c.id === id)) return { state: "missing", preview };
+  // A hidden challenge is `missing`, the answer an unknown id gets: on the
+  // contestant side it does not exist. An admin preview sees every challenge.
+  const known = preview ? all : visibleChallenges(all, Date.now());
+  if (!known.some((c) => c.id === id)) return { state: "missing", preview };
   // An admin preview opens every story step, so an organizer can check them.
+  // The chain is over the visible challenges, so a hidden step is skipped
+  // like a deleted one.
   if (!preview) {
-    const pos = storyPositions(await listStories(), new Set(all.map((c) => c.id))).get(id);
+    const pos = storyPositions(await listStories(), new Set(known.map((c) => c.id))).get(id);
     if (pos?.prereq && isLocked(pos, login ? await getTeamClassicSolvedIds(login) : new Set())) {
       return { state: "locked", preview };
     }

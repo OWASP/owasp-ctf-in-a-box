@@ -12,8 +12,9 @@ import type { AttachmentFile } from "@/lib/attachment-files";
 import type { Story } from "@/lib/story-lock";
 import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
-import { bundleVersionFor, type ClassicBundle } from "@/lib/classic-io";
+import { bundleVersionFor, carriesVisibility, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
+import { challengeStatus, type ChallengeStatus } from "@/lib/classic-release";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import { describeAdminError } from "@/components/admin/fetch";
 import { DELETE_CONFIRM_PHRASE_MAX, confirmPhrase } from "@/components/admin/confirm-phrase";
@@ -117,6 +118,9 @@ export type ChallengeDraft = {
   caseSensitive: boolean;
   /** Optional paid-hint text (#190). Empty = no hint (saving clears it). */
   hint: string;
+  /** "Visible to contestants". Off keeps the challenge out of every
+   *  contestant payload until it is switched back on. */
+  enabled: boolean;
 };
 
 /** The form's whole state: the editable draft plus the identity/position the
@@ -142,10 +146,11 @@ export type ChallengePayload = {
   flag: string;
   caseSensitive?: boolean;
   hint?: string;
+  enabled?: boolean;
 };
 
 export function emptyDraft(defaultCategory: string = ""): ChallengeDraft {
-  return { title: "", category: defaultCategory, description: "", points: "10", flag: "", caseSensitive: false, hint: "" };
+  return { title: "", category: defaultCategory, description: "", points: "10", flag: "", caseSensitive: false, hint: "", enabled: true };
 }
 
 /** A brand-new challenge, positioned at the end of the list. No id: one is
@@ -171,6 +176,8 @@ export function draftFromChallenge({ challenge: c, flag, hint }: AdminChallenge)
     // needs a real boolean — an `undefined` here makes React switch the input
     // from controlled to uncontrolled the first time it is ticked.
     caseSensitive: c.caseSensitive === true,
+    // Absent means live, the stored record's own rule.
+    enabled: c.enabled !== false,
   };
 }
 
@@ -232,6 +239,8 @@ export function payloadFromEditor(
     // through, so an unchanged challenge re-saved from this form produces a
     // byte-identical record.
     ...(d.caseSensitive ? { caseSensitive: true as const } : {}),
+    // Sent only when off, for the same one-representation reason.
+    ...(d.enabled ? {} : { enabled: false }),
   };
 }
 
@@ -258,6 +267,9 @@ export function payloadFromRow({ challenge: c, flag, hint }: AdminChallenge): Ch
     flag,
     hint: hint ?? "",
     ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
+    // A reorder re-saves the row, and the route stores an absent `enabled`
+    // as live: dropping it would publish a hidden challenge on a drag.
+    ...(c.enabled === false ? { enabled: false } : {}),
   };
 }
 
@@ -333,27 +345,31 @@ export function exportBundleFrom(
   );
   const attachmentFiles = files?.filter((f) => named.has(`${f.item}\n${f.sha256}`));
   const withFiles = attachmentFiles?.length ? attachmentFiles : undefined;
+  const challenges = rows.map(({ challenge: c, flag, hint }) => ({
+    id: c.id,
+    title: c.title,
+    category: c.category,
+    description: c.description,
+    points: c.points,
+    order: c.order,
+    flag,
+    // Present-only-when-set, mirroring the server's exportBundle exactly —
+    // this client-side path silently DROPPED both fields (CodeRabbit on
+    // #210 caught hint; caseSensitive had the same latent hole), and a
+    // re-import of such a bundle downgrades grading and deletes hints.
+    ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
+    ...(hint ? { hint } : {}),
+    // Visibility (v4), the server export's rule: a backup restores a hidden
+    // challenge hidden.
+    ...(c.enabled === false ? { enabled: false } : {}),
+    // #186: metadata only, and only when present — the server export's rule.
+    ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
+  }));
   return {
-    version: bundleVersionFor(withFiles !== undefined),
+    version: bundleVersionFor(withFiles !== undefined, challenges.some(carriesVisibility)),
     categories: [...categories],
     stories: stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) })),
-    challenges: rows.map(({ challenge: c, flag, hint }) => ({
-      id: c.id,
-      title: c.title,
-      category: c.category,
-      description: c.description,
-      points: c.points,
-      order: c.order,
-      flag,
-      // Present-only-when-set, mirroring the server's exportBundle exactly —
-      // this client-side path silently DROPPED both fields (CodeRabbit on
-      // #210 caught hint; caseSensitive had the same latent hole), and a
-      // re-import of such a bundle downgrades grading and deletes hints.
-      ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
-      ...(hint ? { hint } : {}),
-      // #186: metadata only, and only when present — the server export's rule.
-      ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
-    })),
+    challenges,
     ...(withFiles ? { attachmentFiles: withFiles } : {}),
   };
 }
@@ -389,4 +405,10 @@ export function solvesLabel(solves: ChallengeSolves | undefined): string | null 
     players === null ? null : `${players} player${players === 1 ? "" : "s"}`,
   ].filter((p): p is string => p !== null);
   return parts.length ? parts.join(" · ") : null;
+}
+
+/** The status chip a row shows: Live or Disabled. */
+export function statusChip(c: Challenge, nowMs: number): { kind: ChallengeStatus["kind"]; label: string } {
+  const status = challengeStatus(c, nowMs);
+  return { kind: status.kind, label: status.kind === "live" ? "Live" : "Disabled" };
 }

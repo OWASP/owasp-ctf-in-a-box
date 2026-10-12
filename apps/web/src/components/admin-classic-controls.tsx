@@ -140,6 +140,7 @@ import {
   payloadFromEditor,
   payloadFromRow,
   solvesLabel,
+  statusChip,
 } from "@/components/admin-classic-model";
 
 export * from "@/components/admin-classic-model";
@@ -202,6 +203,9 @@ export default function AdminClassicControls({
   const [attachmentMetaById, setAttachmentMetaById] = useState<Record<string, AttachmentMeta[]>>({});
   // #595: how many teams and players solved each challenge — same GET.
   const [solvesById, setSolvesById] = useState<Record<string, ChallengeSolves>>({});
+  // The clock the status chips read, taken once per mount: a chip is a
+  // statement about the stored state, not a live countdown.
+  const [nowMs] = useState(() => Date.now());
   function takeStories(next: Story[]) {
     setStories(next);
     setStoriesRev((n) => n + 1);
@@ -343,8 +347,17 @@ export default function AdminClassicControls({
       deleteConfirm={challengeDeleteConfirm}
       meta={(row) => {
         const solves = solvesLabel(solvesById[row.challenge.id]);
+        const chip = statusChip(row.challenge, nowMs);
         return (
           <>
+            <span
+              data-status={chip.kind}
+              className={`mr-1.5 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                chip.kind === "live" ? "border-[#14b8a6]/40 text-[#14b8a6]" : "border-white/15 text-zinc-400"
+              }`}
+            >
+              {chip.label}
+            </span>
             {row.challenge.points} pt
             {row.challenge.points === 1 ? "" : "s"}
             {solves && <> · {solves}</>}

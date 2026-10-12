@@ -11,11 +11,12 @@ import { SCORE_LOWERING_KEY, SCORE_REV_KEY } from "@/lib/leaderboard/fold-cache"
 import { HINTS_AVAILABLE, resolveHintConfig } from "@/lib/hint-config";
 import { appsById, type AppId } from "@/lib/apps";
 import { AI_HINTS_KEY, aiSolvesKey } from "@/lib/ai-keys";
-import { CLASSIC_HINTS_KEY, classicSolvesKey } from "@/lib/classic-keys";
+import { CLASSIC_CHALLENGES_KEY, CLASSIC_HIDDEN_LUA, CLASSIC_HINTS_KEY, classicSolvesKey } from "@/lib/classic-keys";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { HINTS_SPENT_KEY, userHintTimesKey } from "@/lib/team-keys";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
-import { listChallengeIds, listStories } from "@/lib/classic-store";
+import { listStories, readChallengeRecords } from "@/lib/classic-store";
+import { isChallengeVisible } from "@/lib/classic-release";
 import { storyLockLua, teamLockKeys } from "@/lib/classic-team";
 import { storyPositions } from "@/lib/story-lock";
 // Moved to hint-config.ts (#553): the leaderboard's penalty fold imports them
@@ -105,7 +106,8 @@ export function isHintTarget(value: string): value is HintTarget {
 // KEYS: [1]=user's hint set [2]=spend hash [3]=app hint catalogue [4]=purchase times
 //       [5]=the shared score revision and [6]=the score-lowering in-progress
 //       counter (#553, fold-cache.ts); [7]=the admin settings hash (#566: the
-//       live `paused` flag); [8..]=the story lock's (solves hash, user
+//       live `paused` flag); [8]=the Jeopardy challenge records, for the
+//       visibility check ([14]); [9..]=the story lock's (solves hash, user
 //       record) pair per teammate (#463, #602), when any.
 // ARGV: [1]=challengeId [2]=<app>/<id> [3]=login [4]=cost [5]=now (ISO)
 //       [6]="1" for a DRY RUN (#464 admin preview): read the text, write
@@ -145,6 +147,10 @@ export function isHintTarget(value: string): value is HintTarget {
 //       write and without the text. An owned hint is exempt (a re-view
 //       charges nothing).
 //       [13]=the default hint cost, "" to fall back to [4].
+//       [14]="1" when [1] is a Jeopardy challenge: its record in KEYS[8] is
+//       read and a HIDDEN challenge's hint is refused as `missing`, the same
+//       answer an unknown one gets, before anything else. An owned hint is
+//       not exempt: a hidden challenge does not exist, for its buyers too.
 //
 // THE PRICE is read here, from the settings hash (KEYS[7] `hintCost`), not
 // taken from [4]: the caller's settings read is a round-trip old, and the
@@ -157,9 +163,16 @@ export function isHintTarget(value: string): value is HintTarget {
 // call (case-folded, see the script) — what `balance` is derived from.
 // Exported for the live suite only.
 export const REVEAL_SCRIPT = `
--- The story lock (#463) comes FIRST: a locked step's hint is never read.
+${CLASSIC_HIDDEN_LUA}
+-- Visibility comes first: a hidden Jeopardy challenge's hint is refused like
+-- an unknown one, before the lock, the text or any write. The admin preview
+-- (dry run) skips it, like the lock.
+if ARGV[6] ~= '1' and ARGV[14] == '1' and classicHidden(redis.call('HGET', KEYS[8], ARGV[1])) then
+  return {'missing'}
+end
+-- The story lock (#463) comes next: a locked step's hint is never read.
 if ARGV[6] ~= '1' and ARGV[7] and ARGV[7] ~= '' then
-${storyLockLua(8, 7, 11)}
+${storyLockLua(9, 7, 11)}
   if not open then return {'locked'} end
 end
 -- Existence is a FIELD check, not a read: the text is the protected thing,
@@ -516,14 +529,20 @@ async function attemptReveal(
 
   // STORY LOCK (#463): a classic hint for a later story step is refused by
   // the script unless a teammate solved the step before it. Resolved here,
-  // enforced there; a stories/team read failure refuses (closed).
+  // enforced there; a stories/team read failure refuses (closed). The chain
+  // is the VISIBLE challenges' (a hidden step is skipped like a deleted one),
+  // with this challenge kept in so its own prerequisite is known; whether it
+  // is hidden is the script's call.
   let prereq = "";
   let lockKeys: string[] = [];
   let lockTeam = "";
   if (target === "classic") {
     try {
-      const [stories, existing] = await Promise.all([listStories(), listChallengeIds()]);
-      const pos = storyPositions(stories, existing).get(id);
+      const [stories, records] = await Promise.all([listStories(), readChallengeRecords()]);
+      const nowMs = Date.now();
+      const visible = new Set(records.filter((c) => isChallengeVisible(c, nowMs)).map((c) => c.id));
+      if (records.some((c) => c.id === id)) visible.add(id);
+      const pos = storyPositions(stories, visible).get(id);
       if (pos?.prereq) {
         prereq = pos.prereq;
         ({ keys: lockKeys, team: lockTeam } = await teamLockKeys(login));
@@ -546,8 +565,11 @@ async function attemptReveal(
         SCORE_REV_KEY,
         SCORE_LOWERING_KEY,
         // KEYS[7]: the settings hash, for the live `paused` flag at the
-        // charge boundary (#566). The lock keys follow it.
+        // charge boundary (#566).
         HINT_SETTINGS_KEY,
+        // KEYS[8]: the Jeopardy records, for the visibility check (ARGV[14]).
+        // The lock keys follow it.
+        CLASSIC_CHALLENGES_KEY,
         ...lockKeys,
       ],
       [
@@ -573,6 +595,8 @@ async function attemptReveal(
         quoted,
         // ARGV[13]: the default price, for a settings hash with none.
         String(HINT_COST),
+        // ARGV[14]: check the Jeopardy challenge's visibility.
+        target === "classic" ? "1" : "0",
       ],
     );
   } catch (err) {

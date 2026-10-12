@@ -82,6 +82,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 64 — sync's cursor lives in Redis, and an unreadable cursor holds the poller](#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)
 - [ADR 65 — An event adds its own logo and favicon; the OWASP mark stays](#adr-65-an-event-adds-its-own-logo-and-favicon-the-owasp-mark-stays)
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
+- [ADR 67 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-67-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -3957,3 +3958,60 @@ steps aside; `listSponsors` is not cached) and the event image metadata once
 fetched by the browser from their own routes. Another page that adds its own
 sponsor block joins `PAGES_WITH_OWN_SPONSOR_CREDIT`. Other pages are
 unchanged; a further surface is still its own decision.
+
+## ADR 67. A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock
+
+**Context.** Issue #189. A Jeopardy challenge had no visibility state: the
+moment an organizer saved one it was live for every contestant. A board
+could not be staged the night before, a broken flag could not be pulled
+without deleting its solves, and a multi-day event could not release
+challenges in rounds without someone authoring live in front of the board.
+
+**Decision.**
+- **Visibility is a field on the challenge's public record.** `enabled`
+  (absent means live, stored only when `false`), so every record, bundle and
+  archive written before it behaves as before.
+- **Hidden means the challenge does not exist on the contestant side.** Not
+  "not rendered": it is left out of every server payload. One pure
+  predicate, `isChallengeVisible` (`lib/classic-release.ts`), answers it for
+  every reader: the board, the challenge page and its metadata, the
+  board-items API, the profile, the landing count, the leaderboard and
+  display-mode denominators, the `/api/hints` texts, and the attachment
+  download (through `classicVisibility`, ADR 61). `listChallenges` returns
+  hidden challenges too; a source scan
+  (`classic-release-coverage.test.ts`) fails any caller that does not
+  filter. A story's chain is built over the visible challenges, so a hidden
+  step is skipped like a deleted one (ADR 60) and comes back in its stored
+  place.
+- **The scripts that write decide for themselves.** `SUBMIT_SCRIPT` reads
+  the challenge's record before anything else and answers a hidden one
+  `missing`, the reply an unknown id gets: before the already-solved guard,
+  so a solver of a withdrawn challenge is refused too, and before any
+  attempt is spent. The hint `REVEAL_SCRIPT` does the same from the record
+  in `KEYS[8]`, before the story lock, the text or a charge; an owned hint
+  is not exempt. The JS pre-check leaves a hidden challenge's "solved" and
+  "cooldown" refusals to the script, since either would confirm it exists.
+  An admin preview's dry run (ADR 59) skips the check, so an organizer can
+  test a hidden challenge before launch; the pre-launch lock still applies
+  on top for everyone else.
+- **Banked points stay.** Hiding a challenge is the delete dialog's promise:
+  solves and points already banked are kept. The challenge leaves the
+  solver's lists too, and the profile names the points in one line ("+N pts
+  from withdrawn challenges") so the list still adds up to the total.
+- **Bundles carry it.** Version 4, stamped only when some challenge is
+  hidden, so other exports stay importable on an older box. An older
+  version carrying the field is refused by position and rule, never by
+  value: an older box would otherwise import the challenge live.
+
+This was chosen over a separate "draft" store (a second place for a
+challenge to live, and a copy step that can lose fields) and over hiding in
+the components (a hand-made request, or a payload a component happens not to
+render, would still carry the challenge). It is not a three-reader rule:
+only the app reads Jeopardy challenges, so scorer and sync are untouched.
+
+**Consequences.** Every contestant reader pays one predicate call over a list
+it already read; the graders read the record they already read (the submit
+script) or one more `HGET` (the reveal script). The reveal script's lock
+keys move from `KEYS[8..]` to `KEYS[9..]`. A future reader of the challenge
+list has to filter, and the source scan says so if it does not.
+

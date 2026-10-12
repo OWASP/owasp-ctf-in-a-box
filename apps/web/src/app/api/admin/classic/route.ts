@@ -96,6 +96,7 @@ export const CHALLENGE_KEYS = new Set([
   "flag",
   "caseSensitive",
   "hint",
+  "enabled",
 ]);
 export const CATEGORIES_KEYS = new Set(["categories"]);
 /** The rename shape's outer and inner key sets (#304). */
@@ -134,6 +135,9 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
   // empty/whitespace hint is a deliberate CLEAR, passed through so the store
   // deletes the row.
   if (body.hint !== undefined && typeof body.hint !== "string") return null;
+  // Optional; a present non-boolean is malformed, for the caseSensitive
+  // reason: a string "false" would publish the challenge.
+  if (body.enabled !== undefined && typeof body.enabled !== "boolean") return null;
   return {
     id: body.id,
     title: body.title.trim(),
@@ -147,6 +151,8 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
     // and the bundle exports, so one challenge has one representation
     // whichever door it came through.
     ...(body.caseSensitive ? { caseSensitive: true as const } : {}),
+    // Same rule, the other way round: stored only when false.
+    ...(body.enabled === false ? { enabled: false } : {}),
   };
 }
 

@@ -24,6 +24,7 @@ import {
   NumberField,
   PositionReadout,
   TextField,
+  VisibleField,
 } from "@/components/admin/editor-fields";
 import {
   type ChallengeDraft,
@@ -111,6 +112,8 @@ export function ChallengeForm({
           </>
         }
       />
+
+      <VisibleField checked={draft.enabled} disabled={pending} onChange={(enabled) => set({ enabled })} />
 
       <HintField value={draft.hint} disabled={pending} onChange={(hint) => set({ hint })} />
 

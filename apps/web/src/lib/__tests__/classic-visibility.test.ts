@@ -9,7 +9,7 @@ const m = vi.hoisted(() => ({
   access: { allowed: true, preview: false },
   admins: new Set<string>(),
   teamed: new Set<string>(),
-  challenges: [{ id: "one" }, { id: "two" }] as { id: string }[],
+  challenges: [{ id: "one" }, { id: "two" }] as { id: string; enabled?: boolean }[],
   stories: [] as { id: string; title: string; intro: string; steps: string[] }[],
   solved: new Set<string>(),
 }));
@@ -33,6 +33,7 @@ beforeEach(() => {
   m.teamed = new Set(["alice"]);
   m.stories = [];
   m.solved = new Set();
+  m.challenges = [{ id: "one" }, { id: "two" }];
 });
 
 describe("classicVisibility", () => {
@@ -66,5 +67,38 @@ describe("classicVisibility", () => {
     m.access = { allowed: true, preview: true };
     m.stories = [{ id: "op", title: "Op", intro: "", steps: ["one", "two"] }];
     expect(await classicVisibility("boss", "two")).toEqual({ state: "visible", preview: true });
+  });
+});
+
+// A hidden challenge does not exist for a contestant: the page, its metadata
+// and the attachment route all get `missing`, the answer an unknown id gets.
+describe("classicVisibility and hidden challenges", () => {
+  it("answers missing for a disabled challenge, exactly like an unknown id", async () => {
+    m.challenges = [{ id: "one", enabled: false }, { id: "two" }];
+    expect(await classicVisibility("alice", "one")).toEqual(await classicVisibility("alice", "nope"));
+    expect((await classicVisibility(undefined, "one")).state).toBe("missing");
+  });
+
+  it("answers missing to a non-preview admin too: on the contestant side it does not exist", async () => {
+    m.admins = new Set(["boss"]);
+    m.challenges = [{ id: "one", enabled: false }];
+    expect((await classicVisibility("boss", "one")).state).toBe("missing");
+  });
+
+  it("lets an admin preview open a disabled challenge", async () => {
+    m.admins = new Set(["boss"]);
+    m.access = { allowed: true, preview: true };
+    m.challenges = [{ id: "one", enabled: false }];
+    expect(await classicVisibility("boss", "one")).toEqual({ state: "visible", preview: true });
+  });
+
+  it("closes a story chain around a hidden step, and reopens it in order when the step returns", async () => {
+    m.stories = [{ id: "op", title: "Op", intro: "", steps: ["one", "two", "three"] }];
+    m.challenges = [{ id: "one" }, { id: "two", enabled: false }, { id: "three" }];
+    m.solved = new Set(["one"]);
+    expect((await classicVisibility("alice", "three")).state).toBe("visible");
+    m.challenges = [{ id: "one" }, { id: "two" }, { id: "three" }];
+    expect((await classicVisibility("alice", "three")).state).toBe("locked");
+    expect((await classicVisibility("alice", "two")).state).toBe("visible");
   });
 });

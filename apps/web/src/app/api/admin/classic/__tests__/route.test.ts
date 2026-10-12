@@ -650,3 +650,21 @@ describe("POST /api/admin/classic — rename a category", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// A challenge's visibility comes through the same upsert: stored only when
+// off, and a malformed value refused rather than read as truthy.
+describe("POST /api/admin/classic — visibility", () => {
+  it("passes enabled:false to the store, and drops enabled:true (absent means live)", async () => {
+    upsertChallenge.mockResolvedValue(ADMIN_ROW);
+    await POST(adminReq("POST", { ...validPayload, enabled: false }));
+    expect(upsertChallenge).toHaveBeenLastCalledWith({ ...CHALLENGE, enabled: false }, "CTF{flag}", undefined);
+    await POST(adminReq("POST", { ...validPayload, enabled: true }));
+    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", undefined);
+  });
+
+  it("400s a non-boolean enabled without writing", async () => {
+    const res = await POST(adminReq("POST", { ...validPayload, enabled: "false" }));
+    expect(res.status).toBe(400);
+    expect(upsertChallenge).not.toHaveBeenCalled();
+  });
+});

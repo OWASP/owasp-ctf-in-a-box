@@ -1591,6 +1591,25 @@ challenge's own title to confirm (falling back to its id for a
 blank/whitespace-only title), the same pattern the quiz's delete and the
 master reset use.
 
+**A challenge can be hidden without deleting it.** Each challenge's form has
+a **Visible to contestants** switch (on for a new challenge), and every row in
+the list carries a status chip: **Live** or **Disabled**. Switch it off to
+stage a challenge before it goes up, or to pull a broken one mid-event. A
+hidden challenge does not exist on the contestant side: it is left out of the
+board, its page is the same 404 an unknown id gets, its flag is refused like
+an unknown challenge's (no attempt spent, no cooldown, decided by the grading
+script itself), its hint cannot be bought, its files do not download, and it
+is out of every leaderboard, profile and display-mode denominator. In a
+story, the chain closes up around it, the same as a deleted step, and
+switching it back on puts it back in its place. Solves already banked on it
+stay, like a deleted challenge's: the solver keeps the points, the challenge
+disappears from their lists too, and their profile shows one line, "+N pts
+from withdrawn challenges", so their total still adds up. An admin preview
+before launch can still open and test a hidden challenge. A bundle or event
+archive carries the switch (bundle version 4, stamped only when some
+challenge is hidden, so other exports still import on an older box), and an
+older bundle that carries it is refused rather than imported live.
+
 **Matching is whitespace-insensitive and — by default — case-insensitive,
 normalized identically on both the authoring and submission sides.** The
 stored flag is trimmed, then Unicode-NFC-normalized, then lowercased before

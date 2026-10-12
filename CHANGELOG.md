@@ -10,6 +10,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Added: hide a Jeopardy challenge without deleting it (#189).** Each
+  challenge has a "Visible to contestants" switch in `/admin`, and the list
+  shows a Live or Disabled chip per row. A hidden challenge does not exist
+  for contestants: it is absent from the board, its page and the expanded
+  leaderboard rows, its flag is refused like an unknown challenge's with no
+  attempt spent, its hint and files are refused, and it is out of every
+  denominator. A story closes up around a hidden step. Points already banked
+  on it stay, and the profile names them in one "+N pts from withdrawn
+  challenges" line. Bundles carrying the switch are version 4; an older
+  bundle carrying it is refused.
 - **Added: first blood on the Jeopardy board (#188).** Each visible tile and
   open story step names the contestant who solved it first. It is display
   only and changes no score. It is read from the current team members' solve

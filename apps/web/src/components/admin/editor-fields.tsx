@@ -173,6 +173,39 @@ export function CaseSensitiveField({
   );
 }
 
+/** "Visible to contestants": off keeps the challenge out of every contestant
+ *  payload (board, page, leaderboard, grading) until it is switched back on.
+ *  Solves already banked on it stay. */
+export function VisibleField({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-2">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-describedby="visible-help"
+        className="mt-0.5 h-4 w-4 flex-none accent-[#2563eb]"
+      />
+      <span className="text-sm text-muted">
+        <span className="text-white">Visible to contestants</span>
+        <span id="visible-help" className="block">
+          Off hides it everywhere a contestant looks: the board, its page, the leaderboard and grading answer as if
+          it did not exist. Points already banked on it stay.
+        </span>
+      </span>
+    </label>
+  );
+}
+
 /** The optional paid hint (#190). Empty = no hint; saving an emptied field is
  *  a deliberate clear. */
 export function HintField({ value, disabled, onChange }: ValueField) {

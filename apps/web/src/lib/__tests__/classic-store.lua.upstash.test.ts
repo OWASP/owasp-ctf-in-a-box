@@ -400,4 +400,53 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await seed(id, "flag{x}", 5);
     expect(await submit(id, "flag{x}", { prereq: freshId("p"), lockKeys: [K.solves, liveKey("classic", "user-none")], dry: true })).toEqual(["correct", "5", "dry"]);
   });
+  // A hidden challenge does not exist for a contestant: the script refuses it
+  // from the record it reads, before the already-solved guard and before any
+  // write, with the same `missing` an unknown id gets.
+  async function seedHidden(id: string, flag: string, points: number, extra: Record<string, unknown>) {
+    await load();
+    await pipeline([
+      ["HSET", K.flagnorm, id, keys.flagComparisonForm(flag, false)],
+      ["HSET", K.challenges, id, JSON.stringify({ id, title: id, points, ...extra })],
+    ]);
+  }
+
+  it("visibility: refuses a disabled challenge's right flag as missing, writing no attempt, solve or counter", async () => {
+    const id = freshId("hidden");
+    await seedHidden(id, "flag{h}", 30, { enabled: false });
+    expect(await submit(id, "flag{h}", { cooldownMs: 0 })).toEqual(["missing"]);
+    expect(await hget(K.attempts, id)).toBeNull();
+    expect(await hget(K.solves, id)).toBeNull();
+    expect(await hget(K.solvecount, id)).toBeNull();
+    expect(await hget(K.points, LOGIN)).toBeNull();
+  });
+
+  it("visibility: a solver of a withdrawn challenge gets missing, not already", async () => {
+    const id = freshId("withdrawn");
+    await seed(id, "flag{w}", 15);
+    expect(await submit(id, "flag{w}", { cooldownMs: 0 })).toEqual(["correct", "15"]);
+    await seedHidden(id, "flag{w}", 15, { enabled: false });
+    expect(await submit(id, "flag{w}", { nowMs: T0 + 1_000, cooldownMs: 0 })).toEqual(["missing"]);
+    // The banked solve stays.
+    expect(await hget(K.solves, id)).not.toBeNull();
+  });
+
+  it("visibility: a dry-run preview grades a disabled challenge and writes nothing", async () => {
+    const id = freshId("hidden-dry");
+    await seedHidden(id, "flag{d}", 12, { enabled: false });
+    expect(await submit(id, "flag{d}", { dry: true })).toEqual(["correct", "12", "dry"]);
+    expect(await hget(K.attempts, id)).toBeNull();
+  });
+
+  it("visibility: an enabled:true record grades as always", async () => {
+    const id = freshId("shown");
+    await seedHidden(id, "flag{s}", 7, { enabled: true });
+    expect(await submit(id, "flag{s}", { cooldownMs: 0 })).toEqual(["correct", "7"]);
+  });
+
+  it("visibility: a description quoting the field does not hide the challenge", async () => {
+    const id = freshId("quoted");
+    await seedHidden(id, "flag{q}", 9, { description: 'set "enabled":false to hide it' });
+    expect(await submit(id, "flag{q}", { cooldownMs: 0 })).toEqual(["correct", "9"]);
+  });
 });

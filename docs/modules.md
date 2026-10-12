@@ -292,7 +292,7 @@ Registered and selectable, and its contract, store layer, contestant surface
 the `/ai/[id]` challenge page (the launcher, and the in-box flag form for a
 `flag`/`both` challenge), plus a full authoring UI
 (`admin-ai-controls.tsx`) for mode/URL/categories/hint and the
-`aiCooldownSec` submission-cooldown knob. Its catalogue rides in the
+`aiCooldownSec` submission-cooldown and `aiMaxAttempts` attempt-cap knobs. Its catalogue rides in the
 whole-event archive bundle (`ai-io.ts`, the third section beside `classic`
 and `quiz`, carrying flags, hints, categories and per-challenge signing keys
 but never the launch keypair); the remaining gap is narrower — the AI tab has

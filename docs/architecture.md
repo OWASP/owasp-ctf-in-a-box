@@ -813,6 +813,7 @@ readable and writable while the stack is running, without a restart:
   | `quizMaxAttempts`, `quizRetryAfterMin` | the quiz retry gate |
   | `classicCooldownSec` | seconds between flag submissions on one classic challenge |
   | `aiCooldownSec` | the same, for an `ai` challenge's graded flag path — a signed event is never subject to it |
+  | `aiMaxAttempts` | graded flag submissions per contestant on one `ai` challenge (default 0, no cap) — a signed event is never capped |
   | `scoreCooldownMin` | minutes between SCORED runs on one PR (ADR 46) |
   | `teamMaxMembers` | players per team (ADR 45) |
   | `scoringStartsAt` / `scoringEndsAt` | the scheduled freeze window |

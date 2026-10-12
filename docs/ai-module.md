@@ -299,7 +299,7 @@ connection your `fetch` can't even inspect.
 |---|---|---|---|---|
 | 200 | `{"correct": true, "points": N, "already": false}` | Fresh solve recorded. | submit, event | Done. |
 | 200 | `{"correct": true, "points": 0, "already": true}` | The solve was already on record — this call banked nothing further. In practice you will rarely see this: a repeat submission is normally caught earlier as `409 solved` (below); this only appears on a genuine race between two near-simultaneous requests for the same player/challenge. | submit, event | Nothing to do; treat as success. |
-| 200 | `{"correct": false}` | Wrong flag. | submit | Let the player try again (subject to cooldown). |
+| 200 | `{"correct": false}` | Wrong flag. | submit | Let the player try again (subject to cooldown and, if the organizer set one, the attempt cap). |
 | 200 | `{"dryRun": true, "wouldAward": bool, "verdict": ..., "checks": [...]}` | Dry-run result (§6). | event | Inspect `wouldAward`. |
 | 400 | `{"error": "invalid-request"}` | Malformed/oversized JSON body, missing `token`, a `challengeId` that isn't a valid id, a non-boolean `dryRun`, or (submit only) a missing/empty/over-length flag. Body is capped at 8192 bytes, checked while reading — never fully buffered past the cap. | submit, event | Fix the request shape; this is a client bug, not worth retrying as-is. |
 | 400 | `{"error": "invalid"}` | The grading store's own refusal of the same class: the id or flag failed its validation after the route's checks passed, or the challenge vanished between the route's lookup and the grading script. Rare — the route normally catches these first as `invalid-request`/`unknown-challenge`. | submit, event | Treat exactly like `invalid-request`; if it persists, the challenge was probably just deleted. |
@@ -309,6 +309,7 @@ connection your `fetch` can't even inspect.
 | 401 | `{"error": "expired"}` | The launch token's `exp` has passed (>24h since mint). | submit, event, state | Same as above — a fresh launch link, not a retry. |
 | 403 | `{"error": "paused"}` | The event is frozen, before its scheduled scoring start, or not launched yet (no scoring start set). | submit, event | Retry later; this isn't an error in your integration. |
 | 403 | `{"error": "ended"}` | The event's scheduled scoring end has passed. Final — unlike `paused`, nothing will reopen; a freeze toggled on top of a passed end still answers `ended`. | submit, event | Tell the player the event is over; do not retry. |
+| 403 | `{"error": "exhausted"}` | This player has used every flag attempt the organizer allows on this challenge (`aiMaxAttempts`, §8). Final for this challenge: no `retryAt`, and the flag was not checked, so this says nothing about whether it was right. Graded/flag path only. | submit | Tell the player they have no attempts left here. Do not retry. A signed event (§5) is never capped. |
 | 403 | `{"error": "unavailable"}` | The AI module is not live: the organizer switched it off in `/admin`, or the box could not read its settings and fell back to the deployment's default modules, which never include AI. Checked before anything else, so it is the answer whatever the body, token or signature holds; nothing is read or written. The same body as the 503 below, but a 403. | submit, event | If the AI board should still be open, retry with backoff (a settings-read blip clears on its own). Stop once the organizer confirms the module is off, and tell the player the event's AI board is closed. |
 | 403 | `{"error": "no-team"}` | The player isn't on a team. | submit, event | Nothing to do on your side — team membership is the player's problem to fix in the box's UI. |
 | 404 | `{"error": "unknown-challenge"}` | The `challengeId` (or the token's `aud`) doesn't name a live challenge. | submit, event | Check the id you're using; it may have been deleted or never existed. |
@@ -321,7 +322,7 @@ connection your `fetch` can't even inspect.
 | 503 | `{"error": "error"}` | The grading step itself failed or returned something the box didn't recognize — distinct from `unavailable` but the same 503 and the same "nothing was written, retry" advice. | submit, event | Safe to retry with backoff. |
 
 `GET /api/ai/launch-key` and `GET /api/ai/state` never return `wrong-mode`,
-`replay`, `cooldown`, `no-team`, `solved`, `paused`, `ended`, `invalid-request`, or
+`replay`, `cooldown`, `exhausted`, `no-team`, `solved`, `paused`, `ended`, `invalid-request`, or
 `invalid-signature`, nor `403 unavailable` — they don't write anything and
 don't gate on team, pause, mode, or the module switch, so those reasons
 don't apply. `launch-key` in particular
@@ -349,6 +350,16 @@ addition to) reporting solves as events. Grading has the same forgiveness
 rules as the box's built-in `classic` module: flags compare case-insensitive
 unless the challenge is authored case-sensitive, and a correct/incorrect
 answer both count as an "attempt" toward the graded-path cooldown.
+
+The organizer can also cap those attempts (`aiMaxAttempts` on the AI tab).
+The default is no cap. With a cap of N, each player gets N graded
+submissions per challenge. The next one answers `403 {"error": "exhausted"}`
+without the flag being checked, so the refusal never says whether that flag
+was right. The cap is decided inside the same atomic grading step as the
+cooldown, so two simultaneous submissions at N-1 cannot both get through.
+Like the cooldown, it counts per player, not per team, and a signed event
+(§5) is never capped. A master reset or a per-player progress reset gives
+the attempts back.
 
 The box's own in-page form for this same challenge, when the organizer
 enables it, does **not** call this route — it grades through a server
@@ -389,7 +400,3 @@ Honestly, as shipped:
   a gap in which either the old key still verifies briefly or your posts
   fail until redeployed.
   ([#251](https://github.com/OWASP/owasp-ctf-in-a-box/issues/251))
-- **No per-challenge attempt cap.** The graded (flag) path only throttles
-  with the cooldown in §7/§8 — there is no ceiling on total attempts, only
-  on how fast they can come in.
-  ([#252](https://github.com/OWASP/owasp-ctf-in-a-box/issues/252))

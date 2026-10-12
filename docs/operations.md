@@ -2107,6 +2107,19 @@ their own cooldown on each challenge, so a team of N can submit N flags per
 period on the same challenge. That is by design (one player's guessing never
 locks out the team); size the cooldown with the team cap in mind.
 
+**The attempt cap** (`aiMaxAttempts`, **Max attempts** on the AI tab) limits
+how many graded flags each contestant may submit on one challenge. Blank
+means the default, which is **no cap**, so an event that never touches it
+behaves exactly as before. `0` also means unlimited. Any value in
+`[0, 1000]` is accepted. Once a contestant has used them all, every further flag on
+that challenge is refused as `exhausted` ("No attempts left on this
+challenge.") without being checked. Like the cooldown it counts **per
+contestant, while points count per team**: a team of N members gets N times
+the cap on each challenge. It applies to the graded flag path only; a signed
+event is never capped. Lowering it mid-event takes effect at once, including
+for contestants already past the new number. The master reset and
+per-player **Reset progress** (Support tab) both clear the attempt counts it reads.
+
 **What contestants see:** the board (`/ai`) lists every challenge with its
 category, points, and a 💡 marker where a hint is on offer. Opening one
 (`/ai/[id]`) mints that contestant a **personal, one-click launch link** —

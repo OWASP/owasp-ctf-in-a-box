@@ -17,6 +17,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   exact tie goes to the login that sorts first, ignoring case. A progress
   reset, a deleted contestant or a removal from a team passes their first
   bloods to the next solver. A locked story step shows none.
+- **Added: an optional per-challenge attempt cap for the AI module (#252).**
+  **Max attempts** on the AI tab (`aiMaxAttempts`) limits how many graded
+  flags each contestant may submit on one AI challenge. Once they are used,
+  further flags are refused with `403 {"error": "exhausted"}` ("No attempts
+  left on this challenge.") without being checked, so the refusal never says
+  whether the flag was right. The award script decides it in the same atomic
+  step as the cooldown, so two simultaneous submissions cannot both take the
+  last attempt. It counts per contestant while points count per team, never
+  applies to signed events, travels in the event archive, and is cleared by
+  the master reset and per-player reset. The default is no cap, so existing
+  events behave as before.
 - **Fixed: the Insights CSV garbled accented titles in Excel (#624).**
   "¿Qué dice señor?" opened as "Â¿QuÃ© dice seÃ±or?": the file had no
   byte-order mark, so Excel read it in the system code page. The export now

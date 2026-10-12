@@ -1517,9 +1517,17 @@ challenge filed under it as part of the same operation. Renaming to a name
 another category already holds is refused rather than merged — merging two
 categories is a different and lossier thing to ask for. Changing only the
 capitalisation of the same category ("web" to "Web") is a rename, not a
-clash. If a rename is interrupted part-way, run the same rename again: it
-picks up from wherever it stopped, and no challenge vanishes from the panel
-in the meantime. The challenge list is grouped under
+clash. A rename is all-or-nothing: the list and every challenge in the
+category change together, so no challenge is ever left under a name the
+list no longer holds.
+
+**Two organizers can edit categories at once without losing either edit.**
+Every category change is checked against the list as it stood when you
+made it. If someone else changed the list in the meantime, your change is
+refused rather than written over theirs: the panel says the list changed,
+reloads it, and you make your change again against the current list. A
+rename does that retry by itself, so a category someone added while you
+renamed another is kept. The challenge list is grouped under
 those categories, each heading carrying its count. A challenge itself has a title, a
 category (picked from that list), a Markdown description (a live preview
 renders alongside the box as you type), a point value, and a flag.
@@ -1929,10 +1937,10 @@ Renaming onto a name another category already holds is **refused, not merged**
 — including when the two differ only in capitalisation, since two casings would
 split one category across two headings on the board. Changing only the
 capitalisation of the category being renamed ("jailbreak" to "Jailbreak") is a
-rename and is allowed. If a rename is interrupted part-way, **run the same
-rename again**: the challenges move before the list is rewritten, so a repeat
-finishes from wherever it stopped, and no challenge disappears from the panel
-in the meantime.
+rename and is allowed. A rename is all-or-nothing — the list and the
+challenges change together — and, as on Jeopardy, a category change that
+another organizer's edit beat is refused and the panel reloads the list
+rather than overwriting theirs.
 
 A challenge itself has a title, a category, a Markdown description (live
 preview alongside the box, same as classic's), a point value, and one more

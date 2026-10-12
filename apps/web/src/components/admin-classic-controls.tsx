@@ -21,8 +21,8 @@
 //     body cut, because a bundle with files is larger; anything else is parsed as a challenge-plus-flag upsert
 //     against `CHALLENGE_KEYS` (see that route's header comment). The shared
 //     `useCategoryEditor` (components/admin) builds every categories POST as
-//     exactly `{categories}` and nothing else — a stray extra key would fall
-//     through to the next parser in line and 400.
+//     exactly `{categories, expected}` and nothing else — a stray extra key
+//     would fall through to the next parser in line and 400.
 //   - Categories can be removed only while nothing references them. The
 //     store itself does not enforce this (`setCategories` just validates and
 //     dedupes the list), so the refusal lives here, client-side, computed
@@ -254,7 +254,7 @@ export default function AdminClassicControls({
     // screen still carry the old name until the list is re-read. Without
     // this the panel keeps grouping them under a heading the store no
     // longer has.
-    afterRename: resource.reload,
+    reload: resource.reload,
   });
 
   // The bulk import/export flow (textarea, file pick, `{import}` POST,

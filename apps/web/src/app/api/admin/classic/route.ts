@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
+import { CategoryConflictError } from "@/lib/category-cas";
 import {
   ClassicValidationError,
   deleteChallenge,
@@ -49,8 +50,9 @@ import { importBundleResponse } from "@/app/api/admin/classic/import-response";
  * 400, never a partially-trusted write.
  *
  * POST carries FIVE distinct payload shapes on the SAME route rather than a
- * separate endpoint per resource: a body with exactly one key, `categories`
- * (an array), replaces the category list; one with exactly `renameCategory`
+ * separate endpoint per resource: a body with exactly `categories` and
+ * `expected` (two arrays: the new list, and the list it was edited from)
+ * replaces the category list; one with exactly `renameCategory`
  * ({from, to}) renames a single category and carries its challenges across
  * (#304 — the array shape cannot express that, since a renamed entry is
  * indistinguishable from one removed plus one added); one with exactly
@@ -97,7 +99,10 @@ export const CHALLENGE_KEYS = new Set([
   "caseSensitive",
   "hint",
 ]);
-export const CATEGORIES_KEYS = new Set(["categories"]);
+/** `expected` is required, not optional: it is what lets the store refuse a
+ *  replace built from a list another organizer has since changed. A body
+ *  without it could only ever be a blind overwrite. */
+export const CATEGORIES_KEYS = new Set(["categories", "expected"]);
 /** The rename shape's outer and inner key sets (#304). */
 export const RENAME_CATEGORY_KEYS = new Set(["renameCategory"]);
 export const RENAME_FIELD_KEYS = new Set(["from", "to"]);
@@ -150,20 +155,23 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
   };
 }
 
-/** Recognizes the OTHER POST shape: a body carrying exactly one key,
- *  `categories`, an array of strings. Deliberately exact (`hasOnlyKeys` PLUS
- *  requiring the key present, not merely "no other keys") rather than merely
+/** Recognizes the OTHER POST shape: a body carrying exactly `categories` and
+ *  `expected`, both arrays of strings. Deliberately exact (`hasOnlyKeys` PLUS
+ *  requiring both keys present, not merely "no other keys") rather than merely
  *  "has a categories key" — that is what keeps this shape and the challenge
  *  shape mutually exclusive without a discriminator field. A body carrying
  *  BOTH `categories` and any challenge key fails `hasOnlyKeys` here (an
  *  unrecognized key for this shape) and also fails `parseChallengePayload`'s
  *  own `hasOnlyKeys` (an unrecognized key there), so it falls through to the
  *  400 catch-all rather than being silently treated as either shape. */
-function parseCategoriesPayload(body: unknown): string[] | null {
+function parseCategoriesPayload(body: unknown): { categories: string[]; expected: string[] } | null {
   if (!isPlainObject(body) || !hasOnlyKeys(body, CATEGORIES_KEYS)) return null;
-  if (!Array.isArray(body.categories)) return null;
-  if (!body.categories.every((c) => typeof c === "string")) return null;
-  return body.categories as string[];
+  if (!isStringArray(body.categories) || !isStringArray(body.expected)) return null;
+  return { categories: body.categories, expected: body.expected };
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((c) => typeof c === "string");
 }
 
 /** Recognizes the FOURTH POST shape: a body carrying exactly one key,
@@ -215,13 +223,20 @@ function parseStoriesPayload(body: unknown): Story[] | null {
 /** Maps an error thrown by `upsertChallenge`/`deleteChallenge`/`setCategories`
  *  to a response: a `ClassicValidationError` means the caller's payload was
  *  genuinely bad (bad id, unknown category, non-integer points, empty flag,
- *  too many categories, ...) -> 400 with the message and field. Anything else
+ *  too many categories, ...) -> 400 with the message and field. A
+ *  `CategoryConflictError` means a category write was refused because the
+ *  list changed since the organizer loaded it -> 409. Anything else
  *  is the store's own plain `Error` for a real Upstash/infra failure -> 503,
  *  so an organizer is never told "bad request" for a problem that was never
  *  theirs to fix. */
 function errorResponse(err: unknown): Response {
   if (err instanceof ClassicValidationError) {
     return NextResponse.json({ error: err.message, field: err.field }, { status: 400 });
+  }
+  // The list changed under the organizer and nothing was written: theirs to
+  // resolve by reloading, so neither a bad request nor the store being down.
+  if (err instanceof CategoryConflictError) {
+    return NextResponse.json({ error: err.message, field: "categories" }, { status: 409 });
   }
   console.error("[admin/classic] store write failed:", adminErrorLabel(err));
   return NextResponse.json({ error: "classic store write failed" }, { status: 503 });
@@ -285,7 +300,7 @@ export async function POST(request: Request) {
   if (categoriesPayload) {
     let categories: string[];
     try {
-      categories = await setCategories(categoriesPayload);
+      categories = await setCategories(categoriesPayload.categories, categoriesPayload.expected);
     } catch (err) {
       return errorResponse(err);
     }

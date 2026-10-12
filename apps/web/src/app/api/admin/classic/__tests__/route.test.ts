@@ -110,6 +110,8 @@ import {
   STORIES_KEYS,
 } from "@/app/api/admin/classic/route";
 
+import { CATEGORY_CONFLICT_MESSAGE, CategoryConflictError } from "@/lib/category-cas";
+
 const adminReq = (method: "GET" | "POST" | "DELETE", body?: unknown) =>
   new Request("http://x/api/admin/classic", {
     method,
@@ -379,30 +381,49 @@ describe("POST /api/admin/classic — challenge upsert", () => {
 describe("POST /api/admin/classic — categories", () => {
   it("401s for no session, without writing anything", async () => {
     requireAdmin.mockResolvedValue({ ok: false, status: 401 });
-    const res = await POST(adminReq("POST", { categories: ["Web"] }));
+    const res = await POST(adminReq("POST", { categories: ["Web"], expected: [] }));
     expect(res.status).toBe(401);
     expect(setCategories).not.toHaveBeenCalled();
   });
 
   it("400s a categories array with a non-string entry", async () => {
-    const res = await POST(adminReq("POST", { categories: ["Web", 1] }));
+    const res = await POST(adminReq("POST", { categories: ["Web", 1], expected: [] }));
     expect(res.status).toBe(400);
+    expect(setCategories).not.toHaveBeenCalled();
+  });
+
+  it("400s a list replace that does not say which list it was edited from", async () => {
+    // Without `expected` there is nothing to compare the stored list against,
+    // and the write could only be the blind overwrite the guard exists to stop.
+    for (const body of [{ categories: ["Web"] }, { categories: ["Web"], expected: "Web" }, { categories: ["Web"], expected: [1] }]) {
+      const res = await POST(adminReq("POST", body));
+      expect(res.status, JSON.stringify(body)).toBe(400);
+    }
     expect(setCategories).not.toHaveBeenCalled();
   });
 
   it("maps a validation error to 400 and a store failure to 503", async () => {
     setCategories.mockRejectedValue(new ClassicValidationError("categories", "too many"));
-    expect((await POST(adminReq("POST", { categories: ["Web"] }))).status).toBe(400);
+    expect((await POST(adminReq("POST", { categories: ["Web"], expected: [] }))).status).toBe(400);
 
     setCategories.mockRejectedValue(new Error("upstash down"));
-    expect((await POST(adminReq("POST", { categories: ["Web"] }))).status).toBe(503);
+    expect((await POST(adminReq("POST", { categories: ["Web"], expected: [] }))).status).toBe(503);
   });
 
-  it("replaces categories, echoes the stored list, and writes an audit line", async () => {
+  it("409s a stale edit with a reload-and-retry message, and audits nothing", async () => {
+    setCategories.mockRejectedValue(new CategoryConflictError());
+    const res = await POST(adminReq("POST", { categories: ["Web", "Crypto"], expected: ["Web"] }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: CATEGORY_CONFLICT_MESSAGE, field: "categories" });
+    expect(CATEGORY_CONFLICT_MESSAGE).toMatch(/reload and try again/i);
+    expect(writeAdminAudit).not.toHaveBeenCalled();
+  });
+
+  it("replaces categories against the list the organizer edited, echoes it, and writes an audit line", async () => {
     setCategories.mockResolvedValue(["Web", "Crypto"]);
-    const res = await POST(adminReq("POST", { categories: ["Web", "Crypto"] }));
+    const res = await POST(adminReq("POST", { categories: ["Web", "Crypto"], expected: ["Web"] }));
     expect(res.status).toBe(200);
-    expect(setCategories).toHaveBeenCalledWith(["Web", "Crypto"]);
+    expect(setCategories).toHaveBeenCalledWith(["Web", "Crypto"], ["Web"]);
     expect(await res.json()).toEqual({ categories: ["Web", "Crypto"] });
     expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-categories", { count: 2 });
   });
@@ -648,5 +669,13 @@ describe("POST /api/admin/classic — rename a category", () => {
     renameCategory.mockRejectedValue(new ClassicValidationError("categories", '"Web" already exists.'));
     const res = await POST(adminReq("POST", { renameCategory: { from: "Crypto", to: "Web" } }));
     expect(res.status).toBe(400);
+  });
+
+  it("409s a rename that kept losing the race, and audits nothing", async () => {
+    renameCategory.mockRejectedValue(new CategoryConflictError());
+    const res = await POST(adminReq("POST", { renameCategory: { from: "Webb", to: "Web" } }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: CATEGORY_CONFLICT_MESSAGE, field: "categories" });
+    expect(writeAdminAudit).not.toHaveBeenCalled();
   });
 });

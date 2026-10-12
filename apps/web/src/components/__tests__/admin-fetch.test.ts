@@ -58,11 +58,14 @@ describe("sendJson", () => {
     expect(result).toEqual({ ok: true, status: 200, data: { challenge: { id: "x" } } });
   });
 
-  it("returns the described error for a non-2xx reply", async () => {
+  it("returns the described error for a non-2xx reply, with the reply's status", async () => {
+    // The status rides along so a caller can act on one refusal in
+    // particular — the category editor re-reads its lists on a 409.
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(400, { error: "bad flag" })));
     await expect(sendJson("/api/admin/ai", { method: "POST", body: {} }, describe503)).resolves.toEqual({
       ok: false,
       message: "bad flag",
+      status: 400,
     });
   });
 

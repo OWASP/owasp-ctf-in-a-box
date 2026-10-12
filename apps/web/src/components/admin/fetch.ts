@@ -37,7 +37,10 @@ export function describeAdminError(status: number, message: string | undefined, 
  *  already applied. What the module panels export as `describeXError`. */
 export type DescribeError = (status: number, message?: string) => string;
 
-export type SendResult<T> = { ok: true; status: number; data: T } | { ok: false; message: string };
+/** A failure carries the reply's `status` when there was a reply, so a caller
+ *  can act on a specific refusal (a 409 conflict re-reads the list); a network
+ *  failure has none. */
+export type SendResult<T> = { ok: true; status: number; data: T } | { ok: false; message: string; status?: number };
 
 /** One JSON request with the headers every module write uses. A non-2xx
  *  reply is resolved to the described message; a network failure to
@@ -57,7 +60,7 @@ export async function sendJson<T>(
       body: JSON.stringify(init.body),
     });
     const data = await parseJson<T & { error?: string }>(res);
-    if (!res.ok) return { ok: false, message: describe(res.status, data.error) };
+    if (!res.ok) return { ok: false, message: describe(res.status, data.error), status: res.status };
     return { ok: true, status: res.status, data };
   } catch {
     return { ok: false, message: NETWORK_ERROR };

@@ -7,8 +7,10 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import CategoryEditor from "@/components/admin/category-editor";
 import {
+  CATEGORIES_RELOADED_MESSAGE,
   addCategoryDecision,
   categoriesRequestBody,
+  categoryWriteFailureMessage,
   moveInList,
   removeCategoryDecision,
   renameCategoryDecision,
@@ -18,12 +20,35 @@ import {
 const noop = () => {};
 
 describe("categoriesRequestBody", () => {
-  it("carries exactly one key, categories, as a fresh array", () => {
+  it("carries exactly the new list and the list it was edited from, as fresh arrays", () => {
     const input = ["Web", "Crypto"];
-    const body = categoriesRequestBody(input);
-    expect(Object.keys(body)).toEqual(["categories"]);
+    const before = ["Web"];
+    const body = categoriesRequestBody(input, before);
+    expect(Object.keys(body)).toEqual(["categories", "expected"]);
     expect(body.categories).toEqual(input);
     expect(body.categories).not.toBe(input);
+    expect(body.expected).toEqual(before);
+    expect(body.expected).not.toBe(before);
+  });
+});
+
+describe("categoryWriteFailureMessage", () => {
+  it("tells the organizer the list was re-read when another edit won the race", () => {
+    expect(categoryWriteFailureMessage({ status: 409, message: "server words" }, true)).toBe(
+      CATEGORIES_RELOADED_MESSAGE,
+    );
+    expect(CATEGORIES_RELOADED_MESSAGE).toMatch(/changed/i);
+    expect(CATEGORIES_RELOADED_MESSAGE).toMatch(/try again/i);
+  });
+
+  it("keeps the server's own sentence when nothing was re-read, or for any other failure", () => {
+    expect(categoryWriteFailureMessage({ status: 409, message: "Reload and try again." }, false)).toBe(
+      "Reload and try again.",
+    );
+    expect(categoryWriteFailureMessage({ status: 400, message: "too long" }, true)).toBe("too long");
+    expect(categoryWriteFailureMessage({ message: "Couldn't reach the server — try again." }, true)).toBe(
+      "Couldn't reach the server — try again.",
+    );
   });
 });
 

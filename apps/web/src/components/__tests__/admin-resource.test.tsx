@@ -94,7 +94,11 @@ describe("postRow", () => {
 
   it("surfaces a 400 as the store's own message", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(400, { error: "title required" })));
-    await expect(postRow(config, { id: "a", title: "", order: 1 })).resolves.toEqual({ ok: false, message: "title required" });
+    await expect(postRow(config, { id: "a", title: "", order: 1 })).resolves.toEqual({
+      ok: false,
+      message: "title required",
+      status: 400,
+    });
   });
 });
 

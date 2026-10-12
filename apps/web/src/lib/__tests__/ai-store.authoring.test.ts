@@ -6,7 +6,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ upstashEval: vi.fn(), upstashPipeline: vi.fn() }));
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
+vi.mock("@/lib/upstash", async () => ({
+  upstashEval: mocks.upstashEval,
+  upstashPipeline: mocks.upstashPipeline,
+  assertPipelineOk: (await vi.importActual<typeof import("@/lib/upstash")>("@/lib/upstash")).assertPipelineOk,
+}));
 
 import {
   AiValidationError,
@@ -18,6 +22,12 @@ import {
   upsertAiChallenge,
   type AiChallenge,
 } from "@/lib/ai-store";
+import {
+  CATEGORY_WRITE_ATTEMPTS,
+  CategoryConflictError,
+  RENAME_CATEGORY_SCRIPT,
+  SET_CATEGORIES_SCRIPT,
+} from "@/lib/category-cas";
 
 const pipelineCalls = (): (string | number)[][][] =>
   mocks.upstashPipeline.mock.calls.map((call) => call[0] as (string | number)[][]);
@@ -307,24 +317,59 @@ describe("clearAiChallenges", () => {
 });
 
 describe("setAiCategories", () => {
-  it("trims, dedupes and stores the organizer's order", async () => {
-    writeReply(1);
-    expect(await setAiCategories([" Injection ", "Jailbreak", "Injection"])).toEqual(["Injection", "Jailbreak"]);
-    expect(pipelineCalls()[0]).toEqual([
-      ["SET", "ctf:ai:categories", JSON.stringify(["Injection", "Jailbreak"])],
+  it("trims, dedupes and stores the organizer's order through a guarded write", async () => {
+    mocks.upstashPipeline
+      .mockResolvedValueOnce([{ result: JSON.stringify(["Injection"]) }])
+      .mockResolvedValueOnce([{ result: 1 }]);
+    expect(await setAiCategories([" Injection ", "Jailbreak", "Injection"], ["Injection"])).toEqual([
+      "Injection",
+      "Jailbreak",
+    ]);
+    expect(pipelineCalls()[0]).toEqual([["GET", "ctf:ai:categories"]]);
+    expect(pipelineCalls()[1]).toEqual([
+      [
+        "EVAL",
+        SET_CATEGORIES_SCRIPT,
+        1,
+        "ctf:ai:categories",
+        "1",
+        JSON.stringify(["Injection"]),
+        JSON.stringify(["Injection", "Jailbreak"]),
+      ],
     ]);
   });
 
   it("rejects an over-long name and an over-long list", async () => {
-    await expect(setAiCategories(["x".repeat(65)])).rejects.toThrow(AiValidationError);
-    await expect(setAiCategories(Array.from({ length: 51 }, (_, i) => `c${i}`))).rejects.toThrow(AiValidationError);
+    await expect(setAiCategories(["x".repeat(65)], [])).rejects.toThrow(AiValidationError);
+    await expect(setAiCategories(Array.from({ length: 51 }, (_, i) => `c${i}`), [])).rejects.toThrow(
+      AiValidationError,
+    );
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+  });
+
+  it("refuses with a conflict, writing nothing, when another organizer changed the list", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Injection", "Jailbreak"]) }]);
+    await expect(setAiCategories(["Injection", "Recon"], ["Injection"])).rejects.toBeInstanceOf(
+      CategoryConflictError,
+    );
+    expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses with a conflict when the guarded write keeps losing the race", async () => {
+    mocks.upstashPipeline.mockImplementation(async (commands: (string | number)[][]) =>
+      commands[0][0] === "GET" ? [{ result: JSON.stringify(["Injection"]) }] : [{ result: 0 }],
+    );
+    await expect(setAiCategories(["Injection", "Recon"], ["Injection"])).rejects.toBeInstanceOf(
+      CategoryConflictError,
+    );
+    expect(pipelineCalls().filter((c) => c[0][0] === "EVAL")).toHaveLength(CATEGORY_WRITE_ATTEMPTS);
   });
 });
 
-// #304, and the two conditions CodeRabbit caught on it: a rename must refuse a
-// case-insensitive clash (the panel forbids one, and two casings would split a
-// category's challenges across two headings), and it must fail closed when the
-// challenge read fails rather than rewriting the list while moving nothing.
+// A rename must refuse a case-insensitive clash (the panel forbids one, and two
+// casings would split a category's challenges across two headings), and it
+// must fail closed when the challenge read fails rather than rewriting the list
+// while moving nothing.
 describe("renameAiCategory", () => {
   const challenge = (id: string, category: string) => ({
     id,
@@ -337,49 +382,96 @@ describe("renameAiCategory", () => {
     urlTemplate: "https://example.test/{token}",
   });
 
-  it("moves the category's challenges and rewrites the list", async () => {
+  function readReply(categories: string[], challenges: ReturnType<typeof challenge>[]) {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: JSON.stringify(categories) },
+      { result: challenges.flatMap((c) => [c.id, JSON.stringify(c)]) },
+    ]);
+  }
+  const evalCalls = () => pipelineCalls().filter((cmds) => cmds[0][0] === "EVAL");
+
+  it("moves the category's challenges and rewrites the list in one script", async () => {
     mocks.upstashPipeline.mockReset();
-    mocks.upstashPipeline
-      .mockResolvedValueOnce([{ result: JSON.stringify(["Jailbreakk", "Injection"]) }])
-      .mockResolvedValueOnce([{ result: ["a", JSON.stringify(challenge("a", "Jailbreakk"))] }])
-      .mockResolvedValue([{ result: "OK" }]);
+    readReply(["Jailbreakk", "Injection"], [challenge("a", "Jailbreakk")]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }]);
 
     expect(await renameAiCategory("Jailbreakk", "Jailbreak")).toEqual({
       categories: ["Jailbreak", "Injection"],
       moved: 1,
     });
+    expect(pipelineCalls()[0]).toEqual([["GET", "ctf:ai:categories"], ["HGETALL", "ctf:ai:challenges"]]);
+    const [cmd] = evalCalls()[0];
+    expect(cmd.slice(0, 10)).toEqual([
+      "EVAL",
+      RENAME_CATEGORY_SCRIPT,
+      2,
+      "ctf:ai:categories",
+      "ctf:ai:challenges",
+      "1",
+      JSON.stringify(["Jailbreakk", "Injection"]),
+      JSON.stringify(["Jailbreak", "Injection"]),
+      "Jailbreakk",
+      "a",
+    ]);
+    expect(JSON.parse(String(cmd[11]))).toEqual(challenge("a", "Jailbreak"));
   });
 
   it("refuses a name another category already holds, ignoring case", async () => {
-    // An earlier draft compared exactly, mirroring setAiCategories' own
-    // case-sensitive dedupe. That let a rename store ["Injection", "injection"]
-    // — which the panel refuses and which would split one category in two.
+    // A case-sensitive comparison, mirroring setAiCategories' own dedupe, would
+    // let a rename store ["Injection", "injection"] — which the panel refuses
+    // and which would split one category in two.
     mocks.upstashPipeline.mockReset();
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Injection", "Jailbreak"]) }]);
+    readReply(["Injection", "Jailbreak"], []);
     await expect(renameAiCategory("Jailbreak", "injection")).rejects.toBeInstanceOf(AiValidationError);
+    expect(evalCalls()).toHaveLength(0);
   });
 
   it("still allows a change of spelling on the entry being renamed", async () => {
     mocks.upstashPipeline.mockReset();
-    mocks.upstashPipeline
-      .mockResolvedValueOnce([{ result: JSON.stringify(["injection"]) }])
-      .mockResolvedValueOnce([{ result: [] }])
-      .mockResolvedValue([{ result: "OK" }]);
+    readReply(["injection"], []);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }]);
 
     expect((await renameAiCategory("injection", "Injection")).categories).toEqual(["Injection"]);
   });
 
-  it("does NOT rewrite the list when the challenge read failed", async () => {
-    // `listAiChallenges` reads `.result` without checking `.error`, so a failed
-    // HGETALL looks like "nothing uses this category" — and renaming on top of
-    // that orphans every challenge in it onto a name that no longer exists,
-    // with no source left for a retry to find.
+  it("moves the challenges filed under the STORED spelling, whatever casing the request used", async () => {
+    // Challenges carry the list's exact spelling (upsert refuses any other), so
+    // matching on the request's casing would rewrite the list and leave them
+    // under a name it no longer holds.
     mocks.upstashPipeline.mockReset();
-    mocks.upstashPipeline
-      .mockResolvedValueOnce([{ result: JSON.stringify(["Jailbreak"]) }])
-      .mockResolvedValueOnce([{ error: "WRONGTYPE" }]);
+    readReply(["Jailbreak"], [challenge("a", "Jailbreak")]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }]);
 
-    await expect(renameAiCategory("Jailbreak", "Jailbreaks")).rejects.toThrow(/HGETALL failed/);
-    expect(mocks.upstashPipeline).toHaveBeenCalledTimes(2);
+    expect(await renameAiCategory("jailbreak", "Jailbreaks")).toEqual({ categories: ["Jailbreaks"], moved: 1 });
+    expect(evalCalls()[0][0][8]).toBe("Jailbreak");
+  });
+
+  it("does NOT write anything when the challenge read failed", async () => {
+    // A failed HGETALL read as an empty hash looks like "nothing uses this
+    // category" — and renaming on top of that orphans every challenge in it.
+    mocks.upstashPipeline.mockReset();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Jailbreak"]) }, { error: "WRONGTYPE" }]);
+
+    await expect(renameAiCategory("Jailbreak", "Jailbreaks")).rejects.toThrow(/WRONGTYPE/);
+    expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-plans when the script refuses a stale read, keeping a concurrent add", async () => {
+    mocks.upstashPipeline.mockReset();
+    readReply(["Jailbreakk"], []);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 0 }]);
+    readReply(["Jailbreakk", "Recon"], []);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }]);
+
+    expect((await renameAiCategory("Jailbreakk", "Jailbreak")).categories).toEqual(["Jailbreak", "Recon"]);
+  });
+
+  it("gives up with a conflict after a bounded number of refused attempts", async () => {
+    mocks.upstashPipeline.mockReset();
+    mocks.upstashPipeline.mockImplementation(async (commands: (string | number)[][]) =>
+      commands[0][0] === "GET" ? [{ result: JSON.stringify(["Jailbreak"]) }, { result: [] }] : [{ result: 0 }],
+    );
+    await expect(renameAiCategory("Jailbreak", "Jailbreaks")).rejects.toBeInstanceOf(CategoryConflictError);
+    expect(evalCalls()).toHaveLength(CATEGORY_WRITE_ATTEMPTS);
   });
 });

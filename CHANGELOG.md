@@ -10,6 +10,18 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: two organizers editing categories at once could silently lose
+  an edit (#349).** Adding, removing, re-ordering and renaming Jeopardy and
+  AI categories read the list and wrote it back in separate steps, so a
+  change landing in between was overwritten without a word. Each change is
+  now one guarded Redis script that writes only if the list is still the
+  one the organizer edited. A stale add, remove or move is refused with a
+  `409` ("the category list changed… reload and try again") and the panel
+  reloads the list; a rename re-plans against the fresh list by itself and
+  moves the list and every challenge in the category in the same step, so
+  it can no longer be half-applied or erase a category added meanwhile.
+  The categories `POST` now carries `expected` (the list the edit was made
+  from) beside `categories`; a body without it is a `400`.
 - **Fixed: the Insights CSV garbled accented titles in Excel (#624).**
   "¿Qué dice señor?" opened as "Â¿QuÃ© dice seÃ±or?": the file had no
   byte-order mark, so Excel read it in the system code page. The export now

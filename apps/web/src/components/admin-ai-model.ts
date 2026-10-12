@@ -253,12 +253,15 @@ export function categoryUsageCount(challenges: readonly AdminAiChallenge[], cate
   return challenges.filter((row) => row.challenge.category === category).length;
 }
 
-/** The exact request body a categories POST sends: EXACTLY one key,
- *  `categories` — see the route's header comment for why the shape has to be
+/** The exact request body a categories POST sends: EXACTLY `categories` and
+ *  `expected` — see the route's header comment for why the shape has to be
  *  this precise. Built once, in `useCategoryEditor` (components/admin); this
  *  binding keeps the name this module's tests drive into the real route. */
-export function aiCategoriesRequestBody(categories: readonly string[]): { categories: string[] } {
-  return categoriesRequestBody(categories);
+export function aiCategoriesRequestBody(
+  categories: readonly string[],
+  expected: readonly string[],
+): { categories: string[]; expected: string[] } {
+  return categoriesRequestBody(categories, expected);
 }
 
 export const AI_MODE_LABELS: Record<AiMode, string> = {

@@ -11,12 +11,18 @@
 // owns what is specific to editing the list — the new-name input, the
 // in-flight flag, and the last refusal.
 //
-// Wire contract: every categories POST carries EXACTLY `{categories}` and
-// nothing else. `POST /api/admin/<module>` dispatches on the exact key set
-// (see each route's header comment) — a stray second key would fall through
-// to the challenge-upsert parser and 400 — so `categoriesRequestBody` is the
-// one place this body is built, and the modules re-export it so their tests
-// can drive it straight into the real route.
+// Wire contract: every categories POST carries EXACTLY `{categories,
+// expected}` and nothing else — the new list, and the list it was edited
+// from. `POST /api/admin/<module>` dispatches on the exact key set (see each
+// route's header comment) — a stray key would fall through to the
+// challenge-upsert parser and 400 — so `categoriesRequestBody` is the one
+// place this body is built, and the modules re-export it so their tests can
+// drive it straight into the real route.
+//
+// `expected` is what keeps two organizers from silently overwriting each
+// other: the store writes only if the stored list is still that one, and
+// otherwise answers 409. On a 409 this hook re-reads the panel's lists, so the
+// organizer is looking at the current list when they try again.
 //
 // Removal is refused while anything still references the category. The
 // stores do not enforce this (`setCategories`/`setAiCategories` only
@@ -29,9 +35,26 @@
 import { useState } from "react";
 import { type DescribeError, sendJson } from "@/components/admin/fetch";
 
-/** The exact request body a categories POST sends — one key. */
-export function categoriesRequestBody(categories: readonly string[]): { categories: string[] } {
-  return { categories: [...categories] };
+/** The exact request body a categories POST sends: the new list, and the
+ *  list the organizer was looking at when they made the edit. */
+export function categoriesRequestBody(
+  categories: readonly string[],
+  expected: readonly string[],
+): { categories: string[]; expected: string[] } {
+  return { categories: [...categories], expected: [...expected] };
+}
+
+/** What the organizer reads after a write lost a race with another
+ *  organizer's edit, once the panel has re-read the lists. */
+export const CATEGORIES_RELOADED_MESSAGE =
+  "The category list changed while you were editing it — someone else may be working on it too. The current list is loaded now; check it and try again.";
+
+/** The sentence a failed category write shows. A 409 means the store refused
+ *  the write because the list changed since this panel read it; when the
+ *  panel has re-read the lists since, say so instead of the server's
+ *  "reload" — the reload already happened. */
+export function categoryWriteFailureMessage(failure: { status?: number; message: string }, reloaded: boolean): string {
+  return failure.status === 409 && reloaded ? CATEGORIES_RELOADED_MESSAGE : failure.message;
 }
 
 export type AddCategoryDecision = { kind: "noop" } | { kind: "duplicate"; message: string } | { kind: "add"; next: string[] };
@@ -127,7 +150,7 @@ export function useCategoryEditor({
   categories,
   setCategories,
   usageCount,
-  afterRename,
+  reload,
 }: {
   endpoint: string;
   describeError: DescribeError;
@@ -135,11 +158,11 @@ export function useCategoryEditor({
   setCategories: (next: string[]) => void;
   /** How many challenges currently file under a category. */
   usageCount: (name: string) => number;
-  /** Re-reads the panel's own lists after a successful rename. Required in
-   *  practice: the rows on screen still carry the OLD category name, so
-   *  without this the list keeps grouping them under a heading that no longer
-   *  exists until something else reloads. */
-  afterRename?: () => Promise<void>;
+  /** Re-reads the panel's own lists. Called after a successful rename — the
+   *  rows on screen still carry the OLD category name, so without it the list
+   *  keeps grouping them under a heading that no longer exists — and after a
+   *  409, so a retry starts from the list another organizer left. */
+  reload?: () => Promise<void>;
 }): CategoryEditorState {
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
@@ -147,10 +170,13 @@ export function useCategoryEditor({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState("");
 
-  async function postCategories(next: string[]): Promise<{ ok: true; categories: string[] } | { ok: false; message: string }> {
+  async function postCategories(
+    next: string[],
+    expected: string[],
+  ): Promise<{ ok: true; categories: string[] } | { ok: false; message: string; status?: number }> {
     const result = await sendJson<{ error?: string; categories?: string[] }>(
       endpoint,
-      { method: "POST", body: categoriesRequestBody(next) },
+      { method: "POST", body: categoriesRequestBody(next, expected) },
       describeError,
     );
     if (!result.ok) return result;
@@ -159,21 +185,36 @@ export function useCategoryEditor({
     return { ok: true, categories: data.categories };
   }
 
+  /** Re-reads the lists after a 409, inside the pending window so no other
+   *  category control can fire against the list being replaced. Reports
+   *  whether a re-read was attempted, for the message. */
+  async function reloadAfterConflict(failure: { status?: number }): Promise<boolean> {
+    if (failure.status !== 409 || !reload) return false;
+    await reload();
+    return true;
+  }
+
   /** Applies a list optimistically, then keeps the STORED list the route
-   *  echoes (validated, deduped) — or restores the previous one on failure. */
+   *  echoes (validated, deduped) — or restores the previous one on failure.
+   *  `before` is also what the store compares against: the list this edit was
+   *  made from. */
   async function applyCategories(next: string[]) {
     const before = categories;
     setCategories(next);
     setPending(true);
     setError(null);
-    const result = await postCategories(next);
-    setPending(false);
-    if (!result.ok) {
-      setCategories(before);
-      setError(result.message);
-      return;
+    try {
+      const result = await postCategories(next, before);
+      if (!result.ok) {
+        setCategories(before);
+        const reloaded = await reloadAfterConflict(result);
+        setError(categoryWriteFailureMessage(result, reloaded));
+        return;
+      }
+      setCategories(result.categories);
+    } finally {
+      setPending(false);
     }
-    setCategories(result.categories);
   }
 
   function add() {
@@ -245,7 +286,8 @@ export function useCategoryEditor({
         describeError,
       );
       if (!result.ok) {
-        setError(result.message);
+        const reloaded = await reloadAfterConflict(result);
+        setError(categoryWriteFailureMessage(result, reloaded));
         return;
       }
       if (!Array.isArray(result.data.categories)) {
@@ -254,12 +296,12 @@ export function useCategoryEditor({
       }
       setCategories(result.data.categories);
       cancelRename();
-      // Awaited INSIDE the pending window on purpose. `afterRename` is the
-      // panel's `reload`, which replaces the shared category list; clearing
+      // Awaited INSIDE the pending window on purpose. `reload` replaces the
+      // shared category list; clearing
       // `pending` first would leave every other category control live during
       // that read, and a move or remove dispatched against the pre-reload list
       // would then persist it — writing a stale list back over a fresh one.
-      if (afterRename) await afterRename();
+      if (reload) await reload();
     } finally {
       // `finally`, so a rejected reload does not strand the panel disabled.
       setPending(false);

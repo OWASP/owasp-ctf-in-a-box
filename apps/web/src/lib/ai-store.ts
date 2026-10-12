@@ -11,6 +11,7 @@ import { generateLaunchKeyPair, generateSigningKey, type AiLaunchKeyPair } from 
 import { AI_BUNDLE_VERSION, type AiBundle, type AiBundleChallenge } from "@/lib/ai-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { renameCategoryAtomically, writeCategoriesIfUnchanged } from "@/lib/category-cas";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   AI_CATEGORIES_KEY as CATEGORIES_KEY,
@@ -492,8 +493,12 @@ export async function getTeamAiTotalsBatch(teams: readonly (readonly string[])[]
 
 /** Replaces the category list. Names are trimmed and deduped, and ORDER IS
  *  CONTENT — it is the order the board renders headings in, which is why this
- *  is one JSON array in a string key rather than a Redis set. */
-export async function setAiCategories(names: string[]): Promise<string[]> {
+ *  is one JSON array in a string key rather than a Redis set.
+ *
+ *  `expected` is the list the organizer edited from; the write is refused with
+ *  `CategoryConflictError`, writing nothing, unless the stored list is still
+ *  exactly that one. Same guard and same reason as classic's `setCategories`. */
+export async function setAiCategories(names: string[], expected: readonly string[]): Promise<string[]> {
   if (!Array.isArray(names)) throw new AiValidationError("categories", "Categories must be a list");
   const cleaned: string[] = [];
   for (const raw of names) {
@@ -508,8 +513,7 @@ export async function setAiCategories(names: string[]): Promise<string[]> {
   if (cleaned.length > AI_CATEGORIES_MAX) {
     throw new AiValidationError("categories", `At most ${AI_CATEGORIES_MAX} categories`);
   }
-  const [res] = await upstashPipeline([["SET", CATEGORIES_KEY, JSON.stringify(cleaned)]]);
-  if (res.error) throw new Error(`Upstash SET failed: ${res.error}`);
+  await writeCategoriesIfUnchanged(CATEGORIES_KEY, expected, cleaned);
   return cleaned;
 }
 
@@ -519,20 +523,17 @@ export async function setAiCategories(names: string[]): Promise<string[]> {
 export type CategoryRename = { categories: string[]; moved: number };
 
 /**
- * Renames one category and carries every challenge in it across.
- *
- * Mirrors `renameCategory` in classic-store.ts — read that one's comment for
- * why the challenges are written BEFORE the list (the resulting partial state
- * is the one a retry can finish from) and why an existing name is refused
- * rather than merged.
+ * Renames one category and carries every challenge in it across, in one
+ * script — mirrors `renameCategory` in classic-store.ts; read that one's
+ * comment for why the list and the challenges move together and why an
+ * existing name is refused rather than merged.
  *
  * The collision check folds case, exactly as classic's does, even though
  * `setAiCategories` dedupes case-SENSITIVELY (`cleaned.includes`). Without the
  * fold a rename could land `["Web", "web"]`, which the panel's own
  * `renameCategoryDecision` forbids and which would split one category's
  * challenges across two headings. The stricter rule is the right one on both
- * sides; a case-only rename of the SAME entry stays allowed, which is what the
- * index comparison protects.
+ * sides; a case-only rename of the SAME entry stays allowed.
  */
 export async function renameAiCategory(from: string, to: string): Promise<CategoryRename> {
   const target = to.trim();
@@ -541,40 +542,19 @@ export async function renameAiCategory(from: string, to: string): Promise<Catego
     throw new AiValidationError("categories", `Category names must be at most ${AI_CATEGORY_MAX_LEN} characters`);
   }
 
-  const categories = await listAiCategories();
-  const source = from.trim();
-  const index = categories.findIndex((name) => name.toLowerCase() === source.toLowerCase());
-  if (index === -1) throw new AiValidationError("categories", `No category named "${from}"`);
-  const targetFold = target.toLowerCase();
-  if (categories.some((name, i) => i !== index && name.toLowerCase() === targetFold)) {
+  const outcome = await renameCategoryAtomically(
+    { categories: CATEGORIES_KEY, challenges: CHALLENGES_KEY },
+    from,
+    target,
+  );
+  if (outcome.kind === "missing") throw new AiValidationError("categories", `No category named "${from}"`);
+  if (outcome.kind === "collides") {
     throw new AiValidationError(
       "categories",
       `"${target}" already exists. Rename it to something else, or move these challenges one at a time.`,
     );
   }
-
-  // Same fail-closed read as classic's: `listAiChallenges` does not check the
-  // reply's error, so a failed HGETALL would look like "nothing uses this
-  // category" and the rename would orphan every challenge in it.
-  const [challengesRes] = await upstashPipeline([["HGETALL", CHALLENGES_KEY]]);
-  if (challengesRes.error) throw new Error(`Upstash HGETALL failed: ${challengesRes.error}`);
-  const moving = parseChallengeHash(challengesRes.result).filter((c) => c.category === source);
-  if (moving.length > 0) {
-    const writes = await upstashPipeline(
-      moving.map((c) => ["HSET", CHALLENGES_KEY, c.id, JSON.stringify({ ...c, category: target })]),
-    );
-    // Per-command errors are values, not throws (AGENTS.md) — an unchecked
-    // `.result` would report a partial move as a complete one.
-    const failed = writes.find((w) => w.error);
-    if (failed) throw new Error(`Upstash HSET failed: ${failed.error}`);
-  }
-
-  const next = [...categories];
-  next[index] = target;
-  const [res] = await upstashPipeline([["SET", CATEGORIES_KEY, JSON.stringify(next)]]);
-  if (res.error) throw new Error(`Upstash SET failed: ${res.error}`);
-
-  return { categories: next, moved: moving.length };
+  return { categories: outcome.categories, moved: outcome.moved };
 }
 
 export type AiUpsertSecrets = { flag?: string; hint?: string | null };

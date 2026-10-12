@@ -21,6 +21,7 @@ const {
   upsertAiChallenge,
   deleteAiChallenge,
   rotateAiSigningKey,
+  renameAiCategory,
   writeAdminAudit,
   AiValidationError,
 } = vi.hoisted(() => {
@@ -44,6 +45,7 @@ const {
     upsertAiChallenge: vi.fn(),
     deleteAiChallenge: vi.fn(),
     rotateAiSigningKey: vi.fn(),
+    renameAiCategory: vi.fn(),
     writeAdminAudit: vi.fn(),
     AiValidationError,
   };
@@ -58,6 +60,7 @@ vi.mock("@/lib/ai-store", () => ({
   upsertAiChallenge,
   deleteAiChallenge,
   rotateAiSigningKey,
+  renameAiCategory,
   AiValidationError,
 }));
 // `adminErrorLabel` is the real (name+message, capped) implementation, not a
@@ -70,6 +73,8 @@ vi.mock("@/lib/admin-store", () => ({
 }));
 
 import { GET, POST, DELETE, CHALLENGE_KEYS, CATEGORIES_KEYS, ROTATE_KEYS } from "@/app/api/admin/ai/route";
+
+import { CATEGORY_CONFLICT_MESSAGE, CategoryConflictError } from "@/lib/category-cas";
 
 const adminReq = (method: "GET" | "POST" | "DELETE", body?: unknown) =>
   new Request("http://x/api/admin/ai", {
@@ -102,6 +107,7 @@ function denyAdmin() {
 
 beforeEach(() => {
   requireAdmin.mockReset();
+  renameAiCategory.mockReset();
   listAiChallengesForAdmin.mockReset();
   listAiCategories.mockReset();
   setAiCategories.mockReset();
@@ -203,26 +209,66 @@ describe("POST /api/admin/ai — dispatch key sets", () => {
 describe("POST /api/admin/ai — categories", () => {
   it("403s when requireAdmin refuses, without writing anything", async () => {
     denyAdmin();
-    const res = await POST(adminReq("POST", { categories: ["AI"] }));
+    const res = await POST(adminReq("POST", { categories: ["AI"], expected: [] }));
     expect(res.status).toBe(403);
     expect(setAiCategories).not.toHaveBeenCalled();
   });
 
-  it("replaces categories, echoes the stored list, and writes an audit line", async () => {
+  it("replaces categories against the list the organizer edited, echoes it, and writes an audit line", async () => {
     setAiCategories.mockResolvedValue(["AI", "Prompt"]);
-    const res = await POST(adminReq("POST", { categories: ["AI", "Prompt"] }));
+    const res = await POST(adminReq("POST", { categories: ["AI", "Prompt"], expected: ["AI"] }));
     expect(res.status).toBe(200);
-    expect(setAiCategories).toHaveBeenCalledWith(["AI", "Prompt"]);
+    expect(setAiCategories).toHaveBeenCalledWith(["AI", "Prompt"], ["AI"]);
     expect(await res.json()).toEqual({ categories: ["AI", "Prompt"] });
     expect(writeAdminAudit).toHaveBeenCalledWith("alice", "ai-categories", { count: 2 });
   });
 
+  it("400s a list replace that does not say which list it was edited from", async () => {
+    for (const body of [{ categories: ["AI"] }, { categories: ["AI"], expected: "AI" }, { categories: ["AI"], expected: [1] }]) {
+      const res = await POST(adminReq("POST", body));
+      expect(res.status, JSON.stringify(body)).toBe(400);
+    }
+    expect(setAiCategories).not.toHaveBeenCalled();
+  });
+
   it("maps a validation error to 400 and a store failure to 503", async () => {
     setAiCategories.mockRejectedValue(new AiValidationError("categories", "too many"));
-    expect((await POST(adminReq("POST", { categories: ["AI"] }))).status).toBe(400);
+    expect((await POST(adminReq("POST", { categories: ["AI"], expected: [] }))).status).toBe(400);
 
     setAiCategories.mockRejectedValue(new Error("upstash down"));
-    expect((await POST(adminReq("POST", { categories: ["AI"] }))).status).toBe(503);
+    expect((await POST(adminReq("POST", { categories: ["AI"], expected: [] }))).status).toBe(503);
+  });
+
+  it("409s a stale edit with a reload-and-retry message, and audits nothing", async () => {
+    setAiCategories.mockRejectedValue(new CategoryConflictError());
+    const res = await POST(adminReq("POST", { categories: ["AI", "Prompt"], expected: ["AI"] }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: CATEGORY_CONFLICT_MESSAGE });
+    expect(writeAdminAudit).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/admin/ai — rename a category", () => {
+  it("dispatches the rename to the store, reports what moved, and audits it", async () => {
+    renameAiCategory.mockResolvedValue({ categories: ["Jailbreak"], moved: 2 });
+    const res = await POST(adminReq("POST", { renameCategory: { from: "Jailbreakk", to: "Jailbreak" } }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ categories: ["Jailbreak"], moved: 2 });
+    expect(renameAiCategory).toHaveBeenCalledWith("Jailbreakk", "Jailbreak");
+    expect(setAiCategories).not.toHaveBeenCalled();
+    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "ai-category-rename", {
+      from: "Jailbreakk",
+      to: "Jailbreak",
+      moved: 2,
+    });
+  });
+
+  it("409s a rename that kept losing the race, and audits nothing", async () => {
+    renameAiCategory.mockRejectedValue(new CategoryConflictError());
+    const res = await POST(adminReq("POST", { renameCategory: { from: "Jailbreakk", to: "Jailbreak" } }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: CATEGORY_CONFLICT_MESSAGE });
+    expect(writeAdminAudit).not.toHaveBeenCalled();
   });
 });
 

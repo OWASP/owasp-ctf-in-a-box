@@ -23,6 +23,7 @@ import { bundleVersionFor, type ClassicBundle, type ClassicBundleChallenge } fro
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { renameCategoryAtomically, writeCategoriesIfUnchanged } from "@/lib/category-cas";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   CLASSIC_CHALLENGES_KEY as CHALLENGES_KEY,
@@ -336,8 +337,14 @@ export async function listCategories(): Promise<string[]> {
  *  Dedupe is case-INSENSITIVE (keeping the first spelling): "Web" and "web"
  *  rendering as two headings side by side is never what an organizer meant,
  *  and `upsertChallenge` matches a challenge's category against this list
- *  exactly, so two casings would also split challenges across them. */
-export async function setCategories(names: string[]): Promise<string[]> {
+ *  exactly, so two casings would also split challenges across them.
+ *
+ *  `expected` is the list the organizer was looking at when they made the
+ *  edit. The write happens only if the stored list is still exactly that one;
+ *  otherwise it throws `CategoryConflictError` and writes nothing, because a
+ *  replace built from an older list would silently drop whatever another
+ *  organizer added, removed or re-ordered since (see category-cas.ts). */
+export async function setCategories(names: string[], expected: readonly string[]): Promise<string[]> {
   if (!Array.isArray(names)) throw new ClassicValidationError("categories", "categories must be an array");
   if (names.length > CLASSIC_CATEGORIES_MAX) {
     throw new ClassicValidationError("categories", `At most ${CLASSIC_CATEGORIES_MAX} categories are allowed`);
@@ -360,8 +367,7 @@ export async function setCategories(names: string[]): Promise<string[]> {
     canonical.push(trimmed);
   }
 
-  const [res] = await upstashPipeline([["SET", CATEGORIES_KEY, JSON.stringify(canonical)]]);
-  if (res.error) throw new Error(`Upstash SET failed: ${res.error}`);
+  await writeCategoriesIfUnchanged(CATEGORIES_KEY, expected, canonical);
   return canonical;
 }
 
@@ -374,27 +380,15 @@ export type CategoryRename = { categories: string[]; moved: number };
  *
  * `setCategories` cannot express this. It replaces the whole array, so a
  * renamed entry is indistinguishable from "one removed, one added" — which is
- * exactly how the association with the challenges was lost, and why
- * `removeCategory` has to refuse while any challenge still uses a name. A typo
- * in a category ten challenges already carry meant editing all ten.
+ * exactly how the association with the challenges would be lost, and why
+ * `removeCategory` has to refuse while any challenge still uses a name.
  *
- * ORDER OF WRITES, deliberately: the challenges move FIRST, the list is
- * rewritten LAST. Neither half is atomic (an Upstash pipeline is batched, not
- * transactional), so what matters is which partial state a retry can finish
- * from:
- *
- *   - Challenges first — a failure before the list write leaves the list still
- *     naming `from` with some challenges already on `to`. Re-running the SAME
- *     rename finds `from` present, moves whatever is left (re-moving an
- *     already-moved challenge is a no-op) and completes. **Idempotent.**
- *   - List first — a failure would leave the list naming `to` while challenges
- *     still say `from`, and a retry of the same rename would refuse, because
- *     `from` is not there to rename. The organizer would have to work
- *     out the inverse rename themselves.
- *
- * Either partial state still RENDERS: `bucketRows` (components/admin) appends
- * a group the category list does not name rather than dropping its rows, so no
- * challenge goes invisible while a rename is half applied.
+ * The list and every challenge filed under the category are rewritten by ONE
+ * script (`renameCategoryAtomically`, category-cas.ts), so there is no
+ * half-applied state: either the list names `to` and every challenge moved, or
+ * nothing changed. A category another organizer added, or a challenge filed
+ * into this one, while the rename was in flight is kept — the script refuses a
+ * stale plan and the rename is re-planned against the fresh state.
  *
  * Refuses rather than merges when `to` already exists, case-insensitively —
  * the same fold `setCategories` dedupes on. Merging two categories is a
@@ -412,51 +406,19 @@ export async function renameCategory(from: string, to: string): Promise<Category
     );
   }
 
-  const categories = await listCategories();
-  const fromFold = from.trim().toLowerCase();
-  const targetFold = target.toLowerCase();
-  const index = categories.findIndex((name) => name.toLowerCase() === fromFold);
-  if (index === -1) throw new ClassicValidationError("categories", `No category named "${from}"`);
-  const collides = categories.some((name, i) => i !== index && name.toLowerCase() === targetFold);
-  if (collides) {
+  const outcome = await renameCategoryAtomically(
+    { categories: CATEGORIES_KEY, challenges: CHALLENGES_KEY },
+    from,
+    target,
+  );
+  if (outcome.kind === "missing") throw new ClassicValidationError("categories", `No category named "${from}"`);
+  if (outcome.kind === "collides") {
     throw new ClassicValidationError(
       "categories",
       `"${target}" already exists. Rename it to something else, or move these challenges one at a time.`,
     );
   }
-
-  const stored = categories[index];
-
-  // Read the challenges HERE rather than through `listChallenges`, and check
-  // the reply's error. `listChallenges` reads `.result` without checking
-  // `.error` (AGENTS.md: `upstashPipeline` reports a per-command failure as a
-  // VALUE), so a failed HGETALL comes back as an empty list — indistinguishable
-  // from "no challenge uses this category". Renaming on top of that would
-  // rewrite the list while moving nothing, orphaning every challenge in the
-  // category onto a name that does not exist AND leaving a retry unable to
-  // find the source. Fail closed instead.
-  const [challengesRes] = await upstashPipeline([["HGETALL", CHALLENGES_KEY]]);
-  if (challengesRes.error) throw new Error(`Upstash HGETALL failed: ${challengesRes.error}`);
-  const moving = parseChallengeHash(challengesRes.result).filter((c) => c.category === stored);
-
-  if (moving.length > 0) {
-    const writes = await upstashPipeline(
-      moving.map((c) => ["HSET", CHALLENGES_KEY, c.id, JSON.stringify({ ...c, category: target })]),
-    );
-    // `upstashPipeline` reports a per-command failure as a VALUE rather than
-    // throwing (AGENTS.md), so an unchecked `.result` would let a partial move
-    // report as a complete one — and the list would then be rewritten on top
-    // of it, landing in the exact state the write order exists to avoid.
-    const failed = writes.find((w) => w.error);
-    if (failed) throw new Error(`Upstash HSET failed: ${failed.error}`);
-  }
-
-  const next = [...categories];
-  next[index] = target;
-  const [res] = await upstashPipeline([["SET", CATEGORIES_KEY, JSON.stringify(next)]]);
-  if (res.error) throw new Error(`Upstash SET failed: ${res.error}`);
-
-  return { categories: next, moved: moving.length };
+  return { categories: outcome.categories, moved: outcome.moved };
 }
 
 /** Creates or replaces a challenge and its flag. Writes the challenge (no

@@ -473,8 +473,8 @@ describe("categoryUsageCount", () => {
 });
 
 describe("aiCategoriesRequestBody", () => {
-  it("carries exactly one key, categories", () => {
-    expect(Object.keys(aiCategoriesRequestBody(["AI"]))).toEqual(["categories"]);
+  it("carries exactly two keys: the new list and the list it was edited from", () => {
+    expect(aiCategoriesRequestBody(["AI", "Recon"], ["AI"])).toEqual({ categories: ["AI", "Recon"], expected: ["AI"] });
   });
 });
 
@@ -654,6 +654,25 @@ describe("challenge-upsert POST wire contract, proven against the real route", (
 // the REAL route handlers, the same wire-contract idiom the upsert tests
 // above use, proving the real `parseRotatePayload`/`DELETE` body parsing
 // accepts it and calls the real store function with the right id.
+describe("categories wire contract, proven against the real route", () => {
+  beforeEach(() => {
+    wireRequireAdmin.mockReset().mockResolvedValue({ ok: true, login: "alice" });
+    wireSetAiCategories.mockReset().mockImplementation(async (names: string[]) => names);
+    wireWriteAdminAudit.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("the exact body this panel sends is accepted, and the edited-from list reaches the store", async () => {
+    const res = await wirePOST(
+      new Request("http://x/api/admin/ai", {
+        method: "POST",
+        body: JSON.stringify(aiCategoriesRequestBody(["AI", "Recon"], ["AI"])),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(wireSetAiCategories).toHaveBeenCalledWith(["AI", "Recon"], ["AI"]);
+  });
+});
+
 describe("rotate and delete wire contract, proven against the real route", () => {
   beforeEach(() => {
     wireRequireAdmin.mockReset().mockResolvedValue({ ok: true, login: "alice" });

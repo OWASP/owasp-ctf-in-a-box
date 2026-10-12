@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
+import { CategoryConflictError } from "@/lib/category-cas";
 import {
   AiValidationError,
   deleteAiChallenge,
@@ -45,7 +46,8 @@ import {
  * straight through to the store.
  *
  * POST carries THREE distinct payload shapes on the SAME route: a body with
- * exactly one key, `categories` (an array), replaces the category list; a
+ * exactly `categories` and `expected` (two arrays: the new list, and the list
+ * it was edited from) replaces the category list; a
  * body with exactly one key, `rotate` (a challenge id string), mints a new
  * signing key for that challenge; anything else is parsed as a
  * challenge-plus-secrets upsert. The three key sets never overlap, so the
@@ -70,7 +72,10 @@ export const CHALLENGE_KEYS = new Set([
   "caseSensitive",
   "hint",
 ]);
-export const CATEGORIES_KEYS = new Set(["categories"]);
+/** `expected` is required, not optional: it is what lets the store refuse a
+ *  replace built from a list another organizer has since changed. A body
+ *  without it could only ever be a blind overwrite. */
+export const CATEGORIES_KEYS = new Set(["categories", "expected"]);
 export const ROTATE_KEYS = new Set(["rotate"]);
 /** The rename shape's outer and inner key sets (#304) — see the classic
  *  route's parser comment for why a rename cannot ride the `categories`
@@ -127,11 +132,6 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
   };
 }
 
-/** Recognizes the `categories` shape: a body carrying exactly one key,
- *  `categories`, an array of strings. Deliberately exact (`hasOnlyKeys` PLUS
- *  requiring the key to actually be present and well-typed) rather than
- *  merely "has a categories key" — that is what keeps this shape and the
- *  other two mutually exclusive without a discriminator field. */
 /** The rename shape (#304): exactly `renameCategory`, itself exactly
  *  `{from, to}`. The nested object is key-checked too, so a body smuggling an
  *  extra field falls through to the 400 rather than being partly honoured. */
@@ -143,11 +143,19 @@ function parseRenameCategoryPayload(body: unknown): { from: string; to: string }
   return { from: rename.from, to: rename.to };
 }
 
-function parseCategoriesPayload(body: unknown): string[] | null {
+/** Recognizes the `categories` shape: a body carrying exactly `categories`
+ *  and `expected`, both arrays of strings. Deliberately exact (`hasOnlyKeys`
+ *  PLUS requiring both keys to actually be present and well-typed) rather than
+ *  merely "has a categories key" — that is what keeps this shape and the
+ *  others mutually exclusive without a discriminator field. */
+function parseCategoriesPayload(body: unknown): { categories: string[]; expected: string[] } | null {
   if (!isPlainObject(body) || !hasOnlyKeys(body, CATEGORIES_KEYS)) return null;
-  if (!Array.isArray(body.categories)) return null;
-  if (!body.categories.every((c) => typeof c === "string")) return null;
-  return body.categories as string[];
+  if (!isStringArray(body.categories) || !isStringArray(body.expected)) return null;
+  return { categories: body.categories, expected: body.expected };
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((c) => typeof c === "string");
 }
 
 /** Recognizes the `rotate` shape: a body carrying exactly one key, `rotate`,
@@ -162,13 +170,20 @@ function parseRotatePayload(body: unknown): string | null {
  *  `setAiCategories`/`rotateAiSigningKey` to a response: an
  *  `AiValidationError` means the caller's payload was genuinely bad (bad id,
  *  unknown category, non-integer points, empty flag, unknown mode, bad url
- *  template, ...) -> 400 with the message. Anything else is the store's own
+ *  template, ...) -> 400 with the message. A `CategoryConflictError` means a
+ *  category write was refused because the list changed since the organizer
+ *  loaded it -> 409 with the reload-and-retry message. Anything else is the store's own
  *  plain `Error` for a real Upstash/infra failure -> 503 `unavailable`, so an
  *  organizer is never told "bad request" for a problem that was never theirs
  *  to fix, and the log never carries the thrown value itself. */
 function errorResponse(err: unknown): Response {
   if (err instanceof AiValidationError) {
     return NextResponse.json({ error: err.message }, { status: 400 });
+  }
+  // The list changed under the organizer and nothing was written: theirs to
+  // resolve by reloading, so neither a bad request nor the store being down.
+  if (err instanceof CategoryConflictError) {
+    return NextResponse.json({ error: err.message }, { status: 409 });
   }
   console.error("[admin/ai] store write failed:", adminErrorLabel(err));
   return NextResponse.json({ error: "unavailable" }, { status: 503 });
@@ -206,7 +221,7 @@ export async function POST(request: Request) {
   if (categoriesPayload) {
     let categories: string[];
     try {
-      categories = await setAiCategories(categoriesPayload);
+      categories = await setAiCategories(categoriesPayload.categories, categoriesPayload.expected);
     } catch (err) {
       return errorResponse(err);
     }

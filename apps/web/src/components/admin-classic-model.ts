@@ -284,14 +284,13 @@ export function changedOrderRows(before: readonly AdminChallenge[], after: reado
   return changedRows(before, after, CHALLENGE_ROWS);
 }
 
-/** The exact request body a categories POST sends: EXACTLY one key,
- *  `categories`. This is the whole client-side half of the wire contract
- *  Task 7's route pins (`POST /api/admin/classic` dispatches on
- *  `Object.keys(body).length === 1 && keys[0] === "categories"`) — the
- *  route's exported `CATEGORIES_KEYS` names the same single key. A second key
- *  here, however added, would silently fall through to the challenge-upsert
- *  parser and get rejected with a 400 rather than replacing the category
- *  list. Built once, in `useCategoryEditor` (components/admin), and
+/** The exact request body a categories POST sends: EXACTLY `categories` and
+ *  `expected`. This is the whole client-side half of the wire contract the
+ *  route pins (`POST /api/admin/classic` dispatches on the exact key set its
+ *  exported `CATEGORIES_KEYS` names). Any other key here, however added, would
+ *  fall through to the challenge-upsert parser and get rejected with a 400
+ *  rather than replacing the category list. Built once, in
+ *  `useCategoryEditor` (components/admin), and
  *  re-exported here so a test can drive it straight into the real route (see
  *  the route-level wire-contract test in this component's test file). */
 export { categoriesRequestBody };

@@ -33,7 +33,7 @@
 //     see that route's header comment. This component's `aiCategoriesRequestBody`
 //     helper exists for the same reason `categoriesRequestBody` exists in
 //     the classic component: every categories POST must carry EXACTLY
-//     `{categories}` and nothing else.
+//     `{categories, expected}` and nothing else.
 //   - Categories can be removed only while nothing references them, checked
 //     client-side here exactly like classic (`setAiCategories` doesn't
 //     enforce it either).
@@ -221,7 +221,7 @@ export default function AdminAiControls({
     // screen still carry the old name until the list is re-read. Without
     // this the panel keeps grouping them under a heading the store no
     // longer has.
-    afterRename: resource.reload,
+    reload: resource.reload,
   });
 
   /** POST `{rotate: id}` — mints a new signing key for one challenge and

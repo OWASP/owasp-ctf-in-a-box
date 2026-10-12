@@ -770,9 +770,12 @@ describe("categories POST wire contract, proven against the real route", () => {
     wirePOST(new Request("http://x/api/admin/classic", { method: "POST", body: JSON.stringify(body) }));
 
   it("the exact body this component sends is accepted by the real route", async () => {
-    const res = await post(categoriesRequestBody(["Web", "Crypto"]));
+    const res = await post(categoriesRequestBody(["Web", "Crypto"], ["Web"]));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ categories: ["Web", "Crypto"] });
+    // The list the organizer edited from reaches the store, which refuses the
+    // write if the stored list is no longer that one.
+    expect(wireSetCategories).toHaveBeenCalledWith(["Web", "Crypto"], ["Web"]);
   });
 
   // THE required mutation check: if `categoriesRequestBody` ever grows a
@@ -781,7 +784,7 @@ describe("categories POST wire contract, proven against the real route", () => {
   // rather than only asserted about, so a future change to
   // `categoriesRequestBody` is caught by an actual protocol rejection.
   it("a body carrying one extra key alongside categories is rejected by the real route", async () => {
-    const withExtraKey = { ...categoriesRequestBody(["Web"]), extra: true };
+    const withExtraKey = { ...categoriesRequestBody(["Web"], []), extra: true };
     const res = await post(withExtraKey);
     expect(res.status).toBe(400);
     expect(wireSetCategories).not.toHaveBeenCalled();

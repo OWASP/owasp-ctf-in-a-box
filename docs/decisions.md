@@ -4009,10 +4009,17 @@ challenges in rounds without someone authoring live in front of the board.
   An admin preview's dry run (ADR 59) skips the check, so an organizer can
   test a hidden challenge before launch; the pre-launch lock still applies
   on top for everyone else.
+- **An admin can still open it.** `classicVisibility` lets an admin (the
+  same case-insensitive admin check as `/admin`) open a hidden or scheduled
+  challenge's page at any time, with a "Hidden from contestants" banner
+  naming why. A flag or hint the admin uses there is a dry run
+  (`adminSeesHidden` in the submit and reveal routes), so nothing is
+  recorded for them. To anyone else it is still the unknown id's 404.
 - **Banked points stay.** Hiding a challenge is the delete dialog's promise:
   solves and points already banked are kept. The challenge leaves the
   solver's lists too, and the profile names the points in one line ("+N pts
-  from withdrawn challenges") so the list still adds up to the total.
+  from challenges no longer on the board", which counts deleted challenges
+  too) so the list still adds up to the total.
 - **Bundles carry it.** Version 4, stamped only when some challenge is
   hidden or scheduled, so other exports stay importable on an older box. An
   older version carrying either field is refused by position and rule, never

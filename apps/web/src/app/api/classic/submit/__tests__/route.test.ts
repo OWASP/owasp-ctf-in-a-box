@@ -29,6 +29,11 @@ vi.mock("@/lib/launch", () => ({ requireLaunchedApi, launchApiAccess }));
 vi.mock("@/lib/classic-store", () => ({ submitFlag, CLASSIC_ID_RE }));
 vi.mock("@/lib/team-store", () => ({ hasTeam }));
 vi.mock("@/lib/enabled-modules", () => ({ isModuleLive }));
+// Whether this viewer is an admin looking at a hidden challenge: its own
+// suite (classic-visibility.test.ts) pins the answer; here, what the route
+// does with it.
+const adminView = vi.hoisted(() => ({ adminSeesHidden: vi.fn<(login: string, id: string) => Promise<boolean>>(async () => false) }));
+vi.mock("@/lib/classic-visibility", () => adminView);
 
 import { POST } from "@/app/api/classic/submit/route";
 
@@ -309,5 +314,30 @@ describe("a locked story step (#463)", () => {
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "challenge not found" });
+  });
+});
+
+// An admin may open a hidden or scheduled challenge after launch, and submit
+// on it as a dry run: nothing is recorded for the admin, whatever the answer.
+describe("an admin on a hidden challenge after launch", () => {
+  it("is graded as a dry run, even without a team", async () => {
+    session("boss");
+    hasTeam.mockResolvedValue(false);
+    adminView.adminSeesHidden.mockResolvedValueOnce(true);
+    storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
+    const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(res.status).toBe(200);
+    expect(adminView.adminSeesHidden).toHaveBeenLastCalledWith("boss", "c-1");
+    expect(submitFlag).toHaveBeenCalledWith("boss", "c-1", "CTF{x}", { dryRun: true });
+    expect((await res.json()).dryRun).toBe(true);
+  });
+
+  it("leaves a contestant on the normal path: graded live, refused like an unknown id by the store", async () => {
+    session("alice");
+    adminView.adminSeesHidden.mockResolvedValueOnce(false);
+    storeReturns({ ok: false, reason: "invalid" });
+    const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
+    expect(res.status).toBe(404);
   });
 });

@@ -1616,8 +1616,12 @@ story, the chain closes up around it, the same as a deleted step, and
 switching it back on puts it back in its place. Solves already banked on it
 stay, like a deleted challenge's: the solver keeps the points, the challenge
 disappears from their lists too, and their profile shows one line, "+N pts
-from withdrawn challenges", so their total still adds up. An admin preview
-before launch can still open and test a hidden challenge. A bundle or event
+from challenges no longer on the board", so their total still adds up
+(points banked on a deleted challenge are counted in the same line). An admin
+can still open a hidden or scheduled challenge's page, before launch or
+after, to check it: the page carries a **Hidden from contestants** banner
+saying why (Disabled, or Releases at what time), and a flag or hint used
+there is a dry run that records nothing for the admin. A bundle or event
 archive carries the switch (bundle version 4, stamped only when some
 challenge is hidden, so other exports still import on an older box), and an
 older bundle that carries it is refused rather than imported live.

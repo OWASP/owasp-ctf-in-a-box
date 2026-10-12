@@ -14,8 +14,7 @@ import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
 import { bundleVersionFor, carriesVisibility, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
-import { challengeStatus, type ChallengeStatus } from "@/lib/classic-release";
-import { formatInZone, zoneLabel } from "@/lib/event-time";
+import { challengeStatus, releaseLabel, type ChallengeStatus } from "@/lib/classic-release";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import { describeAdminError } from "@/components/admin/fetch";
 import { DELETE_CONFIRM_PHRASE_MAX, confirmPhrase } from "@/components/admin/confirm-phrase";
@@ -420,15 +419,6 @@ export function solvesLabel(solves: ChallengeSolves | undefined): string | null 
     players === null ? null : `${players} player${players === 1 ? "" : "s"}`,
   ].filter((p): p is string => p !== null);
   return parts.length ? parts.join(" · ") : null;
-}
-
-/** A release instant as the admin reads it: the event's clock, its offset
- *  named ("Oct 8, 10:00 GMT-3"), so nobody has to guess whose 10:00 it is. */
-export function releaseLabel(iso: string, zone: string): string {
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return iso;
-  const wall = formatInZone(ms, zone, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-  return `${wall} ${zoneLabel(zone, ms)}`;
 }
 
 /** The status chip a row shows: Live, Disabled, or "Releases <time>" on the

@@ -9,6 +9,8 @@
 // classic-keys.ts) from the stored record, so a hand-made request cannot get
 // past what the pages leave out.
 
+import { formatInZone, zoneLabel } from "@/lib/event-time";
+
 /** The visibility fields a stored challenge carries. `enabled` absent means
  *  live: every record written before the field existed stays on the board.
  *  `releaseAt` (an ISO instant) releases a disabled challenge on its own:
@@ -37,6 +39,15 @@ export function isChallengeVisible(c: ReleaseFields, nowMs: number): boolean {
 /** The visible subset of `list`, order kept. */
 export function visibleChallenges<T extends ReleaseFields>(list: readonly T[], nowMs: number): T[] {
   return list.filter((c) => isChallengeVisible(c, nowMs));
+}
+
+/** A release instant as an organizer reads it: the event's clock, its offset
+ *  named ("Oct 8, 10:00 GMT-3"), so nobody has to guess whose 10:00 it is. */
+export function releaseLabel(iso: string, zone: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso;
+  const wall = formatInZone(ms, zone, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  return `${wall} ${zoneLabel(zone, ms)}`;
 }
 
 /** `visibleChallenges` on the reader's own clock: what a page read uses. The

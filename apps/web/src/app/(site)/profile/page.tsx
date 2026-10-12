@@ -15,7 +15,7 @@ import AppBreakdown from "@/components/app-breakdown";
 import ProgressRow, { moduleUnit } from "@/components/progress/progress-row";
 import ChallengeList from "@/components/progress/challenge-list";
 import RemainingLine from "@/components/progress/remaining-line";
-import { maxPointsAcrossModules, visibleClassic, withdrawnClassicPoints } from "@/app/(site)/profile/module-blocks";
+import { maxPointsAcrossModules, visibleClassic, offBoardClassicPoints } from "@/app/(site)/profile/module-blocks";
 import { visibleNow } from "@/lib/classic-release";
 import { fillStyle } from "@/components/progress/progress-bar";
 import ProfileStatTiles, { type StatTile } from "@/components/profile-stat-tiles";
@@ -145,7 +145,7 @@ export default async function ProfilePage() {
       classicEnabled ? getClassicTotals() : Promise.resolve(new Map<string, ClassicTotal>()),
       // Visible challenges only: a hidden one (disabled, or not yet released)
       // is out of the list, every denominator and the points ceiling. Points
-      // banked on it stay, named by the "withdrawn" line below.
+      // banked on it stay, named by the "no longer on the board" line below.
       classicEnabled ? listChallenges().then(visibleNow) : Promise.resolve([] as Challenge[]),
       aiEnabled ? getAiTotals() : Promise.resolve(new Map<string, AiTotal>()),
       aiEnabled ? listAiChallenges() : Promise.resolve([] as AiChallenge[]),
@@ -281,7 +281,7 @@ export default async function ProfilePage() {
   const progressValue = maxPointsAllModules > 0 ? netPoints : patchedCount;
 
   const moduleProgress = buildModuleProgress(moduleInput);
-  const classicWithdrawn = withdrawnClassicPoints(moduleInput);
+  const classicOffBoard = offBoardClassicPoints(moduleInput);
   // `ModuleDetail`/`AppBreakdown` (the same renderers the leaderboard uses)
   // take a `LeaderboardEntry`; this page only ever has a `UserProfile`, which
   // has no `modules` map, so a minimal stand-in is built here rather than
@@ -437,9 +437,9 @@ export default async function ProfilePage() {
                     <ChallengeList items={list.items} unit={summary.unit} doneWord={list.doneWord} />
                   ) : undefined}
                 </ProgressRow>
-                {m.id === "classic" && classicWithdrawn > 0 && (
+                {m.id === "classic" && classicOffBoard > 0 && (
                   <p className="mt-2 text-xs text-muted">
-                    +{classicWithdrawn.toLocaleString("en-US")} pts from withdrawn challenges
+                    +{classicOffBoard.toLocaleString("en-US")} pts from challenges no longer on the board
                   </p>
                 )}
               </div>

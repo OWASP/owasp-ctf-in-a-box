@@ -1,7 +1,7 @@
 // The profile and a hidden Jeopardy challenge: it is out of the list, the
 // denominators and the points ceiling, for a contestant who solved it too.
 // The points they banked on it stay in their total, and one line names them
-// ("+N pts from withdrawn challenges") so the list still adds up. Same
+// ("+N pts from challenges no longer on the board") so the list still adds up. Same
 // fixture as page.test.tsx, plus the classic module.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -119,16 +119,17 @@ describe("profile and a hidden Jeopardy challenge", () => {
     const html = renderToStaticMarkup(await ProfilePage());
     expect(html).toContain("Open One");
     expect(html).not.toContain(SECRET);
-    expect(html).toContain("+30 pts from withdrawn challenges");
+    expect(html).toContain("+30 pts from challenges no longer on the board");
+    expect(html).not.toContain("withdrawn");
     // The total keeps the 30.
     expect(html).toContain("40 of");
   });
 
-  it("shows no withdrawn line when nothing banked is off the board", async () => {
+  it("shows no off-the-board line when nothing banked is off the board", async () => {
     classic.solved = { c1: { points: 10, at: "2026-10-01T00:00:00.000Z" } };
     classic.totals = new Map([["ada", { points: 10, solved: 1, lastAt: null }]]);
     const html = renderToStaticMarkup(await ProfilePage());
-    expect(html).not.toContain("withdrawn");
+    expect(html).not.toContain("no longer on the board");
   });
 
   it("leaves an unsolved hidden challenge out of the points ceiling", async () => {
@@ -138,5 +139,15 @@ describe("profile and a hidden Jeopardy challenge", () => {
     // 10 + 20 visible; the hidden 30 would make it 60.
     expect(html).toContain("0 of 30 pts available");
     expect(html).not.toContain("of 60 pts");
+  });
+});
+
+describe("profile and a deleted Jeopardy challenge", () => {
+  it("counts points banked on a deleted challenge in the same line", async () => {
+    // `old` is not in the challenge list at all: deleted, not hidden.
+    classic.solved = { c1: { points: 10, at: "2026-10-01T00:00:00.000Z" }, old: { points: 15, at: "2026-10-01T00:00:00.000Z" } };
+    classic.totals = new Map([["ada", { points: 25, solved: 2, lastAt: null }]]);
+    const html = renderToStaticMarkup(await ProfilePage());
+    expect(html).toContain("+15 pts from challenges no longer on the board");
   });
 });

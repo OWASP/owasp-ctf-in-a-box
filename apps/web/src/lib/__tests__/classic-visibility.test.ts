@@ -24,7 +24,7 @@ vi.mock("@/lib/classic-store", () => ({
 }));
 vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: async () => m.solved }));
 
-import { classicVisibility } from "@/lib/classic-visibility";
+import { adminSeesHidden, classicVisibility } from "@/lib/classic-visibility";
 
 beforeEach(() => {
   m.live = true;
@@ -79,17 +79,23 @@ describe("classicVisibility and hidden challenges", () => {
     expect((await classicVisibility(undefined, "one")).state).toBe("missing");
   });
 
-  it("answers missing to a non-preview admin too: on the contestant side it does not exist", async () => {
+  it("opens it to an admin after launch, marked with why contestants cannot see it", async () => {
     m.admins = new Set(["boss"]);
     m.challenges = [{ id: "one", enabled: false }];
-    expect((await classicVisibility("boss", "one")).state).toBe("missing");
+    expect(await classicVisibility("boss", "one")).toEqual({ state: "visible", preview: false, hidden: { kind: "disabled" } });
+    const releaseAt = new Date(Date.now() + 3_600_000).toISOString();
+    m.challenges = [{ id: "one", enabled: false, releaseAt }];
+    expect((await classicVisibility("boss", "one")).hidden).toEqual({ kind: "scheduled", releaseAt });
+    // A live challenge carries no mark.
+    m.challenges = [{ id: "one" }];
+    expect(await classicVisibility("boss", "one")).toEqual({ state: "visible", preview: false });
   });
 
   it("lets an admin preview open a disabled challenge", async () => {
     m.admins = new Set(["boss"]);
     m.access = { allowed: true, preview: true };
     m.challenges = [{ id: "one", enabled: false }];
-    expect(await classicVisibility("boss", "one")).toEqual({ state: "visible", preview: true });
+    expect(await classicVisibility("boss", "one")).toEqual({ state: "visible", preview: true, hidden: { kind: "disabled" } });
   });
 
   it("closes a story chain around a hidden step, and reopens it in order when the step returns", async () => {
@@ -106,5 +112,16 @@ describe("classicVisibility and hidden challenges", () => {
     expect((await classicVisibility("alice", "one")).state).toBe("missing");
     m.challenges = [{ id: "one", enabled: false, releaseAt: new Date(Date.now() - 1_000).toISOString() }];
     expect((await classicVisibility("alice", "one")).state).toBe("visible");
+  });
+});
+
+describe("adminSeesHidden", () => {
+  it("is true only for an admin and a challenge that exists and is hidden now", async () => {
+    m.admins = new Set(["boss"]);
+    m.challenges = [{ id: "off", enabled: false }, { id: "on" }];
+    expect(await adminSeesHidden("boss", "off")).toBe(true);
+    expect(await adminSeesHidden("boss", "on")).toBe(false);
+    expect(await adminSeesHidden("boss", "nope")).toBe(false);
+    expect(await adminSeesHidden("alice", "off")).toBe(false);
   });
 });

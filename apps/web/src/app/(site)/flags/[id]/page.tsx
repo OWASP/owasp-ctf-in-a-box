@@ -34,6 +34,8 @@ import {
   type ViewerClassic,
 } from "@/lib/classic-store";
 import { classicVisibility } from "@/lib/classic-visibility";
+import { releaseLabel } from "@/lib/classic-release";
+import { resolveTimeZone } from "@/lib/event-time";
 import { listAttachments } from "@/lib/attachments-store";
 import type { AttachmentView } from "@/components/attachment-list";
 import { isModuleLive } from "@/lib/enabled-modules";
@@ -100,12 +102,15 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   // #463/#186: the shared visibility answer — the attachment download route
   // asks the same one. A locked story step is a 404, the same as an unknown
   // id: its page must reveal nothing, not even that it exists. An admin
-  // preview (#464) may open it, to test the whole story before launch.
-  if ((await classicVisibility(login, challengeId)).state !== "visible") notFound();
+  // preview (#464) may open it, to test the whole story before launch. An
+  // admin may also open a challenge contestants cannot see (disabled, or
+  // not yet released), marked as such; to a contestant it is a 404.
+  const visibility = await classicVisibility(login, challengeId);
+  if (visibility.state !== "visible") notFound();
   // When this contestant first opened it: the start of Insights'
-  // open-to-solve time. Never for a visitor or an admin preview; a failed
-  // write is logged, not thrown.
-  if (login && !launch.preview) await recordFirstOpen("classic", login, challenge.id);
+  // open-to-solve time. Never for a visitor, an admin preview, or an admin
+  // looking at a hidden challenge; a failed write is logged, not thrown.
+  if (login && !launch.preview && !visibility.hidden) await recordFirstOpen("classic", login, challenge.id);
 
   // Read only once the challenge is known visible (#186). Field by field for
   // the same reason as the view below: the sha256 and chunk bookkeeping stay
@@ -142,6 +147,16 @@ export default async function ClassicChallengePage({ params }: { params: Promise
     <div className="flex flex-col gap-6">
       {/* #464: an admin browsing before launch sees what contestants will. */}
       {launch.preview && <PreviewBanner />}
+      {visibility.hidden && (
+        <p role="status" className="rounded-md border border-[#d4a017]/40 bg-[#d4a017]/10 px-4 py-2 text-sm text-white">
+          <span className="font-semibold">Hidden from contestants</span>
+          {" — "}
+          {visibility.hidden.kind === "scheduled"
+            ? `Releases ${releaseLabel(visibility.hidden.releaseAt, resolveTimeZone(settings.eventIdentity?.eventTimeZone))}`
+            : "Disabled"}
+          . Only admins can open this page; a flag submitted here is graded as a dry run and records nothing.
+        </p>
+      )}
       {viewerIsTeamless && <TeamlessNotice what="solves" />}
       <div className="flex flex-col gap-3">
         <Link href="/flags" className="ds-link w-fit text-sm">

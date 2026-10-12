@@ -22,8 +22,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   attempt spent, its hint and files are refused, and it is out of every
   denominator. A story closes up around a hidden step and reopens in order
   when it is released. Points already banked on it stay, and the profile
-  names them in one "+N pts from withdrawn challenges" line. Bundles carrying
-  either field are version 4; an older bundle carrying one is refused.
+  names them in one "+N pts from challenges no longer on the board" line.
+  An admin can still open a hidden challenge's page, marked "Hidden from
+  contestants", where a flag or hint is a dry run that records nothing.
+  Bundles carrying either field are version 4; an older bundle carrying one
+  is refused.
 - **Added: first blood on the Jeopardy board (#188).** Each visible tile and
   open story step names the contestant who solved it first. It is display
   only and changes no score. It is read from the current team members' solve

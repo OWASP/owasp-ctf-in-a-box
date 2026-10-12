@@ -71,11 +71,11 @@ export function visibleClassic(
 }
 
 /** Points this viewer banked on Jeopardy challenges that are no longer on
- *  their board: withdrawn (hidden by an organizer) or deleted. The list shows
+ *  their board: hidden by an organizer, or deleted. The list shows
  *  only what is on the board, so without this the items would add up to less
  *  than the row's total. Those points stay; this is the one line that names
  *  them, without naming the challenges. */
-export function withdrawnClassicPoints(input: ProfileModuleInput): number {
+export function offBoardClassicPoints(input: ProfileModuleInput): number {
   const classic = input.classic;
   if (!classic) return 0;
   const shown = new Set(classic.challenges.map((c) => c.id));

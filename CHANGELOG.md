@@ -18,6 +18,286 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   read time from authoritative solve records, with team solves deduplicated
   before applying current values. Live solve counts are raised safely during
   reseeding without overwriting higher counts.
+- **Added: first blood on the Jeopardy board (#188).** Each visible tile and
+  open story step names the contestant who solved it first. It is display
+  only and changes no score. It is read from the current team members' solve
+  rows on every load, with nothing stored: the earliest solve wins, and an
+  exact tie goes to the login that sorts first, ignoring case. A progress
+  reset, a deleted contestant or a removal from a team passes their first
+  bloods to the next solver. A locked story step shows none.
+- **Fixed: CI gates that could pass without proving anything (#498).** The
+  vacuous-pass sweep (`scorer/tools/vacuous-sweep.mjs`) now exits 1 when a
+  target's run aborted, got stuck behind a shared gate, or was not measured
+  at all; before, only a vacuous pass failed it, so an unmeasured target read
+  as clean. CI's path filter moved into `scripts/ci-changes.sh` with a bats
+  suite: it no longer skips an area when the changed-file list passes 64 KiB
+  (a SIGPIPE under `pipefail`), and it now runs the app suite for the rubric
+  catalogues and `caddy/`, where the app job also runs `caddy validate`. The
+  docker- and jq-dependent bats tests fail in CI instead of skipping, the
+  window corpora carry a row-count floor, `secureDevTargets` has a shared
+  corpus run by the app and the poller, every workflow action is pinned to a
+  commit, and the acceptance scripts' Redis images are digest-pinned.
+
+- **Fixed: the Insights CSV garbled accented titles in Excel (#624).**
+  "¿Qué dice señor?" opened as "Â¿QuÃ© dice seÃ±or?": the file had no
+  byte-order mark, so Excel read it in the system code page. The export now
+  starts with one. A title a spreadsheet would run as a formula (leading `=`,
+  `+`, `-`, `@`) is written as text, and a cell with a carriage return is
+  quoted.
+- **Added: a Jeopardy challenge bundle can carry its files (#625).** Tick
+  **Include files** next to **Export challenges** and the bundle embeds every
+  uploaded file's bytes (base64, `attachmentFiles`, bundle version 3), so
+  importing it on another box needs no re-upload. The import fills each
+  upload the box is missing, skips one it already holds with the same
+  sha256, and never deletes. A tampered file, or files that would push the
+  event past its 50 MiB, are refused before anything is written. Imports now
+  go to `/api/admin/classic/bundle`, outside the proxy's 10 MB body cut, and
+  a bundle over 75 MB gets a `413` naming the limit. Without the option, or
+  with it on a board holding no uploads, the export is the same
+  metadata-only version 2 file as before, so a box on an older build still
+  imports it, and so does the classic section of an event archive. Version
+  1 and 2 bundles import as before.
+- **Fixed: a hint could be charged a different price than the one confirmed
+  (#557).** If an organizer changed the hint cost after a contestant's page
+  loaded, Confirm (−10 pts) charged the new price. The purchase now carries
+  the confirmed price and the charging script refuses a mismatch atomically,
+  before any write; the button shows the new price and asks again. A hint
+  already bought is still re-viewed free.
+- **Fixed: a regenerated or disbanded team could leave a stale join code
+  working (#497).** Regenerate and disband read the code to retire before
+  their script ran, so two regenerations at once (or one racing a disband)
+  left older codes resolving to the team, or to a team that no longer
+  existed. Both scripts now read the code they retire at the write. The
+  captain-only team scripts, the organizer overrides, the admin-grant script
+  and the rate limiter now run against a live Redis in CI.
+- **Changed: every attempt budget says it is per contestant (#494).** Quiz
+  **Retry after** and the AI **Submission cooldown** now say, next to the
+  field, what Max attempts and the Jeopardy cooldown already said: the
+  budget is kept per contestant while points count per team, so a team of N
+  gets N times it. Kept that way by decision; the AI docs say so too.
+- **Fixed: Insights' median time read 0s for almost every challenge (#616).**
+  It measured from a player's first flag submission, and most players submit
+  once they have the flag, so it was 0 by construction. The box now records
+  when each player first opens a Jeopardy or AI challenge (`ctf:classic:opened:`
+  / `ctf:ai:opened:<login>`, once per challenge), and the median runs from
+  that open to the solve. Rows with no open recorded fall back to the first
+  submission and are starred; rows where every solver was right first time
+  show —. The CSV gains `median_time_measure`. Master reset and a player's
+  progress reset clear the new records.
+- **Fixed: leaving a team after registration closed stranded the player
+  (#597).** Leave and the captain's Remove member now ask for confirmation
+  once registration is closed, saying the player can't join any team again
+  and their points leave the team; the server refuses an unconfirmed request
+  (409). Remove member, refused outright after close until now, is allowed
+  with that confirmation. `/admin → Support` gains **Add to team** / **Move
+  to team** on a player's card, whatever the registration state: one atomic
+  script, the team-size cap unless overridden, a captain of a team with
+  other members refused, the player found by their signed-in spelling,
+  written to the audit and activity logs. Reopening registration is no
+  longer the only way back.
+- **Added: score adjustments for teams (#591).** `/admin → Support → Score
+  adjustments` adds a bonus or penalty to a team with a required reason, and
+  lists every one with who added it and a Remove. It is folded into the
+  team's total last, after hint spend, on the board, display mode and the
+  profile panel, marked "±N adjustment", floored at 0, never changing the
+  tie-break time. Its own ledger (`ctf:adjustments`), audited on add and
+  remove, cleared by the master reset, not carried by the event archive. It
+  replaces deducting points by writing hint spend into Redis by hand.
+- **Fixed: admin Insights undercounted the event and disagreed with the
+  leaderboard (#608).** Players whose GitHub login has a capital letter were
+  read under the lowercased login and found empty; a player who left a team
+  without scoring was never found; team points summed members' own totals
+  instead of the board's. On the RTS event's snapshot "ever on a team" goes
+  from 30 to 42, Jeopardy solves from 59 to 119, attempts from 225 to 339,
+  and every team's points now equal the board. The solves chart keeps the
+  quiet stretches as empty buckets on a real time axis across the full
+  width, widening the bucket (10 min, 30 min, 1 h, …) on a long event.
+- **Added: search the admin Activity log on every field (#609).** One box
+  matches each word against the login, the event, the detail (challenge,
+  question or team id) and the time as shown, with `login:`, `type:`,
+  `detail:` and `team:` to pin a word to one field; a time range (quick
+  picks or from/to on the panel's clock) narrows it further, and each type
+  chip shows its count. A filter now searches the whole log, not only the
+  pages loaded, and the search is kept in the URL (`?q=`). Before, the box
+  matched the login only.
+- **Fixed: team names could be invisible or reverse the text around them
+  (#603).** Create and rename now refuse a name with nothing visible (a lone
+  zero-width space saved a nameless team through rename) and any
+  text-direction control character (a right-to-left override rendered a
+  name reversed over its neighbours), and measure the 32-character limit
+  after NFC. Every surface showing a team name isolates its direction, so a
+  name stored before the check cannot reorder its row.
+- **Fixed: a solved story step could be carried to another team (#602).**
+  A player who solved step N on one team and then joined another opened step
+  N+1 there, because unlocks read who is on the team now. A teammate's solve
+  now opens the next step only if they made it while on the team (solve time
+  on or after their join time), decided inside the grading and hint scripts
+  and applied the same way on the board, the challenge pages and
+  `/api/board/items`. Points are unaffected: a team's total is still the
+  union of its members' solves (ADR 60 amended).
+- **Added: solve counts on the Jeopardy and AI boards and in admin (#595).**
+  Every visible tile, open story step and challenge page now says how many
+  teams solved it (scoring is per team: two members on one flag count once,
+  a teamless solver not at all), folded from current members' solves on
+  read. A locked story step shows none. The admin Jeopardy list shows teams
+  and players per challenge, "unsolved" when nobody has. Before, a count
+  (of players) appeared only on a challenge's own page.
+- **Added: a QR code of the event's address on the projector board (#592).**
+  Display mode shows it in a corner below the standings, with the address
+  as text, so anyone in the room can join from a phone. Encoded on the
+  server into an inline SVG (new dependency: `qrcode-generator` 2.0.4,
+  pinned, encoding only, no dependencies of its own), from `EVENT_URL`. On by
+  default; **QR code on the projector board** in `/admin → Event` turns it
+  off. The regular leaderboard is unchanged.
+- **Fixed: the leaderboard's Individual view listed only contestants who had
+  scored (#586).** Every team member now has a row; one with no points sits
+  at 0 after everyone who scored, alphabetically, so a player who can find
+  their team on the Teams view can find themselves too. On the RTS event's
+  snapshot the view goes from 22 rows to all 41 team members. A signed-in
+  player on no team still gets no row.
+- **Fixed: a points tie between teams ignored when they finished Jeopardy
+  (#583).** Teams now rank like individuals: points, then items completed,
+  then whoever earned their last points first, in any module. The scorer's
+  order only knew Secure Development, and the app kept it on a tie, so at
+  the RTS event three teams tied at 5,308 were ranked by their Secure
+  Development finish; by the rule they finish Oxguardians, provart,
+  Mortadela's, which the board now shows on the event's snapshot. The rules
+  page and FAQ state the team rule, and Secure Development's rules say a PR
+  counts from when the event receives it.
+- **Fixed: a numeric event setting could never be reset to its default
+  (#600), and two messages misstated when points count (#599).** Emptying
+  a number field in `/admin` (hint cost and gating, players per team, the
+  retry gate, the cooldowns) now removes the override so the default applies
+  again; the API takes `null` or `""` for the same, as the other optional
+  settings already did. The profile's team card no longer says nothing counts
+  without a team on a Secure Development event (PR scores are kept and count
+  for the team the player joins), and every PR score report now says points
+  count only while the event's scoring window is open.
+- **Changed: vitest 4.1.11 → 5.0.2 in `apps/web` (Dependabot #453).** No
+  test or config changes were needed: the full suite, the live grading-Lua
+  suites with `CTF_LUA_SUITES_REQUIRED=1`, lint, typecheck and the
+  production build all pass unchanged.
+
+- **Changed: dependency batch (Dependabot #462, #563, #564, #565, #574,
+  #575).** Next.js and `eslint-config-next` 16.3.6 → 16.4.0, better-auth
+  1.7.5 → 1.7.7, `@types/node` 26.6.2 → 26.6.4, sharp 0.35.4 → 0.35.5,
+  source-map-js 1.2.1 → 1.2.2, and the compose `redis:8-alpine` digest. One
+  lockfile regenerated against current `main` instead of six PRs whose
+  lockfile hunks overlap. better-auth is now pinned exactly (1.7.7, one
+  patch past Dependabot's target), as `next` already is; `@types/node`
+  resolves one patch past its target inside the existing `^26` range.
+- **Fixed: an expanded leaderboard row listed the story steps its team had
+  solved, but that the viewer has not reached, as unsolved and worth 0
+  (#584).** The steps stay redacted placeholders (ADR 60) and now read
+  "Locked" with a dash instead of "Open" and "0pt"; one line under the list
+  gives how many of them the team solved and their total ("5 hidden steps
+  solved · 1,550 pts"). The route sends only that count, never which steps;
+  the total is the row's own Jeopardy points minus the visible items, so no
+  single step's value is sent or shown.
+- **Fixed: admin activity times read in UTC with no label, and to the minute
+  (#587).** The Overview's Recent activity and the Activity tab now show each
+  entry on the event's clock, to the second, with the offset named
+  ("10-07 13:26:00 GMT-3"), with a "Show UTC" switch, remembered per
+  browser, for matching a row against logs; at the RTS finish two solves 24
+  seconds apart both read "16:59". Insights and Support keep UTC on purpose, to match
+  against logs, and now carry seconds too.
+
+- **Fixed: the leaderboard's score chart dropped every quiz, Jeopardy and AI
+  point of a contestant whose GitHub login has an uppercase letter (#577).**
+  The chart read each module's solves hash under the lowercased login, while
+  the stores key it on the login as the session spelled it, so the read came
+  back empty; a team whose only scorer history was one PR showed "Not enough
+  score history yet to chart." with hundreds of points on the board. Scores,
+  ranks and the module rows were never affected.
+
+- **Changed: the maintainability follow-ups from the pre-v0.7.0 audit
+  (#504).** Refactors with no behavior change: the demo seed and clear body
+  moved out of `admin-store.ts` (43% of that file) into `lib/demo-seed.ts`,
+  with the settings read it needs staying behind a two-line wrapper there so
+  the two modules do not import each other in a loop; the four-module registry
+  literal in `lib/modules.ts` (71% of it) split one file per module under
+  `lib/module-defs/`, with the docs/playbook/scoring-branch URLs it linked to
+  in `lib/module-urls.ts`; the attempt-row decode helpers and the Lua read of
+  an attempt row shared by quiz, classic and ai through `lib/redis-decode.ts`;
+  the admin controls' settings/nav/restamp logic split into hooks beside
+  `admin-controls.tsx`; the classic and ai admin panels rebuilt on one shared
+  `ChallengeFrame`; the acceptance gates sourcing their shared helpers from
+  `scripts/lib/acceptance-lib.sh` instead of each carrying a copy (and
+  `acceptance-target.sh` sourcing it too); and `ctf-setup.sh`'s doctor and
+  setup wizard split into one helper per check. Each has a regression test
+  that fails if the duplication grows back.
+- **Added: the event logo and the sponsor strip on the regular leaderboard
+  (#571, ADR 66).** The leaderboard is the page an event keeps on screen, and
+  it now carries the event's identity there too, not only on the projector
+  view: the uploaded event logo sits beside the "Leaderboard" title (hidden
+  if it fails to load; the default OWASP mark when none is uploaded, as on the
+  landing page), and the landing page's sponsor strip runs under the
+  header, above the board — same order, same `/admin` logo-size setting,
+  nothing when there are no sponsors. Both reads fail open, so a Redis blip
+  costs the decoration, never the standings. The footer's text sponsor line
+  steps aside on this page so sponsors are credited once, and a wide logo
+  wraps above the title on a phone. `PageHeader` gains an optional `logo`
+  slot; every other page renders exactly as before.
+- **Changed: a comment policy, and the audit's top 20 files trimmed to it
+  (#505).** AGENTS.md now says what a comment is for — the present: why this
+  shape, what must stay true, what breaks if it changes, where a security or
+  fail-closed boundary sits — and what it is not: **history** ("previously",
+  "used to", "renamed from", "no longer", a bare `(issue #N)`), which belongs
+  to the commit that made the change and, once it is a decision, to an ADR in
+  `docs/decisions.md`; a **change restatement** narrating a diff the reader
+  can see; and **narration** of what the next line plainly does. Directive
+  comments (`// eslint-disable…`, `# shellcheck disable…`, `@ts-expect-error`,
+  shebangs) are not comments and are never deleted. The pre-v0.7.0 audit's
+  top 20 files by comment count were walked to that rule — offending comments
+  removed or rewritten, every rationale, invariant, fail direction, key
+  layout and security boundary left standing — and
+  `scripts/check-comment-policy.mjs` (run by `bats scripts/test/`) holds them
+  there: it fails on a history, restatement or provenance comment in any of
+  those files, on the policy going missing from AGENTS.md, or on an audited
+  file dropping out of its manifest. No code changed with any of it.
+
+- **Fixed: a hint can no longer be bought while scoring is closed (#566).**
+  A paid reveal lowers the buyer's net, so it now closes with scoring the way
+  a flag or quiz submit does: while scoring is frozen the reveal is refused
+  with "Scoring is paused right now — hints can't be bought until it resumes",
+  and once the scheduled end has passed with "Scoring has closed — the event
+  has ended, so hints can no longer be bought" (`403`, from the same gate
+  the other refusals come from, before the time, progress and affordability
+  checks, and re-checked inside the atomic charge script against Redis's
+  own clock and the live freeze flag, so a reveal that passed the gate a
+  moment before the end cannot charge after it). Before, a contestant could
+  buy a hint after the event ended and
+  move the final standings. Re-viewing a hint already bought stays free, and
+  the admin preview is unaffected.
+- **Fixed: after the scheduled end, a refused submission says the event has
+  ended instead of "Scoring is paused right now. Try again later" (#567).**
+  The classic, quiz and AI gates now answer `ended` (not `paused`) once
+  `Scoring closes` has passed — a freeze toggled on after the close still
+  reads as the end — and both refusal messages say "Scoring has closed — the
+  event has ended." The external AI site receives `403 {"error": "ended"}`
+  for the same case (see docs/ai-module.md's error table); `paused` keeps
+  its meaning for the manual freeze, a start still ahead, and not launched.
+- **Fixed: the paid-hint "−N pts spent · M pts left" acknowledgement stays on
+  the page after the reveal's refresh (#560).** A successful reveal calls
+  `router.refresh()`, and both challenge pages then rendered the now-owned
+  hint as a separate server-side `<p>` — an element swap that unmounted the
+  reveal control and destroyed the acknowledgement it held, so the ack
+  vanished in under a second while the hint text stayed. The pages now pass
+  the owned text into the same control as a prop, which renders it both
+  before and after the refresh. An unowned viewer still never receives the
+  text, and a hint loaded already-owned shows no acknowledgement (nothing
+  was charged on that page load).
+- **Fixed: `ctf-setup.sh org` no longer fails when GitHub's free plan refuses
+  branch protection on a private repo (#601).** That refusal — the state of
+  every fork between `org` and `launch` (#465) — is now recorded as
+  **pending until launch**: every remaining step and repo still runs, the
+  summary lists each pending `org/repo:ctf`, and it is never reported as
+  completed; any other protection error still fails the run. `launch` applies
+  the same idempotent protection as each fork goes public and verifies it
+  (one approving review required, force-pushes and deletions disabled) before
+  reporting success, and `doctor` shows it pending (⏳) on a private fork
+  before launch, clearing to ✅ only once protection is verified.
+
 - **Fixed: a hint can no longer be bought with points the contestant does not
   have (#553).** The reveal is refused — `403`, "Not enough points: this hint
   costs N and you have M" — when the contestant's leaderboard score (every

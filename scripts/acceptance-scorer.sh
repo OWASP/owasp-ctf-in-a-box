@@ -114,6 +114,7 @@ docker build -t "$IMG" --build-arg RUBRIC_DIR=rubric.example scorer/
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
 
 echo "--- boot score serve (memory store)"
+# pins: $IMG is the scorer image this script builds
 docker run -d --name "$SERVE_CTR" --network "$NET" \
   -p "127.0.0.1:$SERVE_PORT:4000" -e SCORER_TOKEN=test-token "$IMG" >/dev/null
 
@@ -147,6 +148,7 @@ import("./sync/src/parse.js").then(({ parseScoreComment }) => {
 echo "--- run judge via the score-action contract"
 # No --network on purpose: score-action starts the scorer on the default
 # bridge and the entrypoint must self-attach to $NET over docker.sock.
+# pins: $IMG is the scorer image this script builds
 docker run --rm \
   --entrypoint /usr/local/bin/entrypoint.sh \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -172,8 +174,10 @@ REPORT="$WS_PATCHED/ctf-score.md"
 [ -f "$REPORT" ] || { echo "FAIL: judge wrote no ctf-score.md"; exit 1; }
 
 echo "--- report carries the score-action regexes with the expected count"
-grep -qF '## 🏆 CTF Patch Score' "$REPORT"
-grep -qF '**2 / 3** challenges patched' "$REPORT"
+grep -qF '## 🏆 CTF Patch Score' "$REPORT" \
+  || { echo "FAIL: ctf-score.md has no '## 🏆 CTF Patch Score' heading"; cat "$REPORT"; exit 1; }
+grep -qF '**2 / 3** challenges patched' "$REPORT" \
+  || { echo "FAIL: ctf-score.md does not say '**2 / 3** challenges patched'"; cat "$REPORT"; exit 1; }
 
 echo "--- oracle discipline: no probe internals leak into the comment"
 for secret in '/rest/products/search' 'alert(1)' '/rest/user/login' '/ftp/acquisitions.md' 'bodyMissing'; do
@@ -240,6 +244,7 @@ JS
 )
 write_fake_app "$WS_STOCK" "$STOCK_APP_JS"
 
+# pins: $IMG is the scorer image this script builds
 docker run --rm \
   --entrypoint /usr/local/bin/entrypoint.sh \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -257,7 +262,8 @@ docker rm -f ctf-app-juice-shop >/dev/null 2>&1 || true
 
 STOCK_REPORT="$WS_STOCK/ctf-score.md"
 [ -f "$STOCK_REPORT" ] || { echo "FAIL: stock judge wrote no ctf-score.md"; exit 1; }
-grep -qF '**0 / 3** challenges patched' "$STOCK_REPORT"
+grep -qF '**0 / 3** challenges patched' "$STOCK_REPORT" \
+  || { echo "FAIL: stock ctf-score.md does not say '**0 / 3** challenges patched'"; cat "$STOCK_REPORT"; exit 1; }
 # An empty solve list is a real result, not a failure to report: the scorer
 # takes it (202) and the author stays at zero.
 post_marker "$STOCK_REPORT"
@@ -279,11 +285,11 @@ process.stdin.on("data", (c) => (s += c)).on("end", () => {
 '
 
 echo "--- freeze: boot a second serve instance backed by real Redis (via SRH)"
-docker run -d --name "$FREEZE_REDIS_CTR" --network "$NET" redis:7-alpine >/dev/null
+docker run -d --name "$FREEZE_REDIS_CTR" --network "$NET" redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 >/dev/null
 docker run -d --name "$FREEZE_SRH_CTR" --network "$NET" \
   -e SRH_MODE=env -e SRH_TOKEN="$FREEZE_SRH_TOKEN" \
   -e SRH_CONNECTION_STRING="redis://$FREEZE_REDIS_CTR:6379" \
-  hiett/serverless-redis-http:latest >/dev/null
+  hiett/serverless-redis-http:latest@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150 >/dev/null
 
 srh_deadline=$((SECONDS + 30))
 until docker exec "$FREEZE_SRH_CTR" wget -qO- \
@@ -293,6 +299,7 @@ until docker exec "$FREEZE_SRH_CTR" wget -qO- \
   sleep 1
 done
 
+# pins: $IMG is the scorer image this script builds
 docker run -d --name "$FREEZE_SERVE_CTR" --network "$NET" \
   -p "127.0.0.1:$FREEZE_PORT:4000" \
   -e SCORER_TOKEN=test-token \

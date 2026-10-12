@@ -231,7 +231,7 @@ describe("Leaderboard", () => {
     });
     const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
     // Default sort is "points", so the rule is visible on first paint.
-    expect(html).toContain("Ranked by points; ties go to more items completed, then to whoever got there first.");
+    expect(html).toContain("Ranked by points; ties go to more items completed, then to whoever earned their last points first.");
     expect(html).not.toContain("Rank rewards breadth");
   });
 });
@@ -586,5 +586,27 @@ describe("Leaderboard score-cadence note (#552)", () => {
       <Leaderboard data={data({ entries: [], teams: [] })} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
     );
     expect(html).not.toMatch(/about once a minute/i);
+  });
+});
+
+// #591: a team's organizer adjustment is already in its points; the row says
+// so with an explicit signed marker, and shows nothing when there is none.
+describe("team row adjustment marker (#591)", () => {
+  it("shows a penalty and a bonus as signed adjustments", () => {
+    const penalty = renderToStaticMarkup(
+      <TeamRow team={team({ members: ["alice"], captain: "alice", adjustment: -10 })} topPoints={150} isOpen={false} onToggle={() => {}} enabledApps={apps} />,
+    );
+    expect(penalty).toContain("−10 adjustment");
+    const bonus = renderToStaticMarkup(
+      <TeamRow team={team({ members: ["alice"], captain: "alice", adjustment: 50 })} topPoints={150} isOpen={false} onToggle={() => {}} enabledApps={apps} />,
+    );
+    expect(bonus).toContain("+50 adjustment");
+  });
+
+  it("shows no marker without an adjustment", () => {
+    const html = renderToStaticMarkup(
+      <TeamRow team={team({ members: ["alice"], captain: "alice" })} topPoints={150} isOpen={false} onToggle={() => {}} enabledApps={apps} />,
+    );
+    expect(html).not.toContain("adjustment");
   });
 });

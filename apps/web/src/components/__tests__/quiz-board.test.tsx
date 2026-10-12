@@ -345,6 +345,15 @@ describe("describeRefusal (quiz)", () => {
     expect(describeQuizRefusal("not-launched")).not.toBe("That submission wasn't accepted.");
     expect(describeQuizRefusal("not-launched")).toMatch(/launch/i);
   });
+
+  // #567: after the scheduled end the server answers `ended`, not `paused`;
+  // the copy says the event is over and does not promise a retry.
+  it("names the end of the event as final, not as a pause", () => {
+    expect(describeQuizRefusal("ended")).not.toBe("That submission wasn't accepted.");
+    expect(describeQuizRefusal("ended")).toMatch(/ended|over|closed/i);
+    expect(describeQuizRefusal("ended")).not.toMatch(/try again/i);
+    expect(describeQuizRefusal("ended")).not.toBe(describeQuizRefusal("paused"));
+  });
 });
 
 describe("quiz dry-run result copy (#464 admin preview)", () => {

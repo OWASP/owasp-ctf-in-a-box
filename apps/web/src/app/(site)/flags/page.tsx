@@ -12,6 +12,7 @@
 // /api/classic/submit itself.
 
 import type { Metadata } from "next";
+import { teamSolveBoard } from "@/lib/team-solve-counts";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
@@ -24,7 +25,6 @@ import { auth } from "@/lib/auth";
 import { getAdminSettings } from "@/lib/admin-store";
 import { listStories,
   CLASSIC_COOLDOWN_SEC,
-  getSolveCounts,
   getViewerClassic,
   listCategories,
   listChallenges,
@@ -73,10 +73,12 @@ export default async function FlagsPage() {
   // below, so a redirect never follows work that was thrown away.
   await redirectIfTeamless(login, { isAdmin: viewerIsAdmin });
 
-  const [challenges, categories, solveCounts, viewerClassic, settings, modules, hintIds, stories] = await Promise.all([
+  const [challenges, categories, solveBoard, viewerClassic, settings, modules, hintIds, stories] = await Promise.all([
     listChallenges(),
     listCategories(),
-    getSolveCounts(),
+    // Team counts (#595) and first blood (#188), from one read of the
+    // members' solve rows. Null when that read failed: neither is shown.
+    teamSolveBoard("classic"),
     login ? getViewerClassic(login) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
     // Fails OPEN, same doctrine as ai-store.ts's resolveSettings for this
     // exact read (see ai/page.tsx's identical fix): a Redis blip here must
@@ -111,8 +113,14 @@ export default async function FlagsPage() {
     title: c.title,
     category: c.category,
     description: c.description,
-    points: challengeCurrentValue(c, solveCounts.get(c.id) ?? 0),
-    solveCount: solveCounts.get(c.id) ?? 0,
+    points: challengeCurrentValue(c, solveBoard ? (solveBoard.counts.get(c.id) ?? 0) : 0),
+    // Teams, not players (#595): scoring is per team. Null when unread.
+    teamsSolved: solveBoard ? (solveBoard.counts.get(c.id) ?? 0) : null,
+    // #188: the first solver's login, display only. Carried on every view,
+    // but a LOCKED story step's view is never rendered: its lane entry is
+    // built from its position alone, below, and it is kept out of the grid
+    // and the run rail.
+    firstBlood: solveBoard?.firstBlood.get(c.id)?.login ?? null,
     // Listed explicitly, like every field above it — this map is deliberately
     // NOT a spread of the store record, because a spread is how a flag leaks.
     caseSensitive: c.caseSensitive,
@@ -136,7 +144,18 @@ export default async function FlagsPage() {
           // An admin preview (#464) sees every step open, to test the story.
           if (!launch.preview && isLocked(pos, teamSolved)) return { locked: true, key: `${st.id}:${pos.position}`, label: lockedLabel(pos) };
           const c = byId.get(id)!;
-          return { locked: false, id, title: c.title, category: c.category, points: c.points, solved: c.status === "solved", position: pos.position, total: pos.total };
+          return {
+            locked: false,
+            id,
+            title: c.title,
+            category: c.category,
+            points: c.points,
+            solved: c.status === "solved",
+            position: pos.position,
+            total: pos.total,
+            teamsSolved: c.teamsSolved,
+            firstBlood: c.firstBlood ?? null,
+          };
         }),
     }))
     .filter((lane) => lane.steps.length > 0);

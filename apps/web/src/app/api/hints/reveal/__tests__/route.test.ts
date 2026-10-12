@@ -172,6 +172,38 @@ describe("POST /api/hints/reveal", () => {
   });
 });
 
+// #557: the price the contestant confirmed travels with the purchase; a
+// changed price is a 409 carrying the new one, so the control can ask again.
+describe("POST /api/hints/reveal quoted cost (#557)", () => {
+  it("passes the confirmed price to the store", async () => {
+    revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10, cost: 10 });
+    await POST(req({ app: "classic", id: "web", quotedCost: 10 }));
+    expect(revealHint).toHaveBeenCalledWith("alice", "classic", "web", { dryRun: false, quotedCost: 10 });
+  });
+
+  it("passes no quote when the body has none", async () => {
+    revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10, cost: 10 });
+    await POST(req({ app: "classic", id: "web" }));
+    expect(revealHint).toHaveBeenCalledWith("alice", "classic", "web", { dryRun: false });
+  });
+
+  it.each([["a string", "10"], ["a negative", -1], ["a fraction", 2.5], ["NaN-like", null]])(
+    "400s %s quote without touching the store",
+    async (_what, quotedCost) => {
+      const res = await POST(req({ app: "classic", id: "web", quotedCost }));
+      expect(res.status).toBe(400);
+      expect(revealHint).not.toHaveBeenCalled();
+    },
+  );
+
+  it("409s a changed price with the new price and nothing else", async () => {
+    revealHint.mockResolvedValue({ ok: false, repriced: true, cost: 25, error: "This hint now costs 25 pts. Confirm again to buy it at the new price." });
+    const res = await POST(req({ app: "classic", id: "web", quotedCost: 10 }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "This hint now costs 25 pts. Confirm again to buy it at the new price.", cost: 25 });
+  });
+});
+
 describe("POST /api/hints/reveal admin preview (#464)", () => {
   it("reveals a preview admin's hint as a dry run (nothing charged)", async () => {
     launchApiAccess.mockResolvedValueOnce({ refused: null, preview: true });

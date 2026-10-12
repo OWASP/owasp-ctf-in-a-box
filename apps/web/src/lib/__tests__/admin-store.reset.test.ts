@@ -118,24 +118,27 @@ describe("resetEvent", () => {
       classicSolved: 2,
       classicSolveCount: 2,
       classicLastAt: 2,
+      classicOpened: 2,
       aiSolves: 2,
       aiAttempts: 2,
       aiPoints: 2,
       aiSolved: 2,
       aiSolveCount: 2,
       aiLastAt: 2,
+      aiOpened: 2,
       aiNonces: 2,
       aiLaunchKey: 2,
       activity: 2,
       sponsors: 2,
       sponsorsLogo: 2,
+      adjustments: 2,
     });
     expect(out.resetAt).toMatch(/^\d+$/);
 
-    // one SCAN + one DEL per prefix (27 prefixes) = 54 pipeline calls
+    // one SCAN + one DEL per prefix (30 prefixes) = 60 pipeline calls
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(27);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(27);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(30);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(30);
     // every wiped prefix, and NOT settings/audit/sync
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
@@ -157,17 +160,20 @@ describe("resetEvent", () => {
       "ctf:classic:solved",
       "ctf:classic:solvecount",
       "ctf:classic:lastAt",
+      "ctf:classic:opened:*",
       "ctf:ai:solves:*",
       "ctf:ai:attempts:*",
       "ctf:ai:points",
       "ctf:ai:solved",
       "ctf:ai:solvecount",
       "ctf:ai:lastAt",
+      "ctf:ai:opened:*",
       "ctf:ai:nonce:*",
       "ctf:ai:launchkey",
       "ctf:activity:log",
       "ctf:sponsors",
       "ctf:sponsors:logo",
+      "ctf:adjustments",
     ]);
 
     // the freeze + audit eval: settings + audit keys, and a reset audit line

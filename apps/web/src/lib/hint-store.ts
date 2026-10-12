@@ -1,9 +1,11 @@
 import "server-only";
 import { errorLabel } from "@/lib/error-label";
+import { scoringEnded } from "@/lib/schedule-window";
 // Re-exported, not redeclared: the admin UI is a Client Component and cannot
 // import from this server-only module, so the values live in the
 // dependency-free defaults file and both sides read the same constant.
 export { HINT_COST, HINT_MIN_SOLVES, HINT_UNLOCK_AFTER_MIN } from "./hint-defaults";
+import { HINT_COST } from "./hint-defaults";
 import { hintBalance, type HintBalance } from "@/lib/hint-balance";
 import { SCORE_LOWERING_KEY, SCORE_REV_KEY } from "@/lib/leaderboard/fold-cache";
 import { HINTS_AVAILABLE, resolveHintConfig } from "@/lib/hint-config";
@@ -14,7 +16,7 @@ import { isModuleLive } from "@/lib/enabled-modules";
 import { HINTS_SPENT_KEY, userHintTimesKey } from "@/lib/team-keys";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
 import { listChallengeIds, listStories } from "@/lib/classic-store";
-import { teamSolveKeys } from "@/lib/classic-team";
+import { storyLockLua, teamLockKeys } from "@/lib/classic-team";
 import { storyPositions } from "@/lib/story-lock";
 // Moved to hint-config.ts (#553): the leaderboard's penalty fold imports them
 // from there, because this store now imports the fold (through hint-balance)
@@ -102,13 +104,15 @@ export function isHintTarget(value: string): value is HintTarget {
 // availability cache can't charge for a hint that no longer exists.
 // KEYS: [1]=user's hint set [2]=spend hash [3]=app hint catalogue [4]=purchase times
 //       [5]=the shared score revision and [6]=the score-lowering in-progress
-//       counter (#553, fold-cache.ts); [7..]=the story lock's teammate solves
-//       hashes (#463), when any.
+//       counter (#553, fold-cache.ts); [7]=the admin settings hash (#566: the
+//       live `paused` flag); [8..]=the story lock's (solves hash, user
+//       record) pair per teammate (#463, #602), when any.
 // ARGV: [1]=challengeId [2]=<app>/<id> [3]=login [4]=cost [5]=now (ISO)
 //       [6]="1" for a DRY RUN (#464 admin preview): read the text, write
 //       nothing — no SADD, no charge, no purchase time.
 //       [7]=story prerequisite (#463), "" when none — open only if a TEAMMATE
-//       (a solves hash in KEYS[5..]) holds it; checked before any charge.
+//       holds it and solved it while on this team (#602; see storyLockLua in
+//       classic-team.ts); checked before any charge.
 //       [8]=the contestant's gross score (#553), "" when hints are free. The
 //       charge is refused unless gross − the spend read HERE ≥ cost: the
 //       gate's own read is a separate round-trip, so two parallel reveals
@@ -124,6 +128,30 @@ export function isHintTarget(value: string): value is HintTarget {
 //       moved, or an operation is running, the gross may be too high: the
 //       script answers `stale` before reading the spend or charging, and the
 //       caller re-reads and retries once. "" (no gross) skips the check.
+//       [10]=the scheduled scoring END as epoch ms (#566), "" when none. The
+//       gate checked the window one round-trip earlier; a reveal that passed
+//       it just before the end (or the freeze) must still not charge after
+//       it, so the script compares Redis's own clock (TIME) to this instant
+//       and reads the live `paused` flag from KEYS[7] right before the
+//       charge — the closure is enforced where the write happens. Answers
+//       `closed` with the reason; an owned hint is exempt (a re-view charges
+//       nothing, so there is nothing to close).
+//       [11]=the viewer's team slug for the story lock (#602), "" for a team
+//       of one.
+//       [12]=the price the contestant confirmed, "" when the caller sent none.
+//       A purchase is charged that price or not at all: a quote that differs
+//       from the live price (an organizer repriced hints after the page
+//       rendered) is answered `repriced` with the live price, before any
+//       write and without the text. An owned hint is exempt (a re-view
+//       charges nothing).
+//       [13]=the default hint cost, "" to fall back to [4].
+//
+// THE PRICE is read here, from the settings hash (KEYS[7] `hintCost`), not
+// taken from [4]: the caller's settings read is a round-trip old, and the
+// quote check, the affordability check, the charge and the verdict must all
+// use the price at the moment of the write. [13] (the default) and then [4]
+// stand in only when the hash holds no price. A `charged` verdict carries
+// the price as its fourth element.
 //
 // Every non-preview verdict's third element is the spend TOTAL after the
 // call (case-folded, see the script) — what `balance` is derived from.
@@ -131,10 +159,7 @@ export function isHintTarget(value: string): value is HintTarget {
 export const REVEAL_SCRIPT = `
 -- The story lock (#463) comes FIRST: a locked step's hint is never read.
 if ARGV[6] ~= '1' and ARGV[7] and ARGV[7] ~= '' then
-  local open = false
-  for i = 7, #KEYS do
-    if redis.call('HEXISTS', KEYS[i], ARGV[7]) == 1 then open = true break end
-  end
+${storyLockLua(8, 7, 11)}
   if not open then return {'locked'} end
 end
 -- Existence is a FIELD check, not a read: the text is the protected thing,
@@ -144,6 +169,34 @@ end
 -- runs behind the admin gate and charges nothing.
 if redis.call('HEXISTS', KEYS[3], ARGV[1]) == 0 then return {'missing'} end
 if ARGV[6] == '1' then return {'preview', redis.call('HGET', KEYS[3], ARGV[1]), '0'} end
+-- Scoring window (#566), enforced at the charge boundary: the gate's own
+-- check was a separate round-trip, so a reveal that passed it just before
+-- the scheduled end (or the freeze) could still charge after it. Redis's
+-- clock against ARGV[10] (the end, epoch ms) and the live freeze flag in the
+-- settings hash (KEYS[7]) decide HERE. The end wins over the freeze. An owned
+-- hint is exempt — a re-view charges nothing, so there is nothing to close.
+local price = tonumber(redis.call('HGET', KEYS[7], 'hintCost') or '')
+if not price and ARGV[13] and ARGV[13] ~= '' then price = tonumber(ARGV[13]) end
+if not price then price = tonumber(ARGV[4]) end
+local owned = redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 1
+if not owned then
+  if ARGV[10] and ARGV[10] ~= '' then
+    local t = redis.call('TIME')
+    local nowMs = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+    if nowMs > tonumber(ARGV[10]) then return {'closed', 'ended'} end
+  end
+  if redis.call('HGET', KEYS[7], 'paused') == '1' then return {'closed', 'paused'} end
+  -- The price on the contestant's confirm button: charge it or nothing.
+  if ARGV[12] and ARGV[12] ~= '' and tonumber(ARGV[12]) ~= price then
+    return {'repriced', '', price}
+  end
+  -- The caller resolved the hint as free, so its gate read no balance (ARGV[8]
+  -- is empty). A price set since would be charged unchecked: ask again, and
+  -- the next request takes the paid gate.
+  if price > 0 and tonumber(ARGV[4]) == 0 and (not ARGV[8] or ARGV[8] == '') then
+    return {'repriced', '', price}
+  end
+end
 -- The gross in ARGV[8] was folded under the score revision in ARGV[9]. A
 -- score-lowering operation on ANY app task bumps KEYS[5] before its first
 -- write and after its last, and holds KEYS[6] up in between; if the revision
@@ -163,15 +216,15 @@ local me = string.lower(ARGV[3])
 for i = 1, #all, 2 do
   if string.lower(all[i]) == me then spent = spent + (tonumber(all[i + 1]) or 0) end
 end
-if ARGV[8] and ARGV[8] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 0 then
-  if tonumber(ARGV[8]) - spent < tonumber(ARGV[4]) then return {'insufficient', '', spent} end
+if ARGV[8] and ARGV[8] ~= '' and not owned then
+  if tonumber(ARGV[8]) - spent < price then return {'insufficient', '', spent} end
 end
 -- Every check that can refuse has passed: only now is the text read.
 local hint = redis.call('HGET', KEYS[3], ARGV[1])
 if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
-  redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
+  redis.call('HINCRBY', KEYS[2], ARGV[3], price)
   redis.call('HSETNX', KEYS[4], ARGV[2], ARGV[5])
-  return {'charged', hint, spent + tonumber(ARGV[4])}
+  return {'charged', hint, spent + price, price}
 end
 return {'owned', hint, spent}`;
 
@@ -189,7 +242,10 @@ export type RevealResult =
   // Awards only add, so the figure is never overstated; the page refresh
   // after the reveal shows the live score.
   | { ok: true; hint: string; alreadyOwned: boolean; spent: number; cost: number; balance?: number; dryRun?: true }
-  | { ok: false; error: string; missing?: boolean; forbidden?: boolean };
+  | { ok: false; error: string; missing?: boolean; forbidden?: boolean }
+  // The price changed since the contestant confirmed it: nothing was charged,
+  // and `cost` is the current price to confirm again.
+  | { ok: false; repriced: true; cost: number; error: string };
 
 /** Solves `login` has recorded for `app`, counted straight off the scorer's
  *  `ctf:solves:<target>` hash (fields are `<author>:<challengeId>`). Compared
@@ -219,6 +275,10 @@ export type HintGate =
    *  not a preview): the figures `revealHint` reports the resulting score from. */
   | { allowed: true; balance?: HintBalance }
   | { allowed: false; reason: "disabled" }
+  // #566: scoring is closed — the manual freeze, or a passed scheduled end
+  // (`ended`). A paid reveal lowers the buyer's net, so it closes with
+  // scoring exactly as a flag or quiz submit does.
+  | { allowed: false; reason: "paused" | "ended" }
   /** The event's hint phase hasn't opened yet. */
   | { allowed: false; reason: "locked"; unlocksAt: string }
   /** Caller hasn't earned enough on this target yet (the anti-burner gate). */
@@ -236,6 +296,18 @@ export type HintGate =
 /** The affordability refusal (#553), worded once: the gate and the script's
  *  atomic re-check both end here. */
 const notEnough = (needed: number, have: number) => `Not enough points: this hint costs ${needed} and you have ${have}`;
+
+/** The scoring-window refusals (#566/#567), worded once: the gate and the
+ *  script's charge-boundary re-check both end here. A pause is temporary,
+ *  the end is final — never "until it resumes" for an event that is over. */
+const HINTS_PAUSED_MESSAGE = "Scoring is paused right now — hints can't be bought until it resumes";
+const HINTS_ENDED_MESSAGE = "Scoring has closed — the event has ended, so hints can no longer be bought";
+/** The admin settings hash the script reads the live `paused` flag from
+ *  (KEYS[7]). The same key `admin-store.ts` exports as ADMIN_SETTINGS_KEY —
+ *  spelled here because this module must stay importable with admin-store
+ *  mocked down to `getAdminSettings` (the store's tests do exactly that).
+ *  hint-store.test.ts pins the two spellings against each other. */
+export const HINT_SETTINGS_KEY = "ctf:admin:settings";
 
 /** Whether `login` already bought `<target>/<id>` — the same set membership
  *  the reveal script's SADD guard decides on. Redis trouble reads as NOT
@@ -273,12 +345,31 @@ export async function hintGate(
     return { allowed: false, reason: "disabled" };
   }
 
-  const { enabled, cost, minSolves, unlockAfterMin, scoringStartsAt } = await resolveHintConfig();
+  const { enabled, cost, minSolves, unlockAfterMin, scoringStartsAt, paused, scoringEndsAt } =
+    await resolveHintConfig();
   if (!enabled) return { allowed: false, reason: "disabled" };
   // A preview (#464: an admin before launch) is not buying anything, so the
   // time and anti-burner gates — both about when a PURCHASE is fair — do not
   // apply to it. Module-live and hints-enabled still do.
   if (opts.dryRun) return { allowed: true };
+
+  // Scoring window (#566). A purchase lowers the buyer's net, so it is a
+  // scoring action and closes with scoring: the manual freeze, and the
+  // scheduled END once it has passed (`ended`, so the contestant reads
+  // "over", not "try again later" — #567). NOT the not-launched case: the
+  // route's launch lock (#464) owns that, and an unset start is also every
+  // pre-launch admin preview's state. Before the time/progress/affordability
+  // gates on purpose — a closed event answers "closed", not "solve more" or
+  // "not enough", and no fold is read for a refusal the schedule already
+  // made. The one exemption is a hint this login already owns: a re-view
+  // charges nothing, so there is nothing to freeze.
+  // The end wins over the freeze (CodeRabbit #568): both at once is still
+  // the end of the event, and "until it resumes" would be a false promise.
+  const closedBecause = scoringEnded(Date.now(), scoringEndsAt) ? "ended" : paused ? "paused" : null;
+  if (closedBecause) {
+    if (opts.id && (await ownsHint(login, target, opts.id))) return { allowed: true };
+    return { allowed: false, reason: closedBecause };
+  }
 
   // Time phase: only meaningful once the organizer has set a scoring start.
   if (unlockAfterMin > 0 && scoringStartsAt) {
@@ -344,25 +435,37 @@ export async function revealHint(
   login: string,
   target: string,
   id: string,
-  opts: { dryRun?: boolean } = {},
+  opts: { dryRun?: boolean; quotedCost?: number } = {},
 ): Promise<RevealResult> {
   const dryRun = opts.dryRun === true;
+  const quoted = opts.quotedCost === undefined ? "" : String(opts.quotedCost);
   // Fails CLOSED: unlike the scoring freeze, a settings-read error here must
   // never let a purchase through unpriced/ungated — `resolveHintConfig`'s
   // `getAdminSettings` throws on any read failure (transport or per-command),
   // which propagates out of this function uncaught, so no charge is ever
   // attempted. See docs/reviewing.md's fail-direction table.
-  const { enabled, cost } = await resolveHintConfig();
+  const { enabled, cost, scoringEndsAt } = await resolveHintConfig();
   if (!enabled) return { ok: false, error: "Hints are not enabled" };
   if (!isHintTarget(target)) return { ok: false, error: "Unknown app" };
   if (!CHALLENGE_ID_RE.test(id)) return { ok: false, error: "Invalid challenge id" };
+  // The scheduled end as the script will compare it (#566): epoch ms, or
+  // null when none is set / it does not parse (no end = no end, as
+  // `outsideWindow` reads it).
+  const endsAtParsed = scoringEndsAt ? Date.parse(scoringEndsAt) : NaN;
+  const endsAtMs = Number.isFinite(endsAtParsed) ? endsAtParsed : null;
 
   // One attempt = gate, story lock, script. Re-run ONCE when the script
   // answers `stale` (a score-lowering write on some app task landed between
   // the gate's fold and the charge): the second attempt folds afresh under
   // the new revision. Twice stale is an event in the middle of a reset — tell
   // the contestant to try again rather than spin.
-  return attemptReveal(login, target, id, cost, dryRun, false);
+  return attemptReveal(login, target, id, cost, dryRun, endsAtMs, quoted, false);
+}
+
+/** The refusal for a purchase whose confirmed price is no longer the price:
+ *  nothing charged, and the current price to confirm again. */
+function repricedResult(price: number): RevealResult {
+  return { ok: false, repriced: true, cost: price, error: `This hint now costs ${price} pts. Confirm again to buy it at the new price.` };
 }
 
 async function attemptReveal(
@@ -371,6 +474,8 @@ async function attemptReveal(
   id: string,
   cost: number,
   dryRun: boolean,
+  endsAtMs: number | null,
+  quoted: string,
   retried: boolean,
 ): Promise<RevealResult> {
   // Gate BEFORE the charge script. Enforced here (not just in the route) so
@@ -378,6 +483,10 @@ async function attemptReveal(
   // the boundary that actually decides.
   const gate = await hintGate(login, target, { dryRun, id });
   if (!gate.allowed) {
+    // #566/#567: a closed event, worded apart — a pause is temporary, the
+    // end is final — and `forbidden` so the route answers 403 like a submit.
+    if (gate.reason === "paused") return { ok: false, forbidden: true, error: HINTS_PAUSED_MESSAGE };
+    if (gate.reason === "ended") return { ok: false, forbidden: true, error: HINTS_ENDED_MESSAGE };
     if (gate.reason === "locked") {
       return { ok: false, forbidden: true, error: `Hints unlock at ${gate.unlocksAt}` };
     }
@@ -389,6 +498,11 @@ async function attemptReveal(
       };
     }
     if (gate.reason === "insufficient") {
+      // A stale quote is answered with the current price first: the
+      // contestant confirmed a different figure, and "not enough points" at
+      // a price they never saw is no answer. The next request, quoting the
+      // new price, gets the affordability refusal if it still applies.
+      if (quoted !== "" && Number(quoted) !== gate.needed) return repricedResult(gate.needed);
       return { ok: false, forbidden: true, error: notEnough(gate.needed, gate.have) };
     }
     if (gate.reason === "busy") {
@@ -405,13 +519,14 @@ async function attemptReveal(
   // enforced there; a stories/team read failure refuses (closed).
   let prereq = "";
   let lockKeys: string[] = [];
+  let lockTeam = "";
   if (target === "classic") {
     try {
       const [stories, existing] = await Promise.all([listStories(), listChallengeIds()]);
       const pos = storyPositions(stories, existing).get(id);
       if (pos?.prereq) {
         prereq = pos.prereq;
-        lockKeys = await teamSolveKeys(login);
+        ({ keys: lockKeys, team: lockTeam } = await teamLockKeys(login));
       }
     } catch (err) {
       console.error("Hint reveal: story lock lookup failed (failing closed):", errorLabel(err));
@@ -430,6 +545,9 @@ async function attemptReveal(
         userHintTimesKey(login),
         SCORE_REV_KEY,
         SCORE_LOWERING_KEY,
+        // KEYS[7]: the settings hash, for the live `paused` flag at the
+        // charge boundary (#566). The lock keys follow it.
+        HINT_SETTINGS_KEY,
         ...lockKeys,
       ],
       [
@@ -445,6 +563,16 @@ async function attemptReveal(
         // / preview) the script skips both.
         gate.balance ? gate.balance.gross : "",
         gate.balance ? gate.balance.rev : "",
+        // ARGV[10]: the scheduled end as epoch ms, compared to Redis's clock
+        // right before the charge (#566). "" when no end is set.
+        endsAtMs === null ? "" : String(endsAtMs),
+        // ARGV[11]: the viewer's team slug for the story lock, "" for a team
+        // of one (#602).
+        lockTeam,
+        // ARGV[12]: the price the contestant confirmed, "" when none was sent.
+        quoted,
+        // ARGV[13]: the default price, for a settings hash with none.
+        String(HINT_COST),
       ],
     );
   } catch (err) {
@@ -452,7 +580,7 @@ async function attemptReveal(
     return { ok: false, error: "Hint reveal failed. Try again" };
   }
 
-  const [status, hint, spent] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
+  const [status, hint, spent, chargedPrice] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") {
     return { ok: false, missing: true, error: "No hint available for this challenge" };
   }
@@ -464,8 +592,18 @@ async function attemptReveal(
   // The score revision moved between the gate's fold and the charge (ARGV[9]):
   // the gross may be too high. Fold again under the new revision, once.
   if (status === "stale") {
-    if (!retried) return attemptReveal(login, target, id, cost, dryRun, true);
+    if (!retried) return attemptReveal(login, target, id, cost, dryRun, endsAtMs, quoted, true);
     return { ok: false, error: "Your score changed while buying this hint. Try again" };
+  }
+  if (status === "repriced") {
+    const now = Number(spent);
+    return repricedResult(Number.isFinite(now) ? now : cost);
+  }
+  // The script's charge-boundary window check (#566): the gate passed a
+  // round-trip ago, the end (or the freeze) landed since. Same two messages
+  // the gate gives; nothing was written.
+  if (status === "closed") {
+    return { ok: false, forbidden: true, error: hint === "ended" ? HINTS_ENDED_MESSAGE : HINTS_PAUSED_MESSAGE };
   }
   // The script's own re-check lost a race to a parallel purchase (ARGV[8]):
   // the same refusal the gate gives, from the spend the script actually saw.
@@ -488,7 +626,9 @@ async function attemptReveal(
       hint,
       alreadyOwned,
       spent: Number(spent) || 0,
-      cost,
+      // What the script charged, read at the write; the caller's resolved
+      // figure only when the verdict does not carry one (an owned re-view).
+      cost: status === "charged" && Number.isFinite(Number(chargedPrice)) ? Number(chargedPrice) : cost,
       ...(balance !== undefined ? { balance } : {}),
     };
   }

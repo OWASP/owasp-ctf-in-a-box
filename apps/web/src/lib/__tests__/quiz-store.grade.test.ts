@@ -322,6 +322,19 @@ describe("quizGate", () => {
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
+  // #567: a passed scheduled END is its own reason — the contestant reads
+  // "the event has ended", not "paused, try again later".
+  it("refuses with `ended` once the scheduled scoring end has passed", async () => {
+    mocks.getAdminSettings.mockResolvedValue(
+      settings({
+        scoringStartsAt: new Date(Date.now() - 7_200_000).toISOString(),
+        scoringEndsAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+    expect(await quizGate("octocat", "q1")).toEqual({ allowed: false, reason: "ended" });
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+  });
+
   it("fails CLOSED when the attempt lookup errors, with its OWN reason distinct from exhausted", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.upstashPipeline.mockRejectedValueOnce(new Error("upstash down"));

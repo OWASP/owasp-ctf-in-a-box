@@ -12,6 +12,7 @@
 // ai-store.ts). This component never sees — and cannot render — a flag:
 // `ChallengeView` has no field that could carry one.
 
+import { teamsLabel } from "@/lib/solve-labels";
 import AttachmentList, { type AttachmentView } from "@/components/attachment-list";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -30,9 +31,9 @@ export type ChallengeStatus =
 export type ClassicStatus = ChallengeStatus;
 
 /** What a challenge surface needs to render one challenge — deliberately just
- *  the public `Challenge` fields, this challenge's solve count, and this
- *  viewer's derived status. Built by the server pages from `listChallenges()`
- *  + `getViewerClassic()` + `getSolveCounts()`, field by field — never from a
+ *  the public `Challenge` fields, how many teams solved it, and this viewer's
+ *  derived status. Built by the server pages from `listChallenges()` +
+ *  `getViewerClassic()` + `teamSolveCounts()`, field by field — never from a
  *  spread of a raw store record, which is how a flag would leak. */
 export type ChallengeView = {
   id: string;
@@ -40,7 +41,13 @@ export type ChallengeView = {
   category: string;
   description: string;
   points: number;
-  solveCount: number;
+  /** Teams that solved it (#595): the board's figure, since scoring is per
+   *  team. Null when it could not be read; nothing is shown then. */
+  teamsSolved: number | null;
+  /** The login that solved it first (#188), on the classic board only.
+   *  Optional so every other caller is unchanged; null or absent shows
+   *  nothing (nobody has solved it, or the solves could not be read). */
+  firstBlood?: string | null;
   /** Compared with capitalisation intact (issue #193). Public deliberately —
    *  see the badge below. Optional so every existing caller is unchanged. */
   caseSensitive?: boolean;
@@ -153,6 +160,10 @@ export function describeRefusal(reason: string): string {
   switch (reason) {
     case "paused":
       return "Scoring is paused right now. Try again later.";
+    case "ended":
+      // #567: the scheduled end has passed. Final — no "try again", which
+      // is the pause's promise and false once the event is over.
+      return "Scoring has closed — the event has ended.";
     case "solved":
       return "You already solved this one.";
     case "cooldown":
@@ -331,9 +342,9 @@ export function ChallengeCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-white">{challenge.title}</p>
-          <p className="mt-0.5 text-xs text-muted">
-            {challenge.solveCount} solve{challenge.solveCount === 1 ? "" : "s"}
-          </p>
+          {challenge.teamsSolved !== null && (
+            <p className="mt-0.5 text-xs text-muted">{teamsLabel(challenge.teamsSolved)} solved</p>
+          )}
         </div>
         <div className="flex flex-none items-center gap-1.5">
           {/* Case sensitivity is PUBLIC (issue #193). Without it a contestant

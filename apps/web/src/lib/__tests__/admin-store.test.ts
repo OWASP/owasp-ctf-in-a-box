@@ -81,7 +81,7 @@ describe("getAdminSettings", () => {
   it("fills defaults for an empty hash", async () => {
     mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
     expect(await getAdminSettings()).toEqual({
-      paused: false, hintsEnabled: null, hintCost: null, teamRegistrationOpen: true,
+      paused: false, hintsEnabled: null, hintCost: null, teamRegistrationOpen: true, displayQr: true,
       hintsMinSolves: null, hintsUnlockAfterMin: null,
       quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
       scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
@@ -147,7 +147,7 @@ describe("getAdminSettings", () => {
       result: ["paused", "1", "hintsEnabled", "0", "hintCost", "25", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"],
     }]);
     expect(await getAdminSettings()).toEqual({
-      paused: true, hintsEnabled: false, hintCost: 25, teamRegistrationOpen: true,
+      paused: true, hintsEnabled: false, hintCost: 25, teamRegistrationOpen: true, displayQr: true,
       hintsMinSolves: null, hintsUnlockAfterMin: null,
       quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
       scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
@@ -158,6 +158,15 @@ describe("getAdminSettings", () => {
       secureDevTargets: null,
       sponsorLogoSize: null,
     });
+  });
+
+  // #592: the projector board's QR code is ON unless an organizer turns it
+  // off, so absent means on and only "0" is stored.
+  it("decodes displayQr as on when absent and off for a stored \"0\"", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
+    expect((await getAdminSettings()).displayQr).toBe(true);
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["displayQr", "0"] }]);
+    expect((await getAdminSettings()).displayQr).toBe(false);
   });
 
   it("decodes a stored \"0\" for teamRegistrationOpen as closed", async () => {
@@ -378,6 +387,25 @@ describe("updateAdminSettings write", () => {
     expect(out.teamRegistrationOpen).toBe(false);
   });
 
+  it("turning displayQr off writes \"0\", and on HDELs it (#592)", async () => {
+    mocks.upstashEval.mockResolvedValue(["displayQr", "0", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
+    expect((await updateAdminSettings({ displayQr: false }, "alice")).displayQr).toBe(false);
+    let args = mocks.upstashEval.mock.calls[0][2].map(String);
+    expect(args[args.indexOf("displayQr") + 1]).toBe("0");
+    expect(args[4]).toBe("0");
+
+    mocks.upstashEval.mockClear();
+    mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
+    expect((await updateAdminSettings({ displayQr: true }, "alice")).displayQr).toBe(true);
+    args = mocks.upstashEval.mock.calls[0][2].map(String);
+    expect(args[4]).toBe("1");
+    expect(args[5]).toBe("displayQr");
+  });
+
+  it("rejects a non-boolean displayQr", async () => {
+    await expect(updateAdminSettings({ displayQr: "yes" } as never, "alice")).rejects.toThrow(/displayQr must be a boolean/);
+  });
+
   it("opening teamRegistrationOpen HDELs the field instead of writing \"1\"", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
     const out = await updateAdminSettings({ teamRegistrationOpen: true }, "alice");
@@ -465,13 +493,8 @@ describe("aiCooldownSec", () => {
     await expect(updateAdminSettings({ aiCooldownSec: "x" as never }, "alice")).rejects.toThrow(
       AdminValidationError,
     );
-    // No patch-level null-clear exists for this knob — same as classic's:
-    // the only route back to "no override" is never writing the field at
-    // all (decode reads absent as null). A `null` value is therefore just
-    // another non-number, rejected the same way "x" is.
-    await expect(updateAdminSettings({ aiCooldownSec: null as never }, "alice")).rejects.toThrow(
-      AdminValidationError,
-    );
+    // null is not a rejection: it clears the knob back to its default (see
+    // "numeric knobs accept null as clear" below).
     // Every rejection above refused BEFORE the store: the only Lua call in
     // this whole test is the one valid write at the top. A rejection that
     // still reached upstashEval would validate after writing — the exact
@@ -522,7 +545,7 @@ describe("getSyncStatus", () => {
 
 describe("scheduled windows", () => {
   const base: AdminSettings = {
-    paused: false, hintsEnabled: null, hintCost: null, teamRegistrationOpen: true,
+    paused: false, hintsEnabled: null, hintCost: null, teamRegistrationOpen: true, displayQr: true,
     hintsMinSolves: null, hintsUnlockAfterMin: null,
     quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
     scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
@@ -559,7 +582,7 @@ describe("scheduled windows", () => {
 
   it("effectiveRegistrationOpen: an unlaunched event keeps registration open (window unbounded)", () => {
     const now = T("2026-01-01T12:00:00Z");
-    expect(effectiveRegistrationOpen({ ...base, teamRegistrationOpen: true, scoringStartsAt: null, registrationStartsAt: null, registrationEndsAt: null }, now)).toBe(true);
+    expect(effectiveRegistrationOpen({ ...base, teamRegistrationOpen: true, displayQr: true, scoringStartsAt: null, registrationStartsAt: null, registrationEndsAt: null }, now)).toBe(true);
   });
 
   it("effectiveRegistrationOpen: manual AND inside the registration window", () => {
@@ -902,5 +925,44 @@ describe("sponsorLogoSize", () => {
 
     mocks.upstashPipeline.mockResolvedValue([{ result: ["sponsorLogoSize", "xl"] }]);
     expect((await getAdminSettings()).sponsorLogoSize).toBeNull();
+  });
+});
+
+// --- numeric knobs clear back to their default (#600) ---------------------
+// Once set, a numeric knob could never return to "unset": the rehearsal left
+// hintsMinSolves stored as 1 (equal to the default, but no longer following
+// it). null or "" now HDELs the field, the way sponsorLogoSize and the
+// schedule bounds already clear.
+describe("numeric knobs accept null as clear", () => {
+  const KNOBS = [
+    "hintCost",
+    "hintsMinSolves",
+    "hintsUnlockAfterMin",
+    "quizMaxAttempts",
+    "quizRetryAfterMin",
+    "classicCooldownSec",
+    "aiCooldownSec",
+    "scoreCooldownMin",
+    "teamMaxMembers",
+  ] as const;
+
+  it.each(KNOBS)("%s: null deletes the field instead of being refused", async (knob) => {
+    mocks.upstashEval.mockClear();
+    await expect(updateAdminSettings({ [knob]: null } as unknown as Parameters<typeof updateAdminSettings>[0], "alice")).resolves.toBeDefined();
+    const args = mocks.upstashEval.mock.calls[0][2] as string[];
+    const numDels = Number(args[4]);
+    expect(args.slice(5, 5 + numDels)).toContain(knob);
+    expect(args.slice(5 + numDels)).not.toContain(knob);
+  });
+
+  it("treats an empty string the same as null", async () => {
+    mocks.upstashEval.mockClear();
+    await updateAdminSettings({ hintsMinSolves: "" }, "alice");
+    const args = mocks.upstashEval.mock.calls[0][2] as string[];
+    expect(args.slice(5, 5 + Number(args[4]))).toContain("hintsMinSolves");
+  });
+
+  it("still refuses an out-of-range number", async () => {
+    await expect(updateAdminSettings({ teamMaxMembers: 0 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
   });
 });

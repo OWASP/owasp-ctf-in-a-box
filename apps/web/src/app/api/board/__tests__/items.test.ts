@@ -16,8 +16,12 @@ const mocks = vi.hoisted(() => ({
   requireLaunchedApi: vi.fn(),
   listStories: vi.fn(async () => [] as { id: string; title: string; intro: string; steps: string[] }[]),
   getTeamClassicSolvedIds: vi.fn(async () => new Set<string>()),
+  unlockingSolvedIds: vi.fn(async () => new Set<string>()),
 }));
-vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: mocks.getTeamClassicSolvedIds }));
+vi.mock("@/lib/classic-team", () => ({
+  getTeamClassicSolvedIds: mocks.getTeamClassicSolvedIds,
+  unlockingSolvedIds: mocks.unlockingSolvedIds,
+}));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: mocks.getSession } } }));
 vi.mock("@/lib/launch", () => ({ requireLaunchedApi: mocks.requireLaunchedApi }));
@@ -155,8 +159,32 @@ describe("GET /api/board/items and a locked story step (#463)", () => {
     // The viewer is on that team (their own team has it open too — review C2).
     mocks.getSession.mockResolvedValue({ user: { login: "alice" } });
     mocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
+    mocks.unlockingSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
     const body = JSON.stringify(await (await GET(req("alice,bob"))).json());
     expect(body).toContain("Secret SQLi");
+    expect(mocks.unlockingSolvedIds).toHaveBeenCalledWith(["alice", "bob"]);
+  });
+
+  // #602: bob solved step 1 on another team and then joined this one. The
+  // solve still counts toward the team's points (bob's row is in the union),
+  // but it is older than bob's join here, so it opens step 2 for nobody.
+  it("keeps the next step hidden when the team's only solve of the one before it was carried in", async () => {
+    mocks.listChallenges.mockResolvedValue([
+      { id: "recon-ab12cd", title: "Recon", points: 10 },
+      { id: "secret-sqli-cd34ef", title: "Secret SQLi", points: 50 },
+    ]);
+    mocks.listStories.mockResolvedValue([{ id: "op", title: "Op", intro: "", steps: ["recon-ab12cd", "secret-sqli-cd34ef"] }]);
+    mocks.getViewerClassic.mockImplementation(async (l: string) =>
+      l === "bob" ? { solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} } : { solved: {}, attempts: {} },
+    );
+    // The viewer's OWN team has step 2 open, so only the queried team's
+    // carried solve is in question.
+    mocks.getSession.mockResolvedValue({ user: { login: "carol" } });
+    mocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
+    mocks.unlockingSolvedIds.mockResolvedValue(new Set());
+    const body = await (await GET(req("alice,bob"))).json();
+    expect(JSON.stringify(body)).not.toContain("Secret SQLi");
+    expect(body.classic[0]).toMatchObject({ id: "recon-ab12cd", done: true });
   });
 });
 
@@ -169,6 +197,7 @@ describe("GET /api/board/items redacts for the VIEWER too (#463, review C2)", ()
     mocks.listStories.mockResolvedValue([{ id: "op", title: "Op", intro: "", steps: ["recon-ab12cd", "secret-sqli-cd34ef"] }]);
     // The LEADING team has unlocked step 2…
     mocks.getViewerClassic.mockResolvedValue({ solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} });
+    mocks.unlockingSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
   };
 
   it("never shows a signed-out visitor a step the queried team unlocked but they have not", async () => {
@@ -185,5 +214,58 @@ describe("GET /api/board/items redacts for the VIEWER too (#463, review C2)", ()
     mocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
     const body = JSON.stringify(await (await GET(req("leader"))).json());
     expect(body).toContain("Secret SQLi");
+  });
+});
+
+// A row that says "8 / 12 solved" over a list showing 3 is the contradiction
+// #584 reported. The hidden steps stay placeholders with nothing per position
+// (ADR 60: not which ones the team solved, not their points); what crosses is
+// ONE count of hidden steps the queried team solved, which the row's own
+// solved figure already implies. The caller derives their point total from
+// the row's points.
+describe("GET /api/board/items reports hidden solved steps as one count (#584)", () => {
+  const setup = () => {
+    mocks.listChallenges.mockResolvedValue([
+      { id: "recon-ab12cd", title: "Recon", points: 10 },
+      { id: "secret-sqli-cd34ef", title: "Secret SQLi", points: 1337 },
+      { id: "final-ef56gh", title: "Final Boss", points: 4242 },
+    ]);
+    mocks.listStories.mockResolvedValue([
+      { id: "op", title: "Op", intro: "", steps: ["recon-ab12cd", "secret-sqli-cd34ef", "final-ef56gh"] },
+    ]);
+    // The queried team solved steps 1 and 2; step 3 is open to them but unsolved.
+    mocks.getViewerClassic.mockResolvedValue({
+      solved: { "recon-ab12cd": { points: 10, at: "x" }, "secret-sqli-cd34ef": { points: 1337, at: "y" } },
+      attempts: {},
+    });
+    mocks.unlockingSolvedIds.mockResolvedValue(new Set(["recon-ab12cd", "secret-sqli-cd34ef"]));
+    mocks.getSession.mockResolvedValue(null);
+  };
+  type Body = { classic: Record<string, unknown>[]; classicHiddenSolved?: number };
+  const bodyOf = async (logins: string) => (await (await GET(req(logins))).json()) as Body;
+
+  it("counts the hidden steps the queried team solved, without saying which", async () => {
+    setup();
+    const body = await bodyOf("leader");
+    expect(body.classicHiddenSolved).toBe(1);
+    expect(body.classic).toEqual([
+      { id: "recon-ab12cd", label: "Recon", points: 10, done: true, earnedPoints: 10 },
+      { id: "locked:op:2", label: "??? — step 2 of 3", points: 0, done: false, hidden: true },
+      { id: "locked:op:3", label: "??? — step 3 of 3", points: 0, done: false, hidden: true },
+    ]);
+  });
+
+  it("never sends a hidden step's points, solved or not", async () => {
+    setup();
+    const body = JSON.stringify(await (await GET(req("leader"))).json());
+    expect(body).not.toContain("1337");
+    expect(body).not.toContain("4242");
+    expect(body).not.toContain("Secret SQLi");
+  });
+
+  it("reports 0 when the team solved no hidden step", async () => {
+    setup();
+    mocks.getViewerClassic.mockResolvedValue({ solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} });
+    expect((await bodyOf("leader")).classicHiddenSolved).toBe(0);
   });
 });

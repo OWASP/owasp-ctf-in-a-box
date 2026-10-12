@@ -37,6 +37,36 @@ export function outsideScoringWindow(nowMs: number, startsAt: string | null, end
   return outsideWindow(nowMs, startsAt, endsAt);
 }
 
+/** WHY scoring is closed right now, or null while it is live (#567).
+ *  `effectivePaused` (admin-store) folds the manual freeze and the schedule
+ *  into one boolean — right for the scorer/sync readers, which only need
+ *  "count or don't" — but the contestant-facing refusal has to tell a pause
+ *  ("try again later") from the END of the event (final). A passed scheduled
+ *  end wins over everything: a freeze toggled on after the close is still
+ *  the end. Everything else that closes scoring — the manual freeze, a
+ *  start still ahead, no start at all (#464) — reads as "paused", exactly
+ *  what `outsideScoringWindow` and the freeze refuse on today. App-only: the
+ *  scorer and sync keep their boolean. */
+export function scoringClosure(
+  nowMs: number,
+  paused: boolean,
+  startsAt: string | null,
+  endsAt: string | null,
+): "paused" | "ended" | null {
+  if (scoringEnded(nowMs, endsAt)) return "ended";
+  if (paused || outsideScoringWindow(nowMs, startsAt, endsAt)) return "paused";
+  return null;
+}
+
+/** Whether the scheduled scoring END has passed — `outsideWindow`'s end
+ *  bound on its own (`now > e`, unparseable/absent = no end). The hint gate
+ *  (#566) asks this directly: a paid reveal closes with the freeze and the
+ *  end, but NOT with "not launched", which the route's launch lock owns. */
+export function scoringEnded(nowMs: number, endsAt: string | null): boolean {
+  const e = endsAt ? Date.parse(endsAt) : NaN;
+  return Number.isFinite(e) && nowMs > e;
+}
+
 /** Effective registration state: the manual toggle AND inside the
  *  registration window (absent bound = open). Here rather than only in
  *  admin-store (server-only, which re-exports it) so Server and Client

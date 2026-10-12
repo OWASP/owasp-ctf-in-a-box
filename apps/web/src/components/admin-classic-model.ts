@@ -6,11 +6,13 @@
 // component file stays readable; see that file's header for the design notes
 // these helpers implement.
 
-import type { AdminChallenge, Challenge, ImportSummary } from "@/lib/classic-store";
+import type { AdminChallenge, Challenge } from "@/lib/classic-store";
+import type { ClassicImportSummary } from "@/lib/attachment-files-store";
+import type { AttachmentFile } from "@/lib/attachment-files";
 import type { Story } from "@/lib/story-lock";
 import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
-import { CLASSIC_BUNDLE_VERSION, type ClassicBundle } from "@/lib/classic-io";
+import { bundleVersionFor, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import { describeAdminError } from "@/components/admin/fetch";
@@ -322,13 +324,21 @@ export function exportBundleFrom(
   categories: readonly string[],
   stories: readonly Story[] = [],
   attachments: Readonly<Record<string, readonly AttachmentMeta[]>> = {},
+  files?: readonly AttachmentFile[],
 ): ClassicBundle {
   // A step must name a challenge in the same file, or parseBundle refuses
   // the file this function just wrote (#463). The store drops a deleted
   // challenge from its story too; this is the same rule at the client door.
   const exported = new Set(rows.map((r) => r.challenge.id));
+  // "Include files": the bytes of the uploads this bundle names, and only
+  // those — parseBundle refuses a file for an upload the bundle lacks.
+  const named = new Set(
+    rows.flatMap(({ challenge: { id } }) => (attachments[id] ?? []).flatMap((m) => ("sha256" in m ? [`${id}\n${m.sha256}`] : []))),
+  );
+  const attachmentFiles = files?.filter((f) => named.has(`${f.item}\n${f.sha256}`));
+  const withFiles = attachmentFiles?.length ? attachmentFiles : undefined;
   return {
-    version: CLASSIC_BUNDLE_VERSION,
+    version: bundleVersionFor(withFiles !== undefined),
     categories: [...categories],
     stories: stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) })),
     challenges: rows.map(({ challenge: c, flag, hint }) => ({
@@ -349,6 +359,7 @@ export function exportBundleFrom(
       // #186: metadata only, and only when present — the server export's rule.
       ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
     })),
+    ...(withFiles ? { attachmentFiles: withFiles } : {}),
   };
 }
 
@@ -358,9 +369,29 @@ export function exportBundleFrom(
  *  pluralization branch (and the created/updated interpolation next to it)
  *  has to live outside a render tree to be exercised by a test at all.
  *  Exported for direct testing. */
-export function formatImportSummary({ created, updated, categories, stories }: ImportSummary): string {
+export function formatImportSummary({ created, updated, categories, stories, files }: ClassicImportSummary): string {
   const categoryWord = categories === 1 ? "category" : "categories";
   // `stories` is present only for a v2 file (#463); a v1 summary reads as before.
   const storyPart = stories === undefined ? "" : `, ${stories} ${stories === 1 ? "story" : "stories"}`;
-  return `Imported: ${created} created, ${updated} updated. (${categories} ${categoryWord}${storyPart} listed in the file.)`;
+  // `files` is present only for a bundle that carried files.
+  const filePart = files === undefined ? "" : ` ${files} ${files === 1 ? "file" : "files"} filled from the bundle.`;
+  return `Imported: ${created} created, ${updated} updated. (${categories} ${categoryWord}${storyPart} listed in the file.)${filePart}`;
+}
+
+/** One challenge's solve counts as GET /api/admin/classic sends them (#595):
+ *  teams (the board's figure) and players; null where a count was unread. */
+export type ChallengeSolves = { teams: number | null; players: number | null };
+
+/** The list row's solve figure: "3 teams · 5 players", "unsolved" when
+ *  nobody has, so a flag nobody can solve stands out; only what is known when
+ *  a count was unread; null when nothing is. */
+export function solvesLabel(solves: ChallengeSolves | undefined): string | null {
+  if (!solves) return null;
+  const { teams, players } = solves;
+  if (teams === 0 && players === 0) return "unsolved";
+  const parts = [
+    teams === null ? null : `${teams} team${teams === 1 ? "" : "s"}`,
+    players === null ? null : `${players} player${players === 1 ? "" : "s"}`,
+  ].filter((p): p is string => p !== null);
+  return parts.length ? parts.join(" · ") : null;
 }

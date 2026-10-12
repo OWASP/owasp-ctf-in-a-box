@@ -17,13 +17,16 @@
 
 import { writeFileSync } from "node:fs";
 import { loadRubric } from "../src/rubric.js";
-import { getTarget } from "../src/targets.js";
+import { getTarget, TARGETS } from "../src/targets.js";
 import { runExec } from "../src/exec.js";
 import { AUTH_BY_TARGET, HEALTH_PATHS_BY_TARGET, PERSONALITY_NAMES, startStub } from "./vacuous-stub.mjs";
+import { summarize, verdict } from "./vacuous-verdict.mjs";
+
+const DEFAULT_RUBRIC = "rubric.owasp";
 
 function parseArgs(argv) {
   const out = {
-    rubric: "rubric.owasp",
+    rubric: DEFAULT_RUBRIC,
     targets: [],
     personalities: [],
     json: null,
@@ -133,49 +136,24 @@ async function main() {
     }
   }
 
-  // Union across personalities: a challenge only has to pass under ONE shape of
-  // uselessness to be asserting nothing.
-  const byTarget = new Map();
-  for (const r of results) {
-    if (r.error) continue;
-    const acc = byTarget.get(r.targetName) ?? {
-      total: r.total,
-      ids: new Set(),
-      aborted: false,
-      paths: new Set(),
-    };
-    r.vacuous.forEach((id) => acc.ids.add(id));
-    acc.aborted ||= r.aborted;
-    (r.paths ?? []).forEach((p) => acc.paths.add(p));
-    byTarget.set(r.targetName, acc);
-  }
+  const byTarget = summarize(results);
+  // A full sweep of the shipped rubric must cover every target the scorer
+  // knows: a target whose rubric directory went missing would otherwise drop
+  // out of the loop above and the sweep would pass without measuring it.
+  const expected =
+    opts.targets.length > 0
+      ? opts.targets
+      : opts.rubric === DEFAULT_RUBRIC
+        ? [...new Set([...Object.keys(TARGETS), ...byName.keys()])]
+        : [...byName.keys()];
+  const result = verdict(byTarget, expected);
 
   console.log("\n=== vacuous-pass sweep ===\n");
-  let grandTotal = 0;
-  let grandVacuous = 0;
   for (const [name, acc] of byTarget) {
-    grandTotal += acc.total;
-    grandVacuous += acc.ids.size;
-    // A zero is only meaningful if the rubric actually exercised the stub.
-    // Two ways it silently does not: the runner aborts and skips challenges,
-    // or the target's helpers get stuck on a gate every file has to clear
-    // first (a login, a fixture, docker) and die before touching the endpoint
-    // under test. Both look exactly like a clean bill.
-    //
-    // Distinct paths is the discriminator, not request count. A target stuck
-    // at a login and a target whose anti-vacuous preconditions are correctly
-    // firing BOTH issue roughly one request per challenge — the count cannot
-    // tell them apart, and reading it as a bailout libels the targets that
-    // have been hardened. Where those requests GO does tell them apart: one
-    // path repeated for every challenge means the rubric never got past the
-    // gate, while a path per challenge means it reached the app's surface and
-    // was turned away on the merits.
-    const distinct = acc.paths.size;
-    const stuck = acc.total > 1 && distinct <= 1;
     const warn = acc.aborted
       ? "  ** run aborted — challenges skipped, a clean result here proves nothing **"
-      : acc.ids.size === 0 && stuck
-        ? `  ** reached ${distinct} distinct path${distinct === 1 ? "" : "s"} across ${acc.total} challenges` +
+      : acc.ids.size === 0 && acc.stuck
+        ? `  ** a personality reached at most one distinct path across ${acc.total} challenges` +
           " — the rubric never got past a shared gate; NOT a clean bill **"
         : "";
     console.log(`${name}: ${acc.ids.size} of ${acc.total} pass against a useless target${warn}`);
@@ -183,11 +161,12 @@ async function main() {
     if (acc.ids.size === 0) console.log("    (none)");
     console.log("");
   }
-  console.log(`TOTAL: ${grandVacuous} of ${grandTotal}`);
+  console.log(`TOTAL: ${result.vacuous} of ${result.total}`);
   console.log(
     "\nThis is a LOWER BOUND. A challenge is only reported when it PASSES against\n" +
-      "a useless target; anything that timed out, aborted, or died in its helpers is\n" +
-      "counted as clean. Targets flagged above were not meaningfully measured.",
+      "a useless target; anything that timed out or died in its helpers is\n" +
+      "counted as clean. An aborted or stuck target, or one not measured at all,\n" +
+      "fails the sweep.",
   );
 
   if (opts.json) {
@@ -195,9 +174,13 @@ async function main() {
     console.log(`\nwrote ${opts.json}`);
   }
 
-  // Non-zero when anything is vacuous, so this can gate CI once the findings
-  // are fixed. Until then it is informational — run it, read the list.
-  if (grandVacuous > 0) process.exitCode = 1;
+  // Non-zero when anything is vacuous OR anything went unmeasured: an aborted
+  // run, a stuck one and a missing target all look exactly like a clean bill.
+  if (!result.ok) {
+    console.error("\nvacuous-sweep: FAIL");
+    for (const p of result.problems) console.error(`  - ${p}`);
+    if (!process.exitCode) process.exitCode = 1;
+  }
 }
 
 await main();

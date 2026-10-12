@@ -81,7 +81,8 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 63 — Service hops inside the stack are plain HTTP; the network is the boundary](#adr-63-service-hops-inside-the-stack-are-plain-http-the-network-is-the-boundary)
 - [ADR 64 — sync's cursor lives in Redis, and an unreadable cursor holds the poller](#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)
 - [ADR 65 — An event adds its own logo and favicon; the OWASP mark stays](#adr-65-an-event-adds-its-own-logo-and-favicon-the-owasp-mark-stays)
-- [ADR 66 — Dynamic classic scoring: read-time calculation over aggregate recomputation](#adr-66-dynamic-classic-scoring-read-time-calculation-over-aggregate-recomputation)
+- [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
+- [ADR 67 — Dynamic classic scoring: read-time calculation over aggregate recomputation](#adr-67-dynamic-classic-scoring-read-time-calculation-over-aggregate-recomputation)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -1987,6 +1988,18 @@ the proxy, not from the assertion. `proxy-matcher.test.ts` compiles the
 matcher with Next's own code and pins that exactly this one path is outside
 it, and the route's test pins its own `403`.
 
+*Amended (the classic bundle with files):* `/api/admin/classic/bundle` is
+outside the matcher on the same terms
+(`"/api/((?!admin/event/?$|admin/classic/bundle/?$).*)"`). A classic bundle
+exported with **Include files** carries the uploads as base64, so it hits the
+same 10 MB cut. The route runs `originAllowed` first thing in `POST`, reads
+the body bounded with a `413` naming its limit, and takes the same
+`{ import }` shape as `/api/admin/classic`, through the same handler. The
+dedicated path keeps the rest of `/api/admin/classic` (upserts, deletes,
+categories, stories) behind the proxy rather than giving every one of its
+writes its own origin check. `proxy-matcher.test.ts` pins exactly these two
+paths outside the matcher.
+
 **Decision, part 2: rate-limit on the LOGIN, not the IP.** `gate-store.ts`'s
 throttle is keyed on the client IP its route (`app/api/gate/route.ts`)
 extracts, because the pre-event gate runs before anyone has an identity — and
@@ -3496,7 +3509,9 @@ at the store boundary needs no library and cannot regress.
 
 **Status.** Accepted; amended by
 [ADR 62](#adr-62-the-landing-pages-footer-does-not-repeat-the-sponsor-credit)
-(the landing page's footer leaves its credit out).
+(the landing page's footer leaves its credit out) and by
+[ADR 66](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
+(the regular leaderboard is a fifth surface).
 
 ## ADR 58. Demo seed/clear are admin-gated dangerous settings, not a `DEMO_MODE` env var
 
@@ -3637,11 +3652,26 @@ step by step while the free-pick board stays as it is.
   - Deleting a step shrinks the story.
 - **The unlock is per team.** "Solved by the team" is the union of every
   current teammate's classic solves, which is the same fold the leaderboard
-  uses, so a story and a team's score never disagree. A solo player is a
-  team of one.
+  uses. A solo player is a team of one.
+- **A solve unlocks only for the team it was made on** (amended, #602). A
+  teammate's solve opens the next step only if its `at` is on or after
+  their `joinedAt` on the current team, and their user record still names
+  that team. Membership is otherwise read now, so without this a player
+  could solve step 3 on one team, join another and open step 4 there. A
+  member on a team with no `joinedAt` opens nothing (closed). **Points are
+  unaffected**: a team's total stays the union of its members' solves, so a
+  player who joins mid-event still brings their points; only the unlock
+  follows solve-time membership. A story and a team's score can therefore
+  differ in one case: a carried-in solve scores for the new team but opens
+  nothing there. The record keeps only the CURRENT stint's `joinedAt`, so a
+  player who leaves and rejoins the same team is treated as new: their
+  first-stint solves stop opening steps (a teammate who stayed still opens
+  them). Keeping every stint would need a per-team join history; set aside
+  as rare for its cost.
 - **The lock lives in the scripts.** `SUBMIT_SCRIPT` and `REVEAL_SCRIPT`
-  receive the prerequisite and the teammates' solves hashes, and check the
-  lock first — before they read the flag or hint hash, and before any
+  receive the prerequisite, a (solves hash, user record) pair per teammate
+  and the team slug, decide the rule above inside the same call (one Lua
+  fragment, `storyLockLua`, shared by both), and check the lock first — before they read the flag or hint hash, and before any
   write. A locked step therefore costs no attempt and can't be used as a
   flag oracle. The store then answers it exactly like an unknown challenge
   (a 404 on submit, "No hint available" on reveal), so a guessed id cannot
@@ -3649,7 +3679,10 @@ step by step while the free-pick board stays as it is.
 - **A locked step is invisible.** It never leaves the server: not in the
   board, not on its own page (a 404, like an unknown id), not in metadata,
   and not in `/api/board/items`. That includes its id, which is derived from
-  the title.
+  the title. An expanded leaderboard row may report how many steps hidden
+  from the viewer its team has solved, as one count (`classicHiddenSolved`,
+  #584): nothing per position, which the row's own solved figure already
+  implies.
 - **Fails closed.** An admin preview (ADR 59) skips the lock, because nothing
   is recorded. A stories read that fails errors the request rather than
   opening every step.
@@ -3658,7 +3691,8 @@ step by step while the free-pick board stays as it is.
 resolves the team, so the extra keys cost one pipeline. Story authoring (the
 editor and bundle v2) follows in #463's second PR.
 
-**Status.** Accepted (#463).
+**Status.** Accepted (#463); amended by #602 (solve-time membership for
+unlocks).
 
 ## ADR 61. Challenge attachments live in Redis, served only as downloads, behind the challenge's own visibility
 
@@ -3724,6 +3758,14 @@ the launch lock (#464) and a locked story step (#463).
   - The event archive embeds the bytes as base64 in `attachmentFiles`. Each
     sha256 is verified before the import resets anything, and the import
     body is read bounded at 50 MiB × 4/3 + 8 MiB.
+  - *Amended (the classic bundle with files):* a classic bundle can carry
+    the bytes too, opt-in. **Include files** on the export adds the same
+    `attachmentFiles` list and stamps the bundle version 3; without it the
+    bundle stays the metadata-only version 2 file an older box imports. Its import fills each missing upload whose
+    bytes it carries, skips one the box already holds, and refuses a
+    tampered file or a total past the event cap before writing anything.
+    The import body goes to `/api/admin/classic/bundle`, outside the proxy
+    and read bounded like the archive's (ADR 40).
 
 **Consequences.** Redis memory grows by up to about 67 MB of base64 at the
 event cap. The caps bound it, and an operator sizing a box counts it. An
@@ -3875,7 +3917,49 @@ them. Two more routes join the public surface (docs/reviewing.md invariant
 11), both public before launch because every page shows them. A social share
 card and a header mark are not covered; each would be its own decision.
 
-## ADR 66. Dynamic classic scoring: read-time calculation over aggregate recomputation
+## ADR 66. The regular leaderboard shows the event logo and the sponsor strip
+
+**Context.** Issue #571. [ADR 57](#adr-57-sponsors-are-recognition-only-appear-in-four-fixed-surfaces-and-the-disclaimer-is-not-configurable)
+fixed the sponsor surfaces at four, and the leaderboard carried its identity
+only on the projector view (`?display=1`). But the regular leaderboard is the
+page contestants keep open during an event, and the one most often put on a
+screen that is not running display mode. It showed neither the event logo
+nor a sponsor credit near the top; sponsors reached it only through the
+footer's text line.
+
+**Decision.** The regular leaderboard shows the uploaded event logo beside
+its title and the landing page's `SponsorStrip` under its header, above the
+board. The strip is reused unchanged: same order, same organizer
+`sponsorLogoSize` setting, nothing when the list is empty, grayscale credit
+row rather than an ad rail. With no uploaded logo the header shows the
+default OWASP mark, the same fallback as the landing page's hero, so the
+title never stands without a mark. The logo hides itself if it fails to load, as on
+the projector. Both reads fail open, so a Redis blip costs the decoration and
+never the standings. This makes it a fifth sponsor surface; ADR 57's other
+rules (recognition only, logos from our own origin, raster only, the fixed
+disclaimer) are unchanged.
+
+The footer's text credit steps aside on this page, as
+[ADR 62](#adr-62-the-landing-pages-footer-does-not-repeat-the-sponsor-credit)
+asks of a page with its own sponsor block. The landing page does that with
+`creditSponsors: false`, but the leaderboard's footer is rendered by the
+shared `(site)` layout, which cannot tell which page it wraps. So the credit
+line decides for itself: it sits inside `HideOnPaths`, a client component
+that reads `usePathname` (resolved during server rendering, so nothing
+flashes) and renders nothing on the routes in
+`PAGES_WITH_OWN_SPONSOR_CREDIT` (`/leaderboard`, exact match). Every other
+route, and a route that cannot be read, keeps the credit.
+
+**Consequences.** Sponsors and the event appear on the page that is on screen
+most of an event, credited once. Each leaderboard render reads the sponsor
+list twice (the strip, and the footer, which still reads before its line
+steps aside; `listSponsors` is not cached) and the event image metadata once
+(cached per request). Both are small metadata reads; the logo bytes are
+fetched by the browser from their own routes. Another page that adds its own
+sponsor block joins `PAGES_WITH_OWN_SPONSOR_CREDIT`. Other pages are
+unchanged; a further surface is still its own decision.
+
+## ADR 67. Dynamic classic scoring: read-time calculation over aggregate recomputation
 
 **Context.** Issue #187. Classic CTF challenges traditionally award static
 points, but jeopardy events benefit from dynamic (decaying) scoring to

@@ -83,12 +83,12 @@ done
 
 # Every fly invocation goes through this, so --dry-run cannot leak a real call.
 #
-# --dry-run REDACTS SECRET VALUES. It printed them in full until an organizer
-# ran it and watched their GitHub App private key, OAuth client secret and
-# BETTER_AUTH_SECRET scroll past — into a terminal, a scrollback buffer, and
-# whatever CI log or screen share happened to be capturing it. A dry run is
-# the command people run FIRST, casually, precisely because they believe it
-# is inert; printing credentials is the last thing it should do.
+# --dry-run REDACTS SECRET VALUES. Without it a dry run prints the GitHub App
+# private key, OAuth client secret and BETTER_AUTH_SECRET in full — into a
+# terminal, a scrollback buffer, and whatever CI log or screen share happened
+# to be capturing it. A dry run is the command people run FIRST, casually,
+# precisely because they believe it is inert; printing credentials is the
+# last thing it should do.
 #
 # The redaction is on the VALUE half of `NAME=value`, keyed on the name, so
 # the run still shows exactly which variables are set — which is the whole
@@ -98,9 +98,7 @@ redact_arg() {
     *=*)
       name="${1%%=*}"
       case "$name" in
-        # CONNECTION_STRING is here because a redis:// URL embeds the
-        # password. It was missed on the first pass and caught by reading the
-        # dry-run's own output — which is the argument for previewing.
+        # CONNECTION_STRING is here because a redis:// URL embeds the password.
         *SECRET*|*TOKEN*|*PRIVATE_KEY*|*PASSWORD*|*CONNECTION_STRING*|*AUTH)
           echo "$name=<redacted>" ;;
         *) echo "$1" ;;
@@ -161,9 +159,10 @@ dotenv_value() {
 dotenv_file_value() {
   # $1 file, $2 key. Every form compose accepts for one assignment:
   # `KEY = value` is legal — compose's parser trims whitespace around the key
-  # and after the `=`, and hands back `value`. Matching only `KEY=` made such
-  # a line invisible here — deploy.sh called the key empty and refused,
-  # render-compose.sh dropped secdev — while compose read it fine. `KEY: value`
+  # and after the `=`, and hands back `value`. Matching only `KEY=` would make
+  # such a line invisible here — deploy.sh would call the key empty and
+  # refuse, render-compose.sh would drop secdev — while compose reads it fine.
+  # `KEY: value`
   # and a leading `export ` are accepted the same way; both were checked
   # against `docker compose config` on a throwaway env file rather than
   # guessed, because the whole point is to read what compose reads.
@@ -178,10 +177,9 @@ dotenv_file_value() {
 
 env_value() {
   # The env file being deployed. `--refresh` reads its SOURCE file through
-  # dotenv_file_value directly: it used to read the source with a bare
-  # `sed -n "s/^$key=//p"`, so a `SCORE_IMAGE = x`, `SCORE_IMAGE: x` or quoted
-  # value in `.env` was invisible to the refresh while compose read it fine —
-  # the same disagreement, one file to the left (#381).
+  # dotenv_file_value directly, so a `SCORE_IMAGE = x`, `SCORE_IMAGE: x` or
+  # quoted value in `.env` is read exactly as compose would read it — a bare
+  # `sed -n "s/^$key=//p"` would miss all three forms.
   dotenv_file_value "$ENV_FILE" "$1"
 }
 
@@ -190,9 +188,9 @@ env_value() {
 # replace-vs-append decision and the duplicate-assignment check below.
 #
 # A presence test NARROWER than the reader is how a key ends up assigned twice.
-# `grep -q "^KEY="` answered no for a `KEY = old` line, the refresh appended
-# `KEY=new`, and the file then carried two assignments of one key with only the
-# last one live — which is exactly the shape reported in #381.
+# `grep -q "^KEY="` answers no for a `KEY = old` line, the refresh appends
+# `KEY=new`, and the file then carries two assignments of one key with only the
+# last one live.
 key_line_ere() {
   printf '^[[:space:]]*(export[[:space:]]+)?%s[[:space:]]*[:=]' "$1"
 }
@@ -215,10 +213,8 @@ ADMIN_LOGINS GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID
 FLY_REGION FLY_AUTO_STOP REDIS_DIR STATE_PATH"
 
 # A key assigned twice is not an error — compose takes the last one and so does
-# every reader here — but it is nearly always a mistake, and a silent one: the
-# reported `.env.fly` in #381 had SCORE_IMAGE defined twice (and SCORE_INGEST,
-# a key since removed by #377), so an organizer editing the first occurrence
-# changed nothing at all.
+# every reader here — but it is nearly always a mistake, and a silent one: an
+# organizer editing the first occurrence changes nothing at all.
 warn_duplicate_keys() {
   local file="$1" key dups=""
   [ -f "$file" ] || return 0
@@ -367,11 +363,11 @@ if [ "$CMD" = "init" ]; then
   # pulled from a compose stack's file — sharing them is how two environments
   # end up fighting over one datastore.
   #
-  # Deliberately does NOT exit after the loop (#381): a stale .env.fly is
+  # Deliberately does NOT exit after the loop: a stale .env.fly is
   # often ALSO missing keys a plain `init` would have topped up (SRH_TOKEN,
-  # the region, REDIS_PASSWORD, the single-volume knobs) — a live deploy once
-  # ran for weeks on a file that predated those. Falling through to the same
-  # top-up steps below means `--refresh` never leaves a file half-prepared.
+  # the region, REDIS_PASSWORD, the single-volume knobs). Falling through to
+  # the same top-up steps below means `--refresh` never leaves a file
+  # half-prepared.
   if [ -n "$REFRESH" ]; then
     [ -f "$FROM_ENV" ] || { echo "no $FROM_ENV to refresh from" >&2; exit 1; }
     echo "== refreshing external credentials from $FROM_ENV"
@@ -379,7 +375,7 @@ if [ "$CMD" = "init" ]; then
     # value gets copied, in the destination which one the machine ends up with.
     warn_duplicate_keys "$FROM_ENV"
     warn_duplicate_keys "$ENV_FILE"
-    # An EXPLICITLY BLANK source value is ASYMMETRIC, on purpose (#381).
+    # An EXPLICITLY BLANK source value is ASYMMETRIC, on purpose.
     #
     # GITHUB_APP_INSTALLATION_ID is the one key whose explicit blank means
     # something: empty tells sync to auto-discover the installation, so after
@@ -438,12 +434,13 @@ if [ "$CMD" = "init" ]; then
       # REPLACE the line if it is there, APPEND it if it is not.
       #
       # The awk rewrite alone only ever replaces: with no line to match, it
-      # copies the file through untouched and the loop still printed
+      # copies the file through untouched and the loop would still print
       # "$key updated" — a lie on exactly the file that needs the most help.
-      # A `.env.fly` written before config v2 (#386) has no GITHUB_ORG and no
-      # ADMIN_LOGINS at all, so `--refresh` claimed to carry them over and
-      # carried nothing; the deploy then ran with an empty admin allowlist
-      # (nobody can open /admin) and a sync that refuses to start.
+      # A `.env.fly` written before config v2 has no GITHUB_ORG and no
+      # ADMIN_LOGINS at all, so without the append below `--refresh` would
+      # claim to carry them over and carry nothing: the deploy would run with
+      # an empty admin allowlist (nobody can open /admin) and a sync that
+      # refuses to start.
       if grep -qE "$(key_line_ere "$key")" "$ENV_FILE"; then
         # Rewritten in place with awk rather than sed -i, because these values
         # contain / and + (base64) and would need escaping in a sed pattern.
@@ -453,10 +450,7 @@ if [ "$CMD" = "init" ]; then
         #
         # The FIRST matching line carries the new value in the canonical
         # `KEY=value` form and later duplicates are dropped — normalising a
-        # line we own and are rewriting anyway. The old rewrite matched on
-        # `$1==k` with FS="=", so it both missed `KEY = value`/`KEY: value`
-        # lines and re-printed the new value once per duplicate, preserving the
-        # duplication it was handed.
+        # line we own and are rewriting anyway.
         #
         # The temp file is created 600 BEFORE anything is written into it: it
         # holds every credential the event has for as long as the rewrite takes.
@@ -617,10 +611,9 @@ warn_duplicate_keys "$ENV_FILE"
 # The single-volume layout has to be IN the env file (init writes it; see the
 # block in init). An env file from before that step still deploys — with redis
 # at the volume root and sync's state file on the machine's ephemeral disk.
-# Before ADR 64, that file WAS the cursor, lost on every restart; that ran unnoticed
-# for weeks (#364). The cursor now lives in Redis (ctf:sync:state) and the file
-# only seeds it once on upgrade, but the layout is still named here rather
-# than left to the volume listing.
+# The cursor lives in Redis (ctf:sync:state), not the file (ADR 64), and the
+# file only seeds it once on upgrade, but the layout is still named here
+# rather than left to the volume listing.
 # ---------------------------------------------------------------------------
 missing_knobs=""
 for key in REDIS_DIR STATE_PATH; do
@@ -697,13 +690,13 @@ esac
 # Every one of these is fatal-if-empty, and each is named individually by
 # `require` so the message points at the one key that is missing.
 #
-# GITHUB_ORG and ADMIN_LOGINS join the sweep with config v2 (#386): they are
-# runtime reads now, nothing bakes them, and neither fails loudly on its own.
+# GITHUB_ORG and ADMIN_LOGINS join the sweep below as runtime reads
+# (config v2): nothing bakes them, and neither fails loudly on its own.
 # An empty ADMIN_LOGINS deploys an event whose /admin forbids EVERYONE,
 # including the operator who just deployed it; an empty GITHUB_ORG leaves sync
 # exiting at start-up on a machine whose other four containers look healthy.
 # Poll is the score transport everywhere (#377, ADR 56) and this module has
-# always been poll-only (#373), so sync always runs here and the org is never
+# always been poll-only, so sync always runs here and the org is never
 # optional.
 for name in BETTER_AUTH_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET SCORER_TOKEN \
             GITHUB_ORG ADMIN_LOGINS; do
@@ -716,13 +709,13 @@ require_admin_logins "$(env_value ADMIN_LOGINS)"
 # ---------------------------------------------------------------------------
 # CREDENTIAL DRIFT: does $ENV_FILE still agree with $FROM_ENV?
 #
-# Nothing compared the two files, and a plain `deploy` shipped an OLD org's
-# credentials silently (#381). The event org had been re-created — new OAuth
+# Drift is silent: a plain `deploy` can ship an OLD org's credentials with
+# nothing pointing at the cause. When the event org is re-created — new OAuth
 # app, new sync App, new scorer image, all written to `.env` — while `.env.fly`
-# was never refreshed. Every sign-in bounced with `?error=application_suspended`
-# and sync logged `GitHub 401 minting installation token` for all six targets
+# is never refreshed, every sign-in bounces with `?error=application_suspended`
+# and sync logs `GitHub 401 minting installation token` for all six targets
 # every 30 seconds. Nothing in the deploy, in /health or in `doctor` (which
-# reads `.env`, not `.env.fly`) pointed anywhere near the cause.
+# reads `.env`, not `.env.fly`) points anywhere near the cause.
 #
 # WARNS, NEVER REFUSES. Separate OAuth apps per environment — one for
 # localhost, one for the public box — are a legitimate and common setup, so a
@@ -816,13 +809,12 @@ if APP_BUILD_REV="$(git rev-parse --short=12 HEAD 2>/dev/null)"; then
   # tree, so an UNTRACKED file is baked in just as surely as a modified one,
   # and `diff` cannot see it.
   #
-  # SCOPED to what actually reaches the image, which is the half this got
-  # wrong first time round. The Dockerfile does `COPY apps/web/ ./`, so a
-  # dirty `docs/`, `scorer/`, `sync/` or a stray `.DS_Store` cannot change the
-  # app build — yet checking the whole repo suppressed the revision on every
-  # machine that had one, which is every machine. `unknown` is
-  # indistinguishable from "this build predates the stamp", so the field
-  # stopped meaning anything at all.
+  # SCOPED to what actually reaches the image. The Dockerfile does
+  # `COPY apps/web/ ./`, so a dirty `docs/`, `scorer/`, `sync/` or a stray
+  # `.DS_Store` cannot change the app build — yet checking the whole repo
+  # would suppress the revision on every machine that had one, which is every
+  # machine. `unknown` is indistinguishable from "this build predates the
+  # stamp", so the field would stop meaning anything at all.
   if [ -n "$(git status --porcelain -- apps/web 2>/dev/null)" ]; then
     echo "   NOTE: working tree is dirty — /health will report revision unknown"
     APP_BUILD_REV=""
@@ -903,7 +895,7 @@ make_volume ctf_data
 # format error, after a successful-looking deploy.
 #
 # --skip-build never risks a stale config: the app bakes nothing but the
-# health-check build stamp (config v2, #386) — GITHUB_ORG, ADMIN_LOGINS and
+# health-check build stamp (config v2) — GITHUB_ORG, ADMIN_LOGINS and
 # everything else are runtime reads that flow through the rendered compose
 # file below, on every deploy, with or without --skip-build.
 #
@@ -985,13 +977,13 @@ else
   # by hand, following docs/scorer.md — so it is the one that needs checking.
   # ONLY fails when the platforms are KNOWN and amd64 is absent.
   #
-  # The first version treated "inspect failed" as "no amd64" and blocked a
-  # perfectly good deploy: registry.fly.io returns transient errors (the same
-  # flakiness that produces `app repository not found` on a push), stderr went
-  # to /dev/null, and an empty result read as a missing platform. A check that
-  # cannot tell "absent" from "could not look" is worse than no check — it
-  # fails exactly when the registry is briefly unwell, which is unrelated to
-  # the thing it is guarding.
+  # Treating "inspect failed" as "no amd64" blocks a perfectly good deploy:
+  # registry.fly.io returns transient errors (the same flakiness that produces
+  # `app repository not found` on a push), stderr goes to /dev/null, and an
+  # empty result reads as a missing platform. A check that cannot tell
+  # "absent" from "could not look" is worse than no check — it fails exactly
+  # when the registry is briefly unwell, which is unrelated to the thing it
+  # is guarding.
   #
   # One retry, because the flakiness is transient. If both attempts fail the
   # deploy CONTINUES with a warning: an unverified platform is Fly's problem to
@@ -1081,7 +1073,7 @@ trap cleanup_rendered EXIT INT TERM
 # ---------------------------------------------------------------------------
 # 4/5 Secrets.
 #
-# ONE app now, so ONE `fly secrets set`. Fly injects secrets as environment
+# ONE app, so ONE `fly secrets set`. Fly injects secrets as environment
 # variables into EVERY container in the machine, which is what lets the
 # rendered compose file carry no credentials at all: the variable names
 # already match across services.

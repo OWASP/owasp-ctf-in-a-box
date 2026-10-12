@@ -307,7 +307,8 @@ connection your `fetch` can't even inspect.
 | 401 | `{"error": "stale-request"}` | `X-CTF-Timestamp` missing/non-numeric, or outside the ±300s window. | event | Resync your clock; retry with a fresh timestamp and matching signature. |
 | 401 | `{"error": "invalid-token"}` | The launch token is malformed, its signature doesn't verify, or its `aud` doesn't match the challenge id. | submit, event, state | The token is unusable — the player needs a fresh launch link. |
 | 401 | `{"error": "expired"}` | The launch token's `exp` has passed (>24h since mint). | submit, event, state | Same as above — a fresh launch link, not a retry. |
-| 403 | `{"error": "paused"}` | The event is frozen, outside its scheduled scoring window, or not launched yet (no scoring start set). | submit, event | Retry later; this isn't an error in your integration. |
+| 403 | `{"error": "paused"}` | The event is frozen, before its scheduled scoring start, or not launched yet (no scoring start set). | submit, event | Retry later; this isn't an error in your integration. |
+| 403 | `{"error": "ended"}` | The event's scheduled scoring end has passed. Final — unlike `paused`, nothing will reopen; a freeze toggled on top of a passed end still answers `ended`. | submit, event | Tell the player the event is over; do not retry. |
 | 403 | `{"error": "unavailable"}` | The AI module is not live: the organizer switched it off in `/admin`, or the box could not read its settings and fell back to the deployment's default modules, which never include AI. Checked before anything else, so it is the answer whatever the body, token or signature holds; nothing is read or written. The same body as the 503 below, but a 403. | submit, event | If the AI board should still be open, retry with backoff (a settings-read blip clears on its own). Stop once the organizer confirms the module is off, and tell the player the event's AI board is closed. |
 | 403 | `{"error": "no-team"}` | The player isn't on a team. | submit, event | Nothing to do on your side — team membership is the player's problem to fix in the box's UI. |
 | 404 | `{"error": "unknown-challenge"}` | The `challengeId` (or the token's `aud`) doesn't name a live challenge. | submit, event | Check the id you're using; it may have been deleted or never existed. |
@@ -320,7 +321,7 @@ connection your `fetch` can't even inspect.
 | 503 | `{"error": "error"}` | The grading step itself failed or returned something the box didn't recognize — distinct from `unavailable` but the same 503 and the same "nothing was written, retry" advice. | submit, event | Safe to retry with backoff. |
 
 `GET /api/ai/launch-key` and `GET /api/ai/state` never return `wrong-mode`,
-`replay`, `cooldown`, `no-team`, `solved`, `paused`, `invalid-request`, or
+`replay`, `cooldown`, `no-team`, `solved`, `paused`, `ended`, `invalid-request`, or
 `invalid-signature`, nor `403 unavailable` — they don't write anything and
 don't gate on team, pause, mode, or the module switch, so those reasons
 don't apply. `launch-key` in particular

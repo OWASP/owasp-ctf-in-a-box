@@ -22,14 +22,36 @@ export type ModuleItem = {
   /** What the viewer actually banked, when done — can differ from `points`
    *  if the item was re-priced after they completed it. */
   earnedPoints?: number;
+  /** A story step redacted for this viewer: placeholder label, no price. */
+  hidden?: true;
 };
+
+/** The row's points column: a dash for a hidden step, which carries no price
+ *  (ADR 60) and must not read as worth 0; the banked points for a done item;
+ *  the sticker price otherwise. */
+export function itemPointsLabel(item: ModuleItem): string {
+  if (item.hidden) return "—";
+  return `${item.done && item.earnedPoints != null ? item.earnedPoints : item.points}pt`;
+}
+
+/** The row's status word: "Locked" for a hidden step, which is locked for the
+ *  viewer and carries no solved state (ADR 60); the done word or "Open"
+ *  otherwise. */
+export function itemStatusLabel(item: ModuleItem, doneLabel: string): string {
+  if (item.hidden) return "Locked";
+  return item.done ? doneLabel : "Open";
+}
 
 export default function ModuleItemList({
   items,
   noun,
   doneLabel,
+  note,
 }: {
   items: ModuleItem[];
+  /** One line under the open list — the hidden-steps summary on a classic
+   *  row. */
+  note?: string | null;
   /** Plural item noun for the toggle: "questions", "flags". */
   noun: string;
   /** The done-state word: "Answered", "Solved". */
@@ -70,19 +92,20 @@ export default function ModuleItemList({
                 {item.label}
               </span>
               <span className="flex-none font-mono text-xs text-muted">
-                {item.done && item.earnedPoints != null ? item.earnedPoints : item.points}pt
+                {itemPointsLabel(item)}
               </span>
               <span
                 className={`w-20 flex-none text-right text-xs uppercase tracking-wide ${
                   item.done ? "text-[#22c55e]" : "text-[#8f8f9b]"
                 }`}
               >
-                {item.done ? doneLabel : "Open"}
+                {itemStatusLabel(item, doneLabel)}
               </span>
             </li>
           ))}
         </ul>
       )}
+      {open && note && <p className="mt-1 pl-3 text-xs text-muted">{note}</p>}
     </div>
   );
 }

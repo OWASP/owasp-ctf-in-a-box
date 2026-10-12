@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
-// #186: the demo ships two real forensics artifacts through the attachments
+// The demo ships two real forensics artifacts through the attachments
 // store, which has its own suites — here, only what the seed asks of it.
 const files = vi.hoisted(() => ({
   listAttachments: vi.fn<(module: string, item: string) => Promise<Record<string, unknown>[]>>(async () => []),
@@ -36,7 +36,7 @@ import {
 
 /** The settings-read shape `getAdminSettings` decodes `enabledModules` from —
  *  a comma-joined id list on the ONE hash the seed's schedule clamp and its
- *  module gates now share a single read of (issue #386). Call this before
+ *  module gates share a single read of. Call this before
  *  `seedDemoData` to control which modules the NEXT read sees; it queues onto
  *  `upstashPipeline` with `mockResolvedValueOnce`, so it must be the very next
  *  call — which the settings read always is, since it happens first. */
@@ -46,18 +46,18 @@ function mockEnabledModules(ids: readonly string[]) {
 
 beforeEach(() => {
   mocks.upstashPipeline.mockReset();
-  // Answers BOTH pipelines the seed now runs: the settings read (HGETALL,
+  // Answers BOTH pipelines the seed runs: the settings read (HGETALL,
   // which the clamp consumes — empty hash = no schedule = unclamped — and
-  // which the module gates below now also read `enabledModules` off) and the
+  // which the module gates below also read `enabledModules` off) and the
   // write batch (whose return is unused).
   //
   // ai is deliberately left OFF by default (only secure-development + quiz +
-  // classic on), so the large existing block of assertions below stays
-  // byte-for-byte identical to pre-ai behavior; ai gets its own describe
-  // block with its own mock. secure-development stays on by default too —
-  // most of this file's assertions read `ctf:solves:<target>` rows, which
-  // only exist when it is live (issue #386's carry-forward gate); the one
-  // no-secure-development case gets its own dedicated test below.
+  // classic on), so the main block of assertions below exercises no ai
+  // behavior; ai gets its own describe block with its own mock.
+  // secure-development stays on by default too — most of this file's
+  // assertions read `ctf:solves:<target>` rows, which only exist when it is
+  // live; the one no-secure-development case gets its own dedicated test
+  // below.
   mocks.upstashPipeline.mockResolvedValue([{ result: ["enabledModules", "secure-development,quiz,classic"] }]);
 });
 
@@ -133,7 +133,7 @@ describe("seedDemoData", () => {
     const firstSponsor = JSON.parse(String(sponsorCmds[0][3])) as {
       logo: { type: string; bytes: number; w: number; h: number; etag: string } | null;
     };
-    // Every demo sponsor carries a real logo now, with bytes/etag DERIVED
+    // Every demo sponsor carries a real logo, with bytes/etag DERIVED
     // from the fixture's own base64 data — never hand-carried, so the two
     // cannot silently drift apart.
     expect(firstSponsor.logo).toMatchObject({ type: "image/png", w: 160, h: 56 });
@@ -143,11 +143,11 @@ describe("seedDemoData", () => {
     expect(logoBlobCmds.length).toBe(DEMO_SPONSORS.length);
   });
 
-  // CodeRabbit round 2, finding F1: the settings read now also decides WHICH
+  // CodeRabbit round 2, finding F1: the settings read also decides WHICH
   // modules get demo rows, so it gates a write — it must fail closed. A
-  // transient read error used to be swallowed (`.catch(() => null)`) and
-  // seed the deployment-default module set regardless of what the organizer
-  // actually enabled; it must instead abort the seed with no write issued.
+  // transient read error swallowed with `.catch(() => null)` would seed the
+  // deployment-default module set regardless of what the organizer actually
+  // enabled; it must instead abort the seed with no write issued.
   it("aborts the seed when the settings read fails, instead of seeding the default module set", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH Authentication required." }]);
 
@@ -156,10 +156,10 @@ describe("seedDemoData", () => {
   });
 
   // CodeRabbit round 1, finding E: the ctf:solves:<target> writes (and the
-  // `solves` count derived from them) used to run unconditionally, off the
-  // fixture alone — showing solves for a module this event isn't even
-  // serving. Gated on `live.has("secure-development")`, same as quiz/classic/
-  // ai below.
+  // `solves` count derived from them) must not run unconditionally off the
+  // fixture alone — that would show solves for a module this event isn't
+  // even serving. Gated on `live.has("secure-development")`, same as
+  // quiz/classic/ai below.
   it("skips secure-development's demo solves entirely when it is not live", async () => {
     mockEnabledModules(["quiz"]);
     const out = await seedDemoData("alice");
@@ -383,7 +383,7 @@ describe("seedDemoData", () => {
     }
 
     // the fixture's categories are handed to the script in display order, and
-    // NOTHING writes the key with a bare SET any more (issue #344)
+    // NOTHING writes the key with a bare SET
     expect(scriptArgs(cmds, "ctf:classic:challenges").fixtureCategories).toEqual(DEMO_CLASSIC_CATEGORIES);
     expect(cmds.find((c) => c[0] === "SET" && c[1] === "ctf:classic:categories")).toBeUndefined();
   });
@@ -434,7 +434,7 @@ describe("seedDemoData", () => {
     // Sent as ONE raise-only EVAL rather than per-challenge HSETs: the count is
     // keyed by challenge and counts distinct solvers across EVERYONE, so the
     // fixture's number is a floor. An absolute write rewrote a real
-    // contestant's solve out of the public count on every re-seed (issue #335).
+    // contestant's solve out of the public count on every re-seed.
     const raise = cmds.find((c) => c[0] === "EVAL" && c[3] === "ctf:classic:solvecount")!;
     expect(raise).toBeDefined();
     expect(String(raise[1])).toContain("if current < floor then");
@@ -465,7 +465,7 @@ describe("seedDemoData", () => {
 
     expect(DEMO_AI_CHALLENGES.some((c) => c.mode === "flag")).toBe(true);
 
-    // Issue #355: NO demo challenge may be `event`-mode. Such a challenge can
+    // NO demo challenge may be `event`-mode. Such a challenge can
     // only be solved by an external arena POSTing a signed event, and the
     // fixture's launch URLs are a documentation domain that does not resolve —
     // so seeding one put a 400-point row on the board with no flag form and a
@@ -491,9 +491,9 @@ describe("seedDemoData", () => {
     // the authored flag hash holds the flag verbatim, and ONLY for the
     // graded (mode !== "event") challenges — an event-mode challenge has no
     // flag entries at all, since signed events assert that solve instead
-    // Every fixture challenge is graded now (#355), so this set is all of
+    // Every fixture challenge is graded, so this set is all of
     // them; the `mode === "event"` arms below are kept because the SEED still
-    // has that branch — the fixture no longer exercises it, and a future entry
+    // has that branch — the fixture does not exercise it, and a future entry
     // could. `ai-store.authoring.test.ts` covers the same rule on the
     // authoring path, where an event-mode challenge can still be created.
     const gradedIds = new Set(DEMO_AI_CHALLENGES.filter((c) => c.mode !== "event").map((c) => c.id));
@@ -530,7 +530,7 @@ describe("seedDemoData", () => {
       expect(cmd[3]).toBe(dc.signingKey);
     }
 
-    // handed to the script in display order; no bare SET of the key (#344)
+    // handed to the script in display order; no bare SET of the key
     expect(scriptArgs(cmds, "ctf:ai:challenges").fixtureCategories).toEqual(DEMO_AI_CATEGORIES);
     expect(cmds.find((c) => c[0] === "SET" && c[1] === "ctf:ai:categories")).toBeUndefined();
 
@@ -587,7 +587,7 @@ describe("seedDemoData", () => {
     // Sent as ONE raise-only EVAL rather than per-challenge HSETs: the count is
     // keyed by challenge and counts distinct solvers across EVERYONE, so the
     // fixture's number is a floor. An absolute write rewrote a real
-    // contestant's solve out of the public count on every re-seed (issue #335).
+    // contestant's solve out of the public count on every re-seed.
     const raise = cmds.find((c) => c[0] === "EVAL" && c[3] === "ctf:ai:solvecount")!;
     expect(raise).toBeDefined();
     expect(String(raise[1])).toContain("if current < floor then");
@@ -613,8 +613,8 @@ describe("seedDemoData", () => {
 
   // --- attempt rows -----------------------------------------------------
   //
-  // The seed banks earned rows directly, so it used to produce an event in
-  // which nobody had ever TRIED anything. Insights then reported a 100% solve
+  // The seed banks earned rows directly, which would produce an event in
+  // which nobody has ever TRIED anything: Insights would report a 100% solve
   // rate, "1.0" average tries and a blank median time on every challenge —
   // numbers that are each individually well-formed and collectively a lie.
   // These pin the attempt rows that make those figures mean something.
@@ -728,14 +728,14 @@ describe("seedDemoData", () => {
   });
 });
 
-// The seed used to `SET` both category lists to the fixture's, deleting every
-// category an organizer had authored. Their challenges survived — written
-// per-field and keyed by id — and the admin panel kept listing them, but the
-// contestant board renders only categories present in the list, so authored
-// content silently left the board while "1 category · 5 challenges" read like
-// a healthy setup (issue #344).
+// An absolute `SET` of both category lists to the fixture's would delete
+// every category an organizer had authored. Their challenges survive —
+// written per-field and keyed by id — and the admin panel keeps listing
+// them, but the contestant board renders only categories present in the
+// list, so authored content silently leaves the board while "1 category ·
+// 5 challenges" reads like a healthy setup.
 //
-// The union itself is Lua now, and Lua is only really pinned by RUNNING it:
+// The union itself lives in Lua, and Lua is only really pinned by RUNNING it:
 // `admin-store.upstash.test.ts` executes SEED_CATEGORIES_SCRIPT against a real
 // Redis for the order, the case-insensitive dedupe, the canonical rewrite of
 // the challenge rows and the cap refusal. What is left to assert HERE is the
@@ -749,7 +749,7 @@ describe("seedDemoData hands its category work to one atomic script", () => {
   it("writes both category keys ONLY through the script, never a bare SET", async () => {
     await seedDemoData("alice");
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
-    // The regression guard for #344: an absolute SET of either key is the bug.
+    // The regression guard: an absolute SET of either key is the bug.
     for (const key of ["ctf:classic:categories", "ctf:ai:categories"]) {
       expect(cmds.find((c) => c[0] === "SET" && c[1] === key), key).toBeUndefined();
       expect(cmds.find((c) => c[0] === "EVAL" && c[3] === key), key).toBeTruthy();
@@ -836,9 +836,9 @@ describe("demo attachments (#186)", () => {
     }
   });
 
-  // Review (#475): an artifact whose record is there but still MISSING (an
-  // imported bundle carries metadata only) has the right sha and no bytes —
-  // the re-seed fills it rather than skipping it as present.
+  // An artifact whose record is there but still MISSING (an imported bundle
+  // carries metadata only) has the right sha and no bytes — the re-seed
+  // fills it rather than skipping it as present.
   it("fills a matching upload that is still missing its bytes", async () => {
     files.listAttachments.mockImplementation(async (_m: string, item: string) => {
       const a = DEMO_CLASSIC_ATTACHMENTS.find((x) => x.challengeId === item)!;
@@ -872,8 +872,8 @@ describe("demo attachments (#186)", () => {
     expect(files.addUpload).not.toHaveBeenCalled();
   });
 
-  // Review (PR3) M3: the artifacts go in after the seed pipeline landed — a
-  // failure there is logged, never turned into "the seed failed".
+  // The artifacts go in after the seed pipeline landed — a failure there is
+  // logged, never turned into "the seed failed".
   it("still reports the seed when an artifact upload fails", async () => {
     files.addUpload.mockRejectedValueOnce(new Error("NOAUTH"));
     const res = await seedDemoData("alice");
@@ -886,7 +886,7 @@ describe("demo attachments (#186)", () => {
     expect(files.addUpload).not.toHaveBeenCalled();
   });
 
-  // #522: each module's award-time hash is seeded with every demo login's
+  // Each module's award-time hash is seeded with every demo login's
   // LATEST row time, the same value GRADE_SCRIPT / SUBMIT_SCRIPT /
   // AWARD_SCRIPT would have left behind, so the demo board's "whoever got
   // there first" tiebreak has something to order.

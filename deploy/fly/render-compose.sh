@@ -32,15 +32,15 @@
 #      therefore a credential file — mode 600, gitignored, and deleted by
 #      deploy.sh once the deploy succeeds.
 #
-#      It was built the other way first: values stripped, `fly secrets` relied
-#      on, because Fly's documentation says secrets are "global and available
-#      to every container". They are not. A machine's containers receive only
-#      their own `ExtraEnv`, which comes from this file's `environment:` block;
-#      the machine config carries no `secrets` key at all. Every container came
-#      up without its credentials while `fly secrets list` showed all fourteen
-#      as `Deployed` — the app answering 500 from better-auth's default-secret
-#      error, the scorer refusing to start, and sync refusing to poll with no
-#      org or token to poll with.
+#      They cannot be stripped in favour of `fly secrets`, despite Fly's
+#      documentation saying secrets are "global and available to every
+#      container". They are not. A machine's containers receive only their own
+#      `ExtraEnv`, which comes from this file's `environment:` block; the
+#      machine config carries no `secrets` key at all — so stripping would
+#      leave every container without its credentials while `fly secrets list`
+#      shows all fourteen as `Deployed`: the app answering 500 from
+#      better-auth's default-secret error, the scorer refusing to start, and
+#      sync refusing to poll with no org or token to poll with.
 #
 #      The compensation is real, though: per-service scoping that Fly's global
 #      secrets cannot express. The app never receives REDIS_PASSWORD, and redis
@@ -149,7 +149,7 @@ esac
 # `app` runs always; `secdev` (the scorer and sync containers) is added iff
 # SCORE_IMAGE is non-empty there — the same rule scripts/dev-stack applies to
 # a local bring-up, so "does this event run Secure Development" is answered
-# once, from one key, never from a second knob (config v2, #386). Read
+# once, from one key, never from a second knob (config v2). Read
 # straight out of the file rather than the shell environment: this script has
 # no other reason to see SCORE_IMAGE, and the value that matters is the one
 # the rendered compose file will actually be built from.
@@ -190,12 +190,12 @@ dotenv_value() {
 
 env_value() {
   # `KEY = value` is legal too: compose's parser trims whitespace around the
-  # key and after the `=`, and hands back `value`. Matching only `KEY=` made
-  # such a line invisible here — deploy.sh called the key empty and refused,
-  # render-compose.sh dropped secdev — while compose read it fine. `KEY: value`
-  # and a leading `export ` go the same way; both were checked against
-  # `docker compose config` rather than guessed. deploy.sh reads the same
-  # grammar (there through dotenv_file_value, which takes the file as an
+  # key and after the `=`, and hands back `value`. Matching only `KEY=` would
+  # make such a line invisible here — deploy.sh would call the key empty and
+  # refuse, render-compose.sh would drop secdev — while compose reads it fine.
+  # `KEY: value` and a leading `export ` go the same way; all were checked
+  # against `docker compose config` rather than guessed. deploy.sh reads the
+  # same grammar (there through dotenv_file_value, which takes the file as an
   # argument); the two must agree, since they read the same file.
   dotenv_value "$(sed -n \
     -e "s/^[[:space:]]*export[[:space:]]\{1,\}//" \
@@ -338,12 +338,11 @@ indent == 4 && section == "services" {
 # --- host rewriting -------------------------------------------------------
 # `http://srh:80` -> `http://localhost:80`.
 #
-# TWO anchors, because a URL authority can carry userinfo. the srh connection
+# TWO anchors, because a URL authority can carry userinfo. The srh connection
 # string is `redis://:PASSWORD@redis:6379`, where the host follows an `@` and
-# not the `//` — with only the `//host:` form it was left pointing at `redis`,
-# which resolves nowhere in a shared network namespace. That is the original
-# bug this whole module exists to fix, reintroduced by the renderer, and it
-# would have looked exactly like it did before: srh healthy, unable to connect.
+# not the `//` — with only the `//host:` form the match would leave it
+# pointing at `redis`, which resolves nowhere in a shared network namespace:
+# srh healthy, unable to connect.
 #
 # Both forms end in `:` so they can only match an authority followed by a port.
 # A bare word like `scorer` in a comment, or `app` inside a longer hostname, is
@@ -385,7 +384,7 @@ END { if (held != "") { } }
 '  > "$OUT.tmp"
 
 # Mode 600 BEFORE the content lands. `mv` would otherwise leave the file
-# world-readable for the moment between rename and chmod, and it now holds
+# world-readable for the moment between rename and chmod, and it holds
 # every credential the event has.
 : > "$OUT"
 chmod 600 "$OUT"
@@ -395,15 +394,13 @@ rm -f "$OUT.tmp"
 # ---------------------------------------------------------------------------
 # FAIL-CLOSED CHECK: this file holds credentials, so prove git cannot see it.
 #
-# It used to check the opposite — that no secret value survived — back when the
-# values were stripped and `fly secrets` was expected to supply them. Fly does
-# not do that for compose containers (see the header), so the check has to
-# guard the thing that is now true: a credential file exists on disk, beside a
-# repo whose .env.fly reached a PUBLIC remote twice.
+# The check guards what is true: a credential file exists on disk, beside a
+# repo whose .env.fly reached a PUBLIC remote twice. Fly does not supply
+# secrets to compose containers (see the header), so the values travel in this
+# file and git must not be able to see it.
 #
 # `git check-ignore` is asked directly rather than trusting that .gitignore
-# still has the right rule: the rule and the output path have already moved
-# once in this module's life.
+# has the right rule.
 # ---------------------------------------------------------------------------
 if git -C "$(dirname "$OUT")" rev-parse --git-dir >/dev/null 2>&1; then
   if ! git -C "$(dirname "$OUT")" check-ignore -q "$(basename "$OUT")"; then

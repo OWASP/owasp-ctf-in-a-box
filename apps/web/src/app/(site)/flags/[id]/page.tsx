@@ -14,7 +14,9 @@
 // Gated exactly like /flags: the route 404s when the classic module is off,
 // and 404s for an unknown or deleted challenge id.
 
+import { recordFirstOpen } from "@/lib/first-open";
 import type { Metadata } from "next";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import Link from "next/link";
@@ -27,7 +29,6 @@ import { auth } from "@/lib/auth";
 import { getAdminSettings } from "@/lib/admin-store";
 import {
   CLASSIC_COOLDOWN_SEC,
-  getSolveCounts,
   getViewerClassic,
   listChallenges,
   type ViewerClassic,
@@ -84,14 +85,14 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   const [challenges, solveCounts, viewerClassic, settings, modules, hintIds, hintNotice, viewerHints] =
     await Promise.all([
       listChallenges(),
-      getSolveCounts(),
+      teamSolveCounts("classic"),
       login ? getViewerClassic(login) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
       getAdminSettings(),
       getResolvedModules(),
       getClassicHintIds(),
       getHintNotice(),
-      // The viewer's owned hint TEXT renders server-side — the reveal button
-      // only exists while there is something left to buy.
+      // The viewer's owned hint text, read server-side (never for an
+      // unowned viewer) and handed to the reveal control as `ownedText`.
       login ? getViewerHints(login) : Promise.resolve(null),
     ]);
 
@@ -102,6 +103,10 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   // id: its page must reveal nothing, not even that it exists. An admin
   // preview (#464) may open it, to test the whole story before launch.
   if ((await classicVisibility(login, challengeId)).state !== "visible") notFound();
+  // When this contestant first opened it: the start of Insights'
+  // open-to-solve time. Never for a visitor or an admin preview; a failed
+  // write is logged, not thrown.
+  if (login && !launch.preview) await recordFirstOpen("classic", login, challenge.id);
 
   // Read only once the challenge is known visible (#186). Field by field for
   // the same reason as the view below: the sha256 and chunk bookkeeping stay
@@ -126,8 +131,9 @@ export default async function ClassicChallengePage({ params }: { params: Promise
     title: challenge.title,
     category: challenge.category,
     description: challenge.description,
-    points: challengeCurrentValue(challenge, solveCounts.get(challenge.id) ?? 0),
-    solveCount: solveCounts.get(challenge.id) ?? 0,
+    points: challengeCurrentValue(challenge, solveCounts ? (solveCounts.get(challenge.id) ?? 0) : 0),
+    // Teams, not players (#595): scoring is per team. Null when unread.
+    teamsSolved: solveCounts ? (solveCounts.get(challenge.id) ?? 0) : null,
     caseSensitive: challenge.caseSensitive,
     attachments,
     ...deriveStatus(viewerClassic.solved[challenge.id], viewerClassic.attempts[challenge.id], cooldownMs),
@@ -150,18 +156,22 @@ export default async function ClassicChallengePage({ params }: { params: Promise
         </h1>
       </div>
 
-      {/* Paid hint (#190): the owned text renders server-side; the buy
-          button (client) exists only while unowned, hints are on, and the
-          viewer is signed in — a signed-out visitor sees that a hint exists
-          without an affordance that would 401. */}
+      {/* Paid hint (#190): hints are on and this challenge has one; the
+          signed-in viewer gets the reveal control, with the server-known
+          owned text passed in as a prop so the SAME component renders it
+          before and after router.refresh() (#560) — a separate owned <p>
+          would unmount it and lose the spend/balance acknowledgement. A
+          signed-out visitor sees that a hint exists without an affordance
+          that would 401. */}
       {hintNotice.active && hintIds.includes(challenge.id) && (
         <div className="max-w-xl">
-          {viewerHints?.classic[challenge.id] ? (
-            <p className="rounded border-l-2 border-[#d4a017]/50 bg-[#d4a017]/[0.06] px-3 py-2 text-sm leading-relaxed text-[#d4a017]/90">
-              💡 {viewerHints.classic[challenge.id]}
-            </p>
-          ) : login ? (
-            <HintRevealButton app="classic" id={challenge.id} cost={hintNotice.cost} />
+          {login ? (
+            <HintRevealButton
+              app="classic"
+              id={challenge.id}
+              cost={hintNotice.cost}
+              ownedText={viewerHints?.classic[challenge.id] ?? null}
+            />
           ) : (
             <p className="text-xs text-muted">
               This one has a paid hint ({hintNotice.cost} pts) — sign in to reveal it.

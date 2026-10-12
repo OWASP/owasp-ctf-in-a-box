@@ -192,8 +192,9 @@ export default function AdminSponsorsTab({
           <div className="min-w-0">
             <h3 className="font-mono text-sm text-white">Sponsors</h3>
             <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-              Recognition only — name, logo, link, a short blurb. Renders on the landing page, the footer, /sponsors and
-              the leaderboard&apos;s projector display whenever this list is non-empty. Logos must be PNG, JPEG or WebP;
+              Recognition only — name, logo, link, a short blurb. Renders on the landing page, the footer, /sponsors,
+              the leaderboard (a strip under its header) and the leaderboard&apos;s projector display whenever this list
+              is non-empty. Logos must be PNG, JPEG or WebP;
               SVG is rejected (it can run script when opened directly). Prefer a transparent background — JPEG has none,
               so its own shows as a solid rectangle against the site&apos;s dark theme.
             </p>
@@ -212,7 +213,7 @@ export default function AdminSponsorsTab({
           <AdminSelectField
             id="sponsor-logo-size"
             label="Sponsor logo size"
-            help="How big sponsor logos render on the landing page's credit row and on the leaderboard's projector display (?display=1). The /sponsors page keeps its own fixed size."
+            help="How big sponsor logos render on the landing page's credit row, the leaderboard's sponsor strip and the leaderboard's projector display (?display=1). The /sponsors page keeps its own fixed size."
             value={settings.sponsorLogoSize ?? "md"}
             options={LOGO_SIZE_OPTIONS}
             disabled={settingsPending}

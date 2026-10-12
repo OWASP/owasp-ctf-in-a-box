@@ -22,12 +22,14 @@
 #     bring-up ALSO builds a contestant's fork from source, and that path deserves a
 #     gate of its own. Here the source is staged into the WORKSPACE rather than left
 #     to the bring-up, precisely so the run takes the same branch a contestant's PR
-#     takes: workspace Dockerfile present -> Maven -> image. See stage_source below.
+#     takes: workspace Dockerfile present -> Maven -> image. See the
+#     acc_stage_source call below (helper in scripts/lib/acceptance-lib.sh).
 #
 # A target whose bring-up can do neither still fails loudly on the empty APP_IMAGE,
 # exactly as it does today.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/lib/acceptance-lib.sh
 
 TARGET="${1:?usage: $0 <target> <stock-image|none>}"
 STOCK_IMAGE="${2:?usage: $0 <target> <stock-image|none>}"
@@ -53,49 +55,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Building scorer image with the vendored rubric…"
-docker build -q -t "$IMG" scorer/ >/dev/null
+acc_build_scorer "$IMG"
 
 docker network create --internal "$NET" >/dev/null 2>&1 || true
 
-# Some targets' apps hardcode a nonstandard listen port, a servlet context
-# path, or both, inside their own image (there is no way to discover this at
-# runtime — it is a fact about the vendor's Dockerfile/entrypoint, not
-# something docker networking can smooth over). This mirrors the read-only
-# reference engine's own per-target app-url convention (dc34
-# .github/workflows/stock-scores-zero.yml): VAmPI's Flask app is hardcoded to
-# `app.run(port=5000)`, so the suffix must carry :5000 or the app is simply
-# unreachable at the default :80 — the exact "bad port" this gate exists to
-# catch. VulnerableApp additionally hardcodes a servlet context path
-# (`server.servlet.context-path=/VulnerableApp` baked into the image): the
-# stock container 404s at `/` and only answers under `/VulnerableApp`, so its
-# suffix carries the path as well as the port — verified directly against the
-# stock image (`curl :9090/` -> 404, `curl :9090/VulnerableApp/allEndPointJson`
-# -> 200). Hence APP_URL_SUFFIX, not APP_PORT: it is whatever string turns
-# `http://$TARGET` into the real, reachable app URL — port, path, or both.
-#
-# The SCHEME is per-target for the same reason: securityshepherd is the only one
-# that speaks HTTPS (Tomcat's TLS connector on 8443, with a self-signed cert that
-# expired in 2019 — its bring-up tolerates that rather than re-issuing it, because the
-# rubric's helpers disable verification deliberately and several tests assert on
-# TLS-level behaviour; the tolerance is scoped to the bring-up's own readiness probes,
-# never exported into the judge). It defaults to http, so the other five compose
-# exactly the URLs they always have.
-#
-# setup/ctf-setup.sh's app_url_for() carries the same per-target URL facts
-# for the rendered organizer workflow. The two tables are intentionally NOT
-# derived from one another (that script has provisioning side effects; this
-# gate should not source it) — a new target's scheme and suffix need an entry
-# in BOTH.
-APP_SCHEME="http"
-case "$TARGET" in
-  vampi) APP_URL_SUFFIX=":5000" ;;
-  vulnerableapp) APP_URL_SUFFIX=":9090/VulnerableApp" ;;
-  juice-shop) APP_URL_SUFFIX=":3000" ;;
-  webgoat) APP_URL_SUFFIX=":8080/WebGoat" ;;
-  securityshepherd) APP_SCHEME="https"; APP_URL_SUFFIX=":8443" ;;
-  *) APP_URL_SUFFIX="" ;;
-esac
+# The per-target URL facts (hardcoded listen port, servlet context path,
+# non-http scheme) live in acc_url_for in scripts/lib/acceptance-lib.sh — one
+# table shared by both scoring gates, whose doc comment carries the full
+# rationale (VAmPI's :5000, VulnerableApp's /VulnerableApp context path,
+# securityshepherd's https on :8443) and the lockstep note for
+# setup/ctf-setup.sh's app_url_for().
+acc_url_for "$TARGET"
 
 # Pinned upstream source for the targets whose SOURCE path this gate exercises (see
 # the `none` note in the header). Pinned to a COMMIT, never a branch and never a bare
@@ -110,48 +80,26 @@ esac
 WG_UPSTREAM_REPO="${WG_UPSTREAM_REPO:-WebGoat/WebGoat}"
 WG_UPSTREAM_REF="${WG_UPSTREAM_REF:-c3ed45a733377bc7313b93f57ff518254d81380f}"
 
-# `none` on a target that HAS a published image means "prove the source path". Stage
-# the pinned tree into the WORKSPACE — not into the bring-up — so the bring-up sees
-# exactly what a contestant's PR checkout looks like (a fork tree with a root
-# Dockerfile) and takes exactly the branch that PR would take.
+# `none` on a target that HAS a published image means "prove the source path".
+# acc_stage_source stages the pinned tree into the WORKSPACE — not into the
+# bring-up — so the bring-up sees exactly what a contestant's PR checkout looks
+# like (a fork tree with a root Dockerfile) and takes exactly the branch that
+# PR would take. It asserts the Dockerfile precondition loudly too: without
+# that file the bring-up falls through to "need APP_IMAGE or a workspace
+# Dockerfile" and the gate would look like a packaging bug.
 if [ -z "$STOCK_IMAGE" ] && [ "$TARGET" = "webgoat" ]; then
-  echo "Staging $WG_UPSTREAM_REPO@${WG_UPSTREAM_REF:0:12} into the workspace (source path)…"
-  # `git clone -b` cannot take a bare commit SHA, so init + fetch + checkout the ref.
-  git init -q "$WS"
-  git -C "$WS" remote add origin "https://github.com/$WG_UPSTREAM_REPO.git"
-  git -C "$WS" fetch --depth 1 -q origin "$WG_UPSTREAM_REF"
-  git -C "$WS" checkout -q FETCH_HEAD
-  # Assert the precondition rather than discovering it as a confusing bring-up
-  # failure: without this file the bring-up falls through to "need APP_IMAGE or a
-  # workspace Dockerfile" and the gate would look like a packaging bug.
-  [ -f "$WS/Dockerfile" ] || {
-    echo "FAIL: $WG_UPSTREAM_REPO@$WG_UPSTREAM_REF has no root Dockerfile — the"
-    echo "bring-up's source branch keys on that file and would never fire."
-    exit 1
-  }
+  acc_stage_source "$WS" "$WG_UPSTREAM_REPO" "$WG_UPSTREAM_REF"
 fi
 
-cat > "$TMP/event.json" <<'JSON'
-{"pull_request":{"user":{"login":"stock-check"},"number":1,"head":{"sha":"0000000000000000000000000000000000000000"}}}
-JSON
+acc_write_event "$TMP/event.json"
 
 echo "Scoring STOCK $TARGET — expecting every challenge to FAIL…"
-docker run --rm \
-  --network "$NET" \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$WS:/github/workspace" \
-  -v "$TMP/event.json:/github/event.json:ro" \
-  -e "TARGET=$TARGET" \
-  -e "APP_URL=$APP_SCHEME://$TARGET$APP_URL_SUFFIX" \
-  -e "APP_IMAGE=$STOCK_IMAGE" \
-  -e "NETWORK=$NET" \
-  --entrypoint /usr/local/bin/entrypoint.sh \
-  "$IMG"
+APP_IMAGE="$STOCK_IMAGE" acc_run_judge
 
 REPORT="$WS/ctf-score.md"
 [ -f "$REPORT" ] || { echo "FAIL: no ctf-score.md produced"; exit 1; }
 
-SCORE="$(sed -n 's/.*\*\*\([0-9][0-9]*\) \/ \([0-9][0-9]*\)\*\* challenges patched.*/\1 \2/p' "$REPORT")"
+SCORE="$(acc_score_counts "$REPORT")"
 SOLVED="${SCORE% *}"
 TOTAL="${SCORE#* }"
 

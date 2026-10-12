@@ -54,8 +54,8 @@ import {
 } from "../module-contributions";
 import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
-// Real value, not a removed build-time constant (issue #386, PR 2):
-// `withModuleContributions` now reads the live target total through
+// Computed from the `apps` catalogue rather than hardcoded:
+// `withModuleContributions` reads the live target total through
 // `lib/enabled-apps.ts`'s `getEnabledTotals()`, which — with no admin
 // settings stored (the mocked `@/lib/enabled-modules` double above resolves
 // `getAdminSettingsSnapshot()` to null) — falls back to the default of all
@@ -79,8 +79,8 @@ const data = (entries: LeaderboardEntry[], teams: TeamStanding[] = []): Leaderbo
 
 /** Quiz and classic disabled by default (only secure-development enabled),
  *  matching what a box with a non-empty SCORE_IMAGE and no `/admin` changes
- *  enables — the default module set since config v2 (#386). Tests that need
- *  one of the app-side modules override this. */
+ *  enables — the default module set. Tests that need one of the app-side
+ *  modules override this. */
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.moduleLive.mockImplementation((id: string) => id === "secure-development");
@@ -150,7 +150,7 @@ describe("withModuleContributions", () => {
   });
 
   // upstash carries no per-app data and no modules map, so completedCount
-  // falls back to `patched`. Points come first (#522), so the raw ZRANGE
+  // falls back to `patched`. Points come first, so the raw ZRANGE
   // points-descending order stands; `patched` only breaks a points tie, the
   // same way it does on lambda/mock. Pinned here so neither half drifts.
   it("keeps an upstash-shaped board's points order and breaks its ties on patched", async () => {
@@ -168,9 +168,8 @@ describe("withModuleContributions", () => {
 
   // Regression gate for the whole project: with only secure-development
   // configured, a populated module (completed === patched, lastActivityAt
-  // === lastSolveAt) must rank identically to how rankByStanding already
-  // ranked these rows via the patched/lastSolveAt fallback (Task 3), before
-  // this overlay existed.
+  // === lastSolveAt) must rank identically to rankByStanding's own
+  // patched/lastSolveAt fallback, with no overlay applied.
   it("ranks identically to the pre-overlay patched/lastSolveAt fallback", async () => {
     const raw = [
       entry("ada", 30, 3, "2026-08-01T09:00:00.000Z"),
@@ -190,9 +189,9 @@ describe("withModuleContributions", () => {
     }
   });
 
-  // Regression gate specific to phase 2: with the quiz module DISABLED, the
-  // leaderboard must behave EXACTLY as it did before this task — no quiz
-  // reads, no quiz block, no ranking change driven by quiz data.
+  // Regression gate: with the quiz module DISABLED, the leaderboard must
+  // behave EXACTLY as with no quiz module present — no quiz reads, no quiz
+  // block, no ranking change driven by quiz data.
   describe("with the quiz module disabled", () => {
     it("never reads quiz data and adds no quiz block", async () => {
       const out = await withModuleContributions(data([entry("ada", 30, 3)]));
@@ -230,10 +229,10 @@ describe("withModuleContributions", () => {
     });
 
     // The board's login set is the UNION of the source's logins and the
-    // logins holding module points. Before this, the overlay could only map
-    // over rows the scoring backend had already produced, so a contestant
-    // whose only points were quiz points had no row to overlay onto and never
-    // appeared at all.
+    // logins holding module points. Without that union the overlay maps only
+    // over rows the scoring backend has already produced, so a contestant
+    // whose only points are quiz points has no row to overlay onto and never
+    // appears at all.
     it("creates a row for a contestant with quiz points and no scored submission", async () => {
       mocks.getQuizTotals.mockResolvedValue(new Map([["cyd", { points: 30, answered: 3, lastAt: null }]]));
 
@@ -326,7 +325,7 @@ describe("withModuleContributions", () => {
     // stamp a `quiz` block) must not zero out that row's real patch count.
     // ada has more patches AND a quiz answer on top of bob — she must never
     // rank below him.
-    // At EQUAL points (points come first, #522), the tiebreak is items
+    // At EQUAL points (points come first), the tiebreak is items
     // completed: ada's 5 patches + 1 answer must count as 6, not 1. If her
     // quiz block made completedCount drop `patched` (no secure-development
     // block on an upstash row), she would lose the tie to bob's 3. Bob is
@@ -349,10 +348,9 @@ describe("withModuleContributions", () => {
       expect(out.entries[0].modules!["quiz"]).toBeDefined();
     });
 
-    // Issue #520: withModuleContributions used to add a source team's quiz
-    // points here AND withTeamStandings added them again one stage later, so
-    // every scorer team counted them twice. The team half now has one owner,
-    // `withTeamQuizPoints` (called by withTeamStandings); this stage stamps a
+    // The team's quiz points have one owner: `withTeamQuizPoints` (called by
+    // withTeamStandings) adds them one stage later, so adding them here too
+    // would count every scorer team's quiz points twice. This stage stamps a
     // team's secure-development chip and must leave its points alone.
     it("adds no quiz points to a source team — withTeamStandings owns that", async () => {
       mocks.getTeamQuizTotalsBatch.mockResolvedValue([{ points: 20, answered: 1, lastAt: "2026-08-01T11:00:00.000Z" }]);
@@ -731,7 +729,7 @@ describe("withModuleContributions", () => {
       }
     });
 
-    // ai's counterpart to the test above, for the THIRD module now sharing this
+    // ai's counterpart to the test above, for the THIRD module sharing this
     // describe's `id !== "secure-development"` enablement mock (quiz, classic
     // AND ai are all live here). Each module's read pair is settled
     // independently — see the doc comment on `aiReads` — so a failed
@@ -772,9 +770,9 @@ describe("withModuleContributions", () => {
   });
 
   // Regression gate specific to the ai module: with it DISABLED, the
-  // leaderboard must behave exactly as it did before this module existed —
-  // no ai reads, no ai block, no ranking change driven by ai data. Mirrors
-  // the quiz/classic disabled pairs above.
+  // leaderboard must behave exactly as with no ai module present — no ai
+  // reads, no ai block, no ranking change driven by ai data. Mirrors the
+  // quiz/classic disabled pairs above.
   describe("with the ai module disabled", () => {
     it("never reads ai data and adds no ai block", async () => {
       const out = await withModuleContributions(data([entry("ada", 30, 3)]));
@@ -1000,7 +998,7 @@ describe("withModuleContributions", () => {
 
 // Every degrade path above logs; none of them may log the caught value. A
 // driver-decorated error carries the request in `command`/`cause`, so each
-// site hands `console.error` the label only (#500 follow-up).
+// site hands `console.error` the label only.
 describe("module-contributions log redaction (#500)", () => {
   const teams: TeamStanding[] = [{ rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada"] }];
 
@@ -1028,7 +1026,7 @@ describe("module-contributions log redaction (#500)", () => {
     try {
       await withModuleContributions(data([entry("ada", 30, 3)], teams));
       // Six individual reads, each its own line. (The three team batches
-      // are read by withTeam*Points below, not here — issue #520.)
+      // are read by withTeam*Points below, not here.)
       expect(consoleError.mock.calls.length).toBeGreaterThanOrEqual(6);
       expectLabelOnly(consoleError);
     } finally {
@@ -1066,5 +1064,31 @@ describe("module-contributions log redaction (#500)", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+});
+
+// The RTS tie, through the real team fold. The scorer hands the teams over in
+// ITS order, which knows only Secure Development (provart finished SD first);
+// once Jeopardy is added, a points tie must go to the team that earned its
+// last points first in any module, not keep the scorer's order.
+describe("team ties break on the last points earned in ANY module (#583)", () => {
+  it("re-orders the RTS three-way tie by the Jeopardy finish", async () => {
+    mocks.moduleLive.mockImplementation((id: string) => id === "secure-development" || id === "classic");
+    const teams: TeamStanding[] = [
+      { rank: 1, slug: "provart", name: "provart", captain: "a", points: 668, members: ["a"], lastSolveAt: "2026-10-08T12:35:30.995Z" },
+      { rank: 2, slug: "mortadela-s", name: "Mortadela's", captain: "b", points: 668, members: ["b"], lastSolveAt: "2026-10-09T05:15:55.389Z" },
+      { rank: 3, slug: "oxguardians", name: "Oxguardians", captain: "c", points: 668, members: ["c"], lastSolveAt: "2026-10-09T15:40:09.998Z" },
+    ];
+    mocks.getTeamClassicTotalsBatch.mockResolvedValue([
+      { points: 4650, solved: 18, lastAt: "2026-10-09T16:59:32.540Z" },
+      { points: 4650, solved: 18, lastAt: "2026-10-09T17:19:32.531Z" },
+      { points: 4650, solved: 18, lastAt: "2026-10-09T16:59:08.114Z" },
+    ]);
+    const out = await withTeamClassicPoints(teams);
+    expect(out.map((t) => [t.slug, t.points, t.rank])).toEqual([
+      ["oxguardians", 5318, 1],
+      ["provart", 5318, 2],
+      ["mortadela-s", 5318, 3],
+    ]);
   });
 });

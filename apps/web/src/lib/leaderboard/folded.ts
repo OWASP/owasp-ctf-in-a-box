@@ -4,6 +4,7 @@ import { withModuleContributions } from "./module-contributions";
 import { withTeamStandings } from "./team-standings";
 import { withModuleSeries } from "./module-series";
 import { withHintPenalties } from "./hint-penalties";
+import { withScoreAdjustments } from "./score-adjustments";
 import { foldGeneration } from "./fold-cache";
 import type { LeaderboardData } from "./types";
 
@@ -75,7 +76,10 @@ const defaultFold: Fold = async ({ fresh = false } = {}) =>
     .then(withModuleContributions)
     .then(withTeamStandings)
     .then(withModuleSeries)
-    .then(withHintPenalties);
+    .then(withHintPenalties)
+    // The organizer's team adjustments, after the hint fold: both come off
+    // (or onto) the same final total. See score-adjustments.ts.
+    .then(withScoreAdjustments);
 
 // `gen` is the fold-cache generation the fold STARTED under (#553): the two
 // admin resets that lower scores bump it, and nothing stamped older is served

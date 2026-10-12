@@ -112,7 +112,17 @@ routes would refuse.
 
 Captains
 manage the roster from the app: rename the team, remove a member, transfer the
-captaincy, regenerate the join code, or disband. The join code doubles as a
+captaincy, regenerate the join code, or disband. A team name is up to 32
+characters, counted after Unicode normalization (NFC). Any script and emoji
+may appear in it, but a new team's name needs at least one letter a–z or
+digit 0–9, because the team's id (its key and invite URL) is built from
+those; a rename keeps the id, so it has no such need. A name with nothing
+visible (zero-width or control characters, or the blank Braille cell U+2800,
+alone) or
+with a text-direction control character (U+202E and the rest of the bidi
+controls) is refused on create and on rename, and every page shows a team
+name direction-isolated, so a name stored before that check cannot reorder
+the row around it (#603). The join code doubles as a
 shareable link — **Copy invite link** on the team card yields
 `https://<your-event>/join/<code>`, which a teammate opens and joins in one
 click. Signing in mid-way keeps the invite: the code lives in the URL, so the
@@ -129,9 +139,14 @@ double-counting them. Organizers open or close the registration window from
 the admin panel below — by hand with the **Team registration** switch, or on
 a timer with the **Registration opens** / **Registration closes** schedule
 fields. While it is closed nobody can create or join a team, and a captain
-cannot rename it, remove a member or regenerate its code; **transfer
-captaincy, disband and leave still work**, because those are exits and
-gating them would trap a captain behind a closed window.
+cannot rename it or regenerate its code; **transfer captaincy, disband,
+leave and remove member still work**, because those are exits and gating
+them would trap a player or a captain behind a closed window. Leave and
+remove member ask for confirmation first, though: a player who leaves (or is
+removed) after close **cannot join any team again on their own**, and their
+points leave the team's total. The warning says so, the request is refused
+until it is confirmed, and an organizer can put the player back from
+**Support → Add to team** (see below).
 
 ![A contestant's profile: the header shows their points plus one done-out-of-available stat per enabled module, and the team card below carries the join code, invite link and captain controls](assets/profile.jpg)
 
@@ -360,6 +375,15 @@ The panel offers:
   only deferred. The scorer reads the same flag and answers `POST /score`
   with `503` while it is set, so a submission that reaches the writer anyway
   is refused rather than written. Un-pausing picks up right where it left off.
+- **Projector board** (Event tab) — **QR code on the projector board**, on
+  by default: display mode (`/leaderboard?display=1`) shows a QR code of the
+  event's address, with the address printed under it, in the bottom-right
+  corner below the standings, so anyone in the room can join from a phone
+  (#592). The code is the box's own origin from `EVENT_URL` (compose passes it
+  as `BETTER_AUTH_URL`); with none set, no code is shown rather than one
+  guessed from the request. It is encoded on the server into an inline SVG,
+  with no third-party service and no request from the viewer's browser. The
+  regular `/leaderboard` never shows it.
 - **Modules** (Event tab) — which modules this event serves, switchable
   **during the event without a rebuild**. Switching one off removes its nav
   link and stops its board resolving on everyone's next page load; switching it
@@ -424,10 +448,12 @@ The panel offers:
 
 - **Team registration** — an open/close switch for the team-forming window.
   While closed, players cannot create or join teams (**Play solo** included),
-  and a captain cannot rename the team, remove a member or regenerate the
-  join code. **Transfer captaincy, disband and leave are deliberately not
+  and a captain cannot rename the team or regenerate the join code.
+  **Transfer captaincy, disband, leave and remove member are deliberately not
   gated** (`team-store.ts` says so at each one): they are exits, and gating
-  them would trap a captain the moment registration closes. Existing teams
+  them would trap a player the moment registration closes. Leave and remove
+  member require a confirmation that says the player cannot rejoin and their
+  points leave the team; **Support → Add to team** puts them back. Existing teams
   keep their scores. The switch is one of two things that close registration
   — the scheduled window below is the other.
 - **Schedule (auto dates)** — four optional date-time fields, on the Event
@@ -496,6 +522,18 @@ The panel offers:
     the charge; a solve landing in the same instant shows on the refresh
     that follows). A free hint (cost `0`) skips the check.
 
+  - **Price changes** (no knob — it follows **Hint cost**) — a contestant
+    is charged the price their confirm button showed, or nothing. The
+    purchase carries that price, and the charging script reads the current
+    **Hint cost** itself and compares the two in the same atomic step as the
+    charge (the affordability check and the charge use that same live
+    price): if an organizer changed the cost after the page rendered,
+    nothing is charged,
+    the request answers 409 with the new price, and the button asks again
+    at it ("This hint now costs N pts. Confirm again to buy it at the new
+    price."). Re-viewing a hint already bought is free and never refused
+    this way.
+
   - **Scoring window** (no knob — it follows **Freeze scoring** and the
     **Scoring closes** schedule) — a hint purchase lowers the buyer's net,
     so it is a scoring action and closes with scoring (#566): while scoring
@@ -539,8 +577,16 @@ The panel offers:
 
 - **Activity** (its own tab) — the live event log: sign-ins, quiz, classic
   and ai solves (an ai solve's entry also notes whether it came in via flag
-  or via event), and team create/join/leave/rename, newest first, with type
-  chips and a login filter. Backed by one capped Redis list
+  or via event), and team create/join/leave/rename, newest first. Type
+  chips (each with its count) and one search box narrow it: every word must
+  match somewhere in a row — login, event, detail (challenge, question or
+  team id) or the time as shown — and `login:`, `type:`, `detail:` and
+  `team:` restrict a word to one field; a time range (last 15 min to 24 h,
+  or from/to on the panel's clock) narrows it further. While any of these
+  is on, the tab reads the rest of the log so the search covers all of it,
+  and says how much it searched; the search rides in the URL
+  (`/admin/activity?q=…`), so a filtered view survives a reload and can be
+  shared. Backed by one capped Redis list
   (`ctf:activity:log`, newest ~5,000 entries — older ones drop
   automatically), written **fail-open** so a Redis blip can lose a log line
   but never fail the sign-in or solve it describes. Entries carry the
@@ -558,7 +604,9 @@ The panel offers:
   contestants' forks, and no new tracking was added: quiz answers and classic
   solves already carry a timestamp per item per login, Secure Development
   solves are timestamped as they are ingested, attempts are counted per login,
-  and `firstTeamAt` supplies the funnel's conversion moment.
+  and `firstTeamAt` supplies the funnel's conversion moment. Every per-login record is
+  read under the login as GitHub spells it, so a contestant whose login has
+  a capital letter counts like any other.
 
   It computes when you open the tab, not when the admin page loads — the fold
   is O(contestants) — and, while the event phase is live, recomputes every
@@ -566,18 +614,30 @@ The panel offers:
   Ns ago" stamp beside the "as of" time; **Refresh** is the same read for when
   you won't wait. You get:
 
-  ![The Insights tab: the five participation figures, a ten-minute-bucket solve timeline, and the hardest-first challenge table with solves, attempts, solve rate, average tries and median time to solve per challenge](assets/admin-insights.jpg)
+  ![The Insights tab: the five participation figures, a solve timeline, and the hardest-first challenge table with solves, attempts, solve rate, average tries and median time to solve per challenge](assets/admin-insights.jpg)
 
 
   - **Participation** — on a team / ever on a team / submitted / scored /
     **stuck** (submitted and never scored). The gap between the last two is the
     number worth watching during an event.
-  - **Solves over time**, in ten-minute buckets with a time axis (first,
+  - **Solves over time**: every bucket from the first solve to the last,
+    empty ones included, across the full width, with a time axis (first,
     middle and last bucket, UTC; dated once the buckets cross midnight), so
-    a room going quiet is visible and datable.
+    a room going quiet is a visible, datable gap. Buckets are ten minutes,
+    widened (30 min, 1 h, 2 h, … up to a day, then whole days) to keep any
+    span within 120 bars; the caption names the width and the busiest
+    bucket, and each bar's tooltip its date, range and count. The same
+    figures for every bucket with solves sit in a "Buckets with solves"
+    list under the chart, for keyboard and screen-reader use.
   - **Hardest first** — every challenge by solves, attempts, solve rate,
     *average tries taken by the people who did solve it*, and the *median time
-    from their first attempt to their solve*. Those last two are the difficulty
+    to solve*: from a player first opening a Jeopardy or AI challenge's page
+    to their solve (the box records the first open, once per player and
+    challenge). Where no open was recorded (quiz, and solves from before the
+    record existed) it falls back to their first submission and the cell is
+    starred and taken over the solvers who missed first; where every solver
+    was right on their first submission it shows —, because that fallback is
+    0 by construction, not fast. Those last two are the difficulty
     signal solve rate alone hides: a challenge everyone eventually solved on
     their fourth attempt, forty minutes in, is harder than its 100% rate
     suggests. Each row is named by its **title** — the quiz question's prompt,
@@ -585,6 +645,10 @@ The panel offers:
     be read out without decoding slugs; a challenge deleted since it was solved
     keeps its metrics and shows its id alone. **Download challenges CSV**
     exports the full table, `title` beside `id` rather than instead of it.
+    The file is UTF-8 with a byte-order mark, so Excel opens accented and
+    non-Latin titles intact, and a title beginning with `=`, `+`, `-` or `@`
+    is written with a leading `'` so a spreadsheet shows it as text instead
+    of running it as a formula.
   - **Where attention went** — scorers per module, hint buyers and spend, and
     how many hints were bought *before* the buyer solved the thing. A hint
     bought afterwards bought nothing, so that split is the difference between
@@ -597,7 +661,7 @@ The panel offers:
   | Figure | Counts | Does not count |
   |---|---|---|
   | **On a team** | Distinct logins on a team **right now** | Anyone who has since left |
-  | **Ever on a team** | Distinct logins that have **ever** joined one — survives leaving and switching | Signing in; that leaves no record at all |
+  | **Ever on a team** | Distinct logins that have **ever** joined one — survives leaving and switching, including a player who left without scoring (found through their user record) | Signing in; that leaves no record at all |
   | **Submitted** | Made at least one submission in any module | — |
   | **Scored** | Earned at least one point-bearing item in any module, Secure Development included | Submissions that never landed a point |
   | **Stuck** | Submitted **and never scored** | Anyone who has not submitted yet |
@@ -605,8 +669,8 @@ The panel offers:
   | **Attempts** (per challenge) | Every submission against it, right or wrong | Secure Development items, which do not appear in this table at all |
   | **Solve rate** | solves ÷ **the people who tried it** | The rest of the event; this is not an event-wide difficulty figure |
   | **Avg tries** | Mean attempts taken by the contestants who **did** solve it | Everyone still stuck on it — which is why a low rate and a low average can coexist |
-  | **Median time** | Median seconds from a contestant's **first attempt** to their solve | Items earned before `firstAt` existed; those carry no start time |
-  | **Team points** | The **sum** of each member's own totals | Nothing — and that is the catch: the leaderboard folds the **union** of their solves, so a challenge two teammates both solved counts once there and twice here |
+  | **Median time** | Median seconds from a contestant first **opening** the challenge to their solve; starred (*) when it falls back to their **first submission** because no open was recorded | Time spent before opening it (reading the board, working offline from a shared link); a row where everyone solved on their first submission and no open was recorded shows — |
+  | **Team points** | The leaderboard's own figure for the team: the **union** of its members' solves, hint spend netted | — the two screens agree. Only if the board can't be read does the tab fall back to the sum of members' totals, and it says so |
   | **Hints before solving** | Hints bought **before** the buyer earned that item | Hints bought afterwards, and hints for items never solved |
 
   Solve rate can never exceed 100%: its denominator is the larger of "people
@@ -617,9 +681,7 @@ The panel offers:
 
   The tab ends with **what these numbers do not measure**, and that list ships
   in the API payload too rather than living only here — a metric whose limits
-  travel separately from it gets quoted without them. In short: team points on
-  this tab *sum* each member's totals while the leaderboard folds the *union*
-  of their solves; attempt rows carry a first and a last time but not one per
+  travel separately from it gets quoted without them. In short: attempt rows carry a first and a last time but not one per
   try, so the timeline is solves rather than submissions; signing in leaves no record,
   so the funnel starts at "ever on a team"; Secure Development has no
   per-challenge attempt data, since its scores arrive already judged; and
@@ -649,7 +711,19 @@ The panel offers:
   From there: **reset progress** (clears their Secure Development solves on
   every target, their quiz answers, classic and AI solves, attempts and hints;
   keeps the account and the team), **delete contestant** (all of that
-  plus the team membership and the account record), or **remove from team**.
+  plus the team membership and the account record), **remove from team**, or
+  **add to team** / **move to team**: type a team slug and the player goes
+  onto it, leaving their current team if they have one, whatever the
+  registration state. This is how a player who left after registration
+  closed gets back. The team-size cap applies unless you tick **over the
+  team-size cap**; a captain of a team with other members must hand it over
+  first, as with leaving; a team their move empties is deleted with its join
+  code, as when its last member leaves. The player is found by the spelling
+  they signed in with, so a login that has never signed in is refused. Their
+  points count for the new team on the next board read, and their `joinedAt`
+  is the move, so earlier solves do not open the new team's story steps. The
+  move is in the admin audit log (`ops:team-add-member`) and the activity log
+  (as a team join).
   Team-side, there is **transfer captaincy** and **disband** — the captain-only
   controls, available to an organizer for when the captain is unreachable. That
   is the common live ticket: a captainless team cannot rename, remove a member,
@@ -659,6 +733,28 @@ The panel offers:
   hold the team — transfer or disband first, or you would leave a team nobody
   can administer. And **disbanding deletes nobody's points**: solves are per
   contestant, so the players keep what they earned and can regroup.
+
+  **Score adjustments** (the last block on the tab) — a bonus or penalty for a
+  **team**, with a required reason: type the team slug, a whole number of
+  points (negative for a penalty, up to ±100000, never 0) and the reason, and
+  **Add adjustment**. The list below shows every adjustment with its team,
+  amount, reason and who added it, each with **Remove**. An adjustment:
+  - is applied to the team's total **last**, after hint spend, on every surface
+    that shows it (the board, display mode, the profile's team panel), marked
+    "±N adjustment" beside the total; the total **floors at 0**, like the hint
+    fold;
+  - never touches anyone's hint balance, survives hints being switched off,
+    and adjusts teams only (individual rows are unchanged);
+  - moves points, not time: two teams level after an adjustment are still
+    ordered by who earned their last points first;
+  - is written to the admin audit log on add and on remove (`adjustment:add`,
+    `adjustment:remove`, with who and why), and lives in its own ledger,
+    `ctf:adjustments`;
+  - is this event's scoring data: the **master reset** clears it, and the
+    **event archive does not carry it** (an archive carries content and
+    policy, never solves). The score chart stays gross, as it does for hints.
+  It replaces writing hint spend by hand in Redis, which the board labelled as
+  hints, took from one member's hint balance, and vanished with hints off.
 
   > **Secure Development solves come back.** The scorer writes them with
   > `HSETNX` so replays are no-ops, and the poller re-submits from the PR
@@ -1060,7 +1156,8 @@ AI challenge's mode, launch URL template and **per-challenge signing key**
 plus **policy** settings: the hint controls (enabled, cost, and its two
 gating knobs), the quiz retry-gate knobs, Jeopardy's and AI's submission
 cooldowns, the re-run cooldown, the team-size cap and registration switch,
-module title/blurb overrides, and which modules are enabled. It also carries an informational **event
+module title/blurb overrides, and which modules are enabled. It carries no
+scoring data: no solves, attempts, team rosters or score adjustments. It also carries an informational **event
 identity** block — `name`, `theme`, `dates`, `location` and `ctfStartsAt` —
 read from the running box at export time.
 
@@ -1393,9 +1490,18 @@ entirely inside the app.
 
 ![The Jeopardy board as a contestant sees it: challenges grouped by category as compact tiles — title, points, and a green check once solved — with the solved-count and points progress bar above them](assets/flags.jpg)
 
-<sup>The board as a contestant sees it: every card says what it's worth and how
-many people have solved it, a badge marks the flags where casing matters, and
-grading answers the instant you submit.</sup>
+<sup>The board as a contestant sees it: every card says what it's worth, a
+badge marks the flags where casing matters, and grading answers the instant
+you submit.</sup>
+
+**Solve counts are teams** (#595). Every visible tile, open story step and
+challenge page says how many teams solved it ("3 teams"): scoring is per team,
+so two members solving one flag count once, and a solver on no team is not
+counted. The figure is folded from the current members' solves on each read,
+never stored, so a team change cannot leave it stale. A locked story step
+shows no count. In `/admin` the Jeopardy list gives each challenge both
+figures ("3 teams · 5 players", or "unsolved"), so a flag nobody can solve
+stands out; if a count cannot be read it is left off rather than shown as 0.
 
 **Authoring** happens in `/admin`, under the Jeopardy module's tab (see
 "Jeopardy controls" above). Before adding a challenge you need at least one
@@ -1604,6 +1710,9 @@ ids in order:
 ```
 
 A version 1 file still imports unchanged, but it cannot carry `stories`.
+(Today's export is stamped `"version": 2`, or `"version": 3` when it
+carries the optional attachment files described under "Files in bundles
+and archives" below.)
 Every step must name a challenge **in the same file**, the same
 self-contained rule that applies to categories. Stories merge by id, the
 same way challenges do:
@@ -1625,7 +1734,9 @@ on its own.
 **Stories: challenges a team unlocks in order** (#463). A story is an
 ordered chain of challenges, such as an "Operation Red Dawn" that runs from
 recon to loot. Step 1 is always open. Each later step opens for a team once
-any member of that team solves the step before it. The board shows one lane
+any member of that team solves the step before it while on that team: a
+step solved on another team, before the player joined this one, still
+counts toward this team's points but opens nothing here (#602). The board shows one lane
 per story above the categories. A locked step appears there only as
 "??? — step N of M", and its page, hint and flag answer as if it did not
 exist. Points are plain: a step is worth what its challenge says, and a
@@ -1706,20 +1817,58 @@ base64; count that when sizing the box. See
 [ADR 61](decisions.md#adr-61-challenge-attachments-live-in-redis-served-only-as-downloads-behind-the-challenges-own-visibility)
 for why the bytes live in Redis.
 
-**Files in bundles and archives.** A challenge bundle (version 2) carries
-each attachment's **metadata only**: `{ "name", "size", "sha256" }` for an
-upload, `{ "name", "url" }` for a link, in an `attachments` list on the
-challenge. The bytes travel in the **event archive**, whose import checks
-every file's sha256 before it replaces anything.
+**Files in bundles and archives.** A challenge bundle carries each
+attachment's **metadata** in an `attachments` list on the challenge:
+`{ "name", "size", "sha256" }` for an upload, `{ "name", "url" }` for a link.
+The bytes travel in one of two places:
 
-- Importing a bundle that names an upload the box does not have creates it
-  as **missing**. The Files section flags it ("re-upload `capture.pcap`
-  (sha256 …)") with a re-upload control, and contestants do not see it until
-  it has its bytes.
+- **The event archive** always carries them, in a top-level
+  `attachmentFiles` list. Its import checks every file's sha256 before it
+  replaces anything.
+- **A challenge bundle carries them only when you ask.** Tick **Include
+  files** next to **Export challenges** on the Jeopardy tab, and the export
+  adds the same top-level `attachmentFiles` list. Leave it unticked (the
+  default) and the bundle stays the small, metadata-only file.
+
+A bundle that carries files is stamped `"version": 3`. One without them
+(the option unticked, or nothing uploaded) stays `"version": 2`, so a box on
+an older build still imports it. Each `attachmentFiles` entry
+is `{ "item", "sha256", "bytes" }`: the challenge id, the upload's sha256,
+and the file's bytes as base64. Every entry must name an upload in the same
+file by challenge id and sha256. Version 1 and 2 files still import
+unchanged, but only version 3 can carry `attachmentFiles`.
+
+```json
+"attachmentFiles": [
+  { "item": "web-warmup-x7k2", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "bytes": "dGVzdA==" }
+]
+```
+
+What a challenge-bundle import does with files:
+
+- An upload the box does not have is created as **missing**. If the bundle
+  carries its bytes, they fill it straight away. If it does not, the Files
+  section flags it ("re-upload `capture.pcap` (sha256 …)") with a re-upload
+  control, and contestants do not see it until it has its bytes.
+- An upload the box already holds with the same sha256 is skipped; its
+  bytes in the bundle are not used.
+- Before anything is written, the import checks each file's bytes against
+  its sha256 and recorded size. It also checks the caps: 5 MiB per file,
+  10 attachments per challenge, and 50 MiB for the whole event. A tampered
+  file, or a bundle whose files would push the event past 50 MiB, is
+  refused whole, and the refusal names the cap and the current usage.
 - A re-upload whose sha256 differs from the recorded one is refused.
 - A challenge-bundle import still never deletes: a file on the box that the
   bundle does not mention stays. A link matches by name and URL, an upload
   by sha256. (An event-archive import is a full replace, files included.)
+
+A bundle with files can be large: 50 MiB of uploads is about 67 MB of
+base64. The Jeopardy tab sends every import to
+`POST /api/admin/classic/bundle`, which accepts a body of up to 75 MB
+(the archive import's limit). A larger file is refused with a `413` that
+names the limit. A file too large to edit is loaded but not shown in the
+import box, the same way the event archive's import handles it. The file
+holds every flag and every attachment, so treat it like the archive.
 
 ## AI
 
@@ -1959,7 +2108,11 @@ carries:
 **graded flag path**: a signed event has no wrong answer to rate-limit, so
 it is never subject to this cooldown. `null` (the field left blank) means
 the **5-second default**; set a value in `[0, 3600]` seconds to override it,
-the same bounds classic's own cooldown enforces.
+the same bounds classic's own cooldown enforces. Like classic's, it is
+**per contestant, while a solve counts for the team**: each teammate has
+their own cooldown on each challenge, so a team of N can submit N flags per
+period on the same challenge. That is by design (one player's guessing never
+locks out the team); size the cooldown with the team cap in mind.
 
 **What contestants see:** the board (`/ai`) lists every challenge with its
 category, points, and a 💡 marker where a hint is on offer. Opening one

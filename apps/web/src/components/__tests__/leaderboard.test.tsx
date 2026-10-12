@@ -646,3 +646,25 @@ describe("the story-lock disclaimer (#570)", () => {
     expect(html).toContain(DISCLAIMER);
   });
 });
+
+// #591: a team's organizer adjustment is already in its points; the row says
+// so with an explicit signed marker, and shows nothing when there is none.
+describe("team row adjustment marker (#591)", () => {
+  it("shows a penalty and a bonus as signed adjustments", () => {
+    const penalty = renderToStaticMarkup(
+      <TeamRow team={team({ members: ["alice"], captain: "alice", adjustment: -10 })} topPoints={150} isOpen={false} onToggle={() => {}} enabledApps={apps} />,
+    );
+    expect(penalty).toContain("−10 adjustment");
+    const bonus = renderToStaticMarkup(
+      <TeamRow team={team({ members: ["alice"], captain: "alice", adjustment: 50 })} topPoints={150} isOpen={false} onToggle={() => {}} enabledApps={apps} />,
+    );
+    expect(bonus).toContain("+50 adjustment");
+  });
+
+  it("shows no marker without an adjustment", () => {
+    const html = renderToStaticMarkup(
+      <TeamRow team={team({ members: ["alice"], captain: "alice" })} topPoints={150} isOpen={false} onToggle={() => {}} enabledApps={apps} />,
+    );
+    expect(html).not.toContain("adjustment");
+  });
+});

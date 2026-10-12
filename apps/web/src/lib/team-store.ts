@@ -57,7 +57,11 @@ export { TEAM_MAX_MEMBERS } from "@/lib/team-limits";
 const NAME_MAX_LENGTH = 32;
 const NOT_AVAILABLE_IN_DEMO_MODE = "Not available in demo mode";
 
-export type TeamActionResult = { ok: true; team: string | null } | { ok: false; error: string };
+/** `needsConfirm`: refused only because the caller has not confirmed an exit
+ *  after registration closed; the same call with `confirmClosed` goes ahead. */
+export type TeamActionResult =
+  | { ok: true; team: string | null }
+  | { ok: false; error: string; needsConfirm?: true };
 
 export type JoinCodeResult = { ok: true; team: string; code: string } | { ok: false; error: string };
 
@@ -68,6 +72,41 @@ export type TeamInfo = {
 };
 
 const REGISTRATION_CLOSED_ERROR = "Team registration is closed";
+
+/** Leaving or being removed after registration closes is allowed, but it
+ *  cannot be undone by the player: they can't join any team again, and the
+ *  team's total (its members' union) loses their points. So the exit is
+ *  warned about and must be confirmed; an organizer can put them back from
+ *  /admin → Support. */
+const LEAVE_AFTER_CLOSE_WARNING =
+  "Registration is closed. You won't be able to join any team again, and your points leave the team.";
+const removeAfterCloseWarning = (login: string) =>
+  `Registration is closed. ${login} won't be able to join any team again, and their points leave the team.`;
+
+/** The Unicode bidi controls: marks, embeddings, overrides and isolates. */
+const BIDI_CONTROLS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
+/** What renders as nothing: format characters (zero-width spaces and joiners,
+ *  the BOM, word joiners), every other default-ignorable code point, control
+ *  characters (NUL, BEL, ESC: no glyph at all), and the blank Braille pattern
+ *  U+2800, a graphic character that draws an empty cell. */
+const INVISIBLE = /[\p{Cf}\p{Cc}\p{Default_Ignorable_Code_Point}\s\u2800]/gu;
+
+/** The one name check create and rename share. NFC first, so the
+ *  length counts what is displayed. Bidi controls are refused rather than
+ *  stripped, so a saved name never silently differs from what was typed: one
+ *  could render a name reversed, or push it over the points column. A name
+ *  with nothing visible left once invisible characters are set aside is
+ *  refused too; a zero-width joiner INSIDE a visible name (an emoji sequence)
+ *  is kept. */
+function checkTeamName(raw: string): { ok: true; name: string } | { ok: false; error: string } {
+  const name = raw.normalize("NFC").trim();
+  if (BIDI_CONTROLS.test(name)) return { ok: false, error: "Team names can't contain text-direction control characters" };
+  if (!name.replace(INVISIBLE, "")) return { ok: false, error: "Team name is required" };
+  if (name.length > NAME_MAX_LENGTH) {
+    return { ok: false, error: `Team name must be ${NAME_MAX_LENGTH} characters or fewer` };
+  }
+  return { ok: true, name };
+}
 
 function slugify(value: string): string {
   return value
@@ -164,18 +203,25 @@ if redis.call('SISMEMBER', KEYS[2], ARGV[2]) == 0 then return 'not-member' end
 redis.call('HSET', KEYS[1], 'captain', ARGV[2])
 return 'ok'`;
 
+// DISBAND and REGENERATE_CODE read the join code they retire INSIDE the
+// script, like LEAVE_SCRIPT: a code read by the caller a round-trip earlier
+// can already be stale (two regenerations racing), and deleting it leaves the
+// newer one resolving to the team, or to a deleted team.
 const DISBAND_SCRIPT = `
 if redis.call('HGET', KEYS[1], 'captain') ~= ARGV[1] then return 'not-captain' end
 local members = redis.call('SMEMBERS', KEYS[2])
 for _, login in ipairs(members) do
   redis.call('HDEL', 'ctf:user:' .. login, 'team', 'joinedAt')
 end
-redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])
+local code = redis.call('HGET', KEYS[1], 'joinCode')
+redis.call('DEL', KEYS[1], KEYS[2])
+if code then redis.call('DEL', 'ctf:joincode:' .. code) end
 return 'ok'`;
 
 const REGENERATE_CODE_SCRIPT = `
 if redis.call('HGET', KEYS[1], 'captain') ~= ARGV[1] then return 'not-captain' end
-redis.call('DEL', KEYS[3])
+local old = redis.call('HGET', KEYS[1], 'joinCode')
+if old then redis.call('DEL', 'ctf:joincode:' .. old) end
 redis.call('HSET', KEYS[1], 'joinCode', ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
 return 'ok'`;
@@ -309,12 +355,13 @@ async function attemptCreate(login: string, name: string, slug: string): Promise
 }
 
 export async function createTeam(login: string, name: string): Promise<TeamActionResult> {
-  const trimmed = name.trim();
+  const checked = checkTeamName(name);
+  if (!checked.ok) return checked;
+  const trimmed = checked.name;
   const slug = slugify(trimmed);
-  if (!slug) return { ok: false, error: "Team name is required" };
-  if (trimmed.length > NAME_MAX_LENGTH) {
-    return { ok: false, error: `Team name must be ${NAME_MAX_LENGTH} characters or fewer` };
-  }
+  // The team's id (its key and URL) keeps a-z and 0-9 only. A visible name
+  // with neither ("Команда", "赤") has no id; say so, not "required".
+  if (!slug) return { ok: false, error: "A team name needs at least one letter a–z or digit 0–9" };
   if (!TEAM_WRITES_ENABLED) return setMockTeam(slug);
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
 
@@ -413,7 +460,7 @@ export async function joinTeam(login: string, code: string): Promise<TeamActionR
   return { ok: true, team: slug };
 }
 
-export async function leaveTeam(login: string): Promise<TeamActionResult> {
+export async function leaveTeam(login: string, opts: { confirmClosed?: boolean } = {}): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) {
     const store = await cookies();
     store.delete(MOCK_TEAM_COOKIE);
@@ -422,6 +469,9 @@ export async function leaveTeam(login: string): Promise<TeamActionResult> {
 
   const slug = await getUserTeamSlug(login);
   if (!slug) return { ok: true, team: null };
+  if (!opts.confirmClosed && (await isRegistrationClosed())) {
+    return { ok: false, needsConfirm: true, error: LEAVE_AFTER_CLOSE_WARNING };
+  }
 
   // A 'stale' verdict means the membership changed between the read and the
   // script — leaving is idempotent, so treat it as already left.
@@ -441,9 +491,22 @@ export async function removeMember(
   captainLogin: string,
   slug: string,
   memberLogin: string,
+  opts: { confirmClosed?: boolean } = {},
 ): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
-  if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
+  if (!opts.confirmClosed && (await isRegistrationClosed())) {
+    // The warning names the member and what removing them costs, so only the
+    // captain gets it, and only about someone on the team. The script below
+    // stays the authority for the removal itself.
+    const [captain, listed] = await upstashPipeline([
+      ["HGET", teamKey(slug), "captain"],
+      ["SISMEMBER", membersKey(slug), memberLogin],
+    ]);
+    if (captain.error || listed.error) return { ok: false, error: "Team update failed. Try again" };
+    if (captain.result !== captainLogin) return { ok: false, error: "Only the team captain can do that" };
+    if (listed.result !== 1) return { ok: false, error: `"${memberLogin}" is not on this team` };
+    return { ok: false, needsConfirm: true, error: removeAfterCloseWarning(memberLogin) };
+  }
   const verdict = await upstashEval(
     REMOVE_MEMBER_SCRIPT,
     [teamKey(slug), membersKey(slug), userKey(memberLogin)],
@@ -463,11 +526,9 @@ export async function removeMember(
  *  collide with another team's slug. */
 export async function renameTeam(captainLogin: string, slug: string, newName: string): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
-  const trimmed = newName.trim();
-  if (!trimmed) return { ok: false, error: "Team name is required" };
-  if (trimmed.length > NAME_MAX_LENGTH) {
-    return { ok: false, error: `Team name must be ${NAME_MAX_LENGTH} characters or fewer` };
-  }
+  const checked = checkTeamName(newName);
+  if (!checked.ok) return checked;
+  const trimmed = checked.name;
   const newSlug = slugify(trimmed) || slug;
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
 
@@ -507,14 +568,7 @@ export async function disbandTeam(captainLogin: string, slug: string): Promise<T
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
   // NOT gated by the registration window — disband is an exit for a captain (see
   // transferCaptain). Gating it would trap a captain when registration closes.
-  const [codeRes] = await upstashPipeline([["HGET", teamKey(slug), "joinCode"]]);
-  const currentCode = typeof codeRes.result === "string" && codeRes.result ? codeRes.result : "";
-
-  const verdict = await upstashEval(
-    DISBAND_SCRIPT,
-    [teamKey(slug), membersKey(slug), joinCodeKey(currentCode)],
-    [captainLogin],
-  );
+  const verdict = await upstashEval(DISBAND_SCRIPT, [teamKey(slug), membersKey(slug)], [captainLogin]);
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
   return { ok: true, team: null };
@@ -524,13 +578,11 @@ export async function disbandTeam(captainLogin: string, slug: string): Promise<T
 export async function regenerateCode(captainLogin: string, slug: string): Promise<JoinCodeResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
-  const [codeRes] = await upstashPipeline([["HGET", teamKey(slug), "joinCode"]]);
-  const oldCode = typeof codeRes.result === "string" && codeRes.result ? codeRes.result : "";
   const newCode = await generateUniqueJoinCode();
 
   const verdict = await upstashEval(
     REGENERATE_CODE_SCRIPT,
-    [teamKey(slug), joinCodeKey(newCode), joinCodeKey(oldCode)],
+    [teamKey(slug), joinCodeKey(newCode)],
     [captainLogin, newCode, slug],
   );
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
@@ -569,11 +621,18 @@ export async function listTeams(): Promise<TeamInfo[]> {
   );
   return slugs.map((slug, i) => {
     const nameRes = results[i * 2]?.result;
-    const membersRes = results[i * 2 + 1]?.result;
+    // An empty roster is the same short list the SCAN check refuses: a
+    // competing team on the board with nobody on it. A failed name read only
+    // costs the display name, which falls back to the slug.
+    // A missing reply or a non-list is a read that did not happen either:
+    // SMEMBERS of a key SCAN just listed is a list, even an empty one.
+    const membersReply = results[i * 2 + 1];
+    if (membersReply?.error) throw new Error(`SMEMBERS failed (listTeams ${slug}): ${membersReply.error}`);
+    if (!Array.isArray(membersReply?.result)) throw new Error(`SMEMBERS reply missing or not a list (listTeams ${slug})`);
     return {
       slug,
       name: typeof nameRes === "string" && nameRes ? nameRes : slug,
-      members: Array.isArray(membersRes) ? [...(membersRes as string[])].sort() : [],
+      members: [...(membersReply.result as string[])].sort(),
     };
   });
 }

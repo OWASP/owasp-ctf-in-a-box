@@ -22,7 +22,10 @@
 // for an unknown or deleted challenge id (issue #209's dual-cause not-found,
 // in `[id]/not-found.tsx`).
 
+import { teamsLabel } from "@/lib/solve-labels";
+import { recordFirstOpen } from "@/lib/first-open";
 import type { Metadata } from "next";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import Link from "next/link";
@@ -36,7 +39,6 @@ import { mintLaunchUrl } from "@/lib/ai-launch";
 import { resolveOrigin } from "@/lib/app-origin";
 import {
   AI_COOLDOWN_SEC,
-  getAiSolveCounts,
   getViewerAi,
   listAiChallenges,
   type ViewerAi,
@@ -93,7 +95,7 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
 
   const [challenges, solveCounts, viewerAi, modules, hintIds, hintNotice, viewerHints] = await Promise.all([
     listAiChallenges(),
-    getAiSolveCounts(),
+    teamSolveCounts("ai"),
     login ? getViewerAi(login) : Promise.resolve<ViewerAi>({ solved: {}, attempts: {} }),
     getResolvedModules(),
     getAiHintIds(),
@@ -105,6 +107,10 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
 
   const challenge = challenges.find((c) => c.id === challengeId);
   if (!challenge) notFound();
+  // When this contestant first opened it: the start of Insights'
+  // open-to-solve time. Never for a visitor or an admin preview; a failed
+  // write is logged, not thrown.
+  if (login && !launch.preview) await recordFirstOpen("ai", login, challenge.id);
 
   const moduleTitle = modules.find((m) => m.id === "ai")?.title ?? DEFAULT_TITLE;
   const cooldownMs = AI_COOLDOWN_SEC * 1000;
@@ -119,7 +125,8 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
     category: challenge.category,
     description: challenge.description,
     points: challenge.points,
-    solveCount: solveCounts.get(challenge.id) ?? 0,
+    // Teams, not players (#595): scoring is per team. Null when unread.
+    teamsSolved: solveCounts ? (solveCounts.get(challenge.id) ?? 0) : null,
     caseSensitive: challenge.caseSensitive,
     ...deriveStatus(viewerAi.solved[challenge.id], viewerAi.attempts[challenge.id], cooldownMs),
   };
@@ -149,6 +156,11 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
         <h1 className="text-balance text-4xl font-bold tracking-tight text-white sm:text-5xl">
           {challenge.title}
         </h1>
+        {/* flag and both modes show the count inside ChallengeDetail; an
+            event-only challenge has no ChallengeDetail, so it is drawn here. */}
+        {challenge.mode === "event" && view.teamsSolved !== null && (
+          <p className="text-xs text-muted">{teamsLabel(view.teamsSolved)} solved</p>
+        )}
       </div>
 
       <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] p-5">

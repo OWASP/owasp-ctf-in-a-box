@@ -73,13 +73,16 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
       login = LOGIN,
       dry = false,
       prereq = "",
-      teamSolveKeys = [] as string[],
+      // #602: pairs of (solves hash, user record), viewer first, and the
+      // viewer's team slug ("" for a team of one) — what teamLockKeys hands in.
+      lockKeys = [] as string[],
+      team = "",
     } = {},
   ) {
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...teamSolveKeys],
+      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...lockKeys],
       [
         id,
         keys.normalizeFlag(flag),
@@ -90,6 +93,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
         keys.caseSensitiveFlagForm(flag),
         dry ? "1" : "0",
         prereq, // ARGV[9] — #463 story prerequisite ("" = none)
+        team, // ARGV[10] — #602 the viewer's team slug ("" = team of one)
       ],
     );
   }
@@ -262,20 +266,102 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     const prereqId = freshId("recon");
     const id = freshId("web");
     await seed(id, "flag{web}", 40);
+    const me = liveKey("classic", freshId("user-me"));
     const teammate = liveKey("classic", freshId("solves-bob"));
+    const bob = liveKey("classic", freshId("user-bob"));
+    await pipeline([
+      ["HSET", me, "team", "t", "joinedAt", iso(T0 - 3_600_000)],
+      ["HSET", bob, "team", "t", "joinedAt", iso(T0 - 3_600_000)],
+    ]);
+    const lock = { prereq: prereqId, team: "t", lockKeys: [K.solves, me, teammate, bob] };
     const before = await snapshot();
-    expect(await submit(id, "flag{web}", { prereq: prereqId, teamSolveKeys: [K.solves, teammate] })).toEqual(["locked"]);
+    expect(await submit(id, "flag{web}", lock)).toEqual(["locked"]);
     expect(await snapshot()).toEqual(before);
 
     // A NON-teammate's solve does not count — only the keys the caller hands in.
     const stranger = liveKey("classic", freshId("solves-eve"));
-    await pipeline([["HSET", stranger, prereqId, '{"points":1,"at":"x"}']]);
-    expect(await submit(id, "flag{web}", { prereq: prereqId, teamSolveKeys: [K.solves, teammate] })).toEqual(["locked"]);
+    await pipeline([["HSET", stranger, prereqId, `{"points":1,"at":"${iso(T0)}"}`]]);
+    expect(await submit(id, "flag{web}", lock)).toEqual(["locked"]);
 
     // The teammate solves the prerequisite: the same flag now grades.
-    await pipeline([["HSET", teammate, prereqId, '{"points":10,"at":"x"}']]);
-    expect(await submit(id, "flag{web}", { prereq: prereqId, teamSolveKeys: [K.solves, teammate] })).toEqual(["correct", "40"]);
-    await pipeline([["DEL", teammate, stranger]]);
+    await pipeline([["HSET", teammate, prereqId, `{"points":10,"at":"${iso(T0 - 60_000)}"}`]]);
+    expect(await submit(id, "flag{web}", lock)).toEqual(["correct", "40"]);
+    await pipeline([["DEL", teammate, stranger, me, bob]]);
+  });
+
+  // #602: X solved the prerequisite on team A, then left and joined team B.
+  // Membership is read NOW, so X's solves hash is among B's lock keys — but
+  // the solve is older than X's joinedAt on B, so it opens nothing for B.
+  it("story lock: a solve carried in from another team does not open the step (#602)", async () => {
+    const prereqId = freshId("recon");
+    const id = freshId("web");
+    await seed(id, "flag{web}", 40);
+    const me = liveKey("classic", freshId("user-me"));
+    const xSolves = liveKey("classic", freshId("solves-x"));
+    const x = liveKey("classic", freshId("user-x"));
+    await pipeline([
+      ["HSET", me, "team", "b", "joinedAt", iso(T0 - 7_200_000)],
+      ["HSET", xSolves, prereqId, `{"points":10,"at":"${iso(T0 - 3_600_000)}"}`],
+      ["HSET", x, "team", "b", "joinedAt", iso(T0 - 1_800_000)],
+    ]);
+    const lock = { prereq: prereqId, team: "b", lockKeys: [K.solves, me, xSolves, x] };
+    const before = await snapshot();
+    expect(await submit(id, "flag{web}", lock)).toEqual(["locked"]);
+    expect(await snapshot()).toEqual(before);
+
+    // Joined before solving: the same solve opens it.
+    await pipeline([["HSET", x, "joinedAt", iso(T0 - 5_400_000)]]);
+    expect(await submit(id, "flag{web}", lock)).toEqual(["correct", "40"]);
+    await pipeline([["DEL", me, xSolves, x]]);
+  });
+
+  it("story lock: a member whose record names another team, or no join time, opens nothing (#602)", async () => {
+    const prereqId = freshId("recon");
+    const id = freshId("web");
+    await seed(id, "flag{web}", 40);
+    const me = liveKey("classic", freshId("user-me"));
+    const xSolves = liveKey("classic", freshId("solves-x"));
+    const x = liveKey("classic", freshId("user-x"));
+    await pipeline([
+      ["HSET", me, "team", "b", "joinedAt", iso(T0 - 7_200_000)],
+      ["HSET", xSolves, prereqId, `{"points":10,"at":"${iso(T0 - 60_000)}"}`],
+      ["HSET", x, "team", "a", "joinedAt", iso(T0 - 7_200_000)],
+    ]);
+    const lock = { prereq: prereqId, team: "b", lockKeys: [K.solves, me, xSolves, x] };
+    expect(await submit(id, "flag{web}", lock)).toEqual(["locked"]);
+    await pipeline([["HSET", x, "team", "b"], ["HDEL", x, "joinedAt"]]);
+    expect(await submit(id, "flag{web}", lock)).toEqual(["locked"]);
+    await pipeline([["DEL", me, xSolves, x]]);
+  });
+
+  // ADR 60 (#602): only the current stint's joinedAt is kept, so leaving and
+  // rejoining the SAME team re-locks the steps that player's earlier solves
+  // had opened. Pinned so a change to it is a decision, not a drift.
+  it("story lock: a member who left and rejoined the same team no longer opens with a first-stint solve", async () => {
+    const prereqId = freshId("recon");
+    const id = freshId("web");
+    await seed(id, "flag{web}", 40);
+    const me = liveKey("classic", freshId("user-me"));
+    const xSolves = liveKey("classic", freshId("solves-x"));
+    const x = liveKey("classic", freshId("user-x"));
+    await pipeline([
+      ["HSET", me, "team", "t", "joinedAt", iso(T0 - 7_200_000)],
+      ["HSET", xSolves, prereqId, `{"points":10,"at":"${iso(T0 - 3_600_000)}"}`],
+      // Rejoined t after that solve: the stint the solve was made in is gone.
+      ["HSET", x, "team", "t", "joinedAt", iso(T0 - 600_000)],
+    ]);
+    expect(await submit(id, "flag{web}", { prereq: prereqId, team: "t", lockKeys: [K.solves, me, xSolves, x] })).toEqual(["locked"]);
+    await pipeline([["DEL", me, xSolves, x]]);
+  });
+
+  it("story lock: a team of one opens the step with their own solve", async () => {
+    const prereqId = freshId("recon");
+    const id = freshId("web");
+    await seed(id, "flag{web}", 40);
+    const me = liveKey("classic", freshId("user-solo"));
+    await pipeline([["HSET", K.solves, prereqId, `{"points":10,"at":"${iso(T0 - 60_000)}"}`]]);
+    expect(await submit(id, "flag{web}", { prereq: prereqId, team: "", lockKeys: [K.solves, me] })).toEqual(["correct", "40"]);
+    await pipeline([["HDEL", K.solves, prereqId]]);
   });
 
   // The time is taken in JS before the script runs, so two awards can reach
@@ -299,7 +385,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     const id = freshId("web");
     await seed(id, "flag{web}", 40);
     await pipeline([["HSET", K.lastAt, prereqId, iso(T0)]]);
-    expect(await submit(id, "flag{web}", { prereq: prereqId, teamSolveKeys: [K.solves] })).toEqual(["locked"]);
+    expect(await submit(id, "flag{web}", { prereq: prereqId, lockKeys: [K.solves, liveKey("classic", "user-none")] })).toEqual(["locked"]);
     await pipeline([["HDEL", K.lastAt, prereqId]]);
   });
 
@@ -308,10 +394,10 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
   // all answering `locked`, not `missing` (both reach a contestant as the
   // same 404). Without a prerequisite, an unknown id is still `missing`.
   it("story lock: checked before any flag read; a dry-run preview skips the lock", async () => {
-    expect(await submit(freshId("ghost"), "x", { prereq: "p", teamSolveKeys: [K.solves] })).toEqual(["locked"]);
+    expect(await submit(freshId("ghost"), "x", { prereq: "p", lockKeys: [K.solves, liveKey("classic", "user-none")] })).toEqual(["locked"]);
     expect(await submit(freshId("ghost"), "x")).toEqual(["missing"]);
     const id = freshId("dry-story");
     await seed(id, "flag{x}", 5);
-    expect(await submit(id, "flag{x}", { prereq: freshId("p"), teamSolveKeys: [K.solves], dry: true })).toEqual(["correct", "5", "dry"]);
+    expect(await submit(id, "flag{x}", { prereq: freshId("p"), lockKeys: [K.solves, liveKey("classic", "user-none")], dry: true })).toEqual(["correct", "5", "dry"]);
   });
 });

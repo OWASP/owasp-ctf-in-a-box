@@ -1,4 +1,5 @@
 import "server-only";
+import { ADJUSTMENTS_KEY } from "@/lib/adjustment-keys";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ADMIN_ADMINS_KEY, LOGIN_RE } from "@/lib/admin-admins";
 import { TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
@@ -30,6 +31,7 @@ import {
   CLASSIC_LAST_AT_KEY,
   CLASSIC_SOLVES_PREFIX,
   CLASSIC_ATTEMPTS_PREFIX,
+  CLASSIC_OPENED_PREFIX,
 } from "@/lib/classic-keys";
 import {
   AI_POINTS_KEY,
@@ -38,6 +40,7 @@ import {
   AI_LAST_AT_KEY,
   AI_SOLVES_PREFIX,
   AI_ATTEMPTS_PREFIX,
+  AI_OPENED_PREFIX,
   AI_NONCE_PREFIX,
   AI_LAUNCHKEY_KEY,
 } from "@/lib/ai-keys";
@@ -150,6 +153,9 @@ export type AdminSettings = {
    *  team that is already over the new cap. */
   teamMaxMembers: number | null;
   teamRegistrationOpen: boolean;
+  /** The projector board's QR code of the event URL. On unless an
+   *  organizer turns it off: absent is on, a stored "0" is off. */
+  displayQr: boolean;
   // Scheduled "auto dates" — nullable ISO instants. scoring* gates the freeze
   // through outsideScoringWindow (before start / after end = paused, and an
   // absent start = not launched, so paused); registration* gates
@@ -256,6 +262,7 @@ export type SettingsPatch = {
   hintsEnabled?: boolean;
 } & { [K in NumericKnob]?: number | null | "" } & {
   teamRegistrationOpen?: boolean;
+  displayQr?: boolean;
   /** The modules this event serves. Replaces the set wholesale;
    *  see updateAdminSettings for the two things it refuses. */
   enabledModules?: ModuleId[];
@@ -346,6 +353,7 @@ function decodeSettings(h: Record<string, string>): AdminSettings {
     teamMaxMembers: h.teamMaxMembers === undefined ? null : Number(h.teamMaxMembers),
     scoreCooldownMin: h.scoreCooldownMin === undefined ? null : Number(h.scoreCooldownMin),
     teamRegistrationOpen: h.teamRegistrationOpen !== "0",
+    displayQr: h.displayQr !== "0",
     scoringStartsAt: h.scoringStartsAt ?? null,
     scoringEndsAt: h.scoringEndsAt ?? null,
     registrationStartsAt: h.registrationStartsAt ?? null,
@@ -473,6 +481,12 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       // opening HDELs the field and closing writes the string "0". The team
       // store reads this key with a presence-and-value check, so open must
       // equal absent.
+      if (v) dels.push(k);
+      else fields.push(k, "0");
+      changed[k] = v;
+    } else if (k === "displayQr") {
+      if (typeof v !== "boolean") throw new AdminValidationError(k, `${k} must be a boolean`);
+      // On by default, like registration: on HDELs, off writes "0".
       if (v) dels.push(k);
       else fields.push(k, "0");
       changed[k] = v;
@@ -715,6 +729,9 @@ const RESET_PREFIXES: readonly [string, string][] = [
   ["classicSolved", CLASSIC_SOLVED_KEY],
   ["classicSolveCount", CLASSIC_SOLVECOUNT_KEY],
   ["classicLastAt", CLASSIC_LAST_AT_KEY],
+  // When each contestant first opened each challenge: it only times
+  // this event's solves, so it goes with them.
+  ["classicOpened", `${CLASSIC_OPENED_PREFIX}*`],
   // ai scope mirrors classic's exactly, same PROGRESS/CONTENT split: solves,
   // attempts, the two per-login aggregate hashes, the award-time hash and the
   // per-challenge solvecount are wiped, while `ctf:ai:challenges` / `ctf:ai:flag` /
@@ -727,6 +744,7 @@ const RESET_PREFIXES: readonly [string, string][] = [
   ["aiSolved", AI_SOLVED_KEY],
   ["aiSolveCount", AI_SOLVECOUNT_KEY],
   ["aiLastAt", AI_LAST_AT_KEY],
+  ["aiOpened", `${AI_OPENED_PREFIX}*`],
   // The replay-guard nonces are also contestant PROGRESS in the same sense —
   // spent single-use markers from THIS event, not something a fresh one
   // should start carrying.
@@ -753,6 +771,9 @@ const RESET_PREFIXES: readonly [string, string][] = [
   // ADR in docs/decisions.md). So a master reset wipes both hashes outright.
   ["sponsors", SPONSORS_KEY],
   ["sponsorsLogo", SPONSORS_LOGO_KEY],
+  // The organizer's score adjustments are this event's scoring data, like
+  // the solves above, so they go with them.
+  ["adjustments", ADJUSTMENTS_KEY],
 ];
 
 // SCAN (never KEYS — non-blocking) a prefix and DEL matches in batches until the
@@ -862,7 +883,8 @@ export { ADMIN_ADMINS_KEY, listStoredAdmins } from "@/lib/admin-admins";
 
 // SADD/SREM plus one audit line, in a single script, so a grant can never
 // land without its record — the same guarantee updateAdminSettings gives.
-const ADMINS_SCRIPT = `
+// Exported for the live suite only.
+export const ADMINS_SCRIPT = `
 if ARGV[1] == 'add' then redis.call('SADD', KEYS[1], ARGV[2])
 else redis.call('SREM', KEYS[1], ARGV[2]) end
 redis.call('LPUSH', KEYS[2], ARGV[3])

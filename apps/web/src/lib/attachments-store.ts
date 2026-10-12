@@ -310,6 +310,18 @@ export async function listAllAttachments(module: AttachmentModule, keys = KEYS):
   return out;
 }
 
+/** The event-wide total of stored upload bytes, the number COMMIT_SCRIPT and
+ *  FILL_SCRIPT check the cap against. THROWS on a read error or a value that
+ *  is not a count, never answering 0 for "could not tell". */
+export async function storedAttachmentBytes(keys = KEYS): Promise<number> {
+  const [res] = await upstashPipeline([["GET", keys.bytes]]);
+  if (res.error) throw new Error(`Upstash GET failed: ${res.error}`);
+  if (res.result === null || res.result === undefined) return 0;
+  const n = Number(res.result);
+  if (!Number.isInteger(n) || n < 0) throw new Error("attachments: the stored byte total is not a count");
+  return n;
+}
+
 /** Removes one attachment (and its bytes). Returns false when unknown. */
 export async function removeAttachment(id: string, keys = KEYS): Promise<boolean> {
   if (!ATTACHMENT_ID_RE.test(id)) return false;

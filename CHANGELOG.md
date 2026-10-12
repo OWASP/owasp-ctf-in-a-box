@@ -10,6 +10,117 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: the Insights CSV garbled accented titles in Excel (#624).**
+  "¿Qué dice señor?" opened as "Â¿QuÃ© dice seÃ±or?": the file had no
+  byte-order mark, so Excel read it in the system code page. The export now
+  starts with one. A title a spreadsheet would run as a formula (leading `=`,
+  `+`, `-`, `@`) is written as text, and a cell with a carriage return is
+  quoted.
+- **Added: a Jeopardy challenge bundle can carry its files (#625).** Tick
+  **Include files** next to **Export challenges** and the bundle embeds every
+  uploaded file's bytes (base64, `attachmentFiles`, bundle version 3), so
+  importing it on another box needs no re-upload. The import fills each
+  upload the box is missing, skips one it already holds with the same
+  sha256, and never deletes. A tampered file, or files that would push the
+  event past its 50 MiB, are refused before anything is written. Imports now
+  go to `/api/admin/classic/bundle`, outside the proxy's 10 MB body cut, and
+  a bundle over 75 MB gets a `413` naming the limit. Without the option, or
+  with it on a board holding no uploads, the export is the same
+  metadata-only version 2 file as before, so a box on an older build still
+  imports it, and so does the classic section of an event archive. Version
+  1 and 2 bundles import as before.
+- **Fixed: a hint could be charged a different price than the one confirmed
+  (#557).** If an organizer changed the hint cost after a contestant's page
+  loaded, Confirm (−10 pts) charged the new price. The purchase now carries
+  the confirmed price and the charging script refuses a mismatch atomically,
+  before any write; the button shows the new price and asks again. A hint
+  already bought is still re-viewed free.
+- **Fixed: a regenerated or disbanded team could leave a stale join code
+  working (#497).** Regenerate and disband read the code to retire before
+  their script ran, so two regenerations at once (or one racing a disband)
+  left older codes resolving to the team, or to a team that no longer
+  existed. Both scripts now read the code they retire at the write. The
+  captain-only team scripts, the organizer overrides, the admin-grant script
+  and the rate limiter now run against a live Redis in CI.
+- **Changed: every attempt budget says it is per contestant (#494).** Quiz
+  **Retry after** and the AI **Submission cooldown** now say, next to the
+  field, what Max attempts and the Jeopardy cooldown already said: the
+  budget is kept per contestant while points count per team, so a team of N
+  gets N times it. Kept that way by decision; the AI docs say so too.
+- **Fixed: Insights' median time read 0s for almost every challenge (#616).**
+  It measured from a player's first flag submission, and most players submit
+  once they have the flag, so it was 0 by construction. The box now records
+  when each player first opens a Jeopardy or AI challenge (`ctf:classic:opened:`
+  / `ctf:ai:opened:<login>`, once per challenge), and the median runs from
+  that open to the solve. Rows with no open recorded fall back to the first
+  submission and are starred; rows where every solver was right first time
+  show —. The CSV gains `median_time_measure`. Master reset and a player's
+  progress reset clear the new records.
+- **Fixed: leaving a team after registration closed stranded the player
+  (#597).** Leave and the captain's Remove member now ask for confirmation
+  once registration is closed, saying the player can't join any team again
+  and their points leave the team; the server refuses an unconfirmed request
+  (409). Remove member, refused outright after close until now, is allowed
+  with that confirmation. `/admin → Support` gains **Add to team** / **Move
+  to team** on a player's card, whatever the registration state: one atomic
+  script, the team-size cap unless overridden, a captain of a team with
+  other members refused, the player found by their signed-in spelling,
+  written to the audit and activity logs. Reopening registration is no
+  longer the only way back.
+- **Added: score adjustments for teams (#591).** `/admin → Support → Score
+  adjustments` adds a bonus or penalty to a team with a required reason, and
+  lists every one with who added it and a Remove. It is folded into the
+  team's total last, after hint spend, on the board, display mode and the
+  profile panel, marked "±N adjustment", floored at 0, never changing the
+  tie-break time. Its own ledger (`ctf:adjustments`), audited on add and
+  remove, cleared by the master reset, not carried by the event archive. It
+  replaces deducting points by writing hint spend into Redis by hand.
+- **Fixed: admin Insights undercounted the event and disagreed with the
+  leaderboard (#608).** Players whose GitHub login has a capital letter were
+  read under the lowercased login and found empty; a player who left a team
+  without scoring was never found; team points summed members' own totals
+  instead of the board's. On the RTS event's snapshot "ever on a team" goes
+  from 30 to 42, Jeopardy solves from 59 to 119, attempts from 225 to 339,
+  and every team's points now equal the board. The solves chart keeps the
+  quiet stretches as empty buckets on a real time axis across the full
+  width, widening the bucket (10 min, 30 min, 1 h, …) on a long event.
+- **Added: search the admin Activity log on every field (#609).** One box
+  matches each word against the login, the event, the detail (challenge,
+  question or team id) and the time as shown, with `login:`, `type:`,
+  `detail:` and `team:` to pin a word to one field; a time range (quick
+  picks or from/to on the panel's clock) narrows it further, and each type
+  chip shows its count. A filter now searches the whole log, not only the
+  pages loaded, and the search is kept in the URL (`?q=`). Before, the box
+  matched the login only.
+- **Fixed: team names could be invisible or reverse the text around them
+  (#603).** Create and rename now refuse a name with nothing visible (a lone
+  zero-width space saved a nameless team through rename) and any
+  text-direction control character (a right-to-left override rendered a
+  name reversed over its neighbours), and measure the 32-character limit
+  after NFC. Every surface showing a team name isolates its direction, so a
+  name stored before the check cannot reorder its row.
+- **Fixed: a solved story step could be carried to another team (#602).**
+  A player who solved step N on one team and then joined another opened step
+  N+1 there, because unlocks read who is on the team now. A teammate's solve
+  now opens the next step only if they made it while on the team (solve time
+  on or after their join time), decided inside the grading and hint scripts
+  and applied the same way on the board, the challenge pages and
+  `/api/board/items`. Points are unaffected: a team's total is still the
+  union of its members' solves (ADR 60 amended).
+- **Added: solve counts on the Jeopardy and AI boards and in admin (#595).**
+  Every visible tile, open story step and challenge page now says how many
+  teams solved it (scoring is per team: two members on one flag count once,
+  a teamless solver not at all), folded from current members' solves on
+  read. A locked story step shows none. The admin Jeopardy list shows teams
+  and players per challenge, "unsolved" when nobody has. Before, a count
+  (of players) appeared only on a challenge's own page.
+- **Added: a QR code of the event's address on the projector board (#592).**
+  Display mode shows it in a corner below the standings, with the address
+  as text, so anyone in the room can join from a phone. Encoded on the
+  server into an inline SVG (new dependency: `qrcode-generator` 2.0.4,
+  pinned, encoding only, no dependencies of its own), from `EVENT_URL`. On by
+  default; **QR code on the projector board** in `/admin → Event` turns it
+  off. The regular leaderboard is unchanged.
 - **Fixed: the leaderboard's Individual view listed only contestants who had
   scored (#586).** Every team member now has a row; one with no points sits
   at 0 after everyone who scored, alphabetically, so a player who can find
@@ -34,6 +145,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   without a team on a Secure Development event (PR scores are kept and count
   for the team the player joins), and every PR score report now says points
   count only while the event's scoring window is open.
+- **Changed: vitest 4.1.11 → 5.0.2 in `apps/web` (Dependabot #453).** No
+  test or config changes were needed: the full suite, the live grading-Lua
+  suites with `CTF_LUA_SUITES_REQUIRED=1`, lint, typecheck and the
+  production build all pass unchanged.
 
 - **Changed: dependency batch (Dependabot #462, #563, #564, #565, #574,
   #575).** Next.js and `eslint-config-next` 16.3.6 → 16.4.0, better-auth
@@ -167,6 +282,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   before and after the refresh. An unowned viewer still never receives the
   text, and a hint loaded already-owned shows no acknowledgement (nothing
   was charged on that page load).
+- **Fixed: `ctf-setup.sh org` no longer fails when GitHub's free plan refuses
+  branch protection on a private repo (#601).** That refusal — the state of
+  every fork between `org` and `launch` (#465) — is now recorded as
+  **pending until launch**: every remaining step and repo still runs, the
+  summary lists each pending `org/repo:ctf`, and it is never reported as
+  completed; any other protection error still fails the run. `launch` applies
+  the same idempotent protection as each fork goes public and verifies it
+  (one approving review required, force-pushes and deletions disabled) before
+  reporting success, and `doctor` shows it pending (⏳) on a private fork
+  before launch, clearing to ✅ only once protection is verified.
+
 - **Fixed: a hint can no longer be bought with points the contestant does not
   have (#553).** The reveal is refused — `403`, "Not enough points: this hint
   costs N and you have M" — when the contestant's leaderboard score (every

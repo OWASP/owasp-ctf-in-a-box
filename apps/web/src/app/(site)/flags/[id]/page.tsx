@@ -14,7 +14,9 @@
 // Gated exactly like /flags: the route 404s when the classic module is off,
 // and 404s for an unknown or deleted challenge id.
 
+import { recordFirstOpen } from "@/lib/first-open";
 import type { Metadata } from "next";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import Link from "next/link";
@@ -27,7 +29,6 @@ import { auth } from "@/lib/auth";
 import { getAdminSettings } from "@/lib/admin-store";
 import {
   CLASSIC_COOLDOWN_SEC,
-  getSolveCounts,
   getViewerClassic,
   listChallenges,
   type ViewerClassic,
@@ -83,7 +84,7 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   const [challenges, solveCounts, viewerClassic, settings, modules, hintIds, hintNotice, viewerHints] =
     await Promise.all([
       listChallenges(),
-      getSolveCounts(),
+      teamSolveCounts("classic"),
       login ? getViewerClassic(login) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
       getAdminSettings(),
       getResolvedModules(),
@@ -101,6 +102,10 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   // id: its page must reveal nothing, not even that it exists. An admin
   // preview (#464) may open it, to test the whole story before launch.
   if ((await classicVisibility(login, challengeId)).state !== "visible") notFound();
+  // When this contestant first opened it: the start of Insights'
+  // open-to-solve time. Never for a visitor or an admin preview; a failed
+  // write is logged, not thrown.
+  if (login && !launch.preview) await recordFirstOpen("classic", login, challenge.id);
 
   // Read only once the challenge is known visible (#186). Field by field for
   // the same reason as the view below: the sha256 and chunk bookkeeping stay
@@ -126,7 +131,8 @@ export default async function ClassicChallengePage({ params }: { params: Promise
     category: challenge.category,
     description: challenge.description,
     points: challenge.points,
-    solveCount: solveCounts.get(challenge.id) ?? 0,
+    // Teams, not players (#595): scoring is per team. Null when unread.
+    teamsSolved: solveCounts ? (solveCounts.get(challenge.id) ?? 0) : null,
     caseSensitive: challenge.caseSensitive,
     attachments,
     ...deriveStatus(viewerClassic.solved[challenge.id], viewerClassic.attempts[challenge.id], cooldownMs),

@@ -10,6 +10,7 @@
 // "checks requireAdmin BEFORE any store read" test actually enforces that,
 // rather than merely looking like it does.
 
+import { createHash } from "node:crypto";
 import { inspect } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -60,8 +61,17 @@ const {
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
 // #186: the panel's own Export needs each challenge's attachment metadata.
-const attachmentStore = vi.hoisted(() => ({ listAllAttachments: vi.fn(async () => new Map()) }));
+const attachmentStore = vi.hoisted(() => ({
+  listAllAttachments: vi.fn(async () => new Map()),
+  AttachmentError: class AttachmentError extends Error {},
+}));
 vi.mock("@/lib/attachments-store", () => attachmentStore);
+// #595: solve counts per challenge, teams and players.
+const counts = vi.hoisted(() => ({
+  teamSolveCounts: vi.fn(async (): Promise<Map<string, number> | null> => new Map()),
+  getSolveCounts: vi.fn(async () => new Map<string, number>()),
+}));
+vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts: counts.teamSolveCounts }));
 vi.mock("@/lib/classic-store", () => ({
   listChallengesForAdmin,
   listCategories,
@@ -73,6 +83,7 @@ vi.mock("@/lib/classic-store", () => ({
   listStories,
   setStories,
   listChallengeIds,
+  getSolveCounts: counts.getSolveCounts,
   ClassicValidationError,
 }));
 // `adminErrorLabel` is the real (name+message, capped) implementation, not a
@@ -173,7 +184,25 @@ describe("GET /api/admin/classic", () => {
   it("returns challenges (with flags) and categories for an admin", async () => {
     const res = await GET(adminReq("GET"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [], attachments: {} });
+    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [], attachments: {}, solves: { [ADMIN_ROW.challenge.id]: { teams: 0, players: 0 } } });
+  });
+
+  // #595: an organizer spots a flag nobody can solve from the list itself.
+  it("returns how many teams and players solved each challenge", async () => {
+    counts.teamSolveCounts.mockResolvedValueOnce(new Map([[ADMIN_ROW.challenge.id, 2]]));
+    counts.getSolveCounts.mockResolvedValueOnce(new Map([[ADMIN_ROW.challenge.id, 3]]));
+    const body = await (await GET(adminReq("GET"))).json();
+    expect(body.solves).toEqual({ [ADMIN_ROW.challenge.id]: { teams: 2, players: 3 } });
+  });
+
+  it("still lists the challenges when the counts cannot be read, marking them unknown", async () => {
+    counts.teamSolveCounts.mockResolvedValueOnce(null);
+    counts.getSolveCounts.mockRejectedValueOnce(new Error("NOAUTH"));
+    const res = await GET(adminReq("GET"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.challenges).toEqual([ADMIN_ROW]);
+    expect(body.solves).toEqual({ [ADMIN_ROW.challenge.id]: { teams: null, players: null } });
   });
 
   // Finding B: the store reads were not wrapped in a try/catch, so a
@@ -464,6 +493,23 @@ describe("POST /api/admin/classic — import", () => {
     importBundle.mockResolvedValue({ created: 2, updated: 0, categories: 2 });
     await POST(adminReq("POST", { import: JSON.stringify(validBundle) }));
     expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-import", { created: 2, updated: 0, categories: 2 });
+  });
+
+  // A v3 bundle's files are checked server-side, through this door too:
+  // bytes that do not hash to the sha256 their upload records are refused
+  // before the challenges are imported.
+  it("400s a v3 bundle whose file bytes do not match their sha256, importing nothing", async () => {
+    const sha = createHash("sha256").update("pcap-bytes").digest("hex");
+    const tampered = {
+      ...validBundle,
+      version: 3,
+      challenges: [{ ...validBundle.challenges[0], attachments: [{ name: "cap.pcap", size: 10, sha256: sha }] }],
+      attachmentFiles: [{ item: "web-one-ab12cd", sha256: sha, bytes: Buffer.from("tampered!!").toString("base64") }],
+    };
+    const res = await POST(adminReq("POST", { import: JSON.stringify(tampered) }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).field).toBe("attachmentFiles[0]");
+    expect(importBundle).not.toHaveBeenCalled();
   });
 });
 

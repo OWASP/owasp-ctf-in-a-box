@@ -9,6 +9,8 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import AdminSupportTab, {
+  addToTeamLabel,
+  addToTeamNotice,
   contestantStats,
   resetProgressConfirm,
   teamCardSummary,
@@ -32,9 +34,9 @@ describe("AdminSupportTab", () => {
     const html = renderToStaticMarkup(<AdminSupportTab setConfirm={() => {}} />);
     expect(html).toContain("Find a contestant");
     expect(html).toContain("Team actions");
-    // Look up, Transfer captaincy, Disband team — nothing is live before a
-    // lookup or a filled slug.
-    expect(html.match(/<button[^>]*disabled=""/g)?.length).toBe(3);
+    // Look up, Transfer captaincy, Disband team, Add adjustment: nothing is
+    // live before a lookup, a filled slug, or a complete adjustment.
+    expect(html.match(/<button[^>]*disabled=""/g)?.length).toBe(4);
   });
 });
 
@@ -103,5 +105,20 @@ describe("teamCardSummary", () => {
     expect(summary.joined).toBeNull();
     // The slug is still offered — the two are independent.
     expect(summary.actionSlug).toBe("e2e-crew");
+  });
+});
+
+// #597: the organizer's way back for a player stranded after registration
+// closed. One control on the player's card: Add for a teamless player, Move
+// for one already on a team; the notice names where they came from.
+describe("add or move to a team (#597)", () => {
+  it("offers Add for a teamless player and Move for one on a team", () => {
+    expect(addToTeamLabel(null)).toBe("Add to team");
+    expect(addToTeamLabel({ slug: "red" })).toBe("Move to team");
+  });
+
+  it("says where the player went, and from where", () => {
+    expect(addToTeamNotice({ login: "ChrisZoc", from: null }, "red")).toBe("Added ChrisZoc to red.");
+    expect(addToTeamNotice({ login: "bob", from: "blue" }, "red")).toBe("Moved bob from blue to red.");
   });
 });

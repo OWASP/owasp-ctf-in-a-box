@@ -1987,6 +1987,18 @@ the proxy, not from the assertion. `proxy-matcher.test.ts` compiles the
 matcher with Next's own code and pins that exactly this one path is outside
 it, and the route's test pins its own `403`.
 
+*Amended (the classic bundle with files):* `/api/admin/classic/bundle` is
+outside the matcher on the same terms
+(`"/api/((?!admin/event/?$|admin/classic/bundle/?$).*)"`). A classic bundle
+exported with **Include files** carries the uploads as base64, so it hits the
+same 10 MB cut. The route runs `originAllowed` first thing in `POST`, reads
+the body bounded with a `413` naming its limit, and takes the same
+`{ import }` shape as `/api/admin/classic`, through the same handler. The
+dedicated path keeps the rest of `/api/admin/classic` (upserts, deletes,
+categories, stories) behind the proxy rather than giving every one of its
+writes its own origin check. `proxy-matcher.test.ts` pins exactly these two
+paths outside the matcher.
+
 **Decision, part 2: rate-limit on the LOGIN, not the IP.** `gate-store.ts`'s
 throttle is keyed on the client IP its route (`app/api/gate/route.ts`)
 extracts, because the pre-event gate runs before anyone has an identity — and
@@ -3639,11 +3651,26 @@ step by step while the free-pick board stays as it is.
   - Deleting a step shrinks the story.
 - **The unlock is per team.** "Solved by the team" is the union of every
   current teammate's classic solves, which is the same fold the leaderboard
-  uses, so a story and a team's score never disagree. A solo player is a
-  team of one.
+  uses. A solo player is a team of one.
+- **A solve unlocks only for the team it was made on** (amended, #602). A
+  teammate's solve opens the next step only if its `at` is on or after
+  their `joinedAt` on the current team, and their user record still names
+  that team. Membership is otherwise read now, so without this a player
+  could solve step 3 on one team, join another and open step 4 there. A
+  member on a team with no `joinedAt` opens nothing (closed). **Points are
+  unaffected**: a team's total stays the union of its members' solves, so a
+  player who joins mid-event still brings their points; only the unlock
+  follows solve-time membership. A story and a team's score can therefore
+  differ in one case: a carried-in solve scores for the new team but opens
+  nothing there. The record keeps only the CURRENT stint's `joinedAt`, so a
+  player who leaves and rejoins the same team is treated as new: their
+  first-stint solves stop opening steps (a teammate who stayed still opens
+  them). Keeping every stint would need a per-team join history; set aside
+  as rare for its cost.
 - **The lock lives in the scripts.** `SUBMIT_SCRIPT` and `REVEAL_SCRIPT`
-  receive the prerequisite and the teammates' solves hashes, and check the
-  lock first — before they read the flag or hint hash, and before any
+  receive the prerequisite, a (solves hash, user record) pair per teammate
+  and the team slug, decide the rule above inside the same call (one Lua
+  fragment, `storyLockLua`, shared by both), and check the lock first — before they read the flag or hint hash, and before any
   write. A locked step therefore costs no attempt and can't be used as a
   flag oracle. The store then answers it exactly like an unknown challenge
   (a 404 on submit, "No hint available" on reveal), so a guessed id cannot
@@ -3663,7 +3690,8 @@ step by step while the free-pick board stays as it is.
 resolves the team, so the extra keys cost one pipeline. Story authoring (the
 editor and bundle v2) follows in #463's second PR.
 
-**Status.** Accepted (#463).
+**Status.** Accepted (#463); amended by #602 (solve-time membership for
+unlocks).
 
 ## ADR 61. Challenge attachments live in Redis, served only as downloads, behind the challenge's own visibility
 
@@ -3729,6 +3757,14 @@ the launch lock (#464) and a locked story step (#463).
   - The event archive embeds the bytes as base64 in `attachmentFiles`. Each
     sha256 is verified before the import resets anything, and the import
     body is read bounded at 50 MiB × 4/3 + 8 MiB.
+  - *Amended (the classic bundle with files):* a classic bundle can carry
+    the bytes too, opt-in. **Include files** on the export adds the same
+    `attachmentFiles` list and stamps the bundle version 3; without it the
+    bundle stays the metadata-only version 2 file an older box imports. Its import fills each missing upload whose
+    bytes it carries, skips one the box already holds, and refuses a
+    tampered file or a total past the event cap before writing anything.
+    The import body goes to `/api/admin/classic/bundle`, outside the proxy
+    and read bounded like the archive's (ADR 40).
 
 **Consequences.** Redis memory grows by up to about 67 MB of base64 at the
 event cap. The caps bound it, and an operator sizing a box counts it. An

@@ -20,6 +20,7 @@ import {
   addUpload,
   readUploadBytes,
   resolveAttachment,
+  storedAttachmentBytes,
 } from "@/lib/attachments-store";
 
 const calls = () => mocks.upstashPipeline.mock.calls.map((c) => c[0] as (string | number)[][]);
@@ -136,5 +137,24 @@ describe("missing uploads (#186 PR3)", () => {
     const all = await listAllAttachments("classic");
     expect([...all.keys()]).toEqual(["a"]);
     expect(calls()).toHaveLength(1);
+  });
+});
+
+describe("storedAttachmentBytes", () => {
+  it("reads the event-wide byte total, 0 when nothing is stored", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "1234" }]);
+    expect(await storedAttachmentBytes()).toBe(1234);
+    expect(calls()[0]).toEqual([["GET", "ctf:attachments:bytes"]]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
+    expect(await storedAttachmentBytes()).toBe(0);
+  });
+
+  // A failed read must not read as "nothing stored": the import's cap check
+  // would then let a bundle past a cap the box is already near.
+  it("throws on a read error or a value that is not a count", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+    await expect(storedAttachmentBytes()).rejects.toThrow(/NOAUTH/);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "lots" }]);
+    await expect(storedAttachmentBytes()).rejects.toThrow();
   });
 });

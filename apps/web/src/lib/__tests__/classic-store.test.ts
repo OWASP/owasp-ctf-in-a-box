@@ -568,6 +568,10 @@ describe("getSolveCounts", () => {
     ]);
     expect(pipelineCalls()[0]).toEqual([["HGETALL", "ctf:classic:solvecount"]]);
   });
+  it("throws on a failed read instead of reporting every count as zero", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH Authentication required." }]);
+    await expect(getSolveCounts()).rejects.toThrow(/NOAUTH/);
+  });
 });
 
 describe("getClassicTotals", () => {
@@ -796,7 +800,10 @@ describe("exportBundle", () => {
   it("returns the current board in the importable shape", async () => {
     seedFullBoard();
     const bundle = await exportBundle();
+    // Carries no files, so it keeps the version an older box can import.
     expect(bundle.version).toBe(2);
+    // Metadata only: bytes ride the event archive, or an opt-in panel export.
+    expect("attachmentFiles" in bundle).toBe(false);
     expect(bundle.stories).toEqual([]);
     expect(bundle.categories).toEqual(["Web", "Crypto"]);
     expect(bundle.challenges[0]).toEqual({

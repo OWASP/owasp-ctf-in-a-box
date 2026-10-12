@@ -124,6 +124,10 @@ export type TeamStanding = {
    *  hint-penalties.ts). `points` is net — this is a transparency marker,
    *  mirroring `LeaderboardEntry.hintPenalty`. */
   hintPenalty?: number;
+  /** The organizer's net score adjustment for this team (bonus or penalty,
+   *  adjustments-store.ts), already in `points`. A transparency marker, like
+   *  `hintPenalty`; absent when there is none. */
+  adjustment?: number;
   /** Per-app progress for the team — the UNION of members' solves, with
    *  each app's `challenges` marking which flags the team has collectively
    *  solved. Only populated when the source carries a challenge catalogue

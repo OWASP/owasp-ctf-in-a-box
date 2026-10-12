@@ -65,10 +65,10 @@ export function decodeAttachmentFiles(
     const where = `attachmentFiles[${i}]`;
     const bytes = new Uint8Array(Buffer.from(f.bytes, "base64"));
     const actual = createHash("sha256").update(bytes).digest("hex");
-    if (actual !== f.sha256) throw new AttachmentFilesError(where, `${where}: the bytes' sha256 is ${actual}, not ${f.sha256}`);
+    if (actual !== f.sha256) throw new AttachmentFilesError(where, `${where}: the bytes do not match the file's sha256`);
     const size = sizes.get(`${f.item}\n${f.sha256}`);
     if (size !== bytes.length) {
-      throw new AttachmentFilesError(where, `${where}: ${bytes.length} bytes, but the classic metadata says size ${size}`);
+      throw new AttachmentFilesError(where, `${where}: the bytes' length does not match the size the classic metadata records`);
     }
     return { item: f.item, sha256: f.sha256, bytes };
   });

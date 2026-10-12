@@ -121,10 +121,10 @@ describe("POST /api/admin/classic/bundle", () => {
   });
 
   it("400s a refused file, naming where", async () => {
-    h.importClassicBundle.mockRejectedValue(new h.AttachmentFilesError("attachmentFiles[0]", "attachmentFiles[0]: the bytes' sha256 is x, not y"));
+    h.importClassicBundle.mockRejectedValue(new h.AttachmentFilesError("attachmentFiles[0]", "attachmentFiles[0]: the bytes do not match the file's sha256"));
     const res = await POST(post({ import: validRaw }));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "attachmentFiles[0]: the bytes' sha256 is x, not y", field: "attachmentFiles[0]" });
+    expect(await res.json()).toEqual({ error: "attachmentFiles[0]: the bytes do not match the file's sha256", field: "attachmentFiles[0]" });
   });
 
   it("400s a store validation refusal and 503s an infrastructure failure", async () => {

@@ -85,14 +85,26 @@ describe("importClassicBundle", () => {
     expect(summary).toEqual({ created: 1, updated: 0, categories: 1, files: 0 });
   });
 
+  // An import error names the position and the rule, never the submitted
+  // values: no hash and no byte count reaches the response.
   it("refuses bytes that do not hash to their sha256 before anything is written", async () => {
-    await expect(importClassicBundle(bundleWith(Buffer.from("tampered!!").toString("base64")))).rejects.toThrow(AttachmentFilesError);
+    const tampered = Buffer.from("tampered!!");
+    const err = await importClassicBundle(bundleWith(tampered.toString("base64"))).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AttachmentFilesError);
+    const message = (err as Error).message;
+    expect(message).toMatch(/^attachmentFiles\[0\]: .*sha256/);
+    expect(message).not.toContain(sha);
+    expect(message).not.toContain(createHash("sha256").update(tampered).digest("hex"));
     expect(classic.importBundle).not.toHaveBeenCalled();
     expect(files.fillMissingUpload).not.toHaveBeenCalled();
   });
 
   it("refuses bytes whose length differs from the upload's recorded size before anything is written", async () => {
-    await expect(importClassicBundle(bundleWith(undefined, bytes.length + 1))).rejects.toThrow(/size/);
+    const err = await importClassicBundle(bundleWith(undefined, bytes.length + 1)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AttachmentFilesError);
+    const message = (err as Error).message;
+    expect(message).toMatch(/^attachmentFiles\[0\]: .*size/);
+    expect(message.replace("attachmentFiles[0]", "")).not.toMatch(/\d/);
     expect(classic.importBundle).not.toHaveBeenCalled();
   });
 

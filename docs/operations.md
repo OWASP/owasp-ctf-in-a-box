@@ -1710,8 +1710,9 @@ ids in order:
 ```
 
 A version 1 file still imports unchanged, but it cannot carry `stories`.
-(Today's export is stamped `"version": 3`, which adds the optional
-attachment files described under "Files in bundles and archives" below.)
+(Today's export is stamped `"version": 2`, or `"version": 3` when it
+carries the optional attachment files described under "Files in bundles
+and archives" below.)
 Every step must name a challenge **in the same file**, the same
 self-contained rule that applies to categories. Stories merge by id, the
 same way challenges do:

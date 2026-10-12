@@ -3857,8 +3857,10 @@ give the answer above.
 - **AWS.** The Fargate tasks sit in the event's own VPC, in its *public*
   subnets with public IPs for egress (`deploy/aws-terraform/network.tf`
   explains why: no NAT gateway). The boundary is the security groups, not
-  the subnet: each internal port admits only its one caller's group, and
-  nothing else in the VPC runs. The hop that leaves our tasks, `srh` to
+  the subnet: each internal port admits only its intended callers' groups
+  (`srh`: the app, sync and the scorer; the scorer: the app and sync;
+  ElastiCache: `srh` alone, in `security.tf`), and nothing else in the VPC
+  runs. The hop that leaves our tasks, `srh` to
   ElastiCache, is already TLS: the replication group sets
   `transit_encryption_enabled = true` and an AUTH token, and `srh` connects
   with `rediss://` to the primary endpoint hostname and verifies it

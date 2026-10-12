@@ -20,7 +20,7 @@ import { loadRubric } from "../src/rubric.js";
 import { getTarget, TARGETS } from "../src/targets.js";
 import { runExec } from "../src/exec.js";
 import { AUTH_BY_TARGET, HEALTH_PATHS_BY_TARGET, PERSONALITY_NAMES, startStub } from "./vacuous-stub.mjs";
-import { isStuck, summarize, verdict } from "./vacuous-verdict.mjs";
+import { summarize, verdict } from "./vacuous-verdict.mjs";
 
 const DEFAULT_RUBRIC = "rubric.owasp";
 
@@ -152,8 +152,8 @@ async function main() {
   for (const [name, acc] of byTarget) {
     const warn = acc.aborted
       ? "  ** run aborted — challenges skipped, a clean result here proves nothing **"
-      : acc.ids.size === 0 && isStuck(acc)
-        ? `  ** reached ${acc.paths.size} distinct path${acc.paths.size === 1 ? "" : "s"} across ${acc.total} challenges` +
+      : acc.ids.size === 0 && acc.stuck
+        ? `  ** a personality reached at most one distinct path across ${acc.total} challenges` +
           " — the rubric never got past a shared gate; NOT a clean bill **"
         : "";
     console.log(`${name}: ${acc.ids.size} of ${acc.total} pass against a useless target${warn}`);

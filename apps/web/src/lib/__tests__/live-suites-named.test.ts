@@ -23,9 +23,42 @@ function testFiles(dir: string): string[] {
   return out;
 }
 
-const importsLiveRedis = (file: string) => /from\s+["'][^"']*\/live-redis["']/.test(readFileSync(file, "utf8"));
+// Only a RUNTIME import loads live-redis.ts and so arms its gate. TypeScript
+// erases `import type { … }` and an import whose every specifier is
+// `type X`, so a suite with only those would pass a textual check while never
+// loading the gate.
+function importsLiveRedis(source: string): boolean {
+  if (/^\s*import\s+["'][^"']*\/live-redis["']/m.test(source)) return true;
+  const re = /^\s*import\s+([^;]*?)\s+from\s+["'][^"']*\/live-redis["']/gm;
+  for (const [, clause] of source.matchAll(re)) {
+    if (/^type\s/.test(clause)) continue;
+    const named = /^\{([^}]*)\}$/.exec(clause.trim());
+    if (!named) return true; // a default or namespace import is a runtime import
+    const specifiers = named[1].split(",").map((x) => x.trim()).filter(Boolean);
+    if (specifiers.some((x) => !/^type\s/.test(x))) return true;
+  }
+  return false;
+}
+const fileImportsLiveRedis = (file: string) => importsLiveRedis(readFileSync(file, "utf8"));
 const files = testFiles(srcRoot);
-const live = files.filter(importsLiveRedis);
+const live = files.filter(fileImportsLiveRedis);
+
+describe("importsLiveRedis counts only runtime imports", () => {
+  it.each([
+    ['import { liveConfigured } from "./live-redis";', true],
+    ['import { RUN, liveConfigured } from "./live-redis";', true],
+    ['import { type Foo, liveConfigured } from "./live-redis";', true],
+    ['import "./live-redis";', true],
+    ['import * as live from "./live-redis";', true],
+    ['import type { Foo } from "./live-redis";', false],
+    ['import { type Foo } from "./live-redis";', false],
+    ['import { type Foo, type Bar } from "./live-redis";', false],
+    ['export type { Foo } from "./live-redis";', false],
+    ["// see live-redis.ts for the harness", false],
+  ])("%s -> %s", (source, expected) => {
+    expect(importsLiveRedis(source)).toBe(expected);
+  });
+});
 
 describe("live-Redis suites are named so CI's `vitest run upstash` selects them", () => {
   it("finds the live suites at all", () => {
@@ -41,7 +74,7 @@ describe("live-Redis suites are named so CI's `vitest run upstash` selects them"
 
   it("every *.upstash.test.ts suite gates through live-redis.ts", () => {
     const ungated = files
-      .filter((f) => f.endsWith(".upstash.test.ts") && !importsLiveRedis(f))
+      .filter((f) => f.endsWith(".upstash.test.ts") && !fileImportsLiveRedis(f))
       .map((f) => relative(srcRoot, f));
     expect(ungated).toEqual([]);
   });

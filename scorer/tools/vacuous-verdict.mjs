@@ -20,23 +20,30 @@ export function summarize(results) {
       total: r.total,
       ids: new Set(),
       aborted: false,
+      stuck: false,
       paths: new Set(),
     };
     r.vacuous.forEach((id) => acc.ids.add(id));
     acc.aborted ||= r.aborted;
+    // Judged per personality, before the paths are merged: a personality
+    // stuck at /login would otherwise be hidden by another that reached /a
+    // and /b, and the union would read as a target that got past the gate.
+    acc.stuck ||= isStuck({ total: r.total, paths: new Set(r.paths ?? []) });
     (r.paths ?? []).forEach((p) => acc.paths.add(p));
     byTarget.set(r.targetName, acc);
   }
   return byTarget;
 }
 
-/** Distinct paths is the discriminator, not request count. A target stuck at
- *  a login and a target whose anti-vacuous preconditions are correctly firing
- *  BOTH issue roughly one request per challenge; where those requests GO tells
- *  them apart. One path repeated for every challenge means the rubric never
- *  got past the gate. */
-export function isStuck(acc) {
-  return acc.total > 1 && acc.paths.size <= 1;
+/** One personality's run. Distinct paths is the discriminator, not request
+ *  count. A target stuck at a login and a target whose anti-vacuous
+ *  preconditions are correctly firing BOTH issue roughly one request per
+ *  challenge; where those requests GO tells them apart. One path repeated for
+ *  every challenge means the rubric never got past the gate, and no path at
+ *  all means it never contacted the target, whatever the challenge count. */
+export function isStuck(run) {
+  if (run.paths.size === 0) return true;
+  return run.total > 1 && run.paths.size <= 1;
 }
 
 /**
@@ -57,9 +64,9 @@ export function verdict(byTarget, expected) {
     if (!(acc.total > 0)) problems.push(`${name}: the rubric gave it no challenges to run`);
     if (acc.ids.size > 0) problems.push(`${name}: ${acc.ids.size} of ${acc.total} pass against a useless target`);
     if (acc.aborted) problems.push(`${name}: run aborted — challenges were skipped, so a clean result proves nothing`);
-    else if (acc.ids.size === 0 && isStuck(acc)) {
+    else if (acc.ids.size === 0 && acc.stuck) {
       problems.push(
-        `${name}: reached ${acc.paths.size} distinct path(s) across ${acc.total} challenges — ` +
+        `${name}: a personality reached at most one distinct path across ${acc.total} challenges — ` +
           "the rubric never got past a shared gate; NOT a clean bill",
       );
     }

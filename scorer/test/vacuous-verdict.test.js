@@ -76,3 +76,16 @@ test("an empty sweep fails", () => {
   assert.equal(v.ok, false);
   assert.match(v.problems.join("\n"), /nothing was swept/);
 });
+
+test("one personality stuck at a login fails the target even when another reached distinct paths", () => {
+  const stuck = { ...run("vampi", { total: 9, paths: ["/login"] }), personality: "empty-200" };
+  const fine = { ...run("vampi", { total: 9, paths: ["/a", "/b"] }), personality: "not-found" };
+  const v = verdict(summarize([stuck, fine]), ["vampi"]);
+  assert.equal(v.ok, false);
+  assert.match(v.problems.join("\n"), /shared gate/);
+});
+
+test("a run that contacted no path is unmeasured, even with a single challenge", () => {
+  const v = verdict(summarize([run("vampi", { total: 1, paths: [] })]), ["vampi"]);
+  assert.equal(v.ok, false);
+});

@@ -97,10 +97,13 @@ function requireSlug(slug: string): string {
 async function audit(action: string, actor: string, detail: Record<string, unknown>): Promise<void> {
   const line = JSON.stringify({ at: new Date().toISOString(), by: actor, action, ...detail });
   try {
-    await upstashPipeline([
-      ["LPUSH", ADMIN_AUDIT_KEY, line],
-      ["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1],
-    ]);
+    assertPipelineOk(
+      await upstashPipeline([
+        ["LPUSH", ADMIN_AUDIT_KEY, line],
+        ["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1],
+      ]),
+      `audit ${action}`,
+    );
   } catch (err) {
     console.error(`[admin-ops] audit write failed for ${action}`, errorLabel(err));
   }

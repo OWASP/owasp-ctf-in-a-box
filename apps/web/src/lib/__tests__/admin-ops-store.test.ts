@@ -734,6 +734,18 @@ describe("forceAddToTeam (#597)", () => {
     spy.mockRestore();
   });
 
+  // A per-command error resolves rather than throws, so it must be read off
+  // the reply to be logged at all.
+  it("logs an audit write refused per command, and still succeeds", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:bob"));
+    mocks.upstashEval.mockResolvedValueOnce(["ok", ""]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "WRONGTYPE Operation against a key holding the wrong kind of value" }, { result: "OK" }]);
+    expect(await forceAddToTeam("red-team", "bob", "admin")).toEqual({ ok: true, login: "bob", from: null });
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("ops:team-add-member"), expect.stringContaining("WRONGTYPE"));
+    spy.mockRestore();
+  });
+
   it("scans with a case-insensitive pattern rather than the whole keyspace", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:ab-1"));
     mocks.upstashEval.mockResolvedValueOnce(["ok", ""]);

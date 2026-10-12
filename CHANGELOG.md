@@ -33,6 +33,21 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   deploy's rules from one shared `scripts/lib/redact.sh`, so it also hides
   `PRIVATE_KEY`, `CONNECTION_STRING`, `*_KEY` and `*AUTH` values. Both now
   mask credentials in any URL (`scheme://***@host`).
+- **Fixed: a Secure Development solve was timed, and judged, by when the box
+  read it (#596).** It is now timed by when its score comment was posted on
+  the PR, so the Actions run and the poll no longer cost a PR team minutes in
+  a points tie, and a backlog read after a sync restart keeps each solve's
+  own time. The scoring window and the freeze are judged at that time too: a
+  PR scored while scoring was frozen no longer counts once the freeze lifts,
+  and one scored before the freeze or before **Scoring closes** counts even
+  if it is read later. To know when each freeze ran, the box now records it
+  (`pausedSince` and a `ctf:admin:pauses` interval log, written with the
+  switch; a master reset clears it). The poller no longer holds while scoring
+  is frozen or closed. A refusal is logged as `refused (<reason>)` and is not
+  counted as Dropped. A freeze set by hand with no recorded start holds
+  Secure Development scores until it lifts, as before. The comment is edited
+  on every run, so a solve first read from a later re-run takes the re-run's
+  time. Either service can be upgraded first; see ADR 67.
 - **Added: first blood on the Jeopardy board (#188).** Each visible tile and
   open story step names the contestant who solved it first. It is display
   only and changes no score. It is read from the current team members' solve

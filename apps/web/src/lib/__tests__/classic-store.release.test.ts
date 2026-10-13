@@ -120,3 +120,23 @@ describe("reading and re-writing it", () => {
     expect("releaseAtMs" in bundle.challenges[0]).toBe(false);
   });
 });
+
+describe("a release time's zone", () => {
+  it("refuses an offset-less or impossible instant before writing anything", async () => {
+    for (const releaseAt of ["2099-10-08T10:00:00", "2099-02-30T10:00:00Z", "2099-10-08T25:00:00Z"]) {
+      mocks.upstashPipeline.mockReset();
+      mocks.upstashPipeline.mockResolvedValue([{ result: JSON.stringify(["Web"]) }]);
+      await expect(upsertChallenge(challenge({ releaseAt }), "CTF{a}")).rejects.toBeInstanceOf(ClassicValidationError);
+      expect(pipelineCalls().flat().some((c) => c[0] === "HSET")).toBe(false);
+    }
+  });
+
+  it("accepts Z and an explicit offset", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+    await upsertChallenge(challenge({ releaseAt: "2099-10-08T13:00:00Z" }), "CTF{a}");
+    expect(storedRecord("chal-1").releaseAt).toBe("2099-10-08T13:00:00.000Z");
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+    await upsertChallenge(challenge({ releaseAt: "2099-10-08T15:00:00+02:00" }), "CTF{a}");
+    expect(storedRecord("chal-1").releaseAt).toBe("2099-10-08T13:00:00.000Z");
+  });
+});

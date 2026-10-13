@@ -20,7 +20,7 @@ import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
 import { bundleVersionFor, carriesVisibility, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
-import { isChallengeVisible } from "@/lib/classic-release";
+import { isChallengeVisible, isReleaseInstant } from "@/lib/classic-release";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
@@ -574,8 +574,8 @@ export async function upsertChallenge(c: Challenge, flag: string, hint?: string 
   if (hint != null && (typeof hint !== "string" || hint.length > CLASSIC_HINT_MAX)) {
     throw new ClassicValidationError("hint", `Hint must be at most ${CLASSIC_HINT_MAX} characters`);
   }
-  if (c.releaseAt !== undefined && (typeof c.releaseAt !== "string" || !Number.isFinite(Date.parse(c.releaseAt)))) {
-    throw new ClassicValidationError("releaseAt", "Release time must be an ISO 8601 date and time");
+  if (c.releaseAt !== undefined && (typeof c.releaseAt !== "string" || !isReleaseInstant(c.releaseAt))) {
+    throw new ClassicValidationError("releaseAt", "Release time must be an ISO 8601 date and time ending in Z or an offset such as -03:00");
   }
 
   const authored = flag.trim();

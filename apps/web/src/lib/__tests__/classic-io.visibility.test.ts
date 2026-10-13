@@ -81,7 +81,29 @@ describe("parseBundle and releaseAt", () => {
     const res = parseBundle(JSON.stringify(base(4, { releaseAt: "next-tuesday-zz8" })));
     expect(res.ok).toBe(false);
     if (res.ok) return;
-    expect(res.errors).toContainEqual({ where: "challenges[0].releaseAt", message: "releaseAt must be an ISO 8601 date and time" });
+    expect(res.errors).toContainEqual({ where: "challenges[0].releaseAt", message: "releaseAt must be an ISO 8601 date and time ending in Z or an offset such as -03:00" });
     expect(JSON.stringify(res.errors)).not.toContain("next-tuesday-zz8");
+  });
+});
+
+describe("parseBundle and a release time's zone", () => {
+  const errorFor = (releaseAt: string) => {
+    const res = parseBundle(JSON.stringify(base(4, { enabled: false, releaseAt })));
+    return res.ok ? null : res.errors;
+  };
+
+  it("refuses an offset-less instant, by position and rule, never the value", () => {
+    const errors = errorFor("2099-10-08T10:00:07");
+    expect(errors).toContainEqual({ where: "challenges[0].releaseAt", message: "releaseAt must be an ISO 8601 date and time ending in Z or an offset such as -03:00" });
+    expect(JSON.stringify(errors)).not.toContain("10:00:07");
+  });
+
+  it("refuses a date that does not exist", () => {
+    expect(errorFor("2099-02-30T10:00:00Z")).toContainEqual({ where: "challenges[0].releaseAt", message: "releaseAt must be an ISO 8601 date and time ending in Z or an offset such as -03:00" });
+  });
+
+  it("accepts Z and an explicit offset", () => {
+    expect(errorFor("2099-10-08T13:00:00Z")).toBeNull();
+    expect(errorFor("2099-10-08T10:00:00-03:00")).toBeNull();
   });
 });

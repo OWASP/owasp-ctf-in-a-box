@@ -690,3 +690,21 @@ describe("POST /api/admin/classic — release time", () => {
     expect(upsertChallenge).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/admin/classic — a release time's zone", () => {
+  it("400s an offset-less or impossible release time without writing", async () => {
+    for (const releaseAt of ["2099-10-08T10:00:00", "2099-02-30T10:00:00Z", "2099-10-08T10:00:00+25:00"]) {
+      const res = await POST(adminReq("POST", { ...validPayload, releaseAt }));
+      expect(res.status, releaseAt).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid request payload" });
+    }
+    expect(upsertChallenge).not.toHaveBeenCalled();
+  });
+
+  it("accepts Z and an explicit offset", async () => {
+    upsertChallenge.mockResolvedValue(ADMIN_ROW);
+    for (const releaseAt of ["2099-10-08T13:00:00Z", "2099-10-08T10:00:00-03:00"]) {
+      expect((await POST(adminReq("POST", { ...validPayload, releaseAt }))).status, releaseAt).toBe(200);
+    }
+  });
+});

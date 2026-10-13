@@ -1661,7 +1661,13 @@ saying why (Disabled, or Releases at what time), and a flag or hint used
 there is a dry run that records nothing for the admin. A bundle or event
 archive carries the switch (bundle version 4, stamped only when some
 challenge is hidden, so other exports still import on an older box), and an
-older bundle that carries it is refused rather than imported live.
+older bundle that carries it is refused rather than imported live. In a
+hand-written bundle, `releaseAt` is an ISO 8601 date and time that names its
+zone: it ends in `Z` (`2026-10-08T13:00:00Z`) or an explicit offset
+(`2026-10-08T10:00:00-03:00`). One without a zone, or a date or time that does
+not exist (`2026-02-30`, `25:00`), is refused, because the box would
+otherwise read it in its own zone and release at an instant nobody meant. The
+admin form always stores the UTC form, so it never trips this.
 
 **Matching is whitespace-insensitive and — by default — case-insensitive,
 normalized identically on both the authoring and submission sides.** The

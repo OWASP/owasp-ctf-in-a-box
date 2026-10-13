@@ -3,7 +3,7 @@
 // leaderboard denominators, the admin chip) asks the same function and none
 // can drift onto a rule of its own.
 import { describe, expect, it } from "vitest";
-import { challengeStatus, isChallengeVisible, visibleChallenges } from "@/lib/classic-release";
+import { challengeStatus, isChallengeVisible, isReleaseInstant, visibleChallenges } from "@/lib/classic-release";
 
 const NOW = Date.UTC(2026, 9, 8, 13, 0, 0);
 
@@ -59,5 +59,34 @@ describe("challengeStatus", () => {
   it("names a live challenge Live and a disabled one Disabled", () => {
     expect(challengeStatus({}, NOW)).toEqual({ kind: "live" });
     expect(challengeStatus({ enabled: false }, NOW)).toEqual({ kind: "disabled" });
+  });
+});
+
+// A release time is an instant, so it must say which zone it is in: an
+// offset-less "2026-10-08T10:00:00" would be read in the SERVER's zone and
+// release at the wrong moment.
+describe("isReleaseInstant", () => {
+  it("accepts an ISO 8601 date-time ending in Z or an explicit offset", () => {
+    for (const ok of ["2026-10-08T13:00:00.000Z", "2026-10-08T13:00:00Z", "2026-10-08T13:00Z", "2026-10-08T10:00:00-03:00", "2026-10-08T15:00:00.5+02:00", "2028-02-29T00:00:00Z"]) {
+      expect(isReleaseInstant(ok), ok).toBe(true);
+    }
+  });
+
+  it("refuses one without a zone, and anything that is not a date-time", () => {
+    for (const bad of ["2026-10-08T10:00:00", "2026-10-08T10:00", "2026-10-08", "Oct 8 2026 10:00 GMT", "2026-10-08 10:00:00Z", "", "tomorrow"]) {
+      expect(isReleaseInstant(bad), bad).toBe(false);
+    }
+  });
+
+  it("refuses a date or time that does not exist, which Date would roll over", () => {
+    for (const bad of ["2026-02-30T10:00:00Z", "2026-02-29T10:00:00Z", "2026-13-01T10:00:00Z", "2026-04-31T10:00:00Z", "2026-10-08T25:00:00Z", "2026-10-08T23:60:00Z", "2026-10-08T23:00:60Z", "2026-10-08T10:00:00+24:00", "2026-10-08T10:00:00+05:60"]) {
+      expect(isReleaseInstant(bad), bad).toBe(false);
+    }
+  });
+
+  it("accepts what the admin editor produces from an event-clock wall time", async () => {
+    const { wallToInstant } = await import("@/lib/event-time");
+    expect(isReleaseInstant(wallToInstant("2026-10-08T10:00", "America/Argentina/Buenos_Aires")!)).toBe(true);
+    expect(isReleaseInstant(wallToInstant("2026-03-29T02:30", "Europe/Madrid")!)).toBe(true);
   });
 });

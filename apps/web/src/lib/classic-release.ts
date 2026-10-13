@@ -41,6 +41,28 @@ export function visibleChallenges<T extends ReleaseFields>(list: readonly T[], n
   return list.filter((c) => isChallengeVisible(c, nowMs));
 }
 
+const RELEASE_INSTANT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(Z|[+-](\d{2}):(\d{2}))$/;
+
+/** Whether `value` is a release time this kit accepts: an ISO 8601 date and
+ *  time that says which zone it is in, ending in `Z` or an explicit `±HH:MM`
+ *  offset. Without one, `Date.parse` reads it in the SERVER's zone, and the
+ *  challenge would release at an instant nobody typed. The date and time must
+ *  also exist: each part is checked against what the parsed instant reads
+ *  back as, so a "Feb 30" or a "25:00" that `Date` would roll over to another
+ *  day is refused rather than moved. Every boundary that takes a release time
+ *  (the bundle parser, the admin route, the store, the editor) asks this. */
+export function isReleaseInstant(value: string): boolean {
+  const m = RELEASE_INSTANT_RE.exec(value);
+  if (!m) return false;
+  const [, y, mo, d, h, mi, s = "00", zone, oh, om] = m;
+  if (zone !== "Z" && (Number(oh) > 23 || Number(om) > 59)) return false;
+  // The wall time as typed, read as UTC: its parts must survive the trip.
+  const wall = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)));
+  const parts = [wall.getUTCFullYear(), wall.getUTCMonth() + 1, wall.getUTCDate(), wall.getUTCHours(), wall.getUTCMinutes(), wall.getUTCSeconds()];
+  if (parts.join() !== [y, mo, d, h, mi, s].map(Number).join()) return false;
+  return Number.isFinite(Date.parse(value));
+}
+
 /** A release instant as an organizer reads it: the event's clock, its offset
  *  named ("Oct 8, 10:00 GMT-3"), so nobody has to guess whose 10:00 it is. */
 export function releaseLabel(iso: string, zone: string): string {

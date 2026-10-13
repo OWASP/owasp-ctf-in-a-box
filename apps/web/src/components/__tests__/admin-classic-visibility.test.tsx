@@ -170,3 +170,13 @@ describe("a scheduled release", () => {
     expect(html).toContain("GMT-3");
   });
 });
+
+describe("the editor's release time", () => {
+  it("refuses a draft whose release time carries no zone, and accepts what the field produces", async () => {
+    const { isDraftValid } = await import("@/components/admin-classic-controls");
+    const { wallToInstant } = await import("@/lib/event-time");
+    const draft = { ...draftFromChallenge(row(live)), flag: "CTF{x}" };
+    expect(isDraftValid({ ...draft, enabled: false, releaseAt: "2099-10-08T10:00:00" }, ["Web"])).toBe(false);
+    expect(isDraftValid({ ...draft, enabled: false, releaseAt: wallToInstant("2099-10-08T10:00", "America/Argentina/Buenos_Aires")! }, ["Web"])).toBe(true);
+  });
+});

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isReleaseInstant } from "@/lib/classic-release";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
 import {
@@ -143,7 +144,7 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
   // (a future one hides the challenge until then, a passed one is live).
   if (body.releaseAt !== undefined && body.releaseAt !== null && typeof body.releaseAt !== "string") return null;
   const releaseAt = typeof body.releaseAt === "string" && body.releaseAt ? body.releaseAt : undefined;
-  if (releaseAt !== undefined && !Number.isFinite(Date.parse(releaseAt))) return null;
+  if (releaseAt !== undefined && !isReleaseInstant(releaseAt)) return null;
   return {
     id: body.id,
     title: body.title.trim(),

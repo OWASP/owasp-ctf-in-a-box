@@ -14,7 +14,7 @@ import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
 import { bundleVersionFor, carriesVisibility, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
-import { challengeStatus, releaseLabel, type ChallengeStatus } from "@/lib/classic-release";
+import { challengeStatus, isReleaseInstant, releaseLabel, type ChallengeStatus } from "@/lib/classic-release";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import { describeAdminError } from "@/components/admin/fetch";
 import { DELETE_CONFIRM_PHRASE_MAX, confirmPhrase } from "@/components/admin/confirm-phrase";
@@ -212,7 +212,7 @@ export function isDraftValid(d: ChallengeDraft, categories: readonly string[]): 
   if (d.points.trim() === "" || !Number.isInteger(points) || points < 0 || points > CLASSIC_POINTS_MAX) return false;
 
   if (d.flag.trim().length === 0) return false;
-  if (d.releaseAt && !Number.isFinite(Date.parse(d.releaseAt))) return false;
+  if (d.releaseAt && !isReleaseInstant(d.releaseAt)) return false;
 
   return true;
 }

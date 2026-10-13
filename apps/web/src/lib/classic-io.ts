@@ -52,6 +52,7 @@ import {
 import { type AttachmentFile, validateAttachmentFiles } from "@/lib/attachment-files";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { Story } from "@/lib/story-lock";
+import { isReleaseInstant } from "@/lib/classic-release";
 
 /** 2 added `stories` and per-challenge `attachments` (metadata); 3 adds the
  *  optional top-level `attachmentFiles`; 4 adds a challenge's visibility
@@ -226,10 +227,10 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
   if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") {
     errors.push({ where: `${base}.enabled`, message: "enabled must be true or false" });
   }
-  // Optional; an instant Date.parse reads. Never echoed: the message names
-  // the rule only.
-  if (raw.releaseAt !== undefined && (typeof raw.releaseAt !== "string" || !Number.isFinite(Date.parse(raw.releaseAt)))) {
-    errors.push({ where: `${base}.releaseAt`, message: "releaseAt must be an ISO 8601 date and time" });
+  // Optional; an ISO instant with its zone (`isReleaseInstant`). Never
+  // echoed: the message names the rule only.
+  if (raw.releaseAt !== undefined && (typeof raw.releaseAt !== "string" || !isReleaseInstant(raw.releaseAt))) {
+    errors.push({ where: `${base}.releaseAt`, message: "releaseAt must be an ISO 8601 date and time ending in Z or an offset such as -03:00" });
   }
 
   // Optional paid-hint text (#190): a non-empty string within the cap.

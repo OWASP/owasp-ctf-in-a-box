@@ -37,6 +37,7 @@ import { getTeamClassicSolvedIds } from "@/lib/classic-team";
 import { isLocked, lockedLabel, storyPositions } from "@/lib/story-lock";
 import StoryLanes, { type StoryLaneView, type StoryStepView } from "@/components/story-lanes";
 import { getClassicHintIds } from "@/lib/hint-store";
+import { visibleNow } from "@/lib/classic-release";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 
@@ -73,7 +74,7 @@ export default async function FlagsPage() {
   // below, so a redirect never follows work that was thrown away.
   await redirectIfTeamless(login, { isAdmin: viewerIsAdmin });
 
-  const [challenges, categories, solveBoard, viewerClassic, settings, modules, hintIds, stories] = await Promise.all([
+  const [storedChallenges, categories, solveBoard, viewerClassic, settings, modules, storedHintIds, stories] = await Promise.all([
     listChallenges(),
     listCategories(),
     // Team counts (#595) and first blood (#188), from one read of the
@@ -92,6 +93,13 @@ export default async function FlagsPage() {
     // "no stories" would silently put every locked step on the board.
     listStories(),
   ]);
+  // A hidden challenge (disabled, or not yet released) does not exist here:
+  // it is left out before anything is built from the list, so no tile, lane
+  // step, count, first blood or hint marker can carry it, and a story's chain
+  // closes up around it. An admin preview shows what contestants will see.
+  const challenges = visibleNow(storedChallenges);
+  const visibleIds = new Set(challenges.map((c) => c.id));
+  const hintIds = storedHintIds.filter((id) => visibleIds.has(id));
   // The team's solves decide which story steps are open; only read when a
   // story exists, and "nothing solved" for a signed-out visitor.
   const teamSolved = stories.length > 0 && login ? await getTeamClassicSolvedIds(login) : new Set<string>();
@@ -130,7 +138,7 @@ export default async function FlagsPage() {
   // #463: story lanes, and the category grid WITHOUT any story step (each
   // challenge has exactly one place on the board). A locked step's view is
   // just its position — the challenge's own fields never reach the render.
-  const positions = storyPositions(stories, new Set(challenges.map((c) => c.id)));
+  const positions = storyPositions(stories, visibleIds);
   const byId = new Map(viewChallenges.map((c) => [c.id, c]));
   const storyLanes: StoryLaneView[] = stories
     .map((st) => ({

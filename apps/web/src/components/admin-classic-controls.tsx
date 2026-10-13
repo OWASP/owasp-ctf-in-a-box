@@ -123,7 +123,7 @@ import { useAdminResource } from "@/components/admin/use-admin-resource";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import AdminNumberField, { type FieldStatus } from "@/components/admin-number-field";
 import type { ModuleSettingsSlot } from "@/components/admin/settings-card";
-import { ChallengeForm } from "@/components/admin-classic-form";
+import { ChallengeForm, ClassicTimeZoneContext } from "@/components/admin-classic-form";
 import {
   CHALLENGE_ROWS,
   type ChallengeEditor,
@@ -140,10 +140,12 @@ import {
   payloadFromEditor,
   payloadFromRow,
   solvesLabel,
+  statusChip,
 } from "@/components/admin-classic-model";
 
 export * from "@/components/admin-classic-model";
 export { ChallengeForm } from "@/components/admin-classic-form";
+export { ClassicTimeZoneContext } from "@/components/admin-classic-form";
 
 type NumericSettingKey = "classicCooldownSec";
 
@@ -170,6 +172,8 @@ export type AdminClassicControlsProps = {
   /** Reports the board's size to the shell for the setup checklist above this
    *  panel — after the mount-time fetch has settled, never from the seed. */
   onInventory?: (inventory: ModuleInventory) => void;
+  /** The event's time zone: release times are entered and shown on it. */
+  timeZone?: string;
 };
 
 export default function AdminClassicControls({
@@ -184,6 +188,7 @@ export default function AdminClassicControls({
   initialStories = [],
   initialLoaded = false,
   onInventory,
+  timeZone = "UTC",
 }: AdminClassicControlsProps) {
   // The board, the category list, the open editor, the delete target and
   // every write over them live in the shared resource hook
@@ -202,6 +207,9 @@ export default function AdminClassicControls({
   const [attachmentMetaById, setAttachmentMetaById] = useState<Record<string, AttachmentMeta[]>>({});
   // #595: how many teams and players solved each challenge — same GET.
   const [solvesById, setSolvesById] = useState<Record<string, ChallengeSolves>>({});
+  // The clock the status chips read, taken once per mount: a chip is a
+  // statement about the stored state, not a live countdown.
+  const [nowMs] = useState(() => Date.now());
   function takeStories(next: Story[]) {
     setStories(next);
     setStoriesRev((n) => n + 1);
@@ -333,6 +341,7 @@ export default function AdminClassicControls({
   // confirmations below it are the shared frame — see its header for why the
   // pieces below are classic's and not the frame's.
   return (
+    <ClassicTimeZoneContext.Provider value={timeZone}>
     <ChallengeFrame
       resource={resource}
       categoryEditor={categoryEditor}
@@ -343,8 +352,21 @@ export default function AdminClassicControls({
       deleteConfirm={challengeDeleteConfirm}
       meta={(row) => {
         const solves = solvesLabel(solvesById[row.challenge.id]);
+        const chip = statusChip(row.challenge, nowMs, timeZone);
         return (
           <>
+            <span
+              data-status={chip.kind}
+              className={`mr-1.5 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                chip.kind === "live"
+                  ? "border-[#14b8a6]/40 text-[#14b8a6]"
+                  : chip.kind === "scheduled"
+                    ? "border-[#d4a017]/40 text-[#d4a017]"
+                    : "border-white/15 text-zinc-400"
+              }`}
+            >
+              {chip.label}
+            </span>
             {row.challenge.points} pt
             {row.challenge.points === 1 ? "" : "s"}
             {solves && <> · {solves}</>}
@@ -393,5 +415,6 @@ export default function AdminClassicControls({
       reorderPending={reorderPending}
       onMove={(from, to) => void resource.move(from, to)}
     />
+    </ClassicTimeZoneContext.Provider>
   );
 }

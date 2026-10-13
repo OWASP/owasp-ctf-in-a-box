@@ -665,6 +665,51 @@ describe("withModuleContributions", () => {
       // A team with no solves gets no block rather than an empty one.
       expect(out.find((t) => t.slug === "grey")!.modules?.["classic"]).toBeUndefined();
     });
+
+    // The fold's own tests hand it a current-value map and assert the dedupe;
+    // this is where that map is BUILT — solve counts read, every catalogue
+    // challenge priced, result handed to the batch. A static board must still
+    // get no map at all, so the batch keeps its one-argument call above.
+    it("prices every catalogue challenge from the live solve counts and hands the map to the batch", async () => {
+      mocks.listChallenges.mockResolvedValue([
+        { id: "dyn-1", title: "Dyn", category: "Web", description: "", points: 500, order: 0, maxPoints: 500, minPoints: 100, decay: 10 },
+        { id: "stat-1", title: "Static", category: "Web", description: "", points: 50, order: 1 },
+      ]);
+      mocks.getSolveCounts.mockResolvedValue(new Map([["dyn-1", 2]]));
+      mocks.getTeamClassicTotalsBatch.mockResolvedValue([{ points: 484, solved: 1, lastAt: null }]);
+
+      const teams: TeamStanding[] = [{ rank: 1, slug: "red", name: "Red", captain: "ada", points: 0, members: ["ada"] }];
+      await withTeamClassicPoints(teams);
+
+      // dynamic at n=2: ceil(500 + ((100 - 500) / 10²) · 2²) = 484.
+      expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledWith(
+        [["ada"]],
+        new Map([["dyn-1", 484], ["stat-1", 50]]),
+      );
+    });
+  });
+
+  // A hidden Jeopardy challenge is out of every denominator; points banked on
+  // it stay in the total.
+  describe("with a hidden classic challenge", () => {
+    beforeEach(() => {
+      mocks.moduleLive.mockImplementation((id: string) => id === "secure-development" || id === "classic");
+      mocks.listChallenges.mockResolvedValue([{ id: "c1" }, { id: "c2" }, { id: "gone", enabled: false }]);
+    });
+
+    it("leaves it out of a contestant's denominator and keeps the banked points", async () => {
+      mocks.getClassicTotals.mockResolvedValue(new Map([["alice", { points: 50, solved: 1, lastAt: null }]]));
+      const out = await withModuleContributions(data([entry("alice", 100, 3)]));
+      expect(out.entries[0].points).toBe(150);
+      expect(out.entries[0].modules!["classic"]!.detail).toEqual({ kind: "classic", solved: 1, total: 2, points: 50 });
+    });
+
+    it("leaves it out of a team's denominator unless the team solved it", async () => {
+      mocks.getTeamClassicTotalsBatch.mockResolvedValue([{ points: 20, solved: 1, lastAt: null, itemIds: ["c1"] }]);
+      const teams: TeamStanding[] = [{ rank: 1, slug: "red", name: "Red", captain: "ada", points: 0, members: ["ada"] }];
+      const out = await withTeamClassicPoints(teams);
+      expect(out[0].modules!["classic"]!.detail).toMatchObject({ solved: 1, total: 2 });
+    });
   });
 
   // Both app-side modules on at once. The two are added independently and must
@@ -1043,6 +1088,27 @@ describe("module-contributions log redaction (#500)", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       expect(await fold(teams)).toBe(teams);
+      expectLabelOnly(consoleError);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  // The solve counts are what dynamic challenges are priced FROM, so failing
+  // to read them must fail the whole totals read — logged, team row untouched,
+  // fold never called — rather than pricing every dynamic challenge at its
+  // n=0 value (the MAXIMUM) and putting a wrong-but-green board on screen.
+  it("a failed solve-count read degrades the classic team fold, not the numbers", async () => {
+    mocks.moduleLive.mockImplementation((id: string) => id === "classic");
+    mocks.listChallenges.mockResolvedValue([
+      { id: "dyn-1", title: "Dyn", category: "Web", description: "", points: 500, order: 0, maxPoints: 500, minPoints: 100, decay: 10 },
+    ]);
+    mocks.getSolveCounts.mockRejectedValue(decoratedError());
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await withTeamClassicPoints(teams)).toBe(teams);
+      expect(mocks.getTeamClassicTotalsBatch).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalled();
       expectLabelOnly(consoleError);
     } finally {
       consoleError.mockRestore();

@@ -634,11 +634,15 @@ describe("getClassicTotals", () => {
     expect(mocks.upstashPipeline.mock.calls[0][0]).toContainEqual(["HGETALL", "ctf:classic:lastAt"]);
   });
 
-  // #523: an errored counter read is not "nobody has points".
+  // An errored read is not "nobody has points", not "no dynamic challenges"
+  // and not "nobody solved it". All four reads are settled together, so all
+  // four are checked before anything is parsed or computed.
   it.each([
-    ["points", [{ error: "WRONGTYPE" }, { result: [] }, { result: [] }]],
-    ["solved", [{ result: [] }, { error: "NOAUTH" }, { result: [] }]],
-  ])("throws when the %s counter read fails, instead of reading it as empty", async (_name, replies) => {
+    ["points", [{ error: "WRONGTYPE" }, { result: [] }, { result: [] }, { result: [] }, { result: [] }]],
+    ["solved", [{ result: [] }, { error: "NOAUTH" }, { result: [] }, { result: [] }, { result: [] }]],
+    ["challenges", [{ result: [] }, { result: [] }, { result: [] }, { error: "NOAUTH" }, { result: [] }]],
+    ["solvecount", [{ result: [] }, { result: [] }, { result: [] }, { result: [] }, { error: "WRONGTYPE" }]],
+  ])("throws when the %s read fails, instead of reading it as empty", async (_name, replies) => {
     mocks.upstashPipeline.mockResolvedValueOnce(replies);
     await expect(getClassicTotals()).rejects.toThrow(/classic totals/);
   });

@@ -32,8 +32,8 @@ describe("parseBundle", () => {
   });
 
   it("rejects an unknown version rather than misparsing it", () => {
-    // 3 is the current version (attachment files); 4 is not.
-    const res = parseBundle(JSON.stringify({ ...valid, version: 4 }));
+    // 4 is the current version (challenge visibility); 5 is not.
+    const res = parseBundle(JSON.stringify({ ...valid, version: 5 }));
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
     expect(res.errors.some((e) => e.where === "version")).toBe(true);
@@ -449,8 +449,8 @@ describe("attachment files in a v3 bundle", () => {
     return r.ok ? [] : r.errors.filter((e) => e.where.startsWith("attachmentFiles"));
   };
 
-  it("is the current version", () => {
-    expect(CLASSIC_BUNDLE_VERSION).toBe(3);
+  it("is the version before the current one (visibility, 4)", () => {
+    expect(CLASSIC_BUNDLE_VERSION).toBe(4);
   });
 
   it("accepts files that match an upload in the same bundle, and keeps them", () => {

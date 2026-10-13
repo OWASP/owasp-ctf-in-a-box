@@ -60,6 +60,73 @@ EOF
   [[ "$output" != *"ghcr.io/owasp-ctf/score"* ]]
 }
 
+@test "org: a quoted-empty SCORE_IMAGE is empty too — compose starts no scorer, so nothing is forked" {
+  # `SCORE_IMAGE=""` is empty to docker compose, so the box runs no Secure
+  # Development. Read as the two-character string `""`, this script would
+  # fork and mirror for an event whose box never starts a scorer.
+  cat > .env <<'ENV'
+GITHUB_ORG="test-event-org"
+ADMIN_LOGINS=organizer
+SCORE_IMAGE=""
+ENV
+  run bash "$SCRIPT" org --dry-run
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | grep -F -- "gh repo fork")" ]
+  echo "$output" | grep -qF -- "does not run Secure Development"
+}
+
+@test "org: a quoted, exported GITHUB_ORG is read without its quotes" {
+  cat > .env <<'ENV'
+export GITHUB_ORG="test-event-org"
+ADMIN_LOGINS=organizer
+SCORE_IMAGE = ghcr.io/fixture/score:latest
+ENV
+  run bash "$SCRIPT" org --dry-run
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF "gh repo fork digininja/DVWA --org test-event-org --fork-name DVWA"
+}
+
+# Fail closed: a SCORE_IMAGE the reader cannot read the way compose does
+# stops the command. Read as empty it would skip Secure Development; read as
+# the literal text it would provision it. Neither may happen silently.
+@test "org: an unterminated SCORE_IMAGE quote stops the command, SD neither on nor off" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE="ghcr.io/fixture/score:latest\n' > .env
+  run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE has an unterminated quote'
+  [ -z "$(echo "$output" | grep -F -e 'gh repo fork' -e 'does not run Secure Development')" ]
+}
+
+@test "org: an interpolated SCORE_IMAGE stops the command, SD neither on nor off" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=${SCORER_IMAGE:-}\n' > .env
+  run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE uses interpolation'
+  [ -z "$(echo "$output" | grep -F -e 'gh repo fork' -e 'does not run Secure Development')" ]
+}
+
+@test "runs_secdev exits non-zero on an unreadable SCORE_IMAGE rather than answering" {
+  printf 'SCORE_IMAGE=$SCORER_IMAGE\n' > bad.env
+  run bash -c 'CMD=__selftest source "$1"; OUT=bad.env; if runs_secdev; then echo ON; else echo OFF; fi' _ "$SCRIPT"
+  [ "$status" -ne 0 ]
+  [ -z "$(echo "$output" | grep -x -e ON -e OFF)" ]
+}
+
+@test "org: an env file that exists but cannot be read stops the command" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > locked.env
+  chmod 000 locked.env
+  if [ -r locked.env ]; then
+    # root reads through mode 000; a directory is unreadable as an env file
+    # for everyone, and must fail the same way.
+    rm -f locked.env
+    mkdir locked.env
+  fi
+  run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run --out locked.env
+  chmod 600 locked.env 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [ -z "$(echo "$output" | grep -F -e 'gh repo fork' -e 'does not run Secure Development')" ]
+}
+
 # The switch is the value the BOX carries, not one an operator exported: an
 # exported SCORE_IMAGE overrides only the image to mirror (a one-off retag),
 # because docker compose reads the file to decide which services exist at
@@ -249,11 +316,13 @@ EOF
   # that turns that into a loud failure instead of a silent no-op (a
   # header-only matrix exiting 0). Run against a COPY of the script so
   # SCRIPT_DIR resolves to a directory with a broken targets.tsv, leaving the
-  # real setup/targets.tsv untouched.
-  mkdir -p brokentsv
-  cp "$SCRIPT" brokentsv/ctf-setup.sh
-  : > brokentsv/targets.tsv
-  run bash brokentsv/ctf-setup.sh doctor --dry-run
+  # real setup/targets.tsv untouched. The copy keeps the repo layout around
+  # it: the script sources ../scripts/lib/dotenv.sh.
+  mkdir -p brokentsv/setup brokentsv/scripts/lib
+  cp "$SCRIPT" brokentsv/setup/ctf-setup.sh
+  cp "$BATS_TEST_DIRNAME/../../scripts/lib/dotenv.sh" brokentsv/scripts/lib/
+  : > brokentsv/setup/targets.tsv
+  run bash brokentsv/setup/ctf-setup.sh doctor --dry-run
   printf '%s' "$output" | grep -qF 'targets.tsv'
   printf '%s' "$output" | grep -qF 'no targets to provision'
   [ "$status" -ne 0 ]
@@ -640,7 +709,7 @@ EOF2
   echo "$output" | grep -qx NOTSATISFIED
 }
 
-@test "check_step drop-old fails closed when the branch list call errors" {
+@test "check_step drop-old fails closed when every gh api call errors" {
   mkdir -p stubs
   cat > stubs/gh <<'EOF2'
 #!/usr/bin/env bash
@@ -653,6 +722,72 @@ EOF2
   PATH="$(pwd)/stubs:$PATH" run bash -c 'CMD=__selftest source "'"$SCRIPT"'"; if check_step drop-old dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi'
   [ "$status" -eq 0 ]
   echo "$output" | grep -qx NOTSATISFIED
+}
+
+# drop-old asks for each branch BY NAME. This stub answers those two reads
+# from $MAIN and $MASTER (present | 404 | 500) and serves the paginated branch
+# LIST as GitHub's first page would on a fork with more than 30 branches: one
+# without `main` on it. A check that still read the list would call such a
+# fork done.
+_drop_old_gh_stub() {
+  mkdir -p stubs
+  cat > stubs/gh <<'EOF2'
+#!/usr/bin/env bash
+[ "$1" = api ] || exit 0
+case "$2" in
+  */branches/main) state="$MAIN" ;;
+  */branches/master) state="$MASTER" ;;
+  */branches) printf 'ctf\nfeature-01\nfeature-02\n'; exit 0 ;;
+  *) exit 1 ;;
+esac
+case "$state" in
+  present) echo "${2##*/}"; exit 0 ;;
+  renamed) echo ctf; exit 0 ;;
+  404) echo '{"message":"Branch not found","status":"404"}'; echo "gh: Branch not found (HTTP 404)" >&2; exit 1 ;;
+  *) echo "gh: Server Error (HTTP 500)" >&2; exit 1 ;;
+esac
+EOF2
+  chmod +x stubs/gh
+}
+
+_drop_old_verdict() {
+  PATH="$(pwd)/stubs:$PATH" MAIN="$1" MASTER="$2" run bash -c 'CMD=__selftest source "'"$SCRIPT"'"; if check_step drop-old dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi'
+}
+
+@test "check_step drop-old: a main past the first page of the branch list is still found" {
+  _drop_old_gh_stub
+  _drop_old_verdict present 404
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+}
+
+@test "check_step drop-old: a present master is not satisfied" {
+  _drop_old_gh_stub
+  _drop_old_verdict 404 present
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+}
+
+@test "check_step drop-old: both branches answering 404 is satisfied" {
+  _drop_old_gh_stub
+  _drop_old_verdict 404 404
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx SATISFIED
+}
+
+@test "check_step drop-old: a 500 on either branch fails closed" {
+  _drop_old_gh_stub
+  _drop_old_verdict 404 500
+  [ "$output" = NOTSATISFIED ] || { echo "master 500 read as: $output"; return 1; }
+  _drop_old_verdict 500 404
+  [ "$output" = NOTSATISFIED ]
+}
+
+@test "check_step drop-old: a reply naming a different branch (a rename redirect) is absent" {
+  _drop_old_gh_stub
+  _drop_old_verdict renamed 404
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx SATISFIED
 }
 
 @test "doctor table: fork column flips missing->done via stubbed gh" {

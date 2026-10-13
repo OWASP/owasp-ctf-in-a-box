@@ -192,6 +192,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
       - run: bats scripts/test/
+        env:
+          # dotenv.bats diffs the shared .env reader against `docker compose
+          # config` itself; the runner has docker, so a skip here is a failure.
+          DOTENV_BATS_REQUIRE_DOCKER: "1"
 
   smoke:
     needs: changes

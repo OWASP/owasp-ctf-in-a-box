@@ -27,10 +27,14 @@ const RICH = { gross: 1000, spent: 0, net: 1000, rev: "7" };
 const storyMocks = vi.hoisted(() => ({
   listStories: vi.fn(async () => [] as unknown[]),
   teamLockKeys: vi.fn(async () => ({ keys: [] as string[], team: "" })),
+  // The Jeopardy records the reveal builds the visible story chain from.
+  readChallengeRecords: vi.fn(async () =>
+    ["recon", "web", "web-robots-only"].map((id) => ({ id, title: id, category: "Web", description: "", points: 10, order: 0 }) as Record<string, unknown>),
+  ),
 }));
 vi.mock("@/lib/classic-store", () => ({
   listStories: storyMocks.listStories,
-  listChallengeIds: async () => new Set(["recon", "web", "web-robots-only"]),
+  readChallengeRecords: storyMocks.readChallengeRecords,
 }));
 vi.mock("@/lib/classic-team", async (orig) => ({
   storyLockLua: (await orig<typeof import("@/lib/classic-team")>()).storyLockLua,
@@ -121,8 +125,11 @@ describe("revealHint", () => {
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
       // The settings hash (#566): the script reads the live `paused` flag
-      // at the charge boundary. Lock keys, when any, follow it.
+      // at the charge boundary.
       "ctf:admin:settings",
+      // The Jeopardy records, for the visibility check. Lock keys, when
+      // any, follow it.
+      "ctf:classic:challenges",
     ]);
     expect(argv[1]).toBe("classic/web-robots-only");
   });
@@ -154,8 +161,11 @@ describe("revealHint", () => {
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
       // The settings hash (#566): the script reads the live `paused` flag
-      // at the charge boundary. Lock keys, when any, follow it.
+      // at the charge boundary.
       "ctf:admin:settings",
+      // The Jeopardy records, for the visibility check. Lock keys, when
+      // any, follow it.
+      "ctf:classic:challenges",
     ]);
     expect(argv[1]).toBe("ai/prompt-injection-1");
   });
@@ -208,8 +218,11 @@ describe("revealHint", () => {
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
       // The settings hash (#566): the script reads the live `paused` flag
-      // at the charge boundary. Lock keys, when any, follow it.
+      // at the charge boundary.
       "ctf:admin:settings",
+      // The Jeopardy records, for the visibility check. Lock keys, when
+      // any, follow it.
+      "ctf:classic:challenges",
     ]);
     expect(args.slice(0, 4)).toEqual([
       "Challenge-5-Admin-Section",
@@ -751,8 +764,8 @@ describe("hintGate", () => {
       expect(keys[6]).toBe("ctf:admin:settings");
       expect(keys[6]).toBe(store.HINT_SETTINGS_KEY);
       expect(args[9]).toBe(String(Date.parse(endsAt)));
-      // The lock loop starts AFTER the settings key.
-      expect(script).toContain("for i = 8, #KEYS");
+      // The lock loop starts AFTER the settings key and the records key.
+      expect(script).toContain("for i = 9, #KEYS");
       expect(script).toMatch(/HGET', KEYS\[7\], 'paused'/);
       expect(script).toContain("redis.call('TIME')");
       // Checked before the spend is read and before the text is read.
@@ -1335,7 +1348,8 @@ describe("the story lock on classic hints (#463)", () => {
     const [, keys, argv] = mocks.upstashEval.mock.calls.at(-1)!;
     // After the four fixed keys, the score revision and the in-progress
     // counter (KEYS[5..6], #553).
-    expect(keys.slice(7)).toEqual(["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"]);
+    expect(keys[7]).toBe("ctf:classic:challenges");
+    expect(keys.slice(8)).toEqual(["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"]);
     expect(argv[6]).toBe("recon");
     expect(argv[10]).toBe("red");
   });
@@ -1420,5 +1434,64 @@ describe("hint-store log redaction (#500)", () => {
     });
     expect(out).toContain("upstash down");
     expect(out).not.toContain(SECRET);
+  });
+});
+
+// A hidden Jeopardy challenge does not exist for a contestant: its hint is
+// refused by the script, from the record in KEYS[8], before anything else.
+describe("hidden challenges", () => {
+  it("asks the script to check visibility for a classic hint, and never for another target", async () => {
+    const store = await loadStore();
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    await store.revealHint("octocat", "classic", "web-robots-only");
+    expect(mocks.upstashEval.mock.calls[0][2][13]).toBe("1");
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(mocks.upstashEval.mock.calls[1][2][13]).toBe("0");
+  });
+
+  it("checks visibility first in the script: before the lock, the hint read and every write, skipped on a preview", async () => {
+    const { REVEAL_SCRIPT } = await loadStore();
+    const check = REVEAL_SCRIPT.indexOf("classicHidden(redis.call('HGET', KEYS[8], ARGV[1]))");
+    expect(check).toBeGreaterThan(-1);
+    expect(REVEAL_SCRIPT.slice(0, check)).toContain("ARGV[6] ~= '1' and ARGV[14] == '1'");
+    for (const later of ["for i = 9, #KEYS", "HEXISTS', KEYS[3]", "HGET', KEYS[3]", "SADD", "HINCRBY"]) {
+      expect(check).toBeLessThan(REVEAL_SCRIPT.indexOf(later));
+    }
+  });
+
+  it("reports the script's refusal exactly as a missing hint", async () => {
+    const store = await loadStore();
+    storyMocks.readChallengeRecords.mockResolvedValueOnce([
+      { id: "web-robots-only", title: "w", category: "Web", description: "", points: 10, order: 0, enabled: false },
+    ]);
+    mocks.upstashEval.mockResolvedValueOnce(["missing"]);
+    expect(await store.revealHint("octocat", "classic", "web-robots-only")).toEqual({
+      ok: false,
+      missing: true,
+      error: "No hint available for this challenge",
+    });
+  });
+
+  it("closes the story chain around a hidden step", async () => {
+    const store = await loadStore();
+    storyMocks.listStories.mockResolvedValueOnce([{ id: "op", title: "Op", intro: "", steps: ["recon", "web", "web-robots-only"] }]);
+    storyMocks.readChallengeRecords.mockResolvedValueOnce(
+      ["recon", "web", "web-robots-only"].map((id) => ({
+        id, title: id, category: "Web", description: "", points: 10, order: 0, ...(id === "web" ? { enabled: false } : {}),
+      })),
+    );
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    await store.revealHint("octocat", "classic", "web-robots-only");
+    expect(mocks.upstashEval.mock.calls.at(-1)![2][6]).toBe("recon");
+  });
+
+  it("refuses (closed) when the records cannot be read, without running the script", async () => {
+    const store = await loadStore();
+    storyMocks.readChallengeRecords.mockRejectedValueOnce(new Error("NOAUTH"));
+    mocks.upstashEval.mockClear();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await store.revealHint("octocat", "classic", "web-robots-only")).ok).toBe(false);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 });

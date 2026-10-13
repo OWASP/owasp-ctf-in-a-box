@@ -23,14 +23,22 @@ import {
   HintField,
   NumberField,
   PositionReadout,
+  ReleaseAtField,
   TextField,
+  VisibleField,
 } from "@/components/admin/editor-fields";
+import { createContext, useContext } from "react";
 import {
   type ChallengeDraft,
   type ChallengeEditor,
   confirmPhraseFromTitle,
   isDraftValid,
 } from "@/components/admin-classic-model";
+
+/** The event's time zone, which the "Release at" field reads and writes on.
+ *  A context rather than a prop because the form is mounted by the shared
+ *  ChallengeFrame, whose form slot has a fixed set of props. */
+export const ClassicTimeZoneContext = createContext("UTC");
 
 export function ChallengeForm({
   editor,
@@ -57,6 +65,7 @@ export function ChallengeForm({
   onSubmit: () => void;
 }) {
   const draft = editor.draft;
+  const zone = useContext(ClassicTimeZoneContext);
   const isNew = editor.mode === "new";
   const set = (patch: Partial<ChallengeDraft>) => onChange({ ...draft, ...patch });
   const phrase = editor.mode === "edit" ? confirmPhraseFromTitle(draft.title, editor.id) : "";
@@ -110,6 +119,20 @@ export function ChallengeForm({
             trailing spaces are still forgiven either way.
           </>
         }
+      />
+
+      {/* Switching it on clears a release time (it is live now); setting a
+          release time switches it off until then. */}
+      <VisibleField
+        checked={draft.enabled}
+        disabled={pending}
+        onChange={(enabled) => set(enabled ? { enabled, releaseAt: "" } : { enabled })}
+      />
+      <ReleaseAtField
+        value={draft.releaseAt}
+        zone={zone}
+        disabled={pending}
+        onChange={(releaseAt) => set(releaseAt ? { releaseAt, enabled: false } : { releaseAt })}
       />
 
       <HintField value={draft.hint} disabled={pending} onChange={(hint) => set({ hint })} />

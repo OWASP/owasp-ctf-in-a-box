@@ -184,6 +184,8 @@ reviews:
         independent twins in apps/web/src/lib/schedule-window.ts and
         scorer/src/store.js. A change to one needs the other two in the same
         PR, plus test/fixtures/(scoring-)window-corpus.json when a rule moves.
+        pausedAt (is an instant inside a recorded freeze) is the same: three
+        twins, pinned by test/fixtures/pause-interval-corpus.json.
 
         State trust — treating parsed poll state (Redis `ctf:sync:state`, or
         the legacy /state/state.json) as having a valid shape. It is
@@ -320,7 +322,9 @@ reviews:
         (no scoringStartsAt means not launched, #464) here have independent
         twins in scorer/src/store.js and sync/src/redis.js. All three must
         change together; scoring consumers use outsideScoringWindow, the
-        registration window keeps outsideWindow.
+        registration window keeps outsideWindow. pausedAt (an instant inside
+        a recorded freeze) has the same three twins and its own corpus,
+        test/fixtures/pause-interval-corpus.json.
 
         Units — classicCooldownSec is SECONDS; quizRetryAfterMin,
         hintsUnlockAfterMin, scoreCooldownMin are MINUTES. Flag a new knob

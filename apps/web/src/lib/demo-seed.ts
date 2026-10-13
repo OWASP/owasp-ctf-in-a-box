@@ -135,7 +135,7 @@ function demoAttemptRow(tries: number, earnedAt: string, gapMinutes: number, flo
 //
 // One EVAL rather than read-then-write so the raise is atomic: a solve landing
 // mid-seed is counted, not lost to a stale read.
-const RAISE_SOLVECOUNT_SCRIPT = `
+export const RAISE_SOLVECOUNT_SCRIPT = `
 local i = 1
 while i <= #ARGV do
   local field, floor = ARGV[i], tonumber(ARGV[i + 1])

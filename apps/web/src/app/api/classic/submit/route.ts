@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { adminSeesHidden } from "@/lib/classic-visibility";
+import { isAdminLogin } from "@/lib/admin-auth";
 import { auth } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
@@ -84,18 +86,31 @@ export async function POST(request: Request) {
   // the response to distinguish a correct flag from a wrong one.
   // A preview (#464) skips the team check: a dry run banks nothing to fold
   // into a team, and organizers usually have none.
-  if (!preview && !(await hasTeam(login))) {
+  //
+  // An admin on a challenge contestants cannot see (disabled, or not yet
+  // released) is graded as a dry run too, team or not: the page lets them
+  // test it, and nothing may be recorded for them. That needs the id, so for
+  // an admin alone the body is read before their team check; everyone else
+  // is refused first, with the body unread.
+  const admin = !preview && (await isAdminLogin(login).catch(() => false));
+  if (!preview && !admin && !(await hasTeam(login))) {
     return NextResponse.json({ error: "no-team" }, { status: 403 });
   }
 
   const body = await request.json().catch(() => ({}));
   const challengeId = typeof body.challengeId === "string" ? body.challengeId : "";
   const flag = typeof body.flag === "string" ? body.flag : "";
+  const dryRun = preview || (admin && CLASSIC_ID_RE.test(challengeId) && (await adminSeesHidden(login, challengeId)));
+
+  if (!dryRun && admin && !(await hasTeam(login))) {
+    return NextResponse.json({ error: "no-team" }, { status: 403 });
+  }
+
   if (!CLASSIC_ID_RE.test(challengeId) || !flag.trim() || flag.length > FLAG_MAX_LEN) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  const result = await submitFlag(login, challengeId, flag, { dryRun: preview });
+  const result = await submitFlag(login, challengeId, flag, { dryRun });
   if (result.ok) {
     // An admin preview (#464): graded by the same script, nothing recorded —
     // and nothing logged either, so the activity feed never shows a solve

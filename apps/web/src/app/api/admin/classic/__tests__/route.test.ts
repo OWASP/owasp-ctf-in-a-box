@@ -650,3 +650,61 @@ describe("POST /api/admin/classic — rename a category", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// A challenge's visibility comes through the same upsert: stored only when
+// off, and a malformed value refused rather than read as truthy.
+describe("POST /api/admin/classic — visibility", () => {
+  it("passes enabled:false to the store, and drops enabled:true (absent means live)", async () => {
+    upsertChallenge.mockResolvedValue(ADMIN_ROW);
+    await POST(adminReq("POST", { ...validPayload, enabled: false }));
+    expect(upsertChallenge).toHaveBeenLastCalledWith({ ...CHALLENGE, enabled: false }, "CTF{flag}", undefined);
+    await POST(adminReq("POST", { ...validPayload, enabled: true }));
+    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", undefined);
+  });
+
+  it("400s a non-boolean enabled without writing", async () => {
+    const res = await POST(adminReq("POST", { ...validPayload, enabled: "false" }));
+    expect(res.status).toBe(400);
+    expect(upsertChallenge).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/admin/classic — release time", () => {
+  it("passes a release instant to the store, and treats null or empty as none", async () => {
+    upsertChallenge.mockResolvedValue(ADMIN_ROW);
+    await POST(adminReq("POST", { ...validPayload, enabled: false, releaseAt: "2099-10-08T13:00:00.000Z" }));
+    expect(upsertChallenge).toHaveBeenLastCalledWith(
+      { ...CHALLENGE, enabled: false, releaseAt: "2099-10-08T13:00:00.000Z" },
+      "CTF{flag}",
+      undefined,
+    );
+    await POST(adminReq("POST", { ...validPayload, releaseAt: null }));
+    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", undefined);
+    await POST(adminReq("POST", { ...validPayload, releaseAt: "" }));
+    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", undefined);
+  });
+
+  it("400s an unreadable or non-string release time without writing", async () => {
+    expect((await POST(adminReq("POST", { ...validPayload, releaseAt: "soon" }))).status).toBe(400);
+    expect((await POST(adminReq("POST", { ...validPayload, releaseAt: 123 }))).status).toBe(400);
+    expect(upsertChallenge).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/admin/classic — a release time's zone", () => {
+  it("400s an offset-less or impossible release time without writing", async () => {
+    for (const releaseAt of ["2099-10-08T10:00:00", "2099-02-30T10:00:00Z", "2099-10-08T10:00:00+25:00"]) {
+      const res = await POST(adminReq("POST", { ...validPayload, releaseAt }));
+      expect(res.status, releaseAt).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid request payload" });
+    }
+    expect(upsertChallenge).not.toHaveBeenCalled();
+  });
+
+  it("accepts Z and an explicit offset", async () => {
+    upsertChallenge.mockResolvedValue(ADMIN_ROW);
+    for (const releaseAt of ["2099-10-08T13:00:00Z", "2099-10-08T10:00:00-03:00"]) {
+      expect((await POST(adminReq("POST", { ...validPayload, releaseAt }))).status, releaseAt).toBe(200);
+    }
+  });
+});

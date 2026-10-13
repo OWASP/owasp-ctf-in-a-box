@@ -338,4 +338,47 @@ docker exec "$FREEZE_REDIS_CTR" redis-cli HSET ctf:admin:settings paused 0 >/dev
 code=$(score_freeze)
 [ "$code" = "202" ] || { echo "FAIL: expected 202 after resume, got $code"; exit 1; }
 
+# A score sent with `at` (the score comment's time, which sync sends) is timed
+# by it and judged AT it: the launch, the freeze and the reset epoch as they
+# stood then, read from the settings hash and the pause log over srh (ADR 67).
+# The checks above send no `at`, the older sync's arrival-time path.
+score_at() { # $1 = author, $2 = at
+  curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$FREEZE_PORT/score" \
+    -H "authorization: Bearer test-token" -H 'content-type: application/json' \
+    -d "{\"author\":\"$1\",\"target\":\"juice-shop\",\"solved\":[\"reflected-xss-search\"],\"at\":\"$2\"}"
+}
+expect_code() { # $1 = expected, $2 = actual, $3 = what
+  [ "$2" = "$1" ] || { echo "FAIL: $3: expected $1, got $2"; exit 1; }
+}
+redis_freeze() { docker exec "$FREEZE_REDIS_CTR" redis-cli "$@" >/dev/null; }
+
+echo "--- comment time: a score posted before the launch is refused for good (422)"
+expect_code 422 "$(score_at before-launch 1999-12-31T23:59:59Z)" "a score posted before scoringStartsAt"
+
+echo "--- comment time: recorded at the comment's time, not at arrival"
+expect_code 202 "$(score_at early-bird 2001-02-03T04:05:06Z)" "a score posted during play"
+curl -sf "http://127.0.0.1:$FREEZE_PORT/leaderboard" | grep -q '"author":"early-bird","points":[0-9]*,"lastSolveAt":"2001-02-03T04:05:06.000Z"' \
+  || { echo "FAIL: early-bird's solve was not timed by its comment"; exit 1; }
+
+echo "--- comment time: frozen since T, a score from before T scores and one from T on is refused"
+redis_freeze HSET ctf:admin:settings paused 1 pausedSince 2020-01-01T00:00:00.000Z
+expect_code 202 "$(score_at before-freeze 2019-12-31T23:59:59Z)" "a score posted before the freeze, read during it"
+expect_code 422 "$(score_at in-freeze 2020-01-01T00:00:00Z)" "a score posted at the freeze's start"
+
+echo "--- comment time: once lifted, the logged interval still refuses, and after it scores"
+redis_freeze HDEL ctf:admin:settings paused pausedSince
+redis_freeze LPUSH ctf:admin:pauses '{"from":"2020-01-01T00:00:00.000Z","to":"2020-01-02T00:00:00.000Z"}'
+expect_code 422 "$(score_at in-logged-freeze 2020-01-01T12:00:00Z)" "a score posted inside a logged freeze"
+expect_code 202 "$(score_at after-freeze 2020-01-02T00:00:00Z)" "a score posted as the freeze lifted"
+
+echo "--- comment time: a freeze with no recorded start answers 503 (retry), not a final refusal"
+redis_freeze HSET ctf:admin:settings paused 1
+expect_code 503 "$(score_at unknown-start 2021-01-01T00:00:00Z)" "a score under a freeze with no pausedSince"
+redis_freeze HDEL ctf:admin:settings paused
+
+echo "--- comment time: a score older than the master-reset epoch is refused (422)"
+redis_freeze HSET ctf:admin:settings resetAt 1640995200000
+expect_code 422 "$(score_at pre-reset 2021-06-01T00:00:00Z)" "a score posted before the reset epoch"
+expect_code 202 "$(score_at post-reset 2022-06-01T00:00:00Z)" "a score posted after the reset epoch"
+
 echo "ACCEPTANCE PASS"

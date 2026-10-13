@@ -17,21 +17,82 @@ vi.mock("server-only", () => ({}));
 
 describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   let AUDIT_CAP: number;
+  let PAUSE_LOG_CAP: number;
   let getAdminSettings: (typeof import("@/lib/admin-store"))["getAdminSettings"];
   let updateAdminSettings: (typeof import("@/lib/admin-store"))["updateAdminSettings"];
   let upstashPipeline: (typeof import("@/lib/upstash"))["upstashPipeline"];
 
   beforeAll(async () => {
-    ({ AUDIT_CAP, getAdminSettings, updateAdminSettings } = await import("@/lib/admin-store"));
+    ({ AUDIT_CAP, PAUSE_LOG_CAP, getAdminSettings, updateAdminSettings } = await import("@/lib/admin-store"));
     ({ upstashPipeline } = await import("@/lib/upstash"));
   });
 
   beforeEach(async () => {
-    await upstashPipeline([["DEL", "ctf:admin:settings"], ["DEL", "ctf:admin:audit"]]);
+    await upstashPipeline([["DEL", "ctf:admin:settings"], ["DEL", "ctf:admin:audit"], ["DEL", "ctf:admin:pauses"]]);
   });
 
   afterAll(async () => {
-    await upstashPipeline([["DEL", "ctf:admin:settings"], ["DEL", "ctf:admin:audit"]]);
+    await upstashPipeline([["DEL", "ctf:admin:settings"], ["DEL", "ctf:admin:audit"], ["DEL", "ctf:admin:pauses"]]);
+  });
+
+  // The pause log: a Secure Development score is judged at its comment's
+  // time, so the box records WHEN scoring was frozen, not only whether it is.
+  // Written by the same script as the flag, so the two can never disagree.
+  const settingsField = async (field: string) =>
+    (await upstashPipeline([["HGET", "ctf:admin:settings", field]]))[0].result as string | null;
+  const pauseLog = async () =>
+    ((await upstashPipeline([["LRANGE", "ctf:admin:pauses", 0, -1]]))[0].result as string[]).map((e) => JSON.parse(e));
+
+  it("pausing records when the freeze began, and pausing again keeps that start", async () => {
+    const first = await updateAdminSettings({ paused: true }, "alice");
+    expect(await settingsField("pausedSince")).toBe(first.updatedAt);
+    await new Promise((r) => setTimeout(r, 5));
+    const again = await updateAdminSettings({ paused: true }, "bob");
+    expect(again.updatedAt).not.toBe(first.updatedAt);
+    expect(await settingsField("pausedSince")).toBe(first.updatedAt);
+    expect(await pauseLog()).toEqual([]);
+  });
+
+  it("unpausing closes the interval into the log and clears the open start", async () => {
+    const paused = await updateAdminSettings({ paused: true }, "alice");
+    await updateAdminSettings({ hintCost: 5 }, "alice"); // an unrelated save leaves the pause open
+    expect(await settingsField("pausedSince")).toBe(paused.updatedAt);
+    const resumed = await updateAdminSettings({ paused: false }, "alice");
+    expect(await settingsField("pausedSince")).toBeNull();
+    expect(await pauseLog()).toEqual([{ from: paused.updatedAt, to: resumed.updatedAt }]);
+  });
+
+  it("logs each freeze once, newest first; unpausing an unpaused event logs nothing", async () => {
+    await updateAdminSettings({ paused: false }, "alice");
+    const p1 = await updateAdminSettings({ paused: true }, "alice");
+    const r1 = await updateAdminSettings({ paused: false }, "alice");
+    await updateAdminSettings({ paused: false }, "alice");
+    const p2 = await updateAdminSettings({ paused: true }, "alice");
+    const r2 = await updateAdminSettings({ paused: false }, "alice");
+    expect(await pauseLog()).toEqual([
+      { from: p2.updatedAt, to: r2.updatedAt },
+      { from: p1.updatedAt, to: r1.updatedAt },
+    ]);
+  });
+
+  it("a freeze with no recorded start lifts without logging an interval it cannot bound", async () => {
+    await upstashPipeline([["HSET", "ctf:admin:settings", "paused", "1"]]);
+    await updateAdminSettings({ paused: true }, "alice"); // already frozen: the unknown start stays unknown
+    expect(await settingsField("pausedSince")).toBeNull();
+    await updateAdminSettings({ paused: false }, "alice");
+    expect(await settingsField("paused")).toBeNull();
+    expect(await pauseLog()).toEqual([]);
+  });
+
+  it("caps the pause log at PAUSE_LOG_CAP, dropping the oldest", async () => {
+    let last: { updatedAt: string | null } | null = null;
+    for (let i = 0; i < PAUSE_LOG_CAP + 2; i++) {
+      await updateAdminSettings({ paused: true }, "bot");
+      last = await updateAdminSettings({ paused: false }, "bot");
+    }
+    const [len] = await upstashPipeline([["LLEN", "ctf:admin:pauses"]]);
+    expect(Number(len.result)).toBe(PAUSE_LOG_CAP);
+    expect((await pauseLog())[0].to).toBe(last!.updatedAt);
   });
 
   it("writes settings and an audit line atomically", async () => {
@@ -155,7 +216,7 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     const settingsKey = liveKey("admin", freshId("settings"));
     const auditKey = liveKey("admin", freshId("audit"));
     await upstashPipeline([["HSET", settingsKey, "scoringStartsAt", "2000-01-01T00:00:00.000Z", "eventName", "Kept"]]);
-    await upstashEval(RESET_SCRIPT, [settingsKey, auditKey], ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9]);
+    await upstashEval(RESET_SCRIPT, [settingsKey, auditKey, liveKey("admin", freshId("pauses"))], ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9]);
     const [start, paused, name] = await upstashPipeline([
       ["HGET", settingsKey, "scoringStartsAt"],
       ["HGET", settingsKey, "paused"],
@@ -165,5 +226,64 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     expect(paused.result).toBe("1");
     expect(name.result).toBe("Kept"); // settings other than the launch survive
     await upstashPipeline([["DEL", settingsKey, auditKey]]);
+  });
+
+  it("RESET_SCRIPT clears the pause log and opens the reset's freeze at the reset instant", async () => {
+    const { RESET_SCRIPT } = await import("@/lib/admin-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const settingsKey = liveKey("admin", freshId("settings"));
+    const auditKey = liveKey("admin", freshId("audit"));
+    const pausesKey = liveKey("admin", freshId("pauses"));
+    await upstashPipeline([
+      ["HSET", settingsKey, "paused", "1", "pausedSince", "2026-09-01T00:00:00.000Z"],
+      ["LPUSH", pausesKey, '{"from":"2026-08-01T00:00:00.000Z","to":"2026-08-01T01:00:00.000Z"}'],
+    ]);
+    await upstashEval(RESET_SCRIPT, [settingsKey, auditKey, pausesKey], ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9]);
+    const [since, paused, log] = await upstashPipeline([
+      ["HGET", settingsKey, "pausedSince"],
+      ["HGET", settingsKey, "paused"],
+      ["EXISTS", pausesKey],
+    ]);
+    expect(paused.result).toBe("1");
+    expect(since.result).toBe("2026-10-01T00:00:00.000Z");
+    expect(Number(log.result)).toBe(0);
+    await upstashPipeline([["DEL", settingsKey, auditKey, pausesKey]]);
+  });
+
+  // Reseeding must never overwrite a higher existing solvecount with a lower
+  // seeded floor — run for real, because that is the whole point of the
+  // raise-only EVAL: a script that set instead of raised would pass any
+  // source-shape assertion while still dropping a real contestant's solve.
+  it("RAISE_SOLVECOUNT_SCRIPT never overwrites a higher existing solve count with a lower floor", async () => {
+    const { RAISE_SOLVECOUNT_SCRIPT } = await import("@/lib/demo-seed");
+    const { upstashEval } = await import("@/lib/upstash");
+    const solvecountKey = liveKey("classic", freshId("solvecount"));
+
+    // Pre-populate chal-high with 5 solves, chal-low with 1 solve
+    await upstashPipeline([
+      ["HSET", solvecountKey, "chal-high", "5", "chal-low", "1"],
+    ]);
+
+    // Reseeding tries to set floor: chal-high floor 2, chal-low floor 3, chal-new floor 4
+    await upstashEval(
+      RAISE_SOLVECOUNT_SCRIPT,
+      [solvecountKey],
+      ["chal-high", 2, "chal-low", 3, "chal-new", 4],
+    );
+
+    const [high, low, fresh] = await upstashPipeline([
+      ["HGET", solvecountKey, "chal-high"],
+      ["HGET", solvecountKey, "chal-low"],
+      ["HGET", solvecountKey, "chal-new"],
+    ]);
+
+    // chal-high was 5, floor was 2: PRESERVED at 5 (not overwritten)
+    expect(Number(high.result)).toBe(5);
+    // chal-low was 1, floor was 3: RAISED to 3
+    expect(Number(low.result)).toBe(3);
+    // chal-new had 0, floor was 4: RAISED to 4
+    expect(Number(fresh.result)).toBe(4);
+
+    await upstashPipeline([["DEL", solvecountKey]]);
   });
 });

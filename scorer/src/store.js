@@ -8,6 +8,9 @@ const solveField = (author, id) => `${author}:${id}`;
 // Same key/field the app (admin-store.ts) writes and the sync poller
 // (sync/src/redis.js) reads — "1" means paused, anything else does not.
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
+// The manual freeze's closed intervals, newest first, one JSON {from, to} per
+// entry. apps/web admin-store.ts writes it atomically with the `paused` flag.
+const ADMIN_PAUSES_KEY = "ctf:admin:pauses";
 
 // Generic scheduled window: true when `now` is before start / after end.
 // Absent or unparseable bounds are ignored (no bound) — the registration
@@ -34,9 +37,38 @@ export function outsideScoringWindow(nowMs, startsAt, endsAt) {
   return outsideWindow(nowMs, startsAt, endsAt);
 }
 
+// Whether the manual freeze covered the instant `tMs`: inside a closed
+// interval [from, to) from the pause log, or at or after the start of the
+// pause still open. An open pause whose start is absent or unparseable covers
+// every instant (when it began is unknown); a log entry that does not parse
+// covers nothing. Mirrors apps/web schedule-window.ts and sync/src/redis.js
+// — change all three together; test/fixtures/pause-interval-corpus.json pins
+// them.
+export function pausedAt(tMs, paused, pausedSince, pauses) {
+  if (paused) {
+    const since = pausedSince ? Date.parse(pausedSince) : NaN;
+    if (!Number.isFinite(since) || tMs >= since) return true;
+  }
+  for (const raw of pauses ?? []) {
+    let entry;
+    try {
+      entry = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const from = typeof entry?.from === "string" ? Date.parse(entry.from) : NaN;
+    const to = typeof entry?.to === "string" ? Date.parse(entry.to) : NaN;
+    if (Number.isFinite(from) && Number.isFinite(to) && tMs >= from && tMs < to) return true;
+  }
+  return false;
+}
+
 export function createMemoryStore({ teams = [] } = {}) {
   const hashes = new Map(); // key -> Map(field -> ISO timestamp)
   let paused = false; // test seam mirroring ctf:admin:settings.paused
+  // No event settings to judge a score's time against until a test sets
+  // some — the same answer the Redis store gives when it cannot read them.
+  let policy = null;
   return {
     async recordSolves(target, author, ids, at) {
       let hash = hashes.get(solvesKey(target));
@@ -54,6 +86,12 @@ export function createMemoryStore({ teams = [] } = {}) {
     },
     __setPaused(v) {
       paused = v;
+    },
+    async readScoringPolicy() {
+      return policy;
+    },
+    __setPolicy(v) {
+      policy = v;
     },
     // Test seam mirroring the redis store's getTeams(): tests inject teams
     // via the `teams` option (see createMemoryStore({ teams: [...] })) since
@@ -83,8 +121,8 @@ export function redisErrorText(error) {
 
 /** The Redis-backed solve store: POST /pipeline with a JSON array of command
  *  arrays, bearer token; results come back positionally as { result } or
- *  { error }. Solve persistence uses HSETNX + HGETALL; the pause read uses
- *  HMGET and the team read SCAN, HGET and SMEMBERS — all within the subset
+ *  { error }. Solve persistence uses HSETNX + HGETALL; the pause reads use
+ *  HMGET and LRANGE, and the team read SCAN, HGET and SMEMBERS — all within the subset
  *  SRH's env mode supports. `fetchImpl`, `log` and `timeoutMs` are seams. */
 export function createRedisStore({
   url = process.env.UPSTASH_REDIS_REST_URL,
@@ -149,6 +187,31 @@ export function createRedisStore({
         // and an operator reading this stream must see the outage too.
         log(`redis isPaused: ${err.message}`);
         return false;
+      }
+    },
+    // Everything a score's time is judged against: the freeze flag and the
+    // start of the pause still open, the scoring window, the master-reset
+    // epoch, and the pause log. Null when it cannot be read, and the caller
+    // records the score — the same fail-OPEN direction as isPaused, for the
+    // same reason: a Redis blip must not drop a live submission.
+    async readScoringPolicy() {
+      try {
+        const [row, pauses] = await pipeline([
+          ["HMGET", ADMIN_SETTINGS_KEY, "paused", "pausedSince", "scoringStartsAt", "scoringEndsAt", "resetAt"],
+          ["LRANGE", ADMIN_PAUSES_KEY, 0, -1],
+        ]);
+        const [p, pausedSince, startsAt, endsAt, resetAt] = Array.isArray(row) ? row : [];
+        return {
+          paused: p === "1",
+          pausedSince: pausedSince ?? null,
+          startsAt: startsAt ?? null,
+          endsAt: endsAt ?? null,
+          resetAt: resetAt ?? null,
+          pauses: Array.isArray(pauses) ? pauses : [],
+        };
+      } catch (err) {
+        log(`redis readScoringPolicy: ${err.message}`);
+        return null;
       }
     },
     // Reads the app's team data (apps/web writes ctf:team:<slug> hash +

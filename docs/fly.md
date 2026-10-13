@@ -87,9 +87,14 @@ which is what a `.env.fly` written before configuration v2 looks like for
 `EVENT_URL`, `FLY_REGION`, `SRH_TOKEN` and `REDIS_PASSWORD` are left alone —
 they belong to this deployment, not the compose stack `.env` describes.
 
-Each value is read from `.env` in every form `docker compose` accepts —
-`KEY=value`, `KEY = value`, `KEY: value`, a quoted value, a leading
-`export ` — and written back as a canonical `KEY=value` line, replacing the
+Each value is read from `.env` by the reader every script shares, in the
+forms `docker compose` accepts: `KEY=value`, `KEY = value`, `KEY: value`, a
+quoted value, a leading `export `. A value compose would read differently
+(interpolation, a backslash escape in double quotes, an unterminated quote) or
+an unreadable file stops `init` and the deploy alike, naming the key and
+file. See
+[how the scripts read `.env`](hosting.md#the-four-bootstrap-keys). It is
+written back as a canonical `KEY=value` line, replacing the
 existing assignment whatever form *it* took rather than appending a second one.
 Which blank assignments it obeys, why a key absent from `.env` is left alone,
 and what it does about a key assigned twice, are below.
@@ -334,8 +339,13 @@ an older box's cursor over; it is then renamed `state.json.migrated`.
 
 **Credentials travel in the rendered compose file**, which is therefore a
 secret file: mode 600, gitignored, and deleted as soon as the deploy finishes.
-The dry run redacts every value it prints — it shows which variables get set,
-not what they are — and keeps the rendered file so you can review it.
+The dry run redacts every secret value it prints — it shows which variables get
+set, not what they are — and keeps the rendered file so you can review it. The
+rules are shared with the AWS deploy (`scripts/lib/redact.sh`): any variable
+whose name looks like a credential (`SECRET`, `TOKEN`, `PASSWORD`,
+`PRIVATE_KEY`, `CONNECTION_STRING`, `API_KEY`, a `_KEY` or `AUTH` suffix, and
+similar) has its value hidden, and any URL carrying credentials is printed as
+`scheme://***@host`.
 
 This is not the arrangement the module was built with. Fly's documentation says
 secrets set with `fly secrets` are "global and available to every container";

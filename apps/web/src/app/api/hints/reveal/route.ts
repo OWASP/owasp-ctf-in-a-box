@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { launchApiAccess } from "@/lib/launch";
 import { revealHint } from "@/lib/hint-store";
+import { adminSeesHidden } from "@/lib/classic-visibility";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 
 /** Buys (or re-views) one hint. Charging is atomic and idempotent in Redis —
@@ -51,12 +52,12 @@ export async function POST(request: Request) {
   if (hasQuote && !(typeof quotedCost === "number" && Number.isInteger(quotedCost) && quotedCost >= 0)) {
     return NextResponse.json({ error: "Invalid quoted cost" }, { status: 400 });
   }
-  const result = await revealHint(
-    login,
-    typeof body.app === "string" ? body.app : "",
-    typeof body.id === "string" ? body.id : "",
-    typeof quotedCost === "number" ? { dryRun: preview, quotedCost } : { dryRun: preview },
-  );
+  const app = typeof body.app === "string" ? body.app : "";
+  const id = typeof body.id === "string" ? body.id : "";
+  // An admin on a Jeopardy challenge contestants cannot see reads its hint
+  // as a dry run, like a preview: shown, never charged.
+  const dryRun = preview || (app === "classic" && id !== "" && (await adminSeesHidden(login, id)));
+  const result = await revealHint(login, app, id, typeof quotedCost === "number" ? { dryRun, quotedCost } : { dryRun });
   if (!result.ok && "repriced" in result) {
     // 409: the confirmed price is stale. Only the new price goes back, so
     // the control can ask again; nothing was charged.

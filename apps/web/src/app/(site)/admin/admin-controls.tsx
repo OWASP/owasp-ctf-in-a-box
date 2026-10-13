@@ -370,6 +370,7 @@ export default function AdminControls({
                     ) : tab.id === "classic" ? (
                       <AdminClassicControls
                         pending={pending}
+                        timeZone={eventZone}
                         classicCooldownSecInput={classicCooldownSecInput}
                         setClassicCooldownSecInput={setClassicCooldownSecInput}
                         commitNumber={commitNumber}

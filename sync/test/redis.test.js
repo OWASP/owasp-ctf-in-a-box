@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { makeRedis, outsideScoringWindow, outsideWindow } from "../src/redis.js";
+import { makeRedis, outsideScoringWindow, outsideWindow, pausedAt } from "../src/redis.js";
 import { TARGETS } from "../src/config.js";
 
 const PAST = "2000-01-01T00:00:00.000Z";
@@ -50,6 +50,20 @@ test("outsideScoringWindow: shared scoring-window corpus (#464)", async (t) => {
   for (const { description, nowMs, startsAt, endsAt, expected } of cases) {
     await t.test(description, () => {
       assert.equal(outsideScoringWindow(nowMs, startsAt, endsAt), expected);
+    });
+  }
+});
+
+// Whether the manual freeze covered an instant. Same rows run against
+// apps/web's schedule-window.ts and scorer/src/store.js, which judges a
+// score's comment time with it.
+test("pausedAt: shared pause-interval corpus", async (t) => {
+  const url = new URL("../../test/fixtures/pause-interval-corpus.json", import.meta.url);
+  const { cases } = JSON.parse(await readFile(url, "utf8"));
+  assert.ok(cases.length > 0, "the corpus must not be empty");
+  for (const { description, tMs, paused, pausedSince, pauses, expected } of cases) {
+    await t.test(description, () => {
+      assert.equal(pausedAt(tMs, paused, pausedSince, pauses), expected);
     });
   }
 });

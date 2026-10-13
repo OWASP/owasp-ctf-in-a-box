@@ -227,3 +227,31 @@ export function generateChallengeId(title: string, suffix: string = randomIdSuff
   if (CLASSIC_ID_RE.test(candidate)) return candidate;
   return `c-${randomIdSuffix()}`;
 }
+
+/** Lua: `classicHidden(raw)`, whether a stored challenge record (the JSON in
+ *  `ctf:classic:challenges`) is hidden from contestants right now. The
+ *  grading and hint scripts call it on the record they read, so the decision
+ *  is made where the write happens, by Redis's own clock (TIME): a request
+ *  racing a release instant is decided once. `isChallengeVisible`
+ *  (classic-release.ts) is the same rule for the pages, on the server's
+ *  clock. A nil record is not "hidden": the caller's own existence check
+ *  answers it.
+ *
+ *  Hidden iff `"enabled":false` and either no `releaseAtMs` or TIME is still
+ *  before it; at the instant itself it is released, the predicate's `>=`.
+ *  `releaseAtMs` is the epoch-ms mirror of `releaseAt` the store writes next
+ *  to it, so no ISO date is parsed in Lua.
+ *
+ *  A plain find, not a JSON parse: every quote inside a stored string value
+ *  is escaped (`\"`), so the unescaped `"enabled":false` can only be the
+ *  field itself, the same reasoning as the `"caseSensitive":true` match in
+ *  SUBMIT_SCRIPT. */
+export const CLASSIC_HIDDEN_LUA = `local function classicHidden(raw)
+  if not raw then return false end
+  if not string.find(raw, '"enabled":false', 1, true) then return false end
+  local releaseMs = string.match(raw, '"releaseAtMs":(%d+)[,}]')
+  if not releaseMs then return true end
+  local t = redis.call('TIME')
+  local nowMs = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+  return nowMs < tonumber(releaseMs)
+end`;

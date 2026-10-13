@@ -12,8 +12,9 @@ import type { AttachmentFile } from "@/lib/attachment-files";
 import type { Story } from "@/lib/story-lock";
 import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
-import { bundleVersionFor, type ClassicBundle } from "@/lib/classic-io";
+import { bundleVersionFor, carriesVisibility, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
+import { challengeStatus, isReleaseInstant, releaseLabel, type ChallengeStatus } from "@/lib/classic-release";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import { describeAdminError } from "@/components/admin/fetch";
 import { DELETE_CONFIRM_PHRASE_MAX, confirmPhrase } from "@/components/admin/confirm-phrase";
@@ -117,6 +118,12 @@ export type ChallengeDraft = {
   caseSensitive: boolean;
   /** Optional paid-hint text (#190). Empty = no hint (saving clears it). */
   hint: string;
+  /** "Visible to contestants". Off keeps the challenge out of every
+   *  contestant payload until it is switched back on, or until `releaseAt`. */
+  enabled: boolean;
+  /** "Release at": the UTC ISO instant a hidden challenge goes live on its
+   *  own, or "" for none. The form enters it on the event's clock. */
+  releaseAt: string;
 };
 
 /** The form's whole state: the editable draft plus the identity/position the
@@ -142,10 +149,12 @@ export type ChallengePayload = {
   flag: string;
   caseSensitive?: boolean;
   hint?: string;
+  enabled?: boolean;
+  releaseAt?: string;
 };
 
 export function emptyDraft(defaultCategory: string = ""): ChallengeDraft {
-  return { title: "", category: defaultCategory, description: "", points: "10", flag: "", caseSensitive: false, hint: "" };
+  return { title: "", category: defaultCategory, description: "", points: "10", flag: "", caseSensitive: false, hint: "", enabled: true, releaseAt: "" };
 }
 
 /** A brand-new challenge, positioned at the end of the list. No id: one is
@@ -159,7 +168,10 @@ export function newChallengeEditor(nextOrder: number, defaultCategory: string = 
  *  `Challenge`. Starting a typo fix with a blank flag box forces the
  *  organizer to retype the whole thing from memory, and a mistake there
  *  silently redefines what counts as solved for every contestant. */
-export function draftFromChallenge({ challenge: c, flag, hint }: AdminChallenge): ChallengeDraft {
+export function draftFromChallenge({ challenge: c, flag, hint }: AdminChallenge, nowMs: number = Date.now()): ChallengeDraft {
+  // Seeded from the state the challenge is in NOW: a release time that has
+  // passed opens as plain live, so a re-save does not carry a stale instant.
+  const status = challengeStatus(c, nowMs);
   return {
     title: c.title,
     category: c.category,
@@ -171,12 +183,16 @@ export function draftFromChallenge({ challenge: c, flag, hint }: AdminChallenge)
     // needs a real boolean — an `undefined` here makes React switch the input
     // from controlled to uncontrolled the first time it is ticked.
     caseSensitive: c.caseSensitive === true,
+    enabled: status.kind === "live",
+    releaseAt: status.kind === "scheduled" ? status.releaseAt : "",
   };
 }
 
 /** Opens an existing challenge for editing: its draft, plus the id and order
  *  the form cannot touch. */
 export function editorFromChallenge(row: AdminChallenge): ChallengeEditor {
+  // Called from a click, never during render, so reading the clock here is
+  // the moment the organizer opened the form.
   return { mode: "edit", id: row.challenge.id, order: row.challenge.order, draft: draftFromChallenge(row) };
 }
 
@@ -196,6 +212,7 @@ export function isDraftValid(d: ChallengeDraft, categories: readonly string[]): 
   if (d.points.trim() === "" || !Number.isInteger(points) || points < 0 || points > CLASSIC_POINTS_MAX) return false;
 
   if (d.flag.trim().length === 0) return false;
+  if (d.releaseAt && !isReleaseInstant(d.releaseAt)) return false;
 
   return true;
 }
@@ -232,6 +249,10 @@ export function payloadFromEditor(
     // through, so an unchanged challenge re-saved from this form produces a
     // byte-identical record.
     ...(d.caseSensitive ? { caseSensitive: true as const } : {}),
+    // Sent only when off, for the same one-representation reason. A release
+    // time is a hidden challenge's, so it always travels with enabled:false.
+    ...(d.enabled && !d.releaseAt ? {} : { enabled: false }),
+    ...(d.releaseAt ? { releaseAt: d.releaseAt } : {}),
   };
 }
 
@@ -258,6 +279,10 @@ export function payloadFromRow({ challenge: c, flag, hint }: AdminChallenge): Ch
     flag,
     hint: hint ?? "",
     ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
+    // A reorder re-saves the row, and the route stores an absent `enabled`
+    // as live: dropping it would publish a hidden challenge on a drag.
+    ...(c.enabled === false ? { enabled: false } : {}),
+    ...(c.releaseAt ? { releaseAt: c.releaseAt } : {}),
   };
 }
 
@@ -333,27 +358,32 @@ export function exportBundleFrom(
   );
   const attachmentFiles = files?.filter((f) => named.has(`${f.item}\n${f.sha256}`));
   const withFiles = attachmentFiles?.length ? attachmentFiles : undefined;
+  const challenges = rows.map(({ challenge: c, flag, hint }) => ({
+    id: c.id,
+    title: c.title,
+    category: c.category,
+    description: c.description,
+    points: c.points,
+    order: c.order,
+    flag,
+    // Present-only-when-set, mirroring the server's exportBundle exactly —
+    // this client-side path silently DROPPED both fields (CodeRabbit on
+    // #210 caught hint; caseSensitive had the same latent hole), and a
+    // re-import of such a bundle downgrades grading and deletes hints.
+    ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
+    ...(hint ? { hint } : {}),
+    // Visibility (v4), the server export's rule: a backup restores a hidden
+    // challenge hidden.
+    ...(c.enabled === false ? { enabled: false } : {}),
+    ...(c.releaseAt ? { releaseAt: c.releaseAt } : {}),
+    // #186: metadata only, and only when present — the server export's rule.
+    ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
+  }));
   return {
-    version: bundleVersionFor(withFiles !== undefined),
+    version: bundleVersionFor(withFiles !== undefined, challenges.some(carriesVisibility)),
     categories: [...categories],
     stories: stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) })),
-    challenges: rows.map(({ challenge: c, flag, hint }) => ({
-      id: c.id,
-      title: c.title,
-      category: c.category,
-      description: c.description,
-      points: c.points,
-      order: c.order,
-      flag,
-      // Present-only-when-set, mirroring the server's exportBundle exactly —
-      // this client-side path silently DROPPED both fields (CodeRabbit on
-      // #210 caught hint; caseSensitive had the same latent hole), and a
-      // re-import of such a bundle downgrades grading and deletes hints.
-      ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
-      ...(hint ? { hint } : {}),
-      // #186: metadata only, and only when present — the server export's rule.
-      ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
-    })),
+    challenges,
     ...(withFiles ? { attachmentFiles: withFiles } : {}),
   };
 }
@@ -389,4 +419,12 @@ export function solvesLabel(solves: ChallengeSolves | undefined): string | null 
     players === null ? null : `${players} player${players === 1 ? "" : "s"}`,
   ].filter((p): p is string => p !== null);
   return parts.length ? parts.join(" · ") : null;
+}
+
+/** The status chip a row shows: Live, Disabled, or "Releases <time>" on the
+ *  event's clock. */
+export function statusChip(c: Challenge, nowMs: number, zone: string = "UTC"): { kind: ChallengeStatus["kind"]; label: string } {
+  const status = challengeStatus(c, nowMs);
+  if (status.kind === "scheduled") return { kind: "scheduled", label: `Releases ${releaseLabel(status.releaseAt, zone)}` };
+  return { kind: status.kind, label: status.kind === "live" ? "Live" : "Disabled" };
 }

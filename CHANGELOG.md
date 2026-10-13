@@ -10,6 +10,81 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Added: hide a Jeopardy challenge, or schedule its release (#189).** Each
+  challenge has a "Visible to contestants" switch and an optional "Release
+  at" time in `/admin`, entered on the event's time zone and stored as UTC.
+  The list shows a Live, Disabled or "Releases Oct 8, 10:00 GMT-3" chip per
+  row. A scheduled challenge goes live at that instant on its own, with
+  nothing running on the box: every read decides it, and grading and hint
+  purchases decide it by Redis's clock. A hidden challenge does not exist
+  for contestants: it is absent from the board, its page and the expanded
+  leaderboard rows, its flag is refused like an unknown challenge's with no
+  attempt spent, its hint and files are refused, and it is out of every
+  denominator. A story closes up around a hidden step and reopens in order
+  when it is released. Points already banked on it stay, and the profile
+  names them in one "+N pts from challenges no longer on the board" line.
+  An admin can still open a hidden challenge's page, marked "Hidden from
+  contestants", where a flag or hint is a dry run that records nothing.
+  Bundles carrying either field are version 4; an older bundle carrying one
+  is refused.
+- **Fixed: setup and deploy script hygiene (#496).** `ctf-setup.sh`,
+  `scripts/dev-stack` and both Fly scripts now read `.env` through one shared
+  reader, `scripts/lib/dotenv.sh`. It reads a subset of docker compose's
+  syntax exactly as compose does, and refuses the rest, stopping with the
+  key and file named: interpolation (`$NAME`, `${...}`, `$$`), backslash
+  escapes in double quotes (and `\'` in single quotes), an unterminated
+  quote, and an env file that exists but cannot be read. Before, those read
+  as empty or as literal text, which could switch Secure Development off or
+  on by accident. The last assignment of a key wins even when it is empty.
+  `SCORE_IMAGE=""` is now empty, so Secure Development is off, in every
+  script. Before, `ctf-setup.sh` and `dev-stack` read it as the two-character
+  string `""`, turned Secure Development on, and kept the quotes on any
+  quoted value: `GITHUB_ORG="myorg"` forked into an org named `"myorg"`.
+  `export KEY=`, `KEY = value` and `KEY: value` lines now count in those two
+  as well. A tab before `#` no longer starts a comment, which matches
+  compose. The `drop-old` provisioning check asks GitHub for `main` and
+  `master` by name. It used to read the 30-branch first page of the branch
+  list, so a fork with more branches could pass the check while `main` was
+  still there. Only a 404 for both now counts as done, and any other error
+  fails closed. The AWS deploy's `--dry-run` now redacts with the Fly
+  deploy's rules from one shared `scripts/lib/redact.sh`, so it also hides
+  `PRIVATE_KEY`, `CONNECTION_STRING`, `*_KEY` and `*AUTH` values. Both now
+  mask credentials in any URL (`scheme://***@host`).
+- **Fixed: a Secure Development solve was timed, and judged, by when the box
+  read it (#596).** It is now timed by when its score comment was posted on
+  the PR, so the Actions run and the poll no longer cost a PR team minutes in
+  a points tie, and a backlog read after a sync restart keeps each solve's
+  own time. The scoring window and the freeze are judged at that time too: a
+  PR scored while scoring was frozen no longer counts once the freeze lifts,
+  and one scored before the freeze or before **Scoring closes** counts even
+  if it is read later. To know when each freeze ran, the box now records it
+  (`pausedSince` and a `ctf:admin:pauses` interval log, written with the
+  switch; a master reset clears it). The poller no longer holds while scoring
+  is frozen or closed. A refusal is logged as `refused (<reason>)` and is not
+  counted as Dropped. A freeze set by hand with no recorded start holds
+  Secure Development scores until it lifts, as before. The comment is edited
+  on every run, so a solve first read from a later re-run takes the re-run's
+  time. Either service can be upgraded first; see ADR 67.
+- **Added: first blood on the Jeopardy board (#188).** Each visible tile and
+  open story step names the contestant who solved it first. It is display
+  only and changes no score. It is read from the current team members' solve
+  rows on every load, with nothing stored: the earliest solve wins, and an
+  exact tie goes to the login that sorts first, ignoring case. A progress
+  reset, a deleted contestant or a removal from a team passes their first
+  bloods to the next solver. A locked story step shows none.
+- **Fixed: CI gates that could pass without proving anything (#498).** The
+  vacuous-pass sweep (`scorer/tools/vacuous-sweep.mjs`) now exits 1 when a
+  target's run aborted, got stuck behind a shared gate, or was not measured
+  at all; before, only a vacuous pass failed it, so an unmeasured target read
+  as clean. CI's path filter moved into `scripts/ci-changes.sh` with a bats
+  suite: it no longer skips an area when the changed-file list passes 64 KiB
+  (a SIGPIPE under `pipefail`), and it now runs the app suite for the rubric
+  catalogues and `caddy/`, where the app job also runs `caddy validate`. The
+  docker- and jq-dependent bats tests fail in CI instead of skipping, the
+  window corpora carry a row-count floor, `secureDevTargets` has a shared
+  corpus run by the app and the poller, every workflow action is pinned to a
+  commit, and the acceptance scripts' Redis images are digest-pinned.
+
 - **Fixed: the Insights CSV garbled accented titles in Excel (#624).**
   "¿Qué dice señor?" opened as "Â¿QuÃ© dice seÃ±or?": the file had no
   byte-order mark, so Excel read it in the system code page. The export now

@@ -13,6 +13,7 @@
 
 import type { ReactNode } from "react";
 import { MARKDOWN_MAX } from "@/lib/markdown";
+import { instantToWall, wallToInstant, zoneLabel } from "@/lib/event-time";
 import Markdown from "@/components/markdown";
 
 /** The text control style every admin form field uses. */
@@ -168,6 +169,73 @@ export function CaseSensitiveField({
       <span className="text-sm text-muted">
         <span className="text-white">Case-sensitive flag</span>
         <span className="block">{help}</span>
+      </span>
+    </label>
+  );
+}
+
+/** "Visible to contestants": off keeps the challenge out of every contestant
+ *  payload (board, page, leaderboard, grading) until it is switched back on.
+ *  Solves already banked on it stay. */
+export function VisibleField({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-2">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-describedby="visible-help"
+        className="mt-0.5 h-4 w-4 flex-none accent-[#2563eb]"
+      />
+      <span className="text-sm text-muted">
+        <span className="text-white">Visible to contestants</span>
+        <span id="visible-help" className="block">
+          Off hides it everywhere a contestant looks: the board, its page, the leaderboard and grading answer as if
+          it did not exist. Points already banked on it stay.
+        </span>
+      </span>
+    </label>
+  );
+}
+
+/** "Release at": the instant a hidden challenge goes live on its own. The
+ *  datetime-local value is a wall time read on the EVENT's clock (`zone`),
+ *  never the organizer's laptop; `value` and `onChange` carry the UTC ISO
+ *  instant it stands for, "" for none. The form only opens on a click, so
+ *  the server never renders a value the browser would disagree with. */
+export function ReleaseAtField({
+  value,
+  zone,
+  disabled,
+  onChange,
+}: ValueField & { zone: string }) {
+  const ms = value ? Date.parse(value) : NaN;
+  const offset = zoneLabel(zone, Number.isFinite(ms) ? ms : Date.parse("2000-01-01T00:00:00Z"));
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-sm text-muted">
+        Release at (optional, {zone === "UTC" ? "UTC" : `${zone}, ${offset}`}). Leave empty to switch it on by hand.
+      </span>
+      <input
+        type="datetime-local"
+        value={instantToWall(value || null, zone)}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value ? (wallToInstant(e.target.value, zone) ?? "") : "")}
+        className={INPUT_CLASS}
+      />
+      <span className="text-xs text-muted">
+        {value
+          ? `Hidden until then, then live on its own with nothing to run. Stored as ${value}.`
+          : "No release time: the switch above decides."}
       </span>
     </label>
   );

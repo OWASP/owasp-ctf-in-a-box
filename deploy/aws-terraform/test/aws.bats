@@ -26,6 +26,7 @@
 setup() {
   ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   SCRIPT="$ROOT/deploy/aws-terraform/deploy.sh"
+  REDACT_LIB="$ROOT/scripts/lib/redact.sh"
   STUBS="$BATS_TEST_TMPDIR/stubs"
   CALLS="$BATS_TEST_TMPDIR/calls.log"
 
@@ -88,8 +89,9 @@ setup() {
 # its ROOT from its own location, so the copy has to sit at the same depth.
 fake_repo() {
   local repo="$BATS_TEST_TMPDIR/${1:-repo}"
-  mkdir -p "$repo/deploy/aws-terraform" "$repo/apps/web"
+  mkdir -p "$repo/deploy/aws-terraform" "$repo/apps/web" "$repo/scripts/lib"
   cp "$SCRIPT" "$repo/deploy/aws-terraform/deploy.sh"
+  cp "$ROOT/scripts/lib/redact.sh" "$repo/scripts/lib/redact.sh"
   printf 'FROM scratch\n' > "$repo/apps/web/Dockerfile"
   git -C "$repo" init -q
   git -C "$repo" config user.email bats@example.invalid
@@ -447,3 +449,53 @@ EOF
   [ -z "$(grep -E '^docker (build|push)' "$CALLS")" ]
 }
 
+
+# ---------------------------------------------------------------------------
+# The dry-run redactor: scripts/lib/redact.sh, shared by both deploy scripts.
+# ---------------------------------------------------------------------------
+
+# Every secret shape the shared redactor must hide, run through redact_args.
+# Each value is a distinctive string the output is then grepped for.
+redact_shapes() {
+  bash -c '. "$1"; redact_args \
+    BETTER_AUTH_SECRET=LEAKsecret01 SCORER_TOKEN=LEAKtoken02 \
+    REDIS_PASSWORD=LEAKpass03 GITHUB_APP_PRIVATE_KEY=LEAKpkey04 \
+    SRH_CONNECTION_STRING=redis://:LEAKconn05@localhost:6379 \
+    BASIC_AUTH=LEAKauth06 OPENAI_API_KEY=LEAKkey07 AWS_SECRET_ACCESS_KEY=LEAKkey08 \
+    db_password=LEAKlower09 \
+    EVENT_URL=https://admin:LEAKurl10@ctf.example.org/path \
+    https://x-access-token:LEAKbare11@github.com/org/repo.git \
+    BETTER_AUTH_URL=https://ctf.example.org GITHUB_APP_ID=4242 \
+    --platform linux/amd64 ghcr.io/org/score@sha256:abc123' _ "$REDACT_LIB"
+}
+
+@test "redactor: every secret shape is hidden" {
+  run redact_shapes
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | grep -oE 'LEAK[a-z]+[0-9]+')" ]
+}
+
+@test "redactor: names stay visible, and URL userinfo is masked to ***" {
+  run redact_shapes
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'GITHUB_APP_PRIVATE_KEY=<redacted>'
+  echo "$output" | grep -qF 'SRH_CONNECTION_STRING=<redacted>'
+  echo "$output" | grep -qF 'BASIC_AUTH=<redacted>'
+  echo "$output" | grep -qF 'db_password=<redacted>'
+  echo "$output" | grep -qF 'EVENT_URL=https://***@ctf.example.org/path'
+  echo "$output" | grep -qF 'https://***@github.com/org/repo.git'
+}
+
+@test "redactor: harmless keys and arguments pass through untouched" {
+  run redact_shapes
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'BETTER_AUTH_URL=https://ctf.example.org'
+  echo "$output" | grep -qF 'GITHUB_APP_ID=4242'
+  echo "$output" | grep -qF -- '--platform linux/amd64 ghcr.io/org/score@sha256:abc123'
+}
+
+@test "redactor: deploy.sh prints through the shared redactor and keeps none of its own" {
+  grep -qF '. "$ROOT/scripts/lib/redact.sh"' "$SCRIPT"
+  grep -qF 'DRY-RUN: $(redact_args "$@")' "$SCRIPT"
+  [ -z "$(grep -nE '^[[:space:]]*redacted\(\)' "$SCRIPT")" ]
+}

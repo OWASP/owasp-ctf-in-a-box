@@ -54,6 +54,16 @@ import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSiz
 export { ADMIN_AUDIT_KEY, AUDIT_CAP };
 
 export const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
+/** The manual freeze's closed intervals, newest first: one JSON
+ *  `{"from","to"}` per entry, ISO-8601 UTC. Written only by UPDATE_SCRIPT
+ *  (on an unpause) and cleared by RESET_SCRIPT; the scorer reads it to judge
+ *  a Secure Development score at its comment's time (ADR 67). */
+export const ADMIN_PAUSES_KEY = "ctf:admin:pauses";
+/** Intervals kept on that list. A score is judged against the log when its
+ *  comment is read, normally within a minute, so only the recent freezes
+ *  matter; a dropped one makes a very old comment read later score as if
+ *  that freeze had not happened. */
+export const PAUSE_LOG_CAP = 200;
 export const SYNC_STATUS_KEY = "ctf:sync:status";
 export const HINT_COST_MAX = 100000;
 /** Caps for the two hint-gating knobs (see hint-store's `hintGate`). */
@@ -417,7 +427,13 @@ export async function getSyncStatus(): Promise<SyncStatus | null> {
 
 // HDEL the fields being cleared, HSET the changed fields + updatedBy/updatedAt,
 // LPUSH one audit line, LTRIM the list — one atomic script so a change can
-// never land without its audit record.
+// never land without its audit record. It also keeps the pause log in step
+// with the `paused` flag: a pause that starts records `pausedSince` (the
+// write's own updatedAt), and one that ends moves {from: pausedSince, to:
+// updatedAt} onto KEYS[3] and clears `pausedSince`. A freeze with no recorded
+// start (set by hand) ends without an interval, because it has no bound to
+// log; the scorer treats such a freeze as "start unknown" while it lasts.
+// KEYS: [1]=settings [2]=audit [3]=pause log
 // ARGV: [1]=updatedBy [2]=updatedAt [3]=auditLine [4]=cap-1 [5]=numDels
 //       [6 .. 5+numDels]=field names to HDEL  [6+numDels ..]=field,value pairs to HSET
 const UPDATE_SCRIPT = `
@@ -442,9 +458,26 @@ if touched then
   if not endSet then endV = redis.call('HGET', KEYS[1], 'scoringEndsAt') or nil end
   if startV and endV and endV <= startV then return {'__window_refused__', startV, endV} end
 end
+local wasPaused = redis.call('HGET', KEYS[1], 'paused') == '1'
+local pausing, resuming = false, false
+for i = 1, numDels do
+  if ARGV[5 + i] == 'paused' then resuming = true end
+end
+for i = 6 + numDels, #ARGV, 2 do
+  if ARGV[i] == 'paused' and ARGV[i+1] == '1' then pausing = true end
+end
+local openSince = redis.call('HGET', KEYS[1], 'pausedSince')
 redis.call('HSET', KEYS[1], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
 for i = 1, numDels do redis.call('HDEL', KEYS[1], ARGV[5 + i]) end
 for i = 6 + numDels, #ARGV, 2 do redis.call('HSET', KEYS[1], ARGV[i], ARGV[i+1]) end
+if pausing and not wasPaused then redis.call('HSET', KEYS[1], 'pausedSince', ARGV[2]) end
+if resuming and wasPaused then
+  if openSince then
+    redis.call('LPUSH', KEYS[3], cjson.encode({from = openSince, to = ARGV[2]}))
+    redis.call('LTRIM', KEYS[3], 0, ${PAUSE_LOG_CAP - 1})
+  end
+  redis.call('HDEL', KEYS[1], 'pausedSince')
+end
 redis.call('LPUSH', KEYS[2], ARGV[3])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]))
 return redis.call('HGETALL', KEYS[1])`;
@@ -673,7 +706,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
   try {
     result = await upstashEval(
       UPDATE_SCRIPT,
-      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
       [actor, at, audit, String(AUDIT_CAP - 1), String(dels.length), ...dels, ...fields],
     );
   } finally {
@@ -806,13 +839,16 @@ async function scanDelByPrefix(pattern: string): Promise<number> {
 // Freeze scoring, bump the reset epoch (sync reads `resetAt` and clears its
 // cursor when it advances — the poll-mode re-ingest fix), RELOCK the event
 // (clear the scoring start — a reset event is not launched until an
-// organizer launches it again), and append the audit record. One atomic script
-// so a reset can never land without its audit line. Exported for the live
-// suite only.
+// organizer launches it again), start a fresh pause log (the old event's
+// intervals go; the reset's own freeze is open from the reset instant), and
+// append the audit record. One atomic script so a reset can never land
+// without its audit line. Exported for the live suite only.
+// KEYS: [1]=settings [2]=audit [3]=pause log
 // ARGV: [1]=actor [2]=at [3]=resetAt [4]=auditLine [5]=cap-1
 export const RESET_SCRIPT = `
-redis.call('HSET', KEYS[1], 'paused', '1', 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
+redis.call('HSET', KEYS[1], 'paused', '1', 'pausedSince', ARGV[2], 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
 redis.call('HDEL', KEYS[1], 'scoringStartsAt')
+redis.call('DEL', KEYS[3])
 redis.call('LPUSH', KEYS[2], ARGV[4])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
 
@@ -845,7 +881,7 @@ export async function resetEvent(actor: string): Promise<{ cleared: Record<strin
     const audit = JSON.stringify({ at, by: actor, action: "reset", cleared });
     await upstashEval(
       RESET_SCRIPT,
-      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
       [actor, at, resetAt, audit, String(AUDIT_CAP - 1)],
     );
     return { cleared, resetAt };

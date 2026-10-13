@@ -64,8 +64,11 @@ two modes — **serve** (the leaderboard API and the bearer-authed
 fork's Action). See [scorer.md](scorer.md).
 
 **Freeze vs scoring window** — two ways scoring stops. **Freeze** is the
-manual switch: ingestion holds (queued, never lost), fork Actions keep
-running. The **scoring window** (`scoringStartsAt`/`scoringEndsAt`) does the
+manual switch: nothing scores while it is on, fork Actions keep running, and
+a Secure Development PR is judged by when its score comment was posted, so
+one scored during a freeze never counts and one scored before it still does
+([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)).
+The **scoring window** (`scoringStartsAt`/`scoringEndsAt`) does the
 same on a schedule, and an empty `scoringStartsAt` means the event is **not
 launched** and nothing scores ([ADR 59](decisions.md#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched)).
 Both are evaluated at read time by three independent readers that must

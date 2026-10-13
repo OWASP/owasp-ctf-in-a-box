@@ -144,3 +144,46 @@ _need() {
   fi
   [ -z "$stale" ]
 }
+
+# The gate scripts' own assertions. Two shapes pass or fail without proving
+# anything, and both have shipped:
+#   - a bare `grep -q` statement under `set -e` exits the gate with no word
+#     of what was missing;
+#   - `echo "$X" | grep -q` under `pipefail` can report "no match" for a line
+#     that matched (grep exits on the first match, echo takes SIGPIPE), which
+#     turns a negative check (`if ...; then FAIL`) into a silent pass.
+gate_scripts() {
+  printf '%s\n' "$ROOT"/scripts/smoke.sh "$ROOT"/scripts/acceptance-*.sh "$ROOT"/scripts/lib/acceptance-lib.sh
+}
+
+@test "no gate script has a bare grep -q assertion that exits without a message" {
+  bare="$(gate_scripts | xargs awk '
+    {
+      line = $0
+      cont = (line ~ /\\[ \t]*$/)
+      if (prev) { prev = cont; next }
+      prev = cont
+      sub(/^[ \t]+/, "", line)
+      if (line ~ /^#/) next
+      if (line !~ /(^|[|;&( ])grep -[A-Za-z]*q/) next
+      if (line ~ /^(if|elif|until|while|!) /) next
+      if (line ~ /\|\||&&|; *(then|do)([ \t]|$)/) next
+      if (cont) next
+      n = split(FILENAME, parts, "/")
+      print parts[n] ":" FNR ": " $0
+    }')"
+  if [ -n "$bare" ]; then
+    echo "BARE grep -q assertion(s) — add '|| { echo \"FAIL: <what was missing>\"; exit 1; }':"
+    echo "$bare"
+  fi
+  [ -z "$bare" ]
+}
+
+@test "no gate script feeds grep -q from echo/printf through a pipe" {
+  piped="$(gate_scripts | xargs grep -nE '(^[[:space:]]*|if[[:space:]]+(![[:space:]]+)?|[;(][[:space:]]*)(echo|printf)[^|]*\|[[:space:]]*grep -[A-Za-z]*q' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+  if [ -n "$piped" ]; then
+    echo "PIPE-FED grep -q (use a here-string: grep -q PATTERN <<< \"\$X\"):"
+    echo "$piped"
+  fi
+  [ -z "$piped" ]
+}

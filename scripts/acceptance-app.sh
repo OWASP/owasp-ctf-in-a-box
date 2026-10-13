@@ -56,6 +56,7 @@ ACCEPTANCE_REV=abcdef123456
 docker build -f apps/web/Dockerfile -t ctf-web:acceptance \
   --build-arg APP_BUILD_REV="$ACCEPTANCE_REV" \
   --build-arg APP_BUILT_AT=2026-01-01T00:00:00Z .
+# pins: ctf-web:acceptance is built by this script
 docker run -d --name web-acceptance -p 3100:3000 \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3100 \
   -e SCORE_IMAGE=ghcr.io/example/score:acceptance \
@@ -93,6 +94,7 @@ done
 docker exec aa-redis redis-cli HSET ctf:admin:settings scoringStartsAt "2000-01-01T00:00:00Z" >/dev/null
 AA_REDIS_ENV="-e UPSTASH_REDIS_REST_URL=http://srh:80 -e UPSTASH_REDIS_REST_TOKEN=$AA_SRH_TOKEN"
 # shellcheck disable=SC2086  # AA_REDIS_ENV is two -e flags on purpose
+# pins: ctf-web:acceptance is built by this script
 docker run -d --name web-launched --network aa-net -p 3103:3000 $AA_REDIS_ENV \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3103 \
   -e SCORE_IMAGE=ghcr.io/example/score:acceptance \
@@ -113,7 +115,7 @@ echo "--- identity fails open to the default name (no Redis behind this run)"
 # (issue #386): the title must be the default name, not empty, not an error.
 expect_in "$HOME_HTML" "<title>OWASP CTF in a Box</title>" "landing page title is not the default event name without settings"
 echo "--- no DC34 branding"
-if echo "$HOME_HTML$CHALLENGES_HTML" | grep -qi "DEF CON"; then echo "FAIL: DC34 leaked"; exit 1; fi
+if grep -qi "DEF CON" <<< "$HOME_HTML$CHALLENGES_HTML"; then echo "FAIL: DC34 leaked"; exit 1; fi
 echo "--- all six targets render; no admin-chosen subset is stored, so the default applies"
 # With no Redis behind this run, the app has no secureDevTargets to read and
 # defaults to all six — DVWA and VAmPI AND WebGoat must all render even
@@ -128,7 +130,7 @@ echo "--- fork links use GITHUB_ORG, not a hardcoded OWASP-CTF"
 expect_in "$CHALLENGES_HTML" "github.com/acceptance-org/DVWA" "fork link does not use GITHUB_ORG"
 expect_in "$CHALLENGES_HTML" "github.com/acceptance-org/VAmPI" "fork link does not use GITHUB_ORG"
 expect_in "$CHALLENGES_HTML" "github.com/acceptance-org/WebGoat" "fork link does not use GITHUB_ORG"
-if echo "$CHALLENGES_HTML" | grep -q "github.com/OWASP-CTF/"; then
+if grep -q "github.com/OWASP-CTF/" <<< "$CHALLENGES_HTML"; then
   echo "FAIL: custom-org run still links OWASP-CTF forks"; exit 1
 fi
 
@@ -207,6 +209,7 @@ for leak in BETTER_AUTH GITHUB_CLIENT SRH_TOKEN REDIS_PASSWORD UPSTASH http:// E
 done
 
 echo "--- without a scorer image, nothing is enabled and the landing page says so"
+# pins: ctf-web:acceptance is built by this script
 docker run -d --name web-noscorer -p 3102:3000 \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3102 ctf-web:acceptance
 NOSCORER_HTML=$(wait_for_html http://localhost:3102/)
@@ -220,12 +223,13 @@ echo "--- default run (no GITHUB_ORG) is neutral (no DEF CON, name OWASP CTF in 
 # rebuild: config v2 has nothing left for a second build to bake.
 # On the launched redis too, so its /challenges renders (see web-launched).
 # shellcheck disable=SC2086  # AA_REDIS_ENV is two -e flags on purpose
+# pins: ctf-web:acceptance is built by this script
 docker run -d --name web-default --network aa-net -p 3101:3000 $AA_REDIS_ENV \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3101 \
   -e SCORE_IMAGE=ghcr.io/example/score:acceptance ctf-web:acceptance
 DEFAULT_HTML=$(wait_for_html http://localhost:3101/)
 DEFAULT_CHALLENGES_HTML=$(wait_for_html http://localhost:3101/challenges)
-if echo "$DEFAULT_HTML" | grep -qi "DEF CON"; then echo "FAIL: default run carries DC34"; exit 1; fi
+if grep -qi "DEF CON" <<< "$DEFAULT_HTML"; then echo "FAIL: default run carries DC34"; exit 1; fi
 # "OWASP CTF in a Box" alone is vacuous: the landing page's evaluator card hardcodes
 # that string in prose regardless of the event's runtime identity. Assert the
 # actual title tag, like the identity-fails-open check near the top of this
@@ -237,13 +241,13 @@ echo "--- with no GITHUB_ORG, /challenges renders bare repo names and no fork li
 # fallback any more, since there is nothing baked to fall back to. The page
 # renders the bare repo name instead of a link.
 expect_in "$DEFAULT_CHALLENGES_HTML" "DVWA" "default run's /challenges does not render the DVWA repo name"
-if echo "$DEFAULT_CHALLENGES_HTML" | grep -q "acceptance-org"; then
+if grep -q "acceptance-org" <<< "$DEFAULT_CHALLENGES_HTML"; then
   echo "FAIL: default run's /challenges links acceptance-org even though GITHUB_ORG was not set"; exit 1
 fi
 # "DVWA" above also matches the challenge card's title text, so it passes
 # whether or not a fork link rendered. Assert no fork link at all — for ANY
 # org, not just acceptance-org, so a leftover/mistaken org value still fails.
-if echo "$DEFAULT_CHALLENGES_HTML" | grep -qE 'github\.com/[^"]+/DVWA'; then
+if grep -qE 'github\.com/[^"]+/DVWA' <<< "$DEFAULT_CHALLENGES_HTML"; then
   echo "FAIL: default run's /challenges renders a DVWA fork link even though GITHUB_ORG was not set"; exit 1
 fi
 

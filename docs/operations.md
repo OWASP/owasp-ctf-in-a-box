@@ -366,15 +366,44 @@ The panel offers:
 
   Routine things are deliberately **not** counted here: a comment re-read at
   the cursor boundary, and the workflow's own "⏳ Scoring in progress…"
-  placeholder, are both expected and leave Dropped at 0. The poller's logs
-  carry a per-repo breakdown of those on any tick where something
-  non-routine happened.
-- **Freeze** — a pause switch. Pausing **freezes ingestion, not fork
+  placeholder, are both expected and leave Dropped at 0. Neither is a score
+  the scorer **refused because of when it was posted** — before the launch,
+  while scoring was frozen, after the end, or before a master reset (see
+  Freeze below): that is the rule working, not a loss, so it is logged as
+  `submit <repo>#<pr>: refused (<reason>), not scored` and left out of
+  Dropped. The poller's logs carry a per-repo breakdown of all of these on
+  any tick where something non-routine happened.
+- **Freeze** — a pause switch. Pausing **freezes scoring, not fork
   Actions**: contestants' PRs keep getting judged and commented on exactly
-  as before, and the poller's cursor just holds in place — nothing is lost,
-  only deferred. The scorer reads the same flag and answers `POST /score`
-  with `503` while it is set, so a submission that reaches the writer anyway
-  is refused rather than written. Un-pausing picks up right where it left off.
+  as before. Quiz, Jeopardy and AI answers are refused while it is on.
+  A **Secure Development** score is judged by **when its score comment was
+  posted on the PR**, not when the box reads it (ADR 67): a PR scored
+  *before* you froze still counts, even if the poller reads it during the
+  freeze, and a PR scored *while* frozen never counts, not even after you
+  un-freeze. The same rule applies to the scoring window: a PR scored before
+  **Scoring closes** counts even if it is read later, and one scored before
+  the launch or after the end does not. The poller keeps reading during a
+  freeze and the scorer decides each score; the refusals are final and show
+  in the poller's log as `refused (paused)`, `refused (outside-window)` or
+  `refused (pre-reset)`, not in Dropped.
+
+  To make that possible the box records *when* each freeze ran, not only
+  whether one is on: freezing stores the start (`pausedSince` in the settings
+  hash) and un-freezing moves the interval onto `ctf:admin:pauses` (the last
+  200 are kept). Both are written by the same save as the switch. A freeze
+  set straight on the hash with no recorded start (by hand, or left over from
+  a version without the log) has an unknown start, so the scorer **holds**
+  Secure Development scores read during it (`503`, retried) rather than
+  refusing them, and judges them once it lifts — that one freeze then lets in
+  a PR scored during it.
+
+  **One edge, by design.** A PR's score comment is *edited* on every run, so
+  its time is the time of the **last** run. A solve the box already recorded
+  keeps its first time. But if the poller was down across a re-run, a solve
+  first read from the re-run gets the re-run's time, and a re-run after the
+  event ends refuses a solve that was never read, even if its first passing
+  run was in time. Normally the poller reads each comment within a minute, so
+  this needs the poller to have been down across the re-run.
 - **Projector board** (Event tab) — **QR code on the projector board**, on
   by default: display mode (`/leaderboard?display=1`) shows a QR code of the
   event's address, with the address printed under it, in the bottom-right
@@ -480,7 +509,12 @@ The panel offers:
   start)", and the matching states for registration —
   computed from the very fields it edits. The scoring window is honoured by
   every reader of scoring state (the app, the scorer, the sync poller — see
-  [architecture](architecture.md)); the registration window is enforced by
+  [architecture](architecture.md)). Flags, quiz answers and AI solves are
+  judged when they arrive; a Secure Development PR is judged at the time its
+  score comment was posted, so a PR scored before **Scoring closes** counts
+  even if the poller reads it after (see Freeze above). A refusal is final:
+  a PR refused as outside the window stays refused if you move the bounds
+  later, until it is re-run. The registration window is enforced by
   `team-store.ts` on exactly the mutations the manual switch gates.
 - **Hint controls** (the **Hints** destination, under Setup) — whether hints are enabled and
   what they cost. Hints are **on by default** and cost 10 points each; the
@@ -791,7 +825,10 @@ The panel offers:
   when ready*. A PR that is re-scored **after** the reset (its score comment
   is edited forward past the epoch) is ingested as normal — that is a fresh
   result, not a resurrected one. The poller's log reports the skip once, as
-  `poll <repo>: N preReset`.
+  `poll <repo>: N preReset`. The scorer applies the same watermark to each
+  score's comment time, and the reset clears the freeze log (see Freeze
+  above) and starts its own freeze at the reset instant, so a PR scored
+  between the reset and your un-freeze never counts either.
 
   While the reset (or any other score-lowering control — a per-player reset
   or delete, the demo clear, a settings save) is running, a hint purchase is
@@ -1503,6 +1540,19 @@ shows no count. In `/admin` the Jeopardy list gives each challenge both
 figures ("3 teams · 5 players", or "unsolved"), so a flag nobody can solve
 stands out; if a count cannot be read it is left off rather than shown as 0.
 
+**First blood** (#188). Each visible tile and open story step names the
+contestant who solved it first ("🩸 First blood: alice"), by their GitHub
+login. It is display only and moves no points. Like the team count it is read
+off the current team members' own solve rows on every page load, never
+stored: the earliest solve time wins, and an exact tie goes to the login that
+sorts first, ignoring case. Nothing extra happens during a freeze: a frozen
+board records no solves, so first blood stays where the leaderboard does.
+Resetting a contestant's progress or deleting them in the Support tab, or
+removing them from their team, passes their first bloods to the next solver
+(or to nobody), with nothing to clean up. A master reset clears it with the
+solves. A locked story step shows none, and if the solves cannot be read
+neither the counts nor first blood are shown.
+
 **Authoring** happens in `/admin`, under the Jeopardy module's tab (see
 "Jeopardy controls" above). Before adding a challenge you need at least one
 **category** — categories are a row of chips in the order contestants see
@@ -1577,6 +1627,47 @@ history for it is left alone. Deletion is gated behind typing the
 challenge's own title to confirm (falling back to its id for a
 blank/whitespace-only title), the same pattern the quiz's delete and the
 master reset use.
+
+**A challenge can be hidden without deleting it, or released on a
+schedule.** Each challenge's form has a **Visible to contestants** switch (on
+for a new challenge) and an optional **Release at** time, and every row in
+the list carries a status chip: **Live**, **Disabled**, or **Releases Oct 8,
+10:00 GMT-3**. Switch it off to stage a challenge before it goes up, or to
+pull a broken one mid-event. Set a release time for the day-2 and day-3
+drops: the challenge stays hidden until that instant and then goes live on
+its own. Nothing runs on the box to do it: every page read compares the
+release time with the server's clock, and grading and hint purchases compare
+it with Redis's clock, so a submission racing the instant is decided once.
+The time is entered on the event's clock (Event tab → Timezone, the same zone
+the schedule uses) and the form shows the UTC instant it stores. Setting a
+release time switches the challenge off until then; switching it on clears
+the release time; saving a time that has already passed saves it live.
+Give the steps of a story the same release time to release the story
+together: release is per challenge. A
+hidden challenge does not exist on the contestant side: it is left out of the
+board, its page is the same 404 an unknown id gets, its flag is refused like
+an unknown challenge's (no attempt spent, no cooldown, decided by the grading
+script itself), its hint cannot be bought, its files do not download, and it
+is out of every leaderboard, profile and display-mode denominator. In a
+story, the chain closes up around it, the same as a deleted step, and
+switching it back on puts it back in its place. Solves already banked on it
+stay, like a deleted challenge's: the solver keeps the points, the challenge
+disappears from their lists too, and their profile shows one line, "+N pts
+from challenges no longer on the board", so their total still adds up
+(points banked on a deleted challenge are counted in the same line). An admin
+can still open a hidden or scheduled challenge's page, before launch or
+after, to check it: the page carries a **Hidden from contestants** banner
+saying why (Disabled, or Releases at what time), and a flag or hint used
+there is a dry run that records nothing for the admin. A bundle or event
+archive carries the switch (bundle version 4, stamped only when some
+challenge is hidden, so other exports still import on an older box), and an
+older bundle that carries it is refused rather than imported live. In a
+hand-written bundle, `releaseAt` is an ISO 8601 date and time that names its
+zone: it ends in `Z` (`2026-10-08T13:00:00Z`) or an explicit offset
+(`2026-10-08T10:00:00-03:00`). One without a zone, or a date or time that does
+not exist (`2026-02-30`, `25:00`), is refused, because the box would
+otherwise read it in its own zone and release at an instant nobody meant. The
+admin form always stores the UTC form, so it never trips this.
 
 **Matching is whitespace-insensitive and — by default — case-insensitive,
 normalized identically on both the authoring and submission sides.** The

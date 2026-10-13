@@ -287,7 +287,7 @@ git push -u origin fix/<short-description>`,
       "Found a bug in a challenge, the scorer, or the site itself? Report it to an organizer instead of exploiting it for an unfair edge.",
     ],
     scoring: [
-      "Each challenge is worth a fixed point value based on difficulty. Points post once the event receives your PR's passing result, usually a few minutes after the push, and that is the time a points tie is decided on.",
+      "Each challenge is worth a fixed point value based on difficulty. Points post once the event receives your PR's passing result, usually a few minutes after the push, but a points tie is decided on the time the result was posted on your PR. A result posted while scoring is frozen or closed does not count, even if the event receives it later.",
       "Your best-ever result per challenge counts. A later successful patch always replaces an earlier miss.",
       "Revealing a hint deducts points from your total, and hint purchases are final.",
     ],

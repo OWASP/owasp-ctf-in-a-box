@@ -18,7 +18,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CLASSIC_ID_RE } from "@/lib/classic-keys";
-import { CLASSIC_BUNDLE_VERSION, parseBundle, serializeBundle } from "@/lib/classic-io";
+import { parseBundle, serializeBundle } from "@/lib/classic-io";
 import type { AdminChallenge, Challenge } from "@/lib/classic-store";
 import AdminClassicControls, {
   CLASSIC_POINTS_MAX,
@@ -219,7 +219,8 @@ describe("AdminClassicControls", () => {
       ];
       const bundle = exportBundleFrom([row1], ["Web"], [], meta, files);
       expect(bundle.attachmentFiles).toEqual([{ item: row1.challenge.id, sha256: sha, bytes: "AAAA" }]);
-      expect(bundle.version).toBe(CLASSIC_BUNDLE_VERSION);
+      // Files alone need version 3; 4 is for visibility, which this board lacks.
+      expect(bundle.version).toBe(3);
       const parsed = parseBundle(serializeBundle(bundle));
       if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors));
       expect(parsed.bundle.attachmentFiles).toHaveLength(1);
@@ -373,6 +374,8 @@ describe("payloadFromEditor — an edit can never change a challenge's id", () =
       flag: "CTF{changed}",
       caseSensitive: false,
       hint: "",
+      enabled: true,
+      releaseAt: "",
     };
     const payload = payloadFromEditor({ ...editor, draft }, () => "generated-from-the-new-title");
     expect(payload.id).toBe(c1.id);

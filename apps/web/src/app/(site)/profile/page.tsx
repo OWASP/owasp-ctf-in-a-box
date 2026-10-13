@@ -15,7 +15,8 @@ import AppBreakdown from "@/components/app-breakdown";
 import ProgressRow, { moduleUnit } from "@/components/progress/progress-row";
 import ChallengeList from "@/components/progress/challenge-list";
 import RemainingLine from "@/components/progress/remaining-line";
-import { maxPointsAcrossModules } from "@/app/(site)/profile/module-blocks";
+import { maxPointsAcrossModules, offBoardClassicPoints } from "@/app/(site)/profile/module-blocks";
+import { visibleNow } from "@/lib/classic-release";
 import { fillStyle } from "@/components/progress/progress-bar";
 import ProfileStatTiles, { type StatTile } from "@/components/profile-stat-tiles";
 import { loadTeamStanding } from "@/app/(site)/profile/team-standing";
@@ -147,7 +148,10 @@ export default async function ProfilePage() {
       quizEnabled ? getQuizTotals() : Promise.resolve(new Map<string, QuizTotal>()),
       quizEnabled ? listQuestions() : Promise.resolve([] as Question[]),
       classicEnabled ? getClassicTotals() : Promise.resolve(new Map<string, ClassicTotal>()),
-      classicEnabled ? listChallenges() : Promise.resolve([] as Challenge[]),
+      // Visible challenges only: a hidden one (disabled, or not yet released)
+      // is out of the list, every denominator and the points ceiling. Points
+      // banked on it stay, named by the "no longer on the board" line below.
+      classicEnabled ? listChallenges().then(visibleNow) : Promise.resolve([] as Challenge[]),
       aiEnabled ? getAiTotals() : Promise.resolve(new Map<string, AiTotal>()),
       aiEnabled ? listAiChallenges() : Promise.resolve([] as AiChallenge[]),
       // The viewer's OWN per-item progress, for the blocks' Show-N lists —
@@ -324,6 +328,7 @@ export default async function ProfilePage() {
   const progressValue = maxPointsAllModules > 0 ? netPoints : patchedCount;
 
   const moduleProgress = buildModuleProgress(moduleInput);
+  const classicOffBoard = offBoardClassicPoints(moduleInput);
   // `ModuleDetail`/`AppBreakdown` (the same renderers the leaderboard uses)
   // take a `LeaderboardEntry`; this page only ever has a `UserProfile`, which
   // has no `modules` map, so a minimal stand-in is built here rather than
@@ -485,6 +490,11 @@ export default async function ProfilePage() {
                   <p className="mt-2 text-xs text-muted">
                     Totals count unlocked challenges only — story steps add to the total as your team unlocks them.
                     <span className="ml-2">· {lockedCount} {lockedCount === 1 ? "step" : "steps"} locked</span>
+                  </p>
+                )}
+                {isClassic && classicOffBoard > 0 && (
+                  <p className="mt-2 text-xs text-muted">
+                    +{classicOffBoard.toLocaleString("en-US")} pts from challenges no longer on the board
                   </p>
                 )}
               </div>

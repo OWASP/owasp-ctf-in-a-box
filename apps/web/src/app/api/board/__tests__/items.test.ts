@@ -269,3 +269,36 @@ describe("GET /api/board/items reports hidden solved steps as one count (#584)",
     expect((await bodyOf("leader")).classicHiddenSolved).toBe(0);
   });
 });
+
+// A hidden challenge does not exist in an expanded row either: absent from the
+// payload, for its solvers too, and a story's chain closes up around it.
+describe("GET /api/board/items and hidden challenges", () => {
+  it("leaves a disabled challenge out, even for a team that solved it", async () => {
+    mocks.listChallenges.mockResolvedValue([
+      { id: "c1", title: "Robots Only", points: 50 },
+      { id: "gone", title: "Withdrawn-title-q7", points: 30, enabled: false },
+    ]);
+    mocks.getViewerClassic.mockResolvedValue({ solved: { gone: { points: 30, at: "2026-10-01T00:00:00.000Z" } }, attempts: {} });
+    const res = await GET(req("alice"));
+    const body = await res.json();
+    expect(body.classic).toEqual([{ id: "c1", label: "Robots Only", points: 50, done: false }]);
+    expect(JSON.stringify(body)).not.toContain("gone");
+    expect(JSON.stringify(body)).not.toContain("Withdrawn-title-q7");
+    expect(body.classicHiddenSolved).toBe(0);
+  });
+
+  it("closes a story's chain around a hidden step", async () => {
+    mocks.listStories.mockResolvedValue([{ id: "op", title: "Op", intro: "", steps: ["one", "gone", "three"] }]);
+    mocks.listChallenges.mockResolvedValue([
+      { id: "one", title: "One", points: 10 },
+      { id: "gone", title: "Gone", points: 10, enabled: false },
+      { id: "three", title: "Three", points: 10 },
+    ]);
+    mocks.unlockingSolvedIds.mockResolvedValue(new Set(["one"]));
+    mocks.getSession.mockResolvedValue({ user: { login: "alice" } });
+    mocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["one"]));
+    const body = await (await GET(req("alice"))).json();
+    expect(body.classic.map((i: { id: string }) => i.id)).toEqual(["one", "three"]);
+    mocks.listStories.mockResolvedValue([]);
+  });
+});

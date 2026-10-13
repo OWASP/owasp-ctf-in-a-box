@@ -23,7 +23,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
-vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts }));
+// #188: the page reads counts and first blood in one go (teamSolveBoard).
+// Wrapped over the teamSolveCounts mock, so a test sets counts as before and
+// first blood through `firstBloods`.
+const firstBloods = vi.hoisted(() => ({ map: new Map<string, { login: string; at: string | null }>() }));
+vi.mock("@/lib/team-solve-counts", () => ({
+  teamSolveCounts,
+  teamSolveBoard: async (module: "classic" | "ai") => {
+    const counts = (await teamSolveCounts(module)) as Map<string, number> | null;
+    return counts ? { counts, firstBlood: firstBloods.map } : null;
+  },
+}));
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -103,6 +113,7 @@ beforeEach(() => {
   getAdminSettings.mockResolvedValue({ classicCooldownSec: 5 });
   listCategories.mockResolvedValue(["Web"]);
   teamSolveCounts.mockResolvedValue(new Map());
+  firstBloods.map = new Map();
   getResolvedModules.mockResolvedValue([
     { id: "classic", title: "Jeopardy", blurb: "Find the flag, submit the string, take the points." },
   ]);
@@ -142,7 +153,7 @@ describe("/flags view model", () => {
     // that reveals nothing about the answer. It is copied by name in the page's
     // map like every other field here, which is what this test exists to force.
     expect(Object.keys(captured.challenges[0]).sort()).toEqual(
-      ["caseSensitive", "category", "description", "id", "points", "teamsSolved", "status", "title"].sort(),
+      ["caseSensitive", "category", "description", "firstBlood", "id", "points", "teamsSolved", "status", "title"].sort(),
     );
   });
 });

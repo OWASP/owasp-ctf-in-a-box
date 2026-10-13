@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { loadRubric } from "./rubric.js";
-import { createMemoryStore, createRedisStore } from "./store.js";
+import { createMemoryStore, createRedisStore, outsideScoringWindow, pausedAt } from "./store.js";
 
 // Mirrors sync/src/parse.js — same grammar, because the author becomes a
 // Redis field segment (`<author>:<challengeId>`) in the solves hash.
@@ -36,6 +36,48 @@ function bearerMatches(header, token) {
   return timingSafeEqual(digest(header), digest(`Bearer ${token}`));
 }
 
+// How far ahead of the scorer's clock a score's `at` may be before it is
+// treated as clock skew and replaced by now. GitHub's clock and the box's
+// disagree by seconds, not minutes; a time further ahead is not a solve time
+// anyone could have earned.
+const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+/** The master-reset epoch (`resetAt`) as milliseconds, or null. The app
+ *  writes epoch milliseconds; an ISO string is read too. Anything else is
+ *  not a watermark, the same rule sync applies to the same field. */
+function resetEpochMs(resetAt) {
+  if (typeof resetAt !== "string" || resetAt === "") return null;
+  const ms = /^\d+$/.test(resetAt) ? Number(resetAt) : Date.parse(resetAt);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * The verdict on a score timed at `atMs`, judged against the event's settings
+ * at that instant rather than at arrival: null to record it, `{ refused }`
+ * for a final refusal sync drops for good, `{ retry: true }` for one it
+ * re-presents next tick.
+ *
+ * A freeze with no recorded start is the one retry. Its start is unknown, so
+ * refusing for good could throw away a score made before it; answering as
+ * the arrival-time freeze did keeps the comment until the freeze lifts. The
+ * window and reset refusals come first because they are final either way.
+ */
+export function judgeScoreTime(atMs, policy) {
+  const resetMs = resetEpochMs(policy.resetAt);
+  if (resetMs !== null && atMs < resetMs) {
+    return { refused: "pre-reset", error: "the score predates the last master reset" };
+  }
+  if (outsideScoringWindow(atMs, policy.startsAt, policy.endsAt)) {
+    return { refused: "outside-window", error: "the score was posted outside the scoring window" };
+  }
+  const since = policy.pausedSince ? Date.parse(policy.pausedSince) : NaN;
+  if (policy.paused && !Number.isFinite(since)) return { retry: true };
+  if (pausedAt(atMs, policy.paused, policy.pausedSince, policy.pauses)) {
+    return { refused: "paused", error: "the score was posted while scoring was frozen" };
+  }
+  return null;
+}
+
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
@@ -48,14 +90,37 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
   const seenTargets = new Set();
   const targetsInPlay = () => (rubric ? [...rubric.targets.keys()] : [...seenTargets].sort());
 
+  /**
+   * When a score was earned, or the response refusing it.
+   *
+   * `at` is the score comment's GitHub time, which sync sends with every
+   * score (ADR 67): the solve is timed by it, and the window, the freeze and
+   * the reset epoch are judged at it, so a score that waited in a sync
+   * backlog keeps its own time and one posted while scoring was closed stays
+   * refused after it reopens. A sync that sends no `at` predates that rule
+   * and keeps the arrival-time one: the effective freeze is checked now (503,
+   * which sync retries) and the solve is timed now. Both reads fail open on a
+   * store error, so a Redis blip never drops a live submission — see
+   * store.js's isPaused and readScoringPolicy.
+   */
+  async function solveTime(at) {
+    if (at === undefined || at === null) {
+      if (await store.isPaused()) return { status: 503, body: { error: "scoring is paused" } };
+      return { iso: now() };
+    }
+    let atMs = typeof at === "string" ? Date.parse(at) : NaN;
+    if (!Number.isFinite(atMs)) return { status: 400, body: { error: "invalid at" } };
+    const nowMs = Date.parse(now());
+    if (atMs > nowMs + MAX_FUTURE_SKEW_MS) atMs = nowMs;
+    const policy = await store.readScoringPolicy();
+    const verdict = policy ? judgeScoreTime(atMs, policy) : null;
+    if (verdict?.retry) return { status: 503, body: { error: "scoring is paused" } };
+    if (verdict) return { status: 422, body: { error: verdict.error, refused: verdict.refused } };
+    return { iso: new Date(atMs).toISOString() };
+  }
+
   async function score(req, res) {
     if (!bearerMatches(req.headers.authorization, token)) return json(res, 401, { error: "unauthorized" });
-    // Organizer freeze, the scorer's half: sync (the only caller since push
-    // ingest was removed, ADR 56) also holds its cursor while paused, and this
-    // refuses anything that reaches /score anyway. Fails open on a store
-    // error, so a Redis blip never drops a live submission — see store.js's
-    // isPaused for both implementations.
-    if (await store.isPaused()) return json(res, 503, { error: "scoring is paused" });
     let body = "";
     let bytes = 0;
     for await (const chunk of req) {
@@ -75,7 +140,7 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     } catch {
       return json(res, 400, { error: "body must be JSON" });
     }
-    const { author, target, solved } = data ?? {};
+    const { author, target, solved, at } = data ?? {};
     if (typeof author !== "string" || !GITHUB_LOGIN.test(author)) return json(res, 400, { error: "invalid author" });
     if (typeof target !== "string" || !SEGMENT.test(target)) return json(res, 400, { error: "invalid target" });
     if (rubric && !rubric.targets.has(target)) return json(res, 400, { error: `unknown target: ${target}` });
@@ -87,7 +152,9 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     const ids = [...new Set(solved)].filter((id) =>
       rubric ? rubric.pointsFor(target, id) !== undefined : SEGMENT.test(id),
     );
-    await store.recordSolves(target, author, ids, now());
+    const solvedAt = await solveTime(at);
+    if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
+    await store.recordSolves(target, author, ids, solvedAt.iso);
     if (!rubric) seenTargets.add(target);
     res.writeHead(202).end();
   }

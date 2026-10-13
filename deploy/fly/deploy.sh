@@ -14,6 +14,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
+# The env-file reader and the dry-run redactor every deploy path shares.
+# shellcheck source=scripts/lib/dotenv.sh
+. scripts/lib/dotenv.sh
+# shellcheck source=scripts/lib/redact.sh
+. scripts/lib/redact.sh
+
 FLY_DIR=deploy/fly
 CONFIG_TOML="$FLY_DIR/fly.toml"
 RENDERED="compose.fly.yml"
@@ -92,20 +98,9 @@ done
 #
 # The redaction is on the VALUE half of `NAME=value`, keyed on the name, so
 # the run still shows exactly which variables are set — which is the whole
-# point of previewing it — without showing what they are.
-redact_arg() {
-  case "$1" in
-    *=*)
-      name="${1%%=*}"
-      case "$name" in
-        # CONNECTION_STRING is here because a redis:// URL embeds the password.
-        *SECRET*|*TOKEN*|*PRIVATE_KEY*|*PASSWORD*|*CONNECTION_STRING*|*AUTH)
-          echo "$name=<redacted>" ;;
-        *) echo "$1" ;;
-      esac ;;
-    *) echo "$1" ;;
-  esac
-}
+# point of previewing it — without showing what they are; URL userinfo is
+# masked whatever the name. `redact_arg` and its rules live in
+# scripts/lib/redact.sh, shared with deploy/aws-terraform/deploy.sh.
 
 fly_run() {
   if [ -n "$DRY_RUN" ]; then
@@ -125,54 +120,17 @@ toml_value() {
   sed -n "s/^$1 *= *\"\([^\"]*\)\".*/\1/p" "$CONFIG_TOML" | head -1
 }
 
-# Compose's .env semantics, for the subset that reaches a value here: an
-# inline `#` comment after whitespace, surrounding whitespace, and ONE pair of
-# matching surrounding quotes. Without it this script and `docker compose`
-# disagree about the same file — `SCORE_IMAGE=""` is empty to compose and the
-# two-character string `""` to a bare `sed`, and every check downstream then
-# validates a value the containers never see. render-compose.sh carries the
-# same function for the same reason; keep the two identical.
-dotenv_value() {
-  local v="$1"
-  v="${v#"${v%%[![:space:]]*}"}"
-  case "$v" in
-  '"'*)
-    # Quoted: the value ends at the closing quote, and `#` inside it is data.
-    v="${v#\"}"
-    v="${v%%\"*}"
-    ;;
-  "'"*)
-    v="${v#\'}"
-    v="${v%%\'*}"
-    ;;
-  *)
-    # Unquoted: a comment starts at the first whitespace-preceded `#`.
-    case "$v" in
-    *[[:space:]]#*) v="${v%%[[:space:]]#*}" ;;
-    esac
-    v="${v%"${v##*[![:space:]]}"}"
-    ;;
-  esac
-  printf '%s' "$v"
-}
-
+# One assignment out of an env file, read with compose's .env semantics by
+# scripts/lib/dotenv.sh — the reader render-compose.sh, dev-stack and
+# ctf-setup.sh share, so this script and `docker compose` cannot disagree
+# about the same file. `SCORE_IMAGE=""` is empty to compose; a bare `sed`
+# hands back the two-character string `""`, and every check downstream then
+# validates a value the containers never see. `KEY = value`, `KEY: value`, a
+# leading `export `, quotes, CRLF and a trailing ` # comment` all read the way
+# compose reads them, and the LAST assignment wins — warn_duplicate_keys says
+# so out loud, because the first line is the one a human edits.
 dotenv_file_value() {
-  # $1 file, $2 key. Every form compose accepts for one assignment:
-  # `KEY = value` is legal — compose's parser trims whitespace around the key
-  # and after the `=`, and hands back `value`. Matching only `KEY=` would make
-  # such a line invisible here — deploy.sh would call the key empty and
-  # refuse, render-compose.sh would drop secdev — while compose reads it fine.
-  # `KEY: value`
-  # and a leading `export ` are accepted the same way; both were checked
-  # against `docker compose config` on a throwaway env file rather than
-  # guessed, because the whole point is to read what compose reads.
-  #
-  # LAST assignment wins, as compose does. warn_duplicate_keys says so out
-  # loud, because the first line is the one a human edits.
-  dotenv_value "$(sed -n \
-    -e "s/^[[:space:]]*export[[:space:]]\{1,\}//" \
-    -e "s/^[[:space:]]*$2[[:space:]]*[:=][[:space:]]*//p" \
-    "$1" | tail -1)"
+  dotenv_get "$1" "$2"
 }
 
 env_value() {
@@ -192,7 +150,7 @@ env_value() {
 # `KEY=new`, and the file then carries two assignments of one key with only the
 # last one live.
 key_line_ere() {
-  printf '^[[:space:]]*(export[[:space:]]+)?%s[[:space:]]*[:=]' "$1"
+  dotenv_key_ere "$1"
 }
 
 count_key_lines() {
@@ -211,6 +169,17 @@ READ_KEYS="EVENT_URL BETTER_AUTH_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
 SCORER_TOKEN SRH_TOKEN REDIS_PASSWORD SCORE_IMAGE GITHUB_ORG
 ADMIN_LOGINS GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID
 FLY_REGION FLY_AUTO_STOP REDIS_DIR STATE_PATH"
+
+# Both env files this script reads, checked once, here, in its own shell. A
+# value the shared reader refuses (an unterminated quote, interpolation, an
+# unreadable file; see scripts/lib/dotenv.sh) stops the script before any
+# step: inside a `$(env_value ...)` the refusal would stop only the subshell,
+# and a caller such as `require "$name" "$(env_value "$name")"` would read it
+# as empty. An absent file passes: `init` creates it.
+for checked_file in "$ENV_FILE" "$FROM_ENV"; do
+  # shellcheck disable=SC2086 # the key list is split into words on purpose
+  dotenv_check "$checked_file" $READ_KEYS || exit 1
+done
 
 # A key assigned twice is not an error — compose takes the last one and so does
 # every reader here — but it is nearly always a mistake, and a silent one: an
@@ -494,7 +463,7 @@ if [ "$CMD" = "init" ]; then
 
   # SRH bearer token. Generated here rather than reused from $FROM_ENV so a
   # local stack and a Fly deployment never share one.
-  if grep -q "^SRH_TOKEN=." "$ENV_FILE" 2>/dev/null; then
+  if [ -n "$(env_value SRH_TOKEN)" ]; then
     echo "   SRH_TOKEN already set"
   elif [ -z "$DRY_RUN" ]; then
     printf 'SRH_TOKEN=%s\n' "$(openssl rand -hex 24)" >> "$ENV_FILE"
@@ -511,8 +480,8 @@ if [ "$CMD" = "init" ]; then
   # and the operator — in Brazil — ended up with a volume in gru against an
   # app configured for iad. Volumes are region-pinned, so fixing that later
   # means destroying them.
-  if grep -q "^FLY_REGION=." "$ENV_FILE" 2>/dev/null; then
-    echo "   FLY_REGION already set ($(sed -n 's/^FLY_REGION=//p' "$ENV_FILE" | tail -1))"
+  if [ -n "$(env_value FLY_REGION)" ]; then
+    echo "   FLY_REGION already set ($(env_value FLY_REGION))"
   else
     default_region="${REGION_ARG:-$(toml_value primary_region)}"
     if [ -n "$REGION_ARG" ]; then
@@ -558,7 +527,7 @@ if [ "$CMD" = "init" ]; then
   # Redis credential. The datastore is our own `redis:7-alpine` container,
   # authenticated with the same REDIS_PASSWORD the compose stack uses — so an
   # env file copied from a working compose deployment already has it.
-  if grep -q "^REDIS_PASSWORD=." "$ENV_FILE" 2>/dev/null; then
+  if [ -n "$(env_value REDIS_PASSWORD)" ]; then
     echo "   REDIS_PASSWORD already set"
   elif [ -z "$DRY_RUN" ]; then
     printf 'REDIS_PASSWORD=%s\n' "$(openssl rand -hex 24)" >> "$ENV_FILE"
@@ -578,7 +547,7 @@ if [ "$CMD" = "init" ]; then
   # organizer can see — and change — where their data actually lives.
   for pair in "REDIS_DIR=/data/redis" "STATE_PATH=/data/sync/state.json"; do
     key="${pair%%=*}"
-    if grep -q "^$key=." "$ENV_FILE" 2>/dev/null; then
+    if [ -n "$(env_value "$key")" ]; then
       echo "   $key already set"
     elif [ -z "$DRY_RUN" ]; then
       printf '%s\n' "$pair" >> "$ENV_FILE"

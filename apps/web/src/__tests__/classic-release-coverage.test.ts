@@ -3,13 +3,18 @@
 // whether its caller is a contestant surface. So every CALL has to reach a
 // filter from classic-release.ts, and a new reader that forgets would put a
 // hidden challenge on some page. This test finds every call in the source
-// tree (not a hand-kept list) and follows each one on its own: the filter
-// must wrap or chain onto the call, or be applied, later in the same block,
-// to the variable the call's result was bound to. A file with one filtered
-// call and one unfiltered call fails. A call whose result reaches contestants
-// only through another gate is listed in EXEMPT with the reason.
+// tree (not a hand-kept list) and follows each one on its own, reading the
+// code with the TypeScript compiler rather than as text, so a string, a
+// template or a regex literal cannot move the verdict. A call is filtered
+// when a list filter wraps it, when `.then` hands it to one, or when the
+// variable its result is bound to is filtered later in the same function:
+// resolved by the type checker, so another variable of the same name, or a
+// filter inside a nested function, does not count. A call whose result
+// reaches contestants only through another gate is listed in EXEMPT with the
+// reason.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const SRC = join(__dirname, "..");
@@ -32,75 +37,184 @@ const EXEMPT: Record<string, { calls: number; reason: string }> = {
   },
 };
 
-/** Code only: a comment line that names a reader is not a read. */
-const code = (src: string) =>
-  src
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\/\*|\*|\{\/\*)/.test(line))
-    .join("\n");
+const READERS = new Set(["listChallenges", "readChallengeRecords"]);
+/** The list filters from classic-release.ts, which take a list. */
+const LIST_FILTERS = new Set(["visibleNow", "visibleChallenges"]);
+/** The per-challenge predicate, for `.filter((c) => isChallengeVisible(c, …))`
+ *  and a single record looked up from the list. */
+const ITEM_FILTER = "isChallengeVisible";
 
-const CALL = /\b(listChallenges|readChallengeRecords)\(/g;
-const FILTER = "visibleNow|visibleChallenges|isChallengeVisible";
+/** One file parsed into a program of its own, so the type checker can resolve
+ *  each identifier to its declaration (scope-aware: a shadowing variable of
+ *  the same name is a different symbol). No lib and no imports are loaded:
+ *  only local bindings need resolving. */
+function analyze(source: string, fileName = "scan.tsx") {
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const host: ts.CompilerHost = {
+    getSourceFile: (name) => (name === fileName ? sourceFile : undefined),
+    writeFile: () => {},
+    getDefaultLibFileName: () => "lib.d.ts",
+    useCaseSensitiveFileNames: () => true,
+    getCanonicalFileName: (name) => name,
+    getCurrentDirectory: () => "",
+    getNewLine: () => "\n",
+    fileExists: (name) => name === fileName,
+    readFile: () => undefined,
+  };
+  const program = ts.createProgram([fileName], { noLib: true, noResolve: true, types: [], jsx: ts.JsxEmit.Preserve }, host);
+  return { file: program.getSourceFile(fileName)!, checker: program.getTypeChecker() };
+}
 
-/** The index of the element containing the end of `elems` in a
- *  comma-separated list, counting only top-level commas. */
-function elementIndex(elems: string): number {
-  let depth = 0;
-  let index = 0;
-  for (const ch of elems) {
-    if ("([{".includes(ch)) depth += 1;
-    else if (")]}".includes(ch)) depth -= 1;
-    else if (ch === "," && depth === 0) index += 1;
+const calleeName = (call: ts.CallExpression): string | null =>
+  ts.isIdentifier(call.expression) ? call.expression.text : null;
+
+/** Walks up through `( … )` and `await`, which do not change the value. */
+function valueNode(node: ts.Expression): ts.Expression {
+  let n: ts.Expression = node;
+  while (n.parent && (ts.isParenthesizedExpression(n.parent) || ts.isAwaitExpression(n.parent))) n = n.parent;
+  return n;
+}
+
+function enclosingFunction(node: ts.Node): ts.Node | undefined {
+  let n = node.parent;
+  while (n && !ts.isFunctionLike(n) && !ts.isSourceFile(n)) n = n.parent;
+  return n;
+}
+
+/** Whether `fn` (an arrow or function expression) calls a list filter on its
+ *  own first parameter: `.then((c) => visibleNow(c))`. */
+function filtersItsParameter(fn: ts.Node, checker: ts.TypeChecker, filters: Set<string>): boolean {
+  if (!(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) return false;
+  const param = fn.parameters[0]?.name;
+  if (!param || !ts.isIdentifier(param)) return false;
+  const paramSymbol = checker.getSymbolAtLocation(param);
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isCallExpression(n) && filters.has(calleeName(n) ?? "")) {
+      const arg = n.arguments[0];
+      if (arg && ts.isIdentifier(arg) && paramSymbol && checker.getSymbolAtLocation(arg) === paramSymbol) found = true;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(fn.body);
+  return found;
+}
+
+/** The identifier the value is bound to in a declaration: `const x = v`, or
+ *  its position in `const [a, b] = await Promise.all([…, v, …])`. */
+function bindingFor(value: ts.Expression): ts.Identifier | null {
+  const parent = value.parent;
+  if (parent && ts.isVariableDeclaration(parent) && parent.initializer === value) {
+    return ts.isIdentifier(parent.name) ? parent.name : null;
   }
-  return index;
-}
-
-/** The variable the call at `at` is bound to, in the same statement: `const x
- *  = await call()`, `const x = (await call()).find(...)`, or position `i` of
- *  `const [a, b] = await Promise.all([e0, e1])`. Null when there is none. */
-function boundName(src: string, at: number): string | null {
-  const head = src.slice(0, at);
-  const decl = [...head.matchAll(/\b(?:const|let)\s+(\[[^\]]*\]|\w+)\s*=\s*/g)].pop();
-  if (!decl || decl.index === undefined) return null;
-  const between = src.slice(decl.index + decl[0].length, at);
-  if (between.includes(";")) return null;
-  if (!decl[1].startsWith("[")) return decl[1];
-  const all = /Promise\.all(?:Settled)?\(\[/.exec(between);
-  if (!all) return null;
-  const names = decl[1].slice(1, -1).split(",").map((n) => n.trim());
-  return names[elementIndex(between.slice(all.index + all[0].length))] || null;
-}
-
-/** Where the block enclosing `at` closes: the rest of the function. */
-function blockEnd(src: string, at: number): number {
-  let depth = 0;
-  for (let i = at; i < src.length; i += 1) {
-    if (src[i] === "{") depth += 1;
-    else if (src[i] === "}" && --depth < 0) return i;
+  if (parent && ts.isArrayLiteralExpression(parent)) {
+    const all = parent.parent;
+    if (
+      all &&
+      ts.isCallExpression(all) &&
+      ts.isPropertyAccessExpression(all.expression) &&
+      ts.isIdentifier(all.expression.expression) &&
+      all.expression.expression.text === "Promise" &&
+      /^all(Settled)?$/.test(all.expression.name.text)
+    ) {
+      const decl = valueNode(all).parent;
+      if (decl && ts.isVariableDeclaration(decl) && ts.isArrayBindingPattern(decl.name)) {
+        const element = decl.name.elements[parent.elements.indexOf(value)];
+        return element && ts.isBindingElement(element) && ts.isIdentifier(element.name) ? element.name : null;
+      }
+    }
   }
-  return src.length;
+  return null;
 }
 
-function callFiltered(src: string, at: number, name: string): boolean {
-  // Wrapped: visibleNow(listChallenges()), visibleNow(await listChallenges()).
-  if (/\b(visibleNow|visibleChallenges)\(\s*(await\s+)?$/.test(src.slice(Math.max(0, at - 40), at))) return true;
-  // Chained: listChallenges().then(visibleNow), .then((c) => visibleNow(c)...).
-  const after = src.slice(at + name.length + 2);
-  if (/^\.then\(\s*(visibleNow\b|\(?\w+\)?\s*=>\s*visibleNow\()/.test(after)) return true;
-  // Bound, then filtered later in the same block.
-  const bound = boundName(src, at);
+/** Whether `symbol` is filtered later in `scope` (the function that bound
+ *  it, never a function nested in it): passed to a filter, or the receiver of
+ *  `.filter`/`.find`/`.some` whose callback calls the item filter on its own
+ *  parameter. */
+function filteredLater(symbol: ts.Symbol, scope: ts.Node, after: number, checker: ts.TypeChecker, filters: Set<string>): boolean {
+  let found = false;
+  const isSymbol = (e: ts.Expression | undefined) => !!e && ts.isIdentifier(e) && checker.getSymbolAtLocation(e) === symbol;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (n !== scope && ts.isFunctionLike(n)) {
+      // A nested function is someone else's flow, except a `.filter`
+      // callback, which the receiver check below reads on its own.
+      return;
+    }
+    if (n.pos >= after && ts.isCallExpression(n)) {
+      if (filters.has(calleeName(n) ?? "") && isSymbol(n.arguments[0])) found = true;
+      const callee = n.expression;
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        /^(filter|find|some)$/.test(callee.name.text) &&
+        isSymbol(callee.expression) &&
+        n.arguments[0] &&
+        filtersItsParameter(n.arguments[0], checker, new Set([ITEM_FILTER]))
+      ) {
+        found = true;
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  return found;
+}
+
+function callFiltered(call: ts.CallExpression, checker: ts.TypeChecker): boolean {
+  const value = valueNode(call);
+  // (a) An argument of a list filter: visibleNow(await listChallenges()).
+  const outer = value.parent;
+  if (outer && ts.isCallExpression(outer) && outer.arguments.includes(value) && LIST_FILTERS.has(calleeName(outer) ?? "")) return true;
+  // (b) The receiver of .then(filter) or .then((c) => visibleNow(c)…).
+  const access = call.parent;
+  if (access && ts.isPropertyAccessExpression(access) && access.expression === call && access.name.text === "then") {
+    const then = access.parent;
+    const f = then && ts.isCallExpression(then) ? then.arguments[0] : undefined;
+    if (f && ts.isIdentifier(f) && LIST_FILTERS.has(f.text)) return true;
+    if (f && filtersItsParameter(f, checker, LIST_FILTERS)) return true;
+  }
+  // (c) Bound, then filtered later in the same function: the list itself,
+  // or one record looked up from it with `.find(…)` and checked.
+  let bound = bindingFor(value);
+  let filters = LIST_FILTERS;
+  if (!bound) {
+    const find = value.parent;
+    if (find && ts.isPropertyAccessExpression(find) && find.expression === value && find.name.text === "find" && find.parent && ts.isCallExpression(find.parent)) {
+      bound = bindingFor(valueNode(find.parent));
+      filters = new Set([ITEM_FILTER]);
+    }
+  }
   if (!bound) return false;
-  const rest = src.slice(at, blockEnd(src, at));
-  return new RegExp(`\\b(${FILTER})\\(\\s*${bound}\\b|\\b${bound}\\.(filter|find|some)\\([^;]*\\b(${FILTER})\\(`).test(rest);
+  const symbol = checker.getSymbolAtLocation(bound);
+  const scope = enclosingFunction(bound);
+  if (!symbol || !scope) return false;
+  return filteredLater(symbol, ts.isSourceFile(scope) ? scope : (scope as ts.FunctionLikeDeclaration).body ?? scope, bound.end, checker, filters);
 }
 
-/** Every call in `src` that reaches no filter, by its offset. */
+/** The offset of every call in `source` that reaches no filter. */
 export function unfilteredCalls(source: string): number[] {
-  const src = code(source);
-  return [...src.matchAll(CALL)]
-    .filter((m) => !/function\s+$/.test(src.slice(Math.max(0, (m.index ?? 0) - 20), m.index)))
-    .filter((m) => !callFiltered(src, m.index ?? 0, m[1]))
-    .map((m) => m.index ?? 0);
+  if (!/\b(listChallenges|readChallengeRecords)\b/.test(source)) return [];
+  const { file, checker } = analyze(source);
+  const out: number[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && READERS.has(calleeName(n) ?? "") && !callFiltered(n, checker)) out.push(n.getStart(file));
+    ts.forEachChild(n, visit);
+  };
+  visit(file);
+  return out;
+}
+
+/** Every call to a reader in `source`, filtered or not. */
+function readerCalls(source: string): number {
+  const file = ts.createSourceFile("scan.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let count = 0;
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && READERS.has(calleeName(n) ?? "")) count += 1;
+    ts.forEachChild(n, visit);
+  };
+  visit(file);
+  return count;
 }
 
 describe("the scan itself", () => {
@@ -133,6 +247,33 @@ export async function page() {
   });
 });
 
+describe("the scan reads code, not text", () => {
+  it("accepts a filtered binding whose name a regex would misread", () => {
+    expect(unfilteredCalls("async function f() { const $list = await listChallenges(); return visibleNow($list); }")).toEqual([]);
+  });
+
+  it("does not take an unrelated filter in the same statement for this call's", () => {
+    expect(unfilteredCalls("async function f() { const all = await listChallenges(); all.find((x) => y); isChallengeVisible(other); }")).toHaveLength(1);
+    expect(unfilteredCalls("async function f() { const all = await listChallenges(); const r = all.find((x) => x.id === id), z = isChallengeVisible(other, 0); }")).toHaveLength(1);
+  });
+
+  it("is not moved by braces inside strings, template literals or regex literals", () => {
+    const body = (filter: string) =>
+      `async function f() { const s = "}}"; const all = await listChallenges(); const t = \`}\${"{"}\`; const r = /}}/; const u = '}'; ${filter} }`;
+    expect(unfilteredCalls(body("return visibleNow(all);"))).toEqual([]);
+    expect(unfilteredCalls(body("return all;"))).toHaveLength(1);
+  });
+
+  it("does not count a filter inside a nested function, on another value or on the same one", () => {
+    expect(unfilteredCalls("async function f() { const all = await listChallenges(); const g = () => visibleNow(other); return all; }")).toHaveLength(1);
+    expect(unfilteredCalls("async function f() { const all = await listChallenges(); const g = () => visibleNow(all); return g; }")).toHaveLength(1);
+  });
+
+  it("does not take a shadowing variable of the same name for the bound one", () => {
+    expect(unfilteredCalls("async function f() { const all = await listChallenges(); { const all = []; visibleNow(all); } return all; }")).toHaveLength(1);
+  });
+});
+
 describe("every call to the Jeopardy challenge list reaches a visibility filter", () => {
   const files = walk(SRC).map((p) => ({ path: relative(SRC, p), src: readFileSync(p, "utf8") }));
   const unfiltered = files
@@ -140,7 +281,7 @@ describe("every call to the Jeopardy challenge list reaches a visibility filter"
     .filter((f) => f.calls > 0);
 
   it("finds the readers it is meant to check", () => {
-    const readers = files.filter(({ src }) => /\b(listChallenges|readChallengeRecords)\(/.test(code(src))).map((f) => f.path);
+    const readers = files.filter(({ src }) => readerCalls(src) > 0).map((f) => f.path);
     // Non-vacuous: the board, the graders and the leaderboard are readers.
     expect(readers).toEqual(
       expect.arrayContaining(["app/(site)/flags/page.tsx", "lib/classic-store.ts", "lib/hint-store.ts", "lib/leaderboard/module-contributions.ts"]),

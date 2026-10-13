@@ -835,6 +835,22 @@ describe("getTeamClassicTotalsBatch", () => {
     });
   });
 
+  it("evaluates team dynamic points once when multiple teammates solve, matching board value", async () => {
+    // Both Alice and Bob solved dyn-1 when solveCount was 1 (value 496).
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      solves({ "dyn-1": { points: 500, at: "2026-08-19T10:00:00.000Z" } }),
+      solves({ "dyn-1": { points: 496, at: "2026-08-19T10:05:00.000Z" } }),
+    ]);
+    const currentValueById = new Map([["dyn-1", 496]]);
+    const [total] = await getTeamClassicTotalsBatch([["alice", "bob"]], currentValueById);
+    expect(total).toEqual({
+      points: 496,
+      solved: 1,
+      lastAt: "2026-08-19T10:00:00.000Z",
+      itemIds: ["dyn-1"],
+    });
+  });
+
   it("deduplicates team solves across a mix of dynamic and static challenges", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce([
       solves({

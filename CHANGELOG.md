@@ -69,10 +69,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   can optionally configure decay (`maxPoints`, `minPoints`, and `decay`),
   calculated deterministically via the CTFd dynamic formula
   `ceil(max + ((min - max) / decay²) * solve_count²)` clamped to `minPoints`.
-  Both individual and team totals reflect current dynamic challenge values at
-  read time from authoritative solve records, with team solves deduplicated
-  before applying current values. Live solve counts are raised safely during
-  reseeding without overwriting higher counts.
+  Team surfaces (board tiles, challenge pages, and team totals) derive dynamic
+  values from team-deduplicated solve counts, with shared solves deduplicated
+  before applying decay. Individual totals reflect per-contestant solve counts.
+  Live solve counts are raised safely during reseeding without overwriting
+  higher counts.
 - **Added: first blood on the Jeopardy board (#188).** Each visible tile and
   open story step names the contestant who solved it first. It is display
   only and changes no score. It is read from the current team members' solve

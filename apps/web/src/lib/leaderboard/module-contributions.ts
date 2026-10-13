@@ -5,10 +5,10 @@ import { atLeast, unionTotal } from "@/lib/leaderboard/denominators";
 import {
   getClassicTotals,
   getTeamClassicTotalsBatch,
-  getSolveCounts,
   listChallenges,
   type ClassicTotal,
 } from "@/lib/classic-store";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
 import { challengeCurrentValue, hasDynamicScoring } from "@/lib/classic-keys";
 import { getEnabledModuleIds, isModuleLive } from "@/lib/enabled-modules";
 import { visibleNow } from "@/lib/classic-release";
@@ -357,7 +357,8 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
     (async () => {
       let currentValueById: ReadonlyMap<string, number> | null = null;
       if (challenges.some(hasDynamicScoring)) {
-        const solveCounts = await getSolveCounts();
+        const solveCounts = await teamSolveCounts("classic");
+        if (!solveCounts) throw new Error("classic team solve counts unavailable");
         currentValueById = new Map(challenges.map((c) => [c.id, challengeCurrentValue(c, solveCounts.get(c.id) ?? 0)]));
       }
       return teamClassicTotals(teams, currentValueById);

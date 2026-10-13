@@ -4223,9 +4223,12 @@ solvers' totals must reflect the new value. Two architectures were compared:
    write/update the aggregate points (`ctf:classic:points`) for every past
    solver of $C$ across Redis.
 2. **Read-time calculation.** Derive dynamic challenge values at read time from
-   the authoritative solve counts (`ctf:classic:solvecount`) and compute
-   individual/team totals directly from the authoritative per-login solve
-   records (`ctf:classic:solves:<login>`) and deduplicated team solve sets.
+   authoritative solve data: team-deduplicated solve counts (`teamSolveCounts`)
+   for team surfaces (`/flags`, `/flags/[id]`, and `withTeamClassicPoints`), and
+   distinct login solve counts (`ctf:classic:solvecount`) for individual totals
+   (`getClassicTotals`). Compute individual/team totals directly from the
+   authoritative per-login solve records (`ctf:classic:solves:<login>`) and
+   deduplicated team solve sets.
 
 **Decision.** Choose **read-time calculation**.
 
@@ -4239,11 +4242,22 @@ solvers' totals must reflect the new value. Two architectures were compared:
   monotonically increasing source records. Deriving scores at read time guarantees
   that leaderboard totals are always mathematically consistent with actual solve
   records and current solve counts.
-- **Team deduplication happens before dynamic pricing.** Team scoring must never
-  multiply a challenge's value by the number of teammates who solved it. Under
-  read-time calculation, the union of challenge IDs solved by a team is taken
-  first (via `foldTeamItems`), and the current dynamic value is evaluated
-  exactly once per distinct challenge solved by the team.
+- **Authoritative count sources and distinct scoring semantics.** Jeopardy
+  scoring distinguishes team scoring from individual contestant progress:
+  - **Team surfaces and board consistency.** The challenge board (`/flags`),
+    detail pages (`/flags/[id]`), and team leaderboard totals
+    (`withTeamClassicPoints`) all derive dynamic challenge values from the
+    same team-deduplicated solve counts (`teamSolveCounts`). When multiple
+    teammates solve the same challenge, the team is counted once and points do
+    not decay; when another team solves it, the count increments once and
+    points decay for all teams. Shared challenge solves within a team are
+    deduplicated (via `foldTeamItems`) before dynamic pricing is applied,
+    so team totals and displayed board values always agree.
+  - **Individual scoring semantics.** Individual totals (`getClassicTotals`)
+    reflect per-contestant progress and derive dynamic values from distinct
+    individual solve counts (`ctf:classic:solvecount`). Individual scoring
+    never conflates team counts, and team scoring never multiplies points by
+    team size.
 - **Zero penalty on static-only boards.** When no dynamic challenges exist on
   the board, `getClassicTotals()` stops at the stored aggregates
   (`ctf:classic:points`, `ctf:classic:solved`) and skips the per-login solve
@@ -4256,9 +4270,11 @@ solvers' totals must reflect the new value. Two architectures were compared:
   nothing extra either.
 
 **Consequences.** Individual and team totals always reflect current challenge
-values. When a second contestant solves a dynamic challenge, previous solvers'
-totals immediately and deterministically reflect the decay on the next
-leaderboard read. Redis writes on submission remain a fixed number of $O(1)$
+values according to their respective semantics. When a second team solves a
+dynamic challenge, team totals and displayed board values immediately reflect
+the decay on the next read. If another member of the same team solves the
+challenge, the team count remains unchanged and displayed values and team totals
+do not decay. Redis writes on submission remain a fixed number of $O(1)$
 operations: `SUBMIT_SCRIPT` writes the solve record into
 `ctf:classic:solves:<login>`, increments `ctf:classic:points` by the
 challenge's authored value, increments `ctf:classic:solved` (the login's solve

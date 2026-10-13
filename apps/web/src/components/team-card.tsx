@@ -9,17 +9,87 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { TeamInfo } from "@/lib/team-store";
 
-type TeamActionResponse = { error?: string; code?: string };
+type TeamActionResponse = { error?: string; code?: string; needsConfirm?: boolean };
 
-async function postTeam(path: string, body?: Record<string, string>): Promise<TeamActionResponse> {
+/** The server refused an exit only because registration has closed and the
+ *  exit was not confirmed yet; `message` is its warning. */
+export class NeedsConfirmError extends Error {}
+
+export async function postTeam(path: string, body?: Record<string, string | boolean>): Promise<TeamActionResponse> {
   const res = await fetch(`/api/team${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
   });
   const data = (await res.json().catch(() => ({}))) as TeamActionResponse;
+  if (res.status === 409 && data.needsConfirm) throw new NeedsConfirmError(data.error ?? "Confirm to continue");
   if (!res.ok) throw new Error(data.error ?? "Request failed");
   return data;
+}
+
+/** A Leave or Remove the server wants confirmed: its warning, and the request
+ *  to resend with `confirm: true`. */
+export type PendingExit = { message: string; label: string; path: string; body: Record<string, string> };
+
+/** Sends a Leave or Remove. A refusal that only wants confirmation comes back
+ *  as the request kept for the player, not as an error; any other refusal
+ *  throws as `postTeam` does. */
+export async function requestExit(
+  path: string,
+  body: Record<string, string>,
+  label: string,
+): Promise<{ done: TeamActionResponse } | { confirm: PendingExit }> {
+  try {
+    return { done: await postTeam(path, body) };
+  } catch (err) {
+    if (err instanceof NeedsConfirmError) return { confirm: { message: err.message, label, path, body } };
+    throw err;
+  }
+}
+
+/** Confirm on the warning: the kept request again, with `confirm: true`. */
+export function confirmExit(exit: PendingExit): Promise<TeamActionResponse> {
+  return postTeam(exit.path, { ...exit.body, confirm: true });
+}
+
+/** The after-close warning on Leave and Remove, with the choice kept by the
+ *  player: confirm (the same request again, with `confirm: true`) or cancel. */
+export function ExitConfirm({
+  message,
+  confirmLabel,
+  pending,
+  onConfirm,
+  onCancel,
+}: {
+  message: string;
+  confirmLabel: string;
+  pending: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div role="alert" className="mt-2 flex flex-col gap-2 rounded-md border border-[#e53e3e]/40 bg-[#e53e3e]/[0.06] px-3 py-2">
+      <p className="text-xs text-zinc-200">{message}</p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={pending}
+          onClick={onConfirm}
+          className="rounded-md border border-[#e53e3e]/50 px-3 py-1.5 text-xs text-[#e53e3e] hover:bg-[#e53e3e]/10 disabled:opacity-50"
+        >
+          {confirmLabel}
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={onCancel}
+          className="rounded-md border border-white/10 px-3 py-1.5 text-xs text-zinc-300 hover:text-white disabled:opacity-50"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** The two captain buttons that sit BESIDE an input — Rename and Transfer.
@@ -85,10 +155,14 @@ export default function TeamCard({
   const [transferTarget, setTransferTarget] = useState("");
   const [confirmingDisband, setConfirmingDisband] = useState(false);
   const [latestCode, setLatestCode] = useState<string | null>(null);
+  // An exit the server wants confirmed (registration closed): the warning,
+  // and the request to resend with `confirm: true`.
+  const [exitConfirm, setExitConfirm] = useState<PendingExit | null>(null);
 
   const run = async (fn: () => Promise<TeamActionResponse>) => {
     setPending(true);
     setError(null);
+    setExitConfirm(null);
     try {
       const result = await fn();
       if (result.code) setLatestCode(result.code);
@@ -96,11 +170,22 @@ export default function TeamCard({
       setCreateValue("");
       router.refresh();
     } catch (err) {
+      if (err instanceof NeedsConfirmError) return;
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setPending(false);
     }
   };
+
+  /** Leave or Remove: sent as usual; if the server asks for confirmation,
+   *  the warning is shown and the same request waits for the player. */
+  const exit = (path: string, body: Record<string, string>, label: string) =>
+    run(async () => {
+      const outcome = await requestExit(path, body, label);
+      if ("done" in outcome) return outcome.done;
+      setExitConfirm(outcome.confirm);
+      throw new NeedsConfirmError(outcome.confirm.message);
+    });
 
   const displayCode = latestCode ?? joinCode;
   const [copied, setCopied] = useState(false);
@@ -129,7 +214,7 @@ export default function TeamCard({
             <button
               type="button"
               disabled={pending}
-              onClick={() => run(() => postTeam("/leave"))}
+              onClick={() => exit("/leave", {}, "Leave anyway")}
               className="flex-none rounded-md border border-white/10 px-3 py-1.5 text-xs text-zinc-300 transition-colors hover:border-[#e53e3e]/50 hover:text-white disabled:opacity-50"
             >
               Leave team
@@ -177,7 +262,7 @@ export default function TeamCard({
                       <button
                         type="button"
                         disabled={pending}
-                        onClick={() => run(() => postTeam("/remove", { slug: team.slug, member }))}
+                        onClick={() => exit("/remove", { slug: team.slug, member }, `Remove ${member} anyway`)}
                         className="text-[#e53e3e] hover:text-white disabled:opacity-50"
                         aria-label={`Remove ${member}`}
                       >
@@ -378,6 +463,15 @@ export default function TeamCard({
           — so without it the button click was silent for a screen reader and
           the team simply never appeared. Matches join-team-invite.tsx, which
           already announces its own. */}
+      {exitConfirm && (
+        <ExitConfirm
+          message={exitConfirm.message}
+          confirmLabel={exitConfirm.label}
+          pending={pending}
+          onConfirm={() => run(() => confirmExit(exitConfirm))}
+          onCancel={() => setExitConfirm(null)}
+        />
+      )}
       {error && (
         <p role="alert" className="mt-2 text-xs text-[#e53e3e]">
           {error}

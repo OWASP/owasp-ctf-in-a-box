@@ -32,6 +32,7 @@ type ChallengeStat = {
   solveRate: number | null;
   avgAttemptsToSolve: number | null;
   medianSecondsToSolve: number | null;
+  timeMeasure: "open" | "first-miss" | null;
   solvedAfterHint: number;
 };
 
@@ -66,6 +67,16 @@ function duration(seconds: number | null): string {
   if (seconds < 90) return `${seconds}s`;
   if (seconds < 5400) return `${Math.round(seconds / 60)}m`;
   return `${(seconds / 3600).toFixed(1)}h`;
+}
+
+/** The median-time cell: plain when measured from first opening the
+ *  challenge, starred when measured from the first wrong flag (no open was
+ *  recorded), and "—" when unknown — never "0s" for a row whose solvers were
+ *  all right on their first submission. The caption under the table explains
+ *  the star. */
+export function medianTimeCell(seconds: number | null, measure: "open" | "first-miss" | null): string {
+  if (seconds === null || measure === null) return "—";
+  return measure === "first-miss" ? `${duration(seconds)}*` : duration(seconds);
 }
 
 /** The sparkline's time axis: first, middle and last bucket, as "HH:MM" UTC —
@@ -322,12 +333,17 @@ export default function AdminInsightsTab({
                       <td className="py-1 pr-2 text-right">
                         {c.avgAttemptsToSolve === null ? "—" : c.avgAttemptsToSolve.toFixed(1)}
                       </td>
-                      <td className="py-1 text-right">{duration(c.medianSecondsToSolve)}</td>
+                      <td className="py-1 text-right">{medianTimeCell(c.medianSecondsToSolve, c.timeMeasure)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            <p className="text-sm text-muted">
+              Median time runs from a player first opening the challenge to solving it. * marks a figure from
+              their first wrong flag instead, for solves with no open recorded; — means every solver got it on
+              their first submission, so there is no time to show.
+            </p>
             {metrics.challenges.length > 40 && (
               <p className="text-sm text-muted">
                 Showing 40 of {metrics.challenges.length}. The CSV has every row.

@@ -71,6 +71,14 @@ describe("GET /api/admin/metrics", () => {
     expect(await res.text()).toBe("module,id\nquiz,q1\n");
   });
 
+  // `res.text()` strips a leading byte-order mark when it decodes, but the
+  // browser saves the raw bytes: those are what Excel reads.
+  it("sends the CSV's byte-order mark as the first bytes of the download", async () => {
+    challengesToCsv.mockReturnValue("﻿module,id\n");
+    const bytes = new Uint8Array(await (await GET(req("?format=csv"))).arrayBuffer());
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+  });
+
   it("ignores an unrecognised format rather than guessing", async () => {
     const res = await GET(req("?format=xlsx"));
     expect(res.headers.get("Content-Type")).toContain("application/json");

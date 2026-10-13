@@ -16,7 +16,9 @@
 //     `{categories: string[]}` (exactly one key) replaces the category list;
 //     `{import: <raw text>}` (exactly one key) bulk-imports a pasted/uploaded
 //     bundle, parsed and validated by `parseBundle` before anything is
-//     written; anything else is parsed as a challenge-plus-flag upsert
+//     written — the panel sends that one to `/api/admin/classic/bundle`,
+//     the same shape through the same handler, outside the proxy's 10 MB
+//     body cut, because a bundle with files is larger; anything else is parsed as a challenge-plus-flag upsert
 //     against `CHALLENGE_KEYS` (see that route's header comment). The shared
 //     `useCategoryEditor` (components/admin) builds every categories POST as
 //     exactly `{categories}` and nothing else — a stray extra key would fall
@@ -105,12 +107,15 @@ import { CLASSIC_COOLDOWN_SEC } from "@/lib/classic-defaults";
 // Type-only import: `classic-store.ts` is `server-only`, but a `import type`
 // is fully erased at compile time — no runtime import ever reaches the
 // client bundle. Never change this to a value import.
-import type { AdminChallenge, Challenge, ImportSummary } from "@/lib/classic-store";
+import type { AdminChallenge, Challenge } from "@/lib/classic-store";
+import type { ClassicImportSummary } from "@/lib/attachment-files-store";
+import type { AttachmentFile } from "@/lib/attachment-files";
 import type { Story } from "@/lib/story-lock";
 import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { parseBundle, serializeBundle } from "@/lib/classic-io";
 import ImportPanel from "@/components/admin/import-panel";
 import { downloadJson, useBundleImport } from "@/components/admin/use-bundle-import";
+import { NETWORK_ERROR, parseJson } from "@/components/admin/fetch";
 import AdminClassicStories from "@/components/admin-classic-stories";
 import ChallengeFrame from "@/components/admin/challenge-frame";
 import { useCategoryEditor } from "@/components/admin/use-category-editor";
@@ -118,11 +123,12 @@ import { useAdminResource } from "@/components/admin/use-admin-resource";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import AdminNumberField, { type FieldStatus } from "@/components/admin-number-field";
 import type { ModuleSettingsSlot } from "@/components/admin/settings-card";
-import { ChallengeForm } from "@/components/admin-classic-form";
+import { ChallengeForm, ClassicTimeZoneContext } from "@/components/admin-classic-form";
 import {
   CHALLENGE_ROWS,
   type ChallengeEditor,
   type ChallengePayload,
+  type ChallengeSolves,
   categoryUsageCount,
   challengeDeleteConfirm,
   classicInventory,
@@ -133,10 +139,13 @@ import {
   newChallengeEditor,
   payloadFromEditor,
   payloadFromRow,
+  solvesLabel,
+  statusChip,
 } from "@/components/admin-classic-model";
 
 export * from "@/components/admin-classic-model";
 export { ChallengeForm } from "@/components/admin-classic-form";
+export { ClassicTimeZoneContext } from "@/components/admin-classic-form";
 
 type NumericSettingKey = "classicCooldownSec";
 
@@ -163,6 +172,8 @@ export type AdminClassicControlsProps = {
   /** Reports the board's size to the shell for the setup checklist above this
    *  panel — after the mount-time fetch has settled, never from the seed. */
   onInventory?: (inventory: ModuleInventory) => void;
+  /** The event's time zone: release times are entered and shown on it. */
+  timeZone?: string;
 };
 
 export default function AdminClassicControls({
@@ -177,6 +188,7 @@ export default function AdminClassicControls({
   initialStories = [],
   initialLoaded = false,
   onInventory,
+  timeZone = "UTC",
 }: AdminClassicControlsProps) {
   // The board, the category list, the open editor, the delete target and
   // every write over them live in the shared resource hook
@@ -193,6 +205,11 @@ export default function AdminClassicControls({
   const [storiesRev, setStoriesRev] = useState(0);
   // #186: attachment metadata, for the Export button — same GET, same capture.
   const [attachmentMetaById, setAttachmentMetaById] = useState<Record<string, AttachmentMeta[]>>({});
+  // #595: how many teams and players solved each challenge — same GET.
+  const [solvesById, setSolvesById] = useState<Record<string, ChallengeSolves>>({});
+  // The clock the status chips read, taken once per mount: a chip is a
+  // statement about the stored state, not a live countdown.
+  const [nowMs] = useState(() => Date.now());
   function takeStories(next: Story[]) {
     setStories(next);
     setStoriesRev((n) => n + 1);
@@ -207,6 +224,7 @@ export default function AdminClassicControls({
       if (data.attachments && typeof data.attachments === "object") {
         setAttachmentMetaById(data.attachments as Record<string, AttachmentMeta[]>);
       }
+      if (data.solves && typeof data.solves === "object") setSolvesById(data.solves as Record<string, ChallengeSolves>);
       return {
         rows: Array.isArray(data.challenges) ? (data.challenges as AdminChallenge[]) : [],
         categories: Array.isArray(data.categories) ? (data.categories as string[]) : [],
@@ -250,8 +268,11 @@ export default function AdminClassicControls({
   // The bulk import/export flow (textarea, file pick, `{import}` POST,
   // after-import summary) — see components/admin/use-bundle-import.ts. On
   // success both lists are re-read from the server, never hand-patched.
-  const bundleImport = useBundleImport<ImportSummary>({
-    endpoint: "/api/admin/classic",
+  // The import goes to `/api/admin/classic/bundle`, which sits outside the
+  // Next proxy and reads a body of tens of MB: a bundle with files would be
+  // cut at the proxy's 10 MB on `/api/admin/classic`.
+  const bundleImport = useBundleImport<ClassicImportSummary>({
+    endpoint: "/api/admin/classic/bundle",
     describeError: describeClassicError,
     parse: parseBundle,
     parseSummary: (reply) => ({
@@ -259,9 +280,39 @@ export default function AdminClassicControls({
       updated: reply.updated ?? 0,
       categories: reply.categories ?? 0,
       ...(reply.stories !== undefined ? { stories: reply.stories } : {}),
+      ...(reply.files !== undefined ? { files: reply.files } : {}),
     }),
     afterImport: resource.reload,
   });
+
+  // "Include files": off by default, so an export stays the small
+  // metadata-only file unless the organizer asks for the bytes. Those are
+  // not in the panel's state, so an export with them reads them first.
+  const [includeFiles, setIncludeFiles] = useState(false);
+  const [exportPending, setExportPending] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  async function exportChallenges() {
+    setExportError(null);
+    let files: AttachmentFile[] | undefined;
+    if (includeFiles) {
+      setExportPending(true);
+      try {
+        const res = await fetch("/api/admin/classic/bundle");
+        const data = await parseJson<{ attachmentFiles?: AttachmentFile[]; error?: string }>(res);
+        if (!res.ok || !Array.isArray(data.attachmentFiles)) {
+          setExportError(`Couldn't read the files: ${describeClassicError(res.status, data.error)}`);
+          return;
+        }
+        files = data.attachmentFiles;
+      } catch {
+        setExportError(NETWORK_ERROR);
+        return;
+      } finally {
+        setExportPending(false);
+      }
+    }
+    downloadJson(serializeBundle(exportBundleFrom(challenges, categories, stories, attachmentMetaById, files)), "classic-challenges.json");
+  }
 
   // Report upward whenever the board changes, once it is real. A report to
   // the parent's subscriber, not a setState of this component's own.
@@ -290,6 +341,7 @@ export default function AdminClassicControls({
   // confirmations below it are the shared frame — see its header for why the
   // pieces below are classic's and not the frame's.
   return (
+    <ClassicTimeZoneContext.Provider value={timeZone}>
     <ChallengeFrame
       resource={resource}
       categoryEditor={categoryEditor}
@@ -298,12 +350,29 @@ export default function AdminClassicControls({
       newEditor={newChallengeEditor}
       editorFromRow={editorFromChallenge}
       deleteConfirm={challengeDeleteConfirm}
-      meta={(row) => (
-        <>
-          {row.challenge.points} pt
-          {row.challenge.points === 1 ? "" : "s"}
-        </>
-      )}
+      meta={(row) => {
+        const solves = solvesLabel(solvesById[row.challenge.id]);
+        const chip = statusChip(row.challenge, nowMs, timeZone);
+        return (
+          <>
+            <span
+              data-status={chip.kind}
+              className={`mr-1.5 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                chip.kind === "live"
+                  ? "border-[#14b8a6]/40 text-[#14b8a6]"
+                  : chip.kind === "scheduled"
+                    ? "border-[#d4a017]/40 text-[#d4a017]"
+                    : "border-white/15 text-zinc-400"
+              }`}
+            >
+              {chip.label}
+            </span>
+            {row.challenge.points} pt
+            {row.challenge.points === 1 ? "" : "s"}
+            {solves && <> · {solves}</>}
+          </>
+        );
+      }}
       Form={ChallengeForm}
       beforePanel={
         <AdminClassicStories
@@ -316,10 +385,14 @@ export default function AdminClassicControls({
       }
       afterPanel={
         <ImportPanel
-          exportDescription="Downloads every challenge currently on the board as one JSON file, flags included."
+          exportDescription="Downloads every challenge currently on the board as one JSON file, flags included. Include files adds every uploaded file's bytes, so another box needs no re-upload."
           exportLabel="Export challenges"
           exportDisabled={challenges.length === 0}
-          onExport={() => downloadJson(serializeBundle(exportBundleFrom(challenges, categories, stories, attachmentMetaById)), "classic-challenges.json")}
+          onExport={() => void exportChallenges()}
+          exportPending={exportPending}
+          exportError={exportError}
+          includeFiles={includeFiles}
+          onIncludeFiles={setIncludeFiles}
           notice={
             <>
               Import never deletes existing challenges — anything already on the board that isn&rsquo;t in the file
@@ -342,5 +415,6 @@ export default function AdminClassicControls({
       reorderPending={reorderPending}
       onMove={(from, to) => void resource.move(from, to)}
     />
+    </ClassicTimeZoneContext.Provider>
   );
 }

@@ -111,24 +111,15 @@ done
 
 # Every external call goes through `run`, so --dry-run cannot leak a real one.
 # Anything that looks like a secret is redacted in the printed form: a dry run
-# exists to be pasted into a terminal or a review.
-redacted() {
-  local out=""
-  local arg=""
-  for arg in "$@"; do
-    case "$arg" in
-    *SECRET* | *TOKEN* | *PASSWORD*)
-      out="$out ${arg%%=*}=<redacted>"
-      ;;
-    *) out="$out $arg" ;;
-    esac
-  done
-  echo "${out# }"
-}
+# exists to be pasted into a terminal or a review. The rules live in
+# scripts/lib/redact.sh, shared with deploy/fly/deploy.sh so the two deploy
+# paths cannot disagree about what a secret looks like.
+# shellcheck source=scripts/lib/redact.sh
+. "$ROOT/scripts/lib/redact.sh"
 
 run() {
   if [ -n "$DRY_RUN" ]; then
-    echo "   DRY-RUN: $(redacted "$@")"
+    echo "   DRY-RUN: $(redact_args "$@")"
     return 0
   fi
   "$@"

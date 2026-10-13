@@ -6,7 +6,8 @@
 // `getMiddlewareRouteMatcher`), so a lookahead that exempts too much — or
 // nothing at all — fails here.
 //
-// Audit S2: `/api/admin/event` must be OUT. Every request the proxy runs on has
+// Audit S2: `/api/admin/event` must be OUT, and so must
+// `/api/admin/classic/bundle`, the classic bundle import that carries files. Every request the proxy runs on has
 // its body cloned and silently cut at 10 MB (next/dist/server/body-streams.js),
 // which broke every archive import with more than a few MB of attachments.
 // Everything else under `/api/` must stay IN, because the proxy is where the
@@ -37,6 +38,11 @@ describe("the proxy matcher, compiled by Next", () => {
     expect(matches(p)).toBe(false);
   });
 
+  // A classic bundle with files is tens of MB, the same problem as the archive.
+  it.each(["/api/admin/classic/bundle", "/api/admin/classic/bundle/"])("does not run on the classic bundle route %s", (p) => {
+    expect(matches(p)).toBe(false);
+  });
+
   it.each([
     "/api/admin/events",
     "/api/admin/eventx",
@@ -45,6 +51,9 @@ describe("the proxy matcher, compiled by Next", () => {
     "/api/admin/settings",
     "/api/admin/attachments",
     "/api/admin/classic",
+    "/api/admin/classic/bundles",
+    "/api/admin/classic/bundle/extra",
+    "/api/admin/classicx/bundle",
     "/api/team/join",
     "/api/classic/submit",
     "/api/stats/visit",

@@ -14,6 +14,7 @@ import AdminOverviewTab, { moduleSummary } from "@/app/(site)/admin/admin-overvi
 const settings: AdminSettings = {
   paused: false,
   teamRegistrationOpen: true,
+  displayQr: true,
   hintsEnabled: null,
   hintCost: null,
   hintsMinSolves: null,

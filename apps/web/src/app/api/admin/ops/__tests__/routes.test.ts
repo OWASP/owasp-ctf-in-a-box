@@ -16,6 +16,7 @@ const {
   forceRemoveFromTeam,
   forceTransferCaptain,
   forceDisbandTeam,
+  forceAddToTeam,
   OpsValidationError,
 } = vi.hoisted(() => {
   class OpsValidationError extends Error {
@@ -34,6 +35,7 @@ const {
     forceRemoveFromTeam: vi.fn(),
     forceTransferCaptain: vi.fn(),
     forceDisbandTeam: vi.fn(),
+    forceAddToTeam: vi.fn(),
     OpsValidationError,
   };
 });
@@ -47,6 +49,7 @@ vi.mock("@/lib/admin-ops-store", () => ({
   forceRemoveFromTeam,
   forceTransferCaptain,
   forceDisbandTeam,
+  forceAddToTeam,
   OpsValidationError,
 }));
 
@@ -79,6 +82,32 @@ beforeEach(() => {
   forceRemoveFromTeam.mockResolvedValue({ ok: true });
   forceTransferCaptain.mockResolvedValue({ ok: true });
   forceDisbandTeam.mockResolvedValue({ ok: true, members: 2 });
+  forceAddToTeam.mockResolvedValue({ ok: true, login: "bob", from: null });
+});
+
+// #597: an organizer puts a player on a team, or moves them, whatever the
+// registration state. The cap override is opt-in and only a literal true.
+describe("add-member (#597)", () => {
+  it("adds through the store, with the admin as actor and the cap enforced by default", async () => {
+    const res = await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "add-member" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, login: "bob", from: null });
+    expect(forceAddToTeam).toHaveBeenCalledWith("red", "bob", "alice", { overrideCap: false });
+  });
+
+  it("passes the override only when it is literally true", async () => {
+    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "add-member", overrideCap: true }));
+    expect(forceAddToTeam).toHaveBeenLastCalledWith("red", "bob", "alice", { overrideCap: true });
+    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "add-member", overrideCap: "yes" }));
+    expect(forceAddToTeam).toHaveBeenLastCalledWith("red", "bob", "alice", { overrideCap: false });
+  });
+
+  it("400s a validation error with its field", async () => {
+    forceAddToTeam.mockRejectedValueOnce(new OpsValidationError("slug", '"red" is full (4 players). Tick override to add them anyway'));
+    const res = await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "add-member" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field: "slug" });
+  });
 });
 
 describe("authorization", () => {

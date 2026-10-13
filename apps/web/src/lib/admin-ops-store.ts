@@ -4,6 +4,9 @@ import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-store";
 import { LOGIN_RE } from "@/lib/admin-admins";
 import { beginScoreLowering, endScoreLowering } from "@/lib/leaderboard/fold-cache";
 import { sumAttempts } from "@/lib/attempt-row";
+import { logActivity } from "@/lib/activity-log";
+import { errorLabel } from "@/lib/error-label";
+import { resolveTeamMaxMembers } from "@/lib/team-store";
 import {
   HINTS_SPENT_KEY,
   joinCodeKey,
@@ -26,6 +29,7 @@ import {
   CLASSIC_SOLVED_KEY,
   CLASSIC_POINTS_KEY,
   classicAttemptsKey,
+  classicOpenedKey,
   classicSolvesKey,
 } from "@/lib/classic-keys";
 import {
@@ -34,6 +38,7 @@ import {
   AI_LAST_AT_KEY,
   AI_SOLVED_KEY,
   aiAttemptsKey,
+  aiOpenedKey,
   aiSolvesKey,
 } from "@/lib/ai-keys";
 
@@ -86,12 +91,22 @@ function requireSlug(slug: string): string {
   return normalized;
 }
 
+/** Best-effort: every caller has already committed its write, so a failed
+ *  audit line is logged and the operation still reports what it did. A 503
+ *  there would send the organizer to retry something that already happened. */
 async function audit(action: string, actor: string, detail: Record<string, unknown>): Promise<void> {
   const line = JSON.stringify({ at: new Date().toISOString(), by: actor, action, ...detail });
-  await upstashPipeline([
-    ["LPUSH", ADMIN_AUDIT_KEY, line],
-    ["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1],
-  ]);
+  try {
+    assertPipelineOk(
+      await upstashPipeline([
+        ["LPUSH", ADMIN_AUDIT_KEY, line],
+        ["LTRIM", ADMIN_AUDIT_KEY, 0, AUDIT_CAP - 1],
+      ]),
+      `audit ${action}`,
+    );
+  } catch (err) {
+    console.error(`[admin-ops] audit write failed for ${action}`, errorLabel(err));
+  }
 }
 
 // --- read -------------------------------------------------------------------
@@ -478,6 +493,10 @@ async function resetProgressOf(login: string, actor: string): Promise<ResetScope
     ["HDEL", HINTS_SPENT_KEY, login],
     // Last, so the counts below keep their positions.
     ["HDEL", QUIZ_LAST_AT_KEY, login],
+    // When this login first opened each challenge: it only times
+    // their solves, so it goes with them. After the counted replies.
+    ["DEL", classicOpenedKey(login)],
+    ["DEL", aiOpenedKey(login)],
   ]);
   const n = (i: number) => Number(replies[i]?.result) || 0;
 
@@ -565,7 +584,8 @@ export async function deleteUser(
 // path that races with a contestant clicking Leave.
 
 // KEYS: [1]=team [2]=members [3]=user  ARGV: [1]=login [2]=slug
-const FORCE_REMOVE_SCRIPT = `
+// Exported for the live suite only.
+export const FORCE_REMOVE_SCRIPT = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return 'no-team' end
 if redis.call('HGET', KEYS[1], 'captain') == ARGV[1] then return 'is-captain' end
 if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then return 'not-member' end
@@ -601,7 +621,8 @@ export async function forceRemoveFromTeam(
 }
 
 // KEYS: [1]=team [2]=members  ARGV: [1]=newCaptain
-const FORCE_TRANSFER_SCRIPT = `
+// Exported for the live suite only.
+export const FORCE_TRANSFER_SCRIPT = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return 'no-team' end
 if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then return 'not-member' end
 redis.call('HSET', KEYS[1], 'captain', ARGV[1])
@@ -633,6 +654,105 @@ export async function forceTransferCaptain(
   }
   await audit("ops:team-transfer-captain", actor, { slug, login });
   return { ok: true };
+}
+
+// KEYS: [1]=team [2]=members [3]=user
+// ARGV: [1]=login (stored spelling) [2]=slug [3]=cap, "" for none [4]=now (ISO)
+// Puts a player on a team, moving them off their current one if they have
+// one: the organizer's way back for a player who left after registration
+// closed, or a move between teams. The same checks a join makes, in
+// the same atomic step as the write: the team exists, the cap (unless the
+// organizer overrode it), and a captain of a team with other members must
+// hand it over first, as Leave requires. Leaving the old team deletes it,
+// and its join code, when it empties, as LEAVE_SCRIPT does. `joinedAt` is
+// the move's time, so earlier solves do not open the new team's story steps
+// (ADR 60). Answers {verdict, previous team or ""}.
+// Exported for the live suite only.
+export const FORCE_ADD_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return {'no-team', ''} end
+local cur = redis.call('HGET', KEYS[3], 'team')
+local listed = redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1
+if cur == ARGV[2] and listed then return {'already-member', cur} end
+if not listed and ARGV[3] ~= '' and redis.call('SCARD', KEYS[2]) >= tonumber(ARGV[3]) then return {'full', ''} end
+local from = ''
+if cur and cur ~= '' and cur ~= ARGV[2] then
+  local oldTeam = 'ctf:team:' .. cur
+  local oldMembers = oldTeam .. ':members'
+  if redis.call('HGET', oldTeam, 'captain') == ARGV[1] and redis.call('SCARD', oldMembers) > 1 then
+    return {'is-captain', cur}
+  end
+  redis.call('SREM', oldMembers, ARGV[1])
+  if redis.call('SCARD', oldMembers) == 0 then
+    local code = redis.call('HGET', oldTeam, 'joinCode')
+    redis.call('DEL', oldTeam, oldMembers)
+    if code then redis.call('DEL', 'ctf:joincode:' .. code) end
+  end
+  from = cur
+end
+redis.call('SADD', KEYS[2], ARGV[1])
+redis.call('HSET', KEYS[3], 'team', ARGV[2], 'joinedAt', ARGV[4])
+redis.call('HSETNX', KEYS[3], 'firstTeamAt', ARGV[4])
+return {'ok', from}`;
+
+/** The spelling a player signed in with, found from their user record. Team
+ *  membership is read under that exact key (`ctf:user:<login>`), so a write
+ *  under any other spelling would put a record on the team that the player's
+ *  session never reads. `null` when no record exists: the player has never
+ *  signed in, and has no key to put on a team yet. The SCAN pattern spells
+ *  each letter both ways, so it walks the keyspace once without reading every
+ *  user key back. */
+async function resolveStoredLogin(lower: string): Promise<string | null> {
+  const pattern = `ctf:user:${[...lower].map((c) => (/[a-z]/.test(c) ? `[${c}${c.toUpperCase()}]` : c)).join("")}`;
+  const found: string[] = [];
+  let cursor = "0";
+  do {
+    const [scan] = await upstashPipeline([["SCAN", cursor, "MATCH", pattern, "COUNT", 1000]]);
+    const [next, keys] = parseScanPage(scan, "ops resolve login");
+    cursor = next;
+    for (const key of keys) {
+      const login = key.slice("ctf:user:".length);
+      if (login.toLowerCase() === lower) found.push(login);
+    }
+  } while (cursor !== "0");
+  return found.sort()[0] ?? null;
+}
+
+/**
+ * Puts a player on a team, or moves them to it, whatever the registration
+ * state. Enforces the team-size cap unless `overrideCap` is set.
+ * Audited, and written to the activity log as a team join.
+ */
+export async function forceAddToTeam(
+  rawSlug: string,
+  rawLogin: string,
+  actor: string,
+  opts: { overrideCap?: boolean } = {},
+): Promise<{ ok: true; login: string; from: string | null }> {
+  const slug = requireSlug(rawSlug);
+  const login = await resolveStoredLogin(requireLogin(rawLogin));
+  if (!login) {
+    throw new OpsValidationError("login", `${rawLogin.trim()} has not signed in yet, so there is no player to add`);
+  }
+  const cap = opts.overrideCap ? null : await resolveTeamMaxMembers();
+  const verdict = await upstashEval(
+    FORCE_ADD_SCRIPT,
+    [teamKey(slug), membersKey(slug), userKey(login)],
+    [login, slug, cap === null ? "" : String(cap), new Date().toISOString()],
+  );
+  const [status, other] = Array.isArray(verdict) ? (verdict as unknown[]).map(String) : [String(verdict), ""];
+  if (status === "no-team") throw new OpsValidationError("slug", `No team "${slug}"`);
+  if (status === "already-member") throw new OpsValidationError("login", `${login} is already on "${slug}"`);
+  if (status === "full") {
+    throw new OpsValidationError("slug", `"${slug}" is full (${cap} players). Tick override to add them anyway`);
+  }
+  if (status === "is-captain") {
+    throw new OpsValidationError("login", `${login} captains "${other}", which has other members. Transfer that captaincy first`);
+  }
+  if (status !== "ok") throw new Error(`unexpected verdict from the add script: ${status}`);
+  const from = other || null;
+  await audit("ops:team-add-member", actor, { slug, login, from, overrideCap: opts.overrideCap === true });
+  await logActivity("team-join", login, slug);
+  return { ok: true, login, from };
 }
 
 /**

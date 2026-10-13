@@ -30,7 +30,11 @@ const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
   getLaunchAccess: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
+vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts }));
 vi.mock("@/lib/launch", () => launchLock);
+// #616: the first-open record Insights measures time to solve from.
+const firstOpen = vi.hoisted(() => ({ recordFirstOpen: vi.fn(async () => {}) }));
+vi.mock("@/lib/first-open", () => firstOpen);
 import { renderToStaticMarkup } from "react-dom/server";
 
 const {
@@ -38,7 +42,7 @@ const {
   isAdminLogin,
   getSession,
   listAiChallenges,
-  getAiSolveCounts,
+  teamSolveCounts,
   getViewerAi,
   getResolvedModules,
   mintLaunchUrl,
@@ -53,7 +57,7 @@ const {
   isAdminLogin: vi.fn(),
   getSession: vi.fn(),
   listAiChallenges: vi.fn(),
-  getAiSolveCounts: vi.fn(),
+  teamSolveCounts: vi.fn(),
   getViewerAi: vi.fn(),
   getResolvedModules: vi.fn(),
   mintLaunchUrl: vi.fn(),
@@ -89,7 +93,7 @@ vi.mock("@/lib/require-team", () => ({ redirectIfTeamless }));
 vi.mock("@/lib/hint-store", () => ({ getAiHintIds, getHintNotice, getViewerHints }));
 vi.mock("@/lib/ai-store", () => ({
   listAiChallenges,
-  getAiSolveCounts,
+  teamSolveCounts,
   getViewerAi,
   AI_COOLDOWN_SEC: 5,
 }));
@@ -145,7 +149,7 @@ beforeEach(() => {
   isAdminLogin.mockReturnValue(false);
   getSession.mockResolvedValue({ user: { login: "alice" } });
   listAiChallenges.mockResolvedValue([flagChallenge, eventChallenge]);
-  getAiSolveCounts.mockResolvedValue(new Map([["a1", 3]]));
+  teamSolveCounts.mockResolvedValue(new Map([["a1", 3]]));
   getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });
   getResolvedModules.mockResolvedValue([
     { id: "ai", title: "AI", blurb: "Prompt-injection and guardrail challenges." },
@@ -158,6 +162,23 @@ beforeEach(() => {
   getAiHintIds.mockResolvedValue([]);
   getHintNotice.mockResolvedValue({ active: false, cost: 10 });
   getViewerHints.mockResolvedValue({ purchased: {}, classic: {}, ai: {}, spent: 0, count: 0 });
+});
+
+describe("first-open record (#616)", () => {
+  it("records a signed-in contestant opening a challenge, event-only ones too", async () => {
+    renderToStaticMarkup(await AiChallengePage(params("a1")));
+    renderToStaticMarkup(await AiChallengePage(params("a2")));
+    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("ai", "alice", "a1");
+    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("ai", "alice", "a2");
+  });
+
+  it("records nothing for a signed-out visitor or an admin preview", async () => {
+    getSession.mockResolvedValueOnce(null);
+    renderToStaticMarkup(await AiChallengePage(params("a1")));
+    launchLock.redirectIfNotLaunched.mockResolvedValueOnce({ allowed: true, preview: true });
+    renderToStaticMarkup(await AiChallengePage(params("a1")));
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+  });
 });
 
 describe("ai challenge page gates", () => {
@@ -214,15 +235,15 @@ describe("ai challenge page", () => {
     // ChallengeDetail's own card to draw (pinned in its own test file) — this
     // page's job is only to hand it the right view model, checked here.
     expect(challengeDetailSpy).toHaveBeenCalledTimes(1);
-    const [props] = challengeDetailSpy.mock.calls[0] as [{ challenge: { points: number; solveCount: number; description: string } }];
+    const [props] = challengeDetailSpy.mock.calls[0] as [{ challenge: { points: number; teamsSolved: number | null; description: string } }];
     expect(props.challenge.points).toBe(40);
-    expect(props.challenge.solveCount).toBe(3);
+    expect(props.challenge.teamsSolved).toBe(3);
     expect(props.challenge.description).toContain("**leak**");
   });
 
   it("decodes an encoded id from the URL", async () => {
     listAiChallenges.mockResolvedValue([{ ...flagChallenge, id: "web/one two" }]);
-    getAiSolveCounts.mockResolvedValue(new Map());
+    teamSolveCounts.mockResolvedValue(new Map());
     const html = renderToStaticMarkup(await AiChallengePage(params("web%2Fone%20two")));
     expect(html).toContain("Prompt Leak");
   });
@@ -362,6 +383,20 @@ describe("ai challenge page form", () => {
     listAiChallenges.mockResolvedValue([{ ...flagChallenge, id: "a3", mode: "both" as const }]);
     renderToStaticMarkup(await AiChallengePage(params("a3")));
     expect(challengeDetailSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // Event-only challenges skip ChallengeDetail, which is where the count is
+  // drawn for the other modes, so the page draws it itself.
+  it("shows how many teams solved an event-mode challenge", async () => {
+    teamSolveCounts.mockResolvedValue(new Map([["a2", 2]]));
+    const html = renderToStaticMarkup(await AiChallengePage(params("a2")));
+    expect(html).toContain("2 teams solved");
+  });
+
+  it("shows no count on an event-mode challenge when the counts could not be read", async () => {
+    teamSolveCounts.mockResolvedValue(null);
+    const html = renderToStaticMarkup(await AiChallengePage(params("a2")));
+    expect(html).not.toMatch(/teams? solved/);
   });
 
   it("renders no ChallengeDetail at all for an event-mode challenge — the launcher is the whole page", async () => {

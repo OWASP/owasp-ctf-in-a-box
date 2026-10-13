@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { LOGIN_RE } from "@/lib/admin-admins";
 import { getViewerAi, listAiChallenges } from "@/lib/ai-store";
 import { getViewerClassic, listChallenges, listStories } from "@/lib/classic-store";
+import { visibleNow } from "@/lib/classic-release";
 import { isLocked, lockedLabel, storyPositions } from "@/lib/story-lock";
 import { getTeamClassicSolvedIds, unlockingSolvedIds } from "@/lib/classic-team";
 import { auth } from "@/lib/auth";
@@ -66,11 +67,15 @@ export async function GET(request: Request) {
   let classic: Item[] | null = null;
   let classicHiddenSolved = 0;
   if (classicLive) {
-    const [challenges, viewers, stories] = await Promise.all([
+    const [storedChallenges, viewers, stories] = await Promise.all([
       listChallenges(),
       Promise.all(logins.map((l) => getViewerClassic(l))),
       listStories(),
     ]);
+    // A hidden challenge (disabled, or not yet released) does not exist here,
+    // for the team that solved it too: left out before anything is built, so
+    // the story chain below closes up around it.
+    const challenges = visibleNow(storedChallenges);
     // #463: a story step is redacted to its position alone — label, points
     // AND id, since an id is derived from the title — unless it is open BOTH
     // for the queried logins (the team whose row this is) AND for the

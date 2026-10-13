@@ -13,6 +13,7 @@
 // requires auth, enforced by /api/ai/submit itself.
 
 import type { Metadata } from "next";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
@@ -25,7 +26,6 @@ import { auth } from "@/lib/auth";
 import { getAdminSettings } from "@/lib/admin-store";
 import {
   AI_COOLDOWN_SEC,
-  getAiSolveCounts,
   getViewerAi,
   listAiCategories,
   listAiChallenges,
@@ -75,7 +75,7 @@ export default async function AiPage() {
   const [challenges, categories, solveCounts, viewerAi, settings, modules, hintIds] = await Promise.all([
     listAiChallenges(),
     listAiCategories(),
-    getAiSolveCounts(),
+    teamSolveCounts("ai"),
     login ? getViewerAi(login) : Promise.resolve<ViewerAi>({ solved: {}, attempts: {} }),
     // Fails OPEN, same doctrine as ai-store.ts's own resolveSettings for this
     // exact read: a Redis blip here must not take the whole public board
@@ -107,7 +107,8 @@ export default async function AiPage() {
     category: c.category,
     description: c.description,
     points: c.points,
-    solveCount: solveCounts.get(c.id) ?? 0,
+    // Teams, not players (#595): scoring is per team. Null when unread.
+    teamsSolved: solveCounts ? (solveCounts.get(c.id) ?? 0) : null,
     // Listed explicitly, like every field above it — this map is deliberately
     // NOT a spread of the store record, because a spread is how a secret leaks.
     caseSensitive: c.caseSensitive,

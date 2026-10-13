@@ -160,7 +160,12 @@ and `.next` are excluded, along with anything else your git ignore rules
 exclude — and the tag changes with it. That is what keeps a work-in-progress
 deploy off the tag an earlier one already pushed, which on an immutable
 registry would have redeployed the earlier image.
-`./deploy.sh --dry-run` prints every command and runs none of them.
+`./deploy.sh --dry-run` prints every command and runs none of them. It
+redacts secrets with the same rules as the Fly deploy (`scripts/lib/redact.sh`).
+The value of any variable whose name looks like a credential is replaced
+(`SECRET`, `TOKEN`, `PASSWORD`, `PRIVATE_KEY`, `CONNECTION_STRING`, `API_KEY`,
+a `_KEY` or `AUTH` suffix, and similar), while the name stays visible. Any
+`scheme://user:pass@host` is printed as `scheme://***@host`.
 
 Watch a rollout:
 

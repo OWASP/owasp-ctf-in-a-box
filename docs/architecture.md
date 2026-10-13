@@ -156,19 +156,34 @@ state; everything else that touches scores goes through it.
    carrying the real result was skipped, silently, and the cursor advanced
    past it. Re-presenting a revision is safe because the scorer's write is
    monotonic and idempotent on replay (step 7).
-6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload to
-   `POST /score` on `scorer` with a bearer token
+6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload, plus
+   `at` — the comment's own GitHub `updated_at`, never a field of the marker —
+   to `POST /score` on `scorer` with a bearer token
    (`Authorization: Bearer ${cfg.scorerToken}`), over the compose network —
    that endpoint is reachable from inside the box and nowhere else. The
    scorer compares the token in constant time: both sides are SHA-256'd and
    passed to `timingSafeEqual`, so neither the token's bytes nor its length
    are recoverable from how long a rejection takes. A `2xx` is success; a
+   `422` is the scorer's final verdict on *when* the score was posted
+   (logged as `refused`, never retried, not counted as dropped); any other
    `4xx` is treated as a permanent rejection (dropped, logged); anything
    else throws and the poller un-marks the comment as seen so it retries
-   next tick.
-7. `scorer` writes the score to Redis (via `srh`) as a monotonic,
-   idempotent-on-replay update — the write model is described in
+   next tick. The poller does not hold its cursor while scoring is frozen or
+   outside its window: it reads the effective freeze only for its heartbeat.
+7. `scorer` judges the score **at `at`**
+   ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)):
+   an unparseable `at` is a `400`, one more than five minutes in the future
+   is clamped to now, and one before the master-reset epoch, outside the
+   scoring window (`outsideScoringWindow`) or inside a freeze (`pausedAt`,
+   over `pausedSince` and the `ctf:admin:pauses` interval log the app writes
+   with the flag) is refused with a final `422`. A freeze with no recorded
+   start answers `503`, which the poller retries. A payload with no `at` (an
+   older sync) keeps the arrival-time rule. The scorer then writes the score
+   to Redis (via `srh`), timed `at`, as a monotonic, idempotent-on-replay
+   update — the write model is described in
    [docs/decisions.md #5](decisions.md#adr-5-single-score-writer-monotonic-writes-at-least-once-delivery).
+   Because the comment is edited on every run, `at` is the time of its last
+   run: a solve first read from a later re-run takes the re-run's time.
 8. `app` reads `GET ${LEADERBOARD_API_URL}/leaderboard` and renders the
    result on the contestant-facing leaderboard page. Alongside the ranked
    `leaderboard`/`teams` standings, the payload carries a top-level `catalog`
@@ -220,7 +235,8 @@ state; everything else that touches scores goes through it.
    every module block's and the scorer's team `lastSolveAt`, so a points tie
    goes to the team that earned its last points first in any module, not to
    the scorer's Secure-Development-only order. A Secure Development time is
-   when the box received the score. The Upstash source hands back rows
+   when its score comment was posted on the PR (step 7), not when the box
+   read it. The Upstash source hands back rows
    ordered by points descending (`ZRANGE`); points-first keeps that order and
    only breaks its ties on `patched`, the same way as on the lambda and mock
    sources. An
@@ -500,8 +516,15 @@ is what Insights' time-to-solve is measured from), and four running
 aggregates: `points` and `solved` (per-login totals the leaderboard overlay
 reads with flat `HGETALL`s regardless of board size), `lastAt` (each login's
 latest award time, the leaderboard's tiebreak, #522) and `solvecount` (the
-per-challenge distinct-solver count the board displays, distinct by
-construction because the already-solved guard runs before any write).
+per-challenge distinct-solver count, distinct by construction because the
+already-solved guard runs before any write; the admin list shows it as the
+players column). The contestant board shows a different figure, teams that
+solved each challenge (#595, `lib/team-solve-counts.ts`), folded from the
+members' solves hashes on read. The same read names each challenge's first
+blood (#188, `teamSolveBoard` and `lib/first-blood.ts`): the member with the
+earliest solve row `at`, an exact tie going to the case-insensitively first
+login. It is display only and has no key of its own, so no grading script
+writes it and every reset that removes a solve row or a membership removes it.
 
 **Submission**: `POST /api/classic/submit` derives `login` from the session
 (never the request body) and calls `submitFlag(login, challengeId, flag)`.
@@ -583,6 +606,38 @@ deliberately leaves `solves:<login>`/`attempts:<login>` rows and the three
 aggregate counters alone, mirroring `deleteQuestion`. Points already banked
 for a deleted challenge stay on the leaderboard; only the master reset
 clears them.
+
+**Visibility is a field on the public record, decided where it is read.** A
+challenge stored with `enabled: false` is hidden from contestants: it does not
+exist on their side, unless its `releaseAt` instant has come (`now >=
+releaseAt`, the instant itself released). The store keeps a release time only
+while it is in the future, always with `enabled: false`, next to
+`releaseAtMs`, its epoch-ms mirror, because the Lua scripts compare it with
+Redis's `TIME` and parse no ISO dates. Nothing is scheduled or stored per
+reader; pages read with the server's clock, the scripts with Redis's, and a
+page can lag the grader by at most the leaderboard fold's 10-second memo. Every reader
+asks one pure predicate, `isChallengeVisible` in `lib/classic-release.ts`,
+and filters before anything is built. `listChallenges` returns hidden
+challenges too, so each contestant caller filters through `visibleNow` (the
+board, the board-items API, the profile, the landing count, the leaderboard
+and display-mode denominators, the `/api/hints` texts) or asks
+`classicVisibility` (the challenge page, its metadata, the attachment
+download); `classic-release-coverage.test.ts` fails a caller that does
+neither. Story positions are built over the visible challenges, so a hidden
+step is skipped like a deleted one. The two scripts that write decide for
+themselves from the record they read: `SUBMIT_SCRIPT` reads the challenge's
+record first and answers a hidden one `missing` before the already-solved
+guard or any write, and the hint `REVEAL_SCRIPT` does the same from
+`KEYS[8]` before the story lock, the text or any charge (`CLASSIC_HIDDEN_LUA`
+in `classic-keys.ts`, which reads `TIME` only for a disabled record with a
+release time). The JS pre-check leaves a hidden challenge's
+"solved" and "cooldown" to the script, so neither confirms it exists. An
+admin preview's dry run skips the check, and so does an admin looking at a
+hidden challenge after launch: `classicVisibility` opens its page to them
+with a "Hidden from contestants" banner, and the submit and reveal routes
+grade their flag or hint as a dry run (`adminSeesHidden`). The admin list (`/api/admin/classic`)
+returns every challenge with its field, for the status chip and the form.
+See [ADR 68](decisions.md#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock).
 
 ## AI data flow
 
@@ -824,8 +879,15 @@ readable and writable while the stack is running, without a restart:
   | `registrationStartsAt` / `registrationEndsAt` | the team-registration window |
   | `enabledModules` | the live module set (ADR 52, amended by #386) — absent means "use the `SCORE_IMAGE`-derived default" |
 
-  plus `updatedBy`/`updatedAt` and `resetAt` (the master-reset epoch `sync`
-  honours — see below). Every reader applies **override-else-default**
+  plus `updatedBy`/`updatedAt`, `resetAt` (the master-reset epoch `sync`
+  and the scorer honour — see below) and `pausedSince`, the start of the
+  freeze that is on. Beside the hash, **`ctf:admin:pauses`** (a list, newest
+  first, capped at 200) holds each finished freeze as `{"from","to"}`. Both
+  are written by the same atomic script as `paused` — a freeze that starts
+  records its start, one that ends moves its interval onto the list — and
+  the master reset clears the list and opens its own freeze. The scorer reads
+  them to judge a Secure Development score at its comment's time
+  ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)). Every reader applies **override-else-default**
   precedence (`s.hintsEnabled ?? HINT_DEFAULT_ENABLED`, `hint-store.ts`'s
   `resolveHintConfig`), never the reverse.
 
@@ -834,9 +896,12 @@ readable and writable while the stack is running, without a restart:
   for the scoring window, where a missing start means not launched, #464) is
   implemented independently in
   `apps/web/src/lib/schedule-window.ts` (re-exported through
-  `admin-store.ts`), `scorer/src/store.js` and `sync/src/redis.js`. Those
-  three must agree; changing one alone silently splits the event's idea of
-  whether it is running.
+  `admin-store.ts`), `scorer/src/store.js` and `sync/src/redis.js`, and so
+  is `pausedAt`, whether the freeze covered a given instant. Those three must
+  agree; changing one alone silently splits the event's idea of whether it
+  is running. Shared corpora in `test/fixtures/` (`window-corpus.json`,
+  `scoring-window-corpus.json`, `pause-interval-corpus.json`) run verbatim in
+  all three suites.
 
   **`scoreCooldownMin` is the one setting a fork needs.** The Action enforcing
   it runs inside a contestant's repository and cannot reach this Redis, so it
@@ -1022,19 +1087,22 @@ floor that keeps the rate inside 0..1.
   logged branch, so no amount of tailing the poller would have found either.
   See ADR 38.
 
-**Freeze = hold ingestion, not stop execution.** Setting `paused` does not
-touch fork Actions or GitHub — PRs keep getting judged and commented on; the
-poller's cursor just holds in place. `sync/src/index.js`'s `tick()`
-checks `redis.isPaused()` first; while paused it skips the whole
-fetch/parse/submit loop (the per-repo cursor and ETag are untouched, so
-nothing is lost, just deferred) and still writes a `paused: true`
-heartbeat. The `scorer` checks the same key on every `POST /score` and
-returns `503` while paused (`scorer/src/serve.js`) — a second, independent
-reader of the flag, so a submission that reaches the writer anyway is
-refused retryably rather than written.
-Both sides **fail open** on a Redis error — a Redis blip must never freeze
-ingestion by accident (`sync/src/redis.js`'s `isPaused()` catches and
-returns `false`; `scorer/src/store.js` does the same).
+**Freeze = judged at the comment's time, not stop execution.** Setting
+`paused` does not touch fork Actions or GitHub — PRs keep getting judged and
+commented on. The poller does not hold its cursor either: `sync/src/index.js`'s
+`tick()` reads `redis.isPaused()` only to write the `paused` heartbeat, and
+forwards every score with its comment's `updated_at`. The `scorer` reads the
+freeze, the window and the reset epoch on every `POST /score` that carries
+`at` (`store.readScoringPolicy()`) and refuses with a final `422` a score
+posted while any of them closed scoring (`scorer/src/serve.js`'s
+`judgeScoreTime`, ADR 67). So a PR scored before the freeze still counts when
+it is read during it, and one scored during it does not count after it lifts.
+A payload with no `at` (an older sync) keeps the arrival-time check: `503`
+while effectively paused, retried. Both reads **fail open** on a Redis error —
+a Redis blip must never drop a live score by accident (`sync/src/redis.js`'s
+`isPaused()` catches and returns `false`; `scorer/src/store.js`'s `isPaused()`
+and `readScoringPolicy()` do the same, the latter returning "no policy", so
+the score is recorded).
 
 **The poller's state lives in Redis, next to the scores.** The per-repo
 `since`/ETag cursors, the seen cache, `ingested`/`dropped`/`lastDrop` and the
@@ -1099,9 +1167,11 @@ all event data — `SCAN`+`DEL` of `ctf:solves:*`, `ctf:team:*`, `ctf:user:*`,
 `ctf:quiz:answers:*`/`ctf:quiz:attempts:*`/`ctf:quiz:points`/
 `ctf:quiz:answered`/`ctf:quiz:lastAt`, and
 `ctf:classic:solves:*`/`ctf:classic:attempts:*`/`ctf:classic:points`/
-`ctf:classic:solved`/`ctf:classic:solvecount`/`ctf:classic:lastAt`,
+`ctf:classic:solved`/`ctf:classic:solvecount`/`ctf:classic:lastAt`/
+`ctf:classic:opened:*`,
 `ctf:ai:solves:*`/`ctf:ai:attempts:*`/`ctf:ai:points`/`ctf:ai:solved`/
-`ctf:ai:solvecount`/`ctf:ai:lastAt`, the spent replay nonces `ctf:ai:nonce:*`, the
+`ctf:ai:solvecount`/`ctf:ai:lastAt`/`ctf:ai:opened:*` (the first-open times
+Insights measures from, #616), the spent replay nonces `ctf:ai:nonce:*`, the
 module-wide `ctf:ai:launchkey` (so no launch token issued before the reset
 survives it — see "AI data flow" above), and the activity log
 (`ctf:activity:log`) — keeps `ctf:admin:settings`
@@ -1116,15 +1186,17 @@ module left behind are cleared too. On its own that isn't enough in **poll
 mode**: `sync` would re-ingest the same PR comments within a cycle and undo
 the wipe. So the reset also freezes scoring **and bumps a `resetAt` epoch
 field in the settings hash**.
-`sync/src/index.js`'s `tick()` reads it (`redis.getResetAt()`) *before* the
-pause check and, when it advances, drops its per-repo cursor/seen state — so the
-wipe sticks even while frozen, and an unfreeze re-polls from scratch. On its
+`sync/src/index.js`'s `tick()` reads it (`redis.getResetAt()`) every tick and,
+when it advances, drops its per-repo cursor/seen state, so the next poll
+re-reads from scratch. On its
 own that re-poll would re-bank every pre-reset score (the seen-set that would
 have deduped them was just cleared), so the epoch is also the ingestion
 **watermark** (#551): a bot comment whose `updated_at` predates `resetAt` is
 marked seen and skipped (tallied once as `preReset` in the poll summary), while
 a re-run that edits the comment past the epoch is a new revision and lands as
-normal. The epoch is epoch-milliseconds from `resetEvent` (an ISO string from
+normal. The scorer applies the same watermark to each score's `at`, and the
+reset clears the freeze log and opens its own freeze, so a PR scored between
+the reset and the un-freeze is refused too. The epoch is epoch-milliseconds from `resetEvent` (an ISO string from
 an older state file is read too); an unparseable value is no watermark —
 skipping on junk would silently lose every score, the same fail-open direction
 `getResetAt` takes on a read error. This `resetAt` signal is the app→sync
@@ -1376,11 +1448,13 @@ build.
   with a signed launch token, `POST /api/ai/event` with that token plus an
   HMAC event signature, and `GET /api/ai/launch-key` is intentionally public
   (see `AI_PREFIX` in `src/proxy.ts`). A missing `Origin` is allowed: it means a
-  non-browser client, which carries no ambient cookie to ride. One route runs
-  the assertion itself instead of through the proxy: `/api/admin/event`, the
-  event-archive import, is outside the proxy matcher because the proxy's body
-  clone cuts any request at 10 MB, and an archive with attachments can reach
-  about 75 MB. See ADR 40.
+  non-browser client, which carries no ambient cookie to ride. Two routes run
+  the assertion themselves instead of through the proxy:
+  `/api/admin/event`, the event-archive import, and
+  `/api/admin/classic/bundle`, the classic bundle import, are outside the
+  proxy matcher because the proxy's body clone cuts any request at 10 MB,
+  and an archive or bundle with attachments can reach about 75 MB. See
+  ADR 40.
 - **Baseline security headers come from the app.** `next.config.ts` sends
   `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`,
   `X-Content-Type-Options: nosniff`,
@@ -1434,9 +1508,9 @@ build.
 | Unit (sync) | `sync/test/*.test.js`, run via `npm test` (Node's built-in test runner) | Config loading/validation, comment parsing and the author grammar, cursor/ETag handling, submit retry semantics, state persistence — in isolation, no network or Docker. |
 | Unit (scorer) | `scorer/test/*.test.js`, run via `npm test` (Node's built-in test runner) | Rubric loading/validation, probe grammar + evaluation, the judge's report format (the score-action regexes and the sync marker, pinned verbatim), serve auth/validation/monotonic-replay semantics, leaderboard aggregation, and both solve stores (memory, and Redis-via-SRH against a mocked endpoint) — in isolation, no network or Docker. |
 | Unit (app) | `apps/web/src/lib/__tests__/*`, run via `vitest run` | Bootstrap-env parsing (`ADMIN_LOGINS` case/whitespace/empties, the `SCORE_IMAGE`-derived default module set), timezone-independent date formatting from the scoring window, module/app enablement filtering (`enabled-apps.ts`'s live, per-request target filter, defaulting to all six), site config derivation, and — `apps/web/src/lib/leaderboard/__tests__/{module-contributions,rank,pipeline}.test.ts` — the module-contribution overlay's attribution (`secure-development` attributed not added, no double counting; a penalised row's module points equal its net points; with the quiz module disabled a source's teams pass through untouched and no quiz block is read at all; with it enabled, quiz points are added to an entry's and a deduped team's totals, a quiz-less entry gets no quiz block, and a quiz-active row on an upstash-shaped board keeps its patches in the items tiebreak — added quiz points can move a row either way in the points order, whatever its patch count) and the points/cross-module-completion/earliest-activity ranking — including the regression that ordering is already correct with hints disabled, since `withHintPenalties` no-ops in that case and must not be the thing doing the re-rank, and the pinned points order of an Upstash-shaped board with its ties broken on `patched`. The quiz store itself (`src/lib/__tests__/quiz-store*.test.ts`) covers all-or-nothing set comparison, the attempt cap and cooldown (including the atomic grading script's authority over the JS-side pre-check, and its fail-closed behavior on a lookup error), and question authoring validation; `components/__tests__/{admin-quiz-controls,quiz-board}.test.tsx` cover the authoring form and the contestant answer UI. The derived-plumbing rules get their own direct coverage, since neither is observable in a static render: `src/lib/__tests__/quiz-id.test.ts` pins that `generateQuestionId` always emits an id `QUIZ_ID_RE` accepts (across a corpus of punctuation-only, non-Latin, emoji and over-long prompts) and that two identical prompts never collide, and `admin-quiz-controls.test.tsx` pins that `payloadFromEditor` submits an existing question's stored id no matter how the draft was rewritten, plus `reorderQuestions`'s recomputed `order` values. The drag handlers themselves are deliberately NOT unit-tested — this repo has no testing-library and does not want one — which is why every decision they make lives in those two pure functions instead. The answer-key boundary is pinned from both sides: `listQuestions` never issues a command against `ctf:quiz:key` while `listQuestionsForAdmin` returns the set paired by question id (`quiz-store.test.ts`), `GET /api/admin/quiz` returns it for an admin and returns a body with no answer data at all for a 401/403 (`app/api/quiz/__tests__/routes.test.ts`), the admin edit draft prefills it (`admin-quiz-controls.test.tsx`) while the collapsed question list doesn't paint it, and `/quiz`'s page-level view model strips it even when the store hands one over (`app/(site)/quiz/__tests__/page-view-model.test.tsx`, with `quiz-board.test.tsx`'s markup check as the independent second guard). |
-| Live Lua (app) | `apps/web/src/lib/__tests__/{classic-store,quiz-store,ai-store}.lua.upstash.test.ts` and the `{admin-store,hint-store,team-store}.upstash.test.ts` suites, all `describe.skipIf`-gated through `live-redis.ts`'s `liveConfigured` on `UPSTASH_REDIS_REST_URL`/`_TOKEN`; the `app` CI job brings up `redis` + `srh` (digest-pinned like `docker-compose.yml`), sets `CTF_LUA_SUITES_REQUIRED=1` so a skip fails the job, and runs every `*.upstash.test.ts` file serially (`vitest run upstash --no-file-parallelism` — `admin-store` and `hint-store` share the fixed `ctf:admin:settings` hash) | The three older suites, one store each: `admin-store` pins the settings write + audit append as one atomic step and the audit cap; `hint-store` the hint reveal under a policy the suite seeds itself (a player with no solves on the target is refused with `forbidden` and charged nothing, the first reveal charges the organizer's configured price — not the baked default — once a solve is seeded, the second is free, and a missing hint charges nothing); `team-store` the team scripts (the four-player cap, one team per player, a populated team's captain refused with `Transfer or disband before leaving` as a no-op, then transfer → leave → the last member's leave deleting the team hash, member set and join-code index while every user hash survives). Each was checked against a one-line store mutation (the gate condition flipped; the key deletion dropped; the captain rule weakened) and went red (#235). The three grading scripts — the scoring authority — EXECUTED against a real Redis, on run-unique keys: `missing`/`already`/`incorrect`/`correct`/`cooldown`/`exhausted`/`mode` verdicts, the exact attempts and solve rows written, that a refused submission writes nothing, the cooldown boundary (refused at `now < lastAtMs + cooldownMs`, graded at equality), the `>=` cap, `maxAttempts = 0` as uncapped, a first-ever submission with a cooldown set (no attempts row, so `lastAtMs` is nil), `solvecount` keyed by the challenge and the two totals by the login, the case-sensitive form chosen only for a `caseSensitive` record, and ai's event path (no flag compare, no attempts row, `source` recorded, a `mode: "flag"` challenge refused). Each of the six single-line Lua mutations the 2026-08-25 review found survivable (already-solved polarity, `and lastAtMs`, login-keyed solvecount, `>` cap, mode refusal, case-sensitive branch) fails at least one of these. The mocked `*.grade.test.ts` suites still pin what the stores hand the scripts (key and argument order); together the two layers cover the chain. |
+| Live Lua (app) | `apps/web/src/lib/__tests__/{classic-store,quiz-store,ai-store}.lua.upstash.test.ts` and the `{admin-store,hint-store,team-store,team-captain,admin-ops-store,admin-scripts,rate-limit-store}.upstash.test.ts` suites, all `describe.skipIf`-gated through `live-redis.ts`'s `liveConfigured` on `UPSTASH_REDIS_REST_URL`/`_TOKEN`; the `app` CI job brings up `redis` + `srh` (digest-pinned like `docker-compose.yml`), sets `CTF_LUA_SUITES_REQUIRED=1` so a skip fails the job, and runs every `*.upstash.test.ts` file serially (`vitest run upstash --no-file-parallelism` — `admin-store` and `hint-store` share the fixed `ctf:admin:settings` hash) | The three older suites, one store each: `admin-store` pins the settings write + audit append as one atomic step and the audit cap; `hint-store` the hint reveal under a policy the suite seeds itself (a player with no solves on the target is refused with `forbidden` and charged nothing, the first reveal charges the organizer's configured price — not the baked default — once a solve is seeded, the second is free, and a missing hint charges nothing); `team-store` the team scripts (the four-player cap, one team per player, a populated team's captain refused with `Transfer or disband before leaving` as a no-op, then transfer → leave → the last member's leave deleting the team hash, member set and join-code index while every user hash survives). Each was checked against a one-line store mutation (the gate condition flipped; the key deletion dropped; the captain rule weakened) and went red (#235). The newer suites close the rest of that gap (#497): `team-captain` runs the captain-only scripts (remove, rename, transfer, disband, regenerate) through the store, refusals asserted as no-ops, plus concurrent regenerations and a disband racing one (no join code may survive resolving to the team or to a deleted one); `admin-scripts` runs the organizer overrides `FORCE_REMOVE`/`FORCE_TRANSFER` and the runtime-admin `ADMINS` grant; `rate-limit-store` runs `CONSUME` on a two-second window, observing the expiry for real. Each was checked against a one-line mutant (window extended on every call, captain guard dropped, transfer to a non-member, another team's member record cleared, audit cap dropped) and went red. The three grading scripts — the scoring authority — EXECUTED against a real Redis, on run-unique keys: `missing`/`already`/`incorrect`/`correct`/`cooldown`/`exhausted`/`mode` verdicts, the exact attempts and solve rows written, that a refused submission writes nothing, the cooldown boundary (refused at `now < lastAtMs + cooldownMs`, graded at equality), the `>=` cap, `maxAttempts = 0` as uncapped, a first-ever submission with a cooldown set (no attempts row, so `lastAtMs` is nil), `solvecount` keyed by the challenge and the two totals by the login, the case-sensitive form chosen only for a `caseSensitive` record, and ai's event path (no flag compare, no attempts row, `source` recorded, a `mode: "flag"` challenge refused). Each of the six single-line Lua mutations the 2026-08-25 review found survivable (already-solved polarity, `and lastAtMs`, login-keyed solvecount, `>` cap, mode refusal, case-sensitive branch) fails at least one of these. The mocked `*.grade.test.ts` suites still pin what the stores hand the scripts (key and argument order); together the two layers cover the chain. |
 | Shell (bats) | `setup/test/ctf_setup.bats` | `ctf-setup.sh`'s subcommands against fixture `.env` files: dry-run fork/workflow/mirror/teardown plans, secrets generation, the wizard's answers, and the `.env` reader's edge cases (trailing comments, blank values, a missing file refused rather than read as "no Secure Development") — no real `gh`/`docker` calls needed. |
-| Offline smoke | `scripts/smoke.sh` | The full poll pipeline against fixture services (`test/fixtures/mock-github.mjs`, `test/fixtures/mock-scorer.mjs`, `docker-compose.smoke.yml`): Redis and the `srh` REST proxy work, `sync` ingests fixture score comments, scores match the fixtures, a forged comment is dropped by the trust filter, an unauthenticated `POST /score` is rejected, and — the organizer admin panel's freeze proof — setting `ctf:admin:settings paused` directly on Redis (the same key the app's settings route writes) holds a queued fixture score out of the leaderboard and out of `ctf:sync:status`, then clearing it lets the poller ingest it on the next tick. This is what CI's `smoke` job runs, and needs no live GitHub org, Action runs, or scorer image access. |
+| Offline smoke | `scripts/smoke.sh` | The full poll pipeline against fixture services (`test/fixtures/mock-github.mjs`, `test/fixtures/mock-scorer.mjs`, `docker-compose.smoke.yml`): Redis and the `srh` REST proxy work, `sync` ingests fixture score comments, scores match the fixtures, a forged comment is dropped by the trust filter, an unauthenticated `POST /score` is rejected, each score carries its own comment's `updated_at` as `at`, and — the poller's half of the freeze — setting `ctf:admin:settings paused` directly on Redis (the same key the app's settings route writes) shows in `ctf:sync:status` while the poller keeps forwarding a queued fixture score, with its comment time, for the scorer to judge. The scorer's half (refusing a score posted before the launch, during a freeze or before a reset, against a real Redis) is `scripts/acceptance-scorer.sh`'s freeze stage. This is what CI's `smoke` job runs, and needs no live GitHub org, Action runs, or scorer image access. |
 | Docker acceptance | `scripts/acceptance-app.sh` | Builds the real `apps/web/Dockerfile` **once**, with no config build-arg (there is none to pass since #386), then runs that same image three times with different runtime environments and asserts what each renders: with `GITHUB_ORG` and `SCORE_IMAGE` set, all six targets render and every fork link follows `GITHUB_ORG`, while the landing page presents Secure Development as the only default board; with `SCORE_IMAGE` empty, nothing is enabled and the landing page renders its no-boards copy pointing at `/admin`; with nothing set, `/challenges` renders bare repo names and no fork link, and the page `<title>` is the identity default "OWASP CTF in a Box" — proving identity fails open to its default rather than being read from anywhere baked. It also pins `/health`'s build stamp, which is the only thing the image still carries from build args. This is the layer that proves the runtime config flow actually reaches rendered HTML. |
 | Docker acceptance (scorer) | `scripts/acceptance-scorer.sh` | Builds the scorer image from `scorer/` with the example rubric and closes the scoring loop offline: judge runs against a fake target that passes some probes and fails others, and the script asserts the report's score-action regexes, that no probe internals leak into the comment, that the sync marker parses via the real `sync/src/parse.js`, and that the marker POSTed the way `sync` does lands on `GET /leaderboard` with rubric-derived points/totals. It also pins the removal (#377): one judge run has `SCORE_API`/`SCORE_TOKEN` set and one has neither, and the two reports must be byte-identical — that environment is dead, so a leaderboard entry can only have come from the script's own POST. |
 | Docker acceptance (quiz-only) | `scripts/acceptance-quiz-only.sh` | Boots the real app image with `SCORE_IMAGE` empty and `quiz` enabled through the admin settings route (no config file exists to bind it to), seeds one question and one contestant's answer straight into Redis (no OAuth app in CI to drive real authoring/answering), and asserts against the running app: `/quiz` shows the seeded question by name, `/challenges` 404s, and `/leaderboard` shows the contestant by login with their quiz points — the one assertion a vacuously-up-but-broken app can't fake, since a quiz-only event's leaderboard source is `emptySource` and carries no rows of its own. It also asserts the DOCUMENTED bring-up structurally: `--profile app` must resolve to a line-up with no `scorer` and no `sync` (a quiz-only organizer cannot pull the private scorer image), while `--profile secdev --profile app` — what a non-empty `SCORE_IMAGE` derives — must still contain both. Separately brings `sync` up under `secdev` with no `GITHUB_ORG` and asserts it refuses at start-up, naming the key, with a non-zero exit. |

@@ -4,10 +4,28 @@
 // challenge itself (the view model never even carries it: see flags/page.tsx).
 
 import Link from "next/link";
+import { teamsLabel } from "@/lib/solve-labels";
+import FirstBloodLine from "@/components/first-blood-line";
 
 export type StoryStepView =
   | { locked: true; key: string; label: string }
-  | { locked: false; id: string; title: string; category: string; points: number; solved: boolean; position: number; total: number };
+  | {
+      locked: false;
+      id: string;
+      title: string;
+      category: string;
+      points: number;
+      solved: boolean;
+      position: number;
+      total: number;
+      /** Teams that solved it (#595); null when unread. A locked step has
+       *  no count at all: it is invisible (ADR 60). */
+      teamsSolved: number | null;
+      /** Its first solver's login (#188); null when nobody has solved it or
+       *  the solves could not be read. A locked step has none: like its
+       *  count, who solved it first would say something about it. */
+      firstBlood: string | null;
+    };
 
 export type StoryLaneView = { id: string; title: string; intro: string; steps: StoryStepView[] };
 
@@ -37,7 +55,7 @@ export default function StoryLanes({ stories, basePath }: { stories: StoryLaneVi
                 <li key={step.id}>
                   <Link
                     href={`${basePath}/${encodeURIComponent(step.id)}`}
-                    aria-label={`Step ${step.position} of ${step.total}: ${step.title}, ${step.points} points${step.solved ? ", solved" : ""}`}
+                    aria-label={`Step ${step.position} of ${step.total}: ${step.title}, ${step.points} points${step.solved ? ", solved" : ""}${step.firstBlood ? `, first blood by ${step.firstBlood}` : ""}`}
                     className={`ds-card flex h-full min-h-24 flex-col justify-between gap-2 rounded-lg border p-4 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017] ${
                       step.solved ? "border-[#22c55e]/40 bg-[#22c55e]/[0.08]" : "border-white/[0.06] bg-[#16162a] hover:border-[#2563eb]/40"
                     }`}
@@ -46,8 +64,10 @@ export default function StoryLanes({ stories, basePath }: { stories: StoryLaneVi
                       Step {step.position} · {step.category}
                     </span>
                     <span className={`line-clamp-2 text-sm font-medium ${step.solved ? "text-[#22c55e]" : "text-white"}`}>{step.title}</span>
+                    {step.firstBlood && <FirstBloodLine login={step.firstBlood} />}
                     <span className={`font-mono text-xs tabular-nums ${step.solved ? "text-[#22c55e]/80" : "text-muted"}`}>
-                      {step.points} pts{step.solved && " ✓"}
+                      {step.points} pts{step.teamsSolved !== null && <> · {teamsLabel(step.teamsSolved)}</>}
+                      {step.solved && " ✓"}
                     </span>
                   </Link>
                 </li>

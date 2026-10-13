@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { errorLabel } from "@/lib/error-label";
 import {
   OpsValidationError,
+  forceAddToTeam,
   forceDisbandTeam,
   forceRemoveFromTeam,
   forceTransferCaptain,
@@ -12,6 +13,8 @@ import {
  * Per-team support operations (issue #168).
  *
  *   POST   {slug, action:"remove-member"|"transfer-captain", login}
+ *   POST   {slug, action:"add-member", login, overrideCap?}  add or move a
+ *          player, whatever the registration state
  *   DELETE {slug}   disband
  *
  * These are the captain-only actions in `team-store.ts`, available to an
@@ -27,9 +30,9 @@ import {
  * contestant clicking Leave.
  */
 
-/** The two actions this route performs. A UNION, not `string`, so the label
+/** The actions this route performs. A UNION, not `string`, so the label
  *  handed to `fail` below can never be arbitrary caller input. */
-type TeamAction = "remove-member" | "transfer-captain";
+type TeamAction = "remove-member" | "transfer-captain" | "add-member";
 
 function fail(err: unknown, label: TeamAction | "disband") {
   if (err instanceof OpsValidationError) {
@@ -49,7 +52,7 @@ export async function POST(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
 
-  let body: { slug?: unknown; login?: unknown; action?: unknown };
+  let body: { slug?: unknown; login?: unknown; action?: unknown; overrideCap?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -61,9 +64,9 @@ export async function POST(request: Request) {
 
   // Narrow BEFORE the try, so `action` is the union from here down rather than
   // `unknown` — the unknown-action 400 stops being a fallthrough at the bottom
-  // of a try block, and the catch's label is provably one of two literals.
+  // of a try block, and the catch's label is provably one of the three literals.
   const action = body.action;
-  if (action !== "remove-member" && action !== "transfer-captain") {
+  if (action !== "remove-member" && action !== "transfer-captain" && action !== "add-member") {
     return NextResponse.json({ error: "unknown action" }, { status: 400 });
   }
 
@@ -72,7 +75,9 @@ export async function POST(request: Request) {
     const result =
       action === "remove-member"
         ? await forceRemoveFromTeam(slug, login, gate.login)
-        : await forceTransferCaptain(slug, login, gate.login);
+        : action === "transfer-captain"
+          ? await forceTransferCaptain(slug, login, gate.login)
+          : await forceAddToTeam(slug, login, gate.login, { overrideCap: body.overrideCap === true });
     return NextResponse.json(result);
   } catch (err) {
     return fail(err, action);

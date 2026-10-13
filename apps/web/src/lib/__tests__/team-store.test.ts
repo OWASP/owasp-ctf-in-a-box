@@ -374,7 +374,6 @@ describe("registration window", () => {
     const store = await loadStore(true);
     const closed = { ok: false, error: "Team registration is closed" };
     for (const call of [
-      () => store.removeMember("captain", "red-team", "member2"),
       () => store.renameTeam("captain", "red-team", "New Name"),
       () => store.regenerateCode("captain", "red-team"),
     ]) {
@@ -402,14 +401,80 @@ describe("registration window", () => {
     expect(await store.createTeam("octocat", "Red Team")).toEqual({ ok: true, team: "red-team" });
   });
 
-  it("never blocks leaveTeam — players can always leave", async () => {
+  it("lets a player leave freely while registration is open", async () => {
     const store = await loadStore(true);
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]); // getUserTeamSlug
+    mockRegistrationOpen();
     mocks.upstashEval.mockResolvedValueOnce("ok");
-    const result = await store.leaveTeam("captain");
-    expect(result).toEqual({ ok: true, team: null });
-    // Only the membership lookup ran — no registration HGET was issued.
-    expect(mocks.upstashPipeline).toHaveBeenCalledOnce();
+    expect(await store.leaveTeam("captain")).toEqual({ ok: true, team: null });
+  });
+
+  // #597: warn, don't refuse. After close a player who leaves can't join any
+  // team again and takes their points with them, so the leave must be
+  // confirmed; the server refuses an unconfirmed one so a hand-made request
+  // can't skip the warning.
+  it("asks for confirmation before a leave once registration is closed, writing nothing", async () => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
+    mockRegistrationClosed();
+    expect(await store.leaveTeam("octocat")).toEqual({
+      ok: false,
+      needsConfirm: true,
+      error: "Registration is closed. You won't be able to join any team again, and your points leave the team.",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("leaves after close once confirmed", async () => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
+    mocks.upstashEval.mockResolvedValueOnce("ok");
+    expect(await store.leaveTeam("octocat", { confirmClosed: true })).toEqual({ ok: true, team: null });
+  });
+
+  it("asks the captain to confirm removing a member once registration is closed, writing nothing", async () => {
+    const store = await loadStore(true);
+    mockRegistrationClosed();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 1 }]); // captain, member listed
+    expect(await store.removeMember("captain", "red-team", "member2")).toEqual({
+      ok: false,
+      needsConfirm: true,
+      error: "Registration is closed. member2 won't be able to join any team again, and their points leave the team.",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  // The warning names the member and says what removing them costs, so it
+  // goes only to the captain, about someone actually on the team.
+  it("refuses a non-captain after close without the warning, writing nothing", async () => {
+    const store = await loadStore(true);
+    mockRegistrationClosed();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 1 }]);
+    expect(await store.removeMember("intruder", "red-team", "member2")).toEqual({
+      ok: false,
+      error: "Only the team captain can do that",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("refuses a login not on the team after close without the warning", async () => {
+    const store = await loadStore(true);
+    mockRegistrationClosed();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 0 }]);
+    expect(await store.removeMember("captain", "red-team", "ghost")).toEqual({
+      ok: false,
+      error: '"ghost" is not on this team',
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("removes a member after close once confirmed", async () => {
+    const store = await loadStore(true);
+    mocks.upstashEval.mockResolvedValueOnce("ok");
+    expect(await store.removeMember("captain", "red-team", "member2", { confirmClosed: true })).toEqual({
+      ok: true,
+      team: "red-team",
+    });
   });
 });
 
@@ -571,6 +636,30 @@ describe("listTeams", () => {
       .mockResolvedValueOnce([{ result: "not-a-page" }]);
     await expect(store.listTeams()).rejects.toThrow(/unexpected shape/);
   });
+
+  // A failed SMEMBERS read as an empty roster puts a competing team on the
+  // board with nobody on it, the short list the SCAN check above exists to
+  // refuse.
+  // SMEMBERS of a key SCAN just found is a list, even if the team emptied in
+  // between; a missing reply or a non-list is a read that did not happen.
+  it.each([
+    ["a missing member reply", [{ result: "Red Team" }]],
+    ["a non-list member result", [{ result: "Red Team" }, { result: "abe" }]],
+  ])("rejects %s, rather than showing the team empty", async (_what, replies) => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline
+      .mockResolvedValueOnce([{ result: ["0", ["ctf:team:red:members"]] }])
+      .mockResolvedValueOnce(replies);
+    await expect(store.listTeams()).rejects.toThrow(/listTeams red/);
+  });
+
+  it("rejects when a team's member read fails, rather than showing it empty", async () => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline
+      .mockResolvedValueOnce([{ result: ["0", ["ctf:team:red:members"]] }])
+      .mockResolvedValueOnce([{ result: "Red Team" }, { error: "WRONGTYPE Operation against a key holding the wrong kind of value" }]);
+    await expect(store.listTeams()).rejects.toThrow(/WRONGTYPE/);
+  });
 });
 
 describe("captain guard", () => {
@@ -608,7 +697,6 @@ describe("captain guard", () => {
   it("rejects regenerateCode from a non-captain", async () => {
     const store = await loadStore(true);
     mockRegistrationOpen();
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "old123" }]);
     mockCodeCollisionCheck(false);
     mocks.upstashEval.mockResolvedValueOnce("not-captain");
     const result = await store.regenerateCode("intruder", "red-team");
@@ -694,13 +782,16 @@ describe("captain roster actions", () => {
 
   it("disbands the team and clears its join code", async () => {
     const store = await loadStore(true);
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "abc123" }]);
     mocks.upstashEval.mockResolvedValueOnce("ok");
     const result = await store.disbandTeam("captain", "red-team");
     expect(result).toEqual({ ok: true, team: null });
     const [script, keys] = mocks.upstashEval.mock.calls[0];
-    expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members", "ctf:joincode:abc123"]);
+    // The code to retire is read inside the script, not handed in: a code
+    // read a round-trip earlier can be stale (team-captain.upstash.test.ts).
+    expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members"]);
     expect(script).toContain("SMEMBERS");
+    expect(script).toContain("HGET', KEYS[1], 'joinCode'");
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
   it("issues a new join code and clears the old one", async () => {
@@ -715,9 +806,10 @@ describe("captain roster actions", () => {
       expect(result.team).toBe("red-team");
       expect(result.code).toMatch(/^[a-z0-9]{6}$/);
     }
-    const [, keys, args] = mocks.upstashEval.mock.calls[0];
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(keys).toHaveLength(2);
     expect(keys[0]).toBe("ctf:team:red-team");
-    expect(keys[2]).toBe("ctf:joincode:old123");
+    expect(script).toContain("HGET', KEYS[1], 'joinCode'");
     expect(args[0]).toBe("captain");
   });
 

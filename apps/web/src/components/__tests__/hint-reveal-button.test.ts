@@ -18,7 +18,7 @@ const src = readFileSync(fileURLToPath(new URL("../hint-reveal-button.tsx", impo
 
 describe("HintRevealButton posts the target app in its reveal request", () => {
   it("builds the POST body from the app prop", () => {
-    expect(src).toMatch(/body:\s*JSON\.stringify\(\{\s*app,\s*id\s*\}\)/);
+    expect(src).toMatch(/body:\s*JSON\.stringify\(\{\s*app,\s*id,\s*quotedCost:\s*price\s*\}\)/);
   });
 
   it.each(["classic", "ai"] as const)('never hardcodes app: "%s"', (app) => {
@@ -102,5 +102,26 @@ describe("HintRevealButton confirms before charging and acknowledges the cost (#
     expect(src).toMatch(/ref=\{idleRef\}/);
     expect(src).toMatch(/idleRef\.current\?\.focus\(\)/);
     expect(src).toMatch(/prevState/);
+  });
+});
+
+// #557: the price on the confirm button is the price charged, or nothing is.
+// The request carries the price the contestant saw; a 409 from the route
+// means it changed, so the control takes the new price and asks again.
+describe("HintRevealButton charges only the price it showed (#557)", () => {
+  it("sends the price on the button as the quoted cost", () => {
+    expect(src).toMatch(/quotedCost:\s*price/);
+  });
+
+  it("shows the price from state, so a changed price is what the button then says", () => {
+    expect(src).toMatch(/useState\(cost\)/);
+    expect(src).toMatch(/Confirm \(−\{price\} pts\)/);
+    expect(src).not.toMatch(/Confirm \(−\{cost\} pts\)/);
+  });
+
+  it("on a 409 with a price, takes the new price and returns to the confirm step", () => {
+    expect(src).toMatch(/res\.status === 409 && typeof data\.cost === "number"/);
+    expect(src).toMatch(/setPrice\(data\.cost\)/);
+    expect(src).toMatch(/setState\("confirm"\)/);
   });
 });

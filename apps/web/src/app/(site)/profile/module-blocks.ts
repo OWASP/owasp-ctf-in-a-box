@@ -70,6 +70,21 @@ export function visibleClassic(
   return { challenges: shown, maxPoints: shown.reduce((sum, c) => sum + (Number(c.points) || 0), 0) };
 }
 
+/** Points this viewer banked on Jeopardy challenges that are no longer on
+ *  their board: hidden by an organizer, or deleted. The list shows
+ *  only what is on the board, so without this the items would add up to less
+ *  than the row's total. Those points stay; this is the one line that names
+ *  them, without naming the challenges. */
+export function offBoardClassicPoints(input: ProfileModuleInput): number {
+  const classic = input.classic;
+  if (!classic) return 0;
+  const shown = new Set(classic.challenges.map((c) => c.id));
+  return Object.entries(classic.viewer.solved).reduce(
+    (sum, [id, solve]) => (shown.has(id) ? sum : sum + (Number(solve.points) || 0)),
+    0,
+  );
+}
+
 export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<ModuleId, ModuleProgress>> {
   const { profile } = input;
   const blocks: Partial<Record<ModuleId, ModuleProgress>> = {};

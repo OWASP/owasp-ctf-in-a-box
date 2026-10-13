@@ -82,6 +82,8 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 64 — sync's cursor lives in Redis, and an unreadable cursor holds the poller](#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)
 - [ADR 65 — An event adds its own logo and favicon; the OWASP mark stays](#adr-65-an-event-adds-its-own-logo-and-favicon-the-owasp-mark-stays)
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
+- [ADR 67 — A Secure Development solve is timed, and judged, by its score comment](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
+- [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -1433,7 +1435,7 @@ override and no config key — not back in `event.yaml`.
 
 ## ADR 32. Scheduled windows, evaluated at read time in three readers
 
-**Status.** Accepted; amended by [ADR 59](#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched): the scoring window now requires a start (`outsideScoringWindow`), so `effectivePaused` below reads `s.paused || outsideScoringWindow(...)`; the registration window is unchanged.
+**Status.** Accepted; amended by [ADR 59](#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched): the scoring window now requires a start (`outsideScoringWindow`), so `effectivePaused` below reads `s.paused || outsideScoringWindow(...)`; the registration window is unchanged. Amended by [ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment): for Secure Development the window and the freeze are judged at the score comment's time, which needs the freeze's intervals, so a fourth shared function (`pausedAt`) and the pause log join the contract.
 
 **Context.** [#19](#adr-19-organizer-admin-panel-runtime-override-layer) gave
 organizers a manual freeze. Manual is not enough for a real event: an
@@ -1840,6 +1842,7 @@ The taxonomy is the whole decision:
 | `invalid` | Marker **present** and unusable — schema drift, truncation, forgery | **Yes** |
 | `rejected` | Scorer returned `4xx`; the comment stays marked seen, so it is never retried | **Yes** |
 | `retried` | Submission failed transiently and was un-marked; next tick re-presents it | No — logged, not lost |
+| `refused` | Scorer returned `422`: posted before the launch, during a freeze, after the end or before a reset ([ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)); stays marked seen | No — the rule working, logged per PR |
 
 **Splitting `invalid` from `noMarker` required a parser change.**
 `parseScoreComment` returned `null` for both "ordinary comment" and "claims to
@@ -1986,6 +1989,18 @@ prefixes above, this route is **not** exempt from the check: it runs the same
 the proxy, not from the assertion. `proxy-matcher.test.ts` compiles the
 matcher with Next's own code and pins that exactly this one path is outside
 it, and the route's test pins its own `403`.
+
+*Amended (the classic bundle with files):* `/api/admin/classic/bundle` is
+outside the matcher on the same terms
+(`"/api/((?!admin/event/?$|admin/classic/bundle/?$).*)"`). A classic bundle
+exported with **Include files** carries the uploads as base64, so it hits the
+same 10 MB cut. The route runs `originAllowed` first thing in `POST`, reads
+the body bounded with a `413` naming its limit, and takes the same
+`{ import }` shape as `/api/admin/classic`, through the same handler. The
+dedicated path keeps the rest of `/api/admin/classic` (upserts, deletes,
+categories, stories) behind the proxy rather than giving every one of its
+writes its own origin check. `proxy-matcher.test.ts` pins exactly these two
+paths outside the matcher.
 
 **Decision, part 2: rate-limit on the LOGIN, not the IP.** `gate-store.ts`'s
 throttle is keyed on the client IP its route (`app/api/gate/route.ts`)
@@ -3308,7 +3323,9 @@ the admin allowlist cannot be stored behind the thing it guards access to.
 
 ## ADR 56. Poll is the score transport; push ingest is removed
 
-**Status.** Accepted 2026-09-12. Supersedes
+**Status.** Accepted 2026-09-12. Freeze semantics amended by
+[ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
+(sync no longer holds its cursor during a freeze). Supersedes
 [ADR 3](#adr-3-score-transport-poll-by-default-push-optional). Implements
 issue [#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377). Originally
 written as a two-release plan — deprecate in v0.6, remove in v0.7 — and
@@ -3745,6 +3762,14 @@ the launch lock (#464) and a locked story step (#463).
   - The event archive embeds the bytes as base64 in `attachmentFiles`. Each
     sha256 is verified before the import resets anything, and the import
     body is read bounded at 50 MiB × 4/3 + 8 MiB.
+  - *Amended (the classic bundle with files):* a classic bundle can carry
+    the bytes too, opt-in. **Include files** on the export adds the same
+    `attachmentFiles` list and stamps the bundle version 3; without it the
+    bundle stays the metadata-only version 2 file an older box imports. Its import fills each missing upload whose
+    bytes it carries, skips one the box already holds, and refuses a
+    tampered file or a total past the event cap before writing anything.
+    The import body goes to `/api/admin/classic/bundle`, outside the proxy
+    and read bounded like the archive's (ADR 40).
 
 **Consequences.** Redis memory grows by up to about 67 MB of base64 at the
 event cap. The caps bound it, and an operator sizing a box counts it. An
@@ -3805,14 +3830,78 @@ because that hop leaves our tasks for a managed service.
 - **What changes the answer.** Another tenant or workload sharing the
   network; a hop that crosses it (another VPC, another account, the public
   internet); or a stack that outlives an event. Any of these makes internal
-  TLS the right call, and
-  [#484](https://github.com/OWASP/owasp-ctf-in-a-box/issues/484) tracks doing it after the first event.
+  TLS the right call. [#484](https://github.com/OWASP/owasp-ctf-in-a-box/issues/484) was the promise to revisit this after the first event; the
+  rider below is that revisit, and the decision stands.
 
 **Consequences.** A review should not flag plaintext HTTP between the stack's
 own services as such, nor the scorer's open read routes. It should flag a new
 internal write or `srh` hop without a bearer token, a security-group rule
 wider than the one caller, and any internal hop exposed beyond the stack's
 network.
+
+### ADR 63 rider — Revisited after the first event: still no internal TLS
+
+**Status.** Accepted, October 2026. Resolves
+[#484](https://github.com/OWASP/owasp-ctf-in-a-box/issues/484) by recording why not.
+
+The first live event ran 7–9 October 2026 on the AWS module. Nothing in it
+argued for TLS on the internal hops, and the deploy shapes, read again, still
+give the answer above.
+
+- **compose.** Every internal hop is a container-to-container call on a
+  compose network on one host. `srh` and `redis` meet on `backend`, which is
+  `internal: true`, and the app never reaches `redis:6379`
+  ([ADR 41](#adr-41-authenticating-redis-and-cutting-the-app-tier-off-from-it)).
+  Only Caddy publishes ports, and it terminates TLS.
+- **Fly.** One machine, one network namespace: app, scorer, sync, `srh` and
+  redis reach each other over `localhost`
+  ([ADR 42](#adr-42-one-fly-machine-running-the-real-compose-file-not-five-fly-apps)).
+  Fly's proxy routes the public only to port 3000; `srh`, the scorer and
+  redis are not exposed off the machine. TLS on loopback protects nothing a
+  reader on the machine could not take from the processes directly.
+- **AWS.** The Fargate tasks sit in the event's own VPC, in its *public*
+  subnets with public IPs for egress (`deploy/aws-terraform/network.tf`
+  explains why: no NAT gateway). The boundary is the security groups, not
+  the subnet: each internal port admits only its intended callers' groups
+  (`srh`: the app, sync and the scorer; the scorer: the app and sync;
+  ElastiCache: `srh` alone, in `security.tf`), and nothing else in the VPC
+  runs. The hop that leaves our tasks, `srh` to
+  ElastiCache, is already TLS: the replication group sets
+  `transit_encryption_enabled = true` and an AUTH token, and `srh` connects
+  with `rediss://` to the primary endpoint hostname and verifies it
+  (`deploy/aws-terraform/elasticache.tf`). The cache itself sits in the
+  private subnets.
+- **Tokens.** Every `srh` hop carries `srh`'s bearer token and sync's
+  `POST /score` carries `SCORER_TOKEN`. The scorer's `GET /leaderboard` and
+  `GET /challenges` stay open by contract, as above. Reading any of these
+  hops already takes a foothold in a task that holds the tokens.
+- **Lifetime.** Each stack is applied for one event and destroyed after it.
+
+**What TLS would cost.** A private CA per stack, with certificates issued
+and rotated in two deploy targets (a Terraform `tls` CA and SSM on AWS, a
+generated CA in the compose bootstrap). The scorer would serve HTTPS, and
+`srh` would need a TLS terminator in front of it. The app, sync and the
+scorer would each need the root wired in (`NODE_EXTRA_CA_CERTS`) and every
+internal URL would change scheme. `srh` makes the trust side worse: as a
+client it verifies against CAStore's Mozilla bundle embedded in the pinned
+release, not the OS store
+([ADR 54](#adr-54-the-aws-module-is-ecs--managed-redis-the-events-data-stopped-being-ours-to-lose)),
+so a private CA on its redis hop in compose or Fly would mean rebuilding
+that third-party image. Each of these is a new way for a deploy to fail on
+event day, an expired or mistrusted certificate turning into a stack that
+does not score, to defend against an attacker who already holds the tokens.
+
+**What reopens it.** The same conditions as above, stated as triggers:
+
+- a multi-host or shared-network deployment, where another tenant or
+  workload can see the stack's traffic;
+- any internal hop that leaves the stack's private network, to another VPC,
+  another account or the public internet;
+- a stack kept running across events rather than destroyed after one;
+- a compliance requirement for encryption in transit on every hop.
+
+Any one of these makes internal TLS the right call, starting from the
+proposal recorded in #484.
 
 ## ADR 64. sync's cursor lives in Redis, and an unreadable cursor holds the poller
 
@@ -3937,3 +4026,181 @@ steps aside; `listSponsors` is not cached) and the event image metadata once
 fetched by the browser from their own routes. Another page that adds its own
 sponsor block joins `PAGES_WITH_OWN_SPONSOR_CREDIT`. Other pages are
 unchanged; a further surface is still its own decision.
+
+## ADR 67. A Secure Development solve is timed, and judged, by its score comment
+
+**Context.** A Secure Development solve was timestamped when the scorer
+received it. Between a contestant's push and that moment sit the Actions run,
+the score comment and the sync poll, about four to five minutes at the
+October 3 rehearsal, plus any backlog after a sync restart, which landed a
+whole batch with one late time. That time decides ties across modules
+(#583): a team whose last points were a PR was handicapped against one whose
+last points were a flag, which is timed when it is submitted. The window and
+the freeze were judged on arrival too. sync held its cursor while scoring was
+frozen and ingested after the resume, so a PR pushed during a freeze counted
+once it lifted (rehearsal finding F-N), and a comment posted before the end
+of the event but read after it was held forever.
+
+**Decision.** A Secure Development solve's time is its score comment's GitHub
+`updated_at`, and the scoring window, the manual freeze and the master-reset
+epoch are judged at that time.
+
+- **sync sends `at`.** Each score goes to the scorer's internal `POST /score`
+  with `at = comment.updated_at`. It is the comment's own field, read by sync
+  from a `github-actions[bot]` comment, never a field of the marker: no more
+  forgeable than the score itself (the chain of ADR 56). sync no longer holds
+  its cursor while scoring is frozen or outside the window. It still reads
+  the effective freeze, for its heartbeat only.
+- **The scorer judges each score at `at`.** In order: an `at` that does not
+  parse is refused (400); one more than five minutes ahead of the scorer's
+  clock is clamped to now (clock skew, not a time anyone earned); one before
+  the master-reset epoch is refused; one outside the scoring window
+  (`outsideScoringWindow(at, …)`, ADR 59) is refused; one inside the freeze
+  (`pausedAt(at)`) is refused. Each refusal is a **final** verdict, `422`
+  with a `refused` code (`pre-reset`, `outside-window`, `paused`). sync logs
+  it, marks the comment seen and never re-presents it, and does not count it
+  as dropped: it is the rule working, and a counter every pause bumped would
+  be a counter nobody reads. Otherwise the solve is recorded with that time,
+  `HSETNX` keeping the first one. The #583 tie-break reads the recorded times
+  and does not change.
+- **The freeze is recorded as intervals.** The settings hash held only a
+  flag, which cannot say whether a past instant was frozen. The settings
+  update script now keeps a pause log beside it, in the same atomic script:
+  pausing writes `pausedSince` (the write's own time), unpausing moves
+  `{from: pausedSince, to: now}` onto `ctf:admin:pauses` (newest first,
+  capped at 200) and clears `pausedSince`. The master reset clears the log
+  and opens its own freeze at the reset instant. `pausedAt(t)` is true inside
+  a logged interval `[from, to)` or at or after an open pause's start. Like
+  the window functions, it is implemented in all three readers
+  (`apps/web/src/lib/schedule-window.ts`, `scorer/src/store.js`,
+  `sync/src/redis.js`) and pinned by a shared corpus,
+  `test/fixtures/pause-interval-corpus.json`.
+- **A freeze with no recorded start answers `503`.** A flag set by hand, or
+  set before the pause log existed, has no `pausedSince`. Its start is
+  unknown, so a final refusal could throw away a score posted before it. The
+  scorer answers `503`, which sync retries, and judges the comment once the
+  freeze lifts; that one freeze then behaves as it did before (F-N), and it
+  logs no interval when it ends.
+- **The app's own modules are unchanged.** A Quiz, Jeopardy or AI submit is
+  judged when it arrives, which is when it happens, so `paused` alone answers
+  it. The app carries `pausedAt` for parity and its corpus test.
+- **Fail directions are unchanged.** The scorer reads the settings and the
+  pause log in one pipeline. A failed read is logged and the score is
+  recorded at its comment time, the open direction ADR 32 gives the freeze
+  read.
+
+**Known edge.** The score comment is upserted per PR, so `updated_at` is the
+time of its LAST run. A solve first ingested from a later re-run is timed by
+that re-run, not by the run that first passed. Solves ingested earlier keep
+their time (`HSETNX`). A PR re-run after the end of the event, carrying a
+solve that was never ingested, is refused as outside the window, even if its
+first passing run was in time. sync reads each comment within a poll or two
+of it being written, so this only bites when sync was down across a re-run.
+
+**Upgrade order.** Either service can be upgraded first. A new scorer with an
+old sync gets no `at` and keeps the arrival-time rule: the effective freeze
+is checked when the score arrives (`503`, retried) and the solve is timed
+then. A new sync with an old scorer sends `at`, which the old scorer ignores;
+since the new sync no longer holds, the old scorer's `503` during a freeze or
+outside the window is retried every tick until scoring reopens, as before.
+The intended path is to upgrade both together, which a compose bring-up does.
+
+**Alternatives rejected.** *Keep the arrival time and fix only the tie-break.*
+The handicap is in the time, not in the comparison, and the backlog case has
+no arrival-time fix. *Judge the window on comment time but the freeze on
+arrival.* sync would still have to hold during a freeze, which delays a
+comment posted before it and counts one posted during it after the resume,
+the F-N behavior the decision on the issue rejected. *Store the freeze as an
+event stream in the audit log.* The audit list is capped by entry count
+across every admin action and is not structured for an instant lookup; the
+pause log is one short list with one shape.
+
+**Status.** Accepted (#596). Amends [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers).
+
+## ADR 68. A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock
+
+**Context.** Issue #189. A Jeopardy challenge had no visibility state: the
+moment an organizer saved one it was live for every contestant. A board
+could not be staged the night before, a broken flag could not be pulled
+without deleting its solves, and a multi-day event could not release
+challenges in rounds without someone authoring live in front of the board.
+
+**Decision.**
+- **Visibility is a field on the challenge's public record.** `enabled`
+  (absent means live, stored only when `false`), so every record, bundle and
+  archive written before it behaves as before.
+- **A release is an instant, evaluated at read time.** `releaseAt`, entered
+  on the event's clock (the Event tab's time zone) and stored as UTC ISO.
+  Visible iff `enabled !== false` or `now >= releaseAt`; the instant itself
+  is released. No scheduler, cron or job on the box: like the scheduled
+  scoring window (ADRs 32 and 59), every reader compares the instant with its
+  own clock.
+  The write settles it once: a future instant is kept with `enabled: false`;
+  one already passed is stored as plain live. Release is per challenge; a
+  story releases together when its steps share an instant.
+- **Two clocks, one decision each.** Pages read with the server's clock. The
+  grading and hint scripts read Redis's `TIME` and the record's
+  `releaseAtMs` (an epoch-ms mirror the store writes beside the instant, so
+  Lua parses no ISO date, the attempt row's `lastAtMs` precedent), so a
+  request racing the release is decided once, where the write happens. A
+  page can lag the grader by at most the leaderboard fold's memo.
+- **Hidden means the challenge does not exist on the contestant side.** Not
+  "not rendered": it is left out of every server payload. One pure
+  predicate, `isChallengeVisible` (`lib/classic-release.ts`), answers it for
+  every reader: the board, the challenge page and its metadata, the
+  board-items API, the profile, the landing count, the leaderboard and
+  display-mode denominators, the `/api/hints` texts, and the attachment
+  download (through `classicVisibility`, ADR 61). `listChallenges` returns
+  hidden challenges too; a source scan
+  (`classic-release-coverage.test.ts`) fails any caller that does not
+  filter. A story's chain is built over the visible challenges, so a hidden
+  step is skipped like a deleted one (ADR 60) and comes back in its stored
+  place.
+- **The scripts that write decide for themselves.** `SUBMIT_SCRIPT` reads
+  the challenge's record before anything else and answers a hidden one
+  `missing`, the reply an unknown id gets: before the already-solved guard,
+  so a solver of a withdrawn challenge is refused too, and before any
+  attempt is spent. The hint `REVEAL_SCRIPT` does the same from the record
+  in `KEYS[8]`, before the story lock, the text or a charge; an owned hint
+  is not exempt. The JS pre-check leaves a hidden challenge's "solved" and
+  "cooldown" refusals to the script, since either would confirm it exists.
+  An admin preview's dry run (ADR 59) skips the check, so an organizer can
+  test a hidden challenge before launch; the pre-launch lock still applies
+  on top for everyone else.
+- **An admin can still open it.** `classicVisibility` lets an admin (the
+  same case-insensitive admin check as `/admin`) open a hidden or scheduled
+  challenge's page at any time, with a "Hidden from contestants" banner
+  naming why. A flag or hint the admin uses there is a dry run
+  (`adminSeesHidden` in the submit and reveal routes), so nothing is
+  recorded for them. To anyone else it is still the unknown id's 404.
+- **Banked points stay.** Hiding a challenge is the delete dialog's promise:
+  solves and points already banked are kept. The challenge leaves the
+  solver's lists too, and the profile names the points in one line ("+N pts
+  from challenges no longer on the board", which counts deleted challenges
+  too) so the list still adds up to the total.
+- **Bundles carry it.** Version 4, stamped only when some challenge is
+  hidden or scheduled, so other exports stay importable on an older box. An
+  older version carrying either field is refused by position and rule, never
+  by value: an older box would otherwise import the challenge live.
+- **The admin sees everything.** The list shows a status chip per challenge
+  (Live, Disabled, or "Releases Oct 8, 10:00 GMT-3" on the event's clock),
+  and the form edits the switch and the release time.
+
+This was chosen over a separate "draft" store (a second place for a
+challenge to live, and a copy step that can lose fields), over hiding in the
+components (a hand-made request, or a payload a component happens not to
+render, would still carry the challenge), and over a release job on the box
+(one more process to keep alive, and a release that silently does not happen
+when it is down). It is not a three-reader rule: only the app reads Jeopardy
+challenges, so scorer and sync are untouched.
+
+**Consequences.** Every contestant reader pays one predicate call over a list
+it already read; the graders read the record they already read (the submit
+script) or one more `HGET` (the reveal script), and a `TIME` only for a
+scheduled record. Every write of a record goes through one canonical form,
+so a rename or an import cannot drop `releaseAtMs` and leave a challenge the
+pages release and the grader never does. A release does not announce itself:
+the board shows the challenge on the next read. The reveal script's lock
+keys move from `KEYS[8..]` to `KEYS[9..]`. A future reader of the challenge
+list has to filter, and the source scan says so if it does not.
+

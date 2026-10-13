@@ -9,6 +9,7 @@ import {
   type ClassicTotal,
 } from "@/lib/classic-store";
 import { getEnabledModuleIds, isModuleLive } from "@/lib/enabled-modules";
+import { visibleNow } from "@/lib/classic-release";
 import { getEnabledTotals } from "@/lib/enabled-apps";
 import { getQuizTotals, getTeamQuizTotalsBatch, listQuestions, type QuizTotal } from "@/lib/quiz-store";
 import { compareTeamStanding, rankByStanding } from "./rank";
@@ -87,7 +88,10 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   // they hit disjoint key spaces and nothing orders one against another.
   // Each module still settles its OWN two reads independently; see below.
   const quizReads = quizEnabled ? Promise.allSettled([getQuizTotals(), listQuestions()]) : null;
-  const classicReads = classicEnabled ? Promise.allSettled([getClassicTotals(), listChallenges()]) : null;
+  // The denominator counts only what contestants can see: a hidden challenge
+  // (disabled, or not yet released) is out of it, while points banked on it
+  // stay in the totals.
+  const classicReads = classicEnabled ? Promise.allSettled([getClassicTotals(), listChallenges().then(visibleNow)]) : null;
   const aiReads = aiEnabled ? Promise.allSettled([getAiTotals(), listAiChallenges()]) : null;
 
   let quizTotals = new Map<string, QuizTotal>();
@@ -332,7 +336,8 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
   // Settled INDEPENDENTLY — see the note in `withModuleContributions`: the
   // totals carry POINTS (and with them the team board's order), the challenge
   // list only the DENOMINATOR.
-  const [totalsResult, challengesResult] = await Promise.allSettled([teamClassicTotals(teams), listChallenges()]);
+  // Visible challenges only, as in `withModuleContributions`.
+  const [totalsResult, challengesResult] = await Promise.allSettled([teamClassicTotals(teams), listChallenges().then(visibleNow)]);
 
   if (totalsResult.status !== "fulfilled") {
     console.error("classic team totals unavailable for leaderboard:", errorLabel(totalsResult.reason));

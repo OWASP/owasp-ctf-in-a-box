@@ -17,6 +17,7 @@
 
 import { useRef, useState } from "react";
 import type { ConfirmState } from "./types";
+import AdminAdjustments from "./admin-adjustments";
 import { adminTime } from "@/lib/event-time";
 
 /** The shape `GET /api/admin/ops/user` answers with — mirrors `UserDetail` in
@@ -93,6 +94,17 @@ export function resetProgressConfirm(detail: UserDetail): {
  *  vanished") began by retyping a slug from the line above. Null for a
  *  contestant on no team, which is what hides the control. Exported for direct
  *  testing. */
+/** The player card's team control: Add for a teamless player, Move for
+ *  one already on a team. Works whatever the registration state. */
+export function addToTeamLabel(team: { slug: string } | null): "Add to team" | "Move to team" {
+  return team ? "Move to team" : "Add to team";
+}
+
+/** The notice after an add or move, naming the team they came from. */
+export function addToTeamNotice(data: { login: string; from: string | null }, slug: string): string {
+  return data.from ? `Moved ${data.login} from ${data.from} to ${slug}.` : `Added ${data.login} to ${slug}.`;
+}
+
 export function teamCardSummary(detail: UserDetail): { joined: string | null; actionSlug: string | null } {
   return {
     joined: detail.team?.joinedAt ? `joined ${adminTime(detail.team.joinedAt, "UTC", { year: true })}` : null,
@@ -141,6 +153,8 @@ export default function AdminSupportTab({
    *  slug it already knows and put the cursor there (audit F21). */
   const teamSlugRef = useRef<HTMLInputElement>(null);
   const [teamLogin, setTeamLogin] = useState("");
+  const [addSlug, setAddSlug] = useState("");
+  const [addOverride, setAddOverride] = useState(false);
 
   /** Runs a request and folds the outcome into the shared notice/error state.
    *  `after` re-reads the contestant when one is on screen, so the panel never
@@ -408,6 +422,55 @@ export default function AdminSupportTab({
               </button>
             )}
           </div>
+
+          {/* The way back for a player who left after registration
+              closed (they can't rejoin on their own), and a move between
+              teams. Same atomic checks as a join; the cap applies unless
+              overridden. */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-3">
+            <label htmlFor="support-add-slug" className="text-sm text-zinc-400">
+              {addToTeamLabel(detail.team)}
+            </label>
+            <input
+              id="support-add-slug"
+              value={addSlug}
+              onChange={(e) => setAddSlug(e.target.value)}
+              placeholder="team slug"
+              className="w-40 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-sm text-white focus-visible:border-[#d4a017]/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
+            />
+            <label className="flex items-center gap-1.5 text-sm text-zinc-400">
+              <input type="checkbox" checked={addOverride} onChange={(e) => setAddOverride(e.target.checked)} />
+              over the team-size cap
+            </label>
+            <button
+              type="button"
+              disabled={pending || !addSlug.trim()}
+              className={BTN}
+              onClick={() => {
+                const slug = addSlug.trim();
+                void run(
+                  () =>
+                    fetch("/api/admin/ops/team", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ slug, login: detail.login, action: "add-member", overrideCap: addOverride }),
+                    }),
+                  (data) =>
+                    addToTeamNotice(
+                      { login: typeof data.login === "string" ? data.login : detail.login, from: typeof data.from === "string" ? data.from : null },
+                      slug,
+                    ),
+                  async () => {
+                    setAddSlug("");
+                    setAddOverride(false);
+                    await refresh();
+                  },
+                );
+              }}
+            >
+              {addToTeamLabel(detail.team)}
+            </button>
+          </div>
         </section>
       )}
 
@@ -506,6 +569,8 @@ export default function AdminSupportTab({
           </button>
         </div>
       </section>
+
+      <AdminAdjustments />
 
       {error && <p className="text-sm text-[#e53e3e]">{error}</p>}
       {notice && <p className="text-sm text-[#22c55e]">{notice}</p>}

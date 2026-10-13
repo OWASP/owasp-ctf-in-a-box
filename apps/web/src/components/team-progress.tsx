@@ -12,6 +12,7 @@
 // row. A member with no scores yet still gets a row — a full roster with an
 // honest zero beats a list that silently omits teammates.
 
+import { adjustmentLabel } from "@/lib/leaderboard/adjustment-label";
 import Image from "next/image";
 import type { LeaderboardEntry, TeamStanding } from "@/lib/leaderboard/types";
 import { moduleVerb } from "@/components/progress/progress-row";
@@ -59,6 +60,9 @@ export default function TeamProgress({
           </span>
           {typeof standing.hintPenalty === "number" && standing.hintPenalty > 0 && (
             <span className="ml-2 text-xs text-[#d4a017]">−{standing.hintPenalty} hints</span>
+          )}
+          {typeof standing.adjustment === "number" && standing.adjustment !== 0 && (
+            <span className="ml-2 text-xs text-[#d4a017]">{adjustmentLabel(standing.adjustment)}</span>
           )}
         </p>
       </div>

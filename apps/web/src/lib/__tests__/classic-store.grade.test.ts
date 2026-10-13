@@ -419,7 +419,7 @@ describe("the grading script itself (text invariants)", () => {
   it("guards the already-solved check before ANY write, re-checks the cooldown before spending an attempt, and gates the counters behind the correctness check", async () => {
     await submitFlag("alice", "chal-1", "x");
     const { script } = lastEval();
-    const missing = script.indexOf("'missing'");
+    const missing = script.indexOf("if not target then return {'missing'} end");
     const guard = script.indexOf("HEXISTS");
     const cooldownReturn = script.indexOf("'cooldown'");
     const attemptsWrite = script.indexOf("HSET', KEYS[1]");
@@ -638,13 +638,17 @@ describe("dry run (#464 admin preview)", () => {
 
 describe("story lock (#463)", () => {
   const storiesReply = (steps: string[]) => [{ result: JSON.stringify([{ id: "op", title: "Op", intro: "", steps }]) }];
+  /** The HGETALL of the challenge records, each one live. */
+  const recordsReply = (ids: string[]) => [
+    { result: ids.flatMap((id) => [id, JSON.stringify({ id, title: id, category: "Web", description: "", points: 10, order: 0 })]) },
+  ];
 
   it("hands the script the step's prerequisite, the teammate attempts hashes and every teammate's (solves, user record) pair with the team", async () => {
     teamRead.slug = "t";
     teamRead.members = ["alice", "bob"];
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["recon", "chal-1"]));
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["recon", "chal-1"] }]); // existing ids
+    mocks.upstashPipeline.mockResolvedValueOnce(recordsReply(["recon", "chal-1"])); // the challenge records
     evalReturns(["correct", "50"]);
     await submitFlag("alice", "chal-1", "CTF{x}");
     const { keys, argv } = lastEval();
@@ -667,7 +671,7 @@ describe("story lock (#463)", () => {
   it("reports the script's `locked` exactly as an unknown challenge — no oracle, never a wrong answer", async () => {
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["recon", "chal-1"]));
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["recon", "chal-1"] }]); // existing ids
+    mocks.upstashPipeline.mockResolvedValueOnce(recordsReply(["recon", "chal-1"])); // the challenge records
     evalReturns(["locked"]);
     expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "invalid" });
   });
@@ -679,7 +683,7 @@ describe("story lock (#463)", () => {
   it("answers a locked step in cooldown like an unknown challenge, not with a cooldown", async () => {
     gateReads(null, JSON.stringify({ attempts: 1, lastAt: new Date().toISOString() }));
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["recon", "chal-1"]));
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["recon", "chal-1"] }]); // existing ids
+    mocks.upstashPipeline.mockResolvedValueOnce(recordsReply(["recon", "chal-1"])); // the challenge records
     evalReturns(["locked"]);
     expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "invalid" });
     expect(evalCalls()).toHaveLength(1);
@@ -688,7 +692,7 @@ describe("story lock (#463)", () => {
   it("passes no prerequisite for step 1 or a challenge outside any story", async () => {
     gateReads(null, null);
     mocks.upstashPipeline.mockResolvedValueOnce(storiesReply(["chal-1", "web"]));
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["chal-1", "web"] }]); // existing ids
+    mocks.upstashPipeline.mockResolvedValueOnce(recordsReply(["chal-1", "web"])); // the challenge records
     evalReturns(["correct", "50"]);
     await submitFlag("alice", "chal-1", "CTF{x}");
     expect(lastEval().argv[8]).toBe("");
@@ -701,7 +705,6 @@ describe("story lock (#463)", () => {
     expect(evalCalls()).toHaveLength(0);
   });
 });
-
 // --- the cooldown is the TEAM's to share (#494) ------------------------------
 //
 // The per-challenge cooldown is enforced per login, but scoring is a per-team
@@ -856,11 +859,139 @@ describe("team-shared cooldown (#494)", () => {
     expect(evalCalls()).toHaveLength(0);
 
     mocks.getAdminSettings.mockResolvedValue(settings());
+    // A transport failure on the roster: if the roster were read, this would
+    // fail closed with 'unavailable'. It must not be read at all.
+    teamRead.failure = "down";
     gateReads(solveRow(50, "2026-08-19T10:00:00.000Z"), null);
     expect(await submitFlag("alice", "chal-1", "CTF{x}")).toEqual({ ok: false, reason: "solved" });
-    // The gate alone was read: a refused submission never pays for stories,
-    // challenge ids, or the roster behind them.
-    expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
+    expect(evalCalls()).toHaveLength(0);
+  });
+});
+
+// A hidden challenge does not exist for a contestant. The script decides it
+// from the record it reads; the JS side only keeps its own early refusals
+// ("solved", "cooldown") from confirming the challenge exists.
+describe("hidden challenges", () => {
+  const record = (id: string, over: Record<string, unknown> = {}) =>
+    [id, JSON.stringify({ id, title: id, category: "Web", description: "", points: 10, order: 0, ...over })];
+
+  /** Routes each pipeline call by its first command, so the gate, the stories
+   *  read and the records read each get their own reply whatever order the
+   *  Promise.all issues them in. */
+  function store({
+    solve = null as string | null,
+    attempt = null as string | null,
+    records = [] as string[],
+    stories = null as string | null,
+    recordsError = undefined as string | undefined,
+  } = {}) {
+    mocks.upstashPipeline.mockImplementation(async (cmds) => {
+      const [op, key] = cmds[0];
+      if (op === "HGET" && String(key).startsWith("ctf:classic:solves:")) return [{ result: solve }, { result: attempt }];
+      if (op === "GET" && key === "ctf:classic:stories") return [{ result: stories }];
+      if (op === "HGETALL" && key === "ctf:classic:challenges") return [recordsError ? { error: recordsError } : { result: records }];
+      return [{ result: null }];
+    });
+  }
+
+  it("checks visibility in the script before the already-solved guard and before any write, and lets a dry run through", async () => {
+    await submitFlag("alice", "chal-1", "x");
+    const { script } = lastEval();
+    const hiddenCheck = script.indexOf("if not dry and classicHidden(cRaw) then return {'missing'} end");
+    expect(hiddenCheck).toBeGreaterThan(-1);
+    expect(script.indexOf("local cRaw = redis.call('HGET', KEYS[4], ARGV[1])")).toBeLessThan(hiddenCheck);
+    expect(hiddenCheck).toBeLessThan(script.indexOf("HEXISTS"));
+    for (const write of ["HSET', KEYS[1]", "HSET', KEYS[2]", "HINCRBY"]) {
+      expect(hiddenCheck).toBeLessThan(script.indexOf(write));
+    }
+    // The record is read once, at the top, and reused for points and case.
+    expect(script.split("redis.call('HGET', KEYS[4], ARGV[1])")).toHaveLength(2);
+  });
+
+  it("answers the script's refusal of a hidden challenge exactly like an unknown id", async () => {
+    store({ records: record("chal-1", { enabled: false }) });
+    evalReturns(["missing"]);
+    const hiddenResult = await submitFlag("alice", "chal-1", "x");
+    store();
+    evalReturns(["missing"]);
+    const unknownResult = await submitFlag("alice", "no-such", "x");
+    expect(hiddenResult).toEqual({ ok: false, reason: "invalid" });
+    expect(hiddenResult).toEqual(unknownResult);
+  });
+
+  it("does not answer 'solved' for a hidden challenge the contestant solved: the script decides", async () => {
+    store({ solve: solveRow(10, "2026-10-01T00:00:00.000Z"), records: record("chal-1", { enabled: false }) });
+    evalReturns(["missing"]);
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "invalid" });
+    expect(evalCalls()).toHaveLength(1);
+  });
+
+  it("does not answer 'cooldown' for a hidden challenge: the script decides", async () => {
+    store({ attempt: attemptRow(1, new Date().toISOString()), records: record("chal-1", { enabled: false }) });
+    evalReturns(["missing"]);
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "invalid" });
+    expect(evalCalls()).toHaveLength(1);
+  });
+
+  it("still answers 'solved' early for a visible challenge", async () => {
+    store({ solve: solveRow(10, "2026-10-01T00:00:00.000Z"), records: record("chal-1") });
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "solved" });
+    expect(evalCalls()).toHaveLength(0);
+  });
+
+  it("closes a story's chain around a hidden step: the next step waits on the one before it", async () => {
+    store({
+      records: [...record("recon"), ...record("web", { enabled: false }), ...record("crypto")],
+      stories: JSON.stringify([{ id: "op", title: "Op", intro: "", steps: ["recon", "web", "crypto"] }]),
+    });
+    await submitFlag("alice", "crypto", "x");
+    expect(lastEval().argv[8]).toBe("recon");
+  });
+
+  it("reopens the chain in order once the step is visible again", async () => {
+    store({
+      records: [...record("recon"), ...record("web"), ...record("crypto")],
+      stories: JSON.stringify([{ id: "op", title: "Op", intro: "", steps: ["recon", "web", "crypto"] }]),
+    });
+    await submitFlag("alice", "crypto", "x");
+    expect(lastEval().argv[8]).toBe("web");
+  });
+
+  it("decides a release by Redis's clock in the script, released AT the instant (strict < for hidden)", async () => {
+    await submitFlag("alice", "chal-1", "x");
+    const { script } = lastEval();
+    expect(script).toContain(`string.match(raw, '"releaseAtMs":(%d+)[,}]')`);
+    expect(script).toContain("redis.call('TIME')");
+    expect(script).toContain("return nowMs < tonumber(releaseMs)");
+    // The clock is read inside the visibility check, before any write.
+    expect(script.indexOf("redis.call('TIME')")).toBeLessThan(script.indexOf("HSET', KEYS[1]"));
+  });
+
+  it("defers a not-yet-released challenge's 'solved' to the script, and answers a released one early", async () => {
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    store({ solve: solveRow(10, "2026-10-01T00:00:00.000Z"), records: record("chal-1", { enabled: false, releaseAt: future }) });
+    evalReturns(["missing"]);
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "invalid" });
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    store({ solve: solveRow(10, "2026-10-01T00:00:00.000Z"), records: record("chal-1", { enabled: false, releaseAt: past }) });
+    mocks.upstashEval.mockClear();
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "solved" });
+    expect(evalCalls()).toHaveLength(0);
+  });
+
+  it("puts a story step back in the chain once its release time has passed", async () => {
+    const past = new Date(Date.now() - 1_000).toISOString();
+    store({
+      records: [...record("recon"), ...record("web", { enabled: false, releaseAt: past }), ...record("crypto")],
+      stories: JSON.stringify([{ id: "op", title: "Op", intro: "", steps: ["recon", "web", "crypto"] }]),
+    });
+    await submitFlag("alice", "crypto", "x");
+    expect(lastEval().argv[8]).toBe("web");
+  });
+
+  it("fails closed when the records cannot be read", async () => {
+    store({ recordsError: "NOAUTH" });
+    expect(await submitFlag("alice", "chal-1", "x")).toEqual({ ok: false, reason: "unavailable" });
     expect(evalCalls()).toHaveLength(0);
   });
 });

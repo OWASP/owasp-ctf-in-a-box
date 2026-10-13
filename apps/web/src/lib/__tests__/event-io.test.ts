@@ -224,6 +224,35 @@ describe("attachment files in the archive (#186)", () => {
     expect(fileErrors(withFiles(files)).length).toBeGreaterThan(0);
   });
 
+  // An archive's files ride its top-level `attachmentFiles`; a classic
+  // section carrying its own would be imported as metadata and its bytes
+  // silently dropped, so it is refused.
+  it("refuses a classic section that carries its own attachmentFiles", () => {
+    const res = parseEventBundle(
+      JSON.stringify({
+        ...valid,
+        classic: {
+          version: 3,
+          categories: ["Web"],
+          challenges: [{ ...valid.classic!.challenges[0], attachments: [{ name: "cap.pcap", size: 10, sha256: sha }] }],
+          attachmentFiles: [{ item: "web-one-ab12cd", sha256: sha, bytes }],
+        },
+      }),
+    );
+    if (res.ok) throw new Error("expected the archive to be refused");
+    expect(res.errors).toContainEqual({
+      where: "classic.attachmentFiles",
+      message: 'An archive carries files in its top-level "attachmentFiles", not inside "classic"',
+    });
+  });
+
+  it("keeps naming the archive when a file matches no classic upload", () => {
+    expect(fileErrors(withFiles([{ item: "ghost-zz99zz", sha256: sha, bytes }]))).toContainEqual({
+      where: "attachmentFiles[0]",
+      message: "No classic upload in this archive matches this file's item and sha256",
+    });
+  });
+
   it("refuses files on an archive without a classic section", () => {
     const rest: Partial<EventBundle> = { ...valid };
     delete rest.classic;
@@ -323,5 +352,26 @@ describe("the eventImages section", () => {
     const errors = errorsOf({ ...valid, eventImages });
     expect(errors.some((e) => e.where === where)).toBe(true);
     expect(JSON.stringify(errors)).not.toContain(PLANTED);
+  });
+});
+
+// The event archive carries a Jeopardy challenge's visibility through the same
+// classic parser: a v4 section keeps it, an older one carrying it is refused
+// by position, never by value.
+describe("parseEventBundle and Jeopardy visibility", () => {
+  it("keeps enabled:false on a version 4 classic section", () => {
+    const bundle = { ...valid, classic: { ...valid.classic!, version: 4, challenges: [{ ...valid.classic!.challenges[0], enabled: false }] } };
+    const res = parseEventBundle(serializeEventBundle(bundle));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.classic?.challenges[0].enabled).toBe(false);
+  });
+
+  it("refuses the field on an older classic section", () => {
+    const bundle = { ...valid, classic: { ...valid.classic!, version: 3, challenges: [{ ...valid.classic!.challenges[0], enabled: false }] } };
+    const res = parseEventBundle(serializeEventBundle(bundle));
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.errors).toContainEqual({ where: "classic.challenges[0].enabled", message: '"enabled" needs bundle version 4' });
+    expect(JSON.stringify(res.errors)).not.toContain("ctfbox{One}");
   });
 });

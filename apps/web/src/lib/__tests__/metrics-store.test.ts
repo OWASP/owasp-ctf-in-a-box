@@ -77,6 +77,9 @@ function mockStore(opts: {
       firstTeamAt?: string | null;
       /** `<app>/<challengeId>` -> ISO bought-at. */
       hintTimes?: Record<string, string>;
+      /** challengeId -> ISO first opened (#616). */
+      classicOpened?: Record<string, string>;
+      aiOpened?: Record<string, string>;
     }
   >;
   logins?: string[];
@@ -151,6 +154,8 @@ function mockStore(opts: {
           { result: hash(p.aiAttempts ?? {}) },
           { result: [p.firstTeamAt ?? null] },
           { result: hash(p.hintTimes ?? {}) },
+          { result: hash(p.classicOpened ?? {}) },
+          { result: hash(p.aiOpened ?? {}) },
         ];
       });
     if (opts.perLoginError) replies[0] = { error: opts.perLoginError };
@@ -493,17 +498,23 @@ describe("naming the challenges", () => {
 describe("challengesToCsv", () => {
   const metrics = {
     challenges: [
-      { module: "classic", id: "c1", title: "Cookie jar", solves: 2, attempts: 5, solveRate: 0.5, avgAttemptsToSolve: 2.5, medianSecondsToSolve: 90, solvedAfterHint: 0 },
-      { module: "quiz", id: "q,1", title: null, solves: 0, attempts: 0, solveRate: null, avgAttemptsToSolve: null, medianSecondsToSolve: null, solvedAfterHint: 0 },
+      { module: "classic", id: "c1", title: "Cookie jar", solves: 2, attempts: 5, solveRate: 0.5, avgAttemptsToSolve: 2.5, medianSecondsToSolve: 90, timeMeasure: "open", solvedAfterHint: 0 },
+      { module: "quiz", id: "q,1", title: null, solves: 0, attempts: 0, solveRate: null, avgAttemptsToSolve: null, medianSecondsToSolve: null, timeMeasure: null, solvedAfterHint: 0 },
     ],
   } as EventMetrics;
 
   it("emits a header and one row per challenge", () => {
-    const lines = challengesToCsv(metrics).trim().split("\n");
+    const lines = challengesToCsv(metrics).replace(/^\uFEFF/, "").trim().split("\n");
     expect(lines[0]).toBe(
-      "module,id,title,solves,attempts,solve_rate,avg_attempts_to_solve,median_seconds_to_solve",
+      "module,id,title,solves,attempts,solve_rate,avg_attempts_to_solve,median_seconds_to_solve,median_time_measure",
     );
     expect(lines).toHaveLength(3);
+  });
+
+  it("names the measure each median uses", () => {
+    const lines = challengesToCsv(metrics).trim().split("\n");
+    expect(lines[1].endsWith(",90,open")).toBe(true);
+    expect(lines[2].endsWith(",,")).toBe(true);
   });
 
   it("quotes a field containing a comma, so the columns do not shift", () => {
@@ -517,11 +528,39 @@ describe("challengesToCsv", () => {
     expect(challengesToCsv(metrics)).toMatch(/classic,c1,Cookie jar,2,5,/);
   });
 
+  // Excel reads a CSV with no byte-order mark in the system code page, so a
+  // UTF-8 title such as "¿Qué dice señor?" opens as "Â¿QuÃ© dice seÃ±or?".
+  // The response's charset header does not survive the browser saving the
+  // download, so the mark has to be in the body.
+  it("starts with a UTF-8 byte-order mark and keeps non-ASCII titles intact", () => {
+    const csv = challengesToCsv({
+      challenges: [{ ...metrics.challenges[0], title: "¿Qué dice señor? — 06" }],
+    } as EventMetrics);
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+    expect(csv).toContain("¿Qué dice señor? — 06");
+  });
+
+  // A cell a spreadsheet would run as a formula is written as text.
+  it.each(["=HYPERLINK(\"x\")", "+1", "-1", "@SUM(A1)", "\tx", "\rx"])(
+    "neutralizes a formula-leading title %j",
+    (title) => {
+      const csv = challengesToCsv({ challenges: [{ ...metrics.challenges[0], title }] } as EventMetrics);
+      const row = csv.replace(/^\uFEFF/, "").split("\n")[1];
+      const cell = row.split(",").slice(2).join(",").replace(/,2,5,.*$/, "");
+      expect(cell.replace(/^"/, "")).toMatch(/^'/);
+    },
+  );
+
+  it("quotes a field containing a carriage return", () => {
+    const csv = challengesToCsv({ challenges: [{ ...metrics.challenges[0], title: "a\rb" }] } as EventMetrics);
+    expect(csv).toContain('"a\rb"');
+  });
+
   it("writes an EMPTY cell for null, never the string 'null'", () => {
     // A spreadsheet reading `null` as text silently breaks every average over
     // that column. A missing title takes the same treatment as a missing
     // number: an empty cell.
-    expect(challengesToCsv(metrics)).toMatch(/quiz,"q,1",,0,0,,,\n/);
+    expect(challengesToCsv(metrics)).toMatch(/quiz,"q,1",,0,0,,,,\n/);
   });
 });
 
@@ -582,6 +621,134 @@ describe("time to solve", () => {
       classicPoints: { alice: 10 },
     });
     expect((await computeEventMetrics()).challenges[0]?.medianSecondsToSolve).toBeNull();
+  });
+
+  // #616: from first opening the challenge, where the box recorded it. The
+  // first submission is usually the right one (players work offline), so the
+  // first-miss figure is 0 by construction for most rows.
+  it("measures from first opening the challenge when that was recorded", async () => {
+    mockStore({
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(10, "2026-08-22T10:10:00Z") },
+          classicAttempts: { c1: attemptFrom(1, "2026-08-22T10:10:00Z") },
+          classicOpened: { c1: "2026-08-22T10:00:00Z" },
+        },
+      },
+      classicPoints: { alice: 10 },
+    });
+    const c = (await computeEventMetrics()).challenges[0];
+    expect(c?.medianSecondsToSolve).toBe(600);
+    expect(c?.timeMeasure).toBe("open");
+  });
+
+  it("reads the AI module's first-open records too", async () => {
+    mockStore({
+      perLogin: {
+        alice: {
+          aiSolves: { a1: earned(10, "2026-08-22T10:03:00Z") },
+          aiAttempts: { a1: attemptFrom(1, "2026-08-22T10:03:00Z") },
+          aiOpened: { a1: "2026-08-22T10:00:00Z" },
+        },
+      },
+      aiPoints: { alice: 10 },
+    });
+    const c = (await computeEventMetrics()).challenges.find((x) => x.id === "a1");
+    expect(c?.medianSecondsToSolve).toBe(180);
+    expect(c?.timeMeasure).toBe("open");
+  });
+
+  it("uses only the open-to-solve durations when some solvers have them", async () => {
+    mockStore({
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(1, "2026-08-22T10:10:00Z") },
+          classicAttempts: { c1: attemptFrom(1, "2026-08-22T10:10:00Z") },
+          classicOpened: { c1: "2026-08-22T10:00:00Z" },
+        },
+        bob: {
+          classicSolves: { c1: earned(1, "2026-08-22T12:00:00Z") },
+          classicAttempts: { c1: attemptFrom(2, "2026-08-22T10:00:00Z") },
+        },
+      },
+      classicPoints: { alice: 1, bob: 1 },
+    });
+    const c = (await computeEventMetrics()).challenges[0];
+    expect(c?.medianSecondsToSolve).toBe(600);
+    expect(c?.timeMeasure).toBe("open");
+  });
+
+  it("ignores a first-open recorded after the solve", async () => {
+    mockStore({
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(10, "2026-08-22T10:05:00Z") },
+          classicAttempts: { c1: attemptFrom(2, "2026-08-22T10:00:00Z") },
+          classicOpened: { c1: "2026-08-22T11:00:00Z" },
+        },
+      },
+      classicPoints: { alice: 10 },
+    });
+    const c = (await computeEventMetrics()).challenges[0];
+    expect(c?.medianSecondsToSolve).toBe(300);
+    expect(c?.timeMeasure).toBe("first-miss");
+  });
+
+  it("labels a first-miss figure as such", async () => {
+    mockStore({
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(10, "2026-08-22T10:05:00Z") },
+          classicAttempts: { c1: attemptFrom(3, "2026-08-22T10:00:00Z") },
+        },
+      },
+      classicPoints: { alice: 10 },
+    });
+    expect((await computeEventMetrics()).challenges[0]?.timeMeasure).toBe("first-miss");
+  });
+
+  // A first-try solver's 0 is unknown, not instant, so it does not drag the
+  // first-miss median of the solvers who did miss down to 0.
+  it("takes the first-miss median over the solvers who missed first", async () => {
+    const firstTry = (at: string) => ({
+      classicSolves: { c1: earned(10, at) },
+      classicAttempts: { c1: attemptFrom(1, at) },
+    });
+    mockStore({
+      perLogin: {
+        alice: firstTry("2026-08-22T10:05:00Z"),
+        bob: firstTry("2026-08-22T10:06:00Z"),
+        carol: {
+          classicSolves: { c1: earned(10, "2026-08-22T10:05:00Z") },
+          classicAttempts: { c1: attemptFrom(2, "2026-08-22T10:00:00Z") },
+        },
+      },
+      classicPoints: { alice: 10, bob: 10, carol: 10 },
+    });
+    const c = (await computeEventMetrics()).challenges[0];
+    expect(c?.medianSecondsToSolve).toBe(300);
+    expect(c?.timeMeasure).toBe("first-miss");
+  });
+
+  // Every solver right on their first submission, and no open records: the
+  // duration is 0 by construction, which reads as "instant". It is unknown.
+  it("is null, not 0s, when everyone solved on their first submission and no open was recorded", async () => {
+    mockStore({
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(10, "2026-08-22T10:05:00Z") },
+          classicAttempts: { c1: attemptFrom(1, "2026-08-22T10:05:00Z") },
+        },
+        bob: {
+          classicSolves: { c1: earned(10, "2026-08-22T11:05:00Z") },
+          classicAttempts: { c1: attemptFrom(1, "2026-08-22T11:05:00Z") },
+        },
+      },
+      classicPoints: { alice: 10, bob: 10 },
+    });
+    const c = (await computeEventMetrics()).challenges[0];
+    expect(c?.medianSecondsToSolve).toBeNull();
+    expect(c?.timeMeasure).toBeNull();
   });
 
   it("discards a solve recorded BEFORE its first attempt", async () => {
@@ -877,12 +1044,13 @@ describe("challengesToCsv carries the ai module column", () => {
           solveRate: 0.5,
           avgAttemptsToSolve: 2,
           medianSecondsToSolve: 30,
+          timeMeasure: "first-miss",
           solvedAfterHint: 0,
         },
       ],
     } as EventMetrics;
     const lines = challengesToCsv(metrics).trim().split("\n");
-    expect(lines[1]).toBe("ai,a1,Guardrail bypass,1,2,0.5000,2.00,30");
+    expect(lines[1]).toBe("ai,a1,Guardrail bypass,1,2,0.5000,2.00,30,first-miss");
   });
 });
 

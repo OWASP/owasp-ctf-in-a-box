@@ -25,6 +25,11 @@
 // case-insensitive dedupe, because two spellings of the same category
 // arriving in one paste is almost certainly a mistake worth surfacing rather
 // than quietly fixing.
+//
+// A v3 or later bundle may also carry `attachmentFiles`: the uploads' bytes, base64, in
+// the same shape and under the same validator as the event archive's
+// (attachment-files.ts). Optional and opt-in at export; without it the bundle
+// is metadata only and an import records each named upload as "missing".
 
 import {
   CLASSIC_HINT_MAX,
@@ -44,12 +49,35 @@ import {
   ATTACHMENT_URL_MAX,
   type AttachmentMeta,
 } from "@/lib/attachments-keys";
+import { type AttachmentFile, validateAttachmentFiles } from "@/lib/attachment-files";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { Story } from "@/lib/story-lock";
+import { isReleaseInstant } from "@/lib/classic-release";
 
-/** 2 since #463: an optional top-level `stories`. 1 stays importable. */
-export const CLASSIC_BUNDLE_VERSION = 2;
-const SUPPORTED_VERSIONS = new Set([1, 2]);
+/** 2 added `stories` and per-challenge `attachments` (metadata); 3 adds the
+ *  optional top-level `attachmentFiles`; 4 adds a challenge's visibility
+ *  (`enabled`, `releaseAt`). 1 to 3 stay importable. */
+export const CLASSIC_BUNDLE_VERSION = 4;
+const SUPPORTED_VERSIONS = new Set([1, 2, 3, 4]);
+/** The oldest version that knows `stories` and `attachments`. */
+const STORIES_VERSION = 2;
+/** The oldest version that knows `attachmentFiles`. */
+const FILES_VERSION = 3;
+/** The oldest version that knows a challenge's visibility. */
+const VISIBILITY_VERSION = 4;
+
+/** The version an export is stamped with: the oldest one that knows every
+ *  field it carries, so a bundle without files or visibility stays
+ *  importable on a box built before either. */
+export function bundleVersionFor(hasFiles: boolean, hasVisibility = false): number {
+  if (hasVisibility) return VISIBILITY_VERSION;
+  return hasFiles ? FILES_VERSION : STORIES_VERSION;
+}
+
+/** Whether a bundle row carries a visibility field (and so needs version 4). */
+export function carriesVisibility(c: { enabled?: boolean; releaseAt?: string | null }): boolean {
+  return c.enabled === false || typeof c.releaseAt === "string";
+}
 const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
 
@@ -71,9 +99,15 @@ export type ClassicBundleChallenge = {
    *  a bundle is an ORGANIZER artifact and already carries every answer. */
   hint?: string;
   /** v2 (#186): the challenge's files as METADATA only — an upload's name,
-   *  size and sha256, or a link. Bytes travel in the event archive; an
-   *  import that names an upload the box lacks creates it as "missing". */
+   *  size and sha256, or a link. Bytes travel in the event archive or a v3
+   *  bundle's `attachmentFiles`; an import that names an upload the box
+   *  lacks creates it as "missing" until bytes fill it. */
   attachments?: BundleAttachment[];
+  /** v4: false keeps the challenge off the contestant board. Absent means
+   *  live, the same rule as the stored record. */
+  enabled?: boolean;
+  /** v4: the ISO instant a disabled challenge goes live on its own. */
+  releaseAt?: string;
 };
 
 export type ClassicBundle = {
@@ -82,6 +116,9 @@ export type ClassicBundle = {
   challenges: ClassicBundleChallenge[];
   /** v2 (#463): ordered chains of this bundle's challenges. */
   stories?: Story[];
+  /** v3: the uploads' bytes, present only when the export opted in. Each
+   *  names an upload `(item, sha256)` in this same bundle. */
+  attachmentFiles?: AttachmentFile[];
 };
 
 /** `where` is the indexed path, `message` the rule it broke — never the
@@ -103,6 +140,8 @@ const CHALLENGE_KEYS = [
   "caseSensitive",
   "hint",
   "attachments",
+  "enabled",
+  "releaseAt",
 ] as const;
 const CHALLENGE_KEY_SET = new Set<string>(CHALLENGE_KEYS);
 
@@ -181,6 +220,17 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
   // case-sensitive that its author did not mean to.
   if (raw.caseSensitive !== undefined && typeof raw.caseSensitive !== "boolean") {
     errors.push({ where: `${base}.caseSensitive`, message: "caseSensitive must be true or false" });
+  }
+
+  // Optional, a boolean when present, for the same reason as caseSensitive: a
+  // string "false" would be truthy downstream and publish the challenge.
+  if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") {
+    errors.push({ where: `${base}.enabled`, message: "enabled must be true or false" });
+  }
+  // Optional; an ISO instant with its zone (`isReleaseInstant`). Never
+  // echoed: the message names the rule only.
+  if (raw.releaseAt !== undefined && (typeof raw.releaseAt !== "string" || !isReleaseInstant(raw.releaseAt))) {
+    errors.push({ where: `${base}.releaseAt`, message: "releaseAt must be an ISO 8601 date and time ending in Z or an offset such as -03:00" });
   }
 
   // Optional paid-hint text (#190): a non-empty string within the cap.
@@ -343,7 +393,7 @@ export function parseBundle(raw: string): ParseResult {
   const errors: ImportError[] = [];
 
   if (typeof parsed.version !== "number" || !SUPPORTED_VERSIONS.has(parsed.version)) {
-    errors.push({ where: "version", message: `Unsupported bundle version: expected 1 or ${CLASSIC_BUNDLE_VERSION}` });
+    errors.push({ where: "version", message: `Unsupported bundle version: expected 1 to ${CLASSIC_BUNDLE_VERSION}` });
   }
 
   const categories = validateCategories(parsed.categories, errors);
@@ -356,7 +406,20 @@ export function parseBundle(raw: string): ParseResult {
   if (parsed.version === 1) {
     rawChallenges.forEach((c, i) => {
       if (isPlainObject(c) && c.attachments !== undefined) {
-        errors.push({ where: `challenges[${i}].attachments`, message: `"attachments" needs bundle version ${CLASSIC_BUNDLE_VERSION}` });
+        errors.push({ where: `challenges[${i}].attachments`, message: `"attachments" needs bundle version ${STORIES_VERSION}` });
+      }
+    });
+  }
+
+  // v4: visibility. On an older version the field is an error, not ignored:
+  // a box built before it would import the challenge live.
+  if (typeof parsed.version === "number" && parsed.version < VISIBILITY_VERSION) {
+    rawChallenges.forEach((c, i) => {
+      if (!isPlainObject(c)) return;
+      for (const key of ["enabled", "releaseAt"] as const) {
+        if (c[key] !== undefined) {
+          errors.push({ where: `challenges[${i}].${key}`, message: `"${key}" needs bundle version ${VISIBILITY_VERSION}` });
+        }
       }
     });
   }
@@ -367,12 +430,29 @@ export function parseBundle(raw: string): ParseResult {
   let stories: Story[] | undefined;
   if (parsed.stories !== undefined) {
     if (parsed.version === 1) {
-      errors.push({ where: "stories", message: `"stories" needs bundle version ${CLASSIC_BUNDLE_VERSION}` });
+      errors.push({ where: "stories", message: `"stories" needs bundle version ${STORIES_VERSION}` });
     } else {
       const ids = new Set(
         rawChallenges.map((c) => (isPlainObject(c) && typeof c.id === "string" ? c.id : null)).filter((v): v is string => v !== null),
       );
       stories = validateStories(parsed.stories, ids, errors);
+    }
+  }
+
+  // v3: the uploads' bytes. On an older version the key is an error, for the
+  // same reason as stories: an older box would import the bundle and drop
+  // the bytes without a word.
+  let attachmentFiles: AttachmentFile[] | undefined;
+  if (parsed.attachmentFiles !== undefined) {
+    if (typeof parsed.version === "number" && parsed.version < FILES_VERSION) {
+      errors.push({ where: "attachmentFiles", message: `"attachmentFiles" needs bundle version ${FILES_VERSION}` });
+    } else {
+      attachmentFiles = validateAttachmentFiles(
+        parsed.attachmentFiles,
+        rawChallenges,
+        "No upload in this bundle matches this file's item and sha256",
+        errors,
+      );
     }
   }
 
@@ -383,7 +463,13 @@ export function parseBundle(raw: string): ParseResult {
   const challenges = rawChallenges as ClassicBundleChallenge[];
   return {
     ok: true,
-    bundle: { version: parsed.version as number, categories, challenges, ...(stories ? { stories } : {}) },
+    bundle: {
+      version: parsed.version as number,
+      categories,
+      challenges,
+      ...(stories ? { stories } : {}),
+      ...(attachmentFiles ? { attachmentFiles } : {}),
+    },
   };
 }
 

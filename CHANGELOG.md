@@ -75,6 +75,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   Secure Development scores until it lifts, as before. The comment is edited
   on every run, so a solve first read from a later re-run takes the re-run's
   time. Either service can be upgraded first; see ADR 67.
+- **Added: dynamic challenge scoring for classic CTF (#187).** Classic challenges
+  can optionally configure decay (`maxPoints`, `minPoints`, and `decay`),
+  calculated deterministically via the CTFd dynamic formula
+  `ceil(max + ((min - max) / decay²) * solve_count²)` clamped to `minPoints`.
+  Team surfaces (board tiles, challenge pages, and team totals) derive dynamic
+  values from team-deduplicated solve counts, with shared solves deduplicated
+  before applying decay. Individual totals reflect per-contestant solve counts.
+  Live solve counts are raised safely during reseeding without overwriting
+  higher counts.
 - **Added: first blood on the Jeopardy board (#188).** Each visible tile and
   open story step names the contestant who solved it first. It is display
   only and changes no score. It is read from the current team members' solve

@@ -84,6 +84,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
 - [ADR 67 — A Secure Development solve is timed, and judged, by its score comment](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
 - [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
+- [ADR 69 — Dynamic classic scoring: read-time calculation over aggregate recomputation](#adr-69-dynamic-classic-scoring-read-time-calculation-over-aggregate-recomputation)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -4206,3 +4207,84 @@ the board shows the challenge on the next read. The reveal script's lock
 keys move from `KEYS[8..]` to `KEYS[9..]`. A future reader of the challenge
 list has to filter, and the source scan says so if it does not.
 
+## ADR 69. Dynamic classic scoring: read-time calculation over aggregate recomputation
+
+**Context.** Issue #187. Classic CTF challenges traditionally award static
+points, but jeopardy events benefit from dynamic (decaying) scoring to
+incentivize solving uncracked challenges and prevent early-solve point inflation.
+Under dynamic scoring (the CTFd formula:
+`ceil(maximum + ((minimum - maximum) / decay²) * solve_count²)`, clamped to the
+minimum), each additional solve reduces the point value of the challenge for
+all solvers.
+
+When a dynamic challenge's value decays from $V_{old}$ to $V_{new}$, previous
+solvers' totals must reflect the new value. Two architectures were compared:
+
+1. **Write-time aggregate recomputation (fan-out write).** Whenever a
+   contestant solves a dynamic challenge $C$, update $C$'s value and
+   write/update the aggregate points (`ctf:classic:points`) for every past
+   solver of $C$ across Redis.
+2. **Read-time calculation.** Derive dynamic challenge values at read time from
+   authoritative solve data: team-deduplicated solve counts (`teamSolveCounts`)
+   for team surfaces (`/flags`, `/flags/[id]`, and `withTeamClassicPoints`), and
+   distinct login solve counts (`ctf:classic:solvecount`) for individual totals
+   (`getClassicTotals`). Compute individual/team totals directly from the
+   authoritative per-login solve records (`ctf:classic:solves:<login>`) and
+   deduplicated team solve sets.
+
+**Decision.** Choose **read-time calculation**.
+
+- **Write fan-out is eliminated.** A write-time fan-out would require an $O(S)$
+  write cascade across Redis on every solve, where $S$ is the number of previous
+  solvers. For a popular challenge solved by many contestants or teams, this
+  amplifies write traffic and introduces distributed concurrency windows / race
+  conditions between simultaneous solves.
+- **Source of truth remains authoritative and uncorrupted.** The solve records
+  in `ctf:classic:solves:<login>` and `ctf:classic:solvecount` are immutable or
+  monotonically increasing source records. Deriving scores at read time guarantees
+  that leaderboard totals are always mathematically consistent with actual solve
+  records and current solve counts.
+- **Authoritative count sources and distinct scoring semantics.** Jeopardy
+  scoring distinguishes team scoring from individual contestant progress:
+  - **Team surfaces and board consistency.** The challenge board (`/flags`),
+    detail pages (`/flags/[id]`), and team leaderboard totals
+    (`withTeamClassicPoints`) all derive dynamic challenge values from the
+    same team-deduplicated solve counts (`teamSolveCounts`). When multiple
+    teammates solve the same challenge, the team is counted once and points do
+    not decay; when another team solves it, the count increments once and
+    points decay for all teams. Shared challenge solves within a team are
+    deduplicated (via `foldTeamItems`) before dynamic pricing is applied,
+    so team totals and displayed board values always agree.
+  - **Individual scoring semantics.** Individual totals (`getClassicTotals`)
+    reflect per-contestant progress and derive dynamic values from distinct
+    individual solve counts (`ctf:classic:solvecount`). Individual scoring
+    never conflates team counts, and team scoring never multiplies points by
+    team size.
+- **Zero penalty on static-only boards.** When no dynamic challenges exist on
+  the board, `getClassicTotals()` stops at the stored aggregates
+  (`ctf:classic:points`, `ctf:classic:solved`) and skips the per-login solve
+  reads the dynamic path needs — the pre-existing fast path, kept intact.
+  `foldTeamSolves()` reads each member's `ctf:classic:solves:<login>` hash
+  through `foldTeamItems()` whether or not any challenge is dynamic (it never
+  folds the stored aggregate points, which carry totals but no memory of WHICH
+  challenges produced them); on a static board it simply keeps the fold's own
+  solve-time points instead of recomputing them, so the static case costs
+  nothing extra either.
+
+**Consequences.** Individual and team totals always reflect current challenge
+values according to their respective semantics. When a second team solves a
+dynamic challenge, team totals and displayed board values immediately reflect
+the decay on the next read. If another member of the same team solves the
+challenge, the team count remains unchanged and displayed values and team totals
+do not decay. Redis writes on submission remain a fixed number of $O(1)$
+operations: `SUBMIT_SCRIPT` writes the solve record into
+`ctf:classic:solves:<login>`, increments `ctf:classic:points` by the
+challenge's authored value, increments `ctf:classic:solved` (the login's solve
+count) and `ctf:classic:solvecount` (the challenge's distinct-solver count),
+and refreshes `ctf:classic:lastAt`, the leaderboard tiebreak — never a cascade
+over past solvers. Those aggregates are exact for a static challenge and stale
+by design for a dynamic one (they carry the authored value, not the current
+one), which is exactly why the dynamic read path discards them and the static
+read path above keeps them. Read paths perform a single batched pipeline read
+of member solve hashes for dynamic challenges, which is already the pattern
+used for team deduplication.

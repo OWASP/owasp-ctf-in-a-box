@@ -20,6 +20,10 @@ export const CLASSIC_STORY_TITLE_MAX = 120;
 export const CLASSIC_STORY_INTRO_MAX = 2000;
 export const CLASSIC_POINTS_KEY = "ctf:classic:points";
 export const CLASSIC_SOLVED_KEY = "ctf:classic:solved";
+/** challengeId -> distinct login solve count (maintained by SUBMIT_SCRIPT).
+ *  Used by individual scoring totals in getClassicTotals and admin player
+ *  count display. Team surfaces derive distinct team counts from member
+ *  solve hashes instead. */
 export const CLASSIC_SOLVECOUNT_KEY = "ctf:classic:solvecount";
 /** login -> ISO time of that login's latest award (#522). */
 export const CLASSIC_LAST_AT_KEY = "ctf:classic:lastAt";
@@ -46,6 +50,109 @@ export const CLASSIC_ID_RE = /^[\w-]{1,64}$/;
  *  storable value inside the plain-integer form the script can actually
  *  parse. */
 export const CLASSIC_POINTS_MAX = 100000;
+
+// ---------------------------------------------------------------------------
+// Dynamic (decaying) scoring (#187)
+//
+// A challenge can opt into decay by carrying three extra fields alongside its
+// static `points`:
+//   maxPoints  — value awarded to the first solver (>= 1, <= CLASSIC_POINTS_MAX)
+//   minPoints  — floor, never goes below this (>= 1, <= maxPoints)
+//   decay      — solve count at which the value reaches minPoints (>= 1)
+//
+// Static challenges have none of these fields.  A challenge with any of the
+// three must have all three (enforced by upsertChallenge / importBundle).
+//
+// The formula is CTFd's standard dynamic formula:
+//   value = ceil( max + ((min - max) / decay²) × n² )
+//   clamped to the range [min, max]
+// where n is the count of distinct solvers so far (0 at first solve).
+//
+// Count source and scoring semantics:
+// - On team surfaces (the challenge board `/flags`, the challenge detail
+//   `/flags/[id]`, and team leaderboard totals `withTeamClassicPoints`),
+//   n is the number of DISTINCT TEAMS that have solved the challenge
+//   (`teamSolveCounts`). Shared challenge solves within a team are deduplicated
+//   before dynamic pricing is applied, so multiple teammates solving one
+//   flag count that team once and team totals stay consistent with displayed
+//   board values.
+// - On individual totals (`getClassicTotals`), n is the number of DISTINCT
+//   INDIVIDUAL LOGINS (`ctf:classic:solvecount`), reflecting per-contestant
+//   solves.
+//
+// At n=0  the value is max (the first solver earns max).
+// At n=decay the value is min (floor reached at exactly that many solves).
+// Beyond decay it stays at min.
+//
+// Deterministic and integer-valued by construction (Math.ceil).
+// Monotonically non-increasing: adding solvers can only lower or maintain.
+
+/** Minimum allowed value for maxPoints on a dynamic challenge. */
+export const CLASSIC_DYNAMIC_MAX_MIN = 1;
+/** Minimum allowed value for minPoints on a dynamic challenge. */
+export const CLASSIC_DYNAMIC_MIN_MIN = 1;
+/** Minimum allowed decay value. */
+export const CLASSIC_DYNAMIC_DECAY_MIN = 1;
+
+/**
+ * Computes the current point value for a dynamic challenge.
+ *
+ * Pure function — no I/O, no side effects. The same formula is used
+ * across authoring validation, totals calculations, and board display.
+ * One implementation so surfaces never drift in formula evaluation.
+ *
+ * @param maxPoints  Award for the first solver.
+ * @param minPoints  Floor value.
+ * @param decay      Solve count at which the floor is reached.
+ * @param solveCount Number of distinct solvers (distinct teams for team
+ *                   surfaces/board display, distinct logins for individual totals).
+ * @returns          Integer in [minPoints, maxPoints].
+ */
+export function dynamicPoints(
+  maxPoints: number,
+  minPoints: number,
+  decay: number,
+  solveCount: number,
+): number {
+  if (solveCount <= 0) return maxPoints;
+  if (solveCount >= decay) return minPoints;
+  const raw = maxPoints + ((minPoints - maxPoints) / (decay * decay)) * (solveCount * solveCount);
+  return Math.max(minPoints, Math.min(maxPoints, Math.ceil(raw)));
+}
+
+/** Whether a challenge carries the dynamic-scoring triple. All three present
+ *  or none — the invariant `upsertChallenge` enforces and `parseChallenge`
+ *  re-checks on read, so a caller that has just read a stored record may
+ *  trust this. Exported so every surface (totals, team fold, board display,
+ *  profile items) asks the same one question instead of three inline. */
+export function hasDynamicScoring(c: {
+  maxPoints?: number;
+  minPoints?: number;
+  decay?: number;
+}): boolean {
+  return (
+    typeof c.maxPoints === "number" &&
+    typeof c.minPoints === "number" &&
+    typeof c.decay === "number"
+  );
+}
+
+/** A challenge's CURRENT value, given its solve count: the decayed value
+ *  for a dynamic challenge, its (constant) `points` for a static one.
+ *  Display-side reading of the formula — team board surfaces and totals
+ *  paths evaluate challenge values through here, so a tile, a detail page
+ *  and the leaderboard agree on what a challenge is worth.
+ *
+ *  `solveCount` is ignored for a static challenge, so a caller that has no
+ *  count may pass 0. */
+export function challengeCurrentValue(
+  c: { points: number; maxPoints?: number; minPoints?: number; decay?: number },
+  solveCount: number,
+): number {
+  if (!hasDynamicScoring(c)) return c.points;
+  return dynamicPoints(c.maxPoints as number, c.minPoints as number, c.decay as number, solveCount);
+}
+
 /** Paid-hint text per challenge (id -> text). SECRET until purchased — same
  *  storage rule as the flag hashes: separate from the public challenge
  *  record, so no list/read of `ctf:classic:challenges` can ever carry it.

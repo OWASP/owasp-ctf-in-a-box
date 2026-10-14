@@ -249,4 +249,41 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     expect(Number(log.result)).toBe(0);
     await upstashPipeline([["DEL", settingsKey, auditKey, pausesKey]]);
   });
+
+  // Reseeding must never overwrite a higher existing solvecount with a lower
+  // seeded floor — run for real, because that is the whole point of the
+  // raise-only EVAL: a script that set instead of raised would pass any
+  // source-shape assertion while still dropping a real contestant's solve.
+  it("RAISE_SOLVECOUNT_SCRIPT never overwrites a higher existing solve count with a lower floor", async () => {
+    const { RAISE_SOLVECOUNT_SCRIPT } = await import("@/lib/demo-seed");
+    const { upstashEval } = await import("@/lib/upstash");
+    const solvecountKey = liveKey("classic", freshId("solvecount"));
+
+    // Pre-populate chal-high with 5 solves, chal-low with 1 solve
+    await upstashPipeline([
+      ["HSET", solvecountKey, "chal-high", "5", "chal-low", "1"],
+    ]);
+
+    // Reseeding tries to set floor: chal-high floor 2, chal-low floor 3, chal-new floor 4
+    await upstashEval(
+      RAISE_SOLVECOUNT_SCRIPT,
+      [solvecountKey],
+      ["chal-high", 2, "chal-low", 3, "chal-new", 4],
+    );
+
+    const [high, low, fresh] = await upstashPipeline([
+      ["HGET", solvecountKey, "chal-high"],
+      ["HGET", solvecountKey, "chal-low"],
+      ["HGET", solvecountKey, "chal-new"],
+    ]);
+
+    // chal-high was 5, floor was 2: PRESERVED at 5 (not overwritten)
+    expect(Number(high.result)).toBe(5);
+    // chal-low was 1, floor was 3: RAISED to 3
+    expect(Number(low.result)).toBe(3);
+    // chal-new had 0, floor was 4: RAISED to 4
+    expect(Number(fresh.result)).toBe(4);
+
+    await upstashPipeline([["DEL", solvecountKey]]);
+  });
 });

@@ -30,6 +30,7 @@ import { listStories,
   listChallenges,
   type ViewerClassic,
 } from "@/lib/classic-store";
+import { challengeCurrentValue } from "@/lib/classic-keys";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { redirectIfNotLaunched } from "@/lib/launch";
 import { getTeamClassicSolvedIds } from "@/lib/classic-team";
@@ -120,7 +121,7 @@ export default async function FlagsPage() {
     title: c.title,
     category: c.category,
     description: c.description,
-    points: c.points,
+    points: challengeCurrentValue(c, solveBoard ? (solveBoard.counts.get(c.id) ?? 0) : 0),
     // Teams, not players (#595): scoring is per team. Null when unread.
     teamsSolved: solveBoard ? (solveBoard.counts.get(c.id) ?? 0) : null,
     // #188: the first solver's login, display only. Carried on every view,

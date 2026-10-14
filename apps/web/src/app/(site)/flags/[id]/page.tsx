@@ -33,6 +33,7 @@ import {
   listChallenges,
   type ViewerClassic,
 } from "@/lib/classic-store";
+import { challengeCurrentValue } from "@/lib/classic-keys";
 import { classicVisibility } from "@/lib/classic-visibility";
 import { releaseLabel } from "@/lib/classic-release";
 import { resolveTimeZone } from "@/lib/event-time";
@@ -135,7 +136,7 @@ export default async function ClassicChallengePage({ params }: { params: Promise
     title: challenge.title,
     category: challenge.category,
     description: challenge.description,
-    points: challenge.points,
+    points: challengeCurrentValue(challenge, solveCounts ? (solveCounts.get(challenge.id) ?? 0) : 0),
     // Teams, not players (#595): scoring is per team. Null when unread.
     teamsSolved: solveCounts ? (solveCounts.get(challenge.id) ?? 0) : null,
     caseSensitive: challenge.caseSensitive,

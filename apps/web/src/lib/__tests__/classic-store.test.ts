@@ -419,6 +419,52 @@ describe("upsertChallenge", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: 1 }, { error: "WRONGTYPE" }, { result: 1 }]);
     await expect(upsertChallenge(base, "f")).rejects.not.toBeInstanceOf(ClassicValidationError);
   });
+
+  it("stores a valid dynamic challenge and returns its dynamic fields", async () => {
+    categoriesReply(["Web"]);
+    writeReply(3);
+    const dyn = {
+      ...base,
+      points: 500,
+      maxPoints: 500,
+      minPoints: 100,
+      decay: 10,
+    };
+    const saved = await upsertChallenge(dyn, "CTF{Dyn}");
+    expect(saved.challenge.maxPoints).toBe(500);
+    expect(saved.challenge.minPoints).toBe(100);
+    expect(saved.challenge.decay).toBe(10);
+    const stored = JSON.parse(valueFor("ctf:classic:challenges", dyn.id));
+    expect(stored.maxPoints).toBe(500);
+    expect(stored.minPoints).toBe(100);
+    expect(stored.decay).toBe(10);
+  });
+
+  it("rejects partial dynamic configurations in upsertChallenge", async () => {
+    categoriesReply(["Web"]);
+    await expect(upsertChallenge({ ...base, maxPoints: 500 }, "f")).rejects.toThrow(ClassicValidationError);
+    await expect(upsertChallenge({ ...base, minPoints: 100, decay: 10 }, "f")).rejects.toThrow(ClassicValidationError);
+  });
+
+  it("rejects minPoints > maxPoints or points !== maxPoints in upsertChallenge", async () => {
+    categoriesReply(["Web"]);
+    await expect(
+      upsertChallenge({ ...base, points: 50, maxPoints: 50, minPoints: 100, decay: 10 }, "f"),
+    ).rejects.toThrow(ClassicValidationError);
+    await expect(
+      upsertChallenge({ ...base, points: 400, maxPoints: 500, minPoints: 100, decay: 10 }, "f"),
+    ).rejects.toThrow(ClassicValidationError);
+  });
+
+  it("rejects decay < 1 or non-integer in upsertChallenge", async () => {
+    categoriesReply(["Web"]);
+    await expect(
+      upsertChallenge({ ...base, points: 500, maxPoints: 500, minPoints: 100, decay: 0 }, "f"),
+    ).rejects.toThrow(ClassicValidationError);
+    await expect(
+      upsertChallenge({ ...base, points: 500, maxPoints: 500, minPoints: 100, decay: 3.5 }, "f"),
+    ).rejects.toThrow(ClassicValidationError);
+  });
 });
 
 describe("AdminChallenge", () => {
@@ -588,13 +634,130 @@ describe("getClassicTotals", () => {
     expect(mocks.upstashPipeline.mock.calls[0][0]).toContainEqual(["HGETALL", "ctf:classic:lastAt"]);
   });
 
-  // #523: an errored counter read is not "nobody has points".
+  // An errored read is not "nobody has points", not "no dynamic challenges"
+  // and not "nobody solved it". All four reads are settled together, so all
+  // four are checked before anything is parsed or computed.
   it.each([
-    ["points", [{ error: "WRONGTYPE" }, { result: [] }, { result: [] }]],
-    ["solved", [{ result: [] }, { error: "NOAUTH" }, { result: [] }]],
-  ])("throws when the %s counter read fails, instead of reading it as empty", async (_name, replies) => {
+    ["points", [{ error: "WRONGTYPE" }, { result: [] }, { result: [] }, { result: [] }, { result: [] }]],
+    ["solved", [{ result: [] }, { error: "NOAUTH" }, { result: [] }, { result: [] }, { result: [] }]],
+    ["challenges", [{ result: [] }, { result: [] }, { result: [] }, { error: "NOAUTH" }, { result: [] }]],
+    ["solvecount", [{ result: [] }, { result: [] }, { result: [] }, { result: [] }, { error: "WRONGTYPE" }]],
+  ])("throws when the %s read fails, instead of reading it as empty", async (_name, replies) => {
     mocks.upstashPipeline.mockResolvedValueOnce(replies);
     await expect(getClassicTotals()).rejects.toThrow(/classic totals/);
+  });
+
+  it("calculates dynamic totals at read time: required scenario (login a solves, login b solves same challenge)", async () => {
+    const dynChallengeRecord = JSON.stringify({
+      id: "dyn-1",
+      title: "Dyn",
+      category: "Web",
+      description: "find it",
+      points: 500,
+      maxPoints: 500,
+      minPoints: 100,
+      decay: 10,
+      order: 0,
+    });
+
+    // Step 1: Alice solves dyn-1. Solve count is 1.
+    // Initial pipeline call:
+    // 0: ctf:classic:points -> alice=500
+    // 1: ctf:classic:solved -> alice=1
+    // 2: ctf:classic:lastAt -> alice="2026-10-01T10:00:00.000Z"
+    // 3: ctf:classic:challenges -> dyn-1
+    // 4: ctf:classic:solvecount -> dyn-1=1
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: ["alice", "500"] },
+      { result: ["alice", "1"] },
+      { result: ["alice", "2026-10-01T10:00:00.000Z"] },
+      { result: ["dyn-1", dynChallengeRecord] },
+      { result: ["dyn-1", "1"] },
+    ]);
+    // Second pipeline call reads ctf:classic:solves:alice
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      {
+        result: [
+          "dyn-1",
+          JSON.stringify({ points: 500, at: "2026-10-01T10:00:00.000Z" }),
+        ],
+      },
+    ]);
+
+    const totals1 = await getClassicTotals();
+    // At n=1: ceil(500 + ((100 - 500)/100) * 1) = ceil(500 - 4) = 496
+    expect(totals1.get("alice")).toEqual({
+      points: 496,
+      solved: 1,
+      lastAt: "2026-10-01T10:00:00.000Z",
+    });
+
+    // Step 2: Bob solves the same dynamic challenge dyn-1. Solve count advances to 2.
+    // Stored points aggregates still say 500 and 496, but read-time dynamic calculation
+    // must recompute BOTH Alice and Bob at the new current value (solveCount=2 -> 484).
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: ["alice", "500", "bob", "496"] },
+      { result: ["alice", "1", "bob", "1"] },
+      { result: ["alice", "2026-10-01T10:00:00.000Z", "bob", "2026-10-01T10:05:00.000Z"] },
+      { result: ["dyn-1", dynChallengeRecord] },
+      { result: ["dyn-1", "2"] },
+    ]);
+    // Second pipeline call reads ctf:classic:solves:alice and ctf:classic:solves:bob
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      {
+        result: [
+          "dyn-1",
+          JSON.stringify({ points: 500, at: "2026-10-01T10:00:00.000Z" }),
+        ],
+      },
+      {
+        result: [
+          "dyn-1",
+          JSON.stringify({ points: 496, at: "2026-10-01T10:05:00.000Z" }),
+        ],
+      },
+    ]);
+
+    const totals2 = await getClassicTotals();
+    // At n=2: ceil(500 + ((100 - 500)/100) * 4) = ceil(500 - 16) = 484
+    // Verify Alice's total changed from 496 to 484!
+    expect(totals2.get("alice")).toEqual({
+      points: 484,
+      solved: 1,
+      lastAt: "2026-10-01T10:00:00.000Z",
+    });
+    // Verify Bob's total is also 484!
+    expect(totals2.get("bob")).toEqual({
+      points: 484,
+      solved: 1,
+      lastAt: "2026-10-01T10:05:00.000Z",
+    });
+  });
+
+  it("preserves static scoring and skips member solves read when no dynamic challenges exist", async () => {
+    const staticRecord = JSON.stringify({
+      id: "stat-1",
+      title: "Static",
+      category: "Web",
+      description: "find it",
+      points: 100,
+      order: 0,
+    });
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: ["alice", "100"] },
+      { result: ["alice", "1"] },
+      { result: ["alice", "2026-10-01T10:00:00.000Z"] },
+      { result: ["stat-1", staticRecord] },
+      { result: ["stat-1", "5"] },
+    ]);
+    const totals = await getClassicTotals();
+    expect(totals.get("alice")).toEqual({
+      points: 100,
+      solved: 1,
+      lastAt: "2026-10-01T10:00:00.000Z",
+    });
+    // Fast path: only 1 pipeline call, no second call to read member solves
+    expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -653,6 +816,65 @@ describe("getTeamClassicTotalsBatch", () => {
       { points: 0, solved: 0, lastAt: null, itemIds: [] },
     ]);
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates shared dynamic challenge solves across teammates at current value", async () => {
+    // Both Alice and Bob solved dyn-1.
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      solves({ "dyn-1": { points: 500, at: "2026-08-19T10:00:00.000Z" } }), // alice
+      solves({ "dyn-1": { points: 484, at: "2026-08-19T11:00:00.000Z" } }), // bob
+    ]);
+    const currentValueById = new Map([["dyn-1", 484]]);
+    const [total] = await getTeamClassicTotalsBatch([["alice", "bob"]], currentValueById);
+    // Solved count must be 1, points must be exactly 484 (never multiplied to 968)
+    expect(total).toEqual({
+      points: 484,
+      solved: 1,
+      lastAt: "2026-08-19T10:00:00.000Z",
+      itemIds: ["dyn-1"],
+    });
+  });
+
+  it("evaluates team dynamic points once when multiple teammates solve, matching board value", async () => {
+    // Both Alice and Bob solved dyn-1 when solveCount was 1 (value 496).
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      solves({ "dyn-1": { points: 500, at: "2026-08-19T10:00:00.000Z" } }),
+      solves({ "dyn-1": { points: 496, at: "2026-08-19T10:05:00.000Z" } }),
+    ]);
+    const currentValueById = new Map([["dyn-1", 496]]);
+    const [total] = await getTeamClassicTotalsBatch([["alice", "bob"]], currentValueById);
+    expect(total).toEqual({
+      points: 496,
+      solved: 1,
+      lastAt: "2026-08-19T10:00:00.000Z",
+      itemIds: ["dyn-1"],
+    });
+  });
+
+  it("deduplicates team solves across a mix of dynamic and static challenges", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      solves({
+        "dyn-1": { points: 500, at: "2026-08-19T10:00:00.000Z" },
+        "static-1": { points: 50, at: "2026-08-19T10:30:00.000Z" },
+      }), // alice
+      solves({
+        "dyn-1": { points: 484, at: "2026-08-19T11:00:00.000Z" },
+        "static-2": { points: 100, at: "2026-08-19T11:30:00.000Z" },
+      }), // bob
+    ]);
+    const currentValueById = new Map([
+      ["dyn-1", 484],
+      ["static-1", 50],
+      ["static-2", 100],
+    ]);
+    const [total] = await getTeamClassicTotalsBatch([["alice", "bob"]], currentValueById);
+    // dyn-1 (484) + static-1 (50) + static-2 (100) = 634, solved 3
+    expect(total).toEqual({
+      points: 634,
+      solved: 3,
+      lastAt: "2026-08-19T11:30:00.000Z",
+      itemIds: ["dyn-1", "static-1", "static-2"],
+    });
   });
 });
 

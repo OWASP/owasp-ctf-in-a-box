@@ -149,6 +149,9 @@ export type ChallengePayload = {
   flag: string;
   caseSensitive?: boolean;
   hint?: string;
+  maxPoints?: number;
+  minPoints?: number;
+  decay?: number;
   enabled?: boolean;
   releaseAt?: string;
 };
@@ -279,6 +282,7 @@ export function payloadFromRow({ challenge: c, flag, hint }: AdminChallenge): Ch
     flag,
     hint: hint ?? "",
     ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
+    ...(c.maxPoints !== undefined ? { maxPoints: c.maxPoints, minPoints: c.minPoints, decay: c.decay } : {}),
     // A reorder re-saves the row, and the route stores an absent `enabled`
     // as live: dropping it would publish a hidden challenge on a drag.
     ...(c.enabled === false ? { enabled: false } : {}),
@@ -372,6 +376,7 @@ export function exportBundleFrom(
     // re-import of such a bundle downgrades grading and deletes hints.
     ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
     ...(hint ? { hint } : {}),
+    ...(c.maxPoints !== undefined ? { maxPoints: c.maxPoints, minPoints: c.minPoints, decay: c.decay } : {}),
     // Visibility (v4), the server export's rule: a backup restores a hidden
     // challenge hidden.
     ...(c.enabled === false ? { enabled: false } : {}),

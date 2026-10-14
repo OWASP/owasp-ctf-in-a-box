@@ -97,6 +97,9 @@ export const CHALLENGE_KEYS = new Set([
   "flag",
   "caseSensitive",
   "hint",
+  "maxPoints",
+  "minPoints",
+  "decay",
   "enabled",
   "releaseAt",
 ]);
@@ -137,6 +140,10 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
   // empty/whitespace hint is a deliberate CLEAR, passed through so the store
   // deletes the row.
   if (body.hint !== undefined && typeof body.hint !== "string") return null;
+  // Dynamic scoring (#187): integers when present.
+  if (body.maxPoints !== undefined && (typeof body.maxPoints !== "number" || !Number.isInteger(body.maxPoints))) return null;
+  if (body.minPoints !== undefined && (typeof body.minPoints !== "number" || !Number.isInteger(body.minPoints))) return null;
+  if (body.decay !== undefined && (typeof body.decay !== "number" || !Number.isInteger(body.decay))) return null;
   // Optional; a present non-boolean is malformed, for the caseSensitive
   // reason: a string "false" would publish the challenge.
   if (body.enabled !== undefined && typeof body.enabled !== "boolean") return null;
@@ -158,6 +165,9 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
     // and the bundle exports, so one challenge has one representation
     // whichever door it came through.
     ...(body.caseSensitive ? { caseSensitive: true as const } : {}),
+    ...(body.maxPoints !== undefined ? { maxPoints: body.maxPoints } : {}),
+    ...(body.minPoints !== undefined ? { minPoints: body.minPoints } : {}),
+    ...(body.decay !== undefined ? { decay: body.decay } : {}),
     // Same rule, the other way round: stored only when false.
     ...(body.enabled === false ? { enabled: false } : {}),
     ...(releaseAt !== undefined ? { releaseAt } : {}),

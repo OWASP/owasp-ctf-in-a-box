@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   listQuestions: vi.fn(),
   getClassicTotals: vi.fn(),
   getTeamClassicTotalsBatch: vi.fn(),
+  getSolveCounts: vi.fn(),
+  teamSolveCounts: vi.fn(),
   listChallenges: vi.fn(),
   getAiTotals: vi.fn(),
   getTeamAiTotalsBatch: vi.fn(),
@@ -35,7 +37,12 @@ vi.mock("@/lib/quiz-store", () => ({
 vi.mock("@/lib/classic-store", () => ({
   getClassicTotals: mocks.getClassicTotals,
   getTeamClassicTotalsBatch: mocks.getTeamClassicTotalsBatch,
+  getSolveCounts: mocks.getSolveCounts,
   listChallenges: mocks.listChallenges,
+}));
+
+vi.mock("@/lib/team-solve-counts", () => ({
+  teamSolveCounts: mocks.teamSolveCounts,
 }));
 
 vi.mock("@/lib/ai-store", () => ({
@@ -50,6 +57,7 @@ import {
   withTeamClassicPoints,
   withTeamQuizPoints,
 } from "../module-contributions";
+import { challengeCurrentValue } from "@/lib/classic-keys";
 import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 // Computed from the `apps` catalogue rather than hardcoded:
@@ -91,6 +99,8 @@ beforeEach(() => {
   mocks.getTeamClassicTotalsBatch.mockImplementation((teams: readonly string[][]) =>
     Promise.resolve(teams.map(() => ({ points: 0, solved: 0, lastAt: null }))),
   );
+  mocks.getSolveCounts.mockResolvedValue(new Map());
+  mocks.teamSolveCounts.mockResolvedValue(new Map());
   mocks.listChallenges.mockResolvedValue([]);
   mocks.getAiTotals.mockResolvedValue(new Map());
   mocks.getTeamAiTotalsBatch.mockImplementation((teams: readonly string[][]) =>
@@ -662,6 +672,110 @@ describe("withModuleContributions", () => {
       // A team with no solves gets no block rather than an empty one.
       expect(out.find((t) => t.slug === "grey")!.modules?.["classic"]).toBeUndefined();
     });
+
+    // The fold's own tests hand it a current-value map and assert the dedupe;
+    // this is where that map is BUILT — solve counts read, every catalogue
+    // challenge priced, result handed to the batch. A static board must still
+    // get no map at all, so the batch keeps its one-argument call above.
+    it("prices every catalogue challenge from the live solve counts and hands the map to the batch", async () => {
+      mocks.listChallenges.mockResolvedValue([
+        { id: "dyn-1", title: "Dyn", category: "Web", description: "", points: 500, order: 0, maxPoints: 500, minPoints: 100, decay: 10 },
+        { id: "stat-1", title: "Static", category: "Web", description: "", points: 50, order: 1 },
+      ]);
+      mocks.teamSolveCounts.mockResolvedValue(new Map([["dyn-1", 2]]));
+      mocks.getTeamClassicTotalsBatch.mockResolvedValue([{ points: 484, solved: 1, lastAt: null }]);
+
+      const teams: TeamStanding[] = [{ rank: 1, slug: "red", name: "Red", captain: "ada", points: 0, members: ["ada"] }];
+      await withTeamClassicPoints(teams);
+
+      // dynamic at n=2: ceil(500 + ((100 - 500) / 10²) · 2²) = 484.
+      expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledWith(
+        [["ada"]],
+        new Map([["dyn-1", 484], ["stat-1", 50]]),
+      );
+    });
+
+    it("two teammates solving the same dynamic challenge counts the team once and keeps team totals and board value consistent", async () => {
+      const dynChallenge = {
+        id: "dyn-1",
+        title: "Dyn",
+        category: "Web",
+        description: "",
+        points: 500,
+        order: 0,
+        maxPoints: 500,
+        minPoints: 100,
+        decay: 10,
+      };
+      mocks.listChallenges.mockResolvedValue([dynChallenge]);
+      // Two teammates on team 'red' (ada and cyd) solved dyn-1.
+      // Team solve count is 1.
+      mocks.teamSolveCounts.mockResolvedValue(new Map([["dyn-1", 1]]));
+
+      // At n=1: ceil(500 + ((100 - 500) / 10²) · 1²) = 496.
+      const expectedDynamicPoints = challengeCurrentValue(dynChallenge, 1);
+      expect(expectedDynamicPoints).toBe(496);
+
+      mocks.getTeamClassicTotalsBatch.mockResolvedValue([
+        { points: expectedDynamicPoints, solved: 1, lastAt: null, itemIds: ["dyn-1"] },
+      ]);
+
+      const teams: TeamStanding[] = [
+        { rank: 1, slug: "red", name: "Red", captain: "ada", points: 0, members: ["ada", "cyd"] },
+      ];
+      const out = await withTeamClassicPoints(teams);
+
+      // Verify currentValueById handed to the batch used team solve count 1 (496)
+      expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledWith(
+        [["ada", "cyd"]],
+        new Map([["dyn-1", 496]]),
+      );
+      // Team Red points match the displayed challenge value exactly (496)
+      expect(out[0].points).toBe(496);
+      expect(out[0].modules!["classic"]!.points).toBe(496);
+    });
+
+    it("a second team solving the challenge decays the dynamic value consistently for both teams", async () => {
+      const dynChallenge = {
+        id: "dyn-1",
+        title: "Dyn",
+        category: "Web",
+        description: "",
+        points: 500,
+        order: 0,
+        maxPoints: 500,
+        minPoints: 100,
+        decay: 10,
+      };
+      mocks.listChallenges.mockResolvedValue([dynChallenge]);
+      // Two teams have solved dyn-1: Team Red and Team Blue.
+      // Team-deduplicated solve count advances to 2.
+      mocks.teamSolveCounts.mockResolvedValue(new Map([["dyn-1", 2]]));
+
+      // At n=2: ceil(500 + ((100 - 500) / 10²) · 2²) = 484.
+      const expectedDynamicPoints = challengeCurrentValue(dynChallenge, 2);
+      expect(expectedDynamicPoints).toBe(484);
+
+      mocks.getTeamClassicTotalsBatch.mockResolvedValue([
+        { points: expectedDynamicPoints, solved: 1, lastAt: null, itemIds: ["dyn-1"] },
+        { points: expectedDynamicPoints, solved: 1, lastAt: null, itemIds: ["dyn-1"] },
+      ]);
+
+      const teams: TeamStanding[] = [
+        { rank: 1, slug: "red", name: "Red", captain: "ada", points: 0, members: ["ada", "cyd"] },
+        { rank: 2, slug: "blue", name: "Blue", captain: "eve", points: 0, members: ["eve"] },
+      ];
+      const out = await withTeamClassicPoints(teams);
+
+      // Verify currentValueById handed to the batch used team solve count 2 (484)
+      expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledWith(
+        [["ada", "cyd"], ["eve"]],
+        new Map([["dyn-1", 484]]),
+      );
+      // Both teams' points match the decayed displayed value exactly (484)
+      expect(out[0].points).toBe(484);
+      expect(out[1].points).toBe(484);
+    });
   });
 
   // A hidden Jeopardy challenge is out of every denominator; points banked on
@@ -1063,6 +1177,27 @@ describe("module-contributions log redaction (#500)", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       expect(await fold(teams)).toBe(teams);
+      expectLabelOnly(consoleError);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  // The solve counts are what dynamic challenges are priced FROM, so failing
+  // to read them must fail the whole totals read — logged, team row untouched,
+  // fold never called — rather than pricing every dynamic challenge at its
+  // n=0 value (the MAXIMUM) and putting a wrong-but-green board on screen.
+  it("a failed solve-count read degrades the classic team fold, not the numbers", async () => {
+    mocks.moduleLive.mockImplementation((id: string) => id === "classic");
+    mocks.listChallenges.mockResolvedValue([
+      { id: "dyn-1", title: "Dyn", category: "Web", description: "", points: 500, order: 0, maxPoints: 500, minPoints: 100, decay: 10 },
+    ]);
+    mocks.teamSolveCounts.mockRejectedValue(decoratedError());
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await withTeamClassicPoints(teams)).toBe(teams);
+      expect(mocks.getTeamClassicTotalsBatch).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalled();
       expectLabelOnly(consoleError);
     } finally {
       consoleError.mockRestore();

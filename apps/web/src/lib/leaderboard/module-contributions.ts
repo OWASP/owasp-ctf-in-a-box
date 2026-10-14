@@ -8,6 +8,8 @@ import {
   listChallenges,
   type ClassicTotal,
 } from "@/lib/classic-store";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
+import { challengeCurrentValue, hasDynamicScoring } from "@/lib/classic-keys";
 import { getEnabledModuleIds, isModuleLive } from "@/lib/enabled-modules";
 import { visibleNow } from "@/lib/classic-release";
 import { getEnabledTotals } from "@/lib/enabled-apps";
@@ -336,8 +338,32 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
   // Settled INDEPENDENTLY — see the note in `withModuleContributions`: the
   // totals carry POINTS (and with them the team board's order), the challenge
   // list only the DENOMINATOR.
-  // Visible challenges only, as in `withModuleContributions`.
-  const [totalsResult, challengesResult] = await Promise.allSettled([teamClassicTotals(teams), listChallenges().then(visibleNow)]);
+  // Settled INDEPENDENTLY — see the note in `withModuleContributions`: the
+  // totals carry POINTS (and with them the team board's order), the challenge
+  // list only the DENOMINATOR. Visible challenges only, as in
+  // `withModuleContributions`.
+  const [challengesResult] = await Promise.allSettled([listChallenges().then(visibleNow)]);
+  const challenges = challengesResult.status === "fulfilled" ? challengesResult.value : [];
+
+  // Dynamic scoring (ADR 69): when dynamic challenges exist, team points are
+  // recomputed over the deduped solve set using CURRENT challenge values,
+  // which needs the live solve counts. That read settles INSIDE the same
+  // promise as the totals, so a failed solve-count read degrades exactly like
+  // a failed totals read below — logged, classic left off the team board.
+  // Swallowing it into an empty map instead is not a degrade: every dynamic
+  // challenge would price at its n=0 value (the MAXIMUM) and every team would
+  // over-score on a stale-but-green leaderboard.
+  const [totalsResult] = await Promise.allSettled([
+    (async () => {
+      let currentValueById: ReadonlyMap<string, number> | null = null;
+      if (challenges.some(hasDynamicScoring)) {
+        const solveCounts = await teamSolveCounts("classic");
+        if (!solveCounts) throw new Error("classic team solve counts unavailable");
+        currentValueById = new Map(challenges.map((c) => [c.id, challengeCurrentValue(c, solveCounts.get(c.id) ?? 0)]));
+      }
+      return teamClassicTotals(teams, currentValueById);
+    })(),
+  ]);
 
   if (totalsResult.status !== "fulfilled") {
     console.error("classic team totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
@@ -407,8 +433,13 @@ function teamQuizTotals(teams: readonly TeamStanding[]): Promise<QuizTotal[]> {
 
 /** classic's counterpart, and ONE pipeline for the whole board for the same
  *  reason — see `getTeamClassicTotalsBatch`'s doc comment. */
-function teamClassicTotals(teams: readonly TeamStanding[]): Promise<ClassicTotal[]> {
-  return getTeamClassicTotalsBatch(teams.map((team) => team.members));
+function teamClassicTotals(
+  teams: readonly TeamStanding[],
+  currentValueById?: ReadonlyMap<string, number> | null,
+): Promise<ClassicTotal[]> {
+  return currentValueById
+    ? getTeamClassicTotalsBatch(teams.map((team) => team.members), currentValueById)
+    : getTeamClassicTotalsBatch(teams.map((team) => team.members));
 }
 
 /** ai's counterpart, and ONE pipeline for the whole board for the same

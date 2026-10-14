@@ -355,6 +355,21 @@ describe("a locked story step's own page (#463)", () => {
     storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon"]));
     expect(renderToStaticMarkup(await ClassicChallengePage(params("c1")))).toContain(record.title);
   });
+
+  it("renders current dynamic value on the challenge detail page", async () => {
+    const dyn = {
+      ...record,
+      id: "dyn-detail",
+      points: 500,
+      maxPoints: 500,
+      minPoints: 100,
+      decay: 10,
+    };
+    listChallenges.mockResolvedValue([dyn]);
+    teamSolveCounts.mockResolvedValue(new Map([["dyn-detail", 2]]));
+    const html = renderToStaticMarkup(await ClassicChallengePage(params("dyn-detail")));
+    expect(html).toContain("484 pts");
+  });
 });
 
 // A hidden challenge does not exist on its own URL: the page is the same 404

@@ -381,6 +381,28 @@ describe("stories on the board (#463)", () => {
     expect(html).toContain("Still cooling down");
     expect(html).not.toContain("??? — step 2 of 2");
   });
+
+  it("displays current dynamic value on the board while preserving static challenge points", async () => {
+    const dynChallenge = {
+      id: "dyn-1",
+      title: "Dynamic Web",
+      category: "Web",
+      description: "find it",
+      points: 500,
+      maxPoints: 500,
+      minPoints: 100,
+      decay: 10,
+      order: 3,
+    };
+    listChallenges.mockResolvedValue([...baseChallenges, dynChallenge]);
+    // 2 solves: ceil(500 + ((100 - 500) / 100) * 4) = 484
+    teamSolveCounts.mockResolvedValue(new Map([["dyn-1", 2]]));
+    const html = renderToStaticMarkup(await FlagsPage());
+    expect(html).toContain("Dynamic Web");
+    expect(html).toContain("484 pts");
+    // Static challenge c1 still displays static points (10 pts)
+    expect(html).toContain("10 pts");
+  });
 });
 
 

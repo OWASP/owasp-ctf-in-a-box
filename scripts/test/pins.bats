@@ -51,7 +51,7 @@ image_refs() {
       cmd = buf line
       buf = ""
       if (cmd ~ /^[ \t]*#/) next
-      if (cmd ~ /^[ \t]*((export|local)[ \t]+)?([A-Z][A-Z0-9_]*)?(IMAGE|IMG)[A-Z0-9_]*=/) {
+      if (cmd ~ /^[ \t]*((export|local|readonly|declare|typeset)[ \t]+(-[A-Za-z]+[ \t]+)*)?([A-Z][A-Z0-9_]*)?(IMAGE|IMG)[A-Z0-9_]*=/) {
         v = cmd
         sub(/^[^=]*=/, "", v)
         q = substr(v, 1, 1)
@@ -119,6 +119,9 @@ unpinned_images() {
     echo 'IMAGE=${APP_IMAGE:-}'                                           # 33 not an image (empty default)
     echo "IMAGE=alpine${digest}junk"                                      # 34 flagged (digest must end it)
     echo "docker run alpine${digest}junk"                                 # 35 flagged (digest must end it)
+    echo '  local -r IMAGE=alpine'                                        # 36 flagged (declaration options)
+    echo 'readonly IMG_X=alpine'                                          # 37 flagged
+    echo 'declare -x TOOL_IMAGE="maven:3"'                                # 38 flagged
   } > "$f"
   exempt="$(image_refs "$f" | grep -E '^[^:]+:[0-9]+:exempt: ' | cut -d: -f2 | tr '\n' ' ')"
   echo "exempt lines: '$exempt' (want '12 17 18 26 ')"
@@ -126,8 +129,8 @@ unpinned_images() {
   flagged="$(unpinned_images "$f" | cut -d: -f2 | tr '\n' ' ')"
   states="$(image_refs "$f" | cut -d: -f2,3 | tr '\n' ' ')"
   echo "all: $states"
-  echo "flagged lines: '$flagged' (want '1 2 3 4 8 14 16 19 20 24 28 31 32 34 35 ')"
-  [ "$flagged" = "1 2 3 4 8 14 16 19 20 24 28 31 32 34 35 " ] || return 1
+  echo "flagged lines: '$flagged' (want '1 2 3 4 8 14 16 19 20 24 28 31 32 34 35 36 37 38 ')"
+  [ "$flagged" = "1 2 3 4 8 14 16 19 20 24 28 31 32 34 35 36 37 38 " ] || return 1
   pinned="$(image_refs "$f" | grep -E '^[^:]+:[0-9]+:pinned: ' | cut -d: -f2 | tr '\n' ' ')"
   echo "pinned lines: '$pinned' (want '5 15 21 32 ')"
   [ "$pinned" = "5 15 21 32 " ]

@@ -8,6 +8,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+### Breaking changes
+
+- **`LEADERBOARD_SOURCE=upstash` is removed (#502).** The mode read the
+  legacy `ZADD leaderboard` / `HSET team:<login>` schema that an external
+  pusher writes — never this kit's scorer — through its own adapter. An
+  event whose `.env` still names it now warns and serves the placeholder
+  `mock` board instead of those rows. **After upgrading, set
+  `LEADERBOARD_SOURCE=lambda` with `LEADERBOARD_API_URL` pointed at the
+  scorer**, or leave `LEADERBOARD_SOURCE` unset for `mock`.
+
 ### Changes
 
 - **Added: hide a Jeopardy challenge, or schedule its release (#189).** Each
@@ -584,18 +594,30 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 - **Changed: `scripts/load-test.sh` deletes the seeder it uploaded** to the
   container's `/tmp` on every exit path, without changing the exit status.
 
+- **Breaking: the `LEADERBOARD_SOURCE=upstash` mode and its adapter are
+  removed (#502).** The adapter served a direct read of the legacy
+  `ZADD leaderboard` / `HSET team:<login>` schema, written by an external
+  push-era action rather than this kit's scorer — poll has been the one
+  score transport since v0.6 ([ADR 56](docs/decisions.md)), which writes
+  `ctf:solves:<target>` and reaches the board through `lambda`. With the
+  adapter gone, an `.env` that still says `upstash` is an unknown value:
+  the app warns once — `unknown LEADERBOARD_SOURCE "upstash" — falling back
+  to "mock"` — and serves placeholder data where those rows used to render,
+  so any event that did rely on that schema loses its real board until it
+  switches. **Set `LEADERBOARD_SOURCE=lambda` with `LEADERBOARD_API_URL`
+  pointed at the scorer**, or leave the key unset for `mock`.
 - **Changed: the pre-v0.7.0 audit's dead-code findings (#502).** Deletions
   and de-exports with no behavior change: the orphaned `AppChallengeList` and
   `HintNotice` components (neither has a caller), `getHintAvailability()` (it
   always returned `{}`, and no code path in this kit writes `hints:<app>`),
-  the unsupported `LEADERBOARD_SOURCE=upstash` mode and its adapter (a `.env`
-  still naming it now warns and falls back to `mock`, like any unknown value),
   and the `serializeBundle` helpers in `sponsors-io.ts` and `ai-io.ts` (no
   export button uses them — only the classic and quiz bundles have one).
   `sync`'s config drops its always-`"app"` `authMode` field, an unused local
   in the seed test is gone, and 128 exports that nothing outside their own
   file consumes lost the `export` keyword — audited symbol by symbol, keeping
-  every framework-required export, package entry point and real consumer.
+  every framework-required export, package entry point and real consumer. The
+  audit's one behavior change, the `upstash` mode removal, is the breaking
+  entry above.
 
 ## v0.7.0 — 2026-09-30
 

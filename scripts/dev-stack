@@ -231,8 +231,8 @@ challenge_ids_json() {
 }
 
 # Writes a fake solve straight through the real scorer's bearer-authed
-# POST /score — the same endpoint a contestant's scoring Action calls in push
-# mode (scorer/src/serve.js). We run the request *inside* the scorer
+# POST /score — the same endpoint sync's poller calls after it reads a PR's
+# score comment (scorer/src/serve.js). We run the request *inside* the scorer
 # container (docker compose exec + node's built-in fetch) rather than
 # publishing a host port for it or reaching into Redis ourselves: the scorer
 # already holds CTF_SCORE_BEARER_TOKEN and the SRH connection, so this is the

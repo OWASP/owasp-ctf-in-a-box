@@ -730,8 +730,9 @@ toggle was only live at the reveal boundary.** `resolveHintConfig()` (and theref
 `revealHint`, called by the `/api/hints` reveal route) resolves the
 `hintsEnabled`/`hintCost` override live, so a flip takes effect on the very
 next reveal attempt. But `getViewerHints`, `getHintPenalties`, and
-`getHintAvailability` — which drive the challenges-page hint button, the
-hint-notice banner, and the leaderboard's hint-penalty display — all still
+`getHintAvailability` (since removed as dead code) — which drive the
+challenges-page hint button, the hint-notice banner, and the leaderboard's
+hint-penalty display — all still
 gate on the module-level `HINTS_ENABLED` constant, resolved once from the
 build-time env var. An organizer flipping hints mid-event changes whether
 a hint **can be bought** instantly; it does not instantly change whether
@@ -1343,8 +1344,9 @@ an event with hints off, but `docker-compose.yml` never forwarded it to the
 composed stack the container never saw it. And `/admin`'s toggle — the one
 switch that did reach the running app — governed only whether a hint could be
 **bought**: `getViewerHints`, `getHintPenalties` and `getHintAvailability`
-read a module-level env constant instead, so turning hints off left the hint
-buttons on the challenges page and the penalty column on the leaderboard.
+(since removed as dead code) read a module-level env constant instead, so
+turning hints off left the hint buttons on the challenges page and the
+penalty column on the leaderboard.
 That last split is the limitation [#19](#adr-19-organizer-admin-panel-runtime-override-layer)
 recorded and deferred.
 

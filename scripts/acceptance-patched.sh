@@ -346,6 +346,7 @@ case "$CTRL_STRATEGY" in
       # runtime-only (COPY target/*.jar) so a bare `docker build $WS` has no jar and
       # dies; vulnerableapp would otherwise re-run a multi-minute gradle build. Every
       # source-build bring-up tags its image ctf-app-under-test on the host daemon.
+      # pins: built locally from the PR checkout, never pulled
       BOOT_IMG="ctf-app-under-test"
       docker image inspect "$BOOT_IMG" >/dev/null 2>&1 || fail "expected the judge's $BOOT_IMG image for the control, but it is gone."
     else

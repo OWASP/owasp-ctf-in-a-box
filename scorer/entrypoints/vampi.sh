@@ -12,6 +12,7 @@ if [ -n "${APP_IMAGE:-}" ]; then
   IMAGE="$APP_IMAGE"
 elif [ -f "${GITHUB_WORKSPACE:-/github/workspace}/Dockerfile" ]; then
   docker build -t ctf-app-under-test "${GITHUB_WORKSPACE:-/github/workspace}" >/dev/null
+  # pins: built locally from the PR checkout, never pulled
   IMAGE=ctf-app-under-test
 else
   echo "vampi: need APP_IMAGE or a workspace Dockerfile" >&2

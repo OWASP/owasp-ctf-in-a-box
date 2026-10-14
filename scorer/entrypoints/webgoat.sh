@@ -94,6 +94,7 @@ elif [ -f "${GITHUB_WORKSPACE:-/github/workspace}/Dockerfile" ]; then
 
   # The image carries the jar now — free the disk.
   docker volume rm -f "$SRC_VOL" >/dev/null 2>&1 || true
+  # pins: built locally from the PR checkout, never pulled
   IMAGE=ctf-app-under-test
 else
   echo "webgoat: need APP_IMAGE or a workspace Dockerfile" >&2

@@ -623,7 +623,10 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
         solvedRecords[id] = { points };
       }
     }
-    const eligibility = stories.length === 0 ? teamSolved : unlocked?.[i];
+    // A team with no solves has unlocked nothing: its eligibility is the empty
+    // set whatever the batched read did, so a failed read cannot erase its
+    // zero block.
+    const eligibility = stories.length === 0 ? teamSolved : total.solved === 0 ? new Set<string>() : unlocked?.[i];
     if (challengesReadFailed || !eligibility) {
       // Union of the (here: unknown) catalogue with the solved items, clamped
       // to at least the solved count — never below its own numerator, and

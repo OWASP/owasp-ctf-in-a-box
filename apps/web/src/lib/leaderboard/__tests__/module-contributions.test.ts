@@ -1378,6 +1378,22 @@ describe("every enabled module is on a row from the start (#585)", () => {
     expect(out[0].points).toBe(30);
   });
 
+  // A team with no solves has unlocked nothing, so its reachable total needs
+  // no eligibility read: a failed one must not take its zero block off the row.
+  it("keeps a team's zero block when the unlock read fails", async () => {
+    mocks.listChallenges.mockResolvedValue([{ id: "c1" }, { id: "c2" }, { id: "c3" }]);
+    mocks.listStories.mockResolvedValue([{ id: "s1", title: "Story", intro: "", steps: ["c1", "c2"] }]);
+    mocks.upstashPipeline.mockRejectedValue(new Error("srh down"));
+    const teams: TeamStanding[] = [
+      { rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, patched: 3, members: ["ada"], apps: sdApps },
+    ];
+
+    const out = await withTeamClassicPoints(teams);
+
+    expect(out[0].modules?.classic?.detail).toEqual({ kind: "classic", solved: 0, total: 2, points: 0, locked: 1 });
+    expect(out[0].points).toBe(30);
+  });
+
   it("gives a created row the modules it has not played at zero, and no Secure Development block", async () => {
     mocks.moduleLive.mockImplementation((id: string) => id !== "ai");
     mocks.listQuestions.mockResolvedValue([{ id: "q1" }, { id: "q2" }, { id: "q3" }]);

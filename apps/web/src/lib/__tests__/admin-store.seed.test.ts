@@ -799,7 +799,7 @@ describe("seedDemoData hands its category work to one atomic script", () => {
     // response (call 1: "classic,ai"); this Once value lines up with the
     // SECOND pipeline call, the write batch.
     mocks.upstashPipeline.mockImplementationOnce(async (cmds) =>
-      cmds.map((c, i) => (i >= cmds.length - 2 ? { error: "NOAUTH Authentication required." } : { result: "OK" })),
+      cmds.map((_, i) => (i >= cmds.length - 2 ? { error: "NOAUTH Authentication required." } : { result: "OK" })),
     );
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await seedDemoData("alice");

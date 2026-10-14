@@ -56,9 +56,8 @@ test("is pure over the passed env, not the live process.env", () => {
   }
 });
 
-test("app mode: App creds yield authMode app and a functional getToken", () => {
+test("App creds yield a functional getToken", () => {
   const cfg = loadConfig(ENV);
-  assert.equal(cfg.authMode, "app");
   assert.equal(typeof cfg.getToken, "function");
 });
 

@@ -390,7 +390,7 @@ export async function listAiCategories(): Promise<string[]> {
 
 /** How the solve was earned. `flag` is the default for any row written before
  *  this field existed. */
-export type AiSolveSource = "flag" | "event";
+type AiSolveSource = "flag" | "event";
 type Solve = { points: number; at: string; source: AiSolveSource };
 type Attempt = { attempts: number; lastAt: string };
 
@@ -577,7 +577,7 @@ export async function renameAiCategory(from: string, to: string): Promise<Catego
   return { categories: next, moved: moving.length };
 }
 
-export type AiUpsertSecrets = { flag?: string; hint?: string | null };
+type AiUpsertSecrets = { flag?: string; hint?: string | null };
 
 /** Creates or updates one challenge, and guarantees it has a signing key.
  *
@@ -1150,7 +1150,7 @@ export async function exportBundle(): Promise<AiBundle> {
   return { version: AI_BUNDLE_VERSION, categories, challenges };
 }
 
-export type AiImportSummary = { created: number; updated: number; categories: number };
+type AiImportSummary = { created: number; updated: number; categories: number };
 
 /** Bulk upsert of an already-PARSED bundle (`parseBundle` in ai-io.ts has
  *  validated every row). Categories are unioned onto the existing list —

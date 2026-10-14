@@ -19,7 +19,7 @@
  * reinvent `Number(value)` and be wrong in the same silent way.
  */
 
-export type AttemptRow = {
+type AttemptRow = {
   /** Tries recorded for this item. 0 when the row is absent or unreadable. */
   attempts: number;
   /** When they FIRST tried it. Null on rows written before the field existed,

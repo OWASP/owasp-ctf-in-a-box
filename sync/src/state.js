@@ -7,7 +7,7 @@ const SEEN_CAP = 500;
  *  per-repo entry may take. */
 const isRecord = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
 
-export const freshState = () => ({ repos: {} });
+const freshState = () => ({ repos: {} });
 
 /**
  * Parses a serialized state, repairing anything unusable. `where` names the

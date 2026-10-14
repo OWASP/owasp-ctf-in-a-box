@@ -3,7 +3,7 @@
 // With `secure-development` disabled there is no scorer, no lambda and no
 // Upstash scoring data for this event, so every configured source is wrong:
 // mock would serve placeholder standings as if they were real, and
-// lambda/upstash would read a backend that was never deployed. The board is
+// lambda would read a backend that was never deployed. The board is
 // built entirely by the module overlays instead, on top of an empty source.
 //
 // `vi.mock` is hoisted per file, so this fixture lives in its own file — see
@@ -16,7 +16,6 @@ vi.mock("server-only", () => ({}));
 // them should be selected here, which is most of the point.
 vi.mock("@/lib/leaderboard/mock", () => ({ mockSource: { id: "mock" } }));
 vi.mock("@/lib/leaderboard/lambda", () => ({ lambdaSource: { id: "lambda" } }));
-vi.mock("@/lib/leaderboard/upstash", () => ({ upstashSource: { id: "upstash" } }));
 // This event is quiz-only: secure-development is not live, which is the
 // whole premise of this suite.
 vi.mock("@/lib/enabled-modules", () => ({ isModuleLive: async () => false }));

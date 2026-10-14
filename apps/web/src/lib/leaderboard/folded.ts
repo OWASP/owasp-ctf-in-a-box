@@ -60,8 +60,8 @@ type Clock = () => number;
 // marker is what reconciles them against the netted header. Running the
 // penalty fold earlier netted scorer points alone, which made hints free for
 // any row whose points arrive later — a classic- or quiz-only contestant, or
-// an upstash-path team. Same story in docs/architecture.md, step 9 of the
-// score data flow.
+// a team whose module points team standings folds in. Same story in
+// docs/architecture.md, step 9 of the score data flow.
 //
 // withModuleSeries runs after withTeamStandings because it needs the final
 // team rows — it charts a team's roster, and a team the standings stage has

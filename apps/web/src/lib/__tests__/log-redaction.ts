@@ -20,7 +20,7 @@ export function decoratedError(message = "upstash down", secret = PLANTED_LOG_SE
 
 /** Every argument of every call, strings as-is and anything else rendered
  *  deep (hidden properties included), joined — what a log sink could see. */
-export function renderLogged(spy: MockInstance): string {
+function renderLogged(spy: MockInstance): string {
   return spy.mock.calls
     .map((args) => args.map((a) => (typeof a === "string" ? a : inspect(a, { depth: 10, showHidden: true }))).join(" "))
     .join("\n");

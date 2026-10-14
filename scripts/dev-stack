@@ -231,8 +231,8 @@ challenge_ids_json() {
 }
 
 # Writes a fake solve straight through the real scorer's bearer-authed
-# POST /score — the same endpoint a contestant's scoring Action calls in push
-# mode (scorer/src/serve.js). We run the request *inside* the scorer
+# POST /score — the same endpoint sync's poller calls after it reads a PR's
+# score comment (scorer/src/serve.js). We run the request *inside* the scorer
 # container (docker compose exec + node's built-in fetch) rather than
 # publishing a host port for it or reaching into Redis ourselves: the scorer
 # already holds CTF_SCORE_BEARER_TOKEN and the SRH connection, so this is the
@@ -241,10 +241,10 @@ challenge_ids_json() {
 #
 # Note on schema: the app's LEADERBOARD_SOURCE is "lambda" in docker-compose.yml,
 # which reads scorer's HTTP /leaderboard (backed by ctf:solves:<target> hashes),
-# NOT the ZADD leaderboard / HSET team:<login> zset+hash schema. That schema
-# belongs to LEADERBOARD_SOURCE=upstash, written by a different, external
-# pusher (see apps/web/src/lib/leaderboard/upstash.ts's own comment) that this
-# repo's scorer does not implement. Seeding through the real /score endpoint
+# NOT a ZADD leaderboard / HSET team:<login> zset+hash schema. That zset+hash
+# shape belongs to no source the app ships (LEADERBOARD_SOURCE accepts "mock"
+# or "lambda"); it is written by a different, external pusher that this repo's
+# scorer does not implement. Seeding through the real /score endpoint
 # is what actually renders under the compose file as shipped.
 submit_solves() {
   local login="$1" target="$2" count="$3" ids_json status n

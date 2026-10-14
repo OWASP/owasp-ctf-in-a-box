@@ -18,13 +18,13 @@
 
 import CopyButton from "@/components/copy-button";
 
-export type DemoResponse = {
+type DemoResponse = {
   status: string;
   body: string;
   meaning: string;
 };
 
-export type EndpointDemo = {
+type EndpointDemo = {
   label: string;
   path: string;
   /** One line: why an integrator calls this at all. */

@@ -96,7 +96,7 @@ export type FaqContext = OrgContext & {
 };
 
 /** One numbered card in a guide's step list or worked example. */
-export type GuideStep = { title: string; body: string; code?: string };
+type GuideStep = { title: string; body: string; code?: string };
 
 /** A module's contribution to `/how-to-play` — the long-form counterpart to
  *  `ModuleHome`.

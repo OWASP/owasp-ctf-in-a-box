@@ -40,9 +40,9 @@ import { errorLabel } from "@/lib/error-label";
  * a probe storm against it.
  */
 
-export type DependencyState = "ok" | "down";
+type DependencyState = "ok" | "down";
 
-export type DeepHealth = {
+type DeepHealth = {
   status: "ok" | "degraded";
   redis: DependencyState;
   /** Present only when `SCORE_IMAGE` is set. */

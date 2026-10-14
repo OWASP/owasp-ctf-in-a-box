@@ -16,7 +16,7 @@ import { withScoreAdjustments } from "@/lib/leaderboard/score-adjustments";
 import { withModuleContributions } from "@/lib/leaderboard/module-contributions";
 import { withTeamStandings } from "@/lib/leaderboard/team-standings";
 
-export type TeamPanelData = {
+type TeamPanelData = {
   standing: TeamStanding | null;
   /** One entry per roster member, in roster order; null when that member has
    *  no scored activity yet. */

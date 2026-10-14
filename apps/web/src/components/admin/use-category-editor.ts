@@ -34,7 +34,7 @@ export function categoriesRequestBody(categories: readonly string[]): { categori
   return { categories: [...categories] };
 }
 
-export type AddCategoryDecision = { kind: "noop" } | { kind: "duplicate"; message: string } | { kind: "add"; next: string[] };
+type AddCategoryDecision = { kind: "noop" } | { kind: "duplicate"; message: string } | { kind: "add"; next: string[] };
 
 /** What typing a name and pressing Add does: nothing for a blank, a refusal
  *  for a name already present (case-insensitively), otherwise the new list. */
@@ -55,7 +55,7 @@ export function renameCategoryRequestBody(from: string, to: string): { renameCat
   return { renameCategory: { from, to } };
 }
 
-export type RenameCategoryDecision =
+type RenameCategoryDecision =
   | { kind: "noop" }
   | { kind: "duplicate"; message: string }
   | { kind: "rename"; from: string; to: string };
@@ -80,7 +80,7 @@ export function renameCategoryDecision(
   return { kind: "rename", from, to };
 }
 
-export type RemoveCategoryDecision = { kind: "refuse"; message: string } | { kind: "remove" };
+type RemoveCategoryDecision = { kind: "refuse"; message: string } | { kind: "remove" };
 
 /** Refuses to remove a category still in use, naming exactly how many
  *  challenges reference it. */

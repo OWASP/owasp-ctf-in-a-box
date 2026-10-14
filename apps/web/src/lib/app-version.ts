@@ -23,7 +23,7 @@ import "server-only";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export type AppVersion = {
+type AppVersion = {
   /** Repo-level release this build was cut from, or "unknown". */
   version: string;
   /** Short git sha of the build, or "unknown". */

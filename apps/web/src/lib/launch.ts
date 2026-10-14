@@ -21,7 +21,7 @@ import { isAdminLogin } from "@/lib/admin-auth";
 import { getAdminSettings } from "@/lib/admin-store";
 import { isLaunched } from "@/lib/schedule-window";
 
-export type LaunchAccess = { allowed: boolean; preview: boolean };
+type LaunchAccess = { allowed: boolean; preview: boolean };
 
 /** Fixed diagnostic plus the shared label only — never the error object,
  *  whose own fields can carry request data (#244), and never `String(err)`

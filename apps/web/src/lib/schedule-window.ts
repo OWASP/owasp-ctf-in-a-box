@@ -119,7 +119,7 @@ export function isLaunched(nowMs: number, startsAt: string | null): boolean {
 /** The /admin Launch block's state (#464): not launched (no or an
  *  unparseable start), scheduled (a start still ahead), or live (the start has
  *  passed). Instants come back normalised to ISO-8601 UTC. */
-export type LaunchState = { kind: "not-launched" } | { kind: "scheduled"; at: string } | { kind: "live"; since: string };
+type LaunchState = { kind: "not-launched" } | { kind: "scheduled"; at: string } | { kind: "live"; since: string };
 
 export function launchState(nowMs: number, startsAt: string | null): LaunchState {
   const s = startsAt ? Date.parse(startsAt) : NaN;

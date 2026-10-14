@@ -8,7 +8,7 @@
 /** One team's folded total. Callers rename `completed` to their own module's
  *  noun (`answered` for quiz, `solved` for classic) — the SHAPE is shared, the
  *  vocabulary is not. */
-export type FoldedTotal = {
+type FoldedTotal = {
   points: number;
   completed: number;
   lastAt: string | null;

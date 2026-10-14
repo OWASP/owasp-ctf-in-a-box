@@ -16,7 +16,8 @@ import type { LeaderboardData } from "./types";
  * all-module total. It used to run first, netting scorer points alone —
  * which made hints free in every case where the row's points arrived later:
  * a classic- or quiz-only contestant (row created by module contributions),
- * and upstash-path teams (rows synthesised by team standings). Module blocks
+ * and a team whose module points team standings folds in (source rows alike,
+ * plus the membership-only rows it synthesises). Module blocks
  * everywhere show GROSS module points; the penalty appears exactly once, at
  * the row level, as the −N hints marker.
  *

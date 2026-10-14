@@ -30,7 +30,7 @@ describe("the proxy matcher", () => {
   it("carries exactly /profile and the API pattern — no module page routes", () => {
     // The API pattern's one exemption (the archive import) is pinned against
     // Next's own matcher compiler in proxy-matcher.test.ts.
-    expect([...config.matcher].sort()).toEqual(["/api/((?!admin/event/?$).*)", "/profile"]);
+    expect([...config.matcher].sort()).toEqual(["/api/((?!admin/event/?$|admin/classic/bundle/?$).*)", "/profile"]);
   });
 });
 

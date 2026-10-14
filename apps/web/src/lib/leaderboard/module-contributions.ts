@@ -9,9 +9,10 @@ import {
   type ClassicTotal,
 } from "@/lib/classic-store";
 import { getEnabledModuleIds, isModuleLive } from "@/lib/enabled-modules";
+import { visibleNow } from "@/lib/classic-release";
 import { getEnabledTotals } from "@/lib/enabled-apps";
 import { getQuizTotals, getTeamQuizTotalsBatch, listQuestions, type QuizTotal } from "@/lib/quiz-store";
-import { rankByStanding } from "./rank";
+import { compareTeamStanding, rankByStanding } from "./rank";
 import type { AppProgress, LeaderboardData, LeaderboardEntry, ModuleProgress, TeamStanding } from "./types";
 import type { AppId } from "@/lib/apps";
 import type { ModuleId } from "@/lib/modules";
@@ -87,7 +88,10 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   // they hit disjoint key spaces and nothing orders one against another.
   // Each module still settles its OWN two reads independently; see below.
   const quizReads = quizEnabled ? Promise.allSettled([getQuizTotals(), listQuestions()]) : null;
-  const classicReads = classicEnabled ? Promise.allSettled([getClassicTotals(), listChallenges()]) : null;
+  // The denominator counts only what contestants can see: a hidden challenge
+  // (disabled, or not yet released) is out of it, while points banked on it
+  // stay in the totals.
+  const classicReads = classicEnabled ? Promise.allSettled([getClassicTotals(), listChallenges().then(visibleNow)]) : null;
   const aiReads = aiEnabled ? Promise.allSettled([getAiTotals(), listAiChallenges()]) : null;
 
   let quizTotals = new Map<string, QuizTotal>();
@@ -222,7 +226,7 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
         ...team,
         modules: {
           ...(team.modules ?? {}),
-          "secure-development": secureDevelopmentModule(team.points, patched, null, apps),
+          "secure-development": secureDevelopmentModule(team.points, patched, team.lastSolveAt ?? null, apps),
         },
       };
     });
@@ -332,7 +336,8 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
   // Settled INDEPENDENTLY — see the note in `withModuleContributions`: the
   // totals carry POINTS (and with them the team board's order), the challenge
   // list only the DENOMINATOR.
-  const [totalsResult, challengesResult] = await Promise.allSettled([teamClassicTotals(teams), listChallenges()]);
+  // Visible challenges only, as in `withModuleContributions`.
+  const [totalsResult, challengesResult] = await Promise.allSettled([teamClassicTotals(teams), listChallenges().then(visibleNow)]);
 
   if (totalsResult.status !== "fulfilled") {
     console.error("classic team totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
@@ -697,7 +702,8 @@ function aiContributions(
 /** Adds each team's already-deduped module total (`contributions[i]` belongs
  *  to `teams[i]`) to its points and stamps that module's block, then re-ranks
  *  the teams on the new totals — mirroring `withHintPenalties`'s team sort
- *  (points descending, original position breaking ties). Shared verbatim by
+ *  (`compareTeamStanding`: points, items, then whoever earned their last
+ *  points first in any module; original position breaking what is left). Shared verbatim by
  *  every caller and every module, so a source-provided team row and a
  *  synthesised one are attributed by exactly the same rule.
  *
@@ -718,6 +724,6 @@ function attributeTeams(teams: TeamStanding[], { moduleId, contributions }: Team
         },
       };
     })
-    .sort((a, b) => b.team.points - a.team.points || a.i - b.i)
+    .sort((a, b) => compareTeamStanding(a.team, b.team) || a.i - b.i)
     .map(({ team }, i) => ({ ...team, rank: i + 1 }));
 }

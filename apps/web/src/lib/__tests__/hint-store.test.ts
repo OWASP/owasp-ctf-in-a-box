@@ -24,12 +24,22 @@ vi.mock("@/lib/hint-balance", () => ({ hintBalance: mocks.hintBalance }));
  *  test below is unaffected by the gate; the gate's own cases override it. */
 const RICH = { gross: 1000, spent: 0, net: 1000, rev: "7" };
 // #463: no stories on this board unless a test says otherwise.
-const storyMocks = vi.hoisted(() => ({ listStories: vi.fn(async () => [] as unknown[]), teamSolveKeys: vi.fn(async () => [] as string[]) }));
+const storyMocks = vi.hoisted(() => ({
+  listStories: vi.fn(async () => [] as unknown[]),
+  teamLockKeys: vi.fn(async () => ({ keys: [] as string[], team: "" })),
+  // The Jeopardy records the reveal builds the visible story chain from.
+  readChallengeRecords: vi.fn(async () =>
+    ["recon", "web", "web-robots-only"].map((id) => ({ id, title: id, category: "Web", description: "", points: 10, order: 0 }) as Record<string, unknown>),
+  ),
+}));
 vi.mock("@/lib/classic-store", () => ({
   listStories: storyMocks.listStories,
-  listChallengeIds: async () => new Set(["recon", "web", "web-robots-only"]),
+  readChallengeRecords: storyMocks.readChallengeRecords,
 }));
-vi.mock("@/lib/classic-team", () => ({ teamSolveKeys: storyMocks.teamSolveKeys }));
+vi.mock("@/lib/classic-team", async (orig) => ({
+  storyLockLua: (await orig<typeof import("@/lib/classic-team")>()).storyLockLua,
+  teamLockKeys: storyMocks.teamLockKeys,
+}));
 vi.mock("@/lib/upstash", () => ({
   upstashEval: mocks.upstashEval,
   upstashPipeline: mocks.upstashPipeline,
@@ -115,8 +125,11 @@ describe("revealHint", () => {
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
       // The settings hash (#566): the script reads the live `paused` flag
-      // at the charge boundary. Lock keys, when any, follow it.
+      // at the charge boundary.
       "ctf:admin:settings",
+      // The Jeopardy records, for the visibility check. Lock keys, when
+      // any, follow it.
+      "ctf:classic:challenges",
     ]);
     expect(argv[1]).toBe("classic/web-robots-only");
   });
@@ -148,8 +161,11 @@ describe("revealHint", () => {
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
       // The settings hash (#566): the script reads the live `paused` flag
-      // at the charge boundary. Lock keys, when any, follow it.
+      // at the charge boundary.
       "ctf:admin:settings",
+      // The Jeopardy records, for the visibility check. Lock keys, when
+      // any, follow it.
+      "ctf:classic:challenges",
     ]);
     expect(argv[1]).toBe("ai/prompt-injection-1");
   });
@@ -202,8 +218,11 @@ describe("revealHint", () => {
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
       // The settings hash (#566): the script reads the live `paused` flag
-      // at the charge boundary. Lock keys, when any, follow it.
+      // at the charge boundary.
       "ctf:admin:settings",
+      // The Jeopardy records, for the visibility check. Lock keys, when
+      // any, follow it.
+      "ctf:classic:challenges",
     ]);
     expect(args.slice(0, 4)).toEqual([
       "Challenge-5-Admin-Section",
@@ -514,6 +533,67 @@ describe("revealHint", () => {
     expect(args[8]).toBe(""); // no gross, no revision to vouch for
   });
 
+  // #557: the contestant confirmed a price; the charge must be that price or
+  // nothing. The quote goes to the script, which compares it to the cost it
+  // charges, atomically with the charge.
+  it("hands the script the quoted cost the contestant confirmed, and \"\" when none was sent", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 25 });
+    mocks.upstashEval.mockResolvedValue(["charged", "text", 25]);
+    await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section", { quotedCost: 10 });
+    await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(mocks.upstashEval.mock.calls[0][2][11]).toBe("10");
+    expect(mocks.upstashEval.mock.calls[1][2][11]).toBe("");
+  });
+
+  it("reports the price the script charged, not the one it read before the call", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 10 });
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 25, 25]);
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(result).toMatchObject({ ok: true, cost: 25 });
+    expect(mocks.upstashEval.mock.calls[0][2][12]).toBe(String(store.HINT_COST));
+  });
+
+  // The price rose past what the contestant can afford: the gate refuses
+  // before the script runs. A stale quote must still come back as the new
+  // price to confirm, not as "not enough points" at a price they never saw.
+  it("answers repriced, not insufficient, when the gate refuses a stale quote", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 25 });
+    mocks.hintBalance.mockResolvedValue({ gross: 20, spent: 0, net: 20 });
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section", { quotedCost: 10 });
+    expect(result).toEqual({
+      ok: false,
+      repriced: true,
+      cost: 25,
+      error: "This hint now costs 25 pts. Confirm again to buy it at the new price.",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("still says not enough points when the quote matches the price", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 25 });
+    mocks.hintBalance.mockResolvedValue({ gross: 20, spent: 0, net: 20 });
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section", { quotedCost: 25 });
+    expect(result).toMatchObject({ ok: false, forbidden: true });
+    expect(result).not.toHaveProperty("repriced");
+  });
+
+  it("maps a repriced verdict to a refusal carrying the new price, charging nothing", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 25 });
+    mocks.upstashEval.mockResolvedValueOnce(["repriced", "", 25]);
+    const result = await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section", { quotedCost: 10 });
+    expect(result).toEqual({
+      ok: false,
+      repriced: true,
+      cost: 25,
+      error: "This hint now costs 25 pts. Confirm again to buy it at the new price.",
+    });
+  });
+
   it("maps the script's insufficient verdict to the same 403 message, from the spend it saw", async () => {
     const store = await loadStore();
     // The gate saw net 1000 (RICH) — then a parallel purchase landed first and
@@ -677,8 +757,8 @@ describe("hintGate", () => {
       expect(keys[6]).toBe("ctf:admin:settings");
       expect(keys[6]).toBe(store.HINT_SETTINGS_KEY);
       expect(args[9]).toBe(String(Date.parse(endsAt)));
-      // The lock loop starts AFTER the settings key.
-      expect(script).toContain("for i = 8, #KEYS");
+      // The lock loop starts AFTER the settings key and the records key.
+      expect(script).toContain("for i = 9, #KEYS");
       expect(script).toMatch(/HGET', KEYS\[7\], 'paused'/);
       expect(script).toContain("redis.call('TIME')");
       // Checked before the spend is read and before the text is read.
@@ -1220,10 +1300,13 @@ describe("getHintPenalties", () => {
 });
 
 describe("the story lock on classic hints (#463)", () => {
-  it("hands the script the prerequisite and the teammates' solves keys, and reports `locked` exactly as a missing hint", async () => {
+  it("hands the script the prerequisite, the teammates' lock pairs and the team, and reports `locked` exactly as a missing hint", async () => {
     const store = await loadStore();
     storyMocks.listStories.mockResolvedValueOnce([{ id: "op", title: "Op", intro: "", steps: ["recon", "web"] }]);
-    storyMocks.teamSolveKeys.mockResolvedValueOnce(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    storyMocks.teamLockKeys.mockResolvedValueOnce({
+      team: "red",
+      keys: ["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"],
+    });
     mocks.upstashEval.mockResolvedValueOnce(["locked"]);
     const result = await store.revealHint("alice", "classic", "web");
     // No oracle (CodeRabbit #470): a locked step's hint is indistinguishable
@@ -1232,8 +1315,10 @@ describe("the story lock on classic hints (#463)", () => {
     const [, keys, argv] = mocks.upstashEval.mock.calls.at(-1)!;
     // After the four fixed keys, the score revision and the in-progress
     // counter (KEYS[5..6], #553).
-    expect(keys.slice(7)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    expect(keys[7]).toBe("ctf:classic:challenges");
+    expect(keys.slice(8)).toEqual(["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"]);
     expect(argv[6]).toBe("recon");
+    expect(argv[10]).toBe("red");
   });
 
   it("refuses (closed) when the stories cannot be read, without running the script", async () => {
@@ -1316,5 +1401,64 @@ describe("hint-store log redaction (#500)", () => {
     });
     expect(out).toContain("upstash down");
     expect(out).not.toContain(SECRET);
+  });
+});
+
+// A hidden Jeopardy challenge does not exist for a contestant: its hint is
+// refused by the script, from the record in KEYS[8], before anything else.
+describe("hidden challenges", () => {
+  it("asks the script to check visibility for a classic hint, and never for another target", async () => {
+    const store = await loadStore();
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    await store.revealHint("octocat", "classic", "web-robots-only");
+    expect(mocks.upstashEval.mock.calls[0][2][13]).toBe("1");
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
+    expect(mocks.upstashEval.mock.calls[1][2][13]).toBe("0");
+  });
+
+  it("checks visibility first in the script: before the lock, the hint read and every write, skipped on a preview", async () => {
+    const { REVEAL_SCRIPT } = await loadStore();
+    const check = REVEAL_SCRIPT.indexOf("classicHidden(redis.call('HGET', KEYS[8], ARGV[1]))");
+    expect(check).toBeGreaterThan(-1);
+    expect(REVEAL_SCRIPT.slice(0, check)).toContain("ARGV[6] ~= '1' and ARGV[14] == '1'");
+    for (const later of ["for i = 9, #KEYS", "HEXISTS', KEYS[3]", "HGET', KEYS[3]", "SADD", "HINCRBY"]) {
+      expect(check).toBeLessThan(REVEAL_SCRIPT.indexOf(later));
+    }
+  });
+
+  it("reports the script's refusal exactly as a missing hint", async () => {
+    const store = await loadStore();
+    storyMocks.readChallengeRecords.mockResolvedValueOnce([
+      { id: "web-robots-only", title: "w", category: "Web", description: "", points: 10, order: 0, enabled: false },
+    ]);
+    mocks.upstashEval.mockResolvedValueOnce(["missing"]);
+    expect(await store.revealHint("octocat", "classic", "web-robots-only")).toEqual({
+      ok: false,
+      missing: true,
+      error: "No hint available for this challenge",
+    });
+  });
+
+  it("closes the story chain around a hidden step", async () => {
+    const store = await loadStore();
+    storyMocks.listStories.mockResolvedValueOnce([{ id: "op", title: "Op", intro: "", steps: ["recon", "web", "web-robots-only"] }]);
+    storyMocks.readChallengeRecords.mockResolvedValueOnce(
+      ["recon", "web", "web-robots-only"].map((id) => ({
+        id, title: id, category: "Web", description: "", points: 10, order: 0, ...(id === "web" ? { enabled: false } : {}),
+      })),
+    );
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
+    await store.revealHint("octocat", "classic", "web-robots-only");
+    expect(mocks.upstashEval.mock.calls.at(-1)![2][6]).toBe("recon");
+  });
+
+  it("refuses (closed) when the records cannot be read, without running the script", async () => {
+    const store = await loadStore();
+    storyMocks.readChallengeRecords.mockRejectedValueOnce(new Error("NOAUTH"));
+    mocks.upstashEval.mockClear();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await store.revealHint("octocat", "classic", "web-robots-only")).ok).toBe(false);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 });

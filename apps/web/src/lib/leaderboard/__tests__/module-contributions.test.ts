@@ -664,6 +664,29 @@ describe("withModuleContributions", () => {
     });
   });
 
+  // A hidden Jeopardy challenge is out of every denominator; points banked on
+  // it stay in the total.
+  describe("with a hidden classic challenge", () => {
+    beforeEach(() => {
+      mocks.moduleLive.mockImplementation((id: string) => id === "secure-development" || id === "classic");
+      mocks.listChallenges.mockResolvedValue([{ id: "c1" }, { id: "c2" }, { id: "gone", enabled: false }]);
+    });
+
+    it("leaves it out of a contestant's denominator and keeps the banked points", async () => {
+      mocks.getClassicTotals.mockResolvedValue(new Map([["alice", { points: 50, solved: 1, lastAt: null }]]));
+      const out = await withModuleContributions(data([entry("alice", 100, 3)]));
+      expect(out.entries[0].points).toBe(150);
+      expect(out.entries[0].modules!["classic"]!.detail).toEqual({ kind: "classic", solved: 1, total: 2, points: 50 });
+    });
+
+    it("leaves it out of a team's denominator unless the team solved it", async () => {
+      mocks.getTeamClassicTotalsBatch.mockResolvedValue([{ points: 20, solved: 1, lastAt: null, itemIds: ["c1"] }]);
+      const teams: TeamStanding[] = [{ rank: 1, slug: "red", name: "Red", captain: "ada", points: 0, members: ["ada"] }];
+      const out = await withTeamClassicPoints(teams);
+      expect(out[0].modules!["classic"]!.detail).toMatchObject({ solved: 1, total: 2 });
+    });
+  });
+
   // Both app-side modules on at once. The two are added independently and must
   // land on ONE row per contestant — not one row per module, and not one
   // module's points silently replacing the other's.
@@ -1061,5 +1084,31 @@ describe("module-contributions log redaction (#500)", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+});
+
+// The RTS tie, through the real team fold. The scorer hands the teams over in
+// ITS order, which knows only Secure Development (provart finished SD first);
+// once Jeopardy is added, a points tie must go to the team that earned its
+// last points first in any module, not keep the scorer's order.
+describe("team ties break on the last points earned in ANY module (#583)", () => {
+  it("re-orders the RTS three-way tie by the Jeopardy finish", async () => {
+    mocks.moduleLive.mockImplementation((id: string) => id === "secure-development" || id === "classic");
+    const teams: TeamStanding[] = [
+      { rank: 1, slug: "provart", name: "provart", captain: "a", points: 668, members: ["a"], lastSolveAt: "2026-10-08T12:35:30.995Z" },
+      { rank: 2, slug: "mortadela-s", name: "Mortadela's", captain: "b", points: 668, members: ["b"], lastSolveAt: "2026-10-09T05:15:55.389Z" },
+      { rank: 3, slug: "oxguardians", name: "Oxguardians", captain: "c", points: 668, members: ["c"], lastSolveAt: "2026-10-09T15:40:09.998Z" },
+    ];
+    mocks.getTeamClassicTotalsBatch.mockResolvedValue([
+      { points: 4650, solved: 18, lastAt: "2026-10-09T16:59:32.540Z" },
+      { points: 4650, solved: 18, lastAt: "2026-10-09T17:19:32.531Z" },
+      { points: 4650, solved: 18, lastAt: "2026-10-09T16:59:08.114Z" },
+    ]);
+    const out = await withTeamClassicPoints(teams);
+    expect(out.map((t) => [t.slug, t.points, t.rank])).toEqual([
+      ["oxguardians", 5318, 1],
+      ["provart", 5318, 2],
+      ["mortadela-s", 5318, 3],
+    ]);
   });
 });

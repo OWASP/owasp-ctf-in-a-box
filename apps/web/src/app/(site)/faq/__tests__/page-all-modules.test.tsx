@@ -63,7 +63,7 @@ describe("/faq with every module enabled", () => {
 
   it("answers how the leaderboard is ranked (#522)", () => {
     expect(questions()).toContain("How is the leaderboard ranked?");
-    expect(html).toContain("By points. At equal points, whoever completed more items ranks higher, and after that whoever got there first.");
+    expect(html).toContain("By points, for individuals and teams alike. At equal points, whoever completed more items ranks higher, and after that whoever earned their last points first, in any module.");
   });
 
   it("keeps every module's answer to a shared question, labelled by module", () => {

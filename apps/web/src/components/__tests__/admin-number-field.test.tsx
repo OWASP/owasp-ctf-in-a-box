@@ -105,8 +105,9 @@ describe("describeFieldError", () => {
 
 // What the shell does on blur, as data: snap back with a reason, do nothing,
 // or post the parsed value. The old commit snapped back SILENTLY on junk
-// (audit F2); the reason is now part of the decision. The server accepts no
-// null for these keys, so a blanked field is a snap-back too, not a clear.
+// (audit F2); the reason is now part of the decision. A blanked field over a
+// stored value is a CLEAR: the server removes the override and the default
+// applies again (#600).
 describe("parseNumberCommit", () => {
   it("is a no-op when the value is unchanged", () => {
     expect(parseNumberCommit("42", 42)).toEqual({ kind: "noop" });
@@ -124,7 +125,8 @@ describe("parseNumberCommit", () => {
     expect(parseNumberCommit("-3", null)).toEqual({ kind: "snapback", message: "Whole numbers only — kept the default." });
   });
 
-  it("snaps back with a reason when the field is blanked over a stored value", () => {
-    expect(parseNumberCommit("", 42)).toEqual({ kind: "snapback", message: "Blank is not a value — kept 42." });
+  it("clears the override when the field is blanked over a stored value", () => {
+    expect(parseNumberCommit("", 42)).toEqual({ kind: "post", value: null });
+    expect(parseNumberCommit("   ", 0)).toEqual({ kind: "post", value: null });
   });
 });

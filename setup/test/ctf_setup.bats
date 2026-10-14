@@ -60,6 +60,73 @@ EOF
   [[ "$output" != *"ghcr.io/owasp-ctf/score"* ]]
 }
 
+@test "org: a quoted-empty SCORE_IMAGE is empty too — compose starts no scorer, so nothing is forked" {
+  # `SCORE_IMAGE=""` is empty to docker compose, so the box runs no Secure
+  # Development. Read as the two-character string `""`, this script would
+  # fork and mirror for an event whose box never starts a scorer.
+  cat > .env <<'ENV'
+GITHUB_ORG="test-event-org"
+ADMIN_LOGINS=organizer
+SCORE_IMAGE=""
+ENV
+  run bash "$SCRIPT" org --dry-run
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | grep -F -- "gh repo fork")" ]
+  echo "$output" | grep -qF -- "does not run Secure Development"
+}
+
+@test "org: a quoted, exported GITHUB_ORG is read without its quotes" {
+  cat > .env <<'ENV'
+export GITHUB_ORG="test-event-org"
+ADMIN_LOGINS=organizer
+SCORE_IMAGE = ghcr.io/fixture/score:latest
+ENV
+  run bash "$SCRIPT" org --dry-run
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF "gh repo fork digininja/DVWA --org test-event-org --fork-name DVWA"
+}
+
+# Fail closed: a SCORE_IMAGE the reader cannot read the way compose does
+# stops the command. Read as empty it would skip Secure Development; read as
+# the literal text it would provision it. Neither may happen silently.
+@test "org: an unterminated SCORE_IMAGE quote stops the command, SD neither on nor off" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE="ghcr.io/fixture/score:latest\n' > .env
+  run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE has an unterminated quote'
+  [ -z "$(echo "$output" | grep -F -e 'gh repo fork' -e 'does not run Secure Development')" ]
+}
+
+@test "org: an interpolated SCORE_IMAGE stops the command, SD neither on nor off" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=${SCORER_IMAGE:-}\n' > .env
+  run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE uses interpolation'
+  [ -z "$(echo "$output" | grep -F -e 'gh repo fork' -e 'does not run Secure Development')" ]
+}
+
+@test "runs_secdev exits non-zero on an unreadable SCORE_IMAGE rather than answering" {
+  printf 'SCORE_IMAGE=$SCORER_IMAGE\n' > bad.env
+  run bash -c 'CMD=__selftest source "$1"; OUT=bad.env; if runs_secdev; then echo ON; else echo OFF; fi' _ "$SCRIPT"
+  [ "$status" -ne 0 ]
+  [ -z "$(echo "$output" | grep -x -e ON -e OFF)" ]
+}
+
+@test "org: an env file that exists but cannot be read stops the command" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > locked.env
+  chmod 000 locked.env
+  if [ -r locked.env ]; then
+    # root reads through mode 000; a directory is unreadable as an env file
+    # for everyone, and must fail the same way.
+    rm -f locked.env
+    mkdir locked.env
+  fi
+  run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run --out locked.env
+  chmod 600 locked.env 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [ -z "$(echo "$output" | grep -F -e 'gh repo fork' -e 'does not run Secure Development')" ]
+}
+
 # The switch is the value the BOX carries, not one an operator exported: an
 # exported SCORE_IMAGE overrides only the image to mirror (a one-off retag),
 # because docker compose reads the file to decide which services exist at
@@ -249,11 +316,13 @@ EOF
   # that turns that into a loud failure instead of a silent no-op (a
   # header-only matrix exiting 0). Run against a COPY of the script so
   # SCRIPT_DIR resolves to a directory with a broken targets.tsv, leaving the
-  # real setup/targets.tsv untouched.
-  mkdir -p brokentsv
-  cp "$SCRIPT" brokentsv/ctf-setup.sh
-  : > brokentsv/targets.tsv
-  run bash brokentsv/ctf-setup.sh doctor --dry-run
+  # real setup/targets.tsv untouched. The copy keeps the repo layout around
+  # it: the script sources ../scripts/lib/dotenv.sh.
+  mkdir -p brokentsv/setup brokentsv/scripts/lib
+  cp "$SCRIPT" brokentsv/setup/ctf-setup.sh
+  cp "$BATS_TEST_DIRNAME/../../scripts/lib/dotenv.sh" brokentsv/scripts/lib/
+  : > brokentsv/setup/targets.tsv
+  run bash brokentsv/setup/ctf-setup.sh doctor --dry-run
   printf '%s' "$output" | grep -qF 'targets.tsv'
   printf '%s' "$output" | grep -qF 'no targets to provision'
   [ "$status" -ne 0 ]
@@ -640,7 +709,7 @@ EOF2
   echo "$output" | grep -qx NOTSATISFIED
 }
 
-@test "check_step drop-old fails closed when the branch list call errors" {
+@test "check_step drop-old fails closed when every gh api call errors" {
   mkdir -p stubs
   cat > stubs/gh <<'EOF2'
 #!/usr/bin/env bash
@@ -653,6 +722,72 @@ EOF2
   PATH="$(pwd)/stubs:$PATH" run bash -c 'CMD=__selftest source "'"$SCRIPT"'"; if check_step drop-old dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi'
   [ "$status" -eq 0 ]
   echo "$output" | grep -qx NOTSATISFIED
+}
+
+# drop-old asks for each branch BY NAME. This stub answers those two reads
+# from $MAIN and $MASTER (present | 404 | 500) and serves the paginated branch
+# LIST as GitHub's first page would on a fork with more than 30 branches: one
+# without `main` on it. A check that still read the list would call such a
+# fork done.
+_drop_old_gh_stub() {
+  mkdir -p stubs
+  cat > stubs/gh <<'EOF2'
+#!/usr/bin/env bash
+[ "$1" = api ] || exit 0
+case "$2" in
+  */branches/main) state="$MAIN" ;;
+  */branches/master) state="$MASTER" ;;
+  */branches) printf 'ctf\nfeature-01\nfeature-02\n'; exit 0 ;;
+  *) exit 1 ;;
+esac
+case "$state" in
+  present) echo "${2##*/}"; exit 0 ;;
+  renamed) echo ctf; exit 0 ;;
+  404) echo '{"message":"Branch not found","status":"404"}'; echo "gh: Branch not found (HTTP 404)" >&2; exit 1 ;;
+  *) echo "gh: Server Error (HTTP 500)" >&2; exit 1 ;;
+esac
+EOF2
+  chmod +x stubs/gh
+}
+
+_drop_old_verdict() {
+  PATH="$(pwd)/stubs:$PATH" MAIN="$1" MASTER="$2" run bash -c 'CMD=__selftest source "'"$SCRIPT"'"; if check_step drop-old dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi'
+}
+
+@test "check_step drop-old: a main past the first page of the branch list is still found" {
+  _drop_old_gh_stub
+  _drop_old_verdict present 404
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+}
+
+@test "check_step drop-old: a present master is not satisfied" {
+  _drop_old_gh_stub
+  _drop_old_verdict 404 present
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+}
+
+@test "check_step drop-old: both branches answering 404 is satisfied" {
+  _drop_old_gh_stub
+  _drop_old_verdict 404 404
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx SATISFIED
+}
+
+@test "check_step drop-old: a 500 on either branch fails closed" {
+  _drop_old_gh_stub
+  _drop_old_verdict 404 500
+  [ "$output" = NOTSATISFIED ] || { echo "master 500 read as: $output"; return 1; }
+  _drop_old_verdict 500 404
+  [ "$output" = NOTSATISFIED ]
+}
+
+@test "check_step drop-old: a reply naming a different branch (a rename redirect) is absent" {
+  _drop_old_gh_stub
+  _drop_old_verdict renamed 404
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx SATISFIED
 }
 
 @test "doctor table: fork column flips missing->done via stubbed gh" {
@@ -2027,6 +2162,21 @@ echo "$*" >> "$S/gh.log"
 repo="$(printf '%s' "$*" | sed -n 's|.*repos/test-event-org/\([^ /?]*\).*|\1|p')"
 case "$*" in
   *"-X PATCH"*visibility=*) [ -f "$S/patch-fails" ] && exit 1; cat "$S/launched" 2>/dev/null >> "$S/patch_saw_launched" || echo none >> "$S/patch_saw_launched"; printf '%s' "$*" | sed 's/.*visibility=//' > "$S/vis_$repo"; exit 0 ;;
+  *"-X PUT"*"branches/ctf/protection"*) [ -f "$S/protect-fails" ] && { echo '{"message":"Validation Failed"}' >&2; exit 1; }; echo applied > "$S/prot_$repo"; exit 0 ;;
+  *"branches/ctf/protection"*)
+    [ -f "$S/prot_$repo" ] || exit 1
+    # Replay a recorded protection payload through the script's own --jq
+    # filter (gh's --jq is jq): the verified object shape by default, the
+    # force-push-enabled shape under prot-bad_<repo>. A canned `true`/`false`
+    # verdict would miss the payload shape the filter actually has to read.
+    filter=""; prev=""
+    for a in "$@"; do [ "$prev" = "--jq" ] && filter="$a"; prev="$a"; done
+    if [ -f "$S/prot-bad_$repo" ]; then
+      printf '%s' '{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_force_pushes":{"enabled":true},"allow_deletions":{"enabled":false}}' | jq -r "$filter"
+    else
+      printf '%s' '{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_force_pushes":{"enabled":false},"allow_deletions":{"enabled":false}}' | jq -r "$filter"
+    fi
+    exit 0 ;;
   *packages/container/score*) cat "$S/package" 2>/dev/null || echo private ;;
   *actions/workflows/ctf-score.yml/runs*) if [ -f "$S/refused_$repo" ]; then echo 101; elif [ -f "$S/runs-broken_$repo" ]; then exit 1; fi ;;
   *actions/runs/101/jobs*) echo failure ;;
@@ -2183,6 +2333,8 @@ patched() {
   run_vis launch --dry-run
   printf '%s' "$output" | grep -qF -- 'DRY-RUN: gh api -X PATCH repos/test-event-org/DVWA -f visibility=public'
   printf '%s' "$output" | grep -qF -- 'DRY-RUN: would wait for'
+  # #601: the launch-time protection application is narrated too, with no call.
+  printf '%s' "$output" | grep -qF -- 'DRY-RUN: PUT branch protection on test-event-org/DVWA:ctf once public'
   [ ! -f state/gh.log ]
   [ ! -f state/curl.log ]
   [ ! -f state/docker.log ]
@@ -2476,4 +2628,328 @@ _fn_body_lines() {
       }
     } END { n = 0; for (k in seen) n++; print n }')"
   [ "$calls" -ge 8 ] || { echo "cmd_wizard calls only $calls distinct wiz_* step helpers — want >= 8"; return 1; }
+}
+
+# --- #601: ctf protection deferred on a free-plan private repo ----------------
+#
+# GitHub's free plan refuses branch protection on private repositories, which
+# is exactly the state every fork is in between `org` and `launch` (#465).
+# `org` must record that specific refusal as PENDING until launch — continue
+# every remaining step and repo, never report it completed — while any OTHER
+# protection error still fails, including the same refusal on a fork that is
+# not confirmed private. `launch` applies the same protection as each fork
+# goes public and verifies it (1 approving review, force-push and deletion
+# disabled) before reporting success; `doctor` shows it pending only while
+# the box reports not-launched, and fails on a miss otherwise.
+
+# The --jq filter check_step protect passes is gh's own jq, so a test that
+# wants to exercise it needs a real jq. A machine without one sees a visible
+# skip rather than a silently weakened gate; CI's shell job installs jq and
+# sets CTF_SETUP_REQUIRE_JQ=1, which turns that skip into a failure.
+need_jq() {
+  command -v jq >/dev/null && return 0
+  if [ "${CTF_SETUP_REQUIRE_JQ:-}" = "1" ]; then
+    echo "FAIL: jq is not installed, and CTF_SETUP_REQUIRE_JQ=1 forbids skipping the protection --jq filter tests" >&2
+    return 1
+  fi
+  skip "jq not installed — the protection --jq filter tests need a real jq (CI sets CTF_SETUP_REQUIRE_JQ=1, where this is a failure)"
+}
+
+# A recorded GitHub protection payload in the shape the API actually returns
+# (allow_force_pushes/allow_deletions are objects with .enabled, never
+# booleans) — the three verdicts a payload can carry for `check_step protect`.
+PROT_OK_PAYLOAD='{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_force_pushes":{"enabled":false},"allow_deletions":{"enabled":false}}'
+PROT_FORCEPUSH_PAYLOAD='{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_force_pushes":{"enabled":true},"allow_deletions":{"enabled":false}}'
+PROT_MISSING_PAYLOAD='{"url":"https://api.github.com/repos/o/r/branches/ctf/protection"}'
+
+# A full-`org` gh stub: every call succeeds with empty output, EXCEPT the
+# branch-protection PUT, which replays GitHub's answer in gh's own stderr
+# shape — HTTP 403 + the complete free-plan refusal message by default — and
+# fails; and the visibility read, which answers $2 (private by default), the
+# confirmation apply_protect requires before it may defer. docker reports
+# amd64 and succeeds, so the mirror and privatize steps complete and the run
+# reaches the pending summary.
+org_protect_stub() {  # $1 = PUT stderr (optional), $2 = fork visibility (optional; "" = unreadable)
+  mkdir -p stubs
+  local refusal="${1:-gh: HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature. (https://api.github.com/repos/test-event-org/DVWA/branches/ctf/protection)}"
+  # ${2-private}, not ${2:-private}: an EXPLICITLY empty second argument is
+  # the "GitHub did not answer" case the fail-closed test needs.
+  local vis="${2-private}"
+  cat > stubs/gh <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *"-X PUT"*"branches/ctf/protection"*)
+    printf '%s\n' "$refusal" >&2
+    exit 1 ;;
+  *".visibility"*) echo "$vis" ;;
+  *) exit 0 ;;
+esac
+EOF
+  cat > stubs/docker <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *"image inspect"*) echo amd64 ;;
+  *) exit 0 ;;
+esac
+EOF
+  chmod +x stubs/gh stubs/docker
+}
+
+@test "org defers ctf protection on the free-plan refusal, continues, and reports it pending (#601)" {
+  org_protect_stub
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -eq 0 ]
+  # Deferred per target, and every target's fork named in the pending summary.
+  [ "$(printf '%s' "$output" | grep -cF '⏳ protect (')" -eq 6 ]
+  for r in DVWA VAmPI juice-shop WebGoat VulnerableApp SecurityShepherd; do
+    printf '%s' "$output" | grep -qF -- "test-event-org/$r:ctf" \
+      || { echo "missing from the pending summary: $r"; return 1; }
+  done
+  printf '%s' "$output" | grep -qF -- 'branch protection PENDING until launch'
+  # Never reported as completed.
+  [ -z "$(printf '%s' "$output" | grep -F '✓ protect')" ]
+  # …and it did not stop the run: later steps, later repos, the image mirror
+  # and the privatize sweep all ran.
+  printf '%s' "$output" | grep -qF -- 'workflow (vampi)'
+  printf '%s' "$output" | grep -qF -- '== mirroring scorer image'
+  printf '%s' "$output" | grep -qF -- '== keep forks private until launch'
+}
+
+@test "org fails normally on a protection error that is not the plan refusal (#601)" {
+  org_protect_stub "gh: HTTP 422: Validation Failed (https://api.github.com/repos/test-event-org/DVWA/branches/ctf/protection)"
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF -- 'Validation Failed'
+  # Not a deferral, and nothing past the failure ran.
+  [ -z "$(printf '%s' "$output" | grep -F 'PENDING until launch')" ]
+  [ -z "$(printf '%s' "$output" | grep -F '== mirroring scorer image')" ]
+}
+
+@test "org defers only the COMPLETE refusal on HTTP 403 — a partial phrase or a bare 403 fails (#601)" {
+  # The complete observed message, without the 403 that names this endpoint's
+  # refusal kind: not the deferral.
+  org_protect_stub "gh: HTTP 422: Upgrade to GitHub Pro or make this repository public to enable this feature. (https://api.github.com/repos/test-event-org/DVWA/branches/ctf/protection)"
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -ne 0 ]
+  # A 403 that does not carry the complete refusal: also not the deferral.
+  org_protect_stub "gh: HTTP 403: Resource not accessible by integration (https://api.github.com/repos/test-event-org/DVWA/branches/ctf/protection)"
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -ne 0 ]
+  [ -z "$(printf '%s' "$output" | grep -F 'PENDING until launch')" ]
+}
+
+@test "org fails closed on the plan refusal when the fork is not confirmed private (#601)" {
+  # The refusal says free-plan-private, but the fork reads back PUBLIC:
+  # the confirmation is missing, so this is a failure, not a deferral.
+  org_protect_stub "" public
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF -- 'Upgrade to GitHub Pro'
+  # And a visibility GitHub did not answer is not `private` either.
+  org_protect_stub "" ""
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -ne 0 ]
+  [ -z "$(printf '%s' "$output" | grep -F 'PENDING until launch')" ]
+}
+
+@test "org leaves an already-verified ctf protection alone, with no pending marker (#601)" {
+  need_jq
+  mkdir -p stubs
+  cat > stubs/gh <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$BATS_TEST_TMPDIR/gh.log"
+case "\$*" in
+  *"-X PUT"*"branches/ctf/protection"*) exit 0 ;;
+  *branches/ctf/protection*)
+    # The verified payload, run through the script's OWN --jq filter — the
+    # skip org's idempotency check is allowed to make must survive GitHub's
+    # real payload shape, not a canned true.
+    filter=""; prev=""
+    for a in "\$@"; do [ "\$prev" = "--jq" ] && filter="\$a"; prev="\$a"; done
+    printf '%s' '$PROT_OK_PAYLOAD' | jq -r "\$filter" ;;
+  *) exit 0 ;;
+esac
+EOF
+  cat > stubs/docker <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *"image inspect"*) echo amd64 ;;
+  *) exit 0 ;;
+esac
+EOF
+  chmod +x stubs/gh stubs/docker
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" org
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -qF -- 'protect (juice-shop): already done'
+  [ -z "$(printf '%s' "$output" | grep -F 'PENDING until launch')" ]
+  # The decisive check, last: no protection PUT was ever issued.
+  [ -z "$(grep -F 'PUT' "$BATS_TEST_TMPDIR/gh.log" | grep -F 'branches/ctf/protection')" ]
+}
+
+@test "check_step protect runs its real --jq filter against GitHub's recorded payloads (#601)" {
+  need_jq
+  mkdir -p "$BATS_TEST_TMPDIR/protstubs"
+  # The stub replays a RECORDED protection payload through the --jq filter
+  # the script itself passes — gh's --jq IS jq, so this exercises the actual
+  # filter against the actual payload shape, not a canned verdict. The filter
+  # erroring (a boolean where an object belongs) reads as unsatisfied, as it
+  # does under gh.
+  cat > "$BATS_TEST_TMPDIR/protstubs/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *branches/ctf/protection*)
+    filter=""; prev=""
+    for a in "$@"; do [ "$prev" = "--jq" ] && filter="$a"; prev="$a"; done
+    printf '%s' "$PROT_PAYLOAD" | jq -r "$filter"
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/protstubs/gh"
+  # Run the script's real `check_step protect` under the payload stub: the
+  # filter must accept or reject $1 exactly as it would GitHub's reply.
+  protect_verdict() {
+    env PROT_PAYLOAD="$1" PATH="$BATS_TEST_TMPDIR/protstubs:$PATH" \
+      bash -c 'CMD=__selftest source "$1"; if check_step protect dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi' _ "$SCRIPT"
+  }
+  # 1 review + force-pushes disabled (as {enabled:false}) + deletions
+  # disabled -> satisfied.
+  run protect_verdict "$PROT_OK_PAYLOAD"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx SATISFIED
+  # Force-pushes enabled in the object shape -> not satisfied.
+  run protect_verdict "$PROT_FORCEPUSH_PAYLOAD"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+  # Missing fields (no reviews, no allow_* objects) -> not satisfied.
+  run protect_verdict "$PROT_MISSING_PAYLOAD"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+  # The boolean-shaped payload the old filter accepted: .enabled on a
+  # boolean errors the filter, which fails closed.
+  run protect_verdict '{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_force_pushes":false,"allow_deletions":false}'
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+  # An unreadable reply — gh exiting nonzero — stays unsatisfied too. The
+  # decisive check, last.
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$BATS_TEST_TMPDIR/protstubs/gh"
+  chmod +x "$BATS_TEST_TMPDIR/protstubs/gh"
+  run env PATH="$BATS_TEST_TMPDIR/protstubs:$PATH" \
+    bash -c 'CMD=__selftest source "$1"; if check_step protect dvwa test-event-org; then echo SATISFIED; else echo NOTSATISFIED; fi' _ "$SCRIPT"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qx NOTSATISFIED
+}
+
+@test "org --dry-run narrates the deferred protection and makes zero gh calls (#601)" {
+  mkdir -p "$BATS_TEST_TMPDIR/stubbin"
+  printf '#!/usr/bin/env bash\necho "gh $*" >> "%s/gh.calls"\nexit 1\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/stubbin/gh"
+  chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
+  run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" NO_COLOR=1 bash "$SCRIPT" org --dry-run
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -qF -- 'PUT branch protection on test-event-org/DVWA:ctf'
+  printf '%s' "$output" | grep -qF -- 'stays pending until launch'
+  [ ! -s "$BATS_TEST_TMPDIR/gh.calls" ]
+}
+
+@test "launch applies ctf protection as each fork goes public and verifies it (#601)" {
+  need_jq
+  vis_env
+  echo true > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  run_vis launch
+  [ "$status" -eq 0 ]
+  local missing="" r
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do
+    [ -f "state/prot_$r" ] || missing="$missing $r"
+  done
+  [ -z "$missing" ] || { echo "unprotected:$missing"; false; }
+  printf '%s' "$output" | grep -qF -- 'ctf branch protection applied and verified on every fork'
+  # Applied IMMEDIATELY after each fork goes public: juice-shop's protection
+  # PUT is logged before the next fork (webgoat, in targets.tsv order) is
+  # even read for its flip.
+  local p_js p_wg
+  p_js="$(grep -n -F -- '-X PUT repos/test-event-org/juice-shop/branches/ctf/protection' state/gh.log | head -1 | cut -d: -f1)"
+  p_wg="$(grep -n -F -- '-X PATCH repos/test-event-org/WebGoat' state/gh.log | head -1 | cut -d: -f1)"
+  [ -n "$p_js" ] && [ -n "$p_wg" ] && [ "$p_js" -lt "$p_wg" ]
+}
+
+@test "launch stops when ctf protection cannot be applied, and says so (#601)" {
+  vis_env
+  echo true > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  touch state/protect-fails
+  run_vis launch
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF -- 'could not apply ctf branch protection on juice-shop'
+  [ -z "$(printf '%s' "$output" | grep -F 'launched ✓')" ]
+}
+
+@test "launch does not report success when protection fails verification (#601)" {
+  need_jq
+  vis_env
+  echo true > state/launched
+  for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
+  # The PUT "succeeds" but DVWA's protection still reads back with
+  # force-pushes allowed ({ "enabled": true }) — the required payload shape
+  # is not in place, so the pre-success verification must refuse.
+  touch state/prot-bad_DVWA
+  run_vis launch
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF -- 'DVWA: ctf branch protection is not verified'
+  [ -z "$(printf '%s' "$output" | grep -F 'launched ✓')" ]
+}
+
+@test "doctor reports ctf protection as pending on a private fork before launch (#601)" {
+  need_jq
+  vis_env
+  echo false > state/launched
+  echo private > state/vis_DVWA
+  run_vis doctor
+  printf '%s' "$output" | grep -qF -- '⏳ = branch protection pending until launch'
+  local cell
+  cell="$(echo "$output" | awk '/^dvwa/{print $5}')"
+  echo "dvwa prot cell: $cell"
+  [ "$cell" = "⏳" ]
+}
+
+@test "doctor clears the pending marker only once ctf protection is verified (#601)" {
+  need_jq
+  vis_env
+  echo false > state/launched
+  echo private > state/vis_DVWA
+  touch state/prot_DVWA
+  run_vis doctor
+  local cell
+  cell="$(echo "$output" | awk '/^dvwa/{print $5}')"
+  echo "dvwa prot cell: $cell"
+  [ "$cell" = "✅" ]
+}
+
+@test "doctor fails on missing protection once the box reports launched — never pending (#601)" {
+  need_jq
+  vis_env
+  echo true > state/launched
+  echo private > state/vis_DVWA
+  # Launched: the free-plan deferral is over — a missing protection is a
+  # real miss, cell ❌, and doctor's exit code carries it.
+  run_vis doctor
+  local cell
+  cell="$(echo "$output" | awk '/^dvwa/{print $5}')"
+  echo "dvwa prot cell: $cell"
+  [ "$cell" = "❌" ]
+  [ "$status" -ne 0 ]
+}
+
+@test "doctor fails on missing protection when the launch state is unknown (#601)" {
+  need_jq
+  vis_env
+  # No state/launched: curl exits 7 and the box's launch state is unknown —
+  # which the box never answered, so it cannot earn the pending deferral.
+  echo private > state/vis_DVWA
+  run_vis doctor
+  local cell
+  cell="$(echo "$output" | awk '/^dvwa/{print $5}')"
+  echo "dvwa prot cell: $cell"
+  [ "$cell" = "❌" ]
+  [ "$status" -ne 0 ]
 }

@@ -223,6 +223,9 @@ test("outsideWindow: before start / after end / inside / unbounded / bad", () =>
 test("outsideWindow: shared boundary-instant corpus", async (t) => {
   const url = new URL("../../test/fixtures/window-corpus.json", import.meta.url);
   const { cases } = JSON.parse(await readFile(url, "utf8"));
+  // A floor at the committed row count: an emptied or truncated corpus would
+  // otherwise run zero subtests here and pass.
+  assert.ok(Array.isArray(cases) && cases.length >= 16, `window-corpus.json has ${cases?.length} rows, expected at least 16`);
   for (const { description, nowMs, startsAt, endsAt, expected } of cases) {
     await t.test(description, () => {
       assert.equal(outsideWindow(nowMs, startsAt, endsAt), expected);
@@ -236,6 +239,9 @@ test("outsideWindow: shared boundary-instant corpus", async (t) => {
 test("outsideScoringWindow: shared scoring-window corpus (#464)", async (t) => {
   const url = new URL("../../test/fixtures/scoring-window-corpus.json", import.meta.url);
   const { cases } = JSON.parse(await readFile(url, "utf8"));
+  // A floor at the committed row count: an emptied or truncated corpus would
+  // otherwise run zero subtests here and pass.
+  assert.ok(Array.isArray(cases) && cases.length >= 10, `scoring-window-corpus.json has ${cases?.length} rows, expected at least 10`);
   for (const { description, nowMs, startsAt, endsAt, expected } of cases) {
     await t.test(description, () => {
       assert.equal(outsideScoringWindow(nowMs, startsAt, endsAt), expected);
@@ -350,4 +356,92 @@ test("redis store: a per-command error longer than 200 characters is capped", as
     assert.equal(err.message.replace(/^upstash: /, "").length, 200);
     return true;
   });
+});
+
+// --- the pause log: pausedAt and the scoring-policy read --------------------
+import { pausedAt } from "../src/store.js";
+
+// The manual freeze judged at an instant, not "right now": a Secure
+// Development score is timed by its score comment, so the scorer has to know
+// whether the freeze covered THAT instant. Same rows run against apps/web's
+// schedule-window.ts and sync/src/redis.js.
+test("pausedAt: shared pause-interval corpus", async (t) => {
+  const url = new URL("../../test/fixtures/pause-interval-corpus.json", import.meta.url);
+  const { cases } = JSON.parse(await readFile(url, "utf8"));
+  assert.ok(cases.length > 0, "the corpus must not be empty");
+  for (const { description, tMs, paused, pausedSince, pauses, expected } of cases) {
+    await t.test(description, () => {
+      assert.equal(pausedAt(tMs, paused, pausedSince, pauses), expected);
+    });
+  }
+});
+
+test("redis store readScoringPolicy: one HMGET + one LRANGE, decoded", async () => {
+  let sent;
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "t",
+    fetchImpl: async (_url, opts) => {
+      sent = JSON.parse(opts.body);
+      return new Response(
+        JSON.stringify([
+          { result: ["1", "2026-08-14T10:30:00.000Z", "2026-08-14T09:00:00.000Z", "2026-08-14T18:00:00.000Z", "1755160000000"] },
+          { result: ['{"from":"2026-08-14T10:00:00.000Z","to":"2026-08-14T10:10:00.000Z"}'] },
+        ]),
+        { status: 200 },
+      );
+    },
+  });
+  assert.deepEqual(await store.readScoringPolicy(), {
+    paused: true,
+    pausedSince: "2026-08-14T10:30:00.000Z",
+    startsAt: "2026-08-14T09:00:00.000Z",
+    endsAt: "2026-08-14T18:00:00.000Z",
+    resetAt: "1755160000000",
+    pauses: ['{"from":"2026-08-14T10:00:00.000Z","to":"2026-08-14T10:10:00.000Z"}'],
+  });
+  assert.deepEqual(sent, [
+    ["HMGET", "ctf:admin:settings", "paused", "pausedSince", "scoringStartsAt", "scoringEndsAt", "resetAt"],
+    ["LRANGE", "ctf:admin:pauses", 0, -1],
+  ]);
+});
+
+test("redis store readScoringPolicy: absent fields decode as not paused, nulls, no intervals", async () => {
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "t",
+    fetchImpl: async () =>
+      new Response(JSON.stringify([{ result: [null, null, null, null, null] }, { result: [] }]), { status: 200 }),
+  });
+  assert.deepEqual(await store.readScoringPolicy(), {
+    paused: false,
+    pausedSince: null,
+    startsAt: null,
+    endsAt: null,
+    resetAt: null,
+    pauses: [],
+  });
+});
+
+// Same direction as isPaused: a Redis blip must not drop a live score, so an
+// unreadable policy is "nothing to judge against" (null), and it is logged.
+test("redis store readScoringPolicy: a failed read fails OPEN (null) and is logged", async () => {
+  const logs = [];
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "t",
+    fetchImpl: async () => new Response(JSON.stringify([{ result: [] }, { error: "WRONGTYPE Operation" }]), { status: 200 }),
+    log: (m) => logs.push(m),
+  });
+  assert.equal(await store.readScoringPolicy(), null);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /readScoringPolicy.*WRONGTYPE/);
+});
+
+test("memory store readScoringPolicy: null until a test sets one", async () => {
+  const store = createMemoryStore();
+  assert.equal(await store.readScoringPolicy(), null);
+  const policy = { paused: false, pausedSince: null, startsAt: T0, endsAt: null, resetAt: null, pauses: [] };
+  store.__setPolicy(policy);
+  assert.deepEqual(await store.readScoringPolicy(), policy);
 });

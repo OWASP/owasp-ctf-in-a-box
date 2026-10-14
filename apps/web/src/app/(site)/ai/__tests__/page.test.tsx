@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
+vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts }));
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -18,7 +19,7 @@ const {
   getSession,
   listAiChallenges,
   listAiCategories,
-  getAiSolveCounts,
+  teamSolveCounts,
   getViewerAi,
   getAdminSettings,
   getResolvedModules,
@@ -31,7 +32,7 @@ const {
   getSession: vi.fn(),
   listAiChallenges: vi.fn(),
   listAiCategories: vi.fn(),
-  getAiSolveCounts: vi.fn(),
+  teamSolveCounts: vi.fn(),
   getViewerAi: vi.fn(),
   getAdminSettings: vi.fn(),
   getResolvedModules: vi.fn(),
@@ -54,7 +55,7 @@ vi.mock("@/lib/require-team", () => ({ redirectIfTeamless }));
 vi.mock("@/lib/ai-store", () => ({
   listAiChallenges,
   listAiCategories,
-  getAiSolveCounts,
+  teamSolveCounts,
   getViewerAi,
   AI_COOLDOWN_SEC: 5,
 }));
@@ -90,7 +91,7 @@ beforeEach(() => {
     },
   ]);
   listAiCategories.mockResolvedValue(["Prompt Injection", "Guardrails"]);
-  getAiSolveCounts.mockResolvedValue(new Map());
+  teamSolveCounts.mockResolvedValue(new Map());
   // The passing default — no organizer override, so the module default
   // (AI_COOLDOWN_SEC, mocked to 5 above) applies. The dedicated cooldown test
   // below overrides this per-case.
@@ -122,7 +123,7 @@ describe("ai page gate", () => {
     await expect(AiPage()).rejects.toBe(redirectError);
     expect(listAiChallenges).not.toHaveBeenCalled();
     expect(getViewerAi).not.toHaveBeenCalled();
-    expect(getAiSolveCounts).not.toHaveBeenCalled();
+    expect(teamSolveCounts).not.toHaveBeenCalled();
   });
 });
 

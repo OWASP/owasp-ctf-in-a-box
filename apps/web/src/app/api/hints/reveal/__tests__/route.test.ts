@@ -21,6 +21,8 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/launch", () => ({ requireLaunchedApi, launchApiAccess }));
 vi.mock("@/lib/hint-store", () => ({ revealHint, resolveHintConfig }));
+const adminView = vi.hoisted(() => ({ adminSeesHidden: vi.fn<(login: string, id: string) => Promise<boolean>>(async () => false) }));
+vi.mock("@/lib/classic-visibility", () => adminView);
 // Mocked EXPLICITLY rather than left to load for real. The real module fails
 // open on any Upstash error, so an unmocked import would quietly make every
 // test in this file exercise the error branch and pass — coverage of the one
@@ -172,6 +174,38 @@ describe("POST /api/hints/reveal", () => {
   });
 });
 
+// #557: the price the contestant confirmed travels with the purchase; a
+// changed price is a 409 carrying the new one, so the control can ask again.
+describe("POST /api/hints/reveal quoted cost (#557)", () => {
+  it("passes the confirmed price to the store", async () => {
+    revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10, cost: 10 });
+    await POST(req({ app: "classic", id: "web", quotedCost: 10 }));
+    expect(revealHint).toHaveBeenCalledWith("alice", "classic", "web", { dryRun: false, quotedCost: 10 });
+  });
+
+  it("passes no quote when the body has none", async () => {
+    revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10, cost: 10 });
+    await POST(req({ app: "classic", id: "web" }));
+    expect(revealHint).toHaveBeenCalledWith("alice", "classic", "web", { dryRun: false });
+  });
+
+  it.each([["a string", "10"], ["a negative", -1], ["a fraction", 2.5], ["NaN-like", null]])(
+    "400s %s quote without touching the store",
+    async (_what, quotedCost) => {
+      const res = await POST(req({ app: "classic", id: "web", quotedCost }));
+      expect(res.status).toBe(400);
+      expect(revealHint).not.toHaveBeenCalled();
+    },
+  );
+
+  it("409s a changed price with the new price and nothing else", async () => {
+    revealHint.mockResolvedValue({ ok: false, repriced: true, cost: 25, error: "This hint now costs 25 pts. Confirm again to buy it at the new price." });
+    const res = await POST(req({ app: "classic", id: "web", quotedCost: 10 }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "This hint now costs 25 pts. Confirm again to buy it at the new price.", cost: 25 });
+  });
+});
+
 describe("POST /api/hints/reveal admin preview (#464)", () => {
   it("reveals a preview admin's hint as a dry run (nothing charged)", async () => {
     launchApiAccess.mockResolvedValueOnce({ refused: null, preview: true });
@@ -187,5 +221,25 @@ describe("POST /api/hints/reveal admin preview (#464)", () => {
     revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10 });
     await POST(req({ app: "classic", id: "c1" }));
     expect(revealHint).toHaveBeenCalledWith(expect.any(String), "classic", "c1", { dryRun: false });
+  });
+});
+
+// An admin viewing a hidden Jeopardy challenge after launch reads its hint as
+// a dry run: shown, never charged.
+describe("an admin on a hidden challenge after launch", () => {
+  it("reveals a classic hint as a dry run", async () => {
+    adminView.adminSeesHidden.mockResolvedValueOnce(true);
+    revealHint.mockResolvedValue({ ok: true, hint: "h", alreadyOwned: false, spent: 0, cost: 10, dryRun: true });
+    await POST(req({ app: "classic", id: "c-1" }));
+    expect(adminView.adminSeesHidden).toHaveBeenLastCalledWith("alice", "c-1");
+    expect(revealHint).toHaveBeenCalledWith("alice", "classic", "c-1", { dryRun: true });
+  });
+
+  it("never asks about another module's target", async () => {
+    adminView.adminSeesHidden.mockClear();
+    revealHint.mockResolvedValue({ ok: true, hint: "h", alreadyOwned: false, spent: 0, cost: 10 });
+    await POST(req({ app: "ai", id: "a-1" }));
+    expect(adminView.adminSeesHidden).not.toHaveBeenCalled();
+    expect(revealHint).toHaveBeenCalledWith("alice", "ai", "a-1", { dryRun: false });
   });
 });

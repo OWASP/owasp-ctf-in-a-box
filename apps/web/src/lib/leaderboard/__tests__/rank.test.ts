@@ -5,8 +5,8 @@
 // Entries without an activity time sort after those with one.
 
 import { describe, expect, it } from "vitest";
-import { rankByStanding } from "../rank";
-import type { LeaderboardEntry } from "../types";
+import { compareTeamStanding, rankByStanding } from "../rank";
+import type { LeaderboardEntry, TeamStanding } from "../types";
 
 function entry(
   login: string,
@@ -175,5 +175,78 @@ describe("compareStanding across modules", () => {
       quiz: { points: 10, completed: 1, lastActivityAt: "2026-08-01T12:00:00.000Z", detail: { kind: "quiz", answered: 1, total: 5, points: 10 } },
     });
     expect(rankByStanding([late, early]).map((e) => e.login)).toEqual(["early", "late"]);
+  });
+});
+
+// #583. At the RTS event three teams finished tied at 5,308 with every item
+// done. The board ranked them by who finished Secure Development first and
+// ignored when they finished Jeopardy. The rule is the contestant one:
+// points, then items completed, then whoever earned their LAST points first,
+// across every module.
+describe("compareTeamStanding", () => {
+  const rts = (slug: string, sdLast: string, jeoLast: string, points = 5308, completed = 18): TeamStanding => ({
+    rank: 0,
+    slug,
+    name: slug,
+    captain: "",
+    points,
+    members: [],
+    lastSolveAt: sdLast,
+    modules: {
+      "secure-development": { points: 668, completed: 321, lastActivityAt: sdLast, detail: { kind: "secure-development", apps: {} } },
+      classic: { points: 4650, completed, lastActivityAt: jeoLast, detail: { kind: "classic", solved: completed, total: 18, points: 4650 } },
+    },
+  });
+  const provart = rts("provart", "2026-10-08T12:35:30.995Z", "2026-10-09T16:59:32.540Z");
+  const mortadela = rts("mortadela-s", "2026-10-09T05:15:55.389Z", "2026-10-09T17:19:32.531Z");
+  const oxguardians = rts("oxguardians", "2026-10-09T15:40:09.998Z", "2026-10-09T16:59:08.114Z");
+
+  it("puts the team that earned its final points first ahead, across modules (the RTS tie)", () => {
+    const order = [provart, mortadela, oxguardians].sort(compareTeamStanding).map((t) => t.slug);
+    expect(order).toEqual(["oxguardians", "provart", "mortadela-s"]);
+  });
+
+  it("never lets time beat points", () => {
+    const behind = { ...oxguardians, slug: "behind", points: 5307 };
+    expect([behind, mortadela].sort(compareTeamStanding).map((t) => t.slug)).toEqual(["mortadela-s", "behind"]);
+  });
+
+  it("breaks a points tie on items completed before time", () => {
+    const fewer = rts("fewer", "2026-10-07T00:00:00.000Z", "2026-10-07T00:00:00.000Z", 5308, 17);
+    expect([fewer, mortadela].sort(compareTeamStanding).map((t) => t.slug)).toEqual(["mortadela-s", "fewer"]);
+  });
+
+  it("sorts a team with no activity time after those with one", () => {
+    const none: TeamStanding = { rank: 0, slug: "none", name: "none", captain: "", points: 5308, members: [], modules: {} };
+    expect([none, provart].sort(compareTeamStanding)[0].slug).toBe("provart");
+  });
+});
+
+// A scorer that omits its catalogue gives teams no per-app breakdown, so no
+// secure-development block is stamped. The team's SD solve count still has to
+// enter the items tie-break, once: the same fallback to `patched` the
+// contestant comparator uses.
+describe("compareTeamStanding without a secure-development block", () => {
+  const team = (slug: string, patched: number | undefined, sd: boolean): TeamStanding => ({
+    rank: 0,
+    slug,
+    name: slug,
+    captain: "",
+    points: 100,
+    members: [],
+    ...(patched === undefined ? {} : { patched }),
+    modules: sd
+      ? { "secure-development": { points: 100, completed: patched ?? 0, lastActivityAt: null, detail: { kind: "secure-development", apps: {} } } }
+      : {},
+  });
+
+  it("counts the team's SD solves from `patched` when there is no block", () => {
+    expect([team("fewer", 2, false), team("more", 3, false)].sort(compareTeamStanding).map((t) => t.slug)).toEqual(["more", "fewer"]);
+  });
+
+  it("never counts SD solves twice when the block is there", () => {
+    // Block says 3 and patched says 3: the total is 3, so a team with a block
+    // of 3 ties a team with patched 3 and no block, and keeps input order.
+    expect([team("block", 3, true), team("bare", 3, false)].sort(compareTeamStanding).map((t) => t.slug)).toEqual(["block", "bare"]);
   });
 });

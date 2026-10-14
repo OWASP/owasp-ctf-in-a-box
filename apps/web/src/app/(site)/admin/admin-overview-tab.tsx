@@ -28,6 +28,8 @@ import { moduleSummary, type ModuleInventory } from "@/components/admin-module-s
 import AdminSwitch from "@/components/admin-switch";
 import type { FieldStatus } from "@/components/admin-number-field";
 import { formatWhen, TYPE_LABELS, type ActivityEntry } from "./admin-activity-tab";
+import { DEFAULT_EVENT_TIME_ZONE } from "@/lib/event-time";
+import { activityZone, UtcToggle, useShowUtc } from "./activity-time-zone";
 import AdminLiveStamp from "./admin-live-stamp";
 import { FREEZE_HELP, freezeConfirm } from "./freeze-copy";
 import { LIVE_POLL_MS, useLivePoll } from "./use-live-poll";
@@ -89,6 +91,8 @@ export default function AdminOverviewTab({
   visible?: boolean;
 }) {
   const resolution = phaseFromSettings(settings, nowMs);
+  const [showUtc, setShowUtc] = useShowUtc();
+  const activityRowZone = activityZone(resolution.timeZone ?? DEFAULT_EVENT_TIME_ZONE, showUtc);
   const boundary = phaseBoundaryLabel(resolution.phase, resolution.startsAt, resolution.endsAt, resolution.timeZone);
   const boundaryMs =
     resolution.phase === "registration" && resolution.startsAt
@@ -310,19 +314,22 @@ export default function AdminOverviewTab({
       <section className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-white">Recent activity</h3>
-          <button
-            type="button"
-            onClick={() => onNavigate("activity")}
-            className="text-sm text-zinc-400 transition-colors hover:text-white"
-          >
-            View all
-          </button>
+          <div className="flex items-center gap-4">
+            <UtcToggle checked={showUtc} onChange={setShowUtc} />
+            <button
+              type="button"
+              onClick={() => onNavigate("activity")}
+              className="text-sm text-zinc-400 transition-colors hover:text-white"
+            >
+              View all
+            </button>
+          </div>
         </div>
         {activity && activity.length > 0 ? (
           <ul className="flex flex-col gap-1 text-sm text-zinc-300">
             {activity.map((e, i) => (
               <li key={`${e.at}-${e.type}-${e.login}-${i}`} className="flex gap-2">
-                <span className="font-mono tabular-nums text-muted">{formatWhen(e.at)}</span>
+                <span className="font-mono tabular-nums text-muted">{formatWhen(e.at, activityRowZone)}</span>
                 <span>{TYPE_LABELS[e.type] ?? e.type}</span>
                 <span className="font-mono text-white">{e.login}</span>
               </li>

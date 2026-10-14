@@ -2,8 +2,8 @@
 //
 // This is the app's copy of the pause/schedule contract's window logic —
 // `outsideWindow` (generic: absent bound = open, used by the registration
-// window) and `outsideScoringWindow` (a start is REQUIRED: no start = not
-// launched, issue #464) —
+// window), `outsideScoringWindow` (a start is REQUIRED: no start = not
+// launched, ADR 59) and `pausedAt` (the freeze at an instant, ADR 67) —
 // kept IDENTICAL in scorer/src/store.js and sync/src/redis.js; change all
 // three together (AGENTS.md: "the pause/schedule contract lives in THREE
 // readers"). It lives here rather than in admin-store.ts because admin-store
@@ -35,6 +35,36 @@ export function outsideScoringWindow(nowMs: number, startsAt: string | null, end
   const s = startsAt ? Date.parse(startsAt) : NaN;
   if (!Number.isFinite(s)) return true;
   return outsideWindow(nowMs, startsAt, endsAt);
+}
+
+/** Whether the manual freeze covered the instant `tMs`: inside a closed
+ *  interval [from, to) of the pause log (`ctf:admin:pauses`, one JSON
+ *  `{from, to}` per entry, written by admin-store's settings script), or at or
+ *  after `pausedSince`, the start of the pause still open. An open pause whose
+ *  start is absent or unparseable covers every instant (when it began is
+ *  unknown); a log entry that does not parse covers nothing. The scorer judges
+ *  a Secure Development score's comment time with its copy (ADR 67); the app's
+ *  own submits are judged on arrival, where `paused` alone already answers.
+ *  Kept IDENTICAL in scorer/src/store.js and sync/src/redis.js, pinned by
+ *  test/fixtures/pause-interval-corpus.json. */
+export function pausedAt(tMs: number, paused: boolean, pausedSince: string | null, pauses: readonly string[]): boolean {
+  if (paused) {
+    const since = pausedSince ? Date.parse(pausedSince) : NaN;
+    if (!Number.isFinite(since) || tMs >= since) return true;
+  }
+  for (const raw of pauses) {
+    let entry: unknown;
+    try {
+      entry = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const bounds = entry !== null && typeof entry === "object" ? (entry as { from?: unknown; to?: unknown }) : {};
+    const from = typeof bounds.from === "string" ? Date.parse(bounds.from) : NaN;
+    const to = typeof bounds.to === "string" ? Date.parse(bounds.to) : NaN;
+    if (Number.isFinite(from) && Number.isFinite(to) && tMs >= from && tMs < to) return true;
+  }
+  return false;
 }
 
 /** WHY scoring is closed right now, or null while it is live (#567).

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_EVENT_TIME_ZONE, canonicalTimeZone, formatInZone, instantToWall, wallToInstant, zoneLabel,
+  DEFAULT_EVENT_TIME_ZONE, adminTime, canonicalTimeZone, formatInZone, instantToWall, wallToInstant, zoneLabel,
 } from "@/lib/event-time";
 
 // #547: one configured zone for every date the event shows. These run in
@@ -81,5 +81,36 @@ describe("wall clock <-> instant", () => {
     expect(wallToInstant("tomorrow", "UTC")).toBeNull();
     expect(instantToWall(null, "UTC")).toBe("");
     expect(instantToWall("garbage", "UTC")).toBe("");
+  });
+});
+
+// Admin times: on the event's clock, to the second, with the offset named. A
+// minute-only UTC slice made two solves 24 s apart read the same, and its
+// "16:26" sat under a header in GMT-3 with nothing saying it was UTC.
+describe("adminTime", () => {
+  const BA = "America/Argentina/Buenos_Aires";
+
+  it("reads on the event's clock with seconds and the offset", () => {
+    expect(adminTime("2026-10-07T16:26:00.000Z", BA)).toBe("10-07 13:26:00 GMT-3");
+  });
+
+  it("names UTC when the event has no zone", () => {
+    expect(adminTime("2026-10-07T16:26:00.000Z", DEFAULT_EVENT_TIME_ZONE)).toBe("10-07 16:26:00 UTC");
+  });
+
+  it("carries the year in its long form", () => {
+    expect(adminTime("2026-10-07T16:26:00.000Z", BA, { year: true })).toBe("2026-10-07 13:26:00 GMT-3");
+  });
+
+  it("tells apart two instants inside one minute", () => {
+    expect(adminTime("2026-10-09T16:59:08.117Z", BA)).not.toBe(adminTime("2026-10-09T16:59:32.544Z", BA));
+  });
+
+  it("rolls the date back across midnight on the event's clock", () => {
+    expect(adminTime("2026-10-08T01:30:05.000Z", BA)).toBe("10-07 22:30:05 GMT-3");
+  });
+
+  it("returns an unparseable value as given rather than inventing a time", () => {
+    expect(adminTime("not-a-date", BA)).toBe("not-a-date");
   });
 });

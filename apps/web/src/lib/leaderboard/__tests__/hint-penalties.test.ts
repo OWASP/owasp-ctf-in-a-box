@@ -156,6 +156,25 @@ describe("withHintPenalties — teams", () => {
     ]);
   });
 
+  // #583: equal NET points after hint spend still break on who earned their
+  // last points first, not on the order the teams arrived in.
+  it("re-sorts teams tied after penalties by the time they earned their last points", async () => {
+    mocks.getHintPenalties.mockResolvedValueOnce(new Map([["ada", 10], ["bob", 10]]));
+    const result = await withHintPenalties(
+      withTeams(
+        [entry("ada", 100), entry("bob", 100)],
+        [
+          { ...team("late", 110, ["ada"]), lastSolveAt: "2026-10-09T17:19:32.531Z" },
+          { ...team("early", 110, ["bob"]), lastSolveAt: "2026-10-09T16:59:08.114Z" },
+        ],
+      ),
+    );
+    expect(result.teams.map((t) => [t.slug, t.points, t.rank])).toEqual([
+      ["early", 100, 1],
+      ["late", 100, 2],
+    ]);
+  });
+
   it("exposes the deducted total as hintPenalty for the transparency chip", async () => {
     mocks.getHintPenalties.mockResolvedValueOnce(new Map([["ada", 30], ["bob", 25]]));
     const result = await withHintPenalties(

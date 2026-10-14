@@ -23,7 +23,11 @@ One image (`scorer/Dockerfile`), two modes:
   (the shape the app renders), `GET /challenges` (the challenge catalogue the
   app's `/challenges` page prefers over its static per-app cards), and `GET
   /healthz`. Everything but `POST /score` is unauthenticated — it is all
-  public catalogue and standings data. Backed by Redis via the Upstash-REST
+  public catalogue and standings data. `POST /score` times each solve by the
+  payload's `at` (the score comment's time, which sync sends) and refuses
+  with a final `422` a score posted before the launch, outside the scoring
+  window, during a freeze or before the last master reset
+  ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)). Backed by Redis via the Upstash-REST
   proxy when `UPSTASH_REDIS_REST_URL` is set, an in-memory store otherwise.
 
   `GET /challenges` sends each challenge's OWASP **code** (`"A03"`, `"API1"`)

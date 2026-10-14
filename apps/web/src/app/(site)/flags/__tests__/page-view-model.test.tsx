@@ -23,16 +23,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
+// #188: the page reads counts and first blood in one go (teamSolveBoard).
+// Wrapped over the teamSolveCounts mock, so a test sets counts as before and
+// first blood through `firstBloods`.
+const firstBloods = vi.hoisted(() => ({ map: new Map<string, { login: string; at: string | null }>() }));
+vi.mock("@/lib/team-solve-counts", () => ({
+  teamSolveCounts,
+  teamSolveBoard: async (module: "classic" | "ai") => {
+    const counts = (await teamSolveCounts(module)) as Map<string, number> | null;
+    return counts ? { counts, firstBlood: firstBloods.map } : null;
+  },
+}));
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { moduleLive, getSession, listChallenges, listCategories, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules } =
+const { moduleLive, getSession, listChallenges, listCategories, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules } =
   vi.hoisted(() => ({
     moduleLive: vi.fn(),
     getSession: vi.fn(),
     listChallenges: vi.fn(),
     listCategories: vi.fn(),
-    getSolveCounts: vi.fn(),
+    teamSolveCounts: vi.fn(),
     getViewerClassic: vi.fn(),
     getAdminSettings: vi.fn(),
     getResolvedModules: vi.fn(),
@@ -54,12 +65,14 @@ vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
-vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: async () => new Set() }));
+// storyLockLua: classic-store builds its grading script from it at load; no
+// script runs here.
+vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: async () => new Set(), storyLockLua: () => "" }));
 vi.mock("@/lib/classic-store", () => ({
   listStories: async () => [],
   listChallenges,
   listCategories,
-  getSolveCounts,
+  teamSolveCounts,
   getViewerClassic,
   CLASSIC_COOLDOWN_SEC: 5,
 }));
@@ -99,7 +112,8 @@ beforeEach(() => {
   getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
   getAdminSettings.mockResolvedValue({ classicCooldownSec: 5 });
   listCategories.mockResolvedValue(["Web"]);
-  getSolveCounts.mockResolvedValue(new Map());
+  teamSolveCounts.mockResolvedValue(new Map());
+  firstBloods.map = new Map();
   getResolvedModules.mockResolvedValue([
     { id: "classic", title: "Jeopardy", blurb: "Find the flag, submit the string, take the points." },
   ]);
@@ -139,7 +153,7 @@ describe("/flags view model", () => {
     // that reveals nothing about the answer. It is copied by name in the page's
     // map like every other field here, which is what this test exists to force.
     expect(Object.keys(captured.challenges[0]).sort()).toEqual(
-      ["caseSensitive", "category", "description", "id", "points", "solveCount", "status", "title"].sort(),
+      ["caseSensitive", "category", "description", "firstBlood", "id", "points", "teamsSolved", "status", "title"].sort(),
     );
   });
 });

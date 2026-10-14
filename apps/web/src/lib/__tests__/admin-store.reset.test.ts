@@ -118,24 +118,27 @@ describe("resetEvent", () => {
       classicSolved: 2,
       classicSolveCount: 2,
       classicLastAt: 2,
+      classicOpened: 2,
       aiSolves: 2,
       aiAttempts: 2,
       aiPoints: 2,
       aiSolved: 2,
       aiSolveCount: 2,
       aiLastAt: 2,
+      aiOpened: 2,
       aiNonces: 2,
       aiLaunchKey: 2,
       activity: 2,
       sponsors: 2,
       sponsorsLogo: 2,
+      adjustments: 2,
     });
     expect(out.resetAt).toMatch(/^\d+$/);
 
-    // one SCAN + one DEL per prefix (27 prefixes) = 54 pipeline calls
+    // one SCAN + one DEL per prefix (30 prefixes) = 60 pipeline calls
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(27);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(27);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(30);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(30);
     // every wiped prefix, and NOT settings/audit/sync
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
@@ -157,24 +160,27 @@ describe("resetEvent", () => {
       "ctf:classic:solved",
       "ctf:classic:solvecount",
       "ctf:classic:lastAt",
+      "ctf:classic:opened:*",
       "ctf:ai:solves:*",
       "ctf:ai:attempts:*",
       "ctf:ai:points",
       "ctf:ai:solved",
       "ctf:ai:solvecount",
       "ctf:ai:lastAt",
+      "ctf:ai:opened:*",
       "ctf:ai:nonce:*",
       "ctf:ai:launchkey",
       "ctf:activity:log",
       "ctf:sponsors",
       "ctf:sponsors:logo",
+      "ctf:adjustments",
     ]);
 
     // the freeze + audit eval: settings + audit keys, and a reset audit line
     expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(script).toContain("'paused', '1'");
-    expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit"]);
+    expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit", "ctf:admin:pauses"]);
     expect(args[0]).toBe("alice"); // actor
     const auditLine = JSON.parse(String(args[3]));
     expect(auditLine).toMatchObject({ by: "alice", action: "reset", cleared: { solves: 2, teams: 2 } });
@@ -187,6 +193,18 @@ describe("resetEvent", () => {
     await resetEvent("alice");
     const [script] = mocks.upstashEval.mock.calls[0];
     expect(script).toMatch(/redis\.call\('HDEL', KEYS\[1\], 'scoringStartsAt'\)/);
+  });
+
+  // The reset starts a fresh pause log: the old event's intervals go, and the
+  // freeze the reset sets is open from the reset instant.
+  it("clears the pause log and opens the reset's own freeze in the same eval", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [[]]));
+    await resetEvent("alice");
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(keys[2]).toBe("ctf:admin:pauses");
+    expect(script).toMatch(/redis\.call\('DEL', KEYS\[3\]\)/);
+    expect(script).toContain("'pausedSince', ARGV[2]");
+    expect(typeof args[1]).toBe("string");
   });
 
   it("wipes quiz answers and attempts", async () => {

@@ -779,6 +779,50 @@ module, and three things read it as the answer.
 `ctf-setup.sh` reads it the same way: with no `SCORE_IMAGE` it skips every
 fork, mirror and poll step instead of failing.
 
+**Every script reads the same subset of compose's `.env` syntax, and refuses
+the rest.** `ctf-setup.sh`, `scripts/dev-stack` and both Fly scripts share
+one reader, `scripts/lib/dotenv.sh`, so they cannot disagree with each other
+about the same file. Within the subset below, each value is read exactly as
+`docker compose` reads it:
+
+- **Empty values.** `SCORE_IMAGE=`, `SCORE_IMAGE=""` and `SCORE_IMAGE=''` are
+  all empty, which means no Secure Development, everywhere.
+- **Quotes.** Quotes are stripped, and a `#` inside them is part of the
+  value.
+- **`export` and spacing.** A leading `export `, `KEY = value` and
+  `KEY: value` all count as assignments.
+- **Comments.** An unquoted value ends at the first ` #`, a space followed by
+  `#`. One compose quirk carries over on purpose: in `SCORE_IMAGE= # none`
+  the `#` is not preceded by a space once the value is trimmed, so the value
+  is `# none`, which is not empty. Leave the value blank, or write `""`.
+- **Line endings.** Windows (CRLF) line endings read the same as Unix ones.
+- **Repeated keys.** The last assignment of a key wins, even when it is
+  empty.
+
+Some things compose reads differently on purpose, and the reader **refuses**
+them. The command stops with an error naming the key and the file, never the
+value, and does not guess. An empty value would switch Secure Development off,
+and the literal text of an expression would switch it on.
+
+- **Interpolation**, outside single quotes: `$NAME`, `${NAME:-default}` and
+  the `$$` escape. Compose fills these in from your shell; the scripts do not,
+  so write the literal value. A `$` that compose leaves alone is fine, such as
+  `pa$5word`, a trailing `$`, or anything inside single quotes.
+- **Backslash escapes inside double quotes**, such as `\n` or `\"`, and `\'`
+  inside single quotes. Compose interprets them and the scripts do not. Use
+  single quotes (without `\'`), or no quotes.
+- **An unterminated quote.** Compose carries a double-quoted value on to the
+  next lines; the scripts read one line per key.
+- **An env file that exists but cannot be read**, because of its permissions
+  or because it is a directory. A file that does not exist reads as "not set".
+
+`test/fixtures/dotenv-corpus.env` holds every accepted case, each checked
+against `docker compose config`, and
+`test/fixtures/dotenv-corpus-rejected.env` holds every refused one. A
+differential test also has `docker compose config` read every generated
+combination of key form, value form, line ending and duplicate key, and fails
+if the scripts would read any of them differently.
+
 ### What `/admin` owns
 
 Everything below is a runtime setting in `ctf:admin:settings`, changed from the

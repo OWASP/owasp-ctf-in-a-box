@@ -57,9 +57,9 @@ image_refs() {
         q = substr(v, 1, 1)
         if (q == "\"" || q == "\047") { v = substr(v, 2); i = index(v, q); if (i) v = substr(v, 1, i - 1) }
         else sub(/[ \t].*$/, "", v)
-        sub(/^\$\{[A-Za-z_][A-Za-z0-9_]*:-/, "", v)
+        if (sub(/^\$\{[A-Za-z_][A-Za-z0-9_]*:-/, "", v)) sub(/\}$/, "", v)
         if (v != "" && v !~ /\$/ && v !~ /^[0-9]+$/) {
-          if (v ~ /@sha256:[0-9a-f]{64}/) state = "pinned"
+          if (v ~ /@sha256:[0-9a-f]{64}$/) state = "pinned"
           else if (above ~ /^[ \t]*# pins: [^ \t]/) state = "exempt"
           else state = "unpinned"
           a = cmd; sub(/^[ \t]+/, "", a)
@@ -67,7 +67,7 @@ image_refs() {
         }
       }
       if (cmd !~ /docker[ \t]+(run|pull|create)([ \t]|$)/ && cmd !~ /^[ \t]*(-[ \t]+)?image:/) next
-      if (cmd ~ /(^|[ \t"])[^= \t"]+@sha256:[0-9a-f]{64}/) state = "pinned"
+      if (cmd ~ /(^|[ \t"])[^= \t"]+@sha256:[0-9a-f]{64}([ \t"\047}]|$)/) state = "pinned"
       else if (above ~ /^[ \t]*# pins: [^ \t]/) state = "exempt"
       else if (cmd ~ /^[ \t]*(-[ \t]+)?image:[ \t]*(\$\{|!reset[ \t]+null)/) state = "exempt"
       else state = "unpinned"
@@ -116,6 +116,9 @@ unpinned_images() {
     echo "IMAGE=''"                                                       # 30 not an image (empty)
     echo "IMAGE='alpine'"                                                 # 31 flagged (bare name = latest)
     echo "IMAGE=repo$digest docker run alpine"                            # 32 pinned AND flagged (two refs)
+    echo 'IMAGE=${APP_IMAGE:-}'                                           # 33 not an image (empty default)
+    echo "IMAGE=alpine${digest}junk"                                      # 34 flagged (digest must end it)
+    echo "docker run alpine${digest}junk"                                 # 35 flagged (digest must end it)
   } > "$f"
   exempt="$(image_refs "$f" | grep -E '^[^:]+:[0-9]+:exempt: ' | cut -d: -f2 | tr '\n' ' ')"
   echo "exempt lines: '$exempt' (want '12 17 18 26 ')"
@@ -123,8 +126,8 @@ unpinned_images() {
   flagged="$(unpinned_images "$f" | cut -d: -f2 | tr '\n' ' ')"
   states="$(image_refs "$f" | cut -d: -f2,3 | tr '\n' ' ')"
   echo "all: $states"
-  echo "flagged lines: '$flagged' (want '1 2 3 4 8 14 16 19 20 24 28 31 32 ')"
-  [ "$flagged" = "1 2 3 4 8 14 16 19 20 24 28 31 32 " ] || return 1
+  echo "flagged lines: '$flagged' (want '1 2 3 4 8 14 16 19 20 24 28 31 32 34 35 ')"
+  [ "$flagged" = "1 2 3 4 8 14 16 19 20 24 28 31 32 34 35 " ] || return 1
   pinned="$(image_refs "$f" | grep -E '^[^:]+:[0-9]+:pinned: ' | cut -d: -f2 | tr '\n' ' ')"
   echo "pinned lines: '$pinned' (want '5 15 21 32 ')"
   [ "$pinned" = "5 15 21 32 " ]

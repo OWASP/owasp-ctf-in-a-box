@@ -15,7 +15,7 @@ export type Story = {
   steps: string[];
 };
 
-export type StoryPosition = {
+type StoryPosition = {
   /** The step's own challenge id. */
   id: string;
   storyId: string;

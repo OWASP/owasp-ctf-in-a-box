@@ -45,7 +45,7 @@ export type ModuleInventory = {
   unlisted?: number;
 };
 
-export type SetupStepStatus = "done" | "todo" | "unknown";
+type SetupStepStatus = "done" | "todo" | "unknown";
 
 /** What the panel can honestly say about one step. `null` for a step that
  *  declares no `check` — nothing to say, so nothing is shown. `"unknown"`

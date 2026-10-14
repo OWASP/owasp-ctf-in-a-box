@@ -60,7 +60,7 @@ export async function serveEventImage(slot: EventImageSlot, request: Request): P
  *  hex and is sent back as-is (the sponsor route's format), so a client that
  *  echoes the header verbatim matches too. Weak comparison, as RFC 9110 asks
  *  of If-None-Match. */
-export function etagMatches(header: string | null, etag: string): boolean {
+function etagMatches(header: string | null, etag: string): boolean {
   if (!header) return false;
   if (header.trim() === "*") return true;
   const tags = header.match(/(?:W\/)?"[^"]*"|[^\s,]+/g) ?? [];

@@ -1,7 +1,7 @@
 // Small OWASP category badge. When the code maps to a known OWASP page it
 // renders as a link (new tab) to that Top-10 / API-Top-10 category; otherwise
 // it's plain text. THE single implementation, shared by the per-app challenge
-// breakdown (app-challenge-list.tsx) and the catalogue grid
+// breakdown (progress/challenge-list.tsx) and the catalogue grid
 // (challenge-grid.tsx) so the link, the label and the styling stay in one
 // place — those two surfaces each carried their own copy until they drifted:
 // one had the WCAG 2.5.8 pointer target, the other had a different title and

@@ -291,12 +291,8 @@ describe("revealHint", () => {
   // so switching hints off blocked buying but left the hint buttons on the
   // challenges page and the penalty column on the leaderboard.
   it("turns OFF every read path, not just purchasing, when the organizer switches hints off", async () => {
-    // `getHintAvailability` swallows ANY error into `return {}`, and it reads
-    // through `fetch` rather than the mocked pipeline — so asserting only on
-    // its {} result passes even when the gate is missing and the un-mocked
-    // fetch blows up. Spy on fetch and on console.error so the assertions
-    // distinguish "refused because hints are off" from "tried and failed".
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("must not be called"));
+    // Spy on console.error so the assertions distinguish "refused because
+    // hints are off" from "tried and failed".
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const off = await loadStore(false, { creds: true });
@@ -308,13 +304,10 @@ describe("revealHint", () => {
         count: 0,
       });
       expect(await off.getHintPenalties()).toEqual(new Map());
-      expect(await off.getHintAvailability()).toEqual({});
-      // The decisive assertions: no read was even attempted, by either client.
+      // The decisive assertion: no read was even attempted.
       expect(mocks.upstashPipeline).not.toHaveBeenCalled();
-      expect(fetchSpy).not.toHaveBeenCalled();
       expect(consoleError).not.toHaveBeenCalled();
     } finally {
-      fetchSpy.mockRestore();
       consoleError.mockRestore();
     }
   });
@@ -1223,32 +1216,6 @@ describe("getHintPenalties", () => {
     const store = await loadStore();
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "WRONGTYPE" }]);
     await expect(store.getHintPenalties()).rejects.toThrow(/hint penalties/);
-  });
-});
-
-describe("getHintAvailability", () => {
-  // It reads nothing now, and that is the fix (issue #334). `apps` is the
-  // secure-development target list, so this function only ever described that
-  // module — and nothing in the kit writes a `hints:<app>` field: not the
-  // scorer, not the admin panel, not the rubrics. #313 fixed the transport
-  // (an srh 404 on a path-style GET) and the tests here pinned the corrected
-  // pipeline read; what neither caught is that there was never a producer on
-  // the other end, so a working read could only ever come back empty while
-  // /challenges reported that to contestants as news.
-  it("returns {} without touching Redis", async () => {
-    const store = await loadStore();
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    expect(await store.getHintAvailability()).toEqual({});
-    // The point of the change: no read at all, by either client.
-    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("returns {} with hints switched off too, still without reading", async () => {
-    const store = await loadStore(false);
-    expect(await store.getHintAvailability()).toEqual({});
-    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 });
 

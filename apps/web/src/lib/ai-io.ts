@@ -58,7 +58,7 @@ export const AI_BUNDLE_VERSION = 1;
 /** Upper bound on a carried signing key. Minted keys are `aik_` + 43 chars;
  *  this only exists so a hand-edited bundle cannot smuggle a megabyte into a
  *  hash field. */
-export const AI_SIGNING_KEY_MAX = 512;
+const AI_SIGNING_KEY_MAX = 512;
 
 export type AiBundleChallenge = {
   id: string;
@@ -318,10 +318,4 @@ export function parseBundle(raw: string): ParseResult {
   });
 
   return { ok: true, bundle: { version: AI_BUNDLE_VERSION, categories, challenges } };
-}
-
-/** Indented, not minified — an organizer edits this file by hand. Ends in a
- *  trailing newline, like every other text file in the repo. */
-export function serializeBundle(bundle: AiBundle): string {
-  return JSON.stringify(bundle, null, 2) + "\n";
 }

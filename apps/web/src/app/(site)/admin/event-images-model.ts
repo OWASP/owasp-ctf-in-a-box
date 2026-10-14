@@ -80,14 +80,14 @@ export async function prepareUpload(
  *  overlapping writes to one slot could land out of order in Redis. Nothing
  *  is editable until the first read lands (`loaded`), so a slow first read
  *  can never overwrite what an upload just saved. */
-export type ImagesState = {
+type ImagesState = {
   images: EventImagesMeta;
   loaded: boolean;
   loadError: string | null;
   busy: Record<EventImageSlot, boolean>;
 };
 
-export type ImagesAction =
+type ImagesAction =
   | { type: "loaded"; images: EventImagesMeta }
   | { type: "load-failed"; message: string }
   | { type: "start"; slot: EventImageSlot }

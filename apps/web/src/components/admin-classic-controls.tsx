@@ -140,7 +140,7 @@ export { ChallengeForm } from "@/components/admin-classic-form";
 
 type NumericSettingKey = "classicCooldownSec";
 
-export type AdminClassicControlsProps = {
+type AdminClassicControlsProps = {
   /** Parent-wide "a settings POST is in flight" flag — shared with every
    *  other section's inputs, same as the quiz retry knobs. */
   pending: boolean;

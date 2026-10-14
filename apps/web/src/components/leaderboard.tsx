@@ -30,7 +30,7 @@ type SortKey = "points" | "solved";
  *  query. The bare query on a board with nobody scored draws the podium
  *  ("empty"); a typed query with nothing to match falls through to
  *  no-match, same as a populated board with zero hits. */
-export type IndividualBoardState = "empty" | "no-match" | "list";
+type IndividualBoardState = "empty" | "no-match" | "list";
 export function individualBoardState(
   entryCount: number,
   query: string,
@@ -44,8 +44,8 @@ export function individualBoardState(
 /** View plus whichever row is expanded. Switching views always closes
  *  whatever row is open: a team row shares its key space with the
  *  individual rows, so carrying the slug over reopens the wrong row. */
-export type BoardUi = { view: View; expanded: string | null };
-export type BoardUiAction =
+type BoardUi = { view: View; expanded: string | null };
+type BoardUiAction =
   | { type: "switchView"; view: View }
   | { type: "toggleRow"; key: string };
 export function boardUiReducer(state: BoardUi, action: BoardUiAction): BoardUi {

@@ -51,7 +51,7 @@ export class SponsorValidationError extends Error {
   }
 }
 
-export type SponsorLogo = {
+type SponsorLogo = {
   type: "image/png" | "image/webp" | "image/jpeg";
   bytes: number;
   w: number;
@@ -83,7 +83,7 @@ export type SponsorInput = {
  *  friendlier error message on an obvious SVG upload before the byte sniff
  *  runs — every actual accept/reject decision below reads the decoded bytes,
  *  never `declaredType` or a filename. */
-export type SponsorLogoInput = { data: string; declaredType?: string };
+type SponsorLogoInput = { data: string; declaredType?: string };
 
 // Plain text only — no C0 control characters, no Unicode bidi
 // override/isolate characters (U+202A-U+202E, U+2066-U+2069), mirroring

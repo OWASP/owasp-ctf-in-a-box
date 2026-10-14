@@ -930,7 +930,7 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 | `BETTER_AUTH_SECRET` | `lib/auth.ts` | required | Session-signing secret. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | `lib/auth.ts` | required | The sign-in OAuth app (not the poll GitHub App). |
 | `ALLOW_INSECURE_EVENT_URL` | `instrumentation.ts` | unset | `1` downgrades the `http://` non-loopback refusal to a start-up warning. TLS-less closed networks only. |
-| `LEADERBOARD_SOURCE` | `lib/leaderboard/source.ts` | *fixed*: `lambda` | `mock` / `lambda` / `upstash`. With `secure-development` disabled the mode is forced to `empty` (no scorer read; the board is built from the module overlays alone); an unknown value falls back to `mock` with a warning. |
+| `LEADERBOARD_SOURCE` | `lib/leaderboard/source.ts` | *fixed*: `lambda` | `mock` / `lambda`. With `secure-development` disabled the mode is forced to `empty` (no scorer read; the board is built from the module overlays alone); an unknown value falls back to `mock` with a warning. |
 | `LEADERBOARD_API_URL` | `lib/challenges.ts`, `lib/leaderboard/lambda.ts` | *fixed*: `http://scorer:4000` | Scorer base URL for the challenge catalogue and the board. |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | `lib/upstash.ts`; also `scorer/src/store.js`, `sync/src/redis.js` | *fixed*: `http://srh:80`, `SRH_TOKEN` | Redis-over-REST endpoint. Hints, teams, admin settings and module content live behind it. |
 | `TEAM_WRITES_ENABLED` | `lib/team-store.ts` | *fixed*: `"true"` | Enables team create/join writes; off in mock mode. |

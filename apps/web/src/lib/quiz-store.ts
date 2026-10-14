@@ -616,7 +616,7 @@ function foldTeamAnswers(memberReplies: ({ result?: unknown; error?: string } | 
   return { points, answered: completed, lastAt, itemIds };
 }
 
-export type QuizGate =
+type QuizGate =
   | { allowed: true }
   | {
       allowed: false;

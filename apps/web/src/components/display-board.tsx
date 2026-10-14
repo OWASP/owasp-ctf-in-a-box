@@ -17,7 +17,7 @@ import { useRouter } from "next/navigation";
 import DisplayClock from "@/components/display-clock";
 import type { SponsorLogoSize } from "@/lib/sponsors-keys";
 
-export type DisplayRow = {
+type DisplayRow = {
   key: string;
   rank: number;
   name: string;
@@ -32,7 +32,7 @@ export type DisplayRow = {
  *  clicks. `logoSrc` points at the public logo route (issue #405); `w`/`h`
  *  are the stored intrinsic dimensions, so the row lays out without a
  *  layout shift while a logo loads. */
-export type DisplaySponsor = {
+type DisplaySponsor = {
   key: string;
   name: string;
   logoSrc: string | null;

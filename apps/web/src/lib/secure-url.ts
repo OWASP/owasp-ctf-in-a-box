@@ -12,7 +12,7 @@
 // correct for a local trial and catastrophic if an organizer edits the host
 // and not the scheme — a one-token mistake with no visible symptom.
 
-export type UrlVerdict = {
+type UrlVerdict = {
   level: "ok" | "warn" | "fail";
   /** Empty when `ok`. Written to be read in a container log, so it names the
    *  variable, the value, and the fix rather than describing a category. */

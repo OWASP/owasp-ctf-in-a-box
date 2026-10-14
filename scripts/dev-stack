@@ -242,10 +242,10 @@ challenge_ids_json() {
 #
 # Note on schema: the app's LEADERBOARD_SOURCE is "lambda" in docker-compose.yml,
 # which reads scorer's HTTP /leaderboard (backed by ctf:solves:<target> hashes),
-# NOT the ZADD leaderboard / HSET team:<login> zset+hash schema. That schema
-# belongs to LEADERBOARD_SOURCE=upstash, written by a different, external
-# pusher (see apps/web/src/lib/leaderboard/upstash.ts's own comment) that this
-# repo's scorer does not implement. Seeding through the real /score endpoint
+# NOT a ZADD leaderboard / HSET team:<login> zset+hash schema. That zset+hash
+# shape belongs to no source the app ships (LEADERBOARD_SOURCE accepts "mock"
+# or "lambda"); it is written by a different, external pusher that this repo's
+# scorer does not implement. Seeding through the real /score endpoint
 # is what actually renders under the compose file as shipped.
 submit_solves() {
   local login="$1" target="$2" count="$3" ids_json status n

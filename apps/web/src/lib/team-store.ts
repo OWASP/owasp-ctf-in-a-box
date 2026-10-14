@@ -57,9 +57,9 @@ export { TEAM_MAX_MEMBERS } from "@/lib/team-limits";
 const NAME_MAX_LENGTH = 32;
 const NOT_AVAILABLE_IN_DEMO_MODE = "Not available in demo mode";
 
-export type TeamActionResult = { ok: true; team: string | null } | { ok: false; error: string };
+type TeamActionResult = { ok: true; team: string | null } | { ok: false; error: string };
 
-export type JoinCodeResult = { ok: true; team: string; code: string } | { ok: false; error: string };
+type JoinCodeResult = { ok: true; team: string; code: string } | { ok: false; error: string };
 
 export type TeamInfo = {
   slug: string;

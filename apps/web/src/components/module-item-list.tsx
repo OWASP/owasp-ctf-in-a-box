@@ -1,7 +1,7 @@
 "use client";
 
 // Collapsible per-item list for the app-side modules' profile blocks — the
-// quiz and classic counterpart of AppChallengeList, so "which ones have I
+// quiz and classic counterpart of AppBreakdown, so "which ones have I
 // done" reads the same on every module: a Show/Hide toggle, then check-dot
 // rows. Client Component because it's pure local expand/collapse state —
 // collapsed by default, same as the target lists.

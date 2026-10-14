@@ -210,16 +210,13 @@ state; everything else that touches scores goes through it.
    the row's `−N hints` marker is what reconciles them against the netted
    header. (The fold used to run first, netting scorer points alone, which
    made hints free for any row whose points arrive later: a classic- or
-   quiz-only contestant, or an upstash-path team.) Ranking
+   quiz-only contestant.) Ranking
    itself (`src/lib/leaderboard/rank.ts`'s `compareStanding`) is: combined
    points descending, then items completed **across modules** descending,
    then earliest last-activity ascending (#522 — until v0.7 items came
    first), with a `patched`/`lastSolveAt` fallback for sources that carry no
-   per-module data (e.g. the legacy Upstash-schema source). Teams rank on
-   points too, so the two views agree. The Upstash source hands back rows
-   ordered by points descending (`ZRANGE`); points-first keeps that order and
-   only breaks its ties on `patched`, the same way as on the lambda and mock
-   sources. An
+   per-module data. Teams rank on
+   points too, so the two views agree. An
    expanded leaderboard row then renders each enabled module's own detail
    block (`components/module-detail.tsx` switches on `moduleId` — a
    `secure-development` row shows the existing per-target breakdown, and a
@@ -1114,8 +1111,9 @@ the same pattern `/api/admin/reset` already used.
 **Known limitation: the hint toggle is only live at the reveal boundary.**
 `resolveHintConfig()` is the single answer to "are hints on right now",
 and every hint read path goes through it: `revealHint`/`hintGate` (the
-purchase boundary), `getHintAvailability` (the challenges-page button and
-its notice banner), `getViewerHints` (the profile tile and `/api/hints`),
+purchase boundary), `getHintNotice` and `getClassicHintIds`/`getAiHintIds`
+(the boards' paid-hint notice and 💡 purchase affordance),
+`getViewerHints` (the profile tile and `/api/hints`),
 and `getHintPenalties` (the read-time leaderboard penalty). Flipping
 `hintsEnabled` in `/admin` therefore changes all of them on the next
 request, with no rebuild and no restart.

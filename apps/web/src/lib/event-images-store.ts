@@ -41,7 +41,7 @@ export class EventImageValidationError extends Error {
 
 /** A raw upload: base64 bytes plus the type the browser claimed, which only
  *  sharpens a refusal message and never decides acceptance. */
-export type EventImageInput = { data: string; declaredType?: string };
+type EventImageInput = { data: string; declaredType?: string };
 
 export type { EventImagesBundle };
 
@@ -57,7 +57,7 @@ const SNIFF_MESSAGES = {
 
 /** Decodes and validates one upload for one slot. Throws
  *  `EventImageValidationError`; touches nothing. */
-export function validateEventImage(slot: EventImageSlot, input: EventImageInput): { bytes: Buffer; meta: EventImageMeta } {
+function validateEventImage(slot: EventImageSlot, input: EventImageInput): { bytes: Buffer; meta: EventImageMeta } {
   const label = LABEL[slot];
   const fail = (message: string): never => {
     throw new EventImageValidationError(slot, `The ${label} ${message}`);

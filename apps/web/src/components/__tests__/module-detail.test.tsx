@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 // No next/image mock: nothing under ModuleDetail (AppBreakdown →
-// AppChallengeList → OwaspBadge) renders one, so the stub the other
+// ChallengeList → OwaspBadge) renders one, so the stub the other
 // component tests need would be dead here — and its `<img>` was the file's
 // one lint finding.
 import ModuleDetail from "@/components/module-detail";

@@ -3,7 +3,6 @@ import { isModuleLive } from "@/lib/enabled-modules";
 import type { LeaderboardData, UserProfile } from "./types";
 import { mockSource } from "./mock";
 import { lambdaSource } from "./lambda";
-import { upstashSource } from "./upstash";
 import { emptySource } from "./empty";
 
 export interface LeaderboardSource {
@@ -16,21 +15,19 @@ export interface LeaderboardSource {
  *  - "mock"    (default) — local fixture shaped like the proposed v2 API.
  *  - "lambda"  — the deployed Lambda's `GET /leaderboard` (live scoring;
  *                per-app solved/total, no per-challenge or point breakdown).
- *  - "upstash" — direct read of the CURRENT real Upstash schema (read-only
- *                token) — aggregates only, no teams, no per-app breakdown.
  *
  * An event with no scored module (`secure-development` disabled) ignores the
  * variable entirely and resolves to the "empty" mode — see
  * getLeaderboardSourceMode and ./empty.ts.
  */
-const VALID_MODES = ["mock", "lambda", "upstash"] as const;
+const VALID_MODES = ["mock", "lambda"] as const;
 
 /** The modes an organizer can actually configure. */
 type ConfiguredMode = (typeof VALID_MODES)[number];
 
 /** …plus "empty", which is never configured: it is what an event with no
  *  scored module resolves to regardless of what `LEADERBOARD_SOURCE` says. */
-export type LeaderboardSourceMode = ConfiguredMode | "empty";
+type LeaderboardSourceMode = ConfiguredMode | "empty";
 
 function isValidMode(value: string | undefined): value is ConfiguredMode {
   return (VALID_MODES as readonly string[]).includes(value ?? "");
@@ -70,8 +67,6 @@ export async function getLeaderboardSource(): Promise<LeaderboardSource> {
   switch (await getLeaderboardSourceMode()) {
     case "lambda":
       return lambdaSource;
-    case "upstash":
-      return upstashSource;
     case "mock":
       return mockSource;
     case "empty":

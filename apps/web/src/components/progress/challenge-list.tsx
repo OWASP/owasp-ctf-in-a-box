@@ -38,7 +38,7 @@ export type ProgressItem = {
   group?: string | null;
 };
 
-export type ItemGroup = {
+type ItemGroup = {
   /** null for an ungrouped module: one anonymous bucket, no headers. */
   name: string | null;
   items: ProgressItem[];

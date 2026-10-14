@@ -19,7 +19,7 @@ import AdminNumberField, { type FieldStatus } from "@/components/admin-number-fi
 import AdminSwitch from "@/components/admin-switch";
 import type { CommitNumber } from "./types";
 
-export type AdminHintsTabProps = {
+type AdminHintsTabProps = {
   settings: AdminSettings;
   pending: boolean;
   /** A write that belongs to one row, reported beside it (Saving… / Saved /

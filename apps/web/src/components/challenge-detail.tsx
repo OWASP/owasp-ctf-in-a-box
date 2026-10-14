@@ -64,12 +64,12 @@ export type SubmitResponse =
 
 /** The ai module's transport: a Server Action bound to the challenge id,
  *  taking the typed flag and returning the same shape the fetch path parses. */
-export type SubmitAction = (flag: string) => Promise<SubmitResponse>;
+type SubmitAction = (flag: string) => Promise<SubmitResponse>;
 
 /** WHERE a submission goes, as a union so each module passes exactly one and
  *  neither can pass both. Classic's call sites are unchanged by construction:
  *  `submitPath` alone still type-checks. */
-export type SubmitTarget =
+type SubmitTarget =
   | { submitPath: string; submitAction?: never }
   | { submitPath?: never; submitAction: SubmitAction };
 

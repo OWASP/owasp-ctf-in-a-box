@@ -16,7 +16,7 @@ import { useState } from "react";
 import type { ChangeEvent } from "react";
 import { MODULE_TITLE_MAX, MODULE_BLURB_MAX } from "@/lib/modules";
 
-export type AdminModuleIdentityProps = {
+type AdminModuleIdentityProps = {
   moduleId: string;
   /** Registry defaults (displayName/description) — shown as placeholders,
    *  never as the field value, so clearing the override is discoverable. */

@@ -112,7 +112,7 @@ export function randomIdSuffix(random: () => number = Math.random): string {
   return out;
 }
 
-export function slugifyTitle(title: string): string {
+function slugifyTitle(title: string): string {
   return title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

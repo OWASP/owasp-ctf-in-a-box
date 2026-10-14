@@ -17,9 +17,9 @@ import { getLaunchAccess } from "@/lib/launch";
 import { isLocked, storyPositions } from "@/lib/story-lock";
 import { hasTeam } from "@/lib/team-store";
 
-export type ClassicVisibilityState = "visible" | "module-off" | "not-launched" | "teamless" | "missing" | "locked";
+type ClassicVisibilityState = "visible" | "module-off" | "not-launched" | "teamless" | "missing" | "locked";
 
-export type ClassicVisibility = {
+type ClassicVisibility = {
   state: ClassicVisibilityState;
   /** An admin through only because the event is not launched (#464). */
   preview: boolean;

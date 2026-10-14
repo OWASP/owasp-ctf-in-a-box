@@ -56,7 +56,7 @@ import type { EventImportSummary } from "@/lib/event-store";
 import ConfirmModal from "@/components/confirm-modal";
 import { FILE_READ_ERROR } from "@/components/admin/use-bundle-import";
 
-export type AdminEventControlsProps = {
+type AdminEventControlsProps = {
   /** Test/first-paint seed only — lets a static-render test observe the
    *  import button's `canImport` gating (and the client-side validation
    *  errors under it) without a browser to paste into. Mirrors

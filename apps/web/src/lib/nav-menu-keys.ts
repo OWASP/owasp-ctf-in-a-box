@@ -11,7 +11,7 @@
 
 /** What a keypress should do. `nav-dropdown.tsx` is the only thing that
  *  interprets these — everything here is inert data. */
-export type MenuKeyAction =
+type MenuKeyAction =
   | { type: "open"; focusIndex: number }
   | { type: "focus"; index: number }
   | { type: "close" }

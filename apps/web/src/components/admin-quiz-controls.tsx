@@ -108,7 +108,7 @@ export * from "@/components/admin-quiz-model";
 
 type NumericSettingKey = "quizMaxAttempts" | "quizRetryAfterMin";
 
-export type AdminQuizControlsProps = {
+type AdminQuizControlsProps = {
   /** Parent-wide "a settings POST is in flight" flag — shared with every
    *  other section's inputs, same as the hint knobs. */
   pending: boolean;

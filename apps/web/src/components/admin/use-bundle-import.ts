@@ -44,7 +44,7 @@ export type BundleParse = { ok: true } | { ok: false; errors: ImportError[] };
 
 /** The counts a successful import reply carries. `categories` is classic's,
  *  and so is `stories` — sent only for a v2 bundle (#463). */
-export type ImportReply = { created?: number; updated?: number; categories?: number; stories?: number };
+type ImportReply = { created?: number; updated?: number; categories?: number; stories?: number };
 
 /** The client-side gate on the Import button. Convenience only — the server
  *  re-validates the raw text regardless — and skipped entirely on an empty
@@ -75,7 +75,7 @@ export function downloadJson(text: string, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export type BundleImportState<Summary> = {
+type BundleImportState<Summary> = {
   text: string;
   /** Replaces the textarea's text and retires any stale summary or error. */
   setText: (value: string) => void;

@@ -129,7 +129,7 @@ export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<M
   return blocks;
 }
 
-export type ModuleRow = { done: number; total: number; unit: string; earned: number; max: number };
+type ModuleRow = { done: number; total: number; unit: string; earned: number; max: number };
 
 /** One module's row numbers: its own unit word, its clamped done/total pair,
  *  and its earned/available points.

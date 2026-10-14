@@ -24,7 +24,7 @@ import AdminSettingsCard, { type ModuleSettingsSlot } from "@/components/admin/s
 import AdminTargetList from "./admin-target-list";
 import type { CommitNumber } from "./types";
 
-export type AdminSecureDevTabProps = {
+type AdminSecureDevTabProps = {
   settings: AdminSettings;
   pending: boolean;
   apply: (patch: Record<string, unknown>) => Promise<boolean>;

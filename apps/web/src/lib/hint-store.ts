@@ -24,14 +24,12 @@ export { getHintNotice, getHintPenalties, HINTS_AVAILABLE, resolveHintConfig } f
 
 /**
  * Paid hints — for `classic` and `ai`. **Secure Development has none**, and
- * cannot: no code path in this kit writes a `hints:<app>` field. The comment
- * here used to call those hashes "scorer-owned", but the scorer has no concept
- * of a hint at all (`grep -rni hint scorer/src/` is empty), so availability for
- * secure-development targets was always empty and `/challenges` told every
- * contestant "no challenge is offering one yet" — permanently (issue #334).
- * Rather than leave the machinery pointed at a producer that does not exist,
- * secure-development is out of the availability read; if hint text ever gains
- * an author, that is the decision to revisit, not this comment.
+ * cannot: no code path in this kit writes a `hints:<app>` field — not the
+ * scorer (it has no concept of a hint at all: `grep -rni hint scorer/src/`
+ * is empty), not the admin panel (`admin-secure-dev-tab.tsx` has no hint
+ * field), not the rubrics — so `/challenges` offers it no hint button or
+ * notice (#334). If hint text ever gains an author, that is the decision to
+ * revisit, not this comment.
  *
  * Purchases are recorded under the site's ctf: namespace, which
  * the scorer never rewrites, so penalties survive re-scores:
@@ -200,7 +198,7 @@ if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
 end
 return {'owned', hint, spent}`;
 
-export type RevealResult =
+type RevealResult =
   // `dryRun`: an admin-preview reveal (#464) — nothing was charged or recorded.
   // `cost` is the price THIS reveal resolved and charged the Lua with, so a
   // caller reports the amount actually deducted — never a second
@@ -239,7 +237,7 @@ async function countSolves(login: string, target: HintTarget): Promise<number> {
   return fields.filter((f) => f.toLowerCase().startsWith(prefix)).length;
 }
 
-export type HintGate =
+type HintGate =
   /** `balance` is present when the affordability gate ran (a priced hint,
    *  not a preview): the figures `revealHint` reports the resulting score from. */
   | { allowed: true; balance?: HintBalance }
@@ -577,7 +575,7 @@ async function attemptReveal(
   return { ok: false, error: "Hint reveal failed. Try again" };
 }
 
-export type ViewerHints = {
+type ViewerHints = {
   /** Bought hints with their texts, grouped by app and keyed by challenge id. */
   purchased: Partial<Record<AppId, Record<string, string>>>;
   /** Bought CLASSIC hints, keyed by challenge id (#190). */
@@ -633,25 +631,6 @@ export async function getViewerHints(login: string): Promise<ViewerHints> {
     spent,
     count: owned.length,
   };
-}
-
-/** Which challenge ids have a hint, per secure-development target.
- *
- *  **Always empty, and reads nothing.** `apps` is the secure-development target
- *  list, so this function only ever described that module — and no code path in
- *  this kit writes a `hints:<app>` field. Not the scorer (it has no concept of a
- *  hint), not the admin panel (`admin-secure-dev-tab.tsx` has no hint field),
- *  not the rubrics. The transport bug behind it was real and is fixed (#313),
- *  but there was never a producer on the other end, so the honest answer is
- *  "this module has no hints" rather than a live read that can only come back
- *  empty and a banner reporting that as news (#334).
- *
- *  Kept as a function, returning the same shape, so the decision is one edit
- *  away if secure-development hints ever gain an author — the three candidate
- *  designs are in #334. `classic` and `ai` hints are unaffected and are read
- *  by `getClassicHintIds` / `getAiHintIds` below. */
-export async function getHintAvailability(): Promise<Partial<Record<AppId, string[]>>> {
-  return {};
 }
 
 /** Which classic challenge ids have a hint — public shape (no text), for the

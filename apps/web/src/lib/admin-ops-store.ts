@@ -272,7 +272,7 @@ export async function lookupUser(rawLogin: string): Promise<UserDetail> {
 
 // --- progress reset ---------------------------------------------------------
 
-export type ResetScope = {
+type ResetScope = {
   /** Fields removed, per area. */
   cleared: Record<string, number>;
   /** Things the operator must know that the operation itself cannot fix. */

@@ -326,6 +326,19 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 - **Changed: `scripts/load-test.sh` deletes the seeder it uploaded** to the
   container's `/tmp` on every exit path, without changing the exit status.
 
+- **Changed: the pre-v0.7.0 audit's dead-code findings (#502).** Deletions
+  and de-exports with no behavior change: the orphaned `AppChallengeList` and
+  `HintNotice` components (neither has a caller), `getHintAvailability()` (it
+  always returned `{}`, and no code path in this kit writes `hints:<app>`),
+  the unsupported `LEADERBOARD_SOURCE=upstash` mode and its adapter (a `.env`
+  still naming it now warns and falls back to `mock`, like any unknown value),
+  and the `serializeBundle` helpers in `sponsors-io.ts` and `ai-io.ts` (no
+  export button uses them — only the classic and quiz bundles have one).
+  `sync`'s config drops its always-`"app"` `authMode` field, an unused local
+  in the seed test is gone, and 128 exports that nothing outside their own
+  file consumes lost the `export` keyword — audited symbol by symbol, keeping
+  every framework-required export, package entry point and real consumer.
+
 ## v0.7.0 — 2026-09-30
 
 ### Breaking changes

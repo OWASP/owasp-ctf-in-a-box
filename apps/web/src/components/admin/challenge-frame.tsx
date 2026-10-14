@@ -54,18 +54,18 @@ import type { AdminResource } from "@/components/admin/use-admin-resource";
 /** The row shape this frame reads on its own (id/title/category). Every
  *  module row is `{ challenge: {...} }` — see the `*_ROWS` accessors in the
  *  model files. */
-export type ChallengeRowShape = { challenge: { id: string; title: string; category: string } };
+type ChallengeRowShape = { challenge: { id: string; title: string; category: string } };
 
 /** What an editor looks like to the frame: a discriminated union, so the id
  *  is reachable only in the edit case — mirrors `ChallengeEditor` and
  *  `AiChallengeEditor`, which is what a panel passes. `draft` is `unknown`
  *  here and pinned to the module's own draft type through the form slot. */
-export type EditorSlot = { mode: "new"; draft: unknown } | { mode: "edit"; id: string; draft: unknown };
+type EditorSlot = { mode: "new"; draft: unknown } | { mode: "edit"; id: string; draft: unknown };
 
 /** The add/edit form slot — what `ChallengeForm` and `AiChallengeForm`
  *  already take, field for field. `onChange` carries the module's DRAFT (the
  *  form cannot touch the id or position — see each form's own comment). */
-export type ChallengeFormSlot<Editor extends EditorSlot> = {
+type ChallengeFormSlot<Editor extends EditorSlot> = {
   editor: Editor;
   categories: readonly string[];
   pending: boolean;
@@ -77,7 +77,7 @@ export type ChallengeFormSlot<Editor extends EditorSlot> = {
   onSubmit: () => void;
 };
 
-export type ChallengeFrameProps<Row extends ChallengeRowShape, Editor extends EditorSlot> = {
+type ChallengeFrameProps<Row extends ChallengeRowShape, Editor extends EditorSlot> = {
   /** The module screen's settings card slot (identity editor + Hints link);
    *  absent, `knob` renders bare — see components/admin/settings-card.tsx. */
   moduleSettings?: ModuleSettingsSlot;

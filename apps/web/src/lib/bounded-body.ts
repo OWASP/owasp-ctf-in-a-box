@@ -5,8 +5,8 @@
 // not "trusted with unbounded memory". "Too large" and "stream broke" are kept
 // apart so a caller answers 413 for one and 400 for the other.
 
-export type BoundedBytesResult = { ok: true; bytes: Uint8Array } | { ok: false; reason: "too_large" | "stream_error" };
-export type BoundedBodyResult = { ok: true; body: string } | { ok: false; reason: "too_large" | "stream_error" };
+type BoundedBytesResult = { ok: true; bytes: Uint8Array } | { ok: false; reason: "too_large" | "stream_error" };
+type BoundedBodyResult = { ok: true; body: string } | { ok: false; reason: "too_large" | "stream_error" };
 
 export async function readBoundedBytes(request: Request, maxBytes: number): Promise<BoundedBytesResult> {
   const reader = request.body?.getReader();

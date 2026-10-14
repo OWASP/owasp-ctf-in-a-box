@@ -15,12 +15,14 @@
 //   3. release sweep: claim every newly-public challenge (ALWAYS, even when
 //      announcements are off — so enabling later never replays history),
 //      enqueue only for claimed ones when the release switch is on; locked
-//      story steps are filtered out before any claim
+//      story steps and hidden challenges are filtered out before any claim
 //   4. board CAS: watch the top of the board, atomically advance the
 //      snapshot (ALWAYS, so enabling leaders later fires only on a real
 //      change), enqueue the leader announcement when this replica won a
 //      change AND the switch is on
-//   5. remaining-time marks and the daily summary: claim-then-enqueue
+//   5. remaining-time marks (claim ALWAYS, enqueue only when enabled — like
+//      the release sweep, so a mid-event enable cannot replay the past) and
+//      the daily summary: claim-then-enqueue
 //   6. outbox retry sweep + prune
 //
 // Nothing here ever logs a webhook URL or a message payload; failures go
@@ -34,6 +36,7 @@ import { defaultEnabledModules, secureDevAvailable } from "@/lib/module-defaults
 import { resolveTimeZone } from "@/lib/event-time";
 import { DEFAULT_EVENT_IDENTITY } from "@/lib/event-identity";
 import { listChallenges, listStories, getClassicTotals, getTeamClassicTotalsBatch } from "@/lib/classic-store";
+import { visibleChallenges } from "@/lib/classic-release";
 import { listQuestions, getQuizTotals, getTeamQuizTotalsBatch } from "@/lib/quiz-store";
 import { listAiChallenges, getAiTotals, getTeamAiTotalsBatch } from "@/lib/ai-store";
 import { listTeams } from "@/lib/team-store";
@@ -117,7 +120,7 @@ export async function runAnnounceTick(nowMs: number = Date.now()): Promise<void>
     const live = liveModuleIds(settings);
 
     if (settings) await tickLifecycle(config, settings, nowMs);
-    await tickReleases(config, live);
+    await tickReleases(config, live, nowMs);
     if (settings) await tickBoard(config, live);
     if (settings) await tickDaily(config, live, settings, nowMs);
     if (settings) await tickMilestones(config, settings, nowMs);
@@ -180,15 +183,21 @@ function liveModuleIds(settings: AdminSettings | null): ReadonlySet<ModuleId> {
   return resolved;
 }
 
+/** The event's display name, falling back to the kit default. */
 function eventName(settings: AdminSettings): string {
   const name = settings.eventIdentity.eventName;
   return name && name.trim() !== "" ? name : DEFAULT_EVENT_IDENTITY.eventName;
 }
 
+/** The event's clock (IANA zone), resolved to a zone Intl accepts. */
 function timeZone(settings: AdminSettings): string {
   return resolveTimeZone(settings.eventIdentity.eventTimeZone);
 }
 
+/** Lifecycle observation: derive this tick's snapshot, atomically advance
+ *  the stored one, and announce the edges this replica won — only for the
+ *  kinds the config switches allow. The state advances even when every kind
+ *  is off, so enabling later fires only on a real change. */
 async function tickLifecycle(config: DiscordFullConfig, settings: AdminSettings, nowMs: number): Promise<void> {
   try {
     const registrationOpen = effectiveRegistrationOpen(settings, nowMs);
@@ -217,12 +226,20 @@ async function tickLifecycle(config: DiscordFullConfig, settings: AdminSettings,
   }
 }
 
-/** The public items of every live module. Quiz prompts are public (the
- *  board renders them); they carry the question's `prompt` as the title and
- *  a fixed "Quiz" category. */
-async function collectReleasable(live: ReadonlySet<ModuleId>): Promise<{ items: ReleasableItem[]; stories: Awaited<ReturnType<typeof listStories>> }> {
+/** The public items of every live module, at `nowMs`. Quiz prompts are
+ *  public (the board renders them); they carry the question's `prompt` as
+ *  the title and a fixed "Quiz" category. Classic challenges are filtered
+ *  through the release predicate first: a hidden challenge is not public,
+ *  so the sweep must neither claim nor announce it. */
+async function collectReleasable(
+  live: ReadonlySet<ModuleId>,
+  nowMs: number = Date.now(),
+): Promise<{ items: ReleasableItem[]; stories: Awaited<ReturnType<typeof listStories>> }> {
   const [challenges, questions, aiChallenges, stories] = await Promise.all([
-    live.has("classic") ? listChallenges().catch(() => []) : Promise.resolve([]),
+    // `.then(visibleChallenges)` filters the classic list at the read site:
+    // a hidden challenge is not public, so the sweep must neither claim nor
+    // announce it (the same predicate every contestant reader uses).
+    live.has("classic") ? listChallenges().then((c) => visibleChallenges(c, nowMs)).catch(() => []) : Promise.resolve([]),
     live.has("quiz") ? listQuestions().catch(() => []) : Promise.resolve([]),
     live.has("ai") ? listAiChallenges().catch(() => []) : Promise.resolve([]),
     live.has("classic") ? listStories().catch(() => []) : Promise.resolve([]),
@@ -235,9 +252,13 @@ async function collectReleasable(live: ReadonlySet<ModuleId>): Promise<{ items: 
   return { items, stories };
 }
 
-async function tickReleases(config: DiscordFullConfig, live: ReadonlySet<ModuleId>): Promise<void> {
+/** The release sweep: claim every newly-public item (ALWAYS — an unclaimed
+ *  challenge is a replay waiting to happen the day the organizer enables
+ *  releases), then post only for the ones this caller won, and only when
+ *  releases are switched on and a webhook is configured. */
+async function tickReleases(config: DiscordFullConfig, live: ReadonlySet<ModuleId>, nowMs: number = Date.now()): Promise<void> {
   try {
-    const { items, stories } = await collectReleasable(live);
+    const { items, stories } = await collectReleasable(live, nowMs);
     const released = await ledgerFields(ANNOUNCE_RELEASED_KEY);
     const candidates = selectReleasable(items, stories, released);
     if (candidates.length === 0) return;
@@ -323,6 +344,10 @@ export async function observeBoardRows(live: ReadonlySet<ModuleId>, watchDepth: 
     .slice(0, watchDepth);
 }
 
+/** Board observation: derive the watched rows, atomically advance the
+ *  stored snapshot (always — enabling leaders later fires only on a real
+ *  change), and post the leader announcement when this replica won a change
+ *  AND the switch is on. */
 async function tickBoard(config: DiscordFullConfig, live: ReadonlySet<ModuleId>): Promise<void> {
   try {
     const current = await observeBoardRows(live);
@@ -342,6 +367,9 @@ async function tickBoard(config: DiscordFullConfig, live: ReadonlySet<ModuleId>)
   }
 }
 
+/** The daily summary: claim the event-local day, then post the top-N
+ *  board, the solves/releases deltas and the time left — switch + webhook
+ *  gated before any work. */
 async function tickDaily(config: DiscordFullConfig, live: ReadonlySet<ModuleId>, settings: AdminSettings, nowMs: number): Promise<void> {
   try {
     if (!config.webhookConfigured || !config.daily) return;
@@ -396,6 +424,8 @@ async function totalSolved(live: ReadonlySet<ModuleId>): Promise<number> {
 
 type DailySnapshot = { solves: number; released: number; at: string };
 
+/** The last daily baseline (solves + released counts), or null when there
+ *  is none or it cannot be read/parsed. */
 async function readDailySnapshot(): Promise<DailySnapshot | null> {
   const [res] = await upstashPipeline([["GET", ANNOUNCE_DAILY_SNAPSHOT_KEY]]);
   if (res.error || typeof res.result !== "string") return null;
@@ -409,28 +439,39 @@ async function readDailySnapshot(): Promise<DailySnapshot | null> {
   }
 }
 
+/** Stores the daily baseline. A failed write only understates the next
+ *  delta (the next fire re-seeds), so it logs and swallows. */
 async function writeDailySnapshot(snapshot: DailySnapshot): Promise<void> {
   const [res] = await upstashPipeline([["SET", ANNOUNCE_DAILY_SNAPSHOT_KEY, JSON.stringify(snapshot)]]);
   if (res.error) console.error("[announce] daily snapshot write failed:", errorLabel(new Error(res.error)));
 }
 
+/** Remaining-time marks. Claim-first, and the claims run even with the kind
+ *  switched OFF (and with no webhook): every crossed mark is claimed on the
+ *  tick that first sees it, so enabling milestones mid-event — or a box
+ *  restarting after several marks have passed — claims the history instead
+ *  of replaying it as a burst of "20m left" posts. Posting happens only for
+ *  a mark this caller claimed AND the switch + webhook allow, and only the
+ *  smallest crossed mark posts (the most precise time left), so one tick
+ *  never sends several time checks with the same remaining time. */
 async function tickMilestones(config: DiscordFullConfig, settings: AdminSettings, nowMs: number): Promise<void> {
   try {
-    if (!config.webhookConfigured || !config.milestones) return;
     const endsAtMs = Date.parse(settings.scoringEndsAt ?? "");
     if (!Number.isFinite(endsAtMs)) return;
     const parsed = parseMarks(config.marks);
     if (!parsed.ok) return;
-    const name = eventName(settings);
-    for (const mark of parsed.marks) {
-      if (!markCrossed(nowMs, endsAtMs, mark)) continue;
-      const claimed = await claimLedgerField(ANNOUNCE_MILESTONE_KEY, markKey(endsAtMs, mark));
-      if (!claimed) continue;
-      await enqueueAnnouncement(
-        "milestone",
-        buildLifecycleMessage({ kind: "milestone", eventName: name, timeLeft: formatTimeLeft(nowMs, endsAtMs) ?? undefined }),
-      );
-    }
+    const crossed = parsed.marks.filter((m) => markCrossed(nowMs, endsAtMs, m));
+    if (crossed.length === 0) return;
+    const won = await claimLedgerFields(ANNOUNCE_MILESTONE_KEY, crossed.map((m) => markKey(endsAtMs, m)));
+    if (won.size === 0 || !config.webhookConfigured || !config.milestones) return;
+    await enqueueAnnouncement(
+      "milestone",
+      buildLifecycleMessage({
+        kind: "milestone",
+        eventName: eventName(settings),
+        timeLeft: formatTimeLeft(nowMs, endsAtMs) ?? undefined,
+      }),
+    );
   } catch (err) {
     console.error("[announce] milestone tick failed:", errorLabel(err));
   }

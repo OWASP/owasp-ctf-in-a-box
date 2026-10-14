@@ -76,12 +76,14 @@ export const ANNOUNCEMENT_KINDS: readonly AnnouncementKind[] = [
   "daily",
 ];
 
+/** Whether `value` names one of the announcement kinds. */
 export function isAnnouncementKind(value: unknown): value is AnnouncementKind {
   return typeof value === "string" && (ANNOUNCEMENT_KINDS as readonly string[]).includes(value);
 }
 
 /** Which switch gates which kind. `pause` covers both the pause and the
  *  resume edge — they are two faces of one "scoring paused/resumed" stream. */
+/** Whether the config switch that gates `kind` is on. */
 export function kindEnabled(config: DiscordPublicConfig, kind: AnnouncementKind): boolean {
   switch (kind) {
     case "release":
@@ -114,6 +116,9 @@ export const DISCORD_WEBHOOK_URL_MAX = 1024;
 const DISCORD_WEBHOOK_HOSTS = new Set(["discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"]);
 const DISCORD_WEBHOOK_PATH_RE = /^\/api\/webhooks\/\d{5,30}\/[A-Za-z0-9_-]{20,}$/;
 
+/** Validates a submitted webhook URL. Every refusal message is FIXED — it
+ *  names the rule, never any part of the submitted URL, so the secret
+ *  cannot be echoed back through an admin-visible error. */
 export function checkDiscordWebhookUrl(raw: unknown): { ok: true; value: string } | { ok: false; message: string } {
   if (typeof raw !== "string") return { ok: false, message: "webhook URL must be a string" };
   // Checked on the RAW input, before any trimming: a pasted URL ending in a
@@ -153,7 +158,10 @@ export const MARK_MAX_MS = 7 * 86_400_000;
 /** Parses the remaining-time marks field ("1h, 30m, 5m") into milliseconds,
  *  sorted ascending, or reports why it cannot. Empty/whitespace-only is a
  *  valid "no marks" value. Each mark is `<n><s|m|h|d>`, at least a minute and
- *  at most seven days, at most DISCORD_MARKS_MAX of them. */
+ *  at most seven days, at most DISCORD_MARKS_MAX of them. Every refusal is a
+ *  FIXED message naming the entry's position and the rule — never the
+ *  submitted text — so an admin-visible error cannot echo a secret-like
+ *  value back (this field is free text a request can put anything in). */
 export function parseMarks(raw: unknown): { ok: true; marks: number[] } | { ok: false; message: string } {
   if (typeof raw !== "string") return { ok: false, message: "marks must be a string like \"1h, 15m\"" };
   const text = raw.trim();
@@ -163,12 +171,13 @@ export function parseMarks(raw: unknown): { ok: true; marks: number[] } | { ok: 
     return { ok: false, message: `at most ${DISCORD_MARKS_MAX} marks, comma-separated` };
   }
   const marks: number[] = [];
-  for (const part of parts) {
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i];
     const m = MARK_RE.exec(part);
-    if (!m) return { ok: false, message: `"${part}" is not a mark — use forms like 45m, 2h, 1d` };
+    if (!m) return { ok: false, message: `mark ${i + 1} is not a duration like 45m, 2h or 1d` };
     const ms = Number(m[1]) * MARK_MS[m[2].toLowerCase()];
-    if (ms < MARK_MIN_MS) return { ok: false, message: `"${part}" is under a minute — the smallest mark is 1m` };
-    if (ms > MARK_MAX_MS) return { ok: false, message: `"${part}" is over seven days` };
+    if (ms < MARK_MIN_MS) return { ok: false, message: `mark ${i + 1} is under a minute — the smallest mark is 1m` };
+    if (ms > MARK_MAX_MS) return { ok: false, message: `mark ${i + 1} is over seven days` };
     marks.push(ms);
   }
   return { ok: true, marks: [...new Set(marks)].sort((a, b) => a - b) };
@@ -176,6 +185,8 @@ export function parseMarks(raw: unknown): { ok: true; marks: number[] } | { ok: 
 
 const DAILY_AT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
+/** Validates the daily summary time (HH:MM, event clock). Fixed refusal
+ *  message, same reason as parseMarks. */
 export function checkDailyAt(raw: unknown): { ok: true; value: string } | { ok: false; message: string } {
   if (typeof raw !== "string") return { ok: false, message: "daily summary time must be HH:MM" };
   const value = raw.trim();
@@ -186,6 +197,7 @@ export function checkDailyAt(raw: unknown): { ok: true; value: string } | { ok: 
 export const DISCORD_DAILY_TOPN_MIN = 1;
 export const DISCORD_DAILY_TOPN_MAX = 50;
 
+/** Validates the daily summary's top-N team count. Fixed refusal message. */
 export function checkDailyTopN(raw: unknown): { ok: true; value: number } | { ok: false; message: string } {
   if (typeof raw !== "number" || !Number.isInteger(raw) || raw < DISCORD_DAILY_TOPN_MIN || raw > DISCORD_DAILY_TOPN_MAX) {
     return { ok: false, message: `top N must be an integer in [${DISCORD_DAILY_TOPN_MIN}, ${DISCORD_DAILY_TOPN_MAX}]` };
@@ -193,6 +205,7 @@ export function checkDailyTopN(raw: unknown): { ok: true; value: number } | { ok
   return { ok: true, value: raw };
 }
 
+/** Validates the leader announcement scope. Fixed refusal message. */
 export function checkLeaderScope(raw: unknown): { ok: true; value: DiscordLeaderScope } | { ok: false; message: string } {
   if (raw === "first" || raw === "top3") return { ok: true, value: raw };
   return { ok: false, message: 'leader scope must be "first" or "top3"' };

@@ -36,6 +36,7 @@ import { errorLabel } from "@/lib/error-label";
 import { listTeams } from "@/lib/team-store";
 import { resolveOrigin } from "@/lib/app-origin";
 import { listChallenges } from "@/lib/classic-store";
+import { visibleNow } from "@/lib/classic-release";
 import { listQuestions } from "@/lib/quiz-store";
 import { listAiChallenges } from "@/lib/ai-store";
 import { buildFirstBloodMessage } from "./messages";
@@ -54,10 +55,12 @@ export type FirstBloodInput = {
 
 /** Public title + points for one challenge, from the module's PUBLIC list
  *  (the same one the board reads — no flags, no answers ride along). Null
- *  when the challenge no longer exists. */
+ *  when the challenge no longer exists or is no longer public: a hidden
+ *  challenge's TITLE must never ride an announcement (the caller then falls
+ *  back to the bare id, which leaks nothing). */
 async function lookupItem(module: FirstBloodInput["module"], id: string): Promise<{ title: string; points: number } | null> {
   if (module === "classic") {
-    const c = (await listChallenges()).find((x) => x.id === id);
+    const c = visibleNow(await listChallenges()).find((x) => x.id === id);
     return c ? { title: c.title, points: c.points } : null;
   }
   if (module === "quiz") {

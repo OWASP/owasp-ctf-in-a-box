@@ -34,10 +34,13 @@ const PATCH_KEYS = new Set([
   "dailyTopN",
 ]);
 
+/** JSON object guard: arrays and nulls are not patch payloads. */
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** GET: the public config (never the webhook URL) plus the delivery status
+ *  counters. */
 export async function GET(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
@@ -50,6 +53,10 @@ export async function GET(request: Request) {
   }
 }
 
+/** POST: applies a switches/options patch. Unknown keys are refused with a
+ *  FIXED message (the submitted key is never echoed back); a validation
+ *  refusal is a 400 naming the field and the rule; anything else is a 503 —
+ *  the webhook URL has its own endpoint and is not settable here. */
 export async function POST(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
@@ -66,7 +73,9 @@ export async function POST(request: Request) {
   }
   if (!isPlainObject(body)) return NextResponse.json({ error: "invalid request payload" }, { status: 400 });
   for (const key of Object.keys(body)) {
-    if (!PATCH_KEYS.has(key)) return NextResponse.json({ error: `unknown setting: ${key}` }, { status: 400 });
+    // Fixed message: the submitted key itself is never echoed back, so a
+    // secret-like marker smuggled into a key cannot reach the response.
+    if (!PATCH_KEYS.has(key)) return NextResponse.json({ error: "unknown setting" }, { status: 400 });
   }
 
   try {

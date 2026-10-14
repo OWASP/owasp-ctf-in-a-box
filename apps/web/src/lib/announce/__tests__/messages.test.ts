@@ -1,7 +1,7 @@
-// Discord message builders (#590). Pure — no mocks. The two structural
+// Discord message builders (#590). Pure — no mocks. The structural
 // invariants are what these pin: every message suppresses mentions, and the
-// escape layer neutralises control characters and mention syntax in
-// organizer/contestant-supplied text.
+// escape layer neutralises control characters, mention syntax AND Markdown
+// (masked links included) in organizer/contestant-supplied text.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -11,6 +11,7 @@ import {
   buildLifecycleMessage,
   buildReleaseMessage,
   buildTestMessage,
+  escapeForDiscord,
   type DiscordMessage,
 } from "@/lib/announce/messages";
 
@@ -62,6 +63,40 @@ describe("escapeForDiscord", () => {
     const desc = m.embeds[0].description ?? "";
     expect(desc).not.toContain(nul);
     expect(desc.length).toBeLessThanOrEqual(121);
+  });
+
+  it("neutralises a masked link: a team named [text](https://…) cannot render as a clickable link", () => {
+    const m = buildFirstBloodMessage({
+      challengeTitle: "web-1",
+      points: 10,
+      who: "[Claim your prize](https://evil.example)",
+      url: "https://example.test/flags/web-1",
+    });
+    const desc = m.embeds[0].description ?? "";
+    // No Markdown link target survives, and the URL is unlinked outright.
+    expect(desc).not.toMatch(/\[[^\]]*\]\(https?:\/\//);
+    expect(desc).not.toMatch(/https?:\/\//);
+    // The bracket/paren characters themselves are backslash-escaped, so even
+    // the literal text cannot re-form a link after Discord renders it.
+    expect(desc).toContain("\\[");
+    expect(desc).toContain("\\]\\(");
+  });
+
+  it("backslash-escapes Markdown so untrusted text cannot reformat the announcement", () => {
+    const escaped = escapeForDiscord("**bold** ||spoiler|| `code` ~~strike~~ >quote #hdr |pipe|");
+    expect(escaped).toBe("\\*\\*bold\\*\\* \\|\\|spoiler\\|\\| \\`code\\` \\~\\~strike\\~\\~ \\>quote \\#hdr \\|pipe\\|");
+  });
+
+  it("does not leave half an escape pair when truncating", () => {
+    // Every character escapes to two, so a naive slice lands on a backslash.
+    const escaped = escapeForDiscord("*".repeat(300), 120);
+    expect(escaped.length).toBeLessThanOrEqual(120);
+    expect(escaped.endsWith("\\…")).toBe(false);
+    expect(escaped.endsWith("…")).toBe(true);
+  });
+
+  it("leaves ordinary text (a normal team name) readable — no gratuitous escapes", () => {
+    expect(escapeForDiscord("Team One")).toBe("Team One");
   });
 });
 

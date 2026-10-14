@@ -68,4 +68,12 @@ describe("AdminEventTab — projector QR code", () => {
     expect(qrInput(html)).not.toBe("");
     expect(qrInput(html)).not.toMatch(/checked=""/);
   });
+
+  // The projector section and the Discord-announcements section share this
+  // tab; dropping either from the tree would strand its controls.
+  it("still renders the Discord announcements section alongside the projector controls", () => {
+    const html = renderToStaticMarkup(<AdminEventTab {...props(settings)} />);
+    expect(html).toContain("Projector board");
+    expect(html).toContain("Discord announcements");
+  });
 });

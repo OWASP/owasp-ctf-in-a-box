@@ -105,9 +105,15 @@ function scheduleFlush(): void {
 
 /** One flush pass: lease everything currently `pending`, pack it, post it.
  *  Re-entrant-safe (the timer and a direct call cannot interleave); a second
- *  call during a pass returns immediately. */
+ *  call during a pass returns immediately — after re-arming the coalescing
+ *  timer, so an entry enqueued mid-pass (or during the ticker's retry pass,
+ *  which shares this guard) is flushed by a later pass instead of waiting
+ *  for some future enqueue to happen along. */
 export async function flush(): Promise<void> {
-  if (flushing) return;
+  if (flushing) {
+    scheduleFlush();
+    return;
+  }
   flushing = true;
   try {
     queue = queue.filter((id) => id !== ""); // defensive; ids are never ""

@@ -128,12 +128,15 @@ export function publicConfig(config: DiscordFullConfig): DiscordPublicConfig {
  *  validated fields. Unknown keys are refused outright (same contract as
  *  updateAdminSettings), so a typo'd field is an error, not a silent no-op.
  *  Throws with a field-named message on any validation failure; writes
- *  nothing until every field in the patch has passed. */
+ *  nothing until every field in the patch has passed. Every refusal message
+ *  is FIXED — it names the field position and the rule, never the submitted
+ *  value or key, so a secret-like marker in a request cannot be echoed back
+ *  through an admin-visible error. */
 export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPatch): Promise<DiscordPublicConfig> {
   const boolKeys = ["releases", "firstBlood", "leaders", "launch", "pause", "registration", "milestones", "daily"] as const;
   const known = new Set<string>([...boolKeys, "leaderScope", "marks", "dailyAt", "dailyTopN"]);
   for (const key of Object.keys(patch)) {
-    if (!known.has(key)) throw new AnnounceValidationError(`unknown setting: ${key}`);
+    if (!known.has(key)) throw new AnnounceValidationError("unknown announcement setting");
   }
 
   const writes: [string, string][] = [];
@@ -402,6 +405,8 @@ export async function outboxRetryable(): Promise<{ id: string; entry: OutboxEntr
   return outboxEntries((e) => e.status === "failed" && e.n < ANNOUNCE_MAX_ATTEMPTS);
 }
 
+/** The outbox hash entries `keep` accepts, oldest first. An unparsable entry
+ *  is skipped, never delivered; a Redis failure logs and returns nothing. */
 async function outboxEntries(
   keep: (entry: OutboxEntry) => boolean,
 ): Promise<{ id: string; entry: OutboxEntry }[]> {
@@ -476,21 +481,32 @@ export type AnnounceStatus = {
   lastErrorAt: string | null;
 };
 
+/** Records one delivery outcome: a successful post bumps that kind's `sent`
+ *  counter and the last-posted stamp; a failed one records the (fixed,
+ *  label-only) error text and its time, and bumps no counter — the counter
+ *  is what the admin status line reads as "posted". */
 export async function bumpStatus(kind: AnnouncementKind, outcome: "sent" | "failed", errorText?: string): Promise<void> {
   try {
     const at = new Date().toISOString();
-    const cmds: (string | number)[][] = [["HINCRBY", ANNOUNCE_STATUS_KEY, `${kind}:sent`, 1]];
+    // The sent counter counts SUCCESSFUL posts only: a failed post that
+    // bumped it would make the admin status line report deliveries that
+    // never reached Discord.
+    const cmds: (string | number)[][] = [];
     if (outcome === "sent") {
+      cmds.push(["HINCRBY", ANNOUNCE_STATUS_KEY, `${kind}:sent`, 1]);
       cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "lastPostedAt", at]);
     } else if (errorText) {
       cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "lastError", errorText], ["HSET", ANNOUNCE_STATUS_KEY, "lastErrorAt", at]);
     }
-    await upstashPipeline(cmds);
+    if (cmds.length > 0) await upstashPipeline(cmds);
   } catch (err) {
     console.error("[announce] status write failed:", adminErrorLabel(err));
   }
 }
 
+/** The status counters and stamps, as the admin section reads them. A
+ *  missing or unreadable hash reads as "nothing posted yet", never an
+ *  error. */
 export async function readStatus(): Promise<AnnounceStatus> {
   try {
     const [res] = await upstashPipeline([["HGETALL", ANNOUNCE_STATUS_KEY]]);

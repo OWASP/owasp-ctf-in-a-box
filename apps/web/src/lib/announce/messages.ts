@@ -12,7 +12,11 @@
 //   2. Every message sets `allowed_mentions: { parse: [] }`, so Discord
 //      resolves NO mentions in it — a team named "@everyone" cannot ping the
 //      channel. `escapeForDiscord` additionally inserts a zero-width space
-//      into mention syntax, as defence in depth for the rendered text.
+//      into mention syntax, as defence in depth for the rendered text, and
+//      backslash-escapes Markdown (so a team named `[Claim your prize](…)`
+//      cannot become a clickable link inside an official announcement) and
+//      splits `https://` so Discord cannot autolink a URL out of untrusted
+//      text.
 
 export type DiscordEmbed = {
   title?: string;
@@ -51,16 +55,34 @@ const CONTROL_CHARS_RE = /[\x00-\x1f\x7f-\x9f‪-‮⁦-⁩]/g;
 const ZWSP = "​";
 
 /** Scrubs text destined for the channel: control characters out, mention
- *  syntax neutralised (mass mentions and raw user/role/channel tokens), and
- *  a length cap so one hostile field cannot blow past Discord's limits. */
+ *  syntax neutralised (mass mentions and raw user/role/channel tokens),
+ *  Markdown neutralised (masked links, bold, spoilers, inline code, quotes)
+ *  and URLs unlinked (the `//` is split with a zero-width space, so Discord
+ *  neither autolinks nor renders the target), then a length cap so one
+ *  hostile field cannot blow past Discord's limits. The cap is applied AFTER
+ *  the escapes (which add characters) and never splits a backslash escape in
+ *  half, so a truncated escape cannot leave a stray `\` in the channel. */
 export function escapeForDiscord(raw: string, maxLength = 120): string {
   let text = raw.replace(CONTROL_CHARS_RE, "").trim();
   text = text.replace(/@(everyone|here)/gi, `@${ZWSP}$1`);
   text = text.replace(/<(?=[@#&!])/g, `<${ZWSP}`);
-  if (text.length > maxLength) text = `${text.slice(0, maxLength - 1)}…`;
+  // Markdown and clickable links: a contestant-controlled team name must not
+  // format the announcement or carry a phishing link under the event's
+  // authority. Discord renders `\<special>` as the literal character.
+  text = text.replace(/([\\*_~`|\[\]()>#-])/g, "\\$1");
+  text = text.replace(/(https?):\/\//gi, `$1:${ZWSP}//`);
+  if (text.length > maxLength) {
+    text = text.slice(0, Math.max(0, maxLength - 1));
+    // Never leave half an escape pair: a trailing lone `\` would swallow the
+    // ellipsis into code-span-style nothingness.
+    if (text.endsWith("\\")) text = text.slice(0, -1);
+    text = `${text}…`;
+  }
   return text;
 }
 
+/** Wraps one embed in the shape every message carries — mentions off,
+ *  always. */
 function msg(embed: DiscordEmbed): DiscordMessage {
   return { embeds: [embed], allowed_mentions: { parse: [] } };
 }
@@ -146,6 +168,8 @@ const LIFECYCLE_COPY: Record<LifecycleKind, { title: string; color: number; desc
   },
 };
 
+/** Launch, pause/resume, registration-closed and the remaining-time
+ *  check — one builder, the kind selecting the title, colour and copy. */
 export function buildLifecycleMessage(input: LifecycleInput): DiscordMessage {
   const copy = LIFECYCLE_COPY[input.kind];
   const event = escapeForDiscord(input.eventName, 80);
@@ -165,6 +189,8 @@ export type DailyInput = {
   timeLeft: string | null;
 };
 
+/** Once-a-day summary: the top of the board plus the day's counters
+ *  (deltas, understated when a baseline is missing) and the time left. */
 export function buildDailyMessage(input: DailyInput): DiscordMessage {
   const board =
     input.topTeams.length > 0

@@ -113,6 +113,17 @@ describe("config POST", () => {
     expect(((await invalid.json()) as { error: string }).error).toContain("marks");
   });
 
+  // The submitted KEY is request-controlled text; echoing it back would turn
+  // this endpoint into a reflection surface for a marker smuggled in a key.
+  it("answers an unknown key with a fixed message that never echoes the key", async () => {
+    const res = await POST(req("POST", { "FLAG{canary-in-a-key}": true }));
+    expect(res.status).toBe(400);
+    const text = JSON.stringify(await res.json());
+    expect(text).toBe('{"error":"unknown setting"}');
+    expect(text).not.toContain("canary");
+    expect(mocks.updateAnnounceConfig).not.toHaveBeenCalled();
+  });
+
   it("maps a store failure to 503", async () => {
     mocks.updateAnnounceConfig.mockRejectedValue(new Error("redis down"));
     expect((await POST(req("POST", { releases: true }))).status).toBe(503);

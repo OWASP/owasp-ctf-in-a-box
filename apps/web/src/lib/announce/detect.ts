@@ -26,6 +26,8 @@ export function encodeLifecycleState(s: LifecycleSnapshot): string {
   return `v1|L${s.launched ? 1 : 0}P${s.paused ? 1 : 0}R${s.registrationClosed ? 1 : 0}`;
 }
 
+/** Parses the stored lifecycle pack; any other shape (or a missing value)
+ *  reads as "no previous state", so a first tick announces nothing. */
 export function decodeLifecycleState(raw: string | null | undefined): LifecycleSnapshot | null {
   if (typeof raw !== "string") return null;
   const m = /^v1\|L([01])P([01])R([01])$/.exec(raw);
@@ -43,6 +45,9 @@ export type LifecycleEdge =
   | { kind: "resume"; prev: LifecycleSnapshot; next: LifecycleSnapshot }
   | { kind: "registration-closed"; prev: LifecycleSnapshot; next: LifecycleSnapshot };
 
+/** The transitions between two lifecycle snapshots, in announcement order.
+ *  A missing previous snapshot is read as all-off, so nothing fires on the
+ *  very first observation. */
 export function lifecycleEdges(prev: LifecycleSnapshot | null, next: LifecycleSnapshot): LifecycleEdge[] {
   const before = prev ?? { launched: false, paused: false, registrationClosed: false };
   const edges: LifecycleEdge[] = [];
@@ -101,6 +106,8 @@ export function encodeBoardSnapshot(rows: readonly BoardRow[]): string {
   return rows.map((r) => `${r.slug}:${r.points}`).join(";");
 }
 
+/** Parses the stored board pack; a missing value reads as "no board yet"
+ *  (an empty list) rather than a malformed one. */
 export function decodeBoardSnapshot(raw: string | null | undefined): BoardRow[] | null {
   if (typeof raw !== "string" || raw === "") return [];
   return raw.split(";").map((part) => {
@@ -144,6 +151,7 @@ export function eventLocalDay(nowMs: number, timeZone: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(nowMs));
 }
 
+/** Type guard for a stored `YYYY-MM-DD` day claim key. */
 export function isEventLocalDay(raw: unknown): raw is string {
   return typeof raw === "string" && DAY_RE.test(raw);
 }

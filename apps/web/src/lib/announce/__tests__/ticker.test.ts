@@ -195,6 +195,14 @@ describe("release sweep", () => {
     expect(mocks.claimLedgerFields).not.toHaveBeenCalled();
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
+
+  it("never claims or announces a HIDDEN challenge — it is not public", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ releases: true }));
+    mocks.listChallenges.mockResolvedValue([{ ...challenge, enabled: false, releaseAt: "2026-10-20T00:00:00Z" }]);
+    await runAnnounceTick(T0);
+    expect(mocks.claimLedgerFields).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
 });
 
 describe("board tick", () => {
@@ -249,8 +257,36 @@ describe("daily and milestones", () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ milestones: true, marks: "30m" }));
     mocks.getAdminSettings.mockResolvedValue(settings({ scoringEndsAt: "2026-10-14T12:20:00Z" }));
     await runAnnounceTick(T0);
-    expect(mocks.claimLedgerField).toHaveBeenCalledWith("ctf:announce:milestone", expect.stringContaining("1800000"));
+    expect(mocks.claimLedgerFields).toHaveBeenCalledWith("ctf:announce:milestone", [expect.stringContaining("1800000")]);
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("milestone", expect.anything());
+  });
+
+  it("CLAIMS crossed marks with the switch OFF — enabling later must not replay them", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ milestones: false, marks: "30m" }));
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringEndsAt: "2026-10-14T12:20:00Z" }));
+    await runAnnounceTick(T0);
+    expect(mocks.claimLedgerFields).toHaveBeenCalledWith("ctf:announce:milestone", [expect.stringContaining("1800000")]);
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("CLAIMS crossed marks with no webhook configured — same no-replay rule", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ webhookConfigured: false, milestones: true, marks: "30m" }));
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringEndsAt: "2026-10-14T12:20:00Z" }));
+    await runAnnounceTick(T0);
+    expect(mocks.claimLedgerFields).toHaveBeenCalledWith("ctf:announce:milestone", [expect.stringContaining("1800000")]);
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("posts ONE time check when several marks are crossed at once (no burst)", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ milestones: true, marks: "2h, 1h, 30m" }));
+    // 20 minutes left: every one of the three marks has been crossed.
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringEndsAt: "2026-10-14T12:20:00Z" }));
+    await runAnnounceTick(T0);
+    expect(mocks.claimLedgerFields).toHaveBeenCalledTimes(1);
+    const claimed = mocks.claimLedgerFields.mock.calls[0][1] as string[];
+    expect(claimed).toHaveLength(3);
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledTimes(1);
   });
 });
 

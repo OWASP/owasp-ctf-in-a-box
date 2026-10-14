@@ -34,11 +34,24 @@ const SWITCHES: { key: keyof DiscordPublicConfig; id: string; label: string; hel
   { key: "daily", id: "ann-daily", label: "Daily summary", help: "Post once a day at the configured time.", kind: "daily" },
 ];
 
+/** The server"s refusal text, or a fixed status-coded fallback when the
+ *  body is not JSON or carries no error string. */
 async function errorOf(res: Response): Promise<string> {
   const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
   return typeof body?.error === "string" ? body.error : `Request failed (${res.status}).`;
 }
 
+/** Whether a blur-save should POST at all: only when the trimmed input
+ *  differs from what the server already has (a blur with no edit must not
+ *  write an audit entry). Exported so the suite can pin it — there is no DOM
+ *  in this repo's tests. */
+export function blurNeedsSave(value: string, stored: string): boolean {
+  return value.trim() !== stored;
+}
+
+/** The Event tab"s self-contained Discord announcements panel: webhook
+ *  (write-only), per-type switches, previews, Send test and the delivery
+ *  status line. */
 export default function AdminEventAnnouncements({ timeZone }: { timeZone: string }) {
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [fieldStatus, setFieldStatus] = useState<Partial<Record<string, FieldStatus>>>({});
@@ -61,6 +74,8 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
     [],
   );
 
+  /** Re-reads config + status after an action whose own response is not the
+   *  fresh config (Send test). */
   const reload = useCallback(async () => {
     try {
       const body = await readConfig();
@@ -89,12 +104,20 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
   const status = load.state === "ready" ? load.status : null;
   const busy = load.state !== "ready" || webhookBusy || testBusy || previewBusy;
 
+  /** Records one field"s status line (pending/saved/rejected). */
   function report(key: string, s: FieldStatus) {
     setFieldStatus((prev) => ({ ...prev, [key]: s }));
   }
 
-  async function savePatch(patch: Record<string, unknown>, key: string) {
-    if (inFlight.current.has(key)) return;
+  /** Saves one field (or switch) to the config endpoint. Returns whether the
+   *  value is NOW IN EFFECT: true only when the server accepted and returned
+   *  the new config; false on a rejection, a network failure, or a save that
+   *  was skipped because one for the same key is already in flight. The
+   *  text/time/number inputs use this to restore the stored value after a
+   *  failed save — an input must never keep showing a value that is not in
+   *  effect. */
+  async function savePatch(patch: Record<string, unknown>, key: string): Promise<boolean> {
+    if (inFlight.current.has(key)) return false;
     inFlight.current.add(key);
     report(key, { state: "pending" });
     try {
@@ -105,18 +128,33 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
       });
       if (!res.ok) {
         report(key, { state: "rejected", message: await errorOf(res) });
-        return;
+        return false;
       }
       const body = (await res.json()) as { config: DiscordPublicConfig };
       setLoad((prev) => (prev.state === "ready" ? { ...prev, config: body.config } : prev));
       report(key, { state: "saved" });
+      return true;
     } catch {
       report(key, { state: "rejected", message: "Request failed — check the connection and try again." });
+      return false;
     } finally {
       inFlight.current.delete(key);
     }
   }
 
+  /** On blur: save the field only when it actually differs from the stored
+   *  config (a blur with no edit must not POST and write an audit entry),
+   *  and put the stored value back when the save fails. `currentTarget` is
+   *  captured synchronously — it is null by the time the promise settles. */
+  function saveOnBlur<K extends "marks" | "dailyAt" | "dailyTopN">(key: K, el: HTMLInputElement, stored: string, toPatch: (value: string) => Record<string, unknown>) {
+    if (!blurNeedsSave(el.value, stored)) return;
+    void savePatch(toPatch(el.value), key).then((ok) => {
+      if (!ok) el.value = stored;
+    });
+  }
+
+  /** Saves the pasted webhook URL; the response replaces the input with a
+   *  blank one (the URL is never round-tripped). */
   async function saveWebhook() {
     if (webhookBusy) return;
     setWebhookBusy(true);
@@ -142,6 +180,7 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
     }
   }
 
+  /** Clears the stored webhook (POST webhookUrl: null). */
   async function clearWebhook() {
     if (webhookBusy) return;
     setWebhookBusy(true);
@@ -166,6 +205,7 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
     }
   }
 
+  /** Posts the Send-test message server-side and refreshes the status. */
   async function sendTest() {
     if (testBusy) return;
     setTestBusy(true);
@@ -345,7 +385,7 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
                 defaultValue={config?.marks ?? ""}
                 disabled={busy}
                 placeholder="1h, 15m"
-                onBlur={(e) => void savePatch({ marks: e.target.value }, "marks")}
+                onBlur={(e) => saveOnBlur("marks", e.currentTarget, config?.marks ?? "", (value) => ({ marks: value }))}
                 className="w-40 rounded-md border border-white/10 bg-[#1a1a2e] px-2 py-1 font-mono text-xs text-white"
                 aria-describedby="ann-marks-status"
               />
@@ -363,7 +403,7 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
                 type="time"
                 defaultValue={config?.dailyAt ?? "09:00"}
                 disabled={busy}
-                onBlur={(e) => void savePatch({ dailyAt: e.target.value }, "dailyAt")}
+                onBlur={(e) => saveOnBlur("dailyAt", e.currentTarget, config?.dailyAt ?? "09:00", (value) => ({ dailyAt: value }))}
                 className="rounded-md border border-white/10 bg-[#1a1a2e] px-2 py-1 font-mono text-xs text-white"
                 aria-describedby="ann-daily-at-status"
               />
@@ -379,7 +419,7 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
                 max={50}
                 defaultValue={config?.dailyTopN ?? 10}
                 disabled={busy}
-                onBlur={(e) => void savePatch({ dailyTopN: Number(e.target.value) }, "dailyTopN")}
+                onBlur={(e) => saveOnBlur("dailyTopN", e.currentTarget, String(config?.dailyTopN ?? 10), (value) => ({ dailyTopN: Number(value) }))}
                 className="w-20 rounded-md border border-white/10 bg-[#1a1a2e] px-2 py-1 font-mono text-xs text-white"
                 aria-describedby="ann-daily-topn-status"
               />

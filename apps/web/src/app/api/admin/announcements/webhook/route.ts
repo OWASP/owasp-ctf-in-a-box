@@ -19,6 +19,9 @@ import { seedReleaseClaims } from "@/lib/announce/ticker";
 
 const MAX_BODY_BYTES = 2_048;
 
+/** POST: 200 `{ config }` with `webhookConfigured` only (the URL itself is
+ *  never in the response); a validation refusal is a 400 naming the rule;
+ *  admin-gated before the body is read. */
 export async function POST(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });

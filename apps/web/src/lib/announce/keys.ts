@@ -75,6 +75,7 @@ export const ANNOUNCE_OUTBOX_KEY = "ctf:announce:outbox";
  *  cross-replica guard on "who delivers this". A crashed owner's lease
  *  expires and the next retry sweep may re-claim. */
 export const ANNOUNCE_LEASE_PREFIX = "ctf:announce:lease:";
+/** The per-id lease key under that prefix. */
 export const announceLeaseKey = (id: string) => `${ANNOUNCE_LEASE_PREFIX}${id}`;
 
 /** Delivery lease / retry backoff: long enough to cover the coalesce window

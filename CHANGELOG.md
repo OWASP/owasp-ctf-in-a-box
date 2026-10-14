@@ -25,7 +25,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   a leased Redis outbox with retries — a restart loses nothing durable, and
   turning a type off stops its pending posts immediately. Every message
   suppresses Discord mentions outright, so a team named `@everyone` cannot
-  ping the channel; locked story steps are never announced; and no flag,
+  ping the channel, and escapes Markdown in untrusted text, so a team named
+  `[Claim your prize](…)` cannot become a clickable link; locked story
+  steps are never announced; and no flag,
   answer or hint can reach a message, because the builders only accept
   public metadata. A Send test and per-type previews are in the section; the
   master reset wipes the announcement state but keeps the webhook setup

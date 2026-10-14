@@ -145,6 +145,38 @@ describe("flush", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
+
+  it("re-arms the coalescing timer when a pass is already active, so the skipped flush is not stranded", async () => {
+    // First pass is in flight (flushing set); the enqueue timer firing now
+    // must not just return — it must arm a LATER pass for the new entry.
+    let secondStarted!: () => void;
+    let secondMayFinish!: () => void;
+    const secondStartedP = new Promise<void>((r) => {
+      secondStarted = r;
+    });
+    const secondGate = new Promise<void>((r) => {
+      secondMayFinish = r;
+    });
+    mocks.outboxPending
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(async () => {
+        secondStarted();
+        await secondGate;
+        return [];
+      });
+    const first = flush(); // sets `flushing` synchronously
+    await flush(); // the coalescing timer firing mid-pass
+    expect(vi.getTimerCount()).toBe(1); // re-armed, not dropped
+    await first;
+    expect(mocks.outboxPending).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(300); // the re-armed timer starts pass two
+    await secondStartedP;
+    expect(mocks.outboxPending).toHaveBeenCalledTimes(2);
+    secondMayFinish();
+    // Let pass two drain before the test ends — a stuck `flushing` would
+    // make every later test's flush a no-op.
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+  });
 });
 
 describe("flushRetries", () => {

@@ -24,6 +24,7 @@ import {
 
 const MAX_BODY_BYTES = 1_024;
 
+/** The SAMPLE message for one known kind — no stored content, no webhook. */
 function sample(kind: AnnouncementKind, eventName: string): DiscordMessage {
   switch (kind) {
     case "release":
@@ -43,6 +44,8 @@ function sample(kind: AnnouncementKind, eventName: string): DiscordMessage {
   }
 }
 
+/** POST: 200 `{ message }` for a known kind, 400 for an unknown one;
+ *  admin-gated before the body is read. Sends nothing. */
 export async function POST(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });

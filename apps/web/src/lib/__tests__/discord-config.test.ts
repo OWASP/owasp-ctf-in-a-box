@@ -97,6 +97,25 @@ describe("parseMarks", () => {
     expect(parseMarks("8d").ok).toBe(false);
     expect(parseMarks(Array.from({ length: 11 }, () => "1m").join(",")).ok).toBe(false);
   });
+
+  // The marks field is free text a request can put anything in, and the
+  // refusal reaches the admin as an API error. A submitted flag, answer or
+  // any other secret-like marker must NEVER come back in that message.
+  it("refusals carry the rule and the entry's position, never the submitted text", () => {
+    const marker = "FLAG{secret-canary-123}";
+    for (const bad of [marker, `${marker}, 1h`, `30s, ${marker}`, `${marker}, 9d`]) {
+      const r = parseMarks(bad);
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.message).not.toContain("secret-canary-123");
+        expect(r.message).not.toContain("FLAG");
+      }
+    }
+    // And the position IS named, so the organizer can find the bad entry.
+    const second = parseMarks("1h, nope");
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.message).toContain("mark 2");
+  });
 });
 
 describe("checkDailyAt / checkDailyTopN / checkLeaderScope", () => {

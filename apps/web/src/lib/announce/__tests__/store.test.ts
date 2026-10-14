@@ -92,6 +92,14 @@ describe("updateAnnounceConfig", () => {
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
+  // The key is request-controlled text — the refusal message must carry the
+  // rule, never the submitted key, or a marker smuggled in one echoes back.
+  it("the unknown-key refusal is a FIXED message that never echoes the key", async () => {
+    await expect(updateAnnounceConfig("admin", { "FLAG{canary-in-a-key}": true } as never)).rejects.toThrow("unknown announcement setting");
+    await expect(updateAnnounceConfig("admin", { "FLAG{canary-in-a-key}": true } as never)).rejects.not.toThrow(/canary/);
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+  });
+
   it("refuses a bad marks/dailyAt/topN and writes nothing", async () => {
     await expect(updateAnnounceConfig("admin", { marks: "soon" })).rejects.toBeInstanceOf(AnnounceValidationError);
     await expect(updateAnnounceConfig("admin", { dailyAt: "25:00" })).rejects.toBeInstanceOf(AnnounceValidationError);
@@ -258,6 +266,16 @@ describe("status", () => {
     expect(sent).toEqual(["HINCRBY", "ctf:announce:status", "release:sent", 1]);
     await bumpStatus("release", "failed", "discord post failed");
     expect(mocks.upstashPipeline.mock.calls[1][0]).toContainEqual(["HSET", "ctf:announce:status", "lastError", "discord post failed"]);
+  });
+
+  it("a FAILED outcome bumps no sent counter — the counter is what 'posted' means", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
+    await bumpStatus("release", "failed", "discord post failed");
+    expect(mocks.upstashPipeline.mock.calls[0][0]).not.toContainEqual(["HINCRBY", "ctf:announce:status", "release:sent", 1]);
+    expect(mocks.upstashPipeline.mock.calls[0][0]).not.toContainEqual(["HSET", "ctf:announce:status", "lastPostedAt", expect.any(String)]);
+    // The failure IS recorded, with its stamp.
+    expect(mocks.upstashPipeline.mock.calls[0][0]).toContainEqual(["HSET", "ctf:announce:status", "lastError", "discord post failed"]);
+    expect(mocks.upstashPipeline.mock.calls[0][0]).toContainEqual(["HSET", "ctf:announce:status", "lastErrorAt", expect.any(String)]);
   });
 
   it("reads the counters back, failing open to an empty status", async () => {

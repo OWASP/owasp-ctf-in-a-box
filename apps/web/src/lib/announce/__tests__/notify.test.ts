@@ -81,7 +81,16 @@ describe("notifyFirstBlood", () => {
     await notifyFirstBlood({ module: "classic", challengeId: "gone-1", login: "alice" });
     const msg = mocks.enqueueAnnouncement.mock.calls[0][1] as { embeds: { description?: string }[] };
     expect(msg.embeds[0].description).toContain("alice");
-    expect(msg.embeds[0].description).toContain("gone-1");
+    // The id is escaped like any other untrusted text — `-` is Markdown.
+    expect(msg.embeds[0].description).toContain("gone\\-1");
+  });
+
+  it("never leaks a HIDDEN challenge's title — the announcement carries only its id", async () => {
+    mocks.listChallenges.mockResolvedValue([{ id: "web-9", title: "Secret Unreleased Title", category: "web", points: 100, enabled: false }]);
+    await notifyFirstBlood({ module: "classic", challengeId: "web-9", login: "alice" });
+    const msg = mocks.enqueueAnnouncement.mock.calls[0][1] as { embeds: { description?: string }[] };
+    expect(msg.embeds[0].description).not.toContain("Secret Unreleased Title");
+    expect(msg.embeds[0].description).toContain("web\\-9");
   });
 
   it("links the quiz board for quiz (no per-question page) and /ai/<id> for ai", async () => {

@@ -4262,7 +4262,10 @@ announcement).
   fires only on a real change. Daily summaries and remaining-time marks are
   `HSETNX` claims on the event-local day and on `<closeInstant>:<markMs>`
   (keyed by the scoring-close instant, so moving Scoring closes re-arms the
-  marks for the new window).
+  marks for the new window). A mark's claim runs even while the kind is off,
+  like the release sweep — enabling milestones mid-event (or a restart after
+  several marks have passed) claims the crossed history instead of replaying
+  it as a burst, and only one post (the current time left) goes out per tick.
 
 - **Delivery is a leased Redis outbox, at-least-once.** Every announcement
   is written to `ctf:announce:outbox` and delivered by a coalescing flush
@@ -4290,10 +4293,14 @@ announcement).
   step's internals could ride in on. Every message sets
   `allowed_mentions: { parse: [] }` so Discord resolves no mentions at all,
   and the text escape additionally neutralises `@everyone`/`@here` and raw
-  user/role/channel syntax in rendered text. Locked story steps are filtered
-  out before any release claim, so a challenge nobody can open yet is never
-  announced. The admin "Send test" and the per-type previews are built by
-  the same functions, so a preview is exactly what the announcer would post.
+  user/role/channel syntax in rendered text, backslash-escapes Markdown
+  (so a team named `[Claim your prize](…)` cannot become a clickable
+  phishing link under the event's authority) and splits `https://` so
+  Discord autolinks nothing out of untrusted text. Locked story steps are
+  filtered out before any release claim, so a challenge nobody can open
+  yet is never announced. The admin "Send test" and the per-type previews
+  are built by the same functions, so a preview is exactly what the
+  announcer would post.
 
 **Consequences.** Announcements are an organizer opt-in with no new
 credential to manage beyond the webhook itself, and no new process to

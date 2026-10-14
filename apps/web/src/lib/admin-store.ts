@@ -780,6 +780,15 @@ const RESET_PREFIXES: readonly [string, string][] = [
   // solves — a record of what people did during the event — so a reset wipes
   // it. Leaving it would let a "fresh" event open with last event's sign-ins.
   ["activity", ACTIVITY_LOG_KEY],
+  // Discord-announcement STATE (#590): the dedup ledgers, the delivery
+  // outbox, the lifecycle/board observations and the status counters are
+  // PROGRESS — a record of what this run announced — so a reset wipes them
+  // and a fresh run re-announces its own launches and first bloods. The
+  // organizer's CONFIGURATION (`ctf:admin:discord`, `ctf:admin:discord:webhook`)
+  // deliberately does NOT live under this prefix: like the event images and
+  // the settings hash, a webhook the organizer set up is something they set,
+  // not event data, and survives the reset.
+  ["announcements", "ctf:announce:*"],
   // Sponsors are the one exception to the CONTENT/PROGRESS split every other
   // entry above follows: unlike a challenge's flag/description, a sponsor
   // configuration is scoped to ONE event run (sponsors funded last year's

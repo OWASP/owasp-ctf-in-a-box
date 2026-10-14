@@ -82,6 +82,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 64 — sync's cursor lives in Redis, and an unreadable cursor holds the poller](#adr-64-syncs-cursor-lives-in-redis-and-an-unreadable-cursor-holds-the-poller)
 - [ADR 65 — An event adds its own logo and favicon; the OWASP mark stays](#adr-65-an-event-adds-its-own-logo-and-favicon-the-owasp-mark-stays)
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
+- [ADR 67 — Discord announcements are app-scheduled, outbox-delivered, and claim-first](#adr-67-discord-announcements-are-app-scheduled-outbox-delivered-and-claim-first)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -3918,3 +3919,105 @@ steps aside; `listSponsors` is not cached) and the event image metadata once
 fetched by the browser from their own routes. Another page that adds its own
 sponsor block joins `PAGES_WITH_OWN_SPONSOR_CREDIT`. Other pages are
 unchanged; a further surface is still its own decision.
+## ADR 67. Discord announcements are app-scheduled, outbox-delivered, and claim-first
+
+**Context.** Issue #590. Event organizers run their community on Discord:
+challenge releases, first bloods, the lead changing hands and the event's
+own lifecycle all want to land in a channel as they happen. The kit had no
+outbound announcement surface at all — `eventDiscord` on the landing page is
+an invite link, and push ingest was removed in v0.6 (ADR 56), so the box has
+no inbound scoring surface to hang a webhook on either. The obvious
+alternatives each fail somewhere: a Discord bot (another credential, another
+process, another thing to keep in step with the event state), an external
+scheduler (the box already runs a server; a cron sidecar is one more
+container to deploy and clock-sync), and piggybacking on the solve routes
+alone (first blood yes, but releases and leaderboard moves have no request
+to piggyback on, and a restart between solve and post would lose the
+announcement).
+
+**Decision.** An in-app announcer, configured at `/admin` → Event:
+
+- **Configuration is runtime, and apart from the settings hash.** The
+  webhook URL lives in `ctf:admin:discord:webhook`, its own key, and every
+  other field (per-type switches, leader scope, marks, daily time/top-N) in
+  `ctf:admin:discord`. Neither is a build argument (ADR 55's lesson); both
+  survive the master reset like the event images, because a webhook the
+  organizer set up is something they set, not event data. The URL is
+  validated to a discord.com `/api/webhooks/<id>/<token>` on https before it
+  is stored — both the SSRF boundary (no organizer-supplied host ever gets a
+  POST from the box) and the "that is not a webhook" sanity check — is never
+  returned by any API (the public shape carries a `webhookConfigured`
+  boolean), never logged, and never audited by value (only "set"/"cleared").
+  Everything defaults OFF: a configured webhook turns nothing on by itself.
+
+- **Scheduling is a 30-second observation loop in the app** (started from
+  `instrumentation.ts`, nodejs runtime, unref'd, fire-and-forget), not a
+  cron and not the request path. Observation is a read of what the event IS
+  — launched, paused, registration closed, which challenges are public,
+  where the board stands — compared against what was last observed, stored
+  under `ctf:announce:*`. The loop deliberately re-derives its module set
+  and board from connection-free reads (a React `cache()` that awaits
+  Next's `connection()` would throw outside a request scope), so the ticker
+  never needs a request to run in.
+
+- **Dedup is claim-first, and the claims are atomic.** First blood is
+  trigger-driven (the submit routes call a non-blocking `notifyFirstBlood`
+  after a fresh solve) but still claim-first: `HSETNX` on
+  `ctf:announce:first` decides the single winner across replicas, retries
+  and races, and a box with the feature off never claims — so enabling later
+  cannot replay history. Release claims run the other way round, by design:
+  the sweep claims EVERY newly-public challenge even while announcements are
+  off (and a webhook save runs a claim-only seed), because an unclaimed
+  challenge is a replay waiting to happen the day the organizer enables
+  releases. Lifecycle and board observations advance through one tiny Lua
+  compare-and-swap (read pack, swap-if-expected, bump a seq id): exactly one
+  replica announces each edge, the loser's stale read simply does not match,
+  and the state still advances with announcements off so enabling later
+  fires only on a real change. Daily summaries and remaining-time marks are
+  `HSETNX` claims on the event-local day and on `<closeInstant>:<markMs>`
+  (keyed by the scoring-close instant, so moving Scoring closes re-arms the
+  marks for the new window).
+
+- **Delivery is a leased Redis outbox, at-least-once.** Every announcement
+  is written to `ctf:announce:outbox` and delivered by a coalescing flush
+  (250 ms) or the ticker's retry pass: `SET NX PX` lease per id so two
+  replicas or a retry and a live flush can never both deliver, ≤10 embeds
+  per POST (Discord's batch limit), a 5s timeout, and three attempts before
+  an entry is parked as `failed`. At-least-once is the chosen direction —
+  a POST that succeeded but whose `sent` write was lost will be retried,
+  because a rare duplicate announcement beats a silent drop — and the lease
+  bounds that window to a crashed owner's lease expiry. The kind switch is
+  re-checked at flush time: turning a type off stops its pending posts
+  immediately, without draining them.
+
+- **Failure isolation is total.** Every reader fails open (an unavailable
+  Redis means no announcement, never a thrown error); every write-side
+  failure is logged through the label-only error helpers and swallowed; the
+  solve routes call the notifier fire-and-forget, so a Discord outage can
+  never fail a solve that already banked; and instrumentation starts the
+  ticker in a try/catch so a boot that cannot load the announcer still
+  serves the event.
+
+- **Secrecy is structural, not conventional.** Message builders are pure
+  and accept only public metadata (a title, a category, points, a team
+  name, a link) — there is no field a flag, an answer or a locked story
+  step's internals could ride in on. Every message sets
+  `allowed_mentions: { parse: [] }` so Discord resolves no mentions at all,
+  and the text escape additionally neutralises `@everyone`/`@here` and raw
+  user/role/channel syntax in rendered text. Locked story steps are filtered
+  out before any release claim, so a challenge nobody can open yet is never
+  announced. The admin "Send test" and the per-type previews are built by
+  the same functions, so a preview is exactly what the announcer would post.
+
+**Consequences.** Announcements are an organizer opt-in with no new
+credential to manage beyond the webhook itself, and no new process to
+deploy. The `ctf:announce:*` state is wiped by the master reset (so a fresh
+run re-announces its own launches and first bloods) while the webhook setup
+survives with the other organizer-set things. The pause/schedule contract is
+NOT re-implemented: the ticker reads the same `ctf:admin:settings` fields
+through the app's own `schedule-window.ts`, so the three-reader rule holds.
+Two public routes join the surface (the test and preview endpoints are
+admin-gated; the config and webhook endpoints likewise). What this does not
+cover: per-contestant DMs (needs a bot, not a webhook), richer widgets
+(buttons, threads), and announcing Secure Development's per-PR scores — the
+poller already has its own cadence and the scorer owns that story.

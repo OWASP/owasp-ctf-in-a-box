@@ -54,8 +54,8 @@ image_refs() {
       if (cmd ~ /^[ \t]*((export|local)[ \t]+)?([A-Z][A-Z0-9_]*)?(IMAGE|IMG)[A-Z0-9_]*=/) {
         v = cmd
         sub(/^[^=]*=/, "", v)
-        if (v ~ /^(""|[ \t]|$)/) next
-        sub(/[ \t]+#.*$/, "", v); gsub(/"/, "", v)
+        if (v ~ /^(""|\047\047|[ \t]|$)/) next
+        sub(/[ \t]+#.*$/, "", v); gsub(/["\047]/, "", v)
         sub(/^\$\{[A-Za-z_][A-Za-z0-9_]*:-/, "", v)
         if (v ~ /\$/ || v ~ /^[0-9]+$/) next
         if (v ~ /@sha256:[0-9a-f]{64}/) state = "pinned"
@@ -112,6 +112,8 @@ unpinned_images() {
     echo 'CTRL_REUSE_JUDGE_IMAGE=0   # 1 = reuse the judge image: yes/no'  # 27 not an image (a flag)
     echo 'TOOL_IMAGE=alpine'                                              # 28 flagged (bare name = latest)
     echo 'APP_IMAGE="" acc_run_judge'                                     # 29 not an image (empty)
+    echo "IMAGE=''"                                                       # 30 not an image (empty)
+    echo "IMAGE='alpine'"                                                 # 31 flagged (bare name = latest)
   } > "$f"
   exempt="$(image_refs "$f" | grep -E '^[^:]+:[0-9]+:exempt: ' | cut -d: -f2 | tr '\n' ' ')"
   echo "exempt lines: '$exempt' (want '12 17 18 26 ')"
@@ -119,8 +121,8 @@ unpinned_images() {
   flagged="$(unpinned_images "$f" | cut -d: -f2 | tr '\n' ' ')"
   states="$(image_refs "$f" | cut -d: -f2,3 | tr '\n' ' ')"
   echo "all: $states"
-  echo "flagged lines: '$flagged' (want '1 2 3 4 8 14 16 19 20 24 28 ')"
-  [ "$flagged" = "1 2 3 4 8 14 16 19 20 24 28 " ] || return 1
+  echo "flagged lines: '$flagged' (want '1 2 3 4 8 14 16 19 20 24 28 31 ')"
+  [ "$flagged" = "1 2 3 4 8 14 16 19 20 24 28 31 " ] || return 1
   pinned="$(image_refs "$f" | grep -E '^[^:]+:[0-9]+:pinned: ' | cut -d: -f2 | tr '\n' ' ')"
   echo "pinned lines: '$pinned' (want '5 15 21 ')"
   [ "$pinned" = "5 15 21 " ]

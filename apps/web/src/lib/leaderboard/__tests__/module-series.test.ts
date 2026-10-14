@@ -105,6 +105,33 @@ describe("withModuleSeries", () => {
     ]);
   });
 
+  // A module's solves hash is keyed on the login exactly as the session spelled
+  // it (`ctf:classic:solves:ChrisZoc`); only the JOIN between logins is
+  // case-insensitive. Reading the hash under a lowercased login finds nothing,
+  // and a mixed-case contestant's line loses every app-side point. The mock
+  // answers only the exact key the store writes, so a lowercased read is empty.
+  it("reads a mixed-case login's hashes under the spelling the store wrote", async () => {
+    mocks.getEnabledModuleIds.mockResolvedValue(new Set(["secure-development", "classic"]));
+    const stored = new Map([["ctf:classic:solves:ChrisZoc", hash(["flag-1", 50, "2026-10-07T12:20:00.000Z"])]]);
+    mocks.upstashPipeline.mockImplementation(async (commands: string[][]) =>
+      commands.map(([, key]) => stored.get(key) ?? { result: [] }),
+    );
+    const base = data({
+      entries: [entry("ChrisZoc", 62)],
+      teams: [team("oxguardians", ["ChrisZoc", "stsewd"])],
+      series: [{ login: "ChrisZoc", points: [{ t: "2026-10-07T12:30:00.000Z", score: 12 }] }],
+      teamSeries: [{ slug: "oxguardians", name: "Oxguardians", points: [{ t: "2026-10-07T12:30:00.000Z", score: 12 }] }],
+      capabilities: { apps: true, teams: true, challenges: false },
+    });
+    const result = await withModuleSeries(base);
+    const expected = [
+      { t: "2026-10-07T12:20:00.000Z", score: 50 },
+      { t: "2026-10-07T12:30:00.000Z", score: 62 },
+    ];
+    expect(result.series?.find((s) => s.login === "ChrisZoc")?.points).toEqual(expected);
+    expect(result.teamSeries?.[0].points).toEqual(expected);
+  });
+
   // Review finding on #416. Ids are unique inside a module's namespace and
   // nowhere else, and the team TOTALS dedupe per module separately — so the
   // same id in two modules is two items, and folding on the id alone would

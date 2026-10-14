@@ -1,5 +1,4 @@
 import "server-only";
-import { createHash } from "node:crypto";
 import { exportBundle as exportClassic, clearChallenges, importBundle as importClassic } from "@/lib/classic-store";
 import { exportBundle as exportQuiz, clearQuestions, importBundle as importQuiz } from "@/lib/quiz-store";
 import { exportBundle as exportAi, clearAiChallenges, importBundle as importAi } from "@/lib/ai-store";
@@ -17,13 +16,18 @@ import {
   updateAdminSettings,
   type SettingsPatch,
 } from "@/lib/admin-store";
-import { fillMissingUpload, listAllAttachments, listAttachments, readUploadBytes } from "@/lib/attachments-store";
+import {
+  AttachmentFilesError,
+  decodeAttachmentFiles,
+  exportAttachmentFiles,
+  fillAttachmentFiles,
+  type DecodedFile,
+} from "@/lib/attachment-files-store";
 import { ATTACHMENTS_EVENT_MAX_BYTES, formatBytes } from "@/lib/attachments-keys";
 import { resolveSite } from "@/lib/site";
 import {
   EVENT_BUNDLE_VERSION,
   EVENT_POLICY_FIELDS,
-  type AttachmentFile,
   type EventBundle,
   type EventPolicySettings,
 } from "@/lib/event-io";
@@ -176,43 +180,19 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
   return { bundle, warnings };
 }
 
-/** Every stored classic upload's bytes, base64 — the classic bundle
- *  carries only metadata. A missing upload and a link carry no bytes. */
-async function exportAttachmentFiles(): Promise<AttachmentFile[]> {
-  const out: AttachmentFile[] = [];
-  for (const [item, list] of await listAllAttachments("classic")) {
-    for (const a of list) {
-      if (a.kind !== "upload" || a.missing || !a.sha256) continue;
-      out.push({ item, sha256: a.sha256, bytes: Buffer.from(await readUploadBytes(a)).toString("base64") });
-    }
+/** Decodes the archive's files and checks each one's sha256 and size, then
+ *  their total against the event cap. THROWS `AdminValidationError` — before
+ *  anything destructive. The total is the whole archive's: the import clears
+ *  every stored upload first. */
+function decodeArchiveFiles(bundle: EventBundle): DecodedFile[] {
+  let decoded: DecodedFile[];
+  try {
+    decoded = decodeAttachmentFiles(bundle.classic?.challenges ?? [], bundle.attachmentFiles ?? []);
+  } catch (err) {
+    if (err instanceof AttachmentFilesError) throw new AdminValidationError(err.where, err.message);
+    throw err;
   }
-  return out;
-}
-
-type DecodedFile = { item: string; sha256: string; bytes: Uint8Array };
-
-/** Decodes the archive's files and checks each one's sha256. THROWS
- *  `AdminValidationError` on a mismatch — before anything destructive. */
-function decodeAttachmentFiles(bundle: EventBundle): DecodedFile[] {
-  // Every check the fill would make later, made now — size against the
-  // metadata, and the event total — so none of them can fail after the reset.
-  const sizes = new Map<string, number>();
-  for (const c of bundle.classic?.challenges ?? []) {
-    for (const a of c.attachments ?? []) if ("sha256" in a) sizes.set(`${c.id}\n${a.sha256}`, a.size);
-  }
-  let total = 0;
-  const decoded = (bundle.attachmentFiles ?? []).map((f, i) => {
-    const where = `attachmentFiles[${i}]`;
-    const bytes = new Uint8Array(Buffer.from(f.bytes, "base64"));
-    const actual = createHash("sha256").update(bytes).digest("hex");
-    if (actual !== f.sha256) throw new AdminValidationError(where, `${where}: the bytes' sha256 is ${actual}, not ${f.sha256}`);
-    const size = sizes.get(`${f.item}\n${f.sha256}`);
-    if (size !== bytes.length) {
-      throw new AdminValidationError(where, `${where}: ${bytes.length} bytes, but the classic metadata says size ${size}`);
-    }
-    total += bytes.length;
-    return { item: f.item, sha256: f.sha256, bytes };
-  });
+  const total = decoded.reduce((n, f) => n + f.bytes.length, 0);
   if (total > ATTACHMENTS_EVENT_MAX_BYTES) {
     throw new AdminValidationError(
       "attachmentFiles",
@@ -220,13 +200,6 @@ function decodeAttachmentFiles(bundle: EventBundle): DecodedFile[] {
     );
   }
   return decoded;
-}
-
-async function fillAttachmentFiles(files: readonly DecodedFile[]): Promise<void> {
-  for (const f of files) {
-    const target = (await listAttachments("classic", f.item)).find((a) => a.kind === "upload" && a.missing && a.sha256 === f.sha256);
-    if (target) await fillMissingUpload(target.id, f.bytes);
-  }
 }
 
 /** Thrown by `importEventBundle`'s live guard. Maps to a 409 at the route via
@@ -310,7 +283,7 @@ export async function importEventBundle(
   // Same fail-fast rule for attachment bytes — decode and check every
   // sha256 now, before `resetEvent`, so a tampered file refuses the import
   // with the current event still intact.
-  const decodedFiles = decodeAttachmentFiles(bundle);
+  const decodedFiles = decodeArchiveFiles(bundle);
 
   // And for the event images — sniffed here, before the reset, so a
   // tampered image refuses the import with the current event intact.

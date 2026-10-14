@@ -1,6 +1,6 @@
 import "server-only";
 import { storyPositions, type Story } from "@/lib/story-lock";
-import { teamSolveKeys } from "@/lib/classic-team";
+import { storyLockLua, teamLockKeys } from "@/lib/classic-team";
 import {
   addLink,
   addMissingUpload,
@@ -19,7 +19,8 @@ import { getAdminSettings } from "@/lib/admin-store";
 import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
-import { CLASSIC_BUNDLE_VERSION, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
+import { bundleVersionFor, carriesVisibility, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
+import { isChallengeVisible, isReleaseInstant } from "@/lib/classic-release";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
@@ -49,6 +50,7 @@ import {
   CLASSIC_POINTS_MAX,
   CLASSIC_CATEGORY_MAX_LEN,
   CLASSIC_CATEGORIES_MAX,
+  CLASSIC_HIDDEN_LUA,
 } from "@/lib/classic-keys";
 
 /**
@@ -184,6 +186,17 @@ export type Challenge = {
    *  It is also what SUBMIT_SCRIPT reads to pick which form of the submission
    *  to compare — see that script's comment. */
   caseSensitive?: boolean;
+  /** False keeps the challenge off the contestant side entirely: absent from
+   *  every payload, its page a 404, its flag and hint refused like an
+   *  unknown id (classic-release.ts). Absent means live, so every record
+   *  written before the field stays on the board. Stored only when false. */
+  enabled?: boolean;
+  /** The UTC ISO instant a disabled challenge goes live on its own, read at
+   *  every request against the reader's clock (no scheduler). Stored only
+   *  while it is in the future, always with `enabled: false`; the stored JSON
+   *  also carries `releaseAtMs`, its epoch-ms mirror for the Lua scripts,
+   *  which never reaches this shape. */
+  releaseAt?: string;
 };
 
 /** One challenge as the ADMIN-GATED surface sees it: the public-safe record
@@ -238,10 +251,55 @@ function parseChallenge(raw: string): Challenge | null {
       // challenge, the edit form unchecks its box, and `exportBundle` writes a
       // backup that restores as case-INsensitive.
       ...(c.caseSensitive === true ? { caseSensitive: true as const } : {}),
+      // Same absent-unless-it-says-something rule: only a stored false comes
+      // back. Dropping it here would publish a hidden challenge on the next
+      // write that re-serializes the record (a rename, a reorder).
+      ...(c.enabled === false ? { enabled: false } : {}),
+      // The instant only; the `releaseAtMs` mirror stays in storage.
+      ...(typeof c.releaseAt === "string" ? { releaseAt: c.releaseAt } : {}),
     };
   } catch {
     return null;
   }
+}
+
+/** A challenge in the one shape the store writes: fields in a fixed order,
+ *  the optional ones only when they say something. Every write of a record
+ *  goes through here, so one challenge has one representation whichever door
+ *  it came through, and a re-serialization never drops a field.
+ *
+ *  The release instant is settled at write time, on the server's clock: a
+ *  future one is kept (as UTC ISO) and makes the challenge disabled until
+ *  then; one that has passed means the challenge is simply live, so both
+ *  fields are dropped. An unreadable one is dropped (the writers refuse it
+ *  first). */
+function canonicalChallenge(c: Challenge, nowMs: number): Challenge {
+  const releaseMs = typeof c.releaseAt === "string" ? Date.parse(c.releaseAt) : NaN;
+  const scheduled = Number.isFinite(releaseMs) && releaseMs > nowMs;
+  const released = Number.isFinite(releaseMs) && !scheduled;
+  return {
+    id: c.id,
+    title: c.title,
+    category: c.category,
+    description: c.description,
+    points: c.points,
+    order: c.order,
+    ...(c.caseSensitive === true ? { caseSensitive: true as const } : {}),
+    ...(scheduled || (c.enabled === false && !released) ? { enabled: false } : {}),
+    ...(scheduled ? { releaseAt: new Date(releaseMs).toISOString() } : {}),
+  };
+}
+
+/** The stored JSON for a canonical record: the record, plus `releaseAtMs`
+ *  (the instant as epoch ms) when it is scheduled, which is what the grading
+ *  and hint scripts compare to Redis's clock (CLASSIC_HIDDEN_LUA). */
+function serializeRecord(record: Challenge): string {
+  return JSON.stringify(record.releaseAt ? { ...record, releaseAtMs: Date.parse(record.releaseAt) } : record);
+}
+
+/** The stored JSON for a challenge record, canonicalized now. */
+function serializeChallenge(c: Challenge): string {
+  return serializeRecord(canonicalChallenge(c, Date.now()));
 }
 
 /** The board's reading order: cheapest first (points ascending), then the
@@ -264,12 +322,27 @@ function parseChallengeHash(flat: unknown): Challenge[] {
 /** All challenges, in board order. Flags excluded — this issues a single
  *  HGETALL against the public-safe hash only, and the `Challenge` shape it
  *  returns has nowhere to put a flag even if it did. This is the ONLY list
- *  function a contestant-facing route (or the leaderboard) may call. */
+ *  function a contestant-facing route (or the leaderboard) may call.
+ *
+ *  It returns HIDDEN challenges too (`enabled: false`): every contestant
+ *  caller filters with `visibleChallenges` (classic-release.ts) before
+ *  anything reaches a payload or a denominator, and
+ *  classic-release-coverage.test.ts fails a caller that does not. */
 export async function listChallenges(): Promise<Challenge[]> {
   const [res] = await upstashPipeline([["HGETALL", CHALLENGES_KEY]]);
   const challenges = parseChallengeHash(res.result);
   challenges.sort(compareChallenges);
   return challenges;
+}
+
+/** Every stored challenge record, hidden ones included, THROWING on a read
+ *  error rather than reading it as an empty board. For the graders' JS side
+ *  (submitFlag, the hint reveal), which must tell "hidden" from "unknown"
+ *  and fail closed when it cannot. */
+export async function readChallengeRecords(): Promise<Challenge[]> {
+  const [res] = await upstashPipeline([["HGETALL", CHALLENGES_KEY]]);
+  if (res.error) throw new Error(`Upstash HGETALL failed: ${res.error}`);
+  return parseChallengeHash(res.result);
 }
 
 /** The same list, WITH each challenge's flag — for the admin-gated authoring
@@ -441,7 +514,7 @@ export async function renameCategory(from: string, to: string): Promise<Category
 
   if (moving.length > 0) {
     const writes = await upstashPipeline(
-      moving.map((c) => ["HSET", CHALLENGES_KEY, c.id, JSON.stringify({ ...c, category: target })]),
+      moving.map((c) => ["HSET", CHALLENGES_KEY, c.id, serializeChallenge({ ...c, category: target })]),
     );
     // `upstashPipeline` reports a per-command failure as a VALUE rather than
     // throwing (AGENTS.md), so an unchecked `.result` would let a partial move
@@ -501,14 +574,18 @@ export async function upsertChallenge(c: Challenge, flag: string, hint?: string 
   if (hint != null && (typeof hint !== "string" || hint.length > CLASSIC_HINT_MAX)) {
     throw new ClassicValidationError("hint", `Hint must be at most ${CLASSIC_HINT_MAX} characters`);
   }
+  if (c.releaseAt !== undefined && (typeof c.releaseAt !== "string" || !isReleaseInstant(c.releaseAt))) {
+    throw new ClassicValidationError("releaseAt", "Release time must be an ISO 8601 date and time ending in Z or an offset such as -03:00");
+  }
 
   const authored = flag.trim();
+  const record = canonicalChallenge(c, Date.now());
   // The hint is written (or CLEARED — an empty/absent hint deletes the row)
   // in the same pipeline as the challenge, into its own SECRET hash: the
   // public record must never carry it, same storage rule as the flag pair.
   const authoredHint = typeof hint === "string" && hint.trim() ? hint.trim() : null;
   const results = await upstashPipeline([
-    ["HSET", CHALLENGES_KEY, c.id, JSON.stringify(c)],
+    ["HSET", CHALLENGES_KEY, c.id, serializeRecord(record)],
     ["HSET", FLAG_KEY, c.id, authored],
     ["HSET", FLAGNORM_KEY, c.id, flagComparisonForm(flag, c.caseSensitive)],
     authoredHint ? ["HSET", HINTS_KEY, c.id, authoredHint] : ["HDEL", HINTS_KEY, c.id],
@@ -516,7 +593,7 @@ export async function upsertChallenge(c: Challenge, flag: string, hint?: string 
   const failed = results.find((r) => r.error);
   if (failed) throw new Error(`Upstash HSET failed: ${failed.error}`);
 
-  return { challenge: c, flag: authored, hint: authoredHint };
+  return { challenge: record, flag: authored, hint: authoredHint };
 }
 
 /** Result of a bulk import: how many bundle rows were brand new vs. already
@@ -703,8 +780,10 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
       // import round-trip test compares stored JSON, and an always-present
       // `"caseSensitive":false` would break it while changing nothing.
       ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
+      ...(c.enabled === false ? { enabled: false } : {}),
+      ...(typeof c.releaseAt === "string" ? { releaseAt: c.releaseAt } : {}),
     };
-    commands.push(["HSET", CHALLENGES_KEY, c.id, JSON.stringify(record)]);
+    commands.push(["HSET", CHALLENGES_KEY, c.id, serializeChallenge(record)]);
     commands.push(["HSET", FLAG_KEY, c.id, c.flag.trim()]);
     // Hint written-or-cleared, same as upsertChallenge: re-importing a bundle
     // without the field removes a hint the earlier import created, so the
@@ -762,8 +841,13 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // Same only-when-set rule as caseSensitive: a hint-less board exports
     // byte-identically to one that predates hints.
     ...(hint ? { hint } : {}),
-    // Metadata only (the bytes ride the event archive), and only when
-    // there is some — the same byte-identical rule as hint.
+    // Visibility, only when it says something (v4): a backup restores a
+    // hidden challenge hidden, never live.
+    ...(challenge.enabled === false ? { enabled: false } : {}),
+    ...(challenge.releaseAt ? { releaseAt: challenge.releaseAt } : {}),
+    // Metadata only (the bytes ride the event archive, or a panel export
+    // with "Include files"), and only when there is some — the same
+    // byte-identical rule as hint.
     ...(files.get(challenge.id)?.length ? { attachments: files.get(challenge.id)!.map(attachmentMeta) } : {}),
   }));
   // A stored step can outlive its challenge (deleteChallenge updates the story
@@ -772,7 +856,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
   // would be a backup that does not restore — prune to the exported ids.
   const exported = new Set(challenges.map((c) => c.id));
   const kept = stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) }));
-  return { version: CLASSIC_BUNDLE_VERSION, categories, challenges, stories: kept };
+  return { version: bundleVersionFor(false, challenges.some(carriesVisibility)), categories, challenges, stories: kept };
 }
 
 /** Removes a challenge and both of its flag rows together — nothing else.
@@ -900,6 +984,7 @@ export async function getViewerClassic(login: string): Promise<ViewerClassic> {
  *  returns `already` without ever reaching the increment. */
 export async function getSolveCounts(): Promise<Map<string, number>> {
   const [res] = await upstashPipeline([["HGETALL", SOLVECOUNT_KEY]]);
+  if (res.error) throw new Error(`Upstash HGETALL failed (classic solvecount): ${res.error}`);
   return parseCounterHash(res.result);
 }
 
@@ -1078,6 +1163,8 @@ async function evaluateGate(
 // one script to completion before starting the next, so each submission here
 // sees every effect of every submission that finished before it.
 //
+//   0. A hidden challenge (the record's `enabled`) -> {'missing'}, before
+//      anything else is read or written.
 //   1. HGET the normalized flag. Missing -> {'missing'} (bad/deleted id).
 //   2. HEXISTS the solve row BEFORE any write -> {'already'}, nothing touched.
 //      This guard is also what makes KEYS[6] (solvecount) distinct-by-
@@ -1108,20 +1195,27 @@ async function evaluateGate(
 // complete "points":<int> pair, not a digit run appearing earlier in the blob.
 export const SUBMIT_SCRIPT = `
 local dry = ARGV[8] == '1'
+${CLASSIC_HIDDEN_LUA}
+-- VISIBILITY: a hidden challenge does not exist for a contestant. Decided
+-- here, from the record this script reads, before the already-solved guard
+-- (a solver of a withdrawn challenge is refused like anyone else) and before
+-- any read of the flag or any write. Answered exactly like an unknown id. A
+-- dry-run preview skips it, so an organizer can test a hidden challenge.
+local cRaw = redis.call('HGET', KEYS[4], ARGV[1])
+if not dry and classicHidden(cRaw) then return {'missing'} end
 if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 -- STORY LOCK (#463): ARGV[9] names this step's prerequisite ("" when the
--- challenge is not a later story step). It is open only if some TEAMMATE —
--- one of the solves hashes the caller handed in as KEYS[9..] — holds it.
--- (KEYS[8] is the lastAt hash, #522: never part of this loop.)
+-- challenge is not a later story step). It is open only if some TEAMMATE
+-- holds it, and made that solve while on this team (#602): KEYS[9..] are
+-- (solves hash, user record) pairs, ARGV[10] the viewer's team slug. See
+-- storyLockLua in classic-team.ts. (KEYS[8] is the lastAt hash, #522: never
+-- part of this loop.)
 -- Checked FIRST, before the flag hash is read and before any read or write
 -- of attempts: a locked step touches no secret, spends no attempt and cannot
 -- be used to test a flag. The store reports it exactly like an unknown
 -- challenge (no oracle). A dry-run preview skips it.
 if not dry and ARGV[9] and ARGV[9] ~= '' then
-  local open = false
-  for i = 9, #KEYS do
-    if redis.call('HEXISTS', KEYS[i], ARGV[9]) == 1 then open = true break end
-  end
+${storyLockLua(9, 9, 10)}
   if not open then return {'locked'} end
 end
 local target = redis.call('HGET', KEYS[3], ARGV[1])
@@ -1145,11 +1239,10 @@ if not dry then
   redis.call('HSET', KEYS[1], ARGV[1], '{"attempts":' .. attempts .. ',"firstAt":"' .. firstAt .. '","lastAt":"' .. ARGV[3] .. '","lastAtMs":' .. ARGV[6] .. '}')
 end
 
--- Fetched BEFORE the comparison, not after, because the record now decides
--- WHICH submitted form to compare (issue #193) as well as what the solve is
--- worth. Lua still performs no case handling of its own: both forms arrive
--- already normalized from JS, and this only chooses between them.
-local cRaw = redis.call('HGET', KEYS[4], ARGV[1])
+-- The record (read at the top, for visibility) decides WHICH submitted form
+-- to compare (issue #193) as well as what the solve is worth. Lua still
+-- performs no case handling of its own: both forms arrive already normalized
+-- from JS, and this only chooses between them.
 local points = 0
 local caseSensitive = false
 if cRaw then
@@ -1243,15 +1336,29 @@ export async function submitFlag(
   // script checks it against every teammate's solves hash. Resolved here and
   // enforced THERE (the script is the authority). A stories or team read that
   // fails is `unavailable` — closed, never "no lock".
+  //
+  // The same read tells whether the challenge is HIDDEN. The chain is built
+  // over the visible challenges, so a hidden step is skipped like a deleted
+  // one and the step after it waits on the one before; the challenge itself
+  // is kept in the set so its own prerequisite is known if the script finds
+  // it released.
   let prereq = "";
   let lockKeys: string[] = [];
-  if (gate.allowed || gate.reason === "cooldown") {
+  let lockTeam = "";
+  let hidden = false;
+  if (gate.allowed || gate.reason === "cooldown" || gate.reason === "solved") {
     try {
-      const [stories, existing] = await Promise.all([listStories(), listChallengeIds()]);
-      const pos = storyPositions(stories, existing).get(challengeId);
+      const [stories, records] = await Promise.all([listStories(), readChallengeRecords()]);
+      const nowMs = Date.now();
+      const record = records.find((c) => c.id === challengeId);
+      // A preview grades a hidden challenge (the script skips the check too).
+      hidden = !dryRun && record !== undefined && !isChallengeVisible(record, nowMs);
+      const visible = new Set(records.filter((c) => isChallengeVisible(c, nowMs)).map((c) => c.id));
+      if (record) visible.add(challengeId);
+      const pos = storyPositions(stories, visible).get(challengeId);
       if (pos?.prereq) {
         prereq = pos.prereq;
-        lockKeys = await teamSolveKeys(login);
+        ({ keys: lockKeys, team: lockTeam } = await teamLockKeys(login));
       }
     } catch (err) {
       console.error("classic: story lock lookup failed (failing closed):", errorLabel(err));
@@ -1263,8 +1370,13 @@ export async function submitFlag(
   // checks the lock BEFORE the cooldown, so a locked step is answered like an
   // unknown challenge — never with a cooldown an unknown id cannot have. The
   // script still enforces the cooldown on an open step.
-  const cooldownDeferred = !gate.allowed && gate.reason === "cooldown" && prereq !== "";
-  if (!gate.allowed && !cooldownDeferred) {
+  //
+  // A hidden challenge's "solved" and "cooldown" are left to the script for
+  // the same reason: either would confirm it exists. The script answers it
+  // like an unknown id, unless Redis's clock finds it visible after all, in
+  // which case it gives the real verdict.
+  const deferred = !gate.allowed && (gate.reason === "cooldown" || gate.reason === "solved") && (hidden || (gate.reason === "cooldown" && prereq !== ""));
+  if (!gate.allowed && !deferred) {
     // Kept as its own branch (not folded into the passthrough below) so its
     // caller-facing shape can never accidentally pick up a retryAt the lookup
     // never actually established.
@@ -1295,7 +1407,7 @@ export async function submitFlag(
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
         LAST_AT_KEY, // KEYS[8] — login -> latest award time
-        ...lockKeys, // KEYS[9..] — teammates' solves hashes, for the story lock
+        ...lockKeys, // KEYS[9..] — (solves hash, user record) per teammate, for the story lock
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the
@@ -1312,6 +1424,7 @@ export async function submitFlag(
         caseSensitiveFlagForm(flag), // ARGV[7] — case preserved
         dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing
         prereq, // ARGV[9] — story prerequisite, "" when none
+        lockTeam, // ARGV[10] — the viewer's team slug, "" for a team of one
       ],
     );
   } catch (err) {

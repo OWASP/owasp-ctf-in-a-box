@@ -14,6 +14,7 @@ import {
   nextScheduleBoundary,
   outsideScoringWindow,
   outsideWindow,
+  pausedAt,
   restampPlan,
   scoringClosure,
   serverFloorNow,
@@ -29,6 +30,11 @@ const { cases: windowCorpus } = JSON.parse(readFileSync(CORPUS_PATH, "utf8")) as
 };
 
 describe("outsideWindow: shared boundary-instant corpus", () => {
+  // A floor at the committed row count: an emptied or truncated corpus would
+  // otherwise generate zero cases here and pass.
+  it("has at least its committed 16 rows", () => {
+    expect(windowCorpus.length).toBeGreaterThanOrEqual(16);
+  });
   for (const { description, nowMs, startsAt, endsAt, expected } of windowCorpus) {
     it(description, () => {
       expect(outsideWindow(nowMs, startsAt, endsAt)).toBe(expected);
@@ -48,9 +54,32 @@ const { cases: scoringCorpus } = JSON.parse(readFileSync(SCORING_CORPUS_PATH, "u
 };
 
 describe("outsideScoringWindow: shared scoring-window corpus (#464)", () => {
+  it("has at least its committed 10 rows", () => {
+    expect(scoringCorpus.length).toBeGreaterThanOrEqual(10);
+  });
   for (const { description, nowMs, startsAt, endsAt, expected } of scoringCorpus) {
     it(description, () => {
       expect(outsideScoringWindow(nowMs, startsAt, endsAt)).toBe(expected);
+    });
+  }
+});
+
+// Whether the manual freeze covered an instant: the pause log's closed
+// intervals plus the pause still open. Runs verbatim in
+// scorer/test/store.test.js, which judges a Secure Development score's
+// comment time with it, and sync/test/redis.test.js.
+const PAUSE_CORPUS_PATH = fileURLToPath(new URL("../../../../../test/fixtures/pause-interval-corpus.json", import.meta.url));
+const { cases: pauseCorpus } = JSON.parse(readFileSync(PAUSE_CORPUS_PATH, "utf8")) as {
+  cases: { description: string; tMs: number; paused: boolean; pausedSince: string | null; pauses: string[]; expected: boolean }[];
+};
+
+describe("pausedAt: shared pause-interval corpus", () => {
+  it("has rows", () => {
+    expect(pauseCorpus.length).toBeGreaterThan(0);
+  });
+  for (const { description, tMs, paused, pausedSince, pauses, expected } of pauseCorpus) {
+    it(description, () => {
+      expect(pausedAt(tMs, paused, pausedSince, pauses)).toBe(expected);
     });
   }
 });

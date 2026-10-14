@@ -14,7 +14,7 @@ const web: ClassicChallengeView = {
   category: "Web",
   description: "Find the flag hidden behind a login form.",
   points: 50,
-  solveCount: 3,
+  teamsSolved: 3,
   status: "unsolved",
 };
 
@@ -24,7 +24,7 @@ const crypto: ClassicChallengeView = {
   category: "Crypto",
   description: "Break a small RSA modulus.",
   points: 75,
-  solveCount: 1,
+  teamsSolved: 1,
   status: "unsolved",
 };
 
@@ -154,5 +154,45 @@ describe("the run rail counts open story steps too (#463, review M3)", () => {
     expect(withStep).toContain("/ 2 solved");
     // The extra is counted, not rendered as a tile here — it lives in its lane.
     expect(withStep).not.toContain('href="/flags/story-step"');
+  });
+});
+
+// #595: how many teams solved a challenge, on the tile itself, so a
+// contestant can see what is approachable without opening each one.
+describe("ChallengeBoard solve counts", () => {
+  it("shows how many teams solved each tile", () => {
+    const html = renderToStaticMarkup(
+      <ChallengeBoard categories={["Web", "Crypto"]} challenges={[web, crypto]} authenticated basePath="/flags" />,
+    );
+    expect(html).toContain("3 teams");
+    expect(html).toContain("1 team<");
+  });
+
+  it("shows no count when it could not be read, rather than a wrong 0", () => {
+    const html = renderToStaticMarkup(
+      <ChallengeBoard categories={["Web"]} challenges={[{ ...web, teamsSolved: null }]} authenticated basePath="/flags" />,
+    );
+    expect(html).not.toMatch(/\d+ teams?\b/);
+  });
+});
+
+// #188: the first solver of a challenge, by login, on its tile — visible and
+// in the tile's accessible name (the link's aria-label replaces its text).
+describe("ChallengeBoard first blood", () => {
+  it("names the first solver on the tile and in its accessible name", () => {
+    const html = renderToStaticMarkup(
+      <ChallengeBoard categories={["Web"]} challenges={[{ ...web, firstBlood: "Alice-Dev" }]} authenticated basePath="/flags" />,
+    );
+    expect(html).toContain("First blood: Alice-Dev");
+    expect(html).toMatch(/aria-label="SQLi 101, 50 points, first blood by Alice-Dev"/);
+  });
+
+  it("shows nothing for a challenge nobody has solved, or whose first blood could not be read", () => {
+    for (const firstBlood of [null, undefined]) {
+      const html = renderToStaticMarkup(
+        <ChallengeBoard categories={["Web"]} challenges={[{ ...web, firstBlood }]} authenticated basePath="/flags" />,
+      );
+      expect(html).not.toMatch(/first blood/i);
+    }
   });
 });

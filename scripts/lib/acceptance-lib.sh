@@ -109,6 +109,7 @@ JSON
 # APP_IMAGE means "score from SOURCE" — the bring-up builds the staged
 # workspace Dockerfile, the same branch a contestant's PR takes.
 acc_run_judge() {
+  # pins: $IMG is the scorer image acc_build_scorer builds
   docker run --rm \
     --network "$NET" \
     -v /var/run/docker.sock:/var/run/docker.sock \
@@ -143,6 +144,7 @@ acc_score_counts() {
 acc_boot_standalone() {
   img="$1"; name="$2"; cport="${3:-5000}"; shift 3
   docker rm -f "$name" >/dev/null 2>&1 || true
+  # pins: the caller passes the target image; the workflows pin it
   docker run -d --rm --name "$name" -p "127.0.0.1::$cport" "$@" "$img" >/dev/null
   hp="$(docker port "$name" "$cport/tcp" | head -1 | sed 's/.*://')"
   [ -n "$hp" ] || return 1
@@ -164,12 +166,14 @@ acc_control_dvwa() {
   docker run -d --name "$CTRL_DB_NAME" --network "$cnet" --network-alias db \
     -e MYSQL_ROOT_PASSWORD=dvwa -e MYSQL_DATABASE=dvwa \
     -e MYSQL_USER=dvwa -e MYSQL_PASSWORD='p@ssw0rd' \
-    docker.io/library/mariadb:10 >/dev/null
+    docker.io/library/mariadb:10@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2 >/dev/null
+  # pins: $CTRL_IMG is the patched target the gate builds
   docker run -d --name "$CTRL_NAME" --network "$cnet" --network-alias dvwa \
     -e DB_SERVER=db -e DB_DATABASE=dvwa -e DB_USER=dvwa -e DB_PASSWORD='p@ssw0rd' \
     -e RECAPTCHA_PRIV_KEY='' -e RECAPTCHA_PUB_KEY='' -e DEFAULT_SECURITY_LEVEL=low \
     "$CTRL_IMG" >/dev/null
   rc=0
+  # pins: $IMG is the scorer image acc_build_scorer builds
   docker run --rm --network "$cnet" \
     -e APP_URL="http://dvwa" -e CHALLENGE="$CHALLENGE" \
     -v "$1:/dvwa-ctrl.js:ro" \
@@ -297,7 +301,7 @@ acc_boot_redis_srh() {
   echo "--- booting redis + srh"
   docker rm -f "$pfx-redis" "$pfx-srh" >/dev/null 2>&1 || true
   docker run -d --name "$pfx-redis" --network "$net" --network-alias redis \
-    redis:7-alpine redis-server --appendonly yes >/dev/null
+    redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 redis-server --appendonly yes >/dev/null
   docker run -d --name "$pfx-srh" --network "$net" --network-alias srh \
     -e SRH_MODE=env -e SRH_TOKEN="$token" -e SRH_CONNECTION_STRING=redis://redis:6379 \
     hiett/serverless-redis-http:latest@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150 >/dev/null
@@ -323,6 +327,7 @@ acc_boot_app() {
   org="$7"; logins="$8"; secret="$9"
   echo "--- booting the app"
   docker rm -f "$name" >/dev/null 2>&1 || true
+  # pins: the caller passes the app image it built
   docker run -d --name "$name" --network "$net" -p "$port:3000" \
     -e BETTER_AUTH_SECRET="$secret" \
     -e BETTER_AUTH_URL="http://localhost:$port" \
@@ -434,12 +439,12 @@ acc_assert_leaderboard_contrib() {
   lb_base="$1"; lb_module="$2"; lb_login="$3"; lb_points_fmt="$4"
   echo "--- /leaderboard shows the seeded contestant by login, with their $lb_module points"
   lb_html="$(curl -sf "$lb_base/leaderboard")"
-  if ! echo "$lb_html" | grep -qF "$lb_login"; then
+  if ! grep -qF "$lb_login" <<< "$lb_html"; then
     echo "FAIL: /leaderboard has no row for $lb_login — a contestant whose" >&2
     echo "      only points are $lb_module points did not get a row created at all." >&2
     return 1
   fi
-  if ! echo "$lb_html" | grep -qF "$lb_points_fmt"; then
+  if ! grep -qF "$lb_points_fmt" <<< "$lb_html"; then
     echo "FAIL: /leaderboard shows $lb_login but not their $lb_module total" >&2
     echo "      ($lb_points_fmt) — the row exists, so the module" >&2
     echo "      overlay ran, but the points did not reach it." >&2

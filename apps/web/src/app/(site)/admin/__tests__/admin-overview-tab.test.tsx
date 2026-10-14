@@ -14,6 +14,7 @@ import AdminOverviewTab, { moduleSummary } from "@/app/(site)/admin/admin-overvi
 const settings: AdminSettings = {
   paused: false,
   teamRegistrationOpen: true,
+  displayQr: true,
   hintsEnabled: null,
   hintCost: null,
   hintsMinSolves: null,
@@ -107,6 +108,14 @@ describe("AdminOverviewTab", () => {
     expect(html).not.toContain("Sync");
     // Non-vacuity: the screen did render, and the module it DOES serve is on it.
     expect(html).toContain("Quiz");
+  });
+
+  it("offers a Show UTC switch on Recent activity, off by default", () => {
+    const html = render();
+    const section = html.slice(html.indexOf("Recent activity"));
+    expect(section).toContain("Show UTC");
+    expect(section).toMatch(/<input[^>]*type="checkbox"/);
+    expect(section).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked/);
   });
 
   it("shows Loading… for the activity preview before its fetch could resolve", () => {

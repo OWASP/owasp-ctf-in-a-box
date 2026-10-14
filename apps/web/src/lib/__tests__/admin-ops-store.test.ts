@@ -33,10 +33,15 @@ vi.mock("@/lib/admin-store", () => ({ ADMIN_AUDIT_KEY: "ctf:admin:audit", AUDIT_
 // bump) so no app task charges a hint against a gross the reset is removing.
 const foldCache = vi.hoisted(() => ({ beginScoreLowering: vi.fn(), endScoreLowering: vi.fn() }));
 vi.mock("@/lib/leaderboard/fold-cache", () => foldCache);
+// #597: the admin add/move reads the team-size cap and writes the activity log.
+const teamDeps = vi.hoisted(() => ({ resolveTeamMaxMembers: vi.fn(async () => 4), logActivity: vi.fn(async () => {}) }));
+vi.mock("@/lib/team-store", () => ({ resolveTeamMaxMembers: teamDeps.resolveTeamMaxMembers }));
+vi.mock("@/lib/activity-log", () => ({ logActivity: teamDeps.logActivity }));
 
 import {
   OpsValidationError,
   deleteUser,
+  forceAddToTeam,
   forceDisbandTeam,
   forceRemoveFromTeam,
   forceTransferCaptain,
@@ -376,6 +381,9 @@ describe("resetUserProgress", () => {
       "ctf:hints:spent#octocat",
       // #522: the award time goes with the totals it orders.
       "ctf:quiz:lastAt#octocat",
+      // #616: the first-open times, which only time this login's solves.
+      "ctf:classic:opened:octocat",
+      "ctf:ai:opened:octocat",
     ]);
     // Classic's and ai's per-login keys are cleared through the atomic
     // scripts instead — assert those calls named exactly this login's keys.
@@ -687,5 +695,88 @@ describe("lookupUser — known", () => {
     );
     mockNoSecureDevKeys();
     expect((await lookupUser("octocat")).known).toBe(true);
+  });
+});
+
+// #597: after registration closes a player who left can't rejoin on their
+// own; an organizer puts them on a team (or moves them) from Support. The
+// write is one atomic script; the player's record is found by the spelling
+// they signed in with, because that is the key their session reads.
+describe("forceAddToTeam (#597)", () => {
+  const scanReply = (...keys: string[]) => [{ result: ["0", keys] }];
+
+  it("finds the player's stored spelling and adds them under it, with the cap", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:ChrisZoc", "ctf:user:ChrisZoc:hints"));
+    mocks.upstashEval.mockResolvedValueOnce(["ok", ""]);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
+    const result = await forceAddToTeam("Red-Team", "chriszoc", "admin");
+    expect(result).toEqual({ ok: true, login: "ChrisZoc", from: null });
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(script).toContain("SADD");
+    expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members", "ctf:user:ChrisZoc"]);
+    expect(args.slice(0, 3)).toEqual(["ChrisZoc", "red-team", "4"]);
+    expect(teamDeps.logActivity).toHaveBeenCalledWith("team-join", "ChrisZoc", "red-team");
+    expect(allCommands().some((c) => c[0] === "LPUSH" && String(c[2]).includes("ops:team-add-member"))).toBe(true);
+  });
+
+  // The script has already moved the player when the audit line is written,
+  // so a failed audit write is logged and the add still reports success: a
+  // 503 would send the organizer to retry a move that already happened.
+  it("still succeeds, and logs the join, when the audit write fails", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:bob"));
+    mocks.upstashEval.mockResolvedValueOnce(["ok", "blue"]);
+    mocks.upstashPipeline.mockRejectedValueOnce(new Error("upstash down"));
+    const result = await forceAddToTeam("red-team", "bob", "admin");
+    expect(result).toEqual({ ok: true, login: "bob", from: "blue" });
+    expect(teamDeps.logActivity).toHaveBeenCalledWith("team-join", "bob", "red-team");
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("ops:team-add-member"), expect.anything());
+    spy.mockRestore();
+  });
+
+  // A per-command error resolves rather than throws, so it must be read off
+  // the reply to be logged at all.
+  it("logs an audit write refused per command, and still succeeds", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:bob"));
+    mocks.upstashEval.mockResolvedValueOnce(["ok", ""]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "WRONGTYPE Operation against a key holding the wrong kind of value" }, { result: "OK" }]);
+    expect(await forceAddToTeam("red-team", "bob", "admin")).toEqual({ ok: true, login: "bob", from: null });
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("ops:team-add-member"), expect.stringContaining("WRONGTYPE"));
+    spy.mockRestore();
+  });
+
+  it("scans with a case-insensitive pattern rather than the whole keyspace", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:ab-1"));
+    mocks.upstashEval.mockResolvedValueOnce(["ok", ""]);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
+    await forceAddToTeam("red-team", "AB-1", "admin");
+    expect(mocks.upstashPipeline.mock.calls[0][0][0]).toEqual(["SCAN", "0", "MATCH", "ctf:user:[aA][bB]-1", "COUNT", 1000]);
+  });
+
+  it("refuses a login that has never signed in, writing nothing", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce(scanReply());
+    await expect(forceAddToTeam("red-team", "ghost", "admin")).rejects.toThrow(/has not signed in/);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("hands the script no cap when the admin overrides it", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:bob"));
+    mocks.upstashEval.mockResolvedValueOnce(["ok", "blue"]);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
+    expect(await forceAddToTeam("red-team", "bob", "admin", { overrideCap: true })).toEqual({ ok: true, login: "bob", from: "blue" });
+    expect(mocks.upstashEval.mock.calls[0][2][2]).toBe("");
+  });
+
+  it.each([
+    [["no-team"], /No team "red-team"/],
+    [["already-member"], /already on "red-team"/],
+    [["full"], /full \(4 players\).*override/],
+    [["is-captain", "blue"], /captains "blue"/],
+  ])("maps %j to a validation error and logs nothing", async (verdict, message) => {
+    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:bob"));
+    mocks.upstashEval.mockResolvedValueOnce(verdict);
+    await expect(forceAddToTeam("red-team", "bob", "admin")).rejects.toThrow(message);
+    expect(teamDeps.logActivity).not.toHaveBeenCalled();
   });
 });

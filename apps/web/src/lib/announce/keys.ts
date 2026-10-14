@@ -44,7 +44,7 @@ export const ANNOUNCE_DAILY_KEY = "ctf:announce:daily";
  *  Updated ONLY when a daily claims, so the delta is "since the last
  *  summary", not "since the last tick". A missing snapshot (first fire
  *  after enabling) seeds the baseline and reports zeros — an understated
- *  first summary beats an overstated one (ADR 67). */
+ *  first summary beats an overstated one (ADR 69). */
 export const ANNOUNCE_DAILY_SNAPSHOT_KEY = "ctf:announce:daily:snapshot";
 
 /** Remaining-time-mark claims: field `<endsAtMs>:<markMs>` → ISO instant.

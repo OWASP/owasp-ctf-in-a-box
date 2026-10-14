@@ -132,6 +132,7 @@ const twoModules: readonly ResolvedModule[] = [
 const settings: AdminSettings = {
   paused: false,
   teamRegistrationOpen: true,
+  displayQr: true,
   hintsEnabled: null,
   hintCost: null,
   hintsMinSolves: null,

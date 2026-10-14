@@ -17,6 +17,7 @@
 setup() {
   REPO="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   FLY="$REPO/deploy/fly"
+  REDACT_LIB="$REPO/scripts/lib/redact.sh"
 
   # Strip comments before asserting on structure. These files EXPLAIN the
   # blocks they deliberately omit, so a naive grep for "[[services]]" matches
@@ -60,11 +61,18 @@ ENV
     [ -s "$RENDERED" ]
   }
   # The render shells out to `docker compose`. Skipping is honest when docker
-  # is absent (a laptop without it running the rest of the suite); CI has it,
-  # so these never silently vanish where it counts.
+  # is absent (a laptop without it running the rest of the suite). CI sets
+  # FLY_BATS_REQUIRE_DOCKER=1, which turns that skip into a failure: a render
+  # test that skips there is a gate that proved nothing.
   need_docker() {
-    command -v docker >/dev/null || skip "docker not available"
-    docker compose version >/dev/null 2>&1 || skip "docker compose not available"
+    if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ "${FLY_BATS_REQUIRE_DOCKER:-}" = "1" ]; then
+      echo "FAIL: docker compose is not available, and FLY_BATS_REQUIRE_DOCKER=1 forbids skipping the render tests" >&2
+      return 1
+    fi
+    skip "docker compose not available (CI sets FLY_BATS_REQUIRE_DOCKER=1, where this is a failure)"
   }
 }
 
@@ -1344,4 +1352,88 @@ ENV
   run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.colon"
   [ "$status" -eq 0 ]
   echo "$output" | grep -qF 'ghcr.io/fixture-org/score:latest'
+}
+
+# ---------------------------------------------------------------------------
+# The dry-run redactor: scripts/lib/redact.sh, shared by both deploy scripts.
+# ---------------------------------------------------------------------------
+
+# Every secret shape the shared redactor must hide, run through redact_args.
+# Each value is a distinctive string the output is then grepped for.
+redact_shapes() {
+  bash -c '. "$1"; redact_args \
+    BETTER_AUTH_SECRET=LEAKsecret01 SCORER_TOKEN=LEAKtoken02 \
+    REDIS_PASSWORD=LEAKpass03 GITHUB_APP_PRIVATE_KEY=LEAKpkey04 \
+    SRH_CONNECTION_STRING=redis://:LEAKconn05@localhost:6379 \
+    BASIC_AUTH=LEAKauth06 OPENAI_API_KEY=LEAKkey07 AWS_SECRET_ACCESS_KEY=LEAKkey08 \
+    db_password=LEAKlower09 \
+    EVENT_URL=https://admin:LEAKurl10@ctf.example.org/path \
+    https://x-access-token:LEAKbare11@github.com/org/repo.git \
+    BETTER_AUTH_URL=https://ctf.example.org GITHUB_APP_ID=4242 \
+    --platform linux/amd64 ghcr.io/org/score@sha256:abc123' _ "$REDACT_LIB"
+}
+
+@test "redactor: every secret shape is hidden" {
+  run redact_shapes
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | grep -oE 'LEAK[a-z]+[0-9]+')" ]
+}
+
+@test "redactor: names stay visible, and URL userinfo is masked to ***" {
+  run redact_shapes
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'GITHUB_APP_PRIVATE_KEY=<redacted>'
+  echo "$output" | grep -qF 'SRH_CONNECTION_STRING=<redacted>'
+  echo "$output" | grep -qF 'BASIC_AUTH=<redacted>'
+  echo "$output" | grep -qF 'db_password=<redacted>'
+  echo "$output" | grep -qF 'EVENT_URL=https://***@ctf.example.org/path'
+  echo "$output" | grep -qF 'https://***@github.com/org/repo.git'
+}
+
+@test "redactor: harmless keys and arguments pass through untouched" {
+  run redact_shapes
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'BETTER_AUTH_URL=https://ctf.example.org'
+  echo "$output" | grep -qF 'GITHUB_APP_ID=4242'
+  echo "$output" | grep -qF -- '--platform linux/amd64 ghcr.io/org/score@sha256:abc123'
+}
+
+@test "redactor: deploy.sh prints through the shared redactor and keeps none of its own" {
+  grep -qF '. scripts/lib/redact.sh' "$FLY/deploy.sh"
+  grep -qF 'redact_arg "$arg"' "$FLY/deploy.sh"
+  [ -z "$(grep -nE '^[[:space:]]*redact_arg\(\)' "$FLY/deploy.sh")" ]
+}
+
+# ---------------------------------------------------------------------------
+# Fail closed on an env file the shared reader cannot read the way compose
+# does. Both checks stop before any docker or fly call, so neither needs docker.
+# ---------------------------------------------------------------------------
+
+@test "render: an interpolated SCORE_IMAGE stops the render — secdev neither added nor dropped" {
+  sed 's|^SCORE_IMAGE=.*|SCORE_IMAGE=${SCORER_IMAGE:-}|' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.interp"
+  out="$BATS_TEST_TMPDIR/interp.yml"
+  run "$FLY/render-compose.sh" --env-file "$BATS_TEST_TMPDIR/env.interp" --out "$out" \
+    --app-image reg/app:t --sync-image reg/sync:t --scorer-image reg/scorer:t
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE uses interpolation'
+  [ ! -e "$out" ]
+}
+
+@test "render: an unterminated SCORE_IMAGE quote stops the render" {
+  sed 's|^SCORE_IMAGE=.*|SCORE_IMAGE="ghcr.io/fixture-org/score:latest|' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.unterm"
+  out="$BATS_TEST_TMPDIR/unterm.yml"
+  run "$FLY/render-compose.sh" --env-file "$BATS_TEST_TMPDIR/env.unterm" --out "$out" \
+    --app-image reg/app:t --sync-image reg/sync:t --scorer-image reg/scorer:t
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE has an unterminated quote'
+  [ ! -e "$out" ]
+}
+
+@test "deploy --dry-run: a malformed key in the env file stops it before any step" {
+  cd "$REPO"
+  sed 's|^SCORE_IMAGE=.*|SCORE_IMAGE="ghcr.io/fixture-org/score:latest|' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.unterm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.unterm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'SCORE_IMAGE has an unterminated quote'
+  [ -z "$(echo "$output" | grep -F 'DRY-RUN: fly')" ]
 }

@@ -81,6 +81,12 @@ describe("AdminQuizControls", () => {
     expect(html).toMatch(/value="3"/);
     expect(html).toMatch(/value="5"/);
   });
+  // #494: both budgets are per contestant while points are per team; each
+  // knob says so where it is set.
+  it("says on both retry-gate knobs that the budget is per contestant, not per team", () => {
+    const html = renderControls();
+    expect(html.match(/Counted per contestant, not per team/g)).toHaveLength(2);
+  });
 
   it("renders an Add question control and a placeholder when there are no questions", () => {
     const html = renderControls();

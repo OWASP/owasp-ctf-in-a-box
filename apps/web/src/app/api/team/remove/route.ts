@@ -19,7 +19,12 @@ export async function POST(request: Request) {
   const slug = typeof body.slug === "string" ? body.slug : "";
   const member = typeof body.member === "string" ? body.member : "";
 
-  const result = await removeMember(login, slug, member);
+  // `confirm: true` is the captain accepting the after-close warning;
+  // only a literal true counts.
+  const result = await removeMember(login, slug, member, { confirmClosed: body.confirm === true });
+  if (!result.ok && result.needsConfirm) {
+    return NextResponse.json({ error: result.error, needsConfirm: true }, { status: 409 });
+  }
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: statusForError(result.error) });
   return NextResponse.json({ team: result.team });
 }

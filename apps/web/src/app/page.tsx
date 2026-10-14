@@ -28,6 +28,7 @@ import { joinAppNames } from "@/lib/apps";
 import { getEnabledApps, getEnabledTotals } from "@/lib/enabled-apps";
 import { getChallengeCatalog } from "@/lib/challenges";
 import { listChallenges } from "@/lib/classic-store";
+import { visibleNow } from "@/lib/classic-release";
 import { listQuestions } from "@/lib/quiz-store";
 import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { DOCS_URL, type HomeContext } from "@/lib/modules";
@@ -173,7 +174,8 @@ export default async function Home({
   const classicLive = live.has("classic");
   const [quizCount, classicCount] = await Promise.all([
     quizLive ? listQuestions().then((q) => q.length).catch(() => null) : Promise.resolve(null),
-    classicLive ? listChallenges().then((c) => c.length).catch(() => null) : Promise.resolve(null),
+    // Visible challenges only: a hidden one does not exist for a visitor.
+    classicLive ? listChallenges().then((c) => visibleNow(c).length).catch(() => null) : Promise.resolve(null),
   ]);
   const countFor = (id: string): string | null => {
     if (id === "secure-development")
@@ -385,7 +387,7 @@ export default async function Home({
                     >
                       {i + 1}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-white">{row.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-white"><bdi>{row.name}</bdi></span>
                     <span className="flex-none font-semibold tabular-nums text-white">
                       {row.points.toLocaleString("en-US")}
                       <span className="ml-1 text-xs font-normal text-[#8f8f9b]">pts</span>

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
+import { isReleaseInstant } from "@/lib/classic-release";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
-import { parseBundle } from "@/lib/classic-io";
 import {
   ClassicValidationError,
   deleteChallenge,
-  importBundle,
+  getSolveCounts,
   listCategories,
   listChallengeIds,
   listChallengesForAdmin,
@@ -20,6 +20,8 @@ import {
 import type { Story } from "@/lib/story-lock";
 import { type Attachment, attachmentMeta } from "@/lib/attachments-keys";
 import { listAllAttachments } from "@/lib/attachments-store";
+import { teamSolveCounts } from "@/lib/team-solve-counts";
+import { importBundleResponse } from "@/app/api/admin/classic/import-response";
 
 /**
  * Organizer authoring surface for the classic (flag) module: list (GET),
@@ -64,13 +66,15 @@ import { listAllAttachments } from "@/lib/attachments-store";
  * rather than a second bespoke assertion.
  *
  * The `import` shape carries the bundle as raw TEXT, never a pre-parsed
- * object: this route re-parses and re-validates it with `parseBundle` (the
- * same validator the admin bulk-import UI runs client-side) before ever
- * calling `importBundle`, so a client that skipped or weakened its own
- * validation cannot write anything the single-challenge path above would
- * have rejected. `importBundle` itself trusts its input completely — see its
- * own doc comment in classic-store.ts — which is exactly why this route must
- * never call it with anything that hasn't been through `parseBundle` first.
+ * object: `importBundleResponse` (import-response.ts) re-parses and
+ * re-validates it with `parseBundle` (the same validator the admin
+ * bulk-import UI runs client-side) before anything is imported, so a client
+ * that skipped or weakened its own validation cannot write anything the
+ * single-challenge path above would have rejected. The import trusts its
+ * input completely — see `importBundle`'s doc comment in classic-store.ts.
+ * This route's body passes through the Next proxy, which cuts it at 10 MB; a
+ * bundle with files goes to `/api/admin/classic/bundle`, which takes the same
+ * shape through the same handler, outside the proxy.
  */
 
 type ChallengePayload = Challenge & { flag: string; hint?: string };
@@ -93,6 +97,8 @@ export const CHALLENGE_KEYS = new Set([
   "flag",
   "caseSensitive",
   "hint",
+  "enabled",
+  "releaseAt",
 ]);
 export const CATEGORIES_KEYS = new Set(["categories"]);
 /** The rename shape's outer and inner key sets (#304). */
@@ -131,6 +137,14 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
   // empty/whitespace hint is a deliberate CLEAR, passed through so the store
   // deletes the row.
   if (body.hint !== undefined && typeof body.hint !== "string") return null;
+  // Optional; a present non-boolean is malformed, for the caseSensitive
+  // reason: a string "false" would publish the challenge.
+  if (body.enabled !== undefined && typeof body.enabled !== "boolean") return null;
+  // Optional: an ISO instant, or null / "" for none. The store settles it
+  // (a future one hides the challenge until then, a passed one is live).
+  if (body.releaseAt !== undefined && body.releaseAt !== null && typeof body.releaseAt !== "string") return null;
+  const releaseAt = typeof body.releaseAt === "string" && body.releaseAt ? body.releaseAt : undefined;
+  if (releaseAt !== undefined && !isReleaseInstant(releaseAt)) return null;
   return {
     id: body.id,
     title: body.title.trim(),
@@ -144,6 +158,9 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
     // and the bundle exports, so one challenge has one representation
     // whichever door it came through.
     ...(body.caseSensitive ? { caseSensitive: true as const } : {}),
+    // Same rule, the other way round: stored only when false.
+    ...(body.enabled === false ? { enabled: false } : {}),
+    ...(releaseAt !== undefined ? { releaseAt } : {}),
   };
 }
 
@@ -252,7 +269,24 @@ export async function GET(request: Request) {
   // #186: each challenge's attachment METADATA, for the panel's own Export —
   // the same shape the server export writes, no ids or chunk counts.
   const attachments = Object.fromEntries([...files].map(([id, list]) => [id, list.map(attachmentMeta)]));
-  return NextResponse.json({ challenges, categories, stories, attachments });
+  // #595: how many teams and how many players solved each challenge, so an
+  // organizer can spot a flag nobody solves without opening Insights. Read
+  // apart from the list: a count that cannot be read is null (unknown), and
+  // never fails the list the panel needs to work.
+  const [teams, players] = await Promise.all([
+    teamSolveCounts("classic"),
+    getSolveCounts().catch((err: unknown) => {
+      console.error("classic: player solve counts unavailable:", adminErrorLabel(err));
+      return null;
+    }),
+  ]);
+  const solves = Object.fromEntries(
+    challenges.map(({ challenge: { id } }) => [
+      id,
+      { teams: teams ? (teams.get(id) ?? 0) : null, players: players ? (players.get(id) ?? 0) : null },
+    ]),
+  );
+  return NextResponse.json({ challenges, categories, stories, attachments, solves });
 }
 
 export async function POST(request: Request) {
@@ -308,30 +342,7 @@ export async function POST(request: Request) {
   }
 
   const importPayload = parseImportPayload(body);
-  if (importPayload !== null) {
-    // Re-parse and re-validate the raw text server-side with the SAME
-    // validator the client ran (or should have run) — this is what makes it
-    // safe to accept raw text from a client that skipped or weakened its own
-    // validation. `importBundle` itself does not re-check any of this; see
-    // its doc comment.
-    const parsedBundle = parseBundle(importPayload);
-    if (!parsedBundle.ok) return NextResponse.json({ errors: parsedBundle.errors }, { status: 400 });
-
-    let summary;
-    try {
-      summary = await importBundle(parsedBundle.bundle);
-    } catch (err) {
-      return errorResponse(err);
-    }
-
-    await writeAdminAudit(gate.login, "classic-import", {
-      created: summary.created,
-      updated: summary.updated,
-      categories: summary.categories,
-      ...(summary.stories !== undefined ? { stories: summary.stories } : {}),
-    });
-    return NextResponse.json(summary);
-  }
+  if (importPayload !== null) return importBundleResponse(importPayload, gate.login);
 
   const parsed = parseChallengePayload(body);
   if (!parsed) return NextResponse.json({ error: "invalid request payload" }, { status: 400 });

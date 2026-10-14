@@ -352,7 +352,7 @@ async function tickDaily(config: DiscordFullConfig, live: ReadonlySet<ModuleId>,
     if (!claimed) return;
 
     // Deltas since the last daily fire. A missing baseline (first fire ever)
-    // seeds one and reports zeros — understated, never overstated (ADR 67).
+    // seeds one and reports zeros — understated, never overstated (ADR 69).
     const [solves, releasedCount] = await Promise.all([
       totalSolved(live),
       ledgerFields(ANNOUNCE_RELEASED_KEY),

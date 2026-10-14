@@ -346,10 +346,16 @@ suggestions.
   agree. The scoring window goes through `outsideScoringWindow`, where a
   start is **required**: an empty or unparseable `scoringStartsAt` means the
   event is not launched and nothing scores (#464, ADR 59). The registration
-  window keeps `outsideWindow`, where an absent bound means open. Each rule
-  has a shared corpus in `test/fixtures/` (`scoring-window-corpus.json`,
-  `window-corpus.json`) that all three suites run. Manual-freeze reads fail
-  **open** (a Redis blip must not drop live submissions); keep that.
+  window keeps `outsideWindow`, where an absent bound means open.
+  `pausedAt(t)` — whether the manual freeze covered an instant, from
+  `pausedSince` and the `ctf:admin:pauses` interval log that admin-store's
+  settings script writes atomically with `paused` — is the fourth: the
+  scorer judges a Secure Development score at its comment's time with it,
+  and the window too (ADR 67). Each rule has a shared corpus in
+  `test/fixtures/` (`scoring-window-corpus.json`, `window-corpus.json`,
+  `pause-interval-corpus.json`) that all three suites run. Manual-freeze
+  reads fail **open** (a Redis blip must not drop live submissions); keep
+  that.
 - **`upstashPipeline` in `apps/web` does not throw on a per-command error.**
   It returns `{ result?, error? }` positionally; a caller that reads
   `.result` without checking `.error` turns `NOAUTH`/`WRONGTYPE` into a
@@ -405,8 +411,15 @@ suggestions.
   the source the script pins by commit; `patches/README.md` is the contract.
 - `test/fixtures/` — `mock-github.mjs` and `mock-scorer.mjs`, the stand-ins
   `docker-compose.smoke.yml` builds for `smoke.sh`; and the shared window
-  corpora (`window-corpus.json`, `scoring-window-corpus.json`) that the app,
-  scorer and sync suites all run (the three-reader rule above).
+  corpora (`window-corpus.json`, `scoring-window-corpus.json`,
+  `pause-interval-corpus.json`) that the app, scorer and sync suites all run
+  (the three-reader rule above); and
+  `dotenv-corpus.env` (and `dotenv-corpus-rejected.env`, the values it must
+  refuse), which `scripts/test/dotenv.bats` runs, with a differential
+  against `docker compose config` itself, through
+  `scripts/lib/dotenv.sh`, the one `.env` reader every shell entry point
+  sources (`scripts/lib/redact.sh` is the deploy scripts' one dry-run
+  redactor, the same way).
 - `deploy/` — optional cloud deploy modules: `aws-terraform/` (ECS Fargate +
   ElastiCache + ALB; `docs/aws.md`) and `fly/` (one Fly machine running the
   rendered compose file; `docs/fly.md`; its scripts and bats suite run under

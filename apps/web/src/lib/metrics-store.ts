@@ -2,11 +2,12 @@ import "server-only";
 import { assertPipelineOk, parseScanPage, upstashPipeline, type UpstashResult } from "@/lib/upstash";
 import { userKey, userHintTimesKey, HINTS_SPENT_KEY } from "@/lib/team-keys";
 import { QUIZ_POINTS_KEY, QUIZ_QUESTIONS_KEY, quizAnswersKey, quizAttemptsKey } from "@/lib/quiz-keys";
-import { CLASSIC_CHALLENGES_KEY, CLASSIC_POINTS_KEY, classicAttemptsKey, classicSolvesKey } from "@/lib/classic-keys";
-import { AI_CHALLENGES_KEY, AI_POINTS_KEY, aiAttemptsKey, aiSolvesKey } from "@/lib/ai-keys";
+import { CLASSIC_CHALLENGES_KEY, CLASSIC_POINTS_KEY, classicAttemptsKey, classicOpenedKey, classicSolvesKey } from "@/lib/classic-keys";
+import { AI_CHALLENGES_KEY, AI_POINTS_KEY, aiAttemptsKey, aiOpenedKey, aiSolvesKey } from "@/lib/ai-keys";
 import { listTeams } from "@/lib/team-store";
 import { parseAttemptRow } from "@/lib/attempt-row";
 import { getLeaderboardSource, getLeaderboardSourceMode } from "@/lib/leaderboard/source";
+import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { errorLabel } from "@/lib/error-label";
 
 /**
@@ -43,9 +44,44 @@ import { errorLabel } from "@/lib/error-label";
  * number, not one from a minute ago.
  */
 
-/** Solves-over-time bucket width. Ten minutes is the resolution at which a
- *  room going quiet is visible without the series becoming noise. */
-const BUCKET_MS = 10 * 60 * 1000;
+/** Solves-over-time bucket widths, in minutes. Ten is the resolution at which
+ *  a room going quiet is visible without the series becoming noise; a longer
+ *  event takes the first width that keeps it within `MAX_BUCKETS` bars, so a
+ *  three-day event still fits the panel instead of drawing ~400 slivers. Past
+ *  the last width the bucket grows by whole days until it fits, so the limit
+ *  holds for any span. */
+const BUCKET_MINUTES = [10, 30, 60, 120, 240, 360, 720, 1440] as const;
+const MAX_BUCKETS = 120;
+const DAY_MINUTES = 1440;
+
+/** Every bucket from the first solve to the last, empty ones included: the
+ *  quiet stretches are what the chart is for, and the axis reads as time only
+ *  while every bucket is on it. The extrema come from one loop, not
+ *  `Math.min(...times)`: a spread call throws past ~125k arguments, and
+ *  nothing bounds how many solves a contestant holds. */
+function solveTimeline(times: number[]): { bucketMinutes: number; timeline: { at: string; solves: number }[] } {
+  if (times.length === 0) return { bucketMinutes: BUCKET_MINUTES[0], timeline: [] };
+  let first = Infinity;
+  let last = -Infinity;
+  for (const t of times) {
+    if (t < first) first = t;
+    if (t > last) last = t;
+  }
+  const fits = (m: number) => {
+    const ms = m * 60_000;
+    return Math.floor(last / ms) - Math.floor(first / ms) + 1 <= MAX_BUCKETS;
+  };
+  let minutes: number = BUCKET_MINUTES.find(fits) ?? DAY_MINUTES;
+  while (!fits(minutes)) minutes += DAY_MINUTES;
+  const ms = minutes * 60_000;
+  const start = Math.floor(first / ms);
+  const counts = new Array<number>(Math.floor(last / ms) - start + 1).fill(0);
+  for (const t of times) counts[Math.floor(t / ms) - start] += 1;
+  return {
+    bucketMinutes: minutes,
+    timeline: counts.map((solves, i) => ({ at: new Date((start + i) * ms).toISOString(), solves })),
+  };
+}
 
 /** Hard ceiling on contestants folded in one pass. An event this size is far
  *  beyond what the kit targets; the cap exists so a runaway key space cannot
@@ -75,10 +111,18 @@ export type ChallengeStat = {
    *  difficulty signal — a challenge solved by everyone on the fourth try is
    *  harder than its solve rate suggests. */
   avgAttemptsToSolve: number | null;
-  /** Median seconds from a contestant's FIRST attempt at this item to earning
-   *  it. Median, not mean: one contestant who left a tab open overnight would
-   *  otherwise dominate the figure. Null until enough rows carry `firstAt`. */
+  /** Median seconds to earn it, measured as `timeMeasure` says. Median, not
+   *  mean: one contestant who left a tab open overnight would otherwise
+   *  dominate the figure. */
   medianSecondsToSolve: number | null;
+  /** What `medianSecondsToSolve` measures. `"open"`: from the contestant first
+   *  opening the challenge's page to earning it, used whenever any solver has
+   *  that record (classic and ai, #616). `"first-miss"`: from their first
+   *  submission, when no open was recorded. Contestants work offline and
+   *  usually submit once they have the answer, so that figure is 0 for anyone
+   *  right first time: when it is 0 for EVERY solver the row is null, not
+   *  0s, because 0 there means "unknown", not "instant". */
+  timeMeasure: "open" | "first-miss" | null;
   /** Contestants who bought this item's hint before earning it. Classic and
    *  ai are per-challenge contributors here;
    *  quiz has no hints by design, so this is always 0 there. */
@@ -101,8 +145,11 @@ export type EventMetrics = {
     stuck: number;
   };
   challenges: ChallengeStat[];
-  /** Solves per 10-minute bucket, ascending. Quiz, classic and ai only; see caveats. */
+  /** Solves per bucket of `bucketMinutes`, ascending, every bucket from the
+   *  first solve to the last (empty ones at 0). Quiz, classic and ai only; see caveats. */
   timeline: { at: string; solves: number }[];
+  /** The timeline's bucket width: 10 minutes, wider on a long event. */
+  bucketMinutes: number;
   teams: { slug: string; name: string; size: number; points: number }[];
   modules: { quiz: number; classic: number; ai: number; secureDevelopment: number };
   hints: {
@@ -131,6 +178,22 @@ function parseEarned(raw: unknown): Earned | null {
   } catch {
     return null;
   }
+}
+
+/** The time-to-solve figure and what it measures; see `ChallengeStat`. */
+function timeToSolve(
+  solved: { durations: number[]; openDurations: number[] } | undefined,
+): Pick<ChallengeStat, "medianSecondsToSolve" | "timeMeasure"> {
+  if (solved && solved.openDurations.length > 0) {
+    return { medianSecondsToSolve: median(solved.openDurations), timeMeasure: "open" };
+  }
+  // A first-try solve measures 0 by construction: unknown, not instant, so
+  // only the solvers who missed first count toward this median.
+  const missed = solved?.durations.filter((d) => d > 0) ?? [];
+  if (missed.length > 0) {
+    return { medianSecondsToSolve: median(missed), timeMeasure: "first-miss" };
+  }
+  return { medianSecondsToSolve: null, timeMeasure: null };
 }
 
 /** Median, not mean, for durations: one contestant who left a tab open
@@ -170,6 +233,27 @@ async function batched(commands: (string | number)[][]): Promise<UpstashResult[]
  * hint bought on one target could otherwise be matched against a solve on
  * another that happens to share an id.
  */
+/** Every login with a user record (`ctf:user:<login>`), in its stored
+ *  spelling. The only index that holds a player who joined a team, left it
+ *  and scored nothing — no roster or points hash knows them, yet "ever on a
+ *  team" exists to count them. The same pattern also matches each player's
+ *  `ctf:user:<login>:hints` set, which is skipped. Throws on an unreadable
+ *  page, like the SD sweep below, so the caller can say the funnel is short. */
+async function readUserLogins(): Promise<string[]> {
+  let cursor = "0";
+  const logins: string[] = [];
+  do {
+    const [scan] = await upstashPipeline([["SCAN", cursor, "MATCH", "ctf:user:*", "COUNT", 1000]]);
+    const [next, found] = parseScanPage(scan, "metrics user records");
+    cursor = next;
+    for (const key of found) {
+      const login = key.slice("ctf:user:".length);
+      if (login && !login.includes(":")) logins.push(login);
+    }
+  } while (cursor !== "0");
+  return logins;
+}
+
 async function readSecureDevSolves(): Promise<Map<string, string>> {
   let cursor = "0";
   const keys: string[] = [];
@@ -290,6 +374,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   // The fail direction matches the solves sweep below: a scorer that cannot
   // be reached costs the SD share of the totals and SAYS so, never the panel.
   const sdPoints = new Map<string, number>();
+  const sdSpellings: string[] = [];
   const sourceMode = await getLeaderboardSourceMode();
   if (sourceMode === "mock") {
     caveats.push(
@@ -301,6 +386,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       for (const entry of data.entries) {
         const points = Number(entry.points);
         if (Number.isFinite(points)) sdPoints.set(entry.login.toLowerCase(), points);
+        sdSpellings.push(entry.login);
       }
     } catch (err) {
       console.error("secure-development points unavailable for metrics:", errorLabel(err));
@@ -355,6 +441,37 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     ...sdLogins,
     ...sdPoints.keys(),
   ]);
+
+  // Every per-login hash below is keyed on the login AS THE SESSION SPELLED IT
+  // (`ctf:classic:solves:ChrisZoc`); only the join between logins is
+  // case-insensitive. So each contestant is read under every spelling the box
+  // holds for them — team rosters, the points and hint-spend hashes, the
+  // scorer's entries — and their rows merged. Reading under the lowercased
+  // login alone found nothing for a mixed-case player, which at the RTS event
+  // hid 12 of 42 contestants from every figure on this panel.
+  const spellingsOf = new Map<string, Set<string>>();
+  const addSpelling = (raw: string) => {
+    const login = raw.toLowerCase();
+    const set = spellingsOf.get(login) ?? new Set<string>();
+    set.add(raw);
+    spellingsOf.set(login, set);
+  };
+  for (const t of teams) for (const m of t.members) addSpelling(m);
+  for (const res of [quizPointsRes, classicPointsRes, aiPointsRes, hintsSpentRes]) {
+    for (const [k] of hashEntries(res.result)) addSpelling(k);
+  }
+  for (const raw of sdSpellings) addSpelling(raw);
+  // Leavers who scored nothing are known only to their user record; without
+  // this sweep "ever on a team" missed exactly the people it exists to count.
+  try {
+    for (const raw of await readUserLogins()) {
+      addSpelling(raw);
+      contestants.add(raw.toLowerCase());
+    }
+  } catch (err) {
+    console.error("user records unavailable for metrics:", errorLabel(err));
+    caveats.push("Player records could not be read — \"ever on a team\" may miss players who left their team without scoring.");
+  }
   let logins = [...contestants].sort();
   if (logins.length > MAX_CONTESTANTS) {
     caveats.push(
@@ -363,12 +480,14 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     logins = logins.slice(0, MAX_CONTESTANTS);
   }
 
-  // Eight reads per contestant: their earned items (quiz, classic, ai), their
+  // Ten reads per spelling: their earned items (quiz, classic, ai), their
   // attempt rows (quiz, classic, ai), the firstTeamAt that anchors the funnel,
-  // and when they bought each hint.
-  const PER_LOGIN = 8;
-  const perLogin = await batched(
-    logins.flatMap((l) => [
+  // when they bought each hint, and when they first opened each classic and
+  // ai challenge.
+  const PER_LOGIN = 10;
+  const reads = logins.flatMap((login) => [...(spellingsOf.get(login) ?? [login])].map((spelling) => ({ login, spelling })));
+  const replies = await batched(
+    reads.flatMap(({ spelling: l }) => [
       ["HGETALL", quizAnswersKey(l)],
       ["HGETALL", classicSolvesKey(l)],
       ["HGETALL", aiSolvesKey(l)],
@@ -377,18 +496,48 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       ["HGETALL", aiAttemptsKey(l)],
       ["HMGET", userKey(l), "firstTeamAt"],
       ["HGETALL", userHintTimesKey(l)],
+      ["HGETALL", classicOpenedKey(l)],
+      ["HGETALL", aiOpenedKey(l)],
     ]),
   );
+
+  // A per-command error comes back as a value, not a throw. Merged as an
+  // empty hash it would drop that contestant's rows from every figure with
+  // nothing saying so; failing the read sends the tab to its error state.
+  const failed = replies.find((reply) => reply?.error);
+  if (failed) throw new Error(`metrics per-login read failed: ${failed.error}`);
+
+  // One contestant's rows across their spellings. A single item held under
+  // two spellings of one login keeps its first row, which is enough: the
+  // figures below count an item once per contestant either way.
+  const merged = new Map<string, { result: unknown }[]>();
+  reads.forEach(({ login }, r) => {
+    const slots = merged.get(login) ?? Array.from({ length: PER_LOGIN }, () => ({ result: [] as unknown[] }));
+    for (let s = 0; s < PER_LOGIN; s++) {
+      const reply = replies[r * PER_LOGIN + s]?.result;
+      if (s === 6) {
+        const first = Array.isArray(reply) ? reply[0] : null;
+        const held = (slots[s].result as unknown[])[0];
+        if (!held && typeof first === "string" && first) slots[s] = { result: [first] };
+        continue;
+      }
+      const have = new Set(hashEntries(slots[s].result).map(([k]) => k));
+      const add = hashEntries(reply).filter(([k]) => !have.has(k));
+      slots[s] = { result: [...(slots[s].result as unknown[]), ...add.flat()] };
+    }
+    merged.set(login, slots);
+  });
+  const perLogin = logins.flatMap((login) => merged.get(login) ?? []);
 
   let everOnATeam = 0;
   let attempted = 0;
   let scored = 0;
   let hintsBeforeSolve = 0;
   let hintsAfterSolve = 0;
-  const buckets = new Map<number, number>();
+  const solveTimes: number[] = [];
   const solvesById = new Map<
     string,
-    { module: "quiz" | "classic" | "ai"; solvers: number; attemptSum: number; durations: number[] }
+    { module: "quiz" | "classic" | "ai"; solvers: number; attemptSum: number; durations: number[]; openDurations: number[] }
   >();
   const attemptsById = new Map<
     string,
@@ -410,6 +559,10 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     const userFields = perLogin[i * PER_LOGIN + 6]?.result;
     const firstTeamAt = Array.isArray(userFields) ? userFields[0] : null;
     const hintTimes = hashEntries(perLogin[i * PER_LOGIN + 7]?.result);
+    const opened = {
+      classic: new Map(hashEntries(perLogin[i * PER_LOGIN + 8]?.result)),
+      ai: new Map(hashEntries(perLogin[i * PER_LOGIN + 9]?.result)),
+    };
 
     // Did the hint arrive in time to help? A hint bought AFTER the solve
     // bought nothing, and counting the two together turns "hints are used"
@@ -488,12 +641,9 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         const earned = parseEarned(raw);
         if (!earned) continue;
         const ms = Date.parse(earned.at);
-        if (!Number.isNaN(ms)) {
-          const bucket = Math.floor(ms / BUCKET_MS) * BUCKET_MS;
-          buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
-        }
+        if (!Number.isNaN(ms)) solveTimes.push(ms);
         const key = `${mod}:${id}`;
-        const stat = solvesById.get(key) ?? { module: mod, solvers: 0, attemptSum: 0, durations: [] as number[] };
+        const stat = solvesById.get(key) ?? { module: mod, solvers: 0, attemptSum: 0, durations: [] as number[], openDurations: [] as number[] };
         stat.solvers += 1;
         // How many tries THIS contestant took to earn it, and how long it took
         // them. The attempt row survives the solve, so both are available
@@ -511,6 +661,13 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
           if (!Number.isNaN(startedMs) && ms >= startedMs) {
             stat.durations.push(Math.round((ms - startedMs) / 1000));
           }
+        }
+        // From first opening the page, when the box recorded it. An
+        // open recorded after the solve is corrupt ordering and is dropped.
+        const openedAt = mod === "quiz" ? undefined : opened[mod].get(id);
+        if (typeof openedAt === "string" && !Number.isNaN(ms)) {
+          const openedMs = Date.parse(openedAt);
+          if (!Number.isNaN(openedMs) && ms >= openedMs) stat.openDurations.push(Math.round((ms - openedMs) / 1000));
         }
         solvesById.set(key, stat);
       }
@@ -556,31 +713,42 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         attempts: tried?.attempts ?? 0,
         solveRate: triers > 0 ? solves / triers : null,
         avgAttemptsToSolve: solves > 0 ? (solved as { attemptSum: number }).attemptSum / solves : null,
-        medianSecondsToSolve: median(solved?.durations ?? []),
+        ...timeToSolve(solved),
         solvedAfterHint: hintHelpedById.get(key) ?? 0, // classic + ai per-challenge; quiz has no hints
       };
     })
     .sort((a, b) => a.solves - b.solves || a.id.localeCompare(b.id));
 
-  const timeline = [...buckets.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([ms, solves]) => ({ at: new Date(ms).toISOString(), solves }));
+  const { bucketMinutes, timeline } = solveTimeline(solveTimes);
 
+  // Team points are the leaderboard's own figures: the UNION fold over the
+  // members' items, hint spend netted, read fresh like the rest of this panel.
+  // Summing the members' own totals instead counted a flag two teammates both
+  // solved twice and ignored hints, so this screen and the board gave two
+  // numbers for one team (provart: 7,918 here, 5,308 there, at RTS). Only if
+  // the board cannot be read does the rough sum come back, and it says so.
+  let boardPoints: Map<string, number> | null = null;
+  try {
+    const board = await getFoldedLeaderboard({ fresh: true });
+    boardPoints = new Map(board.teams.map((t) => [t.slug, t.points]));
+  } catch (err) {
+    console.error("leaderboard unavailable for metrics team points:", errorLabel(err));
+    caveats.push(
+      "The leaderboard could not be read, so team points here SUM each member's own totals; the leaderboard folds the UNION of their solves, so a challenge two teammates both solved counts once there and twice here.",
+    );
+  }
   const teamRows = teams
     .map((t) => ({
       slug: t.slug,
       name: t.name,
       size: t.members.length,
-      // The team's own leaderboard total is a UNION fold over its members'
-      // items; summing per-login aggregates would double count a challenge two
-      // teammates both solved. This is a rough per-team sum and is labelled as
-      // such, not presented as the leaderboard figure.
-      points: t.members.reduce((sum, m) => sum + (pointsByLogin.get(m.toLowerCase()) ?? 0), 0),
+      points:
+        boardPoints?.get(t.slug) ??
+        (boardPoints ? 0 : t.members.reduce((sum, m) => sum + (pointsByLogin.get(m.toLowerCase()) ?? 0), 0)),
     }))
     .sort((a, b) => b.points - a.points);
 
   caveats.push(
-    "Team points here SUM each member's own totals; the leaderboard folds the UNION of their solves, so a challenge two teammates both solved counts once there and twice here.",
     "The timeline plots solves, not submissions: attempt rows carry a first and a last time but not one per try.",
     "Time-to-solve and hint ordering are blank for anything earned before those timestamps were added, so early-event figures cover fewer contestants than late-event ones.",
     "Signing in leaves no record; the funnel starts at 'ever on a team'.",
@@ -598,6 +766,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     },
     challenges,
     timeline,
+    bucketMinutes,
     teams: teamRows,
     modules: {
       quiz: [...quizPoints.values()].filter((p) => p > 0).length,
@@ -622,14 +791,15 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
 export function challengesToCsv(metrics: EventMetrics): string {
   const esc = (v: string | number | null) => {
     if (v === null) return "";
-    const s = String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    // A text cell a spreadsheet would run as a formula is written as text.
+    const s = typeof v === "string" && /^[=+\-@\t\r]/.test(v) ? `'${v}` : String(v);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const rows = [
     // `title` sits beside `id`, never instead of it: the id is what a support
     // question or a store key names, and a title can be blank for a challenge
     // deleted since it was solved (audit F7).
-    ["module", "id", "title", "solves", "attempts", "solve_rate", "avg_attempts_to_solve", "median_seconds_to_solve"],
+    ["module", "id", "title", "solves", "attempts", "solve_rate", "avg_attempts_to_solve", "median_seconds_to_solve", "median_time_measure"],
     ...metrics.challenges.map((c) => [
       c.module,
       c.id,
@@ -639,7 +809,11 @@ export function challengesToCsv(metrics: EventMetrics): string {
       c.solveRate === null ? null : c.solveRate.toFixed(4),
       c.avgAttemptsToSolve === null ? null : c.avgAttemptsToSolve.toFixed(2),
       c.medianSecondsToSolve,
+      c.timeMeasure,
     ]),
   ];
-  return rows.map((r) => r.map(esc).join(",")).join("\n") + "\n";
+  // The byte-order mark is what makes Excel read the file as UTF-8: without
+  // it, it falls back to the system code page and every non-ASCII title is
+  // garbled. The response's charset does not survive the browser saving it.
+  return "\uFEFF" + rows.map((r) => r.map(esc).join(",")).join("\n") + "\n";
 }

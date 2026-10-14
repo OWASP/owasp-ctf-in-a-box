@@ -1,4 +1,5 @@
 import "server-only";
+import { ADJUSTMENTS_KEY } from "@/lib/adjustment-keys";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ADMIN_ADMINS_KEY, LOGIN_RE } from "@/lib/admin-admins";
 import { TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
@@ -30,6 +31,7 @@ import {
   CLASSIC_LAST_AT_KEY,
   CLASSIC_SOLVES_PREFIX,
   CLASSIC_ATTEMPTS_PREFIX,
+  CLASSIC_OPENED_PREFIX,
 } from "@/lib/classic-keys";
 import {
   AI_POINTS_KEY,
@@ -38,6 +40,7 @@ import {
   AI_LAST_AT_KEY,
   AI_SOLVES_PREFIX,
   AI_ATTEMPTS_PREFIX,
+  AI_OPENED_PREFIX,
   AI_NONCE_PREFIX,
   AI_LAUNCHKEY_KEY,
 } from "@/lib/ai-keys";
@@ -51,6 +54,16 @@ import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSiz
 export { ADMIN_AUDIT_KEY, AUDIT_CAP };
 
 export const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
+/** The manual freeze's closed intervals, newest first: one JSON
+ *  `{"from","to"}` per entry, ISO-8601 UTC. Written only by UPDATE_SCRIPT
+ *  (on an unpause) and cleared by RESET_SCRIPT; the scorer reads it to judge
+ *  a Secure Development score at its comment's time (ADR 67). */
+export const ADMIN_PAUSES_KEY = "ctf:admin:pauses";
+/** Intervals kept on that list. A score is judged against the log when its
+ *  comment is read, normally within a minute, so only the recent freezes
+ *  matter; a dropped one makes a very old comment read later score as if
+ *  that freeze had not happened. */
+export const PAUSE_LOG_CAP = 200;
 export const SYNC_STATUS_KEY = "ctf:sync:status";
 export const HINT_COST_MAX = 100000;
 /** Caps for the two hint-gating knobs (see hint-store's `hintGate`). */
@@ -150,6 +163,9 @@ export type AdminSettings = {
    *  team that is already over the new cap. */
   teamMaxMembers: number | null;
   teamRegistrationOpen: boolean;
+  /** The projector board's QR code of the event URL. On unless an
+   *  organizer turns it off: absent is on, a stored "0" is off. */
+  displayQr: boolean;
   // Scheduled "auto dates" — nullable ISO instants. scoring* gates the freeze
   // through outsideScoringWindow (before start / after end = paused, and an
   // absent start = not launched, so paused); registration* gates
@@ -232,19 +248,31 @@ export type SyncStatus = {
 // catches a typo in any of the fixed field names above.
 type ModuleFieldKey = `moduleTitle:${string}` | `moduleBlurb:${string}`;
 
+/** The numeric event knobs and their accepted [min, max]. Each also takes
+ *  null/"" to clear back to its default. Two floors are deliberate:
+ *  `scoreCooldownMin` may be 0 ("no cooldown", reasonable for a short
+ *  workshop where the feedback loop matters more than the anti-gaming cap),
+ *  while `teamMaxMembers` starts at 1, because 0 would store a cap no team
+ *  can satisfy: every join refused, the captain's own included. */
+const NUMERIC_KNOBS = {
+  hintCost: [0, HINT_COST_MAX],
+  hintsMinSolves: [0, HINT_MIN_SOLVES_MAX],
+  hintsUnlockAfterMin: [0, HINT_UNLOCK_AFTER_MAX],
+  quizMaxAttempts: [0, QUIZ_MAX_ATTEMPTS_MAX],
+  quizRetryAfterMin: [0, QUIZ_RETRY_AFTER_MAX],
+  classicCooldownSec: [0, CLASSIC_COOLDOWN_SEC_MAX],
+  aiCooldownSec: [0, AI_COOLDOWN_SEC_MAX],
+  scoreCooldownMin: [0, SCORE_COOLDOWN_MIN_MAX],
+  teamMaxMembers: [1, TEAM_MAX_MEMBERS_MAX],
+} as const satisfies Record<string, readonly [number, number]>;
+type NumericKnob = keyof typeof NUMERIC_KNOBS;
+
 export type SettingsPatch = {
   paused?: boolean;
   hintsEnabled?: boolean;
-  hintCost?: number;
-  hintsMinSolves?: number;
-  hintsUnlockAfterMin?: number;
-  quizMaxAttempts?: number;
-  quizRetryAfterMin?: number;
-  classicCooldownSec?: number;
-  aiCooldownSec?: number;
-  scoreCooldownMin?: number;
-  teamMaxMembers?: number;
+} & { [K in NumericKnob]?: number | null | "" } & {
   teamRegistrationOpen?: boolean;
+  displayQr?: boolean;
   /** The modules this event serves. Replaces the set wholesale;
    *  see updateAdminSettings for the two things it refuses. */
   enabledModules?: ModuleId[];
@@ -335,6 +363,7 @@ function decodeSettings(h: Record<string, string>): AdminSettings {
     teamMaxMembers: h.teamMaxMembers === undefined ? null : Number(h.teamMaxMembers),
     scoreCooldownMin: h.scoreCooldownMin === undefined ? null : Number(h.scoreCooldownMin),
     teamRegistrationOpen: h.teamRegistrationOpen !== "0",
+    displayQr: h.displayQr !== "0",
     scoringStartsAt: h.scoringStartsAt ?? null,
     scoringEndsAt: h.scoringEndsAt ?? null,
     registrationStartsAt: h.registrationStartsAt ?? null,
@@ -398,7 +427,13 @@ export async function getSyncStatus(): Promise<SyncStatus | null> {
 
 // HDEL the fields being cleared, HSET the changed fields + updatedBy/updatedAt,
 // LPUSH one audit line, LTRIM the list — one atomic script so a change can
-// never land without its audit record.
+// never land without its audit record. It also keeps the pause log in step
+// with the `paused` flag: a pause that starts records `pausedSince` (the
+// write's own updatedAt), and one that ends moves {from: pausedSince, to:
+// updatedAt} onto KEYS[3] and clears `pausedSince`. A freeze with no recorded
+// start (set by hand) ends without an interval, because it has no bound to
+// log; the scorer treats such a freeze as "start unknown" while it lasts.
+// KEYS: [1]=settings [2]=audit [3]=pause log
 // ARGV: [1]=updatedBy [2]=updatedAt [3]=auditLine [4]=cap-1 [5]=numDels
 //       [6 .. 5+numDels]=field names to HDEL  [6+numDels ..]=field,value pairs to HSET
 const UPDATE_SCRIPT = `
@@ -423,9 +458,26 @@ if touched then
   if not endSet then endV = redis.call('HGET', KEYS[1], 'scoringEndsAt') or nil end
   if startV and endV and endV <= startV then return {'__window_refused__', startV, endV} end
 end
+local wasPaused = redis.call('HGET', KEYS[1], 'paused') == '1'
+local pausing, resuming = false, false
+for i = 1, numDels do
+  if ARGV[5 + i] == 'paused' then resuming = true end
+end
+for i = 6 + numDels, #ARGV, 2 do
+  if ARGV[i] == 'paused' and ARGV[i+1] == '1' then pausing = true end
+end
+local openSince = redis.call('HGET', KEYS[1], 'pausedSince')
 redis.call('HSET', KEYS[1], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
 for i = 1, numDels do redis.call('HDEL', KEYS[1], ARGV[5 + i]) end
 for i = 6 + numDels, #ARGV, 2 do redis.call('HSET', KEYS[1], ARGV[i], ARGV[i+1]) end
+if pausing and not wasPaused then redis.call('HSET', KEYS[1], 'pausedSince', ARGV[2]) end
+if resuming and wasPaused then
+  if openSince then
+    redis.call('LPUSH', KEYS[3], cjson.encode({from = openSince, to = ARGV[2]}))
+    redis.call('LTRIM', KEYS[3], 0, ${PAUSE_LOG_CAP - 1})
+  end
+  redis.call('HDEL', KEYS[1], 'pausedSince')
+end
 redis.call('LPUSH', KEYS[2], ARGV[3])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]))
 return redis.call('HGETALL', KEYS[1])`;
@@ -465,67 +517,27 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
       if (v) dels.push(k);
       else fields.push(k, "0");
       changed[k] = v;
-    } else if (k === "hintCost") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > HINT_COST_MAX) {
-        throw new AdminValidationError(k, `hintCost must be an integer in [0, ${HINT_COST_MAX}]`);
-      }
-      fields.push(k, String(v));
+    } else if (k === "displayQr") {
+      if (typeof v !== "boolean") throw new AdminValidationError(k, `${k} must be a boolean`);
+      // On by default, like registration: on HDELs, off writes "0".
+      if (v) dels.push(k);
+      else fields.push(k, "0");
       changed[k] = v;
-    } else if (k === "hintsMinSolves") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > HINT_MIN_SOLVES_MAX) {
-        throw new AdminValidationError(k, `hintsMinSolves must be an integer in [0, ${HINT_MIN_SOLVES_MAX}]`);
+    } else if (k in NUMERIC_KNOBS) {
+      // null/"" clears back to the default (HDEL), the same two-state contract
+      // as sponsorLogoSize and the schedule bounds: once set, a knob must be
+      // able to follow the default again rather than only equal it.
+      const [min, max] = NUMERIC_KNOBS[k as NumericKnob];
+      if (v === null || v === "") {
+        dels.push(k);
+        changed[k] = null as unknown as boolean;
+      } else {
+        if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) {
+          throw new AdminValidationError(k, `${k} must be an integer in [${min}, ${max}]`);
+        }
+        fields.push(k, String(v));
+        changed[k] = v;
       }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "hintsUnlockAfterMin") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > HINT_UNLOCK_AFTER_MAX) {
-        throw new AdminValidationError(k, `hintsUnlockAfterMin must be an integer in [0, ${HINT_UNLOCK_AFTER_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "quizMaxAttempts") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > QUIZ_MAX_ATTEMPTS_MAX) {
-        throw new AdminValidationError(k, `quizMaxAttempts must be an integer in [0, ${QUIZ_MAX_ATTEMPTS_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "quizRetryAfterMin") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > QUIZ_RETRY_AFTER_MAX) {
-        throw new AdminValidationError(k, `quizRetryAfterMin must be an integer in [0, ${QUIZ_RETRY_AFTER_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "classicCooldownSec") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > CLASSIC_COOLDOWN_SEC_MAX) {
-        throw new AdminValidationError(k, `classicCooldownSec must be an integer in [0, ${CLASSIC_COOLDOWN_SEC_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "aiCooldownSec") {
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > AI_COOLDOWN_SEC_MAX) {
-        throw new AdminValidationError(k, `aiCooldownSec must be an integer in [0, ${AI_COOLDOWN_SEC_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "scoreCooldownMin") {
-      // 0 is VALID here, unlike teamMaxMembers: it means "no cooldown", which
-      // is a reasonable choice for a short workshop where the feedback loop
-      // matters more than the anti-gaming cap.
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > SCORE_COOLDOWN_MIN_MAX) {
-        throw new AdminValidationError(k, `scoreCooldownMin must be an integer in [0, ${SCORE_COOLDOWN_MIN_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
-    } else if (k === "teamMaxMembers") {
-      // Floor of 1, not 0. Zero would store a cap no team can satisfy — every
-      // join refused, including the captain's own team, with the UI cheerfully
-      // advertising "0 players max". Rejecting it here is the difference
-      // between a validation error and an event nobody can form a team in.
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > TEAM_MAX_MEMBERS_MAX) {
-        throw new AdminValidationError(k, `teamMaxMembers must be an integer in [1, ${TEAM_MAX_MEMBERS_MAX}]`);
-      }
-      fields.push(k, String(v));
-      changed[k] = v;
     } else if (k === "sponsorLogoSize") {
       // null/"" clears back to the default ("md") — same two-state contract
       // as the schedule fields below.
@@ -694,7 +706,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
   try {
     result = await upstashEval(
       UPDATE_SCRIPT,
-      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
       [actor, at, audit, String(AUDIT_CAP - 1), String(dels.length), ...dels, ...fields],
     );
   } finally {
@@ -750,6 +762,9 @@ const RESET_PREFIXES: readonly [string, string][] = [
   ["classicSolved", CLASSIC_SOLVED_KEY],
   ["classicSolveCount", CLASSIC_SOLVECOUNT_KEY],
   ["classicLastAt", CLASSIC_LAST_AT_KEY],
+  // When each contestant first opened each challenge: it only times
+  // this event's solves, so it goes with them.
+  ["classicOpened", `${CLASSIC_OPENED_PREFIX}*`],
   // ai scope mirrors classic's exactly, same PROGRESS/CONTENT split: solves,
   // attempts, the two per-login aggregate hashes, the award-time hash and the
   // per-challenge solvecount are wiped, while `ctf:ai:challenges` / `ctf:ai:flag` /
@@ -762,6 +777,7 @@ const RESET_PREFIXES: readonly [string, string][] = [
   ["aiSolved", AI_SOLVED_KEY],
   ["aiSolveCount", AI_SOLVECOUNT_KEY],
   ["aiLastAt", AI_LAST_AT_KEY],
+  ["aiOpened", `${AI_OPENED_PREFIX}*`],
   // The replay-guard nonces are also contestant PROGRESS in the same sense —
   // spent single-use markers from THIS event, not something a fresh one
   // should start carrying.
@@ -797,6 +813,9 @@ const RESET_PREFIXES: readonly [string, string][] = [
   // ADR in docs/decisions.md). So a master reset wipes both hashes outright.
   ["sponsors", SPONSORS_KEY],
   ["sponsorsLogo", SPONSORS_LOGO_KEY],
+  // The organizer's score adjustments are this event's scoring data, like
+  // the solves above, so they go with them.
+  ["adjustments", ADJUSTMENTS_KEY],
 ];
 
 // SCAN (never KEYS — non-blocking) a prefix and DEL matches in batches until the
@@ -829,13 +848,16 @@ async function scanDelByPrefix(pattern: string): Promise<number> {
 // Freeze scoring, bump the reset epoch (sync reads `resetAt` and clears its
 // cursor when it advances — the poll-mode re-ingest fix), RELOCK the event
 // (clear the scoring start — a reset event is not launched until an
-// organizer launches it again), and append the audit record. One atomic script
-// so a reset can never land without its audit line. Exported for the live
-// suite only.
+// organizer launches it again), start a fresh pause log (the old event's
+// intervals go; the reset's own freeze is open from the reset instant), and
+// append the audit record. One atomic script so a reset can never land
+// without its audit line. Exported for the live suite only.
+// KEYS: [1]=settings [2]=audit [3]=pause log
 // ARGV: [1]=actor [2]=at [3]=resetAt [4]=auditLine [5]=cap-1
 export const RESET_SCRIPT = `
-redis.call('HSET', KEYS[1], 'paused', '1', 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
+redis.call('HSET', KEYS[1], 'paused', '1', 'pausedSince', ARGV[2], 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
 redis.call('HDEL', KEYS[1], 'scoringStartsAt')
+redis.call('DEL', KEYS[3])
 redis.call('LPUSH', KEYS[2], ARGV[4])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
 
@@ -868,7 +890,7 @@ export async function resetEvent(actor: string): Promise<{ cleared: Record<strin
     const audit = JSON.stringify({ at, by: actor, action: "reset", cleared });
     await upstashEval(
       RESET_SCRIPT,
-      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
       [actor, at, resetAt, audit, String(AUDIT_CAP - 1)],
     );
     return { cleared, resetAt };
@@ -906,7 +928,8 @@ export { ADMIN_ADMINS_KEY, listStoredAdmins } from "@/lib/admin-admins";
 
 // SADD/SREM plus one audit line, in a single script, so a grant can never
 // land without its record — the same guarantee updateAdminSettings gives.
-const ADMINS_SCRIPT = `
+// Exported for the live suite only.
+export const ADMINS_SCRIPT = `
 if ARGV[1] == 'add' then redis.call('SADD', KEYS[1], ARGV[2])
 else redis.call('SREM', KEYS[1], ARGV[2]) end
 redis.call('LPUSH', KEYS[2], ARGV[3])

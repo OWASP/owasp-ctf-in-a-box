@@ -5,17 +5,19 @@ import { scoringEnded } from "@/lib/schedule-window";
 // import from this server-only module, so the values live in the
 // dependency-free defaults file and both sides read the same constant.
 export { HINT_COST, HINT_MIN_SOLVES, HINT_UNLOCK_AFTER_MIN } from "./hint-defaults";
+import { HINT_COST } from "./hint-defaults";
 import { hintBalance, type HintBalance } from "@/lib/hint-balance";
 import { SCORE_LOWERING_KEY, SCORE_REV_KEY } from "@/lib/leaderboard/fold-cache";
 import { HINTS_AVAILABLE, resolveHintConfig } from "@/lib/hint-config";
 import { appsById, type AppId } from "@/lib/apps";
 import { AI_HINTS_KEY, aiSolvesKey } from "@/lib/ai-keys";
-import { CLASSIC_HINTS_KEY, classicSolvesKey } from "@/lib/classic-keys";
+import { CLASSIC_CHALLENGES_KEY, CLASSIC_HIDDEN_LUA, CLASSIC_HINTS_KEY, classicSolvesKey } from "@/lib/classic-keys";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { HINTS_SPENT_KEY, userHintTimesKey } from "@/lib/team-keys";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
-import { listChallengeIds, listStories } from "@/lib/classic-store";
-import { teamSolveKeys } from "@/lib/classic-team";
+import { listStories, readChallengeRecords } from "@/lib/classic-store";
+import { isChallengeVisible } from "@/lib/classic-release";
+import { storyLockLua, teamLockKeys } from "@/lib/classic-team";
 import { storyPositions } from "@/lib/story-lock";
 // Moved to hint-config.ts (#553): the leaderboard's penalty fold imports them
 // from there, because this store now imports the fold (through hint-balance)
@@ -104,13 +106,15 @@ export function isHintTarget(value: string): value is HintTarget {
 // KEYS: [1]=user's hint set [2]=spend hash [3]=app hint catalogue [4]=purchase times
 //       [5]=the shared score revision and [6]=the score-lowering in-progress
 //       counter (#553, fold-cache.ts); [7]=the admin settings hash (#566: the
-//       live `paused` flag); [8..]=the story lock's teammate solves hashes
-//       (#463), when any.
+//       live `paused` flag); [8]=the Jeopardy challenge records, for the
+//       visibility check ([14]); [9..]=the story lock's (solves hash, user
+//       record) pair per teammate (#463, #602), when any.
 // ARGV: [1]=challengeId [2]=<app>/<id> [3]=login [4]=cost [5]=now (ISO)
 //       [6]="1" for a DRY RUN (#464 admin preview): read the text, write
 //       nothing — no SADD, no charge, no purchase time.
 //       [7]=story prerequisite (#463), "" when none — open only if a TEAMMATE
-//       (a solves hash in KEYS[5..]) holds it; checked before any charge.
+//       holds it and solved it while on this team (#602; see storyLockLua in
+//       classic-team.ts); checked before any charge.
 //       [8]=the contestant's gross score (#553), "" when hints are free. The
 //       charge is refused unless gross − the spend read HERE ≥ cost: the
 //       gate's own read is a separate round-trip, so two parallel reveals
@@ -134,17 +138,41 @@ export function isHintTarget(value: string): value is HintTarget {
 //       charge — the closure is enforced where the write happens. Answers
 //       `closed` with the reason; an owned hint is exempt (a re-view charges
 //       nothing, so there is nothing to close).
+//       [11]=the viewer's team slug for the story lock (#602), "" for a team
+//       of one.
+//       [12]=the price the contestant confirmed, "" when the caller sent none.
+//       A purchase is charged that price or not at all: a quote that differs
+//       from the live price (an organizer repriced hints after the page
+//       rendered) is answered `repriced` with the live price, before any
+//       write and without the text. An owned hint is exempt (a re-view
+//       charges nothing).
+//       [13]=the default hint cost, "" to fall back to [4].
+//       [14]="1" when [1] is a Jeopardy challenge: its record in KEYS[8] is
+//       read and a HIDDEN challenge's hint is refused as `missing`, the same
+//       answer an unknown one gets, before anything else. An owned hint is
+//       not exempt: a hidden challenge does not exist, for its buyers too.
+//
+// THE PRICE is read here, from the settings hash (KEYS[7] `hintCost`), not
+// taken from [4]: the caller's settings read is a round-trip old, and the
+// quote check, the affordability check, the charge and the verdict must all
+// use the price at the moment of the write. [13] (the default) and then [4]
+// stand in only when the hash holds no price. A `charged` verdict carries
+// the price as its fourth element.
 //
 // Every non-preview verdict's third element is the spend TOTAL after the
 // call (case-folded, see the script) — what `balance` is derived from.
 // Exported for the live suite only.
 export const REVEAL_SCRIPT = `
--- The story lock (#463) comes FIRST: a locked step's hint is never read.
+${CLASSIC_HIDDEN_LUA}
+-- Visibility comes first: a hidden Jeopardy challenge's hint is refused like
+-- an unknown one, before the lock, the text or any write. The admin preview
+-- (dry run) skips it, like the lock.
+if ARGV[6] ~= '1' and ARGV[14] == '1' and classicHidden(redis.call('HGET', KEYS[8], ARGV[1])) then
+  return {'missing'}
+end
+-- The story lock (#463) comes next: a locked step's hint is never read.
 if ARGV[6] ~= '1' and ARGV[7] and ARGV[7] ~= '' then
-  local open = false
-  for i = 8, #KEYS do
-    if redis.call('HEXISTS', KEYS[i], ARGV[7]) == 1 then open = true break end
-  end
+${storyLockLua(9, 7, 11)}
   if not open then return {'locked'} end
 end
 -- Existence is a FIELD check, not a read: the text is the protected thing,
@@ -160,6 +188,9 @@ if ARGV[6] == '1' then return {'preview', redis.call('HGET', KEYS[3], ARGV[1]), 
 -- clock against ARGV[10] (the end, epoch ms) and the live freeze flag in the
 -- settings hash (KEYS[7]) decide HERE. The end wins over the freeze. An owned
 -- hint is exempt — a re-view charges nothing, so there is nothing to close.
+local price = tonumber(redis.call('HGET', KEYS[7], 'hintCost') or '')
+if not price and ARGV[13] and ARGV[13] ~= '' then price = tonumber(ARGV[13]) end
+if not price then price = tonumber(ARGV[4]) end
 local owned = redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 1
 if not owned then
   if ARGV[10] and ARGV[10] ~= '' then
@@ -168,6 +199,16 @@ if not owned then
     if nowMs > tonumber(ARGV[10]) then return {'closed', 'ended'} end
   end
   if redis.call('HGET', KEYS[7], 'paused') == '1' then return {'closed', 'paused'} end
+  -- The price on the contestant's confirm button: charge it or nothing.
+  if ARGV[12] and ARGV[12] ~= '' and tonumber(ARGV[12]) ~= price then
+    return {'repriced', '', price}
+  end
+  -- The caller resolved the hint as free, so its gate read no balance (ARGV[8]
+  -- is empty). A price set since would be charged unchecked: ask again, and
+  -- the next request takes the paid gate.
+  if price > 0 and tonumber(ARGV[4]) == 0 and (not ARGV[8] or ARGV[8] == '') then
+    return {'repriced', '', price}
+  end
 end
 -- The gross in ARGV[8] was folded under the score revision in ARGV[9]. A
 -- score-lowering operation on ANY app task bumps KEYS[5] before its first
@@ -189,14 +230,14 @@ for i = 1, #all, 2 do
   if string.lower(all[i]) == me then spent = spent + (tonumber(all[i + 1]) or 0) end
 end
 if ARGV[8] and ARGV[8] ~= '' and not owned then
-  if tonumber(ARGV[8]) - spent < tonumber(ARGV[4]) then return {'insufficient', '', spent} end
+  if tonumber(ARGV[8]) - spent < price then return {'insufficient', '', spent} end
 end
 -- Every check that can refuse has passed: only now is the text read.
 local hint = redis.call('HGET', KEYS[3], ARGV[1])
 if redis.call('SADD', KEYS[1], ARGV[2]) == 1 then
-  redis.call('HINCRBY', KEYS[2], ARGV[3], ARGV[4])
+  redis.call('HINCRBY', KEYS[2], ARGV[3], price)
   redis.call('HSETNX', KEYS[4], ARGV[2], ARGV[5])
-  return {'charged', hint, spent + tonumber(ARGV[4])}
+  return {'charged', hint, spent + price, price}
 end
 return {'owned', hint, spent}`;
 
@@ -214,7 +255,10 @@ export type RevealResult =
   // Awards only add, so the figure is never overstated; the page refresh
   // after the reveal shows the live score.
   | { ok: true; hint: string; alreadyOwned: boolean; spent: number; cost: number; balance?: number; dryRun?: true }
-  | { ok: false; error: string; missing?: boolean; forbidden?: boolean };
+  | { ok: false; error: string; missing?: boolean; forbidden?: boolean }
+  // The price changed since the contestant confirmed it: nothing was charged,
+  // and `cost` is the current price to confirm again.
+  | { ok: false; repriced: true; cost: number; error: string };
 
 /** Solves `login` has recorded for `app`, counted straight off the scorer's
  *  `ctf:solves:<target>` hash (fields are `<author>:<challengeId>`). Compared
@@ -404,9 +448,10 @@ export async function revealHint(
   login: string,
   target: string,
   id: string,
-  opts: { dryRun?: boolean } = {},
+  opts: { dryRun?: boolean; quotedCost?: number } = {},
 ): Promise<RevealResult> {
   const dryRun = opts.dryRun === true;
+  const quoted = opts.quotedCost === undefined ? "" : String(opts.quotedCost);
   // Fails CLOSED: unlike the scoring freeze, a settings-read error here must
   // never let a purchase through unpriced/ungated — `resolveHintConfig`'s
   // `getAdminSettings` throws on any read failure (transport or per-command),
@@ -427,7 +472,13 @@ export async function revealHint(
   // the gate's fold and the charge): the second attempt folds afresh under
   // the new revision. Twice stale is an event in the middle of a reset — tell
   // the contestant to try again rather than spin.
-  return attemptReveal(login, target, id, cost, dryRun, endsAtMs, false);
+  return attemptReveal(login, target, id, cost, dryRun, endsAtMs, quoted, false);
+}
+
+/** The refusal for a purchase whose confirmed price is no longer the price:
+ *  nothing charged, and the current price to confirm again. */
+function repricedResult(price: number): RevealResult {
+  return { ok: false, repriced: true, cost: price, error: `This hint now costs ${price} pts. Confirm again to buy it at the new price.` };
 }
 
 async function attemptReveal(
@@ -437,6 +488,7 @@ async function attemptReveal(
   cost: number,
   dryRun: boolean,
   endsAtMs: number | null,
+  quoted: string,
   retried: boolean,
 ): Promise<RevealResult> {
   // Gate BEFORE the charge script. Enforced here (not just in the route) so
@@ -459,6 +511,11 @@ async function attemptReveal(
       };
     }
     if (gate.reason === "insufficient") {
+      // A stale quote is answered with the current price first: the
+      // contestant confirmed a different figure, and "not enough points" at
+      // a price they never saw is no answer. The next request, quoting the
+      // new price, gets the affordability refusal if it still applies.
+      if (quoted !== "" && Number(quoted) !== gate.needed) return repricedResult(gate.needed);
       return { ok: false, forbidden: true, error: notEnough(gate.needed, gate.have) };
     }
     if (gate.reason === "busy") {
@@ -472,16 +529,23 @@ async function attemptReveal(
 
   // STORY LOCK (#463): a classic hint for a later story step is refused by
   // the script unless a teammate solved the step before it. Resolved here,
-  // enforced there; a stories/team read failure refuses (closed).
+  // enforced there; a stories/team read failure refuses (closed). The chain
+  // is the VISIBLE challenges' (a hidden step is skipped like a deleted one),
+  // with this challenge kept in so its own prerequisite is known; whether it
+  // is hidden is the script's call.
   let prereq = "";
   let lockKeys: string[] = [];
+  let lockTeam = "";
   if (target === "classic") {
     try {
-      const [stories, existing] = await Promise.all([listStories(), listChallengeIds()]);
-      const pos = storyPositions(stories, existing).get(id);
+      const [stories, records] = await Promise.all([listStories(), readChallengeRecords()]);
+      const nowMs = Date.now();
+      const visible = new Set(records.filter((c) => isChallengeVisible(c, nowMs)).map((c) => c.id));
+      if (records.some((c) => c.id === id)) visible.add(id);
+      const pos = storyPositions(stories, visible).get(id);
       if (pos?.prereq) {
         prereq = pos.prereq;
-        lockKeys = await teamSolveKeys(login);
+        ({ keys: lockKeys, team: lockTeam } = await teamLockKeys(login));
       }
     } catch (err) {
       console.error("Hint reveal: story lock lookup failed (failing closed):", errorLabel(err));
@@ -501,8 +565,11 @@ async function attemptReveal(
         SCORE_REV_KEY,
         SCORE_LOWERING_KEY,
         // KEYS[7]: the settings hash, for the live `paused` flag at the
-        // charge boundary (#566). The lock keys follow it.
+        // charge boundary (#566).
         HINT_SETTINGS_KEY,
+        // KEYS[8]: the Jeopardy records, for the visibility check (ARGV[14]).
+        // The lock keys follow it.
+        CLASSIC_CHALLENGES_KEY,
         ...lockKeys,
       ],
       [
@@ -521,6 +588,15 @@ async function attemptReveal(
         // ARGV[10]: the scheduled end as epoch ms, compared to Redis's clock
         // right before the charge (#566). "" when no end is set.
         endsAtMs === null ? "" : String(endsAtMs),
+        // ARGV[11]: the viewer's team slug for the story lock, "" for a team
+        // of one (#602).
+        lockTeam,
+        // ARGV[12]: the price the contestant confirmed, "" when none was sent.
+        quoted,
+        // ARGV[13]: the default price, for a settings hash with none.
+        String(HINT_COST),
+        // ARGV[14]: check the Jeopardy challenge's visibility.
+        target === "classic" ? "1" : "0",
       ],
     );
   } catch (err) {
@@ -528,7 +604,7 @@ async function attemptReveal(
     return { ok: false, error: "Hint reveal failed. Try again" };
   }
 
-  const [status, hint, spent] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
+  const [status, hint, spent, chargedPrice] = Array.isArray(verdict) ? (verdict as unknown[]) : [];
   if (status === "missing") {
     return { ok: false, missing: true, error: "No hint available for this challenge" };
   }
@@ -540,8 +616,12 @@ async function attemptReveal(
   // The score revision moved between the gate's fold and the charge (ARGV[9]):
   // the gross may be too high. Fold again under the new revision, once.
   if (status === "stale") {
-    if (!retried) return attemptReveal(login, target, id, cost, dryRun, endsAtMs, true);
+    if (!retried) return attemptReveal(login, target, id, cost, dryRun, endsAtMs, quoted, true);
     return { ok: false, error: "Your score changed while buying this hint. Try again" };
+  }
+  if (status === "repriced") {
+    const now = Number(spent);
+    return repricedResult(Number.isFinite(now) ? now : cost);
   }
   // The script's charge-boundary window check (#566): the gate passed a
   // round-trip ago, the end (or the freeze) landed since. Same two messages
@@ -570,7 +650,9 @@ async function attemptReveal(
       hint,
       alreadyOwned,
       spent: Number(spent) || 0,
-      cost,
+      // What the script charged, read at the write; the caller's resolved
+      // figure only when the verdict does not carry one (an owned re-view).
+      cost: status === "charged" && Number.isFinite(Number(chargedPrice)) ? Number(chargedPrice) : cost,
       ...(balance !== undefined ? { balance } : {}),
     };
   }

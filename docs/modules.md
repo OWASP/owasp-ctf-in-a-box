@@ -160,8 +160,13 @@ the sections below are the enforceable contract behind it.
    no second write path. A module MUST NOT invent one.
 
 2. Payload MUST be `{author, target, solved: string[], pr: number, sha:
-   string}`, delivered as a bearer-authenticated JSON POST, and a success
-   response is `202`:
+   string, at: string}`, delivered as a bearer-authenticated JSON POST, and a
+   success response is `202`. `at` is when the score was earned — for the
+   poll pipeline, the score comment's GitHub `updated_at` — and the scorer
+   times the solve by it and judges the scoring window, the freeze and the
+   master-reset epoch at it ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)).
+   A `422` is a final refusal on that time (never retry it); a payload with
+   no `at` is timed on arrival, the older rule:
 
    ```js
    // sync/src/submit.js
@@ -172,8 +177,8 @@ the sections below are the enforceable contract behind it.
    });
    ```
 
-   (`sync/test/submit.test.js`: "POSTs payload with bearer token, true on
-   202".)
+   (`sync/test/submit.test.js`: "POSTs payload with bearer token, accepted
+   on 202", "refused on 422, carrying the scorer's reason".)
 
 3. `author` MUST match the GitHub-login grammar before it is ever sent,
    because it becomes a datastore key on the scorer side:
@@ -760,8 +765,9 @@ of one module's shape.
    The check lives in each page and route, **not** in `proxy.ts`: the proxy
    makes no Redis reads (its matcher is only `/profile` and `/api/*`, for
    the sign-in redirect and the cross-origin write assertion — minus
-   `/api/admin/event`, the archive import, which the proxy would truncate past
-   10 MB and which runs the same origin check itself), and a
+   `/api/admin/event`, the archive import, and `/api/admin/classic/bundle`,
+   the classic bundle import that carries files, which the proxy would
+   truncate past 10 MB and which run the same origin check themselves), and a
    page-level check runs on every request, soft navigations included, where a
    layout would not. The failure mode that design invites — a new module page
    or route that forgets the guard — is closed by

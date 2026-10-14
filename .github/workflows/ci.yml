@@ -51,6 +51,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # The area patterns, and why each path is in them, live in
+      # scripts/ci-changes.sh, where scripts/test/ci-changes.bats can run them.
+      # The list goes through a file, not a pipe (the script's header says
+      # why), and an unreadable list fails the step rather than reading as
+      # "nothing touched".
       - id: f
         env:
           EVENT: ${{ github.event_name }}
@@ -58,111 +63,14 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT" != "pull_request" ]; then
-            { echo "app=true"; echo "scorer=true"; echo "sync=true"; echo "shell=true"; echo "smoke=true"; echo "quiz=true"; echo "classic=true"; echo "ai=true"; echo "docs=true"; echo "registries=true"; } >> "$GITHUB_OUTPUT"
+            ./scripts/ci-changes.sh --all >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
-          printf 'changed files:\n%s\n' "$changed"
-          # Editing this workflow re-runs every area (a CI change is untargeted).
-          CI='|^\.github/workflows/ci\.yml$'
-          m() { if printf '%s\n' "$changed" | grep -qE "$1"; then echo true; else echo false; fi; }
-          {
-            # setup/targets.tsv is here for the same reason the corpus is on
-            # `sync` below: it is the ONLY authoritative source of a fork's
-            # repo name (ctf-setup.sh forks with --fork-name derived from it),
-            # and both `app` and `sync` keep a copy pinned to it by a
-            # differential test. Without this line a PR editing only the tsv —
-            # an upstream rename, a new target — runs neither suite, so the one
-            # guard that would catch the drift stays silent on the exact commit
-            # that causes it.
-            # The shared window corpora (test/fixtures/window-corpus.json and
-            # scoring-window-corpus.json) are read by the app,
-            # scorer AND sync suites — each runs every row against its own
-            # copy of the three-reader contract. A corpus-only edit must run
-            # all three.
-            # caddy/Caddyfile.poll is here because the app's
-            # security-headers.test.ts pins Caddy's header block to the same
-            # values next.config.ts sends (audit S1); a Caddy-only edit must
-            # run the suite that catches the two drifting apart.
-            echo "app=$(m "^apps/web/|^caddy/Caddyfile\.poll$|^setup/targets\.tsv$|^scripts/acceptance-app\.sh|^test/fixtures/(scoring-)?window-corpus\.json\$$CI")"
-            # sync/src/parse.js rides the scorer filter too:
-            # acceptance-scorer.sh imports the REAL parser as the one live
-            # cross-check of the marker/grammar contract, so a sync-only PR
-            # that changes the grammar must run the suite that proves the
-            # scorer still agrees with it.
-            echo "scorer=$(m "^scorer/|^sync/src/parse\.js$|^scripts/acceptance-scorer\.sh|^test/fixtures/(scoring-)?window-corpus\.json\$$CI")"
-            # setup/targets.tsv is here for the reason given under `app`
-            # above: it is the only authoritative source of a fork's repo
-            # name, and sync keeps a copy pinned to it by
-            # sync/test/repo-names.differential.test.js — the one guard that
-            # catches the drift, which must therefore run on the commit that
-            # causes it.
-            echo "sync=$(m "^sync/|^setup/targets\.tsv|^test/fixtures/(scoring-)?window-corpus\.json\$$CI")"
-            # deploy/fly is here because its checks ARE shell: a bats suite
-            # plus a shellcheck'd deploy script. There is no `terraform
-            # validate` equivalent for fly.toml to give it its own job.
-            # scorer/consumer-workflow.example.yml is here because the bats
-            # suite pins that file's security posture (the unsafe-checkout
-            # opt-in, persist-credentials: false, the workflow version) — a PR
-            # "hardening" the template must run the suite that guards it.
-            # docker-compose.yml is here because fly.bats renders and asserts
-            # on the REAL compose file, not a fixture.
-            # deploy/aws-terraform's SCRIPT and its bats suite are shell, so
-            # they belong here; the .tf files belong to terraform.yml, which
-            # has its own paths filter. Both jobs run when the module changes,
-            # and each checks the half the other cannot see.
-            # docs/decisions.md, the Makefile, AGENTS.md and CONTRIBUTING.md
-            # are here because scripts/test/check-docs-drift.bats pins the ADR
-            # index and the local copies of this job's own commands.
-            # .nvmrc and every workflow are here for the same check's third
-            # rule: each workflow's node-version must equal .nvmrc.
-            # The audited apps/web/ files are here because scripts/test/check-comment-policy.bats
-            # asserts on them, following the same approach as check-docs-drift above.
-            echo "shell=$(m "^scripts/|^setup/|^deploy/fly/|^deploy/aws-terraform/deploy\.sh$|^deploy/aws-terraform/test/|^sync/Dockerfile$|^docker-compose\.yml$|^scorer/consumer-workflow\.example\.yml$|^scorer/entrypoint|^docs/decisions\.md$|^Makefile$|^AGENTS\.md$|^CONTRIBUTING\.md$|^\.nvmrc$|^\.github/workflows/|^apps/web/src/lib/classic-store\.ts$|^apps/web/src/lib/admin-store\.ts$|^apps/web/src/lib/modules\.ts$|^apps/web/src/lib/quiz-store\.ts$|^apps/web/src/lib/ai-store\.ts$|^apps/web/src/lib/leaderboard/module-contributions\.ts$|^apps/web/src/app/\(site\)/admin/admin-controls\.tsx$|^apps/web/src/lib/event-store\.ts$|^apps/web/src/lib/metrics-store\.ts$|^apps/web/src/lib/__tests__/admin-store\.seed\.test\.ts$|^apps/web/src/lib/leaderboard/__tests__/module-contributions\.test\.ts$|^apps/web/src/lib/team-store\.ts$|^apps/web/src/app/\(site\)/admin/__tests__/admin-controls\.test\.tsx$|^apps/web/src/lib/admin-ops-store\.ts$|^apps/web/src/lib/demo-seed\.ts$|^apps/web/src/app/\(site\)/admin/use-admin-settings\.ts$|^apps/web/src/app/\(site\)/admin/use-admin-nav\.ts$|^apps/web/src/app/\(site\)/admin/admin-danger-actions\.ts$|^apps/web/src/lib/module-defs/secure-development\.ts$|^apps/web/src/lib/module-defs/quiz\.ts$|^apps/web/src/lib/module-defs/classic\.ts$|^apps/web/src/lib/module-defs/ai\.ts$|^apps/web/src/lib/admin-audit-keys\.ts$|^apps/web/src/lib/module-urls\.ts$|^apps/web/src/lib/redis-decode\.ts$|^apps/web/src/app/\(site\)/admin/use-admin-restamp\.ts$|^apps/web/src/app/\(site\)/admin/admin-changed-at\.tsx$|^scripts/lib/acceptance-lib\.sh\$$CI")"
-            # `^sync/` is here because smoke runs the REAL sync service —
-            # docker-compose.smoke.yml overrides only its environment. It is
-            # the one end-to-end proof the poll pipeline works, so the area
-            # most able to break it has to trigger it.
-            # Without this a change to the poller's own state handling can
-            # merge with the poll-pipeline test skipped.
-            #
-            # `^scorer/` is deliberately NOT here: the same override file
-            # replaces the scorer with test/fixtures/mock-scorer.mjs
-            # (`image: !reset null`), so no scorer source change can affect
-            # this job. It has its own suites.
-            # test/fixtures/ is here because docker-compose.smoke.yml builds
-            # BOTH mock services (mock-github, mock-scorer) from it — a fixture
-            # change is a smoke-behavior change nothing else runs.
-            echo "smoke=$(m "^docker-compose|^scripts/smoke\.sh|^setup/|^sync/|^\.env|^Caddyfile|^scorer/consumer-workflow|^test/fixtures/$CI")"
-            # Quiz-only spans BOTH areas it proves compose end to end: the app
-            # (module gating, /quiz, /leaderboard) and sync (the
-            # refuses-without-GITHUB_ORG contract), plus docker-compose.yml
-            # itself (the sync service definition the gate brings up).
-            echo "quiz=$(m "^apps/web/|^sync/|^docker-compose\.yml$|^scripts/acceptance-quiz-only\.sh$|^scripts/lib/acceptance-lib\.sh$CI")"
-            # classic mirrors quiz's reasoning exactly: it spans the app
-            # (module gating, /flags, /challenges 404, /leaderboard) and sync
-            # (the refuses-without-GITHUB_ORG contract), plus
-            # docker-compose.yml itself.
-            echo "classic=$(m "^apps/web/|^sync/|^docker-compose\.yml$|^scripts/acceptance-classic-only\.sh$|^scripts/lib/acceptance-lib\.sh$CI")"
-            # ai mirrors quiz's and classic's reasoning exactly: it spans the
-            # app (module gating, /ai, /ai/<id>, /challenges+/flags+/quiz
-            # 404, /leaderboard) and sync (the refuses-without-GITHUB_ORG
-            # contract), plus docker-compose.yml itself.
-            echo "ai=$(m "^apps/web/|^sync/|^docker-compose\.yml$|^scripts/acceptance-ai-only\.sh$|^scripts/lib/acceptance-lib\.sh$CI")"
-            # The Pages site is built from docs/ ALONE (pages.yml sets
-            # `source: docs`), so only docs/ and the publishing workflow can
-            # change what ships. README.md is in pages.yml's trigger paths but
-            # is not part of the site, so it is deliberately absent here.
-            echo "docs=$(m "^docs/|^\.github/workflows/pages\.yml$CI")"
-            # The three independently-maintained TARGET lists this check
-            # compares, plus the check script itself and this workflow file
-            # (either is a behavior change). It compares no MODULE list:
-            # config v2 deleted the duplicated KNOWN_MODULES in
-            # setup/ctf-setup.sh and left module registration to apps/web
-            # alone, so neither that script nor apps/web/src/lib/modules.ts
-            # is an input here.
-            echo "registries=$(m "^(sync/src/config\.js|apps/web/src/lib/apps\.ts|scorer/src/targets\.js|scripts/check-module-registries\.mjs|\.github/workflows/ci\.yml)$")"
-          } >> "$GITHUB_OUTPUT"
+          list="$RUNNER_TEMP/changed-files.txt"
+          git diff --name-only "$BASE_SHA"...HEAD > "$list"
+          printf 'changed files (%s):\n' "$(wc -l < "$list" | tr -d ' ')"
+          cat "$list"
+          ./scripts/ci-changes.sh "$list" | tee -a "$GITHUB_OUTPUT"
 
   sync-tests:
     needs: changes
@@ -172,7 +80,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22, cache: npm, cache-dependency-path: sync/package-lock.json }
       - run: npm ci
         working-directory: sync
@@ -187,7 +95,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22, cache: npm, cache-dependency-path: scorer/package-lock.json }
       - run: npm ci
         working-directory: scorer
@@ -215,7 +123,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22, cache: npm, cache-dependency-path: scorer/package-lock.json }
       - run: npm ci
         working-directory: scorer
@@ -231,6 +139,16 @@ jobs:
         with:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y shellcheck bats
+      # jq: the protection --jq filter tests replay recorded GitHub payloads
+      # through the script's real --jq filter, so they must never skip.
+      # Digest-pinned, not an apt package: apt versions drift with the runner
+      # image, and an unpinned OS package fails the pre-merge pin check. The
+      # sha256 pins the exact 1.7.1 linux-amd64 release asset.
+      - run: |
+          curl -fsSL -o "$RUNNER_TEMP/jq" https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+          echo "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5  $RUNNER_TEMP/jq" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/jq" /usr/local/bin/jq
+          jq --version
       # scripts/dev-stack is listed by name: it has no .sh suffix, so the glob
       # alone would leave the one developer entry point unlinted.
       - run: shellcheck scripts/*.sh scripts/lib/*.sh scripts/dev-stack setup/*.sh scorer/entrypoint.sh sync/docker-entrypoint.sh deploy/fly/deploy.sh deploy/fly/render-compose.sh deploy/aws-terraform/deploy.sh
@@ -240,7 +158,11 @@ jobs:
       # script that reads them. Nothing else is excluded — a finding here is a bug to
       # fix in the script, not a rule to widen.
       - run: shellcheck -s sh --exclude=SC2034 scorer/entrypoints/*.sh
+      # The *_REQUIRE_* variables turn each suite's "tool missing, skip" into a
+      # failure here: a skipped test is a gate that proved nothing.
       - run: bats setup/test/
+        env:
+          CTF_SETUP_REQUIRE_JQ: "1"
       # Static invariants for the fly.io module: the compose render scopes each
       # credential to the one service that needs it, resolves every service to
       # loopback (including hosts behind URL userinfo), leaves no compose-only
@@ -249,6 +171,8 @@ jobs:
       # the runner has), but nothing is deployed and no fly account is used —
       # same posture as the terraform job.
       - run: bats deploy/fly/test/
+        env:
+          FLY_BATS_REQUIRE_DOCKER: "1"
       # The AWS module's stack is checked by `terraform test` in its own job.
       # This covers the one part Terraform cannot see: deploy.sh, which builds
       # and pushes the app image and hands Terraform the tag to apply. There
@@ -258,14 +182,20 @@ jobs:
       # terraform, so --dry-run's "makes no real call" is asserted rather than
       # assumed, and no AWS account is used here either.
       - run: bats deploy/aws-terraform/test/
+        env:
+          SRH_HEALTHCHECK_REQUIRED: "1"
       # scripts/check-changelog.sh, the rule changelog.yml enforces on every
       # PR. Each case builds a throwaway git repo, so it needs no fixture.
       # And scripts/check-docs-drift.mjs: the ADR index and the local
       # copies of this job's commands. It is plain Node, pinned to 22 like the
       # rest of the repo.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
       - run: bats scripts/test/
+        env:
+          # dotenv.bats diffs the shared .env reader against `docker compose
+          # config` itself; the runner has docker, so a skip here is a failure.
+          DOTENV_BATS_REQUIRE_DOCKER: "1"
 
   smoke:
     needs: changes
@@ -285,7 +215,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
@@ -359,6 +289,19 @@ jobs:
           echo "OK: / is not statically prerendered"
         working-directory: apps/web
       - run: ./scripts/acceptance-app.sh
+      # The Caddyfile the box mounts must parse. The image is read out of
+      # docker-compose.yml, so this validates with the exact digest the box
+      # runs, and an empty read fails rather than validating nothing.
+      - name: caddy validate caddy/Caddyfile.poll
+        run: |
+          set -euo pipefail
+          img="$(sed -n 's/^    image: \(caddy:[^ ]*@sha256:[0-9a-f]\{64\}\)$/\1/p' docker-compose.yml)"
+          if [ -z "$img" ]; then
+            echo "FAIL: no digest-pinned caddy image found in docker-compose.yml"; exit 1
+          fi
+          # pins: $img is the digest-pinned caddy image read from docker-compose.yml above
+          docker run --rm -v "$PWD/caddy:/etc/caddy:ro" -e EVENT_HOST=http://localhost \
+            "$img" caddy validate --config /etc/caddy/Caddyfile.poll --adapter caddyfile
 
   quiz-only:
     needs: changes
@@ -402,7 +345,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
       - run: node scripts/check-module-registries.mjs
 

@@ -16,7 +16,9 @@
 #             + print install steps, mirror scorer image
 #             (idempotent/re-runnable: every step is skipped once its
 #             target state is already satisfied, so re-running `org` after
-#             a partial run or failure just resumes where it left off)
+#             a partial run or failure just resumes where it left off.
+#             ctf protection the free plan refuses on private repos is
+#             reported PENDING until launch, not as a failure
 #   render    (re)render just the per-target scoring workflows into dist/workflows/
 #   upgrade   re-commit the rendered scoring workflow to every fork whose
 #             committed copy is behind the template's
@@ -57,6 +59,11 @@ set -euo pipefail
 # $0 is the sourcing shell's own name rather than this file's path.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 WORKFLOW_TEMPLATE="$SCRIPT_DIR/../scorer/consumer-workflow.example.yml"
+
+# The one env-file reader every shell entry point shares: env_val and env_has
+# below are thin wrappers over it.
+# shellcheck source=scripts/lib/dotenv.sh
+. "$SCRIPT_DIR/../scripts/lib/dotenv.sh"
 
 # ANSI colors — only when stdout is a TTY and NO_COLOR is unset (respect the
 # NO_COLOR convention + non-interactive/piped output stays plain for logs/CI).
@@ -261,13 +268,15 @@ fork_workflow_version() {
 # make disable-inherited never settle (doctor stuck red, provisioning looping).
 INHERITED_JQ='.workflows[] | select(.path | startswith(".github/workflows/")) | select(.path != ".github/workflows/ctf-score.yml") | select(.state=="active") | .id'
 
+# One DRY-RUN narration line for a provisioning step: what apply_step would
+# do. Narration only — `org --dry-run` makes zero gh calls.
 plan_step() {
   local id="$1" t="$2" org="$3" name; name="$(prov_repo_name "$t")"
   case "$id" in
     fork) echo "DRY-RUN: gh repo fork $(prov_field "$t" 2) --org $org --fork-name $name --clone=false" ;;
     ctf-branch) echo "DRY-RUN: create refs/heads/ctf on $org/$name from $(prov_field "$t" 2)@$(prov_field "$t" 3); set default_branch=ctf" ;;
     drop-old) echo "DRY-RUN: delete master/main on $org/$name if present and != ctf" ;;
-    protect) echo "DRY-RUN: PUT branch protection on $org/$name:ctf (1 approving review, no force-push/deletion)" ;;
+    protect) echo "DRY-RUN: PUT branch protection on $org/$name:ctf (1 approving review, no force-push/deletion); while the fork is private on a free plan this stays pending until launch" ;;
     workflow) echo "DRY-RUN: render ctf-score.yml v$(template_workflow_version) (TARGET=$t) and PUT to $org/$name:.github/workflows/ctf-score.yml on ctf" ;;
     disable-inherited) echo "DRY-RUN: disable every workflow on $org/$name except .github/workflows/ctf-score.yml" ;;
     pr-template) echo "DRY-RUN: PUT setup/PULL_REQUEST_TEMPLATE.md to $org/$name:.github/PULL_REQUEST_TEMPLATE.md on ctf" ;;
@@ -279,21 +288,63 @@ plan_step() {
   esac
 }
 
+# Whether one branch exists on a repo: `present`, `absent`, or `unknown`.
+# Only GitHub's 404 is `absent`; any other failure (auth, rate limit, a 5xx,
+# no network) is `unknown`, which every caller treats as "not satisfied" —
+# an API blip must never read as "already deleted". The reply's name is
+# checked too: GitHub answers a request for a RENAMED branch with the branch
+# it became, and that is not the one asked for.
+branch_state() {
+  local slug="$1" branch="$2" got err
+  if got="$(gh api "repos/$slug/branches/$branch" --jq '.name' 2>/dev/null)"; then
+    if [ "$got" = "$branch" ]; then
+      echo present
+    elif [ -n "$got" ]; then
+      echo absent
+    else
+      echo unknown
+    fi
+    return 0
+  fi
+  err="$(gh api "repos/$slug/branches/$branch" 2>&1 >/dev/null)" || true
+  case "$err" in
+  *"HTTP 404"*) echo absent ;;
+  *) echo unknown ;;
+  esac
+}
+
+# True when one provisioning step is already in its target state — the
+# idempotency probe behind org's skip-if-done and doctor's matrix cells.
+# Fails closed: an unreadable or unexpected reply is "not satisfied".
 check_step() {
   local id="$1" t="$2" org="$3" name; name="$(prov_repo_name "$t")"
   case "$id" in
     fork) gh_ok "repos/$org/$name" ;;
     ctf-branch) [ "$(gh api "repos/$org/$name" --jq '.default_branch' 2>/dev/null)" = "ctf" ] ;;
     drop-old)
-      local branches
-      branches="$(gh api "repos/$org/$name/branches" --jq '.[].name' 2>/dev/null)" || return 1
-      ! printf '%s\n' "$branches" | grep -qxE 'master|main'
+      # Each branch is asked for by name rather than read out of the branch
+      # list, which GitHub pages at 30: on a fork with more branches than
+      # that, `main` can sit on page two and the list reads as "gone". Only
+      # an answer of absent for BOTH counts as done; a branch that is present,
+      # or one GitHub did not answer for, is not.
+      [ "$(branch_state "$org/$name" main)" = absent ] || return 1
+      [ "$(branch_state "$org/$name" master)" = absent ]
       ;;
     protect)
-      local n
-      n="$(gh api "repos/$org/$name/branches/ctf/protection" \
-        --jq '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null)" || n=0
-      [ "${n:-0}" -ge 1 ]
+      # The full protection payload, not just the review count: `launch`
+      # verifies all three properties before reporting success, and `org`'s
+      # idempotency check must not skip a fork whose force-pushes or deletions
+      # were later enabled. GitHub returns allow_force_pushes and
+      # allow_deletions as OBJECTS ({ "enabled": false }), not booleans, so
+      # the filter reads `.enabled`. Fails closed: an unreadable reply (404 =
+      # no protection, a gh error) never reads as satisfied; a missing field
+      # (null.enabled == false is false) is not either; and a boolean where
+      # the object belongs errors the filter itself, which `||` reads as
+      # unsatisfied.
+      local ok
+      ok="$(gh api "repos/$org/$name/branches/ctf/protection" \
+        --jq '(((.required_pull_request_reviews.required_approving_review_count // 0) >= 1) and (.allow_force_pushes.enabled == false) and (.allow_deletions.enabled == false))' 2>/dev/null)" || ok=false
+      [ "$ok" = true ]
       ;;
     # Version-aware, not merely present. A fork carrying an OLDER workflow is
     # not "already done": that is exactly the state a security fix has to get
@@ -326,6 +377,49 @@ check_step() {
   esac
 }
 
+# PUT the ctf branch protection — the one payload `org` and `launch` both
+# apply. Returns:
+#   0  applied (or already in place)
+#   2  REFUSED specifically by GitHub's free plan on a private repository:
+#      the ONE observed refusal this defers — HTTP 403 carrying "Upgrade to
+#      GitHub Pro or make this repository public", on a fork that reads back
+#      private. Not an error — the caller defers it until launch makes the
+#      fork public. No output: the refusal is the expected state of a
+#      private fork on a free org.
+#   1  any other failure — including that same refusal when the fork is not
+#      CONFIRMED private (a visibility GitHub did not answer is not
+#      confirmation) — the caller fails on it, like every check_step.
+# The plan refusal is told apart by the status and the complete message
+# GitHub answers with, on the only endpoint this runs against, plus the
+# fork's actual visibility — never by exit status alone, or every protection
+# error would silently become a deferral.
+apply_protect() {
+  local org="$1" name="$2" err
+  if err="$(gh api -X PUT "repos/$org/$name/branches/ctf/protection" --input - 2>&1 >/dev/null <<'JSON'
+{ "required_status_checks": null, "enforce_admins": false,
+  "required_pull_request_reviews": { "required_approving_review_count": 1 },
+  "restrictions": null, "allow_force_pushes": false, "allow_deletions": false }
+JSON
+)"; then
+    return 0
+  fi
+  case "$err" in
+    *"HTTP 403"*"Upgrade to GitHub Pro or make this repository public"*)
+      # Only the complete, observed refusal counts — and only on a fork that
+      # reads back private, which is what makes this the free-plan state
+      # rather than a 403 of another kind. An unreadable visibility is not
+      # `private`, so it falls through and fails closed.
+      if [ "$(fork_visibility "$org/$name")" = private ]; then
+        return 2
+      fi
+      ;;
+  esac
+  printf '%s\n' "${err:-gh api PUT branches/ctf/protection failed for $org/$name}" >&2
+  return 1
+}
+
+# Perform one provisioning step for a fork — the mutation plan_step only
+# narrates. Idempotent: re-running resumes where a partial run stopped.
 apply_step() {
   local id="$1" t="$2" org="$3" name; name="$(prov_repo_name "$t")"
   case "$id" in
@@ -342,17 +436,17 @@ apply_step() {
     drop-old)
       local b
       for b in master main; do
-        if gh_ok "repos/$org/$name/branches/$b"; then
+        # Anything but a confirmed absence gets the delete attempt: the
+        # check_step that follows is what decides whether it worked.
+        if [ "$(branch_state "$org/$name" "$b")" != absent ]; then
           gh api -X DELETE "repos/$org/$name/git/refs/heads/$b" >/dev/null 2>&1 || true
         fi
       done
       ;;
     protect)
-      gh api -X PUT "repos/$org/$name/branches/ctf/protection" --input - >/dev/null <<'JSON'
-{ "required_status_checks": null, "enforce_admins": false,
-  "required_pull_request_reviews": { "required_approving_review_count": 1 },
-  "restrictions": null, "allow_force_pushes": false, "allow_deletions": false }
-JSON
+      # Propagates apply_protect's 2 (deferred on a free-plan private repo)
+      # for the caller to record as pending — do_step passes it through.
+      apply_protect "$org" "$name"
       ;;
     workflow)
       local base_url lb_url="" tmp
@@ -562,9 +656,12 @@ doctor_check_org_exists() {
 # runtime in /admin -> Secure Development.
 # One row per target, one column per provisioning step (+ fork-detach). Each
 # cell: ✅ done · ❌ missing (automatable — fails the exit code) · ⚠️ manual
-# step not yet done (advisory) · – not applicable to this target.
+# step not yet done (advisory) · – not applicable to this target. The second
+# argument is the box's launch state (doctor_check_launch's out-param):
+# only an explicit not-launched turns a missing protection on a private fork
+# into ⏳ pending; launched or unknown reports it ❌ like any other miss.
 doctor_check_matrix() {
-  local org="$1" crc=0 t id cell name
+  local org="$1" doctor_launch="${2:-unknown}" crc=0 t id cell name
   printf '%s%-18s %-5s %-5s %-5s %-5s %-5s %-5s %-5s %-5s %-5s%s\n' "$C_BOLD" \
     "target" fork ctf old prot wkfl disI pr vapp detch "$C_RESET"
   for t in $(all_targets); do
@@ -575,6 +672,14 @@ doctor_check_matrix() {
         cell="–"
       elif check_step "$id" "$t" "$org"; then
         cell="✅"
+      elif [ "$id" = protect ] && [ "$doctor_launch" = not-launched ] && [ "$(fork_visibility "$org/$name")" = private ]; then
+        # The free plan refuses protection on a private repo, so before
+        # launch `org` records this as pending until launch, not missing —
+        # and only a launch state the box itself reported as not-launched
+        # earns that: launched or unknown, a missing protection is a real
+        # miss (❌). An unreadable visibility is not `private` either, so a
+        # real miss stays ❌ (fail closed).
+        cell="⏳"
       else
         cell="❌"; crc=1
       fi
@@ -589,6 +694,7 @@ doctor_check_matrix() {
   echo "legend: fork=forked ctf=ctf-branch old=drop-old prot=protected wkfl=workflow"
   echo "        disI=disable-inherited pr=pr-template vapp=vapp-dockerfile detch=fork-detached (–=n/a)"
   echo "❌ = automatable step missing (fails exit); ⚠️ = UI-only step to finish by hand"
+  echo "⏳ = branch protection pending until launch (GitHub's free plan cannot protect a private repo; shown only while not-launched)"
   return $crc
 }
 
@@ -719,6 +825,9 @@ doctor_check_pull_grants() {
   return $crc
 }
 
+# `doctor`: read-only health report — the box's launch state, the org, and
+# one cell per provisioning step per target. A real miss is ❌ and sets a
+# nonzero exit; ⏳ appears only while the box itself reports not-launched.
 cmd_doctor() {
   require_env_file
   local org; org="$(env_val GITHUB_ORG)"
@@ -765,7 +874,7 @@ cmd_doctor() {
     return $rc
   fi
 
-  doctor_check_matrix "$org" || rc=1
+  doctor_check_matrix "$org" "$doctor_launch" || rc=1
   doctor_check_fork_visibility "$org" "$doctor_launch"
   doctor_check_package_private "$org"
   doctor_check_sync_app "$org" || rc=1
@@ -843,20 +952,16 @@ app_url_for() {
 # substitution takes the whole script down — silently, with no output and exit
 # 1. `render` on a machine with no .env did exactly that.
 #
-# A trailing `# comment` and surrounding whitespace are stripped: organizers
-# annotate this file (`GITHUB_ORG=myorg  # the disposable one`), and the value
-# this script forks into, or prints as the org it inspected, must be the org
-# and not the org plus prose. docker compose's own .env reader does the same.
-# A `#` INSIDE the value is only stripped when whitespace precedes it, so a
-# token that legitimately contains one survives.
+# The value is read by scripts/lib/dotenv.sh, the reader dev-stack and the Fly
+# scripts share, with docker compose's semantics: quotes, a leading `export `,
+# `KEY = value`, CRLF and a trailing ` # comment` all read the way compose
+# reads them. Organizers annotate this file (`GITHUB_ORG=myorg  # the
+# disposable one`), and the value this script forks into must be the org, not
+# the org plus prose. Reading it any other way than compose
+# does would let `SCORE_IMAGE=""` — empty to compose, so no scorer starts —
+# read as the two-character string `""` here, and call Secure Development on.
 env_val() {
-  local out="${OUT:-.env}" v
-  [ -f "$out" ] || return 0
-  v="$(sed -n "s/^$1=//p" "$out" | tail -1)"
-  v="${v%%[[:space:]]#*}"
-  # Trim both ends without a subshell per call: bash 3.2-safe extglob-free.
-  v="${v#"${v%%[![:space:]]*}"}"
-  printf '%s' "${v%"${v##*[![:space:]]}"}"
+  dotenv_get "${OUT:-.env}" "$1"
 }
 
 # Is the key PRESENT in the env file, whatever its value? Distinct from
@@ -865,9 +970,7 @@ env_val() {
 # Development", while no such line at all is a file that has not been asked
 # the question yet — one the wizard must ask rather than resume past.
 env_has() {
-  local out="${OUT:-.env}"
-  [ -f "$out" ] || return 1
-  grep -q "^$1=" "$out"
+  dotenv_has "${OUT:-.env}" "$1"
 }
 
 # Refuse to act on an absent env file, for the commands whose whole input it
@@ -908,7 +1011,7 @@ env_url() {
 # configured for Secure Development when its env file says otherwise.
 score_image() {
   local v="${SCORE_IMAGE:-}"
-  [ -n "$v" ] || v="$(env_val SCORE_IMAGE)"
+  if [ -z "$v" ]; then v="$(env_val SCORE_IMAGE)" || exit 1; fi
   printf '%s' "$v"
 }
 
@@ -919,8 +1022,13 @@ score_image() {
 # error — an event can run quiz, classic or ai alone, and those are app-side
 # only — so every caller says "this event does not run Secure Development"
 # rather than just "nothing to do".
+# A SCORE_IMAGE the reader refuses (an unterminated quote, interpolation, an
+# unreadable file) is neither answer: the script stops, with the reason
+# dotenv_get printed, instead of guessing on or off.
 runs_secdev() {
-  [ -n "$(env_val SCORE_IMAGE)" ]
+  local v
+  v="$(env_val SCORE_IMAGE)" || exit 1
+  [ -n "$v" ]
 }
 
 run() {
@@ -1070,6 +1178,10 @@ cmd_secrets() {
   echo "wrote $out — fill in GITHUB_ORG, ADMIN_LOGINS, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY, SCORE_IMAGE"
 }
 
+# `org`: provision every target's fork — fork, ctf branch, branch
+# protection, workflow, inherited-workflow disable, PR template. Steps
+# already satisfied are skipped; a free-plan protection refusal on a
+# confirmed-private fork is recorded pending, not failed.
 cmd_org() {
   require_env_file
   # The switch first: with SCORE_IMAGE empty this event does not run Secure
@@ -1095,14 +1207,43 @@ cmd_org() {
 
   require_targets
   echo "== provisioning $org (idempotent — re-run safe)"
-  local t
+  # Targets whose ctf protection could not be applied because GitHub's
+  # free plan refuses it on private repositories — recorded as pending until
+  # launch (which opens the forks and applies it), never as completed, and
+  # never a reason to stop: every remaining step and repo still runs.
+  local deferred_protect="" t
   for t in $(all_targets); do
     echo "== $t -> $org/$(prov_repo_name "$t")"
     local id
-    for id in $STEPS; do do_step "$id" "$t" "$org"; done
+    for id in $STEPS; do
+      if [ "$id" = protect ]; then
+        local prc=0
+        do_step protect "$t" "$org" || prc=$?
+        if [ "$prc" -eq 2 ]; then
+          echo "  ⏳ protect ($t): pending until launch — GitHub's free plan does not support branch protection on private repos"
+          deferred_protect="$deferred_protect $t"
+        elif [ "$prc" -ne 0 ]; then
+          return "$prc"
+        fi
+      else
+        do_step "$id" "$t" "$org"
+      fi
+    done
   done
 
   mirror_image "$org" "$src"
+
+  # The pending list, said plainly and before the manual steps: deferred is
+  # not done, and 'launch' is what clears it (applies + verifies each fork's
+  # protection once it is public).
+  if [ -n "$deferred_protect" ]; then
+    echo
+    echo "== branch protection PENDING until launch (the free plan refuses it on"
+    echo "   private repos; 'ctf-setup.sh launch' applies it once each fork is public):"
+    for t in $deferred_protect; do
+      echo "   - $org/$(prov_repo_name "$t"):ctf"
+    done
+  fi
 
   # Forks stay private until launch. A fork still in its fork network
   # cannot be made private, so this skips it by name — re-run
@@ -1217,7 +1358,10 @@ cmd_private() {
 #      the ctf branch, the workflow, the PR template — and opening them first
 #      handed everyone a head start for as long as the press took.
 #   3. Flip every fork public (an already-public one is skipped), within one
-#      poll interval of the press.
+#      poll interval of the press — and, as each fork goes public, apply the
+#      ctf branch protection `org` deferred on a free plan (it refuses
+#      protection on private repos), then verify it on every fork
+#      before reporting success.
 # Every step is idempotent, so after a partial failure the report names the
 # state and a re-run finishes it. LAUNCH_WAIT_SECS (default 1800) and
 # LAUNCH_POLL_SECS (default 5) bound the wait.
@@ -1248,6 +1392,11 @@ cmd_launch() {
     echo "DRY-RUN: would wait for $url/health/deep to report launched (press Launch in /admin → Event), with every fork still private"
     for t in $(all_targets); do
       echo "DRY-RUN: gh api -X PATCH repos/$org/$(prov_repo_name "$t") -f visibility=public"
+    done
+    # The free plan could not protect the forks while they were private;
+    # launch applies the same protection `org` applies, then verifies it.
+    for t in $(all_targets); do
+      echo "DRY-RUN: PUT branch protection on $org/$(prov_repo_name "$t"):ctf once public (1 approving review, no force-push/deletion), then verify it"
     done
     return 0
   fi
@@ -1314,10 +1463,31 @@ cmd_launch() {
         exit 1
         ;;
     esac
+    # Immediately after the fork is public, apply the same idempotent
+    # check-then-apply ctf protection `org` uses — the free plan could not set
+    # it while the repo was private. Any failure here is a real one (the repo
+    # is public now, so the plan refusal cannot recur) and stops the launch.
+    do_step protect "$t" "$org" || {
+      echo "❌ could not apply ctf branch protection on $name (1 approving review required, force-pushes and deletions disabled)." >&2
+      echo "   Made public so far:${flipped:- none}. Fix the cause and re-run 'ctf-setup.sh launch' — it picks up where this stopped." >&2
+      exit 1
+    }
+  done
+
+  # Verify every fork's protection before reporting launch success:
+  # one approving review required, force-pushes and deletions disabled.
+  for t in $(all_targets); do
+    name="$(prov_repo_name "$t")"
+    if ! check_step protect "$t" "$org"; then
+      echo "❌ $name: ctf branch protection is not verified (needs 1 approving review, with force-pushes and deletions disabled) — not reporting launch." >&2
+      echo "   Re-run 'ctf-setup.sh launch' — it is idempotent and picks up where this stopped." >&2
+      exit 1
+    fi
   done
 
   echo "== launched ✓ $url (confirmed $launched_at)"
   echo "   forks made public now:${flipped:- none — every fork was already public}"
+  echo "   ctf branch protection applied and verified on every fork"
 }
 
 # Just the workflow-render step of cmd_org — for re-rendering after an
@@ -2357,7 +2527,17 @@ cmd_wizard() {
   wiz_done "$out" "$secdev"
 }
 
+# Every key this script reads out of the env file, checked once, here, in the
+# script's own shell: a refusal inside a `$(env_val ...)` stops only that
+# subshell, and a caller such as `[ -n "$(env_val X)" ]` would read it as
+# empty. `check` reads no env file, so a broken one does not block it.
+ENV_KEYS="SCORE_IMAGE GITHUB_ORG ADMIN_LOGINS EVENT_URL GITHUB_APP_ID
+GITHUB_APP_PRIVATE_KEY GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET"
 if [ "$CMD" != "__selftest" ]; then
+  if [ "$CMD" != check ]; then
+    # shellcheck disable=SC2086 # the key list is split into words on purpose
+    dotenv_check "${OUT:-.env}" $ENV_KEYS || exit 1
+  fi
   case "$CMD" in
     ""|wizard) cmd_wizard ;;
     check) cmd_check ;;

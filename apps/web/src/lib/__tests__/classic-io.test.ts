@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { parseBundle, serializeBundle, type ClassicBundle } from "@/lib/classic-io";
+import { CLASSIC_BUNDLE_VERSION, parseBundle, serializeBundle, type ClassicBundle } from "@/lib/classic-io";
 
 const valid: ClassicBundle = {
   version: 1,
@@ -31,8 +32,8 @@ describe("parseBundle", () => {
   });
 
   it("rejects an unknown version rather than misparsing it", () => {
-    // 2 is a real version since #463 (stories); 3 is not.
-    const res = parseBundle(JSON.stringify({ ...valid, version: 3 }));
+    // 4 is the current version (challenge visibility); 5 is not.
+    const res = parseBundle(JSON.stringify({ ...valid, version: 5 }));
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
     expect(res.errors.some((e) => e.where === "version")).toBe(true);
@@ -286,5 +287,63 @@ describe("classic import errors never echo the submitted value (#500)", () => {
       "stories[1].steps[0]",
       PLANTED_ID,
     );
+  });
+});
+
+describe("attachment files in a v3 bundle", () => {
+  const bytes = Buffer.from("pcap-bytes");
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  const b64 = bytes.toString("base64");
+  const c0 = valid.challenges[0];
+  const withFiles = (files: unknown, version = 3) =>
+    JSON.stringify({
+      ...valid,
+      version,
+      challenges: [{ ...c0, attachments: [{ name: "cap.pcap", size: bytes.length, sha256: sha }] }],
+      attachmentFiles: files,
+    });
+  const fileErrors = (text: string) => {
+    const r = parseBundle(text);
+    return r.ok ? [] : r.errors.filter((e) => e.where.startsWith("attachmentFiles"));
+  };
+
+  it("is the version before the current one (visibility, 4)", () => {
+    expect(CLASSIC_BUNDLE_VERSION).toBe(4);
+  });
+
+  it("accepts files that match an upload in the same bundle, and keeps them", () => {
+    const res = parseBundle(withFiles([{ item: c0.id, sha256: sha, bytes: b64 }]));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.attachmentFiles).toEqual([{ item: c0.id, sha256: sha, bytes: b64 }]);
+  });
+
+  it("parses a v3 bundle without the key exactly like a v2 one", () => {
+    const v2 = parseBundle(JSON.stringify({ ...valid, version: 2 }));
+    const v3 = parseBundle(JSON.stringify({ ...valid, version: 3 }));
+    if (!v2.ok || !v3.ok) throw new Error("expected both to parse");
+    expect(v3.bundle).toEqual({ ...v2.bundle, version: 3 });
+    expect("attachmentFiles" in v3.bundle).toBe(false);
+  });
+
+  it.each([
+    ["a file no upload in the bundle names", [{ item: c0.id, sha256: "cd".repeat(32), bytes: b64 }]],
+    ["an unknown challenge", [{ item: "ghost-zz99zz", sha256: sha, bytes: b64 }]],
+    ["bytes that are not base64", [{ item: c0.id, sha256: sha, bytes: "not base64!!" }]],
+    ["an extra key", [{ item: c0.id, sha256: sha, bytes: b64, name: "x" }]],
+    ["a non-array", "cap.pcap"],
+  ])("refuses %s", (_label, files) => {
+    expect(fileErrors(withFiles(files)).length).toBeGreaterThan(0);
+  });
+
+  it.each([1, 2])("refuses the key on a version %i bundle, which predates it", (version) => {
+    const errors = fileErrors(withFiles([{ item: c0.id, sha256: sha, bytes: b64 }], version));
+    expect(errors).toContainEqual({ where: "attachmentFiles", message: '"attachmentFiles" needs bundle version 3' });
+  });
+
+  it("names the bundle, not an archive, when a file matches no upload, and echoes neither value", () => {
+    const PLANTED = "PLANTED-bundle-item-77";
+    const errors = fileErrors(withFiles([{ item: PLANTED, sha256: sha, bytes: b64 }]));
+    expect(errors).toContainEqual({ where: "attachmentFiles[0]", message: "No upload in this bundle matches this file's item and sha256" });
+    expect(JSON.stringify(errors)).not.toContain(PLANTED);
   });
 });

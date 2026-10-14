@@ -133,3 +133,14 @@ describe("TeamProgress", () => {
     expect(html).toContain("5 answered");
   });
 });
+
+// #591: the profile panel shows the team's organizer adjustment beside its
+// total, like the hint marker.
+describe("TeamProgress adjustment marker (#591)", () => {
+  it("shows the signed adjustment", () => {
+    const html = renderToStaticMarkup(
+      <TeamProgress standing={{ ...standing, adjustment: -25 }} memberEntries={[]} viewerLogin="bob" />,
+    );
+    expect(html).toContain("−25 adjustment");
+  });
+});

@@ -91,6 +91,24 @@ describe("the assembled registry", () => {
     expect(moduleDefById("nope" as never)).toBeUndefined();
   });
 
+  // A Secure Development point POSTS when the event receives the passing
+  // result, minutes after the push, so copy promising it "immediately" is
+  // wrong. But it is TIMED by when the result was posted on the PR (ADR 67):
+  // that time breaks a points tie, and a result posted while scoring was
+  // frozen or closed does not count when it arrives later.
+  it("never promises Secure Development points the instant a test passes", () => {
+    const copy = JSON.stringify(moduleDefById("secure-development"));
+    expect(copy).not.toMatch(/scores?( its)? points immediately|awarded the moment/i);
+  });
+
+  it("states that a Secure Development solve is timed by the PR's result, not its arrival", () => {
+    const def = moduleDefById("secure-development");
+    const scoring = JSON.stringify(def?.rules?.({ appCount: 1, appList: "DVWA" }).scoring ?? []);
+    expect(scoring).toMatch(/time the result was posted on your PR/i);
+    expect(scoring).not.toMatch(/that is the time a points tie is decided on/i);
+    expect(scoring).toMatch(/frozen or closed/i);
+  });
+
   it("does not value-import the module back out of its own def", () => {
     for (const id of ALL_MODULE_IDS) {
       const src = read(join(DEFS, `${id}.ts`));

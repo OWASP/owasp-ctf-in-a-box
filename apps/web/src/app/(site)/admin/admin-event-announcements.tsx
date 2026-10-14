@@ -237,9 +237,10 @@ export default function AdminEventAnnouncements() {
     }
   }
 
-  /** Renders what ONE kind would post — built server-side by the very same
-   *  builders the announcer uses, so a preview is byte-identical to a live
-   *  message. Never sends anything; no webhook is read. */
+  /** Renders what ONE kind would look like — built server-side by the very
+   *  same builders the announcer uses, so the format matches a live message
+   *  exactly while the content is sample data. Never sends anything; no
+   *  webhook is read. */
   async function showPreview(kind: AnnouncementKind) {
     if (previewBusy) return;
     setPreviewBusy(true);
@@ -391,13 +392,13 @@ export default function AdminEventAnnouncements() {
       ))}
 
       {/* The preview: the server builds it with the SAME builders a live
-          announcement goes through, so what is rendered here is exactly what
-          would be posted — nothing is sent, and no webhook is read. */}
+          announcement goes through, so this shows the live message format on
+          SAMPLE data — nothing is sent, and no webhook is read. */}
       {preview && (
         <div className="rounded-md border border-white/10 bg-[#1a1a2e] p-3" data-testid="ann-preview">
           <p className="text-xs text-muted">
-            Preview of “{SWITCHES.find((row) => row.kind === preview.kind)?.label ?? preview.kind}” — exactly what would be posted
-            (nothing was sent):
+            Preview of “{SWITCHES.find((row) => row.kind === preview.kind)?.label ?? preview.kind}” in the live format, with sample
+            data (nothing was sent):
           </p>
           {preview.message.embeds.map((embed, i) => (
             <div key={i} className="mt-2 flex flex-col gap-0.5">

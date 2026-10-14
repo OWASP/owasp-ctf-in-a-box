@@ -4314,8 +4314,10 @@ work an event without the feature must never pay for.
   (ADR 60), withholding the ENTIRE post — title, points and the bare id the
   board also redacts — when the step is locked, or when the story line it
   needs cannot be read at all. The admin "Send test" and the per-type
-  previews are built by the same functions, so a preview is exactly what
-  the announcer would post.
+  previews are built by the same builders the live announcer uses, so a
+  preview demonstrates the live message format — the same embeds, mention
+  suppression and escaping — on sample data, not the real content of any
+  future post.
 
 **Consequences.** Announcements are an organizer opt-in with no new
 credential to manage beyond the webhook itself, and no new process to

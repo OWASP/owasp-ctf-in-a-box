@@ -294,12 +294,14 @@ export default async function ProfilePage() {
     classicReachableMaxPoints = reachable.max;
     classicLockedCount = reachable.locked;
     // Build the locked set for moduleItemsFor filtering (locked live steps
-    // only) — the SAME decision `classicReachableDenominator` made above, so
-    // the list can never hide a step the counts and ceiling include.
+    // only): every step ADR 60 eligibility keeps locked, even one the fold
+    // holds a banked solve for. A solve carried in from another team keeps
+    // its points in the counts and ceiling above, but it must not surface
+    // the step's title — hiding a locked step never drops its records.
     if (stories.length > 0) {
       const positions = storyPositions(stories, new Set(classicChallenges.map((c) => c.id)));
       for (const pos of positions.values()) {
-        if (!Object.hasOwn(solvedRecords, pos.id) && isLocked(pos, teamSolved)) {
+        if (isLocked(pos, teamSolved)) {
           classicLocked.add(pos.id);
         }
       }

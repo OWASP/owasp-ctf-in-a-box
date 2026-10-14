@@ -356,4 +356,62 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     expect(html).not.toContain("Step Two");
     expect(html).not.toContain("Step Three");
   });
+
+  // A solve a teammate carried in from ANOTHER team scores for this one but
+  // opens nothing (ADR 60): the fold holds grace's step-3 record while the
+  // eligibility read leaves step-3 out of red's unlock set, so it stays
+  // locked behind the unsolved step 2. The record must not smuggle the
+  // title back onto the page (#463) — while the 90 pts it banked stay in
+  // the ceiling exactly as the fold reported them.
+  it("hides a locked step even when a teammate's banked solve holds its record", async () => {
+    moduleLive.mockImplementation((id: string) => id === "classic");
+    getSession.mockResolvedValue({ user: { login: "ada", image: null } });
+    getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
+    getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
+    getResolvedModules.mockResolvedValue([
+      { id: "classic", nav: { href: "/challenges", label: "Challenges" }, targets: [], title: "Classic", blurb: "" },
+    ]);
+    // The roster resolves once, off the store team this page already read.
+    getViewerTeam.mockResolvedValue({ slug: "red", name: "Red", members: ["ada", "grace"] });
+    listChallenges.mockResolvedValue(CHALLENGES);
+    listStories.mockResolvedValue([STORY]);
+    // ada's own step-1 solve (post-join, so it counts) opens step 2 for red.
+    getClassicTotals.mockResolvedValue(new Map([["ada", { points: 10, solved: 1, lastAt: null }]]));
+    getViewerClassic.mockResolvedValue({ solved: { "step-1": { points: 10, at: SOLVED_AT } }, attempts: {} });
+    // The fold carries both records, wherever they were made: step-1 (10)
+    // and grace's step-3 (90).
+    getTeamClassicTotalsBatch.mockResolvedValue([
+      {
+        points: 100,
+        solved: 2,
+        lastAt: null,
+        itemIds: ["step-1", "step-3"],
+        itemPoints: { "step-1": 10, "step-3": 90 },
+      },
+    ]);
+    // grace solved step-3 on her PREVIOUS team: her record on red predates
+    // her joinedAt, so under solve-time membership it unlocks nothing —
+    // with a post-join stamp it would put step-3 in the eligibility set and
+    // the step would render.
+    upstashPipeline.mockImplementation(
+      unlockPipeline({
+        ada: { solves: { "step-1": SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
+        grace: { solves: { "step-3": SOLVED_AT }, team: "red", joinedAt: "2026-08-03T00:00:00.000Z" },
+      }),
+    );
+
+    const html = renderToStaticMarkup(await ProfilePage());
+
+    // The locked step's title never reaches the page…
+    expect(html).not.toContain("Step Three");
+    // …while the steps red CAN reach still render, so the absence above is
+    // the lock, not an empty list.
+    expect(html).toContain("Step One");
+    expect(html).toContain("Step Two");
+    // The banked 90 pts stay in the total: 10 + 50 + 90 on offer, and the
+    // disclaimer names what the totals exclude — a counted record is not
+    // one of them.
+    expect(html).toContain("10 of 150 pts available");
+    expect(html).not.toContain(DISCLAIMER);
+  });
 });

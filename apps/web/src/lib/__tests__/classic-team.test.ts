@@ -14,7 +14,7 @@ vi.mock("@/lib/team-store", () => ({
   },
 }));
 
-import { getTeamClassicSolvedIds, teamLockKeys, unlockingSolvedIds } from "@/lib/classic-team";
+import { getTeamClassicSolvedIds, teamLockKeys, unlockingSolvedIds, unlockingSolvedIdsBatch } from "@/lib/classic-team";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -126,6 +126,41 @@ describe("unlockingSolvedIds", () => {
   it("THROWS on a read error — the caller fails closed, never 'nothing solved' silently", async () => {
     m.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }, { result: [null, null] }]);
     await expect(unlockingSolvedIds(["alice"], null)).rejects.toThrow();
+  });
+});
+
+describe("unlockingSolvedIdsBatch", () => {
+  // The board's form: one pipeline for every roster, one set out per roster.
+  it("answers many rosters from ONE pipeline, fetching a shared login once", async () => {
+    m.upstashPipeline.mockResolvedValue([
+      ...member({ recon: solve("2026-10-07T12:00:00.000Z") }, "t", "2026-10-07T11:00:00.000Z"),
+      ...member({ web: solve("2026-10-07T13:00:00.000Z") }, "t", "2026-10-07T11:00:00.000Z"),
+    ]);
+    const sets = await unlockingSolvedIdsBatch([
+      { logins: ["alice", "bob"], team: "t" },
+      { logins: ["bob"], team: "t" },
+    ]);
+    expect(sets).toEqual([new Set(["recon", "web"]), new Set(["web"])]);
+    expect(m.upstashPipeline).toHaveBeenCalledTimes(1);
+    expect(m.upstashPipeline.mock.calls[0][0]).toEqual([
+      ["HGETALL", "ctf:classic:solves:alice"],
+      ["HMGET", "ctf:user:alice", "team", "joinedAt"],
+      ["HGETALL", "ctf:classic:solves:bob"],
+      ["HMGET", "ctf:user:bob", "team", "joinedAt"],
+    ]);
+  });
+
+  // Each roster asks its own question of the SAME replies: the member is on
+  // team t, so t's roster counts their solve and a team-of-one roster does not.
+  it("applies each roster's scope to the shared replies", async () => {
+    m.upstashPipeline.mockResolvedValue([
+      ...member({ recon: solve("2026-10-07T12:00:00.000Z") }, "t", "2026-10-07T11:00:00.000Z"),
+    ]);
+    const sets = await unlockingSolvedIdsBatch([
+      { logins: ["alice"], team: "t" },
+      { logins: ["alice"], team: null },
+    ]);
+    expect(sets).toEqual([new Set(["recon"]), new Set()]);
   });
 });
 

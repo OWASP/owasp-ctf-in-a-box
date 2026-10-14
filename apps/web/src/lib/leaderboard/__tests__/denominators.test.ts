@@ -216,6 +216,18 @@ describe("classicReachableDenominator", () => {
     expect(result.max).toBe(375);
   });
 
+  it("a banked record the eligibility set does not open with still counts (pre-join solve)", () => {
+    // step-2 has a solve record (its points are folded and count) but its
+    // solver's `at` predates their `joinedAt`, so eligibility does not carry
+    // it: the step stays visible and valued, while step-3 stays locked.
+    const result = classicReachableDenominator(challenges, [story], new Set(), {
+      "step-2": { points: 100 },
+    });
+    expect(result.total).toBe(3); // step-1, step-2, standalone
+    expect(result.max).toBe(225); // 50 + 100 + 75
+    expect(result.locked).toBe(1); // step-3 — its prereq opened nothing
+  });
+
   it("challenges not in any story are always reachable", () => {
     const teamSolved = new Set<string>();
     const result = classicReachableDenominator(challenges, [story], teamSolved, {});

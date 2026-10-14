@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   getAiTotals: vi.fn(),
   getTeamAiTotalsBatch: vi.fn(),
   listAiChallenges: vi.fn(),
+  upstashPipeline: vi.fn(),
 }));
 
 vi.mock("@/lib/modules", () => ({
@@ -44,6 +45,9 @@ vi.mock("@/lib/classic-store", () => ({
 // Reachability reads rosters only when the source carries none of its own.
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
 
+// The solve-time eligibility read (ADR 60) answers from the real key builders.
+vi.mock("@/lib/upstash", () => ({ upstashPipeline: mocks.upstashPipeline }));
+
 vi.mock("@/lib/ai-store", () => ({
   getAiTotals: mocks.getAiTotals,
   getTeamAiTotalsBatch: mocks.getTeamAiTotalsBatch,
@@ -58,6 +62,7 @@ import {
 } from "../module-contributions";
 import { withTeamStandings } from "../team-standings";
 import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
+import { unlockPipeline } from "@/test/unlock-pipeline-mock";
 
 // Computed from the `apps` catalogue rather than hardcoded:
 // `withModuleContributions` reads the live target total through
@@ -82,6 +87,11 @@ const data = (entries: LeaderboardEntry[], teams: TeamStanding[] = []): Leaderbo
   capabilities: { apps: true, teams: teams.length > 0, challenges: false },
 });
 
+// ISO stamps the eligibility read compares as strings: a solve made at
+// SOLVED_AT by a member who joined at JOINED_AT counts, one before it does not.
+const JOINED_AT = "2026-08-01T00:00:00.000Z";
+const SOLVED_AT = "2026-08-02T00:00:00.000Z";
+
 /** Quiz and classic disabled by default (only secure-development enabled),
  *  matching what a box with a non-empty SCORE_IMAGE and no `/admin` changes
  *  enables — the default module set. Tests that need one of the app-side
@@ -101,6 +111,9 @@ beforeEach(() => {
   mocks.listChallenges.mockResolvedValue([]);
   mocks.listStories.mockResolvedValue([]);
   mocks.listTeams.mockResolvedValue([]);
+  // Nobody has solved anything the eligibility read can see; tests that pin
+  // story unlock install their own member records over this.
+  mocks.upstashPipeline.mockImplementation(unlockPipeline({}));
   mocks.getAiTotals.mockResolvedValue(new Map());
   mocks.getTeamAiTotalsBatch.mockImplementation((teams: readonly string[][]) =>
     Promise.resolve(teams.map(() => ({ points: 0, solved: 0, lastAt: null }))),
@@ -641,6 +654,11 @@ describe("withModuleContributions", () => {
       mocks.getTeamClassicTotalsBatch.mockResolvedValue([
         { points: 30, solved: 1, lastAt: null, itemIds: ["c3"], itemPoints: { c3: 30 } },
       ]);
+      // Ada's solve of the standalone c3 — she is on red since before it, so
+      // it counts for the roster; it opens nothing (c3 has no successor).
+      mocks.upstashPipeline.mockImplementation(
+        unlockPipeline({ ada: { solves: { c3: SOLVED_AT }, team: "red", joinedAt: JOINED_AT } }),
+      );
 
       const out = await withModuleContributions(data([entry("ada", 0, 0)]));
 
@@ -669,10 +687,17 @@ describe("withModuleContributions", () => {
       ]);
       mocks.listStories.mockResolvedValue([{ id: "s1", title: "Story", intro: "", steps: ["c1", "c2"] }]);
       mocks.getClassicTotals.mockResolvedValue(new Map([["ada", { points: 30, solved: 1, lastAt: null }]]));
-      // cyd holds the prerequisite; the fold hands the row both members' ids.
+      // cyd holds the prerequisite; the fold hands the row both members' ids,
+      // and cyd's solve hash is what the eligibility read releases c2 from.
       mocks.getTeamClassicTotalsBatch.mockResolvedValue([
         { points: 40, solved: 2, lastAt: null, itemIds: ["c1", "c3"], itemPoints: { c1: 10, c3: 30 } },
       ]);
+      mocks.upstashPipeline.mockImplementation(
+        unlockPipeline({
+          ada: { solves: { c3: SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
+          cyd: { solves: { c1: SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
+        }),
+      );
 
       const out = await withModuleContributions(data([entry("ada", 0, 0)]));
 
@@ -739,6 +764,12 @@ describe("withModuleContributions", () => {
               : { points: 30, solved: 1, lastAt: null, itemIds: ["c3"], itemPoints: { c3: 30 } },
           ),
         ),
+      );
+      mocks.upstashPipeline.mockImplementation(
+        unlockPipeline({
+          ada: { solves: { c3: SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
+          cyd: { solves: { c1: SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
+        }),
       );
 
       const sourceTeams: TeamStanding[] = [
@@ -809,32 +840,22 @@ describe("withModuleContributions", () => {
       expect(out.find((t) => t.slug === "grey")!.modules?.["classic"]).toBeUndefined();
     });
 
-    // A stories blip fails OPEN: with no story list every live step counts as
-    // reachable, so the denominator stays the union of the catalogue and the
-    // solve records (3 live + the deleted "gone" = 4) with nothing locked —
-    // never a catalogue-only or clamped figure, and never a locked step.
-    it("falls back to the union when the stories read fails", async () => {
+    // A stories blip FAILS the request, on both paths. Degrading it to `[]`
+    // would count every live step as reachable — the union of the catalogue
+    // and the solve records with nothing locked — and put locked steps'
+    // titles and points on the board. The catalogue and totals reads keep
+    // their own degradations; the read guarding that boundary does not.
+    it("fails the request when the stories read fails", async () => {
       mocks.listStories.mockRejectedValue(new Error("upstash blip"));
       mocks.getTeamClassicTotalsBatch.mockResolvedValue([
         { points: 60, solved: 2, lastAt: null, itemIds: ["c1", "gone"], itemPoints: { c1: 10, gone: 50 } },
       ]);
-      const err = vi.spyOn(console, "error").mockImplementation(() => {});
-      try {
-        const teams: TeamStanding[] = [
-          { rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada"] },
-        ];
-        const out = await withTeamClassicPoints(teams);
 
-        expect(out[0].modules!["classic"]!.detail).toEqual({
-          kind: "classic",
-          solved: 2,
-          total: 4,
-          points: 60,
-          locked: 0,
-        });
-      } finally {
-        err.mockRestore();
-      }
+      const teams: TeamStanding[] = [
+        { rank: 1, slug: "red", name: "Red", captain: "ada", points: 30, members: ["ada"] },
+      ];
+      await expect(withTeamClassicPoints(teams)).rejects.toThrow("upstash blip");
+      await expect(withModuleContributions(data([entry("ada", 0, 0)]))).rejects.toThrow("upstash blip");
     });
   });
 

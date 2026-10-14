@@ -1059,11 +1059,10 @@ export async function getTeamClassicTotalsBatch(
   if (logins.length === 0) return teams.map(() => ({ points: 0, solved: 0, lastAt: null, itemIds: [] }));
 
   const results = await upstashPipeline(logins.map((login) => ["HGETALL", solvesKey(login)]));
-  // A per-command failure arrives as a VALUE, not a throw (AGENTS.md:
-  // `upstashPipeline` never throws per-command). Folding it as empty data
-  // scores the member as having solved nothing — understating the team's
-  // union and silently re-locking story steps their solves opened. Fail
-  // closed, like `getClassicTotals` does for the aggregate hashes.
+  // A per-command failure arrives as a VALUE, not a throw (AGENTS.md), so an
+  // unchecked `.result` would fold the failed member as having solved
+  // nothing: partial solve data is a misleading total, never a smaller true
+  // one. Fail closed, like `getClassicTotals` for the aggregate hashes.
   const failed = results.find((r) => r?.error);
   if (failed) throw new Error(`classic team solves read failed: ${failed.error}`);
   return teams.map((members) => foldTeamSolves(members.map((login) => results[indexByLogin.get(login) ?? -1])));

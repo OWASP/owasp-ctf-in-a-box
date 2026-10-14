@@ -1849,20 +1849,23 @@ Jeopardy tab:
   the refusal is shown in the block.
 
 Reordering during a live event is safe, because the unlock is recomputed
-from each team's current solves. A step that a team could see before the
-reorder can lock again if its new predecessor is unsolved. Deleting a
-challenge also removes it from its story, and the chain closes up around
-the gap.
+from each team's solves. A step that a team could see before the reorder
+can lock again if its new predecessor is unsolved. A solve only counts for
+a team's unlock if its solver was on that team when they solved it — the
+`joinedAt` rule: a solve carried into a team from an earlier one keeps its
+points for the team but opens nothing after it. Deleting a challenge also
+removes it from its story, and the chain closes up around the gap.
 
 **Denominator counts only reachable challenges**. Both the profile
 page and the leaderboard show per-team reachable totals for classic
 challenges. The denominator grows as your team unlocks story steps:
 - Step 1 of every story is always counted.
 - Each later step is added to the denominator only when its prerequisite
-  is solved by your team.
+  was solved for your team — by a member who was on the team at the time.
 - Locked steps are excluded from both the challenge count and the points
   ceiling — their titles and points are never exposed.
-- A solo contestant (no team) sees only step 1 of each story.
+- A solo contestant is a team of one: their own solves unlock the next
+  steps just like a team's do.
 - Challenges already solved by the team but since deleted from the
   catalogue are still counted (union with solve records), preserving
   banked points.

@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   getTeamClassicTotalsBatch: vi.fn(),
   listChallenges: vi.fn(),
   listStories: vi.fn(),
+  upstashPipeline: vi.fn(),
 }));
 
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
@@ -33,6 +34,7 @@ vi.mock("@/lib/classic-store", () => ({
   listChallenges: mocks.listChallenges,
   listStories: mocks.listStories,
 }));
+vi.mock("@/lib/upstash", () => ({ upstashPipeline: mocks.upstashPipeline }));
 
 import { withModuleContributions } from "../module-contributions";
 import { withTeamStandings } from "../team-standings";
@@ -42,6 +44,7 @@ import {
   moduleRow,
   type ProfileModuleInput,
 } from "@/app/(site)/profile/module-blocks";
+import { unlockPipeline } from "@/test/unlock-pipeline-mock";
 
 // One three-step story: step one is always reachable, step two unlocks after
 // it, step three after step two. The team has solved only step one.
@@ -51,6 +54,8 @@ const CHALLENGES = [
   { id: "step-3", title: "Step Three", category: "Web", description: "", points: 90, order: 2 },
 ];
 const STORY: Story = { id: "s1", title: "Operation", intro: "", steps: ["step-1", "step-2", "step-3"] };
+const JOINED_AT = "2026-08-01T00:00:00.000Z";
+const SOLVED_AT = "2026-08-02T00:00:00.000Z";
 
 const empty = (): LeaderboardData => ({
   entries: [],
@@ -75,6 +80,11 @@ beforeEach(() => {
   mocks.listStories.mockResolvedValue([STORY]);
   mocks.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["ada"] }]);
   mocks.getTeamClassicTotalsBatch.mockResolvedValue([teamTotal]);
+  // ada's step-1 solve is what makes step-2 reachable for both the team row
+  // and her contestant row (roster mode: each member's current team).
+  mocks.upstashPipeline.mockImplementation(
+    unlockPipeline({ ada: { solves: { "step-1": SOLVED_AT }, team: "red", joinedAt: JOINED_AT } }),
+  );
 });
 
 describe("the locked count reaches the profile and the leaderboard (#570)", () => {

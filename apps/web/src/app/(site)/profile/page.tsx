@@ -4,6 +4,7 @@
 // dossier: identity, overall progress, per-app breakdown, and team control.
 
 import { isLocked, storyPositions } from "@/lib/story-lock";
+import { unlockingSolvedIds } from "@/lib/classic-team";
 import { classicReachableDenominator } from "@/lib/leaderboard/denominators";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
@@ -250,33 +251,40 @@ export default async function ProfilePage() {
   if (classicEnabled) {
     const stories = await listStories();
     const viewerSolved = viewerClassic.solved;
-    // Both halves of the denominator — the solved-id set that unlocks steps
-    // and the per-item points the ceiling counts — come from ONE read per
-    // membership state, or they drift apart: pairing a team-wide id set with
-    // only the viewer's own records puts a teammate's solve of a
-    // since-deleted challenge in the count with no points behind it
-    // (issue #570).
-    const teamSolved = new Set<string>();
+    // Two sets, two jobs (ADR 60). What OPENS a step is solve-time
+    // membership: `unlockingSolvedIds` over the roster this page already
+    // resolved counts a member's solve only if their user record still names
+    // the team asked about and the solve is no older than their `joinedAt`
+    // (the rule `getTeamClassicSolvedIds` applies; with team writes off the
+    // cookie team names no record, so it is asked as a team of one). What
+    // the CEILING counts is the historical fold: solve records — a teammate's
+    // banked solve, including one carried in from another team — keep its
+    // points in the total even where it opens nothing. Both halves come from
+    // the SAME team read (the roster and the fold below), or they drift apart:
+    // pairing a team-wide id set with only the viewer's own records puts a
+    // teammate's solve of a since-deleted challenge in the count with no
+    // points behind it (issue #570). A solo contestant (no team) is a team of
+    // one: their own solves unlock the next step the same way a team's do.
+    const roster = [...new Set([login, ...(storeTeam?.members ?? [])])];
+    const scope = TEAM_WRITES_ENABLED && storeTeam?.slug ? storeTeam.slug : null;
     const solvedRecords: Record<string, { points?: number }> = {};
+    const [teamClassic, teamSolved] = await Promise.all([
+      storeTeam ? getTeamClassicTotalsBatch([roster]) : Promise.resolve(undefined),
+      // No story means nothing to lock: skip the eligibility read entirely.
+      stories.length > 0 ? unlockingSolvedIds(roster, scope) : Promise.resolve(new Set<string>()),
+    ]);
     if (storeTeam) {
-      // The store team this page already read, the viewer leading it — folded
-      // through the same `getTeamClassicTotalsBatch` the leaderboard rows use,
-      // so the profile and the board can't disagree about what the team
-      // solved.
-      const roster = [...new Set([login, ...storeTeam.members])];
-      const [teamClassic] = await getTeamClassicTotalsBatch([roster]);
-      for (const id of teamClassic?.itemIds ?? []) teamSolved.add(id);
-      for (const [id, points] of Object.entries(teamClassic?.itemPoints ?? {})) {
+      // Folded through the same `getTeamClassicTotalsBatch` the leaderboard
+      // rows use, so the profile and the board can't disagree about what the
+      // team solved or what its solves are worth.
+      for (const [id, points] of Object.entries(teamClassic?.[0]?.itemPoints ?? {})) {
         solvedRecords[id] = { points };
       }
     } else {
-      // No team: story unlock is a TEAM property, so with no roster nothing
-      // unlocks past step 1 — a solve banked before leaving a team must not
-      // open the next step for a lone contestant. The viewer's OWN records
-      // still feed the union below, so a challenge they solved and an
-      // organizer has since deleted keeps its banked points in the ceiling.
-      // No fold read is needed for that half: those records are the same
-      // per-login hash this page already read for the Show-N lists.
+      // No team: no fold read is needed for the records half — they are the
+      // same per-login hash this page already read for the Show-N lists, so a
+      // challenge they solved and an organizer has since deleted keeps its
+      // banked points in the ceiling.
       for (const [id, solve] of Object.entries(viewerSolved)) {
         solvedRecords[id] = { points: solve.points };
       }
@@ -285,11 +293,13 @@ export default async function ProfilePage() {
     classicReachableTotal = reachable.total;
     classicReachableMaxPoints = reachable.max;
     classicLockedCount = reachable.locked;
-    // Build the locked set for moduleItemsFor filtering (locked live steps only).
+    // Build the locked set for moduleItemsFor filtering (locked live steps
+    // only) — the SAME decision `classicReachableDenominator` made above, so
+    // the list can never hide a step the counts and ceiling include.
     if (stories.length > 0) {
       const positions = storyPositions(stories, new Set(classicChallenges.map((c) => c.id)));
       for (const pos of positions.values()) {
-        if (isLocked(pos, teamSolved) && !viewerSolved[pos.id]) {
+        if (!Object.hasOwn(solvedRecords, pos.id) && isLocked(pos, teamSolved)) {
           classicLocked.add(pos.id);
         }
       }

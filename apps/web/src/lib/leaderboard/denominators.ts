@@ -6,11 +6,15 @@
 //
 // Story-lock reachability: classic stories are ordered chains where step
 // 1 is always reachable and each later step unlocks only when the previous
-// step is solved by the team. Locked steps' titles and points must never be
-// exposed. The reachable denominator is computed from the team's solved IDs
-// through `lib/story-lock.ts`'s own `storyPositions`/`isLocked`, so the
-// profile, the leaderboard's player and team rows, and the graders all agree
-// on what is reachable. A teamless contestant sees only step 1 of each story.
+// step is solved by the team — a solve counts toward that unlock only if its
+// solver was on the team at the time (their `joinedAt`, ADR 60), the rule
+// `lib/classic-team.ts` applies for every surface. Locked steps' titles and
+// points must never be exposed. The reachable denominator is computed from
+// that eligibility set through `lib/story-lock.ts`'s own
+// `storyPositions`/`isLocked`, so the profile, the leaderboard's player and
+// team rows, and the graders all agree on what is reachable. A solo
+// contestant is a team of one: their own solves unlock the next step the
+// same way a team's do.
 //
 // The rule: a module's numerator counts SOLVE RECORDS, which survive deletion
 // on purpose — the admin delete dialog promises it ("Points already banked for
@@ -93,17 +97,21 @@ export function unionDenominators(
  *
  *  A story step is REACHABLE when:
  *    - it is step 1 of its story, OR
- *    - its prerequisite step is in `teamSolved`.
+ *    - its prerequisite step is in `teamSolved`, OR
+ *    - it is in `solved` — a banked solve is never hidden.
  *
- *  Locked steps are excluded from both the count and the points ceiling —
- *  their titles and points must never leak. A teamless contestant (empty
- *  `teamSolved`) sees only step 1 of each story.
+ *  `teamSolved` is the ELIGIBILITY set from `classic-team.ts` (solve-time
+ *  membership since `joinedAt`, ADR 60), while `solved` keeps every record
+ *  the team's points are folded from — the two differ exactly for a solve
+ *  carried in from another team: it scores, and the step it landed on stays
+ *  visible, but it opens nothing after it. Locked steps are excluded from
+ *  both the count and the points ceiling — their titles and points must
+ *  never leak. An empty `teamSolved` and empty `solved` (a contestant who
+ *  has solved nothing) sees only step 1 of each story.
  *
  *  The union with `solved` is still applied: a step solved by the team but
  *  since deleted from the catalogue is counted in `total` and its points from
- *  the solve record are added to `max`. A step that is locked for the team
- *  but appears in `solved` (a teammate left, or a reorder) is treated as
- *  reachable — banked points are never hidden.
+ *  the solve record are added to `max`.
  *
  *  Returns { total, max, locked } where:
  *    - total: reachable live steps + solved-but-deleted steps
@@ -134,11 +142,11 @@ export function classicReachableDenominator(
       max += Number(challenge.points) || 0;
       continue;
     }
-    if (isLocked(pos, teamSolved)) {
+    if (!Object.hasOwn(solved, challenge.id) && isLocked(pos, teamSolved)) {
       locked += 1;
       continue;
     }
-    // Reachable (step 1, or prereq solved, or already solved by team).
+    // Reachable (step 1, prereq solved, or a banked solve of its own).
     total += 1;
     max += Number(challenge.points) || 0;
   }

@@ -12,6 +12,7 @@ import {
 } from "@/lib/classic-store";
 import { getEnabledModuleIds, isModuleLive } from "@/lib/enabled-modules";
 import { visibleNow } from "@/lib/classic-release";
+import { unlockingSolvedIdsBatch } from "@/lib/classic-team";
 import { getEnabledTotals } from "@/lib/enabled-apps";
 import { listTeams } from "@/lib/team-store";
 import { getQuizTotals, getTeamQuizTotalsBatch, listQuestions, type QuizTotal } from "@/lib/quiz-store";
@@ -157,15 +158,13 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
     } else {
       console.error("classic challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
     }
-    // Fail OPEN, the same direction `withTeamClassicPoints` takes: an unread
-    // story list degrades to `[]`, which counts every live step as reachable
-    // (nothing locked) — a blip must never lock a challenge behind a story
-    // nobody could read.
-    if (storiesResult.status === "fulfilled") {
-      classicStories = storiesResult.value;
-    } else {
-      console.error("classic stories unavailable for leaderboard denominator:", errorLabel(storiesResult.reason));
-    }
+    // An unreadable story list FAILS the request — degrading it to `[]`
+    // counts every live step as reachable, putting locked steps' titles and
+    // points on the board (#463, review C1). The catalogue and totals reads
+    // above keep their own degradations: neither of them guards that
+    // boundary, this one does.
+    if (storiesResult.status !== "fulfilled") throw storiesResult.reason;
+    classicStories = storiesResult.value;
   }
 
   // Story-lock reachability for the CONTESTANT rows, keyed on the same
@@ -377,7 +376,12 @@ export function mergeTeamRosters(
 }
 
 /** Story-lock reachability for every contestant row that will carry a classic
- *  block, in ONE solves read for the whole board.
+ *  block, in two reads batched over the whole board: the team fold, whose
+ *  solve records are what the CEILING counts, and `unlockingSolvedIdsBatch`,
+ *  whose solve-time membership set (ADR 60) is what OPENS a step — a solve
+ *  carried in from another team still scores for the roster but unlocks
+ *  nothing there. No team is named to that second read: a board roster means
+ *  each member's solves count for the team they are on now.
  *
  *  A row's team is looked up by LOGIN through `mergeTeamRosters`, so it sees
  *  the same complete membership `withTeamStandings` ranks a stage later and a
@@ -389,8 +393,8 @@ export function mergeTeamRosters(
  *  team of one and uses its own solves, which is the same rule `/profile`
  *  applies to a viewer with no team.
  *
- *  Returns `undefined` rather than a partial answer: a failed roster or
- *  solves read leaves every row on the clamp it used before, which can
+ *  Returns `undefined` rather than a partial answer: a failed roster, fold or
+ *  eligibility read leaves every row on the clamp it used before, which can
  *  overstate a denominator but never locks a step or exposes its title. */
 async function reachableByLogin(
   data: LeaderboardData,
@@ -412,14 +416,16 @@ async function reachableByLogin(
     }
     if (rows.length === 0) return undefined;
 
-    const folded = await getTeamClassicTotalsBatch(rows.map((row) => row.roster));
+    const [folded, unlocked] = await Promise.all([
+      getTeamClassicTotalsBatch(rows.map((row) => row.roster)),
+      unlockingSolvedIdsBatch(rows.map((row) => ({ logins: row.roster }))),
+    ]);
     const reachable = new Map<string, Reachable>();
     rows.forEach((row, i) => {
       const total: ClassicTotal | undefined = folded[i];
-      const solved = new Set(total?.itemIds ?? []);
       const records: Record<string, { points?: number }> = {};
       for (const [id, points] of Object.entries(total?.itemPoints ?? {})) records[id] = { points };
-      reachable.set(row.login.toLowerCase(), classicReachableDenominator(challenges, stories, solved, records));
+      reachable.set(row.login.toLowerCase(), classicReachableDenominator(challenges, stories, unlocked[i], records));
     });
     return reachable;
   } catch (err) {
@@ -506,6 +512,14 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
     listStories(),
   ]);
 
+  // An unreadable story list FAILS the request — the same rule
+  // `withModuleContributions` applies: degrading it to `[]` counts every live
+  // step as reachable and leaks locked titles and points through this row's
+  // denominator. Checked FIRST so a combined failure can never hide it behind
+  // one of the degradable reads below.
+  if (storiesResult.status !== "fulfilled") throw storiesResult.reason;
+  const stories = storiesResult.value;
+
   if (totalsResult.status !== "fulfilled") {
     console.error("classic team totals unavailable for leaderboard:", errorLabel(totalsResult.reason));
     return teams;
@@ -513,23 +527,31 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
   if (challengesResult.status !== "fulfilled") {
     console.error("classic challenge list unavailable for leaderboard denominator:", errorLabel(challengesResult.reason));
   }
-  if (storiesResult.status !== "fulfilled") {
-    console.error("classic stories unavailable for leaderboard denominator:", errorLabel(storiesResult.reason));
-  }
 
   const challenges = challengesResult.status === "fulfilled" ? challengesResult.value : [];
-  // Fail OPEN: an unread story list degrades to `[]`, which counts every live
-  // step as reachable (union, locked 0) — a blip must never lock a challenge
-  // behind a story nobody could read.
-  const stories = storiesResult.status === "fulfilled" ? storiesResult.value : [];
   const liveIds = challengesResult.status === "fulfilled" ? new Set(challenges.map((c) => c.id)) : undefined;
-
-  // If the challenge list read failed, fall back to the old union/clamp logic
-  // because we can't compute story-lock reachability without the catalogue.
+  // Reachability needs the catalogue: without it there is no lock structure
+  // to apply, so the union/clamp fallback below stands in.
   const challengesReadFailed = challengesResult.status !== "fulfilled";
 
-  // Compute reachable denominator for each team.
-  const reachableDenominators = totalsResult.value.map((total) => {
+  // What OPENS a step for each team (ADR 60): solve-time membership over the
+  // same rosters the fold below unions, in ONE batched read, and only when a
+  // story exists to lock anything behind. A failure degrades to the same
+  // clamp a contestant row takes (see `reachableByLogin`) — an overstated
+  // count costs precision, while an invented lock would hide earned steps.
+  let unlocked: Set<string>[] | undefined;
+  if (stories.length > 0) {
+    try {
+      unlocked = await unlockingSolvedIdsBatch(teams.map((team) => ({ logins: team.members })));
+    } catch (err) {
+      console.error("classic story-lock eligibility unavailable for leaderboard team rows:", errorLabel(err));
+    }
+  }
+
+  // Compute reachable denominator for each team: the fold's records are what
+  // the CEILING counts (a carried-in solve keeps its points); the
+  // eligibility set is what unlocks the step after it.
+  const reachableDenominators = totalsResult.value.map((total, i) => {
     const teamSolved = new Set(total.itemIds ?? []);
     const solvedRecords: Record<string, { points?: number }> = {};
     if (total.itemPoints) {
@@ -537,12 +559,14 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
         solvedRecords[id] = { points };
       }
     }
-    if (challengesReadFailed) {
-      // Fallback: union of live catalogue (unknown, so 0) with solved items = solved count,
-      // then clamp to at least solved. This matches the old `denominator` behavior.
+    const eligibility = stories.length === 0 ? teamSolved : unlocked?.[i];
+    if (challengesReadFailed || !eligibility) {
+      // Union of the (here: unknown) catalogue with the solved items, clamped
+      // to at least the solved count — never below its own numerator, and
+      // locked 0 so a failed read cannot invent a lock.
       return { total: Math.max(teamSolved.size, total.solved), max: total.points, locked: 0 };
     }
-    return classicReachableDenominator(challenges, stories, teamSolved, solvedRecords);
+    return classicReachableDenominator(challenges, stories, eligibility, solvedRecords);
   });
 
   return attributeTeams(

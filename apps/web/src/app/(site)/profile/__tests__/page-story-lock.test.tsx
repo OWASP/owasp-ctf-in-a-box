@@ -3,15 +3,16 @@
 // locked. The disclaimer is gated on `locked > 0`: an unlocked event (or one
 // with no stories at all) must not carry a note about steps it has no locked
 // steps of, and the solved/total pair beside it must stay exactly what it was.
-// One test also pins the parity rule behind that denominator: the
-// solved-id set and the point records come from ONE roster fold, so a
-// teammate's deleted solve counts in the ceiling exactly as the viewer's own.
+// Reachability follows solve-time membership (ADR 60): a member's solve opens
+// the next step only if their user record names the asked-about team and the
+// solve is no older than their `joinedAt`, while the CEILING still counts the
+// fold's records — a teammate's deleted solve keeps its points either way.
 //
 // Same harness shape as `page.test.tsx` — renderToStaticMarkup of the real
-// Server Component, with the stores it reads stubbed. A teamed fixture
-// carries a store roster (the fold reads one); the teamless fixture pins
-// that no roster means no unlock past step 1, while the viewer's own banked
-// records still feed the denominator's union.
+// Server Component, with the stores it reads stubbed. The real
+// `unlockingSolvedIds` runs against a keyed `upstashPipeline` stand-in
+// (`@/test/unlock-pipeline-mock`): a fixture whose member records disagree
+// with the expected unlocks is the whole point of these tests.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -27,6 +28,8 @@ const {
   getViewerClassic,
   getTeamClassicTotalsBatch,
   getViewerTeam,
+  upstashPipeline,
+  teamWrites,
 } = vi.hoisted(() => ({
   getSession: vi.fn(),
   getUser: vi.fn(),
@@ -39,6 +42,8 @@ const {
   getViewerClassic: vi.fn(),
   getTeamClassicTotalsBatch: vi.fn(),
   getViewerTeam: vi.fn(),
+  upstashPipeline: vi.fn(),
+  teamWrites: { on: true },
 }));
 
 vi.mock("server-only", () => ({}));
@@ -59,7 +64,9 @@ vi.mock("@/lib/team-store", () => ({
   listTeams: async () => [],
   resolveTeamMaxMembers: async () => 4,
   TEAM_MAX_MEMBERS: 4,
-  TEAM_WRITES_ENABLED: false,
+  get TEAM_WRITES_ENABLED() {
+    return teamWrites.on;
+  },
 }));
 vi.mock("@/lib/hint-store", () => ({ getViewerHints, HINTS_AVAILABLE: true }));
 vi.mock("@/lib/hint-config", () => ({ getHintPenalties: vi.fn(), HINTS_AVAILABLE: true }));
@@ -74,7 +81,7 @@ vi.mock("@/lib/ai-store", () => ({
   listAiChallenges: async () => [],
   getViewerAi: async () => ({ solved: {}, attempts: {} }),
 }));
-vi.mock("@/lib/upstash", () => ({ upstashPipeline: vi.fn() }));
+vi.mock("@/lib/upstash", () => ({ upstashPipeline }));
 // Only the classic slice matters here; every other module is switched off
 // through `moduleLive` above and its reads are never reached.
 vi.mock("@/lib/classic-store", () => ({
@@ -86,8 +93,14 @@ vi.mock("@/lib/classic-store", () => ({
 }));
 
 import ProfilePage from "@/app/(site)/profile/page";
+import { unlockPipeline } from "@/test/unlock-pipeline-mock";
 
 const DISCLAIMER = "Totals count unlocked challenges only";
+
+// ISO stamps both records are written as: a solve stamped SOLVED_AT counts
+// for a member who joined at JOINED_AT, and one stamped before it does not.
+const JOINED_AT = "2026-08-01T00:00:00.000Z";
+const SOLVED_AT = "2026-08-02T00:00:00.000Z";
 
 const CHALLENGES = [
   { id: "step-1", title: "Step One", category: "Web", description: "", points: 10, order: 0 },
@@ -121,7 +134,7 @@ function givenTeam(solvedIds: readonly string[], classicPoints: number, classicS
   listStories.mockResolvedValue([STORY]);
   getClassicTotals.mockResolvedValue(new Map([["ada", { points: classicPoints, solved: classicSolved, lastAt: null }]]));
   getViewerClassic.mockResolvedValue({
-    solved: Object.fromEntries(solvedIds.map((id) => [id, { points: 10, at: "t" }])),
+    solved: Object.fromEntries(solvedIds.map((id) => [id, { points: 10, at: SOLVED_AT }])),
     attempts: {},
   });
   getTeamClassicTotalsBatch.mockResolvedValue([
@@ -133,13 +146,24 @@ function givenTeam(solvedIds: readonly string[], classicPoints: number, classicS
       itemPoints: Object.fromEntries(solvedIds.map((id) => [id, 10])),
     },
   ]);
+  // The eligibility read runs for real against the member's record: on red,
+  // joined before these solves, so they open the next step for the team.
+  upstashPipeline.mockImplementation(
+    unlockPipeline({
+      ada: { solves: Object.fromEntries(solvedIds.map((id) => [id, SOLVED_AT])), team: "red", joinedAt: JOINED_AT },
+    }),
+  );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   // clearAllMocks keeps implementations: the team must default back to
-  // teamless so a test that gives the viewer a team can't leak into the next.
+  // teamless so a test that gives the viewer a team can't leak into the next,
+  // and the pipeline must default to no member records (nobody solves
+  // anything) for the same reason.
   getViewerTeam.mockResolvedValue(null);
+  teamWrites.on = true;
+  upstashPipeline.mockImplementation(unlockPipeline({}));
 });
 
 /** The same viewer, on an event with two independent stories. */
@@ -202,12 +226,14 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     expect(html).toContain("150 of 150 pts available");
   });
 
-  // The denominator's two inputs must leave ONE roster fold: the solved-id set
-  // that unlocks steps and the per-item points the ceiling counts. Pairing a
-  // team-wide id set with only the viewer's own records leaves a teammate's
-  // solve of a since-deleted challenge in the count with no points behind it —
-  // the profile then advertises a ceiling missing banked team points. Locked
-  // titles and points stay off the page either way (#463).
+  // The denominator's two inputs come from ONE roster: the eligibility set
+  // the unlock reads (`unlockingSolvedIds` over the same members) and the
+  // per-item point records the CEILING counts, folded from the same roster by
+  // `getTeamClassicTotalsBatch`. Pairing a team-wide id set with only the
+  // viewer's own records leaves a teammate's solve of a since-deleted
+  // challenge in the count with no points behind it — the profile then
+  // advertises a ceiling missing banked team points. Locked titles and points
+  // stay off the page either way (#463).
   it("folds a teammate's deleted solve into the ceiling at its solve-time points", async () => {
     moduleLive.mockImplementation((id: string) => id === "classic");
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
@@ -221,7 +247,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     listChallenges.mockResolvedValue(CHALLENGES);
     listStories.mockResolvedValue([STORY]);
     getClassicTotals.mockResolvedValue(new Map([["ada", { points: 10, solved: 1, lastAt: null }]]));
-    getViewerClassic.mockResolvedValue({ solved: { "step-1": { points: 10, at: "t" } }, attempts: {} });
+    getViewerClassic.mockResolvedValue({ solved: { "step-1": { points: 10, at: SOLVED_AT } }, attempts: {} });
     // grace solved step-1 (unlocking step-2 for the team) and gone-1 — a
     // challenge since deleted from the catalogue, banked at 70 pts.
     getTeamClassicTotalsBatch.mockResolvedValue([
@@ -233,6 +259,12 @@ describe("the profile's story-lock disclaimer (#570)", () => {
         itemPoints: { "step-1": 10, "gone-1": 70 },
       },
     ]);
+    upstashPipeline.mockImplementation(
+      unlockPipeline({
+        ada: { solves: { "step-1": SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
+        grace: { solves: { "step-1": SOLVED_AT, "gone-1": SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
+      }),
+    );
 
     const html = renderToStaticMarkup(await ProfilePage());
 
@@ -255,12 +287,13 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     expect(html).not.toContain("90 pts");
   });
 
-  // Story unlock is a TEAM property. A viewer with no store team must not
-  // fold as a "team of one" — that let a solve banked before leaving a team
-  // unlock the next step for the lone contestant alone. Their OWN banked
-  // records still feed the union (a since-deleted challenge keeps its points
-  // in the ceiling), and no team fold read is issued at all.
-  it("keeps later steps locked for a teamless viewer, preserving their banked points", async () => {
+  // A solo contestant is a team of one (ADR 60): with no team their own
+  // solves open the next step exactly like a team's do — the old rule that a
+  // teamless viewer saw only step 1 treated a lone player as the one player
+  // story unlock can never serve. Their OWN banked records feed the ceiling,
+  // so a since-deleted challenge keeps its points, and no team fold read is
+  // issued at all.
+  it("advances a solo contestant's own story, preserving their banked points", async () => {
     moduleLive.mockImplementation((id: string) => id === "classic");
     getSession.mockResolvedValue({ user: { login: "ada", image: null } });
     getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
@@ -274,29 +307,52 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     listStories.mockResolvedValue([STORY]);
     getClassicTotals.mockResolvedValue(new Map([["ada", { points: 80, solved: 2, lastAt: null }]]));
     getViewerClassic.mockResolvedValue({
-      solved: { "step-1": { points: 10, at: "t" }, "gone-1": { points: 70, at: "t" } },
+      solved: { "step-1": { points: 10, at: SOLVED_AT }, "gone-1": { points: 70, at: SOLVED_AT } },
       attempts: {},
     });
+    // The member record names no team, so under the team-of-one scope their
+    // own solves count.
+    upstashPipeline.mockImplementation(
+      unlockPipeline({ ada: { solves: { "step-1": SOLVED_AT, "gone-1": SOLVED_AT }, team: "", joinedAt: "" } }),
+    );
 
     const html = renderToStaticMarkup(await ProfilePage());
 
     // Nothing to fold: the team batch read is skipped entirely.
     expect(getViewerTeam).toHaveBeenCalledTimes(1);
     expect(getTeamClassicTotalsBatch).not.toHaveBeenCalled();
-    // Reachability is empty, so step-2 (behind step-1's solo solve) and
-    // step-3 (behind step-2) both stay locked — a team-of-one fold would
-    // have opened step-2 and reported one locked step.
+    // step-1's own solve opens step-2; only step-3 stays behind it.
+    expect(html).toContain(DISCLAIMER);
+    expect(html).toContain("· 1 step locked");
+    // The reachable count is step-1, step-2, and gone-1's identity — step-3
+    // alone is out of it. Named on the block itself: a category's own
+    // subtotal also renders "N / M solved" and would mask a bare substring.
+    expect(html).toContain('aria-label="Classic: 2 of 3 solved"');
+    // Historical points preserved: step-1's 10 and gone-1's solve-time 70
+    // stay in the ceiling, joined by the now-reachable step-2's 50.
+    expect(html).toContain("80 of 130 pts available");
+    // The unlocked step's title renders; the still-locked one never does.
+    expect(html).toContain("Step Two");
+    expect(html).not.toContain("Step Three");
+  });
+
+  // The ADR 60 rule on the profile: a solve made BEFORE the solver joined
+  // this team keeps its points for the team but opens nothing after it, so
+  // step 2 stays locked behind a step 1 the team already holds the record for.
+  it("does not let a pre-join solve open the next step for the team", async () => {
+    givenTeam(["step-1"], 10, 1);
+    upstashPipeline.mockImplementation(
+      unlockPipeline({ ada: { solves: { "step-1": SOLVED_AT }, team: "red", joinedAt: "2026-08-03T00:00:00.000Z" } }),
+    );
+
+    const html = renderToStaticMarkup(await ProfilePage());
+
     expect(html).toContain(DISCLAIMER);
     expect(html).toContain("· 2 steps locked");
-    // The reachable count is step 1 plus gone-1's identity, never step 2.
-    expect(html).toContain("/ 2 solved");
-    expect(html).not.toContain("/ 3 solved");
-    // Historical points preserved: step-1's 10 and gone-1's solve-time 70
-    // stay in the ceiling; the 130 a team-of-one fold would have advertised
-    // (adding step-2's 50) never appears.
-    expect(html).toContain("80 of 80 pts available");
-    expect(html).not.toContain("of 130 pts");
-    // Locked-step secrecy: neither locked title reaches the page.
+    expect(html).toContain("/ 1 solved");
+    // The banked solve still counts: its 10 pts remain on offer, and the two
+    // steps behind it contribute neither slots nor points.
+    expect(html).toContain("10 of 10 pts available");
     expect(html).not.toContain("Step Two");
     expect(html).not.toContain("Step Three");
   });

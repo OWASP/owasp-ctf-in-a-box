@@ -260,13 +260,18 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 - **Changed: classic story-lock reachable totals in profile and leaderboard
   (#570).** The classic module's denominator now counts only challenges
   reachable under the story-lock rules: step 1 of every story is always
-  reachable; each later step unlocks only when the team solves its
-  prerequisite. Locked steps are excluded from both the challenge count and
-  the points ceiling — their titles and points are never exposed. A solo
-  contestant (no team) sees only step 1 of each story. The union with
-  solve records is preserved, so challenges solved before deletion still
-  count — and the profile takes its solved ids and those solve-time point
-  records from ONE fold of the roster it already resolved (the same
+  reachable; each later step unlocks only when its prerequisite was solved
+  for that team — by a member who was on the team at the time (the
+  `joinedAt` rule, ADR 60), so a solve carried in from another team keeps
+  its points for the team but opens nothing after it. Locked steps are
+  excluded from both the challenge count and the points ceiling — their
+  titles and points are never exposed. A solo contestant is a team of one:
+  their own solves unlock the next steps just like a team's. An unreadable
+  story list now fails the request rather than degrading to "nothing is
+  locked", which would put locked steps' titles and points on the board.
+  The union with solve records is preserved, so challenges solved before
+  deletion still count — and the profile takes its solve records and its
+  solve-time eligibility set from ONE roster it already resolved (the same
   team-totals helper the leaderboard rows use), so a teammate's deleted
   solve counts in the ceiling exactly as the viewer's own. The profile
   shows "X of Y pts available" and a locked-step marker

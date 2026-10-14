@@ -125,6 +125,7 @@ CATALOGUE="scorer/rubric.owasp/$TARGET/tests/challenges/catalogue.$TARGET.json"
 CAT_N="$(grep -c '"key":' "$CATALOGUE" || true)"
 [ "${CAT_N:-0}" -gt 0 ] || { echo "FAIL: no challenges found in $CATALOGUE"; exit 1; }
 
+# pins: the scorer image acc_build_scorer builds from this checkout
 IMG="ctf-score:acceptance-$TARGET"
 NET="ctf-acceptance-$TARGET"
 TMP="$(mktemp -d)"

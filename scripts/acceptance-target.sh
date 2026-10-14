@@ -35,6 +35,7 @@ TARGET="${1:?usage: $0 <target> <stock-image|none>}"
 STOCK_IMAGE="${2:?usage: $0 <target> <stock-image|none>}"
 if [ "$STOCK_IMAGE" = "none" ]; then STOCK_IMAGE=""; fi
 
+# pins: the scorer image acc_build_scorer builds from this checkout
 IMG="ctf-score:acceptance-$TARGET"
 NET="ctf-acceptance-$TARGET"
 TMP="$(mktemp -d)"

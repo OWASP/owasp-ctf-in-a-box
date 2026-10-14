@@ -36,6 +36,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# pins: the scorer image acc_build_scorer builds from this checkout
 IMG=ctf-score:acceptance
 NET=ctf-scorer-acceptance
 SERVE_CTR=ctf-scorer-acceptance-serve

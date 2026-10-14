@@ -52,10 +52,13 @@ SS_UPSTREAM_REF="${SS_UPSTREAM_REF:-662771bfcc4d1e205b2d682d26edf95dd3c95cf5}"
 
 # Pinned build inputs — the literal upstream .env / docker-compose.yml values. HTTPS_PORT
 # is 8443 rather than the 443 default so the TLS connector matches the port $APP_URL uses.
-MAVEN_IMAGE="maven:3.9-eclipse-temurin-17"
-DOCKER_CLI_IMAGE="docker:27-cli"
+MAVEN_IMAGE="maven:3.9-eclipse-temurin-17@sha256:1a352420f7aba21f5ad08df31bab55f74c013fb491f1ae8ab1dd7ff9ed698584"
+DOCKER_CLI_IMAGE="docker:27-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c"
+# pins: built locally below from the pinned source, never pulled
 IMG_TOMCAT="owasp/security-shepherd"
+# pins: built locally below from the pinned source, never pulled
 IMG_MARIADB="owasp/security-shepherd_mariadb"
+# pins: built locally below from the pinned source, never pulled
 IMG_MONGO="owasp/security-shepherd_mongo"
 SRC_VOL="ss_src"
 
@@ -75,11 +78,11 @@ if [ -f "$SRC/pom.xml" ] && [ -f "$SRC/docker-compose.yml" ]; then
   # Patch-to-score: the contestant's checked-out Security Shepherd tree.
   echo "securityshepherd: staging the PR workspace source ($SRC)…"
   tar --exclude=./.git -C "$SRC" -cf - . \
-    | docker run --rm -i -v "$SRC_VOL":/src -w /src alpine tar -xf -
+    | docker run --rm -i -v "$SRC_VOL":/src -w /src alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 tar -xf -
 else
   echo "securityshepherd: no source in the workspace — cloning $SS_UPSTREAM_REPO@$SS_UPSTREAM_REF…"
   # `git clone -b` cannot take a bare commit SHA, so init + fetch + checkout the exact ref.
-  docker run --rm -v "$SRC_VOL":/src --entrypoint sh alpine/git -c '
+  docker run --rm -v "$SRC_VOL":/src --entrypoint sh alpine/git:v2.54.0@sha256:ce84fd6a057b4dc5cf5009da2dd832f1c6d096c1984bf50496cf3c256402264d -c '
     set -e
     cd /src
     git init -q
@@ -96,6 +99,7 @@ fi
 #    dependency downloads that bury the scoring log, and the tail on failure is what an
 #    organizer actually needs.
 echo "securityshepherd: building the WAR (Maven)…"
+# pins: MAVEN_IMAGE is digest-pinned where it is set, above
 docker run --rm -v "$SRC_VOL":/src -w /src "$MAVEN_IMAGE" \
   mvn -Pdocker clean install -DskipTests -B >/tmp/ss-maven.log 2>&1 || {
   echo "securityshepherd: Maven build FAILED" >&2
@@ -110,6 +114,7 @@ docker run --rm -v "$SRC_VOL":/src -w /src "$MAVEN_IMAGE" \
 #    output is buffered and replayed only on failure — three interleaved build logs are
 #    unreadable, and a green run does not need them.
 echo "securityshepherd: building the Tomcat/MariaDB/MongoDB images…"
+# pins: DOCKER_CLI_IMAGE is digest-pinned where it is set, above
 docker run --rm -v "$SRC_VOL":/src -v /var/run/docker.sock:/var/run/docker.sock -w /src \
   "$DOCKER_CLI_IMAGE" sh -euc '
     docker build -t '"$IMG_MARIADB"' \
@@ -146,9 +151,12 @@ docker volume rm -f "$SRC_VOL" >/dev/null 2>&1 || true
 #    /docker-entrypoint-initdb.d on first boot; no volumes are attached, so every run
 #    starts from a known-fresh schema.
 echo "securityshepherd: starting the stack…"
+# pins: built locally above from the pinned source
 docker run -d --name secshep_mariadb --network "$NETWORK" \
   -e MYSQL_ROOT_PASSWORD=CowSaysMoo "$IMG_MARIADB" >/dev/null
+# pins: built locally above from the pinned source
 docker run -d --name secshep_mongo --network "$NETWORK" "$IMG_MONGO" >/dev/null
+# pins: built locally above from the pinned source
 docker run -d --name secshep_tomcat --network "$NETWORK" --network-alias "$APP_HOST" \
   "$IMG_TOMCAT" >/dev/null
 

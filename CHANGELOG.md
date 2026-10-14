@@ -20,6 +20,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: every image the judge pulls is pinned by digest.** The target
+  bring-up scripts in `scorer/entrypoints/` ran seven third-party images by
+  a moving tag: DVWA's `mariadb:10`, the `alpine` and `alpine/git` staging
+  helpers, Security Shepherd's Maven and `docker:27-cli` builders, and
+  WebGoat's `eclipse-temurin` JDK and `docker:27-cli` builder. A retagged
+  upstream image could change a score or run untrusted code inside the
+  judge. Each is now pinned to the digest its tag resolved to, so scoring is
+  unchanged. `scripts/test/pins.bats` now scans the entrypoints too, and
+  checks an image variable where it is set (`MAVEN_IMAGE="…"`), not only
+  where `docker run` uses it.
 - **Added: hide a Jeopardy challenge, or schedule its release (#189).** Each
   challenge has a "Visible to contestants" switch and an optional "Release
   at" time in `/admin`, entered on the event's time zone and stored as UTC.

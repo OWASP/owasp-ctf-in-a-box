@@ -7,6 +7,7 @@
 # first challenge child spawns — 110 children at concurrency 8 would otherwise
 # all race an unready app and trip the unreachable early-abort.
 if [ -n "${APP_IMAGE:-}" ]; then
+  # pins: APP_IMAGE is chosen, and pinned, by whoever passes it in
   docker pull "$APP_IMAGE" >/dev/null
   IMAGE="$APP_IMAGE"
 elif [ -f "${GITHUB_WORKSPACE:-/github/workspace}/Dockerfile" ]; then
@@ -17,6 +18,7 @@ else
   exit 1
 fi
 
+# pins: the app under test: APP_IMAGE, or an image built from the PR checkout
 docker run -d --rm \
   --network "$NETWORK" \
   --network-alias "$APP_HOST" \

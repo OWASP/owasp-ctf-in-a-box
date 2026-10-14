@@ -9,41 +9,27 @@
 // Every other field here is an ordinary organizer preference.
 
 /** Every announcement type defaults to OFF, and configuring a webhook never
- *  turns one on — an organizer opts each stream in deliberately. */
+ *  turns one on — an organizer opts each stream in deliberately. The whole
+ *  scope is first blood, launch/pause/resume and the time-left marks; the
+ *  store refuses any other field (unknown keys are an error, not a no-op). */
 export const DISCORD_DEFAULTS = {
-  releases: false,
   firstBlood: false,
-  leaders: false,
-  leaderScope: "first" as const,
   launch: false,
   pause: false,
-  registration: false,
   milestones: false,
   marks: "1h, 15m",
-  daily: false,
-  dailyAt: "09:00",
-  dailyTopN: 10,
 };
-
-export type DiscordLeaderScope = "first" | "top3";
 
 /** The non-secret half of the config — exactly what an API response may
  *  carry. The webhook URL is deliberately NOT a field here: the public shape
  *  cannot leak what it never has. */
 export type DiscordPublicConfig = {
   webhookConfigured: boolean;
-  releases: boolean;
   firstBlood: boolean;
-  leaders: boolean;
-  leaderScope: DiscordLeaderScope;
   launch: boolean;
   pause: boolean;
-  registration: boolean;
   milestones: boolean;
   marks: string;
-  daily: boolean;
-  dailyAt: string;
-  dailyTopN: number;
 };
 
 /** The server-only full config (announce/store.ts) — the same fields plus
@@ -53,56 +39,29 @@ export type DiscordFullConfig = DiscordPublicConfig & { webhookUrl: string | nul
 /** Announcement kinds, keyed by the config switch that gates them. Used by
  *  the sender's flush-time filter ("stop disabled announcements immediately")
  *  and by the preview route. */
-export type AnnouncementKind =
-  | "release"
-  | "first-blood"
-  | "leader"
-  | "launch"
-  | "pause"
-  | "resume"
-  | "registration-closed"
-  | "milestone"
-  | "daily";
+export type AnnouncementKind = "first-blood" | "launch" | "pause" | "resume" | "milestone";
 
-export const ANNOUNCEMENT_KINDS: readonly AnnouncementKind[] = [
-  "release",
-  "first-blood",
-  "leader",
-  "launch",
-  "pause",
-  "resume",
-  "registration-closed",
-  "milestone",
-  "daily",
-];
+export const ANNOUNCEMENT_KINDS: readonly AnnouncementKind[] = ["first-blood", "launch", "pause", "resume", "milestone"];
 
 /** Whether `value` names one of the announcement kinds. */
 export function isAnnouncementKind(value: unknown): value is AnnouncementKind {
   return typeof value === "string" && (ANNOUNCEMENT_KINDS as readonly string[]).includes(value);
 }
 
-/** Which switch gates which kind. `pause` covers both the pause and the
- *  resume edge — they are two faces of one "scoring paused/resumed" stream. */
-/** Whether the config switch that gates `kind` is on. */
+/** Whether the config switch that gates `kind` is on. `pause` covers both
+ *  the pause and the resume edge — they are two faces of one "scoring
+ *  paused/resumed" stream. */
 export function kindEnabled(config: DiscordPublicConfig, kind: AnnouncementKind): boolean {
   switch (kind) {
-    case "release":
-      return config.releases;
     case "first-blood":
       return config.firstBlood;
-    case "leader":
-      return config.leaders;
     case "launch":
       return config.launch;
     case "pause":
     case "resume":
       return config.pause;
-    case "registration-closed":
-      return config.registration;
     case "milestone":
       return config.milestones;
-    case "daily":
-      return config.daily;
   }
 }
 
@@ -183,50 +142,15 @@ export function parseMarks(raw: unknown): { ok: true; marks: number[] } | { ok: 
   return { ok: true, marks: [...new Set(marks)].sort((a, b) => a - b) };
 }
 
-const DAILY_AT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
-
-/** Validates the daily summary time (HH:MM, event clock). Fixed refusal
- *  message, same reason as parseMarks. */
-export function checkDailyAt(raw: unknown): { ok: true; value: string } | { ok: false; message: string } {
-  if (typeof raw !== "string") return { ok: false, message: "daily summary time must be HH:MM" };
-  const value = raw.trim();
-  if (!DAILY_AT_RE.test(value)) return { ok: false, message: "daily summary time must be HH:MM on the event's clock (00:00–23:59)" };
-  return { ok: true, value };
-}
-
-export const DISCORD_DAILY_TOPN_MIN = 1;
-export const DISCORD_DAILY_TOPN_MAX = 50;
-
-/** Validates the daily summary's top-N team count. Fixed refusal message. */
-export function checkDailyTopN(raw: unknown): { ok: true; value: number } | { ok: false; message: string } {
-  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < DISCORD_DAILY_TOPN_MIN || raw > DISCORD_DAILY_TOPN_MAX) {
-    return { ok: false, message: `top N must be an integer in [${DISCORD_DAILY_TOPN_MIN}, ${DISCORD_DAILY_TOPN_MAX}]` };
-  }
-  return { ok: true, value: raw };
-}
-
-/** Validates the leader announcement scope. Fixed refusal message. */
-export function checkLeaderScope(raw: unknown): { ok: true; value: DiscordLeaderScope } | { ok: false; message: string } {
-  if (raw === "first" || raw === "top3") return { ok: true, value: raw };
-  return { ok: false, message: 'leader scope must be "first" or "top3"' };
-}
-
 /** A field patch accepted by the config store. Every field optional; the
  *  store validates each one and refuses unknown keys, exactly like
  *  updateAdminSettings. */
 export type DiscordConfigPatch = Partial<{
-  releases: boolean;
   firstBlood: boolean;
-  leaders: boolean;
-  leaderScope: DiscordLeaderScope;
   launch: boolean;
   pause: boolean;
-  registration: boolean;
   milestones: boolean;
   marks: string;
-  daily: boolean;
-  dailyAt: string;
-  dailyTopN: number;
 }>;
 
-export const DISCORD_BOOL_KEYS = ["releases", "firstBlood", "leaders", "launch", "pause", "registration", "milestones", "daily"] as const;
+export const DISCORD_BOOL_KEYS = ["firstBlood", "launch", "pause", "milestones"] as const;

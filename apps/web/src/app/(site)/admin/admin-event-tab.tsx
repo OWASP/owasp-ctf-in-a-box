@@ -353,10 +353,9 @@ export default function AdminEventTab({
 
       {/* Discord announcements (#590) — also stored apart from the settings
           hash (its own keys, its own endpoints), so it self-contains like
-          the images section above. `timeZone` is the event's own clock: the
-          daily summary's time is read on it, never on the browser's. */}
+          the images section above. */}
       <section className="flex flex-col gap-3 border-b border-white/[0.06] pb-4">
-        <AdminEventAnnouncements timeZone={zone} />
+        <AdminEventAnnouncements />
       </section>
 
       <section className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">

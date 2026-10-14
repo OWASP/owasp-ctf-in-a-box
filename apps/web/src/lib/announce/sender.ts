@@ -15,7 +15,7 @@
 // delivers). Delivery is AT-LEAST-ONCE — a POST that succeeds but whose
 // `sent` write is lost will be retried — which is the right direction for
 // announcements (a rare duplicate beats a silent drop) and is recorded as
-// such in ADR 69.
+// such in ADR 70.
 //
 // The kind switch is checked at BOTH ends: at enqueue (the common case — a
 // tick that would generate a disabled kind never writes an entry) and at
@@ -211,7 +211,11 @@ export async function flushRetries(): Promise<void> {
 
 /** One POST. `body` is already the assembled Discord payload (embeds +
  *  a hard `allowed_mentions: { parse: [] }`); the URL and the body are
- *  never logged, whatever happens. */
+ *  never logged, whatever happens. `redirect: "manual"` keeps a 3xx from
+ *  the endpoint answering as a "success": delivery is recorded from THIS
+ *  response alone, so a redirect-following fetch that lands on an error
+ *  page cannot mark a post sent (nor one that lands elsewhere can fail a
+ *  post Discord accepted). */
 export async function postToDiscord(url: string, body: unknown): Promise<boolean> {
   try {
     const res = await fetch(url, {
@@ -219,6 +223,7 @@ export async function postToDiscord(url: string, body: unknown): Promise<boolean
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       cache: "no-store",
+      redirect: "manual",
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
     if (!res.ok) {

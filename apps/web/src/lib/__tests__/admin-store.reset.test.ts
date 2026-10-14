@@ -219,6 +219,25 @@ describe("resetEvent", () => {
     expect(patterns).toContain("ctf:quiz:attempts:*");
   });
 
+  // #590: the webhook + switches are ORGANIZER CONFIGURATION (their own
+  // `ctf:admin:discord*` keys, outside every reset prefix and absent from
+  // the freeze/audit eval); only the announcement PROGRESS under
+  // `ctf:announce:*` is event data a reset wipes. Losing the webhook on a
+  // reset would silently disconnect an event the organizer already wired up.
+  it("KEEPS the Discord webhook configuration across a reset, while wiping announcement state", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    await resetEvent("alice");
+    const patterns = mocks.upstashPipeline.mock.calls
+      .filter((c) => c[0][0][0] === "SCAN")
+      .map((c) => c[0][0][3]);
+    expect(patterns).toContain("ctf:announce:*");
+    expect(patterns).not.toContain("ctf:admin:discord");
+    expect(patterns).not.toContain("ctf:admin:discord:webhook");
+    const [, evalKeys] = mocks.upstashEval.mock.calls[0];
+    expect(evalKeys).not.toContain("ctf:admin:discord");
+    expect(evalKeys).not.toContain("ctf:admin:discord:webhook");
+  });
+
   it("KEEPS the question bank and the answer key across a reset", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
     await resetEvent("alice");

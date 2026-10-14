@@ -7,10 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   DISCORD_DEFAULTS,
   ANNOUNCEMENT_KINDS,
-  checkDailyAt,
-  checkDailyTopN,
   checkDiscordWebhookUrl,
-  checkLeaderScope,
   isAnnouncementKind,
   kindEnabled,
   parseMarks,
@@ -19,18 +16,11 @@ import {
 
 const config = (over: Partial<DiscordPublicConfig> = {}): DiscordPublicConfig => ({
   webhookConfigured: false,
-  releases: false,
   firstBlood: false,
-  leaders: false,
-  leaderScope: "first",
   launch: false,
   pause: false,
-  registration: false,
   milestones: false,
   marks: DISCORD_DEFAULTS.marks,
-  daily: false,
-  dailyAt: DISCORD_DEFAULTS.dailyAt,
-  dailyTopN: DISCORD_DEFAULTS.dailyTopN,
   ...over,
 });
 
@@ -118,38 +108,22 @@ describe("parseMarks", () => {
   });
 });
 
-describe("checkDailyAt / checkDailyTopN / checkLeaderScope", () => {
-  it("accepts HH:MM and refuses everything else", () => {
-    expect(checkDailyAt("09:00")).toEqual({ ok: true, value: "09:00" });
-    expect(checkDailyAt("9:00").ok).toBe(false);
-    expect(checkDailyAt("24:00").ok).toBe(false);
-  });
-
-  it("bounds top N to [1, 50]", () => {
-    expect(checkDailyTopN(10)).toEqual({ ok: true, value: 10 });
-    expect(checkDailyTopN(0).ok).toBe(false);
-    expect(checkDailyTopN(51).ok).toBe(false);
-    expect(checkDailyTopN(1.5).ok).toBe(false);
-  });
-
-  it("accepts first/top3 only", () => {
-    expect(checkLeaderScope("first")).toEqual({ ok: true, value: "first" });
-    expect(checkLeaderScope("top3")).toEqual({ ok: true, value: "top3" });
-    expect(checkLeaderScope("all").ok).toBe(false);
-  });
-});
-
 describe("kindEnabled / isAnnouncementKind", () => {
   it("maps every kind to its own switch, with pause covering resume", () => {
-    const on = config({ releases: true, firstBlood: true, leaders: true, launch: true, pause: true, registration: true, milestones: true, daily: true });
+    const on = config({ firstBlood: true, launch: true, pause: true, milestones: true });
     for (const kind of ANNOUNCEMENT_KINDS) expect(kindEnabled(on, kind)).toBe(true);
     const off = config();
     for (const kind of ANNOUNCEMENT_KINDS) expect(kindEnabled(off, kind)).toBe(false);
     expect(kindEnabled(config({ pause: true }), "resume")).toBe(true);
+    expect(kindEnabled(config({ milestones: true }), "launch")).toBe(false);
   });
 
   it("recognises exactly the known kinds", () => {
-    expect(isAnnouncementKind("release")).toBe(true);
+    for (const kind of ANNOUNCEMENT_KINDS) expect(isAnnouncementKind(kind)).toBe(true);
+    expect(isAnnouncementKind("release")).toBe(false);
+    expect(isAnnouncementKind("leader")).toBe(false);
+    expect(isAnnouncementKind("daily")).toBe(false);
+    expect(isAnnouncementKind("registration-closed")).toBe(false);
     expect(isAnnouncementKind("nope")).toBe(false);
     expect(isAnnouncementKind(7)).toBe(false);
   });

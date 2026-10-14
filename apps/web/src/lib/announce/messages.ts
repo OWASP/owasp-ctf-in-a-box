@@ -33,15 +33,11 @@ export type DiscordMessage = {
 };
 
 const COLOR = {
-  release: 0x2563eb,
   firstBlood: 0xe53e3e,
-  leader: 0xd4a017,
   launch: 0x22c55e,
   pause: 0xd4a017,
   resume: 0x22c55e,
-  registration: 0x2563eb,
   milestone: 0x2563eb,
-  daily: 0x2563eb,
   test: 0x7c3aed,
 } as const;
 
@@ -96,26 +92,6 @@ export function buildTestMessage(eventName: string): DiscordMessage {
   });
 }
 
-export type ReleaseInput = { title: string; category: string; points: number; url: string };
-
-/** A challenge released: only ever called for a challenge that is actually
- *  public (see announce/ticker's release sweep). Never for a locked story
- *  step — that is filtered before the builder is reached. */
-export function buildReleaseMessage(input: ReleaseInput): DiscordMessage {
-  // The cap is applied to the WHOLE description, suffix included, so one
-  // hostile title cannot push the rendered line past the length the escape
-  // layer promises.
-  const suffix = ` — **${input.points} pts**`;
-  const title = escapeForDiscord(input.title, Math.max(1, 120 - suffix.length));
-  return msg({
-    title: "New challenge released",
-    url: input.url,
-    color: COLOR.release,
-    description: `${title}${suffix}`,
-    fields: [{ name: "Category", value: escapeForDiscord(input.category || "—"), inline: true }],
-  });
-}
-
 export type FirstBloodInput = { challengeTitle: string; points: number; who: string; url: string };
 
 /** First blood: the first TEAM (or solo login) to solve a challenge. */
@@ -129,29 +105,7 @@ export function buildFirstBloodMessage(input: FirstBloodInput): DiscordMessage {
   });
 }
 
-export type LeaderInput = {
-  scope: "first" | "top3";
-  leader: { name: string; points: number };
-  runnersUp?: { name: string; points: number }[];
-};
-
-/** A leaderboard change: a new #1, or (scope "top3") any change among the
- *  top three. Names are team display names, already escaped. */
-export function buildLeaderMessage(input: LeaderInput): DiscordMessage {
-  const fields = [{ name: "New #1", value: `${escapeForDiscord(input.leader.name)} — ${input.leader.points} pts`, inline: false }];
-  if (input.scope === "top3" && input.runnersUp?.length) {
-    fields.push({
-      name: "Top three",
-      value: input.runnersUp
-        .map((t, i) => `${i + 2}. ${escapeForDiscord(t.name)} — ${t.points} pts`)
-        .join("\n"),
-      inline: false,
-    });
-  }
-  return msg({ title: "Leaderboard change", color: COLOR.leader, fields });
-}
-
-export type LifecycleKind = "launch" | "pause" | "resume" | "registration-closed" | "milestone";
+export type LifecycleKind = "launch" | "pause" | "resume" | "milestone";
 
 export type LifecycleInput = { kind: LifecycleKind; eventName: string; timeLeft?: string };
 
@@ -159,17 +113,12 @@ const LIFECYCLE_COPY: Record<LifecycleKind, { title: string; color: number; desc
   launch: { title: "The event is live!", color: COLOR.launch, description: (e) => `${e} has started. Good luck and have fun!` },
   pause: { title: "Scoring is paused", color: COLOR.pause, description: (e) => `Scoring for ${e} is paused — submits are on hold until it resumes.` },
   resume: { title: "Scoring resumed", color: COLOR.resume, description: (e) => `Scoring for ${e} is back on. Go get 'em.` },
-  "registration-closed": {
-    title: "Team registration is closed",
-    color: COLOR.registration,
-    description: (e) => `Team registration for ${e} is now closed. Existing teams keep playing.`,
-  },
   milestone: { title: "Time check", color: COLOR.milestone, description: (e) => `Time remaining in ${e}:`,
   },
 };
 
-/** Launch, pause/resume, registration-closed and the remaining-time
- *  check — one builder, the kind selecting the title, colour and copy. */
+/** Launch, pause/resume and the remaining-time check — one builder, the kind
+ *  selecting the title, colour and copy. */
 export function buildLifecycleMessage(input: LifecycleInput): DiscordMessage {
   const copy = LIFECYCLE_COPY[input.kind];
   const event = escapeForDiscord(input.eventName, 80);
@@ -177,33 +126,5 @@ export function buildLifecycleMessage(input: LifecycleInput): DiscordMessage {
     title: copy.title,
     color: copy.color,
     description: input.timeLeft ? `${copy.description(event)} **${escapeForDiscord(input.timeLeft, 40)}**` : copy.description(event),
-  });
-}
-
-export type DailyInput = {
-  /** The event-local calendar day, e.g. "Oct 14". */
-  day: string;
-  topTeams: { name: string; points: number }[];
-  solves: number;
-  releases: number;
-  timeLeft: string | null;
-};
-
-/** Once-a-day summary: the top of the board plus the day's counters
- *  (deltas, understated when a baseline is missing) and the time left. */
-export function buildDailyMessage(input: DailyInput): DiscordMessage {
-  const board =
-    input.topTeams.length > 0
-      ? input.topTeams.map((t, i) => `${i + 1}. ${escapeForDiscord(t.name)} — ${t.points} pts`).join("\n")
-      : "No teams on the board yet.";
-  return msg({
-    title: `Daily summary — ${escapeForDiscord(input.day, 40)}`,
-    color: COLOR.daily,
-    description: board,
-    fields: [
-      { name: "Solves today", value: String(input.solves), inline: true },
-      { name: "Challenges released", value: String(input.releases), inline: true },
-      { name: "Time remaining", value: input.timeLeft ? escapeForDiscord(input.timeLeft, 40) : "—", inline: true },
-    ],
   });
 }

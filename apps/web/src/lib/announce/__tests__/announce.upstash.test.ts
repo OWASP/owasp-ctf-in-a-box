@@ -1,7 +1,7 @@
 // Integration tests for the announcer's atomicity primitives (#590), against
-// a REAL Redis behind srh: the lifecycle/board compare-and-swap Lua (exactly
-// one replica announces a transition) and the HSETNX dedup ledgers (exactly
-// one caller wins a first-blood/release/daily claim). These are the only
+// a REAL Redis behind srh: the lifecycle compare-and-swap Lua (exactly one
+// replica announces a transition) and the HSETNX dedup ledgers (exactly one
+// caller wins a first-blood or mark claim). These are the only
 // places those guarantees are actually enforced — a mocked pipeline can only
 // pin what the store SENDS, not what Redis DOES with it.
 //
@@ -36,24 +36,24 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
   });
 
   it("first observation with expected='' seeds silently (code 2) and bumps the seq", async () => {
-    const res = (await upstashEval(STATE_CAS_SCRIPT, [STATE_KEY, SEQ_KEY], ["", "v1|L1P0R0"])) as [number, number, string];
+    const res = (await upstashEval(STATE_CAS_SCRIPT, [STATE_KEY, SEQ_KEY], ["", "v1|L1P0"])) as [number, number, string];
     expect(res[0]).toBe(2);
     expect(res[1]).toBe(1);
     const [get] = await upstashPipeline([["GET", STATE_KEY]]);
-    expect(get.result).toBe("v1|L1P0R0");
+    expect(get.result).toBe("v1|L1P0");
   });
 
   it("the matching expected pack wins the swap (code 1); a stale expected does not (code 0)", async () => {
     // Same expected as the CURRENT value: this replica owns the edge.
-    const win = (await upstashEval(STATE_CAS_SCRIPT, [STATE_KEY, SEQ_KEY], ["v1|L1P0R0", "v1|L1P1R0"])) as [number, number, string];
+    const win = (await upstashEval(STATE_CAS_SCRIPT, [STATE_KEY, SEQ_KEY], ["v1|L1P0", "v1|L1P1"])) as [number, number, string];
     expect(win[0]).toBe(1);
     expect(win[1]).toBe(2);
-    expect(win[2]).toBe("v1|L1P0R0");
+    expect(win[2]).toBe("v1|L1P0");
     // A second replica still holding the OLD pack loses.
-    const lose = (await upstashEval(STATE_CAS_SCRIPT, [STATE_KEY, SEQ_KEY], ["v1|L1P0R0", "v1|L1P0R1"])) as [number, number, string];
+    const lose = (await upstashEval(STATE_CAS_SCRIPT, [STATE_KEY, SEQ_KEY], ["v1|L1P0", "v1|L0P0"])) as [number, number, string];
     expect(lose[0]).toBe(0);
     // A replica that already matches the current value gets 0, not a re-announce.
-    const same = (await upstashEval(STATE_CAS_SCRIPT, [STATE_KEY, SEQ_KEY], ["v1|L1P1R0", "v1|L1P1R0"])) as [number, number, string];
+    const same = (await upstashEval(STATE_CAS_SCRIPT, [STATE_KEY, SEQ_KEY], ["v1|L1P1", "v1|L1P1"])) as [number, number, string];
     expect(same[0]).toBe(0);
   });
 

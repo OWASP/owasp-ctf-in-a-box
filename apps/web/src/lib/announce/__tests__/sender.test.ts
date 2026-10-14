@@ -40,18 +40,11 @@ const message: DiscordMessage = { embeds: [{ title: "t" }], allowed_mentions: { 
 
 const configured = (over: Record<string, unknown> = {}) => ({
   webhookConfigured: true,
-  releases: true,
   firstBlood: true,
-  leaders: true,
-  leaderScope: "first",
   launch: true,
   pause: true,
-  registration: true,
   milestones: true,
   marks: "",
-  daily: true,
-  dailyAt: "09:00",
-  dailyTopN: 10,
   webhookUrl: URL,
   ...over,
 });
@@ -88,16 +81,16 @@ afterEach(() => {
 describe("enqueueAnnouncement", () => {
   it("writes nothing when unconfigured or the kind's switch is off", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(configured({ webhookConfigured: false }));
-    await enqueueAnnouncement("release", message);
+    await enqueueAnnouncement("first-blood", message);
     expect(mocks.outboxEnqueue).not.toHaveBeenCalled();
 
-    mocks.getAnnounceConfig.mockResolvedValue(configured({ releases: false }));
-    await enqueueAnnouncement("release", message);
+    mocks.getAnnounceConfig.mockResolvedValue(configured({ firstBlood: false }));
+    await enqueueAnnouncement("first-blood", message);
     expect(mocks.outboxEnqueue).not.toHaveBeenCalled();
   });
 
   it("enqueues and arms a coalesced flush when armed", async () => {
-    await enqueueAnnouncement("release", message);
+    await enqueueAnnouncement("first-blood", message);
     expect(mocks.outboxEnqueue).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(300);
     expect(mocks.outboxPending).toHaveBeenCalled();
@@ -107,40 +100,44 @@ describe("enqueueAnnouncement", () => {
 describe("flush", () => {
   it("leases, packs up to 10 embeds into ONE post, marks sent", async () => {
     mocks.outboxPending.mockResolvedValue([
-      { id: "1", entry: entry("release") },
-      { id: "2", entry: entry("first-blood") },
+      { id: "1", entry: entry("first-blood") },
+      { id: "2", entry: entry("launch") },
     ]);
     await flush();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0];
+    const [dest, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as { embeds: unknown[]; allowed_mentions: unknown };
     expect(body.embeds).toHaveLength(2);
     expect(body.allowed_mentions).toEqual({ parse: [] });
     expect(mocks.outboxComplete).toHaveBeenCalledWith("1", "sent");
     expect(mocks.outboxComplete).toHaveBeenCalledWith("2", "sent");
     // The URL is the only thing fetch ever sees as a destination.
-    expect(fetchMock.mock.calls[0][0]).toBe(URL);
+    expect(dest).toBe(URL);
+    // Delivery is judged from THIS response alone: a 3xx must come back as
+    // an opaque redirect response, never followed to somewhere that could
+    // be mistaken for Discord's acceptance (or a rejection).
+    expect(init.redirect).toBe("manual");
   });
 
   it("skips an entry whose switch went off since enqueue ('stop disabled immediately')", async () => {
-    mocks.getAnnounceConfig.mockResolvedValue(configured({ releases: false }));
-    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("release") }]);
+    mocks.getAnnounceConfig.mockResolvedValue(configured({ firstBlood: false }));
+    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     await flush();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.outboxComplete).toHaveBeenCalledWith("1", "skipped");
   });
 
   it("marks a failed POST failed and records the status", async () => {
-    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("release") }]);
+    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     fetchMock.mockResolvedValue({ ok: false, status: 404 });
     await flush();
     expect(mocks.outboxComplete).toHaveBeenCalledWith("1", "failed");
-    expect(mocks.bumpStatus).toHaveBeenCalledWith("release", "failed", expect.any(String));
+    expect(mocks.bumpStatus).toHaveBeenCalledWith("first-blood", "failed", expect.any(String));
   });
 
   it("does nothing at all without a webhook", async () => {
     mocks.getWebhookUrl.mockResolvedValue(null);
-    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("release") }]);
+    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     await flush();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
@@ -181,7 +178,7 @@ describe("flush", () => {
 
 describe("flushRetries", () => {
   it("re-delivers failed entries with attempts remaining, same lease discipline", async () => {
-    mocks.outboxRetryable.mockResolvedValue([{ id: "9", entry: entry("leader", "failed", 1) }]);
+    mocks.outboxRetryable.mockResolvedValue([{ id: "9", entry: entry("launch", "failed", 1) }]);
     await flushRetries();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mocks.outboxComplete).toHaveBeenCalledWith("9", "sent");

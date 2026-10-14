@@ -22,7 +22,7 @@ const source = (): string =>
 
 describe("AdminEventAnnouncements", () => {
   it("renders the section with its loading state (config arrives via GET)", () => {
-    const html = renderToStaticMarkup(<AdminEventAnnouncements timeZone="UTC" />);
+    const html = renderToStaticMarkup(<AdminEventAnnouncements />);
     expect(html).toContain("Discord announcements");
     expect(html).toContain("Loading…");
   });
@@ -51,41 +51,34 @@ describe("blurNeedsSave", () => {
 describe("mergePatched", () => {
   const config = (over: Partial<DiscordPublicConfig> = {}): DiscordPublicConfig => ({
     webhookConfigured: false,
-    releases: false,
     firstBlood: false,
-    leaders: false,
-    leaderScope: "first",
     launch: false,
     pause: false,
-    registration: false,
     milestones: false,
     marks: "",
-    daily: false,
-    dailyAt: "09:00",
-    dailyTopN: 10,
     ...over,
   });
 
   it("takes only the keys that request wrote — a stale copy of another key cannot clobber it", () => {
     // The displayed config already carries the OTHER save's newer
-    // `releases: true`; this response was generated before that save
-    // landed, so its copy of `releases` is stale and must be ignored.
-    const displayed = config({ releases: true, firstBlood: true });
-    const staleResponse = config({ releases: false, firstBlood: false });
-    expect(mergePatched(displayed, ["firstBlood"], staleResponse)).toMatchObject({ releases: true, firstBlood: false });
+    // `launch: true`; this response was generated before that save
+    // landed, so its copy of `launch` is stale and must be ignored.
+    const displayed = config({ launch: true, firstBlood: true });
+    const staleResponse = config({ launch: false, firstBlood: false });
+    expect(mergePatched(displayed, ["firstBlood"], staleResponse)).toMatchObject({ launch: true, firstBlood: false });
     // The response IS authoritative for its own key, both ways round.
     expect(mergePatched(config({ firstBlood: true }), ["firstBlood"], staleResponse)).toMatchObject({ firstBlood: false });
     expect(mergePatched(config({ firstBlood: false }), ["firstBlood"], config({ firstBlood: true }))).toMatchObject({ firstBlood: true });
   });
 
   it("folds every key of a multi-key patch, and nothing else", () => {
-    const merged = mergePatched(config({ releases: false, leaders: false, marks: "" }), ["releases", "leaders"], config({ releases: true, leaders: true, firstBlood: true }));
-    expect(merged).toMatchObject({ releases: true, leaders: true });
+    const merged = mergePatched(config({ launch: false, pause: false, marks: "" }), ["launch", "pause"], config({ launch: true, pause: true, firstBlood: true }));
+    expect(merged).toMatchObject({ launch: true, pause: true });
     expect(merged.firstBlood).toBe(false);
   });
 
   it("ignores a key the response does not carry", () => {
-    expect(mergePatched(config(), ["bogus"], config())).toHaveProperty("releases", false);
+    expect(mergePatched(config(), ["bogus"], config())).toHaveProperty("marks", "");
     expect("bogus" in mergePatched(config(), ["bogus"], config())).toBe(false);
   });
 });
@@ -93,12 +86,10 @@ describe("mergePatched", () => {
 describe("the blur-save contract, at source", () => {
   // No DOM to fire a real blur through: these pin the two halves of the
   // behaviour that a regression would silently break.
-  it("routes each of the three text/time/number fields through the guarded save", () => {
+  it("routes the one text field (marks) through the guarded save", () => {
     const code = source();
     expect(code).toContain('saveOnBlur("marks"');
-    expect(code).toContain('saveOnBlur("dailyAt"');
-    expect(code).toContain('saveOnBlur("dailyTopN"');
-    expect(code.match(/saveOnBlur\(/g)).toHaveLength(3);
+    expect(code.match(/saveOnBlur\(/g)).toHaveLength(1);
   });
 
   it("puts the STORED value back when the save fails — an input never keeps a value that is not in effect", () => {

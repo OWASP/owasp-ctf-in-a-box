@@ -1,9 +1,9 @@
 // The /admin → Event Discord-announcements endpoints (#590). The invariants
 // worth pinning at this layer: requireAdmin runs before any store call on
-// every route; the config the GET returns never carries the webhook URL; a
-// validation refusal is a 400 that names the problem; saving a webhook
-// triggers the claim-only seed sweep; and the test route reports only an
-// outcome, never the endpoint.
+// every route; the config the GET returns never carries the webhook URL;
+// only the current patch keys are accepted, everything else is a 400; a
+// validation refusal is a 400 that names the problem; and the test route
+// reports only an outcome, never the endpoint.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,7 +19,6 @@ const mocks = vi.hoisted(() => ({
   setAnnounceWebhook: vi.fn(),
   getWebhookUrl: vi.fn(),
   readStatus: vi.fn(),
-  seedReleaseClaims: vi.fn(),
   postToDiscord: vi.fn(),
   getAdminSettings: vi.fn(),
   writeAdminAudit: vi.fn(),
@@ -43,7 +42,6 @@ vi.mock("@/lib/announce/store", () => ({
   getWebhookUrl: mocks.getWebhookUrl,
   readStatus: mocks.readStatus,
 }));
-vi.mock("@/lib/announce/ticker", () => ({ seedReleaseClaims: mocks.seedReleaseClaims }));
 vi.mock("@/lib/announce/sender", () => ({ postToDiscord: mocks.postToDiscord }));
 
 const { GET, POST } = await import("@/app/api/admin/announcements/route");
@@ -52,7 +50,7 @@ const { POST: TEST } = await import("@/app/api/admin/announcements/test/route");
 const { POST: PREVIEW } = await import("@/app/api/admin/announcements/preview/route");
 
 const URL = "https://discord.com/api/webhooks/1/aaaaaaaaaaaaaaaaaaaaaa";
-const fullConfig = { webhookConfigured: true, releases: true, webhookUrl: URL };
+const fullConfig = { webhookConfigured: true, firstBlood: true, webhookUrl: URL };
 const req = (method: string, body?: unknown, path = "/api/admin/announcements") =>
   new Request(`http://x${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body) });
 
@@ -66,9 +64,8 @@ beforeEach(() => {
     return rest;
   });
   mocks.readStatus.mockResolvedValue({ posted: {}, lastPostedAt: null, lastError: null, lastErrorAt: null });
-  mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, releases: true });
+  mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, firstBlood: true });
   mocks.setAnnounceWebhook.mockResolvedValue({ webhookConfigured: true });
-  mocks.seedReleaseClaims.mockResolvedValue(0);
   mocks.getWebhookUrl.mockResolvedValue(URL);
   mocks.postToDiscord.mockResolvedValue(true);
   mocks.getAdminSettings.mockRejectedValue(new Error("no settings"));
@@ -77,10 +74,10 @@ beforeEach(() => {
 describe("the admin gate", () => {
   it.each([
     ["config GET", () => GET(req("GET"))],
-    ["config POST", () => POST(req("POST", { releases: true }))],
+    ["config POST", () => POST(req("POST", { firstBlood: true }))],
     ["webhook POST", () => WEBHOOK(req("POST", { webhookUrl: URL }, "/api/admin/announcements/webhook"))],
     ["test POST", () => TEST(req("POST", undefined, "/api/admin/announcements/test"))],
-    ["preview POST", () => PREVIEW(req("POST", { kind: "release" }, "/api/admin/announcements/preview"))],
+    ["preview POST", () => PREVIEW(req("POST", { kind: "milestone" }, "/api/admin/announcements/preview"))],
   ])("%s refuses a non-admin before touching anything", async (_name, call) => {
     mocks.requireAdmin.mockResolvedValue({ ok: false, status: 403 });
     expect((await call()).status).toBe(403);
@@ -126,23 +123,26 @@ describe("config POST", () => {
 
   it("maps a store failure to 503", async () => {
     mocks.updateAnnounceConfig.mockRejectedValue(new Error("redis down"));
-    expect((await POST(req("POST", { releases: true }))).status).toBe(503);
+    expect((await POST(req("POST", { firstBlood: true }))).status).toBe(503);
+  });
+
+  // PATCH_KEYS is the route's own boundary: a key outside the current
+  // setting set is refused before the store sees the request.
+  it("refuses every key outside the current patch set as 400 unknown setting", async () => {
+    for (const key of ["releases", "leaders", "leaderScope", "registration", "daily", "dailyAt", "dailyTopN"]) {
+      const res = await POST(req("POST", { [key]: true }));
+      expect(res.status).toBe(400);
+    }
+    expect(mocks.updateAnnounceConfig).not.toHaveBeenCalled();
   });
 });
 
 describe("webhook POST", () => {
-  it("stores the URL, runs the claim-only seed, and never returns the URL", async () => {
+  it("stores the URL and never returns it", async () => {
     const res = await WEBHOOK(req("POST", { webhookUrl: URL }, "/api/admin/announcements/webhook"));
     expect(res.status).toBe(200);
     expect(mocks.setAnnounceWebhook).toHaveBeenCalledWith("organizer", URL);
-    expect(mocks.seedReleaseClaims).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(await res.json())).not.toContain(URL);
-  });
-
-  it("clearing does not seed", async () => {
-    mocks.setAnnounceWebhook.mockResolvedValue({ webhookConfigured: false });
-    await WEBHOOK(req("POST", { webhookUrl: null }, "/api/admin/announcements/webhook"));
-    expect(mocks.seedReleaseClaims).not.toHaveBeenCalled();
   });
 
   it("a validation refusal is a 400 naming the problem", async () => {
@@ -176,13 +176,15 @@ describe("test POST", () => {
 
 describe("preview POST", () => {
   it("returns a sample message for a known kind, with mentions suppressed", async () => {
-    const res = await PREVIEW(req("POST", { kind: "release" }, "/api/admin/announcements/preview"));
+    const res = await PREVIEW(req("POST", { kind: "milestone" }, "/api/admin/announcements/preview"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { message: { allowed_mentions: unknown } };
     expect(body.message.allowed_mentions).toEqual({ parse: [] });
   });
 
-  it("refuses an unknown kind", async () => {
+  it("refuses an unknown kind, and any kind outside the announcement set", async () => {
     expect((await PREVIEW(req("POST", { kind: "nope" }, "/api/admin/announcements/preview"))).status).toBe(400);
+    expect((await PREVIEW(req("POST", { kind: "release" }, "/api/admin/announcements/preview"))).status).toBe(400);
+    expect((await PREVIEW(req("POST", { kind: "daily" }, "/api/admin/announcements/preview"))).status).toBe(400);
   });
 });

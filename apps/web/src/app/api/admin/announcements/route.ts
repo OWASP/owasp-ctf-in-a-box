@@ -19,20 +19,7 @@ import { AnnounceValidationError, getAnnounceConfig, publicConfig, readStatus, u
 
 const MAX_BODY_BYTES = 4_096;
 
-const PATCH_KEYS = new Set([
-  "releases",
-  "firstBlood",
-  "leaders",
-  "leaderScope",
-  "launch",
-  "pause",
-  "registration",
-  "milestones",
-  "marks",
-  "daily",
-  "dailyAt",
-  "dailyTopN",
-]);
+const PATCH_KEYS = new Set(["firstBlood", "launch", "pause", "milestones", "marks"]);
 
 /** JSON object guard: arrays and nulls are not patch payloads. */
 function isPlainObject(v: unknown): v is Record<string, unknown> {

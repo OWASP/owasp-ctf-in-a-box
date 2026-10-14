@@ -5,11 +5,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  buildDailyMessage,
   buildFirstBloodMessage,
-  buildLeaderMessage,
   buildLifecycleMessage,
-  buildReleaseMessage,
   buildTestMessage,
   escapeForDiscord,
   type DiscordMessage,
@@ -17,16 +14,11 @@ import {
 
 const all = (): DiscordMessage[] => [
   buildTestMessage("Test Event"),
-  buildReleaseMessage({ title: "T", category: "C", points: 100, url: "https://x/flags/t" }),
   buildFirstBloodMessage({ challengeTitle: "T", points: 100, who: "who", url: "https://x/flags/t" }),
-  buildLeaderMessage({ scope: "first", leader: { name: "a", points: 1 } }),
-  buildLeaderMessage({ scope: "top3", leader: { name: "a", points: 1 }, runnersUp: [{ name: "b", points: 0 }] }),
   buildLifecycleMessage({ kind: "launch", eventName: "E" }),
   buildLifecycleMessage({ kind: "pause", eventName: "E" }),
   buildLifecycleMessage({ kind: "resume", eventName: "E" }),
-  buildLifecycleMessage({ kind: "registration-closed", eventName: "E" }),
   buildLifecycleMessage({ kind: "milestone", eventName: "E", timeLeft: "1h 0m" }),
-  buildDailyMessage({ day: "Oct 14", topTeams: [], solves: 0, releases: 0, timeLeft: null }),
 ];
 
 describe("builders", () => {
@@ -59,10 +51,12 @@ describe("escapeForDiscord", () => {
 
   it("strips control characters and caps length", () => {
     const nul = String.fromCharCode(0);
-    const m = buildReleaseMessage({ title: `a${nul}b${"x".repeat(300)}`, category: "c", points: 1, url: "u" });
+    const m = buildFirstBloodMessage({ challengeTitle: `a${nul}b${"x".repeat(300)}`, points: 1, who: "w", url: "u" });
     const desc = m.embeds[0].description ?? "";
     expect(desc).not.toContain(nul);
-    expect(desc.length).toBeLessThanOrEqual(121);
+    // The builder's escape cap bounds the title run inside the description.
+    const run = desc.match(/x+/)?.[0] ?? "";
+    expect(run.length).toBeLessThanOrEqual(120);
   });
 
   it("neutralises a masked link: a team named [text](https://…) cannot render as a clickable link", () => {
@@ -97,13 +91,5 @@ describe("escapeForDiscord", () => {
 
   it("leaves ordinary text (a normal team name) readable — no gratuitous escapes", () => {
     expect(escapeForDiscord("Team One")).toBe("Team One");
-  });
-});
-
-describe("daily builder", () => {
-  it("renders an empty board honestly and keeps the counts", () => {
-    const m = buildDailyMessage({ day: "Oct 14", topTeams: [], solves: 3, releases: 1, timeLeft: "2h 0m" });
-    expect(m.embeds[0].description).toContain("No teams");
-    expect(m.embeds[0].fields?.map((f) => f.value)).toEqual(["3", "1", "2h 0m"]);
   });
 });

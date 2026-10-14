@@ -8,8 +8,8 @@
 //      webhook URL (`ctf:admin:discord:webhook`, its own key so the config
 //      hash can be read into an API response without the secret in it).
 //      Survives the master reset, like `ctf:admin:settings`.
-//   2. STATE — the dedup ledgers, the lifecycle/board CAS state and the
-//      delivery outbox (`ctf:announce:*`). Wiped by the master reset, so a
+//   2. STATE — the dedup ledgers, the lifecycle CAS state and the delivery
+//      outbox (`ctf:announce:*`). Wiped by the master reset, so a
 //      fresh run re-announces its own launches and first bloods.
 //   3. CAS — a tiny Lua script that makes "exactly one replica announces
 //      this transition" an atomic decision (compare observed pack, swap to
@@ -27,10 +27,7 @@ import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
 import {
   ANNOUNCEMENT_KINDS,
   DISCORD_DEFAULTS,
-  checkDailyAt,
-  checkDailyTopN,
   checkDiscordWebhookUrl,
-  checkLeaderScope,
   parseMarks,
   type AnnouncementKind,
   type DiscordConfigPatch,
@@ -38,7 +35,6 @@ import {
   type DiscordPublicConfig,
 } from "@/lib/discord-config";
 import {
-  ANNOUNCE_BOARD_KEY,
   ANNOUNCE_LEASE_MS,
   ANNOUNCE_LEASE_PREFIX,
   ANNOUNCE_LIFECYCLE_KEY,
@@ -79,20 +75,11 @@ export async function getAnnounceConfig(timeoutMs?: number): Promise<DiscordFull
     const webhookUrl = typeof urlRes.result === "string" && urlRes.result !== "" ? urlRes.result : null;
     return {
       webhookConfigured: webhookUrl !== null,
-      releases: raw.releases === "1",
       firstBlood: raw.firstBlood === "1",
-      leaders: raw.leaders === "1",
-      leaderScope: raw.leaderScope === "top3" ? "top3" : "first",
       launch: raw.launch === "1",
       pause: raw.pause === "1",
-      registration: raw.registration === "1",
       milestones: raw.milestones === "1",
       marks: typeof raw.marks === "string" ? raw.marks : DISCORD_DEFAULTS.marks,
-      daily: raw.daily === "1",
-      dailyAt: typeof raw.dailyAt === "string" && /^\d{2}:\d{2}$/.test(raw.dailyAt) ? raw.dailyAt : DISCORD_DEFAULTS.dailyAt,
-      dailyTopN: Number.isInteger(Number(raw.dailyTopN)) && Number(raw.dailyTopN) >= 1 && Number(raw.dailyTopN) <= 50
-        ? Number(raw.dailyTopN)
-        : DISCORD_DEFAULTS.dailyTopN,
       webhookUrl,
     };
   } catch (err) {
@@ -109,18 +96,11 @@ export async function getAnnounceConfig(timeoutMs?: number): Promise<DiscordFull
 export function publicConfig(config: DiscordFullConfig): DiscordPublicConfig {
   return {
     webhookConfigured: config.webhookConfigured,
-    releases: config.releases,
     firstBlood: config.firstBlood,
-    leaders: config.leaders,
-    leaderScope: config.leaderScope,
     launch: config.launch,
     pause: config.pause,
-    registration: config.registration,
     milestones: config.milestones,
     marks: config.marks,
-    daily: config.daily,
-    dailyAt: config.dailyAt,
-    dailyTopN: config.dailyTopN,
   };
 }
 
@@ -133,8 +113,8 @@ export function publicConfig(config: DiscordFullConfig): DiscordPublicConfig {
  *  value or key, so a secret-like marker in a request cannot be echoed back
  *  through an admin-visible error. */
 export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPatch): Promise<DiscordPublicConfig> {
-  const boolKeys = ["releases", "firstBlood", "leaders", "launch", "pause", "registration", "milestones", "daily"] as const;
-  const known = new Set<string>([...boolKeys, "leaderScope", "marks", "dailyAt", "dailyTopN"]);
+  const boolKeys = ["firstBlood", "launch", "pause", "milestones"] as const;
+  const known = new Set<string>([...boolKeys, "marks"]);
   for (const key of Object.keys(patch)) {
     if (!known.has(key)) throw new AnnounceValidationError("unknown announcement setting");
   }
@@ -149,30 +129,12 @@ export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPa
       changed[key] = v;
     }
   }
-  if ("leaderScope" in patch) {
-    const r = checkLeaderScope(patch.leaderScope);
-    if (!r.ok) throw new AnnounceValidationError(r.message);
-    writes.push(["leaderScope", r.value]);
-    changed.leaderScope = r.value;
-  }
   if ("marks" in patch) {
     const r = parseMarks(patch.marks);
     if (!r.ok) throw new AnnounceValidationError(r.message);
     const value = typeof patch.marks === "string" ? patch.marks.trim() : "";
     writes.push(["marks", value]);
     changed.marks = value;
-  }
-  if ("dailyAt" in patch) {
-    const r = checkDailyAt(patch.dailyAt);
-    if (!r.ok) throw new AnnounceValidationError(r.message);
-    writes.push(["dailyAt", r.value]);
-    changed.dailyAt = r.value;
-  }
-  if ("dailyTopN" in patch) {
-    const r = checkDailyTopN(patch.dailyTopN);
-    if (!r.ok) throw new AnnounceValidationError(r.message);
-    writes.push(["dailyTopN", String(r.value)]);
-    changed.dailyTopN = r.value;
   }
 
   if (writes.length > 0) {
@@ -205,8 +167,6 @@ export async function setAnnounceWebhook(actor: string, raw: unknown): Promise<{
   if (!checked.ok) throw new AnnounceValidationError(checked.message);
   const [res] = await upstashPipeline([["SET", DISCORD_WEBHOOK_KEY, checked.value]]);
   if (res.error) throw new Error(`webhook write failed: ${res.error}`);
-  // Seed-sweep claims everything already public, so saving a webhook never
-  // replays the past — see ticker.seedReleaseClaims.
   await writeAdminAudit(actor, "announce-webhook", { state: "set" });
   return { webhookConfigured: true };
 }
@@ -227,9 +187,9 @@ export async function getWebhookUrl(): Promise<string | null> {
 
 /** Claims a field in one of the dedup ledgers (HSETNX). `true` = this
  *  caller won the claim and should announce; `false` = already claimed (by
- *  an earlier tick, another replica, or the seed sweep). The key is a
- *  parameter (not a closed union) so the live-Redis suite can claim against
- *  run-unique ledgers without ever touching the box's real ones. */
+ *  an earlier tick or another replica). The key is a parameter (not a
+ *  closed union) so the live-Redis suite can claim against run-unique
+ *  ledgers without ever touching the box's real ones. */
 export async function claimLedgerField(ledgerKey: string, field: string): Promise<boolean> {
   const [res] = await upstashPipeline([["HSETNX", ledgerKey, field, new Date().toISOString()]]);
   if (res.error) {
@@ -240,7 +200,7 @@ export async function claimLedgerField(ledgerKey: string, field: string): Promis
 }
 
 /** Bulk-claims many fields in one pipeline, returning which ones this caller
- *  won. Used by the release sweep and the seed sweep. */
+ *  won. Used by the remaining-time mark sweep. */
 export async function claimLedgerFields(
   ledgerKey: string,
   fields: readonly string[],
@@ -271,7 +231,7 @@ export async function ledgerFields(ledgerKey: string): Promise<Set<string>> {
   }
 }
 
-// --- lifecycle / board CAS ---------------------------------------------------
+// --- lifecycle CAS -----------------------------------------------------------
 
 /** The compare-and-swap result: `code` 2 = first observation (the state was
  *  seeded silently, nothing to announce), 1 = the observed transition is
@@ -302,13 +262,15 @@ end
 return {0, 0, cur}
 `;
 
-/** Runs the CAS against one of the two observed-state keys. `expected` is
- *  the pack this caller last read ('' when the key is absent); `next` is the
- *  pack derived from the CURRENT observation. Exactly one replica's `next`
- *  write can win per distinct transition, because the swap is atomic and the
- *  loser's `expected` no longer matches. */
+/** Runs the CAS against the observed lifecycle state. `expected` is the pack
+ *  this caller last read ('' when the key is absent); `next` is the pack
+ *  derived from the CURRENT observation. Exactly one replica's `next` write
+ *  can win per distinct transition, because the swap is atomic and the
+ *  loser's `expected` no longer matches. The script itself is exported as
+ *  STATE_CAS_SCRIPT so the live-Redis suite runs the same copy against
+ *  run-unique keys. */
 export async function stateCompareSet(
-  stateKey: typeof ANNOUNCE_LIFECYCLE_KEY | typeof ANNOUNCE_BOARD_KEY,
+  stateKey: typeof ANNOUNCE_LIFECYCLE_KEY,
   expected: string,
   next: string,
 ): Promise<StateCasResult> {
@@ -325,7 +287,7 @@ export async function stateCompareSet(
 }
 
 /** The current observed-state pack, or null when the key is absent. */
-export async function readStatePack(stateKey: typeof ANNOUNCE_LIFECYCLE_KEY | typeof ANNOUNCE_BOARD_KEY): Promise<string | null> {
+export async function readStatePack(stateKey: typeof ANNOUNCE_LIFECYCLE_KEY): Promise<string | null> {
   const [res] = await upstashPipeline([["GET", stateKey]]);
   if (res.error) return null;
   return typeof res.result === "string" ? res.result : null;

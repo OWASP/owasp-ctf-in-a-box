@@ -24,14 +24,10 @@ type Load = { state: "loading" } | { state: "ready"; config: DiscordPublicConfig
 type PreviewState = { kind: AnnouncementKind; message: DiscordMessage } | null;
 
 const SWITCHES: { key: keyof DiscordPublicConfig; id: string; label: string; help: string; kind: AnnouncementKind }[] = [
-  { key: "releases", id: "ann-releases", label: "Challenge releases", help: "Post when a challenge becomes publicly visible.", kind: "release" },
   { key: "firstBlood", id: "ann-first-blood", label: "First blood", help: "Post the first solve of each challenge.", kind: "first-blood" },
-  { key: "leaders", id: "ann-leaders", label: "Leaderboard changes", help: "Post when the top of the board changes.", kind: "leader" },
   { key: "launch", id: "ann-launch", label: "Event launch", help: "Post when the event goes live.", kind: "launch" },
   { key: "pause", id: "ann-pause", label: "Scoring paused / resumed", help: "Post both edges of a scoring freeze.", kind: "pause" },
-  { key: "registration", id: "ann-registration", label: "Registration closed", help: "Post when team registration closes for good.", kind: "registration-closed" },
   { key: "milestones", id: "ann-milestones", label: "Remaining-time checks", help: "Post at each configured mark before scoring closes.", kind: "milestone" },
-  { key: "daily", id: "ann-daily", label: "Daily summary", help: "Post once a day at the configured time.", kind: "daily" },
 ];
 
 /** The server"s refusal text, or a fixed status-coded fallback when the
@@ -68,7 +64,7 @@ export function mergePatched(config: DiscordPublicConfig, keysWritten: readonly 
 /** The Event tab"s self-contained Discord announcements panel: webhook
  *  (write-only), per-type switches, previews, Send test and the delivery
  *  status line. */
-export default function AdminEventAnnouncements({ timeZone }: { timeZone: string }) {
+export default function AdminEventAnnouncements() {
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [fieldStatus, setFieldStatus] = useState<Partial<Record<string, FieldStatus>>>({});
   const [webhookInput, setWebhookInput] = useState("");
@@ -162,7 +158,7 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
    *  config (a blur with no edit must not POST and write an audit entry),
    *  and put the stored value back when the save fails. `currentTarget` is
    *  captured synchronously — it is null by the time the promise settles. */
-  function saveOnBlur<K extends "marks" | "dailyAt" | "dailyTopN">(key: K, el: HTMLInputElement, stored: string, toPatch: (value: string) => Record<string, unknown>) {
+  function saveOnBlur<K extends "marks">(key: K, el: HTMLInputElement, stored: string, toPatch: (value: string) => Record<string, unknown>) {
     if (!blurNeedsSave(el.value, stored)) return;
     void savePatch(toPatch(el.value), key).then((ok) => {
       if (!ok) el.value = stored;
@@ -343,7 +339,7 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
         </div>
         <p id="ann-webhook-help" className="text-xs text-muted">
           {config?.webhookConfigured ? "A webhook is configured." : "No webhook configured — nothing is posted until one is saved."} Must be a
-          discord.com webhook URL (Server Settings → Integrations → Webhooks). Challenges already public are never replayed when you save.
+          discord.com webhook URL (Server Settings → Integrations → Webhooks).
         </p>
         <FieldStatusLine id="ann-webhook-status" status={fieldStatus.webhook ?? { state: "idle" }} />
         <FieldStatusLine id="ann-test-status" status={fieldStatus.test ?? { state: "idle" }} />
@@ -372,24 +368,6 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
               </button>
             </div>
           )}
-          {row.key === "leaders" && config?.leaders && (
-            <div className="ml-1 flex items-center gap-2">
-              <label htmlFor="ann-leader-scope" className="text-xs text-muted">
-                Scope
-              </label>
-              <select
-                id="ann-leader-scope"
-                value={config?.leaderScope ?? "first"}
-                disabled={busy}
-                onChange={(e) => void savePatch({ leaderScope: e.target.value }, "leaderScope")}
-                className="rounded-md border border-white/10 bg-[#1a1a2e] px-2 py-1 font-mono text-xs text-white"
-              >
-                <option value="first">New #1 only</option>
-                <option value="top3">Any top-three change</option>
-              </select>
-              <FieldStatusLine id="ann-leader-scope-status" status={fieldStatus.leaderScope ?? { state: "idle" }} />
-            </div>
-          )}
           {row.key === "milestones" && config?.milestones && (
             <div className="ml-1 flex items-center gap-2">
               <label htmlFor="ann-marks" className="text-xs text-muted">
@@ -407,40 +385,6 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
               />
               <span className="text-xs text-muted">e.g. 1h, 15m — each at most 7 days, at least 1m</span>
               <FieldStatusLine id="ann-marks-status" status={fieldStatus.marks ?? { state: "idle" }} />
-            </div>
-          )}
-          {row.key === "daily" && config?.daily && (
-            <div className="ml-1 flex flex-wrap items-center gap-2">
-              <label htmlFor="ann-daily-at" className="text-xs text-muted">
-                Post at
-              </label>
-              <input
-                id="ann-daily-at"
-                type="time"
-                defaultValue={config?.dailyAt ?? "09:00"}
-                disabled={busy}
-                onBlur={(e) => saveOnBlur("dailyAt", e.currentTarget, config?.dailyAt ?? "09:00", (value) => ({ dailyAt: value }))}
-                className="rounded-md border border-white/10 bg-[#1a1a2e] px-2 py-1 font-mono text-xs text-white"
-                aria-describedby="ann-daily-at-status"
-              />
-              <span className="text-xs text-muted">on the event clock ({timeZone})</span>
-              <FieldStatusLine id="ann-daily-at-status" status={fieldStatus.dailyAt ?? { state: "idle" }} />
-              <label htmlFor="ann-daily-topn" className="ml-2 text-xs text-muted">
-                Top
-              </label>
-              <input
-                id="ann-daily-topn"
-                type="number"
-                min={1}
-                max={50}
-                defaultValue={config?.dailyTopN ?? 10}
-                disabled={busy}
-                onBlur={(e) => saveOnBlur("dailyTopN", e.currentTarget, String(config?.dailyTopN ?? 10), (value) => ({ dailyTopN: Number(value) }))}
-                className="w-20 rounded-md border border-white/10 bg-[#1a1a2e] px-2 py-1 font-mono text-xs text-white"
-                aria-describedby="ann-daily-topn-status"
-              />
-              <span className="text-xs text-muted">teams in the summary</span>
-              <FieldStatusLine id="ann-daily-topn-status" status={fieldStatus.dailyTopN ?? { state: "idle" }} />
             </div>
           )}
         </div>

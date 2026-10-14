@@ -15,11 +15,16 @@
 //     so a teammate double-submitting or two replicas grading concurrently
 //     cannot produce two posts.
 //
+// The claim comes before every content decision: once a first blood is
+// claimable, the claim is spent whether or not this caller ends up posting,
+// so a failing lookup can never hand the "first" to a later solver.
+//
 // Title and points are looked up HERE from the module's public list (never
 // from the admin surface, never from the request body), so the solve routes
 // need pass nothing but the ids — and a challenge deleted in the seconds
 // between solve and lookup still announces under its id rather than being
-// silently dropped.
+// silently dropped. The one exception is a story step the board redacts
+// (see the gate in the classic branch): there, id included, nothing posts.
 //
 // Every failure is logged (label only) and swallowed — a Discord hiccup must
 // never surface on a contestant's submit response.
@@ -35,15 +40,16 @@ import { errorLabel } from "@/lib/error-label";
 // current view of it.
 import { listTeams } from "@/lib/team-store";
 import { resolveOrigin } from "@/lib/app-origin";
-import { listChallenges } from "@/lib/classic-store";
+import { listChallenges, listStories } from "@/lib/classic-store";
 import { visibleNow } from "@/lib/classic-release";
 import { listQuestions } from "@/lib/quiz-store";
 import { listAiChallenges } from "@/lib/ai-store";
+import { isLocked, storyPositions } from "@/lib/story-lock";
 import { buildFirstBloodMessage } from "./messages";
 import { enqueueAnnouncement } from "./sender";
 import { claimLedgerField, getAnnounceConfig } from "./store";
 import { ANNOUNCE_FIRST_KEY } from "./keys";
-import { releaseField } from "./detect";
+import { challengeField } from "./detect";
 
 export type FirstBloodInput = {
   module: "classic" | "quiz" | "ai";
@@ -53,16 +59,14 @@ export type FirstBloodInput = {
   login: string;
 };
 
-/** Public title + points for one challenge, from the module's PUBLIC list
- *  (the same one the board reads — no flags, no answers ride along). Null
- *  when the challenge no longer exists or is no longer public: a hidden
+/** Public prompt + points for one quiz/ai item, from the module's PUBLIC
+ *  list (the same one the board reads — no flags, no answers ride along).
+ *  Null when the challenge no longer exists or is no longer public: a hidden
  *  challenge's TITLE must never ride an announcement (the caller then falls
- *  back to the bare id, which leaks nothing). */
-async function lookupItem(module: FirstBloodInput["module"], id: string): Promise<{ title: string; points: number } | null> {
-  if (module === "classic") {
-    const c = visibleNow(await listChallenges()).find((x) => x.id === id);
-    return c ? { title: c.title, points: c.points } : null;
-  }
+ *  back to the bare id, which leaks nothing). Classic goes through the
+ *  secrecy gate below instead, because a story step must be judged before
+ *  even its id is safe to name. */
+async function lookupItem(module: "quiz" | "ai", id: string): Promise<{ title: string; points: number } | null> {
   if (module === "quiz") {
     const q = (await listQuestions()).find((x) => x.id === id);
     return q ? { title: q.prompt, points: q.points } : null;
@@ -80,15 +84,37 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     // Gate BEFORE the claim: an unconfigured box (or one that does not want
     // first bloods) must not consume the claim, or turning the feature on
     // later would find every existing challenge already "claimed" by a
-    // silent sweep. This gate is also what keeps the title lookup below off
-    // the hot path for the default (unconfigured) box.
+    // silent sweep. This gate is also what keeps the content lookups below
+    // off the hot path for the default (unconfigured) box.
     if (!config.webhookConfigured || !config.firstBlood) return;
 
-    const field = releaseField(input.module, input.challengeId);
+    const field = challengeField(input.module, input.challengeId);
     const claimed = await claimLedgerField(ANNOUNCE_FIRST_KEY, field);
     if (!claimed) return;
 
-    const item = await lookupItem(input.module, input.challengeId).catch(() => null);
+    let item: { title: string; points: number } | null;
+    if (input.module === "classic") {
+      // Secrecy gate (ADR 60): the board redacts a story step to any reader
+      // whose team has not unlocked it — title, points AND id — and an
+      // announcement's audience is everyone in the channel, so a step locked
+      // for even one of them may appear in no part of the post. Evaluated
+      // with the board's own isLocked from the no-solve view (api/board/
+      // items/route.ts pairs it with the viewer's solves; the empty set is
+      // the most locked view there is, and every other reader only opens
+      // further): step 1 has no prereq and passes, every later step withholds
+      // the whole announcement — not even the bare id, which the board also
+      // redacts because ids are derived from titles. A read that throws lands
+      // in the outer catch: unreadable means NO post, never a guess.
+      const visible = visibleNow(await listChallenges());
+      const positions = storyPositions(await listStories(), new Set(visible.map((c) => c.id)));
+      const pos = positions.get(input.challengeId);
+      if (pos && isLocked(pos, new Set())) return;
+      const c = visible.find((x) => x.id === input.challengeId);
+      item = c ? { title: c.title, points: c.points } : null;
+    } else {
+      item = await lookupItem(input.module, input.challengeId).catch(() => null);
+    }
+
     // Case-insensitive join, like every other login join in this codebase:
     // the scorer records the PR author's spelling, the team store the
     // session's, and GitHub logins are unique only case-insensitively.

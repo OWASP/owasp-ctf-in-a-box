@@ -3,18 +3,12 @@ import { readBoundedBody } from "@/lib/bounded-body";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel } from "@/lib/admin-store";
 import { AnnounceValidationError, getAnnounceConfig, publicConfig, setAnnounceWebhook } from "@/lib/announce/store";
-import { seedReleaseClaims } from "@/lib/announce/ticker";
 
 /**
  * Set or clear the Discord webhook URL (#590). Its OWN endpoint, separate
  * from the switches/config patch, so the secret never rides in the same
  * request as preference fields and can never be echoed back by a config
  * save. The response is only `{ webhookConfigured }` — never the URL.
- *
- * On SET, a claim-only release sweep runs (seedReleaseClaims): everything
- * already publicly visible is claimed SILENTLY, so this webhook never
- * replays the past. The sweep runs again on every ticker pass regardless,
- * so this is belt-and-braces for a box whose ticker has not yet ticked.
  */
 
 const MAX_BODY_BYTES = 2_048;
@@ -49,10 +43,6 @@ export async function POST(request: Request) {
 
   try {
     const result = await setAnnounceWebhook(gate.login, url);
-    if (result.webhookConfigured) {
-      // Claim-only, never posts — see the route comment.
-      await seedReleaseClaims().catch(() => {});
-    }
     const config = await getAnnounceConfig();
     return NextResponse.json({ ...result, config: publicConfig(config) });
   } catch (err) {

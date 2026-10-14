@@ -1,6 +1,6 @@
 // Announce store (#590): config validation + writes, ledger claims, the CAS
 // result mapping, the outbox and the status counters. The Lua script itself
-// is pinned against a real Redis in cas.upstash.test.ts; here the pipeline
+// is pinned against a real Redis in announce.upstash.test.ts; here the pipeline
 // is mocked and the POINT is what the store does with each reply — including
 // the two failure directions that matter: a claim failure must not post, and
 // a config read failure must fail open to all-off.
@@ -58,21 +58,25 @@ describe("getAnnounceConfig", () => {
     mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: [] as unknown[] })));
     const config = await getAnnounceConfig();
     expect(config.webhookConfigured).toBe(false);
-    expect(config.releases).toBe(false);
-    expect(config.leaderScope).toBe("first");
-    expect(config.dailyTopN).toBe(10);
+    expect(config.firstBlood).toBe(false);
+    expect(config.launch).toBe(false);
+    expect(config.marks).toBe("1h, 15m");
   });
 
   it("decodes stored fields over the defaults, without the URL in the public shape", async () => {
     mocks.upstashPipeline.mockImplementation(async (commands) =>
       commands.map((cmd) => {
-        if (cmd[1] === DISCORD_CONFIG_KEY) return { result: ["releases", "1", "leaderScope", "top3", "dailyTopN", "25"] };
+        // A stored hash carrying fields outside the current set must be
+        // ignored, not surfaced — an old write has no live meaning.
+        if (cmd[1] === DISCORD_CONFIG_KEY) return { result: ["firstBlood", "1", "pause", "1", "marks", "5m", "releases", "1", "dailyAt", "09:00"] };
         if (cmd[1] === DISCORD_WEBHOOK_KEY) return { result: VALID_URL };
         return { result: null };
       }),
     );
     const config = await getAnnounceConfig();
-    expect(config).toMatchObject({ webhookConfigured: true, releases: true, leaderScope: "top3", dailyTopN: 25 });
+    expect(config).toMatchObject({ webhookConfigured: true, firstBlood: true, pause: true, marks: "5m" });
+    expect(config).not.toHaveProperty("releases");
+    expect(config).not.toHaveProperty("dailyAt");
     const pub = publicConfig(config);
     expect(pub).not.toHaveProperty("webhookUrl");
     expect(JSON.stringify(pub)).not.toContain(VALID_URL);
@@ -82,7 +86,7 @@ describe("getAnnounceConfig", () => {
     mocks.upstashPipeline.mockRejectedValue(new Error("boom"));
     const config = await getAnnounceConfig();
     expect(config.webhookConfigured).toBe(false);
-    expect(config.releases).toBe(false);
+    expect(config.firstBlood).toBe(false);
   });
 });
 
@@ -100,21 +104,23 @@ describe("updateAnnounceConfig", () => {
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
-  it("refuses a bad marks/dailyAt/topN and writes nothing", async () => {
+  it("refuses a bad marks value, and any field outside the patch set, writing nothing", async () => {
     await expect(updateAnnounceConfig("admin", { marks: "soon" })).rejects.toBeInstanceOf(AnnounceValidationError);
-    await expect(updateAnnounceConfig("admin", { dailyAt: "25:00" })).rejects.toBeInstanceOf(AnnounceValidationError);
-    await expect(updateAnnounceConfig("admin", { dailyTopN: 0 })).rejects.toBeInstanceOf(AnnounceValidationError);
+    for (const patch of [{ releases: true }, { leaderScope: "top3" }, { dailyAt: "09:00" }, { dailyTopN: 10 }] as never[]) {
+      await expect(updateAnnounceConfig("admin", patch)).rejects.toBeInstanceOf(AnnounceValidationError);
+    }
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
   it("writes validated fields, audits only public values, and returns the public config", async () => {
     mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: [] as unknown[] })));
-    const config = await updateAnnounceConfig("admin", { releases: true, leaderScope: "top3" });
-    expect(config.releases).toBe(true);
+    const config = await updateAnnounceConfig("admin", { firstBlood: true, marks: "15m, 5m" });
+    expect(config.firstBlood).toBe(true);
+    expect(config.marks).toBe("15m, 5m");
     const hset = mocks.upstashPipeline.mock.calls[0][0][0];
     expect(hset[0]).toBe("HSET");
     expect(hset).toContain(DISCORD_CONFIG_KEY);
-    expect(mocks.writeAdminAudit).toHaveBeenCalledWith("admin", "announce-config", { releases: true, leaderScope: "top3" });
+    expect(mocks.writeAdminAudit).toHaveBeenCalledWith("admin", "announce-config", { firstBlood: true, marks: "15m, 5m" });
   });
 });
 
@@ -180,14 +186,14 @@ describe("ledger claims", () => {
 
 describe("stateCompareSet / readStatePack", () => {
   it("maps the Lua reply to code/seq/prev", async () => {
-    mocks.upstashEval.mockResolvedValue([1, 7, "v1|L0P0R0"]);
-    const cas = await stateCompareSet("ctf:announce:lifecycle", "v1|L0P0R0", "v1|L1P0R0");
-    expect(cas).toEqual({ code: 1, seq: 7, prev: "v1|L0P0R0" });
+    mocks.upstashEval.mockResolvedValue([1, 7, "v1|L0P0"]);
+    const cas = await stateCompareSet("ctf:announce:lifecycle", "v1|L0P0", "v1|L1P0");
+    expect(cas).toEqual({ code: 1, seq: 7, prev: "v1|L0P0" });
   });
 
   it("reads the pack, null on miss or error", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: "v1|L1P0R0" }]);
-    expect(await readStatePack("ctf:announce:lifecycle")).toBe("v1|L1P0R0");
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: "v1|L1P0" }]);
+    expect(await readStatePack("ctf:announce:lifecycle")).toBe("v1|L1P0");
     mocks.upstashPipeline.mockImplementation(async () => [{ result: null }]);
     expect(await readStatePack("ctf:announce:lifecycle")).toBeNull();
   });
@@ -196,7 +202,7 @@ describe("stateCompareSet / readStatePack", () => {
 describe("outbox", () => {
   it("enqueues a pending entry", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
-    await outboxEnqueue("id-1", "release", { embeds: [] });
+    await outboxEnqueue("id-1", "first-blood", { embeds: [] });
     const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
     expect(cmd[0]).toBe("HSET");
     expect(cmd[1]).toBe(ANNOUNCE_OUTBOX_KEY);
@@ -211,7 +217,7 @@ describe("outbox", () => {
   });
 
   it("completes an entry, bumping attempts on failure and dropping the lease", async () => {
-    const entry = JSON.stringify({ kind: "release", payload: {}, at: new Date().toISOString(), n: 0, status: "pending" });
+    const entry = JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending" });
     mocks.upstashPipeline.mockImplementation(async (commands) => commands.map((cmd) => (cmd[0] === "HGET" ? { result: entry } : { result: 1 })));
     await outboxComplete("id-1", "failed");
     // The HGET (to bump attempts) and the HSET+DEL write are two pipelines;
@@ -224,13 +230,13 @@ describe("outbox", () => {
     const at = new Date().toISOString();
     const flat = [
       "p1",
-      JSON.stringify({ kind: "release", payload: {}, at, n: 0, status: "pending" }),
+      JSON.stringify({ kind: "first-blood", payload: {}, at, n: 0, status: "pending" }),
       "f1",
-      JSON.stringify({ kind: "release", payload: {}, at, n: 1, status: "failed" }),
+      JSON.stringify({ kind: "first-blood", payload: {}, at, n: 1, status: "failed" }),
       "f2",
-      JSON.stringify({ kind: "release", payload: {}, at, n: 3, status: "failed" }),
+      JSON.stringify({ kind: "first-blood", payload: {}, at, n: 3, status: "failed" }),
       "s1",
-      JSON.stringify({ kind: "release", payload: {}, at, n: 0, status: "sent" }),
+      JSON.stringify({ kind: "first-blood", payload: {}, at, n: 0, status: "sent" }),
     ];
     mocks.upstashPipeline.mockImplementation(async () => [{ result: flat }]);
     expect((await outboxPending()).map((x) => x.id)).toEqual(["p1"]);
@@ -241,11 +247,11 @@ describe("outbox", () => {
     const old = new Date(Date.now() - 48 * 3_600_000).toISOString();
     const flat = [
       "old-sent",
-      JSON.stringify({ kind: "release", payload: {}, at: old, n: 0, status: "sent" }),
+      JSON.stringify({ kind: "first-blood", payload: {}, at: old, n: 0, status: "sent" }),
       "fresh-sent",
-      JSON.stringify({ kind: "release", payload: {}, at: new Date().toISOString(), n: 0, status: "sent" }),
+      JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "sent" }),
       "skipped",
-      JSON.stringify({ kind: "release", payload: {}, at: old, n: 0, status: "skipped" }),
+      JSON.stringify({ kind: "first-blood", payload: {}, at: old, n: 0, status: "skipped" }),
       "garbage",
       "not-json",
     ];
@@ -261,17 +267,17 @@ describe("outbox", () => {
 describe("status", () => {
   it("bumps a sent counter and stamps lastPostedAt; failures record the label", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
-    await bumpStatus("release", "sent");
+    await bumpStatus("first-blood", "sent");
     const sent = mocks.upstashPipeline.mock.calls[0][0][0];
-    expect(sent).toEqual(["HINCRBY", "ctf:announce:status", "release:sent", 1]);
-    await bumpStatus("release", "failed", "discord post failed");
+    expect(sent).toEqual(["HINCRBY", "ctf:announce:status", "first-blood:sent", 1]);
+    await bumpStatus("first-blood", "failed", "discord post failed");
     expect(mocks.upstashPipeline.mock.calls[1][0]).toContainEqual(["HSET", "ctf:announce:status", "lastError", "discord post failed"]);
   });
 
   it("a FAILED outcome bumps no sent counter — the counter is what 'posted' means", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
-    await bumpStatus("release", "failed", "discord post failed");
-    expect(mocks.upstashPipeline.mock.calls[0][0]).not.toContainEqual(["HINCRBY", "ctf:announce:status", "release:sent", 1]);
+    await bumpStatus("first-blood", "failed", "discord post failed");
+    expect(mocks.upstashPipeline.mock.calls[0][0]).not.toContainEqual(["HINCRBY", "ctf:announce:status", "first-blood:sent", 1]);
     expect(mocks.upstashPipeline.mock.calls[0][0]).not.toContainEqual(["HSET", "ctf:announce:status", "lastPostedAt", expect.any(String)]);
     // The failure IS recorded, with its stamp.
     expect(mocks.upstashPipeline.mock.calls[0][0]).toContainEqual(["HSET", "ctf:announce:status", "lastError", "discord post failed"]);
@@ -279,9 +285,9 @@ describe("status", () => {
   });
 
   it("reads the counters back, failing open to an empty status", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: ["release:sent", "3", "lastPostedAt", "2026-01-01T00:00:00Z"] }]);
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: ["first-blood:sent", "3", "lastPostedAt", "2026-01-01T00:00:00Z"] }]);
     const status = await readStatus();
-    expect(status.posted.release).toBe(3);
+    expect(status.posted["first-blood"]).toBe(3);
     expect(status.lastPostedAt).toBe("2026-01-01T00:00:00Z");
     mocks.upstashPipeline.mockRejectedValue(new Error("down"));
     expect((await readStatus()).posted).toEqual({});

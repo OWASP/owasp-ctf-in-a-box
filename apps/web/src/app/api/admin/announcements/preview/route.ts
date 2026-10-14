@@ -5,14 +5,7 @@ import { adminErrorLabel } from "@/lib/admin-store";
 import { getAdminSettings } from "@/lib/admin-store";
 import { DEFAULT_EVENT_IDENTITY } from "@/lib/event-identity";
 import { isAnnouncementKind, type AnnouncementKind } from "@/lib/discord-config";
-import {
-  buildDailyMessage,
-  buildFirstBloodMessage,
-  buildLeaderMessage,
-  buildLifecycleMessage,
-  buildReleaseMessage,
-  type DiscordMessage,
-} from "@/lib/announce/messages";
+import { buildFirstBloodMessage, buildLifecycleMessage, type DiscordMessage } from "@/lib/announce/messages";
 
 /**
  * Build (but never send) a sample of one announcement kind (#590), so the
@@ -27,20 +20,13 @@ const MAX_BODY_BYTES = 1_024;
 /** The SAMPLE message for one known kind — no stored content, no webhook. */
 function sample(kind: AnnouncementKind, eventName: string): DiscordMessage {
   switch (kind) {
-    case "release":
-      return buildReleaseMessage({ title: "Sample challenge", category: "Sample category", points: 100, url: "https://example.invalid/flags/sample" });
     case "first-blood":
       return buildFirstBloodMessage({ challengeTitle: "Sample challenge", points: 100, who: "sample-team", url: "https://example.invalid/flags/sample" });
-    case "leader":
-      return buildLeaderMessage({ scope: "top3", leader: { name: "sample-team", points: 1200 }, runnersUp: [{ name: "runner-up", points: 900 }] });
     case "launch":
     case "pause":
     case "resume":
-    case "registration-closed":
     case "milestone":
       return buildLifecycleMessage({ kind, eventName, timeLeft: kind === "milestone" ? "1h 0m" : undefined });
-    case "daily":
-      return buildDailyMessage({ day: "Sample day", topTeams: [{ name: "sample-team", points: 1200 }], solves: 12, releases: 3, timeLeft: "4h 30m" });
   }
 }
 

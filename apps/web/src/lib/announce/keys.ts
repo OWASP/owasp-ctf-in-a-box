@@ -9,7 +9,7 @@
 //     being in the same object.
 //
 //   - `ctf:announce:*` — runtime announcement STATE (dedup ledgers, the
-//     delivery outbox, the lifecycle/board observations, status counters).
+//     delivery outbox, the lifecycle observation, status counters).
 //     Wiped by the master reset (`RESET_PREFIXES` in admin-store.ts) so a
 //     fresh run re-announces its own launches and first bloods, while the
 //     organizer's webhook setup survives.
@@ -29,36 +29,14 @@ export const DISCORD_WEBHOOK_KEY = "ctf:admin:discord:webhook";
  *  across replicas and retries. */
 export const ANNOUNCE_FIRST_KEY = "ctf:announce:first";
 
-/** Per-challenge release claims: field `<module>:<challengeId>` → the ISO
- *  instant the challenge first became publicly visible to the announcer.
- *  Claimed even while announcements are off, so enabling later never
- *  replays challenges that were already public. */
-export const ANNOUNCE_RELEASED_KEY = "ctf:announce:released";
-
-/** Daily-summary claims: field `YYYY-MM-DD` (the event-local calendar day)
- *  → the ISO instant the claim was made. One post per event-local day. */
-export const ANNOUNCE_DAILY_KEY = "ctf:announce:daily";
-
-/** The totals snapshot the daily summary diffs against: JSON
- *  `{solves, released, at}` as of the last daily fire (or the seed).
- *  Updated ONLY when a daily claims, so the delta is "since the last
- *  summary", not "since the last tick". A missing snapshot (first fire
- *  after enabling) seeds the baseline and reports zeros — an understated
- *  first summary beats an overstated one (ADR 69). */
-export const ANNOUNCE_DAILY_SNAPSHOT_KEY = "ctf:announce:daily:snapshot";
-
 /** Remaining-time-mark claims: field `<endsAtMs>:<markMs>` → ISO instant.
  *  Keyed by the scoring-close instant, so moving Scoring closes re-arms the
  *  marks for the new window rather than inheriting the old one's claims. */
 export const ANNOUNCE_MILESTONE_KEY = "ctf:announce:milestone";
 
-/** The observed lifecycle state (`v1|L0|P0|R1`), advanced atomically by
+/** The observed lifecycle state (`v1|L<0|1>P<0|1>`), advanced atomically by
  *  ANNOUNCE_STATE_SCRIPT so exactly one replica announces each transition. */
 export const ANNOUNCE_LIFECYCLE_KEY = "ctf:announce:lifecycle";
-
-/** The observed top-of-board snapshot, same CAS discipline as the
- *  lifecycle state. */
-export const ANNOUNCE_BOARD_KEY = "ctf:announce:board";
 
 /** Monotonic id source bumped inside ANNOUNCE_STATE_SCRIPT, so every
  *  announced transition/outbox entry gets a unique id even when the same

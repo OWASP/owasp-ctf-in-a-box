@@ -49,6 +49,22 @@ export function blurNeedsSave(value: string, stored: string): boolean {
   return value.trim() !== stored;
 }
 
+/** Folds ONE request's config response into the currently displayed config.
+ *  Only the keys that request wrote are taken from the response: a
+ *  concurrent save for a different key may have landed after this request
+ *  read Redis, and this response's copy of THAT key would be stale —
+ *  replacing the whole config would show the other control out of step with
+ *  what is actually stored. `keysWritten` names what this response is
+ *  authoritative for. Exported so the suite can pin it without a DOM. */
+export function mergePatched(config: DiscordPublicConfig, keysWritten: readonly string[], fresh: DiscordPublicConfig): DiscordPublicConfig {
+  const next = { ...config } as Record<string, unknown>;
+  const source = fresh as Record<string, unknown>;
+  for (const key of keysWritten) {
+    if (key in source) next[key] = source[key];
+  }
+  return next as DiscordPublicConfig;
+}
+
 /** The Event tab"s self-contained Discord announcements panel: webhook
  *  (write-only), per-type switches, previews, Send test and the delivery
  *  status line. */
@@ -131,7 +147,7 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
         return false;
       }
       const body = (await res.json()) as { config: DiscordPublicConfig };
-      setLoad((prev) => (prev.state === "ready" ? { ...prev, config: body.config } : prev));
+      setLoad((prev) => (prev.state === "ready" ? { ...prev, config: mergePatched(prev.config, Object.keys(patch), body.config) } : prev));
       report(key, { state: "saved" });
       return true;
     } catch {
@@ -170,7 +186,7 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
         return;
       }
       const body = (await res.json()) as { config: DiscordPublicConfig };
-      setLoad((prev) => (prev.state === "ready" ? { ...prev, config: body.config } : prev));
+      setLoad((prev) => (prev.state === "ready" ? { ...prev, config: mergePatched(prev.config, ["webhookConfigured"], body.config) } : prev));
       setWebhookInput("");
       report("webhook", { state: "saved" });
     } catch {
@@ -196,7 +212,7 @@ export default function AdminEventAnnouncements({ timeZone }: { timeZone: string
         return;
       }
       const body = (await res.json()) as { config: DiscordPublicConfig };
-      setLoad((prev) => (prev.state === "ready" ? { ...prev, config: body.config } : prev));
+      setLoad((prev) => (prev.state === "ready" ? { ...prev, config: mergePatched(prev.config, ["webhookConfigured"], body.config) } : prev));
       report("webhook", { state: "saved" });
     } catch {
       report("webhook", { state: "rejected", message: "Request failed — check the connection and try again." });

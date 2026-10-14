@@ -4279,13 +4279,17 @@ announcement).
   re-checked at flush time: turning a type off stops its pending posts
   immediately, without draining them.
 
-- **Failure isolation is total.** Every reader fails open (an unavailable
-  Redis means no announcement, never a thrown error); every write-side
-  failure is logged through the label-only error helpers and swallowed; the
-  solve routes call the notifier fire-and-forget, so a Discord outage can
-  never fail a solve that already banked; and instrumentation starts the
-  ticker in a try/catch so a boot that cannot load the announcer still
-  serves the event.
+- **Failure isolation is total on the background path.** Every reader
+  fails open (an unavailable Redis means no announcement, never a thrown
+  error); background delivery failures — the enqueue, the flush, the retry
+  pass, the ticker's own ticks — are logged through the label-only error
+  helpers and swallowed; the solve routes call the notifier
+  fire-and-forget, so a Discord outage can never fail a solve that already
+  banked; and instrumentation starts the ticker in a try/catch so a boot
+  that cannot load the announcer still serves the event. Admin
+  configuration saves are the deliberate opposite: a config write that
+  fails THROWS and its endpoint answers 503, so an organizer is told their
+  change did not land instead of being left to believe it did.
 
 - **Secrecy is structural, not conventional.** Message builders are pure
   and accept only public metadata (a title, a category, points, a team

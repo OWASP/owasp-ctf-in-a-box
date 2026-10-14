@@ -10,7 +10,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
-import AdminEventAnnouncements, { blurNeedsSave } from "../admin-event-announcements";
+import AdminEventAnnouncements, { blurNeedsSave, mergePatched } from "../admin-event-announcements";
+import type { DiscordPublicConfig } from "@/lib/discord-config";
 
 const source = (): string =>
   readFileSync(fileURLToPath(new URL("../admin-event-announcements.tsx", import.meta.url)), "utf8")
@@ -41,6 +42,51 @@ describe("blurNeedsSave", () => {
     expect(blurNeedsSave("2h", "1h")).toBe(true);
     expect(blurNeedsSave("", "1h")).toBe(true);
     expect(blurNeedsSave("1h, 15m, 1d", "1h, 15m")).toBe(true);
+  });
+});
+
+// Two saves for DIFFERENT keys can be in flight at once; each response
+// carries the full config as its writer saw it. Folding in only what that
+// request wrote is what keeps the panel showing what is actually stored.
+describe("mergePatched", () => {
+  const config = (over: Partial<DiscordPublicConfig> = {}): DiscordPublicConfig => ({
+    webhookConfigured: false,
+    releases: false,
+    firstBlood: false,
+    leaders: false,
+    leaderScope: "first",
+    launch: false,
+    pause: false,
+    registration: false,
+    milestones: false,
+    marks: "",
+    daily: false,
+    dailyAt: "09:00",
+    dailyTopN: 10,
+    ...over,
+  });
+
+  it("takes only the keys that request wrote — a stale copy of another key cannot clobber it", () => {
+    // The displayed config already carries the OTHER save's newer
+    // `releases: true`; this response was generated before that save
+    // landed, so its copy of `releases` is stale and must be ignored.
+    const displayed = config({ releases: true, firstBlood: true });
+    const staleResponse = config({ releases: false, firstBlood: false });
+    expect(mergePatched(displayed, ["firstBlood"], staleResponse)).toMatchObject({ releases: true, firstBlood: false });
+    // The response IS authoritative for its own key, both ways round.
+    expect(mergePatched(config({ firstBlood: true }), ["firstBlood"], staleResponse)).toMatchObject({ firstBlood: false });
+    expect(mergePatched(config({ firstBlood: false }), ["firstBlood"], config({ firstBlood: true }))).toMatchObject({ firstBlood: true });
+  });
+
+  it("folds every key of a multi-key patch, and nothing else", () => {
+    const merged = mergePatched(config({ releases: false, leaders: false, marks: "" }), ["releases", "leaders"], config({ releases: true, leaders: true, firstBlood: true }));
+    expect(merged).toMatchObject({ releases: true, leaders: true });
+    expect(merged.firstBlood).toBe(false);
+  });
+
+  it("ignores a key the response does not carry", () => {
+    expect(mergePatched(config(), ["bogus"], config())).toHaveProperty("releases", false);
+    expect("bogus" in mergePatched(config(), ["bogus"], config())).toBe(false);
   });
 });
 

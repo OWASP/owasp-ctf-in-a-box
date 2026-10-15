@@ -28,9 +28,10 @@ guides + verifies each UI-only one, and resumes if you stop:
 ./setup/ctf-setup.sh            # guided, prompts for values, resumable
 ```
 
-Every discrete step is also its own subcommand — `check`, `secrets`, `org`,
-`render`, `upgrade`, `teardown`, `doctor`, `app-manifest`, `app-config`,
-`oauth-app`, `oauth-config` — with the global flags `--dry-run` (print
+Every discrete step is also its own subcommand — `wizard` (the guided run
+itself), `check`, `secrets`, `org`, `render`, `upgrade`, `teardown`, `doctor`,
+`private`, `launch`, `app-manifest`, `app-config`, `oauth-app`,
+`oauth-config` — with the global flags `--dry-run` (print
 mutating commands instead of running them) and `--out <path>` (default
 `.env`, the file every subcommand reads and `secrets` writes). The numbered
 sequence below names each one where it's used; `teardown` is covered in
@@ -75,7 +76,8 @@ The `SCORE_INGEST` key that used to answer that question is gone — the wizard
 writes no such line and rewrites none, because nothing reads it. A line an
 upgraded `.env` still carries is inert: delete it. (`doctor` named such a line
 in v0.6 only; v0.7 removed that notice, #503.) `EVENT_URL` is asked once: at step 2 when the wizard
-creates `.env`, or at step 3 when an existing file has no value for it.
+creates `.env`, or at step 3 whenever it asks the event basics of an existing
+file, with the current value as the default (Enter keeps it).
 
 **Secure Development decides which later steps run.** With `SCORE_IMAGE` set,
 steps 4–7 do the scorer image, the `sync` GitHub App, and the org: forks,
@@ -158,7 +160,8 @@ git clone https://github.com/OWASP/owasp-ctf-in-a-box && cd owasp-ctf-in-a-box
 #    Pin linux/amd64 — GitHub runners are amd64; an arm64 image (the default on
 #    Apple Silicon) fails scoring with "no matching manifest for linux/amd64".
 docker login ghcr.io   # token with write:packages
-docker buildx build --platform linux/amd64 -t ghcr.io/<your-org>/score:latest --push scorer/
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+  -t ghcr.io/<your-org>/score:latest --push scorer/
 #    MANUAL: edit SCORE_IMAGE=ghcr.io/<your-org>/score:latest in .env
 #    (the wizard builds + pins amd64 for you at step 4)
 
@@ -253,7 +256,8 @@ Build your own scorer from the engine in `scorer/` — that is the
 self-contained path and it needs no upstream access:
 
 ```sh
-docker buildx build --platform linux/amd64 -t ghcr.io/<your-org>/score:latest --push scorer/
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+  -t ghcr.io/<your-org>/score:latest --push scorer/
 ```
 
 (`--platform linux/amd64` is required — GitHub runners are amd64, and
@@ -1024,7 +1028,7 @@ workflow):
 
 | Variable | Read by | Default | Meaning |
 |---|---|---|---|
-| `WEBGOAT_JDK_IMAGE` | `webgoat.sh` | `eclipse-temurin:23-jdk-noble` | JDK used to build a fork from source through its own `./mvnw`. |
+| `WEBGOAT_JDK_IMAGE` | `webgoat.sh` | `eclipse-temurin:23-jdk-noble@sha256:7cb6c8eff24b…` | JDK used to build a fork from source through its own `./mvnw`. |
 | `SS_UPSTREAM_REPO`, `SS_UPSTREAM_REF` | `securityshepherd.sh` | `OWASP/SecurityShepherd` @ `662771b…` | Source cloned when the workspace has none. Pinned to a commit, never a branch. |
 | `WEBWOLF_URL`, `WEBGOAT_LEAKED_ADMIN_PW`, `WEBGOAT_DESER_PAYLOAD` | exported by `webgoat.sh`, read by the WebGoat rubric's tests | *computed* | Not inputs: the bring-up derives them from the running container and always exports them (an *empty* payload means "patched", an *absent* one would fail two challenges outright). |
 | `<TARGET>_UPSTREAM_REPO`, `<TARGET>_UPSTREAM_REF` | `scripts/acceptance-patched.sh` (`JS_`, `DVWA_`, `WEBGOAT_`, `VULNERABLEAPP_`, `VAMPI_`, `SS_`), `scripts/acceptance-target.sh` (`WG_`) | pinned per script | Local acceptance only: which fork and ref to judge as the patched or stock baseline. |

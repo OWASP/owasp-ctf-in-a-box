@@ -38,7 +38,7 @@
 #      `ExtraEnv`, which comes from this file's `environment:` block; the
 #      machine config carries no `secrets` key at all — so stripping would
 #      leave every container without its credentials while `fly secrets list`
-#      shows all fourteen as `Deployed`: the app answering 500 from
+#      shows every one as `Deployed`: the app answering 500 from
 #      better-auth's default-secret error, the scorer refusing to start, and
 #      sync refusing to poll with no org or token to poll with.
 #

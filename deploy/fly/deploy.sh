@@ -1042,15 +1042,13 @@ trap cleanup_rendered EXIT INT TERM
 # ---------------------------------------------------------------------------
 # 4/5 Secrets.
 #
-# ONE app, so ONE `fly secrets set`. Fly injects secrets as environment
-# variables into EVERY container in the machine, which is what lets the
-# rendered compose file carry no credentials at all: the variable names
-# already match across services.
-#
-# The flip side is that scoping is impossible — the app container also
-# receives REDIS_PASSWORD, and the redis container also receives
-# GITHUB_CLIENT_SECRET. That is a Fly platform limit, not a choice here, and
-# it is recorded in ADR 42 alongside the loss of the frontend/backend split.
+# ONE app, so ONE `fly secrets set`. These do not reach the containers: a
+# machine's containers receive only their own `environment:` from the
+# rendered compose file, which carries each service's credentials and so
+# scopes them — the app container never receives REDIS_PASSWORD, and redis
+# never receives GITHUB_CLIENT_SECRET (see render-compose.sh's header). The
+# secrets are set as well as a fallback, so nothing regresses if Fly starts
+# injecting them into every container.
 #
 # NOTE: no `--stage`. `--stage` means "hold these, apply on the next deploy",
 # and on a real run it left six secrets permanently staged — better-auth with

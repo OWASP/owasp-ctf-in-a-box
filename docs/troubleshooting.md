@@ -106,7 +106,9 @@ first ([`NOAUTH`](#services-log-noauth-authentication-required),
 **Fix.** In `/admin` → **Event**, set **Scoring opens** to now to launch
 immediately, or leave the scheduled time and wait — the lock lifts on its
 own at that instant, no restart. The **Right now:** readout under the
-schedule says "closed (not launched …)" until it has. A leftover
+schedule says "scoring is closed (not launched — set a scoring start)" while
+the field is empty, and "scoring is frozen (outside its window)" while the
+start it holds is still in the future. A leftover
 `CHALLENGES_GATE_ENABLED`/`CHALLENGES_GATE_PASSWORD` in `.env` does nothing
 any more (the password gate was removed in v0.6) — delete them. See
 [Before launch](operations.md#before-launch).
@@ -138,9 +140,10 @@ Work down this list — each item is a different subsystem:
    is judged at its PR comment's time (ADR 67): one posted while frozen,
    before the launch or after the end **never counts**, not even after you
    unfreeze or set a start — the poller logs it as `refused (paused)` or
-   `refused (outside-window)`. The contestant has to push again once scoring
-   is live. One exception: a freeze set straight on the settings hash (`HSET
-   … paused 1`, no recorded `pausedSince`) has an unknown start, so the
+   `refused (outside-window)`. A score timed before the last master reset
+   never counts either, logged `refused (pre-reset)`. The contestant has to
+   push again once scoring is live. One exception: a freeze set straight on
+   the settings hash (`HSET … paused 1`, no recorded `pausedSince`) has an unknown start, so the
    scorer holds the scores it reads during it and judges them once the freeze
    lifts.
 2. **Did the fork's Action run and post the score comment?** Open the PR: you
@@ -172,7 +175,7 @@ Work down this list — each item is a different subsystem:
 platform pin — GitHub's runners are amd64.
 
 **Fix.** Rebuild pinned and push:
-`docker buildx build --platform linux/amd64 -t <SCORE_IMAGE> --push scorer/`
+`docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t <SCORE_IMAGE> --push scorer/`
 (the wizard's own build step already pins this).
 
 ## Services log `NOAUTH Authentication required`
@@ -274,11 +277,11 @@ public URL. The reason is in the server log: `fly logs --app <app>`,
 tagged `[health/deep]`.
 
 **What a dead container actually does on Fly (measured, not assumed).** The
-rendered compose file carries no `restart:` — `render-compose.sh` drops it —
-so every container inherits the *machine's* policy, which `deploy.sh` leaves
-at Fly's default `on-failure`, ten retries. Killing PID 1 in the `app`
-container on the live box (2026-09-16, `fly ssh console --machine <id>
---container app -C "kill 1"`) produced: exit 143 → Fly rescheduled the
+rendered compose file keeps each service's `restart:` line from
+`docker-compose.yml`, and `deploy.sh` sets no restart policy of its own, so
+the machine runs at Fly's default `on-failure`, ten retries. Killing PID 1 in
+the `app` container on the live box (2026-09-16, `fly ssh console --machine
+<id> --container app -C "kill 1"`) produced: exit 143 → Fly rescheduled the
 container in 200 ms → `next start` ready in 251 ms → **one failed request and
 a 5–7 second blackout** from outside, the machine never restarted, Redis,
 scorer and poller untouched, the Fly check on `/health` stayed passing. So a

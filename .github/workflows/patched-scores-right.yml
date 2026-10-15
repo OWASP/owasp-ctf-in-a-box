@@ -73,7 +73,7 @@ jobs:
           # builds from firing on leaderboard-only changes. A serve/store
           # change that broke the shared module load is still caught by the
           # fast `scorer` unit job in ci.yml, so nothing goes unverified.
-          if printf '%s\n' "$changed" | grep -qE '^scorer/(Dockerfile|package(-lock)?\.json|entrypoint\.sh)$|^scorer/(entrypoints|rubric\.owasp)/|^scorer/src/(index|judge|exec|probe|rubric|rubric-id|catalogue|targets)\.js$|^scripts/(acceptance-patched\.sh|lib/acceptance-lib\.sh)$|^patches/|^\.github/workflows/patched-scores-right\.yml$'; then
+          if grep -qE '^scorer/(Dockerfile|package(-lock)?\.json|entrypoint\.sh)$|^scorer/(entrypoints|rubric\.owasp)/|^scorer/src/(index|judge|exec|probe|rubric|rubric-id|catalogue|targets)\.js$|^scripts/(acceptance-patched\.sh|lib/acceptance-lib\.sh)$|^patches/|^\.github/workflows/patched-scores-right\.yml$' <<<"$changed"; then
             echo "judge=true"
           else
             echo "judge=false"

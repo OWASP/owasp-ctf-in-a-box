@@ -19,7 +19,7 @@ describe("foldTeamItems", () => {
       reply({ "c-1": { points: 50, at: "2026-08-19T10:00:00.000Z" } }),
       reply({ "c-1": { points: 90, at: "2026-08-19T11:00:00.000Z" } }),
     ]);
-    expect(total).toEqual({ points: 50, completed: 1, lastAt: "2026-08-19T10:00:00.000Z", itemIds: ["c-1"] });
+    expect(total).toEqual({ points: 50, completed: 1, lastAt: "2026-08-19T10:00:00.000Z", itemIds: ["c-1"], itemPoints: { "c-1": 50 } });
   });
 
   // Same pair, opposite argument order: the winner must be decided by the
@@ -31,7 +31,7 @@ describe("foldTeamItems", () => {
       reply({ "c-1": { points: 90, at: "2026-08-19T11:00:00.000Z" } }),
       reply({ "c-1": { points: 50, at: "2026-08-19T10:00:00.000Z" } }),
     ]);
-    expect(total).toEqual({ points: 50, completed: 1, lastAt: "2026-08-19T10:00:00.000Z", itemIds: ["c-1"] });
+    expect(total).toEqual({ points: 50, completed: 1, lastAt: "2026-08-19T10:00:00.000Z", itemIds: ["c-1"], itemPoints: { "c-1": 50 } });
   });
 
   it("sums distinct items across members without dropping any", () => {
@@ -42,7 +42,7 @@ describe("foldTeamItems", () => {
       }),
       reply({ "c-3": { points: 5, at: "2026-08-19T11:00:00.000Z" } }),
     ]);
-    expect(total).toEqual({ points: 35, completed: 3, lastAt: "2026-08-19T12:00:00.000Z", itemIds: ["c-1", "c-2", "c-3"] });
+    expect(total).toEqual({ points: 35, completed: 3, lastAt: "2026-08-19T12:00:00.000Z", itemIds: ["c-1", "c-2", "c-3"], itemPoints: { "c-1": 10, "c-2": 20, "c-3": 5 } });
   });
 
   // `lastAt` is "most recent activity" for the leaderboard's activity column —
@@ -58,7 +58,7 @@ describe("foldTeamItems", () => {
       // 10 points) and, having lost it, contributes nothing to lastAt either.
       reply({ "c-1": { points: 999, at: "2026-08-19T23:00:00.000Z" } }),
     ]);
-    expect(total).toEqual({ points: 20, completed: 2, lastAt: "2026-08-19T18:00:00.000Z", itemIds: ["c-1", "c-2"] });
+    expect(total).toEqual({ points: 20, completed: 2, lastAt: "2026-08-19T18:00:00.000Z", itemIds: ["c-1", "c-2"], itemPoints: { "c-1": 10, "c-2": 10 } });
   });
 
   it("skips unparseable rows rather than throwing", () => {
@@ -67,6 +67,7 @@ describe("foldTeamItems", () => {
       completed: 0,
       lastAt: null,
       itemIds: [],
+      itemPoints: {},
     });
   });
 
@@ -85,7 +86,7 @@ describe("foldTeamItems", () => {
         ],
       },
     ]);
-    expect(total).toEqual({ points: 7, completed: 1, lastAt: "2026-08-19T10:00:00.000Z", itemIds: ["c-4"] });
+    expect(total).toEqual({ points: 7, completed: 1, lastAt: "2026-08-19T10:00:00.000Z", itemIds: ["c-4"], itemPoints: { "c-4": 7 } });
   });
 
   it("treats a missing, errored, or empty member reply as no items", () => {
@@ -95,11 +96,11 @@ describe("foldTeamItems", () => {
       { result: [] },
       reply({ "c-1": { points: 5, at: "2026-08-19T10:00:00.000Z" } }),
     ]);
-    expect(total).toEqual({ points: 5, completed: 1, lastAt: "2026-08-19T10:00:00.000Z", itemIds: ["c-1"] });
+    expect(total).toEqual({ points: 5, completed: 1, lastAt: "2026-08-19T10:00:00.000Z", itemIds: ["c-1"], itemPoints: { "c-1": 5 } });
   });
 
   it("returns a zero total for a team with no members at all", () => {
-    expect(foldTeamItems([])).toEqual({ points: 0, completed: 0, lastAt: null, itemIds: [] });
+    expect(foldTeamItems([])).toEqual({ points: 0, completed: 0, lastAt: null, itemIds: [], itemPoints: {} });
   });
 });
 

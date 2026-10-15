@@ -63,7 +63,7 @@ export type EventImagesMeta = Partial<Record<EventImageSlot, EventImageMeta>>;
 export type EventImagesBundle = Partial<Record<EventImageSlot, { data: string }>>;
 
 /** The public URL a slot is served from. */
-export const EVENT_IMAGE_PATH: Record<EventImageSlot, string> = {
+const EVENT_IMAGE_PATH: Record<EventImageSlot, string> = {
   logo: "/api/event/logo",
   icon: "/api/event/icon",
 };

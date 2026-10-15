@@ -1,7 +1,7 @@
-// The quiz/classic counterpart of AppChallengeList — same static-render
+// The quiz/classic counterpart of AppBreakdown — same static-render
 // pattern. Collapsed is the resting state, so these pins cover the toggle's
 // contract; the expanded rows are client state a static render can't reach
-// (the same limit AppChallengeList's coverage lives with).
+// (the same limit AppBreakdown's coverage lives with).
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 

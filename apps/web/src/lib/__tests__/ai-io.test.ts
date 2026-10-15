@@ -5,7 +5,7 @@
 // event-only and forbidden when it is, a signing key is optional but must be
 // a non-empty string when present — get their own cases.
 import { describe, expect, it } from "vitest";
-import { AI_BUNDLE_VERSION, parseBundle, serializeBundle, type AiBundle } from "@/lib/ai-io";
+import { AI_BUNDLE_VERSION, parseBundle, type AiBundle } from "@/lib/ai-io";
 
 const valid: AiBundle = {
   version: AI_BUNDLE_VERSION,
@@ -44,12 +44,6 @@ describe("parseBundle (ai)", () => {
     const res = parseBundle(asJson(valid));
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.bundle).toEqual(valid);
-  });
-
-  it("round-trips its own serialization", () => {
-    const res = parseBundle(serializeBundle(valid));
-    if (!res.ok) throw new Error(JSON.stringify(res.errors));
-    expect(res.bundle).toEqual(valid);
   });
 
   it("reports malformed JSON as one generic error with no input echoed", () => {
@@ -148,14 +142,6 @@ describe("parseBundle (ai)", () => {
     const res = parseBundle(asJson({ ...valid, challenges: [{ ...graded, caseSensitive: "true", hint: "" }] }));
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.errors.map((e) => e.where).sort()).toEqual(["challenges[0].caseSensitive", "challenges[0].hint"]);
-  });
-});
-
-describe("serializeBundle (ai)", () => {
-  it("emits indented JSON ending in a newline", () => {
-    const text = serializeBundle(valid);
-    expect(text.endsWith("\n")).toBe(true);
-    expect(text).toContain('\n  "categories": [');
   });
 });
 

@@ -235,7 +235,7 @@ export type AdminEventTabProps = {
 
 /** The registry row a module switch renders from — see module-toggle.ts,
  *  which the module panels' own header switches share with this tab. */
-export type ModuleChoice = ModuleToggleChoice;
+type ModuleChoice = ModuleToggleChoice;
 
 export default function AdminEventTab({
   settings,

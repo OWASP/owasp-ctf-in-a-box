@@ -24,7 +24,7 @@ export const getEventImages = cache(async (): Promise<EventImagesMeta> => {
 /** The built-in icons, served from public/. They used to be Next.js
  *  file-convention icons under src/app/, but those always win over
  *  `metadata.icons`, so a stored icon could never replace them there. */
-export const DEFAULT_ICONS: NonNullable<Metadata["icons"]> = {
+const DEFAULT_ICONS: NonNullable<Metadata["icons"]> = {
   icon: [
     { url: "/favicon.ico", sizes: "any" },
     { url: "/icon.png", type: "image/png" },

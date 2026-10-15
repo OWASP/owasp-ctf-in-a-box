@@ -13,7 +13,7 @@
 
 export type RasterMime = "image/png" | "image/webp" | "image/jpeg";
 
-export type SniffResult =
+type SniffResult =
   | { ok: true; type: RasterMime; w: number; h: number }
   /** `png`/`webp`/`jpeg`: the magic matched but the structure did not.
    *  `svg`: an SVG, refused on purpose. `unknown`: none of the above. */

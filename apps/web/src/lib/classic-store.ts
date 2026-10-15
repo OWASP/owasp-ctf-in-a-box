@@ -995,7 +995,7 @@ export async function getSolveCounts(): Promise<Map<string, number>> {
  *  of which items produced them. Where it is present a caller can union it
  *  with the live catalogue for a denominator that survives an organizer
  *  deleting a solved item; where it is absent the caller clamps. */
-export type ClassicTotal = { points: number; solved: number; lastAt: string | null; itemIds?: string[] };
+export type ClassicTotal = { points: number; solved: number; lastAt: string | null; itemIds?: string[]; itemPoints?: Record<string, number> };
 
 /** Per-login classic totals for every login that has solved at least one
  *  challenge — three HGETALLs in one pipeline (`ctf:classic:points`,
@@ -1059,6 +1059,12 @@ export async function getTeamClassicTotalsBatch(
   if (logins.length === 0) return teams.map(() => ({ points: 0, solved: 0, lastAt: null, itemIds: [] }));
 
   const results = await upstashPipeline(logins.map((login) => ["HGETALL", solvesKey(login)]));
+  // A per-command failure arrives as a VALUE, not a throw (AGENTS.md), so an
+  // unchecked `.result` would fold the failed member as having solved
+  // nothing: partial solve data is a misleading total, never a smaller true
+  // one. Fail closed, like `getClassicTotals` for the aggregate hashes.
+  const failed = results.find((r) => r?.error);
+  if (failed) throw new Error(`classic team solves read failed: ${failed.error}`);
   return teams.map((members) => foldTeamSolves(members.map((login) => results[indexByLogin.get(login) ?? -1])));
 }
 
@@ -1069,8 +1075,8 @@ export async function getTeamClassicTotalsBatch(
  *  with quiz-store's team fold — see the note there. All this wrapper does is
  *  rename the shared `completed` to classic's own noun. */
 function foldTeamSolves(memberReplies: ({ result?: unknown; error?: string } | undefined)[]): ClassicTotal {
-  const { points, completed, lastAt, itemIds } = foldTeamItems(memberReplies);
-  return { points, solved: completed, lastAt, itemIds };
+  const { points, completed, lastAt, itemIds, itemPoints } = foldTeamItems(memberReplies);
+  return { points, solved: completed, lastAt, itemIds, itemPoints };
 }
 
 type ResolvedAdminSettings = Awaited<ReturnType<typeof getAdminSettings>>;

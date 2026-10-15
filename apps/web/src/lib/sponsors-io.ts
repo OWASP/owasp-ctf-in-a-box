@@ -26,7 +26,7 @@ import {
 
 export const SPONSORS_BUNDLE_VERSION = 1;
 
-export type SponsorsBundleLogo = {
+type SponsorsBundleLogo = {
   type: "image/png" | "image/webp" | "image/jpeg";
   /** Base64-encoded raw bytes. */
   data: string;
@@ -36,7 +36,7 @@ export type SponsorsBundleLogo = {
   etag: string;
 };
 
-export type SponsorsBundleSponsor = {
+type SponsorsBundleSponsor = {
   id: string;
   name: string;
   url: string;
@@ -210,10 +210,4 @@ export function parseBundle(raw: string): ParseResult {
 
   if (errors.length > 0) return { ok: false, errors };
   return { ok: true, bundle: { version: SPONSORS_BUNDLE_VERSION, sponsors } };
-}
-
-/** Indented, not minified — an organizer may edit this file by hand, mirroring
- *  every other bundle serializer in the repo. */
-export function serializeBundle(bundle: SponsorsBundle): string {
-  return JSON.stringify(bundle, null, 2) + "\n";
 }

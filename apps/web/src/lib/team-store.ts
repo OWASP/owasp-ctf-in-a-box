@@ -59,11 +59,11 @@ const NOT_AVAILABLE_IN_DEMO_MODE = "Not available in demo mode";
 
 /** `needsConfirm`: refused only because the caller has not confirmed an exit
  *  after registration closed; the same call with `confirmClosed` goes ahead. */
-export type TeamActionResult =
+type TeamActionResult =
   | { ok: true; team: string | null }
   | { ok: false; error: string; needsConfirm?: true };
 
-export type JoinCodeResult = { ok: true; team: string; code: string } | { ok: false; error: string };
+type JoinCodeResult = { ok: true; team: string; code: string } | { ok: false; error: string };
 
 export type TeamInfo = {
   slug: string;

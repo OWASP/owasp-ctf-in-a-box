@@ -1,7 +1,12 @@
 import "server-only";
 import { errorLabel } from "@/lib/error-label";
 import { listTeams } from "@/lib/team-store";
-import { withTeamAiPoints, withTeamClassicPoints, withTeamQuizPoints } from "./module-contributions";
+import {
+  mergeTeamRosters,
+  withTeamAiPoints,
+  withTeamClassicPoints,
+  withTeamQuizPoints,
+} from "./module-contributions";
 import { rankByStanding } from "./rank";
 import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "./types";
 
@@ -74,37 +79,15 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   // solved, and re-synthesising those rows here would fabricate or double-count
   // points. App-side teams the source does not know are appended beside them,
   // starting at `points: 0` for exactly the same reason.
-  const storeBySlug = new Map(teams.map((team) => [team.slug, team]));
-  // A slug both records claim keeps the source's row — its points are the
-  // deduped ones — but takes the UNION of the two rosters. The overlays fold
-  // by `members` (`teams.map((team) => team.members)` in module-contributions),
-  // so a member the source has not heard of would otherwise have their quiz,
-  // classic and ai items left out of their own team's total: a roster short by
-  // one name silently undercounts, which is worse than the missing row this
-  // change set out to fix. Deduped case-insensitively, like every login join in
-  // this codebase, keeping the team store's spelling; sorted, as listTeams
-  // returns them.
-  const sourceTeams = (data.capabilities.teams ? data.teams : []).map((team) => {
-    const stored = storeBySlug.get(team.slug);
-    if (!stored) return team;
-    const byLower = new Map(team.members.map((member) => [member.toLowerCase(), member]));
-    for (const member of stored.members) byLower.set(member.toLowerCase(), member);
-    return { ...team, members: [...byLower.values()].sort() };
-  });
+  //
+  // The roster UNION and the login index come from `mergeTeamRosters`, shared
+  // with the contestant path in module-contributions.ts: the overlays fold by
+  // `members`, so a roster short by one name silently undercounts its own
+  // team's items — and a player's story-lock reachability folding over a
+  // different membership than the team row's would unlock a different set of
+  // steps for the same contest.
+  const { sourceTeams, teamByLogin } = mergeTeamRosters(data, teams);
   const sourceSlugs = new Set(sourceTeams.map((team) => team.slug));
-
-  const teamByLogin = new Map<string, string>();
-  for (const team of teams) {
-    for (const member of team.members) teamByLogin.set(member.toLowerCase(), team.slug);
-  }
-  // Source rows carry their own roster, and a login the team store does not
-  // place stays attributed to the source's team rather than losing its chip.
-  for (const team of sourceTeams) {
-    for (const member of team.members) {
-      const login = member.toLowerCase();
-      if (!teamByLogin.has(login)) teamByLogin.set(login, team.slug);
-    }
-  }
 
   const membershipOnly: TeamStanding[] = teams
     .filter((team) => !sourceSlugs.has(team.slug))

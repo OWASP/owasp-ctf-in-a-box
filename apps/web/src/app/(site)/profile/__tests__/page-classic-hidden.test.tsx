@@ -89,7 +89,7 @@ vi.mock("@/lib/classic-store", () => ({
   getViewerClassic: async () => ({ solved: classic.solved, attempts: {} }),
   listChallenges: async () => classic.challenges,
 }));
-vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: async () => new Set() }));
+vi.mock("@/lib/classic-team", () => ({ unlockingSolvedIds: async () => new Set() }));
 
 import ProfilePage from "@/app/(site)/profile/page";
 

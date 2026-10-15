@@ -36,7 +36,7 @@ import CopyButton from "@/components/copy-button";
 import AiEndpointDemo, { ENDPOINT_DEMOS } from "@/components/admin-ai-endpoint-demos";
 import type { AiChallenge } from "@/lib/ai-store";
 
-export type AdminAiIntegrationProps = {
+type AdminAiIntegrationProps = {
   challenge: AiChallenge;
   signingKey: string;
   onRotate: () => Promise<void>;
@@ -52,7 +52,7 @@ const TOKEN_CAPTION =
 
 const MASKED_KEY = "aik_…";
 
-export type AiTestOutcome = { kind: "award" } | { kind: "named"; label: string };
+type AiTestOutcome = { kind: "award" } | { kind: "named"; label: string };
 
 /** Classifies a `/api/admin/ai/test` response into a render-ready outcome.
  *  `ok` is the HTTP-level `res.ok` of the admin route's OWN response — a

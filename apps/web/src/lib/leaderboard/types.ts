@@ -45,17 +45,19 @@ export type AppProgress = {
 };
 
 /** secure-development's detail block: today's per-target progress map. */
-export type SecureDevelopmentDetail = { kind: "secure-development"; apps: Partial<Record<AppId, AppProgress>> };
+type SecureDevelopmentDetail = { kind: "secure-development"; apps: Partial<Record<AppId, AppProgress>> };
 /** quiz's detail block (populated in phase 2). */
-export type QuizDetail = { kind: "quiz"; answered: number; total: number; points: number };
+type QuizDetail = { kind: "quiz"; answered: number; total: number; points: number };
 /** classic's detail block: flags solved out of the challenges on offer.
  *  `total` is CLAMPED to at least `solved` by whoever builds it — see
- *  `classicModule` in module-contributions.ts. */
-export type ClassicDetail = { kind: "classic"; solved: number; total: number; points: number };
+ *  `classicModule` in module-contributions.ts.
+ *  `locked` is the number of live story steps still locked for this team
+ *  (zero when classic has no stories or all steps unlocked). */
+type ClassicDetail = { kind: "classic"; solved: number; total: number; points: number; locked: number };
 /** ai's detail block: prompt-injection challenges solved out of the
  *  challenges on offer. Same shape and same clamp discipline as
  *  `ClassicDetail` — see `aiModule` in module-contributions.ts. */
-export type AiDetail = { kind: "ai"; solved: number; total: number; points: number };
+type AiDetail = { kind: "ai"; solved: number; total: number; points: number };
 /** Discriminated on `kind` — narrow on it rather than casting; each module
  *  contributes its own detail shape and a new module means a new branch, not
  *  a wider inferred type. */
@@ -145,7 +147,7 @@ export type TeamStanding = {
  *  `PlayerSeries` but keyed by team instead of player. */
 export type TeamSeries = { slug: string; name: string; points: SeriesPoint[] };
 
-export type SourceCapabilities = {
+type SourceCapabilities = {
   /** Per-app breakdown available on list entries. */
   apps: boolean;
   /** Team standings + membership available. */

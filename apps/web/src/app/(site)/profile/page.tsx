@@ -3,8 +3,9 @@
 // contestant's progress from the active leaderboard source and renders their
 // dossier: identity, overall progress, per-app breakdown, and team control.
 
-import { getTeamClassicSolvedIds } from "@/lib/classic-team";
 import { isLocked, storyPositions } from "@/lib/story-lock";
+import { unlockingSolvedIds } from "@/lib/classic-team";
+import { classicReachableDenominator } from "@/lib/leaderboard/denominators";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -15,7 +16,7 @@ import AppBreakdown from "@/components/app-breakdown";
 import ProgressRow, { moduleUnit } from "@/components/progress/progress-row";
 import ChallengeList from "@/components/progress/challenge-list";
 import RemainingLine from "@/components/progress/remaining-line";
-import { maxPointsAcrossModules, visibleClassic, offBoardClassicPoints } from "@/app/(site)/profile/module-blocks";
+import { maxPointsAcrossModules, offBoardClassicPoints } from "@/app/(site)/profile/module-blocks";
 import { visibleNow } from "@/lib/classic-release";
 import { fillStyle } from "@/components/progress/progress-bar";
 import ProfileStatTiles, { type StatTile } from "@/components/profile-stat-tiles";
@@ -42,6 +43,7 @@ import {
 } from "@/lib/ai-store";
 import { listStories,
   getClassicTotals,
+  getTeamClassicTotalsBatch,
   getViewerClassic,
   listChallenges,
   type Challenge,
@@ -95,6 +97,10 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
+/** The viewer's own progress page: the shared leaderboard pipeline for the
+ *  totals, plus the per-item reads no list row carries — the viewer's solve
+ *  records and their team's story locks — which set the classic reachable
+ *  denominator and keep locked steps' titles and points off the page. */
 export default async function ProfilePage() {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/");
@@ -235,19 +241,72 @@ export default async function ProfilePage() {
   // #463: story steps still locked for this viewer's team never reach the
   // page — not their title, points or category (review C1). A stories read
   // that fails errors the page, like the challenge list would.
-  let classicLocked: Set<string> = new Set();
+  const classicLocked: Set<string> = new Set();
+  let classicReachableTotal = 0;
+  let classicReachableMaxPoints = 0;
+  // Hoisted because the `moduleInput` literal sits outside this block, and
+  // because a disabled classic module must read 0 rather than an
+  // uninitialised name.
+  let classicLockedCount = 0;
   if (classicEnabled) {
     const stories = await listStories();
+    const viewerSolved = viewerClassic.solved;
+    // Two sets, two jobs (ADR 60). What OPENS a step is solve-time
+    // membership: `unlockingSolvedIds` over the roster this page already
+    // resolved counts a member's solve only if their user record still names
+    // the team asked about and the solve is no older than their `joinedAt`
+    // (the rule `getTeamClassicSolvedIds` applies; with team writes off the
+    // cookie team names no record, so it is asked as a team of one). What
+    // the CEILING counts is the historical fold: solve records — a teammate's
+    // banked solve, including one carried in from another team — keep its
+    // points in the total even where it opens nothing. Both halves come from
+    // the SAME team read (the roster and the fold below), or they drift apart:
+    // pairing a team-wide id set with only the viewer's own records puts a
+    // teammate's solve of a since-deleted challenge in the count with no
+    // points behind it (issue #570). A solo contestant (no team) is a team of
+    // one: their own solves unlock the next step the same way a team's do.
+    const roster = [...new Set([login, ...(storeTeam?.members ?? [])])];
+    const scope = TEAM_WRITES_ENABLED && storeTeam?.slug ? storeTeam.slug : null;
+    const solvedRecords: Record<string, { points?: number }> = {};
+    const [teamClassic, teamSolved] = await Promise.all([
+      storeTeam ? getTeamClassicTotalsBatch([roster]) : Promise.resolve(undefined),
+      // No story means nothing to lock: skip the eligibility read entirely.
+      stories.length > 0 ? unlockingSolvedIds(roster, scope) : Promise.resolve(new Set<string>()),
+    ]);
+    if (storeTeam) {
+      // Folded through the same `getTeamClassicTotalsBatch` the leaderboard
+      // rows use, so the profile and the board can't disagree about what the
+      // team solved or what its solves are worth.
+      for (const [id, points] of Object.entries(teamClassic?.[0]?.itemPoints ?? {})) {
+        solvedRecords[id] = { points };
+      }
+    } else {
+      // No team: no fold read is needed for the records half — they are the
+      // same per-login hash this page already read for the Show-N lists, so a
+      // challenge they solved and an organizer has since deleted keeps its
+      // banked points in the ceiling.
+      for (const [id, solve] of Object.entries(viewerSolved)) {
+        solvedRecords[id] = { points: solve.points };
+      }
+    }
+    const reachable = classicReachableDenominator(classicChallenges, stories, teamSolved, solvedRecords);
+    classicReachableTotal = reachable.total;
+    classicReachableMaxPoints = reachable.max;
+    classicLockedCount = reachable.locked;
+    // Build the locked set for moduleItemsFor filtering (locked live steps
+    // only): every step ADR 60 eligibility keeps locked, even one the fold
+    // holds a banked solve for. A solve carried in from another team keeps
+    // its points in the counts and ceiling above, but it must not surface
+    // the step's title — hiding a locked step never drops its records.
     if (stories.length > 0) {
       const positions = storyPositions(stories, new Set(classicChallenges.map((c) => c.id)));
-      const teamSolved = await getTeamClassicSolvedIds(login);
-      classicLocked = new Set([...positions.values()].filter((pos) => isLocked(pos, teamSolved)).map((pos) => pos.id));
+      for (const pos of positions.values()) {
+        if (isLocked(pos, teamSolved)) {
+          classicLocked.add(pos.id);
+        }
+      }
     }
   }
-
-  // Locked steps are out of the ceiling too, not only the list (CodeRabbit #470).
-  const classicVisible = visibleClassic(classicChallenges, classicLocked);
-  const classicMaxPoints = classicVisible.maxPoints;
 
   const moduleInput: ProfileModuleInput = {
     profile,
@@ -257,7 +316,7 @@ export default async function ProfilePage() {
     secureDev: secureDevEnabled,
     quiz: quizEnabled ? { total: quizTotal, questions: quizQuestions, maxPoints: quizMaxPoints, viewer: viewerQuiz } : undefined,
     classic: classicEnabled
-      ? { total: classicTotal, challenges: classicVisible.challenges, maxPoints: classicMaxPoints, viewer: viewerClassic, locked: classicLocked }
+      ? { total: classicTotal, challenges: classicChallenges, maxPoints: classicReachableMaxPoints, viewer: viewerClassic, locked: classicLocked, reachableTotal: classicReachableTotal, lockedCount: classicLockedCount }
       : undefined,
     ai: aiEnabled ? { total: aiTotal, challenges: aiChallenges, maxPoints: aiMaxPoints, viewer: viewerAi } : undefined,
   };
@@ -318,7 +377,7 @@ export default async function ProfilePage() {
     classicEnabled && classicChallenges.length > 0 && {
       unit: moduleUnit("classic"),
       done: classicTotal?.solved ?? 0,
-      total: Math.max(classicVisible.challenges.length, classicTotal?.solved ?? 0),
+      total: Math.max(classicReachableTotal, classicTotal?.solved ?? 0),
     },
     aiEnabled && aiChallenges.length > 0 && {
       unit: moduleUnit("ai"),
@@ -423,6 +482,8 @@ export default async function ProfilePage() {
             const summary = moduleRow(moduleProgress[m.id]!, moduleInput);
             const list = moduleItemsFor(m.id, moduleInput);
             const isSecureDev = moduleProgress[m.id]!.detail.kind === "secure-development";
+            const isClassic = m.id === "classic";
+            const lockedCount = isClassic ? (summary.locked ?? 0) : 0;
             // One row shape at every level: the module row opens into its
             // targets (secure-development) or straight into its own grouped
             // list. The title is redundant on a single-module event, but the
@@ -437,7 +498,13 @@ export default async function ProfilePage() {
                     <ChallengeList items={list.items} unit={summary.unit} doneWord={list.doneWord} />
                   ) : undefined}
                 </ProgressRow>
-                {m.id === "classic" && classicOffBoard > 0 && (
+                {isClassic && lockedCount > 0 && (
+                  <p className="mt-2 text-xs text-muted">
+                    Totals count unlocked challenges only — story steps add to the total as your team unlocks them.
+                    <span className="ml-2">· {lockedCount} {lockedCount === 1 ? "step" : "steps"} locked</span>
+                  </p>
+                )}
+                {isClassic && classicOffBoard > 0 && (
                   <p className="mt-2 text-xs text-muted">
                     +{classicOffBoard.toLocaleString("en-US")} pts from challenges no longer on the board
                   </p>

@@ -78,7 +78,7 @@ export function aiRoute<Args extends unknown[]>(
   };
 }
 
-export type RawBody =
+type RawBody =
   | { ok: true; raw: string; parsed: Record<string, unknown> }
   | { ok: false; error: "too-large" | "invalid-json" };
 

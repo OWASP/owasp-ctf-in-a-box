@@ -17,10 +17,9 @@ const launchLock = vi.hoisted(() => ({
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { getResolvedModules, getChallengeCatalog, getHintAvailability, moduleLive, getEnabledApps, getEnabledTotals, getGithubOrg } = vi.hoisted(() => ({
+const { getResolvedModules, getChallengeCatalog, moduleLive, getEnabledApps, getEnabledTotals, getGithubOrg } = vi.hoisted(() => ({
   getResolvedModules: vi.fn(),
   getChallengeCatalog: vi.fn(),
-  getHintAvailability: vi.fn(),
   moduleLive: vi.fn(),
   // The live target list (issue #386, PR 2) — defaulted to the real
   // catalogue's full six in the outer beforeEach below, so every existing
@@ -50,7 +49,6 @@ vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/enabled-apps", () => ({ getEnabledApps, getEnabledTotals }));
 vi.mock("@/lib/challenges", () => ({ getChallengeCatalog }));
 vi.mock("@/lib/hint-store", () => ({
-  getHintAvailability,
   // The page asks getHintNotice once and uses BOTH fields — hints off here,
   // so the notice must not render.
   getHintNotice: async () => ({ active: false, cost: 0 }),
@@ -74,7 +72,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   moduleLive.mockReturnValue(true);
   getChallengeCatalog.mockResolvedValue(null);
-  getHintAvailability.mockResolvedValue({});
   // Default: every existing test here predates runtime target selection
   // (issue #386, PR 2) and expects the full catalogue, same as the old
   // build-time `enabledApps`.

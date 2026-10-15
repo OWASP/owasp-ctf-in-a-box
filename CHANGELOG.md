@@ -8,6 +8,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+### Breaking changes
+
+- **`LEADERBOARD_SOURCE=upstash` is removed (#502).** The mode read the
+  legacy `ZADD leaderboard` / `HSET team:<login>` schema that an external
+  pusher writes — never this kit's scorer — through its own adapter. An
+  event whose `.env` still names it now warns and serves the placeholder
+  `mock` board instead of those rows. **After upgrading, set
+  `LEADERBOARD_SOURCE=lambda` with `LEADERBOARD_API_URL` pointed at the
+  scorer**, or leave `LEADERBOARD_SOURCE` unset for `mock`.
+
 ### Changes
 
 - **Added: optional Discord webhook announcements (#590).** `/admin` → Event
@@ -35,6 +45,26 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   accept public metadata. A Send test and per-type previews are in the
   section; the master reset wipes the announcement state but keeps the
   webhook setup (ADR 70).
+- **Fixed: a module stayed off a leaderboard row until its first solve
+  (#585).** Expanding a team with no Jeopardy solves showed only its Secure
+  Development targets, so a new team could not tell from the board that
+  Jeopardy counted. An expanded team or contestant row now lists every
+  enabled module from the start, at `0 / N` and 0 pts; for Jeopardy
+  with stories, `N` is what a row that has solved nothing can reach (every
+  unstoried challenge and step 1 of each story). A module whose totals
+  could not be read, or whose catalogue is empty, still stays off the row
+  rather than reading `0 / 0`. Points, ranks and order are unchanged: a zero
+  row adds nothing.
+- **Fixed: every image the judge pulls is pinned by digest.** The target
+  bring-up scripts in `scorer/entrypoints/` ran seven third-party images by
+  a moving tag: DVWA's `mariadb:10`, the `alpine` and `alpine/git` staging
+  helpers, Security Shepherd's Maven and `docker:27-cli` builders, and
+  WebGoat's `eclipse-temurin` JDK and `docker:27-cli` builder. A retagged
+  upstream image could change a score or run untrusted code inside the
+  judge. Each is now pinned to the digest its tag resolved to, so scoring is
+  unchanged. `scripts/test/pins.bats` now scans the entrypoints too, and
+  checks an image variable where it is set (`MAVEN_IMAGE="…"`), not only
+  where `docker run` uses it.
 - **Added: hide a Jeopardy challenge, or schedule its release (#189).** Each
   challenge has a "Visible to contestants" switch and an optional "Release
   at" time in `/admin`, entered on the event's time zone and stored as UTC.
@@ -281,6 +311,34 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   back empty; a team whose only scorer history was one PR showed "Not enough
   score history yet to chart." with hundreds of points on the board. Scores,
   ranks and the module rows were never affected.
+
+- **Changed: classic story-lock reachable totals in profile and leaderboard
+  (#570).** The classic module's denominator now counts only challenges
+  reachable under the story-lock rules: step 1 of every story is always
+  reachable; each later step unlocks only when its prerequisite was solved
+  for that team — by a member who was on the team at the time (the
+  `joinedAt` rule, ADR 60), so a solve carried in from another team keeps
+  its points for the team but opens nothing after it. Locked steps are
+  excluded from both the challenge count and the points ceiling — their
+  titles and points are never exposed. A solo contestant is a team of one:
+  their own solves unlock the next steps just like a team's. An unreadable
+  story list now fails the request rather than degrading to "nothing is
+  locked", which would put locked steps' titles and points on the board.
+  The union with solve records is preserved, so challenges solved before
+  deletion still count — and the profile takes its solve records and its
+  solve-time eligibility set from ONE roster it already resolved (the same
+  team-totals helper the leaderboard rows use), so a teammate's deleted
+  solve counts in the ceiling exactly as the viewer's own. The profile
+  shows "X of Y pts available" and a locked-step marker
+  ("· 1 step locked", or "· N steps locked") when applicable, with a
+  disclaimer: "Totals count unlocked challenges
+  only — story steps add to the total as your team unlocks them." The
+  leaderboard's "solved / total" column, its contestant rows and its team
+  rows each use that row's own reachable denominator instead of the
+  event-wide catalogue count, and the same disclaimer appears on the board
+  while any row still has locked steps. This replaces the previous
+  `visibleClassic` filtering and the event-wide `completable` denominator
+  with a single shared helper in `lib/leaderboard/denominators.ts`.
 
 - **Changed: the maintainability follow-ups from the pre-v0.7.0 audit
   (#504).** Refactors with no behavior change: the demo seed and clear body
@@ -608,6 +666,31 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   holding anything but known module ids. Its test suite now runs in CI.
 - **Changed: `scripts/load-test.sh` deletes the seeder it uploaded** to the
   container's `/tmp` on every exit path, without changing the exit status.
+
+- **Breaking: the `LEADERBOARD_SOURCE=upstash` mode and its adapter are
+  removed (#502).** The adapter served a direct read of the legacy
+  `ZADD leaderboard` / `HSET team:<login>` schema, written by an external
+  push-era action rather than this kit's scorer — poll has been the one
+  score transport since v0.6 ([ADR 56](docs/decisions.md)), which writes
+  `ctf:solves:<target>` and reaches the board through `lambda`. With the
+  adapter gone, an `.env` that still says `upstash` is an unknown value:
+  the app warns once — `unknown LEADERBOARD_SOURCE "upstash" — falling back
+  to "mock"` — and serves placeholder data where those rows used to render,
+  so any event that did rely on that schema loses its real board until it
+  switches. **Set `LEADERBOARD_SOURCE=lambda` with `LEADERBOARD_API_URL`
+  pointed at the scorer**, or leave the key unset for `mock`.
+- **Changed: the pre-v0.7.0 audit's dead-code findings (#502).** Deletions
+  and de-exports with no behavior change: the orphaned `AppChallengeList` and
+  `HintNotice` components (neither has a caller), `getHintAvailability()` (it
+  always returned `{}`, and no code path in this kit writes `hints:<app>`),
+  and the `serializeBundle` helpers in `sponsors-io.ts` and `ai-io.ts` (no
+  export button uses them — only the classic and quiz bundles have one).
+  `sync`'s config drops its always-`"app"` `authMode` field, an unused local
+  in the seed test is gone, and 128 exports that nothing outside their own
+  file consumes lost the `export` keyword — audited symbol by symbol, keeping
+  every framework-required export, package entry point and real consumer. The
+  audit's one behavior change, the `upstash` mode removal, is the breaking
+  entry above.
 
 ## v0.7.0 — 2026-09-30
 

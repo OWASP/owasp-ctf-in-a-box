@@ -62,6 +62,7 @@ boot_app() {
   # contract — $NETWORK is a plain bridge (a bare `docker network create`, above
   # and in the consumer workflow), not --internal, so the app can still reach
   # the internet and the runner host can still reach the container's bridge IP.
+  # pins: the app under test: APP_IMAGE, or an image built from the PR checkout
   docker run -d --rm \
     --network "$NETWORK" \
     --network-alias "$APP_HOST" \
@@ -87,6 +88,7 @@ fi
 if [ -n "${APP_IMAGE:-}" ]; then
   # (a) Prebuilt image — pull and run as a sibling.
   echo "entrypoint: booting app from APP_IMAGE=$APP_IMAGE"
+  # pins: APP_IMAGE is chosen, and pinned, by whoever passes it in
   docker pull "$APP_IMAGE" >/dev/null
   boot_app "$APP_IMAGE"
 elif [ -f "${GITHUB_WORKSPACE:-/github/workspace}/Dockerfile" ]; then

@@ -15,7 +15,7 @@ export type RemainingModule = {
   max: number;
 };
 
-export type RemainingSummary = {
+type RemainingSummary = {
   /** Points still on the board across every module. */
   remaining: number;
   /** The module holding most of them, or null when only one module has any

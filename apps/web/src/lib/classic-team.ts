@@ -54,34 +54,64 @@ function solveUnlocks(at: unknown, memberTeam: string, joinedAt: string, team: s
  *  on `team` (see `solveUnlocks`). ISO-8601 UTC strings, as both records are
  *  written, compare correctly as strings. */
 export async function unlockingSolvedIds(logins: string[], team?: string | null): Promise<Set<string>> {
-  const replies = await upstashPipeline(
-    logins.flatMap((l) => [
-      ["HGETALL", classicSolvesKey(l)],
-      ["HMGET", userKey(l), "team", "joinedAt"],
-    ]),
-  );
-  const solved = new Set<string>();
-  for (let i = 0; i < logins.length; i++) {
+  const [ids] = await unlockingSolvedIdsBatch([{ logins, team }]);
+  return ids;
+}
+
+/** `unlockingSolvedIds` for MANY rosters in ONE pipeline — the board's form,
+ *  one entry per roster, same `solveUnlocks` rule, same fail-closed throw.
+ *  A login on more than one roster is fetched ONCE and its replies reused
+ *  (the dedupe `getTeamClassicTotalsBatch` does): `/leaderboard` is dynamic
+ *  and fetched `no-store`, so one round trip per team would bill a 25-team
+ *  event 25 REST calls on every page view. */
+export async function unlockingSolvedIdsBatch(
+  rosters: readonly { logins: readonly string[]; team?: string | null }[],
+): Promise<Set<string>[]> {
+  const indexByLogin = new Map<string, number>();
+  for (const roster of rosters) {
+    for (const login of roster.logins) {
+      if (!indexByLogin.has(login)) indexByLogin.set(login, indexByLogin.size);
+    }
+  }
+  const logins = [...indexByLogin.keys()];
+  const replies = logins.length
+    ? await upstashPipeline(
+        logins.flatMap((l) => [
+          ["HGETALL", classicSolvesKey(l)],
+          ["HMGET", userKey(l), "team", "joinedAt"],
+        ]),
+      )
+    : [];
+  const members = logins.map((_, i) => {
     const rows = replies[2 * i];
     const user = replies[2 * i + 1];
     if (rows?.error || user?.error) throw new Error(`team solves read failed: ${rows?.error ?? user?.error}`);
     const [memberTeam, joinedAt] = Array.isArray(user?.result) ? (user.result as unknown[]) : [];
-    const flat = Array.isArray(rows?.result) ? (rows.result as unknown[]) : [];
-    for (let j = 0; j + 1 < flat.length; j += 2) {
-      const id = flat[j];
-      if (typeof id !== "string") continue;
-      let at: unknown;
-      try {
-        at = (JSON.parse(String(flat[j + 1])) as { at?: unknown }).at;
-      } catch {
-        continue;
-      }
-      if (solveUnlocks(at, typeof memberTeam === "string" ? memberTeam : "", typeof joinedAt === "string" ? joinedAt : "", team)) {
-        solved.add(id);
+    return {
+      flat: Array.isArray(rows?.result) ? (rows.result as unknown[]) : [],
+      memberTeam: typeof memberTeam === "string" ? memberTeam : "",
+      joinedAt: typeof joinedAt === "string" ? joinedAt : "",
+    };
+  });
+  return rosters.map((roster) => {
+    const solved = new Set<string>();
+    for (const login of roster.logins) {
+      const member = members[indexByLogin.get(login) ?? -1];
+      if (!member) continue;
+      for (let j = 0; j + 1 < member.flat.length; j += 2) {
+        const id = member.flat[j];
+        if (typeof id !== "string") continue;
+        let at: unknown;
+        try {
+          at = (JSON.parse(String(member.flat[j + 1])) as { at?: unknown }).at;
+        } catch {
+          continue;
+        }
+        if (solveUnlocks(at, member.memberTeam, member.joinedAt, roster.team)) solved.add(id);
       }
     }
-  }
-  return solved;
+    return solved;
+  });
 }
 
 /** The ids that open the next story step for the viewer's team. */

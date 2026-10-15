@@ -11,7 +11,6 @@ vi.mock("server-only", () => ({}));
 // is exercised here, only which one gets picked.
 vi.mock("@/lib/leaderboard/mock", () => ({ mockSource: { id: "mock" } }));
 vi.mock("@/lib/leaderboard/lambda", () => ({ lambdaSource: { id: "lambda" } }));
-vi.mock("@/lib/leaderboard/upstash", () => ({ upstashSource: { id: "upstash" } }));
 // This suite is about LEADERBOARD_SOURCE resolution, not module gating — the
 // secure-development gate is exercised separately in source-empty.test.ts.
 // Live to true so every mode below runs the branch that reads the env var.
@@ -39,10 +38,20 @@ afterEach(() => {
 });
 
 describe("getLeaderboardSourceMode", () => {
-  it.each(["mock", "lambda", "upstash"])("passes %s through silently", async (value) => {
+  it.each(["mock", "lambda"])("passes %s through silently", async (value) => {
     const { getLeaderboardSourceMode } = await loadWith(value);
     expect(await getLeaderboardSourceMode()).toBe(value);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  // A direct-Upstash read is not a mode this app ships: a box whose .env
+  // names it must land on the placeholder board with the warning, not on a
+  // read of a schema no deployed source writes.
+  it("warns and falls back to mock for upstash, which no source implements", async () => {
+    const { getLeaderboardSourceMode } = await loadWith("upstash");
+    expect(await getLeaderboardSourceMode()).toBe("mock");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("upstash");
   });
 
   it("defaults to mock when unset, without warning", async () => {
@@ -86,7 +95,7 @@ describe("getLeaderboardSourceMode", () => {
 describe("getLeaderboardSource", () => {
   it.each([
     ["lambda", "lambda"],
-    ["upstash", "upstash"],
+    ["upstash", "mock"],
     ["mock", "mock"],
     ["dynamo", "mock"],
   ])("resolves %s to the %s source", async (value, expected) => {

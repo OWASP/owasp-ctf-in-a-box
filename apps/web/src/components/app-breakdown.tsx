@@ -20,7 +20,7 @@ const STATUS: Record<ChallengeResult["status"], { label: string; tone: ProgressI
  *  list, at render time, for the one row that is open. An id the catalogue no
  *  longer holds is simply not a row. No catalogue → no list, and the target
  *  row still renders its counts. */
-export function resolveChallenges(
+function resolveChallenges(
   catalog: readonly ChallengeCatalogEntry[] | undefined,
   solvedIds: readonly string[] | undefined,
 ): ChallengeResult[] {
@@ -35,7 +35,7 @@ export function resolveChallenges(
   }));
 }
 
-export function challengeItems(challenges: ChallengeResult[]): ProgressItem[] {
+function challengeItems(challenges: ChallengeResult[]): ProgressItem[] {
   return challenges.map((c) => ({
     key: c.key,
     name: c.name,

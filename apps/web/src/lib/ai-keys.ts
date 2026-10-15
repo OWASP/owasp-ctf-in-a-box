@@ -90,7 +90,7 @@ export function isAiMode(value: unknown): value is AiMode {
   return typeof value === "string" && (AI_MODES as readonly string[]).includes(value);
 }
 
-export type UrlTemplateCheck = { ok: true; value: string } | { ok: false; reason: string };
+type UrlTemplateCheck = { ok: true; value: string } | { ok: false; reason: string };
 
 /** Validates a launch template.
  *

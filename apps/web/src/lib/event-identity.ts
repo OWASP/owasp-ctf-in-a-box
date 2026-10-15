@@ -51,7 +51,7 @@ export function isEventIdentityKey(k: string): k is EventIdentityKey {
 const IDENTITY_CONTROL_CHARS_RE = /[\x00-\x1f\x7f‪-‮⁦-⁩]/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export type IdentityCheck = { ok: true; value: string } | { ok: false; message: string };
+type IdentityCheck = { ok: true; value: string } | { ok: false; message: string };
 
 /** Trims and validates one identity value. An empty trimmed value is OK with
  *  `value: ""` — the caller treats it as "clear back to the default". */

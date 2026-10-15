@@ -17,7 +17,7 @@
 import { useEffect, useRef } from "react";
 import type { ReactNode, RefObject } from "react";
 
-export type ModalDialogProps = {
+type ModalDialogProps = {
   /** Names the dialog for assistive tech AND renders as its heading. */
   title: string;
   /** Red heading for destructive actions; the caller styles its own footer. */

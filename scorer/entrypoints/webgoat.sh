@@ -46,11 +46,12 @@
 # tree the kit targets rather than tracking latest. The build goes through the
 # repo's own ./mvnw wrapper (not a maven: image) because the wrapper pins the
 # Maven version the fork expects.
-JDK_IMAGE="${WEBGOAT_JDK_IMAGE:-eclipse-temurin:23-jdk-noble}"
-DOCKER_CLI_IMAGE="docker:27-cli"
+JDK_IMAGE="${WEBGOAT_JDK_IMAGE:-eclipse-temurin:23-jdk-noble@sha256:7cb6c8eff24b3ef437ed54f73d62387ceb74a763f8b76891ce1f37bfd0f23454}"
+DOCKER_CLI_IMAGE="docker:27-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c"
 SRC_VOL="webgoat_src"
 
 if [ -n "${APP_IMAGE:-}" ]; then
+  # pins: APP_IMAGE is chosen, and pinned, by whoever passes it in
   docker pull "$APP_IMAGE" >/dev/null
   IMAGE="$APP_IMAGE"
 elif [ -f "${GITHUB_WORKSPACE:-/github/workspace}/Dockerfile" ]; then
@@ -62,13 +63,14 @@ elif [ -f "${GITHUB_WORKSPACE:-/github/workspace}/Dockerfile" ]; then
 
   echo "webgoat: staging the PR workspace source ($SRC)…"
   tar --exclude=./.git -C "$SRC" -cf - . \
-    | docker run --rm -i -v "$SRC_VOL":/src -w /src alpine tar -xf - \
+    | docker run --rm -i -v "$SRC_VOL":/src -w /src alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 tar -xf - \
     || { echo "webgoat: staging the workspace source FAILED" >&2; exit 1; }
 
   # Output is buffered and replayed only on failure: a green Maven run is a couple
   # of thousand lines of dependency downloads that bury the scoring log, and the
   # tail on failure is what an organizer actually needs.
   echo "webgoat: building the jar (Maven)…"
+  # pins: JDK_IMAGE is digest-pinned where it is set, above
   docker run --rm -v "$SRC_VOL":/src -w /src "$JDK_IMAGE" \
     ./mvnw -B clean package -DskipTests >/tmp/webgoat-maven.log 2>&1 || {
     echo "webgoat: Maven build FAILED" >&2
@@ -81,6 +83,7 @@ elif [ -f "${GITHUB_WORKSPACE:-/github/workspace}/Dockerfile" ]; then
   # the socket: it reads the context (now including target/) from the volume and
   # streams it to the host daemon.
   echo "webgoat: building the app image…"
+  # pins: DOCKER_CLI_IMAGE is digest-pinned where it is set, above
   docker run --rm -v "$SRC_VOL":/src -v /var/run/docker.sock:/var/run/docker.sock -w /src \
     "$DOCKER_CLI_IMAGE" docker build -t ctf-app-under-test . >/tmp/webgoat-image.log 2>&1 || {
     echo "webgoat: app image build FAILED" >&2
@@ -91,12 +94,14 @@ elif [ -f "${GITHUB_WORKSPACE:-/github/workspace}/Dockerfile" ]; then
 
   # The image carries the jar now — free the disk.
   docker volume rm -f "$SRC_VOL" >/dev/null 2>&1 || true
+  # pins: built locally from the PR checkout, never pulled
   IMAGE=ctf-app-under-test
 else
   echo "webgoat: need APP_IMAGE or a workspace Dockerfile" >&2
   exit 1
 fi
 
+# pins: the app under test: APP_IMAGE, or an image built from the PR checkout
 docker run -d --rm \
   --network "$NETWORK" \
   --network-alias "$APP_HOST" \

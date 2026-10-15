@@ -124,7 +124,7 @@ import {
 export * from "@/components/admin-ai-model";
 export { AiChallengeForm } from "@/components/admin-ai-form";
 
-export type AdminAiControlsProps = {
+type AdminAiControlsProps = {
   /** Parent-wide "a settings POST is in flight" flag — shared with every
    *  other section's inputs, same as classic's cooldown field. */
   pending: boolean;

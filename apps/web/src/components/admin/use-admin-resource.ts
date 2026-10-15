@@ -42,7 +42,7 @@ import {
  *  what it looked like" — which must count as DIRTY: collapsing it into `none`
  *  made the one case the fallback exists for skip its own confirmation and
  *  replace the draft silently, the exact failure being guarded against. */
-export type EditorSnapshot = { kind: "none" } | { kind: "value"; json: string } | { kind: "unserializable" };
+type EditorSnapshot = { kind: "none" } | { kind: "value"; json: string } | { kind: "unserializable" };
 
 /** Records what an editor looks like at the moment it opens. */
 export function snapshotEditor<Editor>(editor: Editor): EditorSnapshot {
@@ -73,11 +73,11 @@ export function editorIsDirty<Editor>(current: Editor | null, snapshot: EditorSn
   }
 }
 
-export type LoadResult<Row> = { ok: true; rows: Row[]; categories: string[] } | { ok: false; message: string };
+type LoadResult<Row> = { ok: true; rows: Row[]; categories: string[] } | { ok: false; message: string };
 
-export type PostResult<Row> = { ok: true; row: Row } | { ok: false; message: string };
+type PostResult<Row> = { ok: true; row: Row } | { ok: false; message: string };
 
-export type AdminResourceConfig<Row, Editor, Payload> = {
+type AdminResourceConfig<Row, Editor, Payload> = {
   /** `/api/admin/<module>` — GET lists, POST upserts, DELETE removes. */
   endpoint: string;
   describeError: DescribeError;
@@ -139,7 +139,7 @@ export async function postRow<Row, Editor, Payload>(
   return { ok: true, row };
 }
 
-export type ReorderOutcome<Row> = { ok: true } | { ok: false; message: string; fresh: LoadResult<Row> };
+type ReorderOutcome<Row> = { ok: true } | { ok: false; message: string; fresh: LoadResult<Row> };
 
 /** The reorder write-back: re-saves each changed row, in order, through the
  *  upsert route. On the FIRST failure it stops and re-reads the lists from

@@ -11,9 +11,15 @@ import type { AppMeta } from "@/lib/apps";
 import ModuleDetail from "@/components/module-detail";
 import AppBreakdown from "@/components/app-breakdown";
 import BoardItemLists from "@/components/board-item-lists";
+import { hasAppSideProgress } from "@/lib/leaderboard/app-side-progress";
 import { Avatar, RankChip } from "@/components/leaderboard-chrome";
 import { fillStyle } from "@/components/progress/progress-bar";
 import type { LeaderboardData, LeaderboardEntry } from "@/lib/leaderboard/types";
+
+/** Whether any module block on the row has a completed item in it. */
+function hasCompleted(modules: LeaderboardEntry["modules"]): boolean {
+  return Object.values(modules ?? {}).some((m) => (m?.completed ?? 0) > 0);
+}
 
 function LegacyBreakdown({ entry }: { entry: LeaderboardEntry }) {
   return (
@@ -74,11 +80,17 @@ export function EntryRow({
   const multiModule = modules.length > 1;
   // The same function the comparator breaks points ties on — see `completedCount`.
   const solved = completedCount(entry);
+  // The solved column is cross-module, so it divides by the EVENT's
+  // completable count, discounted by this row's locked classic steps: a story
+  // step the row cannot reach yet is not something it can do, so it leaves the
+  // total. A row with no classic detail — or none locked — subtracts nothing.
+  const classicDetail = entry.modules?.classic?.detail;
+  const classicLocked = classicDetail?.kind === "classic" ? classicDetail.locked : 0;
   // Clamped to the row's own numerator: a failed module-count read leaves
   // `completable` short (see withModuleContributions), and "28 / 21" is worse
   // than no denominator at all. Hidden entirely when there is nothing
   // trustworthy to divide by.
-  const solvedTotal = completable && completable > 0 ? Math.max(completable, solved) : null;
+  const solvedTotal = completable && completable > 0 ? Math.max(completable - classicLocked, solved) : null;
   return (
     <li
       className={`ds-card group rounded-lg border bg-[#16162a] transition-all hover:border-[#2563eb]/40 hover:bg-[#1a1a30] ${
@@ -179,7 +191,7 @@ export function EntryRow({
             </span>
             {entry.updatedAgo && <span>Last update {entry.updatedAgo}</span>}
           </div>
-          {entry.modules && Object.keys(entry.modules).length > 0 ? (
+          {entry.modules && Object.keys(entry.modules).length > 0 &&
             modules
               .filter((m) => entry.modules?.[m.id])
               .map((m) => (
@@ -198,22 +210,24 @@ export function EntryRow({
                     catalog={catalog}
                   />
                 </div>
-              ))
-          ) : capabilities.apps ? (
-            <AppBreakdown entry={entry} enabledApps={enabledApps} catalog={catalog} />
-          ) : (
-            <LegacyBreakdown entry={entry} />
-          )}
+              ))}
+          {/* The source's own breakdown, for a row whose module blocks do
+              not carry it: no secure-development block and nothing
+              completed anywhere. A row holding only zero blocks is one of
+              these, and its zero blocks must not take the patched summary
+              off an upstash-shaped row. */}
+          {!entry.modules?.["secure-development"] && !hasCompleted(entry.modules) &&
+            (capabilities.apps ? (
+              <AppBreakdown entry={entry} enabledApps={enabledApps} catalog={catalog} />
+            ) : (
+              <LegacyBreakdown entry={entry} />
+            ))}
           {/* Which questions / which flags — the same Show-N lists the
               profile blocks carry, lazily fetched now that the row is
-              actually open. Only when the entry has app-side activity to
-              enumerate. */}
-          {/* Derived rather than hand-listed: a hardcoded `quiz || classic ||
-              ai` gate silently dropped a module's item list the moment a
-              fifth module (ai) shipped without the check being updated to
-              name it too. secure-development has its own AppBreakdown above,
-              never BoardItemLists, so it's the one id excluded here. */}
-          {Object.keys(entry.modules ?? {}).some((id) => id !== "secure-development") && (
+              actually open, and only when the entry has completed something
+              to enumerate. See `hasAppSideProgress` for why the gate is
+              derived and keyed on a completed item rather than a block. */}
+          {hasAppSideProgress(entry.modules) && (
             <BoardItemLists logins={[entry.login]} classicPoints={entry.modules?.classic?.points} />
           )}
         </div>

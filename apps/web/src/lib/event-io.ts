@@ -81,7 +81,7 @@ export const EVENT_POLICY_FIELDS = [
 
 const EVENT_POLICY_FIELD_SET = new Set<string>(EVENT_POLICY_FIELDS);
 
-export type EventBundleEvent = {
+type EventBundleEvent = {
   name: string;
   theme?: string;
   dates?: string;
@@ -123,7 +123,7 @@ export type { AttachmentFile };
 
 export type EventImportError = { where: string; message: string };
 
-export type EventParseResult = { ok: true; bundle: EventBundle } | { ok: false; errors: EventImportError[] };
+type EventParseResult = { ok: true; bundle: EventBundle } | { ok: false; errors: EventImportError[] };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);

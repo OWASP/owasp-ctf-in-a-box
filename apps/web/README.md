@@ -97,7 +97,7 @@ src/
     admin-store.ts          # ctf:admin:settings — pause, schedule, cap, hint policy
     team-store.ts, hint-store.ts, quiz-store.ts, classic-store.ts, ai-store.ts
     launch.ts               # Pre-launch lock: page redirect + API 403 not-launched
-    leaderboard/            # Source adapters (mock/lambda/upstash/empty) + overlays
+    leaderboard/            # Source adapters (mock/lambda/empty) + overlays
     upstash.ts              # Redis REST client (pipeline + EVAL)
     __tests__/              # vitest, incl. the *.lua.upstash.test.ts grading suites
 ```

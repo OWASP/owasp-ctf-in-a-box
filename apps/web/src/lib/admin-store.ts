@@ -67,13 +67,13 @@ export const PAUSE_LOG_CAP = 200;
 export const SYNC_STATUS_KEY = "ctf:sync:status";
 export const HINT_COST_MAX = 100000;
 /** Caps for the two hint-gating knobs (see hint-store's `hintGate`). */
-export const HINT_MIN_SOLVES_MAX = 1000;
-export const HINT_UNLOCK_AFTER_MAX = 100000; // minutes
+const HINT_MIN_SOLVES_MAX = 1000;
+const HINT_UNLOCK_AFTER_MAX = 100000; // minutes
 /** Caps for the two quiz retry-gate knobs (see quiz-store's `quizGate`). */
-export const QUIZ_MAX_ATTEMPTS_MAX = 100;
-export const QUIZ_RETRY_AFTER_MAX = 100000; // minutes
+const QUIZ_MAX_ATTEMPTS_MAX = 100;
+const QUIZ_RETRY_AFTER_MAX = 100000; // minutes
 /** Cap for the classic-module submission cooldown (see below). */
-export const CLASSIC_COOLDOWN_SEC_MAX = 3600;
+const CLASSIC_COOLDOWN_SEC_MAX = 3600;
 /** Cap for the ai-module submission cooldown (see below). Separate constant
  *  from CLASSIC_COOLDOWN_SEC_MAX rather than shared: the two modules' knobs
  *  happen to agree on [0, 3600] today, but nothing ties them together, and a

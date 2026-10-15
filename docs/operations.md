@@ -1804,9 +1804,10 @@ ids in order:
 ```
 
 A version 1 file still imports unchanged, but it cannot carry `stories`.
-(Today's export is stamped `"version": 2`, or `"version": 3` when it
+(Today's export is stamped `"version": 2`, `"version": 3` when it
 carries the optional attachment files described under "Files in bundles
-and archives" below.)
+and archives" below, or `"version": 4` when any challenge is hidden or
+scheduled.)
 Every step must name a challenge **in the same file**, the same
 self-contained rule that applies to categories. Stories merge by id, the
 same way challenges do:
@@ -1928,8 +1929,9 @@ The bytes travel in one of two places:
   default) and the bundle stays the small, metadata-only file.
 
 A bundle that carries files is stamped `"version": 3`. One without them
-(the option unticked, or nothing uploaded) stays `"version": 2`, so a box on
-an older build still imports it. Each `attachmentFiles` entry
+(the option unticked, or nothing uploaded) stays `"version": 2` (or 4 when it
+carries a hidden or scheduled challenge), so a box on an older build still
+imports it. Each `attachmentFiles` entry
 is `{ "item", "sha256", "bytes" }`: the challenge id, the upload's sha256,
 and the file's bytes as base64. Every entry must name an upload in the same
 file by challenge id and sha256. Version 1 and 2 files still import
@@ -2115,9 +2117,8 @@ like classic.
 
 **Position ordering is a plain editable number**, not drag-and-drop. Unlike
 quiz's and classic's question/challenge lists, this panel has no
-reorder-by-dragging UI — organizers curate a long-running board there;
-nothing about this task called for the same parity here, so `order` is just
-another field the form edits directly.
+reorder-by-dragging UI — organizers curate a long-running board there,
+so `order` is the **Position** number field the form edits directly.
 
 **The integration panel** is what an external challenge actually wires up
 against. It comes in two parts. The **Endpoints** block sits once, above the
@@ -2163,10 +2164,10 @@ carries:
   hard-coded server-side, never taken from the request — so nothing is
   written: no nonce is claimed, no points are awarded. It is safe to click
   against a live event, and it relays that handler's real verdict verbatim
-  rather than inventing one. The panel renders exactly one of two lines
+  rather than inventing one. The panel renders exactly one line
   under the button: a green **Would award — the dry run verified end to
-  end.** for the good case, or a red **Test result: `<name>`** for anything
-  else, where `<name>` is the verdict or error string the route handed back
+  end.** for the good case, or **Test result: `<name>`** for anything
+  else — green for `solved` or `would-award`, red for a refusal or failure — where `<name>` is the verdict or error string the route handed back
   (or `unavailable` when it handed back nothing readable — a 503, or the
   request itself failing). The panel now prints a one-sentence explanation
   under that name for every verdict listed below, so the table here is a
@@ -2503,12 +2504,12 @@ $ curl -s https://ctf.example.org/health
 | `builtAt` | When the image was built. Distinguishes two deploys of the same commit — a redeploy after a config or secret change rebuilds the image without moving the sha. |
 
 `revision` and `builtAt` are baked at build time from `APP_BUILD_REV` and
-`APP_BUILT_AT` (Docker build args). `deploy/fly/deploy.sh`,
-`deploy/aws-terraform/deploy.sh` and `scripts/dev-stack` fill them in; a build
-that passes neither reports
-`"unknown"` and `null` rather than failing. `deploy.sh` deliberately reports
-`unknown` when the working tree is dirty, because the sha would not describe
-the image it built.
+`APP_BUILT_AT` (Docker build args). `deploy/fly/deploy.sh` and
+`deploy/aws-terraform/deploy.sh` fill in both; `scripts/dev-stack` fills in
+only `builtAt`, so a dev stack always reports `revision: "unknown"`. A build
+that passes neither reports `"unknown"` and `null` rather than failing. Both
+`deploy.sh` scripts deliberately report `unknown` when `apps/web/` (the app's
+build context) is dirty, because the sha would not describe the image built.
 
 Watching for a deploy to land:
 
@@ -2547,11 +2548,8 @@ The scorer engine has two more gates of its own:
 `acceptance-scorer.sh` closes the judge → PR-comment marker → leaderboard loop
 against a fake target app: it POSTs the marker the judge wrote the way `sync`
 does, and asserts the leaderboard then shows rubric-derived points. It also
-runs the judge twice, once with `SCORE_API`/`SCORE_TOKEN` set and once with
-neither, and requires the two reports to be byte-identical — that environment
-is dead since push ingest was removed
-([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377)), and this is the
-assertion that keeps it dead.
+checks the report carries the score-action regexes with the expected count,
+and that no probe internal leaks into it.
 `acceptance-target.sh` is the **stock-scores-zero gate**: it boots the real,
 unpatched upstream image and asserts every challenge fails against it. Any
 challenge that passes there asserts the exploit rather than the fix, and the
@@ -2739,7 +2737,9 @@ template, or fork and open PRs, before the event starts.
      everyone a head start. It needs `EVENT_URL` in `.env` to see the press,
      and refuses without it.
    - Then it makes every fork **public**, within one poll interval of the
-     press. If Launch never comes, nothing was changed.
+     press, and applies the `ctf` branch protection that `org` deferred (the
+     free plan cannot protect a private repo), checking it before it reports
+     success. If Launch never comes, nothing was changed.
 
    It uses your own `gh` login; the box never holds a GitHub admin
    credential. Every step is idempotent: after a partial failure it names
@@ -2798,7 +2798,7 @@ Known limits, in the open:
   example). The app is wired to it today for real team-membership and
   hint-purchase data. That the app's Redis client stays inside that subset
   is no longer unverified: `apps/web/src/lib/upstash.ts` exposes exactly two
-  entry points, `upstashPipeline` and `upstashEval`, and the seven
-  `*.upstash.test.ts` suites drive both against a real Redis behind `srh` in
+  entry points, `upstashPipeline` and `upstashEval`, and every
+  `*.upstash.test.ts` suite drives both against a real Redis behind `srh` in
   the `app` CI job — with `CTF_LUA_SUITES_REQUIRED=1` turning a skip into a
   failure, so pipelining and `EVAL` are exercised end to end on every run.

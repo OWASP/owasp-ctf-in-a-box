@@ -367,6 +367,21 @@ describe("importEventBundle", () => {
     vi.mocked(adminStore.updateAdminSettings).mockResolvedValue({} as Awaited<ReturnType<typeof adminStore.updateAdminSettings>>);
   });
 
+  it("round-trips a switched-off module: its content is re-imported and it stays off", async () => {
+    vi.mocked(aiStore.importBundle).mockResolvedValue({ created: 0, updated: 0, categories: 1 });
+    m.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["quiz"], paused: true });
+    const { bundle } = await exportEventBundle(new Date());
+
+    m.getAdminSettings.mockResolvedValue({ paused: true });
+    await importEventBundle(JSON.parse(JSON.stringify(bundle)), "alice");
+
+    expect(classicStore.importBundle).toHaveBeenCalledWith(bundle.classic);
+    expect(aiStore.importBundle).toHaveBeenCalledWith(bundle.ai);
+    expect(quizStore.importBundle).toHaveBeenCalledWith(bundle.quiz);
+    const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
+    expect(patch.enabledModules).toEqual(["quiz"]);
+  });
+
   it("refuses to import into a live event", async () => {
     m.effectivePaused.mockReturnValue(false);
     await expect(importEventBundle(bundleFixture(), "alice")).rejects.toBeInstanceOf(EventLiveError);

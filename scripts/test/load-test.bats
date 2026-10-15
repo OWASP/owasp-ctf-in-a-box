@@ -56,3 +56,19 @@ EOF
   run env PATH="$STUB:$PATH" "$REPO_ROOT/scripts/load-test.sh" --app demo --clean
   [ "$status" -eq 1 ] && [ -z "$(grep -F 'rm -f' "$CALLS")" ]
 }
+
+# The p95 phase driver needs autocannon require-able, so a run installs it
+# into its scratch directory BEFORE seeding (issue #446). An install that
+# fails is a setup failure: a report naming the step, and no synthetic rows
+# left behind for the operator to discover.
+@test "a failed autocannon install is a setup failure and seeds nothing" {
+  cat > "$STUB/npm" <<EOF
+#!/bin/sh
+exit 1
+EOF
+  chmod +x "$STUB/npm"
+  REPORT="$BATS_TEST_TMPDIR/report.md"
+  run env PATH="$STUB:$PATH" "$REPO_ROOT/scripts/load-test.sh" --app demo --url http://example.invalid --count 2 --report "$REPORT"
+  grep -q 'installing autocannon' "$REPORT"
+  [ "$status" -eq 1 ] && [ -z "$(grep -F -- '--count' "$CALLS")" ]
+}

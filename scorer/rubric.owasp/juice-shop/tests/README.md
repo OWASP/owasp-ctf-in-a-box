@@ -47,12 +47,15 @@ export CTF_UPSTREAM_DIR=/path/to/juice-shop
 Then, from `scorer/rubric.owasp/juice-shop/tests/`:
 
 ```sh
-node --test --test-reporter=spec challenges/                # all of them
+# exactly the challenges the judge runs (the catalogue's files, no guards)
+node --test $(node -p 'require("./challenges/catalogue.juice-shop.json").map((c) => "challenges/" + c.file).join(" ")')
+
 node --test challenges/Challenge-1-Password-Hash-Leak.test.js   # one
-JUICE_SHOP_URL=http://localhost:3000 node --test challenges/    # another host
+node --test challenges/                                         # everything, guards included
 ```
 
-Against the stock image every challenge should fail: a stock app scores 0.
+Set `JUICE_SHOP_URL` to test another host. Against the stock image every
+challenge in the first command should fail: a stock app scores 0..
 
 ## Adding a challenge
 

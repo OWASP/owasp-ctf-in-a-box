@@ -199,11 +199,11 @@ on ECS: where the logs are, how to get a shell, what each failure looks
 like, and how to roll back and tear down. Symptom-first recipes are in
 [docs/troubleshooting.md](troubleshooting.md).
 
-**Not yet verified on a live stack.** This module has not been applied end
-to end yet. The rehearsal tracked in
-[#476](https://github.com/OWASP/owasp-ctf-in-a-box/issues/476) runs every
-drill below against a throwaway stack, and it is where this runbook gets
-corrected. Run that rehearsal before you rely on AWS for a real event.
+**Run at a real event.** This module hosted the first live event, on
+October 7–8, 2026. What that event taught — monitoring, snapshots, the
+deploy script, hardening and sizing — is tracked in
+[#593](https://github.com/OWASP/owasp-ctf-in-a-box/issues/593). Rehearse the
+drills below on a throwaway stack before you rely on them at your own event.
 
 Every command below uses these names:
 

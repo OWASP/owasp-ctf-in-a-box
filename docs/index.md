@@ -253,14 +253,13 @@ Pick the doc for what you're doing right now:
 
 ## Status
 
-The kit is complete, tested offline and running live: the smoke test
-(`scripts/smoke.sh`) exercises the whole poll pipeline end to end, every
-target's rubric is gated against the unpatched app, the full live-GitHub
-scoring path ships in-kit, and a hosted instance runs continuously from the
-Compose file this repo ships — an end-to-end pass over it is where a batch of
-real defects were found and fixed. What it still awaits is a first real event:
-a cohort of contestants driving real PRs through real GitHub, at once. The
-known limits, stated in the open, are in
+The kit has run a real event. The first one ran on October 7–8, 2026, on
+the [AWS module](aws.md) behind Cloudflare: 28 teams and 41 players, 498
+Secure Development score comments ingested with none dropped, and about
+465,000 requests over the two event days. CI gates every target's rubric in
+both directions — the unpatched app scores 0 and a reference patch earns its
+points — and the smoke test (`scripts/smoke.sh`) runs the whole poll
+pipeline end to end. The known limits, stated in the open, are in
 [Status and upstream dependencies](operations.md#status-and-upstream-dependencies).
 
 ---

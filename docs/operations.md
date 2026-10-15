@@ -2778,14 +2778,12 @@ on from other OWASP-CTF repos landed here instead:
    org secrets of its own — the comment is the transport, so there is nothing
    for it to authenticate to.
 
-What none of that bounds: **no real event has yet driven real contestant PRs
-through real GitHub end to end**, and nothing here has been exercised at the
-concurrency of a full cohort. A live instance catches what mocks cannot — an
-end-to-end pass over one is where a batch of real defects were found, several
-of them invisible to a green CI run — but one operator clicking through a
-deployed box is not forty contestants pushing at once. Until an event has run,
-treat `scripts/smoke.sh` as the source of truth that the pipeline works, and
-the live box as evidence that it works when deployed.
+**It has run a real event.** The first one ran on October 7–8, 2026, on the
+AWS module behind Cloudflare, with a new challenge release on October 9:
+28 teams and 41 players, 498 Secure Development score comments ingested with
+none dropped, and about 465,000 requests over the two event days. That is
+the measured load: a larger cohort, or a single box on venue wifi, is still
+beyond what has been run.
 
 Known limits, in the open:
 

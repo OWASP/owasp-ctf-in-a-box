@@ -66,7 +66,7 @@ jobs:
           # depends on the JUDGE path, not serve.js / store.js (the
           # leaderboard path). Those are covered by the fast `scorer` unit
           # job in ci.yml.
-          if printf '%s\n' "$changed" | grep -qE '^scorer/(Dockerfile|package(-lock)?\.json|entrypoint\.sh)$|^scorer/(entrypoints|rubric\.owasp)/|^scorer/src/(index|judge|exec|probe|rubric|rubric-id|catalogue|targets)\.js$|^scripts/(acceptance-target\.sh|lib/acceptance-lib\.sh)$|^\.github/workflows/stock-scores-zero\.yml$'; then
+          if grep -qE '^scorer/(Dockerfile|package(-lock)?\.json|entrypoint\.sh)$|^scorer/(entrypoints|rubric\.owasp)/|^scorer/src/(index|judge|exec|probe|rubric|rubric-id|catalogue|targets)\.js$|^scripts/(acceptance-target\.sh|lib/acceptance-lib\.sh)$|^\.github/workflows/stock-scores-zero\.yml$' <<<"$changed"; then
             echo "judge=true"
           else
             echo "judge=false"

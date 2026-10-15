@@ -64,6 +64,7 @@ challenge in the first command should fail: a stock app scores 0..
 2. Add its entry to `catalogue.juice-shop.json` (`key`, `id`, `file`,
    `name`, `difficulty`, `owasp`, `category`); the judge runs only what the
    catalogue lists.
-3. Make it fail against the stock app and pass against a fix, and prove the
-   app is up and the exploit path is reachable before asserting the fix
-   (`assertShopAlive()`), so a down app can never pass it.
+3. Make it fail against the stock app and pass against a fix. Before
+   asserting the fix, call `assertShopAlive()` (a health check: the app is up
+   and its catalogue answers) and then prove this challenge's own exploit
+   path is reachable, so neither a down app nor a missing route can pass it.

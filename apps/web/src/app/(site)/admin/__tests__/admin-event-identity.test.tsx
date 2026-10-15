@@ -51,7 +51,6 @@ describe("Event tab identity rows", () => {
   it("labels the rows with the organizer-facing copy", () => {
     expect(EVENT_IDENTITY_ROWS.map((r) => r.label)).toEqual([
       "Event name",
-      "Tagline",
       "Location",
       "Timezone",
       "Contact e-mail",

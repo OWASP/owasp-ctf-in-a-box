@@ -34,7 +34,7 @@ import AdminEventControls, {
 const validBundle: EventBundle = {
   version: 1,
   kind: "archive",
-  event: { name: "Demo CTF", theme: "web", dates: "2026", location: "online", ctfStartsAt: null },
+  event: { name: "Demo CTF", dates: "2026", location: "online", ctfStartsAt: null },
   settings: { hintCost: 50, teamMaxMembers: 4 },
   quiz: {
     version: 1,

@@ -149,18 +149,18 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
 
   it("round-trips the event identity fields and clears them on empty (issue #386)", async () => {
     await updateAdminSettings(
-      { eventName: "Live CTF", eventTheme: "Ship it", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live" },
+      { eventName: "Live CTF", eventLocation: "Montevideo", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live" },
       "alice",
     );
     let s = await getAdminSettings();
     expect(s.eventIdentity).toEqual({
-      eventName: "Live CTF", eventTheme: "Ship it", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live",
+      eventName: "Live CTF", eventLocation: "Montevideo", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live",
     });
-    await updateAdminSettings({ eventTheme: "", eventDiscord: "" }, "alice");
+    await updateAdminSettings({ eventLocation: "", eventDiscord: "" }, "alice");
     s = await getAdminSettings();
     expect(s.eventIdentity).toEqual({ eventName: "Live CTF", eventContact: "org@example.org" });
     const [fields] = await upstashPipeline([["HKEYS", "ctf:admin:settings"]]);
-    expect(fields.result).not.toContain("eventTheme");
+    expect(fields.result).not.toContain("eventLocation");
     expect(fields.result).not.toContain("eventDiscord");
   });
 

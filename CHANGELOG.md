@@ -20,6 +20,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Removed: the event Tagline setting (#648).** The Event tab's Tagline
+  field was saved and carried in the event archive but shown on no page, so
+  it is gone: the Event tab no longer offers it, `/admin` refuses an
+  `eventTheme` write as an unknown setting, and the archive export no longer
+  carries `event.theme`. An older archive that still has it imports as
+  before, with the value ignored. A tagline already stored on a box stays in
+  `ctf:admin:settings` unread; nothing needs cleaning up.
+- **Fixed: the demo quiz marked XSS as not an injection vulnerability
+  (#649).** The `injection-types` question in the demo seed now counts
+  Cross-Site Scripting as correct alongside SQL and command injection, as
+  OWASP Top 10 2021 A03 does.
 - **Fixed: an event archive round trip deleted a switched-off module's
   content (#644).** The archive export left out the Jeopardy, Quiz or AI
   content of any module that was switched off, while the import clears all

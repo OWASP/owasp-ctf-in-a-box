@@ -1313,8 +1313,8 @@ an organizer changes during an event: the live module set
 (`lib/enabled-modules.ts` → `lib/resolved-modules.ts` over the static
 `modules.ts` registry), the live Secure Development target list
 (`lib/enabled-apps.ts`, a per-request filter over `apps.ts`'s static
-catalogue of all six), the event's identity — name, tagline, location, contact
-e-mail, Discord invite — through `lib/site.ts`'s request-cached `getSite()`,
+catalogue of all six), the event's identity — name, location, time zone, contact
+e-mail, Discord invite, logo link — through `lib/site.ts`'s request-cached `getSite()`,
 the scoring schedule and the freeze, the hint policy, and the team caps. The
 dates line and the countdown are derived from the scoring window rather than
 stored separately (`lib/event-dates.ts`). `sync` re-reads the target list on

@@ -48,13 +48,6 @@ export const EVENT_IDENTITY_ROWS: readonly {
     maxLength: EVENT_IDENTITY_MAX.eventName,
   },
   {
-    key: "eventTheme",
-    label: "Tagline",
-    help: "One line under the event name on the landing page. Blank hides it.",
-    placeholder: "No tagline",
-    maxLength: EVENT_IDENTITY_MAX.eventTheme,
-  },
-  {
     key: "eventLocation",
     label: "Location",
     help: "Shown beside the dates on the landing page and in the page description. Blank hides it.",

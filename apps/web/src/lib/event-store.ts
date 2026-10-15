@@ -45,7 +45,7 @@ const LIVE_WARNING = "This event is live — do not publish this bundle while co
  *  modules' own `exportBundle()` (which themselves only read their own
  *  challenge/question definitions, never solves/attempts), the
  *  `EVENT_POLICY_FIELDS`-picked subset of `getAdminSettings()`, and the
- *  runtime identity fields (`name`, `theme`, `dates`, `location`,
+ *  runtime identity fields (`name`, `dates`, `location`,
  *  `ctfStartsAt`, and `logoUrl` / `timeZone` when set) resolved via `resolveSite` over that SAME settings read
  *  (see below — no second HGETALL, no fail-open in an export). No
  *  `ctf:user:*`/
@@ -138,7 +138,6 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
     kind: "archive",
     event: {
       name: site.name,
-      theme: site.theme,
       dates: site.dates,
       location: site.location,
       ctfStartsAt: site.ctfStartsAt,
@@ -244,7 +243,7 @@ export type EventImportSummary = {
  *  to admin settings; schedule/run fields (`paused`, `scoringStartsAt`, etc.)
  *  are never in that allowlist (see event-io.ts's header) and so can never
  *  leak into the patch. `bundle.event.name` (always present) and its optional
- *  `theme`/`location` are merged into that SAME patch — see below. Secure
+ *  `location` is merged into that SAME patch — see below. Secure
  *  Development content is outside what a bundle can carry at all — that is
  *  reported back in `skipped` rather than silently dropped.
  *
@@ -303,7 +302,6 @@ export async function importEventBundle(
   // header comment), so only these can come back (the logo link travels
   // with the logo; the time zone likewise).
   patch.eventName = bundle.event.name;
-  if (typeof bundle.event.theme === "string") patch.eventTheme = bundle.event.theme;
   if (typeof bundle.event.location === "string") patch.eventLocation = bundle.event.location;
   if (typeof bundle.event.logoUrl === "string") patch.eventLogoUrl = bundle.event.logoUrl;
   if (typeof bundle.event.timeZone === "string") patch.eventTimeZone = bundle.event.timeZone;
@@ -311,7 +309,7 @@ export async function importEventBundle(
 
   // The images are identity too, so they land with the identity patch. A
   // slot the archive does not carry keeps what the box has — the same rule
-  // as an absent tagline. `resetEvent` below never touches them.
+  // as an absent location. `resetEvent` below never touches them.
   let importedImages: string[] | undefined;
   if (bundle.eventImages) importedImages = Object.keys(await importEventImages(bundle.eventImages)).sort();
 

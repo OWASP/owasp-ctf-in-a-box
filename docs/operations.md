@@ -303,8 +303,7 @@ The panel offers:
   into the image. Each restores its default when left blank: **Event name** (≤80
   characters; blank restores "OWASP CTF in a Box"; shown in page titles,
   the header, the leaderboard, and this panel's own master-reset confirmation),
-  **Tagline** (≤160; one line under the event name on the landing page;
-  blank hides it), **Location** (≤160; shown beside the dates on the landing
+  **Location** (≤160; shown beside the dates on the landing
   page and in the page description; blank hides it), **Timezone** (≤64; an
   IANA zone such as `America/Argentina/Buenos_Aires`, suggested as you type;
   the landing page's dates, the phase line, the score chart's axis and the
@@ -1277,12 +1276,14 @@ second successful run overwrites whatever the failed one left behind.
 again before the import runs anything destructive; an archive without them
 leaves the box's own images as they are.
 
-**Name, tagline and location travel with the bundle; contact and Discord
-never do.** The event's identity is a runtime `/admin` setting now (issue
-#386), so on import only the supported identity fields — `name`, `theme`
-and `location` — are applied, through the same validated settings patch as
-every other policy field, before anything destructive runs — a restore or a
-repeat run of the same CTF renames itself without a rebuild. The bundle's
+**Name, location, time zone and logo link travel with the bundle; contact
+and Discord never do.** The event's identity is a runtime `/admin` setting
+(issue #386), so on import only the supported identity fields are applied —
+`name`, plus `location`, `timeZone` and `logoUrl` when the bundle carries
+them; an older archive's `theme` (the retired tagline) is ignored. They go
+through the same validated settings patch as every other policy field,
+before anything destructive runs — a restore or a repeat run of the same
+CTF renames itself without a rebuild. The bundle's
 `dates` and `ctfStartsAt` are informational only (they travel with the
 export for the record — see above) and are **not** reapplied on import: both
 are derived from the **Scoring opens** / **Scoring closes** schedule, which an

@@ -93,7 +93,7 @@ afterward from `/admin` → Secure Development → Targets, live, with no
 rebuild — see [docs/operations.md](operations.md#targets).
 
 **Everything else is a runtime setting, so the wizard does not ask for it.**
-Which modules run, the event's name, tagline, location, contact and Discord
+Which modules run, the event's name, location, time zone, contact and Discord
 invite, the scoring window and dates, hint policy, team caps, the quiz's
 attempt and cooldown knobs: all of them live in `ctf:admin:settings` and are
 changed from `/admin` while the event is up (config v2, #386). There is no
@@ -835,7 +835,8 @@ panel while the event is running, and covered in
   setup script forks and provisions all six; the panel picks the live subset,
   and `sync` re-reads it every tick.
 - **The event's identity** — Event → Identity: name (default
-  `OWASP CTF in a Box`), tagline, location, contact e-mail, Discord invite.
+  `OWASP CTF in a Box`), location, time zone, contact e-mail, Discord invite
+  and logo link.
 - **The scoring schedule and the freeze** — Event → Schedule: scoring opens,
   scoring closes, and the manual pause.
 - **Hints, teams and caps** — the hint switch and prices, the registration
@@ -938,7 +939,7 @@ reads **no build-time configuration at all**, and no image in the kit takes a
 config build-arg. That is the point of #386: an image is the same image on
 every box, and a build that forgot a variable can no longer ship an event with
 an empty admin list. Dates come from the scoring schedule (**Scoring opens** /
-**Scoring closes**) set in `/admin` → Event, same as name, tagline, location,
+**Scoring closes**) set in `/admin` → Event, same as name, location,
 contact e-mail and Discord invite — all runtime settings, read on every
 request.
 

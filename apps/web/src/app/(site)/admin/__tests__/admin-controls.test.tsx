@@ -588,9 +588,10 @@ describe("AdminControls event identity section", () => {
   it("renders one input per identity field, ahead of the module switches", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
     const eventPanel = panelFor(html, "event");
-    for (const name of ["eventName", "eventTheme", "eventLocation", "eventTimeZone", "eventContact", "eventDiscord", "eventLogoUrl"]) {
+    for (const name of ["eventName", "eventLocation", "eventTimeZone", "eventContact", "eventDiscord", "eventLogoUrl"]) {
       expect(eventPanel).toContain(`name="${name}"`);
     }
+    expect(eventPanel).not.toContain(`name="eventTheme"`);
     const identityAt = eventPanel.indexOf(">Identity<");
     const modulesAt = eventPanel.indexOf(">Modules<");
     expect(identityAt).toBeGreaterThan(-1);

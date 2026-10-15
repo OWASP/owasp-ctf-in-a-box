@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_EVENT_IDENTITY, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX, EVENT_IDENTITY_KEYS, EVENT_LOCATION_MAX, EVENT_LOGO_URL_MAX, EVENT_TIME_ZONE_MAX,
-  EVENT_NAME_MAX, EVENT_THEME_MAX, checkEventIdentityValue, isEventIdentityKey,
+  EVENT_NAME_MAX, checkEventIdentityValue, isEventIdentityKey,
 } from "@/lib/event-identity";
 
 describe("event identity contract", () => {
   it("names exactly the spec fields, in order (#545 adds the logo link last)", () => {
-    expect([...EVENT_IDENTITY_KEYS]).toEqual(["eventName", "eventTheme", "eventLocation", "eventTimeZone", "eventContact", "eventDiscord", "eventLogoUrl"]);
+    expect([...EVENT_IDENTITY_KEYS]).toEqual(["eventName", "eventLocation", "eventTimeZone", "eventContact", "eventDiscord", "eventLogoUrl"]);
   });
   it("defaults to OWASP CTF in a Box and nothing else", () => {
-    expect(DEFAULT_EVENT_IDENTITY).toEqual({ eventName: "OWASP CTF in a Box", eventTheme: "", eventLocation: "", eventTimeZone: "", eventContact: "", eventDiscord: "", eventLogoUrl: "" });
+    expect(DEFAULT_EVENT_IDENTITY).toEqual({ eventName: "OWASP CTF in a Box", eventLocation: "", eventTimeZone: "", eventContact: "", eventDiscord: "", eventLogoUrl: "" });
   });
   it("pins the spec limits", () => {
-    expect([EVENT_NAME_MAX, EVENT_THEME_MAX, EVENT_LOCATION_MAX, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX, EVENT_LOGO_URL_MAX, EVENT_TIME_ZONE_MAX]).toEqual([80, 160, 160, 254, 200, 2048, 64]);
+    expect([EVENT_NAME_MAX, EVENT_LOCATION_MAX, EVENT_CONTACT_MAX, EVENT_DISCORD_MAX, EVENT_LOGO_URL_MAX, EVENT_TIME_ZONE_MAX]).toEqual([80, 160, 254, 200, 2048, 64]);
   });
   it("recognises its keys and nothing else", () => {
     expect(isEventIdentityKey("eventName")).toBe(true);
@@ -26,7 +26,7 @@ describe("checkEventIdentityValue", () => {
     expect(checkEventIdentityValue("eventName", "  Demo CTF ")).toEqual({ ok: true, value: "Demo CTF" });
   });
   it("returns an empty value for whitespace-only input (the caller clears)", () => {
-    expect(checkEventIdentityValue("eventTheme", "   ")).toEqual({ ok: true, value: "" });
+    expect(checkEventIdentityValue("eventLocation", "   ")).toEqual({ ok: true, value: "" });
   });
   it("rejects non-strings", () => {
     expect(checkEventIdentityValue("eventName", 42)).toMatchObject({ ok: false });
@@ -39,7 +39,7 @@ describe("checkEventIdentityValue", () => {
   it("enforces each field's max after trimming", () => {
     expect(checkEventIdentityValue("eventName", "x".repeat(80))).toMatchObject({ ok: true });
     expect(checkEventIdentityValue("eventName", "x".repeat(81))).toMatchObject({ ok: false, message: expect.stringContaining("80") });
-    expect(checkEventIdentityValue("eventTheme", "x".repeat(161))).toMatchObject({ ok: false, message: expect.stringContaining("160") });
+    expect(checkEventIdentityValue("eventLocation", "x".repeat(161))).toMatchObject({ ok: false, message: expect.stringContaining("160") });
     expect(checkEventIdentityValue("eventLocation", " " + "x".repeat(160) + " ")).toMatchObject({ ok: true });
   });
   it("accepts an e-mail or empty for eventContact, nothing else", () => {

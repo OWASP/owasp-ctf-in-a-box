@@ -103,9 +103,9 @@ scoring code to write.
 <sup>Captured from the contestant app with seeded demo players. The board ranks
 <strong>teams</strong> by default and switches to individual standings; anything
 solved by more than one teammate counts <strong>once</strong>, so a team's total
-can be less than its members' scores added up. Targets and fork links are
-event-config driven; the event name and its branding are admin-panel
-settings.</sup>
+can be less than its members' scores added up. Targets, the event name and
+its branding are admin-panel settings; fork links follow `.env`'s
+`GITHUB_ORG`.</sup>
 
 ## What organizers run
 
@@ -179,13 +179,16 @@ in one place.</sup>
 
 Anyone named in `.env`'s `ADMIN_LOGINS` can sign in and reach `/admin` — and
 from there **grant admin to anyone else**, without a restart. The panel is
-tabbed: **Event** (freeze, registration, the scoring and registration
-schedules, players per team, the score cooldown, demo seed, master reset),
-**Admins**, **Support**, **Activity**, **Insights**, then one tab per enabled
-module for its own knobs and its title/blurb.
+tabbed: **Overview**, **Event** (identity, freeze, registration, the
+scoring and registration schedules, players per team, demo seed, master
+reset), **Hints**, **Admins**, **Sponsors**, **Support**, **Activity**,
+**Insights**, then one tab per enabled module for its own knobs and its
+title/blurb — the Secure Development tab holds the score cooldown.
 
-The **freeze** switch pauses ingestion, not fork Actions — PRs keep getting
-judged, nothing is lost, it is only queued until you resume.
+The **freeze** switch stops scoring, not fork Actions — PRs keep getting
+judged, and a Secure Development score counts by when its PR comment was
+posted: one posted during the freeze never counts, one posted before it
+still does.
 
 **Support** acts on one contestant or one team mid-event: look someone up,
 reset their progress, delete them, or take over a team whose captain has
@@ -213,7 +216,7 @@ Pick the doc for what you're doing right now:
 **Standing the kit up**
 
 - [Hosting](hosting.md) — the guided wizard, prerequisites, how scores reach
-  the box, the GitHub OAuth app, and event config.
+  the box, the GitHub OAuth app, and the `.env` bootstrap.
 - [Deploy on AWS](aws.md) — single-shot Terraform deploy onto ECS Fargate with
   ElastiCache behind an ALB (`apply` up, `destroy` down).
 - [Deploy on fly.io](fly.md) — the whole stack as one Fly machine, running the
@@ -246,7 +249,7 @@ Pick the doc for what you're doing right now:
 - [Reviewing](reviewing.md) — the review guideline: the invariants a PR
   review here must verify, and the deliberate decisions not to re-flag.
 - [Glossary](glossary.md) — the terms an outsider trips on (target, module,
-  rubric, marker, the poll transport, …) and the project's seven names.
+  rubric, marker, the poll transport, …) and the project's eight names.
 
 ## Status
 
@@ -266,7 +269,7 @@ known limits, stated in the open, are in
 [OWASP project page](https://owasp.org/projects/ctf-in-a-box) ·
 [owasp.org](https://owasp.org/) ·
 [OWASP-CTF/dc34-owasp-secure-development-ctf](https://github.com/OWASP-CTF/dc34-owasp-secure-development-ctf)
-(underlying spec and target apps)
+(underlying spec and rubrics)
 
 Code is MIT; this documentation is
 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). OWASP® is a

@@ -13,7 +13,7 @@
 # passed over it, and srh would never have gone healthy on ECS (#476).
 #
 # Needs docker. Without it the tests SKIP locally, and FAIL when
-# SRH_HEALTHCHECK_REQUIRED=1 — which is how .github/workflows/terraform.yml
+# SRH_HEALTHCHECK_REQUIRED=1 — which is how ci.yml's `terraform` job
 # runs it, so CI can never pass this by not running it.
 #
 # Every test ends with its decisive assertion (AGENTS.md: a `[[ ]]` or a

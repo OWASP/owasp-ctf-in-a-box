@@ -551,9 +551,11 @@ aws ssm delete-parameters --names <ssm_prefix>/BETTER_AUTH_SECRET <ssm_prefix>/G
   certificate in the stack's region, and point your own record at the
   `alb_dns_name` output. Terraform manages the record only when the zone is in
   the same account.
-- **Changes to the module are CI-validated, never applied** —
-  `.github/workflows/terraform.yml` runs `terraform fmt -check`, `validate` and
-  `test` on any change under `deploy/aws-terraform/`. `terraform test` is the
+- **Changes to the module are CI-validated, never applied** — the `terraform`
+  job in `.github/workflows/ci.yml` runs `terraform fmt -check`, `validate`
+  and `test` on any change under `deploy/aws-terraform/` (moved there from
+  `terraform.yml` in #487 so the check reports on every pull request).
+  `terraform test` is the
   one that reads **rendered** output: `validate` never looks at it, which is how
   a fundamentally broken bring-up script survived in the EC2 version unnoticed.
   The tests render the container definitions at plan time behind

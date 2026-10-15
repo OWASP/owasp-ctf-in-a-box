@@ -3,30 +3,17 @@ name: stock-scores-zero
 # Every vendored challenge MUST fail against the stock, unpatched app. A test
 # that passes here hands every contestant a free point, so this gates the
 # rubric on the invariant in docs/modules.md §6.4.
+#
+# #487: the judge-relevant scope below used to be a workflow-level `paths:`
+# filter, which made this workflow UNREQUIREABLE — a filtered-out PR produces
+# no run at all, so a required check on it waits forever. The same scope now
+# lives in the `changes` job: the workflow runs on every pull request, the
+# heavy matrix runs only for judge-relevant changes, and the required
+# `stock-summary` job reports on every PR either way (skipped = pass). Cost
+# is unchanged for unrelated PRs — two seconds of diffing instead of a
+# container build.
 on:
   pull_request:
-    # Judge-relevant inputs only (see patched-scores-right.yml for the rationale):
-    # this gate runs `score judge` against stock images, so its outcome depends on
-    # the JUDGE path, not serve.js / store.js (the leaderboard path). Those are
-    # covered by the fast `scorer` unit job in ci.yml.
-    paths:
-      - 'scorer/Dockerfile'
-      - 'scorer/package.json'
-      - 'scorer/package-lock.json'
-      - 'scorer/entrypoint.sh'
-      - 'scorer/entrypoints/**'
-      - 'scorer/rubric.owasp/**'
-      - 'scorer/src/index.js'
-      - 'scorer/src/judge.js'
-      - 'scorer/src/exec.js'
-      - 'scorer/src/probe.js'
-      - 'scorer/src/rubric.js'
-      - 'scorer/src/rubric-id.js'
-      - 'scorer/src/catalogue.js'
-      - 'scorer/src/targets.js'
-      - 'scripts/acceptance-target.sh'
-      - 'scripts/lib/acceptance-lib.sh'
-      - '.github/workflows/stock-scores-zero.yml'
   workflow_dispatch:
 
 # Security Shepherd's vendored helpers.js hardcodes the container names
@@ -39,10 +26,57 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only: the jobs check out the repo and run the acceptance script in
+# containers; it never writes back. actions/checkout persists GITHUB_TOKEN in
+# the checkout, so cap its authority at contents:read (the workflow default).
+permissions:
+  contents: read
+
 jobs:
+  # The workflow-level paths filter, re-expressed as a job gate (see the
+  # `on:` comment). Native `git diff`, no third-party action — the same shape
+  # as ci.yml's `changes` job.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      judge: ${{ steps.f.outputs.judge }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: f
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            # workflow_dispatch (the release run docs/operations.md tells an
+            # operator to make): there is no PR base to diff against, and a
+            # manual run is explicitly asking for the full gate.
+            echo "judge=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          printf 'changed files:\n%s\n' "$changed"
+          # Judge-relevant inputs only — the exact list this workflow's
+          # `paths:` filter carried before #487, rationale unchanged: this
+          # gate runs `score judge` against stock images, so its outcome
+          # depends on the JUDGE path, not serve.js / store.js (the
+          # leaderboard path). Those are covered by the fast `scorer` unit
+          # job in ci.yml.
+          if printf '%s\n' "$changed" | grep -qE '^scorer/(Dockerfile|package(-lock)?\.json|entrypoint\.sh)$|^scorer/(entrypoints|rubric\.owasp)/|^scorer/src/(index|judge|exec|probe|rubric|rubric-id|catalogue|targets)\.js$|^scripts/(acceptance-target\.sh|lib/acceptance-lib\.sh)$|^\.github/workflows/stock-scores-zero\.yml$'; then
+            echo "judge=true"
+          else
+            echo "judge=false"
+          fi >> "$GITHUB_OUTPUT"
+
   stock:
     permissions:
       contents: read
+    needs: changes
+    if: needs.changes.outputs.judge == 'true'
     runs-on: ubuntu-latest
     # Real cost here is image pulls, not compile time: Security Shepherd's own
     # Maven build measures ~35s and its whole gate ~86s. The slow, rate-limit-
@@ -93,3 +127,41 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Stock target must score zero
         run: ./scripts/acceptance-target.sh "${{ matrix.target }}" "${{ matrix.image }}"
+
+  # The REQUIRED check (#487). `stock` alone cannot be required safely: a
+  # matrix job that fails has to block, and one that was correctly skipped
+  # for a judge-irrelevant change has to pass — while a failure of the
+  # `changes` job itself (a diff that could not be computed) must NOT read
+  # as a skip. This summary runs on every PR (`if: always()`), so it never
+  # goes pending, and it is the single context branch protection requires:
+  # skipped-by-design passes, red never does.
+  stock-summary:
+    needs: [changes, stock]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: propagate the gate's result
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          GATE: ${{ needs.stock.result }}
+        run: |
+          set -euo pipefail
+          case "$CHANGES" in
+            success) ;;
+            *)
+              echo "::error::change detection result is '$CHANGES' — failing closed, an unverifiable diff must not read as a pass"
+              exit 1
+              ;;
+          esac
+          case "$GATE" in
+            success)
+              echo "OK: stock-scores-zero ran and every stock target scored zero"
+              ;;
+            skipped)
+              echo "OK: judge-irrelevant change — stock-scores-zero did not need to run"
+              ;;
+            *)
+              echo "::error::stock-scores-zero result is '$GATE' — failing"
+              exit 1
+              ;;
+          esac

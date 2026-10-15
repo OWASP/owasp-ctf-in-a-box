@@ -403,7 +403,8 @@ survives it; delete it yourself once you no longer need the state.
 - **Everything is tagged** via the provider's `default_tags`
   (`Project`/`ManagedBy`/`Event`), so one filter finds the whole event. Add
   owner/cost-centre/expiry with `var.tags`.
-- **CI-validated, never applied.** `.github/workflows/terraform.yml` runs
+- **CI-validated, never applied.** The `terraform` job in
+  `.github/workflows/ci.yml` runs
   `fmt -check`, `validate` and `test`; `stack.tftest.hcl` renders the container
   definitions at plan time with `mock_provider` and asserts on them, because
   `validate` never inspects rendered output — which is how a fundamentally
@@ -414,7 +415,7 @@ survives it; delete it yourself once you no longer need the state.
   health check is read from, inside the pinned srh image against a real Redis.
   The first check called `GET /ping`, which that srh answers with a 404, and
   every string assertion passed over it (#476). The suite skips without
-  docker; `terraform.yml` runs it with `SRH_HEALTHCHECK_REQUIRED=1`, where a
+  docker; CI runs it with `SRH_HEALTHCHECK_REQUIRED=1`, where a
   skip is a failure.
 
 ## Migrating from the EC2 box

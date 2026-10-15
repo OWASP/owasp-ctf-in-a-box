@@ -101,8 +101,8 @@ scripts/check-changelog.sh origin/main HEAD
 ```
 
 Run the layers your change touches, plus `smoke.sh` for anything that crosses
-services. The two real-target gates are for what their workflows' `paths:`
-filters name — the filters are the authority, and the two differ slightly.
+services. The two real-target gates are for what their workflows' `changes`
+jobs name — that list is the authority, and the two differ slightly.
 In summary: rubrics under `scorer/rubric.owasp/`, the judge-path sources in
 `scorer/src/`, the scorer Dockerfile, `package.json` and lockfile, the
 entrypoints, the gate scripts and `scripts/lib/acceptance-lib.sh`,
@@ -111,7 +111,7 @@ entrypoints, the gate scripts and `scripts/lib/acceptance-lib.sh`,
 ## What CI runs
 
 `.github/workflows/ci.yml` is a `changes` gate (native `git diff` path
-filtering) plus eleven gated jobs — a job for an area your PR doesn't touch is
+filtering) plus twelve gated jobs — a job for an area your PR doesn't touch is
 *skipped*, and a push to `main` runs everything:
 
 | Job | Proves |
@@ -124,16 +124,17 @@ filtering) plus eleven gated jobs — a job for an area your PR doesn't touch is
 | `app` | eslint (`pnpm lint`, zero problems); vitest; the three grading Lua scripts and the admin, hint and team scripts executed against a real Redis behind srh (every `*.upstash.test.ts` suite, run serially; required, not skippable, in CI); the production build; the `/`-never-prerendered assertion; `acceptance-app.sh`'s runtime-config acceptance (one image, three environments) |
 | `quiz-only` / `classic-only` / `ai-only` | A single app-side module runs a whole event alone, with no scorer to pull |
 | `registries` | The three independently maintained target lists (`sync/src/config.js`, `apps/web/src/lib/apps.ts`, `scorer/src/targets.js`) still agree |
+| `terraform` | `terraform fmt`/`validate`/`test` on `deploy/aws-terraform` (`stack.tftest.hcl` plans the stack with mocked providers and reads the rendered ECS task definitions, because `terraform validate` never inspects rendered output), plus the srh-healthcheck and security-group-description suites |
 | `docs` | The Jekyll site builds; link/meta checks |
 
 Two heavier workflows (`stock-scores-zero`, `patched-scores-right`) run
 `scripts/acceptance-target.sh` and `scripts/acceptance-patched.sh` against
 real target containers, one matrix row per target or reference patch, and
-are path-scoped to judge-relevant scorer inputs plus `patches/`.
-`terraform.yml` validates and *tests* `deploy/aws-terraform` —
-`stack.tftest.hcl` plans the stack with mocked providers and reads the
-rendered ECS task definitions, because `terraform validate` never inspects
-rendered output.
+are scoped by their own `changes` jobs to judge-relevant scorer inputs plus
+`patches/`; their required summary jobs (`stock-summary`,
+`patched-summary`) report on every PR. The `terraform` job above moved here
+from `terraform.yml` (#487): a workflow-level `paths:` filter produces no
+run at all for an unrelated PR, so its check could never be required.
 
 ## What a PR needs to pass
 
@@ -145,7 +146,12 @@ Nothing here is only asked for; each item is checked on every PR.
   for your area before you push.
 - **CodeRabbit review.** It must reach "Review completed" on your latest
   commit with no open actionable thread (see
-  [Pull request flow](#pull-request-flow)). Its pre-merge checks include
+  [Pull request flow](#pull-request-flow)). The `coderabbit-approved` check
+  is what verifies this mechanically: it passes only when CodeRabbit's
+  *latest* review is APPROVED on your PR's exact head SHA, so a push after
+  its approval makes it red again until the bot re-reviews — CodeRabbit's
+  own `CodeRabbit` commit status being green proves nothing (#487). Its
+  pre-merge checks include
   **"Behavior Changes Ship a Test"**: a change to runtime behavior in
   `apps/web/src/`, `sync/src/`, `scorer/src/` or `setup/*.sh` needs a new or
   changed test next to it (`apps/web/src/**/__tests__/`, `sync/test/`,
@@ -260,7 +266,10 @@ agent (see [AI-assisted contributions](#ai-assisted-contributions)).
 6. **CodeRabbit review must pass too.** It reviews every PR automatically;
    resolve every actionable comment before merge — apply the fix, or reply
    with why it doesn't apply and mark the thread resolved. A reasoned
-   disagreement is fine; an ignored finding is not.
+   disagreement is fine; an ignored finding is not. The required
+   `coderabbit-approved` check stays red until the bot's latest review is
+   APPROVED on your current head, so wait for (or request) that approval
+   after your last push.
 
 A PR is ready when all of these are true:
 
@@ -272,8 +281,8 @@ A PR is ready when all of these are true:
 - Every commit carries a `Signed-off-by:` trailer (`git commit -s`).
 - No `Generated with` / AI `Co-authored-by:` trailers.
 - Breaking-change box in the PR template is filled in (`None` is fine).
-- Latest commit has a CodeRabbit "Review completed" and no open
-  actionable thread.
+- Latest commit has a CodeRabbit "Review completed", no open
+  actionable thread, and a green `coderabbit-approved` check.
 
 ## Proposing a new module
 

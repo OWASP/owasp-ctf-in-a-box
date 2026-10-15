@@ -21,7 +21,7 @@
 # bash 3.2 compatible; no jq, no python.
 set -euo pipefail
 
-AREAS="app scorer sync shell smoke quiz classic ai docs registries"
+AREAS="app scorer sync shell smoke quiz classic ai docs registries terraform"
 
 if [ "$#" -ne 1 ]; then
   echo "ci-changes: usage: $0 <changed-files> | --all" >&2
@@ -93,7 +93,7 @@ emit sync '^sync/|^setup/targets\.tsv|^test/fixtures/(scoring-)?window-corpus\.j
 # - docker-compose.yml: fly.bats renders and asserts on the REAL file, and
 #   pins.bats checks every image: line there and in docker-compose.smoke.yml.
 # - deploy/aws-terraform's script and bats suite are shell; its .tf files
-#   belong to terraform.yml.
+#   belong to the `terraform` area.
 # - sync/docker-entrypoint.sh and scorer/entrypoint* are shellcheck'd here.
 # - docs/decisions.md, the Makefile, AGENTS.md and CONTRIBUTING.md: the
 #   check-docs-drift suite pins the ADR index and the local copies of the
@@ -128,4 +128,12 @@ emit docs '^docs/|^\.github/workflows/pages\.yml$'"$CI"
 # compares, plus the check script itself. It compares no MODULE list: module
 # registration lives in apps/web alone.
 emit registries '^(sync/src/config\.js|apps/web/src/lib/apps\.ts|scorer/src/targets\.js|scripts/check-module-registries\.mjs)$'"$CI"
+
+# terraform — the whole deploy/aws-terraform/ module. Its .tf files are the
+# half no other area reads: `terraform test`'s mocked render and the
+# description/health-check suites are what keep a task-definition edit
+# honest, and on a .tf-only change no other area matches, so this job is the
+# one that runs them. deploy.sh and the tests ride `shell` as well; both
+# running is deliberate — each gates what the other cannot see.
+emit terraform '^deploy/aws-terraform/'"$CI"
 

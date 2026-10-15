@@ -20,6 +20,23 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Enforced merge gates (#487).** What used to be an honor system is now
+  checked: a required `coderabbit-approved` workflow reads the PR's reviews
+  through the GitHub API on every push and every review event, and passes
+  only when CodeRabbit's *latest* review is APPROVED on the PR's exact head
+  SHA — CodeRabbit's own `CodeRabbit` commit status could not gate anything
+  (it reports `success` when the bot did not review, and an approval of an
+  older commit stayed green after new pushes). It fails closed on a missing,
+  dismissed, stale or un-fetchable review, needs only `pull-requests: read`,
+  and checks nothing out. Terraform's fmt/validate/test and the AWS module's
+  bats suites moved from `terraform.yml` into ci.yml as a `changes`-gated
+  `terraform` job, and the two heavy scoring gates now scope their matrices
+  with per-workflow `changes` jobs plus required `stock-summary` /
+  `patched-summary` jobs instead of workflow-level `paths:` filters — a
+  filtered-out workflow reports nothing, so its check could never be
+  required. AGENTS.md and docs/reviewing.md document the checks that are
+  enforced; the branch-protection settings themselves stay a maintainer's
+  step on GitHub, not something repository code can apply.
 - **Fixed: an event archive round trip deleted a switched-off module's
   content (#644).** The archive export left out the Jeopardy, Quiz or AI
   content of any module that was switched off, while the import clears all

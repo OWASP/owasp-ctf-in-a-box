@@ -103,7 +103,7 @@ fragments: they are sourced by `entrypoint.sh`, never run standalone.)
 Not in `ci.yml`: these are the two heavy workflows named under "CI" below,
 one matrix row per target or reference patch, and the rows are the example
 invocations. Each boots a real upstream image (minutes per row), so run only
-the rows for what you touched. Each workflow's `paths:` filter is the
+the rows for what you touched. Each workflow's `changes` job is the
 authority on "what" (read it; the two differ slightly). In summary: rubrics
 under `scorer/rubric.owasp/`, the judge-path sources in `scorer/src/`, the
 scorer Dockerfile, `package.json` and lockfile, the entrypoints, the gate
@@ -138,12 +138,32 @@ minutes of plain Node rather than a container bring-up. It was wired in only
 once the count reached 0/321: a gate adopted while findings remain is a gate
 somebody has to disable.
 
+The `terraform` job runs `terraform fmt -check`, `init -backend=false`,
+`validate` and `test` on `deploy/aws-terraform`, then executes the module's
+srh-healthcheck and security-group-description bats suites (with
+`SRH_HEALTHCHECK_REQUIRED=1`, so the docker-backed suite cannot pass by
+skipping). It was moved here from `terraform.yml` (#487): that workflow's
+`paths:` filter ran at the workflow level, so an unrelated PR produced no run
+at all — and a check that never reports can be required neither safely nor at
+all. As a `changes`-gated ci.yml job the check reports on every PR (an
+untouched area skips, which counts as a pass) while a touched module still
+cannot bypass the tests. `terraform validate` does NOT inspect rendered
+output; `terraform test` (the mocked-provider `stack.tftest.hcl`) is what
+reads the rendered ECS task definitions — see `docs/aws.md`.
+
 Two heavier workflows, `stock-scores-zero.yml` and `patched-scores-right.yml`,
-are scoped with their own `paths:` filters to judge-relevant scorer inputs
-(rubrics, judge/exec/probe/catalogue source, the scorer Dockerfile and
-entrypoints, their own acceptance script, and `patches/`) rather than the
-full `scorer/` tree — they run real target containers, so they're reserved
-for changes that could actually move the score.
+scope their per-target containers to judge-relevant inputs (rubrics,
+judge/exec/probe/catalogue source, the scorer Dockerfile and entrypoints,
+their own acceptance script, and `patches/`) rather than the full `scorer/`
+tree — they run real target containers, so they're reserved for changes that
+could actually move the score. That scope used to be a workflow-level `paths:`
+filter; since #487 the same list lives in each workflow's own `changes` job,
+so the workflow runs on every PR and the required summary job —
+`stock-summary` / `patched-summary` — reports on every PR too (a
+correctly-gated skip passes, a red matrix does not, and a failed change
+detection fails closed rather than reading as a skip). Never move either gate
+back behind a workflow-level filter, and never require the matrix jobs
+(`stock`/`patched`) directly: require the summaries.
 
 The `docs` job builds the Pages site with the action `pages.yml` publishes
 with (that workflow runs only on push to `main`), then fails on any relative
@@ -159,13 +179,22 @@ The `registries` job compares the duplicated target lists and needs no
 install.
 
 **Every PR must also pass CodeRabbit review before merge, not just the CI
-jobs above.** CodeRabbit runs automatically on each PR (`.coderabbit.yaml`
-tunes it); treat its findings as a required gate. Resolve every actionable
-comment — apply the fix, or reply on the thread with the reason it does not
-apply and mark it resolved — and leave no unresolved actionable thread on a
-PR you intend to merge. A finding you disagree with is answered, not
-ignored: CodeRabbit is fallible and a reasoned decline is a valid outcome,
-but the decline has to be on the record. Its pre-merge checks
+jobs above — and what enforces that is the `coderabbit-approved` check
+(`.github/workflows/coderabbit-approved.yml`), not CodeRabbit's own commit
+status.** The status cannot enforce anything: CodeRabbit posts `success` when
+it did not review ("Review rate limited", "Review skipped: …"), and an
+approval it gave an earlier commit stayed green after new pushes — both were
+observed on merged PRs (#487). The check instead reads the PR's reviews from
+the GitHub API on every `pull_request` and `pull_request_review` event and
+passes ONLY when coderabbitai's latest review is `APPROVED` on the PR's
+exact head SHA; no review, a non-approved state (a dismissal included), an
+approval of another commit, or a failed API call all fail it closed. So
+treat CodeRabbit's findings as a required gate, exactly as before: resolve
+every actionable comment — apply the fix, or reply on the thread with the
+reason it does not apply and mark it resolved — and leave no unresolved
+actionable thread on a PR you intend to merge. A finding you disagree with is
+answered, not ignored: CodeRabbit is fallible and a reasoned decline is a
+valid outcome, but the decline has to be on the record. Its pre-merge checks
 (secrecy boundary, fail-open/closed direction, unpinned dependencies,
 breaking-change docs, secrets in logs, behavior changes ship a test) encode
 invariants this repo has been burned by; a warning from one is a prompt to
@@ -180,6 +209,24 @@ skips it, and Dependabot PRs are skipped. `labeler.yml` applies labels by
 path from `.github/labeler.yml`. It runs on `pull_request_target` so it can
 label fork PRs, which is safe only because it never checks out or runs PR
 code. Keep it that way.
+
+**Branch protection is maintainer-applied — settings live on GitHub, and no
+repository file changes them (#487).** The gates above only bind `main` once
+the protection requires them; the required status checks to carry are
+`changes`, `sync-tests`, `scorer`, `vacuous`, `shell`, `smoke`, `app`,
+`quiz-only`, `classic-only`, `ai-only`, `registries`, `terraform`, `docs`,
+`changelog`, `coderabbit-approved`, `stock-summary`, `patched-summary`,
+`Analyze (javascript-typescript)` and `CodeQL` — the existing set with the
+unreliable `CodeRabbit` context dropped in favour of
+`coderabbit-approved`, plus the contexts (#487) found missing. The
+review rules are `dismiss_stale_reviews` and `require_last_push_approval`
+(an approval given to an older head never survives a push) and
+`enforce_admins=true` with required approving reviews set to `0`, so an
+admin merge still has to satisfy every check above — with zero required
+human approvals, the checks, not a second human, are what binds. Until a
+maintainer applies exactly that, do not assume a check is enforced: verify
+the protection before treating a PR as mergeable, and never use an admin
+merge to go around a red or unreviewed gate.
 
 **Always WAIT for CodeRabbit's re-review after every push, and check its
 comments — do not treat a PR as done on green CI alone.** CodeRabbit
@@ -423,8 +470,9 @@ suggestions.
 - `deploy/` — optional cloud deploy modules: `aws-terraform/` (ECS Fargate +
   ElastiCache + ALB; `docs/aws.md`) and `fly/` (one Fly machine running the
   rendered compose file; `docs/fly.md`; its scripts and bats suite run under
-  the `shell` job). `aws-terraform/` is CI-validated by
-  `.github/workflows/terraform.yml` (fmt + validate + test, never apply).
+  the `shell` job). `aws-terraform/` is CI-validated by the `terraform` job
+  in `.github/workflows/ci.yml` (fmt + validate + test, never apply; moved
+  from `terraform.yml` in #487 so the check reports on every PR).
   **`terraform validate` does NOT inspect rendered output** — the container
   definitions are an opaque JSON string to it, so image references, the
   srh-to-ElastiCache wiring and secret-vs-value all pass validate wrong.

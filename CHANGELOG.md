@@ -28,6 +28,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   three modules' content whatever the toggles say; which modules are on
   still travels in the bundle's settings, so a module that was off comes
   back off, with its content.
+- **Fixed: the freeze and reset copy promised PR scores would wait
+  (#646).** The Freeze switch's help line and both confirm dialogs said a
+  Secure Development PR scored during a freeze was held and landed on the
+  board when you unfreeze ("Nothing is dropped"). Since ADR 67 such a score
+  is refused for good, and the contestant has to push again once scoring
+  resumes. The master reset note said ingested points come back on the
+  unfreeze unless the source PRs are closed, but the reset watermark skips
+  every comment from before the reset. Both now say what happens, and so do
+  `docs/aws.md` and `docs/troubleshooting.md`. A freeze set by hand on the
+  settings hash, with no recorded start, still holds scores until it lifts;
+  `docs/aws.md` says so next to the `HSET` line.
 - **Fixed: a module stayed off a leaderboard row until its first solve
   (#585).** Expanding a team with no Jeopardy solves showed only its Secure
   Development targets, so a new team could not tell from the board that

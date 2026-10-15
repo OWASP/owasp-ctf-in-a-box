@@ -319,9 +319,9 @@ audit log.
 
 Freeze from `/admin` → **Event** → **Freeze scoring**, exactly as on any
 other box. See the **Freeze** entry in
-[the admin panel section](operations.md#organizer-admin-panel). It stops
-ingestion and the scorer's writes, and nothing is lost: judged PRs wait in
-their comments until you unfreeze.
+[the admin panel section](operations.md#organizer-admin-panel). Fork Actions
+keep judging, but a PR scored while frozen never counts, not even after you
+unfreeze: its contestant has to push again once scoring resumes.
 
 If `/admin` itself is unreachable, set the same field from an ECS Exec shell
 in the app container, with the `node -e` line above and these arguments:
@@ -332,7 +332,10 @@ HDEL ctf:admin:settings paused       # unfreeze: absent means not paused, never 
 ```
 
 The app, the scorer and sync all read that field on their next check, so no
-restart is needed.
+restart is needed. A freeze set this way records no start time, so the scorer
+cannot tell which PR scores came in during it: it holds every one it reads and
+judges them once you unfreeze (see **Freeze** in
+[the admin panel section](operations.md#organizer-admin-panel)).
 
 ### Failure drills
 

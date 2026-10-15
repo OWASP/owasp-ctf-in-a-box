@@ -30,21 +30,18 @@ describe("FREEZE_HELP", () => {
     expect(FREEZE_HELP).toMatch(/ai/i);
   });
 
-  it("says fork Actions keep going — the fact the old copy left out", () => {
-    // `docs/operations.md`: freezing "freezes ingestion, not fork Actions".
-    // An organizer who does not know this tells a contestant their PR was not
-    // scored, when it was judged, commented, and merely waiting.
+  it("says fork Actions keep going", () => {
+    // `docs/operations.md`: freezing "freezes scoring, not fork Actions" —
+    // a contestant's PR is still judged and commented on.
     expect(FREEZE_HELP).toMatch(/fork Actions keep judging/i);
-    expect(FREEZE_HELP).toMatch(/unfreeze/i);
   });
 
-  it("separates the comment (immediate) from the points (held)", () => {
-    // The distinction an organizer relays at a help desk. Saying the Actions
-    // keep posting and that "those" are held reads as though the comment
-    // itself is withheld — so a contestant checking their PR and finding a
-    // score comment would look like a contradiction.
-    expect(FREEZE_HELP).toMatch(/score comments still appear/i);
-    expect(FREEZE_HELP).toMatch(/points reach the board only once you unfreeze/i);
+  it("says a PR scored during the freeze never counts, not that it waits", () => {
+    // ADR 67: a Secure Development score is judged at its comment's time, so
+    // one posted while frozen is refused for good. An organizer who reads
+    // "held until you unfreeze" freezes to hold scores and loses them.
+    expect(FREEZE_HELP).toMatch(/scored while frozen never counts/i);
+    expect(FREEZE_HELP).not.toMatch(/only once you unfreeze|held|deferred/i);
   });
 });
 
@@ -54,18 +51,22 @@ describe("freezeConfirm", () => {
     expect(title).toBe("Freeze scoring?");
     expect(confirmLabel).toBe("Freeze");
     expect(body).toContain(PAUSED_CONTESTANT_MESSAGE);
-    // Same distinction as the help line: the comment lands on the PR now, the
-    // ingestion of its points is what waits.
-    expect(body).toMatch(/score comment still appears on its PR straight away/i);
-    expect(body).toMatch(/what is held is the ingestion/i);
-    expect(body).toMatch(/Nothing is dropped/i);
+    // What an organizer relays at a help desk: a PR scored before the freeze
+    // still counts, one scored during it never does, and the contestant
+    // pushes again after the unfreeze.
+    expect(body).toMatch(/scored before you freeze still count/i);
+    expect(body).toMatch(/scored while frozen never count/i);
+    expect(body).toMatch(/push again/i);
+    expect(body).not.toMatch(/Nothing is dropped|what is held/i);
   });
 
-  it("promises the deferred scores land, in the unfreeze direction", () => {
+  it("does not promise that scores judged while frozen land, in the unfreeze direction", () => {
     const { title, body, confirmLabel } = freezeConfirm(false);
     expect(title).toBe("Unfreeze scoring?");
     expect(confirmLabel).toBe("Unfreeze");
-    expect(body).toMatch(/picked up from where ingestion stopped/i);
+    expect(body).toMatch(/scored while frozen/i);
+    expect(body).toMatch(/push again/i);
+    expect(body).not.toMatch(/picked up from where ingestion stopped/i);
   });
 
   it("gives the two directions different copy — not one sentence with a word flipped", () => {

@@ -255,33 +255,32 @@ live on the next request; there is no rebuild and no cache to wait out.
 name in three places on every event: **the tab's own label**, **the nav link**
 (header and footer alike), and **the module's own page header and browser tab
 title** (`/challenges` for Secure Development, `/quiz` for Quiz, `/flags` for
-Jeopardy). Two further
-surfaces exist but are **suppressed on a single-module event**, which is what
-most events are:
+Jeopardy, `/ai` for AI). It also reaches two more surfaces on every event:
 
-- the **leaderboard's per-module block heading** — hidden while only one
-  module is enabled, because a row's points *are* that module's and the
-  heading would only restate the column above it;
-- the **landing page's per-module section heading** — a lone module's section
-  is headed "What to expect" instead, and the page's uppercase kicker comes
-  from the module's registry tagline, which is **not** overridable at all.
-  (A module with no registry `home` block is the exception: its section
-  heading *is* its title, override included, because there is no authored
-  heading to prefer. Neither module shipped today is in that position.)
+- the **landing page's module card** — each card under "The game" (or "The
+  games", with more than one module) is headed by the module's title, override
+  included. The page's uppercase kicker above it comes from the modules'
+  registry taglines, which are **not** overridable at all;
+- the **team leaderboard's per-module rows** — an expanded team row labels
+  each module's progress with its title, even when only one module runs.
 
-So on a one-module event a rename reaches three surfaces, not five. Nothing is
-broken if you cannot find your new name on the leaderboard or the landing
-page — those two only start naming modules once there are two to tell apart.
+One surface is **suppressed on a single-module event**, which is what most
+events are: the **individual leaderboard row's per-module block heading**,
+hidden while only one module is enabled because a row's points *are* that
+module's and the heading would only restate the column above it. Nothing is
+broken if a contestant's own row does not show your new name on a one-module
+event — that heading only appears once there are two modules to tell apart.
 
 **The blurb is contestant-facing copy — write it as such.** It reaches three
 places:
 
 - the **meta description** of the module's own page (what a search result or a
   chat link preview shows);
-- **`/quiz`'s and `/flags`'s page header**, as the lede under the title. This
-  is the module describing itself; the "You've answered 2 of 5 questions."
-  (or "You've solved N of M challenges.") line is *your* progress, and sits
-  above the questions/challenges instead;
+- **`/quiz`'s, `/flags`'s and `/ai`'s page header**, as the lede under
+  the title. This is the module describing itself; a contestant's own progress lives on the
+  board itself (Quiz's progress strip, Jeopardy's "Your run" rail), and a
+  signed-out visitor sees a "Sign in with GitHub to …" line above the
+  questions/challenges;
 - the **landing page section lede**, but only for a module that ships no
   registry `home` block. All four modules that exist today have one, so
   today this
@@ -346,9 +345,11 @@ The panel offers:
   **master reset keeps them** — like the name, they are the event's identity,
   not progress. An event archive carries the logo and its **Logo link**
   together; contact and Discord never travel in one.
-- **Status** — the sync poller's heartbeat (last poll time, comments
-  ingested, comments **dropped**, repos polled, last error) and a
-  best-effort leaderboard freshness read.
+- **Sync** (Overview tab, shown only while Secure Development is present) —
+  the sync poller's heartbeat as one line (last poll time, comments ingested,
+  comments **dropped**, running or paused) that expands to the full
+  breakdown: repos polled, whether sync is paused, the last drop and the
+  last error.
 
   **Read Ingested and Dropped together.** Ingested is points that reached the
   leaderboard; Dropped is points that reached a contestant's PR and stopped
@@ -804,10 +805,12 @@ The panel offers:
 
 - **Master reset** (danger zone) — wipes **all** contestant progress so a test
   run or a botched setup can be cleared before the real event. It deletes every
-  solve, team, per-player record, join code, and hint purchase; it **keeps**
-  everything you authored — quiz questions and their answer key, classic and AI
-  challenges with their flags, hints and categories — along with your admin
-  settings, and appends the reset to the audit log. It does rotate the AI
+  solve, attempt, team, per-player record, join code and hint purchase, the
+  organizer's score adjustments, the activity log, and every sponsor (see
+  [Sponsors](#sponsors)); it **keeps** everything you authored — quiz
+  questions and their answer key, classic and AI challenges with their flags,
+  hints and categories — along with your admin settings, and appends the
+  reset to the audit log. It does rotate the AI
   module's launch keypair (see [below](#ai)), so an external challenge site
   re-fetches the public key on its next verification. It is server-side and
   admin-gated, and requires **typing the event name** — the current runtime
@@ -891,7 +894,7 @@ The panel offers:
 
 **Every destination has its own URL.** `/admin/overview`, `/admin/activity`,
 `/admin/insights`, `/admin/support`, `/admin/event`, `/admin/hints`,
-`/admin/admins`, and one per enabled module — `/admin/quiz`,
+`/admin/admins`, `/admin/sponsors`, and one per enabled module — `/admin/quiz`,
 `/admin/classic`, `/admin/ai`, `/admin/secure-development`. That is what the
 sidebar links to, so a link is safe to bookmark, paste into a runbook, or
 read out over a call. Switching tabs updates the address bar without a page
@@ -926,7 +929,7 @@ demo seed and the master reset.
 
 Every settings change is recorded in an audit log (who, when, what changed)
 alongside the setting itself; the log (`ctf:admin:audit`) keeps the newest
-**500** entries and drops older ones automatically. The five Identity fields
+**500** entries and drops older ones automatically. The six Identity fields
 are the exception to "what changed": the audit line names the field and
 whether it was set or cleared, never the value — `eventDiscord` can carry an
 invite/join token and `eventContact` is personal data, so neither is fit for
@@ -978,7 +981,7 @@ DVWA, WebGoat, Security Shepherd, VulnerableApp, VAmPI) this event actually
 runs, as a checkbox list. `ctf-setup.sh org` forks and provisions all six for
 every event that provisions Secure Development at all — six forks, six
 scoring workflows, six package Read grants — regardless of this setting; an
-event with no `secure-development` block forks and grants nothing (see
+event with an empty `SCORE_IMAGE` forks and grants nothing (see
 [modules.md](modules.md)). The checkboxes decide which of those six
 contestants see and which the sync poller reads, not which get provisioned.
 At least one target must stay checked — the last box is disabled, the same
@@ -1169,9 +1172,9 @@ them.
 
 **In the event archive.** A sponsor-carrying export embeds each logo's bytes
 as base64 inside the JSON bundle — a sponsor-heavy archive is noticeably
-larger than one with none. Importing a bundle with a `sponsors` section
-replaces the box's sponsor list wholesale, like every other section of an
-archive import.
+larger than one with none. Every import runs the master reset, which deletes
+the box's sponsors, so after an import the sponsor list is exactly the
+bundle's `sponsors` section — and empty when the bundle carries none.
 
 ## Archiving and replaying an event
 
@@ -1192,12 +1195,14 @@ AI challenge's mode, launch URL template and **per-challenge signing key**
 plus **policy** settings: the hint controls (enabled, cost, and its two
 gating knobs), the quiz retry-gate knobs, Jeopardy's and AI's submission
 cooldowns, the re-run cooldown, the team-size cap and registration switch,
-module title/blurb overrides, and which modules are enabled. The content of
+module title/blurb overrides, which modules are enabled, and which Secure
+Development targets the event runs (`secureDevTargets`). The content of
 all three modules is in every bundle, switched on or off, so a module that is
 off comes back from an import with its content intact and still off. It carries no
 scoring data: no solves, attempts, team rosters or score adjustments. It also carries an informational **event
-identity** block — `name`, `theme`, `dates`, `location` and `ctfStartsAt` —
-read from the running box at export time.
+identity** block — `name`, `dates`, `location` and `ctfStartsAt`, plus
+`logoUrl` and `timeZone` when they are set — read from the running box at
+export time.
 
 **How a bundle is recognised.** The file's top level is stamped
 `"kind": "archive"` next to a numeric `version`, and import checks both
@@ -1236,11 +1241,13 @@ treat the file with the same care as `/admin` access itself.
 
 **Import is replace-all, and it is destructive.** Confirming an import first
 validates and applies the file's policy settings, then runs the same reset
-the master reset button does — wiping every team, solve, attempt, and hint
-purchase — and replaces the entire Jeopardy board, Quiz bank and AI catalogue
-with exactly what the file contains (a section absent from the file leaves
-that module empty, not as it was — replace-all, not merge). Settings go first and fail-fast: a bad or
-cross-box-incompatible settings block is rejected before anything is wiped,
+the master reset button does — wiping every team, solve, attempt and hint
+purchase, the score adjustments, the activity log and every sponsor, and
+leaving scoring frozen with a fresh pause log, a new reset epoch and the
+event not launched — and replaces the entire Jeopardy board, Quiz bank and
+AI catalogue with exactly what the file contains (a section absent from the
+file leaves that module empty, not as it was — replace-all, not merge).
+Settings go first and fail-fast: a bad or cross-box-incompatible settings block is rejected before anything is wiped,
 never after. It is **refused outright (`409`)** while scoring is
 **effectively live** — not manually paused, and inside its scheduled scoring
 window; manually pausing scoring is one way to make the event eligible for

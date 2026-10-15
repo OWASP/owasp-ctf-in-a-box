@@ -10,7 +10,9 @@
 // server never returns it, only a `webhookConfigured` flag, so the field is
 // always blank and shows "configured" state text instead. Send test is a
 // direct POST whose result is the point; it never touches the switch state.
-// Every save is immediate (one field per request), like the image pickers.
+// Every save is immediate (one field per request), like the image pickers —
+// except Clear: no API returns the webhook URL once it is gone, so that one
+// write only happens from the shared confirmation's `onConfirm`.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import AdminSwitch from "@/components/admin-switch";
@@ -18,8 +20,9 @@ import { FieldStatusLine, type FieldStatus } from "@/components/admin-number-fie
 import type { AnnouncementKind, DiscordPublicConfig } from "@/lib/discord-config";
 import type { AnnounceStatus } from "@/lib/announce/store";
 import type { DiscordMessage } from "@/lib/announce/messages";
+import type { ConfirmState } from "./types";
 
-type Load = { state: "loading" } | { state: "ready"; config: DiscordPublicConfig; status: AnnounceStatus } | { state: "failed"; message: string };
+export type Load = { state: "loading" } | { state: "ready"; config: DiscordPublicConfig; status: AnnounceStatus } | { state: "failed"; message: string };
 
 type PreviewState = { kind: AnnouncementKind; message: DiscordMessage } | null;
 
@@ -61,10 +64,34 @@ export function mergePatched(config: DiscordPublicConfig, keysWritten: readonly 
   return next as DiscordPublicConfig;
 }
 
+/** Folds a fresh GET into the load state for `reload`. Send test refreshes
+ *  only the delivery status, so when a ready config exists the response's
+ *  copy of it is NOT taken: that GET may have been served before a config
+ *  save committed and arrived after it, and putting it back would show a
+ *  switch one step behind what is stored. Without a ready state (the first
+ *  load) the response is all there is, so both halves are taken.
+ *  Exported so the suite can pin it without a DOM. */
+export function foldReloaded(prev: Load, fresh: { config: DiscordPublicConfig; status: AnnounceStatus }): Load {
+  return prev.state === "ready" ? { ...prev, status: fresh.status } : { state: "ready", config: fresh.config, status: fresh.status };
+}
+
+/** The confirm dialog Clear opens (the panel's shared ConfirmState, minus
+ *  the action): the webhook URL is write-only — the server never returns it —
+ *  so a cleared URL can only come back by being pasted again, which is what
+ *  the dialog has to say before anything is sent. */
+export function clearWebhookConfirm(): { title: string; body: string; confirmLabel: string; danger: boolean } {
+  return {
+    title: "Clear the Discord webhook?",
+    body: "The stored webhook URL is deleted and nothing is posted until a new one is saved. The URL is write-only, so this panel cannot show it to you again — you will need it from your Discord server settings (Server Settings → Integrations → Webhooks) to post again.",
+    confirmLabel: "Clear webhook",
+    danger: true,
+  };
+}
+
 /** The Event tab"s self-contained Discord announcements panel: webhook
  *  (write-only), per-type switches, previews, Send test and the delivery
  *  status line. */
-export default function AdminEventAnnouncements() {
+export default function AdminEventAnnouncements({ setConfirm }: { setConfirm: (c: ConfirmState) => void }) {
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [fieldStatus, setFieldStatus] = useState<Partial<Record<string, FieldStatus>>>({});
   const [webhookInput, setWebhookInput] = useState("");
@@ -87,11 +114,12 @@ export default function AdminEventAnnouncements() {
   );
 
   /** Re-reads config + status after an action whose own response is not the
-   *  fresh config (Send test). */
+   *  fresh config (Send test): only the delivery status is refreshed — the
+   *  config already on screen is the newer truth (see `foldReloaded`). */
   const reload = useCallback(async () => {
     try {
       const body = await readConfig();
-      setLoad({ state: "ready", config: body.config, status: body.status });
+      setLoad((prev) => foldReloaded(prev, body));
     } catch (err) {
       setLoad({ state: "failed", message: err instanceof Error ? err.message : "Could not read the announcement settings." });
     }
@@ -192,7 +220,9 @@ export default function AdminEventAnnouncements() {
     }
   }
 
-  /** Clears the stored webhook (POST webhookUrl: null). */
+  /** Clears the stored webhook (POST webhookUrl: null). Reached only from
+   *  the shared confirmation's `onConfirm` — the Clear button itself sends
+   *  nothing, so a cancelled dialog leaves the stored URL in place. */
   async function clearWebhook() {
     if (webhookBusy) return;
     setWebhookBusy(true);
@@ -323,7 +353,7 @@ export default function AdminEventAnnouncements() {
           </button>
           <button
             type="button"
-            onClick={clearWebhook}
+            onClick={() => setConfirm({ ...clearWebhookConfirm(), onConfirm: () => clearWebhook() })}
             disabled={busy || !config?.webhookConfigured}
             className="rounded-md border border-white/10 px-2.5 py-1.5 font-mono text-xs text-zinc-300 hover:border-[#e53e3e]/45 hover:text-white disabled:opacity-40"
           >

@@ -355,7 +355,7 @@ export default function AdminEventTab({
           hash (its own keys, its own endpoints), so it self-contains like
           the images section above. */}
       <section className="flex flex-col gap-3 border-b border-white/[0.06] pb-4">
-        <AdminEventAnnouncements />
+        <AdminEventAnnouncements setConfirm={setConfirm} />
       </section>
 
       <section className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">

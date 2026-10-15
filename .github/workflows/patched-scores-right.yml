@@ -13,39 +13,22 @@ name: patched-scores-right
 # per-target positive control (standalone / app+db / exempt — see patches/README.md).
 # vampi carries two rows on purpose (different challenges in different files), which
 # between them prove the assertion discriminates.
+#
+# #487: the judge-relevant scope below used to be a workflow-level `paths:`
+# filter, which made this workflow UNREQUIREABLE — a filtered-out PR produces
+# no run at all, so a required check on it waits forever. The same scope now
+# lives in the `changes` job: the workflow runs on every pull request, the
+# heavy matrix runs only for judge-relevant changes, and the required
+# `patched-summary` job reports on every PR either way (skipped = pass). Cost
+# is unchanged for unrelated PRs — two seconds of diffing instead of a
+# per-target source build.
 on:
   pull_request:
-    # Judge-relevant inputs only. This gate builds the scorer image and runs
-    # `score judge`; its outcome depends on the JUDGE path — not on serve.js /
-    # store.js, which are the leaderboard path and are never imported by
-    # judge.js. Scoping to these files keeps the heavy per-target (Maven/gradle)
-    # builds from firing on leaderboard-only changes. A serve/store change that
-    # broke the shared module load is still caught by the fast `scorer` unit job
-    # in ci.yml, so nothing goes unverified.
-    paths:
-      - 'scorer/Dockerfile'
-      - 'scorer/package.json'
-      - 'scorer/package-lock.json'
-      - 'scorer/entrypoint.sh'
-      - 'scorer/entrypoints/**'
-      - 'scorer/rubric.owasp/**'
-      - 'scorer/src/index.js'
-      - 'scorer/src/judge.js'
-      - 'scorer/src/exec.js'
-      - 'scorer/src/probe.js'
-      - 'scorer/src/rubric.js'
-      - 'scorer/src/rubric-id.js'
-      - 'scorer/src/catalogue.js'
-      - 'scorer/src/targets.js'
-      - 'scripts/acceptance-patched.sh'
-      - 'scripts/lib/acceptance-lib.sh'
-      - 'patches/**'
-      - '.github/workflows/patched-scores-right.yml'
   workflow_dispatch:
 
 # Read-only: the job checks out the repo and runs the acceptance script in
 # containers; it never writes back. actions/checkout persists GITHUB_TOKEN in
-# the checkout, so cap its authority at contents:read (matching terraform.yml).
+# the checkout, so cap its authority at contents:read (the workflow default).
 permissions:
   contents: read
 
@@ -54,7 +37,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The workflow-level paths filter, re-expressed as a job gate (see the
+  # `on:` comment). Native `git diff`, no third-party action — the same shape
+  # as ci.yml's `changes` job.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      judge: ${{ steps.f.outputs.judge }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: f
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            # workflow_dispatch (the release run docs/operations.md tells an
+            # operator to make): there is no PR base to diff against, and a
+            # manual run is explicitly asking for the full gate.
+            echo "judge=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          printf 'changed files:\n%s\n' "$changed"
+          # Judge-relevant inputs only — the exact list this workflow's
+          # `paths:` filter carried before #487, rationale unchanged: this
+          # gate builds the scorer image and runs `score judge`; its outcome
+          # depends on the JUDGE path — not on serve.js / store.js, which are
+          # the leaderboard path and are never imported by judge.js.
+          # Scoping to these files keeps the heavy per-target (Maven/gradle)
+          # builds from firing on leaderboard-only changes. A serve/store
+          # change that broke the shared module load is still caught by the
+          # fast `scorer` unit job in ci.yml, so nothing goes unverified.
+          if printf '%s\n' "$changed" | grep -qE '^scorer/(Dockerfile|package(-lock)?\.json|entrypoint\.sh)$|^scorer/(entrypoints|rubric\.owasp)/|^scorer/src/(index|judge|exec|probe|rubric|rubric-id|catalogue|targets)\.js$|^scripts/(acceptance-patched\.sh|lib/acceptance-lib\.sh)$|^patches/|^\.github/workflows/patched-scores-right\.yml$'; then
+            echo "judge=true"
+          else
+            echo "judge=false"
+          fi >> "$GITHUB_OUTPUT"
+
   patched:
+    needs: changes
+    if: needs.changes.outputs.judge == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -85,3 +112,38 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Patched ${{ matrix.target }} fork must score exactly ${{ matrix.challenge }}
         run: ./scripts/acceptance-patched.sh "${{ matrix.target }}" "${{ matrix.challenge }}"
+
+  # The REQUIRED check (#487), the mirror of stock-scores-zero's summary: the
+  # single context branch protection requires for this gate. It runs on every
+  # PR (`if: always()`), so it never goes pending; a correctly skipped gate
+  # passes, a red one or a failed change detection does not.
+  patched-summary:
+    needs: [changes, patched]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: propagate the gate's result
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          GATE: ${{ needs.patched.result }}
+        run: |
+          set -euo pipefail
+          case "$CHANGES" in
+            success) ;;
+            *)
+              echo "::error::change detection result is '$CHANGES' — failing closed, an unverifiable diff must not read as a pass"
+              exit 1
+              ;;
+          esac
+          case "$GATE" in
+            success)
+              echo "OK: patched-scores-right ran and every reference patch scored exactly its challenge"
+              ;;
+            skipped)
+              echo "OK: judge-irrelevant change — patched-scores-right did not need to run"
+              ;;
+            *)
+              echo "::error::patched-scores-right result is '$GATE' — failing"
+              exit 1
+              ;;
+          esac

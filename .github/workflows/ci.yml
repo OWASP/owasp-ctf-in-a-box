@@ -46,6 +46,7 @@ jobs:
       ai: ${{ steps.f.outputs.ai }}
       docs: ${{ steps.f.outputs.docs }}
       registries: ${{ steps.f.outputs.registries }}
+      terraform: ${{ steps.f.outputs.terraform }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -348,6 +349,70 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22 }
       - run: node scripts/check-module-registries.mjs
+
+  # The AWS Terraform module. Never applies infra — fmt + init(-backend=false)
+  # + validate + test, then the two things `terraform validate` structurally
+  # cannot see. Real applies are run by an operator locally (docs/aws.md);
+  # this just keeps the module well-formed and its rendered bring-up script
+  # correct.
+  #
+  # Gated like every other area: a workflow-level `paths:` filter cannot back
+  # a required check — an unrelated PR produces no run at all, and a check
+  # that never reports can be required neither safely nor at all. As a
+  # `changes`-gated job this one reports on every PR (skipped = pass) while an
+  # affected change still cannot skip the tests: `if:` skips report, a failed
+  # gate does not, and `changes` itself is required.
+  terraform:
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.14.8"
+      - name: fmt
+        working-directory: deploy/aws-terraform
+        run: terraform fmt -check -recursive
+      - name: init (no backend)
+        working-directory: deploy/aws-terraform
+        run: terraform init -backend=false -input=false
+      - name: validate
+        working-directory: deploy/aws-terraform
+        run: terraform validate -no-color
+      # validate never inspects RENDERED output, so it passed this module for
+      # its entire life while the EC2 bring-up script was broken. Fargate has
+      # no user-data to render; what these tests render at plan time via
+      # mock_provider is the CONTAINER DEFINITIONS — that srh alone may reach
+      # ElastiCache, that the connection is rediss:// and not redis://, that no
+      # secret is baked in as plaintext instead of a valueFrom, and that
+      # scorer/sync appear only for the modules the event actually runs.
+      # No AWS credentials, no network, no apply.
+      - name: test
+        working-directory: deploy/aws-terraform
+        run: terraform test -no-color
+      - run: sudo apt-get update && sudo apt-get install -y bats shellcheck
+      # stack.tftest.hcl pins the srh health check to srh-healthcheck.sh, but a
+      # string assertion cannot tell a working probe from one that can never pass:
+      # the first version called `GET /ping`, which the pinned srh answers with a
+      # 404, and every mocked test was green over it. This EXECUTES the
+      # file inside the pinned srh image against a real Redis. The suite skips
+      # without docker locally; SRH_HEALTHCHECK_REQUIRED=1 turns that skip into a
+      # failure here, so CI cannot pass it by not running it.
+      - name: lint the health check as the POSIX sh ECS runs it with
+        run: shellcheck -s sh deploy/aws-terraform/srh-healthcheck.sh
+      - name: execute the health check against the pinned srh
+        env:
+          SRH_HEALTHCHECK_REQUIRED: "1"
+        run: bats deploy/aws-terraform/test/srh-healthcheck.bats
+      # EC2 checks a security group (rule) description's character set only at
+      # apply, which nothing above reaches — six `->` descriptions passed every
+      # gate here and failed the first real apply. A static scan of the
+      # module's own .tf source; it shares this job only for the bats install.
+      - name: every security group description is one EC2 accepts
+        run: bats deploy/aws-terraform/test/descriptions.bats
 
   # Builds the docs site with the SAME action pages.yml publishes with, so a
   # docs change that breaks the site fails the PR instead of landing on main

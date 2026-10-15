@@ -69,6 +69,7 @@ EOF
   chmod +x "$STUB/npm"
   REPORT="$BATS_TEST_TMPDIR/report.md"
   run env PATH="$STUB:$PATH" "$REPO_ROOT/scripts/load-test.sh" --app demo --url http://example.invalid --count 2 --report "$REPORT"
-  grep -q 'installing autocannon' "$REPORT"
-  [ "$status" -eq 1 ] && [ -z "$(grep -F -- '--count' "$CALLS")" ]
+  grep -q 'installing autocannon' "$REPORT" || { echo "FAIL: $REPORT has no 'installing autocannon' line"; return 1; }
+  [ "$status" -eq 1 ] || { echo "FAIL: load-test.sh exited with status $status, expected 1 for a failed install"; return 1; }
+  [ -z "$(grep -F -- '--count' "$CALLS")" ] || { echo "FAIL: fly was called with --count after the install failed; seeding must not run"; return 1; }
 }

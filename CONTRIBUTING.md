@@ -61,7 +61,7 @@ agent-facing copy with the full gotcha list is
 ./scripts/acceptance-scorer.sh
 
 # app
-(cd apps/web && corepack pnpm install --frozen-lockfile && corepack pnpm lint && corepack pnpm test)
+(cd apps/web && corepack enable && corepack pnpm install --frozen-lockfile && corepack pnpm lint && corepack pnpm test)
 
 # app — the grading Lua (classic, quiz, ai) and the admin, hint and team
 # scripts executed against a real Redis. Skips without the two env vars; CI
@@ -72,8 +72,8 @@ agent-facing copy with the full gotcha list is
 
 # app production build — CI also asserts .next/server/app/index.html does
 # NOT exist afterwards: `/` must never be statically prerendered
-(cd apps/web && BETTER_AUTH_SECRET=dummy-secret-32-characters-minimum \
-  BETTER_AUTH_URL=http://localhost corepack pnpm build)
+(cd apps/web && BETTER_AUTH_SECRET=ci-dummy BETTER_AUTH_URL=http://localhost:3000 \
+  corepack pnpm build)
 ./scripts/acceptance-app.sh
 
 # shell
@@ -179,8 +179,9 @@ Nothing here is only asked for; each item is checked on every PR.
   the same input in different languages and share no code, so each is pinned
   to a file both sides can assert against rather than to the other's
   behaviour. The `.env` bootstrap keys are read by `env_val`
-  (`setup/ctf-setup.sh`, bash) and by `loadConfig(env)` (`sync/src/config.js`,
-  JS) — the same keys, two parsers, and AGENTS.md's lockstep rule applies.
+  (`scripts/lib/dotenv.sh`, bash, sourced by `setup/ctf-setup.sh`) and by
+  `loadConfig(env)` (`sync/src/config.js`, JS) — the same keys, two
+  parsers, and AGENTS.md's lockstep rule applies.
   `setup/targets.tsv` is the only authoritative source of a fork's repo name,
   and both `sync/test/repo-names.differential.test.js` and
   `apps/web/src/lib/__tests__/apps-repo-names.differential.test.ts` parse that
@@ -295,8 +296,8 @@ spine. Before writing code:
 ## Releases
 
 Versions follow [Semantic Versioning](https://semver.org/), cut as
-**repo-level annotated tags** from `main` (`v0.1.0` through `v0.4.0` so
-far) with GitHub Releases generated from the Conventional Commit history —
+**repo-level annotated tags** from `main` (every release since
+`v0.1.0`) with GitHub Releases generated from the Conventional Commit history —
 `feat:` implies minor, `fix:`/`docs:`/`chore:` imply patch, a
 `BREAKING CHANGE:` footer (or `!` after the type) implies major. The version
 is repo-level: `apps/web/package.json` tracks the current tag; `scorer` and

@@ -157,7 +157,7 @@ for `apps/web/src/**/*.tsx` (the client-bundle read and the prerendered `/`).
 
 **11. The public surface is a named list, not a shape.** Exactly eight routes
 under `/api` answer without a session or a verified launch token, and each is
-on the list for its own stated reason — a sixth does not inherit an exemption
+on the list for its own stated reason — a ninth does not inherit an exemption
 by resembling one that has it; it needs its own case. Seven are read-only,
 policy or public-by-design content out and never facts in, nothing secret in
 the response: `GET /api/public/scoring`, `GET /api/ai/launch-key`, `GET

@@ -149,12 +149,16 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
       ...(settings.eventIdentity?.eventTimeZone ? { timeZone: site.timeZone } : {}),
     },
     settings: policySettings,
-    ...(isEnabled("classic") ? { classic: await exportClassic() } : {}),
-    ...(isEnabled("quiz") ? { quiz: await exportQuiz() } : {}),
-    // The ai catalogue rides along like the other two. Its own
-    // `exportBundle` reads challenges, flags, hints, signing keys and
-    // categories — never `ctf:ai:launchkey`, which is module identity.
-    ...(isEnabled("ai") ? { ai: await exportAi() } : {}),
+    // All three content stores, whatever the module toggles say:
+    // importEventBundle clears all three, so a section left out here would
+    // delete a switched-off module's content on the way back in. Which
+    // modules are on rides in settings.enabledModuleIds above.
+    classic: await exportClassic(),
+    quiz: await exportQuiz(),
+    // The ai catalogue's own `exportBundle` reads challenges, flags, hints,
+    // signing keys and categories — never `ctf:ai:launchkey`, which is
+    // module identity.
+    ai: await exportAi(),
   };
 
   // Sponsors are a PLATFORM feature, not a module — there is no

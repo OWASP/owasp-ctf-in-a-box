@@ -1193,7 +1193,9 @@ AI challenge's mode, launch URL template and **per-challenge signing key**
 plus **policy** settings: the hint controls (enabled, cost, and its two
 gating knobs), the quiz retry-gate knobs, Jeopardy's and AI's submission
 cooldowns, the re-run cooldown, the team-size cap and registration switch,
-module title/blurb overrides, and which modules are enabled. It carries no
+module title/blurb overrides, and which modules are enabled. The content of
+all three modules is in every bundle, switched on or off, so a module that is
+off comes back from an import with its content intact and still off. It carries no
 scoring data: no solves, attempts, team rosters or score adjustments. It also carries an informational **event
 identity** block — `name`, `theme`, `dates`, `location` and `ctfStartsAt` —
 read from the running box at export time.

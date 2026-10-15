@@ -11,11 +11,11 @@
 // checked against the code and `docs/operations.md` rather than assumed:
 //
 //   1. Fork Actions keep running. A contestant's PR is still judged and still
-//      gets its score comment — freezing stops INGESTION, not judging
-//      (`docs/operations.md`, "Freeze"). The poller's cursor holds in place and
-//      resumes. Nothing is lost, only deferred. This is the fact an organizer
-//      most needs to relay and the fact the old copy never carried: the PR
-//      score is real, the board is on hold.
+//      gets its score comment, but the score is judged at the comment's time
+//      (ADR 67, `docs/operations.md`, "Freeze"): one posted before the freeze
+//      counts, one posted during it never does, not even after the unfreeze.
+//      The contestant pushes again once scoring resumes. This is the fact an
+//      organizer most needs to relay: freezing does not hold PR scores.
 //   2. Direct submissions are refused outright — quiz answers, classic flags,
 //      AI solves.
 //   3. A contestant who tries reads "Scoring is paused right now. Try again
@@ -29,7 +29,7 @@ export const PAUSED_CONTESTANT_MESSAGE = "Scoring is paused right now. Try again
 
 /** The line under the switch, on both screens. */
 export const FREEZE_HELP =
-  "Holds scoring for everyone. Quiz, classic and AI submissions are refused; fork Actions keep judging PRs and their score comments still appear, but those points reach the board only once you unfreeze.";
+  "Holds scoring for everyone. Quiz, classic and AI submissions are refused. Fork Actions keep judging PRs, but a PR scored while frozen never counts, even after you unfreeze — its contestant pushes again once scoring resumes.";
 
 /** The confirmation for flipping `paused`. `next` is the value being written,
  *  so `true` is the freeze direction. */
@@ -39,14 +39,16 @@ export function freezeConfirm(next: boolean): { title: string; body: string; con
         title: "Freeze scoring?",
         body:
           `Contestants get "${PAUSED_CONTESTANT_MESSAGE}" on every quiz answer, flag and AI solve. ` +
-          "Fork Actions keep judging pull requests, and each score comment still appears on its PR straight away — " +
-          "what is held is the ingestion of those points onto the board, which happens when you unfreeze. " +
-          "Nothing is dropped.",
+          "Fork Actions keep judging pull requests: PRs scored before you freeze still count, " +
+          "but a PR scored while frozen never counts, not even after you unfreeze — " +
+          "its contestant has to push again once scoring resumes.",
         confirmLabel: "Freeze",
       }
     : {
         title: "Unfreeze scoring?",
-        body: "Scoring resumes for everyone, and anything judged while frozen is picked up from where ingestion stopped.",
+        body:
+          "Scoring resumes for everyone. A pull request scored while frozen still doesn't count — " +
+          "its contestant has to push again to be scored now.",
         confirmLabel: "Unfreeze",
       };
 }

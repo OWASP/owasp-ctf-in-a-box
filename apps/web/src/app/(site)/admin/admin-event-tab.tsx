@@ -709,10 +709,10 @@ export default function AdminEventTab({
               above first if you want a way back.
             </span>
             <span className="block text-sm text-muted">
-              Scores already ingested are gone, but their source is not: a
-              scored PR comment stays on GitHub, and the poller reads those
-              comments again — so close or clear the source PRs too, or the
-              points come back when you unfreeze.
+              Scores already ingested stay gone: a scored PR comment stays on
+              GitHub, but the poller skips every comment from before the
+              reset. A PR scored again after the reset counts as a fresh
+              result — close the source PRs too if you don&rsquo;t want that.
             </span>
           </div>
           <button

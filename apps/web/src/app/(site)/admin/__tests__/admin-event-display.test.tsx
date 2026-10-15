@@ -77,3 +77,14 @@ describe("AdminEventTab — projector QR code", () => {
     expect(html).toContain("Discord announcements");
   });
 });
+
+describe("AdminEventTab — master reset copy", () => {
+  // The reset watermark skips every score comment from before the reset, and
+  // the scorer refuses them (ADR 67): ingested scores do not come back on the
+  // unfreeze. Only a PR scored again after the reset counts.
+  it("says pre-reset PR scores stay gone and only a re-scored PR counts", () => {
+    const html = renderToStaticMarkup(<AdminEventTab {...props(settings)} />);
+    expect(html).toMatch(/scored again after the reset/i);
+    expect(html).not.toMatch(/come back when you unfreeze/i);
+  });
+});

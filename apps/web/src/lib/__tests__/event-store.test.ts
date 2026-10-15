@@ -139,19 +139,17 @@ describe("exportEventBundle", () => {
     expect(s).not.toContain('"admins"');
   });
 
-  // #250: the ai catalogue is the third archivable content module. Included
-  // exactly when `ai` is in the resolved enabled set, like classic and quiz.
-  it("carries the ai catalogue when the ai module is enabled, and omits the section when it is not", async () => {
-    m.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["classic", "quiz", "ai"], paused: true });
-    const withAi = await exportEventBundle(new Date());
-    expect(withAi.bundle.ai).toEqual({ version: 1, categories: ["Prompt Injection"], challenges: [] });
-    expect(m.exportAi).toHaveBeenCalledTimes(1);
-
-    m.exportAi.mockClear();
-    m.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["classic", "quiz"], paused: true });
-    const withoutAi = await exportEventBundle(new Date());
-    expect("ai" in withoutAi.bundle).toBe(false);
-    expect(m.exportAi).not.toHaveBeenCalled();
+  // Import clears all three content stores, so the export must carry
+  // all three whatever the module toggle says — a switched-off module's
+  // content would otherwise be deleted by its own round trip. Which modules
+  // are on travels separately, in settings.enabledModuleIds.
+  it("carries every module's content when its module is switched off, with the toggle in settings", async () => {
+    m.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["quiz"], paused: true });
+    const { bundle } = await exportEventBundle(new Date());
+    expect(bundle.ai).toEqual({ version: 1, categories: ["Prompt Injection"], challenges: [] });
+    expect(bundle.classic?.challenges.map((c) => c.id)).toEqual(["web-one-ab12cd"]);
+    expect(bundle.quiz).toEqual({ version: 1, questions: [] });
+    expect(bundle.settings.enabledModuleIds).toEqual(["quiz"]);
   });
 
   // #405: sponsors are a PLATFORM feature, not gated on enabledModuleIds —

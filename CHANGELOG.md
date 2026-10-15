@@ -20,6 +20,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: an event archive round trip deleted a switched-off module's
+  content (#644).** The archive export left out the Jeopardy, Quiz or AI
+  content of any module that was switched off, while the import clears all
+  three before loading what the file carries. Exporting with AI off and
+  importing that file emptied the AI catalogue. The export now carries all
+  three modules' content whatever the toggles say; which modules are on
+  still travels in the bundle's settings, so a module that was off comes
+  back off, with its content.
 - **Fixed: a module stayed off a leaderboard row until its first solve
   (#585).** Expanding a team with no Jeopardy solves showed only its Secure
   Development targets, so a new team could not tell from the board that

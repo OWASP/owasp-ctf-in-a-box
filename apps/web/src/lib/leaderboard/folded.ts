@@ -69,9 +69,15 @@ type Clock = () => number;
 // timestamps to put their points on the chart at all (issue #415). It leaves
 // `points` untouched, so it neither needs to run before the penalty fold nor
 // disturbs it: the chart is gross, the row net.
-/** The production fold: the leaderboard source through every overlay stage. */
-const defaultFold: Fold = async ({ fresh = false } = {}) =>
-  (await getLeaderboardSource())
+/** The production fold: the leaderboard source through every overlay stage.
+ *  Times itself and logs once per FOLD (not per request — the 10 s memo
+ *  absorbs the rest, issue #444), so an operator can separate fold cost from
+ *  request/render latency on a live box: the load test's autocannon
+ *  percentiles are whole-request numbers, and this line is the fold's share
+ *  of them (issue #446). */
+const defaultFold: Fold = async ({ fresh = false } = {}) => {
+  const started = Date.now();
+  const data = await (await getLeaderboardSource())
     .getLeaderboard({ fresh })
     .then(withModuleContributions)
     .then(withTeamStandings)
@@ -80,6 +86,13 @@ const defaultFold: Fold = async ({ fresh = false } = {}) =>
     // The organizer's team adjustments, after the hint fold: both come off
     // (or onto) the same final total. See score-adjustments.ts.
     .then(withScoreAdjustments);
+  console.info(
+    `leaderboard fold: ${Date.now() - started}ms ` +
+      `(entries=${data.entries.length} teams=${data.teams.length} ` +
+      `series=${data.series?.length ?? 0} teamSeries=${data.teamSeries?.length ?? 0})`,
+  );
+  return data;
+};
 
 // `gen` is the fold-cache generation the fold STARTED under (#553): the two
 // admin resets that lower scores bump it, and nothing stamped older is served

@@ -91,7 +91,8 @@ the event runs Secure Development:
 
 It asks only for what your event needs, writes `.env`, does every step it
 can automate, and walks you through the few that need the GitHub website.
-`--dry-run` previews any step. Everything else — the event's name, which
+`--dry-run` previews the steps that change anything, once `.env` has the
+admin logins (and the org, if you run Secure Development). Everything else — the event's name, which
 modules run, which targets — is set at runtime in `/admin`, so there is no
 config file to edit.
 
@@ -137,6 +138,8 @@ bundle. Around whichever modules you enable, the platform provides:
   runtime, with no rebuild.
 - **Event archive** — export the event's content and settings, and import
   them into another box. Contestant progress is not exported.
+  The archive holds every flag and quiz answer in plain text, so keep it as
+  private as `/admin`.
 
 | Contestant breakdown | Challenge browser |
 |---|---|

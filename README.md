@@ -52,16 +52,15 @@ anyone who wants to run an event without becoming a cloud operator.
 
 ## Status
 
-**v1.0, proven at a real event.** The first live event ran on October 7–8,
-2026, on the [AWS module](docs/aws.md) behind Cloudflare, with a new
-challenge release on October 9:
+**v1.0, proven at a real event.** The first live event ran on October 7–9,
+2026, on the [AWS module](docs/aws.md) behind Cloudflare:
 
 | | |
 |---|---|
 | Teams | 28 |
 | Players | 41 (24 attempted or scored) |
 | Secure Development scores ingested | 498, none dropped |
-| Requests served | about 465,000 over the two event days |
+| Requests served | about 465,000 on the two busiest days |
 
 Known limits are listed in the open in
 [Status and upstream dependencies](docs/operations.md#status-and-upstream-dependencies).
@@ -108,10 +107,10 @@ Every step in detail:
 ## The modules
 
 **Secure Development** — a GitHub Action in the contestant's fork runs the
-target's tests against the patch and posts the result on the pull request;
-the score reaches the leaderboard on the box's next poll, about 30 seconds
-later. Six targets, 321 challenges. An unpatched app scores 0, and a correct
-patch earns its points; CI checks both directions.
+target's tests against the patch and posts the result on the pull request.
+The box polls for it about every 30 seconds, and it shows on the leaderboard
+within about a minute. Six targets, 321 challenges. An unpatched app scores
+0, and a correct patch earns its points; CI checks both directions.
 
 **Quiz** — graded the moment it is answered (all-or-nothing on
 multi-select), with an attempt cap and a retry cooldown. Needs no GitHub.
@@ -136,7 +135,8 @@ bundle. Around whichever modules you enable, the platform provides:
   team cap, cooldowns, module content, per-contestant support actions, an
   activity stream, engagement metrics and an audit log. All of it changes at
   runtime, with no rebuild.
-- **Event archive** — export the whole event and import it into another box.
+- **Event archive** — export the event's content and settings, and import
+  them into another box. Contestant progress is not exported.
 
 | Contestant breakdown | Challenge browser |
 |---|---|

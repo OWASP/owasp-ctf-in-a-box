@@ -2778,12 +2778,11 @@ on from other OWASP-CTF repos landed here instead:
    org secrets of its own — the comment is the transport, so there is nothing
    for it to authenticate to.
 
-**It has run a real event.** The first one ran on October 7–8, 2026, on the
-AWS module behind Cloudflare, with a new challenge release on October 9:
-28 teams and 41 players, 498 Secure Development score comments ingested with
-none dropped, and about 465,000 requests over the two event days. That is
-the measured load: a larger cohort, or a single box on venue wifi, is still
-beyond what has been run.
+**It has run a real event.** The first one ran on October 7–9, 2026, on the
+AWS module behind Cloudflare: 28 teams and 41 players, 498 Secure
+Development score comments ingested with none dropped, and about 465,000
+requests on the two busiest days. That is the measured load: a larger
+cohort, or a single box on venue wifi, is still beyond what has been run.
 
 Known limits, in the open:
 

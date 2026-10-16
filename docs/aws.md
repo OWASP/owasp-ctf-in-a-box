@@ -200,7 +200,7 @@ like, and how to roll back and tear down. Symptom-first recipes are in
 [docs/troubleshooting.md](troubleshooting.md).
 
 **Run at a real event.** This module hosted the first live event, on
-October 7–8, 2026. What that event taught — monitoring, snapshots, the
+October 7–9, 2026. What that event taught — monitoring, snapshots, the
 deploy script, hardening and sizing — is tracked in
 [#593](https://github.com/OWASP/owasp-ctf-in-a-box/issues/593). Rehearse the
 drills below on a throwaway stack before you rely on them at your own event.

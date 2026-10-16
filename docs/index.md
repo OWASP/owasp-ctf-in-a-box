@@ -253,10 +253,10 @@ Pick the doc for what you're doing right now:
 
 ## Status
 
-The kit has run a real event. The first one ran on October 7–8, 2026, on
+The kit has run a real event. The first one ran on October 7–9, 2026, on
 the [AWS module](aws.md) behind Cloudflare: 28 teams and 41 players, 498
 Secure Development score comments ingested with none dropped, and about
-465,000 requests over the two event days. CI gates every target's rubric in
+465,000 requests on the two busiest days. CI gates every target's rubric in
 both directions — the unpatched app scores 0 and a reference patch earns its
 points — and the smoke test (`scripts/smoke.sh`) runs the whole poll
 pipeline end to end. The known limits, stated in the open, are in

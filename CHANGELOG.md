@@ -8,6 +8,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+## v1.0.0 — 2026-10-16
+
+The first stable release. It follows the kit's first real event (October
+7–9, 2026: 28 teams, 41 players, 498 Secure Development scores ingested,
+none dropped). One breaking change, below.
+
 ### Breaking changes
 
 - **`LEADERBOARD_SOURCE=upstash` is removed (#502).** The mode read the
@@ -20,6 +26,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: `apps/web` pins its dependencies to exact versions.** The
+  eight caret ranges left in `apps/web/package.json` are now the exact
+  versions `pnpm-lock.yaml` already resolved, so no installed version moves;
+  every dependency in the app's manifest is now pinned.
 - **Changed: the kit has its own logo and favicon.** The built-in default
   logo is now the project's artwork — a fox, a server box and a flag beside
   the OWASP mark — on the landing hero, the leaderboard header, the "Built

@@ -109,9 +109,10 @@ Every step in detail:
 
 **Secure Development** — a GitHub Action in the contestant's fork runs the
 target's tests against the patch and posts the result on the pull request.
-The box polls for it about every 30 seconds, and it shows on the leaderboard
-within about a minute. Six targets, 321 challenges. An unpatched app scores
-0, and a correct patch earns its points; CI checks both directions.
+The box polls for it about every 30 seconds, and the leaderboard cache can
+add up to about 40 more, so a score shows within about 70 seconds.
+Six targets, 321 challenges. An unpatched app scores 0, and a correct patch
+earns its points; CI checks both directions.
 
 **Quiz** — graded the moment it is answered (all-or-nothing on
 multi-select), with an attempt cap and a retry cooldown. Needs no GitHub.

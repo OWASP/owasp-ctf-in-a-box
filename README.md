@@ -251,9 +251,9 @@ The targets' vulnerabilities are intentional and out of scope.
 
 ## License and credits
 
-Code is **MIT** ([LICENSE](LICENSE)); the documentation under `docs/` is
-**CC BY-SA 4.0** ([docs/LICENSE](docs/LICENSE)), as the
-[OWASP Project Policy](https://policy.owasp.org/operational/projects)
+Code is **MIT** ([LICENSE](LICENSE)); the documentation — this README and
+the Markdown under `docs/` — is **CC BY-SA 4.0** ([docs/LICENSE](docs/LICENSE)),
+as the [OWASP Project Policy](https://policy.owasp.org/operational/projects)
 requires.
 
 This is an **OWASP Foundation** incubator project —

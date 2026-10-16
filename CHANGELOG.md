@@ -6,7 +6,11 @@ commit-level notes, and this file keeps the human summary. The version is
 repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 `sync` deliberately carry no version field.
 
-## Unreleased
+## v1.0.0 — 2026-10-16
+
+The first stable release. It follows the kit's first real event (October
+7–9, 2026: 28 teams, 41 players, 498 Secure Development scores ingested,
+none dropped). One breaking change, below.
 
 ### Breaking changes
 

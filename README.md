@@ -43,8 +43,8 @@ together on one leaderboard:
 It runs from Docker Compose on a laptop, a spare desktop or a small VPS, plus
 one free GitHub org if you run Secure Development. The scoring rubrics for
 all six vulnerable apps ship in the box, so there is no private image to
-request and no scoring code to write. Nothing is billed and nothing phones
-home.
+request and no scoring code to write. The kit is free and nothing phones
+home; a cloud host or VPS costs whatever your provider charges.
 
 **Who it's for:** course instructors, club organizers, OWASP chapter leads,
 workshop facilitators, and security teams running an internal training day —
@@ -196,7 +196,8 @@ Components, the score data flow and the security model:
   repos; then uninstall the GitHub App and delete the org's Actions secrets
   yourself.
 
-All state lives in named Docker volumes, so a reboot loses nothing. The full
+On a Compose box, all state lives in named Docker volumes, so a reboot loses
+nothing; the AWS module keeps it in ElastiCache instead. The full
 organizer guide is [docs/operations.md](docs/operations.md).
 
 ## What it is not

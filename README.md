@@ -92,9 +92,9 @@ the event runs Secure Development:
 It asks only for what your event needs, writes `.env`, does every step it
 can automate, and walks you through the few that need the GitHub website.
 `--dry-run` previews the steps that change anything, once `.env` has the
-admin logins (and the org, if you run Secure Development). Everything else — the event's name, which
-modules run, which targets — is set at runtime in `/admin`, so there is no
-config file to edit.
+admin logins (and the org, if you run Secure Development). Everything
+else — the event's name, which modules run, which targets — is set at
+runtime in `/admin`, so there is no config file to edit.
 
 <p align="center">
   <img alt="The ctf-setup.sh guided wizard: ASCII banner and step-by-step prompts" src="docs/assets/wizard.jpg" width="820">

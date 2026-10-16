@@ -20,6 +20,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Changed: the kit has its own logo and favicon.** The built-in default
+  logo is now the project's artwork — a fox, a server box and a flag beside
+  the OWASP mark — on the landing hero, the leaderboard header, the "Built
+  with OWASP CTF in a Box" credit, the README and the docs site, shown in its
+  own colours. The favicon is the matching round badge, in the app and, for
+  the first time, on the docs site. An organizer's uploaded logo and favicon
+  still take precedence (ADR 65); nothing on a running box needs to change.
 - **Removed: the event Tagline setting (#648).** The Event tab's Tagline
   field was saved and carried in the event archive but shown on no page, so
   it is gone: the Event tab no longer offers it, `/admin` refuses an

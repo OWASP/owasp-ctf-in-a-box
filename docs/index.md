@@ -3,10 +3,7 @@ title: OWASP CTF in a Box
 ---
 
 <p>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/owasp-logo-dark.png">
-    <img alt="OWASP" src="assets/owasp-logo.png" width="220">
-  </picture>
+  <img alt="OWASP CTF in a Box: a fox guarding a server box with a capture-the-flag flag, beside the OWASP mark" src="assets/logo.png" width="360">
 </p>
 
 # OWASP CTF in a Box

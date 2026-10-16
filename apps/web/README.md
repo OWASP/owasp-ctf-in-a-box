@@ -112,4 +112,4 @@ src/
 
 ## Branding
 
-OWASP logo and favicon from the official mark at [owasp.org](https://owasp.org); typography per the OWASP brand guidelines above. The theme is the original navy/blue terminal identity — `DESIGN_SYSTEM.md` has the full token set and rationale.
+The default logo (`public/logo.png`) and favicon (`public/favicon.ico`, `public/icon.png`) are the project's own artwork, which carries the OWASP mark; typography per the OWASP brand guidelines above. The theme is the original navy/blue terminal identity — `DESIGN_SYSTEM.md` has the full token set and rationale.

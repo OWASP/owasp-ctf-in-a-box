@@ -94,7 +94,7 @@ vi.mock("next/image", () => ({
     <img src={src} alt={alt} className={className} />
   ),
 }));
-// The event's own images (#529). Empty by default (the built-in OWASP mark and
+// The event's own images (#529). Empty by default (the built-in project logo and
 // favicon); the hero-logo tests below set one for a single render, or make the
 // read fail.
 const eventImages = vi.hoisted(() => ({ data: {} as Record<string, unknown>, fail: false }));
@@ -591,28 +591,30 @@ describe("the hero logo (#529)", () => {
     }
   }
 
-  it("shows the OWASP mark, inverted for the navy hero, when no logo is set", () => {
-    const owasp = imgTags(html).find((t) => t.includes('src="/owasp-logo.png"'));
-    expect(owasp).toContain("invert");
+  it("shows the project logo, in its own colours, when no logo is set", () => {
+    const project = imgTags(html).find((t) => t.includes('src="/logo.png"'));
+    expect(project).toContain('alt="OWASP CTF in a Box"');
+    expect(project).not.toContain("invert");
     expect(html).not.toContain("/api/event/logo");
   });
 
-  it("shows the organizer's logo, as uploaded, with a smaller OWASP mark kept beside it", async () => {
+  it("shows the organizer's logo, as uploaded, with a smaller project logo kept beside it", async () => {
     const markup = await render({ logo });
     const custom = imgTags(markup).find((t) => t.includes('src="/api/event/logo?v=0123456789abcdef"'));
     expect(custom).toBeDefined();
     expect(custom).not.toContain("invert");
     expect(custom).toContain('width="480"');
     expect(custom).toContain('height="160"');
-    // The Project Policy's OWASP mark stays on the page, still inverted.
-    const owasp = imgTags(markup).find((t) => t.includes('src="/owasp-logo.png"'));
-    expect(owasp).toContain("invert");
+    // The project credit stays on the page, in its own colours.
+    const project = imgTags(markup).find((t) => t.includes('src="/logo.png"'));
+    expect(project).toBeDefined();
+    expect(project).not.toContain("invert");
   });
 
   it("falls back to the default hero when the image read fails", async () => {
     const markup = await render({ logo }, true);
     expect(markup).not.toContain("/api/event/logo");
-    expect(markup).toContain('src="/owasp-logo.png"');
+    expect(markup).toContain('src="/logo.png"');
   });
 
   // #538: the event logo is the main presence. A fixed 64/80 px height made a
@@ -673,7 +675,8 @@ describe("the hero logo (#529)", () => {
     const link = markup.match(/<a[^>]*href="https:\/\/owasp\.org\/projects\/ctf-in-a-box"[^>]*>[\s\S]*?<\/a>/)?.[0];
     expect(link).toBeDefined();
     expect(link).toContain("Built with OWASP CTF in a Box");
-    expect(link).toMatch(/<img[^>]*src="\/owasp-logo\.png"[^>]*class="[^"]*invert/);
+    expect(link).toMatch(/<img[^>]*src="\/logo\.png"/);
+    expect(link).not.toMatch(/<img[^>]*class="[^"]*invert/);
   });
 
   // PR #540 review: flex-wrap alone leaves a narrow portrait badge and the
@@ -687,10 +690,10 @@ describe("the hero logo (#529)", () => {
     expect(row).not.toContain("flex-wrap");
   });
 
-  it("keeps the default hero unchanged when no logo is set: the OWASP mark alone, no caption", () => {
+  it("keeps the default hero unchanged when no logo is set: the project logo alone, no caption", () => {
     expect(html).not.toContain("Built with OWASP CTF in a Box");
-    const owasp = imgTags(html).filter((t) => t.includes('src="/owasp-logo.png"'));
-    expect(owasp).toHaveLength(1);
+    const project = imgTags(html).filter((t) => t.includes('src="/logo.png"'));
+    expect(project).toHaveLength(1);
   });
 });
 

@@ -327,15 +327,15 @@ The panel offers:
   - **Logo** — PNG, JPEG or WebP, up to 128 KB and 4096 px a side. It leads
     the landing page's hero (shown up to 224 px tall and 32 rem wide on a
     desktop, 144 px tall on a phone, whatever its shape; clickable when a
-    **Logo link** is set), and a smaller OWASP mark stays beside it, captioned "Built
-    with OWASP CTF in a Box": the
+    **Logo link** is set), and a smaller project logo, which carries the
+    OWASP mark, stays beside it, captioned "Built with OWASP CTF in a Box": the
     OWASP Project Policy wants OWASP branding prominent on any domain the kit
     runs on, so an event adds its logo and never removes OWASP's (ADR 65).
     It is shown as uploaded on the dark navy hero — upload a version made for
-    a dark background. With no logo set, the hero shows the OWASP mark alone,
-    as before.
+    a dark background. With no logo set, the hero shows the project logo
+    alone.
   - **Favicon** — the browser tab icon: a square PNG, 32–512 px, up to 32 KB.
-    With none set, the built-in icon is used.
+    With none set, the project's built-in icon is used.
 
   The server checks each file's real bytes, not its name or claimed type, and
   refuses SVG outright (an SVG served from the box can run script). Both are
@@ -1099,8 +1099,8 @@ leaderboard's projector display (`?display=1`) if and only if at least one
 sponsor is configured. The footer's credit is left out on the landing page,
 where the strip above the fold already names them. An event with no sponsors
 ships zero sponsor pixels anywhere. The leaderboard also shows the event logo
-beside its title when one is uploaded in `/admin` → Event, and the default
-OWASP mark otherwise, as the landing page does.
+beside its title when one is uploaded in `/admin` → Event, and the project
+logo otherwise, as the landing page does.
 
 **The tab is the list.** Each sponsor is a card showing its logo as it will
 actually appear — on the site's own dark background, untreated — next to its

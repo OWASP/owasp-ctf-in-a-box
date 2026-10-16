@@ -179,14 +179,14 @@ export default async function LeaderboardPage({
               alt={`${event.name} logo`}
             />
           ) : (
-            // No uploaded logo: the default OWASP mark, the same one the
-            // landing page's hero falls back to.
+            // No uploaded logo: the project logo, the same one the landing
+            // page's hero falls back to.
             <Image
-              src="/owasp-logo.png"
-              alt="OWASP"
+              src="/logo.png"
+              alt="OWASP CTF in a Box"
               width={200}
-              height={69}
-              className="h-auto w-28 shrink-0 invert sm:w-36"
+              height={85}
+              className="h-auto w-28 shrink-0 sm:w-36"
             />
           )
         }

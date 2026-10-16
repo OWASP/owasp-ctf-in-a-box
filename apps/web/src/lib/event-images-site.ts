@@ -8,7 +8,7 @@ import { eventImageUrl, type EventImagesMeta } from "@/lib/event-images-keys";
 /**
  * The event images as the PAGES read them (#529): once per request
  * (react.cache — the layout's metadata and the landing page share the read),
- * and failing OPEN to "none stored", which renders the built-in OWASP mark
+ * and failing OPEN to "none stored", which renders the built-in project logo
  * and favicon. Branding must never take a page down; the image routes
  * themselves fail closed instead (event-image-response.ts).
  */

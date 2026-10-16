@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/owasp-logo-dark.png">
-    <img alt="OWASP" src="docs/assets/owasp-logo.png" width="260">
-  </picture>
+  <img alt="OWASP CTF in a Box: a fox guarding a server box with a capture-the-flag flag, beside the OWASP mark" src="docs/assets/logo.png" width="420">
 </p>
 
 <h1 align="center">OWASP CTF in a Box</h1>

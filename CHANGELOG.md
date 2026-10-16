@@ -6,6 +6,8 @@ commit-level notes, and this file keeps the human summary. The version is
 repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 `sync` deliberately carry no version field.
 
+## Unreleased
+
 ## v1.0.0 — 2026-10-16
 
 The first stable release. It follows the kit's first real event (October
@@ -24,6 +26,10 @@ none dropped). One breaking change, below.
 
 ### Changes
 
+- **Changed: `apps/web` pins its dependencies to exact versions.** The
+  eight caret ranges left in `apps/web/package.json` are now the exact
+  versions `pnpm-lock.yaml` already resolved, so no installed version moves;
+  every dependency in the app's manifest is now pinned.
 - **Changed: the kit has its own logo and favicon.** The built-in default
   logo is now the project's artwork — a fox, a server box and a flag beside
   the OWASP mark — on the landing hero, the leaderboard header, the "Built

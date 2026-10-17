@@ -83,7 +83,6 @@ const EVENT_POLICY_FIELD_SET = new Set<string>(EVENT_POLICY_FIELDS);
 
 type EventBundleEvent = {
   name: string;
-  theme?: string;
   dates?: string;
   location?: string;
   ctfStartsAt?: string | null;
@@ -192,15 +191,12 @@ export function parseEventBundle(raw: string): EventParseResult {
   } else {
     // A present-but-wrong-typed optional identity field is REJECTED, not
     // silently dropped — every other bundle field follows that rule, and
-    // event-store's `typeof bundle.event.theme === "string"` guard at import
+    // event-store's `typeof bundle.event.location === "string"` guard at import
     // would otherwise ignore a non-string value with no error at all (finding
     // M4). `dates`/`ctfStartsAt` are still baked identity facts (PR 3 of #386
     // derives them from the scoring schedule instead), so they get the same
-    // treatment as theme/location here even though nothing currently applies
+    // treatment as location here even though nothing currently applies
     // them on import.
-    if (parsed.event.theme !== undefined && typeof parsed.event.theme !== "string") {
-      errors.push({ where: "event.theme", message: '"event.theme" must be a string' });
-    }
     if (parsed.event.location !== undefined && typeof parsed.event.location !== "string") {
       errors.push({ where: "event.location", message: '"event.location" must be a string' });
     }

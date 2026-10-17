@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/owasp-logo-dark.png">
-    <img alt="OWASP" src="docs/assets/owasp-logo.png" width="260">
-  </picture>
+  <img alt="OWASP CTF in a Box: a fox guarding a server box with a capture-the-flag flag, beside the OWASP mark" src="docs/assets/logo.png" width="420">
 </p>
 
 <h1 align="center">OWASP CTF in a Box</h1>
@@ -24,100 +21,46 @@
   <img alt="Walkthrough of the contestant leaderboard: sweeping the score-over-time graph to read every team's points at that instant, then expanding the leading team to its members, its per-module totals, its per-target breakdown and the list of flags it has open" src="docs/assets/demo.gif" width="820">
 </p>
 
-### Working on the kit (humans and agents)
-
-Read [`AGENTS.md`](AGENTS.md) before you write code. It is the operating
-manual: the exact commands CI runs, the failure modes this repo has
-already hit, and the review invariants in
-[`docs/reviewing.md`](docs/reviewing.md). `CLAUDE.md` is a pointer to
-the same file.
-
-A change is ready when CI is green **and** every actionable CodeRabbit
-thread on the latest commit is resolved (or declined on the record).
-Commits follow Conventional Commits and carry no AI attribution.
-
-Small, well-specified work is tagged
-[`good first issue`](https://github.com/OWASP/owasp-ctf-in-a-box/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
-New modules start as an issue, not a PR — see
-[CONTRIBUTING.md](CONTRIBUTING.md#proposing-a-new-module).
-
 ## What this is
 
-**A control plane, not a single game.** The box gives an event its shared
-spine — a GitHub org, team registration, a live leaderboard, an organizer
-admin panel, and the scoring pipeline that feeds it. **Modules** plug
-challenge content into that spine, and any subset can run alone or together:
-patch-to-score **Secure Development**, a **Quiz** bank, a
-**Jeopardy** board, and externally hosted **AI** challenges. The [module
-contract](docs/modules.md) is the boundary
-between spine and content, so the box is built to host further modules —
-forensics, API-security, cloud — as they land.
+Everything a security event needs, on one machine you control: GitHub
+sign-in, teams, a live leaderboard, an organizer admin panel, and the
+scoring behind it. You pick which challenge **modules** run, alone or
+together on one leaderboard:
 
-**Why it exists.** The Secure Development module teaches defence rather than
-attack, and it is a genuinely good way to teach secure coding. Until now,
-running one meant standing up Vercel, Upstash, Lambda and DynamoDB, holding
-the cloud bill, and having access to a private scoring image. That is a
-reasonable ask for a conference with a budget. It is an unreasonable ask for
-a university security course, a high-school club, an OWASP chapter night, or
-a weekend workshop.
+- **Secure Development** — contestants fork a deliberately vulnerable app,
+  **patch** the flaw, and open a pull request. The patch is tested
+  automatically and scored. It teaches defence, not attack.
+- **Quiz** — single- and multi-select security questions.
+- **Jeopardy** — a board of flag challenges in categories, with optional
+  paid hints.
+- **AI** — prompt-injection and guardrail challenges hosted on an external
+  site, scored back on the leaderboard.
 
-This kit removes it. Everything runs from Docker Compose on one machine you
-already have — a laptop, a spare desktop, a small VPS — plus one free GitHub
-org for the forks. The rubrics for all six targets ship inside the box, so
-there is no private image to request and no scoring code to write. Nothing is
-billed, nothing phones home, and when the event ends you archive the repos
-and stop the stack.
+It runs from Docker Compose on a laptop, a spare desktop or a small VPS, plus
+one free GitHub org if you run Secure Development. The scoring rubrics for
+all six vulnerable apps ship in the box, so there is no private image to
+request and no scoring code to write. The kit is free and nothing phones
+home; a cloud host or VPS costs whatever your provider charges.
 
-**Who it's for:** anyone who wants to run this event and does not want to
-become a cloud operator to do it — course instructors, club organizers, OWASP
-chapter leads, workshop facilitators, security teams running an internal
-training day.
+**Who it's for:** course instructors, club organizers, OWASP chapter leads,
+workshop facilitators, and security teams running an internal training day —
+anyone who wants to run an event without becoming a cloud operator.
 
 ## Status
 
-**Deployed and exercised end to end; not yet run for a real cohort.** The
-full scoring path ships in-kit — the scorer's bearer-authed `POST /score`, the
-self-contained scoring workflow for the forks, the poll transport — and
-`scripts/smoke.sh` drives that whole pipeline against mocks. Beyond that,
-the kit runs continuously on a hosted box from the same Compose file this
-repo ships, `GET /health` reports the exact revision serving it, and an
-end-to-end pass over that live instance is where a batch of real defects were
-found and fixed — the sort a mocked suite cannot see.
+**v1.0, proven at a real event.** The first live event ran on October 7–9,
+2026, on the [AWS module](docs/aws.md) behind Cloudflare:
 
-What has *not* happened is a real event: a cohort of contestants opening real
-PRs against real forks, at once, for hours. That is the gap between "the
-pipeline works" and "the pipeline works at 40 people". Two caveats are open
-rather than buried: the Security Shepherd result matcher has a stated
-residual limit (an unusually-phrased refusal can still read as a solve — it
-can under-credit a correct patch, never award a free point), and the load
-profile of a full cohort is untested. Detail and current state: [Status and
-upstream dependencies](docs/operations.md#status-and-upstream-dependencies).
+| | |
+|---|---|
+| Teams | 28 |
+| Players | 41 (24 attempted or scored) |
+| Secure Development scores ingested | 498, none dropped |
+| Requests served | about 465,000 on the two busiest days |
 
-## What it is not
-
-- **Not a general CTF platform.** [CTFd](https://ctfd.io/) is mature,
-  battle-tested, and has a large plugin ecosystem — if you want a
-  conventional jeopardy or attack-defense event with maximum flexibility,
-  use CTFd. This kit's Jeopardy module is deliberately smaller than CTFd.
-- **Not a hosted practice gym.** [picoCTF](https://picoctf.org/) gives you
-  curriculum and challenges with zero operations — if you don't need to run
-  your *own* event with your own content and roster, it's the better answer.
-- **Not an attack trainer.** The flagship module grades *patches*, not
-  exploits. Contestants fix vulnerabilities and a pipeline proves the fix.
-
-What it does that those don't: patch-to-score defence training graded through
-GitHub pull requests, a module contract for mixing game types on one
-leaderboard, and a control plane you own end to end — one box, one free org,
-no cloud bill, no telemetry.
-
-This is an **OWASP Foundation project** — an incubator-level tool project;
-its home page is
-[owasp.org/projects/ctf-in-a-box](https://owasp.org/projects/ctf-in-a-box).
-Four of the six vulnerable targets are OWASP projects (Juice Shop, WebGoat,
-Security Shepherd, VulnerableApp); DVWA and VAmPI are community projects.
-OWASP does not endorse or recommend any product or service, including the
-targets this kit hosts — they are training material, chosen for what they
-teach.
+Known limits are listed in the open in
+[Status and upstream dependencies](docs/operations.md#status-and-upstream-dependencies).
 
 ## Quickstart
 
@@ -130,83 +73,71 @@ cd owasp-ctf-in-a-box
 ./scripts/dev-stack up
 ```
 
-It writes throwaway local secrets, builds the scorer and app images, brings
-the stack up, seeds a demo leaderboard through the scorer's real scoring API,
-and prints the URL to open. You should see the leaderboard with seeded teams
-and a score-over-time graph; `./scripts/dev-stack score <login> juice-shop 3`
-lands three more solves live. `./scripts/dev-stack down` tears it down.
+It builds the stack, seeds a demo leaderboard and prints the URL to open.
+`./scripts/dev-stack score <login> juice-shop 3` lands three more solves
+live; `./scripts/dev-stack down` tears it down.
 
-**Run a real event** with the guided wizard. Add the **[`gh`
-CLI](https://cli.github.com)** (authenticated), plus **one free GitHub org**
-if the event runs Secure Development; `./setup/ctf-setup.sh check` verifies
-the tooling first:
+**Run a real event** with the guided wizard. You also need the
+**[`gh` CLI](https://cli.github.com)**, signed in, and a free GitHub org if
+the event runs Secure Development:
 
 ```sh
+./setup/ctf-setup.sh check      # verify the tooling
 ./setup/ctf-setup.sh            # guided, prompts for values, resumable
 ```
 
-It asks for each value as it goes — your box URL, the event org, the admin
-logins, whether you run Secure Development, the GitHub credentials — writes
-`.env`, does
-every automatable step, guides you through the GitHub-UI ones, and resumes if
-you stop and come back. Everything else (the event's name, which modules run,
-which targets) is a runtime `/admin` setting, so there is no config file to
-edit. It asks only what you actually need: an event without Secure
-Development needs no org, no forks, and no scorer image, and is never asked
-about them. Preview any mutating step with `--dry-run` — it narrates steps
-4–9 from a `.env` that is already complete, and refuses (by design) when
-there is no admin login, or when Secure Development is on with no org. The
-wizard closes by running `./setup/ctf-setup.sh doctor` — a per-fork status
-matrix you can re-run at any time — and then offers an optional **fly.io
-deploy** (default no), so putting the same event on a public hostname is a
-guided flow — the hostname, a previewed deploy, then a confirmation — rather
-than a trip through the deploy docs.
+It asks only for what your event needs, writes `.env`, does every step it
+can automate, and walks you through the few that need the GitHub website.
+`--dry-run` previews the steps that change anything, once `.env` has the
+admin logins (and the org, if you run Secure Development). Everything
+else — the event's name, which modules run, which targets — is set at
+runtime in `/admin`, so there is no config file to edit.
 
 <p align="center">
   <img alt="The ctf-setup.sh guided wizard: ASCII banner and step-by-step prompts" src="docs/assets/wizard.jpg" width="820">
 </p>
 
-**Want the details?** Every discrete subcommand, each UI-only step, and how
-the two GitHub apps differ:
-[docs/hosting.md](docs/hosting.md#quickstart-zero-to-a-scored-event).
 **In a cloud instead?** [docs/aws.md](docs/aws.md) (Terraform: ECS Fargate,
-ElastiCache and an ALB — `apply` up / `destroy` down) or
-[docs/fly.md](docs/fly.md) (one Fly machine).
+ElastiCache and an ALB) or [docs/fly.md](docs/fly.md) (one Fly machine).
+Every step in detail:
+[docs/hosting.md](docs/hosting.md#quickstart-zero-to-a-scored-event).
 
 ## The modules
 
-**Secure Development** — fork a deliberately vulnerable app, find the flaw,
-**patch** it, open a PR. A GitHub Action in the fork runs the target's rubric
-against the patch and the score lands on the leaderboard (~30 s later, on
-the box's next poll). Six targets, 321 challenges; stock scores 0, a correct patch earns its
-points — gated in both directions. Needs the GitHub org and the scoring
-pipeline.
+**Secure Development** — a GitHub Action in the contestant's fork runs the
+target's tests against the patch and posts the result on the pull request.
+The box polls for it about every 30 seconds, and the leaderboard cache can
+add up to about 40 more, so a score shows within about 70 seconds.
+Six targets, 321 challenges. An unpatched app scores 0, and a correct patch
+earns its points; CI checks both directions.
 
-**Quiz** — single- and multi-select security questions, graded in the app
-the moment they're answered (all-or-nothing on multi-select), with an attempt
-cap and retry cooldown. Authored from `/admin` one at a time or imported and
-exported as one JSON bundle. Needs no GitHub, no forks, no pipeline.
+**Quiz** — graded the moment it is answered (all-or-nothing on
+multi-select), with an attempt cap and a retry cooldown. Needs no GitHub.
 
-**Jeopardy** — a board of organizer-authored flags in
-categories. Submissions are trimmed and normalised, casing forgiven unless a
-flag is marked case-sensitive (its card says so), with a submission cooldown
-and optional paid hints. Same `/admin` + JSON-bundle authoring as the quiz.
-Needs no GitHub either.
+**Jeopardy** — flags are trimmed and matched case-insensitively unless a
+challenge is marked case-sensitive, with a submission cooldown and optional
+paid hints. Challenges can be hidden or scheduled for later release. Needs no
+GitHub.
 
-**AI** — prompt-injection and guardrail challenges hosted outside
-the box. Each contestant's challenge page mints them a personal launch link
-to the external site; a solve reports back to the leaderboard, either
-through that site's own callback or a flag typed back into the app. Needs no
-GitHub, no forks, no pipeline.
+**AI** — each contestant gets a personal launch link to the external
+challenge site; a solve reports back through that site's callback or a flag
+typed into the app. Needs no GitHub. The site's side of the contract is in
+[docs/ai-module.md](docs/ai-module.md).
 
-Around whichever modules you enable, the platform provides: team
-self-registration with captains, join codes and `/join/<code>` links (solo
-play is a team of one; a flag solved by several teammates counts once); the
-live leaderboard with a CTFd-style score-over-time graph from real per-solve
-timestamps; the allowlisted `/admin` panel — freeze, scoring and registration
-windows, hints and costs, team cap, cooldowns, module content, per-contestant
-support actions, an activity stream and engagement metrics — all runtime, no
-rebuild; and a capped audit log on every admin action.
+Quiz, Jeopardy and AI content is written in `/admin` or imported as one JSON
+bundle. Around whichever modules you enable, the platform provides:
+
+- **Teams** — self-registration with captains, join codes and `/join/<code>`
+  links; **Play solo** makes a team of one.
+- **A live leaderboard** with a score-over-time graph from real solve times.
+- **The `/admin` panel** — freeze, scoring and registration windows, hints,
+  team cap, cooldowns, module content, per-contestant support actions, an
+  activity stream, engagement metrics and an audit log. All of it changes at
+  runtime, with no rebuild.
+- **Event archive** — export the event's content and settings, and import
+  them into another box. Contestant progress is not exported.
+  The archive holds every flag and quiz answer in plain text, so keep it as
+  private as `/admin`.
 
 | Contestant breakdown | Challenge browser |
 |---|---|
@@ -216,133 +147,82 @@ rebuild; and a capped audit log on every admin action.
 |---|---|
 | ![The Jeopardy board: challenges grouped by category as compact tiles — title, points, and a green check once solved — each opening the challenge's own page with the description and flag form](docs/assets/flags.jpg) | ![The quiz: single- and multi-select questions, each showing its point value and remaining attempts, graded on submit](docs/assets/quiz.jpg) |
 
-<sup>Captured from the contestant app running locally via <code>scripts/dev-stack up</code>
-with seeded demo players. Targets and fork links are event-config driven; the
-event name and the rest of its branding are admin-panel settings.</sup>
-
-## How it works
-
-One Docker Compose stack: Caddy terminates TLS in front of the Next.js app;
-the app talks to Redis only through srh (an Upstash-compatible REST proxy) —
-the network is split so nothing internet-facing has a route to `redis:6379`.
-Quiz, Jeopardy and AI grade inside the app and bank points straight to Redis.
-Secure Development is graded *outside* the box: the contestant's fork runs a
-GitHub Action that boots the target, runs the rubric against the patch, and
-posts a machine-readable score comment on the PR. The `sync` poller pulls
-those comments — zero inbound network surface, so the box works behind NAT and
-on venue wifi (that is the only transport: push ingest was removed in v0.6,
-see [#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377)). The score
-enters through a single audited writer:
-the scorer's bearer-authed `POST /score`, which validates and writes
-monotonically — solves are never un-solved by a later failing run.
-
-<img src="docs/assets/diagrams/score-ingest-overview.svg" alt="Animated diagram. A contestant answers quiz and Jeopardy challenges in the app, and opens a patch PR against a fork in the event org. The fork's Action runs the rubric and posts a score comment on the PR. Sync pulls that comment about every 30 seconds, needing no inbound network surface: polling is the one score transport, the push branch that once let the Action POST straight to the scorer having been removed in v0.6 per issue 377. The score enters through one audited writer, the scorer's bearer-authed POST /score, which validates and writes monotonically into redis, and the app renders the live leaderboard from it.">
-
-The full picture — components, the nine-step score data flow, the security
-model — is in [docs/architecture.md](docs/architecture.md).
-
-## Secure Development: targets and rubrics
-
-This module's content is a set of vulnerable **targets** and their scoring
-**rubrics**. Contestants pick a target, fork the org's copy, patch it, and
-open a PR. Each target's challenges are executable `node:test` suites, priced
-by difficulty.
+## Secure Development targets
 
 | Target | Challenges | Points | Notes |
 |---|---:|---:|---|
-| `vulnerableapp` | 110 | 187 | Largest target; scored 8-way parallel |
-| `webgoat` | 69 | 137 | Two-stage build: Maven, then the fork's runtime-only Dockerfile |
-| `dvwa` | 55 | 108 | Needs a MariaDB sibling and a schema init |
-| `securityshepherd` | 40 | 79 | HTTPS, three-container stack, strictly serial |
-| `juice-shop` | 38 | 141 | The only target whose difficulty runs to 6 stars |
-| `vampi` | 9 | 16 | Self-contained; the quickest end-to-end proof |
-| **Total** | **321** | **668** | Every event provisions all six; pick a subset in `/admin` → Secure Development → Targets |
-
-<sup>Counts are maintained by hand and pinned to the vendored rubric by
-<code>apps/web/src/lib/__tests__/apps-catalogue.test.ts</code> — re-check them
-after a <code>vendor-rubric.sh</code> bump. Reference <strong>patches</strong>
-that prove a correct fix scores (the positive-direction gate) live separately
-under <a href="patches/README.md"><code>patches/</code></a>.</sup>
+| `vulnerableapp` | 110 | 187 | Largest target |
+| `webgoat` | 69 | 137 | Two-stage build: Maven, then the runtime image |
+| `dvwa` | 55 | 108 | Needs a MariaDB sibling |
+| `securityshepherd` | 40 | 79 | HTTPS, three-container stack |
+| `juice-shop` | 38 | 141 | The only target with 6-star challenges |
+| `vampi` | 9 | 16 | Small and quick — a good first target |
+| **Total** | **321** | **668** | Setup forks all six; pick the live subset in `/admin` |
 
 The rubrics live in `scorer/rubric.owasp/`, vendored from
-[OWASP-CTF/dc34-owasp-secure-development-ctf](https://github.com/OWASP-CTF/dc34-owasp-secure-development-ctf)
-and pinned to the single upstream commit recorded in
-`scorer/rubric.owasp/PROVENANCE.md`. Re-vendor against a newer commit with:
+[OWASP-CTF/dc34-owasp-secure-development-ctf](https://github.com/OWASP-CTF/dc34-owasp-secure-development-ctf).
+They are public: the targets and their solutions are already published, so a
+private rubric only protects against gaming the checks. To use your own, or
+to write new ones, see [docs/scorer.md](docs/scorer.md).
 
-```sh
-./scripts/vendor-rubric.sh --all --ref <sha>
-```
+## How it works
 
-Two rubric shapes are supported at once, and a single rubric directory may mix
-them: `<target>.yaml` files use the declarative HTTP request/expect probe
-grammar, and `<target>/tests/challenges/` directories use executable tests
-priced by `catalogue.<target>.json`. Authoring guide:
-[docs/scorer.md](docs/scorer.md).
+One Docker Compose stack. Caddy terminates TLS in front of the Next.js app,
+and the app reaches Redis only through a REST proxy on a split network, so
+nothing internet-facing can reach Redis directly. Quiz, Jeopardy and AI are
+graded inside the app.
 
-**On rubric secrecy.** These rubrics are public. The targets are open source
-and their solutions are already published, so the kit treats rubric privacy as
-protection against check-gaming rather than against knowing the answers — an
-accepted trade-off for a self-hosted event. Override with your own private
-rubric at any time:
+Secure Development is graded *outside* the box: the contestant's fork runs a
+GitHub Action that boots the target, tests the patch, and posts a score
+comment on the pull request. The box's `sync` service polls GitHub for those
+comments, so nothing has to reach your box from outside — it works behind NAT,
+on a campus network or on venue wifi. Scores only ever go up: a later failing
+run never takes back a solve.
 
-```sh
-cp -r /path/to/private-rubric scorer/rubric
-docker build -t ghcr.io/<org>/score:latest --build-arg RUBRIC_DIR=rubric scorer/
-```
+<img src="docs/assets/diagrams/score-ingest-overview.svg" alt="Animated diagram. A contestant answers quiz and Jeopardy challenges in the app, and opens a patch PR against a fork in the event org. The fork's Action runs the rubric and posts a score comment on the PR. Sync pulls that comment about every 30 seconds, needing no inbound network surface: polling is the one score transport, the push branch that once let the Action POST straight to the scorer having been removed in v0.6 per issue 377. The score enters through one audited writer, the scorer's bearer-authed POST /score, which validates and writes monotonically into redis, and the app renders the live leaderboard from it.">
 
-`scorer/rubric/` is gitignored and reserved for exactly this.
+Components, the score data flow and the security model:
+[docs/architecture.md](docs/architecture.md). Why it is built this way:
+[docs/decisions.md](docs/decisions.md).
 
 ## Running an event
 
-Once the stack is up at your `EVENT_URL`:
-
-- **Contestants** sign in with GitHub and form or join a team — a team is
-  required to score, and **Play solo** makes a team of one in a click. Then
-  they play whichever modules you enabled: patch-and-PR for secure
-  development, answer and submit in the app for quiz and classic, or open a
-  personal launch link for ai.
-- **Organizers** drive `/admin`: freeze the leaderboard, open and close
-  registration, set the schedule, author quiz questions, classic challenges
-  and ai challenges — and when one contestant gets stuck, fix that one
-  contestant rather than resetting the event.
-- **Watch the poller** with `docker compose logs -f sync` (it runs with
-  `secure-development` enabled). All state lives in named Docker volumes, so
-  a box reboot loses nothing.
+- **Contestants** sign in with GitHub and form or join a team (a team is
+  required to score), then play whichever modules you enabled.
+- **Organizers** run everything from `/admin`: the schedule, the freeze,
+  registration, content — and when one contestant gets stuck, they fix that
+  one contestant instead of resetting the event.
+- **Before the doors open**, walk [the security checklist](docs/security-checklist.md).
 - **When it's over**, `./setup/ctf-setup.sh teardown` archives the target
-  repos — then uninstall the GitHub App and delete the org's Actions secrets
-  yourself. An event without `secure-development` has no forks to archive.
+  repos; then uninstall the GitHub App and delete the org's Actions secrets
+  yourself.
 
-Teams, the admin panel, verifying the kit before the day, and the local
-dev-stack are all covered in [docs/operations.md](docs/operations.md);
-prerequisites, the score transport, OAuth setup and event config in
-[docs/hosting.md](docs/hosting.md).
+On a Compose box, all state lives in named Docker volumes, so a reboot loses
+nothing; the AWS module keeps it in ElastiCache instead. The full
+organizer guide is [docs/operations.md](docs/operations.md).
 
-## Why it is built this way
+## What it is not
 
-- **Self-contained, no cloud.** Everything runs from Docker Compose on one box
-  plus one free GitHub org. The rubric ships in the kit — no private image to
-  request, no scoring code to write — and everything survives a reboot on named
-  Docker volumes.
-- **Stock scores zero, a patch earns its points.** Every target is gated: a
-  test that passes against the *unpatched* app would be a free point for every
-  contestant, so the build refuses to ship it.
-- **Zero inbound network surface.** Nothing has to reach your box
-  — it polls GitHub for score comments — so a campus network, a locked-down
-  lab, or venue wifi works without a firewall change.
-
-The full reasoning, alternatives, and trade-offs are recorded as numbered ADRs
-in [docs/decisions.md](docs/decisions.md).
+- **Not a general CTF platform.** For a conventional jeopardy or
+  attack-defense event with maximum flexibility, use
+  [CTFd](https://ctfd.io/). This kit's Jeopardy module is deliberately
+  smaller.
+- **Not a hosted practice gym.** If you don't need to run your *own* event,
+  [picoCTF](https://picoctf.org/) needs zero operations.
+- **Not an attack trainer.** The flagship module grades *patches*, not
+  exploits.
 
 ## Documentation
 
 | Read this when you're… | Document |
 |---|---|
-| Standing the kit up | [docs/hosting.md](docs/hosting.md) — prerequisites, the wizard and every discrete step, how scores reach the box, the GitHub OAuth app, event config |
+| Standing the kit up | [docs/hosting.md](docs/hosting.md) — prerequisites, the wizard and every step, the GitHub OAuth app, the `.env` bootstrap |
 | Deploying to a cloud | [docs/aws.md](docs/aws.md) (Terraform: ECS Fargate + ElastiCache + ALB) · [docs/fly.md](docs/fly.md) (one Fly machine) |
 | About to open the doors | [docs/security-checklist.md](docs/security-checklist.md) — the one-page pre-event walk |
-| Running the event | [docs/operations.md](docs/operations.md) — teams, the admin panel, the quiz/classic/ai organizer guides, verifying, teardown |
-| Understanding the system | [docs/architecture.md](docs/architecture.md) — diagram, score data flow, Redis keys, security model, testing strategy |
-| Writing a rubric | [docs/scorer.md](docs/scorer.md) — serve + judge modes, both rubric grammars, authoring and building |
+| Running the event | [docs/operations.md](docs/operations.md) — teams, the admin panel, the module guides, teardown |
+| Fixing something | [docs/troubleshooting.md](docs/troubleshooting.md) — symptom by symptom |
+| Understanding the system | [docs/architecture.md](docs/architecture.md) — diagram, score data flow, security model, testing |
+| Writing a rubric | [docs/scorer.md](docs/scorer.md) — both rubric formats, authoring and building |
 | Building a new module | [docs/modules.md](docs/modules.md) — the platform/module contract |
 | Asking "why is it like this?" | [docs/decisions.md](docs/decisions.md) — numbered ADRs |
 
@@ -350,51 +230,43 @@ Rendered at **[owasp.github.io/owasp-ctf-in-a-box](https://owasp.github.io/owasp
 
 ## Contributing and security
 
-Contributions welcome — [CONTRIBUTING.md](CONTRIBUTING.md) covers the dev
-environment, the CI gates, and how to propose a module;
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies. As an OWASP project this
-repo uses the [Developer Certificate of Origin](https://developercertificate.org/)
-as its contributor agreement, so **sign off every commit** with
-`git commit -s`.
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the dev
+environment, the CI gates and how to propose a module (start with an issue,
+not a PR); [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies. Small,
+well-specified work is tagged
+[`good first issue`](https://github.com/OWASP/owasp-ctf-in-a-box/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+Sign off every commit with `git commit -s`
+([Developer Certificate of Origin](https://developercertificate.org/)).
 
-Agents should follow [AGENTS.md](AGENTS.md). The commands below match CI;
-`make help` lists the same targets.
+Humans and AI agents alike should read [AGENTS.md](AGENTS.md) before writing
+code: it lists the exact commands CI runs and the mistakes this repo has
+already made. A change is ready when CI is green and every CodeRabbit review
+thread on the latest commit is resolved.
 
-Each service tests independently (Node 22 across the board):
-
-```sh
-(cd sync && npm ci && npm test)
-(cd scorer && npm ci && npm test && node tools/vacuous-sweep.mjs)
-./scripts/acceptance-scorer.sh  # from the repo root — the script lives in scripts/
-(cd apps/web && corepack pnpm install --frozen-lockfile && corepack pnpm lint && corepack pnpm test)
-./scripts/smoke.sh              # the full poll pipeline, end to end
-```
-
-Found a vulnerability in the kit itself? **[SECURITY.md](SECURITY.md)** — the
-targets' vulnerabilities are intentional and out of scope.
+Found a vulnerability in the kit itself? See **[SECURITY.md](SECURITY.md)**.
+The targets' vulnerabilities are intentional and out of scope.
 
 ## License and credits
 
-Code and build artifacts are **MIT** — see [LICENSE](LICENSE). The
-documentation source under `docs/` is **CC BY-SA 4.0** — see
-[docs/LICENSE](docs/LICENSE). The split is what the
-[OWASP Project Policy](https://policy.owasp.org/operational/projects)
-requires: source under an OSI-approved licence, documentation under a
-Creative Commons one.
+Code is **MIT** ([LICENSE](LICENSE)); the documentation — this README and
+the Markdown under `docs/` — is **CC BY-SA 4.0** ([docs/LICENSE](docs/LICENSE)),
+as the [OWASP Project Policy](https://policy.owasp.org/operational/projects)
+requires.
 
-The rubric content under `scorer/rubric.owasp/`
-is vendored from the upstream
+This is an **OWASP Foundation** incubator project —
+[owasp.org/projects/ctf-in-a-box](https://owasp.org/projects/ctf-in-a-box).
+The rubrics come from the
 [OWASP-CTF](https://github.com/OWASP-CTF/dc34-owasp-secure-development-ctf)
-event, pinned to the commit in `scorer/rubric.owasp/PROVENANCE.md` — this kit
-exists because that event was worth running more than once. The vulnerable
-targets are not vendored: events fork them from their own upstreams
-([Juice Shop](https://github.com/juice-shop/juice-shop),
+event; this kit exists because that event was worth running more than once.
+The vulnerable targets are not vendored: events fork them from their own
+upstreams, and each keeps its own license —
+[Juice Shop](https://github.com/juice-shop/juice-shop),
 [WebGoat](https://github.com/WebGoat/WebGoat),
-[DVWA](https://github.com/digininja/DVWA),
-[Security Shepherd](https://github.com/OWASP/SecurityShepherd),
-[VulnerableApp](https://github.com/SasanLabs/VulnerableApp),
-[VAmPI](https://github.com/erev0s/VAmPI)), and each keeps its own license.
+[Security Shepherd](https://github.com/OWASP/SecurityShepherd) and
+[VulnerableApp](https://github.com/SasanLabs/VulnerableApp) are OWASP
+projects; [DVWA](https://github.com/digininja/DVWA) and
+[VAmPI](https://github.com/erev0s/VAmPI) are community projects.
+
 OWASP® is a registered trademark of the OWASP Foundation. OWASP does not
-endorse or recommend any product or service; nothing here should be read as
-the Foundation endorsing the targets, tools or services this kit integrates
-with.
+endorse or recommend any product or service, including the targets and
+services this kit integrates with.

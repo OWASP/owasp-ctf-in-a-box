@@ -11,12 +11,12 @@ describe("resolveSite", () => {
   it("serves the spec defaults when nothing is stored", () => {
     const s = resolveSite(null, null);
     expect(s.name).toBe("OWASP CTF in a Box");
-    expect(s.theme).toBe("");
     expect(s.location).toBe("");
     expect(s.contactEmail).toBe("");
     expect(s.discordUrl).toBe("");
     expect(s.logoUrl).toBe("");
     expect(s.timeZone).toBe("UTC");
+    expect(Object.keys(s)).not.toContain("theme");
   });
   it("lays stored fields over the defaults, field by field", () => {
     const s = resolveSite({ eventName: "Demo CTF", eventDiscord: "https://discord.gg/x" }, null);
@@ -24,7 +24,6 @@ describe("resolveSite", () => {
     expect(s.discordUrl).toBe("https://discord.gg/x");
     expect(s.logoUrl).toBe("");
     expect(resolveSite({ eventLogoUrl: "https://redteamspace.team" }, null).logoUrl).toBe("https://redteamspace.team");
-    expect(s.theme).toBe("");
   });
   // Config v2, PR 3A (#386): dates/ctfStartsAt no longer come from event.yaml
   // — they're derived from the admin scoring schedule via formatDateRange.
@@ -49,11 +48,11 @@ describe("resolveSite", () => {
   // — the app's own write path already rejects "") must still fall back to
   // the default rather than render a blank <title>/headline. The other four
   // identity fields keep their existing "'' is a legitimate no-override" `??`
-  // semantics — pinned here with eventTheme so a future edit can't collapse
+  // semantics — pinned here with eventLocation so a future edit can't collapse
   // `||` onto every field by mistake.
   it("falls back to the default name on an empty stored eventName, but leaves the other fields' blank-is-valid semantics alone", () => {
     expect(resolveSite({ eventName: "" }, null).name).toBe("OWASP CTF in a Box");
-    expect(resolveSite({ eventTheme: "" }, null).theme).toBe("");
+    expect(resolveSite({ eventLocation: "" }, null).location).toBe("");
   });
 });
 

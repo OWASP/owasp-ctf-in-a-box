@@ -115,7 +115,7 @@ state; everything else that touches scores goes through it.
 
 ## Data flow for a score
 
-<img src="assets/diagrams/score-data-flow.svg" alt="Animated diagram. A contestant opens a PR; a pull_request_target Action judges the patch in the base repo; it posts a PR comment carrying the score marker, the one score transport since push ingest was removed in v0.6 per issue 377; sync's tick then filters comments by author, parses and validates, then POSTs to /score itself; scorer is the one writer, landing the score in redis via srh monotonically; the app then reads GET /leaderboard and composes the overlay pipeline (module-contributions, then team-standings, then hint-penalties folded last) before rendering. The score marker is trust-authoritative and only ever comes from the judge's own output, never from the PR checkout.">
+<img src="assets/diagrams/score-data-flow.svg" alt="Animated diagram. A contestant opens a PR; a pull_request_target Action judges the patch in the base repo; it posts a PR comment carrying the score marker, the one score transport since push ingest was removed in v0.6 per issue 377; sync's tick then filters comments by author, parses and validates, then POSTs to /score itself; scorer is the one writer, landing the score in redis via srh monotonically; the app then reads GET /leaderboard and composes the overlay pipeline (module-contributions, then team-standings, then hint-penalties, then score adjustments last) before rendering. The score marker is trust-authoritative and only ever comes from the judge's own output, never from the PR checkout.">
 
 1. A contestant forks a target repo in the event org, patches a
    vulnerability, and opens a PR back to the org's copy.
@@ -205,12 +205,16 @@ state; everything else that touches scores goes through it.
    for 10 s and shared by every concurrent viewer — the result has no
    per-viewer input; a fold that throws is never cached):
    `withModuleContributions` → `withTeamStandings` → `withModuleSeries` →
-   `withHintPenalties`
-   (`src/lib/leaderboard/{module-contributions,team-standings,module-series,hint-penalties}.ts`).
+   `withHintPenalties` → `withScoreAdjustments`
+   (`src/lib/leaderboard/{module-contributions,team-standings,module-series,hint-penalties,score-adjustments}.ts`).
    `withModuleSeries` sits third because it charts each team's roster and
    needs the team rows the standings stage has just built; it reads the
    app-side modules' per-item timestamps to put their points on the chart
-   and leaves `points` untouched, so the penalty stage still nets last.
+   and leaves `points` untouched, so the penalty stage still nets the full
+   module total. `withScoreAdjustments` runs after it: it applies the
+   organizer's per-team adjustments from `ctf:adjustments` to each team's
+   netted total, floors it at 0, and re-ranks the teams. Individual rows
+   are not adjusted, and the chart stays gross.
    `withModuleContributions` attributes each row's points into a
    per-module `ModuleProgress` for every *enabled* module — `secure-development`
    is **attributed**, not added, since its points already came from the
@@ -220,12 +224,12 @@ state; everything else that touches scores goes through it.
    (`entry.points += quizTotal.points + classicTotal.points + aiTotal.points`)
    — see [Quiz data flow](#quiz-data-flow), [Jeopardy data flow](#jeopardy-data-flow),
    and [AI data flow](#ai-data-flow)
-   below. Hint penalties run **last**, netting the final all-module total
-   exactly once — module blocks everywhere show their *gross* contribution and
-   the row's `−N hints` marker is what reconciles them against the netted
-   header. (The fold used to run first, netting scorer points alone, which
-   made hints free for any row whose points arrive later: a classic- or
-   quiz-only contestant.) Ranking
+   below. Hint penalties fold after every module stage, netting the final
+   all-module total exactly once — module blocks everywhere show their
+   *gross* contribution and the row's `−N hints` marker is what reconciles
+   them against the netted header. Netting earlier, before the app-side
+   modules' points are added, would make hints free for any row whose
+   points arrive later: a classic- or quiz-only contestant. Ranking
    itself (`src/lib/leaderboard/rank.ts`'s `compareStanding`) is: combined
    points descending, then items completed **across modules** descending,
    then earliest last-activity ascending (#522 — until v0.7 items came
@@ -498,19 +502,22 @@ value and compares whole strings with Lua's `==` — a flag can contain
 braces, quotes, and backslashes, so it is never pattern-matched out of a
 JSON blob the way a points value is.
 
-**The full key layout is eleven `ctf:classic:*` keys** — ten enumerated in
-`classic-store.ts`'s header comment, plus `hints`, which is named only in
+**The full key layout is thirteen `ctf:classic:*` keys**, all named in
 `classic-keys.ts`: `challenges` (the public-safe hash
 contestants see — no field on it could carry a flag even by accident),
-`flag` and `flagnorm` (above), `hints` (paid-hint text per challenge, per
-issue #190 — written by the admin form, SECRET until purchased through
-hint-store's reveal, exactly the flag hashes' rule; its name lives in
-`classic-keys.ts`),
-`categories` (one JSON array, the organizer's chosen display order), `solves:<login>` (a contestant's banked solves —
+`flag` and `flagnorm` (above), `hints` (paid-hint text per challenge —
+written by the admin form, SECRET until purchased through
+hint-store's reveal, exactly the flag hashes' rule),
+`categories` (one JSON array, the organizer's chosen display order),
+`stories` (one JSON list of `{id, title, intro, steps}` story arcs,
+authored content like the categories, so a master reset keeps it),
+`opened:<login>` (challenge id to the time that contestant first opened its
+page, written once with `HSETNX`; Insights measures time to solve from it,
+and a master reset wipes it), `solves:<login>` (a contestant's banked solves —
 `{points, at}`, points captured at solve time so a later re-price never
 rewrites history), `attempts:<login>` (every submission, right or wrong —
-`{attempts, firstAt, lastAt, lastAtMs}`, the cooldown's own read; `firstAt`
-is what Insights' time-to-solve is measured from), and four running
+`{attempts, firstAt, lastAt, lastAtMs}`, the cooldown's own read; Insights
+falls back to `firstAt` for time to solve when no first-open time exists), and four running
 aggregates: `points` and `solved` (per-login totals the leaderboard overlay
 reads with flat `HGETALL`s regardless of board size), `lastAt` (each login's
 latest award time, the leaderboard's tiebreak, #522) and `solvecount` (the
@@ -709,7 +716,7 @@ assertion against a challenge authored as `mode: "flag"`, so a missed
 mode-check in the route cannot turn every flag-only challenge into
 something any signing-key holder can assert.
 
-**The key layout is fourteen `ctf:ai:*` keys**, split by secrecy class:
+**The key layout is fifteen `ctf:ai:*` keys**, split by secrecy class:
 
 - **Catalogue — public**: `ctf:ai:challenges` (the public-safe hash
   contestants and the leaderboard read — no field on it could carry a flag
@@ -733,7 +740,10 @@ something any signing-key holder can assert.
   `ctf:ai:points`, `ctf:ai:solved`, `ctf:ai:lastAt` (the latest award
   time, the leaderboard tiebreak), and the per-challenge
   `ctf:ai:solvecount` (distinct-solver count, distinct by construction
-  because the already-solved guard runs before any increment).
+  because the already-solved guard runs before any increment), plus
+  `ctf:ai:opened:<login>` (challenge id to the time that contestant first
+  opened its page, written once with `HSETNX`, which Insights measures time
+  to solve from).
 - **Replay** — `ctf:ai:nonce:<jti>`, one key per spent event `jti`, written
   `SET NX EX` so a captured signed request can be replayed at most once.
 
@@ -767,8 +777,8 @@ attribute from (same reasoning as quiz's and classic's points; see
 that holds `ai` points and has no entry from the scoring source, exactly as
 it does for quiz and classic — a login reported by more than one app-side
 module still gets exactly ONE created row, carrying every reported block.
-Gross module blocks render everywhere, with hint penalties folding **last**
-at the row level, same as every other module.
+Gross module blocks render everywhere, with hint penalties folding after
+every module stage at the row level, same as every other module.
 
 A team's `ai` total is the **union** of its members' solved challenges
 (`getTeamAiTotalsBatch`), never the sum of their individual aggregates —
@@ -996,11 +1006,16 @@ metric whose limits travel separately from it gets quoted without them.
 
 **What it reads.** Four aggregate reads in one pipeline (`ctf:quiz:points`,
 `ctf:classic:points`, `ctf:ai:points`, `ctf:hints:spent`), a `SCAN` of
-`ctf:solves:*` for Secure Development, `listTeams()`, and then **eight reads
+`ctf:solves:*` for Secure Development, `listTeams()`, and then **ten reads
 per contestant** (`PER_LOGIN`) — their quiz answers, classic solves and ai
 solves, the three matching attempt hashes, `firstTeamAt` off
-`ctf:user:<login>`, and their hint purchase times — batched 200 commands to a
-round trip. Nothing else; the module contract for those row shapes is
+`ctf:user:<login>`, their hint purchase times, and the classic and ai
+first-opened hashes — batched 200 commands to a round trip. Around those it
+also reads the three catalogue hashes (`ctf:quiz:questions`,
+`ctf:classic:challenges`, `ctf:ai:challenges`) for challenge titles only,
+the leaderboard source for Secure Development points, and the folded
+leaderboard for team points, so a team's total here matches the board's. The
+module contract for those row shapes is
 [docs/modules.md §10](modules.md#section-10-engagement-metrics-contract-insights).
 
 **Who counts as a contestant** is the union of everyone on a team, everyone
@@ -1167,8 +1182,11 @@ all event data — `SCAN`+`DEL` of `ctf:solves:*`, `ctf:team:*`, `ctf:user:*`,
 `ctf:ai:solvecount`/`ctf:ai:lastAt`/`ctf:ai:opened:*` (the first-open times
 Insights measures from, #616), the spent replay nonces `ctf:ai:nonce:*`, the
 module-wide `ctf:ai:launchkey` (so no launch token issued before the reset
-survives it — see "AI data flow" above), and the activity log
-(`ctf:activity:log`) — keeps `ctf:admin:settings`
+survives it — see "AI data flow" above), the activity log
+(`ctf:activity:log`), both sponsor hashes (`ctf:sponsors` and
+`ctf:sponsors:logo` — a sponsor list belongs to one event run, and deleting
+it is the only off switch) and the organizer's score adjustments
+(`ctf:adjustments`) — keeps `ctf:admin:settings`
 and (deliberately) the organizer's authored content,
 `ctf:quiz:questions`/`ctf:quiz:key`, `ctf:classic:challenges`/
 `ctf:classic:flag`/`ctf:classic:flagnorm`/`ctf:classic:categories` and
@@ -1195,18 +1213,19 @@ an older state file is read too); an unparseable value is no watermark —
 skipping on junk would silently lose every score, the same fail-open direction
 `getResetAt` takes on a read error. This `resetAt` signal is the app→sync
 coordination that lets a wipe cross the container boundary without the app
-touching sync's state-file volume. Every disruptive control prompts for confirmation
+writing sync's own poll state (`ctf:sync:state`). Every disruptive control prompts for confirmation
 (type-to-confirm for the reset; one-click for the freeze/registration toggles).
 
 **Demo seed.** `seedDemoData()` + `POST /api/admin/seed` populate a
-demo leaderboard (bundled fixture of real challenge-ids so the scorer scores
-them, timestamps spread for a rising graph, plus teams). When the `quiz`
-module is enabled, the same seed also writes a small demo question bank
-(`DEMO_QUESTIONS`) with some already answered (`DEMO_QUIZ_ANSWERS`), so the
-demo board shows a genuinely combined score — patch points and quiz points
-both contributing — instead of leaving the second module invisible. A
-disabled quiz module leaves the seed byte-for-byte identical to pre-quiz
-behavior. Its inverse, `clearDemoData()` + `DELETE /api/admin/seed`, removes
+demo leaderboard (teams, demo sponsors, and timestamps spread for a rising
+graph) with data for every module the event has enabled, read from the live
+settings: Secure Development solves on a bundled fixture of real
+challenge-ids so the scorer scores them, a small quiz question bank
+(`DEMO_QUESTIONS`) with some already answered, and demo Jeopardy and AI
+challenges with solves and unsolved attempts. The board then shows a
+genuinely combined score across modules. A disabled module gets no demo
+rows at all, and a settings read that fails aborts the seed rather than
+seeding every module. Its inverse, `clearDemoData()` + `DELETE /api/admin/seed`, removes
 exactly the run-state rows seeding added (fake contestants/teams/solves,
 sponsors) but leaves the demo questions/challenges/flags/categories as
 authored content, same as a master reset already treats real ones. Neither
@@ -1273,7 +1292,7 @@ force concurrent buyers to retry); awards only add, so it is never
 overstated, and the page refresh after the reveal shows the live score.
 That read is why the policy helpers the fold needs — `HINTS_AVAILABLE`,
 `resolveHintConfig`, `getHintPenalties` — live in `hint-config.ts`: the fold's
-last stage imports them, the store imports the fold, and one module cannot
+hint stage imports them, the store imports the fold, and one module cannot
 sit on both sides of that without a cycle. `hint-store.ts` re-exports them.
 
 Two things stay separate from that override on purpose. `HINTS_AVAILABLE`
@@ -1313,8 +1332,8 @@ an organizer changes during an event: the live module set
 (`lib/enabled-modules.ts` → `lib/resolved-modules.ts` over the static
 `modules.ts` registry), the live Secure Development target list
 (`lib/enabled-apps.ts`, a per-request filter over `apps.ts`'s static
-catalogue of all six), the event's identity — name, tagline, location, contact
-e-mail, Discord invite — through `lib/site.ts`'s request-cached `getSite()`,
+catalogue of all six), the event's identity — name, location, time zone, contact
+e-mail, Discord invite, logo link — through `lib/site.ts`'s request-cached `getSite()`,
 the scoring schedule and the freeze, the hint policy, and the team caps. The
 dates line and the countdown are derived from the scoring window rather than
 stored separately (`lib/event-dates.ts`). `sync` re-reads the target list on
@@ -1502,12 +1521,12 @@ build.
 |---|---|---|
 | Unit (sync) | `sync/test/*.test.js`, run via `npm test` (Node's built-in test runner) | Config loading/validation, comment parsing and the author grammar, cursor/ETag handling, submit retry semantics, state persistence — in isolation, no network or Docker. |
 | Unit (scorer) | `scorer/test/*.test.js`, run via `npm test` (Node's built-in test runner) | Rubric loading/validation, probe grammar + evaluation, the judge's report format (the score-action regexes and the sync marker, pinned verbatim), serve auth/validation/monotonic-replay semantics, leaderboard aggregation, and both solve stores (memory, and Redis-via-SRH against a mocked endpoint) — in isolation, no network or Docker. |
-| Unit (app) | `apps/web/src/lib/__tests__/*`, run via `vitest run` | Bootstrap-env parsing (`ADMIN_LOGINS` case/whitespace/empties, the `SCORE_IMAGE`-derived default module set), timezone-independent date formatting from the scoring window, module/app enablement filtering (`enabled-apps.ts`'s live, per-request target filter, defaulting to all six), site config derivation, and — `apps/web/src/lib/leaderboard/__tests__/{module-contributions,rank,pipeline}.test.ts` — the module-contribution overlay's attribution (`secure-development` attributed not added, no double counting; a penalised row's module points equal its net points; with the quiz module disabled a source's teams pass through untouched and no quiz block is read at all; with it enabled, quiz points are added to an entry's and a deduped team's totals, a quiz-less entry gets a zero quiz block at `0 / N` that moves no total, rank or order (#585), and a quiz-active row on an upstash-shaped board keeps its patches in the items tiebreak — added quiz points can move a row either way in the points order, whatever its patch count) and the points/cross-module-completion/earliest-activity ranking — including the regression that ordering is already correct with hints disabled, since `withHintPenalties` no-ops in that case and must not be the thing doing the re-rank, and the pinned points order of an Upstash-shaped board with its ties broken on `patched`. The quiz store itself (`src/lib/__tests__/quiz-store*.test.ts`) covers all-or-nothing set comparison, the attempt cap and cooldown (including the atomic grading script's authority over the JS-side pre-check, and its fail-closed behavior on a lookup error), and question authoring validation; `components/__tests__/{admin-quiz-controls,quiz-board}.test.tsx` cover the authoring form and the contestant answer UI. The derived-plumbing rules get their own direct coverage, since neither is observable in a static render: `src/lib/__tests__/quiz-id.test.ts` pins that `generateQuestionId` always emits an id `QUIZ_ID_RE` accepts (across a corpus of punctuation-only, non-Latin, emoji and over-long prompts) and that two identical prompts never collide, and `admin-quiz-controls.test.tsx` pins that `payloadFromEditor` submits an existing question's stored id no matter how the draft was rewritten, plus `reorderQuestions`'s recomputed `order` values. The drag handlers themselves are deliberately NOT unit-tested — this repo has no testing-library and does not want one — which is why every decision they make lives in those two pure functions instead. The answer-key boundary is pinned from both sides: `listQuestions` never issues a command against `ctf:quiz:key` while `listQuestionsForAdmin` returns the set paired by question id (`quiz-store.test.ts`), `GET /api/admin/quiz` returns it for an admin and returns a body with no answer data at all for a 401/403 (`app/api/quiz/__tests__/routes.test.ts`), the admin edit draft prefills it (`admin-quiz-controls.test.tsx`) while the collapsed question list doesn't paint it, and `/quiz`'s page-level view model strips it even when the store hands one over (`app/(site)/quiz/__tests__/page-view-model.test.tsx`, with `quiz-board.test.tsx`'s markup check as the independent second guard). |
-| Live Lua (app) | `apps/web/src/lib/__tests__/{classic-store,quiz-store,ai-store}.lua.upstash.test.ts` and the `{admin-store,hint-store,team-store,team-captain,admin-ops-store,admin-scripts,rate-limit-store}.upstash.test.ts` suites, all `describe.skipIf`-gated through `live-redis.ts`'s `liveConfigured` on `UPSTASH_REDIS_REST_URL`/`_TOKEN`; the `app` CI job brings up `redis` + `srh` (digest-pinned like `docker-compose.yml`), sets `CTF_LUA_SUITES_REQUIRED=1` so a skip fails the job, and runs every `*.upstash.test.ts` file serially (`vitest run upstash --no-file-parallelism` — `admin-store` and `hint-store` share the fixed `ctf:admin:settings` hash) | The three older suites, one store each: `admin-store` pins the settings write + audit append as one atomic step and the audit cap; `hint-store` the hint reveal under a policy the suite seeds itself (a player with no solves on the target is refused with `forbidden` and charged nothing, the first reveal charges the organizer's configured price — not the baked default — once a solve is seeded, the second is free, and a missing hint charges nothing); `team-store` the team scripts (the four-player cap, one team per player, a populated team's captain refused with `Transfer or disband before leaving` as a no-op, then transfer → leave → the last member's leave deleting the team hash, member set and join-code index while every user hash survives). Each was checked against a one-line store mutation (the gate condition flipped; the key deletion dropped; the captain rule weakened) and went red (#235). The newer suites close the rest of that gap (#497): `team-captain` runs the captain-only scripts (remove, rename, transfer, disband, regenerate) through the store, refusals asserted as no-ops, plus concurrent regenerations and a disband racing one (no join code may survive resolving to the team or to a deleted one); `admin-scripts` runs the organizer overrides `FORCE_REMOVE`/`FORCE_TRANSFER` and the runtime-admin `ADMINS` grant; `rate-limit-store` runs `CONSUME` on a two-second window, observing the expiry for real. Each was checked against a one-line mutant (window extended on every call, captain guard dropped, transfer to a non-member, another team's member record cleared, audit cap dropped) and went red. The three grading scripts — the scoring authority — EXECUTED against a real Redis, on run-unique keys: `missing`/`already`/`incorrect`/`correct`/`cooldown`/`exhausted`/`mode` verdicts, the exact attempts and solve rows written, that a refused submission writes nothing, the cooldown boundary (refused at `now < lastAtMs + cooldownMs`, graded at equality), the `>=` cap, `maxAttempts = 0` as uncapped, a first-ever submission with a cooldown set (no attempts row, so `lastAtMs` is nil), `solvecount` keyed by the challenge and the two totals by the login, the case-sensitive form chosen only for a `caseSensitive` record, and ai's event path (no flag compare, no attempts row, `source` recorded, a `mode: "flag"` challenge refused). Each of the six single-line Lua mutations the 2026-08-25 review found survivable (already-solved polarity, `and lastAtMs`, login-keyed solvecount, `>` cap, mode refusal, case-sensitive branch) fails at least one of these. The mocked `*.grade.test.ts` suites still pin what the stores hand the scripts (key and argument order); together the two layers cover the chain. |
-| Shell (bats) | `setup/test/ctf_setup.bats` | `ctf-setup.sh`'s subcommands against fixture `.env` files: dry-run fork/workflow/mirror/teardown plans, secrets generation, the wizard's answers, and the `.env` reader's edge cases (trailing comments, blank values, a missing file refused rather than read as "no Secure Development") — no real `gh`/`docker` calls needed. |
+| Unit (app) | `apps/web/src/lib/__tests__/*`, run via `vitest run` | Bootstrap-env parsing (`ADMIN_LOGINS` case/whitespace/empties, the `SCORE_IMAGE`-derived default module set), timezone-independent date formatting from the scoring window, module/app enablement filtering (`enabled-apps.ts`'s live, per-request target filter, defaulting to all six), site config derivation, and — `apps/web/src/lib/leaderboard/__tests__/{module-contributions,rank,pipeline}.test.ts` — the module-contribution overlay's attribution (`secure-development` attributed not added, no double counting; `pipeline.test.ts` shows a penalised row's module blocks gross and nets the hint penalty once, on the row total; with the quiz module disabled a source's teams pass through untouched and no quiz block is read at all; with it enabled, quiz points are added to an entry's and a deduped team's totals, a quiz-less entry gets a zero quiz block at `0 / N` that moves no total, rank or order (#585), and a quiz-active row on an upstash-shaped board keeps its patches in the items tiebreak — added quiz points can move a row either way in the points order, whatever its patch count) and the points/cross-module-completion/earliest-activity ranking — including the regression that ordering is already correct with hints disabled, since `withHintPenalties` no-ops in that case and must not be the thing doing the re-rank, and the pinned points order of an Upstash-shaped board with its ties broken on `patched`. The quiz store itself (`src/lib/__tests__/quiz-store*.test.ts`) covers all-or-nothing set comparison, the attempt cap and cooldown (including the atomic grading script's authority over the JS-side pre-check, and its fail-closed behavior on a lookup error), and question authoring validation; `components/__tests__/{admin-quiz-controls,quiz-board}.test.tsx` cover the authoring form and the contestant answer UI. The derived-plumbing rules get their own direct coverage, since neither is observable in a static render: `src/lib/__tests__/quiz-id.test.ts` pins that `generateQuestionId` always emits an id `QUIZ_ID_RE` accepts (across a corpus of punctuation-only, non-Latin, emoji and over-long prompts) and that two identical prompts never collide, and `admin-quiz-controls.test.tsx` pins that `payloadFromEditor` submits an existing question's stored id no matter how the draft was rewritten, plus `reorderQuestions`'s recomputed `order` values. The drag handlers themselves are deliberately NOT unit-tested — this repo has no testing-library and does not want one — which is why every decision they make lives in those two pure functions instead. The answer-key boundary is pinned from both sides: `listQuestions` never issues a command against `ctf:quiz:key` while `listQuestionsForAdmin` returns the set paired by question id (`quiz-store.test.ts`), `GET /api/admin/quiz` returns it for an admin and returns a body with no answer data at all for a 401/403 (`app/api/quiz/__tests__/routes.test.ts`), the admin edit draft prefills it (`admin-quiz-controls.test.tsx`) while the collapsed question list doesn't paint it, and `/quiz`'s page-level view model strips it even when the store hands one over (`app/(site)/quiz/__tests__/page-view-model.test.tsx`, with `quiz-board.test.tsx`'s markup check as the independent second guard). |
+| Live Lua (app) | Every `apps/web/src/lib/__tests__/*.upstash.test.ts` suite — the grading scripts' `{classic-store,quiz-store,ai-store}.lua.upstash.test.ts` and the settings, hint, team and other store suites beside them — all `describe.skipIf`-gated through `live-redis.ts`'s `liveConfigured` on `UPSTASH_REDIS_REST_URL`/`_TOKEN`; the `app` CI job brings up `redis` + `srh` (digest-pinned like `docker-compose.yml`), sets `CTF_LUA_SUITES_REQUIRED=1` so a skip fails the job, and runs every `*.upstash.test.ts` file serially (`vitest run upstash --no-file-parallelism` — `admin-store` and `hint-store` share the fixed `ctf:admin:settings` hash) | The three older suites, one store each: `admin-store` pins the settings write + audit append as one atomic step and the audit cap; `hint-store` the hint reveal under a policy the suite seeds itself (a player with no solves on the target is refused with `forbidden` and charged nothing, the first reveal charges the organizer's configured price — not the baked default — once a solve is seeded, the second is free, and a missing hint charges nothing); `team-store` the team scripts (the four-player cap, one team per player, a populated team's captain refused with `Transfer or disband before leaving` as a no-op, then transfer → leave → the last member's leave deleting the team hash, member set and join-code index while every user hash survives). Each was checked against a one-line store mutation (the gate condition flipped; the key deletion dropped; the captain rule weakened) and went red (#235). The newer suites close the rest of that gap (#497): `team-captain` runs the captain-only scripts (remove, rename, transfer, disband, regenerate) through the store, refusals asserted as no-ops, plus concurrent regenerations and a disband racing one (no join code may survive resolving to the team or to a deleted one); `admin-scripts` runs the organizer overrides `FORCE_REMOVE`/`FORCE_TRANSFER` and the runtime-admin `ADMINS` grant; `rate-limit-store` runs `CONSUME` on a two-second window, observing the expiry for real. Each was checked against a one-line mutant (window extended on every call, captain guard dropped, transfer to a non-member, another team's member record cleared, audit cap dropped) and went red. The three grading scripts — the scoring authority — EXECUTED against a real Redis, on run-unique keys: `missing`/`already`/`incorrect`/`correct`/`cooldown`/`exhausted`/`mode` verdicts, the exact attempts and solve rows written, that a refused submission writes nothing, the cooldown boundary (refused at `now < lastAtMs + cooldownMs`, graded at equality), the `>=` cap, `maxAttempts = 0` as uncapped, a first-ever submission with a cooldown set (no attempts row, so `lastAtMs` is nil), `solvecount` keyed by the challenge and the two totals by the login, the case-sensitive form chosen only for a `caseSensitive` record, and ai's event path (no flag compare, no attempts row, `source` recorded, a `mode: "flag"` challenge refused). Each of the six single-line Lua mutations the 2026-08-25 review found survivable (already-solved polarity, `and lastAtMs`, login-keyed solvecount, `>` cap, mode refusal, case-sensitive branch) fails at least one of these. The mocked `*.grade.test.ts` suites still pin what the stores hand the scripts (key and argument order); together the two layers cover the chain. |
+| Shell (bats) | `setup/test/`, `scripts/test/`, `deploy/fly/test/` and `deploy/aws-terraform/test/`, each run by the `shell` job in `ci.yml` | `ctf-setup.sh`'s subcommands against fixture `.env` files: dry-run fork/workflow/mirror/teardown plans, secrets generation, the wizard's answers, and the `.env` reader's edge cases (trailing comments, blank values, a missing file refused rather than read as "no Secure Development") — no real `gh`/`docker` calls needed. The other directories cover the repo's scripts (the shared `.env` reader against `docker compose config`, the CI path filter, the changelog and comment-policy checks, image pins) the Fly module's `deploy.sh` and `render-compose.sh`, and the AWS module's `deploy.sh` with stubbed `docker`/`aws`/`terraform`. |
 | Offline smoke | `scripts/smoke.sh` | The full poll pipeline against fixture services (`test/fixtures/mock-github.mjs`, `test/fixtures/mock-scorer.mjs`, `docker-compose.smoke.yml`): Redis and the `srh` REST proxy work, `sync` ingests fixture score comments, scores match the fixtures, a forged comment is dropped by the trust filter, an unauthenticated `POST /score` is rejected, each score carries its own comment's `updated_at` as `at`, and — the poller's half of the freeze — setting `ctf:admin:settings paused` directly on Redis (the same key the app's settings route writes) shows in `ctf:sync:status` while the poller keeps forwarding a queued fixture score, with its comment time, for the scorer to judge. The scorer's half (refusing a score posted before the launch, during a freeze or before a reset, against a real Redis) is `scripts/acceptance-scorer.sh`'s freeze stage. This is what CI's `smoke` job runs, and needs no live GitHub org, Action runs, or scorer image access. |
-| Docker acceptance | `scripts/acceptance-app.sh` | Builds the real `apps/web/Dockerfile` **once**, with no config build-arg (there is none to pass since #386), then runs that same image three times with different runtime environments and asserts what each renders: with `GITHUB_ORG` and `SCORE_IMAGE` set, all six targets render and every fork link follows `GITHUB_ORG`, while the landing page presents Secure Development as the only default board; with `SCORE_IMAGE` empty, nothing is enabled and the landing page renders its no-boards copy pointing at `/admin`; with nothing set, `/challenges` renders bare repo names and no fork link, and the page `<title>` is the identity default "OWASP CTF in a Box" — proving identity fails open to its default rather than being read from anywhere baked. It also pins `/health`'s build stamp, which is the only thing the image still carries from build args. This is the layer that proves the runtime config flow actually reaches rendered HTML. |
-| Docker acceptance (scorer) | `scripts/acceptance-scorer.sh` | Builds the scorer image from `scorer/` with the example rubric and closes the scoring loop offline: judge runs against a fake target that passes some probes and fails others, and the script asserts the report's score-action regexes, that no probe internals leak into the comment, that the sync marker parses via the real `sync/src/parse.js`, and that the marker POSTed the way `sync` does lands on `GET /leaderboard` with rubric-derived points/totals. It also pins the removal (#377): one judge run has `SCORE_API`/`SCORE_TOKEN` set and one has neither, and the two reports must be byte-identical — that environment is dead, so a leaderboard entry can only have come from the script's own POST. |
+| Docker acceptance | `scripts/acceptance-app.sh` | Builds the real `apps/web/Dockerfile` **once**, with no config build-arg, then runs that same image as four containers with different runtime environments and asserts what each renders. `web-acceptance` has `GITHUB_ORG` and `SCORE_IMAGE` set but no Redis at all: `/challenges` redirects to the landing page (the launch lock fails closed on an unreadable settings read), the page `<title>` is the identity default "OWASP CTF in a Box" (identity fails open to its default rather than being read from anywhere baked), Secure Development is the only default board, `/admin` renders its shell, `/health` carries the build stamp the image was built with, and `/health/deep` answers 503 `degraded` with `redis` down and `launched: null`, leaking no host or error detail. `web-launched` is its twin on a real Redis behind srh with `scoringStartsAt` written, so `/challenges` renders all six targets with every fork link following `GITHUB_ORG`. `web-noscorer` has `SCORE_IMAGE` empty: nothing is enabled, the landing page renders its no-boards copy pointing at `/admin`, and `/challenges` 404s. `web-default` has no `GITHUB_ORG`: `/challenges` renders bare repo names and no fork link. This is the layer that proves the runtime config flow actually reaches rendered HTML. |
+| Docker acceptance (scorer) | `scripts/acceptance-scorer.sh` | Builds the scorer image from `scorer/` with the example rubric and closes the scoring loop offline: judge runs against a fake target that passes some probes and fails others, and the script asserts the report's score-action regexes, that no probe internals leak into the comment, that the sync marker parses via the real `sync/src/parse.js`, and that the marker POSTed the way `sync` does lands on `GET /leaderboard` with rubric-derived points/totals. A second, stock fake app fails every probe and must score 0 and gain no leaderboard entry. A second serve instance backed by real Redis (via srh) then covers the freeze and comment-time rules: an unlaunched event answers 503, a hand-set `paused` answers 503 until cleared, and a score sent with its comment's `at` is recorded at that time and judged by it — refused for good (422) when posted before the launch, inside a recorded freeze (still refused after the freeze lifts) or before the master-reset epoch, scored when posted before the freeze, and held with a 503 under a freeze with no recorded start. That `SCORE_API`/`SCORE_TOKEN` are inert in the judge is pinned in `scorer/test/judge.test.js`, not here. |
 | Docker acceptance (quiz-only) | `scripts/acceptance-quiz-only.sh` | Boots the real app image with `SCORE_IMAGE` empty and `quiz` enabled through the admin settings route (no config file exists to bind it to), seeds one question and one contestant's answer straight into Redis (no OAuth app in CI to drive real authoring/answering), and asserts against the running app: `/quiz` shows the seeded question by name, `/challenges` 404s, and `/leaderboard` shows the contestant by login with their quiz points — the one assertion a vacuously-up-but-broken app can't fake, since a quiz-only event's leaderboard source is `emptySource` and carries no rows of its own. It also asserts the DOCUMENTED bring-up structurally: `--profile app` must resolve to a line-up with no `scorer` and no `sync` (a quiz-only organizer cannot pull the private scorer image), while `--profile secdev --profile app` — what a non-empty `SCORE_IMAGE` derives — must still contain both. Separately brings `sync` up under `secdev` with no `GITHUB_ORG` and asserts it refuses at start-up, naming the key, with a non-zero exit. |
 | Docker acceptance (classic-only) | `scripts/acceptance-classic-only.sh` | The classic module's sibling of the quiz-only script, following every one of its design decisions: boots the real app image with `SCORE_IMAGE` empty and `classic` enabled at runtime, seeds a challenge and a solve straight into Redis, and asserts `/flags` shows the challenge by title, `/challenges` 404s, `/leaderboard` shows the contestant's classic points by login, and the `--profile app` line-up contains no secure-development service. Like the quiz-only script it then brings `sync` up under `secdev` with no `GITHUB_ORG` and asserts it refuses at start-up, naming the key, with a non-zero exit. |
 | Docker acceptance (ai-only) | `scripts/acceptance-ai-only.sh` | The ai module's sibling of the quiz-only/classic-only scripts, following the same design decisions: boots the real app image with `SCORE_IMAGE` empty and `ai` enabled at runtime, seeds a challenge and a contestant's solve straight into Redis, and asserts `/ai` shows the challenge by title without leaking its flag, `/ai/<id>` 200s while `/ai/<bad-id>` 404s, `/challenges`, `/flags` and `/quiz` all 404, `/leaderboard` shows the contestant's ai points by login, `GET /api/ai/launch-key` mints the keypair internally and serves its public key with no OAuth/cookie/session available, and the `--profile app` line-up contains no secure-development service. It too brings `sync` up under `secdev` with no `GITHUB_ORG` and asserts the same start-up refusal. |

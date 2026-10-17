@@ -790,11 +790,11 @@ describe("event identity fields (issue #386)", () => {
   });
   it("clears a field on an empty string (HDEL), never storing it", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-09-10T00:00:00Z"]);
-    await updateAdminSettings({ eventTheme: "   " }, "alice");
+    await updateAdminSettings({ eventLocation: "   " }, "alice");
     const strArgs = mocks.upstashEval.mock.calls[0][2].map(String);
     expect(strArgs[4]).toBe("1"); // numDels
-    expect(strArgs[5]).toBe("eventTheme");
-    expect(strArgs.slice(6)).not.toContain("eventTheme");
+    expect(strArgs[5]).toBe("eventLocation");
+    expect(strArgs.slice(6)).not.toContain("eventLocation");
   });
   it.each([
     ["eventName", "x".repeat(81)],
@@ -802,9 +802,15 @@ describe("event identity fields (issue #386)", () => {
     ["eventContact", "not-an-email"],
     ["eventDiscord", "http://discord.gg/x"],
     ["eventDiscord", "discord.gg/x"],
-    ["eventTheme", 7],
+    ["eventLocation", 7],
   ] as const)("rejects an invalid %s (%s) before any write", async (key, value) => {
     await expect(updateAdminSettings({ [key]: value } as never, "alice")).rejects.toThrow(AdminValidationError);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+  // The tagline rendered nowhere, so it is not a setting at all: a write
+  // naming it is refused like any other unknown key.
+  it("refuses eventTheme as an unknown setting, before any write", async () => {
+    await expect(updateAdminSettings({ eventTheme: "Ship" } as never, "alice")).rejects.toThrow(/unknown setting: eventTheme/);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
   it("accepts an e-mail and an https URL", async () => {
@@ -838,14 +844,13 @@ describe("event identity fields (issue #386)", () => {
   it("marks a cleared identity field as \"cleared\" in the audit record, for every identity key", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-09-10T00:00:00Z"]);
     await updateAdminSettings(
-      { eventName: "", eventTheme: "", eventLocation: "", eventTimeZone: "", eventContact: "", eventDiscord: "", eventLogoUrl: "" },
+      { eventName: "", eventLocation: "", eventTimeZone: "", eventContact: "", eventDiscord: "", eventLogoUrl: "" },
       "alice",
     );
     const auditLine = String(mocks.upstashEval.mock.calls[0][2][2]);
     const audit = JSON.parse(auditLine);
     expect(audit.changed).toEqual({
       eventName: "cleared",
-      eventTheme: "cleared",
       eventLocation: "cleared",
       eventTimeZone: "cleared",
       eventContact: "cleared",

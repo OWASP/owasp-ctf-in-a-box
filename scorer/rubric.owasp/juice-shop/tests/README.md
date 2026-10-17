@@ -1,56 +1,70 @@
-# Per-challenge regression tests
+# Juice Shop challenge tests
 
-Each test in `challenges/` exercises **one** Juice Shop vulnerability. The test **fails** on unpatched code (the exploit still works) and **passes** once the contestant's patch closes the hole.
+Each test in `challenges/` exercises **one** Juice Shop vulnerability. It
+**fails** while the exploit still works and **passes** once a patch closes the
+hole.
 
-CI runs every test on every PR to the [`OWASP-CTF/juice-shop`](https://github.com/OWASP-CTF/juice-shop) fork via the baked score image ([`OWASP-CTF/score-action`](https://github.com/OWASP-CTF/score-action)). A passing test for the challenge a PR claims to fix is the gate for the bonus flag.
+## How the judge runs them
+
+The scorer image bakes this rubric. On each contestant pull request, the
+consumer workflow
+([`scorer/consumer-workflow.example.yml`](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/scorer/consumer-workflow.example.yml))
+runs the judge (`scorer/src/judge.js`), which builds the PR's code, boots it
+as a sibling container, and runs every challenge listed in
+[`challenges/catalogue.juice-shop.json`](challenges/catalogue.juice-shop.json)
+as its own `node --test` child process (`scorer/src/exec.js`). A challenge
+scores its catalogue `difficulty` in points when its file passes.
+
+The children get the app's URL in `JUICE_SHOP_URL`. The static
+source-analysis challenges (9, 12 and 16) read TypeScript instead of probing
+HTTP; the judge points `CTF_UPSTREAM_DIR` at the PR checkout for them.
+
+## Files
+
+- `challenges/Challenge-<N>-<Title>.test.js` — one challenge. Its catalogue
+  entry's `key` is the file name without `.test.js`, and `file` names it.
+- `challenges/*.guard.test.js` — tests of a scorer helper, not challenges;
+  the catalogue does not list them, so the judge never runs them.
+- `challenges/lib/` and `helpers.js` — shared helpers (`api()`,
+  `registerAndLogin()`, `waitForServer()`, `assertShopAlive()`).
 
 ## Run locally
 
-Boot the canonical CTF version (Safety Mode off so every vuln is live):
+Boot the pinned version the way the judge does (`NODE_ENV=unsafe` turns off
+Juice Shop's safety mode, so every challenge is live):
 
 ```sh
-docker run --rm -p 3000:3000 \
-  -e NODE_CONFIG='{"challenges":{"safetyMode":"disabled"}}' \
-  bkimminich/juice-shop:v20.0.0
+docker run --rm -p 3000:3000 -e NODE_ENV=unsafe bkimminich/juice-shop:v20.0.0
 ```
 
-The three static source-analysis challenges (09/12/16) read TypeScript instead of probing HTTP — point them at a source tree (your patched fork checkout, or a stock clone at the same version) via `CTF_UPSTREAM_DIR`:
+For the static challenges, point `CTF_UPSTREAM_DIR` at a Juice Shop source
+tree at the same version (your patched checkout, or a stock clone):
 
 ```sh
-export CTF_UPSTREAM_DIR=/path/to/juice-shop-fork
+export CTF_UPSTREAM_DIR=/path/to/juice-shop
 ```
 
-In a second terminal, run all challenge tests (from the **repo root**):
+Then, from `scorer/rubric.owasp/juice-shop/tests/`:
 
 ```sh
-node --test --test-reporter=spec juice-shop/tests/challenges/
+# exactly the challenges the judge runs (the catalogue's files, no guards)
+node --test $(node -p 'require("./challenges/catalogue.juice-shop.json").map((c) => "challenges/" + c.file).join(" ")')
+
+node --test challenges/Challenge-1-Password-Hash-Leak.test.js   # one
+node --test challenges/                                         # everything, guards included
 ```
 
-Or use the score CLI to get a formatted table with difficulty-weighted points (from the repo root):
+Set `JUICE_SHOP_URL` to test another host. Against the stock image every
+challenge in the first command should fail: a stock app scores 0..
 
-```sh
-npm --prefix .github/actions/ctf-score run score -- \
-  --dir "$(pwd)/juice-shop/tests/challenges"             # score table
-npm --prefix .github/actions/ctf-score run score -- \
-  --dir "$(pwd)/juice-shop/tests/challenges" --verbose   # + full output for every failing test
-```
+## Adding a challenge
 
-Point at a different host with `JUICE_SHOP_URL` or the `--url` flag:
-
-```sh
-JUICE_SHOP_URL=http://localhost:3000 node --test juice-shop/tests/challenges/
-npm --prefix .github/actions/ctf-score run score -- \
-  --dir "$(pwd)/juice-shop/tests/challenges" --url http://localhost:3000
-```
-
-## Adding a new challenge test
-
-1. Create `challenges/NN-<short-slug>.test.js`.
-2. Use [`node:test`](https://nodejs.org/api/test.html) (stdlib — no runner dependency).
-3. Use [`helpers.js`](helpers.js) for `api()`, `registerAndLogin()`, `waitForServer()`.
-4. The test should **fail** when the vulnerability is present and **pass** when patched.
-5. Failure messages should point the contestant at the file(s) most likely to need editing.
-
-## Why `node --test`?
-
-Zero dependencies. Node 20+ ships it. Compatible with `fetch` in stdlib. No `vitest`/`jest`/`mocha` install overhead in CI.
+1. Create `challenges/Challenge-<N>-<Title>.test.js` with
+   [`node:test`](https://nodejs.org/api/test.html) — no runner dependency.
+2. Add its entry to `catalogue.juice-shop.json` (`key`, `id`, `file`,
+   `name`, `difficulty`, `owasp`, `category`); the judge runs only what the
+   catalogue lists.
+3. Make it fail against the stock app and pass against a fix. Before
+   asserting the fix, call `assertShopAlive()` (a health check: the app is up
+   and its catalogue answers) and then prove this challenge's own exploit
+   path is reachable, so neither a down app nor a missing route can pass it.

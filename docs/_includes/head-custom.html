@@ -3,14 +3,9 @@
   is the only hook it offers — the theme ships no favicon of its own, so
   without this the docs site falls back to the browser's blank-page glyph.
 
-  The icon is an inline SVG data URI rather than an asset file: it needs no
-  extra request, no binary committed to the repo, and cannot 404. The flag
-  reads at 16px, and #159957 is Cayman's own header-gradient green, so the tab
-  matches the site it opens.
-
-  SVG favicons are ignored by Safari and older Edge, which fall back to
-  /favicon.ico; there is deliberately no .ico here, so those browsers keep
-  their default glyph. That is an accepted trade rather than an oversight —
-  committing a binary to dodge it is not worth it for a docs site.
+  The icon is the project's own badge, the same artwork as the app's
+  icon.png, as a 192 px PNG: every browser takes a PNG favicon, including
+  Safari, which ignores SVG ones. relative_url resolves it under the project
+  page's baseurl.
 {%- endcomment -%}
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23159957'/%3E%3Cpath d='M11 6v20M11 8h11l-3 4 3 4H11' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="icon" type="image/png" href="{{ '/assets/favicon.png' | relative_url }}">

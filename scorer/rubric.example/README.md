@@ -51,8 +51,13 @@ patch that satisfies the exact probe string without actually fixing the vuln.
 
 ```sh
 cp -r ./my-rubric scorer/rubric
-docker build -t ghcr.io/<org>/score:latest --build-arg RUBRIC_DIR=rubric scorer/
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+  -t ghcr.io/<org>/score:latest --build-arg RUBRIC_DIR=rubric scorer/
 ```
+
+GitHub runners need a `linux/amd64` image (`setup/ctf-setup.sh` refuses to
+mirror anything else), and turning attestations off keeps it one plain
+manifest rather than an index, which the Fly deploy's registry mirror needs.
 
 (Add `--build-arg RUBRIC_DIR=rubric.example` to bake this tutorial rubric instead.)
 

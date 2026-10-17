@@ -284,7 +284,6 @@ export type SettingsPatch = {
   /** Event identity. "" clears the field back to its default,
    *  the same contract as `moduleTitle:<id>`. */
   eventName?: string;
-  eventTheme?: string;
   eventLocation?: string;
   eventContact?: string;
   eventDiscord?: string;

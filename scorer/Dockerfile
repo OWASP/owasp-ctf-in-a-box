@@ -20,7 +20,7 @@ FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18
 # docker.sock (boot the app under test, self-attach to the ctf network).
 # Pinned to the version in the base image's Alpine release (the base is pinned
 # by digest above, so this is deterministic too); bump both together.
-RUN apk add --no-cache docker-cli=29.8.2-r0
+RUN apk add --no-cache docker-cli=29.8.2-r1
 
 WORKDIR /app
 

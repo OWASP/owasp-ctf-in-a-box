@@ -20,6 +20,30 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Enforced merge gates (#487).** What used to be an honor system is now
+  checked: a required `coderabbit-approved` workflow reads the PR's reviews
+  through the GitHub API on every push and every review event, and passes
+  only when CodeRabbit's *latest* review is APPROVED on the PR's exact head
+  SHA — CodeRabbit's own `CodeRabbit` commit status could not gate anything
+  (it reports `success` when the bot did not review, and an approval of an
+  older commit stayed green after new pushes). It fails closed on a missing,
+  dismissed, stale or un-fetchable review, needs only `pull-requests: read`,
+  and checks nothing out. Terraform's fmt/validate/test and the AWS module's
+  bats suites moved from `terraform.yml` into ci.yml as a `changes`-gated
+  `terraform` job, and the two heavy scoring gates now scope their matrices
+  with per-workflow `changes` jobs plus required `stock-summary` /
+  `patched-summary` jobs instead of workflow-level `paths:` filters — a
+  filtered-out workflow reports nothing, so its check could never be
+  required. AGENTS.md and docs/reviewing.md document the checks that are
+  enforced; the branch-protection settings themselves stay a maintainer's
+  step on GitHub, not something repository code can apply.
+- **Fixed: the scorer image builds again — the `docker-cli` apk pin moves to
+  the base release's current rebuild.** Alpine rolled its `docker-cli`
+  29.8.2 package from `-r0` to `-r1` (a rebuild within the same release the
+  base image pins), and the exact `-r0` pin no longer resolves, so every
+  `docker build` of `scorer/` failed — taking the `scorer` job and both
+  heavy scoring gates with it. The pin moves to `29.8.2-r1`; the upstream
+  docker version, the base-image digest and scoring behaviour are unchanged.
 - **Changed: the kit has its own logo and favicon.** The built-in default
   logo is now the project's artwork — a fox, a server box and a flag beside
   the OWASP mark — on the landing hero, the leaderboard header, the "Built

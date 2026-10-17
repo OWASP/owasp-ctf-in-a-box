@@ -325,13 +325,41 @@ ADR, not the code.
   is that a check blocks only when it judges CODE against a mechanical rule:
   breaking-change docs was demoted after #241, because it scores the PR
   description from a snapshot taken at review time and blocked a PR whose
-  code was fine. CodeRabbit review is a required merge gate; the workflow rules —
-  wait for the re-review after every push, resolve every actionable thread,
-  decline on the record — are in `AGENTS.md` and
+  code was fine. CodeRabbit review is a required merge gate; what
+  *mechanically* enforces it is the next bullet — and the workflow rules
+  (wait for the re-review after every push, resolve every actionable
+  thread, decline on the record) are in `AGENTS.md` and
   [CONTRIBUTING](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/CONTRIBUTING.md).
-- CI (`.github/workflows/ci.yml`) — the per-area jobs, the vacuous-sweep
-  gate, and the acceptance scripts, which are the strongest anti-vacuous
-  layer in the repo.
+- `.github/workflows/coderabbit-approved.yml` — the required
+  `coderabbit-approved` check (#487). CodeRabbit's own commit status cannot
+  be a gate: it reports `success` when the bot did not review ("rate
+  limited", "skipped"), and an approval of an earlier commit stayed green
+  after new pushes. This workflow re-derives the fact from the reviews API on
+  every `pull_request` (including `synchronize`) and every
+  `pull_request_review`, and fails closed unless coderabbitai's *latest*
+  review is `APPROVED` on the PR's exact head SHA — no review, a
+  non-approved or dismissed state, an approval of another commit, or an API
+  failure all fail it. It needs only `pull-requests: read` and checks out
+  nothing. Reviewers should treat a red `coderabbit-approved` as "not
+  reviewed yet or review went stale", and get the bot's approval on the
+  current head — never argue that the `CodeRabbit` status is green.
+- CI (`.github/workflows/ci.yml`) — the per-area jobs (including the
+  `terraform` job, moved from `terraform.yml` so its check reports on every
+  PR), the vacuous-sweep gate, and the acceptance scripts, which are the
+  strongest anti-vacuous layer in the repo. The two heavy scoring gates run
+  in their own workflows, each with a `changes` job and a required summary
+  (`stock-summary` / `patched-summary`) so an affected change cannot bypass
+  them and an unaffected one does not wait on them.
+- Branch protection — applied by the maintainer on GitHub, never by repo
+  code (#487). The protection this repo is written against requires the
+  checks above (including `changelog` and `coderabbit-approved`),
+  `dismiss_stale_reviews` and `require_last_push_approval` so an approval of
+  an older head never survives a push, and `enforce_admins` with **zero**
+  required approving reviews — an admin merge must then satisfy every
+  required check, so there is no honor-system path around a red gate or a
+  missing CodeRabbit approval. Until those settings are in place, verify the
+  actual protection before treating a PR as mergeable; do not assume, and do
+  not claim, that a setting was changed.
 - This page — the reader-facing rationale. Keep the three in lockstep: a
   `.coderabbit.yaml` path instruction covers this page and the config as a
   pair, so a PR changing one side's rules without the other draws a warning

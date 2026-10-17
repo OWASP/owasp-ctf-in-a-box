@@ -1,0 +1,94 @@
+# The CodeRabbit merge gate (#487). The `CodeRabbit` commit status this
+# replaces could not enforce anything: CodeRabbit posts `success` when it did
+# NOT review ("Review rate limited", "Review skipped: …"), and an approval it
+# gave an earlier commit stayed green after new pushes — both observed on
+# merged PRs. This check asks the reviews API instead and passes ONLY when
+# coderabbitai's LATEST review is APPROVED on this PR's exact head SHA. No
+# review, a non-APPROVED state (including a dismissal, which the API reports
+# as DISMISSED), a review of another commit, or a failed API call all fail it
+# — it fails closed by construction, never by omission.
+#
+# Its own workflow rather than a ci.yml job for two reasons: it must re-run
+# when a review is submitted, edited or dismissed (`pull_request_review`
+# below), which ci.yml's bare `pull_request` trigger does not include; and
+# running it inside ci.yml would re-run the whole test suite on every review.
+# It is one read-only API call, so it needs no checkout and no `changes`
+# gate — it reports on every pull request.
+#
+# The check this reports is the job id `coderabbit-approved` (no `name:`, so
+# the job id IS the check name — the required context branch protection must
+# use in place of `CodeRabbit`). Branch protection itself is applied by the
+# maintainer on GitHub; this workflow only produces the check.
+name: coderabbit-approved
+
+on:
+  pull_request:
+    # Default types plus ready_for_review: marking a draft ready is when
+    # CodeRabbit starts reviewing it, so the gate has to re-evaluate then.
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+# `pull-requests: read` and nothing else — reading reviews needs it; no
+# `contents` because nothing is checked out (there is no checkout step at
+# all), and no `checks`/`statuses` because the workflow run's own check run
+# is the report. The token is read-only on fork PRs too, which is enough.
+permissions:
+  pull-requests: read
+
+jobs:
+  coderabbit-approved:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: coderabbitai's latest review approves this head
+        # Only the repo, the PR number and the head SHA reach the step, and
+        # through env rather than interpolated into the script: no
+        # PR-controlled text (title, body, branch name, review body) is ever
+        # expanded by the shell.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # One row per review coderabbitai[bot] filed on this PR:
+          # `submitted_at <TAB> commit_id <TAB> state`. gh's built-in --jq
+          # runs the filter against each page (--paginate), so a PR with
+          # more than one page of reviews still yields every row. A failed
+          # API call exits nonzero under this assignment — the gate reports
+          # the API failure and fails closed instead of guessing.
+          if ! reviews="$(gh api --paginate --jq \
+            '.[] | select((.user.login // "" | ascii_downcase) == "coderabbitai[bot]") | [(.submitted_at // ""), (.commit_id // ""), (.state // "")] | @tsv' \
+            "repos/${REPO}/pulls/${PR}/reviews?per_page=100")"; then
+            echo "::error::could not read this PR's reviews from the API — failing closed"
+            exit 1
+          fi
+
+          if [ -z "$reviews" ]; then
+            echo "::error::coderabbitai has filed no review on this PR — failing closed"
+            exit 1
+          fi
+
+          # ISO-8601 UTC timestamps sort byte-wise, so an LC_ALL=C sort puts
+          # the NEWEST review last whatever order the pages came back in —
+          # never take the first row: a later CHANGES_REQUESTED must beat an
+          # earlier APPROVED on the same commit.
+          latest="$(printf '%s\n' "$reviews" | LC_ALL=C sort -t $'\t' -k1,1 | tail -n 1)"
+
+          IFS=$'\t' read -r review_when review_sha review_state <<< "$latest"
+          echo "coderabbitai's latest review: state=${review_state} commit=${review_sha} submitted_at=${review_when}; this head is ${HEAD_SHA}"
+
+          if [ "$review_state" != "APPROVED" ]; then
+            echo "::error::coderabbitai's latest review is ${review_state}, not APPROVED — failing closed"
+            exit 1
+          fi
+
+          if [ "$review_sha" != "$HEAD_SHA" ]; then
+            echo "::error::coderabbitai approved ${review_sha}, not this head (${HEAD_SHA}) — a stale approval does not pass; failing closed"
+            exit 1
+          fi
+
+          echo "OK: coderabbitai's latest review is APPROVED for ${HEAD_SHA}"

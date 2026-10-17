@@ -215,7 +215,8 @@ resource "aws_ecs_task_definition" "srh" {
     // there is a single source: this reads it verbatim, and
     // test/srh-healthcheck.bats runs that same file inside the pinned srh
     // image against a real Redis (right token passes; wrong token and a
-    // stopped Redis fail). terraform.yml makes that test mandatory in CI.
+    // stopped Redis fail). ci.yml's `terraform` job makes that test
+    // mandatory in CI.
     // `file()` does not interpolate, so `$SRH_TOKEN` reaches the container
     // shell unexpanded, which is where it must be expanded.
     healthCheck = {

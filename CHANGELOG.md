@@ -20,6 +20,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: an event-archive import preserves the AI launch keypair (#653).**
+  Importing an archive replaces the challenge catalogue but no longer rotates
+  `ctf:ai:launchkey` — it is the module's published identity, so rotating it
+  would break every deployed external verifier and invalidate live launch
+  tokens (ADR 53), the same reason `clearAiChallenges` leaves it alone. An
+  ordinary master reset still rotates the key.
 - **Changed: the kit has its own logo and favicon.** The built-in default
   logo is now the project's artwork — a fox, a server box and a flag beside
   the OWASP mark — on the landing hero, the leaderboard header, the "Built

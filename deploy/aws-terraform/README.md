@@ -270,7 +270,7 @@ registry, would have redeployed the earlier image. `deploy.sh --dry-run` prints 
 ## Variables
 
 Every input is in `variables.tf` with its own description;
-`terraform.tfvars.example` shows each at its default. Four are required:
+`terraform.tfvars.example` shows each at its default. These are required:
 
 | Variable | Why it is required |
 |---|---|

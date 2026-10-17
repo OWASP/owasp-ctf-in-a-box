@@ -39,12 +39,14 @@ The patched gate stages a **pinned source tree** and applies the reference patch
 it. `scripts/acceptance-patched.sh` carries a per-target pin (a commit SHA, never a
 branch or tag — either can move and silently score a different app):
 
-- **vampi** stages the original upstream `erev0s/VAmPI`. This gate was authored
-  first, against original upstream, and is left as-is.
-- **The other five** stage their **OWASP-CTF fork** (the tree a contestant forks
-  and patches). The authoritative per-challenge fixes are extracted from the
-  private rubric repo's `solutions/<target>/patch.diff`, so each minimal patch is a
-  strict subset of a fix known to score.
+- **vampi** stages the upstream `erev0s/VAmPI` at the same commit
+  `setup/targets.tsv` pins.
+- **The other five** stage an `OWASP-CTF/<target>` repo at the script's own SHA.
+  Those trees are not the source a contestant forks: `setup/ctf-setup.sh` forks
+  each target from the upstream repo and `ref` in `setup/targets.tsv`. The
+  per-challenge fixes are extracted from the private rubric repo's
+  `solutions/<target>/patch.diff` and apply to the staged tree, so each minimal
+  patch is a strict subset of a fix known to score there.
 
 ## How the harness uses them
 

@@ -362,7 +362,7 @@ export const DEMO_QUESTIONS: DemoQuestion[] = [
       { id: "c", label: "Cross-Site Scripting" },
       { id: "d", label: "Broken Access Control" },
     ],
-    correct: ["a", "b"],
+    correct: ["a", "b", "c"],
   },
   {
     id: "owasp-top10-2021",

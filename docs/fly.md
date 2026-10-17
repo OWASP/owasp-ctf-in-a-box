@@ -293,7 +293,10 @@ The scorer is **mirrored, not rebuilt**. Fly cannot pull from a private
 third-party registry and has no flag for credentials, so the image is copied
 into Fly's own registry with `docker buildx imagetools create`, which
 preserves the digest. The scorer serving your leaderboard must be the same
-artifact the forks pull to judge PRs, or the totals disagree.
+artifact the forks pull to judge PRs, or the totals disagree. Build that image
+with `--provenance=false --sbom=false`: buildx otherwise pushes an image index
+carrying attestation manifests, Fly's registry answers the mirror's `HEAD`
+with a 400, and the mirror fails.
 
 ### 2. One volume, region-pinned, shared by two services
 
@@ -351,7 +354,7 @@ This is not the arrangement the module was built with. Fly's documentation says
 secrets set with `fly secrets` are "global and available to every container";
 they are not. A machine's containers receive only their own environment, which
 comes from the compose file. With the values stripped, every container started
-without credentials while `fly secrets list` reported all fourteen as
+without credentials while `fly secrets list` reported every one as
 `Deployed` — the app answering 500 from better-auth's default-secret error, the
 scorer refusing to start, and sync refusing to poll with no org or token to
 poll with.
@@ -398,9 +401,9 @@ which is the point of rendering it.
 
 ## Security differences from compose
 
-Two properties the local stack has do **not** survive on Fly. Neither is new
-to this module — the five-app version had already lost them — but they are
-worth knowing before you run a public event.
+One property the local stack has does **not** survive on Fly. It is not new
+to this module — the five-app version had already lost it — but it is worth
+knowing before you run a public event.
 
 **No `frontend`/`backend` network split.** [ADR 41](decisions.md) cuts the app
 tier off from `redis:6379` so a compromised app cannot bypass srh's bearer
@@ -409,7 +412,9 @@ binding redis to `127.0.0.1` would not help because containers share loopback.
 **`requirepass` is the whole control on Fly**, which is why `REDIS_PASSWORD`
 is mandatory rather than optional.
 
-**No per-service secret scoping**, as above.
+Per-service secret scoping does survive, and rests on the rendered compose
+file alone (see above); the `fly secrets` that `deploy.sh` also sets are only
+a fallback.
 
 What does hold: no inbound scoring surface at all, TLS from Fly, srh
 never public, and the datastore reachable from nothing outside the machine.

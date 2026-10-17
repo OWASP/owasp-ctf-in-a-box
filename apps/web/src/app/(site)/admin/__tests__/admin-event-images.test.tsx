@@ -27,7 +27,7 @@ describe("EventImageRow", () => {
 
   it("names the built-in default and offers no restore when nothing is stored", () => {
     const html = row();
-    expect(html).toContain("Built-in OWASP mark");
+    expect(html).toContain("Built-in project logo");
     expect(html).toContain("Choose logo");
     expect(html).not.toContain("Restore default");
     expect(html).not.toContain("/api/event/logo");
@@ -84,6 +84,6 @@ describe("Restore default asks first", () => {
 
   it("names the slot and what comes back in the dialog copy", () => {
     expect(restoreConfirm("icon").title).toMatch(/favicon/i);
-    expect(String(restoreConfirm("logo").body)).toMatch(/OWASP mark/);
+    expect(String(restoreConfirm("logo").body)).toMatch(/project logo alone/);
   });
 });

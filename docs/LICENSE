@@ -2,8 +2,8 @@ Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
 
 Copyright (c) 2026 OWASP CTF in a Box contributors
 
-This licence covers the DOCUMENTATION in this directory — the Markdown
-sources under `docs/`, the site they are published as at
+This licence covers the DOCUMENTATION — the repository's root `README.md`,
+the Markdown sources under `docs/`, the site they are published as at
 https://owasp.github.io/owasp-ctf-in-a-box/, and the diagrams and images
 under `docs/assets/`.
 

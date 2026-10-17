@@ -10,7 +10,7 @@ import {
 const valid: EventBundle = {
   version: EVENT_BUNDLE_VERSION,
   kind: "archive",
-  event: { name: "Demo CTF", theme: "web", dates: "2026", location: "online", ctfStartsAt: null },
+  event: { name: "Demo CTF", dates: "2026", location: "online", ctfStartsAt: null },
   settings: { hintCost: 50, teamMaxMembers: 4, enabledModuleIds: ["classic", "quiz"], classicCooldownSec: 45, aiCooldownSec: 12 },
   classic: {
     version: 1,
@@ -154,13 +154,17 @@ describe("parseEventBundle", () => {
     expect(res.bundle.quiz).toBeUndefined();
   });
 
-  // Finding M4: a non-string theme/location/dates (or non-string/non-null
+  // Finding M4: a non-string location/dates (or non-string/non-null
   // ctfStartsAt) is REJECTED like every other malformed bundle field, not
-  // silently ignored — event-store's `typeof bundle.event.theme === "string"`
+  // silently ignored — event-store's `typeof bundle.event.location === "string"`
   // import guard would otherwise drop a wrong-typed value with no error at
   // all.
+  it("accepts an older archive whose event still carries a theme string", () => {
+    const older = { ...valid, event: { ...valid.event, theme: "web" } };
+    expect(parseEventBundle(JSON.stringify(older)).ok).toBe(true);
+  });
+
   it.each([
-    ["theme", 42, "event.theme"],
     ["location", 42, "event.location"],
     ["dates", 42, "event.dates"],
     ["ctfStartsAt", 42, "event.ctfStartsAt"],

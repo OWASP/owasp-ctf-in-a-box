@@ -255,33 +255,32 @@ live on the next request; there is no rebuild and no cache to wait out.
 name in three places on every event: **the tab's own label**, **the nav link**
 (header and footer alike), and **the module's own page header and browser tab
 title** (`/challenges` for Secure Development, `/quiz` for Quiz, `/flags` for
-Jeopardy). Two further
-surfaces exist but are **suppressed on a single-module event**, which is what
-most events are:
+Jeopardy, `/ai` for AI). It also reaches two more surfaces on every event:
 
-- the **leaderboard's per-module block heading** — hidden while only one
-  module is enabled, because a row's points *are* that module's and the
-  heading would only restate the column above it;
-- the **landing page's per-module section heading** — a lone module's section
-  is headed "What to expect" instead, and the page's uppercase kicker comes
-  from the module's registry tagline, which is **not** overridable at all.
-  (A module with no registry `home` block is the exception: its section
-  heading *is* its title, override included, because there is no authored
-  heading to prefer. Neither module shipped today is in that position.)
+- the **landing page's module card** — each card under "The game" (or "The
+  games", with more than one module) is headed by the module's title, override
+  included. The page's uppercase kicker above it comes from the modules'
+  registry taglines, which are **not** overridable at all;
+- the **team leaderboard's per-module rows** — an expanded team row labels
+  each module's progress with its title, even when only one module runs.
 
-So on a one-module event a rename reaches three surfaces, not five. Nothing is
-broken if you cannot find your new name on the leaderboard or the landing
-page — those two only start naming modules once there are two to tell apart.
+One surface is **suppressed on a single-module event**, which is what most
+events are: the **individual leaderboard row's per-module block heading**,
+hidden while only one module is enabled because a row's points *are* that
+module's and the heading would only restate the column above it. Nothing is
+broken if a contestant's own row does not show your new name on a one-module
+event — that heading only appears once there are two modules to tell apart.
 
 **The blurb is contestant-facing copy — write it as such.** It reaches three
 places:
 
 - the **meta description** of the module's own page (what a search result or a
   chat link preview shows);
-- **`/quiz`'s and `/flags`'s page header**, as the lede under the title. This
-  is the module describing itself; the "You've answered 2 of 5 questions."
-  (or "You've solved N of M challenges.") line is *your* progress, and sits
-  above the questions/challenges instead;
+- **`/quiz`'s, `/flags`'s and `/ai`'s page header**, as the lede under
+  the title. This is the module describing itself; a contestant's own progress lives on the
+  board itself (Quiz's progress strip, Jeopardy's "Your run" rail), and a
+  signed-out visitor sees a "Sign in with GitHub to …" line above the
+  questions/challenges;
 - the **landing page section lede**, but only for a module that ships no
   registry `home` block. All four modules that exist today have one, so
   today this
@@ -303,8 +302,7 @@ The panel offers:
   into the image. Each restores its default when left blank: **Event name** (≤80
   characters; blank restores "OWASP CTF in a Box"; shown in page titles,
   the header, the leaderboard, and this panel's own master-reset confirmation),
-  **Tagline** (≤160; one line under the event name on the landing page;
-  blank hides it), **Location** (≤160; shown beside the dates on the landing
+  **Location** (≤160; shown beside the dates on the landing
   page and in the page description; blank hides it), **Timezone** (≤64; an
   IANA zone such as `America/Argentina/Buenos_Aires`, suggested as you type;
   the landing page's dates, the phase line, the score chart's axis and the
@@ -329,15 +327,15 @@ The panel offers:
   - **Logo** — PNG, JPEG or WebP, up to 128 KB and 4096 px a side. It leads
     the landing page's hero (shown up to 224 px tall and 32 rem wide on a
     desktop, 144 px tall on a phone, whatever its shape; clickable when a
-    **Logo link** is set), and a smaller OWASP mark stays beside it, captioned "Built
-    with OWASP CTF in a Box": the
+    **Logo link** is set), and a smaller project logo, which carries the
+    OWASP mark, stays beside it, captioned "Built with OWASP CTF in a Box": the
     OWASP Project Policy wants OWASP branding prominent on any domain the kit
     runs on, so an event adds its logo and never removes OWASP's (ADR 65).
     It is shown as uploaded on the dark navy hero — upload a version made for
-    a dark background. With no logo set, the hero shows the OWASP mark alone,
-    as before.
+    a dark background. With no logo set, the hero shows the project logo
+    alone.
   - **Favicon** — the browser tab icon: a square PNG, 32–512 px, up to 32 KB.
-    With none set, the built-in icon is used.
+    With none set, the project's built-in icon is used.
 
   The server checks each file's real bytes, not its name or claimed type, and
   refuses SVG outright (an SVG served from the box can run script). Both are
@@ -347,9 +345,11 @@ The panel offers:
   **master reset keeps them** — like the name, they are the event's identity,
   not progress. An event archive carries the logo and its **Logo link**
   together; contact and Discord never travel in one.
-- **Status** — the sync poller's heartbeat (last poll time, comments
-  ingested, comments **dropped**, repos polled, last error) and a
-  best-effort leaderboard freshness read.
+- **Sync** (Overview tab, shown only while Secure Development is present) —
+  the sync poller's heartbeat as one line (last poll time, comments ingested,
+  comments **dropped**, running or paused) that expands to the full
+  breakdown: repos polled, whether sync is paused, the last drop and the
+  last error.
 
   **Read Ingested and Dropped together.** Ingested is points that reached the
   leaderboard; Dropped is points that reached a contestant's PR and stopped
@@ -805,10 +805,12 @@ The panel offers:
 
 - **Master reset** (danger zone) — wipes **all** contestant progress so a test
   run or a botched setup can be cleared before the real event. It deletes every
-  solve, team, per-player record, join code, and hint purchase; it **keeps**
-  everything you authored — quiz questions and their answer key, classic and AI
-  challenges with their flags, hints and categories — along with your admin
-  settings, and appends the reset to the audit log. It does rotate the AI
+  solve, attempt, team, per-player record, join code and hint purchase, the
+  organizer's score adjustments, the activity log, and every sponsor (see
+  [Sponsors](#sponsors)); it **keeps** everything you authored — quiz
+  questions and their answer key, classic and AI challenges with their flags,
+  hints and categories — along with your admin settings, and appends the
+  reset to the audit log. It does rotate the AI
   module's launch keypair (see [below](#ai)), so an external challenge site
   re-fetches the public key on its next verification. It is server-side and
   admin-gated, and requires **typing the event name** — the current runtime
@@ -892,7 +894,7 @@ The panel offers:
 
 **Every destination has its own URL.** `/admin/overview`, `/admin/activity`,
 `/admin/insights`, `/admin/support`, `/admin/event`, `/admin/hints`,
-`/admin/admins`, and one per enabled module — `/admin/quiz`,
+`/admin/admins`, `/admin/sponsors`, and one per enabled module — `/admin/quiz`,
 `/admin/classic`, `/admin/ai`, `/admin/secure-development`. That is what the
 sidebar links to, so a link is safe to bookmark, paste into a runbook, or
 read out over a call. Switching tabs updates the address bar without a page
@@ -927,7 +929,7 @@ demo seed and the master reset.
 
 Every settings change is recorded in an audit log (who, when, what changed)
 alongside the setting itself; the log (`ctf:admin:audit`) keeps the newest
-**500** entries and drops older ones automatically. The five Identity fields
+**500** entries and drops older ones automatically. The six Identity fields
 are the exception to "what changed": the audit line names the field and
 whether it was set or cleared, never the value — `eventDiscord` can carry an
 invite/join token and `eventContact` is personal data, so neither is fit for
@@ -979,7 +981,7 @@ DVWA, WebGoat, Security Shepherd, VulnerableApp, VAmPI) this event actually
 runs, as a checkbox list. `ctf-setup.sh org` forks and provisions all six for
 every event that provisions Secure Development at all — six forks, six
 scoring workflows, six package Read grants — regardless of this setting; an
-event with no `secure-development` block forks and grants nothing (see
+event with an empty `SCORE_IMAGE` forks and grants nothing (see
 [modules.md](modules.md)). The checkboxes decide which of those six
 contestants see and which the sync poller reads, not which get provisioned.
 At least one target must stay checked — the last box is disabled, the same
@@ -1097,8 +1099,8 @@ leaderboard's projector display (`?display=1`) if and only if at least one
 sponsor is configured. The footer's credit is left out on the landing page,
 where the strip above the fold already names them. An event with no sponsors
 ships zero sponsor pixels anywhere. The leaderboard also shows the event logo
-beside its title when one is uploaded in `/admin` → Event, and the default
-OWASP mark otherwise, as the landing page does.
+beside its title when one is uploaded in `/admin` → Event, and the project
+logo otherwise, as the landing page does.
 
 **The tab is the list.** Each sponsor is a card showing its logo as it will
 actually appear — on the site's own dark background, untreated — next to its
@@ -1170,9 +1172,9 @@ them.
 
 **In the event archive.** A sponsor-carrying export embeds each logo's bytes
 as base64 inside the JSON bundle — a sponsor-heavy archive is noticeably
-larger than one with none. Importing a bundle with a `sponsors` section
-replaces the box's sponsor list wholesale, like every other section of an
-archive import.
+larger than one with none. Every import runs the master reset, which deletes
+the box's sponsors, so after an import the sponsor list is exactly the
+bundle's `sponsors` section — and empty when the bundle carries none.
 
 ## Archiving and replaying an event
 
@@ -1193,12 +1195,14 @@ AI challenge's mode, launch URL template and **per-challenge signing key**
 plus **policy** settings: the hint controls (enabled, cost, and its two
 gating knobs), the quiz retry-gate knobs, Jeopardy's and AI's submission
 cooldowns, the re-run cooldown, the team-size cap and registration switch,
-module title/blurb overrides, and which modules are enabled. The content of
+module title/blurb overrides, which modules are enabled, and which Secure
+Development targets the event runs (`secureDevTargets`). The content of
 all three modules is in every bundle, switched on or off, so a module that is
 off comes back from an import with its content intact and still off. It carries no
 scoring data: no solves, attempts, team rosters or score adjustments. It also carries an informational **event
-identity** block — `name`, `theme`, `dates`, `location` and `ctfStartsAt` —
-read from the running box at export time.
+identity** block — `name`, `dates`, `location` and `ctfStartsAt`, plus
+`logoUrl` and `timeZone` when they are set — read from the running box at
+export time.
 
 **How a bundle is recognised.** The file's top level is stamped
 `"kind": "archive"` next to a numeric `version`, and import checks both
@@ -1237,11 +1241,13 @@ treat the file with the same care as `/admin` access itself.
 
 **Import is replace-all, and it is destructive.** Confirming an import first
 validates and applies the file's policy settings, then runs the same reset
-the master reset button does — wiping every team, solve, attempt, and hint
-purchase — and replaces the entire Jeopardy board, Quiz bank and AI catalogue
-with exactly what the file contains (a section absent from the file leaves
-that module empty, not as it was — replace-all, not merge). Settings go first and fail-fast: a bad or
-cross-box-incompatible settings block is rejected before anything is wiped,
+the master reset button does — wiping every team, solve, attempt and hint
+purchase, the score adjustments, the activity log and every sponsor, and
+leaving scoring frozen with a fresh pause log, a new reset epoch and the
+event not launched — and replaces the entire Jeopardy board, Quiz bank and
+AI catalogue with exactly what the file contains (a section absent from the
+file leaves that module empty, not as it was — replace-all, not merge).
+Settings go first and fail-fast: a bad or cross-box-incompatible settings block is rejected before anything is wiped,
 never after. It is **refused outright (`409`)** while scoring is
 **effectively live** — not manually paused, and inside its scheduled scoring
 window; manually pausing scoring is one way to make the event eligible for
@@ -1277,12 +1283,14 @@ second successful run overwrites whatever the failed one left behind.
 again before the import runs anything destructive; an archive without them
 leaves the box's own images as they are.
 
-**Name, tagline and location travel with the bundle; contact and Discord
-never do.** The event's identity is a runtime `/admin` setting now (issue
-#386), so on import only the supported identity fields — `name`, `theme`
-and `location` — are applied, through the same validated settings patch as
-every other policy field, before anything destructive runs — a restore or a
-repeat run of the same CTF renames itself without a rebuild. The bundle's
+**Name, location, time zone and logo link travel with the bundle; contact
+and Discord never do.** The event's identity is a runtime `/admin` setting
+(issue #386), so on import only the supported identity fields are applied —
+`name`, plus `location`, `timeZone` and `logoUrl` when the bundle carries
+them; an older archive's `theme` (the retired tagline) is ignored. They go
+through the same validated settings patch as every other policy field,
+before anything destructive runs — a restore or a repeat run of the same
+CTF renames itself without a rebuild. The bundle's
 `dates` and `ctfStartsAt` are informational only (they travel with the
 export for the record — see above) and are **not** reapplied on import: both
 are derived from the **Scoring opens** / **Scoring closes** schedule, which an
@@ -1803,9 +1811,10 @@ ids in order:
 ```
 
 A version 1 file still imports unchanged, but it cannot carry `stories`.
-(Today's export is stamped `"version": 2`, or `"version": 3` when it
+(Today's export is stamped `"version": 2`, `"version": 3` when it
 carries the optional attachment files described under "Files in bundles
-and archives" below.)
+and archives" below, or `"version": 4` when any challenge is hidden or
+scheduled.)
 Every step must name a challenge **in the same file**, the same
 self-contained rule that applies to categories. Stories merge by id, the
 same way challenges do:
@@ -1927,8 +1936,9 @@ The bytes travel in one of two places:
   default) and the bundle stays the small, metadata-only file.
 
 A bundle that carries files is stamped `"version": 3`. One without them
-(the option unticked, or nothing uploaded) stays `"version": 2`, so a box on
-an older build still imports it. Each `attachmentFiles` entry
+(the option unticked, or nothing uploaded) stays `"version": 2` (or 4 when it
+carries a hidden or scheduled challenge), so a box on an older build still
+imports it. Each `attachmentFiles` entry
 is `{ "item", "sha256", "bytes" }`: the challenge id, the upload's sha256,
 and the file's bytes as base64. Every entry must name an upload in the same
 file by challenge id and sha256. Version 1 and 2 files still import
@@ -2114,9 +2124,8 @@ like classic.
 
 **Position ordering is a plain editable number**, not drag-and-drop. Unlike
 quiz's and classic's question/challenge lists, this panel has no
-reorder-by-dragging UI — organizers curate a long-running board there;
-nothing about this task called for the same parity here, so `order` is just
-another field the form edits directly.
+reorder-by-dragging UI — organizers curate a long-running board there,
+so `order` is the **Position** number field the form edits directly.
 
 **The integration panel** is what an external challenge actually wires up
 against. It comes in two parts. The **Endpoints** block sits once, above the
@@ -2162,10 +2171,10 @@ carries:
   hard-coded server-side, never taken from the request — so nothing is
   written: no nonce is claimed, no points are awarded. It is safe to click
   against a live event, and it relays that handler's real verdict verbatim
-  rather than inventing one. The panel renders exactly one of two lines
+  rather than inventing one. The panel renders exactly one line
   under the button: a green **Would award — the dry run verified end to
-  end.** for the good case, or a red **Test result: `<name>`** for anything
-  else, where `<name>` is the verdict or error string the route handed back
+  end.** for the good case, or **Test result: `<name>`** for anything
+  else — green for `solved` or `would-award`, red for a refusal or failure — where `<name>` is the verdict or error string the route handed back
   (or `unavailable` when it handed back nothing readable — a 503, or the
   request itself failing). The panel now prints a one-sentence explanation
   under that name for every verdict listed below, so the table here is a
@@ -2502,12 +2511,12 @@ $ curl -s https://ctf.example.org/health
 | `builtAt` | When the image was built. Distinguishes two deploys of the same commit — a redeploy after a config or secret change rebuilds the image without moving the sha. |
 
 `revision` and `builtAt` are baked at build time from `APP_BUILD_REV` and
-`APP_BUILT_AT` (Docker build args). `deploy/fly/deploy.sh`,
-`deploy/aws-terraform/deploy.sh` and `scripts/dev-stack` fill them in; a build
-that passes neither reports
-`"unknown"` and `null` rather than failing. `deploy.sh` deliberately reports
-`unknown` when the working tree is dirty, because the sha would not describe
-the image it built.
+`APP_BUILT_AT` (Docker build args). `deploy/fly/deploy.sh` and
+`deploy/aws-terraform/deploy.sh` fill in both; `scripts/dev-stack` fills in
+only `builtAt`, so a dev stack always reports `revision: "unknown"`. A build
+that passes neither reports `"unknown"` and `null` rather than failing. Both
+`deploy.sh` scripts deliberately report `unknown` when `apps/web/` (the app's
+build context) is dirty, because the sha would not describe the image built.
 
 Watching for a deploy to land:
 
@@ -2546,11 +2555,8 @@ The scorer engine has two more gates of its own:
 `acceptance-scorer.sh` closes the judge → PR-comment marker → leaderboard loop
 against a fake target app: it POSTs the marker the judge wrote the way `sync`
 does, and asserts the leaderboard then shows rubric-derived points. It also
-runs the judge twice, once with `SCORE_API`/`SCORE_TOKEN` set and once with
-neither, and requires the two reports to be byte-identical — that environment
-is dead since push ingest was removed
-([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377)), and this is the
-assertion that keeps it dead.
+checks the report carries the score-action regexes with the expected count,
+and that no probe internal leaks into it.
 `acceptance-target.sh` is the **stock-scores-zero gate**: it boots the real,
 unpatched upstream image and asserts every challenge fails against it. Any
 challenge that passes there asserts the exploit rather than the fix, and the
@@ -2738,7 +2744,9 @@ template, or fork and open PRs, before the event starts.
      everyone a head start. It needs `EVENT_URL` in `.env` to see the press,
      and refuses without it.
    - Then it makes every fork **public**, within one poll interval of the
-     press. If Launch never comes, nothing was changed.
+     press, and applies the `ctf` branch protection that `org` deferred (the
+     free plan cannot protect a private repo), checking it before it reports
+     success. If Launch never comes, nothing was changed.
 
    It uses your own `gh` login; the box never holds a GitHub admin
    credential. Every step is idempotent: after a partial failure it names
@@ -2770,14 +2778,11 @@ on from other OWASP-CTF repos landed here instead:
    org secrets of its own — the comment is the transport, so there is nothing
    for it to authenticate to.
 
-What none of that bounds: **no real event has yet driven real contestant PRs
-through real GitHub end to end**, and nothing here has been exercised at the
-concurrency of a full cohort. A live instance catches what mocks cannot — an
-end-to-end pass over one is where a batch of real defects were found, several
-of them invisible to a green CI run — but one operator clicking through a
-deployed box is not forty contestants pushing at once. Until an event has run,
-treat `scripts/smoke.sh` as the source of truth that the pipeline works, and
-the live box as evidence that it works when deployed.
+**It has run a real event.** The first one ran on October 7–9, 2026, on the
+AWS module behind Cloudflare: 28 teams and 41 players, 498 Secure
+Development score comments ingested with none dropped, and about 465,000
+requests on the two busiest days. That is the measured load: a larger
+cohort, or a single box on venue wifi, is still beyond what has been run.
 
 Known limits, in the open:
 
@@ -2797,7 +2802,7 @@ Known limits, in the open:
   example). The app is wired to it today for real team-membership and
   hint-purchase data. That the app's Redis client stays inside that subset
   is no longer unverified: `apps/web/src/lib/upstash.ts` exposes exactly two
-  entry points, `upstashPipeline` and `upstashEval`, and the seven
-  `*.upstash.test.ts` suites drive both against a real Redis behind `srh` in
+  entry points, `upstashPipeline` and `upstashEval`, and every
+  `*.upstash.test.ts` suite drives both against a real Redis behind `srh` in
   the `app` CI job — with `CTF_LUA_SUITES_REQUIRED=1` turning a skip into a
   failure, so pipelining and `EVAL` are exercised end to end on every run.

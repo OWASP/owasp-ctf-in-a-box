@@ -3987,6 +3987,14 @@ them. Two more routes join the public surface (docs/reviewing.md invariant
 11), both public before launch because every page shows them. A social share
 card and a header mark are not covered; each would be its own decision.
 
+**Amendment.** The built-in defaults are now the project's own artwork: a
+logo (`public/logo.png`, a fox, a server box and a flag beside the OWASP
+mark) and a badge favicon (`favicon.ico`, `icon.png`), shown in their own
+colours, so the hero no longer inverts them. "The OWASP mark" above means
+that logo: it is what stays beside an uploaded one, and what the hero shows
+alone when none is set. The rule is unchanged — an organizer adds a logo and
+never removes the OWASP branding.
+
 ## ADR 66. The regular leaderboard shows the event logo and the sponsor strip
 
 **Context.** Issue #571. [ADR 57](#adr-57-sponsors-are-recognition-only-appear-in-four-fixed-surfaces-and-the-disclaimer-is-not-configurable)
@@ -4002,7 +4010,7 @@ its title and the landing page's `SponsorStrip` under its header, above the
 board. The strip is reused unchanged: same order, same organizer
 `sponsorLogoSize` setting, nothing when the list is empty, grayscale credit
 row rather than an ad rail. With no uploaded logo the header shows the
-default OWASP mark, the same fallback as the landing page's hero, so the
+project logo, the same fallback as the landing page's hero, so the
 title never stands without a mark. The logo hides itself if it fails to load, as on
 the projector. Both reads fail open, so a Redis blip costs the decoration and
 never the standings. This makes it a fifth sponsor surface; ADR 57's other

@@ -53,7 +53,7 @@ export function describeStoredImage(meta: EventImageMeta): string {
 
 /** The help line under each picker. */
 export const SLOT_HELP: Record<EventImageSlot, string> = {
-  logo: `Leads the landing page's hero, with a smaller OWASP mark kept beside it. Shown as uploaded on the dark navy hero, so upload a version made for a dark background. PNG, JPEG or WebP, up to ${kb(EVENT_IMAGE_MAX_BYTES.logo)}.`,
+  logo: `Leads the landing page's hero, with a smaller project logo kept beside it. Shown as uploaded on the dark navy hero, so upload a version made for a dark background. PNG, JPEG or WebP, up to ${kb(EVENT_IMAGE_MAX_BYTES.logo)}.`,
   icon: `The browser tab icon. A square PNG, ${EVENT_ICON_MIN_DIMENSION}–${EVENT_ICON_MAX_DIMENSION} pixels, up to ${kb(EVENT_IMAGE_MAX_BYTES.icon)}.`,
 };
 
@@ -137,7 +137,7 @@ export function restoreConfirm(slot: EventImageSlot): { title: string; body: str
   return slot === "logo"
     ? {
         title: "Restore the built-in logo?",
-        body: "The uploaded logo is deleted from this box and the hero goes back to the OWASP mark alone. To use it again you will need to upload the file again.",
+        body: "The uploaded logo is deleted from this box and the hero goes back to the project logo alone. To use it again you will need to upload the file again.",
         confirmLabel: "Restore default",
         danger: true,
       }

@@ -183,7 +183,7 @@ export function validateEventImagesBundle(bundle: EventImagesBundle): Map<EventI
 
 /** Writes an archive's images, every slot in one pipeline, after validating
  *  all of them. A slot the archive does not carry is left as it is — the
- *  same rule as an absent tagline or location. */
+ *  same rule as an absent location. */
 export async function importEventImages(bundle: EventImagesBundle): Promise<EventImagesMeta> {
   const validated = validateEventImagesBundle(bundle);
   const commands: (string | number)[][] = [];

@@ -18,7 +18,6 @@ export type { NavLink, NavGroup, NavEntry } from "@/lib/site-nav";
 
 export type Site = {
   name: string;
-  theme: string;
   dates: string;
   location: string;
   ctfStartsAt: string | null;
@@ -81,13 +80,12 @@ export function resolveSite(
   const timeZone = resolveTimeZone(o.eventTimeZone);
   return {
     // `||`, not `??`, for eventName ONLY: an empty string is a valid "no
-    // override" state for the other four fields (each hides its own UI
+    // override" state for the other fields (each hides its own UI
     // element when blank), but an empty <title>/headline is never desirable.
     // The app's own write path already guards against writing "" here
     // (validation), so this only matters for a hand-run
     // `HSET ctf:admin:settings eventName ""`.
     name: o.eventName || DEFAULT_EVENT_IDENTITY.eventName,
-    theme: o.eventTheme ?? DEFAULT_EVENT_IDENTITY.eventTheme,
     location: o.eventLocation ?? DEFAULT_EVENT_IDENTITY.eventLocation,
     contactEmail: o.eventContact ?? DEFAULT_EVENT_IDENTITY.eventContact,
     discordUrl: o.eventDiscord ?? DEFAULT_EVENT_IDENTITY.eventDiscord,

@@ -158,12 +158,15 @@ Each of these caught a real mistake:
   including the installation id: only an explicit assignment clears, so
   refreshing from a partial `.env` cannot unpin an id nobody mentioned
 
-## Two things this deployment cannot give you
+## What this deployment cannot give you
 
-Both were already true of the five-app version. See ADR 42.
+This was already true of the five-app version. See ADR 42.
 
 - **No `frontend`/`backend` network split** (ADR 41). One machine, one network
   namespace — every container can reach `redis:6379`, and binding to
   `127.0.0.1` would not help because loopback is shared too. `requirepass` is
   the whole control here, which is why `REDIS_PASSWORD` is mandatory.
-- **No per-service secret scoping.** Fly's secrets are global to the machine.
+
+Per-service secret scoping does hold: it rests on the rendered compose file
+(render step 1 above), and the `fly secrets` that `deploy.sh` also sets are
+only a fallback.

@@ -59,11 +59,13 @@ describe("lambdaSource.getLeaderboard", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://scorer.example/leaderboard", { cache: "no-store" });
   });
 
-  it("retains the revalidation cache for regular reads", async () => {
+  it("bypasses Next's fetch cache for regular reads too", async () => {
     vi.stubEnv("LEADERBOARD_API_URL", "https://scorer.example");
     const fetchMock = stubFetch(RESPONSE);
     await lambdaSource.getLeaderboard();
-    expect(fetchMock).toHaveBeenCalledWith("https://scorer.example/leaderboard", { next: { revalidate: 30 } });
+    expect(fetchMock).toHaveBeenCalledWith("https://scorer.example/leaderboard", {
+      cache: "no-store",
+    });
   });
 
   it("captures lastSolveAt and uses it as the source's updatedAt", async () => {

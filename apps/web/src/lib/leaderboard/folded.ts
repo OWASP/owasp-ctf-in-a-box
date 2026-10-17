@@ -21,12 +21,10 @@ import type { LeaderboardData } from "./types";
  * against 10 demanded after the payload fix (#443), with ~370 ms of CPU per
  * request. Six folds a minute instead of six hundred is the difference.
  *
- * TTL. Ten seconds — under the display board's own 30 s refresh and under the
- * scorer fetch's 30 s `revalidate`, so no viewer sees data older than the
- * board could already show them. A contestant's own quiz/flag solve appears
- * here within 10 s rather than on the next request; /profile and the module
- * pages read their own data and are unaffected.
- *
+ * TTL. Ten seconds — under the display board's own 30 s refresh. The scorer
+ * fetch bypasses Next.js's fetch cache, so this memo is the leaderboard's
+ * remaining application-level cache. /profile and the module pages read their
+ * own data and are unaffected.
  * FAIL OPEN, NEVER CACHE A FAILURE. A fold that throws is not stored: the
  * caller sees the error exactly as before, and the next request retries. A
  * Redis blip costs one slow page, never ten seconds of a frozen board.

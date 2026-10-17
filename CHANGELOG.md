@@ -1286,6 +1286,12 @@ with the reasoning; this is the index an upgrader reads first.
   account-level) and its verification; the pre-event checklist in
   `docs/operations.md` grows from three checks to four.
 
+- **Fixed: the leaderboard could show stale scores due to an extra fetch cache (#598).**
+  Normal scorer requests now bypass Next.js's 30-second fetch cache, while the
+  leaderboard retains its 10-second fold memoization to avoid unnecessary
+  recomputation. The Secure Development caption no longer promises a specific
+  update interval that has not been verified across deployed instances.
+
 - **Fixed: the leaderboard fold runs once per 10 s, not once per viewer
   (#444).** Composing the board — the scorer read, every module's points,
   team standings, the chart series and hint penalties — cost roughly 500

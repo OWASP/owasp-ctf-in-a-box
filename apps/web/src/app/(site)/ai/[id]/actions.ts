@@ -33,6 +33,7 @@ import { headers } from "next/headers";
 
 import type { SubmitResponse } from "@/components/challenge-detail";
 import { logActivity } from "@/lib/activity-log";
+import { notifyFirstBlood } from "@/lib/announce/notify";
 import { AI_ID_RE } from "@/lib/ai-keys";
 import { submitAiFlag, type AiSubmitResult } from "@/lib/ai-store";
 import { auth } from "@/lib/auth";
@@ -119,6 +120,9 @@ export async function submitAiFlagAction(challengeId: string, flag: string): Pro
   // Never for a dry run (#464 admin preview): nothing was solved.
   if (result.ok && result.correct && !result.already && !result.dryRun) {
     await logActivity("ai-solve", login, `${challengeId} via flag`);
+    // First blood (#590): non-blocking, fresh solves only — same contract
+    // as api/ai/submit's hook.
+    void notifyFirstBlood({ module: "ai", challengeId, login });
   }
   return toResponse(result);
 }

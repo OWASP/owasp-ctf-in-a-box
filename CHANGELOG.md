@@ -20,6 +20,31 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Added: optional Discord webhook announcements (#590).** `/admin` → Event
+  now has a "Discord announcements" section: paste a discord.com webhook URL
+  (stored in its own Redis key, never returned by any API, never logged, and
+  audited only as "set"/"cleared") and opt each announcement in separately —
+  first blood, event launch, scoring paused/resumed, and remaining-time
+  checks at organizer-set marks. Nothing posts by default: a 30-second
+  observation loop reads its config first and ends the tick there for a box
+  with no webhook or every announcement off (one Redis read, nothing else),
+  lifecycle edges go through an atomic compare-and-swap so exactly one
+  replica announces each edge — and the first observation a box makes seeds
+  silently, so configuring a webhook never replays history — first blood is
+  claimed atomically at solve time (a box that is off never claims, so
+  enabling later cannot replay it), and marks claim every crossed time in
+  one pass while posting at most one check, so a restart or a mid-event
+  enable never bursts. Delivery goes through a leased Redis outbox with
+  retries — a restart loses nothing durable, and turning a type off stops
+  its pending posts immediately. Every message suppresses Discord mentions
+  outright, so a team named `@everyone` cannot ping the channel, and
+  escapes Markdown in untrusted text, so a team named `[Claim your
+  prize](…)` cannot become a clickable link; a classic challenge still
+  locked behind its story step is never announced — not even its id; and no
+  flag, answer or hint can reach a message, because the builders only
+  accept public metadata. A Send test and per-type previews are in the
+  section; the master reset wipes the announcement state but keeps the
+  webhook setup (ADR 70).
 - **Changed: the kit has its own logo and favicon.** The built-in default
   logo is now the project's artwork — a fox, a server box and a flag beside
   the OWASP mark — on the landing hero, the leaderboard header, the "Built

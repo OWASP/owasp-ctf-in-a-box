@@ -4245,8 +4245,16 @@ would then never turn the check green.
   and gate areas.
 - **Fail closed, and fail visibly.** A missing or wrong signature is refused
   with no check; a failed reviews read publishes a *failing* check rather than
-  leaving a stale success; a failed token mint returns 500 so the webhook is
-  redelivered. Branch protection must require the check *from* the App.
+  leaving a stale success. Each handled delivery writes the check twice: it
+  claims the head's row (`in_progress`) before reading the verdict, then
+  completes it — so any failure after the claim leaves an unfinished check,
+  which a required status does not satisfy, instead of an earlier delivery's
+  conclusion on the same head. GitHub does not automatically redeliver failed
+  deliveries, so the two failures that answer 500 (no token, no check write)
+  stay visible in the App's delivery log for the operator to redeliver; a
+  durable retry queue is deliberately not built — this is a repo-governance
+  process with no datastore, and any later push or review re-publishes.
+  Branch protection must require the check *from* the App.
 
 **Consequences.** The forgeable workflow and its bats harness are deleted. The
 required context stays `coderabbit-approved`, so branch protection needs only

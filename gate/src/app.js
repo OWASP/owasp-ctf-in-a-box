@@ -1,6 +1,6 @@
 import { verifySignature } from "./verify.js";
 import { evaluateVerdict, DEPENDABOT } from "./verdict.js";
-import { publishCheck, CHECK_NAME } from "./checks.js";
+import { claimCheck, publishCheck, CHECK_NAME } from "./checks.js";
 
 const API_VERSION = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" };
 
@@ -20,12 +20,19 @@ function nextLink(link) {
 
 // Every review on the PR, one page at a time. GitHub's reviews list is not
 // ordered by submission time and pages at 30 by default, so the newest verdict
-// can sit on any page — the rule sorts, but it needs the whole set first.
+// can sit on any page — the rule sorts, but it needs the whole set first. The
+// cap exists so a misbehaving Link header cannot loop forever, and hitting it
+// throws rather than returning the pages read so far: a truncated set can drop
+// the newest verdict and approve an unapproved head, which fails open. The
+// handler turns a thrown read into a published failure.
 export async function fetchAllReviews({ apiUrl, token, repo, number, fetchImpl = fetch }) {
   const headers = { ...API_VERSION, authorization: `Bearer ${token}` };
   const reviews = [];
   let url = `${apiUrl}/repos/${repo}/pulls/${number}/reviews?per_page=100`;
-  for (let page = 0; url !== null && page < MAX_REVIEW_PAGES; page++) {
+  for (let page = 1; url !== null; page++) {
+    if (page > MAX_REVIEW_PAGES) {
+      throw new Error(`more than ${MAX_REVIEW_PAGES} review pages on ${repo}#${number}; refusing to judge a truncated set`);
+    }
     const res = await fetchImpl(url, { headers });
     if (!res.ok) throw new Error(`GitHub ${res.status} reading ${repo}#${number} reviews`);
     const batch = await res.json();
@@ -71,9 +78,22 @@ export function createHandler({ webhookSecret, auth, appId, apiUrl = "https://ap
     try {
       token = await auth.getToken(fetchImpl);
     } catch (err) {
-      // With no token no check can be published at all. Return 500 so GitHub
-      // redelivers, rather than recording a delivery that changed nothing.
+      // With no token no check can be published at all, and GitHub does not
+      // automatically redeliver failed deliveries — the delivery is dead here
+      // until the operator redelivers it from the App's delivery log or the
+      // next event on the PR arrives. Log it loudly; it is the one failure
+      // this service cannot turn into a failing check.
       log.error?.(`gate: cannot mint an installation token: ${err?.message ?? err}`);
+      return { status: 500 };
+    }
+
+    // Claim the head's row before reading the verdict: from here the run is
+    // ours and unfinished, so no later failure can leave an earlier
+    // conclusion standing on this head.
+    try {
+      await claimCheck({ apiUrl, token, appId, repo, headSha, fetchImpl, log });
+    } catch (err) {
+      log.error?.(`gate: cannot claim the ${CHECK_NAME} check for ${repo}@${headSha}: ${err?.message ?? err}`);
       return { status: 500 };
     }
 
@@ -95,6 +115,9 @@ export function createHandler({ webhookSecret, auth, appId, apiUrl = "https://ap
     try {
       await publishCheck({ apiUrl, token, appId, repo, headSha, pass: decision.pass, reason: decision.reason, fetchImpl, log });
     } catch (err) {
+      // The claim above already moved this head's run out of any earlier
+      // conclusion, so the row is left `in_progress` — unfinished, and not a
+      // success. Return 500 to record the delivery as failed for the operator.
       log.error?.(`gate: could not publish the ${CHECK_NAME} check for ${repo}@${headSha}: ${err?.message ?? err}`);
       return { status: 500 };
     }

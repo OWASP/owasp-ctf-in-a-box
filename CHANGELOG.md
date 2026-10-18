@@ -30,9 +30,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   so its author could rewrite the step to `exit 0`. The check is therefore
   published by a GitHub App (`gate/`) that receives the signed webhooks, reads
   the reviews with its own installation token and publishes the check on the
-  head SHA, which no PR code can reach; it fails closed on a missing, dismissed,
-  stale or un-fetchable review, and until the App is installed the check
-  publishes nothing rather than passing vacuously. Terraform's
+  head SHA, which no PR code can reach. Each delivery claims that row
+  in-progress before it reads the verdict, so a failure mid-delivery leaves an
+  unfinished check rather than an earlier conclusion standing; it also fails
+  closed on a missing, dismissed, stale or un-fetchable review, and until the
+  App is installed the check publishes nothing rather than passing vacuously.
+  Terraform's
   fmt/validate/test and the AWS module's bats suites moved from
   `terraform.yml` into ci.yml as a `changes`-gated `terraform` job, and the two
   heavy scoring gates now scope their matrices with per-workflow `changes` jobs

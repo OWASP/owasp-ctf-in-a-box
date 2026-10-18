@@ -28,6 +28,27 @@ included), an approval of another commit, or a failed API read all fail
 closed. Dependabot PRs, which CodeRabbit does not review, pass on the exact
 author login `dependabot[bot]`.
 
+A delivery writes the check twice: it first **claims** the head's row
+(`in_progress`, no conclusion), then completes it with the verdict. Anything
+that fails after the claim — the reviews read, the completion write, the
+process dying mid-delivery — therefore leaves an unfinished check, which a
+required status does not satisfy, rather than whatever an earlier delivery
+concluded on the same head.
+
+### When the check cannot be written at all
+
+GitHub does **not** automatically redeliver failed webhook deliveries, so two
+failures answer `500` and change nothing: the token mint and the check-run
+writes themselves (both need the GitHub API). They surface as failed
+deliveries in the App's webhook log, where the operator can redeliver them
+(deliveries are redeliverable for 3 days); any later push or review on the PR
+re-publishes the check anyway. Nothing in this service can publish through an
+API outage — a durable retry queue is deliberately not built, because this is
+a repo-governance process with no datastore. Once a delivery holds a token,
+every state it can leave behind is unfinished or failing, never passing; the
+residual window is an outage before the claim lands, where an earlier
+conclusion on the same head stands until a later delivery succeeds.
+
 ## GitHub App setup (maintainer)
 
 Register an App and install it on the repository:

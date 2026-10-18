@@ -19,16 +19,20 @@ function rev(state, commitId, submittedAt, login = "coderabbitai[bot]") {
 // and check-run endpoints are faked.
 function makeApi() {
   const calls = { reviews: [], created: [], updated: [] };
+  const runs = [];
+  let nextId = 100;
   const fetchImpl = async (url, opts = {}) => {
     const method = opts.method ?? "GET";
     if (/\/pulls\/\d+\/reviews/.test(url)) {
       calls.reviews.push(url);
       return { ok: true, status: 200, headers: { get: () => null }, json: async () => [rev("APPROVED", HEAD, "2026-01-01T00:00:00Z")] };
     }
-    if (/\/check-runs\?/.test(url) && method === "GET") return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ check_runs: [] }) };
+    if (/\/check-runs\?/.test(url) && method === "GET") return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ check_runs: runs }) };
     if (/\/check-runs$/.test(url) && method === "POST") {
       calls.created.push(JSON.parse(opts.body));
-      return { ok: true, status: 201, headers: { get: () => null }, json: async () => ({ id: 1 }) };
+      const id = nextId++;
+      runs.push({ id, app: { id: APP_ID } });
+      return { ok: true, status: 201, headers: { get: () => null }, json: async () => ({ id }) };
     }
     if (/\/check-runs\/\d+$/.test(url) && method === "PATCH") {
       calls.updated.push(JSON.parse(opts.body));
@@ -86,9 +90,12 @@ test("a signed webhook delivery reaches the handler and publishes the check", as
       body,
     });
     assert.equal(res.status, 202);
+    // Two writes over the socket: the claim, then the completion.
     assert.equal(api.calls.created.length, 1);
-    assert.equal(api.calls.created[0].conclusion, "success");
+    assert.equal(api.calls.created[0].status, "in_progress");
     assert.equal(api.calls.created[0].head_sha, HEAD);
+    assert.equal(api.calls.updated.length, 1);
+    assert.equal(api.calls.updated[0].conclusion, "success");
   });
 });
 

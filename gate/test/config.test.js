@@ -63,7 +63,25 @@ test("a valid environment yields the signer and the webhook secret", async () =>
   assert.match(calls[0], /^POST https:\/\/api\.github\.com\/app\/installations\/42\/access_tokens$/);
 });
 
-test("an omitted installation id is left for appAuth to discover", () => {
+test("an omitted installation id is discovered from GitHub, not guessed", async () => {
   const cfg = loadConfig(env({ GITHUB_APP_INSTALLATION_ID: undefined }));
-  assert.equal(typeof cfg.auth.getToken, "function");
+  const calls = [];
+  const fetchImpl = async (url, opts = {}) => {
+    calls.push(`${opts.method ?? "GET"} ${url}`);
+    if ((opts.method ?? "GET") === "GET") {
+      return { ok: true, status: 200, json: async () => [{ id: 7, account: { login: "owasp" } }] };
+    }
+    return {
+      ok: true,
+      status: 201,
+      json: async () => ({ token: "discovered-token", expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() }),
+    };
+  };
+
+  // The token proves the whole path: the App JWT listed the installations,
+  // the sole installation (id 7) was used, and its token came back.
+  assert.equal(await cfg.auth.getToken(fetchImpl), "discovered-token");
+  assert.equal(calls.length, 2);
+  assert.match(calls[0], /^GET https:\/\/api\.github\.com\/app\/installations$/);
+  assert.match(calls[1], /^POST https:\/\/api\.github\.com\/app\/installations\/7\/access_tokens$/);
 });

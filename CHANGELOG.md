@@ -26,6 +26,11 @@ none dropped). One breaking change, below.
 
 ### Changes
 
+- **Fixed: a fresh scorer image build fails at `apk add docker-cli`.**
+  Alpine replaced `docker-cli` 29.8.2-r0 with a rebuild, 29.8.2-r1, and keeps
+  only the latest revision in its index, so the pinned `-r0` could no longer
+  be installed. The scorer Dockerfile now pins `-r1`. An image you already
+  built still works; this affects only a clean build.
 - **Changed: `apps/web` pins its dependencies to exact versions.** The
   eight caret ranges left in `apps/web/package.json` are now the exact
   versions `pnpm-lock.yaml` already resolved, so no installed version moves;

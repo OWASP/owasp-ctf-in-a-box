@@ -82,13 +82,16 @@ export async function createDb({ ttlMs = 20_000 } = {}) {
   await waitUntilSeeded();
 }
 
-// True once the seeded user 'name1' is queryable (i.e. drop_all/create_all finished).
+// True once every seeded user is queryable. /createdb commits them one at a
+// time (name1, name2, admin), so name1 alone can be present mid-seed.
+const SEED_USERS = ['name1', 'name2', 'admin'];
+
 async function isSeeded() {
   try {
     const res = await fetch(`${BASE}/users/v1/_debug`);
     if (res.status !== 200) return false;
     const data = await res.json();
-    return Array.isArray(data.users) && data.users.some(u => u.username === 'name1');
+    return Array.isArray(data.users) && SEED_USERS.every(name => data.users.some(u => u.username === name));
   } catch {
     return false;
   }

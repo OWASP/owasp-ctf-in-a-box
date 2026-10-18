@@ -8,6 +8,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+### Changes
+
+- **Fixed: VAmPI's Unauthorized Password Change could score on the stock app
+  (#661).** VAmPI's `/createdb` commits its seed users one at a time, and a
+  test that ran between `name1` and `name2` got `400 User Not Found` for the
+  exploit, so the attacker's password failed to log in and the challenge
+  read as fixed. The challenge now checks that `name2` exists before it tries
+  the exploit, and the rubric's seed wait now covers every seeded user, not
+  just `name1`. Scores on a real fix are unchanged.
+
 ## v1.0.0 — 2026-10-16
 
 The first stable release. It follows the kit's first real event (October

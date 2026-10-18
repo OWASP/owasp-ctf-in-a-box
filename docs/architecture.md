@@ -1533,7 +1533,9 @@ build.
 | Vacuous-pass sweep | `scorer/tools/vacuous-sweep.mjs` | Points every target's rubric at an in-process HTTP stub that is UP but USELESS (three personalities: empty-200, not-found, server-error) and fails if any challenge passes — a challenge that "blocks the exploit" against a stub proves nothing. Must report 0; wired into CI only once the count reached 0/321. |
 
 CI (`.github/workflows/ci.yml`) carries a `changes` gate (native `git diff`,
-no third-party action) plus twelve gated jobs — `sync-tests`, `scorer`
+no third-party action) plus thirteen gated jobs — `sync-tests`, `gate`
+(the App-owned `coderabbit-approved` producer's suite in `gate/`),
+`scorer`
 (`node --test` + `acceptance-scorer.sh`), `vacuous` (the sweep above),
 `shell` (shellcheck + bats, including `deploy/fly/`'s scripts and bats
 suite), `smoke`, `app` (vitest + `next build` + the `/` never-prerendered
@@ -1541,8 +1543,8 @@ assertion + `acceptance-app.sh`), `quiz-only`, `classic-only`, `ai-only`,
 `registries` (the three duplicated target lists still agree), `terraform`
 (fmt + `validate` + `test` + the AWS module's bats suites; moved from its
 own workflow so the check reports on every PR, #487), and
-`docs` (Jekyll build + link/meta checks). The gate runs only the jobs whose area a
-PR touches; a push to `main` runs all twelve. The heavier `stock-scores-zero` /
+`docs` (Jekyll build + link/meta checks). The `changes` gate runs only the jobs whose area a
+PR touches; a push to `main` runs all thirteen. The heavier `stock-scores-zero` /
 `patched-scores-right` workflows scope their matrices to judge-relevant
 scorer inputs through their own `changes` jobs (with required
 `stock-summary` / `patched-summary` checks), so a leaderboard-only change

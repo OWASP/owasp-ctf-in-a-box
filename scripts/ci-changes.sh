@@ -21,7 +21,7 @@
 # bash 3.2 compatible; no jq, no python.
 set -euo pipefail
 
-AREAS="app scorer sync shell smoke quiz classic ai docs registries terraform"
+AREAS="app scorer sync gate shell smoke quiz classic ai docs registries terraform"
 
 if [ "$#" -ne 1 ]; then
   echo "ci-changes: usage: $0 <changed-files> | --all" >&2
@@ -85,6 +85,11 @@ emit scorer '^scorer/|^sync/src/parse\.js$|^scripts/acceptance-scorer\.sh|^test/
 
 # sync — targets.tsv and the corpora for the reasons given under app.
 emit sync '^sync/|^setup/targets\.tsv|^test/fixtures/(scoring-)?window-corpus\.json$|^test/fixtures/secure-dev-targets-corpus\.json$'"$CI"
+
+# gate — the App-owned coderabbit-approved check. It imports sync's App-auth
+# signer (sync/src/appAuth.js) rather than copying it, so a change to that file
+# must run this suite too: gate is the other reader of the signer.
+emit gate '^gate/|^sync/src/appAuth\.js$'"$CI"
 
 # shell
 # - deploy/fly's checks ARE shell: a bats suite plus a shellcheck'd script.

@@ -84,6 +84,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
 - [ADR 67 — A Secure Development solve is timed, and judged, by its score comment](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
 - [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
+- [ADR 69 — The CodeRabbit gate is published by a GitHub App, not a PR workflow](#adr-69-the-coderabbit-gate-is-published-by-a-github-app-not-a-pr-workflow)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -4213,4 +4214,45 @@ pages release and the grader never does. A release does not announce itself:
 the board shows the challenge on the next read. The reveal script's lock
 keys move from `KEYS[8..]` to `KEYS[9..]`. A future reader of the challenge
 list has to filter, and the source scan says so if it does not.
+
+## ADR 69. The CodeRabbit gate is published by a GitHub App, not a PR workflow
+
+**Context.** #487 added a `coderabbit-approved` required check as a workflow
+triggered on `pull_request` and `pull_request_review`. Both events run the
+workflow file from the pull request's own merge commit, so a PR author could
+replace the step with `exit 0` and turn the required check green with no
+review: the check was forgeable by the very contributor it was meant to gate.
+The obvious base-owned alternative does not fit. `pull_request_target` runs
+from the base branch but carries only `pull_request`'s activity types, so it
+cannot react to a review being submitted, edited or dismissed — and an honest
+approval, which `require_last_push_approval` forces to land after the head,
+would then never turn the check green.
+
+**Decision.**
+- **The check is published by a GitHub App, from data the App fetches.**
+  `gate/` receives signed `pull_request` and `pull_request_review` webhooks,
+  verifies the HMAC, reads the PR's reviews with its own installation token,
+  and creates or updates the `coderabbit-approved` check run on the PR's head
+  SHA. No PR-controlled workflow, branch or file sits on this path.
+- **The verdict rule is unchanged and lives in one pure function**
+  (`gate/src/verdict.js`): the newest coderabbitai verdict review
+  (`APPROVED` / `CHANGES_REQUESTED` / `DISMISSED`) by `submitted_at`,
+  required to be `APPROVED` on the exact head, with the exact-`dependabot[bot]`
+  bypass. A comment-only review is never a verdict.
+- **App auth is reused, not copied.** The service imports
+  `sync/src/appAuth.js` (the App-JWT-to-installation-token signer) so there is
+  one signer; the CI filter routes a change to that file into both the sync
+  and gate areas.
+- **Fail closed, and fail visibly.** A missing or wrong signature is refused
+  with no check; a failed reviews read publishes a *failing* check rather than
+  leaving a stale success; a failed token mint returns 500 so the webhook is
+  redelivered. Branch protection must require the check *from* the App.
+
+**Consequences.** The forgeable workflow and its bats harness are deleted. The
+required context stays `coderabbit-approved`, so branch protection needs only
+its source changed to the App — until the App is installed and its webhook is
+live, the check publishes nothing and the gate blocks rather than passing
+vacuously. The service is a small standalone Node process (`gate/`), tested
+with `node --test` and no network; deploying it and registering the App are
+the operator's steps, like the branch-protection settings themselves.
 

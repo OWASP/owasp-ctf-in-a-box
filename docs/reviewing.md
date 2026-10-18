@@ -330,21 +330,24 @@ ADR, not the code.
   (wait for the re-review after every push, resolve every actionable
   thread, decline on the record) are in `AGENTS.md` and
   [CONTRIBUTING](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/CONTRIBUTING.md).
-- `.github/workflows/coderabbit-approved.yml` — the required
-  `coderabbit-approved` check (#487). CodeRabbit's own commit status cannot
-  be a gate: it reports `success` when the bot did not review ("rate
-  limited", "skipped"), and an approval of an earlier commit stayed green
-  after new pushes. This workflow re-derives the fact from the reviews API on
-  every `pull_request` (including `synchronize`) and every
-  `pull_request_review`, and fails closed unless coderabbitai's *latest
-  verdict* review is `APPROVED` on the PR's exact head SHA — a comment-only
-  review does not count, so a later comment cannot mask an earlier approval,
-  and Dependabot PRs, which CodeRabbit does not review, pass on the bot's
-  author alone. No verdict, a non-approved or dismissed state, an approval of
-  another commit, or an API failure all fail it. It needs only `pull-requests: read` and checks out
-  nothing. Reviewers should treat a red `coderabbit-approved` as "not
-  reviewed yet or review went stale", and get the bot's approval on the
-  current head — never argue that the `CodeRabbit` status is green.
+- `gate/` — the required `coderabbit-approved` check (#487, ADR 69). Two
+  things rule a workflow out as its producer: CodeRabbit's own commit status
+  reports `success` when the bot did not review ("rate limited", "skipped"),
+  and an approval of an earlier commit stayed green after new pushes; and a
+  `pull_request` / `pull_request_review` workflow runs the file from the PR's
+  own merge commit, so its author could rewrite the step to `exit 0`. So the
+  check is published by a GitHub App that receives the signed webhooks,
+  re-derives the fact from the reviews API with its own installation token,
+  and fails closed unless coderabbitai's *latest verdict* review is `APPROVED`
+  on the PR's exact head SHA — a comment-only review does not count, so a
+  later comment cannot mask an earlier approval, and Dependabot PRs, which
+  CodeRabbit does not review, pass on the bot's author alone. No verdict, a
+  non-approved or dismissed state, an approval of another commit, or an API
+  failure all fail it. It reads only what it needs (no `contents`, no
+  checkout) and trusts nothing the PR supplies. Reviewers should treat a red
+  `coderabbit-approved` as "not reviewed yet or review went stale", and get
+  the bot's approval on the current head — never argue that the `CodeRabbit`
+  status is green.
 - CI (`.github/workflows/ci.yml`) — the per-area jobs (including the
   `terraform` job, moved from `terraform.yml` so its check reports on every
   PR), the vacuous-sweep gate, and the acceptance scripts, which are the

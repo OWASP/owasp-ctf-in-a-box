@@ -70,6 +70,19 @@ areas() {
   grep -qx 'shell=true' <<< "$output"
 }
 
+@test "a gate/ change runs gate" {
+  areas gate/src/app.js
+  echo "$output"
+  grep -qx 'gate=true' <<< "$output"
+}
+
+@test "sync/src/appAuth.js runs both sync and gate (the shared App signer)" {
+  areas sync/src/appAuth.js
+  echo "$output"
+  grep -qx 'sync=true' <<< "$output" || { echo "sync did not run"; return 1; }
+  grep -qx 'gate=true' <<< "$output"
+}
+
 @test "editing the filter itself runs every area" {
   areas scripts/ci-changes.sh
   echo "$output"

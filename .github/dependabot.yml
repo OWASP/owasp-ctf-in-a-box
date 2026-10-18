@@ -17,6 +17,14 @@ updates:
       prefix: "chore(deps)"
 
   - package-ecosystem: "npm"
+    directory: "/gate"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "npm"
     directory: "/apps/web"
     schedule:
       interval: "weekly"

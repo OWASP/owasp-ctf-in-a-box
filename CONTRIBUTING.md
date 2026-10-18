@@ -111,12 +111,13 @@ entrypoints, the gate scripts and `scripts/lib/acceptance-lib.sh`,
 ## What CI runs
 
 `.github/workflows/ci.yml` is a `changes` gate (native `git diff` path
-filtering) plus twelve gated jobs — a job for an area your PR doesn't touch is
-*skipped*, and a push to `main` runs everything:
+filtering) plus thirteen gated jobs — a job for an area your PR doesn't touch
+is *skipped*, and a push to `main` runs everything:
 
 | Job | Proves |
 |---|---|
 | `sync-tests` | Poller parsing, cursors, idempotency, config validation |
+| `gate` | The App-owned `coderabbit-approved` producer's decision rule and signed-webhook handler (`gate/`), no network |
 | `scorer` | Rubric grammars, judge report format, serve auth, both solve stores; then the offline acceptance loop |
 | `vacuous` | No rubric check passes against an up-but-useless stub (0/321) |
 | `shell` | shellcheck + bats over `setup/`, `scripts/`, `deploy/fly/`, `deploy/aws-terraform/` (its `deploy.sh` and bats suite) |
@@ -147,7 +148,8 @@ Nothing here is only asked for; each item is checked on every PR.
 - **CodeRabbit review.** It must reach "Review completed" on your latest
   commit with no open actionable thread (see
   [Pull request flow](#pull-request-flow)). The `coderabbit-approved` check
-  is what verifies this mechanically: it passes only when CodeRabbit's
+  is what verifies this mechanically: it is published by a GitHub App
+  (`gate/`) from CodeRabbit's own reviews, and passes only when CodeRabbit's
   *latest verdict* review is APPROVED on your PR's exact head SHA, so a push
   after its approval makes it red again until the bot re-reviews — and a
   comment-only review never counts as a verdict (Dependabot PRs, which

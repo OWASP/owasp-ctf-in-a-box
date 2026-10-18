@@ -1,7 +1,7 @@
 .POSIX:
 
-.PHONY: help registries test-sync test-scorer lint-app test-app lint-shell \
-	test-shell smoke acceptance-scorer acceptance-quiz-only \
+.PHONY: help registries test-sync test-scorer test-gate lint-app test-app \
+	lint-shell test-shell smoke acceptance-scorer acceptance-quiz-only \
 	acceptance-classic-only acceptance-ai-only dev-up dev-down
 
 # Thin wrappers around the commands in AGENTS.md — that file is the
@@ -14,6 +14,7 @@ help:
 	@echo "  registries            target lists must agree; no Docker"
 	@echo "  test-sync             sync unit tests"
 	@echo "  test-scorer           scorer unit tests, vacuous-pass gate, offline acceptance loop"
+	@echo "  test-gate             gate service unit tests (no install; no network)"
 	@echo "  lint-app              app: install + eslint"
 	@echo "  test-app              app: install + eslint + vitest"
 	@echo "  lint-shell            shellcheck over scripts/, setup/, entrypoints, deploy/fly, deploy/aws-terraform"
@@ -39,6 +40,9 @@ test-sync:
 
 test-scorer:
 	(cd scorer && npm ci && npm test) && (cd scorer && node tools/vacuous-sweep.mjs) && ./scripts/acceptance-scorer.sh
+
+test-gate:
+	cd gate && npm test
 
 lint-app:
 	cd apps/web && corepack enable && corepack pnpm install --frozen-lockfile && corepack pnpm lint

@@ -21,6 +21,12 @@ CI (#256, an unref'd `AbortSignal.timeout` timer).
 cd sync && npm ci && npm test
 ```
 
+**gate** (the App-owned `coderabbit-approved` check — no install, no network):
+
+```sh
+cd gate && npm test
+```
+
 **scorer** (judge + leaderboard engine):
 
 ```sh
@@ -179,19 +185,26 @@ The `registries` job compares the duplicated target lists and needs no
 install.
 
 **Every PR must also pass CodeRabbit review before merge, not just the CI
-jobs above — and what enforces that is the `coderabbit-approved` check
-(`.github/workflows/coderabbit-approved.yml`), not CodeRabbit's own commit
-status.** The status cannot enforce anything: CodeRabbit posts `success` when
-it did not review ("Review rate limited", "Review skipped: …"), and an
-approval it gave an earlier commit stayed green after new pushes — both were
-observed on merged PRs (#487). The check instead reads the PR's reviews from
-the GitHub API on every `pull_request` and `pull_request_review` event and
-passes ONLY when coderabbitai's latest *verdict* review is `APPROVED` on the
-PR's exact head SHA — a comment-only review is ignored, so a later comment
-cannot mask an earlier approval, and Dependabot PRs, which CodeRabbit does not
-review, pass on the bot's author alone; no verdict, a non-approved state (a
-dismissal included), an approval of another commit, or a failed API call all
-fail it closed. So
+jobs above — and what enforces that is the `coderabbit-approved` check,
+published by a GitHub App (`gate/`), not CodeRabbit's own commit status and
+not a repository workflow.** The status cannot enforce anything: CodeRabbit
+posts `success` when it did not review ("Review rate limited", "Review
+skipped: …"), and an approval it gave an earlier commit stayed green after
+new pushes — both were observed on merged PRs (#487). A workflow cannot
+enforce it either: `pull_request` and `pull_request_review` run the workflow
+file from the PR's own merge commit, so the author could rewrite the step
+green; and `pull_request_target` is base-owned but has no review-event
+activity type, so it cannot re-evaluate when a review is submitted, edited or
+dismissed. So a GitHub App (`gate/`) receives the signed `pull_request` and
+`pull_request_review` webhooks, reads the PR's reviews with its own
+installation token, and publishes the check on the PR's exact head SHA —
+passing ONLY when coderabbitai's latest *verdict* review is `APPROVED` on
+that head. A comment-only review is ignored, so a later comment cannot mask
+an earlier approval, and Dependabot PRs, which CodeRabbit does not review,
+pass on the bot's author alone; no verdict, a non-approved state (a dismissal
+included), an approval of another commit, or a failed API call all fail it
+closed. `gate/README.md` has the App's permissions and events, and branch
+protection must require the check *from that App*. So
 treat CodeRabbit's findings as a required gate, exactly as before: resolve
 every actionable comment — apply the fix, or reply on the thread with the
 reason it does not apply and mark it resolved — and leave no unresolved
@@ -216,7 +229,7 @@ code. Keep it that way.
 **Branch protection is maintainer-applied — settings live on GitHub, and no
 repository file changes them (#487).** The gates above only bind `main` once
 the protection requires them; the required status checks to carry are
-`changes`, `sync-tests`, `scorer`, `vacuous`, `shell`, `smoke`, `app`,
+`changes`, `sync-tests`, `gate`, `scorer`, `vacuous`, `shell`, `smoke`, `app`,
 `quiz-only`, `classic-only`, `ai-only`, `registries`, `terraform`, `docs`,
 `changelog`, `coderabbit-approved`, `stock-summary`, `patched-summary`,
 `Analyze (javascript-typescript)` and `CodeQL` — the existing set with the
@@ -447,6 +460,12 @@ suggestions.
 - `scorer/` — judge + leaderboard scoring engine. Plain Node.js, `node:test`.
 - `sync/` — poll service feeding the leaderboard from score comments. Plain
   Node.js, `node:test`.
+- `gate/` — the GitHub App service that publishes the `coderabbit-approved`
+  required check from signed webhooks (#487, ADR 69). Plain Node.js,
+  `node:test`, no dependencies: it imports `sync/src/appAuth.js` for its App
+  auth. Not part of the box a contestant runs — it is repo governance, so it
+  is deliberately in neither `docker-compose.yml` nor any deploy module.
+  Provisioning it is documented in `gate/README.md`.
 - `setup/` — `ctf-setup.sh` and event provisioning. Bash, `bats`.
 - `caddy/` — `Caddyfile.poll`, the only Caddyfile, mounted at a constant path
   by `docker-compose.yml`. It proxies to `app:3000` and gives the box **no**

@@ -39,6 +39,7 @@ jobs:
       app: ${{ steps.f.outputs.app }}
       scorer: ${{ steps.f.outputs.scorer }}
       sync: ${{ steps.f.outputs.sync }}
+      gate: ${{ steps.f.outputs.gate }}
       shell: ${{ steps.f.outputs.shell }}
       smoke: ${{ steps.f.outputs.smoke }}
       quiz: ${{ steps.f.outputs.quiz }}
@@ -87,6 +88,21 @@ jobs:
         working-directory: sync
       - run: npm test
         working-directory: sync
+
+  # The App-owned coderabbit-approved check (gate/). No install: gate declares
+  # no dependencies and imports sync's App-auth signer from source.
+  gate:
+    needs: changes
+    if: needs.changes.outputs.gate == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22 }
+      - run: node --test test/*.test.js
+        working-directory: gate
 
   scorer:
     needs: changes

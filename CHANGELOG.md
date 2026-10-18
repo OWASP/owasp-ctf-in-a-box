@@ -18,25 +18,30 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   the exploit, and the rubric's seed wait now covers every seeded user, not
   just `name1`. Scores on a real fix are unchanged.
 - **Enforced merge gates (#487).** What used to be an honor system is now
-  checked: a required `coderabbit-approved` workflow reads the PR's reviews
-  through the GitHub API on every push and every review event, and passes
-  only when CodeRabbit's *latest* verdict review is APPROVED on the PR's
-  exact head SHA. A comment-only review is not a verdict — it is ignored, so
-  a later comment cannot mask an earlier approval — and Dependabot PRs, which
-  CodeRabbit does not review, pass on the bot's author alone. CodeRabbit's own
-  `CodeRabbit` commit status could not gate anything
-  (it reports `success` when the bot did not review, and an approval of an
-  older commit stayed green after new pushes). It fails closed on a missing,
-  dismissed, stale or un-fetchable review, needs only `pull-requests: read`,
-  and checks nothing out. Terraform's fmt/validate/test and the AWS module's
-  bats suites moved from `terraform.yml` into ci.yml as a `changes`-gated
-  `terraform` job, and the two heavy scoring gates now scope their matrices
-  with per-workflow `changes` jobs plus required `stock-summary` /
-  `patched-summary` jobs instead of workflow-level `paths:` filters — a
-  filtered-out workflow reports nothing, so its check could never be
-  required. AGENTS.md and docs/reviewing.md document the checks that are
-  enforced; the branch-protection settings themselves stay a maintainer's
-  step on GitHub, not something repository code can apply.
+  checked: a required `coderabbit-approved` check passes only when CodeRabbit's
+  *latest verdict* review is `APPROVED` on the PR's exact head SHA. A
+  comment-only review is not a verdict — it is ignored, so a later comment
+  cannot mask an earlier approval — and Dependabot PRs, which CodeRabbit does
+  not review, pass on the bot's author alone. CodeRabbit's own `CodeRabbit`
+  commit status could not gate anything (it reports `success` when the bot did
+  not review, and an approval of an older commit stayed green after new
+  pushes), and neither could a workflow: `pull_request` and
+  `pull_request_review` run the workflow file from the PR's own merge commit,
+  so its author could rewrite the step to `exit 0`. The check is therefore
+  published by a GitHub App (`gate/`) that receives the signed webhooks, reads
+  the reviews with its own installation token and publishes the check on the
+  head SHA, which no PR code can reach; it fails closed on a missing, dismissed,
+  stale or un-fetchable review, and until the App is installed the check
+  publishes nothing rather than passing vacuously. Terraform's
+  fmt/validate/test and the AWS module's bats suites moved from
+  `terraform.yml` into ci.yml as a `changes`-gated `terraform` job, and the two
+  heavy scoring gates now scope their matrices with per-workflow `changes` jobs
+  plus required `stock-summary` / `patched-summary` jobs instead of
+  workflow-level `paths:` filters — a filtered-out workflow reports nothing, so
+  its check could never be required. AGENTS.md, gate/README.md and
+  docs/reviewing.md document the checks that are enforced; the
+  branch-protection settings themselves stay a maintainer's step on GitHub, not
+  something repository code can apply.
 
 ## v1.0.0 — 2026-10-16
 

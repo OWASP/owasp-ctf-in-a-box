@@ -148,8 +148,10 @@ Nothing here is only asked for; each item is checked on every PR.
   commit with no open actionable thread (see
   [Pull request flow](#pull-request-flow)). The `coderabbit-approved` check
   is what verifies this mechanically: it passes only when CodeRabbit's
-  *latest* review is APPROVED on your PR's exact head SHA, so a push after
-  its approval makes it red again until the bot re-reviews — CodeRabbit's
+  *latest verdict* review is APPROVED on your PR's exact head SHA, so a push
+  after its approval makes it red again until the bot re-reviews — and a
+  comment-only review never counts as a verdict (Dependabot PRs, which
+  CodeRabbit does not review, pass on the bot's author alone) — CodeRabbit's
   own `CodeRabbit` commit status being green proves nothing (#487). Its
   pre-merge checks include
   **"Behavior Changes Ship a Test"**: a change to runtime behavior in

@@ -336,10 +336,12 @@ ADR, not the code.
   limited", "skipped"), and an approval of an earlier commit stayed green
   after new pushes. This workflow re-derives the fact from the reviews API on
   every `pull_request` (including `synchronize`) and every
-  `pull_request_review`, and fails closed unless coderabbitai's *latest*
-  review is `APPROVED` on the PR's exact head SHA — no review, a
-  non-approved or dismissed state, an approval of another commit, or an API
-  failure all fail it. It needs only `pull-requests: read` and checks out
+  `pull_request_review`, and fails closed unless coderabbitai's *latest
+  verdict* review is `APPROVED` on the PR's exact head SHA — a comment-only
+  review does not count, so a later comment cannot mask an earlier approval,
+  and Dependabot PRs, which CodeRabbit does not review, pass on the bot's
+  author alone. No verdict, a non-approved or dismissed state, an approval of
+  another commit, or an API failure all fail it. It needs only `pull-requests: read` and checks out
   nothing. Reviewers should treat a red `coderabbit-approved` as "not
   reviewed yet or review went stale", and get the bot's approval on the
   current head — never argue that the `CodeRabbit` status is green.

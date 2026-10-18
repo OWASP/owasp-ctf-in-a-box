@@ -186,9 +186,12 @@ it did not review ("Review rate limited", "Review skipped: …"), and an
 approval it gave an earlier commit stayed green after new pushes — both were
 observed on merged PRs (#487). The check instead reads the PR's reviews from
 the GitHub API on every `pull_request` and `pull_request_review` event and
-passes ONLY when coderabbitai's latest review is `APPROVED` on the PR's
-exact head SHA; no review, a non-approved state (a dismissal included), an
-approval of another commit, or a failed API call all fail it closed. So
+passes ONLY when coderabbitai's latest *verdict* review is `APPROVED` on the
+PR's exact head SHA — a comment-only review is ignored, so a later comment
+cannot mask an earlier approval, and Dependabot PRs, which CodeRabbit does not
+review, pass on the bot's author alone; no verdict, a non-approved state (a
+dismissal included), an approval of another commit, or a failed API call all
+fail it closed. So
 treat CodeRabbit's findings as a required gate, exactly as before: resolve
 every actionable comment — apply the fix, or reply on the thread with the
 reason it does not apply and mark it resolved — and leave no unresolved

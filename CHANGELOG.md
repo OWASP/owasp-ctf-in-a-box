@@ -20,8 +20,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 - **Enforced merge gates (#487).** What used to be an honor system is now
   checked: a required `coderabbit-approved` workflow reads the PR's reviews
   through the GitHub API on every push and every review event, and passes
-  only when CodeRabbit's *latest* review is APPROVED on the PR's exact head
-  SHA — CodeRabbit's own `CodeRabbit` commit status could not gate anything
+  only when CodeRabbit's *latest* verdict review is APPROVED on the PR's
+  exact head SHA. A comment-only review is not a verdict — it is ignored, so
+  a later comment cannot mask an earlier approval — and Dependabot PRs, which
+  CodeRabbit does not review, pass on the bot's author alone. CodeRabbit's own
+  `CodeRabbit` commit status could not gate anything
   (it reports `success` when the bot did not review, and an approval of an
   older commit stayed green after new pushes). It fails closed on a missing,
   dismissed, stale or un-fetchable review, needs only `pull-requests: read`,

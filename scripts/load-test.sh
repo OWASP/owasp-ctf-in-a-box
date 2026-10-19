@@ -160,11 +160,12 @@ fi
 # just its CLI on PATH: it adds the issue's p95 to the summary, which the CLI
 # cannot. Installed into the run's scratch directory before anything is
 # seeded, so a box that cannot install drives nothing (fail_setup below).
-# autocannon@8 is pinned major-wise the way the driver's API usage is written;
-# nothing here is cached between runs — TMP is fresh every time.
+# autocannon is pinned to exactly 8.0.0, the version the driver's API usage is
+# written against; nothing here is cached between runs — TMP is fresh every
+# time.
 AC_PREFIX="$TMP/autocannon"
 echo "== installing autocannon (the p95 phase driver needs it require-able)"
-if ! npm install --prefix "$AC_PREFIX" --no-save --no-audit --no-fund --silent autocannon@8 >/dev/null 2>&1; then
+if ! npm install --prefix "$AC_PREFIX" --no-save --no-audit --no-fund --silent autocannon@8.0.0 >/dev/null 2>&1; then
   fail_setup "installing autocannon into $AC_PREFIX (npm install --prefix)"
 fi
 

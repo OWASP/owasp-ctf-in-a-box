@@ -30,10 +30,12 @@ import type { LeaderboardData, PlayerSeries, SeriesPoint, TeamSeries } from "./t
  * invented. The row keeps showing net with its −N marker — the same split
  * every module block already uses: gross in the parts, net on the row.
  *
- * TOP-TEN ONLY (issue #446). Only the top-`SERIES_TOP_N` entries and teams
- * get a line — the cap the scorer's own series, the mock source and the
+ * TOP-TEN ONLY (issue #446). Only the final top-`SERIES_TOP_N` entries and
+ * teams get a line — the cap the scorer's own series, the mock source and the
  * display board already use — so this stage reads and emits only what those
- * lines need, not every login on the board.
+ * lines need, not every login on the board. It runs after hint penalties and
+ * organizer score adjustments, because either can move a row across the
+ * top-ten boundary.
  */
 
 /** One scoring event, before it is folded into a cumulative series.
@@ -184,14 +186,15 @@ function earliestPerItem(events: readonly Earned[]): Earned[] {
 }
 
 export async function withModuleSeries(data: LeaderboardData): Promise<LeaderboardData> {
-  // Only the top-`SERIES_TOP_N` rows per view are charted (issue #446), so
-  // only their events are read and only their lines are emitted: without the
-  // cap a 200-contestant box computes ~270 histories for every /leaderboard
-  // RSC payload while the chart draws a hairball of 200 lines its own legend
-  // is written against (ranks 9-10 fold into one muted "Other"). Player
-  // lines come from the top-ten entries; team lines need their members'
-  // events — including members who hold no entry of their own — so the read
-  // set is the charted entries plus the charted teams' rosters, nothing else.
+  // Only the final top-`SERIES_TOP_N` rows per view are charted (issue #446),
+  // so only their events are read and only their lines are emitted: without
+  // the cap a 200-contestant box computes ~270 histories for every
+  // /leaderboard RSC payload while the chart draws a hairball of 200 lines
+  // its own legend is written against (ranks 9-10 fold into one muted
+  // "Other"). Player lines come from the top-ten entries; team lines need
+  // their members' events — including members who hold no entry of their own
+  // — so the read set is the charted entries plus the charted teams'
+  // rosters, nothing else.
   //
   // The read set carries each login's SPELLING, not its lowercase, because
   // the stores and the join disagree on case: each module's hash is keyed on

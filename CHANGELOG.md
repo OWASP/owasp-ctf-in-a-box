@@ -17,6 +17,25 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   read as fixed. The challenge now checks that `name2` exists before it tries
   the exploit, and the rubric's seed wait now covers every seeded user, not
   just `name1`. Scores on a real fix are unchanged.
+- **Fixed: the leaderboard chart ships only the top ten lines, and the load
+  test reports measured p95 (#446).** `withModuleSeries` used to build a
+  cumulative series for EVERY login and team on the board — re-expanding the
+  scorer's and the mock source's own top-ten series — so a 200-contestant box
+  put ~270 histories into every `/leaderboard` RSC payload while the chart
+  (written for ten lines, ranks 9-10 folding into one muted "Other") drew
+  them as an unreadable hairball. The stage now reads module events for, and
+  emits series of, only the final top-ten entries and top-ten teams — ranked
+  after hint penalties and organizer score adjustments — including a charted
+  team's members who hold no entry of their own, whose items belong on their
+  team's line, leaving every row, the `?display=1` surface and the viewer
+  "you" highlight untouched. The fold also logs its own duration once per
+  fold (not per request), so fold cost can be separated from
+  request/render latency on a live box. `scripts/load-test.sh`'s results
+  table gains a measured p95 column — the issue's own metric, which the
+  autocannon CLI's fixed percentile list skips, so a small programmatic
+  driver (`scripts/autocannon-phase.cjs`) adds it from the same latency
+  histogram the summary percentiles come from — while the enforced bar stays
+  on the stricter p97.5, which bounds p95.
 
 ## v1.0.0 — 2026-10-16
 
@@ -465,24 +484,6 @@ none dropped). One breaking change, below.
   reporting success, and `doctor` shows it pending (⏳) on a private fork
   before launch, clearing to ✅ only once protection is verified.
 
-- **Fixed: the leaderboard chart ships only the top ten lines, and the load
-  test reports measured p95 (#446).** `withModuleSeries` used to build a
-  cumulative series for EVERY login and team on the board — re-expanding the
-  scorer's and the mock source's own top-ten series — so a 200-contestant box
-  put ~270 histories into every `/leaderboard` RSC payload while the chart
-  (written for ten lines, ranks 9-10 folding into one muted "Other") drew
-  them as an unreadable hairball. The stage now reads module events for, and
-  emits series of, only the top-ten entries and top-ten teams — including a
-  charted team's members who hold no entry of their own, whose items belong
-  on their team's line — leaving every row, the `?display=1` surface and the
-  viewer "you" highlight untouched. The fold also logs its own duration once
-  per fold (not per request), so fold cost can be separated from
-  request/render latency on a live box. `scripts/load-test.sh`'s results
-  table gains a measured p95 column — the issue's own metric, which the
-  autocannon CLI's fixed percentile list skips, so a small programmatic
-  driver (`scripts/autocannon-phase.cjs`) adds it from the same latency
-  histogram the summary percentiles come from — while the enforced bar stays
-  on the stricter p97.5, which bounds p95.
 - **Fixed: a hint can no longer be bought with points the contestant does not
   have (#553).** The reveal is refused — `403`, "Not enough points: this hint
   costs N and you have M" — when the contestant's leaderboard score (every

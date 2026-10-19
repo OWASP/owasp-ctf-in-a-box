@@ -8,6 +8,28 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+### Changes
+
+- **Fixed: an event-archive import preserves the AI launch keypair (#653).**
+  Importing an archive replaces the challenge catalogue but no longer rotates
+  `ctf:ai:launchkey` — it is the module's published identity, so rotating it
+  would break every deployed external verifier and invalidate live launch
+  tokens (ADR 53), the same reason `clearAiChallenges` leaves it alone. An
+  ordinary master reset still rotates the key.
+- **Fixed: VAmPI's Unauthorized Password Change could score on the stock app
+  (#661).** VAmPI's `/createdb` commits its seed users one at a time, and a
+  test that ran between `name1` and `name2` got `400 User Not Found` for the
+  exploit, so the attacker's password failed to log in and the challenge
+  read as fixed. The challenge now checks that `name2` exists before it tries
+  the exploit, and the rubric's seed wait now covers every seeded user, not
+  just `name1`. Scores on a real fix are unchanged.
+
+## v1.0.0 — 2026-10-16
+
+The first stable release. It follows the kit's first real event (October
+7–9, 2026: 28 teams, 41 players, 498 Secure Development scores ingested,
+none dropped). One breaking change, below.
+
 ### Breaking changes
 
 - **`LEADERBOARD_SOURCE=upstash` is removed (#502).** The mode read the
@@ -20,12 +42,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
-- **Fixed: an event-archive import preserves the AI launch keypair (#653).**
-  Importing an archive replaces the challenge catalogue but no longer rotates
-  `ctf:ai:launchkey` — it is the module's published identity, so rotating it
-  would break every deployed external verifier and invalidate live launch
-  tokens (ADR 53), the same reason `clearAiChallenges` leaves it alone. An
-  ordinary master reset still rotates the key.
+- **Fixed: a fresh scorer image build fails at `apk add docker-cli`.**
+  Alpine replaced `docker-cli` 29.8.2-r0 with a rebuild, 29.8.2-r1, and keeps
+  only the latest revision in its index, so the pinned `-r0` could no longer
+  be installed. The scorer Dockerfile now pins `-r1`. An image you already
+  built still works; this affects only a clean build.
+- **Changed: `apps/web` pins its dependencies to exact versions.** The
+  eight caret ranges left in `apps/web/package.json` are now the exact
+  versions `pnpm-lock.yaml` already resolved, so no installed version moves;
+  every dependency in the app's manifest is now pinned.
 - **Changed: the kit has its own logo and favicon.** The built-in default
   logo is now the project's artwork — a fox, a server box and a flag beside
   the OWASP mark — on the landing hero, the leaderboard header, the "Built

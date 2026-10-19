@@ -14,7 +14,10 @@
 //      interval, and a config read that FAILS keeps the current one — a
 //      Redis blip is not evidence that the box is off. The config is
 //      re-read every tick, so a /admin change takes effect on the next pass
-//      with no restart.
+//      with no restart; the config and webhook routes also nudge the loop to
+//      run that pass immediately, so an opt-in moments before launch still
+//      seeds the PRE-launch baseline and the launch edge is announced
+//      instead of being swallowed by a first-observation seed.
 //   2. read admin settings — only when a pass below can use them (the
 //      lifecycle or marks switches are on). Plain pipeline reads, SAFE from
 //      a timer: the ticker deliberately does NOT use getEnabledModuleIds /
@@ -73,18 +76,46 @@ export const ANNOUNCE_IDLE_TICK_MS = 5 * 60_000;
  *  interval; a blip must not back off a configured box. */
 export type TickCadence = "active" | "idle" | "unknown";
 
-/** Guard against overlapping ticks (a slow Redis must not stack runs). */
-let ticking = false;
-let started = false;
-/** The last cadence a tick could prove; the boot default is the backoff —
- *  a fresh process reads its config once soon after boot and settles. */
-let lastCadence: TickCadence = "idle";
+/** The loop's process-wide state. It lives on `globalThis` because Next
+ *  bundles instrumentation separately from route handlers: a module-local
+ *  singleton in the admin route's copy would not be the loop instrumentation
+ *  started, and a nudge would begin a SECOND loop instead of waking the
+ *  existing one. The key is namespaced so a dev reload shares the one loop. */
+type TickerState = {
+  /** Guard against overlapping ticks (a slow Redis must not stack runs). */
+  ticking: boolean;
+  started: boolean;
+  /** The pending timeout, so a nudge can replace it instead of running a
+   *  second chain alongside it. */
+  nextTick: ReturnType<typeof setTimeout> | null;
+  /** A nudge that arrived mid-tick: run again as soon as it finishes. */
+  pendingNudge: boolean;
+  /** The last cadence a tick could prove. The boot default is ACTIVE, not
+   *  the backoff: if the first config read fails, a configured box keeps
+   *  retrying every 30s instead of waiting five minutes to find out it was
+   *  armed. The first successful read settles the interval either way. */
+  lastCadence: TickCadence;
+};
+
+const TICKER_STATE_KEY = "__ctfAnnounceTicker";
+
+function tickerState(): TickerState {
+  const holder = globalThis as typeof globalThis & { [TICKER_STATE_KEY]?: TickerState };
+  return (holder[TICKER_STATE_KEY] ??= {
+    ticking: false,
+    started: false,
+    nextTick: null,
+    pendingNudge: false,
+    lastCadence: "active",
+  });
+}
 
 /** One observation pass. Exported for tests, which pass a fixed `nowMs`.
  *  Returns the cadence the next interval should follow. */
 export async function runAnnounceTick(nowMs: number = Date.now()): Promise<TickCadence> {
-  if (ticking) return "unknown";
-  ticking = true;
+  const state = tickerState();
+  if (state.ticking) return "unknown";
+  state.ticking = true;
   // The cadence this tick can PROVE: only a successful config read sets it,
   // so a failure anywhere later still reports the armed/unarmed state the
   // read established.
@@ -129,7 +160,7 @@ export async function runAnnounceTick(nowMs: number = Date.now()): Promise<TickC
     console.error("[announce] tick failed:", errorLabel(err));
     return cadence;
   } finally {
-    ticking = false;
+    state.ticking = false;
   }
 }
 
@@ -139,21 +170,61 @@ export async function runAnnounceTick(nowMs: number = Date.now()): Promise<TickC
  *  loop is a self-scheduling timeout, not an interval, so the next delay can
  *  follow the last tick's cadence (backed off while idle). */
 export function startAnnounceTicker(): void {
-  if (started) return;
+  const state = tickerState();
+  if (state.started) return;
   if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return;
-  started = true;
+  state.started = true;
   // A first observation soon after boot picks up edges that happened while
   // the box was down (the CAS makes the catch-up announce once, not twice).
-  setTimeout(() => void tickAndReschedule(), 3_000).unref?.();
+  scheduleTick(3_000);
 }
 
-/** One tick, then schedule the next on that tick's cadence. Unref'd timers
- *  throughout: the loop must never pin a process open. */
+/** Runs an observation pass NOW after an /admin config save, instead of
+ *  waiting out the current timer. The immediate pass is what lets a webhook
+ *  enabled shortly before launch record the pre-launch baseline, so the
+ *  launch itself is an announced edge rather than a silent first-observation
+ *  seed. Safe to call from a request: it only schedules work and never
+ *  awaits Redis. No-op when the loop is not running (no Redis env), since
+ *  there is nothing to observe. */
+export function nudgeAnnounceTicker(): void {
+  // A save can arrive before the boot timer ran (or after a failed start):
+  // start it now, then replace its first delay with an immediate pass.
+  const state = tickerState();
+  if (!state.started) startAnnounceTicker();
+  if (!state.started) return;
+  if (state.ticking) {
+    state.pendingNudge = true;
+    return;
+  }
+  if (state.nextTick) {
+    clearTimeout(state.nextTick);
+    state.nextTick = null;
+  }
+  void tickAndReschedule();
+}
+
+/** Schedules the next pass, replacing any pending one so the loop stays a
+ *  single chain. Unref'd: it must never pin a process open. */
+function scheduleTick(delayMs: number): void {
+  const state = tickerState();
+  if (state.nextTick) clearTimeout(state.nextTick);
+  state.nextTick = setTimeout(() => {
+    state.nextTick = null;
+    void tickAndReschedule();
+  }, delayMs);
+  state.nextTick.unref?.();
+}
+
+/** One tick, then schedule the next on that tick's cadence. */
 async function tickAndReschedule(): Promise<void> {
+  const state = tickerState();
   const cadence = await runAnnounceTick();
-  if (cadence !== "unknown") lastCadence = cadence;
-  const timer = setTimeout(() => void tickAndReschedule(), lastCadence === "active" ? ANNOUNCE_TICK_MS : ANNOUNCE_IDLE_TICK_MS);
-  timer.unref?.();
+  if (cadence !== "unknown") state.lastCadence = cadence;
+  if (state.pendingNudge) {
+    state.pendingNudge = false;
+    return tickAndReschedule();
+  }
+  scheduleTick(state.lastCadence === "active" ? ANNOUNCE_TICK_MS : ANNOUNCE_IDLE_TICK_MS);
 }
 
 // --- helpers ----------------------------------------------------------------

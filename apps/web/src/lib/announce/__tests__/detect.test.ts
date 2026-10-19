@@ -71,6 +71,19 @@ describe("lifecycleEdges", () => {
       lifecycleEdges(snap({ launched: true, closed: true }), snap({ launched: true })).map((e) => e.kind),
     ).toEqual([]);
   });
+
+  it("does not re-announce a freeze when an extended window reopens while still frozen", () => {
+    // freeze → window closed: the snapshot drops `paused` for `closed`, and
+    // neither transition is an edge.
+    const frozen = snap({ launched: true, paused: true });
+    const closed = snap({ launched: true, closed: true });
+    expect(lifecycleEdges(frozen, closed).map((e) => e.kind)).toEqual([]);
+    // window extended while STILL frozen: reopening is the same pause, so
+    // the reopen must not announce it a second time.
+    expect(lifecycleEdges(closed, frozen).map((e) => e.kind)).toEqual([]);
+    // Unfreezing after the extension is still the one resume of that pause.
+    expect(lifecycleEdges(frozen, snap({ launched: true })).map((e) => e.kind)).toEqual(["resume"]);
+  });
 });
 
 describe("lifecycleSnapshotFrom", () => {

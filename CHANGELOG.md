@@ -20,10 +20,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   posts by default: an observation loop reads its config first and ends the
   tick there for a box with no webhook or every announcement off (one Redis
   read, and the loop backs off to a much longer interval while the box
-  stays unconfigured), lifecycle edges go through an atomic
-  compare-and-swap so exactly one replica announces each edge — and the
-  first observation a box makes seeds silently, so configuring a webhook
-  never replays history — first blood is
+  stays unconfigured; a config/webhook save nudges an immediate pass, so
+  enabling announcements just before launch still announces the launch),
+  lifecycle edges go through an atomic compare-and-swap so exactly one
+  replica announces each edge — and the first observation a box makes seeds
+  silently, so configuring a webhook never replays history, while a freeze
+  that spans a close and a window extension is announced once — first blood is
   claimed atomically at solve time (a box that is off never claims, so
   enabling later cannot replay it), and marks claim every crossed time in
   one pass while posting at most one check, so a restart or a mid-event

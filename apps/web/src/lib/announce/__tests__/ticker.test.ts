@@ -131,6 +131,30 @@ describe("lifecycle tick", () => {
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("launch", expect.objectContaining({ embeds: [expect.objectContaining({ title: "The event is live!" })] }));
   });
 
+  it("an opt-in shortly before launch seeds pre-launch, so the launch edge still fires", async () => {
+    // The box is idle and has never observed its lifecycle (the state key is
+    // absent) while announcements are off.
+    mocks.getAnnounceConfig.mockResolvedValue(config({ webhookConfigured: false, launch: true }));
+    expect(await runAnnounceTick(T0 - 120_000)).toBe("idle");
+    expect(mocks.stateCompareSet).not.toHaveBeenCalled();
+
+    // Enabling the webhook/launch switch nudges an immediate pass. It runs
+    // BEFORE the start, so it seeds the pre-launch baseline instead of a
+    // first observation of an already-launched event (which seeds silently).
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: "2026-10-14T12:00:00Z" }));
+    mocks.stateCompareSet.mockResolvedValue({ code: 2, seq: 1, prev: "" });
+    expect(await runAnnounceTick(T0 - 60_000)).toBe("active");
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v1|L0P0C0");
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+
+    // At launch the next tick sees L0 → L1 and announces it.
+    mocks.readStatePack.mockResolvedValue("v1|L0P0C0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L0P0C0" });
+    await runAnnounceTick(T0 + 30_000);
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("launch", expect.objectContaining({ embeds: [expect.objectContaining({ title: "The event is live!" })] }));
+  });
+
   it("the window closing advances the state but announces nothing — no pause at the end", async () => {
     // The stored pack is the live, unpaused one; the window end has since
     // passed. The snapshot flips to closed — announcing "paused … until it
@@ -246,5 +270,35 @@ describe("tick cadence", () => {
     mocks.getAnnounceConfig.mockRejectedValue(new Error("redis down"));
     expect(await runAnnounceTick(T0)).toBe("unknown");
     expectConfigReadOnly();
+  });
+});
+
+describe("boot cadence", () => {
+  it("a failed first config read retries on the active interval, not the five-minute backoff", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const previousUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const previousToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+    process.env.UPSTASH_REDIS_REST_URL = "https://example.upstash.io";
+    process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+    try {
+      delete (globalThis as Record<string, unknown>).__ctfAnnounceTicker;
+      mocks.getAnnounceConfig.mockRejectedValue(new Error("redis down"));
+      const ticker = await import("@/lib/announce/ticker");
+      ticker.startAnnounceTicker();
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(mocks.getAnnounceConfig).toHaveBeenCalledTimes(1);
+      // The failed read must not push the retry out to the idle backoff.
+      await vi.advanceTimersByTimeAsync(ticker.ANNOUNCE_TICK_MS);
+      expect(mocks.getAnnounceConfig).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.clearAllTimers();
+      delete (globalThis as Record<string, unknown>).__ctfAnnounceTicker;
+      vi.useRealTimers();
+      if (previousUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL;
+      else process.env.UPSTASH_REDIS_REST_URL = previousUrl;
+      if (previousToken === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
+      else process.env.UPSTASH_REDIS_REST_TOKEN = previousToken;
+    }
   });
 });

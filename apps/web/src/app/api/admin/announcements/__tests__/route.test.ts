@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   postToDiscord: vi.fn(),
   getAdminSettings: vi.fn(),
   writeAdminAudit: vi.fn(),
+  nudgeAnnounceTicker: vi.fn(),
 }));
 
 class AnnounceValidationError extends Error {}
@@ -43,6 +44,7 @@ vi.mock("@/lib/announce/store", () => ({
   readStatus: mocks.readStatus,
 }));
 vi.mock("@/lib/announce/sender", () => ({ postToDiscord: mocks.postToDiscord }));
+vi.mock("@/lib/announce/ticker", () => ({ nudgeAnnounceTicker: mocks.nudgeAnnounceTicker }));
 
 const { GET, POST } = await import("@/app/api/admin/announcements/route");
 const { POST: WEBHOOK } = await import("@/app/api/admin/announcements/webhook/route");
@@ -121,9 +123,15 @@ describe("config POST", () => {
     expect(mocks.updateAnnounceConfig).not.toHaveBeenCalled();
   });
 
-  it("maps a store failure to 503", async () => {
+  it("triggers an immediate observation pass after a landed save", async () => {
+    expect((await POST(req("POST", { launch: true }))).status).toBe(200);
+    expect(mocks.nudgeAnnounceTicker).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a store failure to 503 without nudging the ticker", async () => {
     mocks.updateAnnounceConfig.mockRejectedValue(new Error("redis down"));
     expect((await POST(req("POST", { firstBlood: true }))).status).toBe(503);
+    expect(mocks.nudgeAnnounceTicker).not.toHaveBeenCalled();
   });
 
   // PATCH_KEYS is the route's own boundary: a key outside the current
@@ -138,11 +146,18 @@ describe("config POST", () => {
 });
 
 describe("webhook POST", () => {
-  it("stores the URL and never returns it", async () => {
+  it("stores the URL, never returns it, and nudges an immediate observation", async () => {
     const res = await WEBHOOK(req("POST", { webhookUrl: URL }, "/api/admin/announcements/webhook"));
     expect(res.status).toBe(200);
     expect(mocks.setAnnounceWebhook).toHaveBeenCalledWith("organizer", URL);
+    expect(mocks.nudgeAnnounceTicker).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(await res.json())).not.toContain(URL);
+  });
+
+  it("a refused URL does not nudge the ticker", async () => {
+    mocks.setAnnounceWebhook.mockRejectedValue(new AnnounceValidationError("webhook URL must be on discord.com"));
+    expect((await WEBHOOK(req("POST", { webhookUrl: "https://evil.example/x" }, "/api/admin/announcements/webhook"))).status).toBe(400);
+    expect(mocks.nudgeAnnounceTicker).not.toHaveBeenCalled();
   });
 
   it("a validation refusal is a 400 naming the problem", async () => {

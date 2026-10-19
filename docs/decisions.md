@@ -4262,9 +4262,15 @@ work an event without the feature must never pay for.
   much longer one (one config read per backoff period per process), and an
   armed tick restores the normal interval — an idle box must not hammer
   Redis from every process, and a config read that FAILS keeps the current
-  interval rather than masquerading as "all off". The config is re-read
-  every tick, so an `/admin` change takes effect on the next pass with no
-  restart. The observation itself is a plain read of what the event IS —
+  interval rather than masquerading as "all off"; the boot default is the
+  ACTIVE interval, so a first read that fails does not push a configured
+  box onto the five-minute backoff. The config is re-read every tick, so an
+  `/admin` change takes effect on the next pass with no restart, and the
+  config and webhook save endpoints nudge the loop to run that pass
+  immediately: enabling announcements shortly before launch records the
+  pre-launch baseline, so the launch is announced rather than swallowed by
+  a first observation that seeds an already-launched box silently. The
+  observation itself is a plain read of what the event IS —
   launched, paused, where the remaining time stands — compared against what
   was last observed, stored under `ctf:announce:*`; the loop uses only
   connection-free pipeline reads, because a React `cache()` that awaits
@@ -4287,7 +4293,10 @@ work an event without the feature must never pay for.
   That pass runs only while launch or pause is switched on; with both off
   the stored observation freezes, so an opted-out box does no state work,
   and the first observation a box ever makes (fresh boot, post-reset) seeds
-  silently — nothing that predates the observation is announced. Remaining-
+  silently — nothing that predates the observation is announced. A freeze
+  that spans the scoring window's close and an extension of that window is
+  one announced pause: reopening while still frozen is not a new edge.
+  Remaining-
   time marks are `HSETNX` claims on `<closeInstant>:<markMs>` (keyed by the
   scoring-close instant, so moving Scoring closes re-arms the marks for the
   new window); on the tick that first sees marks crossed, ALL of them are

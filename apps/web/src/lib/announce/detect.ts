@@ -47,12 +47,17 @@ export type LifecycleEdge =
  *  very first observation. Entering (or leaving) the `closed` state is
  *  deliberately NOT an edge: the channel must never be told scoring "is
  *  paused — submits are on hold until it resumes" at the window's end, and a
- *  window the admin later extends must not announce a phantom "resumed". */
+ *  window the admin later extends must not announce a phantom "resumed".
+ *  Nor is reopening a closed window while still frozen a NEW pause: the
+ *  snapshot drops `paused` at the close, so without `!before.closed` the
+ *  extension would announce the same freeze a second time. */
 export function lifecycleEdges(prev: LifecycleSnapshot | null, next: LifecycleSnapshot): LifecycleEdge[] {
   const before = prev ?? { launched: false, paused: false, closed: false };
   const edges: LifecycleEdge[] = [];
   if (!before.launched && next.launched) edges.push({ kind: "launch", prev: before, next });
-  if (!before.paused && next.paused && next.launched && !next.closed) edges.push({ kind: "pause", prev: before, next });
+  if (!before.paused && !before.closed && next.paused && next.launched && !next.closed) {
+    edges.push({ kind: "pause", prev: before, next });
+  }
   // `before.launched` is required: a pause flag carried on a pre-launch
   // baseline is not a pause this announcer observed WHILE live, so pairing
   // it with the launch into a "resumed" edge would announce a phantom resume

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readBoundedBody } from "@/lib/bounded-body";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel } from "@/lib/admin-store";
+import { nudgeAnnounceTicker } from "@/lib/announce/ticker";
 import { AnnounceValidationError, getAnnounceConfig, publicConfig, setAnnounceWebhook } from "@/lib/announce/store";
 import { DISCORD_DEFAULTS, type DiscordFullConfig } from "@/lib/discord-config";
 
@@ -44,6 +45,10 @@ export async function POST(request: Request) {
 
   try {
     const result = await setAnnounceWebhook(gate.login, url);
+    // The write landed: observe it now rather than waiting out an idle
+    // backoff, so a webhook set just before launch still sees the pre-launch
+    // baseline.
+    nudgeAnnounceTicker();
     // The write already landed; a failed read-back must not turn it into a
     // 503. The panel folds only `webhookConfigured` from this response, so
     // the fallback carries that flag from the write itself and the default

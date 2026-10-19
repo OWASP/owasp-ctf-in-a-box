@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describeAdminError } from "@/components/admin/fetch";
 import type { RowAccessors } from "@/components/admin/ordered-rows";
-import { loadResource, postRow, useAdminResource, writeBackReorder } from "@/components/admin/use-admin-resource";
+import { closesOnDelete, loadResource, postRow, useAdminResource, writeBackReorder } from "@/components/admin/use-admin-resource";
 
 type Item = { id: string; title: string; order: number };
 type Row = { item: Item; secret: string };
@@ -142,6 +142,26 @@ describe("writeBackReorder", () => {
   });
 });
 
+describe("closesOnDelete", () => {
+  it("closes when editing the same item being deleted", () => {
+    expect(closesOnDelete({ id: "a", title: "A" }, "a")).toBe(true);
+    expect(closesOnDelete({ mode: "edit", id: "a" }, "a")).toBe(true);
+  });
+
+  it("stays open when editing a different item", () => {
+    expect(closesOnDelete({ id: "b", title: "B" }, "a")).toBe(false);
+    expect(closesOnDelete({ mode: "edit", id: "b" }, "a")).toBe(false);
+  });
+
+  it("stays open for a new-mode draft without an id", () => {
+    expect(closesOnDelete({ mode: "new", order: 1 }, "a")).toBe(false);
+  });
+
+  it("returns false when no editor is open", () => {
+    expect(closesOnDelete(null, "a")).toBe(false);
+  });
+});
+
 describe("useAdminResource — initial state", () => {
   function Probe({ seed, seedCategories }: { seed: Row[]; seedCategories: string[] }) {
     const r = useAdminResource<Row, Item, Editor, Payload>({ ...config, initialRows: seed, initialCategories: seedCategories });
@@ -174,5 +194,19 @@ describe("useAdminResource — initial state", () => {
 
   it("starts an empty seed at position 1", () => {
     expect(renderToStaticMarkup(<Probe seed={[]} seedCategories={[]} />)).toContain("next=1");
+  });
+
+  it("openEditor opens clean editor immediately and returns true", () => {
+    let result: boolean | undefined;
+    function OpenProbe() {
+      const r = useAdminResource<Row, Item, Editor, Payload>({ ...config, initialRows: [], initialCategories: [] });
+      if (result === undefined) {
+        result = r.openEditor({ id: "a", title: "A" });
+      }
+      return <div>{r.editing?.id}</div>;
+    }
+    const html = renderToStaticMarkup(<OpenProbe />);
+    expect(result).toBe(true);
+    expect(html).toContain("a");
   });
 });

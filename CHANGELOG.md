@@ -46,6 +46,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   driver (`scripts/autocannon-phase.cjs`) adds it from the same latency
   histogram the summary percentiles come from — while the enforced bar stays
   on the stricter p97.5, which bounds p95.
+- **Fixed: deleting an open challenge in admin panels closes the editor (#666).**
+  `useAdminResource.remove()` now clears the active editor when deleting the
+  item currently open for editing, preventing a subsequent save from upserting
+  the deleted row back into the store. In `ChallengeFrame`, flag visibility is
+  preserved if an editor switch is cancelled, consecutive new challenge drafts
+  receive distinct form keys to cleanly remount form state and re-trigger
+  focus effects, and the Add button is guarded against clicks while categories
+  are reordering, not yet loaded, or when the initial load failed.
 
 ## v1.0.0 — 2026-10-16
 

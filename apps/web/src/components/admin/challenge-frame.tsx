@@ -40,7 +40,9 @@
 // The flag-reveal state lives HERE rather than in each panel because all
 // three things that touch it are in this frame: the Add button, every row's
 // Edit, and the open form. Opening an editor always starts masked — the same
-// projector-safety rule both panels apply to the list itself.
+// projector-safety rule both panels apply to the list itself. Resetting
+// tracks active editor identity so an aborted/cancelled switch leaves an open
+// draft's reveal state intact.
 
 import { useState, type ComponentType, type ReactNode } from "react";
 import CategoryEditor from "@/components/admin/category-editor";
@@ -76,6 +78,50 @@ type ChallengeFormSlot<Editor extends EditorSlot> = {
   onCancel: () => void;
   onSubmit: () => void;
 };
+
+/** Derives the React key for the editor Form.
+ *
+ *  Edit mode keys by challenge id so switching rows remounts the form.
+ *  New mode includes a revision counter so consecutive or replaced new drafts
+ *  mount fresh instances and re-trigger autofocus/scroll effects.
+ *  Exported for direct testing. */
+export function challengeEditorKey<Editor extends EditorSlot>(
+  editing: Editor | null,
+  newDraftRev: number,
+): string | null {
+  if (!editing) return null;
+  return editing.mode === "edit" ? editing.id : `new-${newDraftRev}`;
+}
+
+/** The flag reveal state after an editor key transition.
+ *
+ *  Switching to a different editor identity resets to masked (false).
+ *  When the active key is unchanged (e.g. a draft switch was cancelled),
+ *  the current reveal state is preserved. Exported for direct testing. */
+export function resolveFlagRevealed(
+  currentRevealed: boolean,
+  activeEditorKey: string | null,
+  lastEditorKey: string | null,
+): boolean {
+  if (activeEditorKey !== lastEditorKey) {
+    return false;
+  }
+  return currentRevealed;
+}
+
+/** The tooltip explaining why the Add button is disabled, or undefined when enabled.
+ *  When the initial load failed, explains the error and prompts a page reload.
+ *  Exported for direct testing. */
+export function addChallengeTooltip(
+  loaded: boolean,
+  listError: string | null,
+  categoryCount: number,
+): string | undefined {
+  if (listError) return "Could not load challenges — reload the page to try again";
+  if (!loaded) return "Loading challenges…";
+  if (categoryCount === 0) return "Add a category first before adding challenges";
+  return undefined;
+}
 
 type ChallengeFrameProps<Row extends ChallengeRowShape, Editor extends EditorSlot> = {
   /** The module screen's settings card slot (identity editor + Hints link);
@@ -143,10 +189,22 @@ export default function ChallengeFrame<Row extends ChallengeRowShape, Editor ext
 }: ChallengeFrameProps<Row, Editor>) {
   const { rows, categories, loaded, listError, editing, formPending, formError, deleteTarget, deletePending, deleteError, pendingEditor } =
     resource;
-  // Always masked on open: Add and Edit both reset it before the form mounts
-  // (see the handlers below), and only the form's own reveal toggle ever
-  // flips it back.
+
+  // Track new draft revisions so discarding/replacing successive new drafts
+  // mounts a distinct Form instance, allowing EditorFrame's focus/scroll to re-run.
+  const [newDraftRev, setNewDraftRev] = useState(0);
+  const activeEditorKey = challengeEditorKey(editing, newDraftRev);
+
+  // Masked on open: resets whenever the active editor identity changes,
+  // without mutating early on blocked/cancelled switches.
   const [flagRevealed, setFlagRevealed] = useState(false);
+  const [lastEditorKey, setLastEditorKey] = useState(activeEditorKey);
+
+  if (activeEditorKey !== lastEditorKey) {
+    setLastEditorKey(activeEditorKey);
+    setFlagRevealed(resolveFlagRevealed(flagRevealed, activeEditorKey, lastEditorKey));
+  }
+
   const confirmCopy = deleteTarget ? deleteConfirm(deleteTarget) : null;
 
   return (
@@ -184,10 +242,13 @@ export default function ChallengeFrame<Row extends ChallengeRowShape, Editor ext
           <span className="text-white">Challenges</span>
           <button
             type="button"
-            disabled={formPending || categories.length === 0}
+            disabled={formPending || reorderPending || !loaded || categories.length === 0}
+            title={addChallengeTooltip(loaded, listError, categories.length)}
             onClick={() => {
-              setFlagRevealed(false);
-              resource.openEditor(newEditor(resource.nextOrder, categories[0] ?? ""));
+              const next = newEditor(resource.nextOrder, categories[0] ?? "");
+              if (resource.openEditor(next)) {
+                setNewDraftRev((n) => n + 1);
+              }
             }}
             className="rounded-md border border-[#2563eb]/45 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/[0.06] disabled:opacity-50"
           >
@@ -198,12 +259,12 @@ export default function ChallengeFrame<Row extends ChallengeRowShape, Editor ext
         {panelIntro}
 
         {listError && (
-          <p className="text-sm text-[#e53e3e]">
+          <p role="alert" className="text-sm text-[#e53e3e]">
             {listError}
             {onRetry && (
               <>
                 {" "}
-                <button type="button" onClick={onRetry} className="text-white hover:underline">
+                <button type="button" onClick={onRetry} aria-label="Retry loading challenges" className="text-white hover:underline">
                   Retry
                 </button>
               </>
@@ -231,7 +292,6 @@ export default function ChallengeFrame<Row extends ChallengeRowShape, Editor ext
           reorderPending={reorderPending}
           onMove={onMove}
           onEdit={(row) => {
-            setFlagRevealed(false);
             resource.openEditor(editorFromRow(row));
           }}
           onDelete={(row) => resource.requestDelete(row.challenge)}
@@ -243,7 +303,7 @@ export default function ChallengeFrame<Row extends ChallengeRowShape, Editor ext
 
       {editing && (
         <Form
-          key={editing.mode === "edit" ? editing.id : "new"}
+          key={activeEditorKey}
           editor={editing}
           categories={categories}
           pending={formPending}
@@ -261,7 +321,12 @@ export default function ChallengeFrame<Row extends ChallengeRowShape, Editor ext
       {pendingEditor && (
         <DiscardDraftConfirm
           noun="challenge"
-          onConfirm={resource.confirmDraftSwitch}
+          onConfirm={() => {
+            if (pendingEditor.mode === "new") {
+              setNewDraftRev((n) => n + 1);
+            }
+            resource.confirmDraftSwitch();
+          }}
           onCancel={resource.cancelDraftSwitch}
         />
       )}

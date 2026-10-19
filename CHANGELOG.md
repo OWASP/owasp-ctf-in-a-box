@@ -10,6 +10,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: Jeopardy imports enforce the combined category limit.** A bundle
+  that would take the board above 50 categories is rejected before any writes,
+  preserving existing challenges, flags, hints, stories and attachments.
+  Valid imports still keep existing category order and spelling.
 - **Fixed: AWS deploy reads `SCORE_IMAGE` from the repo-root `.env` (#593).**
   `--scorer-source` and non-empty exported `SCORE_IMAGE` take precedence.
   An unset or empty exported value falls back to the file, as in `ctf-setup.sh`.

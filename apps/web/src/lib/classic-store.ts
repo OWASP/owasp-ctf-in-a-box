@@ -656,12 +656,9 @@ async function applyBundleAttachments(plan: readonly AttachmentAddition[]): Prom
  *  `parseBundle`) to the store: upserts every challenge it contains and
  *  unions its categories into the existing list.
  *
- *  `importBundle` re-validates NOTHING — its whole contract is that the
- *  caller already ran the bundle through `parseBundle`. Validation lives in
- *  exactly one place so the single-challenge admin form and this bulk path
- *  can never quietly grow different rules; a caller that skips `parseBundle`
- *  before calling this is the one at fault, not something this function
- *  guards against.
+ *  The caller validates incoming fields through `parseBundle`; this store
+ *  checks constraints that depend on merging with existing content before
+ *  writing anything.
  *
  *  UPSERT BY ID, NEVER DELETE. A challenge already in the store but absent
  *  from this bundle is left completely untouched — there is no HDEL
@@ -743,6 +740,13 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
     if (seen.has(fold)) continue;
     seen.add(fold);
     unioned.push(name);
+  }
+
+  if (unioned.length > CLASSIC_CATEGORIES_MAX) {
+    throw new ClassicValidationError(
+      "categories",
+      `Import would result in ${unioned.length} categories; at most ${CLASSIC_CATEGORIES_MAX} are allowed`,
+    );
   }
 
   // Maps each surviving spelling's fold back to itself, so every stored

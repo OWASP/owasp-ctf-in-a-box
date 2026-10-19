@@ -202,7 +202,7 @@ still the placeholder is refused at plan time with a sentence naming
 Afterwards a redeploy is one command:
 
 ```sh
-./deploy.sh --apply        # with SCORE_IMAGE exported, or --scorer-source again
+./deploy.sh --apply        # reads SCORE_IMAGE from the repo-root .env
 ```
 
 ### The images
@@ -227,8 +227,14 @@ build an image, which is why this is a script and not an `apply` (#476):
   same artifact the forks' judge pulls. Its package is private by contract
   (`ctf-setup.sh` keeps it so until launch), and Fargate cannot pull it, so
   `deploy.sh` copies it into this stack's `<name>-scorer` repository.
-  `--scorer-source` defaults to `$SCORE_IMAGE`, the event `.env`'s name for the
-  same image; `docker login` to its registry first. Its tag comes from the
+  `--scorer-source` overrides exported `SCORE_IMAGE`, which overrides
+  `SCORE_IMAGE` in the repo-root `.env` (independent of the working directory).
+  An exported empty value overrides the file too; unset it to use `.env`.
+  The shared reader accepts literal quoted values and refuses unsupported
+  interpolation or an unreadable file; it never executes `.env`. A missing
+  file does not itself fail parsing, but a Secure Development deploy still
+  requires a scorer source. A stack without Secure Development does not read it.
+  `docker login` to the source registry first. Its tag comes from the
   source's digest, so a floating `:latest` cannot swap the rubric under a
   running event: an upstream re-push only reaches ECS through a new
   `deploy.sh` run and an apply.

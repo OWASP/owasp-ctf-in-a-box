@@ -351,12 +351,14 @@ describe("resetEvent", () => {
       .map((c) => c[0][0][3]);
     expect(patterns).not.toContain("ctf:ai:launchkey");
     expect(out.cleared.aiLaunchKey).toBeUndefined();
-    // Nothing else is affected: the other 29 prefixes are still swept.
+    // Nothing else is affected: the other 30 prefixes are still swept,
+    // including the announcement state this branch adds.
     expect(patterns).toContain("ctf:ai:nonce:*");
     expect(patterns).toContain("ctf:ai:solves:*");
+    expect(patterns).toContain("ctf:announce:*");
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(29);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(29);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(30);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(30);
   });
 
   it("KEEPS the ai challenge bank, flag/flagnorm, hints, signing keys and categories across a reset", async () => {

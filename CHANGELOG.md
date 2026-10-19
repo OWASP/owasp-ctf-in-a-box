@@ -10,6 +10,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: repeated Redis SCAN keys no longer duplicate scorer teams.**
+  Team discovery preserves the first occurrence of each slug before reading
+  its name and members, keeping one ranked row and history series per team.
+  Individual points and team solve unions are unchanged.
 - **Fixed: an event-archive import preserves the AI launch keypair (#653).**
   Importing an archive replaces the challenge catalogue but no longer rotates
   `ctf:ai:launchkey`. Archive imports preserve the published key, as promised

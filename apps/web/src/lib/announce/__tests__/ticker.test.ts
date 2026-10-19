@@ -108,7 +108,7 @@ describe("lifecycle tick", () => {
   it("seeds the first observation silently (CAS code 2) and announces nothing", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v1|L1P0C0");
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L1P0C0A0");
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
 
@@ -117,16 +117,16 @@ describe("lifecycle tick", () => {
     // The observation is a LIVE event under a manual pause; the stored pack
     // is the un-paused one this replica last saw, so the CAS is ours to win.
     mocks.getAdminSettings.mockResolvedValue(settings({ paused: true }));
-    mocks.readStatePack.mockResolvedValue("v1|L1P0C0");
-    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L1P0C0" });
+    mocks.readStatePack.mockResolvedValue("v2|L1P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
     await runAnnounceTick(T0);
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("pause", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring is paused" })] }));
   });
 
   it("announces the launch edge when this replica wins it", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
-    mocks.readStatePack.mockResolvedValue("v1|L0P0C0");
-    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L0P0C0" });
+    mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L0P0C0A0" });
     await runAnnounceTick(T0);
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("launch", expect.objectContaining({ embeds: [expect.objectContaining({ title: "The event is live!" })] }));
   });
@@ -145,12 +145,12 @@ describe("lifecycle tick", () => {
     mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: "2026-10-14T12:00:00Z" }));
     mocks.stateCompareSet.mockResolvedValue({ code: 2, seq: 1, prev: "" });
     expect(await runAnnounceTick(T0 - 60_000)).toBe("active");
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v1|L0P0C0");
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L0P0C0A0");
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
 
     // At launch the next tick sees L0 → L1 and announces it.
-    mocks.readStatePack.mockResolvedValue("v1|L0P0C0");
-    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L0P0C0" });
+    mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L0P0C0A0" });
     await runAnnounceTick(T0 + 30_000);
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("launch", expect.objectContaining({ embeds: [expect.objectContaining({ title: "The event is live!" })] }));
   });
@@ -161,10 +161,10 @@ describe("lifecycle tick", () => {
     // resumes" here would promise a resume that can never come.
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true, pause: true }));
     mocks.getAdminSettings.mockResolvedValue(settings({ scoringEndsAt: "2026-10-14T11:30:00Z" }));
-    mocks.readStatePack.mockResolvedValue("v1|L1P0C0");
-    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L1P0C0" });
+    mocks.readStatePack.mockResolvedValue("v2|L1P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v1|L1P0C0", "v1|L1P0C1");
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P0C1A0");
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
 
@@ -173,8 +173,8 @@ describe("lifecycle tick", () => {
     // real transition this replica must record, but it must not post.
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true, pause: false }));
     mocks.getAdminSettings.mockResolvedValue(settings({ paused: true }));
-    mocks.readStatePack.mockResolvedValue("v1|L1P0C0");
-    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L1P0C0" });
+    mocks.readStatePack.mockResolvedValue("v2|L1P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
     await runAnnounceTick(T0);
     expect(mocks.stateCompareSet).toHaveBeenCalled();
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
@@ -247,7 +247,7 @@ describe("milestones tick", () => {
     mocks.readStatePack.mockResolvedValue(null);
     mocks.stateCompareSet.mockResolvedValue({ code: 2, seq: 1, prev: "" });
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v1|L0P1C0");
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L0P1C0A0");
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
     expect(mocks.claimLedgerFields).not.toHaveBeenCalled();
   });

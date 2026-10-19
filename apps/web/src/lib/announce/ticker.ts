@@ -47,6 +47,7 @@ import { getAdminSettings, type AdminSettings } from "@/lib/admin-store";
 import { DEFAULT_EVENT_IDENTITY } from "@/lib/event-identity";
 import { ANNOUNCEMENT_KINDS, kindEnabled, parseMarks, type DiscordFullConfig } from "@/lib/discord-config";
 import {
+  announcedLifecyclePause,
   decodeLifecycleState,
   encodeLifecycleState,
   formatTimeLeft,
@@ -242,7 +243,7 @@ function eventName(settings: AdminSettings): string {
  *  change it then watches. */
 async function tickLifecycle(config: DiscordFullConfig, settings: AdminSettings, nowMs: number): Promise<void> {
   try {
-    const snap = lifecycleSnapshotFrom(
+    const derived = lifecycleSnapshotFrom(
       {
         scoringStartsAt: settings.scoringStartsAt,
         scoringEndsAt: settings.scoringEndsAt,
@@ -250,12 +251,20 @@ async function tickLifecycle(config: DiscordFullConfig, settings: AdminSettings,
       },
       nowMs,
     );
-    const next = encodeLifecycleState(snap);
     const expected = (await readStatePack(ANNOUNCE_LIFECYCLE_KEY)) ?? "";
+    // `announced` depends on the STORED pause, not just the settings: a hold
+    // announced live stays announced across a close and an extension, while
+    // one born while closed never is. The CAS still swaps on the pack string,
+    // so a racing replica still loses cleanly.
+    const snap = { ...derived, announced: announcedLifecyclePause(decodeLifecycleState(expected), derived) };
+    const next = encodeLifecycleState(snap);
     if (expected === next) return;
     const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next);
     if (cas.code !== 1) return; // 0 = someone else won or state moved on; 2 = silent init
     const prev = decodeLifecycleState(cas.prev);
+    // A stored pack of an older shape decodes to null: seed the new state
+    // silently rather than announcing a launch from a baseline we cannot read.
+    if (prev === null) return;
     const name = eventName(settings);
     for (const edge of lifecycleEdges(prev, snap)) {
       if (!kindEnabled(config, edge.kind)) continue;

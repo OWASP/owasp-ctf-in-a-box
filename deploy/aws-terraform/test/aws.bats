@@ -38,6 +38,8 @@ setup() {
   done
 
   PATH="$STUBS:$PATH"
+  # Tests using the checkout must not read the developer's own .env.
+  export SCORE_IMAGE=""
 }
 
 @test "--dry-run makes no docker, aws or terraform call at all" {
@@ -92,6 +94,7 @@ fake_repo() {
   mkdir -p "$repo/deploy/aws-terraform" "$repo/apps/web" "$repo/scripts/lib"
   cp "$SCRIPT" "$repo/deploy/aws-terraform/deploy.sh"
   cp "$ROOT/scripts/lib/redact.sh" "$repo/scripts/lib/redact.sh"
+  cp "$ROOT/scripts/lib/dotenv.sh" "$repo/scripts/lib/dotenv.sh"
   printf 'FROM scratch\n' > "$repo/apps/web/Dockerfile"
   git -C "$repo" init -q
   git -C "$repo" config user.email bats@example.invalid
@@ -352,12 +355,110 @@ EOF
     grep -qx "scorer_image = \"$ACCT_REGISTRY/owasp-ctf-scorer:mirror-${SOURCE_DIGEST:0:12}\"" "$vars"
 }
 
-@test "SCORE_IMAGE from the event .env is the default scorer source" {
+@test "exported SCORE_IMAGE overrides the event .env" {
   repo="$(fake_repo)"
   applied_stack_stubs 1
+  printf 'SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:from-file\n' > "$repo/.env"
   SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:v9 run "$repo/deploy/aws-terraform/deploy.sh"
   [ "$status" -eq 0 ]
   grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:v9" "$CALLS"
+}
+
+@test "the repo-root .env supplies the scorer source from the deploy directory" {
+  unset SCORE_IMAGE
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  printf 'SCORE_IMAGE=ignored\r\nexport SCORE_IMAGE = "ghcr.io/owasp-ctf-test/score:from-file" # event\r\n' > "$repo/.env"
+  cd "$repo/deploy/aws-terraform"
+  run ./deploy.sh
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:from-file" "$CALLS"
+}
+
+@test "--scorer-source overrides the shell and an invalid .env" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  printf 'SCORE_IMAGE="unterminated\n' > "$repo/.env"
+  SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:from-shell run "$repo/deploy/aws-terraform/deploy.sh" \
+    --scorer-source ghcr.io/owasp-ctf-test/score:from-flag
+  [ "$status" -eq 0 ]
+  grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:from-flag" "$CALLS"
+}
+
+@test "exported SCORE_IMAGE does not require a readable .env" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  mkdir "$repo/.env"
+  SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:v9 run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:v9" "$CALLS"
+}
+
+@test "an explicitly empty exported SCORE_IMAGE does not fall back to .env" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  printf 'SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:from-file\n' > "$repo/.env"
+  SCORE_IMAGE="" run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q 'nothing names the source'
+  [ ! -f "$repo/deploy/aws-terraform/image.auto.tfvars" ]
+  [ -z "$(grep '^docker ' "$CALLS")" ]
+}
+
+@test "a missing or empty .env scorer source is refused on a Secure Development stack" {
+  unset SCORE_IMAGE
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q 'nothing names the source'
+  for entry in 'OTHER=value' 'SCORE_IMAGE=' 'SCORE_IMAGE=""' "SCORE_IMAGE=''"; do
+    printf '%s\n' "$entry" > "$repo/.env"
+    run "$repo/deploy/aws-terraform/deploy.sh"
+    [ "$status" -ne 0 ]
+    echo "$output" | grep -q 'nothing names the source'
+  done
+  [ ! -f "$repo/deploy/aws-terraform/image.auto.tfvars" ]
+  [ -z "$(grep '^docker ' "$CALLS")" ]
+}
+
+@test "invalid .env values stop the deploy before any build without leaking the value" {
+  unset SCORE_IMAGE
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  for entry in 'SCORE_IMAGE="LEAKunterminated' 'SCORE_IMAGE=${LEAKinterpolation}'; do
+    printf '%s\n' "$entry" > "$repo/.env"
+    run "$repo/deploy/aws-terraform/deploy.sh"
+    [ "$status" -ne 0 ]
+    echo "$output" | grep -q 'dotenv:.*SCORE_IMAGE'
+    [ -z "$(echo "$output" | grep -F LEAK)" ]
+  done
+  [ ! -f "$repo/deploy/aws-terraform/image.auto.tfvars" ]
+  [ -z "$(grep '^docker ' "$CALLS")" ]
+}
+
+@test "an unreadable .env stops even a dry run without any external call" {
+  unset SCORE_IMAGE
+  repo="$(fake_repo)"
+  mkdir "$repo/.env"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q 'exists but cannot be read'
+  [ ! -s "$CALLS" ]
+}
+
+@test "a dry run reads a single-quoted .env value without executing the file or tools" {
+  unset SCORE_IMAGE
+  repo="$(fake_repo)"
+  printf "SCORE_IMAGE='ghcr.io/owasp-ctf-test/score:from-file'\n" > "$repo/.env"
+  printf 'touch "%s"\n' "$repo/env-was-executed" >> "$repo/.env"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q 'docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:from-file'
+  [ ! -e "$repo/env-was-executed" ]
+  [ ! -f "$repo/deploy/aws-terraform/image.auto.tfvars" ]
+  [ ! -s "$CALLS" ]
 }
 
 @test "a Secure Development stack with no scorer source is refused before any build" {
@@ -371,9 +472,11 @@ EOF
 }
 
 @test "a quiz-only stack publishes the app alone and writes only app_image" {
+  unset SCORE_IMAGE
   repo="$(fake_repo)"
   applied_stack_stubs 0
-  SCORE_IMAGE="" run "$repo/deploy/aws-terraform/deploy.sh"
+  printf 'SCORE_IMAGE="unterminated\n' > "$repo/.env"
+  run "$repo/deploy/aws-terraform/deploy.sh"
   [ "$status" -eq 0 ]
   vars="$repo/deploy/aws-terraform/image.auto.tfvars"
   cat "$vars"

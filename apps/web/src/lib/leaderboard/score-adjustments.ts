@@ -1,8 +1,9 @@
 import "server-only";
 
 // Organizer score adjustments (adjustments-store.ts) folded into each TEAM's
-// total. Runs LAST, after withHintPenalties, so the figure a team is ranked
-// on is gross module points, less hint spend, plus or minus adjustments.
+// total. Runs after withHintPenalties, as the last ranking overlay, so the
+// figure a team is ranked on is gross module points, less hint spend, plus or
+// minus adjustments.
 // Floored at 0 like the hint fold. Re-ranks with the team comparator, whose
 // tie-break time is untouched: an adjustment moves points, not "who got
 // there first". Individual rows are not adjusted (adjustments are

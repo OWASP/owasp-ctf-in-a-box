@@ -598,7 +598,8 @@ export async function listTeams(): Promise<TeamInfo[]> {
 
   const prefix = "ctf:team:";
   const suffix = ":members";
-  const slugs: string[] = [];
+  // SCAN may return the same key within or across pages.
+  const found = new Set<string>();
   let cursor = "0";
   do {
     const [scan] = await upstashPipeline([["SCAN", cursor, "MATCH", `${prefix}*${suffix}`, "COUNT", "1000"]]);
@@ -609,8 +610,9 @@ export async function listTeams(): Promise<TeamInfo[]> {
     // standings — a team that is competing simply is not on the board.
     const [next, keys] = parseScanPage(scan, "listTeams");
     cursor = next;
-    for (const key of keys) slugs.push(key.slice(prefix.length, -suffix.length));
+    for (const key of keys) found.add(key.slice(prefix.length, -suffix.length));
   } while (cursor !== "0");
+  const slugs = [...found];
   if (slugs.length === 0) return [];
 
   const results = await upstashPipeline(

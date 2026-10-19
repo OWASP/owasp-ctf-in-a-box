@@ -17,12 +17,12 @@
 # the sampler failed; connection errors or timeouts) OR the bar was missed
 # (latency, a 5xx, memory). The report says which. 2 for a usage error.
 #
-# Pass bar (from the issue, restated on autocannon's percentiles — it reports
-# p97.5, not p95, so the stricter one is used): /leaderboard p97.5 < 1.5 s at
-# 10 rps, ?display=1 p97.5 < 1 s at 2 rps, zero 5xx, zero connection errors
-# and zero timeouts (autocannon's `errors`/`timeouts`: a request that never
-# got an answer is not a measurement, so any of them fails the RUN, not just
-# the bar), machine memory < 80 %.
+# Pass bar (from the issue; the table also reports measured p95, the issue's
+# own metric, while the bar stays on autocannon's stricter p97.5, which
+# bounds it): /leaderboard p97.5 < 1.5 s at 10 rps, ?display=1 p97.5 < 1 s
+# at 2 rps, zero 5xx, zero connection errors and zero timeouts (autocannon's
+# `errors`/`timeouts`: a request that never got an answer is not a
+# measurement, any of them fails the RUN, not just the bar), memory < 80 %.
 # /api/admin/metrics needs an admin session this script deliberately does not
 # carry (a cookie in an argument vector is readable by every local user) —
 # time it from a logged-in tab. The report carries every number; the exit
@@ -52,7 +52,7 @@ while [ $# -gt 0 ]; do
     --duration) need_value "$@"; DURATION="$2"; shift 2 ;;
     --clean) CLEAN=1; shift ;;
     --break-lock) BREAK_LOCK=1; CLEAN=1; shift ;;  # CLEAN=1: same no-report, no-URL path
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -72,7 +72,7 @@ if [ "$DURATION" -lt 5 ] || [ "$DURATION" -gt 3600 ]; then echo "FAIL: --duratio
 command -v fly >/dev/null || { echo "FAIL: fly CLI not found" >&2; exit 1; }
 command -v node >/dev/null || { echo "FAIL: node not found" >&2; exit 1; }
 if [ -z "$CLEAN" ]; then
-  command -v npx >/dev/null || { echo "FAIL: npx not found (autocannon runs through it)" >&2; exit 1; }
+  command -v npm >/dev/null || { echo "FAIL: npm not found (the phase driver installs autocannon through it)" >&2; exit 1; }
 fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -156,6 +156,19 @@ if [ -n "$CLEAN" ]; then
   exit 0
 fi
 
+# The phase driver (autocannon-phase.cjs) needs autocannon REQUIRE-able, not
+# just its CLI on PATH: it adds the issue's p95 to the summary, which the CLI
+# cannot. Installed into the run's scratch directory before anything is
+# seeded, so a box that cannot install drives nothing (fail_setup below).
+# autocannon is pinned to exactly 8.0.0, the version the driver's API usage is
+# written against; nothing here is cached between runs — TMP is fresh every
+# time.
+AC_PREFIX="$TMP/autocannon"
+echo "== installing autocannon (the p95 phase driver needs it require-able)"
+if ! npm install --prefix "$AC_PREFIX" --no-save --no-audit --no-fund --silent autocannon@8.0.0 >/dev/null 2>&1; then
+  fail_setup "installing autocannon into $AC_PREFIX (npm install --prefix)"
+fi
+
 # The seed's status is captured, never allowed to end the script under
 # `set -e`: a failed seed still gets its report (below), then exit 1. Its
 # last output line is the seeder's own JSON summary or its redacted error
@@ -196,33 +209,36 @@ sample_mem() {
 }
 sample_mem & MEM_PID=$!
 
-# One autocannon phase at a fixed rate; its JSON lands in $TMP/<name>.json.
-# A phase that fails to LAUNCH (autocannon missing, DNS, a nonzero exit) or
+# One phase at a fixed rate via the p95 driver (autocannon-phase.cjs — same
+# summary the autocannon CLI emits, plus latency.p95); its JSON lands in
+# $TMP/<name>.json.
+# A phase that fails to LAUNCH (the driver missing, DNS, a nonzero exit) or
 # leaves no result in autocannon's SHAPE (every field the table and the bar
-# read must be a finite number — `{}` is not a measurement) is recorded in
+# read must be a finite number — `{}` is not a measurement, and a summary
+# without the driver's p95 is not this run's measurement) is recorded in
 # $TMP/phase.err and never aborts
 # the script: the report still gets written, and the run fails at the end.
-# Only the phase name and exit status are recorded — autocannon's own stderr
+# Only the phase name and exit status are recorded — the driver's own stderr
 # can echo the target URL, so it is not persisted anywhere, not even in $TMP:
 # its exit status is the whole diagnostic. Ordinary 5xx responses are not this
-# path — autocannon records them in the JSON and summarize prints them.
+# path — they land in the JSON and summarize prints them.
 PHASE_FAILURES=0
 run_phase() { # name path rate duration
   local name="$1" path="$2" rate="$3" dur="$4" status=0 reason=""
   echo "== phase $name: $path @ ${rate} rps for ${dur}s"
-  npx --yes autocannon -d "$dur" -R "$rate" -c 10 --json "${URL%/}$path" > "$TMP/$name.json" 2>/dev/null || status=$?
-  if [ "$status" -ne 0 ]; then reason="autocannon exit $status"
+  NODE_PATH="$AC_PREFIX/node_modules" node "$HERE/autocannon-phase.cjs" --url "${URL%/}$path" --duration "$dur" --rate "$rate" --connections 10 > "$TMP/$name.json" 2>/dev/null || status=$?
+  if [ "$status" -ne 0 ]; then reason="phase driver exit $status"
   elif [ ! -s "$TMP/$name.json" ]; then reason="no result written"
   elif ! node -e '
       const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
       const num = (v) => typeof v === "number" && Number.isFinite(v);
       const ok = r && typeof r === "object"
         && r.requests && num(r.requests.average)
-        && r.latency && num(r.latency.p50) && num(r.latency.p97_5) && num(r.latency.p99)
+        && r.latency && num(r.latency.p50) && num(r.latency.p95) && num(r.latency.p97_5) && num(r.latency.p99)
         && num(r.errors) && num(r.timeouts) && num(r.non2xx)
         && r.statusCodeStats && typeof r.statusCodeStats === "object";
       process.exit(ok ? 0 : 1);
-    ' "$TMP/$name.json" >/dev/null 2>&1; then reason="result is not an autocannon summary (missing or non-numeric requests/latency/errors/timeouts/non2xx/statusCodeStats)"
+    ' "$TMP/$name.json" >/dev/null 2>&1; then reason="result is not a phase-driver summary (missing or non-numeric requests/latency p50/p95/p97.5/p99/errors/timeouts/non2xx/statusCodeStats)"
   fi
   if [ -n "$reason" ]; then
     PHASE_FAILURES=$((PHASE_FAILURES + 1))
@@ -230,17 +246,19 @@ run_phase() { # name path rate duration
     echo "   phase $name FAILED to run ($reason); continuing so the report is written" >&2
   fi
 }
-# One Markdown table row from a phase's JSON. autocannon's latency summary
-# carries p50 / p97.5 / p99 (no p95), which is why the bar is stated on p97.5.
+# One Markdown table row from a phase's JSON. p95 is the issue's own metric,
+# measured by the phase driver from the same latency histogram autocannon's
+# summary percentiles come from (the CLI's fixed list skips it); the bar
+# stays on the stricter p97.5, which bounds p95.
 # A phase run_phase already marked failed prints a "did not run" row; the
 # failure itself was counted there, so this never decides pass/fail.
 summarize() { # name label
-  if grep -q "^$1: " "$TMP/phase.err" 2>/dev/null; then echo "| $2 | did not run | — | — | — | — | — | — | — |"; return 0; fi
+  if grep -q "^$1: " "$TMP/phase.err" 2>/dev/null; then echo "| $2 | did not run | — | — | — | — | — | — | — | — |"; return 0; fi
   # shellcheck disable=SC2016  # the ${} below is JS template syntax, not shell
   node -e '
     const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
     const p = r.latency || {}, non2xx = r.non2xx || 0, e5 = (r.statusCodeStats && Object.entries(r.statusCodeStats).filter(([c]) => c >= "500").reduce((s, [, v]) => s + (v.count || v), 0)) || 0;
-    console.log(`| ${process.argv[2]} | ${(r.requests && r.requests.average || 0).toFixed(1)} | ${p.p50} ms | ${p.p97_5} ms | ${p.p99} ms | ${non2xx} | ${e5} | ${r.errors || 0} | ${r.timeouts || 0} |`);
+    console.log(`| ${process.argv[2]} | ${(r.requests && r.requests.average || 0).toFixed(1)} | ${p.p50} ms | ${p.p95} ms | ${p.p97_5} ms | ${p.p99} ms | ${non2xx} | ${e5} | ${r.errors || 0} | ${r.timeouts || 0} |`);
   ' "$TMP/$1.json" "$2"
 }
 
@@ -274,12 +292,12 @@ if [ -s "$TMP/mem.err" ]; then MEM_FAILURES="$(wc -l < "$TMP/mem.err" | tr -d ' 
   echo
   echo "Seed: \`$SEED_OUT\`"
   echo
-  echo "| phase | rps achieved | p50 | p97.5 | p99 | non-2xx | 5xx | conn errors | timeouts |"
-  echo "|---|---|---|---|---|---|---|---|---|"
+  echo "| phase | rps achieved | p50 | p95 | p97.5 | p99 | non-2xx | 5xx | conn errors | timeouts |"
+  echo "|---|---|---|---|---|---|---|---|---|---|"
   summarize leaderboard "/leaderboard @10rps"
   summarize display "/leaderboard?display=1 @2rps"
   echo
-  echo "Pass bar (p97.5 — autocannon's nearest percentile above the issue's p95): /leaderboard < 1500 ms; display < 1000 ms; zero 5xx; zero connection errors and timeouts (any fails the run: an unanswered request is not a measurement); memory < 80 %. /api/admin/metrics is timed by hand from a logged-in tab."
+  echo "Pass bar (p97.5 — stricter than the issue's p95 target, which the table reports as a measured column): /leaderboard < 1500 ms; display < 1000 ms; zero 5xx; zero connection errors and timeouts (any fails the run: an unanswered request is not a measurement); memory < 80 %. The issue's ≥9.5 rps-achieved target for /leaderboard is the rps column — reported, not enforced by the exit code. /api/admin/metrics is timed by hand from a logged-in tab."
   echo
   if [ -s "$TMP/phase.err" ]; then
     echo "## Phases that did not run (the run FAILS on this)"

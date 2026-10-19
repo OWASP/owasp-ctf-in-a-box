@@ -49,37 +49,54 @@ type Fold = (options?: { fresh?: boolean }) => Promise<LeaderboardData>;
 type Clock = () => number;
 
 // Stage order is load-bearing (this commentary moved here from the page with
-// the fold itself). Penalties fold LAST: withModuleContributions attributes
-// (and, for the app-side modules, adds) each contestant row's gross
-// per-module points, and withTeamStandings folds rows into teams — it is the
-// ONE stage that adds quiz, classic and ai points to a team; the first stage
-// only stamps a source team's secure-development block (running both on the
-// source's teams counted those modules twice, issue #520) — only then does
-// withHintPenalties net the final all-module total, exactly once. Module
-// blocks everywhere show their gross contribution; the row's "−N hints"
-// marker is what reconciles them against the netted header. Running the
-// penalty fold earlier netted scorer points alone, which made hints free for
-// any row whose points arrive later — a classic- or quiz-only contestant, or
-// a team whose module points team standings folds in. Same story in
-// docs/architecture.md, step 9 of the score data flow.
+// the fold itself). withModuleContributions attributes (and, for the app-side
+// modules, adds) each contestant row's gross per-module points, and
+// withTeamStandings folds rows into teams — it is the ONE stage that adds
+// quiz, classic and ai points to a team; the first stage only stamps a source
+// team's secure-development block (running both on the source's teams counted
+// those modules twice, issue #520). withHintPenalties then nets the final
+// all-module total exactly once, and withScoreAdjustments applies the
+// organizer's team adjustments. Module blocks everywhere show their gross
+// contribution; the row's "−N hints" marker is what reconciles them against
+// the netted header. Running the penalty fold before the module folds netted
+// scorer points alone, which made hints free for any row whose points arrive
+// later — a classic- or quiz-only contestant, or a team whose module points
+// team standings folds in. Same story in docs/architecture.md, step 9 of the
+// score data flow.
 //
-// withModuleSeries runs after withTeamStandings because it needs the final
-// team rows — it charts a team's roster, and a team the standings stage has
-// not added yet has no line to draw. It reads the app-side modules' per-item
-// timestamps to put their points on the chart at all (issue #415). It leaves
-// `points` untouched, so it neither needs to run before the penalty fold nor
-// disturbs it: the chart is gross, the row net.
-/** The production fold: the leaderboard source through every overlay stage. */
-const defaultFold: Fold = async ({ fresh = false } = {}) =>
-  (await getLeaderboardSource())
+// withModuleSeries runs after both ranking overlays because it charts only
+// the final top-ten entries and teams. A hint penalty or an organizer score
+// adjustment can move a row across that boundary, so selecting the ranked set
+// earlier would chart a line for a row that is no longer shown, or omit one
+// that is. It reads the app-side modules' per-item timestamps to put their
+// points on the chart at all (issue #415). It leaves `points` untouched: the
+// chart is gross, the row net.
+/** The production fold: the leaderboard source through every overlay stage.
+ *  Times itself and logs once per FOLD (not per request — the 10 s memo
+ *  absorbs the rest, issue #444), so an operator can separate fold cost from
+ *  request/render latency on a live box: the load test's autocannon
+ *  percentiles are whole-request numbers, and this line is the fold's share
+ *  of them (issue #446). */
+const defaultFold: Fold = async ({ fresh = false } = {}) => {
+  const started = Date.now();
+  const data = await (await getLeaderboardSource())
     .getLeaderboard({ fresh })
     .then(withModuleContributions)
     .then(withTeamStandings)
-    .then(withModuleSeries)
     .then(withHintPenalties)
     // The organizer's team adjustments, after the hint fold: both come off
     // (or onto) the same final total. See score-adjustments.ts.
-    .then(withScoreAdjustments);
+    .then(withScoreAdjustments)
+    // Chart only the final ranked rows; both overlays above can move a row
+    // across the top-ten boundary.
+    .then(withModuleSeries);
+  console.info(
+    `leaderboard fold: ${Date.now() - started}ms ` +
+      `(entries=${data.entries.length} teams=${data.teams.length} ` +
+      `series=${data.series?.length ?? 0} teamSeries=${data.teamSeries?.length ?? 0})`,
+  );
+  return data;
+};
 
 // `gen` is the fold-cache generation the fold STARTED under (#553): the two
 // admin resets that lower scores bump it, and nothing stamped older is served

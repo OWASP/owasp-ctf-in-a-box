@@ -205,4 +205,66 @@ describe("withModuleSeries", () => {
     const result = await withModuleSeries(data());
     expect(result.entries[0].points).toBe(10);
   });
+
+  // Issue #446: the chart draws the series it is handed, and shipping every
+  // login's history put ~200 player series into each RSC payload while the
+  // chart is written for the top ten. Only the top-ten rows per view are read
+  // and emitted; ranks past the cap keep their row and get no line.
+  it("emits series only for the top-ten entries and reads only their events", async () => {
+    const entries = Array.from({ length: 12 }, (_, i) => {
+      const e = entry(`player${i + 1}`, 100 - i);
+      e.rank = i + 1;
+      return e;
+    });
+    // One quiz reply per charted entry — a 12th reply would prove rank 11 was
+    // read. Rank 11 and 12 hold no line.
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      entries.slice(0, 10).map((e) => hash([`q-${e.login}`, 5, "2026-01-01T10:00:00.000Z"])),
+    );
+    const result = await withModuleSeries(data({ entries }));
+    expect(result.series?.map((s) => s.login)).toEqual(entries.slice(0, 10).map((e) => e.login.toLowerCase()));
+    const commands = mocks.upstashPipeline.mock.calls[0][0] as unknown[][];
+    expect(commands).toHaveLength(10);
+  });
+
+  it("emits teamSeries only for the top-ten teams, reading their members' events", async () => {
+    const teams = Array.from({ length: 12 }, (_, i) => {
+      const t = team(`team-${i + 1}`, [`member${i + 1}`]);
+      t.rank = i + 1;
+      return t;
+    });
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      teams.slice(0, 10).map((t) => hash([`q-${t.slug}`, 5, "2026-01-01T10:00:00.000Z"])),
+    );
+    const result = await withModuleSeries(
+      data({
+        entries: [],
+        teams,
+        capabilities: { apps: true, teams: true, challenges: false },
+      }),
+    );
+    expect(result.teamSeries?.map((t) => t.slug)).toEqual(teams.slice(0, 10).map((t) => t.slug));
+    const commands = mocks.upstashPipeline.mock.calls[0][0] as unknown[][];
+    expect(commands).toHaveLength(10);
+  });
+
+  it("still reads a charted team's member who holds no entry of their own", async () => {
+    // The member is not on the individual board, so they get no player line —
+    // but their items belong on their team's line, so their hash is read.
+    const base = data({
+      entries: [entry("ada", 10)],
+      teams: [team("red", ["ada", "ghost"])],
+      capabilities: { apps: true, teams: true, challenges: false },
+    });
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      hash(["q-ada", 40, "2026-01-01T10:00:00.000Z"]),
+      hash(["q-ghost", 7, "2026-01-01T11:00:00.000Z"]),
+    ]);
+    const result = await withModuleSeries(base);
+    expect(result.series?.map((s) => s.login)).toEqual(["ada"]);
+    expect(result.teamSeries?.[0].points).toEqual([
+      { t: "2026-01-01T10:00:00.000Z", score: 40 },
+      { t: "2026-01-01T11:00:00.000Z", score: 47 },
+    ]);
+  });
 });

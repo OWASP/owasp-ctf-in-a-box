@@ -40,6 +40,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   accept public metadata. A Send test and per-type previews are in the
   section; the master reset wipes the announcement state but keeps the
   webhook setup (ADR 69).
+- **Fixed: repeated Redis SCAN keys no longer duplicate leaderboard teams.**
+  The scorer and web app preserve the first occurrence of each team slug
+  before reading its name and members, keeping one ranked row per team and
+  one scorer history series. Individual points and team solve unions are
+  unchanged.
+- **Fixed: an event-archive import preserves the AI launch keypair (#653).**
+  Importing an archive replaces the challenge catalogue but no longer rotates
+  `ctf:ai:launchkey`. Archive imports preserve the published key, as promised
+  by ADR 53 and the `importEvent` comment. An ordinary master reset still
+  rotates it.
 - **Fixed: VAmPI's Unauthorized Password Change could score on the stock app
   (#661).** VAmPI's `/createdb` commits its seed users one at a time, and a
   test that ran between `name1` and `name2` got `400 User Not Found` for the
@@ -47,6 +57,25 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   read as fixed. The challenge now checks that `name2` exists before it tries
   the exploit, and the rubric's seed wait now covers every seeded user, not
   just `name1`. Scores on a real fix are unchanged.
+- **Fixed: the leaderboard chart ships only the top ten lines, and the load
+  test reports measured p95 (#446).** `withModuleSeries` used to build a
+  cumulative series for EVERY login and team on the board — re-expanding the
+  scorer's and the mock source's own top-ten series — so a 200-contestant box
+  put ~270 histories into every `/leaderboard` RSC payload while the chart
+  (written for ten lines, ranks 9-10 folding into one muted "Other") drew
+  them as an unreadable hairball. The stage now reads module events for, and
+  emits series of, only the final top-ten entries and top-ten teams — ranked
+  after hint penalties and organizer score adjustments — including a charted
+  team's members who hold no entry of their own, whose items belong on their
+  team's line, leaving every row, the `?display=1` surface and the viewer
+  "you" highlight untouched. The fold also logs its own duration once per
+  fold (not per request), so fold cost can be separated from
+  request/render latency on a live box. `scripts/load-test.sh`'s results
+  table gains a measured p95 column — the issue's own metric, which the
+  autocannon CLI's fixed percentile list skips, so a small programmatic
+  driver (`scripts/autocannon-phase.cjs`) adds it from the same latency
+  histogram the summary percentiles come from — while the enforced bar stays
+  on the stricter p97.5, which bounds p95.
 
 ## v1.0.0 — 2026-10-16
 

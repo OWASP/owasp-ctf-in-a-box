@@ -219,7 +219,8 @@ export function createRedisStore({
     // keys (a team always has one, even with zero members) since there's no
     // index of slugs; then one pipeline of HGET/SMEMBERS per slug.
     async getTeams() {
-      const slugs = [];
+      // SCAN may repeat a key within a page or across pages.
+      const seen = new Set();
       let cursor = "0";
       do {
         const [res] = await pipeline([
@@ -228,10 +229,11 @@ export function createRedisStore({
         const [nextCursor, keys] = res;
         cursor = String(nextCursor);
         for (const key of keys ?? []) {
-          slugs.push(key.replace(/^ctf:team:/, "").replace(/:members$/, ""));
+          seen.add(key.replace(/^ctf:team:/, "").replace(/:members$/, ""));
         }
       } while (cursor !== "0");
 
+      const slugs = [...seen];
       if (slugs.length === 0) return [];
 
       const commands = slugs.flatMap((slug) => [

@@ -3,6 +3,7 @@ import { readBoundedBody } from "@/lib/bounded-body";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel } from "@/lib/admin-store";
 import { AnnounceValidationError, getAnnounceConfig, publicConfig, setAnnounceWebhook } from "@/lib/announce/store";
+import { DISCORD_DEFAULTS, type DiscordFullConfig } from "@/lib/discord-config";
 
 /**
  * Set or clear the Discord webhook URL (#590). Its OWN endpoint, separate
@@ -43,7 +44,16 @@ export async function POST(request: Request) {
 
   try {
     const result = await setAnnounceWebhook(gate.login, url);
-    const config = await getAnnounceConfig();
+    // The write already landed; a failed read-back must not turn it into a
+    // 503. The panel folds only `webhookConfigured` from this response, so
+    // the fallback carries that flag from the write itself and the default
+    // switches — the read-back is best-effort.
+    let config: DiscordFullConfig = { ...DISCORD_DEFAULTS, webhookConfigured: result.webhookConfigured, webhookUrl: null };
+    try {
+      config = await getAnnounceConfig();
+    } catch (err) {
+      console.error("[admin/announcements] config read-back failed after webhook write:", adminErrorLabel(err));
+    }
     return NextResponse.json({ ...result, config: publicConfig(config) });
   } catch (err) {
     if (err instanceof AnnounceValidationError) {

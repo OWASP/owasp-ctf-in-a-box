@@ -16,15 +16,19 @@ import {
 const snap = (over: Partial<LifecycleSnapshot> = {}): LifecycleSnapshot => ({
   launched: false,
   paused: false,
+  closed: false,
   ...over,
 });
 
 describe("lifecycle pack", () => {
   it("round-trips and rejects unknown shapes", () => {
-    const s = snap({ launched: true, paused: true });
+    const s = snap({ launched: true, paused: true, closed: true });
     expect(decodeLifecycleState(encodeLifecycleState(s))).toEqual(s);
     expect(decodeLifecycleState("v2|L1")).toBeNull();
     expect(decodeLifecycleState("v1|L1P1R1")).toBeNull();
+    // The pre-close two-flag pack: unknown now, so it seeds silently rather
+    // than being misparsed as a pause.
+    expect(decodeLifecycleState("v1|L1P1")).toBeNull();
     expect(decodeLifecycleState(null)).toBeNull();
   });
 });
@@ -50,6 +54,23 @@ describe("lifecycleEdges", () => {
       lifecycleEdges(snap({ launched: true, paused: true }), snap({ launched: true, paused: false })).map((e) => e.kind),
     ).toEqual(["resume"]);
   });
+
+  it("the window closing is NOT a pause, and nothing resumes out of closed", () => {
+    // Live and unpaused, then the end passes: the snapshot flips to closed
+    // — announcing "paused … until it resumes" here would promise a resume
+    // that can never come.
+    expect(lifecycleEdges(snap({ launched: true }), snap({ launched: true, closed: true })).map((e) => e.kind)).toEqual([]);
+    // Live and MANUALLY paused when the end passes: still no edges — the
+    // close must not read as the resume of that pause.
+    expect(
+      lifecycleEdges(snap({ launched: true, paused: true }), snap({ launched: true, closed: true })).map((e) => e.kind),
+    ).toEqual([]);
+    // An admin extending the window after the close must not announce a
+    // phantom resume either.
+    expect(
+      lifecycleEdges(snap({ launched: true, closed: true }), snap({ launched: true })).map((e) => e.kind),
+    ).toEqual([]);
+  });
 });
 
 describe("lifecycleSnapshotFrom", () => {
@@ -60,9 +81,15 @@ describe("lifecycleSnapshotFrom", () => {
     expect(lifecycleSnapshotFrom(base, t("2025-12-31T12:00:00Z"))).toEqual(snap());
   });
 
-  it("live reads launched, and a passed end reads paused", () => {
+  it("live reads launched, and a passed end reads CLOSED — not paused", () => {
     expect(lifecycleSnapshotFrom(base, t("2026-01-01T12:00:00Z"))).toEqual(snap({ launched: true }));
-    expect(lifecycleSnapshotFrom(base, t("2026-01-03T00:00:00Z"))).toEqual(snap({ launched: true, paused: true }));
+    expect(lifecycleSnapshotFrom(base, t("2026-01-03T00:00:00Z"))).toEqual(snap({ launched: true, closed: true }));
+  });
+
+  it("a passed end wins over a manual freeze, like scoringClosure judges it", () => {
+    expect(lifecycleSnapshotFrom({ ...base, paused: true }, t("2026-01-03T00:00:00Z"))).toEqual(
+      snap({ launched: true, closed: true }),
+    );
   });
 
   it("a manual pause reads paused while live", () => {

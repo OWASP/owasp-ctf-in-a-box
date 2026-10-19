@@ -84,7 +84,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
 - [ADR 67 — A Secure Development solve is timed, and judged, by its score comment](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
 - [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
-- [ADR 70 — Discord announcements are app-scheduled, outbox-delivered, and claim-first](#adr-70-discord-announcements-are-app-scheduled-outbox-delivered-and-claim-first)
+- [ADR 69 — Discord announcements are app-scheduled, outbox-delivered, and claim-first](#adr-69-discord-announcements-are-app-scheduled-outbox-delivered-and-claim-first)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -4215,7 +4215,7 @@ the board shows the challenge on the next read. The reveal script's lock
 keys move from `KEYS[8..]` to `KEYS[9..]`. A future reader of the challenge
 list has to filter, and the source scan says so if it does not.
 
-## ADR 70. Discord announcements are app-scheduled, outbox-delivered, and claim-first
+## ADR 69. Discord announcements are app-scheduled, outbox-delivered, and claim-first
 
 **Context.** Issue #590. Event organizers run their community on Discord:
 first bloods, the event's own launch/pause/resume edges and time-remaining
@@ -4252,18 +4252,29 @@ work an event without the feature must never pay for.
   boolean), never logged, and never audited by value (only "set"/"cleared").
   Everything defaults OFF: a configured webhook turns nothing on by itself.
 
-- **Scheduling is a 30-second observation loop in the app** (started from
+- **Scheduling is an observation loop in the app** (started from
   `instrumentation.ts`, nodejs runtime, unref'd, fire-and-forget), not a
   cron and not the request path. Each tick reads its own configuration
   FIRST, and a box with no webhook or with every switch off ends the tick
   there: one Redis read, no settings read, no state write, no outbox sweep —
-  the default state of an event that never opted in. The config is re-read
+  the default state of an event that never opted in. While the box stays in
+  that state the loop backs off from its 30-second active interval to a
+  much longer one (one config read per backoff period per process), and an
+  armed tick restores the normal interval — an idle box must not hammer
+  Redis from every process, and a config read that FAILS keeps the current
+  interval rather than masquerading as "all off". The config is re-read
   every tick, so an `/admin` change takes effect on the next pass with no
   restart. The observation itself is a plain read of what the event IS —
   launched, paused, where the remaining time stands — compared against what
   was last observed, stored under `ctf:announce:*`; the loop uses only
   connection-free pipeline reads, because a React `cache()` that awaits
-  Next's `connection()` would throw outside a request scope.
+  Next's `connection()` would throw outside a request scope. A passed
+  scoring window is its own observed state (`closed`), never a pause: the
+  channel is never told "paused — submits are on hold until it resumes" at
+  the event's end, where nothing will resume. Remaining-time marks post
+  only while the event is launched and unpaused — a close time with no
+  scoring start (ADR 59) or a manual freeze never announces "time
+  remaining".
 
 - **Dedup is claim-first, and the claims are atomic.** First blood is
   trigger-driven (the submit routes call a non-blocking `notifyFirstBlood`
@@ -4296,17 +4307,22 @@ work an event without the feature must never pay for.
   re-checked at flush time: turning a type off stops its pending posts
   immediately, without draining them.
 
-- **Failure isolation is total on the background path.** Every reader
-  fails toward no-announcement (an unavailable Redis means no post, never a
-  thrown error); background delivery failures — the enqueue, the flush, the
-  retry pass, the ticker's own ticks — are logged through the label-only
-  error helpers and swallowed; the solve routes call the notifier
-  fire-and-forget, so a Discord outage can never fail a solve that already
-  banked; and instrumentation starts the ticker in a try/catch so a boot
-  that cannot load the announcer still serves the event. Admin
-  configuration saves are the deliberate opposite: a config write that
-  fails THROWS and its endpoint answers 503, so an organizer is told their
-  change did not land instead of being left to believe it did.
+- **Failure isolation is total on the background path.** State readers
+  fail toward no-announcement (an unavailable Redis means no post); the
+  config reader is the deliberate exception and THROWS on a failed read —
+  per-command `{ error }` included — because a NOAUTH or a blip read as
+  "all off" would silently disable a configured announcer, so each caller
+  applies its own direction instead (the ticker skips the tick and keeps
+  its cadence, the solve hook posts nothing, the /admin GET answers 503).
+  Background delivery failures — the enqueue, the flush, the retry pass,
+  the ticker's own ticks — are logged through the label-only error helpers
+  and swallowed; the solve routes call the notifier fire-and-forget, so a
+  Discord outage can never fail a solve that already banked; and
+  instrumentation starts the ticker in a try/catch so a boot that cannot
+  load the announcer still serves the event. Admin configuration saves are
+  the deliberate opposite: a config write that fails THROWS and its
+  endpoint answers 503, so an organizer is told their change did not land
+  instead of being left to believe it did.
 
 - **Secrecy is structural, not conventional.** Message builders are pure
   and accept only public metadata (a title, a category, points, a team

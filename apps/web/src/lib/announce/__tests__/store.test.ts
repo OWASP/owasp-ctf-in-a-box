@@ -3,7 +3,7 @@
 // is pinned against a real Redis in announce.upstash.test.ts; here the pipeline
 // is mocked and the POINT is what the store does with each reply — including
 // the two failure directions that matter: a claim failure must not post, and
-// a config read failure must fail open to all-off.
+// a config read failure must THROW (never read as "all off").
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -82,11 +82,24 @@ describe("getAnnounceConfig", () => {
     expect(JSON.stringify(pub)).not.toContain(VALID_URL);
   });
 
-  it("fails OPEN to all-off when the transport throws", async () => {
+  it("THROWS when the transport fails — a failed read is not an all-off box", async () => {
     mocks.upstashPipeline.mockRejectedValue(new Error("boom"));
-    const config = await getAnnounceConfig();
-    expect(config.webhookConfigured).toBe(false);
-    expect(config.firstBlood).toBe(false);
+    await expect(getAnnounceConfig()).rejects.toThrow("boom");
+  });
+
+  it("THROWS on a per-command read error, never reading it as all-off", async () => {
+    // upstashPipeline reports per-command failures positionally as
+    // `{ error }` without throwing (AGENTS.md); a NOAUTH or WRONGTYPE here
+    // must surface as a failure, not silently disable a configured
+    // announcer.
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => (cmd[0] === "HGETALL" ? { error: "NOAUTH Client sent AUTH, but no password is set" } : { result: null })),
+    );
+    await expect(getAnnounceConfig()).rejects.toThrow(/config read failed/);
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => (cmd[0] === "GET" ? { error: "WRONGTYPE Operation against a key holding the wrong kind of value" } : { result: [] })),
+    );
+    await expect(getAnnounceConfig()).rejects.toThrow(/config read failed/);
   });
 });
 

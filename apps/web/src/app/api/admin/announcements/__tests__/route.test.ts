@@ -151,6 +151,18 @@ describe("webhook POST", () => {
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toContain("discord.com");
   });
+
+  it("a failed config read-back does not turn a landed write into a 503", async () => {
+    // setAnnounceWebhook already stored the URL; the follow-up
+    // getAnnounceConfig may still fail — the response must carry the
+    // webhookConfigured flag the WRITE proved, not a 503.
+    mocks.getAnnounceConfig.mockRejectedValue(new Error("redis down"));
+    const res = await WEBHOOK(req("POST", { webhookUrl: URL }, "/api/admin/announcements/webhook"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { webhookConfigured: boolean; config: { webhookConfigured: boolean } };
+    expect(body.webhookConfigured).toBe(true);
+    expect(body.config.webhookConfigured).toBe(true);
+  });
 });
 
 describe("test POST", () => {

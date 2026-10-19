@@ -4,31 +4,34 @@
 // Every effectful decision (claiming, posting, retrying) lives in
 // announce/store.ts and announce/ticker.ts on top of these.
 
-import { outsideScoringWindow, isLaunched } from "@/lib/schedule-window";
+import { outsideScoringWindow, isLaunched, scoringEnded } from "@/lib/schedule-window";
 
 // --- lifecycle state ---------------------------------------------------------
 
-/** The two lifecycle facts the announcer observes: launched, and scoring
- *  paused. */
+/** The lifecycle facts the announcer observes: launched, scoring paused
+ *  (a manual freeze, or the window not yet open), and closed — the scheduled
+ *  scoring END has passed. `closed` is NOT a pause: nothing resumes after it,
+ *  so it is kept distinct rather than being folded into `paused`. */
 export type LifecycleSnapshot = {
   launched: boolean;
   paused: boolean;
+  closed: boolean;
 };
 
-/** The stored pack: `v1|L<0|1>P<0|1>`. Compact, diffable in logs without
- *  carrying anything sensitive, and version-prefixed so a future shape change
- *  reads as "unknown" rather than being misparsed. */
+/** The stored pack: `v1|L<0|1>P<0|1>C<0|1>`. Compact, diffable in logs
+ *  without carrying anything sensitive, and version-prefixed so a future
+ *  shape change reads as "unknown" rather than being misparsed. */
 export function encodeLifecycleState(s: LifecycleSnapshot): string {
-  return `v1|L${s.launched ? 1 : 0}P${s.paused ? 1 : 0}`;
+  return `v1|L${s.launched ? 1 : 0}P${s.paused ? 1 : 0}C${s.closed ? 1 : 0}`;
 }
 
 /** Parses the stored lifecycle pack; any other shape (or a missing value)
  *  reads as "no previous state", so a first tick announces nothing. */
 export function decodeLifecycleState(raw: string | null | undefined): LifecycleSnapshot | null {
   if (typeof raw !== "string") return null;
-  const m = /^v1\|L([01])P([01])$/.exec(raw);
+  const m = /^v1\|L([01])P([01])C([01])$/.exec(raw);
   if (!m) return null;
-  return { launched: m[1] === "1", paused: m[2] === "1" };
+  return { launched: m[1] === "1", paused: m[2] === "1", closed: m[3] === "1" };
 }
 
 /** The lifecycle transitions to announce, as edge pairs (prev → next). Order
@@ -41,18 +44,22 @@ export type LifecycleEdge =
 
 /** The transitions between two lifecycle snapshots, in announcement order.
  *  A missing previous snapshot is read as all-off, so nothing fires on the
- *  very first observation. */
+ *  very first observation. Entering (or leaving) the `closed` state is
+ *  deliberately NOT an edge: the channel must never be told scoring "is
+ *  paused — submits are on hold until it resumes" at the window's end, and a
+ *  window the admin later extends must not announce a phantom "resumed". */
 export function lifecycleEdges(prev: LifecycleSnapshot | null, next: LifecycleSnapshot): LifecycleEdge[] {
-  const before = prev ?? { launched: false, paused: false };
+  const before = prev ?? { launched: false, paused: false, closed: false };
   const edges: LifecycleEdge[] = [];
   if (!before.launched && next.launched) edges.push({ kind: "launch", prev: before, next });
-  if (!before.paused && next.paused && next.launched) edges.push({ kind: "pause", prev: before, next });
-  // `before.launched` is required: a pre-launch snapshot reads "paused"
-  // (the scoring window has not opened), so a plain pause→resume test would
-  // announce a phantom "resumed" alongside every launch. Only a pause that
-  // was observed WHILE live, followed by a resume while still live, is a
-  // resume.
-  if (before.paused && !next.paused && before.launched && next.launched) edges.push({ kind: "resume", prev: before, next });
+  if (!before.paused && next.paused && next.launched && !next.closed) edges.push({ kind: "pause", prev: before, next });
+  // `before.launched` is required: a pause flag carried on a pre-launch
+  // baseline is not a pause this announcer observed WHILE live, so pairing
+  // it with the launch into a "resumed" edge would announce a phantom resume
+  // alongside every launch. Only a pause observed live, followed by a resume
+  // while still live, is a resume — and never out of `closed`, which nothing
+  // resumes from.
+  if (before.paused && !next.paused && before.launched && next.launched && !next.closed) edges.push({ kind: "resume", prev: before, next });
   return edges;
 }
 
@@ -60,8 +67,10 @@ export function lifecycleEdges(prev: LifecycleSnapshot | null, next: LifecycleSn
  *  reads each tick. `paused` deliberately EXCLUDES "not launched": an event
  *  that has not started reads launched=false, paused=false — a pre-launch
  *  "paused" would pair with every launch into a phantom resume edge (see
- *  lifecycleEdges). A live event whose scoring window has not opened or has
- *  passed reads paused=true, same as a manual pause. */
+ *  lifecycleEdges). A live event whose scoring window has not opened reads
+ *  paused=true, same as a manual pause. A PASSED window end is `closed`, not
+ *  paused (nothing resumes after the end), and closed wins over a manual
+ *  freeze the same way `scoringClosure` judges it. */
 export function lifecycleSnapshotFrom(
   settings: {
     scoringStartsAt: string | null;
@@ -71,9 +80,14 @@ export function lifecycleSnapshotFrom(
   nowMs: number,
 ): LifecycleSnapshot {
   const launched = isLaunched(nowMs, settings.scoringStartsAt);
+  const closed = scoringEnded(nowMs, settings.scoringEndsAt);
   return {
     launched,
-    paused: settings.paused || (launched && outsideScoringWindow(nowMs, settings.scoringStartsAt, settings.scoringEndsAt)),
+    closed,
+    paused:
+      !closed &&
+      (settings.paused ||
+        (launched && outsideScoringWindow(nowMs, settings.scoringStartsAt, settings.scoringEndsAt))),
   };
 }
 

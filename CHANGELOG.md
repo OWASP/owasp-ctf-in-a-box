@@ -15,12 +15,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   (stored in its own Redis key, never returned by any API, never logged, and
   audited only as "set"/"cleared") and opt each announcement in separately —
   first blood, event launch, scoring paused/resumed, and remaining-time
-  checks at organizer-set marks. Nothing posts by default: a 30-second
-  observation loop reads its config first and ends the tick there for a box
-  with no webhook or every announcement off (one Redis read, nothing else),
-  lifecycle edges go through an atomic compare-and-swap so exactly one
-  replica announces each edge — and the first observation a box makes seeds
-  silently, so configuring a webhook never replays history — first blood is
+  checks at organizer-set marks — the time checks only while the event is
+  live and unpaused, and never after the scoring window closes. Nothing
+  posts by default: an observation loop reads its config first and ends the
+  tick there for a box with no webhook or every announcement off (one Redis
+  read, and the loop backs off to a much longer interval while the box
+  stays unconfigured), lifecycle edges go through an atomic
+  compare-and-swap so exactly one replica announces each edge — and the
+  first observation a box makes seeds silently, so configuring a webhook
+  never replays history — first blood is
   claimed atomically at solve time (a box that is off never claims, so
   enabling later cannot replay it), and marks claim every crossed time in
   one pass while posting at most one check, so a restart or a mid-event
@@ -34,7 +37,7 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   flag, answer or hint can reach a message, because the builders only
   accept public metadata. A Send test and per-type previews are in the
   section; the master reset wipes the announcement state but keeps the
-  webhook setup (ADR 70).
+  webhook setup (ADR 69).
 - **Fixed: VAmPI's Unauthorized Password Change could score on the stock app
   (#661).** VAmPI's `/createdb` commits its seed users one at a time, and a
   test that ran between `name1` and `name2` got `400 User Not Found` for the

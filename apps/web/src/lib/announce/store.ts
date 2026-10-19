@@ -15,9 +15,12 @@
 //      this transition" an atomic decision (compare observed pack, swap to
 //      next pack, bump the seq id) rather than a read-modify-write race.
 //
-// Fail directions, uniformly: every reader here FAILS OPEN (an unavailable
-// Redis means no announcement, never a thrown error that could take a
-// contestant-facing request down with it); every writer reports its failure
+// Fail directions, deliberately split: every STATE reader here FAILS OPEN
+// (an unavailable Redis means no announcement, never a thrown error that
+// could take a contestant-facing request down with it), while the CONFIG
+// reader THROWS — a config read that fails is a store failure, not an
+// "all off" box, and reading it as one would silently disable a configured
+// announcer (and back its idle ticker off); every writer reports its failure
 // to the caller and logs a label only, never a value, because the values
 // here include the webhook URL.
 
@@ -60,32 +63,40 @@ export class AnnounceValidationError extends Error {
 
 /** Reads the config + webhook in ONE pipeline, then merges the switches over
  *  the defaults. An absent hash means all-off — configuring nothing IS the
- *  default state, so the announcer never runs unasked. */
+ *  default state, so the announcer never runs unasked. A FAILED read THROWS
+ *  — both a transport failure and a per-command `{ error }` (a NOAUTH or
+ *  WRONGTYPE is a store failure, never a box that chose "all off"; reading
+ *  it as one would silently disable a configured announcer and back its
+ *  idle ticker off). Callers apply their own fail direction: the ticker
+ *  skips the tick and keeps its cadence, the first-blood hook posts
+ *  nothing, the flushes deliver nothing, the /admin GET answers 503. The
+ *  thrown message carries a LABEL only — never a value; the values here
+ *  include the webhook URL. */
 export async function getAnnounceConfig(timeoutMs?: number): Promise<DiscordFullConfig> {
-  try {
-    const [cfgRes, urlRes] = await upstashPipeline([
-      ["HGETALL", DISCORD_CONFIG_KEY],
-      ["GET", DISCORD_WEBHOOK_KEY],
-    ], timeoutMs === undefined ? undefined : { timeoutMs });
-    const flat = Array.isArray(cfgRes.result) ? (cfgRes.result as string[]) : [];
-    const raw: Record<string, string> = {};
-    for (let i = 0; i < flat.length; i += 2) {
-      if (typeof flat[i] === "string" && typeof flat[i + 1] === "string") raw[flat[i]] = flat[i + 1];
-    }
-    const webhookUrl = typeof urlRes.result === "string" && urlRes.result !== "" ? urlRes.result : null;
-    return {
-      webhookConfigured: webhookUrl !== null,
-      firstBlood: raw.firstBlood === "1",
-      launch: raw.launch === "1",
-      pause: raw.pause === "1",
-      milestones: raw.milestones === "1",
-      marks: typeof raw.marks === "string" ? raw.marks : DISCORD_DEFAULTS.marks,
-      webhookUrl,
-    };
-  } catch (err) {
-    console.error("[announce] config read failed:", adminErrorLabel(err));
-    return { ...DISCORD_DEFAULTS, webhookConfigured: false, webhookUrl: null };
+  const [cfgRes, urlRes] = await upstashPipeline([
+    ["HGETALL", DISCORD_CONFIG_KEY],
+    ["GET", DISCORD_WEBHOOK_KEY],
+  ], timeoutMs === undefined ? undefined : { timeoutMs });
+  if (cfgRes.error || urlRes.error) {
+    // Thrown by LABEL only — never a value; the values here include the
+    // webhook URL. Every caller logs (or answers 503) with its own context.
+    throw new Error(`announce config read failed: ${cfgRes.error ?? urlRes.error}`);
   }
+  const flat = Array.isArray(cfgRes.result) ? (cfgRes.result as string[]) : [];
+  const raw: Record<string, string> = {};
+  for (let i = 0; i < flat.length; i += 2) {
+    if (typeof flat[i] === "string" && typeof flat[i + 1] === "string") raw[flat[i]] = flat[i + 1];
+  }
+  const webhookUrl = typeof urlRes.result === "string" && urlRes.result !== "" ? urlRes.result : null;
+  return {
+    webhookConfigured: webhookUrl !== null,
+    firstBlood: raw.firstBlood === "1",
+    launch: raw.launch === "1",
+    pause: raw.pause === "1",
+    milestones: raw.milestones === "1",
+    marks: typeof raw.marks === "string" ? raw.marks : DISCORD_DEFAULTS.marks,
+    webhookUrl,
+  };
 }
 
 /** The client-safe half — the webhook URL is NOT destructured and dropped,
@@ -148,9 +159,17 @@ export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPa
   }
   // The response is the fresh read with this patch overlaid: the overlay
   // makes the returned config reflect what the caller just saved even if the
-  // read back fails (getAnnounceConfig fails open to all-off), so a successful
-  // save is never reported to the admin panel as "everything switched off".
-  const current = await getAnnounceConfig();
+  // read back FAILS (getAnnounceConfig throws on a failed read), so a
+  // successful save is never turned into a 503 — the write already landed.
+  // The panel takes only the keys this patch wrote, so the fallback's
+  // unknown fields are never displayed.
+  let current: DiscordFullConfig;
+  try {
+    current = await getAnnounceConfig();
+  } catch (err) {
+    console.error("[announce] config read-back failed after save:", adminErrorLabel(err));
+    current = { ...DISCORD_DEFAULTS, webhookConfigured: false, webhookUrl: null };
+  }
   return publicConfig({ ...current, ...changed });
 }
 

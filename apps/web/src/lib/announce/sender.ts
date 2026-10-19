@@ -15,7 +15,7 @@
 // delivers). Delivery is AT-LEAST-ONCE — a POST that succeeds but whose
 // `sent` write is lost will be retried — which is the right direction for
 // announcements (a rare duplicate beats a silent drop) and is recorded as
-// such in ADR 70.
+// such in ADR 69.
 //
 // The kind switch is checked at BOTH ends: at enqueue (the common case — a
 // tick that would generate a disabled kind never writes an entry) and at

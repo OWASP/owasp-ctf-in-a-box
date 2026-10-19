@@ -1,5 +1,6 @@
-// The 30s observation loop (#590): the opt-in gate first (one config read
-// for an unconfigured or all-off box), then the lifecycle CAS announcing
+// The observation loop (#590): the opt-in gate first (one config read
+// for an unconfigured or all-off box, which also reports the idle/backoff
+// cadence), then the lifecycle CAS announcing
 // exactly the edges this replica won, and the mark claims posting a single
 // time check. Store and sender mocked; the schedule-window and detect logic
 // they exercise is real.
@@ -107,7 +108,7 @@ describe("lifecycle tick", () => {
   it("seeds the first observation silently (CAS code 2) and announces nothing", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v1|L1P0");
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v1|L1P0C0");
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
 
@@ -116,18 +117,31 @@ describe("lifecycle tick", () => {
     // The observation is a LIVE event under a manual pause; the stored pack
     // is the un-paused one this replica last saw, so the CAS is ours to win.
     mocks.getAdminSettings.mockResolvedValue(settings({ paused: true }));
-    mocks.readStatePack.mockResolvedValue("v1|L1P0");
-    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L1P0" });
+    mocks.readStatePack.mockResolvedValue("v1|L1P0C0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L1P0C0" });
     await runAnnounceTick(T0);
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("pause", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring is paused" })] }));
   });
 
   it("announces the launch edge when this replica wins it", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
-    mocks.readStatePack.mockResolvedValue("v1|L0P0");
-    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L0P0" });
+    mocks.readStatePack.mockResolvedValue("v1|L0P0C0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L0P0C0" });
     await runAnnounceTick(T0);
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("launch", expect.objectContaining({ embeds: [expect.objectContaining({ title: "The event is live!" })] }));
+  });
+
+  it("the window closing advances the state but announces nothing — no pause at the end", async () => {
+    // The stored pack is the live, unpaused one; the window end has since
+    // passed. The snapshot flips to closed — announcing "paused … until it
+    // resumes" here would promise a resume that can never come.
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true, pause: true }));
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringEndsAt: "2026-10-14T11:30:00Z" }));
+    mocks.readStatePack.mockResolvedValue("v1|L1P0C0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L1P0C0" });
+    await runAnnounceTick(T0);
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v1|L1P0C0", "v1|L1P0C1");
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
 
   it("advances the state but posts nothing when the edge's switch is off", async () => {
@@ -135,8 +149,8 @@ describe("lifecycle tick", () => {
     // real transition this replica must record, but it must not post.
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true, pause: false }));
     mocks.getAdminSettings.mockResolvedValue(settings({ paused: true }));
-    mocks.readStatePack.mockResolvedValue("v1|L1P0");
-    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L1P0" });
+    mocks.readStatePack.mockResolvedValue("v1|L1P0C0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v1|L1P0C0" });
     await runAnnounceTick(T0);
     expect(mocks.stateCompareSet).toHaveBeenCalled();
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
@@ -170,6 +184,25 @@ describe("milestones tick", () => {
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledTimes(1);
   });
 
+  it("claims nothing before launch — a close time with no start must never announce", async () => {
+    // Not launched (ADR 59: no scoringStartsAt), close time set and a mark
+    // already crossed. The channel must not get "Time remaining" for an
+    // event that never opened.
+    mocks.getAnnounceConfig.mockResolvedValue(config({ milestones: true, marks: "30m" }));
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: null, scoringEndsAt: "2026-10-14T12:20:00Z" }));
+    await runAnnounceTick(T0);
+    expect(mocks.claimLedgerFields).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("claims nothing while scoring is manually paused", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ milestones: true, marks: "30m" }));
+    mocks.getAdminSettings.mockResolvedValue(settings({ paused: true, scoringEndsAt: "2026-10-14T12:20:00Z" }));
+    await runAnnounceTick(T0);
+    expect(mocks.claimLedgerFields).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
   it("claims nothing while the switch is off — and a first-blood-only box never even reads settings", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ firstBlood: true, milestones: false, marks: "30m" }));
     mocks.getAdminSettings.mockResolvedValue(settings({ scoringEndsAt: "2026-10-14T12:20:00Z" }));
@@ -190,8 +223,28 @@ describe("milestones tick", () => {
     mocks.readStatePack.mockResolvedValue(null);
     mocks.stateCompareSet.mockResolvedValue({ code: 2, seq: 1, prev: "" });
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v1|L0P1");
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v1|L0P1C0");
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
     expect(mocks.claimLedgerFields).not.toHaveBeenCalled();
+  });
+});
+
+describe("tick cadence", () => {
+  it("an unconfigured or all-off box reports the idle (backoff) cadence", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ webhookConfigured: false, launch: true }));
+    expect(await runAnnounceTick(T0)).toBe("idle");
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: false, pause: false, firstBlood: false, milestones: false }));
+    expect(await runAnnounceTick(T0)).toBe("idle");
+  });
+
+  it("an armed box reports the active cadence", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
+    expect(await runAnnounceTick(T0)).toBe("active");
+  });
+
+  it("a FAILED config read reports 'unknown' — a blip must not back off a configured box", async () => {
+    mocks.getAnnounceConfig.mockRejectedValue(new Error("redis down"));
+    expect(await runAnnounceTick(T0)).toBe("unknown");
+    expectConfigReadOnly();
   });
 });

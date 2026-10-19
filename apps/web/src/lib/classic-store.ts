@@ -969,6 +969,11 @@ export async function getViewerClassic(login: string): Promise<ViewerClassic> {
     ["HGETALL", solvesKey(login)],
     ["HGETALL", attemptsKey(login)],
   ]);
+  // `upstashPipeline` reports a per-command failure as a VALUE rather than a
+  // throw; folding it as empty data would tell the board the contestant has no
+  // solves or attempts, including no cooldown.
+  const failed = [solvesRes, attemptsRes].find((res) => res.error);
+  if (failed) throw new Error(`classic viewer read failed: ${failed.error}`);
   return {
     solved: parseHashEntries(solvesRes.result, extractSolve),
     attempts: parseHashEntries(attemptsRes.result, extractAttempt),

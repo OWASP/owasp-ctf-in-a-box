@@ -15,6 +15,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   An unset or empty exported value falls back to the file, as in `ctf-setup.sh`.
   Stacks without Secure Development do not read the file; dry runs still make
   no Docker, AWS or Terraform calls.
+- **Fixed: a failed classic progress read no longer looks like an empty
+  record (#642).** `getViewerClassic` now checks the per-command errors
+  `upstashPipeline` returns instead of parsing them as empty solve and
+  attempt hashes, so a `NOAUTH` or `WRONGTYPE` read fails loudly rather than
+  telling the flags board a contestant has solved nothing and is outside
+  every cooldown.
 - **Fixed: repeated Redis SCAN keys no longer duplicate leaderboard teams.**
   The scorer and web app preserve the first occurrence of each team slug
   before reading its name and members, keeping one ranked row per team and

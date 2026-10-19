@@ -557,6 +557,14 @@ describe("getViewerClassic", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: [] }, { result: [] }]);
     expect(await getViewerClassic("alice")).toEqual({ solved: {}, attempts: {} });
   });
+
+  it.each([
+    ["solves", [{ error: "NOAUTH Authentication required." }, { result: [] }]],
+    ["attempts", [{ result: [] }, { error: "WRONGTYPE" }]],
+  ])("rejects when the %s read fails instead of returning it as empty", async (_name, replies) => {
+    mocks.upstashPipeline.mockResolvedValueOnce(replies);
+    await expect(getViewerClassic("alice")).rejects.toThrow(/classic viewer read failed/);
+  });
 });
 
 describe("getSolveCounts", () => {

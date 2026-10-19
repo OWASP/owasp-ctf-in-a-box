@@ -109,7 +109,8 @@ placeholder is refused at plan time with a sentence naming `deploy.sh`.
 Afterwards a redeploy is one command:
 
 ```sh
-./deploy.sh --apply        # reads SCORE_IMAGE from the repo-root .env
+# Falls back to the repo-root .env when exported SCORE_IMAGE is unset or empty.
+./deploy.sh --apply
 ```
 
 **`deploy.sh` publishes every image the stack runs** into the stack's own ECR

@@ -10,6 +10,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: a failed classic progress read no longer looks like an empty
+  record (#642).** `getViewerClassic` now checks the per-command errors
+  `upstashPipeline` returns instead of parsing them as empty solve and
+  attempt hashes, so a `NOAUTH` or `WRONGTYPE` read fails loudly rather than
+  telling the flags board a contestant has solved nothing and is outside
+  every cooldown.
 - **Fixed: an event-archive import preserves the AI launch keypair (#653).**
   Importing an archive replaces the challenge catalogue but no longer rotates
   `ctf:ai:launchkey`. Archive imports preserve the published key, as promised

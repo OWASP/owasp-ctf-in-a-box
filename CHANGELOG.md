@@ -12,10 +12,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 - **Fixed: an event-archive import preserves the AI launch keypair (#653).**
   Importing an archive replaces the challenge catalogue but no longer rotates
-  `ctf:ai:launchkey` — it is the module's published identity, so rotating it
-  would break every deployed external verifier and invalidate live launch
-  tokens (ADR 53), the same reason `clearAiChallenges` leaves it alone. An
-  ordinary master reset still rotates the key.
+  `ctf:ai:launchkey`. Archive imports preserve the published key, as promised
+  by ADR 53 and the `importEvent` comment. An ordinary master reset still
+  rotates it.
 - **Fixed: VAmPI's Unauthorized Password Change could score on the stock app
   (#661).** VAmPI's `/createdb` commits its seed users one at a time, and a
   test that ran between `name1` and `name2` got `400 User Not Found` for the

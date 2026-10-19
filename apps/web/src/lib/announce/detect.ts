@@ -48,14 +48,20 @@ export function decodeLifecycleState(raw: string | null | undefined): LifecycleS
 /** Whether the state to STORE carries an announced pause. Carried forward for
  *  a pause that is still held (so a pause announced live stays announced
  *  across a close and a window extension), and set only when a pause edge
- *  fires — never for a pause born while closed. A missing previous state
- *  (first observation, post-reset, or the old `v1` pack) reads as false:
- *  nothing predating the first observation is announced. */
+ *  fires — live, or at launch for an event that starts already paused —
+ *  never for a pause born while closed. A missing previous state (first
+ *  observation, post-reset, or the old `v1` pack) reads as false: nothing
+ *  predating the first observation is announced. */
 export function announcedLifecyclePause(prev: LifecycleSnapshot | null, next: LifecycleSnapshot): boolean {
   if (!next.paused) return false;
   if (!prev) return false;
   if (prev.paused && prev.announced) return true;
-  return !prev.paused && next.launched && !next.closed;
+  if (!next.launched || next.closed) return false;
+  // Launching already paused is a pause edge even though `prev.paused` was
+  // already true: the pre-launch hold was never announced, so the launch is
+  // the first moment it can be.
+  if (!prev.launched) return true;
+  return !prev.paused;
 }
 
 /** The lifecycle transitions to announce, as edge pairs (prev → next). Order
@@ -74,12 +80,18 @@ export type LifecycleEdge =
  *  window the admin later extends must not announce a phantom "resumed".
  *  A pause while `closed` is not an edge either (next.closed suppresses it);
  *  because the real paused bit is carried across the close, a later
- *  extension reopens the same hold without re-announcing the freeze. */
+ *  extension reopens the same hold without re-announcing the freeze.
+ *  An event that launches already paused gets BOTH edges, launch first: the
+ *  hold is only announceable once the event is live. */
 export function lifecycleEdges(prev: LifecycleSnapshot | null, next: LifecycleSnapshot): LifecycleEdge[] {
   const before = prev ?? { launched: false, paused: false, closed: false, announced: false };
   const edges: LifecycleEdge[] = [];
   if (!before.launched && next.launched) edges.push({ kind: "launch", prev: before, next });
-  if (!before.paused && next.paused && next.launched && !next.closed) edges.push({ kind: "pause", prev: before, next });
+  // `!before.launched` is the launch-while-paused case: the pre-launch hold
+  // becomes announceable at launch even though the paused bit was already set.
+  if (next.paused && next.launched && !next.closed && (!before.paused || !before.launched)) {
+    edges.push({ kind: "pause", prev: before, next });
+  }
   // `before.launched` is required: a pause flag carried on a pre-launch
   // baseline is not a pause this announcer observed WHILE live, so pairing
   // it with the launch into a "resumed" edge would announce a phantom resume

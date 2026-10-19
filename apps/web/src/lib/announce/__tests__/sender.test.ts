@@ -183,4 +183,23 @@ describe("flushRetries", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mocks.outboxComplete).toHaveBeenCalledWith("9", "sent");
   });
+
+  it("delivers a pending entry stranded by a restart or interrupted flush", async () => {
+    // Seeded straight into the outbox, never through enqueueAnnouncement, so
+    // this process has no local queue id and no coalescing timer to rely on.
+    mocks.outboxPending.mockResolvedValue([{ id: "p1", entry: entry("launch", "pending") }]);
+    await flushRetries();
+    expect(mocks.outboxClaimLease).toHaveBeenCalledWith("p1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("p1", "sent");
+  });
+
+  it("delivers an id once even if both sweeps return it", async () => {
+    mocks.outboxPending.mockResolvedValue([{ id: "same", entry: entry("launch", "pending") }]);
+    mocks.outboxRetryable.mockResolvedValue([{ id: "same", entry: entry("launch", "failed", 1) }]);
+    await flushRetries();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.outboxComplete).toHaveBeenCalledTimes(1);
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("same", "sent");
+  });
 });

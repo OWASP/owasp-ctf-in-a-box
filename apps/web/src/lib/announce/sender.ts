@@ -165,9 +165,10 @@ export async function flush(): Promise<void> {
   }
 }
 
-/** The ticker's retry pass: re-deliver `failed` entries that still have
- *  attempts remaining. Same lease + pack + kind-filter discipline as
- *  `flush`, so a retry and a fresh flush can never both deliver. */
+/** The ticker's sweep: re-deliver `failed` entries that still have attempts
+ *  remaining AND `pending` entries stranded by a restart or an interrupted
+ *  flush. Same lease + pack + kind-filter discipline as `flush`, so a retry
+ *  and a fresh flush can never both deliver. */
 export async function flushRetries(): Promise<void> {
   if (flushing) return;
   flushing = true;
@@ -176,9 +177,17 @@ export async function flushRetries(): Promise<void> {
     if (!config.webhookConfigured) return;
     const url = await getWebhookUrl();
     if (!url) return;
-    const retryable = await outboxRetryable();
+    const [pending, retryable] = await Promise.all([outboxPending(), outboxRetryable()]);
+    // One id can only have one status, but dedupe anyway so a store change
+    // (or a concurrent status flip) cannot put the same announcement in two
+    // batches of one pass.
+    const byId = new Map<string, { id: string; entry: OutboxEntry }>();
+    for (const item of [...pending, ...retryable]) {
+      if (!byId.has(item.id)) byId.set(item.id, item);
+    }
+    const candidates = [...byId.values()].sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at));
     const deliverable: { id: string; entry: OutboxEntry }[] = [];
-    for (const item of retryable) {
+    for (const item of candidates) {
       if (!kindEnabled(config, item.entry.kind)) {
         await outboxComplete(item.id, "skipped");
         continue;

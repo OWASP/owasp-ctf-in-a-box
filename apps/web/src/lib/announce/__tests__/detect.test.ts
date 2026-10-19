@@ -136,6 +136,33 @@ describe("lifecycleEdges", () => {
     expect(lifecycleEdges(extended, unfrozen).map((e) => e.kind)).toEqual([]);
   });
 
+  it("launching while already paused announces launch then pause, and resumes once (#590)", () => {
+    // A manual freeze set before the start: the pre-launch snapshot carries
+    // the real paused bit but nothing was announced, so the launch is the
+    // first moment the hold can be announced. The pause edge must still fire
+    // even though the paused bit was already set pre-launch.
+    const base = { scoringStartsAt: "2026-01-01T00:00:00Z", scoringEndsAt: "2026-01-02T00:00:00Z", paused: true };
+    const pre = advance(null, base, Date.parse("2025-12-31T12:00:00Z"));
+    const launched = advance(pre, base, Date.parse("2026-01-01T12:00:00Z"));
+    expect([pre.launched, pre.paused, pre.announced]).toEqual([false, true, false]);
+    expect([launched.launched, launched.paused, launched.announced]).toEqual([true, true, true]);
+    expect(lifecycleEdges(pre, launched).map((e) => e.kind)).toEqual(["launch", "pause"]);
+    // A second tick on the same state is not another edge.
+    expect(lifecycleEdges(launched, launched).map((e) => e.kind)).toEqual([]);
+
+    const unpaused = advance(launched, { ...base, paused: false }, Date.parse("2026-01-01T12:00:00Z"));
+    expect([unpaused.paused, unpaused.announced]).toEqual([false, false]);
+    expect(lifecycleEdges(launched, unpaused).map((e) => e.kind)).toEqual(["resume"]);
+  });
+
+  it("a launch past the end announces only launch, never a pause while closed (#590)", () => {
+    const base = { scoringStartsAt: "2026-01-01T00:00:00Z", scoringEndsAt: "2026-01-02T00:00:00Z", paused: true };
+    const pre = advance(null, base, Date.parse("2025-12-31T12:00:00Z"));
+    const past = advance(pre, base, Date.parse("2026-01-03T00:00:00Z"));
+    expect([past.launched, past.closed, past.paused, past.announced]).toEqual([true, true, true, false]);
+    expect(lifecycleEdges(pre, past).map((e) => e.kind)).toEqual(["launch"]);
+  });
+
   it("an announced freeze still resumes after a close and a window extension (#590)", () => {
     // The contrast case: the freeze happened while LIVE and was announced, so
     // the same close/extend/unfreeze path must still post exactly one resume.

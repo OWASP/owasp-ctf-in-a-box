@@ -10,6 +10,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: the scorer's unreachable-target early-abort test no longer flakes
+  under CPU load (#643).** `runExec` now also returns `spawned`, the number of
+  probes it actually launched — counted at the spawn decision, not by a marker
+  the child writes after `node --test` boots. Under load a child can be reaped
+  by its 300 ms safety kill before it runs a line, so the child-marker
+  spawn-count assertion ("expected exactly 2 children spawned before abort
+  armed") undercounted and failed intermittently; the abort gate itself was
+  already deterministic. The elapsed-time assertion never failed and keeps its
+  loose sanity bound; the test's behavioral assertions are unchanged, and a
+  probe the gate skips is still never counted.
 - **Fixed: Jeopardy imports enforce the combined category limit.** A bundle
   that would take the board above 50 categories is rejected before any writes,
   preserving existing challenges, flags, hints, stories and attachments.

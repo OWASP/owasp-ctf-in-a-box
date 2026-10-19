@@ -15,6 +15,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   An unset or empty exported value falls back to the file, as in `ctf-setup.sh`.
   Stacks without Secure Development do not read the file; dry runs still make
   no Docker, AWS or Terraform calls.
+- **Fixed: repeated Redis SCAN keys no longer duplicate leaderboard teams.**
+  The scorer and web app preserve the first occurrence of each team slug
+  before reading its name and members, keeping one ranked row per team and
+  one scorer history series. Individual points and team solve unions are
+  unchanged.
 - **Fixed: an event-archive import preserves the AI launch keypair (#653).**
   Importing an archive replaces the challenge catalogue but no longer rotates
   `ctf:ai:launchkey`. Archive imports preserve the published key, as promised

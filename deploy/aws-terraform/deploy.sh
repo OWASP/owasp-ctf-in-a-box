@@ -42,7 +42,7 @@ DRY_RUN=""
 SKIP_BUILD=""
 APPLY=""
 # SCORE_IMAGE is the one name this kit has for "the scorer image".
-# --scorer-source overrides the shell; an unset shell value falls back to
+# --scorer-source overrides the shell; an unset or empty shell value falls back to
 # the repo-root .env only when the stack needs a scorer.
 SCORER_SOURCE="${SCORE_IMAGE:-}"
 
@@ -57,8 +57,8 @@ created, and writes the resulting refs to image.auto.tfvars.
 
 --scorer-source  the scorer image to mirror, e.g.
                  ghcr.io/<your-event-org>/score:latest. Defaults to exported
-                 SCORE_IMAGE (even empty), then SCORE_IMAGE in the repo-root
-                 .env when unset. Required when the stack runs Secure
+                 non-empty SCORE_IMAGE, then SCORE_IMAGE in the repo-root
+                 .env when unset or empty. Required when the stack runs Secure
                  Development; ignored otherwise. The package is private: log
                  docker in to its registry first.
 --apply          also runs `terraform apply` once the images are pushed.
@@ -285,7 +285,7 @@ if [ -n "$SCORER_REPO_URL" ]; then
 fi
 
 # Terraform owns module availability; a quiz-only deploy ignores scorer config.
-if [ -n "$SECDEV" ] && [ -z "$SCORER_SOURCE" ] && [ "${SCORE_IMAGE+x}" != x ]; then
+if [ -n "$SECDEV" ] && [ -z "$SCORER_SOURCE" ]; then
   SCORER_SOURCE="$(dotenv_get "$ROOT/.env" SCORE_IMAGE)" || exit 1
 fi
 
@@ -296,7 +296,7 @@ if [ -n "$SECDEV" ] && [ -z "$SCORER_SOURCE" ]; then
     echo "FAIL: this stack runs Secure Development, so the scorer image has to be" >&2
     echo "      mirrored into its ECR repository, and nothing names the source." >&2
     echo "      Pass --scorer-source <image>, export SCORE_IMAGE, or set it in" >&2
-    echo "      the repo-root .env (an exported empty value overrides the file), e.g." >&2
+    echo "      the repo-root .env (an unset or empty export falls back to it), e.g." >&2
     echo "      ghcr.io/<your-event-org>/score:latest. Log docker in to that" >&2
     echo "      registry first: the package is private." >&2
     exit 1

@@ -38,12 +38,12 @@ setup() {
   done
 
   PATH="$STUBS:$PATH"
-  # Tests using the checkout must not read the developer's own .env.
-  export SCORE_IMAGE=""
+  unset SCORE_IMAGE
 }
 
 @test "--dry-run makes no docker, aws or terraform call at all" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   # The whole point: a preview that shells out is not a preview. An empty log
   # is the assertion, so it has to be the last statement.
@@ -53,8 +53,9 @@ setup() {
 @test "no config file is required — deploy.sh runs with none present" {
   # The old behavior refused to run without event.yaml. Config v2 removed
   # that file from the repo entirely, so the script must not look for one.
-  [ ! -f "$ROOT/event.yaml" ]
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  [ ! -f "$repo/event.yaml" ]
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
 }
 
@@ -65,7 +66,8 @@ setup() {
 }
 
 @test "the docker build passes no EVENT_CONFIG_B64 build arg" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   # A regression here is silent otherwise: an image built with a stray
   # EVENT_CONFIG_B64 would just be an image with an ignored build arg, not an
@@ -74,10 +76,11 @@ setup() {
 }
 
 @test "the tag no longer depends on any config, only the revision" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   first="$(echo "$output" | sed -n 's/.*app_image = "\(.*\)".*/\1/p' | tail -1)"
-  run "$SCRIPT" --dry-run
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   second="$(echo "$output" | sed -n 's/.*app_image = "\(.*\)".*/\1/p' | tail -1)"
   # Idempotence: the same inputs (there is only the revision now) must produce
@@ -86,8 +89,8 @@ setup() {
   [ -n "$first" ] && [ "$first" = "$second" ]
 }
 
-# A throwaway repository, so the dirty-tree tests can dirty a build-context
-# file without touching the checkout the suite is running in. deploy.sh derives
+# A throwaway repository keeps dotenv reads and dirty-tree changes away from
+# the checkout the suite is running in. deploy.sh derives
 # its ROOT from its own location, so the copy has to sit at the same depth.
 fake_repo() {
   local repo="$BATS_TEST_TMPDIR/${1:-repo}"
@@ -208,7 +211,8 @@ me"
 }
 
 @test "the dry-run registry placeholder cannot be mistaken for a real one" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   # A preview that printed a plausible account id would be worse than one that
   # obviously did not consult the stack.
@@ -222,7 +226,8 @@ me"
 }
 
 @test "the build passes the /health build args" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   # Without these the deployed box reports revision "unknown" from /health and
   # "did my fix reach it?" has no answer — the gap #327 and #328 closed for the
@@ -303,7 +308,8 @@ EOF
 }
 
 @test "the app build targets linux/amd64 with no attestation manifests" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   # Fargate runs X86_64 (stack.tftest.hcl asserts that half); an Apple Silicon
   # build without --platform is arm64 and dies with an exec format error.
@@ -395,15 +401,14 @@ EOF
   grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:v9" "$CALLS"
 }
 
-@test "an explicitly empty exported SCORE_IMAGE does not fall back to .env" {
+@test "an explicitly empty exported SCORE_IMAGE falls back to .env" {
   repo="$(fake_repo)"
   applied_stack_stubs 1
   printf 'SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:from-file\n' > "$repo/.env"
   SCORE_IMAGE="" run "$repo/deploy/aws-terraform/deploy.sh"
-  [ "$status" -ne 0 ]
-  echo "$output" | grep -q 'nothing names the source'
-  [ ! -f "$repo/deploy/aws-terraform/image.auto.tfvars" ]
-  [ -z "$(grep '^docker ' "$CALLS")" ]
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:from-file" "$CALLS"
 }
 
 @test "a missing or empty .env scorer source is refused on a Secure Development stack" {

@@ -11,9 +11,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 ### Changes
 
 - **Fixed: AWS deploy reads `SCORE_IMAGE` from the repo-root `.env` (#593).**
-  `--scorer-source` and exported `SCORE_IMAGE` still take precedence, including
-  an explicitly empty exported value. Stacks without Secure Development do
-  not read the file; dry runs still make no Docker, AWS or Terraform calls.
+  `--scorer-source` and non-empty exported `SCORE_IMAGE` take precedence.
+  An unset or empty exported value falls back to the file, as in `ctf-setup.sh`.
+  Stacks without Secure Development do not read the file; dry runs still make
+  no Docker, AWS or Terraform calls.
 - **Fixed: an event-archive import preserves the AI launch keypair (#653).**
   Importing an archive replaces the challenge catalogue but no longer rotates
   `ctf:ai:launchkey`. Archive imports preserve the published key, as promised

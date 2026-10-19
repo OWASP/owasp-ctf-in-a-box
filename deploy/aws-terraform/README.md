@@ -227,9 +227,9 @@ build an image, which is why this is a script and not an `apply` (#476):
   same artifact the forks' judge pulls. Its package is private by contract
   (`ctf-setup.sh` keeps it so until launch), and Fargate cannot pull it, so
   `deploy.sh` copies it into this stack's `<name>-scorer` repository.
-  `--scorer-source` overrides exported `SCORE_IMAGE`, which overrides
+  `--scorer-source` overrides non-empty exported `SCORE_IMAGE`, which overrides
   `SCORE_IMAGE` in the repo-root `.env` (independent of the working directory).
-  An exported empty value overrides the file too; unset it to use `.env`.
+  An unset or empty exported value falls back to `.env`, as in `ctf-setup.sh`.
   The shared reader accepts literal quoted values and refuses unsupported
   interpolation or an unreadable file; it never executes `.env`. A missing
   file does not itself fail parsing, but a Secure Development deploy still

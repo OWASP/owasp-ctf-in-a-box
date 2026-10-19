@@ -116,12 +116,11 @@ Afterwards a redeploy is one command:
 repositories and writes their refs into `image.auto.tfvars` (#476). It builds
 the app from the repo root with `-f apps/web/Dockerfile`, and sync from
 `./sync`. It **mirrors** the scorer: it pulls `--scorer-source`, then tags
-and pushes it. The source defaults to exported `SCORE_IMAGE`, or, when that
-variable is unset, `SCORE_IMAGE` in the repo-root `.env` (independent of the
-working directory). An explicitly empty exported value overrides the file;
-unset it to use the file. `--scorer-source` wins over both. The shared reader
-accepts literal quoted values and refuses unsupported interpolation or an
-unreadable file; it never executes `.env`. A missing file does not itself
+and pushes it. The source defaults to non-empty exported `SCORE_IMAGE`, or,
+when that variable is unset or empty, `SCORE_IMAGE` in the repo-root `.env`
+(independent of the working directory). `--scorer-source` wins over both.
+The shared reader accepts literal quoted values and refuses unsupported
+interpolation or an unreadable file; it never executes `.env`. A missing file does not itself
 fail parsing, but a Secure Development deploy still requires a scorer source.
 Stacks without Secure Development ignore this setting and do not read `.env`.
 Fargate

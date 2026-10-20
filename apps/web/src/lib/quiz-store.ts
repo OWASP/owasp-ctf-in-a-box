@@ -515,6 +515,11 @@ export async function getViewerQuiz(login: string): Promise<ViewerQuiz> {
     ["HGETALL", answersKey(login)],
     ["HGETALL", attemptsKey(login)],
   ]);
+  // `upstashPipeline` reports a per-command failure as a VALUE rather than a
+  // throw; folding it as empty data would tell the board the contestant has
+  // answered nothing and has no cooldown.
+  const failed = [answeredRes, attemptsRes].find((res) => res.error);
+  if (failed) throw new Error(`quiz viewer read failed: ${failed.error}`);
   return {
     answered: parseHashEntries(answeredRes.result, extractAnswered),
     attempts: parseHashEntries(attemptsRes.result, extractAttempt),

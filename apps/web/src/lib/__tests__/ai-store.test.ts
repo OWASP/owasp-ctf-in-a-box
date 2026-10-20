@@ -499,6 +499,14 @@ describe("getViewerAi", () => {
     ]);
     expect((await getViewerAi("alice")).solved[CHALLENGE.id].source).toBe("flag");
   });
+
+  it.each([
+    ["solves", [{ error: "NOAUTH Authentication required." }, { result: [] }]],
+    ["attempts", [{ result: [] }, { error: "WRONGTYPE" }]],
+  ])("rejects when the %s read fails instead of returning it as empty", async (_name, replies) => {
+    mocks.upstashPipeline.mockResolvedValueOnce(replies);
+    await expect(getViewerAi("alice")).rejects.toThrow(/ai viewer read failed/);
+  });
 });
 
 describe("totals", () => {

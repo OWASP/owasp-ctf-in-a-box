@@ -477,6 +477,14 @@ describe("getViewerQuiz", () => {
     const progress = await getViewerQuiz("octocat");
     expect(progress).toEqual({ answered: { q2: { points: 5, at: "x" } }, attempts: {} });
   });
+
+  it.each([
+    ["answered", [{ error: "NOAUTH Authentication required." }, { result: [] }]],
+    ["attempts", [{ result: [] }, { error: "WRONGTYPE" }]],
+  ])("rejects when the %s read fails instead of returning it as empty", async (_name, replies) => {
+    mocks.upstashPipeline.mockResolvedValueOnce(replies);
+    await expect(getViewerQuiz("octocat")).rejects.toThrow(/quiz viewer read failed/);
+  });
 });
 
 describe("getQuizTotals", () => {

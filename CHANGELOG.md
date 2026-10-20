@@ -40,6 +40,16 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   accept public metadata. A Send test and per-type previews are in the
   section; the master reset wipes the announcement state but keeps the
   webhook setup (ADR 69).
+- **Fixed: the scorer's unreachable-target early-abort test no longer flakes
+  under CPU load (#643).** `runExec` now also returns `spawned`, the number of
+  probes it actually launched — counted at the spawn decision, not by a marker
+  the child writes after `node --test` boots. Under load a child can be reaped
+  by its 300 ms safety kill before it runs a line, so the child-marker
+  spawn-count assertion ("expected exactly 2 children spawned before abort
+  armed") undercounted and failed intermittently; the abort gate itself was
+  already deterministic. The elapsed-time assertion never failed and keeps its
+  loose sanity bound; the test's behavioral assertions are unchanged, and a
+  probe the gate skips is still never counted.
 - **Fixed: Jeopardy imports enforce the combined category limit.** A bundle
   that would take the board above 50 categories is rejected before any writes,
   preserving existing challenges, flags, hints, stories and attachments.
@@ -55,6 +65,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   attempt hashes, so a `NOAUTH` or `WRONGTYPE` read fails loudly rather than
   telling the flags board a contestant has solved nothing and is outside
   every cooldown.
+- **Fixed: quiz and AI progress reads no longer turn a failed Redis reply
+  into empty progress (#672).** `getViewerQuiz` and `getViewerAi` now check
+  both pipeline replies for `.error` and throw, so a `NOAUTH` or `WRONGTYPE`
+  read fails loudly instead of rendering "nothing answered/solved, no
+  cooldown" on the board, `/profile` and `/api/board/items`.
 - **Fixed: repeated Redis SCAN keys no longer duplicate leaderboard teams.**
   The scorer and web app preserve the first occurrence of each team slug
   before reading its name and members, keeping one ranked row per team and

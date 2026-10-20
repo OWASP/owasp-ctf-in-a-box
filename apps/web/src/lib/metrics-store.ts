@@ -161,10 +161,10 @@ export type EventMetrics = {
      *  difference between "hints are used" and "hints help". */
     boughtBeforeSolving: number;
     boughtAfterSolving: number;
-    /** The same four figures per Jeopardy ladder rung (#594), level 1 first.
-     *  Spend uses the cost recorded at purchase time; a pre-#594 purchase
-     *  lacks one and is attributed to level 1, so the level totals still sum
-     *  to `totalSpend`. */
+    /** The same four figures per Jeopardy ladder rung, level 1 first. Spend
+     *  uses the cost recorded at purchase time; a purchase made before a
+     *  ladder price record exists is attributed to level 1, so the level
+     *  totals still sum to `totalSpend`. */
     byLevel: HintLevelStat[];
   };
   /** What these numbers do NOT measure, in the payload rather than only in the
@@ -499,7 +499,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
 
   // Eleven reads per spelling: their earned items (quiz, classic, ai), their
   // attempt rows (quiz, classic, ai), the firstTeamAt that anchors the funnel,
-  // when they bought each hint, what each hint actually cost (#594), and when
+  // when they bought each hint, what each hint actually cost, and when
   // they first opened each classic and ai challenge.
   const PER_LOGIN = 11;
   const reads = logins.flatMap((login) => [...(spellingsOf.get(login) ?? [login])].map((spelling) => ({ login, spelling })));

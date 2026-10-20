@@ -226,7 +226,7 @@ export type Challenge = {
 export type AdminChallenge = {
   /** Byte-for-byte what `listChallenges` would have returned for this id. */
   challenge: Challenge;
-  /** Ordered paid-hint ladder as authored (#594), empty when the challenge
+  /** Ordered paid-hint ladder as authored, empty when the challenge
    *  has none. ADMIN SURFACES ONLY — contestants buy it through hint-store.
    *  Level 1 is the bare challenge-id field; later rungs are `<id>#<n>`. */
   hints: HintLevelConfig[];
@@ -864,7 +864,7 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
     commands.push(["HSET", FLAG_KEY, c.id, c.flag.trim()]);
     // Ladder written-or-cleared, same as upsertChallenge: re-importing a
     // bundle without the field removes every hint the earlier import created,
-    // so the round-trip stays faithful in both directions (#190, #594).
+    // so the round-trip stays faithful in both directions.
     commands.push(...hintWriteCommands(c.id, c.hints ?? []));
     // The comparison form follows the record that was just built, NOT the raw
     // bundle field — they are the same value, and reading it from the record
@@ -921,7 +921,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // hidden challenge hidden, never live.
     ...(challenge.enabled === false ? { enabled: false } : {}),
     ...(challenge.releaseAt ? { releaseAt: challenge.releaseAt } : {}),
-    // #186: metadata only (the bytes ride the event archive, or a panel
+    // Metadata only (the bytes ride the event archive, or a panel
     // export with "Include files"), and only when there is some — the same
     // byte-identical rule as hints.
     ...(files.get(challenge.id)?.length ? { attachments: files.get(challenge.id)!.map(attachmentMeta) } : {}),

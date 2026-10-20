@@ -140,7 +140,7 @@ describe.skipIf(!liveConfigured)("Classic bundle category union against real Red
     expect(await snapshot()).toEqual(before);
     await importBundle(parsed(await roundTrip()));
     expect(await snapshot()).toEqual(before);
-    expect((await listChallengesForAdmin())[0]).toMatchObject({ flag: "Flag{Original}", hint: "Original hint", challenge: { points: 25 } });
+    expect((await listChallengesForAdmin())[0]).toMatchObject({ flag: "Flag{Original}", hints: [{ text: "Original hint", cost: null }], challenge: { points: 25 } });
   });
 
   it("returns categories/400 without changing any content, file bytes or audit entry", async () => {

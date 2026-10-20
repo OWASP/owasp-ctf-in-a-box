@@ -669,7 +669,18 @@ function validateStories(raw: unknown, challengeIds: ReadonlySet<string>, errors
 }
 
 /** Indented, not minified — an organizer edits this file by hand. Ends in a
- *  trailing newline, like every other text file in the repo. */
+ *  trailing newline, like every other text file in the repo.
+ *
+ *  A version below 5 has no ladder, so a one-rung `hints` (what parsing a
+ *  legacy `hint` normalizes to) is written back as the `hint` string that
+ *  version understands. Without this a parsed legacy bundle would serialize
+ *  to text its own version refuses, breaking the round-trip every import
+ *  asserts. */
 export function serializeBundle(bundle: ClassicBundle): string {
-  return JSON.stringify(bundle, null, 2) + "\n";
+  if (bundle.version >= LADDER_VERSION) return JSON.stringify(bundle, null, 2) + "\n";
+  const challenges = bundle.challenges.map(({ hints, ...c }) => {
+    const text = hints?.[0]?.text;
+    return text !== undefined ? { ...c, hint: text } : c;
+  });
+  return JSON.stringify({ ...bundle, challenges }, null, 2) + "\n";
 }

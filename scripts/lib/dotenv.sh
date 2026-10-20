@@ -2,7 +2,8 @@
 # shellcheck shell=bash
 # The ONE reader of an env file (`.env`, `.env.fly`, `.env.dev-stack`) for
 # every shell entry point: setup/ctf-setup.sh, scripts/dev-stack,
-# deploy/fly/deploy.sh and deploy/fly/render-compose.sh. Sourced, never
+# deploy/fly/deploy.sh, deploy/fly/render-compose.sh and
+# deploy/aws-terraform/deploy.sh. Sourced, never
 # executed — no shebang on purpose; the `shell=bash` directive above names
 # the target shell for the linter.
 #

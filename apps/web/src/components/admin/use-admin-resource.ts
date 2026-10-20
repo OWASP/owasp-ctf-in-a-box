@@ -73,6 +73,16 @@ export function editorIsDirty<Editor>(current: Editor | null, snapshot: EditorSn
   }
 }
 
+/** Whether deleting `id` should close the open editor.
+ *
+ *  Closes when the editor is editing the item being deleted; stays open for
+ *  a new-mode draft or when editing a different item. Exported for direct
+ *  testing. */
+export function closesOnDelete<Editor>(editing: Editor | null, id: string): boolean {
+  if (!editing || typeof editing !== "object") return false;
+  return "id" in editing && (editing as { id: unknown }).id === id;
+}
+
 type LoadResult<Row> = { ok: true; rows: Row[]; categories: string[] } | { ok: false; message: string };
 
 type PostResult<Row> = { ok: true; row: Row } | { ok: false; message: string };
@@ -181,8 +191,9 @@ export type AdminResource<Row, Item, Editor> = {
   setEditing: (editor: Editor | null) => void;
   /** Opens `next` for editing, or — when the open draft has unsaved changes —
    *  parks it in `pendingEditor` and waits to be told what to do (audit F17).
-   *  Every Edit and Add button goes through this. */
-  openEditor: (next: Editor) => void;
+   *  Every Edit and Add button goes through this. Returns whether `next` was
+   *  opened immediately. */
+  openEditor: (next: Editor) => boolean;
   /** The editor waiting behind a discard confirmation, or null. Non-null is
    *  the panel's cue to render one. */
   pendingEditor: Editor | null;
@@ -300,13 +311,14 @@ export function useAdminResource<Row, Item, Editor, Payload>(
    *  while editing (audit F17). A save in flight is left alone entirely —
    *  swapping the subject out from under an in-flight POST is worse than
    *  making the organizer wait a moment. */
-  function openEditor(next: Editor) {
-    if (formPending) return;
+  function openEditor(next: Editor): boolean {
+    if (formPending) return false;
     if (editorIsDirty(editing, openedAs)) {
       setPendingEditor(next);
-      return;
+      return false;
     }
     applyEditor(next);
+    return true;
   }
 
   function applyEditor(next: Editor) {
@@ -354,6 +366,11 @@ export function useAdminResource<Row, Item, Editor, Payload>(
       setRows((prev) => prev.filter((row) => accessors.id(row) !== id));
       onWrite?.();
       setDeleteTarget(null);
+      if (closesOnDelete(editing, id)) {
+        setEditing(null);
+        setOpenedAs({ kind: "none" });
+        setFormError(null);
+      }
     } finally {
       setDeletePending(false);
     }

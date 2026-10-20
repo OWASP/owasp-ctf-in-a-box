@@ -41,9 +41,9 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 DRY_RUN=""
 SKIP_BUILD=""
 APPLY=""
-# The event .env's SCORE_IMAGE, when the operator's shell carries it: that is
-# the one name this kit has for "the scorer image", so it is the default
-# rather than a second knob. --scorer-source overrides it.
+# SCORE_IMAGE is the one name this kit has for "the scorer image".
+# --scorer-source overrides the shell; an unset or empty shell value falls back to
+# the repo-root .env only when the stack needs a scorer.
 SCORER_SOURCE="${SCORE_IMAGE:-}"
 
 usage() {
@@ -56,8 +56,9 @@ mirrors the scorer, pushes all of them to the ECR repositories this module
 created, and writes the resulting refs to image.auto.tfvars.
 
 --scorer-source  the scorer image to mirror, e.g.
-                 ghcr.io/<your-event-org>/score:latest. Defaults to $SCORE_IMAGE
-                 (the event .env's value). Required when the stack runs Secure
+                 ghcr.io/<your-event-org>/score:latest. Defaults to exported
+                 non-empty SCORE_IMAGE, then SCORE_IMAGE in the repo-root
+                 .env when unset or empty. Required when the stack runs Secure
                  Development; ignored otherwise. The package is private: log
                  docker in to its registry first.
 --apply          also runs `terraform apply` once the images are pushed.
@@ -116,6 +117,8 @@ done
 # paths cannot disagree about what a secret looks like.
 # shellcheck source=scripts/lib/redact.sh
 . "$ROOT/scripts/lib/redact.sh"
+# shellcheck source=scripts/lib/dotenv.sh
+. "$ROOT/scripts/lib/dotenv.sh"
 
 run() {
   if [ -n "$DRY_RUN" ]; then
@@ -281,14 +284,19 @@ if [ -n "$SCORER_REPO_URL" ]; then
   SECDEV=1
 fi
 
+# Terraform owns module availability; a quiz-only deploy ignores scorer config.
+if [ -n "$SECDEV" ] && [ -z "$SCORER_SOURCE" ]; then
+  SCORER_SOURCE="$(dotenv_get "$ROOT/.env" SCORE_IMAGE)" || exit 1
+fi
+
 if [ -n "$SECDEV" ] && [ -z "$SCORER_SOURCE" ]; then
   if [ -n "$DRY_RUN" ]; then
     SCORER_SOURCE="<scorer-source>"
   else
     echo "FAIL: this stack runs Secure Development, so the scorer image has to be" >&2
     echo "      mirrored into its ECR repository, and nothing names the source." >&2
-    echo "      Pass --scorer-source <image> or set SCORE_IMAGE — the value the" >&2
-    echo "      event's .env carries (setup/ctf-setup.sh org pushes it), e.g." >&2
+    echo "      Pass --scorer-source <image>, export SCORE_IMAGE, or set it in" >&2
+    echo "      the repo-root .env (an unset or empty export falls back to it), e.g." >&2
     echo "      ghcr.io/<your-event-org>/score:latest. Log docker in to that" >&2
     echo "      registry first: the package is private." >&2
     exit 1

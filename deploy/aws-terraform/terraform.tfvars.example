@@ -94,8 +94,8 @@ github_client_id = "Iv1.0000000000000000"
 #                 this stack's <name>-sync ECR repository.
 #   scorer_image: deploy.sh MIRRORS the scorer package into this stack's
 #                 <name>-scorer ECR repository. Tell it the source with
-#                 --scorer-source, or export SCORE_IMAGE — the same value as
-#                 SCORE_IMAGE in the event .env, e.g.
+#                 --scorer-source, non-empty exported SCORE_IMAGE, or SCORE_IMAGE in
+#                 the repo-root .env (in that order), e.g.
 #                 ghcr.io/<your-event-org>/score:latest. Fargate cannot pull
 #                 that ref itself: the package is private.
 # Both must be this stack's ECR repository in this account and region, or

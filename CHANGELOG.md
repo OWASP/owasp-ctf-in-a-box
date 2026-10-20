@@ -40,6 +40,21 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   accept public metadata. A Send test and per-type previews are in the
   section; the master reset wipes the announcement state but keeps the
   webhook setup (ADR 69).
+- **Fixed: Jeopardy imports enforce the combined category limit.** A bundle
+  that would take the board above 50 categories is rejected before any writes,
+  preserving existing challenges, flags, hints, stories and attachments.
+  Valid imports still keep existing category order and spelling.
+- **Fixed: AWS deploy reads `SCORE_IMAGE` from the repo-root `.env` (#593).**
+  `--scorer-source` and non-empty exported `SCORE_IMAGE` take precedence.
+  An unset or empty exported value falls back to the file, as in `ctf-setup.sh`.
+  Stacks without Secure Development do not read the file; dry runs still make
+  no Docker, AWS or Terraform calls.
+- **Fixed: a failed classic progress read no longer looks like an empty
+  record (#642).** `getViewerClassic` now checks the per-command errors
+  `upstashPipeline` returns instead of parsing them as empty solve and
+  attempt hashes, so a `NOAUTH` or `WRONGTYPE` read fails loudly rather than
+  telling the flags board a contestant has solved nothing and is outside
+  every cooldown.
 - **Fixed: repeated Redis SCAN keys no longer duplicate leaderboard teams.**
   The scorer and web app preserve the first occurrence of each team slug
   before reading its name and members, keeping one ranked row per team and
@@ -76,6 +91,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   driver (`scripts/autocannon-phase.cjs`) adds it from the same latency
   histogram the summary percentiles come from — while the enforced bar stays
   on the stricter p97.5, which bounds p95.
+- **Fixed: deleting an open challenge in admin panels closes the editor (#666).**
+  `useAdminResource.remove()` now clears the active editor when deleting the
+  item currently open for editing, preventing a subsequent save from upserting
+  the deleted row back into the store. In `ChallengeFrame`, flag visibility is
+  preserved if an editor switch is cancelled, consecutive new challenge drafts
+  receive distinct form keys to cleanly remount form state and re-trigger
+  focus effects, and the Add button is guarded against clicks while categories
+  are reordering, not yet loaded, or when the initial load failed.
 
 ## v1.0.0 — 2026-10-16
 

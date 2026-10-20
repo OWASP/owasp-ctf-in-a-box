@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // The list-plus-editor state the quiz, classic and ai admin panels share.
 // This repo's tests run `renderToStaticMarkup` in vitest's node environment:
 // hooks render once and effects never run, so the async flows are proven
@@ -6,6 +7,7 @@
 // state through a probe component that renders what the hook hands back.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, renderHook } from "@testing-library/react";
 import { describeAdminError } from "@/components/admin/fetch";
 import type { RowAccessors } from "@/components/admin/ordered-rows";
 import { closesOnDelete, loadResource, postRow, useAdminResource, writeBackReorder } from "@/components/admin/use-admin-resource";
@@ -208,5 +210,83 @@ describe("useAdminResource — initial state", () => {
     const html = renderToStaticMarkup(<OpenProbe />);
     expect(result).toBe(true);
     expect(html).toContain("a");
+  });
+});
+
+describe("useAdminResource — remove and closesOnDelete interaction", () => {
+  it("deleting the currently open challenge closes its editor", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return Promise.resolve(jsonResponse(200, { ok: true }));
+      }
+      return Promise.resolve(
+        jsonResponse(200, {
+          things: [
+            { item: { id: "a", title: "A", order: 1 }, secret: "" },
+            { item: { id: "b", title: "B", order: 2 }, secret: "" },
+          ],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() =>
+      useAdminResource<Row, Item, Editor, Payload>({
+        ...config,
+        initialRows: [
+          { item: { id: "a", title: "A", order: 1 }, secret: "" },
+          { item: { id: "b", title: "B", order: 2 }, secret: "" },
+        ],
+      }),
+    );
+
+    act(() => {
+      result.current.openEditor({ id: "a", title: "A" });
+    });
+    expect(result.current.editing).toEqual({ id: "a", title: "A" });
+
+    await act(async () => {
+      await result.current.remove("a");
+    });
+
+    expect(result.current.editing).toBeNull();
+  });
+
+  it("deleting a different challenge leaves the current editor open", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return Promise.resolve(jsonResponse(200, { ok: true }));
+      }
+      return Promise.resolve(
+        jsonResponse(200, {
+          things: [
+            { item: { id: "a", title: "A", order: 1 }, secret: "" },
+            { item: { id: "b", title: "B", order: 2 }, secret: "" },
+          ],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() =>
+      useAdminResource<Row, Item, Editor, Payload>({
+        ...config,
+        initialRows: [
+          { item: { id: "a", title: "A", order: 1 }, secret: "" },
+          { item: { id: "b", title: "B", order: 2 }, secret: "" },
+        ],
+      }),
+    );
+
+    act(() => {
+      result.current.openEditor({ id: "a", title: "A" });
+    });
+    expect(result.current.editing).toEqual({ id: "a", title: "A" });
+
+    await act(async () => {
+      await result.current.remove("b");
+    });
+
+    expect(result.current.editing).toEqual({ id: "a", title: "A" });
   });
 });

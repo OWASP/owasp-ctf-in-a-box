@@ -390,13 +390,24 @@ describe("importEventBundle", () => {
 
   it("clears content before importing (true replace), then sweeps run state", async () => {
     await importEventBundle(bundleFixture(), "alice");
-    expect(adminStore.resetEvent).toHaveBeenCalledWith("alice");
+    expect(adminStore.resetEvent).toHaveBeenCalledWith("alice", { keepLaunchKey: true });
     expect(classicStore.clearChallenges).toHaveBeenCalled();
     expect(classicStore.importBundle).toHaveBeenCalled();
     // clear must precede import
     const clearOrder = vi.mocked(classicStore.clearChallenges).mock.invocationCallOrder[0];
     const importOrder = vi.mocked(classicStore.importBundle).mock.invocationCallOrder[0];
     expect(clearOrder).toBeLessThan(importOrder);
+  });
+
+  // #653: an archive import replaces the catalogue but must NOT rotate the
+  // module's launch keypair — it is module identity, not catalogue content
+  // (ADR 53). The import opts `resetEvent` out of the launch-key wipe;
+  // admin-store.reset.test.ts pins that the option actually skips it and that
+  // the default (an ordinary reset) still clears it.
+  it("preserves the ai launch keypair by opting resetEvent out of the launch-key wipe", async () => {
+    await importEventBundle(bundleFixture(), "alice");
+    expect(adminStore.resetEvent).toHaveBeenCalledWith("alice", { keepLaunchKey: true });
+    expect(aiStore.clearAiChallenges).toHaveBeenCalled();
   });
 
   it("clears ALL THREE content stores on replace, even when the bundle carries only one module (a quiz-only archive must still wipe stale classic and ai content already on the target)", async () => {

@@ -851,16 +851,32 @@ redis.call('DEL', KEYS[3])
 redis.call('LPUSH', KEYS[2], ARGV[4])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
 
+export type ResetEventOptions = {
+  /** Leave `ctf:ai:launchkey` in place — see `importEventBundle`, which
+   *  replaces the challenge catalogue but must not rotate the module's
+   *  published launch keypair (every deployed external verifier would break,
+   *  #250, ADR 53). Defaults to false: a master reset still rotates it. */
+  keepLaunchKey?: boolean;
+};
+
 /**
  * Master reset: wipe all event data (solves, teams, users, join codes, hints),
  * freeze scoring, bump the sync reset epoch, and audit it. Keeps admin
  * settings. Server-only — callers gate on requireAdmin.
  *
+ * `opts.keepLaunchKey` skips the `ctf:ai:launchkey` wipe for callers that
+ * replace the catalogue without rotating module identity (archive import);
+ * every other prefix is cleared as usual. The default (false) is the master
+ * reset's ordinary behavior — the launch keypair rotates.
+ *
  * Poll-mode note: freezing + the `resetAt` epoch (honoured by sync, which drops
  * its cursor) is what makes the wipe stick; a later unfreeze re-ingests from
  * live PR comments, so a post-event wipe also needs those comments gone.
  */
-export async function resetEvent(actor: string): Promise<{ cleared: Record<string, number>; resetAt: string }> {
+export async function resetEvent(
+  actor: string,
+  opts: ResetEventOptions = {},
+): Promise<{ cleared: Record<string, number>; resetAt: string }> {
   const cleared: Record<string, number> = {};
   // Score-lowering bracket (#553, fold-cache.ts): BEFORE the first delete,
   // raise the shared in-progress marker and bump the revision — a hint
@@ -873,6 +889,7 @@ export async function resetEvent(actor: string): Promise<{ cleared: Record<strin
   await beginScoreLowering();
   try {
     for (const [label, pattern] of RESET_PREFIXES) {
+      if (opts.keepLaunchKey && pattern === AI_LAUNCHKEY_KEY) continue;
       cleared[label] = await scanDelByPrefix(pattern);
     }
     const at = new Date().toISOString();

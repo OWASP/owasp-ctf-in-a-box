@@ -317,6 +317,27 @@ describe("resetEvent", () => {
     expect(out.cleared.aiLaunchKey).toBe(1);
   });
 
+  // #653: an archive import replaces the catalogue but must NOT rotate the
+  // module's published launch keypair — it is module identity, not catalogue
+  // content (ADR 53), and rotating it would break every deployed external
+  // verifier. The import opts the wipe out via `keepLaunchKey`; the default
+  // (the master reset above) is unchanged.
+  it("KEEPS the launch keypair when keepLaunchKey is set — an archive import must not rotate it", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    const out = await resetEvent("alice", { keepLaunchKey: true });
+    const patterns = mocks.upstashPipeline.mock.calls
+      .filter((c) => c[0][0][0] === "SCAN")
+      .map((c) => c[0][0][3]);
+    expect(patterns).not.toContain("ctf:ai:launchkey");
+    expect(out.cleared.aiLaunchKey).toBeUndefined();
+    // Nothing else is affected: the other 29 prefixes are still swept.
+    expect(patterns).toContain("ctf:ai:nonce:*");
+    expect(patterns).toContain("ctf:ai:solves:*");
+    const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(29);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(29);
+  });
+
   it("KEEPS the ai challenge bank, flag/flagnorm, hints, signing keys and categories across a reset", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
     await resetEvent("alice");

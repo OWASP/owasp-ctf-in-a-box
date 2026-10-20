@@ -10,6 +10,46 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: the scorer's unreachable-target early-abort test no longer flakes
+  under CPU load (#643).** `runExec` now also returns `spawned`, the number of
+  probes it actually launched — counted at the spawn decision, not by a marker
+  the child writes after `node --test` boots. Under load a child can be reaped
+  by its 300 ms safety kill before it runs a line, so the child-marker
+  spawn-count assertion ("expected exactly 2 children spawned before abort
+  armed") undercounted and failed intermittently; the abort gate itself was
+  already deterministic. The elapsed-time assertion never failed and keeps its
+  loose sanity bound; the test's behavioral assertions are unchanged, and a
+  probe the gate skips is still never counted.
+- **Fixed: Jeopardy imports enforce the combined category limit.** A bundle
+  that would take the board above 50 categories is rejected before any writes,
+  preserving existing challenges, flags, hints, stories and attachments.
+  Valid imports still keep existing category order and spelling.
+- **Fixed: AWS deploy reads `SCORE_IMAGE` from the repo-root `.env` (#593).**
+  `--scorer-source` and non-empty exported `SCORE_IMAGE` take precedence.
+  An unset or empty exported value falls back to the file, as in `ctf-setup.sh`.
+  Stacks without Secure Development do not read the file; dry runs still make
+  no Docker, AWS or Terraform calls.
+- **Fixed: a failed classic progress read no longer looks like an empty
+  record (#642).** `getViewerClassic` now checks the per-command errors
+  `upstashPipeline` returns instead of parsing them as empty solve and
+  attempt hashes, so a `NOAUTH` or `WRONGTYPE` read fails loudly rather than
+  telling the flags board a contestant has solved nothing and is outside
+  every cooldown.
+- **Fixed: quiz and AI progress reads no longer turn a failed Redis reply
+  into empty progress (#672).** `getViewerQuiz` and `getViewerAi` now check
+  both pipeline replies for `.error` and throw, so a `NOAUTH` or `WRONGTYPE`
+  read fails loudly instead of rendering "nothing answered/solved, no
+  cooldown" on the board, `/profile` and `/api/board/items`.
+- **Fixed: repeated Redis SCAN keys no longer duplicate leaderboard teams.**
+  The scorer and web app preserve the first occurrence of each team slug
+  before reading its name and members, keeping one ranked row per team and
+  one scorer history series. Individual points and team solve unions are
+  unchanged.
+- **Fixed: an event-archive import preserves the AI launch keypair (#653).**
+  Importing an archive replaces the challenge catalogue but no longer rotates
+  `ctf:ai:launchkey`. Archive imports preserve the published key, as promised
+  by ADR 53 and the `importEvent` comment. An ordinary master reset still
+  rotates it.
 - **Fixed: VAmPI's Unauthorized Password Change could score on the stock app
   (#661).** VAmPI's `/createdb` commits its seed users one at a time, and a
   test that ran between `name1` and `name2` got `400 User Not Found` for the
@@ -17,6 +57,33 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   read as fixed. The challenge now checks that `name2` exists before it tries
   the exploit, and the rubric's seed wait now covers every seeded user, not
   just `name1`. Scores on a real fix are unchanged.
+- **Fixed: the leaderboard chart ships only the top ten lines, and the load
+  test reports measured p95 (#446).** `withModuleSeries` used to build a
+  cumulative series for EVERY login and team on the board — re-expanding the
+  scorer's and the mock source's own top-ten series — so a 200-contestant box
+  put ~270 histories into every `/leaderboard` RSC payload while the chart
+  (written for ten lines, ranks 9-10 folding into one muted "Other") drew
+  them as an unreadable hairball. The stage now reads module events for, and
+  emits series of, only the final top-ten entries and top-ten teams — ranked
+  after hint penalties and organizer score adjustments — including a charted
+  team's members who hold no entry of their own, whose items belong on their
+  team's line, leaving every row, the `?display=1` surface and the viewer
+  "you" highlight untouched. The fold also logs its own duration once per
+  fold (not per request), so fold cost can be separated from
+  request/render latency on a live box. `scripts/load-test.sh`'s results
+  table gains a measured p95 column — the issue's own metric, which the
+  autocannon CLI's fixed percentile list skips, so a small programmatic
+  driver (`scripts/autocannon-phase.cjs`) adds it from the same latency
+  histogram the summary percentiles come from — while the enforced bar stays
+  on the stricter p97.5, which bounds p95.
+- **Fixed: deleting an open challenge in admin panels closes the editor (#666).**
+  `useAdminResource.remove()` now clears the active editor when deleting the
+  item currently open for editing, preventing a subsequent save from upserting
+  the deleted row back into the store. In `ChallengeFrame`, flag visibility is
+  preserved if an editor switch is cancelled, consecutive new challenge drafts
+  receive distinct form keys to cleanly remount form state and re-trigger
+  focus effects, and the Add button is guarded against clicks while categories
+  are reordering, not yet loaded, or when the initial load failed.
 
 ## v1.0.0 — 2026-10-16
 

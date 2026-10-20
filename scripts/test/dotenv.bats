@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 #
 # scripts/lib/dotenv.sh is the one env-file reader setup/ctf-setup.sh,
-# scripts/dev-stack, deploy/fly/deploy.sh and deploy/fly/render-compose.sh
+# scripts/dev-stack, deploy/fly/deploy.sh, deploy/fly/render-compose.sh and
+# deploy/aws-terraform/deploy.sh
 # share. test/fixtures/dotenv-corpus.env pins its grammar: each `#> KEY|value`
 # line is what docker compose reads for KEY out of that same file, and every
 # reader here must read the same.
@@ -115,12 +116,12 @@ EOF
 }
 
 @test "every env-file reader goes through the shared helper, and none keeps its own" {
-  # dev-stack and the two Fly scripts cannot be sourced for one function the
+  # dev-stack and the deploy scripts cannot be sourced for one function the
   # way ctf-setup.sh can, so this pins the wiring instead: each sources
   # scripts/lib/dotenv.sh, and none carries a `sed -n "s/^KEY=//p"`-shaped
   # reader of its own (comments that name one are fine).
   local f bad=""
-  for f in setup/ctf-setup.sh scripts/dev-stack deploy/fly/deploy.sh deploy/fly/render-compose.sh; do
+  for f in setup/ctf-setup.sh scripts/dev-stack deploy/fly/deploy.sh deploy/fly/render-compose.sh deploy/aws-terraform/deploy.sh; do
     grep -q 'scripts/lib/dotenv.sh"\{0,1\}$' "$REPO/$f" || bad="$bad unsourced:$f"
     if grep -nE "sed -n [\"']s/\^[^/]*=//p" "$REPO/$f" | grep -v -e toml -e "^[0-9]*:[[:space:]]*#" >/dev/null; then
       bad="$bad own-reader:$f"

@@ -315,8 +315,11 @@ export async function importEventBundle(
 
   // Sweep run-state before touching content, so a mid-import failure never
   // leaves stale team/solve/hint state pointing at content that does not
-  // exists.
-  await resetEvent(actor);
+  // exists. `keepLaunchKey` keeps this sweep from rotating the module's
+  // published launch keypair: it is module identity, not catalogue content,
+  // and rotating it would break every deployed external verifier (#250, ADR
+  // 53) — the same reason `clearAiChallenges` leaves it alone.
+  await resetEvent(actor, { keepLaunchKey: true });
 
   // Replace-ALL: every archivable content store is cleared regardless of
   // which module sections this bundle carries. A quiz-only archive must wipe

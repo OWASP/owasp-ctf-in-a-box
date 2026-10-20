@@ -109,14 +109,22 @@ placeholder is refused at plan time with a sentence naming `deploy.sh`.
 Afterwards a redeploy is one command:
 
 ```sh
-./deploy.sh --apply        # with SCORE_IMAGE exported, or --scorer-source again
+# Falls back to the repo-root .env when exported SCORE_IMAGE is unset or empty.
+./deploy.sh --apply
 ```
 
 **`deploy.sh` publishes every image the stack runs** into the stack's own ECR
 repositories and writes their refs into `image.auto.tfvars` (#476). It builds
 the app from the repo root with `-f apps/web/Dockerfile`, and sync from
-`./sync`. It **mirrors** the scorer: it pulls `--scorer-source` (default
-`$SCORE_IMAGE`, the event `.env`'s value), then tags and pushes it. Fargate
+`./sync`. It **mirrors** the scorer: it pulls `--scorer-source`, then tags
+and pushes it. The source defaults to non-empty exported `SCORE_IMAGE`, or,
+when that variable is unset or empty, `SCORE_IMAGE` in the repo-root `.env`
+(independent of the working directory). `--scorer-source` wins over both.
+The shared reader accepts literal quoted values and refuses unsupported
+interpolation or an unreadable file; it never executes `.env`. A missing file does not itself
+fail parsing, but a Secure Development deploy still requires a scorer source.
+Stacks without Secure Development ignore this setting and do not read `.env`.
+Fargate
 cannot pull the scorer package itself, because the package is private until
 launch, and sync is published nowhere. Everything is built or pulled for
 `linux/amd64`, the architecture every task definition declares. An Apple

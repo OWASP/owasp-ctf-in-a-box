@@ -204,17 +204,18 @@ state; everything else that touches scores goes through it.
    fixed pipeline (`src/lib/leaderboard/folded.ts`, memoized across requests
    for 10 s and shared by every concurrent viewer — the result has no
    per-viewer input; a fold that throws is never cached):
-   `withModuleContributions` → `withTeamStandings` → `withModuleSeries` →
-   `withHintPenalties` → `withScoreAdjustments`
-   (`src/lib/leaderboard/{module-contributions,team-standings,module-series,hint-penalties,score-adjustments}.ts`).
-   `withModuleSeries` sits third because it charts each team's roster and
-   needs the team rows the standings stage has just built; it reads the
-   app-side modules' per-item timestamps to put their points on the chart
-   and leaves `points` untouched, so the penalty stage still nets the full
-   module total. `withScoreAdjustments` runs after it: it applies the
-   organizer's per-team adjustments from `ctf:adjustments` to each team's
-   netted total, floors it at 0, and re-ranks the teams. Individual rows
-   are not adjusted, and the chart stays gross.
+   `withModuleContributions` → `withTeamStandings` → `withHintPenalties` →
+   `withScoreAdjustments` → `withModuleSeries`
+   (`src/lib/leaderboard/{module-contributions,team-standings,hint-penalties,score-adjustments,module-series}.ts`).
+   `withHintPenalties` nets the full module total, and
+   `withScoreAdjustments` then applies the organizer's per-team adjustments
+   from `ctf:adjustments` to each team's netted total, floors it at 0, and
+   re-ranks the teams. Individual rows are not adjusted, and the chart stays
+   gross. `withModuleSeries` runs last because it charts only the final
+   ranked top-ten entries and teams: a hint penalty or an adjustment can move
+   a row across that boundary, so it must select them after both overlays. It
+   reads the app-side modules' per-item timestamps to put their points on the
+   chart and leaves `points` untouched.
    `withModuleContributions` attributes each row's points into a
    per-module `ModuleProgress` for every *enabled* module — `secure-development`
    is **attributed**, not added, since its points already came from the

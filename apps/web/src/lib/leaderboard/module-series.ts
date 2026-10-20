@@ -29,6 +29,13 @@ import type { LeaderboardData, PlayerSeries, SeriesPoint, TeamSeries } from "./t
  * change), so there is no instant to subtract it at and a netted line would be
  * invented. The row keeps showing net with its −N marker — the same split
  * every module block already uses: gross in the parts, net on the row.
+ *
+ * TOP-TEN ONLY (issue #446). Only the final top-`SERIES_TOP_N` entries and
+ * teams get a line — the cap the scorer's own series, the mock source and the
+ * display board already use — so this stage reads and emits only what those
+ * lines need, not every login on the board. It runs after hint penalties and
+ * organizer score adjustments, because either can move a row across the
+ * top-ten boundary.
  */
 
 /** One scoring event, before it is folded into a cumulative series.
@@ -41,6 +48,12 @@ import type { LeaderboardData, PlayerSeries, SeriesPoint, TeamSeries } from "./t
  *  across two modules has to count twice there and must count twice here, or
  *  the line ends below the number in the team's own row. */
 type Earned = { moduleId: string; itemId: string; points: number; at: string };
+
+/** How many rows per view get a charted line (issue #446). The chart plots
+ *  the series it is handed, so this is both the read cap and the payload
+ *  cap — the same top-ten the scorer's series (`SERIES_TOP_N` in
+ *  scorer/src/serve.js), the mock source and the display board already use. */
+export const SERIES_TOP_N = 10;
 
 /** `{points, at}` as the three stores write it. Anything malformed is dropped
  *  rather than thrown on: a hand-edited hash, a half-written record or an
@@ -173,20 +186,27 @@ function earliestPerItem(events: readonly Earned[]): Earned[] {
 }
 
 export async function withModuleSeries(data: LeaderboardData): Promise<LeaderboardData> {
-  // Every login the board carries, which is the population the chart draws: it
-  // plots every series handed to it, so computing a subset would silently drop
-  // lines it draws today. Team members join even when they hold no entry of
-  // their own, or their team's line would miss the items only they hold.
+  // Only the final top-`SERIES_TOP_N` rows per view are charted (issue #446),
+  // so only their events are read and only their lines are emitted: without
+  // the cap a 200-contestant box computes ~270 histories for every
+  // /leaderboard RSC payload while the chart draws a hairball of 200 lines
+  // its own legend is written against (ranks 9-10 fold into one muted
+  // "Other"). Player lines come from the top-ten entries; team lines need
+  // their members' events — including members who hold no entry of their own
+  // — so the read set is the charted entries plus the charted teams'
+  // rosters, nothing else.
   //
-  // Two sets, because the stores and the join disagree on case. Each module's
-  // hash is keyed on the login exactly as the session spelled it, so the reads
-  // go out under every distinct SPELLING; a lowercased read of a mixed-case
-  // login finds an empty hash and drops all of that contestant's app-side
-  // points from the chart. The series themselves join case-insensitively, so
-  // a login stored under two spellings is one contestant with one line.
+  // The read set carries each login's SPELLING, not its lowercase, because
+  // the stores and the join disagree on case: each module's hash is keyed on
+  // the login exactly as the session spelled it, so a lowercased read of a
+  // mixed-case login finds an empty hash and drops that contestant's
+  // app-side points from the chart. The series join case-insensitively, so a
+  // login stored under two spellings is one contestant with one line.
+  const chartedEntries = data.entries.filter((e) => e.rank <= SERIES_TOP_N);
+  const chartedTeams = data.teams.filter((t) => t.rank <= SERIES_TOP_N);
   const spellings = new Set<string>();
-  for (const entry of data.entries) spellings.add(entry.login);
-  for (const team of data.teams) for (const member of team.members) spellings.add(member);
+  for (const entry of chartedEntries) spellings.add(entry.login);
+  for (const team of chartedTeams) for (const member of team.members) spellings.add(member);
   if (spellings.size === 0) return data;
 
   const bySpelling = await readModuleEvents([...spellings]);
@@ -204,7 +224,8 @@ export async function withModuleSeries(data: LeaderboardData): Promise<Leaderboa
   const byLogin = new Map([...gathered].map(([login, events]) => [login, earliestPerItem(events)]));
 
   const seriesByLogin = new Map((data.series ?? []).map((s) => [s.login.toLowerCase(), s]));
-  const series: PlayerSeries[] = [...byLogin.keys()].map((login) => {
+  const series: PlayerSeries[] = chartedEntries.map((entry) => {
+    const login = entry.login.toLowerCase();
     const existing = seriesByLogin.get(login);
     return {
       login: existing?.login ?? display.get(login) ?? login,
@@ -213,7 +234,7 @@ export async function withModuleSeries(data: LeaderboardData): Promise<Leaderboa
   });
 
   const teamSeriesBySlug = new Map((data.teamSeries ?? []).map((s) => [s.slug, s]));
-  const teamSeries: TeamSeries[] = data.teams.map((team) => {
+  const teamSeries: TeamSeries[] = chartedTeams.map((team) => {
     const existing = teamSeriesBySlug.get(team.slug);
     return {
       slug: team.slug,

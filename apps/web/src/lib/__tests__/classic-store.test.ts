@@ -53,7 +53,7 @@ import {
   type AdminChallenge,
   type Challenge,
 } from "@/lib/classic-store";
-import { CLASSIC_BUNDLE_VERSION, type ClassicBundle } from "@/lib/classic-io";
+import { CLASSIC_BUNDLE_VERSION, parseBundle, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 
 /** Every `upstashPipeline` call's command list, oldest first. */
@@ -557,6 +557,14 @@ describe("getViewerClassic", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: [] }, { result: [] }]);
     expect(await getViewerClassic("alice")).toEqual({ solved: {}, attempts: {} });
   });
+
+  it.each([
+    ["solves", [{ error: "NOAUTH Authentication required." }, { result: [] }]],
+    ["attempts", [{ result: [] }, { error: "WRONGTYPE" }]],
+  ])("rejects when the %s read fails instead of returning it as empty", async (_name, replies) => {
+    mocks.upstashPipeline.mockResolvedValueOnce(replies);
+    await expect(getViewerClassic("alice")).rejects.toThrow(/classic viewer read failed/);
+  });
 });
 
 describe("getSolveCounts", () => {
@@ -776,6 +784,45 @@ describe("importBundle", () => {
     seedCategories(["Forensics", "Web"]);
     await importBundle({ ...twoRowBundle, categories: ["Web", "Crypto"] });
     expect(JSON.parse(valueFor("ctf:classic:categories"))).toEqual(["Forensics", "Web", "Crypto"]);
+  });
+
+  describe("merged category limit", () => {
+    const categories = (count: number, prefix: string) => Array.from({ length: count }, (_, i) => `${prefix} ${i}`);
+    const parsedBundle = (names: string[]) => {
+      const parsed = parseBundle(JSON.stringify({
+        ...bundleWithFlag("ctfbox{One}"),
+        categories: names,
+        challenges: [{ ...twoRowBundle.challenges[0], category: names[0] }],
+      }));
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) throw new Error("The test bundle must pass the parser");
+      return parsed.bundle;
+    };
+
+    it("accepts a union at exactly the limit", async () => {
+      const existing = categories(CLASSIC_CATEGORIES_MAX - 1, "Stored");
+      seedCategories(existing);
+      await importBundle(parsedBundle(["New"]));
+      expect(JSON.parse(valueFor("ctf:classic:categories"))).toEqual([...existing, "New"]);
+    });
+
+    it.each([[49, 2], [50, 1], [30, 30]])("rejects %i existing plus %i new categories before writing", async (stored, added) => {
+      seedCategories(categories(stored, "Stored"));
+      const bundle = parsedBundle(categories(added, "New"));
+      await expect(importBundle(bundle)).rejects.toMatchObject({
+        name: "ClassicValidationError",
+        field: "categories",
+      });
+      expect(pipelineCalls()).toEqual([[["HKEYS", "ctf:classic:challenges"], ["GET", "ctf:classic:categories"]]]);
+    });
+
+    it("keeps the existing spelling and order when a differently cased category meets the limit", async () => {
+      const existing = ["Web", ...categories(CLASSIC_CATEGORIES_MAX - 1, "Stored")];
+      seedCategories(existing);
+      await importBundle(parsedBundle(["web"]));
+      expect(JSON.parse(valueFor("ctf:classic:categories"))).toEqual(existing);
+      expect(JSON.parse(valueFor("ctf:classic:challenges", twoRowBundle.challenges[0].id)).category).toBe("Web");
+    });
   });
 
   // The invariant the rest of the module assumes (`setCategories`'

@@ -1798,6 +1798,9 @@ its categories that the board doesn't already have, in the order the file
 lists them, after the categories already there — the existing order is
 left exactly as it was. Importing a bundle can only grow the category
 list, never reorder or drop anything from it.
+The combined list must stay within 50 categories, counting names without
+regard to case. If it would exceed that limit, the whole import is refused
+before any content is written; the existing board stays intact.
 
 **Bundles carry stories as version 2** (#463). An export is now stamped
 `"version": 2` and has a `stories` list beside `categories`. Each story has

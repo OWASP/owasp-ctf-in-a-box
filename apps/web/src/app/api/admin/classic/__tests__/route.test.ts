@@ -116,7 +116,7 @@ const CHALLENGE = {
 
 const validPayload = { ...CHALLENGE, flag: "CTF{flag}" };
 
-const ADMIN_ROW = { challenge: CHALLENGE, flag: "CTF{flag}", hint: null };
+const ADMIN_ROW = { challenge: CHALLENGE, flag: "CTF{flag}", hints: [] };
 
 function allowAdmin() {
   requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
@@ -338,12 +338,32 @@ describe("POST /api/admin/classic — challenge upsert", () => {
     upsertChallenge.mockResolvedValue(ADMIN_ROW);
     const res = await POST(adminReq("POST", validPayload));
     expect(res.status).toBe(200);
-    // A payload without a hint passes `undefined` through — the store leaves
-    // the hint row alone only via an explicit empty string, never a default.
-    expect(upsertChallenge).toHaveBeenCalledWith(CHALLENGE, "CTF{flag}", undefined);
-    expect(await res.json()).toEqual({ challenge: CHALLENGE, flag: "CTF{flag}", hint: null });
+    // A payload without hints passes null through — a deliberate clear, the
+    // same shape an empty ladder has.
+    expect(upsertChallenge).toHaveBeenCalledWith(CHALLENGE, "CTF{flag}", null);
+    expect(await res.json()).toEqual({ challenge: CHALLENGE, flag: "CTF{flag}", hints: [] });
 
     expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-upsert", { challengeId: "c-1" });
+  });
+  // #594: a hints ladder is validated at the boundary and handed to the store
+  // as the parsed list (blank text or a bad price is refused, not written).
+  it("passes a validated hints ladder through, and echoes it back", async () => {
+    upsertChallenge.mockResolvedValue({
+      challenge: CHALLENGE,
+      flag: "CTF{flag}",
+      hints: [{ text: "first", cost: 5 }, { text: "second", cost: null }],
+    });
+    const hints = [{ text: "first", cost: 5 }, { text: "second", cost: null }];
+    const res = await POST(adminReq("POST", { ...validPayload, hints }));
+    expect(res.status).toBe(200);
+    expect(upsertChallenge).toHaveBeenCalledWith(CHALLENGE, "CTF{flag}", hints);
+    expect(await res.json()).toMatchObject({ hints });
+  });
+
+  it("400s an invalid hints ladder without writing", async () => {
+    const res = await POST(adminReq("POST", { ...validPayload, hints: [{ text: "", cost: 1 }] }));
+    expect(res.status).toBe(400);
+    expect(upsertChallenge).not.toHaveBeenCalled();
   });
 });
 

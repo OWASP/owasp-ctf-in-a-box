@@ -9,9 +9,11 @@
 import type { AdminChallenge, Challenge, ImportSummary } from "@/lib/classic-store";
 import type { Story } from "@/lib/story-lock";
 import type { AttachmentMeta } from "@/lib/attachments-keys";
-import { generateChallengeId, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
+import { generateChallengeId, CLASSIC_HINT_MAX, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
 import { CLASSIC_BUNDLE_VERSION, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
+import { HINT_COST_MAX } from "@/lib/hint-defaults";
+import { HINT_LEVELS_MAX, type HintLevelConfig } from "@/lib/hint-ladder";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import { describeAdminError } from "@/components/admin/fetch";
 import { DELETE_CONFIRM_PHRASE_MAX, confirmPhrase } from "@/components/admin/confirm-phrase";
@@ -113,8 +115,9 @@ export type ChallengeDraft = {
    *  rather than the string every other field here is: those are strings
    *  because a number input can hold "" mid-edit, which a checkbox cannot. */
   caseSensitive: boolean;
-  /** Optional paid-hint text (#190). Empty = no hint (saving clears it). */
-  hint: string;
+  /** Ordered paid-hint ladder (#594). An empty list clears every hint; a
+   *  blank price means the event-wide hintCost. */
+  hints: { text: string; cost: string }[];
 };
 
 /** The form's whole state: the editable draft plus the identity/position the
@@ -139,11 +142,11 @@ export type ChallengePayload = {
   order: number;
   flag: string;
   caseSensitive?: boolean;
-  hint?: string;
+  hints?: HintLevelConfig[];
 };
 
 export function emptyDraft(defaultCategory: string = ""): ChallengeDraft {
-  return { title: "", category: defaultCategory, description: "", points: "10", flag: "", caseSensitive: false, hint: "" };
+  return { title: "", category: defaultCategory, description: "", points: "10", flag: "", caseSensitive: false, hints: [] };
 }
 
 /** A brand-new challenge, positioned at the end of the list. No id: one is
@@ -157,14 +160,14 @@ export function newChallengeEditor(nextOrder: number, defaultCategory: string = 
  *  `Challenge`. Starting a typo fix with a blank flag box forces the
  *  organizer to retype the whole thing from memory, and a mistake there
  *  silently redefines what counts as solved for every contestant. */
-export function draftFromChallenge({ challenge: c, flag, hint }: AdminChallenge): ChallengeDraft {
+export function draftFromChallenge({ challenge: c, flag, hints }: AdminChallenge): ChallengeDraft {
   return {
     title: c.title,
     category: c.category,
     description: c.description,
     points: String(c.points),
     flag,
-    hint: hint ?? "",
+    hints: hints.map((hint) => ({ text: hint.text, cost: hint.cost === null ? "" : String(hint.cost) })),
     // Coerced, because the stored field is absent-when-false and a checkbox
     // needs a real boolean — an `undefined` here makes React switch the input
     // from controlled to uncontrolled the first time it is ticked.
@@ -195,7 +198,28 @@ export function isDraftValid(d: ChallengeDraft, categories: readonly string[]): 
 
   if (d.flag.trim().length === 0) return false;
 
+  if (d.hints.length > HINT_LEVELS_MAX) return false;
+  for (const hint of d.hints) {
+    if (!hint.text.trim() || hint.text.length > CLASSIC_HINT_MAX) return false;
+    if (hint.cost.trim() === "") continue;
+    const cost = Number(hint.cost);
+    if (!Number.isInteger(cost) || cost < 0 || cost > HINT_COST_MAX) return false;
+  }
+
   return true;
+}
+
+/** Converts a draft's ladder to the stored/request shape: blank rows are
+ *  dropped (an organizer added one and thought better of it), a blank price
+ *  becomes null (event-wide fallback), and text is trimmed like the server. */
+export function hintsFromDraft(d: ChallengeDraft): HintLevelConfig[] {
+  return d.hints
+    .filter((hint) => hint.text.trim())
+    .slice(0, HINT_LEVELS_MAX)
+    .map((hint) => ({
+      text: hint.text.trim(),
+      cost: hint.cost.trim() === "" ? null : Number(hint.cost),
+    }));
 }
 
 /** The POST body for an editor's current state.
@@ -222,9 +246,9 @@ export function payloadFromEditor(
     points: Number(d.points),
     order: editor.order,
     flag: d.flag,
-    // The hint is ALWAYS sent: an emptied field is a deliberate clear, and
-    // the store deletes the row for an empty string (#190).
-    hint: d.hint,
+    // The ladder is ALWAYS sent: an empty list is a deliberate clear, and the
+    // store deletes every rung (#190, #594).
+    hints: hintsFromDraft(d),
     // Sent only when true, matching the route's parser and the store's stored
     // shape — one challenge has one representation whichever door it came
     // through, so an unchanged challenge re-saved from this form produces a
@@ -239,7 +263,7 @@ export function payloadFromEditor(
  *  the same validation and audit line) as an edit. Carries the row's own
  *  flag: the upsert endpoint requires `flag` as one of `CHALLENGE_KEYS`, and a
  *  reorder must not silently blank or rewrite it. */
-export function payloadFromRow({ challenge: c, flag, hint }: AdminChallenge): ChallengePayload {
+export function payloadFromRow({ challenge: c, flag, hints }: AdminChallenge): ChallengePayload {
   // The hint and `caseSensitive` ride along for the same reason the flag
   // does: a reorder re-saves the row through the same endpoint, and omitting
   // a field would clear state the organizer never touched — the route stores
@@ -254,7 +278,7 @@ export function payloadFromRow({ challenge: c, flag, hint }: AdminChallenge): Ch
     points: c.points,
     order: c.order,
     flag,
-    hint: hint ?? "",
+    hints: hints.map((hint) => ({ text: hint.text, cost: hint.cost })),
     ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
   };
 }
@@ -327,7 +351,7 @@ export function exportBundleFrom(
     version: CLASSIC_BUNDLE_VERSION,
     categories: [...categories],
     stories: stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) })),
-    challenges: rows.map(({ challenge: c, flag, hint }) => ({
+    challenges: rows.map(({ challenge: c, flag, hints }) => ({
       id: c.id,
       title: c.title,
       category: c.category,
@@ -340,7 +364,7 @@ export function exportBundleFrom(
       // #210 caught hint; caseSensitive had the same latent hole), and a
       // re-import of such a bundle downgrades grading and deletes hints.
       ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
-      ...(hint ? { hint } : {}),
+      ...(hints.length > 0 ? { hints } : {}),
       // #186: metadata only, and only when present — the server export's rule.
       ...(attachments[c.id]?.length ? { attachments: [...attachments[c.id]] } : {}),
     })),

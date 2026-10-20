@@ -19,12 +19,20 @@ import { effectivePaused, getAdminSettings } from "@/lib/admin-store";
 import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
 import { CLASSIC_BUNDLE_VERSION, type ClassicBundle, type ClassicBundleChallenge } from "@/lib/classic-io";
+import { HINT_COST_MAX } from "@/lib/hint-defaults";
+import {
+  HINT_LEVELS_MAX,
+  hintField,
+  type HintLevelConfig,
+  validateHintLevels,
+} from "@/lib/hint-ladder";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
 import {
   CLASSIC_CHALLENGES_KEY as CHALLENGES_KEY,
   CLASSIC_HINTS_KEY as HINTS_KEY,
+  CLASSIC_HINT_COSTS_KEY as HINT_COSTS_KEY,
   CLASSIC_HINT_MAX,
   CLASSIC_FLAG_KEY as FLAG_KEY,
   CLASSIC_FLAGNORM_KEY as FLAGNORM_KEY,
@@ -198,9 +206,10 @@ export type Challenge = {
 export type AdminChallenge = {
   /** Byte-for-byte what `listChallenges` would have returned for this id. */
   challenge: Challenge;
-  /** Paid-hint text as authored (trimmed), or null when the challenge has no
-   *  hint. ADMIN SURFACES ONLY — contestants buy it through hint-store. */
-  hint: string | null;
+  /** Ordered paid-hint ladder as authored (#594), empty when the challenge
+   *  has none. ADMIN SURFACES ONLY — contestants buy it through hint-store.
+   *  Level 1 is the bare challenge-id field; later rungs are `<id>#<n>`. */
+  hints: HintLevelConfig[];
   /** The flag AS AUTHORED (trimmed), exactly as `ctf:classic:flag` stores it.
    *  Empty only if the flag row is missing — a challenge in that state can
    *  never be solved, which is worth seeing in the edit form rather than
@@ -270,6 +279,54 @@ export async function listChallenges(): Promise<Challenge[]> {
   return challenges;
 }
 
+/** A flat Redis hash reply as a field -> string map. */
+function flatHashMap(flat: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!Array.isArray(flat)) return out;
+  for (let i = 0; i + 1 < flat.length; i += 2) {
+    if (typeof flat[i + 1] === "string") out.set(String(flat[i]), flat[i + 1] as string);
+  }
+  return out;
+}
+
+/** One challenge's contiguous ladder, level 1 first. A hole ends the ladder:
+ *  level N is only purchasable after N-1, so a later rung with no earlier one
+ *  is unreachable data, not a hint. */
+function hintLadderFor(id: string, texts: Map<string, string>, costs: Map<string, string>): HintLevelConfig[] {
+  const out: HintLevelConfig[] = [];
+  for (let level = 1; level <= HINT_LEVELS_MAX; level += 1) {
+    const field = hintField(id, level);
+    const text = texts.get(field);
+    if (text === undefined) break;
+    const rawCost = costs.get(field);
+    const cost = rawCost !== undefined && Number.isInteger(Number(rawCost)) ? Number(rawCost) : null;
+    out.push({ text, cost });
+  }
+  return out;
+}
+
+/** Writes or clears one challenge's ladder. Every field from `levels.length+1`
+ *  through the cap is explicitly removed, so shortening a ladder cannot leave
+ *  a stale later rung (and its price) purchasable. */
+export function hintWriteCommands(id: string, levels: readonly HintLevelConfig[]): (string | number)[][] {
+  const commands: (string | number)[][] = [];
+  levels.forEach((hint, i) => {
+    const field = hintField(id, i + 1);
+    commands.push(["HSET", HINTS_KEY, field, hint.text.trim()]);
+    if (hint.cost === null || hint.cost === undefined) {
+      commands.push(["HDEL", HINT_COSTS_KEY, field]);
+    } else {
+      commands.push(["HSET", HINT_COSTS_KEY, field, String(hint.cost)]);
+    }
+  });
+  for (let level = levels.length + 1; level <= HINT_LEVELS_MAX; level += 1) {
+    const field = hintField(id, level);
+    commands.push(["HDEL", HINTS_KEY, field]);
+    commands.push(["HDEL", HINT_COSTS_KEY, field]);
+  }
+  return commands;
+}
+
 /** The same list, WITH each challenge's flag — for the admin-gated authoring
  *  surface ONLY (`GET /api/admin/classic`, behind `requireAdmin`).
  *
@@ -284,27 +341,21 @@ export async function listChallenges(): Promise<Challenge[]> {
  *  Both hashes are read in ONE pipeline, so the challenges and their flags
  *  come from the same instant. */
 export async function listChallengesForAdmin(): Promise<AdminChallenge[]> {
-  const [challengesRes, flagRes, hintRes] = await upstashPipeline([
+  const [challengesRes, flagRes, hintRes, costRes] = await upstashPipeline([
     ["HGETALL", CHALLENGES_KEY],
     ["HGETALL", FLAG_KEY],
     ["HGETALL", HINTS_KEY],
+    ["HGETALL", HINT_COSTS_KEY],
   ]);
 
-  const flagFlat = Array.isArray(flagRes.result) ? (flagRes.result as string[]) : [];
-  const flagById = new Map<string, string>();
-  for (let i = 0; i < flagFlat.length; i += 2) {
-    if (typeof flagFlat[i + 1] === "string") flagById.set(flagFlat[i], flagFlat[i + 1]);
-  }
-  const hintFlat = Array.isArray(hintRes.result) ? (hintRes.result as string[]) : [];
-  const hintById = new Map<string, string>();
-  for (let i = 0; i < hintFlat.length; i += 2) {
-    if (typeof hintFlat[i + 1] === "string") hintById.set(hintFlat[i], hintFlat[i + 1]);
-  }
+  const flagById = flatHashMap(flagRes?.result);
+  const hintById = flatHashMap(hintRes?.result);
+  const costById = flatHashMap(costRes?.result);
 
-  const rows = parseChallengeHash(challengesRes.result).map((challenge) => ({
+  const rows = parseChallengeHash(challengesRes?.result).map((challenge) => ({
     challenge,
     flag: flagById.get(challenge.id) ?? "",
-    hint: hintById.get(challenge.id) ?? null,
+    hints: hintLadderFor(challenge.id, hintById, costById),
   }));
   rows.sort((a, b) => compareChallenges(a.challenge, b.challenge));
   return rows;
@@ -471,7 +522,11 @@ export async function renameCategory(from: string, to: string): Promise<Category
  *
  *  Returns what was STORED, as an `AdminChallenge`. Contestant-facing code
  *  never sees this value. */
-export async function upsertChallenge(c: Challenge, flag: string, hint?: string | null): Promise<AdminChallenge> {
+export async function upsertChallenge(
+  c: Challenge,
+  flag: string,
+  hints: HintLevelConfig[] | null = null,
+): Promise<AdminChallenge> {
   if (!CLASSIC_ID_RE.test(c.id)) throw new ClassicValidationError("id", `Invalid challenge id: ${c.id}`);
   if (typeof c.title !== "string" || !c.title.trim()) {
     throw new ClassicValidationError("title", "Challenge title is required");
@@ -496,25 +551,27 @@ export async function upsertChallenge(c: Challenge, flag: string, hint?: string 
   if (typeof flag !== "string" || !flag.trim()) {
     throw new ClassicValidationError("flag", "Flag is required");
   }
-  if (hint != null && (typeof hint !== "string" || hint.length > CLASSIC_HINT_MAX)) {
-    throw new ClassicValidationError("hint", `Hint must be at most ${CLASSIC_HINT_MAX} characters`);
-  }
+  const parsedHints = validateHintLevels(hints ?? [], {
+    maxTextLength: CLASSIC_HINT_MAX,
+    maxCost: HINT_COST_MAX,
+  });
+  if (!parsedHints.ok) throw new ClassicValidationError("hints", parsedHints.error);
+  const authoredHints = parsedHints.levels;
 
   const authored = flag.trim();
-  // The hint is written (or CLEARED — an empty/absent hint deletes the row)
-  // in the same pipeline as the challenge, into its own SECRET hash: the
+  // The ladder is written (or CLEARED — an empty array deletes every rung)
+  // in the same pipeline as the challenge, into its own SECRET hashes: the
   // public record must never carry it, same storage rule as the flag pair.
-  const authoredHint = typeof hint === "string" && hint.trim() ? hint.trim() : null;
   const results = await upstashPipeline([
     ["HSET", CHALLENGES_KEY, c.id, JSON.stringify(c)],
     ["HSET", FLAG_KEY, c.id, authored],
     ["HSET", FLAGNORM_KEY, c.id, flagComparisonForm(flag, c.caseSensitive)],
-    authoredHint ? ["HSET", HINTS_KEY, c.id, authoredHint] : ["HDEL", HINTS_KEY, c.id],
+    ...hintWriteCommands(c.id, authoredHints),
   ]);
   const failed = results.find((r) => r.error);
   if (failed) throw new Error(`Upstash HSET failed: ${failed.error}`);
 
-  return { challenge: c, flag: authored, hint: authoredHint };
+  return { challenge: c, flag: authored, hints: authoredHints };
 }
 
 /** Result of a bulk import: how many bundle rows were brand new vs. already
@@ -704,11 +761,10 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
     };
     commands.push(["HSET", CHALLENGES_KEY, c.id, JSON.stringify(record)]);
     commands.push(["HSET", FLAG_KEY, c.id, c.flag.trim()]);
-    // Hint written-or-cleared, same as upsertChallenge: re-importing a bundle
-    // without the field removes a hint the earlier import created, so the
-    // round-trip stays faithful in both directions (#190).
-    const hint = typeof c.hint === "string" && c.hint.trim() ? c.hint.trim() : null;
-    commands.push(hint ? ["HSET", HINTS_KEY, c.id, hint] : ["HDEL", HINTS_KEY, c.id]);
+    // Ladder written-or-cleared, same as upsertChallenge: re-importing a
+    // bundle without the field removes every hint the earlier import created,
+    // so the round-trip stays faithful in both directions (#190, #594).
+    commands.push(...hintWriteCommands(c.id, c.hints ?? []));
     // The comparison form follows the record that was just built, NOT the raw
     // bundle field — they are the same value, and reading it from the record
     // is what keeps them the same value if either ever gains a default.
@@ -744,7 +800,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
     listStories(),
     listAllAttachments("classic"),
   ]);
-  const challenges: ClassicBundleChallenge[] = rows.map(({ challenge, flag, hint }) => ({
+  const challenges: ClassicBundleChallenge[] = rows.map(({ challenge, flag, hints }) => ({
     id: challenge.id,
     title: challenge.title,
     category: challenge.category,
@@ -758,8 +814,8 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // appeared on every row.
     ...(challenge.caseSensitive ? { caseSensitive: true as const } : {}),
     // Same only-when-set rule as caseSensitive: a hint-less board exports
-    // byte-identically to a pre-#190 one.
-    ...(hint ? { hint } : {}),
+    // without a `hints` key. Cost null means the event-wide hintCost.
+    ...(hints.length > 0 ? { hints } : {}),
     // #186: metadata only (the bytes ride the event archive), and only when
     // there is some — the same byte-identical rule as hint.
     ...(files.get(challenge.id)?.length ? { attachments: files.get(challenge.id)!.map(attachmentMeta) } : {}),
@@ -794,11 +850,16 @@ export async function exportBundle(): Promise<ClassicBundle> {
  *  "solved / total" denominator for exactly that reason. */
 export async function deleteChallenge(id: string): Promise<void> {
   if (!CLASSIC_ID_RE.test(id)) throw new ClassicValidationError("id", `Invalid challenge id: ${id}`);
+  const hintDeletes: (string | number)[][] = [];
+  for (let level = 1; level <= HINT_LEVELS_MAX; level += 1) {
+    const field = hintField(id, level);
+    hintDeletes.push(["HDEL", HINTS_KEY, field], ["HDEL", HINT_COSTS_KEY, field]);
+  }
   const results = await upstashPipeline([
     ["HDEL", CHALLENGES_KEY, id],
     ["HDEL", FLAG_KEY, id],
     ["HDEL", FLAGNORM_KEY, id],
-    ["HDEL", HINTS_KEY, id],
+    ...hintDeletes,
   ]);
   const failed = results.find((r) => r.error);
   if (failed) throw new Error(`Upstash HDEL failed: ${failed.error}`);
@@ -830,6 +891,7 @@ export async function clearChallenges(): Promise<void> {
     ["DEL", CATEGORIES_KEY],
     ["DEL", CLASSIC_STORIES_KEY],
     ["DEL", HINTS_KEY],
+    ["DEL", HINT_COSTS_KEY],
   ]);
   // This runs on the destructive replace-all path (event-store's
   // importEventBundle) — a silently-swallowed per-command error here would

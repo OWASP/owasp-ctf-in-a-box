@@ -18,7 +18,9 @@ const src = readFileSync(fileURLToPath(new URL("../hint-reveal-button.tsx", impo
 
 describe("HintRevealButton posts the target app in its reveal request", () => {
   it("builds the POST body from the app prop", () => {
-    expect(src).toMatch(/body:\s*JSON\.stringify\(\{\s*app,\s*id\s*\}\)/);
+    // The ladder level and the client-confirmed price ride along too (#594):
+    // the server re-checks the quote before charging.
+    expect(src).toMatch(/body:\s*JSON\.stringify\(\{\s*app,\s*id,\s*level,\s*confirmedCost:\s*currentCost\s*\}\)/);
   });
 
   it.each(["classic", "ai"] as const)('never hardcodes app: "%s"', (app) => {

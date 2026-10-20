@@ -259,14 +259,15 @@ describe("listChallengesForAdmin", () => {
       { result: [...row(challenge({ id: "b", points: 100 })), ...row(challenge({ id: "a", points: 50 }))] },
       { result: ["a", "CTF{Aaa}", "b", "CTF{Bbb}"] },
       { result: ["a", "Look closer."] },
+      { result: [] },
     ]);
 
     const rows = await listChallengesForAdmin();
 
     expect(rows.map((r) => r.challenge.id)).toEqual(["a", "b"]);
     expect(rows.map((r) => r.flag)).toEqual(["CTF{Aaa}", "CTF{Bbb}"]);
-    // The hint rides back for the edit form too — absent = null (#190).
-    expect(rows.map((r) => r.hint)).toEqual(["Look closer.", null]);
+    // The ladder rides back for the edit form too — absent = [] (#190, #594).
+    expect(rows.map((r) => r.hints)).toEqual([[{ text: "Look closer.", cost: null }], []]);
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
     expect(pipelineCalls()[0]).toEqual([
       ["HGETALL", "ctf:classic:challenges"],
@@ -274,6 +275,7 @@ describe("listChallengesForAdmin", () => {
       // organizer what they typed, casing included.
       ["HGETALL", "ctf:classic:flag"],
       ["HGETALL", "ctf:classic:hints"],
+      ["HGETALL", "ctf:classic:hintcosts"],
     ]);
   });
 
@@ -282,18 +284,24 @@ describe("listChallengesForAdmin", () => {
       { result: row(challenge({ id: "a" })) },
       { result: ["a", "CTF{secret}"] },
       { result: [] },
+      { result: [] },
     ]);
     const [first] = await listChallengesForAdmin();
     // The shape is load-bearing: `AdminChallenge` is deliberately not
     // assignable to `Challenge`, which is what makes handing an admin row to a
     // contestant-facing component a compile error rather than a leak.
-    expect(Object.keys(first)).toEqual(["challenge", "flag", "hint"]);
+    expect(Object.keys(first)).toEqual(["challenge", "flag", "hints"]);
     expect(JSON.stringify(first.challenge)).not.toContain("CTF{secret}");
   });
 
   it("reports a missing flag row as empty rather than hiding the challenge", async () => {
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: row(challenge({ id: "a" })) }, { result: [] }, { result: [] }]);
-    expect(await listChallengesForAdmin()).toEqual([{ challenge: challenge({ id: "a" }), flag: "", hint: null }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: row(challenge({ id: "a" })) },
+      { result: [] },
+      { result: [] },
+      { result: [] },
+    ]);
+    expect(await listChallengesForAdmin()).toEqual([{ challenge: challenge({ id: "a" }), flag: "", hints: [] }]);
   });
 
   // The edit form checks its box off this value. A parser that drops it hands
@@ -304,6 +312,7 @@ describe("listChallengesForAdmin", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([
       { result: row(challenge({ id: "a", caseSensitive: true })) },
       { result: ["a", "CTF{Aaa}"] },
+      { result: [] },
       { result: [] },
     ]);
     const [first] = await listChallengesForAdmin();
@@ -353,9 +362,15 @@ describe("upsertChallenge", () => {
     await upsertChallenge(base, "  CTF{Flag}  ");
     const [call] = pipelineCalls().slice(-1);
     const keys = call.map((c) => c[1]);
-    // The hint row rides in the SAME pipeline (written or cleared) — the
-    // fourth key is #190's, and a hint-less upsert clears it.
-    expect(keys).toEqual(["ctf:classic:challenges", "ctf:classic:flag", "ctf:classic:flagnorm", "ctf:classic:hints"]);
+    // The hint ladder rides in the SAME pipeline: the text hash AND its price
+    // hash (#594), then the clears for every unused rung.
+    expect(keys.slice(0, 5)).toEqual([
+      "ctf:classic:challenges",
+      "ctf:classic:flag",
+      "ctf:classic:flagnorm",
+      "ctf:classic:hints",
+      "ctf:classic:hintcosts",
+    ]);
   });
 
   it("stores the flag as authored and the normalized form separately", async () => {
@@ -379,7 +394,7 @@ describe("upsertChallenge", () => {
   it("returns what was stored, with the flag trimmed", async () => {
     categoriesReply(["Web"]);
     writeReply(3);
-    expect(await upsertChallenge(base, "  CTF{Flag}  ")).toEqual({ challenge: base, flag: "CTF{Flag}", hint: null });
+    expect(await upsertChallenge(base, "  CTF{Flag}  ")).toEqual({ challenge: base, flag: "CTF{Flag}", hints: [] });
   });
 
   it("rejects a challenge whose category is not a known category", async () => {
@@ -436,13 +451,16 @@ describe("deleteChallenge", () => {
     // The stories read that follows (#463): none stored, so nothing to prune.
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
     await deleteChallenge("chal-1");
-    expect(pipelineCalls()[0]).toEqual([
+    expect(pipelineCalls()[0].slice(0, 3)).toEqual([
       ["HDEL", "ctf:classic:challenges", "chal-1"],
       ["HDEL", "ctf:classic:flag", "chal-1"],
       ["HDEL", "ctf:classic:flagnorm", "chal-1"],
-      // The hint row retires with its challenge (#190).
-      ["HDEL", "ctf:classic:hints", "chal-1"],
     ]);
+    // The ladder retires with its challenge (#190/#594): every rung's text
+    // AND price field, level 1 through the cap.
+    const deletedFields = pipelineCalls()[0].filter((c) => c[0] === "HDEL").map((c) => c[1]);
+    expect(deletedFields).toContain("ctf:classic:hints");
+    expect(deletedFields).toContain("ctf:classic:hintcosts");
     // Deliberately NOT the per-login solve/attempt hashes or the aggregate
     // counters — see deleteChallenge's contract.
     const keys = pipelineCalls().flat().map((c) => c[1]);
@@ -695,31 +713,34 @@ describe("importBundle", () => {
     const base = challenge();
     categoriesReply(["Web"]);
     writeReply(4);
-    const saved = await upsertChallenge(base, "CTF{Flag}", "  Look at robots.txt  ");
+    const saved = await upsertChallenge(base, "CTF{Flag}", [{ text: "  Look at robots.txt  ", cost: null }]);
     const [call] = pipelineCalls().slice(-1);
     expect(call[3]).toEqual(["HSET", "ctf:classic:hints", base.id, "Look at robots.txt"]);
+    expect(call[4]).toEqual(["HDEL", "ctf:classic:hintcosts", base.id]);
     // Never into the public record.
     expect(String(call[0][3])).not.toContain("robots.txt");
-    expect(saved.hint).toBe("Look at robots.txt");
+    expect(saved.hints).toEqual([{ text: "Look at robots.txt", cost: null }]);
   });
 
   it("clears the hint row when the hint is emptied or absent", async () => {
     const base = challenge();
     categoriesReply(["Web"]);
     writeReply(4);
-    await upsertChallenge(base, "CTF{Flag}", "   ");
+    await upsertChallenge(base, "CTF{Flag}", []);
     expect(pipelineCalls().slice(-1)[0][3]).toEqual(["HDEL", "ctf:classic:hints", base.id]);
     categoriesReply(["Web"]);
     writeReply(4);
     const saved = await upsertChallenge(base, "CTF{Flag}");
     expect(pipelineCalls().slice(-1)[0][3]).toEqual(["HDEL", "ctf:classic:hints", base.id]);
-    expect(saved.hint).toBeNull();
+    expect(saved.hints).toEqual([]);
   });
 
   it("rejects a hint over the cap without touching Upstash", async () => {
     const base = challenge();
     categoriesReply(["Web"]);
-    await expect(upsertChallenge(base, "CTF{Flag}", "x".repeat(1001))).rejects.toThrow(ClassicValidationError);
+    await expect(upsertChallenge(base, "CTF{Flag}", [{ text: "x".repeat(1001), cost: null }])).rejects.toThrow(
+      ClassicValidationError,
+    );
   });
 
   it("reports created vs updated against what already exists", async () => {
@@ -736,7 +757,7 @@ describe("importBundle", () => {
     // The only HDELs are hint CLEARS for the bundle's own hint-less rows —
     // never a delete of a challenge the bundle does not mention.
     const deleted = pipelineCalls().flat().filter((c) => c[0] === "HDEL");
-    expect(deleted.every((c) => c[1] === "ctf:classic:hints")).toBe(true);
+    expect(deleted.every((c) => c[1] === "ctf:classic:hints" || c[1] === "ctf:classic:hintcosts")).toBe(true);
     expect(deleted.some((c) => String(c[2]).startsWith("legacy"))).toBe(false);
   });
 
@@ -782,7 +803,7 @@ describe("exportBundle", () => {
   it("returns the current board in the importable shape", async () => {
     seedFullBoard();
     const bundle = await exportBundle();
-    expect(bundle.version).toBe(2);
+    expect(bundle.version).toBe(CLASSIC_BUNDLE_VERSION);
     expect(bundle.stories).toEqual([]);
     expect(bundle.categories).toEqual(["Web", "Crypto"]);
     expect(bundle.challenges[0]).toEqual({
@@ -832,7 +853,7 @@ describe("exportBundle", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
     mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
     const bundle = await exportBundle();
-    expect(bundle.challenges[0].hint).toBe("Look closer.");
+    expect(bundle.challenges[0].hints).toEqual([{ text: "Look closer.", cost: null }]);
   });
 });
 
@@ -1116,5 +1137,62 @@ describe("renameCategory", () => {
     await expect(renameCategory("Webb", "Web")).rejects.toThrow(/HSET failed/);
     // Three pipelines: two reads and the failed write. No list SET followed.
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(3);
+  });
+});
+
+// #594: the ordered, independently priced hint ladder.
+describe("hint ladders (#594)", () => {
+  it("composes a ladder from the text and price hashes, cost null when unpriced", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: row(challenge({ id: "web-a" })) },
+      { result: [] },
+      { result: ["web-a", "first", "web-a#2", "second"] },
+      { result: ["web-a", "5"] },
+    ]);
+    const [rowA] = await listChallengesForAdmin();
+    expect(rowA.hints).toEqual([
+      { text: "first", cost: 5 },
+      { text: "second", cost: null },
+    ]);
+  });
+
+  it("writes each rung's text and price, and clears every unused rung", async () => {
+    categoriesReply(["Web"]);
+    writeReply(4);
+    const saved = await upsertChallenge(challenge(), "CTF{Flag}", [
+      { text: "first", cost: 5 },
+      { text: "second", cost: null },
+    ]);
+    expect(saved.hints).toEqual([
+      { text: "first", cost: 5 },
+      { text: "second", cost: null },
+    ]);
+    const [call] = pipelineCalls().slice(-1);
+    expect(call.slice(3, 7)).toEqual([
+      ["HSET", "ctf:classic:hints", "chal-1", "first"],
+      ["HSET", "ctf:classic:hintcosts", "chal-1", "5"],
+      ["HSET", "ctf:classic:hints", "chal-1#2", "second"],
+      ["HDEL", "ctf:classic:hintcosts", "chal-1#2"],
+    ]);
+    // Level 3 onward: both hashes cleared, so a shrunk ladder cannot leave a
+    // stale rung behind.
+    expect(call[7]).toEqual(["HDEL", "ctf:classic:hints", "chal-1#3"]);
+    expect(call[8]).toEqual(["HDEL", "ctf:classic:hintcosts", "chal-1#3"]);
+  });
+
+  it("round-trips a ladder through export and import", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: row(challenge({ id: FULL_BOARD_ID })) },
+      { result: [] },
+      { result: [FULL_BOARD_ID, "first", `${FULL_BOARD_ID}#2`, "second"] },
+      { result: [FULL_BOARD_ID, "7"] },
+    ]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
+    const bundle = await exportBundle();
+    expect(bundle.challenges[0].hints).toEqual([
+      { text: "first", cost: 7 },
+      { text: "second", cost: null },
+    ]);
   });
 });

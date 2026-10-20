@@ -62,8 +62,8 @@ const c2: Challenge = {
   order: 2,
 };
 
-const row1: AdminChallenge = { challenge: c1, flag: "CTF{real}", hint: null };
-const row2: AdminChallenge = { challenge: c2, flag: "CTF{other}", hint: null };
+const row1: AdminChallenge = { challenge: c1, flag: "CTF{real}", hints: [] };
+const row2: AdminChallenge = { challenge: c2, flag: "CTF{other}", hints: [] };
 
 function renderControls(initialChallenges: AdminChallenge[] = [], initialCategories: string[] = ["Web"], loaded = true) {
   return renderToStaticMarkup(
@@ -279,7 +279,7 @@ describe("ChallengeForm — the masking/preview/no-id properties an organizer ac
   // board uses. A second renderer here would drift and stop being a preview
   // of anything real.
   it("previews the description through the same renderer the board uses", () => {
-    const editor = editorFromChallenge({ challenge: { ...c1, description: "**b**" }, flag: "f", hint: null });
+    const editor = editorFromChallenge({ challenge: { ...c1, description: "**b**" }, flag: "f", hints: [] });
     const html = renderToStaticMarkup(
       <ChallengeForm
         editor={editor}
@@ -329,7 +329,7 @@ describe("payloadFromEditor — an edit can never change a challenge's id", () =
       points: "999",
       flag: "CTF{changed}",
       caseSensitive: false,
-      hint: "",
+      hints: [],
     };
     const payload = payloadFromEditor({ ...editor, draft }, () => "generated-from-the-new-title");
     expect(payload.id).toBe(c1.id);
@@ -340,13 +340,13 @@ describe("payloadFromEditor — an edit can never change a challenge's id", () =
   });
 
   it("keeps the id across a title that would generate a different one", () => {
-    const editor = editorFromChallenge({ challenge: { ...c1, id: "legacy-hand-typed-id" }, flag: "f", hint: null });
+    const editor = editorFromChallenge({ challenge: { ...c1, id: "legacy-hand-typed-id" }, flag: "f", hints: [] });
     const payload = payloadFromEditor({ ...editor, draft: { ...editor.draft, title: "New title entirely" } });
     expect(payload.id).toBe("legacy-hand-typed-id");
   });
 
   it("keeps the challenge's existing position rather than re-deriving one", () => {
-    const editor = editorFromChallenge({ challenge: { ...c1, order: 7 }, flag: "f", hint: null });
+    const editor = editorFromChallenge({ challenge: { ...c1, order: 7 }, flag: "f", hints: [] });
     expect(payloadFromEditor(editor).order).toBe(7);
   });
 
@@ -370,25 +370,25 @@ describe("payloadFromEditor — an edit can never change a challenge's id", () =
   it("carries exactly the wire contract's challenge keys, nothing more", () => {
     const payload = payloadFromEditor(editorFromChallenge(row1));
     expect(Object.keys(payload).sort()).toEqual(
-      ["category", "description", "flag", "hint", "id", "order", "points", "title"].sort(),
+      ["category", "description", "flag", "hints", "id", "order", "points", "title"].sort(),
     );
   });
 });
 
 describe("exportBundleFrom", () => {
   // The CLIENT-side export must emit exactly what the server's exportBundle
-  // emits — this path silently dropped caseSensitive AND hint, and a
+  // emits — this path silently dropped caseSensitive AND hints, and a
   // re-import of such a bundle downgrades grading and deletes hints
   // (CodeRabbit #210; the same #196 downgrade class, in the client door).
-  it("round-trips caseSensitive and hint, present only when set", () => {
+  it("round-trips caseSensitive and hints, present only when set", () => {
     const rows: AdminChallenge[] = [
-      { challenge: { ...c1, caseSensitive: true }, flag: "CTF{real}", hint: "Look closer." },
-      { challenge: c2, flag: "CTF{other}", hint: null },
+      { challenge: { ...c1, caseSensitive: true }, flag: "CTF{real}", hints: [{ text: "Look closer.", cost: null }] },
+      { challenge: c2, flag: "CTF{other}", hints: [] },
     ];
     const bundle = exportBundleFrom(rows, ["Web"]);
-    expect(bundle.challenges[0]).toMatchObject({ caseSensitive: true, hint: "Look closer." });
+    expect(bundle.challenges[0]).toMatchObject({ caseSensitive: true, hints: [{ text: "Look closer.", cost: null }] });
     expect(bundle.challenges[1]).not.toHaveProperty("caseSensitive");
-    expect(bundle.challenges[1]).not.toHaveProperty("hint");
+    expect(bundle.challenges[1]).not.toHaveProperty("hints");
   });
 });
 
@@ -456,7 +456,7 @@ describe("AdminClassicControls — stories editor (#463)", () => {
 
 describe("payloadFromRow", () => {
   it("round-trips a stored row unchanged, so a reorder re-saves only the order", () => {
-    const payload = payloadFromRow({ challenge: { ...c1, order: 3 }, flag: "CTF{real}", hint: null });
+    const payload = payloadFromRow({ challenge: { ...c1, order: 3 }, flag: "CTF{real}", hints: [] });
     expect(payload).toEqual({
       id: c1.id,
       title: c1.title,
@@ -465,7 +465,7 @@ describe("payloadFromRow", () => {
       points: c1.points,
       order: 3,
       flag: "CTF{real}",
-      hint: "",
+      hints: [],
     });
   });
 
@@ -473,18 +473,18 @@ describe("payloadFromRow", () => {
   // which treats an absent caseSensitive as false — so dragging a
   // case-sensitive challenge used to silently downgrade its grading.
   it("carries caseSensitive when it is on, so a reorder cannot downgrade the grading", () => {
-    const payload = payloadFromRow({ challenge: { ...c1, caseSensitive: true }, flag: "CTF{real}", hint: null });
+    const payload = payloadFromRow({ challenge: { ...c1, caseSensitive: true }, flag: "CTF{real}", hints: [] });
     expect(payload.caseSensitive).toBe(true);
   });
 
   it("omits caseSensitive when it is off, matching the stored shape", () => {
-    expect("caseSensitive" in payloadFromRow({ challenge: c1, flag: "CTF{real}", hint: null })).toBe(false);
+    expect("caseSensitive" in payloadFromRow({ challenge: c1, flag: "CTF{real}", hints: [] })).toBe(false);
   });
 });
 
 describe("reorderChallenges", () => {
   const rows = (...ids: string[]): AdminChallenge[] =>
-    ids.map((id, i) => ({ challenge: { ...c1, id, title: `Title ${id}`, order: i + 1 }, flag: "f", hint: null }));
+    ids.map((id, i) => ({ challenge: { ...c1, id, title: `Title ${id}`, order: i + 1 }, flag: "f", hints: [] }));
 
   const shape = (list: AdminChallenge[]) => list.map((r) => [r.challenge.id, r.challenge.order] as const);
 
@@ -518,8 +518,8 @@ describe("reorderChallenges", () => {
 
   it("treats an out-of-range index as a no-op rather than a silent renumbering", () => {
     const sparse: AdminChallenge[] = [
-      { challenge: { ...c1, id: "a", order: 0 }, flag: "f", hint: null },
-      { challenge: { ...c1, id: "b", order: 40 }, flag: "f", hint: null },
+      { challenge: { ...c1, id: "a", order: 0 }, flag: "f", hints: [] },
+      { challenge: { ...c1, id: "b", order: 40 }, flag: "f", hints: [] },
     ];
     expect(shape(reorderChallenges(sparse, 0, 5))).toEqual([
       ["a", 0],
@@ -530,7 +530,7 @@ describe("reorderChallenges", () => {
 
 describe("changedOrderRows", () => {
   const rows = (...ids: string[]): AdminChallenge[] =>
-    ids.map((id, i) => ({ challenge: { ...c1, id, order: i + 1 }, flag: "f", hint: null }));
+    ids.map((id, i) => ({ challenge: { ...c1, id, order: i + 1 }, flag: "f", hints: [] }));
 
   it("names exactly the challenges a move has to write back", () => {
     const before = rows("a", "b", "c", "d");

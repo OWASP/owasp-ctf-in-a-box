@@ -5,6 +5,7 @@ import { ADMIN_ADMINS_KEY, LOGIN_RE } from "@/lib/admin-admins";
 import { addUpload, fillMissingUpload, listAttachments } from "@/lib/attachments-store";
 import { TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
 import { SCORE_COOLDOWN_MIN_MAX } from "@/lib/scoring-defaults";
+import { HINT_COST_MAX } from "@/lib/hint-defaults";
 import {
   isModuleId,
   MODULE_TITLE_MAX,
@@ -92,7 +93,7 @@ export const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 export const ADMIN_AUDIT_KEY = "ctf:admin:audit";
 export const SYNC_STATUS_KEY = "ctf:sync:status";
 export const AUDIT_CAP = 500;
-export const HINT_COST_MAX = 100000;
+export { HINT_COST_MAX };
 /** Caps for the two hint-gating knobs (see hint-store's `hintGate`). */
 export const HINT_MIN_SOLVES_MAX = 1000;
 export const HINT_UNLOCK_AFTER_MAX = 100000; // minutes

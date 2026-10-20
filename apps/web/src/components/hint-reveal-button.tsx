@@ -26,11 +26,30 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { HintTarget } from "@/lib/hint-store";
 
-export default function HintRevealButton({ app, id, cost }: { app: HintTarget; id: string; cost: number }) {
+export default function HintRevealButton({
+  app,
+  id,
+  level = 1,
+  cost,
+}: {
+  app: HintTarget;
+  id: string;
+  /** Jeopardy ladder rung (#594); 1 for the single-hint ai target. */
+  level?: number;
+  cost: number;
+}) {
   const router = useRouter();
   const [state, setState] = useState<"idle" | "confirm" | "pending">("idle");
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
+  // The price the contestant is confirming. Seeded from the render-time prop
+  // and updated when the server answers `repriced` (#557/#594), so the second
+  // confirm states the authoritative figure rather than the stale one. The
+  // `{ prop, value }` pair lets a refresh hand down a new price by resetting
+  // during render (the documented alternative to a setState effect).
+  const [quote, setQuote] = useState({ prop: cost, value: cost });
+  if (quote.prop !== cost) setQuote({ prop: cost, value: cost });
+  const currentCost = quote.value;
   // The points actually deducted by THIS reveal, or null when it charged
   // nothing (an admin preview, or an already-owned reveal). Only a real charge
   // gets the "−N pts spent" acknowledgement, and it uses the server's figure.
@@ -77,7 +96,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
       const res = await fetch("/api/hints/reveal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ app, id }),
+        body: JSON.stringify({ app, id, level, confirmedCost: currentCost }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         hint?: string;
@@ -86,7 +105,17 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         balance?: number;
         alreadyOwned?: boolean;
         dryRun?: boolean;
+        repriced?: boolean;
       };
+      // The confirmed price no longer matched the authoritative one: nothing
+      // was charged and no text was read. Re-seed the confirm step with the
+      // current price so the contestant re-confirms knowingly (#557/#594).
+      if (res.status === 409 && data.repriced && typeof data.cost === "number") {
+        setQuote({ prop: cost, value: data.cost });
+        setError(data.error ?? `This hint now costs ${data.cost} points.`);
+        setState("idle");
+        return;
+      }
       if (res.ok && typeof data.hint === "string") {
         // A preview (dryRun) and an already-owned reveal both return the hint
         // but deduct nothing — only a real charge is acknowledged, with the
@@ -96,7 +125,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         // already-owned reveal charge nothing, and a configured cost of 0
         // deducts nothing either — none of those should render "−0 pts spent".
         const deducted =
-          !data.dryRun && !data.alreadyOwned ? (typeof data.cost === "number" ? data.cost : cost) : 0;
+          !data.dryRun && !data.alreadyOwned ? (typeof data.cost === "number" ? data.cost : currentCost) : 0;
         setChargedCost(deducted > 0 ? deducted : null);
         setBalance(deducted > 0 && typeof data.balance === "number" ? data.balance : null);
         setText(data.hint);
@@ -142,7 +171,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
     return (
       <div className="flex flex-col gap-1">
         <span className="sr-only" role="status">
-          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${cost} points on this hint.`}
+          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${currentCost} points on this hint.`}
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -156,7 +185,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
               "Revealing…"
             ) : (
               <>
-                <span aria-hidden="true">💡</span> Confirm (−{cost} pts)
+                <span aria-hidden="true">💡</span> Confirm (−{currentCost} pts)
               </>
             )}
           </button>
@@ -181,7 +210,7 @@ export default function HintRevealButton({ app, id, cost }: { app: HintTarget; i
         onClick={() => setState("confirm")}
         className="w-fit rounded-md border border-[#d4a017]/40 px-3 py-1.5 text-sm text-[#d4a017] transition-colors hover:bg-[#d4a017]/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
       >
-        <span aria-hidden="true">💡</span> Reveal hint (−{cost} pts)
+        <span aria-hidden="true">💡</span> Reveal hint (−{currentCost} pts)
       </button>
       {error && (
         <p role="alert" className="text-xs text-[#e53e3e]">

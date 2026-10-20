@@ -46,9 +46,9 @@ const attempt = (attempts: number, lastAt = "2026-08-22T10:00:00Z") =>
  *   1. one pipeline: quiz points, classic points, ai points, hints spent
  *   2. SCAN ctf:solves:*        (secure-dev sweep; repeats until cursor 0)
  *   3. HGETALL of each solves key found
- *   4. EIGHT commands per contestant, batched (answers, solves, ai solves,
+ *   4. NINE commands per contestant, batched (answers, solves, ai solves,
  *      quiz attempts, classic attempts, ai attempts, firstTeamAt, hint
- *      purchase times)
+ *      purchase times, hint purchase costs)
  *
  * Written as a queue rather than per-call mocks because `vi.clearAllMocks()`
  * does NOT clear queued one-shot implementations — leftovers from one test
@@ -72,6 +72,8 @@ function mockStore(opts: {
       firstTeamAt?: string | null;
       /** `<app>/<challengeId>` -> ISO bought-at. */
       hintTimes?: Record<string, string>;
+      /** Purchase key -> points actually charged (#594), for spend-by-level. */
+      hintCosts?: Record<string, number>;
     }
   >;
   logins?: string[];
@@ -140,6 +142,7 @@ function mockStore(opts: {
           { result: hash(p.aiAttempts ?? {}) },
           { result: [p.firstTeamAt ?? null] },
           { result: hash(p.hintTimes ?? {}) },
+          { result: hash(p.hintCosts ?? {}) },
         ];
       }),
     );
@@ -535,6 +538,31 @@ describe("hint ordering", () => {
     const m = await computeEventMetrics();
     expect(m.hints.boughtBeforeSolving).toBe(1);
     expect(m.hints.boughtAfterSolving).toBe(1);
+  });
+
+  // #594: spend by level comes from the recorded per-purchase cost hash, not
+  // from a re-derivation, so a rung's price at the moment it was bought is what
+  // the Insights table shows.
+  it("prices spend by level from the recorded per-purchase cost (#594)", async () => {
+    mockStore({
+      logins: ["alice", "bob"],
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(50, "2026-08-22T10:10:00Z") },
+          hintTimes: { "classic/c1": "2026-08-22T10:00:00Z", "classic/c1#2": "2026-08-22T10:05:00Z" },
+          hintCosts: { "classic/c1": 10, "classic/c1#2": 15 },
+        },
+        bob: {
+          classicSolves: { c1: earned(50, "2026-08-22T10:10:00Z") },
+          hintTimes: { "classic/c1": "2026-08-22T10:20:00Z" },
+          hintCosts: { "classic/c1": 12 },
+        },
+      },
+    });
+    const m = await computeEventMetrics();
+    const byLevel = new Map(m.hints.byLevel.map((r) => [r.level, r]));
+    expect(byLevel.get(1)).toMatchObject({ buyers: 2, totalSpend: 22, boughtBeforeSolving: 1, boughtAfterSolving: 1 });
+    expect(byLevel.get(2)).toMatchObject({ buyers: 1, totalSpend: 15, boughtBeforeSolving: 1, boughtAfterSolving: 0 });
   });
 
   // #190: classic slots compare against the login's OWN solve rows, and the

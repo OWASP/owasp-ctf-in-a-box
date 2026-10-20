@@ -41,7 +41,19 @@ type EventMetrics = {
   timeline: { at: string; solves: number }[];
   teams: { slug: string; name: string; size: number; points: number }[];
   modules: { quiz: number; classic: number; ai: number; secureDevelopment: number };
-  hints: { buyers: number; totalSpend: number; boughtBeforeSolving: number; boughtAfterSolving: number };
+  hints: {
+    buyers: number;
+    totalSpend: number;
+    boughtBeforeSolving: number;
+    boughtAfterSolving: number;
+    byLevel?: {
+      level: number;
+      buyers: number;
+      totalSpend: number;
+      boughtBeforeSolving: number;
+      boughtAfterSolving: number;
+    }[];
+  };
   caveats: string[];
 };
 
@@ -294,6 +306,39 @@ export default function AdminInsightsTab({
               />
             </div>
           </section>
+
+          {(metrics.hints.byLevel?.length ?? 0) > 0 && (
+            <section className="flex flex-col gap-2">
+              <h3 className="text-sm font-semibold text-white">Hints by level</h3>
+              <p className="text-sm text-muted">
+                Jeopardy ladders sell in order; later rungs are only bought after the ones before them.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="text-xs uppercase tracking-wide text-muted">
+                    <tr>
+                      <th className="py-1 pr-4 font-medium">Level</th>
+                      <th className="py-1 pr-4 font-medium">Buyers</th>
+                      <th className="py-1 pr-4 font-medium">Points spent</th>
+                      <th className="py-1 pr-4 font-medium">Before solving</th>
+                      <th className="py-1 font-medium">After solving</th>
+                    </tr>
+                  </thead>
+                  <tbody className="tabular-nums text-white">
+                    {metrics.hints.byLevel!.map((level) => (
+                      <tr key={level.level} className="border-t border-white/[0.06]">
+                        <td className="py-1 pr-4">{level.level}</td>
+                        <td className="py-1 pr-4">{level.buyers}</td>
+                        <td className="py-1 pr-4">{level.totalSpend}</td>
+                        <td className="py-1 pr-4">{level.boughtBeforeSolving}</td>
+                        <td className="py-1">{level.boughtAfterSolving}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           <section className="flex flex-col gap-1 border-t border-white/[0.06] pt-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">

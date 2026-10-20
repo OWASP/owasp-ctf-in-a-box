@@ -14,7 +14,7 @@ const launchLock = vi.hoisted(() => ({
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { moduleLive, isAdminLogin, getSession, listChallenges, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints } =
+const { moduleLive, isAdminLogin, getSession, listChallenges, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints, getClassicHintLadder } =
   vi.hoisted(() => ({
     moduleLive: vi.fn(),
     isAdminLogin: vi.fn(),
@@ -27,6 +27,7 @@ const { moduleLive, isAdminLogin, getSession, listChallenges, getSolveCounts, ge
     getClassicHintIds: vi.fn(),
     getHintNotice: vi.fn(),
     getViewerHints: vi.fn(),
+    getClassicHintLadder: vi.fn(),
   }));
 
 vi.mock("server-only", () => ({}));
@@ -43,7 +44,7 @@ vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
-vi.mock("@/lib/hint-store", () => ({ getClassicHintIds, getHintNotice, getViewerHints }));
+vi.mock("@/lib/hint-store", () => ({ getClassicHintIds, getHintNotice, getViewerHints, getClassicHintLadder }));
 // #463 stories: none by default; the story tests below set some.
 const storyMocks = vi.hoisted(() => ({
   listStories: vi.fn(async () => [] as { id: string; title: string; intro: string; steps: string[] }[]),
@@ -94,7 +95,8 @@ beforeEach(() => {
   ]);
   getClassicHintIds.mockResolvedValue([]);
   getHintNotice.mockResolvedValue({ active: false, cost: 10 });
-  getViewerHints.mockResolvedValue({ purchased: {}, classic: {}, spent: 0, count: 0 });
+  getViewerHints.mockResolvedValue({ purchased: {}, classic: {}, classicLevels: {}, spent: 0, count: 0 });
+  getClassicHintLadder.mockResolvedValue([]);
 });
 
 describe("challenge page gates", () => {
@@ -223,12 +225,20 @@ describe("challenge page hint", () => {
   });
 
   it("offers the reveal button (with the price) to a signed-in non-owner", async () => {
+    getClassicHintLadder.mockResolvedValue([{ level: 1, price: 25 }]);
     const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(html).toMatch(/Reveal hint \(−25 pts\)/);
   });
 
   it("renders an owned hint's text server-side, with no buy button", async () => {
-    getViewerHints.mockResolvedValue({ purchased: {}, classic: { c1: "Look at robots.txt." }, spent: 25, count: 1 });
+    getClassicHintLadder.mockResolvedValue([{ level: 1, price: 25 }]);
+    getViewerHints.mockResolvedValue({
+      purchased: {},
+      classic: { c1: "Look at robots.txt." },
+      classicLevels: { c1: { 1: "Look at robots.txt." } },
+      spent: 25,
+      count: 1,
+    });
     const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(html).toContain("Look at robots.txt.");
     expect(html).not.toMatch(/Reveal hint/);
@@ -236,6 +246,7 @@ describe("challenge page hint", () => {
 
   it("tells a signed-out visitor a hint exists without an affordance that would 401", async () => {
     getSession.mockResolvedValue(null);
+    getClassicHintLadder.mockResolvedValue([{ level: 1, price: 25 }]);
     const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(html).toContain("sign in to reveal it");
     expect(html).not.toMatch(/Reveal hint \(/);

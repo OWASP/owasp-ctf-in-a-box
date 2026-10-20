@@ -1327,7 +1327,8 @@ either store has to know the fold is shared.
 
 ## ADR 31. One hint switch: capability split from policy
 
-**Status.** Accepted.
+**Status.** Accepted; amended 2026-10-20 (#594): the one switch now governs an
+ordered, per-rung-priced hint ladder — see the Amendment at the end.
 
 **Context.** Hints had three things that looked like a switch, and none of
 them worked the way an organizer would expect.
@@ -1429,6 +1430,36 @@ second switch this ADR exists to remove. Making the *cap* organizer-settable
 is a real request and is tracked separately; if it lands it belongs in
 `/admin` on the `HINT_COST` pattern named above — a constant default with an
 override and no config key — not back in `event.yaml`.
+
+**Amendment (#594, 2026-10-20): the switch now governs a ladder, not one
+hint.** Jeopardy hints are an ordered list of independently priced rungs — hint
+`N` is purchasable only after `N-1`, and each rung may carry its own price. This
+does not add a second switch: `hintsEnabled` still turns the whole feature on
+and off, and each rung's price is the same `HINT_COST` shape this ADR names — a
+number with an event-wide default (`hintCost`) and a per-rung override, no env
+var and no config key.
+
+Storage stays additive so an event upgraded mid-flight keeps its data:
+
+- The ladder's text lives in `ctf:classic:hints`, level 1 under the bare
+  challenge id and level `N≥2` under `<id>#<n>`; a legacy bare field reads as
+  level 1 with no migration. Per-rung prices are a sibling hash
+  `ctf:classic:hintcosts` using the same field names, where an absent field
+  means "use the event-wide default".
+- A purchase is recorded under a canonical key — level 1 under the legacy
+  `<app>/<id>`, level `N≥2` under `<app>/<id>#<n>` — so pre-ladder records and
+  timestamps are read as hint 1 rather than orphaned. The price actually charged
+  is written to `ctf:hints:cost:<login>` per purchase, which is what the
+  Insights "hints by level" table prices spend from.
+- Bundle version 3 carries `hints: [{ text, cost|null }]`; v1/v2's single
+  `hint` string imports as a one-rung ladder, and v3 rejects the legacy field.
+
+`ctf:hints:spent` remains the accumulated **points** penalty, never a count, so
+the leaderboard marker and `hint-penalties.ts` are unchanged; the ordering, the
+authoritative re-read of a rung's price, and the client-confirmed quote are
+enforced atomically inside the reveal Lua script (a stale quote is refused with
+no charge and no text read). Secure Development and the AI module keep a single
+hint: a level above 1 is refused for them.
 
 ## ADR 32. Scheduled windows, evaluated at read time in three readers
 

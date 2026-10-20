@@ -75,7 +75,16 @@ async function loadStore(enabled = true, { creds = true }: { creds?: boolean } =
 }
 
 beforeEach(() => {
+  // `mockClear` leaves implementations (including a queued `mockResolvedValueOnce`)
+  // in place, so reset the ones these tests queue per case and re-seed the
+  // defaults below — a leftover `Once` reply from a previous test otherwise
+  // answers the next one's call.
   vi.clearAllMocks();
+  for (const fn of [mocks.upstashEval, mocks.upstashPipeline, mocks.getAdminSettings, mocks.isModuleLive, mocks.hintBalance]) {
+    fn.mockReset();
+  }
+  storyMocks.listStories.mockReset();
+  storyMocks.teamSolveKeys.mockReset();
   // Hints belong to the Secure Development module; every test below assumes
   // it is enabled unless it says otherwise.
   mocks.isModuleLive.mockResolvedValue(true);
@@ -83,7 +92,16 @@ beforeEach(() => {
   // override sees only the baked env default (as before this override existed).
   mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS });
   mocks.hintBalance.mockResolvedValue(RICH);
+  storyMocks.listStories.mockResolvedValue([]);
+  storyMocks.teamSolveKeys.mockResolvedValue([]);
 });
+
+/** The pipeline reply `classicHintPrice` reads: the rung's text and, when
+ *  `cost` is set, its per-rung price. A classic reveal resolves the price
+ *  before the gate, so every classic case needs one of these queued first. */
+function classicHintRead(text = "Look at robots.txt.", cost: number | null = null) {
+  mocks.upstashPipeline.mockResolvedValueOnce([{ result: text }, { result: cost === null ? null : String(cost) }]);
+}
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -103,6 +121,7 @@ describe("revealHint", () => {
   // is the isolation — a classic purchase must never read a scorer hash.
   it("reveals a classic hint from ctf:classic:hints, charged into the shared spend", async () => {
     const store = await loadStore();
+    classicHintRead();
     mocks.upstashEval.mockResolvedValueOnce(["charged", "Look at robots.txt.", 10]);
     const result = await store.revealHint("octocat", "classic", "web-robots-only");
     expect(result).toEqual({ ok: true, hint: "Look at robots.txt.", alreadyOwned: false, spent: 10, cost: 10, balance: 990 });
@@ -114,6 +133,10 @@ describe("revealHint", () => {
       "ctf:hints:at:octocat",
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
+      // The ladder's price hash and the per-purchase record of what was
+      // actually charged (#594) — KEYS[7..8], ahead of any story-lock keys.
+      "ctf:classic:hintcosts",
+      "ctf:hints:cost:octocat",
     ]);
     expect(argv[1]).toBe("classic/web-robots-only");
   });
@@ -121,6 +144,7 @@ describe("revealHint", () => {
   it("gates classic hints on the CLASSIC module, not secure-development", async () => {
     const store = await loadStore();
     mocks.isModuleLive.mockImplementation(async (id: string) => id === "classic");
+    classicHintRead("text");
     mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
     // classic on, secure-development off: classic reveals work…
     await expect(store.revealHint("octocat", "classic", "web-robots-only")).resolves.toMatchObject({ ok: true });
@@ -144,6 +168,8 @@ describe("revealHint", () => {
       "ctf:hints:at:octocat",
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
+      "ctf:classic:hintcosts",
+      "ctf:hints:cost:octocat",
     ]);
     expect(argv[1]).toBe("ai/prompt-injection-1");
   });
@@ -195,6 +221,8 @@ describe("revealHint", () => {
       // in-progress counter: refused while any score-lowering op is running.
       "ctf:admin:score-rev",
       "ctf:admin:score-lowering",
+      "ctf:classic:hintcosts",
+      "ctf:hints:cost:octocat",
     ]);
     expect(args.slice(0, 4)).toEqual([
       "Challenge-5-Admin-Section",
@@ -294,6 +322,7 @@ describe("revealHint", () => {
       expect(await off.getViewerHints("octocat")).toEqual({
         purchased: {},
         classic: {},
+        classicLevels: {},
         ai: {},
         spent: 0,
         count: 0,
@@ -425,18 +454,18 @@ describe("revealHint", () => {
     expect(stale).toBeLessThan(textRead);
     expect(insufficient).toBeLessThan(textRead);
     expect(textRead).toBeLessThan(sadd);
-    // Exactly one read on the charge/owned path; any other HGET of KEYS[3]
-    // belongs to the preview branch, which returns before the checks.
+    // Exactly three reads of KEYS[3]: the admin preview (which returns before
+    // any check), the free owned re-view (a branch that returns immediately),
+    // and the charge path's single read. No REFUSAL verdict has read the text.
     const reads = script.split("HGET', KEYS[3]").length - 1;
-    expect(reads).toBeLessThanOrEqual(2);
-    if (reads === 2) {
-      const previewLine = script.split("\n").find((l) => l.includes("'preview'")) ?? "";
-      expect(previewLine).toContain("HGET', KEYS[3]");
-      expect(script.indexOf("HGET', KEYS[3]")).toBe(script.indexOf("HGET', KEYS[3]", script.indexOf(previewLine)));
-    }
-    // Nothing reads the text between the preview return and the last refusal.
-    const afterPreview = script.indexOf("\n", script.indexOf("'preview'"));
-    expect(script.slice(afterPreview, insufficient)).not.toContain("HGET', KEYS[3]");
+    expect(reads).toBe(3);
+    const previewLine = script.split("\n").find((l) => l.includes("'preview'")) ?? "";
+    expect(previewLine).toContain("HGET', KEYS[3]");
+    const ownedBranch = script.slice(script.indexOf("SISMEMBER"), script.indexOf("'stale'"));
+    expect(ownedBranch).toContain("HGET', KEYS[3]");
+    // Nothing reads the text between the owned branch and the last refusal —
+    // the stale/order/repriced/insufficient region is read-free.
+    expect(script.slice(script.indexOf("'stale'"), insufficient)).not.toContain("HGET', KEYS[3]");
     // The refusal verdict carries no text, by shape.
     expect(script).toMatch(/return \{'insufficient', '', spent\}/);
     expect(script).toMatch(/return \{'stale'\}/);
@@ -457,14 +486,16 @@ describe("revealHint", () => {
     expect(keys[4]).toBe("ctf:admin:score-rev");
     expect(keys[5]).toBe("ctf:admin:score-lowering");
     expect(args[8]).toBe(RICH.rev);
-    // Checked before the spend is read or anything is charged: the revision
-    // AND the in-progress counter (a wipe still running on another task).
-    const spendRead = script.indexOf("HGETALL");
+    // Checked before anything is charged: the revision AND the in-progress
+    // counter (a wipe still running on another task), both before the SADD
+    // guard that would charge and before the authoritative price read.
     const stale = script.indexOf("'stale'");
+    const sadd = script.indexOf("SADD");
     expect(stale).toBeGreaterThan(-1);
-    expect(stale).toBeLessThan(spendRead);
-    expect(script.slice(0, spendRead)).toMatch(/GET', KEYS\[5\]/);
-    expect(script.slice(0, spendRead)).toMatch(/GET', KEYS\[6\]/);
+    expect(stale).toBeLessThan(sadd);
+    expect(stale).toBeLessThan(script.indexOf("HINCRBY"));
+    expect(script.slice(0, sadd)).toMatch(/GET', KEYS\[5\]/);
+    expect(script.slice(0, sadd)).toMatch(/GET', KEYS\[6\]/);
   });
 
   it("refuses as busy — closed, no retry — while a score-lowering operation is running", async () => {
@@ -533,6 +564,63 @@ describe("revealHint", () => {
     expect(mocks.hintBalance).not.toHaveBeenCalled();
   });
 
+  // #594: a classic rung's price comes from its OWN cost hash field, not the
+  // event-wide fallback, and the level travels as the ladder field and the
+  // previous-rung purchase key.
+  it("prices each classic rung from its own cost hash", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 10 });
+    classicHintRead("Second rung.", 7);
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "Second rung.", 7, "7"]);
+    const result = await store.revealHint("octocat", "classic", "web-robots-only", { level: 2 });
+    expect(result).toMatchObject({ ok: true, hint: "Second rung.", cost: 7, spent: 7 });
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(script).toBeTruthy();
+    expect(keys[6]).toBe("ctf:classic:hintcosts");
+    expect(keys[7]).toBe("ctf:hints:cost:octocat");
+    expect(args[9]).toBe("web-robots-only#2"); // the cost-hash field
+    expect(args[10]).toBe(""); // no confirmed quote -> the script resolves it
+    expect(args[11]).toBe("classic/web-robots-only"); // the previous rung
+  });
+
+  it("refuses a stale confirmed quote as repriced, charging nothing", async () => {
+    const store = await loadStore();
+    mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 10 });
+    classicHintRead("Second rung.", 7);
+    mocks.upstashEval.mockResolvedValueOnce(["repriced", "", 0, "7"]);
+    const result = await store.revealHint("octocat", "classic", "web-robots-only", { level: 2, confirmedCost: 4 });
+    expect(result).toEqual({
+      ok: false,
+      repriced: true,
+      cost: 7,
+      error: "This hint now costs 7 points. Confirm the new price to continue",
+    });
+    const [, , args] = mocks.upstashEval.mock.calls[0];
+    expect(args[10]).toBe("4");
+  });
+
+  it("maps the script's order verdict to a forbidden refusal", async () => {
+    const store = await loadStore();
+    classicHintRead("Second rung.", 7);
+    mocks.upstashEval.mockResolvedValueOnce(["order", "", 0, "0"]);
+    await expect(store.revealHint("octocat", "classic", "web-robots-only", { level: 2 })).resolves.toEqual({
+      ok: false,
+      forbidden: true,
+      error: "Buy the previous hint first",
+    });
+  });
+
+  it("refuses a level above 1 for the single-hint targets, reading nothing", async () => {
+    const store = await loadStore();
+    await expect(store.revealHint("octocat", "ai", "prompt-injection-1", { level: 2 })).resolves.toEqual({
+      ok: false,
+      missing: true,
+      error: "No hint available for this challenge",
+    });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+  });
+
   it("degrades to a friendly error when Upstash fails", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const store = await loadStore();
@@ -587,6 +675,7 @@ describe("hintGate", () => {
 
   it("charges nothing when the live-module lookup rejects", async () => {
     const store = await loadStore();
+    classicHintRead("Look at robots.txt.");
     mocks.isModuleLive.mockRejectedValueOnce(new Error("settings unreachable"));
     await expect(store.revealHint("alice", "classic", "web-robots-only")).rejects.toThrow(
       "settings unreachable",
@@ -987,6 +1076,7 @@ describe("getViewerHints", () => {
         dvwa: { "brute-low": "Brute hint." },
       },
       classic: {},
+      classicLevels: {},
       ai: {},
       spent: 20,
       count: 2,
@@ -1008,8 +1098,25 @@ describe("getViewerHints", () => {
     expect(result).toEqual({
       purchased: {},
       classic: { "web-robots-only": "Look at robots.txt." },
+      classicLevels: { "web-robots-only": { 1: "Look at robots.txt." } },
       ai: { "prompt-injection-1": "Ignore prior instructions." },
       spent: 20,
+      count: 2,
+    });
+  });
+
+  it("maps a level-2 classic purchase into classicLevels, keeping classic level-1 only", async () => {
+    const store = await loadStore();
+    mocks.upstashPipeline
+      .mockResolvedValueOnce([{ result: ["classic/web-robots-only", "classic/web-robots-only#2"] }, { result: "15" }])
+      .mockResolvedValueOnce([{ result: "first rung" }, { result: "second rung" }]);
+    const result = await store.getViewerHints("octocat");
+    expect(result).toEqual({
+      purchased: {},
+      classic: { "web-robots-only": "first rung" },
+      classicLevels: { "web-robots-only": { 1: "first rung", 2: "second rung" } },
+      ai: {},
+      spent: 15,
       count: 2,
     });
   });
@@ -1020,7 +1127,7 @@ describe("getViewerHints", () => {
       .mockResolvedValueOnce([{ result: ["juice-shop/Challenge-Gone"] }, { result: "10" }])
       .mockResolvedValueOnce([{ result: null }]);
     const result = await store.getViewerHints("octocat");
-    expect(result).toEqual({ purchased: {}, classic: {}, ai: {}, spent: 10, count: 1 });
+    expect(result).toEqual({ purchased: {}, classic: {}, classicLevels: {}, ai: {}, spent: 10, count: 1 });
   });
 
   it("skips malformed members and unknown apps", async () => {
@@ -1030,7 +1137,7 @@ describe("getViewerHints", () => {
       { result: null },
     ]);
     const result = await store.getViewerHints("octocat");
-    expect(result).toEqual({ purchased: {}, classic: {}, ai: {}, spent: 0, count: 0 });
+    expect(result).toEqual({ purchased: {}, classic: {}, classicLevels: {}, ai: {}, spent: 0, count: 0 });
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
   });
 
@@ -1039,6 +1146,7 @@ describe("getViewerHints", () => {
     expect(await store.getViewerHints("octocat")).toEqual({
       purchased: {},
       classic: {},
+      classicLevels: {},
       ai: {},
       spent: 0,
       count: 0,
@@ -1106,15 +1214,17 @@ describe("the story lock on classic hints (#463)", () => {
     const store = await loadStore();
     storyMocks.listStories.mockResolvedValueOnce([{ id: "op", title: "Op", intro: "", steps: ["recon", "web"] }]);
     storyMocks.teamSolveKeys.mockResolvedValueOnce(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    classicHintRead("Look at robots.txt.");
     mocks.upstashEval.mockResolvedValueOnce(["locked"]);
     const result = await store.revealHint("alice", "classic", "web");
     // No oracle (CodeRabbit #470): a locked step's hint is indistinguishable
     // from a challenge with no hint.
     expect(result).toEqual({ ok: false, missing: true, error: "No hint available for this challenge" });
     const [, keys, argv] = mocks.upstashEval.mock.calls.at(-1)!;
-    // After the four fixed keys, the score revision and the in-progress
-    // counter (KEYS[5..6], #553).
-    expect(keys.slice(6)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
+    // After the eight fixed keys — the four reads, the score revision and the
+    // in-progress counter (KEYS[5..6], #553), the ladder price hash and the
+    // per-purchase cost record (#594) — come the teammates' solves keys.
+    expect(keys.slice(8)).toEqual(["ctf:classic:solves:alice", "ctf:classic:solves:bob"]);
     expect(argv[6]).toBe("recon");
   });
 

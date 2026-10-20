@@ -31,8 +31,8 @@ describe("parseBundle", () => {
   });
 
   it("rejects an unknown version rather than misparsing it", () => {
-    // 2 is a real version since #463 (stories); 3 is not.
-    const res = parseBundle(JSON.stringify({ ...valid, version: 3 }));
+    // 2 is real since #463 (stories), 3 since #594 (hint ladders); 4 is not.
+    const res = parseBundle(JSON.stringify({ ...valid, version: 4 }));
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
     expect(res.errors.some((e) => e.where === "version")).toBe(true);
@@ -286,5 +286,57 @@ describe("classic import errors never echo the submitted value (#500)", () => {
       "stories[1].steps[0]",
       PLANTED_ID,
     );
+  });
+});
+
+// #594: hint ladders. v3 carries `hints` (an ordered list of {text, cost});
+// each rung's cost is optional and falls back to the event-wide price. The
+// v1/v2 `hint` string is a ONE-rung ladder, normalized without migration.
+describe("hint ladders (#594)", () => {
+  const v3 = (challenges: unknown[], version = 3) => ({ ...valid, version, challenges });
+  const rung = (over: Record<string, unknown> = {}) => ({
+    id: "web-one-ab12cd",
+    title: "One",
+    category: "Web",
+    description: "x",
+    points: 50,
+    order: 0,
+    flag: "ctfbox{One}",
+    ...over,
+  });
+
+  it("accepts a priced ladder and preserves its order", () => {
+    const bundle = v3([rung({ hints: [{ text: "first", cost: 5 }, { text: "second", cost: null }] })]);
+    const res = parseBundle(JSON.stringify(bundle));
+    if (!res.ok) throw new Error(`expected ok: ${JSON.stringify(res.errors)}`);
+    expect(res.bundle.challenges[0].hints).toEqual([{ text: "first", cost: 5 }, { text: "second", cost: null }]);
+  });
+
+  it("normalizes a v1 hint into a single free-priced rung", () => {
+    const res = parseBundle(JSON.stringify({ ...valid, version: 1, challenges: [rung({ hint: "  look closer  " })] }));
+    if (!res.ok) throw new Error(`expected ok: ${JSON.stringify(res.errors)}`);
+    expect(res.bundle.challenges[0].hints).toEqual([{ text: "look closer", cost: null }]);
+  });
+
+  it("rejects a v3 challenge that carries the legacy hint string", () => {
+    const res = parseBundle(JSON.stringify(v3([rung({ hint: "old" })])));
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.errors.some((e) => e.where === "challenges[0].hint")).toBe(true);
+  });
+
+  it("rejects a v1/v2 challenge that carries a hints array", () => {
+    const res = parseBundle(JSON.stringify({ ...valid, version: 1, challenges: [rung({ hints: [{ text: "x", cost: 1 }] })] }));
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    // v1/v2's allowed-key list has no `hints`, so the array is an unknown key.
+    expect(res.errors.some((e) => e.where === "challenges[0]")).toBe(true);
+  });
+
+  it("rejects a negative or oversized rung price", () => {
+    for (const cost of [-1, 100001, 1.5]) {
+      const res = parseBundle(JSON.stringify(v3([rung({ hints: [{ text: "x", cost }] })])));
+      expect(res.ok).toBe(false);
+    }
   });
 });

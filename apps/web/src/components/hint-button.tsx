@@ -31,6 +31,13 @@ export default function HintButton({
 }) {
   const [state, setState] = useState<"idle" | "confirm" | "pending" | "error">("idle");
   const [error, setError] = useState("");
+  // Confirm against the price the server last gave us (#557/#594); a
+  // `repriced` answer re-seeds it so the retry states the current figure. The
+  // `{ prop, value }` pair resets during render when a refresh hands down a new
+  // price, without a setState effect.
+  const [quote, setQuote] = useState({ prop: cost, value: cost });
+  if (quote.prop !== cost) setQuote({ prop: cost, value: cost });
+  const currentCost = quote.value;
   const confirmRef = useRef<HTMLButtonElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
 
@@ -78,9 +85,13 @@ export default function HintButton({
       const res = await fetch("/api/hints/reveal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ app, id }),
+        body: JSON.stringify({ app, id, level: 1, confirmedCost: currentCost }),
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data.repriced && typeof data.cost === "number") {
+        setQuote({ prop: cost, value: data.cost });
+        throw new Error(data.error ?? `This hint now costs ${data.cost} points.`);
+      }
       if (!res.ok || typeof data.hint !== "string") {
         throw new Error(data.error === "not-launched" ? "The event hasn't launched yet." : typeof data.error === "string" ? data.error : "Hint reveal failed. Try again");
       }
@@ -95,7 +106,7 @@ export default function HintButton({
     return (
       <span className="flex flex-none items-center gap-1">
         <span className="sr-only" role="status">
-          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${cost} points on this hint.`}
+          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${currentCost} points on this hint.`}
         </span>
         <button
           ref={confirmRef}
@@ -104,9 +115,9 @@ export default function HintButton({
           disabled={state === "pending"}
           className={`${CHIP} border-[#d4a017]/60 text-[#d4a017] hover:bg-[#d4a017]/10 disabled:opacity-50`}
         >
-          <span aria-hidden="true">{state === "pending" ? "…" : `−${cost} pts ✓`}</span>
+          <span aria-hidden="true">{state === "pending" ? "…" : `−${currentCost} pts ✓`}</span>
           <span className="sr-only">
-            {state === "pending" ? "Revealing" : `Confirm, spend ${cost} points`}
+            {state === "pending" ? "Revealing" : `Confirm, spend ${currentCost} points`}
           </span>
         </button>
         <button
@@ -127,11 +138,11 @@ export default function HintButton({
       ref={chipRef}
       type="button"
       onClick={() => setState("confirm")}
-      title={state === "error" ? `${error} (click to retry)` : `Reveal hint for ${cost} points`}
+      title={state === "error" ? `${error} (click to retry)` : `Reveal hint for ${currentCost} points`}
       aria-label={
         state === "error"
-          ? `${error}. Retry revealing this hint for ${cost} points`
-          : `Reveal hint for ${cost} points`
+          ? `${error}. Retry revealing this hint for ${currentCost} points`
+          : `Reveal hint for ${currentCost} points`
       }
       className={`${CHIP} ${
         state === "error"
@@ -139,7 +150,7 @@ export default function HintButton({
           : "border-white/10 text-muted hover:border-[#d4a017]/60 hover:text-[#d4a017]"
       }`}
     >
-      <span aria-hidden="true">{state === "error" ? "⚠ retry" : `💡 −${cost}`}</span>
+      <span aria-hidden="true">{state === "error" ? "⚠ retry" : `💡 −${currentCost}`}</span>
       {/* The failure is also announced once, politely: the chip's own name
           only reaches a screen reader if the user happens to be on it. */}
       {state === "error" && (

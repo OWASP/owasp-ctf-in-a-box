@@ -1,6 +1,6 @@
 import "server-only";
 import { assertPipelineOk, parseScanPage, upstashPipeline, type UpstashResult } from "@/lib/upstash";
-import { userKey, userHintTimesKey, HINTS_SPENT_KEY } from "@/lib/team-keys";
+import { userKey, userHintCostsKey, userHintTimesKey, HINTS_SPENT_KEY } from "@/lib/team-keys";
 import { QUIZ_POINTS_KEY, QUIZ_QUESTIONS_KEY, quizAnswersKey, quizAttemptsKey } from "@/lib/quiz-keys";
 import { CLASSIC_CHALLENGES_KEY, CLASSIC_POINTS_KEY, classicAttemptsKey, classicSolvesKey } from "@/lib/classic-keys";
 import { AI_CHALLENGES_KEY, AI_POINTS_KEY, aiAttemptsKey, aiSolvesKey } from "@/lib/ai-keys";
@@ -8,6 +8,7 @@ import { listTeams } from "@/lib/team-store";
 import { parseAttemptRow } from "@/lib/attempt-row";
 import { getLeaderboardSource, getLeaderboardSourceMode } from "@/lib/leaderboard/source";
 import { errorLabel } from "@/lib/error-label";
+import { parseHintPurchaseKey } from "@/lib/hint-ladder";
 
 /**
  * Event engagement metrics (issue #169), computed ENTIRELY from data the box
@@ -113,11 +114,27 @@ export type EventMetrics = {
      *  difference between "hints are used" and "hints help". */
     boughtBeforeSolving: number;
     boughtAfterSolving: number;
+    /** The same four figures per Jeopardy ladder rung (#594), level 1 first.
+     *  Spend uses the cost recorded at purchase time; a pre-#594 purchase
+     *  lacks one and is attributed to level 1, so the level totals still sum
+     *  to `totalSpend`. */
+    byLevel: HintLevelStat[];
   };
   /** What these numbers do NOT measure, in the payload rather than only in the
    *  docs — a metric whose limits travel separately from it gets quoted
    *  without them. */
   caveats: string[];
+};
+
+/** One ladder rung's usage. Aggregate figures stay the authority; these
+ *  exist so an organizer can see whether rung 3 ever sells at all. */
+export type HintLevelStat = {
+  level: number;
+  /** Distinct contestants who bought this rung. */
+  buyers: number;
+  totalSpend: number;
+  boughtBeforeSolving: number;
+  boughtAfterSolving: number;
 };
 
 type Earned = { points: number; at: string };
@@ -363,10 +380,10 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     logins = logins.slice(0, MAX_CONTESTANTS);
   }
 
-  // Eight reads per contestant: their earned items (quiz, classic, ai), their
+  // Nine reads per contestant: their earned items (quiz, classic, ai), their
   // attempt rows (quiz, classic, ai), the firstTeamAt that anchors the funnel,
-  // and when they bought each hint.
-  const PER_LOGIN = 8;
+  // when they bought each hint, and what each hint actually cost (#594).
+  const PER_LOGIN = 9;
   const perLogin = await batched(
     logins.flatMap((l) => [
       ["HGETALL", quizAnswersKey(l)],
@@ -377,6 +394,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       ["HGETALL", aiAttemptsKey(l)],
       ["HMGET", userKey(l), "firstTeamAt"],
       ["HGETALL", userHintTimesKey(l)],
+      ["HGETALL", userHintCostsKey(l)],
     ]),
   );
 
@@ -385,6 +403,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   let scored = 0;
   let hintsBeforeSolve = 0;
   let hintsAfterSolve = 0;
+  const hintLevels = new Map<number, HintLevelStat & { buyersSet: Set<string> }>();
   const buckets = new Map<number, number>();
   const solvesById = new Map<
     string,
@@ -410,6 +429,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     const userFields = perLogin[i * PER_LOGIN + 6]?.result;
     const firstTeamAt = Array.isArray(userFields) ? userFields[0] : null;
     const hintTimes = hashEntries(perLogin[i * PER_LOGIN + 7]?.result);
+    const hintCosts = new Map(hashEntries(perLogin[i * PER_LOGIN + 8]?.result).map(([k, v]) => [String(k), Number(v)]));
 
     // Did the hint arrive in time to help? A hint bought AFTER the solve
     // bought nothing, and counting the two together turns "hints are used"
@@ -419,10 +439,27 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     // own solve rows, already loaded above. The target stays in the key so
     // two targets sharing a challenge id cannot cross-match.
     for (const [slot, boughtAt] of hintTimes) {
-      const slash = String(slot).indexOf("/");
-      if (slash <= 0) continue;
-      const target = String(slot).slice(0, slash);
-      const challengeId = String(slot).slice(slash + 1);
+      const parsed = parseHintPurchaseKey(String(slot));
+      if (!parsed) continue;
+      const target = parsed.target;
+      const challengeId = parsed.id;
+      const levelStat = hintLevels.get(parsed.level) ?? {
+        level: parsed.level,
+        buyers: 0,
+        totalSpend: 0,
+        boughtBeforeSolving: 0,
+        boughtAfterSolving: 0,
+        buyersSet: new Set<string>(),
+      };
+      hintLevels.set(parsed.level, levelStat);
+      if (!levelStat.buyersSet.has(login)) {
+        levelStat.buyersSet.add(login);
+        levelStat.buyers += 1;
+      }
+      const recordedCost = hintCosts.get(String(slot));
+      if (typeof recordedCost === "number" && Number.isFinite(recordedCost) && recordedCost >= 0) {
+        levelStat.totalSpend += recordedCost;
+      }
       let solvedAt: string | undefined;
       if (target === "classic") {
         const row = classicSolves.find(([cid]) => cid === challengeId);
@@ -439,12 +476,14 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       if (Number.isNaN(boughtMs) || Number.isNaN(solvedMs)) continue;
       if (boughtMs <= solvedMs) {
         hintsBeforeSolve += 1;
+        levelStat.boughtBeforeSolving += 1;
         if (target === "classic" || target === "ai") {
           const key = `${target}:${challengeId}`;
           hintHelpedById.set(key, (hintHelpedById.get(key) ?? 0) + 1);
         }
       } else {
         hintsAfterSolve += 1;
+        levelStat.boughtAfterSolving += 1;
       }
     }
 
@@ -587,6 +626,26 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     "Secure Development items have no per-challenge attempt data — its scores arrive from GitHub already judged, so it contributes to participation and points only.",
   );
 
+  // Legacy purchases (pre-#594) stored no per-purchase cost. Attribute the
+  // unaccounted remainder to level 1 — the only rung that existed then — so
+  // the by-level figures add up to the authoritative aggregate rather than
+  // silently omitting old spend.
+  const aggregateHintSpend = hintsSpent.reduce((sum, [, spent]) => sum + spent, 0);
+  const knownHintSpend = [...hintLevels.values()].reduce((sum, stat) => sum + stat.totalSpend, 0);
+  const legacyHintSpend = aggregateHintSpend - knownHintSpend;
+  if (legacyHintSpend > 0) {
+    const level1 = hintLevels.get(1) ?? {
+      level: 1,
+      buyers: 0,
+      totalSpend: 0,
+      boughtBeforeSolving: 0,
+      boughtAfterSolving: 0,
+      buyersSet: new Set<string>(),
+    };
+    level1.totalSpend += legacyHintSpend;
+    hintLevels.set(1, level1);
+  }
+
   return {
     generatedAt: new Date().toISOString(),
     funnel: {
@@ -610,6 +669,15 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       totalSpend: hintsSpent.reduce((sum, [, spent]) => sum + spent, 0),
       boughtBeforeSolving: hintsBeforeSolve,
       boughtAfterSolving: hintsAfterSolve,
+      byLevel: [...hintLevels.values()]
+        .sort((a, b) => a.level - b.level)
+        .map((s) => ({
+          level: s.level,
+          buyers: s.buyers,
+          totalSpend: s.totalSpend,
+          boughtBeforeSolving: s.boughtBeforeSolving,
+          boughtAfterSolving: s.boughtAfterSolving,
+        })),
     },
     caveats,
   };

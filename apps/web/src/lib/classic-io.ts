@@ -46,10 +46,14 @@ import {
 } from "@/lib/attachments-keys";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { Story } from "@/lib/story-lock";
+import { HINT_COST_MAX } from "@/lib/hint-defaults";
+import { HINT_LEVELS_MAX, type HintLevelConfig } from "@/lib/hint-ladder";
 
-/** 2 since #463: an optional top-level `stories`. 1 stays importable. */
-export const CLASSIC_BUNDLE_VERSION = 2;
-const SUPPORTED_VERSIONS = new Set([1, 2]);
+/** 3 since #594: an ordered, independently priced `hints` ladder per
+ *  challenge. Versions 1 and 2 stay importable; a v1/v2 `hint` string is
+ *  read as a one-rung ladder (level 1, event-wide price). */
+export const CLASSIC_BUNDLE_VERSION = 3;
+const SUPPORTED_VERSIONS = new Set([1, 2, 3]);
 const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
 
@@ -67,8 +71,13 @@ export type ClassicBundleChallenge = {
    *  rather than required so every bundle exported before #193 still imports,
    *  which is the whole contract of a versioned bundle. */
   caseSensitive?: boolean;
-  /** Optional paid-hint text (#190). Absent = no hint. Secret like `flag`:
-   *  a bundle is an ORGANIZER artifact and already carries every answer. */
+  /** Optional paid-hint ladder (#594). Absent = no hint. Secret like `flag`:
+   *  a bundle is an ORGANIZER artifact and already carries every answer.
+   *  A `cost` of null (or absent) means the event-wide hint cost; level N is
+   *  only purchasable after N-1. */
+  hints?: HintLevelConfig[];
+  /** v1/v2 single-hint field, still accepted on import and normalized to a
+   *  one-rung `hints` list. Never written by v3 export. */
   hint?: string;
   /** v2 (#186): the challenge's files as METADATA only — an upload's name,
    *  size and sha256, or a link. Bytes travel in the event archive; an
@@ -101,10 +110,23 @@ const CHALLENGE_KEYS = [
   "order",
   "flag",
   "caseSensitive",
-  "hint",
+  "hints",
   "attachments",
 ] as const;
 const CHALLENGE_KEY_SET = new Set<string>(CHALLENGE_KEYS);
+const LEGACY_CHALLENGE_KEYS = [
+  "id",
+  "title",
+  "category",
+  "description",
+  "points",
+  "order",
+  "flag",
+  "caseSensitive",
+  "hint",
+  "attachments",
+] as const;
+const LEGACY_CHALLENGE_KEY_SET = new Set<string>(LEGACY_CHALLENGE_KEYS);
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -158,16 +180,28 @@ function validateCategories(raw: unknown, errors: ImportError[]): string[] {
  *  (checked against THIS file's own `categories`, never the live store).
  *  Pushes every problem found onto `errors` rather than stopping at the
  *  first — the whole point of a bulk path is one pass over every row. */
-function validateChallenge(raw: unknown, index: number, categories: readonly string[], errors: ImportError[]): void {
+function validateChallenge(
+  raw: unknown,
+  index: number,
+  categories: readonly string[],
+  version: number,
+  errors: ImportError[],
+): void {
   const base = `challenges[${index}]`;
   if (!isPlainObject(raw)) {
     errors.push({ where: base, message: "Each challenge must be an object" });
     return;
   }
 
-  const unknownKeys = Object.keys(raw).filter((k) => !CHALLENGE_KEY_SET.has(k));
+  const legacy = version < 3;
+  const allowedKeys = legacy ? LEGACY_CHALLENGE_KEY_SET : CHALLENGE_KEY_SET;
+  const allowedList = legacy ? LEGACY_CHALLENGE_KEYS : CHALLENGE_KEYS;
+  const unknownKeys = Object.keys(raw).filter((k) => !allowedKeys.has(k));
   if (unknownKeys.length > 0) {
-    errors.push({ where: base, message: `Unknown key(s) (${unknownKeys.length}) — a challenge has only ${CHALLENGE_KEYS.join(", ")}` });
+    errors.push({ where: base, message: `Unknown key(s) (${unknownKeys.length}) — a challenge has only ${allowedList.join(", ")}` });
+  }
+  if (!legacy && raw.hint !== undefined) {
+    errors.push({ where: `${base}.hint`, message: `Use "hints" — a single "hint" string needs bundle version 1 or 2` });
   }
 
   const id = raw.id;
@@ -183,12 +217,51 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
     errors.push({ where: `${base}.caseSensitive`, message: "caseSensitive must be true or false" });
   }
 
-  // Optional paid-hint text (#190): a non-empty string within the cap.
-  if (raw.hint !== undefined) {
-    if (typeof raw.hint !== "string" || !raw.hint.trim() || raw.hint.length > CLASSIC_HINT_MAX) {
-      errors.push({
-        where: `${base}.hint`,
-        message: `hint must be a non-empty string of at most ${CLASSIC_HINT_MAX} characters`,
+  // Optional paid-hint text/ladder. v1/v2 carry one string (#190); v3
+  // carries ordered rungs (#594). Both are capped here exactly as the store
+  // caps them, so a bundle that parses cannot fail the write later.
+  if (legacy) {
+    if (raw.hint !== undefined) {
+      if (typeof raw.hint !== "string" || !raw.hint.trim() || raw.hint.length > CLASSIC_HINT_MAX) {
+        errors.push({
+          where: `${base}.hint`,
+          message: `hint must be a non-empty string of at most ${CLASSIC_HINT_MAX} characters`,
+        });
+      }
+    }
+  } else if (raw.hints !== undefined) {
+    if (!Array.isArray(raw.hints)) {
+      errors.push({ where: `${base}.hints`, message: "hints must be an array" });
+    } else {
+      if (raw.hints.length > HINT_LEVELS_MAX) {
+        errors.push({ where: `${base}.hints`, message: `At most ${HINT_LEVELS_MAX} hints are allowed` });
+      }
+      raw.hints.forEach((hint, h) => {
+        const where = `${base}.hints[${h}]`;
+        if (!isPlainObject(hint)) {
+          errors.push({ where, message: "Each hint must be an object with text and optional cost" });
+          return;
+        }
+        const unknown = Object.keys(hint).filter((k) => k !== "text" && k !== "cost");
+        if (unknown.length > 0) {
+          errors.push({ where, message: `Unknown key(s) (${unknown.length}) — a hint has only text, cost` });
+        }
+        if (typeof hint.text !== "string" || !hint.text.trim() || hint.text.length > CLASSIC_HINT_MAX) {
+          errors.push({
+            where: `${where}.text`,
+            message: `hint text must be a non-empty string of at most ${CLASSIC_HINT_MAX} characters`,
+          });
+        }
+        if (
+          hint.cost !== undefined &&
+          hint.cost !== null &&
+          (typeof hint.cost !== "number" || !Number.isInteger(hint.cost) || hint.cost < 0 || hint.cost > HINT_COST_MAX)
+        ) {
+          errors.push({
+            where: `${where}.cost`,
+            message: `hint cost must be an integer in [0, ${HINT_COST_MAX}]`,
+          });
+        }
       });
     }
   }
@@ -343,20 +416,20 @@ export function parseBundle(raw: string): ParseResult {
   const errors: ImportError[] = [];
 
   if (typeof parsed.version !== "number" || !SUPPORTED_VERSIONS.has(parsed.version)) {
-    errors.push({ where: "version", message: `Unsupported bundle version: expected 1 or ${CLASSIC_BUNDLE_VERSION}` });
+    errors.push({ where: "version", message: `Unsupported bundle version: expected 1, 2 or ${CLASSIC_BUNDLE_VERSION}` });
   }
 
   const categories = validateCategories(parsed.categories, errors);
 
   const rawChallenges = parsed.challenges;
-  rawChallenges.forEach((c, i) => validateChallenge(c, i, categories, errors));
+  rawChallenges.forEach((c, i) => validateChallenge(c, i, categories, parsed.version as number, errors));
   checkDuplicateIds(rawChallenges, errors);
 
   // v2 (#186): attachments, like stories, need the version that knows them.
   if (parsed.version === 1) {
     rawChallenges.forEach((c, i) => {
       if (isPlainObject(c) && c.attachments !== undefined) {
-        errors.push({ where: `challenges[${i}].attachments`, message: `"attachments" needs bundle version ${CLASSIC_BUNDLE_VERSION}` });
+        errors.push({ where: `challenges[${i}].attachments`, message: `"attachments" needs bundle version 2` });
       }
     });
   }
@@ -367,7 +440,7 @@ export function parseBundle(raw: string): ParseResult {
   let stories: Story[] | undefined;
   if (parsed.stories !== undefined) {
     if (parsed.version === 1) {
-      errors.push({ where: "stories", message: `"stories" needs bundle version ${CLASSIC_BUNDLE_VERSION}` });
+      errors.push({ where: "stories", message: `"stories" needs bundle version 2` });
     } else {
       const ids = new Set(
         rawChallenges.map((c) => (isPlainObject(c) && typeof c.id === "string" ? c.id : null)).filter((v): v is string => v !== null),
@@ -379,8 +452,27 @@ export function parseBundle(raw: string): ParseResult {
   if (errors.length > 0) return { ok: false, errors };
 
   // Every challenge passed validation above (errors.length === 0), so this
-  // cast is sound: each entry has exactly the required keys and types.
-  const challenges = rawChallenges as ClassicBundleChallenge[];
+  // cast is sound: each entry has exactly the required keys and types. v1/v2
+  // single hints are NORMALIZED to a one-rung ladder here, so every
+  // downstream importer has exactly one shape to handle.
+  const challenges: ClassicBundleChallenge[] = rawChallenges.map((raw) => {
+    const c = raw as ClassicBundleChallenge;
+    if (parsed.version !== 3) {
+      const { hint, ...rest } = c;
+      return {
+        ...rest,
+        ...(typeof hint === "string" && hint.trim()
+          ? { hints: [{ text: hint.trim(), cost: null }] }
+          : {}),
+      };
+    }
+    return {
+      ...c,
+      ...(c.hints
+        ? { hints: c.hints.map((h) => ({ text: h.text.trim(), cost: h.cost ?? null })) }
+        : {}),
+    };
+  });
   return {
     ok: true,
     bundle: { version: parsed.version as number, categories, challenges, ...(stories ? { stories } : {}) },

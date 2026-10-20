@@ -45,8 +45,16 @@ export const CLASSIC_POINTS_MAX = 100000;
 /** Paid-hint text per challenge (id -> text). SECRET until purchased — same
  *  storage rule as the flag hashes: separate from the public challenge
  *  record, so no list/read of `ctf:classic:challenges` can ever carry it.
- *  Read and charged through hint-store's shared reveal machinery (#190). */
+ *  Read and charged through hint-store's shared reveal machinery (#190).
+ *
+ *  Since #594 a multi-hint ladder stores level 1 under the bare challenge id
+ *  and later rungs as `<id>#2`, `<id>#3`, ... — so every hint written before
+ *  ladders, and every legacy bundle, is level 1 with no migration. */
 export const CLASSIC_HINTS_KEY = "ctf:classic:hints";
+/** Optional per-rung prices for a classic ladder (#594). Field names match
+ *  CLASSIC_HINTS_KEY; an absent field means "use the event-wide hintCost" so
+ *  a price-clearing edit is an HDEL, not a stored null. */
+export const CLASSIC_HINT_COSTS_KEY = "ctf:classic:hintcosts";
 /** Cap for organizer-authored hint text. */
 export const CLASSIC_HINT_MAX = 1000;
 

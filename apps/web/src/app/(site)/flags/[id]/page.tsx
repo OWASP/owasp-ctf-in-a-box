@@ -37,7 +37,7 @@ import { listAttachments } from "@/lib/attachments-store";
 import type { AttachmentView } from "@/components/attachment-list";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { redirectIfNotLaunched } from "@/lib/launch";
-import { getClassicHintIds, getHintNotice, getViewerHints } from "@/lib/hint-store";
+import { getClassicHintIds, getClassicHintLadder, getHintNotice, getViewerHints } from "@/lib/hint-store";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 import TeamlessNotice from "@/components/teamless-notice";
@@ -117,6 +117,13 @@ export default async function ClassicChallengePage({ params }: { params: Promise
 
   const moduleTitle = modules.find((m) => m.id === "classic")?.title ?? "Jeopardy";
   const cooldownMs = (settings.classicCooldownSec ?? CLASSIC_COOLDOWN_SEC) * 1000;
+  // The ladder's prices are shown BEFORE purchase, including rungs the
+  // contestant cannot buy yet. The text never leaves the server until bought.
+  const hintLadder = hintNotice.active && hintIds.includes(challenge.id)
+    ? await getClassicHintLadder(challenge.id, hintNotice.cost)
+    : [];
+  const ownedHintLevels = viewerHints?.classicLevels[challenge.id] ?? {};
+  const nextHintLevel = hintLadder.find((rung) => !ownedHintLevels[rung.level])?.level ?? null;
 
   // Field by field, never a spread — a spread of the store record is how a
   // flag would leak into props.
@@ -153,19 +160,44 @@ export default async function ClassicChallengePage({ params }: { params: Promise
           button (client) exists only while unowned, hints are on, and the
           viewer is signed in — a signed-out visitor sees that a hint exists
           without an affordance that would 401. */}
-      {hintNotice.active && hintIds.includes(challenge.id) && (
-        <div className="max-w-xl">
-          {viewerHints?.classic[challenge.id] ? (
-            <p className="rounded border-l-2 border-[#d4a017]/50 bg-[#d4a017]/[0.06] px-3 py-2 text-sm leading-relaxed text-[#d4a017]/90">
-              💡 {viewerHints.classic[challenge.id]}
-            </p>
-          ) : login ? (
-            <HintRevealButton app="classic" id={challenge.id} cost={hintNotice.cost} />
-          ) : (
-            <p className="text-xs text-muted">
-              This one has a paid hint ({hintNotice.cost} pts) — sign in to reveal it.
-            </p>
-          )}
+      {hintLadder.length > 0 && (
+        <div className="flex max-w-xl flex-col gap-2">
+          <p className="text-xs text-muted">
+            This challenge has {hintLadder.length} paid hint{hintLadder.length === 1 ? "" : "s"}, bought
+            in order.
+          </p>
+          {hintLadder.map((rung) => {
+            const text = ownedHintLevels[rung.level];
+            if (text) {
+              return (
+                <p
+                  key={rung.level}
+                  className="rounded border-l-2 border-[#d4a017]/50 bg-[#d4a017]/[0.06] px-3 py-2 text-sm leading-relaxed text-[#d4a017]/90"
+                >
+                  <span className="mb-1 block text-xs uppercase tracking-wide text-[#d4a017]/70">
+                    Hint {rung.level}
+                  </span>
+                  💡 {text}
+                </p>
+              );
+            }
+            if (login && rung.level === nextHintLevel) {
+              return <HintRevealButton key={rung.level} app="classic" id={challenge.id} level={rung.level} cost={rung.price} />;
+            }
+            return (
+              <p
+                key={rung.level}
+                className="rounded border border-white/10 px-3 py-2 text-sm text-muted"
+              >
+                Hint {rung.level} — {rung.price} pts
+                {rung.level !== nextHintLevel
+                  ? ` · buy hint ${rung.level - 1} first`
+                  : login
+                    ? ""
+                    : " · sign in to reveal it"}
+              </p>
+            );
+          })}
         </div>
       )}
 

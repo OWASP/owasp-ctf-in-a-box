@@ -42,15 +42,32 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => ({}));
-  const result = await revealHint(
-    login,
-    typeof body.app === "string" ? body.app : "",
-    typeof body.id === "string" ? body.id : "",
-    { dryRun: preview },
-  );
+  // A confirmed price is the number the contestant actually saw. It is
+  // optional so an older client (or a direct call) still works, but when it
+  // is present the reveal script refuses a stale one with 409 rather than
+  // silently charging the new price (#557/#594). A present non-number is a
+  // malformed body, not a missing quote.
+  if (body.confirmedCost !== undefined && (typeof body.confirmedCost !== "number" || !Number.isFinite(body.confirmedCost))) {
+    return NextResponse.json({ error: "confirmedCost must be a number" }, { status: 400 });
+  }
+  const level = body.level === undefined ? 1 : body.level;
+  if (typeof level !== "number" || !Number.isInteger(level) || level < 1) {
+    return NextResponse.json({ error: "level must be a positive integer" }, { status: 400 });
+  }
+  const result = await revealHint(login, typeof body.app === "string" ? body.app : "", typeof body.id === "string" ? body.id : "", {
+    dryRun: preview,
+    level,
+    ...(typeof body.confirmedCost === "number" ? { confirmedCost: body.confirmedCost } : {}),
+  });
   if (!result.ok) {
-    const status = result.missing ? 404 : result.forbidden ? 403 : 400;
-    return NextResponse.json({ error: result.error }, { status });
+    const status = result.repriced ? 409 : result.missing ? 404 : result.forbidden ? 403 : 400;
+    return NextResponse.json(
+      {
+        error: result.error,
+        ...(result.repriced ? { repriced: true, cost: result.cost } : {}),
+      },
+      { status },
+    );
   }
   return NextResponse.json({
     hint: result.hint,

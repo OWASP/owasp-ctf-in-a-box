@@ -216,7 +216,11 @@ export default function AdminClassicControls({
     parseUpsert: (data, payload) => {
       const challenge = data.challenge as Challenge | undefined;
       if (!challenge) return null;
-      return { challenge, flag: (data.flag as string | undefined) ?? payload.flag, hint: (data.hint as string | null | undefined) ?? null };
+      return {
+        challenge,
+        flag: (data.flag as string | undefined) ?? payload.flag,
+        hints: Array.isArray(data.hints) ? (data.hints as AdminChallenge["hints"]) : [],
+      };
     },
     toPayload: payloadFromEditor,
     rowPayload: payloadFromRow,

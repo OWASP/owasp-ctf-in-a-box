@@ -28,10 +28,9 @@ export type LifecycleSnapshot = {
   announced: boolean;
 };
 
-/** The stored pack: `v2|L<0|1>P<0|1>C<0|1>A<0|1>`. Compact, diffable in logs
- *  without carrying anything sensitive, and version-prefixed: the older
- *  three-flag `v1` shape (no `announced` bit) reads as "unknown", so an
- *  upgrade seeds the new state silently rather than misparsing it. */
+/** The stored pack: `v2|L<0|1>P<0|1>C<0|1>A<0|1>`. Compact and diffable in
+ *  logs without carrying anything sensitive; an unknown shape reads as
+ *  unknown, so the state seeds silently rather than being misparsed. */
 export function encodeLifecycleState(s: LifecycleSnapshot): string {
   return `v2|L${s.launched ? 1 : 0}P${s.paused ? 1 : 0}C${s.closed ? 1 : 0}A${s.announced ? 1 : 0}`;
 }
@@ -46,14 +45,19 @@ export function decodeLifecycleState(raw: string | null | undefined): LifecycleS
 }
 
 /** Whether the state to STORE carries an announced pause. Carried forward for
- *  a pause that is still held (so a pause announced live stays announced
- *  across a close and a window extension), and set only when a pause edge
- *  fires — live, or at launch for an event that starts already paused —
- *  never for a pause born while closed. A missing previous state (first
- *  observation, post-reset, or the old `v1` pack) reads as false: nothing
- *  predating the first observation is announced. */
+ *  a pause that is still held, and across an unfreeze while the window is
+ *  closed (so the reopen still owes exactly one resume); set only when a
+ *  pause edge fires — live, or at launch for an event that starts already
+ *  paused — never for a pause born while closed. A missing previous state
+ *  (first observation, post-reset, or an unknown stored shape) reads as
+ *  false: nothing predating the first observation is announced. */
 export function announcedLifecyclePause(prev: LifecycleSnapshot | null, next: LifecycleSnapshot): boolean {
-  if (!next.paused) return false;
+  if (!next.paused) {
+    // An unfreeze can arrive while the window is still closed. Keep the
+    // announced bit so the resume is owed when the window reopens; on that
+    // reopen `next.closed` is false and the bit clears.
+    return Boolean(prev?.announced && next.closed);
+  }
   if (!prev) return false;
   if (prev.paused && prev.announced) return true;
   if (!next.launched || next.closed) return false;
@@ -92,13 +96,13 @@ export function lifecycleEdges(prev: LifecycleSnapshot | null, next: LifecycleSn
   if (next.paused && next.launched && !next.closed && (!before.paused || !before.launched)) {
     edges.push({ kind: "pause", prev: before, next });
   }
-  // `before.launched` is required: a pause flag carried on a pre-launch
-  // baseline is not a pause this announcer observed WHILE live, so pairing
-  // it with the launch into a "resumed" edge would announce a phantom resume
-  // alongside every launch. `before.announced` is required too: only a pause
-  // the channel was actually told about owes a resume — a pause born while
-  // closed is silent, so lifting it after a window extension posts nothing.
-  if (before.paused && before.announced && !next.paused && before.launched && next.launched && !next.closed) {
+  // Only a pause the channel was actually told about owes a resume —
+  // `before.announced` carries across an unfreeze while the window is closed,
+  // so the reopen posts exactly one resume even though the paused bit is
+  // already clear. `next.launched` keeps a pre-launch baseline from pairing
+  // with the launch into a phantom resume; a pause born while closed is
+  // silent, so lifting it after a window extension posts nothing.
+  if (before.announced && !next.paused && !next.closed && next.launched) {
     edges.push({ kind: "resume", prev: before, next });
   }
   return edges;

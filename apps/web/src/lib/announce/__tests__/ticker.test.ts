@@ -123,6 +123,28 @@ describe("lifecycle tick", () => {
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("pause", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring is paused" })] }));
   });
 
+  it("stores the announced pause bit and announces the pause once", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ pause: true }));
+    mocks.getAdminSettings.mockResolvedValue(settings({ paused: true }));
+    mocks.readStatePack.mockResolvedValue("v2|L1P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
+    await runAnnounceTick(T0);
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P1C0A1");
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("pause", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring is paused" })] }));
+  });
+
+  it("uses the stored announced bit to announce the resume", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ pause: true }));
+    mocks.getAdminSettings.mockResolvedValue(settings({ paused: false }));
+    mocks.readStatePack.mockResolvedValue("v2|L1P1C0A1");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P1C0A1" });
+    await runAnnounceTick(T0);
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P1C0A1", "v2|L1P0C0A0");
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("resume", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring resumed" })] }));
+  });
+
   it("announces the launch edge when this replica wins it", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
     mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");

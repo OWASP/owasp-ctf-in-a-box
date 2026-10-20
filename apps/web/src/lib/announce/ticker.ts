@@ -262,8 +262,8 @@ async function tickLifecycle(config: DiscordFullConfig, settings: AdminSettings,
     const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next);
     if (cas.code !== 1) return; // 0 = someone else won or state moved on; 2 = silent init
     const prev = decodeLifecycleState(cas.prev);
-    // A stored pack of an older shape decodes to null: seed the new state
-    // silently rather than announcing a launch from a baseline we cannot read.
+    // An unknown stored shape decodes to null: seed the new state silently
+    // rather than announcing a launch from a baseline we cannot read.
     if (prev === null) return;
     const name = eventName(settings);
     for (const edge of lifecycleEdges(prev, snap)) {

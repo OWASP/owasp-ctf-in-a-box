@@ -177,6 +177,28 @@ describe("lifecycleEdges", () => {
     expect(lifecycleEdges(closed, extended).map((e) => e.kind)).toEqual([]);
     expect(lifecycleEdges(extended, unfrozen).map((e) => e.kind)).toEqual(["resume"]);
   });
+
+  it("keeps an announced pause through a close-time unfreeze and resumes once on reopening (#590)", () => {
+    // freeze → close → unfreeze → extend: the unfreeze lands while the window
+    // is still closed, so the resume cannot post yet. The announced bit must
+    // survive that transition; otherwise the reopen loses the resume entirely.
+    const base = { scoringStartsAt: "2026-01-01T00:00:00Z", scoringEndsAt: "2026-01-02T00:00:00Z", paused: false };
+    const live = advance(null, base, Date.parse("2026-01-01T12:00:00Z"));
+    const frozen = advance(live, { ...base, paused: true }, Date.parse("2026-01-01T12:00:00Z"));
+    const closed = advance(frozen, { ...base, paused: true }, Date.parse("2026-01-03T00:00:00Z"));
+    const unfrozenClosed = advance(closed, base, Date.parse("2026-01-03T00:00:00Z"));
+    const reopened = advance(unfrozenClosed, base, Date.parse("2026-01-01T12:00:00Z"));
+    expect([closed, unfrozenClosed, reopened].map((s) => [s.paused, s.closed, s.announced])).toEqual([
+      [true, true, true],
+      [false, true, true],
+      [false, false, false],
+    ]);
+    expect(lifecycleEdges(live, frozen).map((e) => e.kind)).toEqual(["pause"]);
+    expect(lifecycleEdges(frozen, closed).map((e) => e.kind)).toEqual([]);
+    expect(lifecycleEdges(closed, unfrozenClosed).map((e) => e.kind)).toEqual([]);
+    expect(lifecycleEdges(unfrozenClosed, reopened).map((e) => e.kind)).toEqual(["resume"]);
+    expect(lifecycleEdges(reopened, reopened).map((e) => e.kind)).toEqual([]);
+  });
 });
 
 describe("lifecycleSnapshotFrom", () => {

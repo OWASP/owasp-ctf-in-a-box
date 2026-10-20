@@ -43,7 +43,7 @@ import { QUIZ_ID_RE, QUIZ_POINTS_MAX, canonicalizeChoices } from "@/lib/quiz-key
 
 export const QUIZ_BUNDLE_VERSION = 1;
 
-export type QuizBundleChoice = {
+type QuizBundleChoice = {
   id: string;
   label: string;
 };

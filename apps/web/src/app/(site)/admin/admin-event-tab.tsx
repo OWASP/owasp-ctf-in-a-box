@@ -48,13 +48,6 @@ export const EVENT_IDENTITY_ROWS: readonly {
     maxLength: EVENT_IDENTITY_MAX.eventName,
   },
   {
-    key: "eventTheme",
-    label: "Tagline",
-    help: "One line under the event name on the landing page. Blank hides it.",
-    placeholder: "No tagline",
-    maxLength: EVENT_IDENTITY_MAX.eventTheme,
-  },
-  {
     key: "eventLocation",
     label: "Location",
     help: "Shown beside the dates on the landing page and in the page description. Blank hides it.",
@@ -234,7 +227,7 @@ export type AdminEventTabProps = {
 
 /** The registry row a module switch renders from — see module-toggle.ts,
  *  which the module panels' own header switches share with this tab. */
-export type ModuleChoice = ModuleToggleChoice;
+type ModuleChoice = ModuleToggleChoice;
 
 export default function AdminEventTab({
   settings,
@@ -332,6 +325,22 @@ export default function AdminEventTab({
         {/* The event's own images (#529) — identity too, but stored apart
             from the settings hash, so the section loads and saves itself. */}
         <AdminEventImages setConfirm={setConfirm} />
+      </section>
+
+      <section className="flex flex-col gap-3 border-b border-white/[0.06] pb-4">
+        <div>
+          <h3 className="text-white">Projector board</h3>
+          <p className="text-sm text-muted">What the leaderboard&rsquo;s display mode (/leaderboard?display=1) shows beside the standings.</p>
+        </div>
+        <AdminSwitch
+          id="event-display-qr"
+          label="QR code on the projector board"
+          help="A QR code of the event's address, with the address printed under it, in a corner below the standings, so anyone in the room can join from a phone. Uses the box's EVENT_URL; nothing is shown without one."
+          checked={settings.displayQr}
+          disabled={pending}
+          status={statusOf("displayQr")}
+          onChange={(next) => void applyField("displayQr", { displayQr: next }, "Projector QR code")}
+        />
       </section>
 
       <section className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">
@@ -685,10 +694,10 @@ export default function AdminEventTab({
               above first if you want a way back.
             </span>
             <span className="block text-sm text-muted">
-              Scores already ingested are gone, but their source is not: a
-              scored PR comment stays on GitHub, and the poller reads those
-              comments again — so close or clear the source PRs too, or the
-              points come back when you unfreeze.
+              Scores already ingested stay gone: a scored PR comment stays on
+              GitHub, but the poller skips every comment from before the
+              reset. A PR scored again after the reset counts as a fresh
+              result — close the source PRs too if you don&rsquo;t want that.
             </span>
           </div>
           <button

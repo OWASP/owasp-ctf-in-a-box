@@ -54,9 +54,9 @@ import { formatBytes } from "@/lib/attachments-keys";
 import { parseEventBundle, serializeEventBundle, type EventBundle, type EventImportError } from "@/lib/event-io";
 import type { EventImportSummary } from "@/lib/event-store";
 import ConfirmModal from "@/components/confirm-modal";
-import { FILE_READ_ERROR } from "@/components/admin/use-bundle-import";
+import { FILE_READ_ERROR, IMPORT_TEXTAREA_MAX } from "@/components/admin/use-bundle-import";
 
-export type AdminEventControlsProps = {
+type AdminEventControlsProps = {
   /** Test/first-paint seed only — lets a static-render test observe the
    *  import button's `canImport` gating (and the client-side validation
    *  errors under it) without a browser to paste into. Mirrors
@@ -165,9 +165,6 @@ async function parseJson<T>(res: Response): Promise<T> {
  *  `submitImport` unreachable except by clicking through both `ConfirmModal`s
  *  in order. */
 type ImportStage = "idle" | "warn" | "confirm";
-
-/** Past this many characters an archive is held, not shown (#186). */
-const IMPORT_TEXTAREA_MAX = 256 * 1024;
 
 export default function AdminEventControls({ initialImportText = "", showHeading = true }: AdminEventControlsProps = {}) {
   const [exportPending, setExportPending] = useState(false);

@@ -27,9 +27,9 @@ import {
   SLOT_LABEL,
 } from "./event-images-model";
 
-export type RowStatus = { state: "saving" | "saved" | "error"; message: string } | null;
+type RowStatus = { state: "saving" | "saved" | "error"; message: string } | null;
 
-const DEFAULT_LABEL: Record<EventImageSlot, string> = { logo: "Built-in OWASP mark", icon: "Built-in icon" };
+const DEFAULT_LABEL: Record<EventImageSlot, string> = { logo: "Built-in project logo", icon: "Built-in icon" };
 
 export function EventImageRow({
   slot,

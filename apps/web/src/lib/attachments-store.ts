@@ -80,7 +80,7 @@ return {'ok'}
 
 /** KEYS: meta, index, bytes, blob. ARGV: id. Removes one attachment, its
  *  chunks, and its bytes from the total. Returns 1, or 0 when unknown. */
-export const REMOVE_SCRIPT = `
+const REMOVE_SCRIPT = `
 local ik = redis.call('HGET', KEYS[2], ARGV[1])
 if not ik then return 0 end
 local raw = redis.call('HGET', KEYS[1], ik)
@@ -107,7 +107,7 @@ return 1
  *  {"bytes", total}). A refusal deletes the chunks it was handed — which are
  *  under THIS attempt's own prefix, so a fill that lost a race to another
  *  never touches the winner's chunks. */
-export const FILL_SCRIPT = `
+const FILL_SCRIPT = `
 local function drop()
   for n = 0, tonumber(ARGV[2]) - 1 do redis.call('HDEL', KEYS[4], ARGV[5] .. ':' .. n) end
 end
@@ -308,6 +308,18 @@ export async function listAllAttachments(module: AttachmentModule, keys = KEYS):
     if (field.startsWith(prefix)) out.set(field.slice(prefix.length), parseList(flat[i + 1]));
   }
   return out;
+}
+
+/** The event-wide total of stored upload bytes, the number COMMIT_SCRIPT and
+ *  FILL_SCRIPT check the cap against. THROWS on a read error or a value that
+ *  is not a count, never answering 0 for "could not tell". */
+export async function storedAttachmentBytes(keys = KEYS): Promise<number> {
+  const [res] = await upstashPipeline([["GET", keys.bytes]]);
+  if (res.error) throw new Error(`Upstash GET failed: ${res.error}`);
+  if (res.result === null || res.result === undefined) return 0;
+  const n = Number(res.result);
+  if (!Number.isInteger(n) || n < 0) throw new Error("attachments: the stored byte total is not a count");
+  return n;
 }
 
 /** Removes one attachment (and its bytes). Returns false when unknown. */

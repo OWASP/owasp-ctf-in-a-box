@@ -5,13 +5,12 @@
 
 import { canonicalTimeZone } from "@/lib/event-time";
 
-export const EVENT_IDENTITY_KEYS = ["eventName", "eventTheme", "eventLocation", "eventTimeZone", "eventContact", "eventDiscord", "eventLogoUrl"] as const;
+export const EVENT_IDENTITY_KEYS = ["eventName", "eventLocation", "eventTimeZone", "eventContact", "eventDiscord", "eventLogoUrl"] as const;
 export type EventIdentityKey = (typeof EVENT_IDENTITY_KEYS)[number];
 /** The organizer's stored values, keyed by field. Absent = default. */
 export type EventIdentityOverrides = Partial<Record<EventIdentityKey, string>>;
 
 export const EVENT_NAME_MAX = 80;
-export const EVENT_THEME_MAX = 160;
 export const EVENT_LOCATION_MAX = 160;
 export const EVENT_CONTACT_MAX = 254;
 export const EVENT_DISCORD_MAX = 200;
@@ -20,7 +19,6 @@ export const EVENT_TIME_ZONE_MAX = 64;
 
 export const EVENT_IDENTITY_MAX: Record<EventIdentityKey, number> = {
   eventName: EVENT_NAME_MAX,
-  eventTheme: EVENT_THEME_MAX,
   eventLocation: EVENT_LOCATION_MAX,
   eventContact: EVENT_CONTACT_MAX,
   eventDiscord: EVENT_DISCORD_MAX,
@@ -29,10 +27,9 @@ export const EVENT_IDENTITY_MAX: Record<EventIdentityKey, number> = {
 };
 
 /** Spec §2 defaults. Empty means "hide" for every field but the name — pages
- *  drop their tagline, location line, mailto and Discord links when unset. */
+ *  drop their location line, mailto and Discord links when unset. */
 export const DEFAULT_EVENT_IDENTITY: Record<EventIdentityKey, string> = {
   eventName: "OWASP CTF in a Box",
-  eventTheme: "",
   eventLocation: "",
   eventContact: "",
   eventDiscord: "",
@@ -51,7 +48,7 @@ export function isEventIdentityKey(k: string): k is EventIdentityKey {
 const IDENTITY_CONTROL_CHARS_RE = /[\x00-\x1f\x7f‪-‮⁦-⁩]/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export type IdentityCheck = { ok: true; value: string } | { ok: false; message: string };
+type IdentityCheck = { ok: true; value: string } | { ok: false; message: string };
 
 /** Trims and validates one identity value. An empty trimmed value is OK with
  *  `value: ""` — the caller treats it as "clear back to the default". */

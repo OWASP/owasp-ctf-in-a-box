@@ -1,12 +1,12 @@
 # apps/web — the contestant app
 
-The web app contestants and organizers use during an OWASP CTF in a Box event: GitHub sign-in, the challenge boards, leaderboard, profile, teams, paid hints and the `/admin` panel. Event name, tagline, dates, location, contact and Discord invite are runtime `/admin` → Event settings, not build-time config; `ADMIN_LOGINS` and `GITHUB_ORG` are `.env` keys read at container start (see [docs/hosting.md](../../docs/hosting.md#environment-variables)) — nothing event-specific is baked into the image.
+The web app contestants and organizers use during an OWASP CTF in a Box event: GitHub sign-in, the challenge boards, leaderboard, profile, teams, paid hints and the `/admin` panel. Event name, dates, location, contact and Discord invite are runtime `/admin` → Event settings, not build-time config; `ADMIN_LOGINS` and `GITHUB_ORG` are `.env` keys read at container start (see [docs/hosting.md](../../docs/hosting.md#environment-variables)) — nothing event-specific is baked into the image.
 
 It was vendored from `OWASP-CTF/ctf-owasp-org` on 2026-08-14; `VENDORED.md` records the delta (Vercel bits stripped, DynamoDB retired, the AWS Lambda replaced by the kit's local scorer). `AGENTS.md` next to this file points at the kit's operating manual, and `DESIGN_SYSTEM.md` is the palette and token authority.
 
 ## Status
 
-Shipped and in production use. The kit runs it as the `app` service in `docker-compose.yml`, which injects every runtime variable: `LEADERBOARD_SOURCE=lambda` selects a plain-HTTP adapter (`src/lib/leaderboard/lambda.ts`) pointed at the local scorer (`LEADERBOARD_API_URL=http://scorer:4000`), and teams, hints, admin settings and module state live in Redis through the `UPSTASH_REDIS_REST_*` client, served by SRH. The `mock` leaderboard source and the cookie-backed team mock still exist so the app runs alone with no backend, but the kit never uses them. What exists as of v0.4.0 is in the repo's [CHANGELOG](../../CHANGELOG.md).
+Shipped and in production use. The kit runs it as the `app` service in `docker-compose.yml`, which injects every runtime variable: `LEADERBOARD_SOURCE=lambda` selects a plain-HTTP adapter (`src/lib/leaderboard/lambda.ts`) pointed at the local scorer (`LEADERBOARD_API_URL=http://scorer:4000`), and teams, hints, admin settings and module state live in Redis through the `UPSTASH_REDIS_REST_*` client, served by SRH. The `mock` leaderboard source and the cookie-backed team mock still exist so the app runs alone with no backend, but the kit never uses them. What each release changed is in the repo's [CHANGELOG](../../CHANGELOG.md).
 
 ## Modules
 
@@ -62,7 +62,7 @@ corepack pnpm test           # vitest; the *.upstash suites skip without Redis c
 corepack pnpm lint
 ```
 
-The grading Lua scripts (classic `SUBMIT_SCRIPT`, quiz `GRADE_SCRIPT`, ai `AWARD_SCRIPT`) are the scoring authority, and only `src/lib/__tests__/*.lua.upstash.test.ts` execute them for real — the mocked suites pin what the stores hand the scripts, not what they do. The `admin-store`, `hint-store` and `team-store` `.upstash` suites next to them do the same for the settings, reveal and team scripts. Run all six against a real Redis behind SRH (the `docker run` lines are in `ci.yml`'s "Grading Lua" step) with
+The grading Lua scripts (classic `SUBMIT_SCRIPT`, quiz `GRADE_SCRIPT`, ai `AWARD_SCRIPT`) are the scoring authority, and only `src/lib/__tests__/*.lua.upstash.test.ts` execute them for real — the mocked suites pin what the stores hand the scripts, not what they do. The other `*.upstash.test.ts` suites next to them (`admin-store`, `hint-store`, `team-store`, `attachments-store` and more) do the same for the settings, reveal, team and attachment scripts. Run every `*.upstash.test.ts` suite against a real Redis behind SRH (the `docker run` lines are in `ci.yml`'s "Grading Lua" step) with
 
 ```sh
 UPSTASH_REDIS_REST_URL=http://localhost:8079 UPSTASH_REDIS_REST_TOKEN=<srh token> \
@@ -97,7 +97,7 @@ src/
     admin-store.ts          # ctf:admin:settings — pause, schedule, cap, hint policy
     team-store.ts, hint-store.ts, quiz-store.ts, classic-store.ts, ai-store.ts
     launch.ts               # Pre-launch lock: page redirect + API 403 not-launched
-    leaderboard/            # Source adapters (mock/lambda/upstash/empty) + overlays
+    leaderboard/            # Source adapters (mock/lambda/empty) + overlays
     upstash.ts              # Redis REST client (pipeline + EVAL)
     __tests__/              # vitest, incl. the *.lua.upstash.test.ts grading suites
 ```
@@ -106,10 +106,10 @@ src/
 
 **Authentication surface.** better-auth mounts its whole default endpoint set under `src/app/api/auth/[...all]`; the app uses four routes and closes the rest with `disabledPaths` in `src/lib/auth.ts`. `POST /update-user` was the one that mattered — with no database it would re-sign the session cookie with a client-chosen `login`. Do not "harden" `login` to `input: false` (it breaks OAuth profile mapping), remember `disabledPaths` matches literal paths only, and keep `src/lib/__tests__/auth.test.ts` green — it fails when an upgrade adds an endpoint that is neither used nor closed.
 
-**Launch lock.** Until the event is launched — a **Scoring opens** (`scoringStartsAt`) that has passed — every module page (`/challenges`, `/flags`, `/quiz`, `/ai`, their detail pages, `/leaderboard`) calls `redirectIfNotLaunched(login)` before loading any content and sends a non-admin to `/`, and the module APIs (`POST /api/classic/submit`, `/api/quiz/answer`, `/api/hints/reveal`, `GET /api/board/items`, and the ai module's `/ai/[id]` server action) call `requireLaunchedApi(login)` and answer **403 `{ error: "not-launched" }`**. Both live in `src/lib/launch.ts`; admins pass as a preview; it fails closed. The check is per page and route, not in `src/proxy.ts` (the proxy makes no Redis reads), so `src/__tests__/launch-guard-coverage.test.ts` walks the module pages and routes on disk and fails if a new one forgets the guard. The contract is in [modules.md §8](../../docs/modules.md); the operator view is [Before launch](../../docs/operations.md#before-launch).
+**Launch lock.** Until the event is launched — a **Scoring opens** (`scoringStartsAt`) that has passed — every module page (`/challenges`, `/flags`, `/quiz`, `/ai`, their detail pages, `/leaderboard`) calls `redirectIfNotLaunched(login)` before loading any content and sends a non-admin to `/`, and the module APIs (`POST /api/classic/submit`, `/api/quiz/answer`, `/api/hints/reveal`, `GET /api/board/items`, and the ai module's `/ai/[id]` server action) call `requireLaunchedApi(login)` and answer **403 `{ error: "not-launched" }`**. Both live in `src/lib/launch.ts`; admins pass as a preview; it fails closed. The check is per page and route, not in `src/proxy.ts` (the proxy makes no Redis reads), so `src/__tests__/launch-guard-coverage.test.ts` walks the module pages and routes on disk and fails if a new one forgets the guard. The contract is item 8 of [modules.md Section 5](../../docs/modules.md); the operator view is [Before launch](../../docs/operations.md#before-launch).
 
 **Reach counter.** `POST /api/stats/visit` does `HINCRBY stats:countries <iso2> 1` once per browser session, taking the country from `cf-ipcountry` or `x-geo-country` and validating it as ISO-3166 alpha-2; the body is ignored and no login, IP or timestamp is stored, which is the promise `/privacy` makes. The kit's Caddy does not set or strip that header, so on a bare deployment the tally is spoofable — accepted for an approximate, no-PII counter.
 
 ## Branding
 
-OWASP logo and favicon from the official mark at [owasp.org](https://owasp.org); typography per the OWASP brand guidelines above. The theme is the original navy/blue terminal identity — `DESIGN_SYSTEM.md` has the full token set and rationale.
+The default logo (`public/logo.png`) and favicon (`public/favicon.ico`, `public/icon.png`) are the project's own artwork, which carries the OWASP mark; typography per the OWASP brand guidelines above. The theme is the original navy/blue terminal identity — `DESIGN_SYSTEM.md` has the full token set and rationale.

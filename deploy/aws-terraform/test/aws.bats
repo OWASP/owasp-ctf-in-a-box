@@ -26,6 +26,7 @@
 setup() {
   ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   SCRIPT="$ROOT/deploy/aws-terraform/deploy.sh"
+  REDACT_LIB="$ROOT/scripts/lib/redact.sh"
   STUBS="$BATS_TEST_TMPDIR/stubs"
   CALLS="$BATS_TEST_TMPDIR/calls.log"
 
@@ -37,10 +38,12 @@ setup() {
   done
 
   PATH="$STUBS:$PATH"
+  unset SCORE_IMAGE
 }
 
 @test "--dry-run makes no docker, aws or terraform call at all" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   # The whole point: a preview that shells out is not a preview. An empty log
   # is the assertion, so it has to be the last statement.
@@ -50,8 +53,9 @@ setup() {
 @test "no config file is required — deploy.sh runs with none present" {
   # The old behavior refused to run without event.yaml. Config v2 removed
   # that file from the repo entirely, so the script must not look for one.
-  [ ! -f "$ROOT/event.yaml" ]
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  [ ! -f "$repo/event.yaml" ]
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
 }
 
@@ -62,7 +66,8 @@ setup() {
 }
 
 @test "the docker build passes no EVENT_CONFIG_B64 build arg" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   # A regression here is silent otherwise: an image built with a stray
   # EVENT_CONFIG_B64 would just be an image with an ignored build arg, not an
@@ -71,10 +76,11 @@ setup() {
 }
 
 @test "the tag no longer depends on any config, only the revision" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   first="$(echo "$output" | sed -n 's/.*app_image = "\(.*\)".*/\1/p' | tail -1)"
-  run "$SCRIPT" --dry-run
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   second="$(echo "$output" | sed -n 's/.*app_image = "\(.*\)".*/\1/p' | tail -1)"
   # Idempotence: the same inputs (there is only the revision now) must produce
@@ -83,13 +89,15 @@ setup() {
   [ -n "$first" ] && [ "$first" = "$second" ]
 }
 
-# A throwaway repository, so the dirty-tree tests can dirty a build-context
-# file without touching the checkout the suite is running in. deploy.sh derives
+# A throwaway repository keeps dotenv reads and dirty-tree changes away from
+# the checkout the suite is running in. deploy.sh derives
 # its ROOT from its own location, so the copy has to sit at the same depth.
 fake_repo() {
   local repo="$BATS_TEST_TMPDIR/${1:-repo}"
-  mkdir -p "$repo/deploy/aws-terraform" "$repo/apps/web"
+  mkdir -p "$repo/deploy/aws-terraform" "$repo/apps/web" "$repo/scripts/lib"
   cp "$SCRIPT" "$repo/deploy/aws-terraform/deploy.sh"
+  cp "$ROOT/scripts/lib/redact.sh" "$repo/scripts/lib/redact.sh"
+  cp "$ROOT/scripts/lib/dotenv.sh" "$repo/scripts/lib/dotenv.sh"
   printf 'FROM scratch\n' > "$repo/apps/web/Dockerfile"
   git -C "$repo" init -q
   git -C "$repo" config user.email bats@example.invalid
@@ -203,7 +211,8 @@ me"
 }
 
 @test "the dry-run registry placeholder cannot be mistaken for a real one" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   # A preview that printed a plausible account id would be worse than one that
   # obviously did not consult the stack.
@@ -217,7 +226,8 @@ me"
 }
 
 @test "the build passes the /health build args" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   # Without these the deployed box reports revision "unknown" from /health and
   # "did my fix reach it?" has no answer — the gap #327 and #328 closed for the
@@ -298,7 +308,8 @@ EOF
 }
 
 @test "the app build targets linux/amd64 with no attestation manifests" {
-  run "$SCRIPT" --dry-run
+  repo="$(fake_repo)"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
   [ "$status" -eq 0 ]
   # Fargate runs X86_64 (stack.tftest.hcl asserts that half); an Apple Silicon
   # build without --platform is arm64 and dies with an exec format error.
@@ -350,12 +361,109 @@ EOF
     grep -qx "scorer_image = \"$ACCT_REGISTRY/owasp-ctf-scorer:mirror-${SOURCE_DIGEST:0:12}\"" "$vars"
 }
 
-@test "SCORE_IMAGE from the event .env is the default scorer source" {
+@test "exported SCORE_IMAGE overrides the event .env" {
   repo="$(fake_repo)"
   applied_stack_stubs 1
+  printf 'SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:from-file\n' > "$repo/.env"
   SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:v9 run "$repo/deploy/aws-terraform/deploy.sh"
   [ "$status" -eq 0 ]
   grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:v9" "$CALLS"
+}
+
+@test "the repo-root .env supplies the scorer source from the deploy directory" {
+  unset SCORE_IMAGE
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  printf 'SCORE_IMAGE=ignored\r\nexport SCORE_IMAGE = "ghcr.io/owasp-ctf-test/score:from-file" # event\r\n' > "$repo/.env"
+  cd "$repo/deploy/aws-terraform"
+  run ./deploy.sh
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:from-file" "$CALLS"
+}
+
+@test "--scorer-source overrides the shell and an invalid .env" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  printf 'SCORE_IMAGE="unterminated\n' > "$repo/.env"
+  SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:from-shell run "$repo/deploy/aws-terraform/deploy.sh" \
+    --scorer-source ghcr.io/owasp-ctf-test/score:from-flag
+  [ "$status" -eq 0 ]
+  grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:from-flag" "$CALLS"
+}
+
+@test "exported SCORE_IMAGE does not require a readable .env" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  mkdir "$repo/.env"
+  SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:v9 run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:v9" "$CALLS"
+}
+
+@test "an explicitly empty exported SCORE_IMAGE falls back to .env" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  printf 'SCORE_IMAGE=ghcr.io/owasp-ctf-test/score:from-file\n' > "$repo/.env"
+  SCORE_IMAGE="" run "$repo/deploy/aws-terraform/deploy.sh"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -qx "docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:from-file" "$CALLS"
+}
+
+@test "a missing or empty .env scorer source is refused on a Secure Development stack" {
+  unset SCORE_IMAGE
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q 'nothing names the source'
+  for entry in 'OTHER=value' 'SCORE_IMAGE=' 'SCORE_IMAGE=""' "SCORE_IMAGE=''"; do
+    printf '%s\n' "$entry" > "$repo/.env"
+    run "$repo/deploy/aws-terraform/deploy.sh"
+    [ "$status" -ne 0 ]
+    echo "$output" | grep -q 'nothing names the source'
+  done
+  [ ! -f "$repo/deploy/aws-terraform/image.auto.tfvars" ]
+  [ -z "$(grep '^docker ' "$CALLS")" ]
+}
+
+@test "invalid .env values stop the deploy before any build without leaking the value" {
+  unset SCORE_IMAGE
+  repo="$(fake_repo)"
+  applied_stack_stubs 1
+  for entry in 'SCORE_IMAGE="LEAKunterminated' 'SCORE_IMAGE=${LEAKinterpolation}'; do
+    printf '%s\n' "$entry" > "$repo/.env"
+    run "$repo/deploy/aws-terraform/deploy.sh"
+    [ "$status" -ne 0 ]
+    echo "$output" | grep -q 'dotenv:.*SCORE_IMAGE'
+    [ -z "$(echo "$output" | grep -F LEAK)" ]
+  done
+  [ ! -f "$repo/deploy/aws-terraform/image.auto.tfvars" ]
+  [ -z "$(grep '^docker ' "$CALLS")" ]
+}
+
+@test "an unreadable .env stops even a dry run without any external call" {
+  unset SCORE_IMAGE
+  repo="$(fake_repo)"
+  mkdir "$repo/.env"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -q 'exists but cannot be read'
+  [ ! -s "$CALLS" ]
+}
+
+@test "a dry run reads a single-quoted .env value without executing the file or tools" {
+  unset SCORE_IMAGE
+  repo="$(fake_repo)"
+  printf "SCORE_IMAGE='ghcr.io/owasp-ctf-test/score:from-file'\n" > "$repo/.env"
+  printf 'touch "%s"\n' "$repo/env-was-executed" >> "$repo/.env"
+  run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q 'docker pull --platform linux/amd64 ghcr.io/owasp-ctf-test/score:from-file'
+  [ ! -e "$repo/env-was-executed" ]
+  [ ! -f "$repo/deploy/aws-terraform/image.auto.tfvars" ]
+  [ ! -s "$CALLS" ]
 }
 
 @test "a Secure Development stack with no scorer source is refused before any build" {
@@ -369,9 +477,11 @@ EOF
 }
 
 @test "a quiz-only stack publishes the app alone and writes only app_image" {
+  unset SCORE_IMAGE
   repo="$(fake_repo)"
   applied_stack_stubs 0
-  SCORE_IMAGE="" run "$repo/deploy/aws-terraform/deploy.sh"
+  printf 'SCORE_IMAGE="unterminated\n' > "$repo/.env"
+  run "$repo/deploy/aws-terraform/deploy.sh"
   [ "$status" -eq 0 ]
   vars="$repo/deploy/aws-terraform/image.auto.tfvars"
   cat "$vars"
@@ -447,3 +557,53 @@ EOF
   [ -z "$(grep -E '^docker (build|push)' "$CALLS")" ]
 }
 
+
+# ---------------------------------------------------------------------------
+# The dry-run redactor: scripts/lib/redact.sh, shared by both deploy scripts.
+# ---------------------------------------------------------------------------
+
+# Every secret shape the shared redactor must hide, run through redact_args.
+# Each value is a distinctive string the output is then grepped for.
+redact_shapes() {
+  bash -c '. "$1"; redact_args \
+    BETTER_AUTH_SECRET=LEAKsecret01 SCORER_TOKEN=LEAKtoken02 \
+    REDIS_PASSWORD=LEAKpass03 GITHUB_APP_PRIVATE_KEY=LEAKpkey04 \
+    SRH_CONNECTION_STRING=redis://:LEAKconn05@localhost:6379 \
+    BASIC_AUTH=LEAKauth06 OPENAI_API_KEY=LEAKkey07 AWS_SECRET_ACCESS_KEY=LEAKkey08 \
+    db_password=LEAKlower09 \
+    EVENT_URL=https://admin:LEAKurl10@ctf.example.org/path \
+    https://x-access-token:LEAKbare11@github.com/org/repo.git \
+    BETTER_AUTH_URL=https://ctf.example.org GITHUB_APP_ID=4242 \
+    --platform linux/amd64 ghcr.io/org/score@sha256:abc123' _ "$REDACT_LIB"
+}
+
+@test "redactor: every secret shape is hidden" {
+  run redact_shapes
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | grep -oE 'LEAK[a-z]+[0-9]+')" ]
+}
+
+@test "redactor: names stay visible, and URL userinfo is masked to ***" {
+  run redact_shapes
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'GITHUB_APP_PRIVATE_KEY=<redacted>'
+  echo "$output" | grep -qF 'SRH_CONNECTION_STRING=<redacted>'
+  echo "$output" | grep -qF 'BASIC_AUTH=<redacted>'
+  echo "$output" | grep -qF 'db_password=<redacted>'
+  echo "$output" | grep -qF 'EVENT_URL=https://***@ctf.example.org/path'
+  echo "$output" | grep -qF 'https://***@github.com/org/repo.git'
+}
+
+@test "redactor: harmless keys and arguments pass through untouched" {
+  run redact_shapes
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'BETTER_AUTH_URL=https://ctf.example.org'
+  echo "$output" | grep -qF 'GITHUB_APP_ID=4242'
+  echo "$output" | grep -qF -- '--platform linux/amd64 ghcr.io/org/score@sha256:abc123'
+}
+
+@test "redactor: deploy.sh prints through the shared redactor and keeps none of its own" {
+  grep -qF '. "$ROOT/scripts/lib/redact.sh"' "$SCRIPT"
+  grep -qF 'DRY-RUN: $(redact_args "$@")' "$SCRIPT"
+  [ -z "$(grep -nE '^[[:space:]]*redacted\(\)' "$SCRIPT")" ]
+}

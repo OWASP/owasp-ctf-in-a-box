@@ -7,7 +7,7 @@
 
 /** The only shape matching needs. The accordion's `QA` type satisfies this
  *  structurally, so callers don't have to import `QA` here. */
-export type AnchoredItem = { id?: string };
+type AnchoredItem = { id?: string };
 
 /** Index of the item whose `id` equals `hash`, or null when nothing matches.
  *  Tolerates a leading "#", an empty or absent hash, and items without ids. */

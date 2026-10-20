@@ -52,6 +52,7 @@ type RawTeam = {
   members?: unknown;
   points?: unknown;
   apps?: unknown;
+  lastSolveAt?: unknown;
 };
 type RawTeamSeries = { slug?: unknown; name?: unknown; points?: unknown };
 type LambdaResponse = {
@@ -107,7 +108,23 @@ function toTeams(raw: unknown, catalog: LambdaCatalog): TeamStanding[] {
       continue;
     }
     const validMembers = members.filter((m): m is string => typeof m === "string");
-    teams.push({ rank, slug, name, captain, members: validMembers, points, apps: toTeamApps(apps, catalog) });
+    // The team's Secure Development finish: kept for the points tie-break
+    // (`compareTeamStanding`), which re-sorts once the app-side modules land.
+    const lastSolveAt = typeof item.lastSolveAt === "string" && item.lastSolveAt ? item.lastSolveAt : undefined;
+    // The SD solve count, read off the raw per-target counts so it survives a
+    // response without a catalogue (where `apps` below is dropped).
+    const patched = sumSolved(apps);
+    teams.push({
+      rank,
+      slug,
+      name,
+      captain,
+      members: validMembers,
+      points,
+      apps: toTeamApps(apps, catalog),
+      ...(lastSolveAt ? { lastSolveAt } : {}),
+      ...(patched > 0 ? { patched } : {}),
+    });
   }
   return teams;
 }
@@ -116,6 +133,15 @@ function toTeams(raw: unknown, catalog: LambdaCatalog): TeamStanding[] {
  *  its raw `apps` map, mirroring `toAppProgress` for entries. Returns undefined
  *  when the team has no valid app data or no catalogue exists — the teams view
  *  then falls back to showing members only. */
+/** Total `solved` across a raw team `apps` map, ignoring malformed rows. */
+function sumSolved(raw: unknown): number {
+  if (!raw || typeof raw !== "object") return 0;
+  return Object.values(raw as Record<string, unknown>).reduce<number>((sum, p) => {
+    const solved = p && typeof p === "object" ? (p as { solved?: unknown }).solved : undefined;
+    return sum + (typeof solved === "number" && Number.isFinite(solved) ? solved : 0);
+  }, 0);
+}
+
 function toTeamApps(raw: unknown, catalog: LambdaCatalog): TeamStanding["apps"] {
   if (!raw || typeof raw !== "object" || Object.keys(catalog).length === 0) return undefined;
   const apps: NonNullable<TeamStanding["apps"]> = {};

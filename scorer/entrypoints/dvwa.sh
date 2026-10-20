@@ -12,14 +12,16 @@ echo "dvwa: starting MariaDB…"
 docker run -d --name db --network "$NETWORK" \
   -e MYSQL_ROOT_PASSWORD=dvwa -e MYSQL_DATABASE=dvwa \
   -e MYSQL_USER=dvwa -e MYSQL_PASSWORD='p@ssw0rd' \
-  docker.io/library/mariadb:10 >/dev/null
+  docker.io/library/mariadb:10@sha256:7db29378d4fdab73f8123bbc2b48905c90d1a4b00cf848b028f1e81e623257f2 >/dev/null
 EXTRA_CONTAINERS="db"
 
 if [ -n "${APP_IMAGE:-}" ]; then
+  # pins: APP_IMAGE is chosen, and pinned, by whoever passes it in
   docker pull "$APP_IMAGE" >/dev/null
   IMAGE="$APP_IMAGE"
 elif [ -f "${GITHUB_WORKSPACE:-/github/workspace}/Dockerfile" ]; then
   docker build -t ctf-app-under-test "${GITHUB_WORKSPACE:-/github/workspace}" >/dev/null
+  # pins: built locally from the PR checkout, never pulled
   IMAGE=ctf-app-under-test
 else
   echo "dvwa: need APP_IMAGE or a workspace Dockerfile" >&2
@@ -27,6 +29,7 @@ else
 fi
 
 echo "dvwa: starting the app…"
+# pins: the app under test: APP_IMAGE, or an image built from the PR checkout
 docker run -d --rm \
   --network "$NETWORK" \
   --network-alias "$APP_HOST" \

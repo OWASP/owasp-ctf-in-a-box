@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { apps } from "@/lib/apps";
 import {
@@ -39,4 +41,26 @@ describe("checkSecureDevTargets", () => {
   it.each([[[]], [["dvwa", "nope"]], ["dvwa"], [null], [[1]]])("rejects %j", (v) => {
     expect(checkSecureDevTargets(v)).toEqual({ ok: false, message: SECURE_DEV_TARGETS_MESSAGE });
   });
+});
+
+// Shared with sync/test/redis.test.js (getSecureDevTargets): the same stored
+// value must decode to the same list in both readers, and where either cannot
+// use it, each fails in its own documented direction — the app to the
+// default, the poller to a refusal (the corpus's _comment says why).
+const SDT_CORPUS_PATH = fileURLToPath(
+  new URL("../../../../../test/fixtures/secure-dev-targets-corpus.json", import.meta.url),
+);
+const { cases: sdtCorpus } = JSON.parse(readFileSync(SDT_CORPUS_PATH, "utf8")) as {
+  cases: { description: string; raw: string | null; app: string[] | "default" }[];
+};
+
+describe("normalizeSecureDevTargets: shared secure-dev-targets corpus", () => {
+  it("has at least its committed 15 rows", () => {
+    expect(sdtCorpus.length).toBeGreaterThanOrEqual(15);
+  });
+  for (const { description, raw, app } of sdtCorpus) {
+    it(description, () => {
+      expect(normalizeSecureDevTargets(raw ?? undefined)).toEqual(app === "default" ? null : app);
+    });
+  }
 });

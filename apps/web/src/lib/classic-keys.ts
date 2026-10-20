@@ -25,9 +25,13 @@ export const CLASSIC_SOLVECOUNT_KEY = "ctf:classic:solvecount";
 export const CLASSIC_LAST_AT_KEY = "ctf:classic:lastAt";
 export const CLASSIC_SOLVES_PREFIX = "ctf:classic:solves:";
 export const CLASSIC_ATTEMPTS_PREFIX = "ctf:classic:attempts:";
+/** challengeId -> ISO time this login first opened the challenge's page
+ * , written once (HSETNX). Insights measures time to solve from it. */
+export const CLASSIC_OPENED_PREFIX = "ctf:classic:opened:";
 
 export const classicSolvesKey = (login: string) => `${CLASSIC_SOLVES_PREFIX}${login}`;
 export const classicAttemptsKey = (login: string) => `${CLASSIC_ATTEMPTS_PREFIX}${login}`;
+export const classicOpenedKey = (login: string) => `${CLASSIC_OPENED_PREFIX}${login}`;
 
 /** Challenge ids look like "sql-injection-101-ab12cd" — same shape and cap as
  *  the quiz's, and validated in the same places (store write, API boundary). */
@@ -120,7 +124,7 @@ export function randomIdSuffix(random: () => number = Math.random): string {
   return out;
 }
 
-export function slugifyTitle(title: string): string {
+function slugifyTitle(title: string): string {
   return title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -142,3 +146,31 @@ export function generateChallengeId(title: string, suffix: string = randomIdSuff
   if (CLASSIC_ID_RE.test(candidate)) return candidate;
   return `c-${randomIdSuffix()}`;
 }
+
+/** Lua: `classicHidden(raw)`, whether a stored challenge record (the JSON in
+ *  `ctf:classic:challenges`) is hidden from contestants right now. The
+ *  grading and hint scripts call it on the record they read, so the decision
+ *  is made where the write happens, by Redis's own clock (TIME): a request
+ *  racing a release instant is decided once. `isChallengeVisible`
+ *  (classic-release.ts) is the same rule for the pages, on the server's
+ *  clock. A nil record is not "hidden": the caller's own existence check
+ *  answers it.
+ *
+ *  Hidden iff `"enabled":false` and either no `releaseAtMs` or TIME is still
+ *  before it; at the instant itself it is released, the predicate's `>=`.
+ *  `releaseAtMs` is the epoch-ms mirror of `releaseAt` the store writes next
+ *  to it, so no ISO date is parsed in Lua.
+ *
+ *  A plain find, not a JSON parse: every quote inside a stored string value
+ *  is escaped (`\"`), so the unescaped `"enabled":false` can only be the
+ *  field itself, the same reasoning as the `"caseSensitive":true` match in
+ *  SUBMIT_SCRIPT. */
+export const CLASSIC_HIDDEN_LUA = `local function classicHidden(raw)
+  if not raw then return false end
+  if not string.find(raw, '"enabled":false', 1, true) then return false end
+  local releaseMs = string.match(raw, '"releaseAtMs":(%d+)[,}]')
+  if not releaseMs then return true end
+  local t = redis.call('TIME')
+  local nowMs = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+  return nowMs < tonumber(releaseMs)
+end`;

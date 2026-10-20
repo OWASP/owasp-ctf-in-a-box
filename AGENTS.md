@@ -246,6 +246,22 @@ suggestions.
 - **Commits.** Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`,
   `chore:`, `ci:`, ...). No AI attribution — no "Generated with", no
   `Co-authored-by:` trailers for an AI tool or agent.
+- **Comments explain the present, not the past, and not the code.** A comment
+  earns its place by saying what the code cannot: why this shape, what must
+  stay true, what breaks if it changes, where a security or fail-closed
+  boundary sits. Three things are not that (#505 — the pre-v0.7.0 audit found
+  about a quarter of comment lines were): **history** — "previously", "used
+  to", "renamed from", "no longer", "added in #N", a bare `(issue #N)`. That
+  belongs to the commit that made the change and, once it is a decision, to
+  an ADR in `docs/decisions.md`, where it stays true instead of rotting next
+  to code it no longer describes. **Change restatement** — "now returns ..."
+  narrating a diff the reader can see. **Narration** — restating what the
+  next line plainly does. Pointers to *current* facts stay (key layouts,
+  invariants, `see <file>`, an ADR number). Directive comments are not
+  comments: never delete a shebang, `// eslint-disable…`, `# shellcheck
+  disable…` or `// @ts-expect-error`. `scripts/check-comment-policy.mjs` (run
+  by `bats scripts/test/`) holds the pre-v0.7.0 audit's top 20 files to the
+  first two; narration is a reviewer's call.
 - **Bash (`setup/`, `scripts/`) must be bash-3.2/macOS compatible.** No
   `jq` or `python` on the provisioning path (`gh api --jq ...` is fine —
   that's `gh`'s own built-in JSON filtering, not a `jq` dependency). Quote
@@ -330,10 +346,16 @@ suggestions.
   agree. The scoring window goes through `outsideScoringWindow`, where a
   start is **required**: an empty or unparseable `scoringStartsAt` means the
   event is not launched and nothing scores (#464, ADR 59). The registration
-  window keeps `outsideWindow`, where an absent bound means open. Each rule
-  has a shared corpus in `test/fixtures/` (`scoring-window-corpus.json`,
-  `window-corpus.json`) that all three suites run. Manual-freeze reads fail
-  **open** (a Redis blip must not drop live submissions); keep that.
+  window keeps `outsideWindow`, where an absent bound means open.
+  `pausedAt(t)` — whether the manual freeze covered an instant, from
+  `pausedSince` and the `ctf:admin:pauses` interval log that admin-store's
+  settings script writes atomically with `paused` — is the fourth: the
+  scorer judges a Secure Development score at its comment's time with it,
+  and the window too (ADR 67). Each rule has a shared corpus in
+  `test/fixtures/` (`scoring-window-corpus.json`, `window-corpus.json`,
+  `pause-interval-corpus.json`) that all three suites run. Manual-freeze
+  reads fail **open** (a Redis blip must not drop live submissions); keep
+  that.
 - **`upstashPipeline` in `apps/web` does not throw on a per-command error.**
   It returns `{ result?, error? }` positionally; a caller that reads
   `.result` without checking `.error` turns `NOAUTH`/`WRONGTYPE` into a
@@ -389,8 +411,15 @@ suggestions.
   the source the script pins by commit; `patches/README.md` is the contract.
 - `test/fixtures/` — `mock-github.mjs` and `mock-scorer.mjs`, the stand-ins
   `docker-compose.smoke.yml` builds for `smoke.sh`; and the shared window
-  corpora (`window-corpus.json`, `scoring-window-corpus.json`) that the app,
-  scorer and sync suites all run (the three-reader rule above).
+  corpora (`window-corpus.json`, `scoring-window-corpus.json`,
+  `pause-interval-corpus.json`) that the app, scorer and sync suites all run
+  (the three-reader rule above); and
+  `dotenv-corpus.env` (and `dotenv-corpus-rejected.env`, the values it must
+  refuse), which `scripts/test/dotenv.bats` runs, with a differential
+  against `docker compose config` itself, through
+  `scripts/lib/dotenv.sh`, the one `.env` reader every shell entry point
+  sources (`scripts/lib/redact.sh` is the deploy scripts' one dry-run
+  redactor, the same way).
 - `deploy/` — optional cloud deploy modules: `aws-terraform/` (ECS Fargate +
   ElastiCache + ALB; `docs/aws.md`) and `fly/` (one Fly machine running the
   rendered compose file; `docs/fly.md`; its scripts and bats suite run under

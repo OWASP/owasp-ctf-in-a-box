@@ -30,7 +30,7 @@ const platformRoutes = [
   { href: "/faq", label: "FAQ", body: "Answers to what contestants ask most." },
 ];
 
-export type NotFoundRoute = { href: string; label: string; body: string };
+type NotFoundRoute = { href: string; label: string; body: string };
 
 /** The route directory, resolved. Separate from the component, and awaited by
  *  the CALLER, because a `not-found.tsx` that returns an async child suspends

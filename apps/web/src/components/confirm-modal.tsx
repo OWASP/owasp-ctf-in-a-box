@@ -16,7 +16,7 @@ import ModalDialog from "@/components/modal-dialog";
 
 // Mount this only while open (`{confirm && <ConfirmModal .../>}`) so each open is
 // a fresh mount — the typed-phrase state resets naturally, no effect needed.
-export type ConfirmModalProps = {
+type ConfirmModalProps = {
   title: string;
   body: ReactNode;
   confirmLabel?: string;

@@ -23,7 +23,13 @@ One image (`scorer/Dockerfile`), two modes:
   (the shape the app renders), `GET /challenges` (the challenge catalogue the
   app's `/challenges` page prefers over its static per-app cards), and `GET
   /healthz`. Everything but `POST /score` is unauthenticated — it is all
-  public catalogue and standings data. Backed by Redis via the Upstash-REST
+  public catalogue and standings data. `POST /score` times each solve by the
+  payload's `at` (the score comment's time, which sync sends) and refuses
+  with a final `422` a score posted before the launch, outside the scoring
+  window, during a recorded freeze or before the last master reset (a freeze
+  hand-set on the settings hash, with no recorded start, holds it with a
+  retryable `503` instead)
+  ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)). Backed by Redis via the Upstash-REST
   proxy when `UPSTASH_REDIS_REST_URL` is set, an in-memory store otherwise.
 
   `GET /challenges` sends each challenge's OWASP **code** (`"A03"`, `"API1"`)
@@ -362,7 +368,8 @@ point the `RUBRIC_DIR` build arg at it:
 
 ```sh
 cp -r /path/to/my-rubric scorer/rubric
-docker build -t ghcr.io/<org>/score:latest --build-arg RUBRIC_DIR=rubric scorer/
+docker build --platform linux/amd64 --provenance=false --sbom=false \
+  -t ghcr.io/<org>/score:latest --build-arg RUBRIC_DIR=rubric scorer/
 ```
 
 Pass `--build-arg RUBRIC_DIR=rubric.example` to bake the example rubric
@@ -444,16 +451,12 @@ What each one accepts:
   both siblings on the default bridge, not `$NETWORK` — they need the internet
   for Maven and never the app under test. (`$NETWORK` is created with a plain
   `docker network create`, in both `scorer/entrypoint.sh` and the consumer
-  workflow, so it is *not* `--internal`; comments in `scorer/entrypoint.sh` and
-  `scorer/entrypoints/webgoat.sh` still describe it as if it were.) It takes
-  about two minutes end to end, gated by
-  `scripts/acceptance-target.sh webgoat none`. (An earlier version of this file
-  claimed a WebGoat fork's Maven build could not fit a runner's budget and made
-  `APP_IMAGE` mandatory. That was wrong: upstream's own consumer workflow
-  Maven-builds the PR's jar on a stock runner, and the measured build here is
-  nowhere near the budget.)
-- **`securityshepherd`** — ignores `APP_IMAGE` and always builds from pinned
-  upstream source, because the WAR, the MariaDB schema and the Mongo seed are
+  workflow, so it is *not* `--internal`.) It takes about two minutes end to
+  end, well inside a stock runner's budget, gated by
+  `scripts/acceptance-target.sh webgoat none`.
+- **`securityshepherd`** — ignores `APP_IMAGE` and builds the contestant's
+  checked-out tree (or the pinned upstream source when the workspace holds
+  none), because the WAR, the MariaDB schema and the Mongo seed are
   outputs of one Maven run and a prebuilt Tomcat image paired with freshly
   built siblings would boot against a schema it was never compiled for. The
   whole build (Maven, then three images) takes roughly a minute and a half on
@@ -525,7 +528,8 @@ patch, so it only fits challenges scored against a shared instance).
   of each run and falls back to the workflow's baked `COOLDOWN_MINUTES`
   (default 5) if the event is unreachable, slow, or answers with anything
   that is not a number. A scoring run never fails because a config lookup
-  did. See [ADR 46](decisions.md).
+  did. See
+  [ADR 46](decisions.md#adr-46-the-forks-action-pulls-the-scoring-cooldown-the-box-does-not-push-it).
 
 `scripts/acceptance-scorer.sh` is the offline proof of all of the above:
 it builds the image with the example rubric, judges a fake target that

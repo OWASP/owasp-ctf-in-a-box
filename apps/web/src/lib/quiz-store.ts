@@ -3,12 +3,14 @@ import "server-only";
 // module, so the value lives in the dependency-free defaults file.
 export { QUIZ_MAX_ATTEMPTS, QUIZ_RETRY_AFTER_MIN } from "./quiz-defaults";
 import { QUIZ_MAX_ATTEMPTS, QUIZ_RETRY_AFTER_MIN } from "./quiz-defaults";
-import { effectivePaused, getAdminSettings } from "@/lib/admin-store";
+import { getAdminSettings } from "@/lib/admin-store";
+import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
 import { QUIZ_BUNDLE_VERSION, type QuizBundle, type QuizBundleQuestion } from "@/lib/quiz-io";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { readLastAt } from "@/lib/last-at";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   QUIZ_QUESTIONS_KEY as QUESTIONS_KEY,
   QUIZ_KEY_KEY as KEY_KEY,
@@ -46,7 +48,7 @@ import {
  *                                `listQuestionsForAdmin` alone)
  *   ctf:quiz:lastAt             hash, login -> ISO time of that login's
  *                                latest award, written by GRADE_SCRIPT with
- *                                the totals (#522) — the leaderboard's
+ *                                the totals — the leaderboard's
  *                                "whoever got there first" tiebreak
  *   ctf:quiz:answers:<login>    hash, id -> JSON {choices, points, at} —
  *                                records ONLY correct answers. Points are
@@ -56,7 +58,7 @@ import {
  *   ctf:quiz:attempts:<login>   hash, id -> JSON {attempts, firstAt, lastAt, lastAtMs}
  *                                `firstAt` is the FIRST submission's time,
  *                                carried forward across rewrites; absent on
- *                                rows written before it existed (issue #169).
+ *                                rows written before it existed.
  *                                — every attempt, right or wrong; Task 3's
  *                                retry gate reads this. `lastAtMs` (a plain
  *                                epoch-ms mirror of `lastAt`) exists only so
@@ -66,9 +68,7 @@ import {
  *
  * Secrecy boundary — it is a CONTESTANT boundary, not an absolute one:
  * `ctf:quiz:key` is kept out of every contestant path the same way the scoring
- * rubric stays private. (This used to cite hint text in "a scorer-owned hash
- * the app only ever reads" as the parallel; no such producer exists — see
- * hint-store.ts and issue #334.) Two readers, deliberately kept apart:
+ * rubric stays private. Two readers, deliberately kept apart:
  *
  *   - `listQuestions` (the CONTESTANT path — `/quiz`, the leaderboard
  *     overlay) never issues a command against `ctf:quiz:key`, and the
@@ -120,8 +120,8 @@ import {
  *  It is DEFINED in quiz-keys.ts rather than here: the admin panel's
  *  id generator (`generateQuestionId`) runs in the browser and must check its
  *  output against the same object this file validates with, and this file is
- *  `server-only`. Moving it kept every existing
- *  `import { QUIZ_ID_RE } from "@/lib/quiz-store"` working unchanged. */
+ *  `server-only`. The re-export keeps existing
+ *  `import { QUIZ_ID_RE } from "@/lib/quiz-store"` call sites working. */
 export { QUIZ_ID_RE };
 
 /** Re-exported from quiz-keys.ts for the same reason `QUIZ_ID_RE` is: the
@@ -386,7 +386,7 @@ export async function importBundle(bundle: QuizBundle): Promise<QuizImportSummar
   const [idsRes] = await upstashPipeline([["HKEYS", QUESTIONS_KEY]]);
   // The membership read must have succeeded before anything is written: a
   // failed HKEYS would otherwise read as "no questions yet" and report every
-  // row `created`. Same guard as classic's and ai's (#261).
+  // row `created`. Same guard as classic's and ai's.
   if (idsRes.error) throw new Error(`Upstash read failed before import: ${idsRes.error}`);
   const existingIds = new Set(Array.isArray(idsRes.result) ? (idsRes.result as string[]) : []);
 
@@ -442,7 +442,7 @@ export async function exportBundle(): Promise<QuizBundle> {
  *
  *  Scope, stated plainly because it is easy to assume otherwise: this
  *  retires the question from the quiz (contestants stop seeing it, and it
- *  can no longer be answered — GRADE_SCRIPT's step 1 returns `missing`
+ *  cannot be answered — GRADE_SCRIPT's step 1 returns `missing`
  *  without the key), but it deliberately does NOT touch contestant history.
  *  `ctf:quiz:answers:<login>` / `ctf:quiz:attempts:<login>` rows for the
  *  deleted id stay put, and the two aggregate counters
@@ -496,22 +496,6 @@ export type ViewerQuiz = {
   attempts: Record<string, { attempts: number; lastAt: string }>;
 };
 
-function parseHashEntries<T>(flat: unknown, extract: (parsed: Record<string, unknown>) => T | null): Record<string, T> {
-  const arr = Array.isArray(flat) ? (flat as string[]) : [];
-  const out: Record<string, T> = {};
-  for (let i = 0; i < arr.length; i += 2) {
-    try {
-      const parsed = JSON.parse(arr[i + 1]) as unknown;
-      if (typeof parsed !== "object" || parsed === null) continue;
-      const value = extract(parsed as Record<string, unknown>);
-      if (value !== null) out[arr[i]] = value;
-    } catch {
-      // Skip unparseable rows.
-    }
-  }
-  return out;
-}
-
 function extractAnswered(v: Record<string, unknown>): { points: number; at: string } | null {
   if (typeof v.points !== "number" || typeof v.at !== "string") return null;
   return { points: v.points, at: v.at };
@@ -531,23 +515,15 @@ export async function getViewerQuiz(login: string): Promise<ViewerQuiz> {
     ["HGETALL", answersKey(login)],
     ["HGETALL", attemptsKey(login)],
   ]);
+  // `upstashPipeline` reports a per-command failure as a VALUE rather than a
+  // throw; folding it as empty data would tell the board the contestant has
+  // answered nothing and has no cooldown.
+  const failed = [answeredRes, attemptsRes].find((res) => res.error);
+  if (failed) throw new Error(`quiz viewer read failed: ${failed.error}`);
   return {
     answered: parseHashEntries(answeredRes.result, extractAnswered),
     attempts: parseHashEntries(attemptsRes.result, extractAttempt),
   };
-}
-
-/** Parses a single HGET reply (not a flat hash array) the same way
- *  `parseHashEntries` parses each row of one. */
-function parseJsonValue<T>(raw: unknown, extract: (parsed: Record<string, unknown>) => T | null): T | null {
-  if (typeof raw !== "string") return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== "object" || parsed === null) return null;
-    return extract(parsed as Record<string, unknown>);
-  } catch {
-    return null;
-  }
 }
 
 /** One login's (or one team's) quiz aggregate, as consumed by the leaderboard
@@ -556,19 +532,8 @@ function parseJsonValue<T>(raw: unknown, extract: (parsed: Record<string, unknow
  *  item id — the aggregate per-login path has running counters with no memory
  *  of which items produced them. Where it is present a caller can union it
  *  with the live catalogue for a denominator that survives an organizer
- *  deleting a solved item (#348); where it is absent the caller clamps, which
- *  is what every row did before. */
+ *  deleting a solved item; where it is absent the caller clamps. */
 export type QuizTotal = { points: number; answered: number; lastAt: string | null; itemIds?: string[] };
-
-function parseCounterHash(flat: unknown): Map<string, number> {
-  const arr = Array.isArray(flat) ? (flat as string[]) : [];
-  const out = new Map<string, number>();
-  for (let i = 0; i < arr.length; i += 2) {
-    const n = Number(arr[i + 1]);
-    if (Number.isFinite(n)) out.set(arr[i], n);
-  }
-  return out;
-}
 
 /** Per-login quiz totals for every login that has answered at least one
  *  question correctly — three `HGETALL`s in one pipeline (`ctf:quiz:points`,
@@ -577,7 +542,7 @@ function parseCounterHash(flat: unknown): Map<string, number> {
  *  and GRADE_SCRIPT's own comment, step 6). The cost does not grow with the
  *  board, mirroring `getHintPenalties` in hint-store.ts.
  *
- *  `lastAt` is the login's latest award time (#522), the leaderboard's
+ *  `lastAt` is the login's latest award time, the leaderboard's
  *  "whoever got there first" tiebreak. It is null for a login that last
  *  scored before the time was recorded, and for everyone when that read
  *  fails (`readLastAt` fails open: the points stand). */
@@ -587,7 +552,7 @@ export async function getQuizTotals(): Promise<Map<string, QuizTotal>> {
     ["HGETALL", ANSWERED_KEY],
     ["HGETALL", LAST_AT_KEY],
   ]);
-  // An errored counter read is not "nobody has points" (#523): throw, so the
+  // An errored counter read is not "nobody has points": throw, so the
   // leaderboard's own handling applies (it logs and leaves the module off the
   // board) instead of every row silently losing these points.
   const failed = pointsRes.error ?? answeredRes.error;
@@ -624,9 +589,8 @@ export async function getQuizTotals(): Promise<Map<string, QuizTotal>> {
  *  per-team form cost a 25-team event 25 REST calls on every single page
  *  view; this is exactly ONE `upstashPipeline` round trip for the whole
  *  board. A login on two teams is fetched once and its replies reused for
- *  both, so the pipeline carries one `HGETALL` per DISTINCT member. There is
- *  no single-team wrapper any more — the one that existed had no caller but
- *  its own test; a single team is `getTeamQuizTotalsBatch([members])`. */
+ *  both, so the pipeline carries one `HGETALL` per DISTINCT member. A single
+ *  team is `getTeamQuizTotalsBatch([members])`. */
 export async function getTeamQuizTotalsBatch(teams: readonly (readonly string[])[]): Promise<QuizTotal[]> {
   const indexByLogin = new Map<string, number>();
   for (const members of teams) {
@@ -657,11 +621,11 @@ function foldTeamAnswers(memberReplies: ({ result?: unknown; error?: string } | 
   return { points, answered: completed, lastAt, itemIds };
 }
 
-export type QuizGate =
+type QuizGate =
   | { allowed: true }
   | {
       allowed: false;
-      reason: "paused" | "answered" | "exhausted" | "cooldown" | "unavailable";
+      reason: "paused" | "ended" | "answered" | "exhausted" | "cooldown" | "unavailable";
       retryAt?: string;
       attemptsLeft?: number;
     };
@@ -691,9 +655,14 @@ async function evaluateGate(
   // `settings` is null when the settings read itself failed — the pause/
   // schedule check then fails OPEN (a null reads as "not paused"), matching
   // classic-store's gate and the manual-freeze fail-open in scorer and sync.
-  // A dry run (#464 admin preview) happens exactly while scoring is closed —
+  // A dry run (admin preview) happens exactly while scoring is closed —
   // before launch — so the pause is what is being previewed, not a refusal.
-  if (!dryRun && settings && effectivePaused(settings)) return { allowed: false, reason: "paused" };
+  // `scoringClosure` (#567) is `effectivePaused` with the WHY kept: a passed
+  // scheduled end answers `ended`, every other closure `paused`.
+  if (!dryRun && settings) {
+    const closure = scoringClosure(Date.now(), settings.paused, settings.scoringStartsAt, settings.scoringEndsAt);
+    if (closure) return { allowed: false, reason: closure };
+  }
 
   const maxAttempts = settings?.quizMaxAttempts ?? QUIZ_MAX_ATTEMPTS;
   const retryAfterMin = settings?.quizRetryAfterMin ?? QUIZ_RETRY_AFTER_MIN;
@@ -848,21 +817,10 @@ local nowMs = tonumber(ARGV[7])
 -- budget and cooldown (nothing is recorded, so neither is being spent).
 local dry = ARGV[8] == '1'
 
-local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
-local attempts = 0
-local lastAtMs = nil
-local firstAt = nil
-if attemptsRaw then
-  local foundAttempts = string.match(attemptsRaw, '"attempts":(%d+)[,}]')
-  if foundAttempts then attempts = tonumber(foundAttempts) end
-  local foundLastAtMs = string.match(attemptsRaw, '"lastAtMs":(%d+)[,}]')
-  if foundLastAtMs then lastAtMs = tonumber(foundLastAtMs) end
-  -- Carried forward, never recomputed: this row is REWRITTEN on every
-  -- submission, so the first attempt's time survives only by being read back
-  -- out of the row it is being replaced by. Absent on rows written before
-  -- this field existed, which is why the write below falls back to now.
-  firstAt = string.match(attemptsRaw, '"firstAt":"([^"]*)"')
-end
+-- The shared attempt-row read (#504 M13) — attempts, lastAtMs and firstAt —
+-- declared here as ATTEMPT_ROW_LUA, so classic's and ai's scripts read the
+-- same three fields out of the same row shape.
+${ATTEMPT_ROW_LUA}
 
 if not dry and maxAttempts > 0 and attempts >= maxAttempts then
   return {'exhausted'}
@@ -907,10 +865,10 @@ export type AnswerResult =
   // answer, but `points` is 0 because this call awarded nothing further —
   // NOT because the question is worth nothing. Callers must render the two
   // apart; "Correct — +0 points." is exactly the wrong thing to say here.
-  // `dryRun`: an admin-preview grade (#464) — nothing was written.
+  // `dryRun`: an admin-preview grade — nothing was written.
   | { ok: true; correct: true; points: number; already?: boolean; dryRun?: true }
   | { ok: true; correct: false; dryRun?: true }
-  | { ok: false; reason: "paused" | "answered" | "exhausted" | "cooldown"; retryAt?: string }
+  | { ok: false; reason: "paused" | "ended" | "answered" | "exhausted" | "cooldown"; retryAt?: string }
   // The gate's lookup itself failed (fail-closed) — kept distinct from
   // "exhausted" so a caller-facing message can say the check couldn't be
   // completed (try again) instead of falsely claiming attempts are spent.
@@ -978,7 +936,7 @@ export async function answerQuestion(
     verdict = await upstashEval(
       GRADE_SCRIPT,
       [attemptsKey(login), answersKey(login), KEY_KEY, QUESTIONS_KEY, POINTS_KEY, ANSWERED_KEY, LAST_AT_KEY],
-      // ARGV[8]: dry run — grade, write nothing (#464 admin preview).
+      // ARGV[8]: dry run — grade, write nothing (admin preview).
       [questionId, submitted, nowIso, login, maxAttempts, cooldownMs, now.getTime(), dryRun ? "1" : "0"],
     );
   } catch (err) {

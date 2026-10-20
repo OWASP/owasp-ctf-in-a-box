@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { parseBundle, serializeBundle, type ClassicBundle } from "@/lib/classic-io";
+import { CLASSIC_BUNDLE_VERSION, parseBundle, serializeBundle, type ClassicBundle } from "@/lib/classic-io";
 
 const valid: ClassicBundle = {
   version: 1,
@@ -31,8 +32,8 @@ describe("parseBundle", () => {
   });
 
   it("rejects an unknown version rather than misparsing it", () => {
-    // 2 is real since #463 (stories), 3 since #594 (hint ladders); 4 is not.
-    const res = parseBundle(JSON.stringify({ ...valid, version: 4 }));
+    // 5 is the current version (hint ladders); 6 is not.
+    const res = parseBundle(JSON.stringify({ ...valid, version: 6 }));
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
     expect(res.errors.some((e) => e.where === "version")).toBe(true);
@@ -289,11 +290,11 @@ describe("classic import errors never echo the submitted value (#500)", () => {
   });
 });
 
-// #594: hint ladders. v3 carries `hints` (an ordered list of {text, cost});
+// #594: hint ladders. v5 carries `hints` (an ordered list of {text, cost});
 // each rung's cost is optional and falls back to the event-wide price. The
-// v1/v2 `hint` string is a ONE-rung ladder, normalized without migration.
+// v1-v4 `hint` string is a ONE-rung ladder, normalized without migration.
 describe("hint ladders (#594)", () => {
-  const v3 = (challenges: unknown[], version = 3) => ({ ...valid, version, challenges });
+  const v5 = (challenges: unknown[], version = 5) => ({ ...valid, version, challenges });
   const rung = (over: Record<string, unknown> = {}) => ({
     id: "web-one-ab12cd",
     title: "One",
@@ -306,7 +307,7 @@ describe("hint ladders (#594)", () => {
   });
 
   it("accepts a priced ladder and preserves its order", () => {
-    const bundle = v3([rung({ hints: [{ text: "first", cost: 5 }, { text: "second", cost: null }] })]);
+    const bundle = v5([rung({ hints: [{ text: "first", cost: 5 }, { text: "second", cost: null }] })]);
     const res = parseBundle(JSON.stringify(bundle));
     if (!res.ok) throw new Error(`expected ok: ${JSON.stringify(res.errors)}`);
     expect(res.bundle.challenges[0].hints).toEqual([{ text: "first", cost: 5 }, { text: "second", cost: null }]);
@@ -318,25 +319,83 @@ describe("hint ladders (#594)", () => {
     expect(res.bundle.challenges[0].hints).toEqual([{ text: "look closer", cost: null }]);
   });
 
-  it("rejects a v3 challenge that carries the legacy hint string", () => {
-    const res = parseBundle(JSON.stringify(v3([rung({ hint: "old" })])));
+  it("rejects a v5 challenge that carries the legacy hint string", () => {
+    const res = parseBundle(JSON.stringify(v5([rung({ hint: "old" })])));
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
     expect(res.errors.some((e) => e.where === "challenges[0].hint")).toBe(true);
   });
 
-  it("rejects a v1/v2 challenge that carries a hints array", () => {
-    const res = parseBundle(JSON.stringify({ ...valid, version: 1, challenges: [rung({ hints: [{ text: "x", cost: 1 }] })] }));
+  it("rejects a pre-ladder challenge that carries a hints array", () => {
+    const res = parseBundle(JSON.stringify({ ...valid, version: 4, challenges: [rung({ hints: [{ text: "x", cost: 1 }] })] }));
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("unreachable");
-    // v1/v2's allowed-key list has no `hints`, so the array is an unknown key.
+    // A pre-ladder allowed-key list has no `hints`, so the array is an unknown key.
     expect(res.errors.some((e) => e.where === "challenges[0]")).toBe(true);
   });
 
   it("rejects a negative or oversized rung price", () => {
     for (const cost of [-1, 100001, 1.5]) {
-      const res = parseBundle(JSON.stringify(v3([rung({ hints: [{ text: "x", cost }] })])));
+      const res = parseBundle(JSON.stringify(v5([rung({ hints: [{ text: "x", cost }] })])));
       expect(res.ok).toBe(false);
     }
+  });
+});
+
+describe("attachment files alongside hint ladders", () => {
+  const bytes = Buffer.from("pcap-bytes");
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  const b64 = bytes.toString("base64");
+  const c0 = valid.challenges[0];
+  const withFiles = (files: unknown, version = 3) =>
+    JSON.stringify({
+      ...valid,
+      version,
+      challenges: [{ ...c0, attachments: [{ name: "cap.pcap", size: bytes.length, sha256: sha }] }],
+      attachmentFiles: files,
+    });
+  const fileErrors = (text: string) => {
+    const r = parseBundle(text);
+    return r.ok ? [] : r.errors.filter((e) => e.where.startsWith("attachmentFiles"));
+  };
+
+  it("is the current bundle version", () => {
+    expect(CLASSIC_BUNDLE_VERSION).toBe(5);
+  });
+
+  it("accepts files that match an upload in the same bundle, and keeps them", () => {
+    const res = parseBundle(withFiles([{ item: c0.id, sha256: sha, bytes: b64 }]));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.attachmentFiles).toEqual([{ item: c0.id, sha256: sha, bytes: b64 }]);
+  });
+
+  it("parses a v3 bundle without the key exactly like a v2 one", () => {
+    const v2 = parseBundle(JSON.stringify({ ...valid, version: 2 }));
+    const v3 = parseBundle(JSON.stringify({ ...valid, version: 3 }));
+    if (!v2.ok || !v3.ok) throw new Error("expected both to parse");
+    expect(v3.bundle).toEqual({ ...v2.bundle, version: 3 });
+    expect("attachmentFiles" in v3.bundle).toBe(false);
+  });
+
+  it.each([
+    ["a file no upload in the bundle names", [{ item: c0.id, sha256: "cd".repeat(32), bytes: b64 }]],
+    ["an unknown challenge", [{ item: "ghost-zz99zz", sha256: sha, bytes: b64 }]],
+    ["bytes that are not base64", [{ item: c0.id, sha256: sha, bytes: "not base64!!" }]],
+    ["an extra key", [{ item: c0.id, sha256: sha, bytes: b64, name: "x" }]],
+    ["a non-array", "cap.pcap"],
+  ])("refuses %s", (_label, files) => {
+    expect(fileErrors(withFiles(files)).length).toBeGreaterThan(0);
+  });
+
+  it.each([1, 2])("refuses the key on a version %i bundle, which predates it", (version) => {
+    const errors = fileErrors(withFiles([{ item: c0.id, sha256: sha, bytes: b64 }], version));
+    expect(errors).toContainEqual({ where: "attachmentFiles", message: '"attachmentFiles" needs bundle version 3' });
+  });
+
+  it("names the bundle, not an archive, when a file matches no upload, and echoes neither value", () => {
+    const PLANTED = "PLANTED-bundle-item-77";
+    const errors = fileErrors(withFiles([{ item: PLANTED, sha256: sha, bytes: b64 }]));
+    expect(errors).toContainEqual({ where: "attachmentFiles[0]", message: "No upload in this bundle matches this file's item and sha256" });
+    expect(JSON.stringify(errors)).not.toContain(PLANTED);
   });
 });

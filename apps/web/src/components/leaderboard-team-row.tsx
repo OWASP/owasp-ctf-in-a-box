@@ -8,10 +8,12 @@
 // no denominator ("58 pts 38 patched"), and a target breakdown below it giving
 // counts with no points.
 
+import { adjustmentLabel } from "@/lib/leaderboard/adjustment-label";
 import type { ModuleId, ResolvedModule } from "@/lib/modules";
 import type { AppMeta } from "@/lib/apps";
 import AppBreakdown from "@/components/app-breakdown";
 import BoardItemLists from "@/components/board-item-lists";
+import { hasAppSideProgress } from "@/lib/leaderboard/app-side-progress";
 import ProgressRow, { moduleUnit } from "@/components/progress/progress-row";
 import { Avatar, RankChip } from "@/components/leaderboard-chrome";
 import { fillStyle } from "@/components/progress/progress-bar";
@@ -106,7 +108,7 @@ export function TeamRow({
         <div className="flex items-center gap-3 sm:gap-4">
           <RankChip rank={team.rank} />
           <div className="min-w-0 flex-1">
-            <span className="truncate font-medium text-white">{team.name}</span>
+            <span className="truncate font-medium text-white"><bdi>{team.name}</bdi></span>
             {/* Same reason as the contestant row: `members` is a
                 `hidden sm:block` on the right, so a phone lost the only
                 indication of how large the team behind a score is. */}
@@ -131,6 +133,11 @@ export function TeamRow({
                   contestant's own spend is still itemised on their profile,
                   where it is their own business to read. */}
               <p className="text-[11px] uppercase tracking-wide text-muted">net pts</p>
+              {/* An organizer's bonus or penalty is already in the figure
+                  above; the marker says so, so nobody wonders why it moved. */}
+              {typeof team.adjustment === "number" && team.adjustment !== 0 && (
+                <p className="text-[11px] tabular-nums text-[#d4a017]">{adjustmentLabel(team.adjustment)}</p>
+              )}
             </div>
             <div className="hidden sm:block">
               <p className="font-mono text-base tabular-nums text-zinc-300">{team.members.length}</p>
@@ -202,11 +209,11 @@ export function TeamRow({
           )}
           {/* The team's quiz/classic items — the members' UNION, matching how
               the team banks points. Same lazy fetch as the entry rows. */}
-          {/* Same derived gate as EntryRow's, and for the same reason: a
-              hand-listed `quiz || classic || ai` check silently excluded ai
-              once, and would do it again for the next module too. */}
-          {Object.keys(team.modules ?? {}).some((id) => id !== "secure-development") && team.members.length > 0 && (
-            <BoardItemLists logins={team.members} />
+          {/* Same gate as EntryRow's (`hasAppSideProgress`): only once
+              something outside Secure Development is completed, since every
+              live module sits on the row from the start at 0 / N. */}
+          {hasAppSideProgress(team.modules) && team.members.length > 0 && (
+            <BoardItemLists logins={team.members} classicPoints={team.modules?.classic?.points} />
           )}
         </div>
       )}

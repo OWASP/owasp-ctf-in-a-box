@@ -16,8 +16,9 @@ redesign, what reverted, and the rules that keep the two coherent.
   for body-size links), semantic green/red/amber/teal exactly as
   DESIGN_SYSTEM.md defines them. Terminal personality is deliberate:
   the `$ owasp-ctf` wordmark (green `$`, mono), `$ sign-in --github`,
-  mono for data. The OWASP logo anchors the landing hero — this kit's
-  flagship event is an OWASP event and says so.
+  mono for data. The project logo — a fox, a server box and a flag beside the OWASP
+  mark — anchors the landing hero: this kit is an OWASP project and
+  says so.
 - **Structure = redesign.** The layouts shipped by the redesign stay:
   the landing as a pitch with one state-aware CTA, the challenge browser as
   a stack of collapsible target progress cards (rows in a two-column grid

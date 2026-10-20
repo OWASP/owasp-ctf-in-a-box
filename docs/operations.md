@@ -112,7 +112,17 @@ routes would refuse.
 
 Captains
 manage the roster from the app: rename the team, remove a member, transfer the
-captaincy, regenerate the join code, or disband. The join code doubles as a
+captaincy, regenerate the join code, or disband. A team name is up to 32
+characters, counted after Unicode normalization (NFC). Any script and emoji
+may appear in it, but a new team's name needs at least one letter a–z or
+digit 0–9, because the team's id (its key and invite URL) is built from
+those; a rename keeps the id, so it has no such need. A name with nothing
+visible (zero-width or control characters, or the blank Braille cell U+2800,
+alone) or
+with a text-direction control character (U+202E and the rest of the bidi
+controls) is refused on create and on rename, and every page shows a team
+name direction-isolated, so a name stored before that check cannot reorder
+the row around it (#603). The join code doubles as a
 shareable link — **Copy invite link** on the team card yields
 `https://<your-event>/join/<code>`, which a teammate opens and joins in one
 click. Signing in mid-way keeps the invite: the code lives in the URL, so the
@@ -129,9 +139,14 @@ double-counting them. Organizers open or close the registration window from
 the admin panel below — by hand with the **Team registration** switch, or on
 a timer with the **Registration opens** / **Registration closes** schedule
 fields. While it is closed nobody can create or join a team, and a captain
-cannot rename it, remove a member or regenerate its code; **transfer
-captaincy, disband and leave still work**, because those are exits and
-gating them would trap a captain behind a closed window.
+cannot rename it or regenerate its code; **transfer captaincy, disband,
+leave and remove member still work**, because those are exits and gating
+them would trap a player or a captain behind a closed window. Leave and
+remove member ask for confirmation first, though: a player who leaves (or is
+removed) after close **cannot join any team again on their own**, and their
+points leave the team's total. The warning says so, the request is refused
+until it is confirmed, and an organizer can put the player back from
+**Support → Add to team** (see below).
 
 ![A contestant's profile: the header shows their points plus one done-out-of-available stat per enabled module, and the team card below carries the join code, invite link and captain controls](assets/profile.jpg)
 
@@ -240,33 +255,32 @@ live on the next request; there is no rebuild and no cache to wait out.
 name in three places on every event: **the tab's own label**, **the nav link**
 (header and footer alike), and **the module's own page header and browser tab
 title** (`/challenges` for Secure Development, `/quiz` for Quiz, `/flags` for
-Jeopardy). Two further
-surfaces exist but are **suppressed on a single-module event**, which is what
-most events are:
+Jeopardy, `/ai` for AI). It also reaches two more surfaces on every event:
 
-- the **leaderboard's per-module block heading** — hidden while only one
-  module is enabled, because a row's points *are* that module's and the
-  heading would only restate the column above it;
-- the **landing page's per-module section heading** — a lone module's section
-  is headed "What to expect" instead, and the page's uppercase kicker comes
-  from the module's registry tagline, which is **not** overridable at all.
-  (A module with no registry `home` block is the exception: its section
-  heading *is* its title, override included, because there is no authored
-  heading to prefer. Neither module shipped today is in that position.)
+- the **landing page's module card** — each card under "The game" (or "The
+  games", with more than one module) is headed by the module's title, override
+  included. The page's uppercase kicker above it comes from the modules'
+  registry taglines, which are **not** overridable at all;
+- the **team leaderboard's per-module rows** — an expanded team row labels
+  each module's progress with its title, even when only one module runs.
 
-So on a one-module event a rename reaches three surfaces, not five. Nothing is
-broken if you cannot find your new name on the leaderboard or the landing
-page — those two only start naming modules once there are two to tell apart.
+One surface is **suppressed on a single-module event**, which is what most
+events are: the **individual leaderboard row's per-module block heading**,
+hidden while only one module is enabled because a row's points *are* that
+module's and the heading would only restate the column above it. Nothing is
+broken if a contestant's own row does not show your new name on a one-module
+event — that heading only appears once there are two modules to tell apart.
 
 **The blurb is contestant-facing copy — write it as such.** It reaches three
 places:
 
 - the **meta description** of the module's own page (what a search result or a
   chat link preview shows);
-- **`/quiz`'s and `/flags`'s page header**, as the lede under the title. This
-  is the module describing itself; the "You've answered 2 of 5 questions."
-  (or "You've solved N of M challenges.") line is *your* progress, and sits
-  above the questions/challenges instead;
+- **`/quiz`'s, `/flags`'s and `/ai`'s page header**, as the lede under
+  the title. This is the module describing itself; a contestant's own progress lives on the
+  board itself (Quiz's progress strip, Jeopardy's "Your run" rail), and a
+  signed-out visitor sees a "Sign in with GitHub to …" line above the
+  questions/challenges;
 - the **landing page section lede**, but only for a module that ships no
   registry `home` block. All four modules that exist today have one, so
   today this
@@ -288,13 +302,16 @@ The panel offers:
   into the image. Each restores its default when left blank: **Event name** (≤80
   characters; blank restores "OWASP CTF in a Box"; shown in page titles,
   the header, the leaderboard, and this panel's own master-reset confirmation),
-  **Tagline** (≤160; one line under the event name on the landing page;
-  blank hides it), **Location** (≤160; shown beside the dates on the landing
+  **Location** (≤160; shown beside the dates on the landing
   page and in the page description; blank hides it), **Timezone** (≤64; an
   IANA zone such as `America/Argentina/Buenos_Aires`, suggested as you type;
   the landing page's dates, the phase line, the score chart's axis and the
-  schedule inputs below read on this clock (the Insights and Support
-  timestamps stay UTC, to match against logs); the phase line and the launch status name its offset, e.g. "9:00 AM
+  schedule inputs below and the admin activity times (Overview and the
+  Activity tab, to the second; a "Show UTC" switch beside each flips them
+  to UTC and is remembered per browser) read on this clock (Insights' "as of"
+  time and Support's joined and first-on-a-team times stay UTC, to the second,
+  to match against logs; the Insights timeline counts ten-minute buckets, so
+  its labels stay at the minute); the phase line and the launch status name its offset, e.g. "9:00 AM
   GMT-3"; blank means UTC, the output before this setting existed), **Contact e-mail**
   (≤254; the organizers' own inbox, rendered as a `mailto:` link on the
   privacy and terms pages; blank hides it), and **Discord invite** (≤200;
@@ -310,15 +327,15 @@ The panel offers:
   - **Logo** — PNG, JPEG or WebP, up to 128 KB and 4096 px a side. It leads
     the landing page's hero (shown up to 224 px tall and 32 rem wide on a
     desktop, 144 px tall on a phone, whatever its shape; clickable when a
-    **Logo link** is set), and a smaller OWASP mark stays beside it, captioned "Built
-    with OWASP CTF in a Box": the
+    **Logo link** is set), and a smaller project logo, which carries the
+    OWASP mark, stays beside it, captioned "Built with OWASP CTF in a Box": the
     OWASP Project Policy wants OWASP branding prominent on any domain the kit
     runs on, so an event adds its logo and never removes OWASP's (ADR 65).
     It is shown as uploaded on the dark navy hero — upload a version made for
-    a dark background. With no logo set, the hero shows the OWASP mark alone,
-    as before.
+    a dark background. With no logo set, the hero shows the project logo
+    alone.
   - **Favicon** — the browser tab icon: a square PNG, 32–512 px, up to 32 KB.
-    With none set, the built-in icon is used.
+    With none set, the project's built-in icon is used.
 
   The server checks each file's real bytes, not its name or claimed type, and
   refuses SVG outright (an SVG served from the box can run script). Both are
@@ -328,9 +345,11 @@ The panel offers:
   **master reset keeps them** — like the name, they are the event's identity,
   not progress. An event archive carries the logo and its **Logo link**
   together; contact and Discord never travel in one.
-- **Status** — the sync poller's heartbeat (last poll time, comments
-  ingested, comments **dropped**, repos polled, last error) and a
-  best-effort leaderboard freshness read.
+- **Sync** (Overview tab, shown only while Secure Development is present) —
+  the sync poller's heartbeat as one line (last poll time, comments ingested,
+  comments **dropped**, running or paused) that expands to the full
+  breakdown: repos polled, whether sync is paused, the last drop and the
+  last error.
 
   **Read Ingested and Dropped together.** Ingested is points that reached the
   leaderboard; Dropped is points that reached a contestant's PR and stopped
@@ -347,15 +366,53 @@ The panel offers:
 
   Routine things are deliberately **not** counted here: a comment re-read at
   the cursor boundary, and the workflow's own "⏳ Scoring in progress…"
-  placeholder, are both expected and leave Dropped at 0. The poller's logs
-  carry a per-repo breakdown of those on any tick where something
-  non-routine happened.
-- **Freeze** — a pause switch. Pausing **freezes ingestion, not fork
+  placeholder, are both expected and leave Dropped at 0. Neither is a score
+  the scorer **refused because of when it was posted** — before the launch,
+  while scoring was frozen, after the end, or before a master reset (see
+  Freeze below): that is the rule working, not a loss, so it is logged as
+  `submit <repo>#<pr>: refused (<reason>), not scored` and left out of
+  Dropped. The poller's logs carry a per-repo breakdown of all of these on
+  any tick where something non-routine happened.
+- **Freeze** — a pause switch. Pausing **freezes scoring, not fork
   Actions**: contestants' PRs keep getting judged and commented on exactly
-  as before, and the poller's cursor just holds in place — nothing is lost,
-  only deferred. The scorer reads the same flag and answers `POST /score`
-  with `503` while it is set, so a submission that reaches the writer anyway
-  is refused rather than written. Un-pausing picks up right where it left off.
+  as before. Quiz, Jeopardy and AI answers are refused while it is on.
+  A **Secure Development** score is judged by **when its score comment was
+  posted on the PR**, not when the box reads it (ADR 67): a PR scored
+  *before* you froze still counts, even if the poller reads it during the
+  freeze, and a PR scored *while* frozen never counts, not even after you
+  un-freeze. The same rule applies to the scoring window: a PR scored before
+  **Scoring closes** counts even if it is read later, and one scored before
+  the launch or after the end does not. The poller keeps reading during a
+  freeze and the scorer decides each score; the refusals are final and show
+  in the poller's log as `refused (paused)`, `refused (outside-window)` or
+  `refused (pre-reset)`, not in Dropped.
+
+  To make that possible the box records *when* each freeze ran, not only
+  whether one is on: freezing stores the start (`pausedSince` in the settings
+  hash) and un-freezing moves the interval onto `ctf:admin:pauses` (the last
+  200 are kept). Both are written by the same save as the switch. A freeze
+  set straight on the hash with no recorded start (by hand, or left over from
+  a version without the log) has an unknown start, so the scorer **holds**
+  Secure Development scores read during it (`503`, retried) rather than
+  refusing them, and judges them once it lifts — that one freeze then lets in
+  a PR scored during it.
+
+  **One edge, by design.** A PR's score comment is *edited* on every run, so
+  its time is the time of the **last** run. A solve the box already recorded
+  keeps its first time. But if the poller was down across a re-run, a solve
+  first read from the re-run gets the re-run's time, and a re-run after the
+  event ends refuses a solve that was never read, even if its first passing
+  run was in time. Normally the poller reads each comment within a minute, so
+  this needs the poller to have been down across the re-run.
+- **Projector board** (Event tab) — **QR code on the projector board**, on
+  by default: display mode (`/leaderboard?display=1`) shows a QR code of the
+  event's address, with the address printed under it, in the bottom-right
+  corner below the standings, so anyone in the room can join from a phone
+  (#592). The code is the box's own origin from `EVENT_URL` (compose passes it
+  as `BETTER_AUTH_URL`); with none set, no code is shown rather than one
+  guessed from the request. It is encoded on the server into an inline SVG,
+  with no third-party service and no request from the viewer's browser. The
+  regular `/leaderboard` never shows it.
 - **Modules** (Event tab) — which modules this event serves, switchable
   **during the event without a rebuild**. Switching one off removes its nav
   link and stops its board resolving on everyone's next page load; switching it
@@ -420,10 +477,12 @@ The panel offers:
 
 - **Team registration** — an open/close switch for the team-forming window.
   While closed, players cannot create or join teams (**Play solo** included),
-  and a captain cannot rename the team, remove a member or regenerate the
-  join code. **Transfer captaincy, disband and leave are deliberately not
+  and a captain cannot rename the team or regenerate the join code.
+  **Transfer captaincy, disband, leave and remove member are deliberately not
   gated** (`team-store.ts` says so at each one): they are exits, and gating
-  them would trap a captain the moment registration closes. Existing teams
+  them would trap a player the moment registration closes. Leave and remove
+  member require a confirmation that says the player cannot rejoin and their
+  points leave the team; **Support → Add to team** puts them back. Existing teams
   keep their scores. The switch is one of two things that close registration
   — the scheduled window below is the other.
 - **Schedule (auto dates)** — four optional date-time fields, on the Event
@@ -450,7 +509,12 @@ The panel offers:
   start)", and the matching states for registration —
   computed from the very fields it edits. The scoring window is honoured by
   every reader of scoring state (the app, the scorer, the sync poller — see
-  [architecture](architecture.md)); the registration window is enforced by
+  [architecture](architecture.md)). Flags, quiz answers and AI solves are
+  judged when they arrive; a Secure Development PR is judged at the time its
+  score comment was posted, so a PR scored before **Scoring closes** counts
+  even if the poller reads it after (see Freeze above). A refusal is final:
+  a PR refused as outside the window stays refused if you move the bounds
+  later, until it is re-run. The registration window is enforced by
   `team-store.ts` on exactly the mutations the manual switch gates.
 - **Hint controls** (the **Hints** destination, under Setup) — whether hints are enabled and
   what they cost. Hints are **on by default** and cost 10 points each; the
@@ -492,7 +556,33 @@ The panel offers:
     the charge; a solve landing in the same instant shows on the refresh
     that follows). A free hint (cost `0`) skips the check.
 
-  All three fail **closed**: if the solve or balance lookup errors, the hint
+  - **Price changes** (no knob — it follows **Hint cost**) — a contestant
+    is charged the price their confirm button showed, or nothing. The
+    purchase carries that price, and the charging script reads the current
+    **Hint cost** itself and compares the two in the same atomic step as the
+    charge (the affordability check and the charge use that same live
+    price): if an organizer changed the cost after the page rendered,
+    nothing is charged,
+    the request answers 409 with the new price, and the button asks again
+    at it ("This hint now costs N pts. Confirm again to buy it at the new
+    price."). Re-viewing a hint already bought is free and never refused
+    this way.
+
+  - **Scoring window** (no knob — it follows **Freeze scoring** and the
+    **Scoring closes** schedule) — a hint purchase lowers the buyer's net,
+    so it is a scoring action and closes with scoring (#566): while scoring
+    is frozen the reveal is refused with "Scoring is paused right now —
+    hints can't be bought until it resumes", and once the scheduled end
+    has passed with "Scoring has closed — the event has ended, so hints
+    can no longer be bought". Final standings cannot move after the end.
+    Re-viewing a hint already bought stays free and allowed (nothing to
+    charge), and an admin preview is exempt. Checked right after "hints
+    on", before the time, progress and affordability gates — and re-checked
+    inside the atomic charge script against Redis's own clock and the live
+    freeze flag, so a reveal that passed the gate a moment before the end
+    still cannot charge after it.
+
+  All of them fail **closed**: if the solve or balance lookup errors, the hint
   is refused rather than handed out unverified. A refused purchase never
   reads the hint text either: the charge script checks that the hint
   exists by field, runs every check that can refuse, and only then reads
@@ -521,8 +611,16 @@ The panel offers:
 
 - **Activity** (its own tab) — the live event log: sign-ins, quiz, classic
   and ai solves (an ai solve's entry also notes whether it came in via flag
-  or via event), and team create/join/leave/rename, newest first, with type
-  chips and a login filter. Backed by one capped Redis list
+  or via event), and team create/join/leave/rename, newest first. Type
+  chips (each with its count) and one search box narrow it: every word must
+  match somewhere in a row — login, event, detail (challenge, question or
+  team id) or the time as shown — and `login:`, `type:`, `detail:` and
+  `team:` restrict a word to one field; a time range (last 15 min to 24 h,
+  or from/to on the panel's clock) narrows it further. While any of these
+  is on, the tab reads the rest of the log so the search covers all of it,
+  and says how much it searched; the search rides in the URL
+  (`/admin/activity?q=…`), so a filtered view survives a reload and can be
+  shared. Backed by one capped Redis list
   (`ctf:activity:log`, newest ~5,000 entries — older ones drop
   automatically), written **fail-open** so a Redis blip can lose a log line
   but never fail the sign-in or solve it describes. Entries carry the
@@ -540,7 +638,9 @@ The panel offers:
   contestants' forks, and no new tracking was added: quiz answers and classic
   solves already carry a timestamp per item per login, Secure Development
   solves are timestamped as they are ingested, attempts are counted per login,
-  and `firstTeamAt` supplies the funnel's conversion moment.
+  and `firstTeamAt` supplies the funnel's conversion moment. Every per-login record is
+  read under the login as GitHub spells it, so a contestant whose login has
+  a capital letter counts like any other.
 
   It computes when you open the tab, not when the admin page loads — the fold
   is O(contestants) — and, while the event phase is live, recomputes every
@@ -548,18 +648,30 @@ The panel offers:
   Ns ago" stamp beside the "as of" time; **Refresh** is the same read for when
   you won't wait. You get:
 
-  ![The Insights tab: the five participation figures, a ten-minute-bucket solve timeline, and the hardest-first challenge table with solves, attempts, solve rate, average tries and median time to solve per challenge](assets/admin-insights.jpg)
+  ![The Insights tab: the five participation figures, a solve timeline, and the hardest-first challenge table with solves, attempts, solve rate, average tries and median time to solve per challenge](assets/admin-insights.jpg)
 
 
   - **Participation** — on a team / ever on a team / submitted / scored /
     **stuck** (submitted and never scored). The gap between the last two is the
     number worth watching during an event.
-  - **Solves over time**, in ten-minute buckets with a time axis (first,
+  - **Solves over time**: every bucket from the first solve to the last,
+    empty ones included, across the full width, with a time axis (first,
     middle and last bucket, UTC; dated once the buckets cross midnight), so
-    a room going quiet is visible and datable.
+    a room going quiet is a visible, datable gap. Buckets are ten minutes,
+    widened (30 min, 1 h, 2 h, … up to a day, then whole days) to keep any
+    span within 120 bars; the caption names the width and the busiest
+    bucket, and each bar's tooltip its date, range and count. The same
+    figures for every bucket with solves sit in a "Buckets with solves"
+    list under the chart, for keyboard and screen-reader use.
   - **Hardest first** — every challenge by solves, attempts, solve rate,
     *average tries taken by the people who did solve it*, and the *median time
-    from their first attempt to their solve*. Those last two are the difficulty
+    to solve*: from a player first opening a Jeopardy or AI challenge's page
+    to their solve (the box records the first open, once per player and
+    challenge). Where no open was recorded (quiz, and solves from before the
+    record existed) it falls back to their first submission and the cell is
+    starred and taken over the solvers who missed first; where every solver
+    was right on their first submission it shows —, because that fallback is
+    0 by construction, not fast. Those last two are the difficulty
     signal solve rate alone hides: a challenge everyone eventually solved on
     their fourth attempt, forty minutes in, is harder than its 100% rate
     suggests. Each row is named by its **title** — the quiz question's prompt,
@@ -567,6 +679,10 @@ The panel offers:
     be read out without decoding slugs; a challenge deleted since it was solved
     keeps its metrics and shows its id alone. **Download challenges CSV**
     exports the full table, `title` beside `id` rather than instead of it.
+    The file is UTF-8 with a byte-order mark, so Excel opens accented and
+    non-Latin titles intact, and a title beginning with `=`, `+`, `-` or `@`
+    is written with a leading `'` so a spreadsheet shows it as text instead
+    of running it as a formula.
   - **Where attention went** — scorers per module, hint buyers and spend, and
     how many hints were bought *before* the buyer solved the thing. A hint
     bought afterwards bought nothing, so that split is the difference between
@@ -579,7 +695,7 @@ The panel offers:
   | Figure | Counts | Does not count |
   |---|---|---|
   | **On a team** | Distinct logins on a team **right now** | Anyone who has since left |
-  | **Ever on a team** | Distinct logins that have **ever** joined one — survives leaving and switching | Signing in; that leaves no record at all |
+  | **Ever on a team** | Distinct logins that have **ever** joined one — survives leaving and switching, including a player who left without scoring (found through their user record) | Signing in; that leaves no record at all |
   | **Submitted** | Made at least one submission in any module | — |
   | **Scored** | Earned at least one point-bearing item in any module, Secure Development included | Submissions that never landed a point |
   | **Stuck** | Submitted **and never scored** | Anyone who has not submitted yet |
@@ -587,8 +703,8 @@ The panel offers:
   | **Attempts** (per challenge) | Every submission against it, right or wrong | Secure Development items, which do not appear in this table at all |
   | **Solve rate** | solves ÷ **the people who tried it** | The rest of the event; this is not an event-wide difficulty figure |
   | **Avg tries** | Mean attempts taken by the contestants who **did** solve it | Everyone still stuck on it — which is why a low rate and a low average can coexist |
-  | **Median time** | Median seconds from a contestant's **first attempt** to their solve | Items earned before `firstAt` existed; those carry no start time |
-  | **Team points** | The **sum** of each member's own totals | Nothing — and that is the catch: the leaderboard folds the **union** of their solves, so a challenge two teammates both solved counts once there and twice here |
+  | **Median time** | Median seconds from a contestant first **opening** the challenge to their solve; starred (*) when it falls back to their **first submission** because no open was recorded | Time spent before opening it (reading the board, working offline from a shared link); a row where everyone solved on their first submission and no open was recorded shows — |
+  | **Team points** | The leaderboard's own figure for the team: the **union** of its members' solves, hint spend netted | — the two screens agree. Only if the board can't be read does the tab fall back to the sum of members' totals, and it says so |
   | **Hints before solving** | Hints bought **before** the buyer earned that item | Hints bought afterwards, and hints for items never solved |
 
   Solve rate can never exceed 100%: its denominator is the larger of "people
@@ -599,9 +715,7 @@ The panel offers:
 
   The tab ends with **what these numbers do not measure**, and that list ships
   in the API payload too rather than living only here — a metric whose limits
-  travel separately from it gets quoted without them. In short: team points on
-  this tab *sum* each member's totals while the leaderboard folds the *union*
-  of their solves; attempt rows carry a first and a last time but not one per
+  travel separately from it gets quoted without them. In short: attempt rows carry a first and a last time but not one per
   try, so the timeline is solves rather than submissions; signing in leaves no record,
   so the funnel starts at "ever on a team"; Secure Development has no
   per-challenge attempt data, since its scores arrive already judged; and
@@ -631,7 +745,19 @@ The panel offers:
   From there: **reset progress** (clears their Secure Development solves on
   every target, their quiz answers, classic and AI solves, attempts and hints;
   keeps the account and the team), **delete contestant** (all of that
-  plus the team membership and the account record), or **remove from team**.
+  plus the team membership and the account record), **remove from team**, or
+  **add to team** / **move to team**: type a team slug and the player goes
+  onto it, leaving their current team if they have one, whatever the
+  registration state. This is how a player who left after registration
+  closed gets back. The team-size cap applies unless you tick **over the
+  team-size cap**; a captain of a team with other members must hand it over
+  first, as with leaving; a team their move empties is deleted with its join
+  code, as when its last member leaves. The player is found by the spelling
+  they signed in with, so a login that has never signed in is refused. Their
+  points count for the new team on the next board read, and their `joinedAt`
+  is the move, so earlier solves do not open the new team's story steps. The
+  move is in the admin audit log (`ops:team-add-member`) and the activity log
+  (as a team join).
   Team-side, there is **transfer captaincy** and **disband** — the captain-only
   controls, available to an organizer for when the captain is unreachable. That
   is the common live ticket: a captainless team cannot rename, remove a member,
@@ -641,6 +767,28 @@ The panel offers:
   hold the team — transfer or disband first, or you would leave a team nobody
   can administer. And **disbanding deletes nobody's points**: solves are per
   contestant, so the players keep what they earned and can regroup.
+
+  **Score adjustments** (the last block on the tab) — a bonus or penalty for a
+  **team**, with a required reason: type the team slug, a whole number of
+  points (negative for a penalty, up to ±100000, never 0) and the reason, and
+  **Add adjustment**. The list below shows every adjustment with its team,
+  amount, reason and who added it, each with **Remove**. An adjustment:
+  - is applied to the team's total **last**, after hint spend, on every surface
+    that shows it (the board, display mode, the profile's team panel), marked
+    "±N adjustment" beside the total; the total **floors at 0**, like the hint
+    fold;
+  - never touches anyone's hint balance, survives hints being switched off,
+    and adjusts teams only (individual rows are unchanged);
+  - moves points, not time: two teams level after an adjustment are still
+    ordered by who earned their last points first;
+  - is written to the admin audit log on add and on remove (`adjustment:add`,
+    `adjustment:remove`, with who and why), and lives in its own ledger,
+    `ctf:adjustments`;
+  - is this event's scoring data: the **master reset** clears it, and the
+    **event archive does not carry it** (an archive carries content and
+    policy, never solves). The score chart stays gross, as it does for hints.
+  It replaces writing hint spend by hand in Redis, which the board labelled as
+  hints, took from one member's hint balance, and vanished with hints off.
 
   > **Secure Development solves come back.** The scorer writes them with
   > `HSETNX` so replays are no-ops, and the poller re-submits from the PR
@@ -657,10 +805,12 @@ The panel offers:
 
 - **Master reset** (danger zone) — wipes **all** contestant progress so a test
   run or a botched setup can be cleared before the real event. It deletes every
-  solve, team, per-player record, join code, and hint purchase; it **keeps**
-  everything you authored — quiz questions and their answer key, classic and AI
-  challenges with their flags, hints and categories — along with your admin
-  settings, and appends the reset to the audit log. It does rotate the AI
+  solve, attempt, team, per-player record, join code and hint purchase, the
+  organizer's score adjustments, the activity log, and every sponsor (see
+  [Sponsors](#sponsors)); it **keeps** everything you authored — quiz
+  questions and their answer key, classic and AI challenges with their flags,
+  hints and categories — along with your admin settings, and appends the
+  reset to the audit log. It does rotate the AI
   module's launch keypair (see [below](#ai)), so an external challenge site
   re-fetches the public key on its next verification. It is server-side and
   admin-gated, and requires **typing the event name** — the current runtime
@@ -677,7 +827,10 @@ The panel offers:
   when ready*. A PR that is re-scored **after** the reset (its score comment
   is edited forward past the epoch) is ingested as normal — that is a fresh
   result, not a resurrected one. The poller's log reports the skip once, as
-  `poll <repo>: N preReset`.
+  `poll <repo>: N preReset`. The scorer applies the same watermark to each
+  score's comment time, and the reset clears the freeze log (see Freeze
+  above) and starts its own freeze at the reset instant, so a PR scored
+  between the reset and your un-freeze never counts either.
 
   While the reset (or any other score-lowering control — a per-player reset
   or delete, the demo clear, a settings save) is running, a hint purchase is
@@ -741,7 +894,7 @@ The panel offers:
 
 **Every destination has its own URL.** `/admin/overview`, `/admin/activity`,
 `/admin/insights`, `/admin/support`, `/admin/event`, `/admin/hints`,
-`/admin/admins`, and one per enabled module — `/admin/quiz`,
+`/admin/admins`, `/admin/sponsors`, and one per enabled module — `/admin/quiz`,
 `/admin/classic`, `/admin/ai`, `/admin/secure-development`. That is what the
 sidebar links to, so a link is safe to bookmark, paste into a runbook, or
 read out over a call. Switching tabs updates the address bar without a page
@@ -760,8 +913,12 @@ not-enabled tab name, in either form, falls back to **Overview** rather than
 gating, players per team, the retry gate, the cooldowns) and the four
 schedule fields commit when you leave the field, and report beside it:
 **Saving…** while the write is in flight, **Saved** for a moment after, or the
-reason it was refused. Junk, a fraction, a negative, or a blanked field snaps
-back to the stored value with that reason ("Whole numbers only — kept 10.");
+reason it was refused. **Emptying a number field resets it to its default**:
+the stored override is removed and the field shows the default as its
+greyed placeholder again, so an overridden knob (a value in the box) reads
+differently from one following the default (an empty box). Junk, a
+fraction or a negative snaps back to the stored value with that reason
+("Whole numbers only — kept 10.");
 a value the server refuses is rewritten through the field's own label ("Hint
 cost must be a whole number between 0 and 100,000.") and the field snaps back
 too, so what you see is always what is stored. The switches — module on/off,
@@ -772,7 +929,7 @@ demo seed and the master reset.
 
 Every settings change is recorded in an audit log (who, when, what changed)
 alongside the setting itself; the log (`ctf:admin:audit`) keeps the newest
-**500** entries and drops older ones automatically. The five Identity fields
+**500** entries and drops older ones automatically. The six Identity fields
 are the exception to "what changed": the audit line names the field and
 whether it was set or cleared, never the value — `eventDiscord` can carry an
 invite/join token and `eventContact` is personal data, so neither is fit for
@@ -824,7 +981,7 @@ DVWA, WebGoat, Security Shepherd, VulnerableApp, VAmPI) this event actually
 runs, as a checkbox list. `ctf-setup.sh org` forks and provisions all six for
 every event that provisions Secure Development at all — six forks, six
 scoring workflows, six package Read grants — regardless of this setting; an
-event with no `secure-development` block forks and grants nothing (see
+event with an empty `SCORE_IMAGE` forks and grants nothing (see
 [modules.md](modules.md)). The checkboxes decide which of those six
 contestants see and which the sync poller reads, not which get provisioned.
 At least one target must stay checked — the last box is disabled, the same
@@ -937,10 +1094,13 @@ short blurb. Sponsors get no sponsored challenges, no prizes wired into
 scoring, no contestant data, and no lead capture — anything past that is out
 of scope for this tab entirely. It is a platform feature, not a module: there
 is no toggle to turn it off, and it renders on the landing page, the footer,
-`/sponsors`, and the leaderboard's projector display (`?display=1`) if and
-only if at least one sponsor is configured. The footer's credit is left out
-on the landing page, where the strip above the fold already names them. An event with no sponsors ships
-zero sponsor pixels anywhere.
+`/sponsors`, the leaderboard (a strip under its header, ADR 66), and the
+leaderboard's projector display (`?display=1`) if and only if at least one
+sponsor is configured. The footer's credit is left out on the landing page,
+where the strip above the fold already names them. An event with no sponsors
+ships zero sponsor pixels anywhere. The leaderboard also shows the event logo
+beside its title when one is uploaded in `/admin` → Event, and the project
+logo otherwise, as the landing page does.
 
 **The tab is the list.** Each sponsor is a card showing its logo as it will
 actually appear — on the site's own dark background, untreated — next to its
@@ -970,9 +1130,10 @@ the list snaps back to the order the box actually holds and says why — so a
 move that looks like it stuck, stuck.
 
 **Sponsor logo size.** One control at the top of the tab — Small, Medium
-(the default) or Large — sizes sponsor logos on the two surfaces where they
+(the default) or Large — sizes sponsor logos on the three surfaces where they
 are a credit row rather than the content: the landing page's strip below the
-hero, and the leaderboard's projector display (`?display=1`). Each surface
+hero, the same strip under the leaderboard's header, and the leaderboard's
+projector display (`?display=1`). Each surface
 scales it for its own viewing distance, so Large on a projector is much
 bigger than Large on the landing page. The `/sponsors` page is deliberately
 not affected: it is the page that exists to show sponsors, and it keeps its
@@ -1011,9 +1172,9 @@ them.
 
 **In the event archive.** A sponsor-carrying export embeds each logo's bytes
 as base64 inside the JSON bundle — a sponsor-heavy archive is noticeably
-larger than one with none. Importing a bundle with a `sponsors` section
-replaces the box's sponsor list wholesale, like every other section of an
-archive import.
+larger than one with none. Every import runs the master reset, which deletes
+the box's sponsors, so after an import the sponsor list is exactly the
+bundle's `sponsors` section — and empty when the bundle carries none.
 
 ## Archiving and replaying an event
 
@@ -1034,9 +1195,14 @@ AI challenge's mode, launch URL template and **per-challenge signing key**
 plus **policy** settings: the hint controls (enabled, cost, and its two
 gating knobs), the quiz retry-gate knobs, Jeopardy's and AI's submission
 cooldowns, the re-run cooldown, the team-size cap and registration switch,
-module title/blurb overrides, and which modules are enabled. It also carries an informational **event
-identity** block — `name`, `theme`, `dates`, `location` and `ctfStartsAt` —
-read from the running box at export time.
+module title/blurb overrides, which modules are enabled, and which Secure
+Development targets the event runs (`secureDevTargets`). The content of
+all three modules is in every bundle, switched on or off, so a module that is
+off comes back from an import with its content intact and still off. It carries no
+scoring data: no solves, attempts, team rosters or score adjustments. It also carries an informational **event
+identity** block — `name`, `dates`, `location` and `ctfStartsAt`, plus
+`logoUrl` and `timeZone` when they are set — read from the running box at
+export time.
 
 **How a bundle is recognised.** The file's top level is stamped
 `"kind": "archive"` next to a numeric `version`, and import checks both
@@ -1075,11 +1241,13 @@ treat the file with the same care as `/admin` access itself.
 
 **Import is replace-all, and it is destructive.** Confirming an import first
 validates and applies the file's policy settings, then runs the same reset
-the master reset button does — wiping every team, solve, attempt, and hint
-purchase — and replaces the entire Jeopardy board, Quiz bank and AI catalogue
-with exactly what the file contains (a section absent from the file leaves
-that module empty, not as it was — replace-all, not merge). Settings go first and fail-fast: a bad or
-cross-box-incompatible settings block is rejected before anything is wiped,
+the master reset button does — wiping every team, solve, attempt and hint
+purchase, the score adjustments, the activity log and every sponsor, and
+leaving scoring frozen with a fresh pause log, a new reset epoch and the
+event not launched — and replaces the entire Jeopardy board, Quiz bank and
+AI catalogue with exactly what the file contains (a section absent from the
+file leaves that module empty, not as it was — replace-all, not merge).
+Settings go first and fail-fast: a bad or cross-box-incompatible settings block is rejected before anything is wiped,
 never after. It is **refused outright (`409`)** while scoring is
 **effectively live** — not manually paused, and inside its scheduled scoring
 window; manually pausing scoring is one way to make the event eligible for
@@ -1115,12 +1283,14 @@ second successful run overwrites whatever the failed one left behind.
 again before the import runs anything destructive; an archive without them
 leaves the box's own images as they are.
 
-**Name, tagline and location travel with the bundle; contact and Discord
-never do.** The event's identity is a runtime `/admin` setting now (issue
-#386), so on import only the supported identity fields — `name`, `theme`
-and `location` — are applied, through the same validated settings patch as
-every other policy field, before anything destructive runs — a restore or a
-repeat run of the same CTF renames itself without a rebuild. The bundle's
+**Name, location, time zone and logo link travel with the bundle; contact
+and Discord never do.** The event's identity is a runtime `/admin` setting
+(issue #386), so on import only the supported identity fields are applied —
+`name`, plus `location`, `timeZone` and `logoUrl` when the bundle carries
+them; an older archive's `theme` (the retired tagline) is ignored. They go
+through the same validated settings patch as every other policy field,
+before anything destructive runs — a restore or a repeat run of the same
+CTF renames itself without a rebuild. The bundle's
 `dates` and `ctfStartsAt` are informational only (they travel with the
 export for the record — see above) and are **not** reapplied on import: both
 are derived from the **Scoring opens** / **Scoring closes** schedule, which an
@@ -1367,9 +1537,31 @@ entirely inside the app.
 
 ![The Jeopardy board as a contestant sees it: challenges grouped by category as compact tiles — title, points, and a green check once solved — with the solved-count and points progress bar above them](assets/flags.jpg)
 
-<sup>The board as a contestant sees it: every card says what it's worth and how
-many people have solved it, a badge marks the flags where casing matters, and
-grading answers the instant you submit.</sup>
+<sup>The board as a contestant sees it: every card says what it's worth, a
+badge marks the flags where casing matters, and grading answers the instant
+you submit.</sup>
+
+**Solve counts are teams** (#595). Every visible tile, open story step and
+challenge page says how many teams solved it ("3 teams"): scoring is per team,
+so two members solving one flag count once, and a solver on no team is not
+counted. The figure is folded from the current members' solves on each read,
+never stored, so a team change cannot leave it stale. A locked story step
+shows no count. In `/admin` the Jeopardy list gives each challenge both
+figures ("3 teams · 5 players", or "unsolved"), so a flag nobody can solve
+stands out; if a count cannot be read it is left off rather than shown as 0.
+
+**First blood** (#188). Each visible tile and open story step names the
+contestant who solved it first ("🩸 First blood: alice"), by their GitHub
+login. It is display only and moves no points. Like the team count it is read
+off the current team members' own solve rows on every page load, never
+stored: the earliest solve time wins, and an exact tie goes to the login that
+sorts first, ignoring case. Nothing extra happens during a freeze: a frozen
+board records no solves, so first blood stays where the leaderboard does.
+Resetting a contestant's progress or deleting them in the Support tab, or
+removing them from their team, passes their first bloods to the next solver
+(or to nobody), with nothing to clean up. A master reset clears it with the
+solves. A locked story step shows none, and if the solves cannot be read
+neither the counts nor first blood are shown.
 
 **Authoring** happens in `/admin`, under the Jeopardy module's tab (see
 "Jeopardy controls" above). Before adding a challenge you need at least one
@@ -1445,6 +1637,47 @@ history for it is left alone. Deletion is gated behind typing the
 challenge's own title to confirm (falling back to its id for a
 blank/whitespace-only title), the same pattern the quiz's delete and the
 master reset use.
+
+**A challenge can be hidden without deleting it, or released on a
+schedule.** Each challenge's form has a **Visible to contestants** switch (on
+for a new challenge) and an optional **Release at** time, and every row in
+the list carries a status chip: **Live**, **Disabled**, or **Releases Oct 8,
+10:00 GMT-3**. Switch it off to stage a challenge before it goes up, or to
+pull a broken one mid-event. Set a release time for the day-2 and day-3
+drops: the challenge stays hidden until that instant and then goes live on
+its own. Nothing runs on the box to do it: every page read compares the
+release time with the server's clock, and grading and hint purchases compare
+it with Redis's clock, so a submission racing the instant is decided once.
+The time is entered on the event's clock (Event tab → Timezone, the same zone
+the schedule uses) and the form shows the UTC instant it stores. Setting a
+release time switches the challenge off until then; switching it on clears
+the release time; saving a time that has already passed saves it live.
+Give the steps of a story the same release time to release the story
+together: release is per challenge. A
+hidden challenge does not exist on the contestant side: it is left out of the
+board, its page is the same 404 an unknown id gets, its flag is refused like
+an unknown challenge's (no attempt spent, no cooldown, decided by the grading
+script itself), its hint cannot be bought, its files do not download, and it
+is out of every leaderboard, profile and display-mode denominator. In a
+story, the chain closes up around it, the same as a deleted step, and
+switching it back on puts it back in its place. Solves already banked on it
+stay, like a deleted challenge's: the solver keeps the points, the challenge
+disappears from their lists too, and their profile shows one line, "+N pts
+from challenges no longer on the board", so their total still adds up
+(points banked on a deleted challenge are counted in the same line). An admin
+can still open a hidden or scheduled challenge's page, before launch or
+after, to check it: the page carries a **Hidden from contestants** banner
+saying why (Disabled, or Releases at what time), and a flag or hint used
+there is a dry run that records nothing for the admin. A bundle or event
+archive carries the switch (bundle version 4, stamped only when some
+challenge is hidden, so other exports still import on an older box), and an
+older bundle that carries it is refused rather than imported live. In a
+hand-written bundle, `releaseAt` is an ISO 8601 date and time that names its
+zone: it ends in `Z` (`2026-10-08T13:00:00Z`) or an explicit offset
+(`2026-10-08T10:00:00-03:00`). One without a zone, or a date or time that does
+not exist (`2026-02-30`, `25:00`), is refused, because the box would
+otherwise read it in its own zone and release at an instant nobody meant. The
+admin form always stores the UTC form, so it never trips this.
 
 **Matching is whitespace-insensitive and — by default — case-insensitive,
 normalized identically on both the authoring and submission sides.** The
@@ -1565,6 +1798,9 @@ its categories that the board doesn't already have, in the order the file
 lists them, after the categories already there — the existing order is
 left exactly as it was. Importing a bundle can only grow the category
 list, never reorder or drop anything from it.
+The combined list must stay within 50 categories, counting names without
+regard to case. If it would exceed that limit, the whole import is refused
+before any content is written; the existing board stays intact.
 
 **Bundles carry stories as version 2** (#463). An export is now stamped
 `"version": 2` and has a `stories` list beside `categories`. Each story has
@@ -1578,6 +1814,10 @@ ids in order:
 ```
 
 A version 1 file still imports unchanged, but it cannot carry `stories`.
+(Today's export is stamped `"version": 2`, `"version": 3` when it
+carries the optional attachment files described under "Files in bundles
+and archives" below, or `"version": 4` when any challenge is hidden or
+scheduled.)
 Every step must name a challenge **in the same file**, the same
 self-contained rule that applies to categories. Stories merge by id, the
 same way challenges do:
@@ -1599,7 +1839,9 @@ on its own.
 **Stories: challenges a team unlocks in order** (#463). A story is an
 ordered chain of challenges, such as an "Operation Red Dawn" that runs from
 recon to loot. Step 1 is always open. Each later step opens for a team once
-any member of that team solves the step before it. The board shows one lane
+any member of that team solves the step before it while on that team: a
+step solved on another team, before the player joined this one, still
+counts toward this team's points but opens nothing here (#602). The board shows one lane
 per story above the categories. A locked step appears there only as
 "??? — step N of M", and its page, hint and flag answer as if it did not
 exist. Points are plain: a step is worth what its challenge says, and a
@@ -1621,10 +1863,33 @@ Jeopardy tab:
   the refusal is shown in the block.
 
 Reordering during a live event is safe, because the unlock is recomputed
-from each team's current solves. A step that a team could see before the
-reorder can lock again if its new predecessor is unsolved. Deleting a
-challenge also removes it from its story, and the chain closes up around
-the gap.
+from each team's solves. A step that a team could see before the reorder
+can lock again if its new predecessor is unsolved. A solve only counts for
+a team's unlock if its solver was on that team when they solved it — the
+`joinedAt` rule: a solve carried into a team from an earlier one keeps its
+points for the team but opens nothing after it. Deleting a challenge also
+removes it from its story, and the chain closes up around the gap.
+
+**Denominator counts only reachable challenges**. Both the profile
+page and the leaderboard show per-team reachable totals for classic
+challenges. The denominator grows as your team unlocks story steps:
+- Step 1 of every story is always counted.
+- Each later step is added to the denominator only when its prerequisite
+  was solved for your team — by a member who was on the team at the time.
+- Locked steps are excluded from both the challenge count and the points
+  ceiling — their titles and points are never exposed.
+- A solo contestant is a team of one: their own solves unlock the next
+  steps just like a team's do.
+- Challenges already solved by the team but since deleted from the
+  catalogue are still counted (union with solve records), preserving
+  banked points.
+- A leaderboard row — team or contestant — divides by that row's own
+  reachable total, and the solved column subtracts that row's still-locked
+  steps from the event's completable count. The profile's progress bar
+  divides by the viewer's own reachable total. A disclaimer appears on
+  the profile and the board while any row still has locked steps: "Totals
+  count unlocked challenges only — story steps add to the total as your
+  team unlocks them."
 
 **Jeopardy has paid hints too** (#210, after the board itself shipped
 without them): a challenge can carry an optional `hint`, sold through the
@@ -1660,20 +1925,59 @@ base64; count that when sizing the box. See
 [ADR 61](decisions.md#adr-61-challenge-attachments-live-in-redis-served-only-as-downloads-behind-the-challenges-own-visibility)
 for why the bytes live in Redis.
 
-**Files in bundles and archives.** A challenge bundle (version 2) carries
-each attachment's **metadata only**: `{ "name", "size", "sha256" }` for an
-upload, `{ "name", "url" }` for a link, in an `attachments` list on the
-challenge. The bytes travel in the **event archive**, whose import checks
-every file's sha256 before it replaces anything.
+**Files in bundles and archives.** A challenge bundle carries each
+attachment's **metadata** in an `attachments` list on the challenge:
+`{ "name", "size", "sha256" }` for an upload, `{ "name", "url" }` for a link.
+The bytes travel in one of two places:
 
-- Importing a bundle that names an upload the box does not have creates it
-  as **missing**. The Files section flags it ("re-upload `capture.pcap`
-  (sha256 …)") with a re-upload control, and contestants do not see it until
-  it has its bytes.
+- **The event archive** always carries them, in a top-level
+  `attachmentFiles` list. Its import checks every file's sha256 before it
+  replaces anything.
+- **A challenge bundle carries them only when you ask.** Tick **Include
+  files** next to **Export challenges** on the Jeopardy tab, and the export
+  adds the same top-level `attachmentFiles` list. Leave it unticked (the
+  default) and the bundle stays the small, metadata-only file.
+
+A bundle that carries files is stamped `"version": 3`. One without them
+(the option unticked, or nothing uploaded) stays `"version": 2` (or 4 when it
+carries a hidden or scheduled challenge), so a box on an older build still
+imports it. Each `attachmentFiles` entry
+is `{ "item", "sha256", "bytes" }`: the challenge id, the upload's sha256,
+and the file's bytes as base64. Every entry must name an upload in the same
+file by challenge id and sha256. Version 1 and 2 files still import
+unchanged, but only version 3 can carry `attachmentFiles`.
+
+```json
+"attachmentFiles": [
+  { "item": "web-warmup-x7k2", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "bytes": "dGVzdA==" }
+]
+```
+
+What a challenge-bundle import does with files:
+
+- An upload the box does not have is created as **missing**. If the bundle
+  carries its bytes, they fill it straight away. If it does not, the Files
+  section flags it ("re-upload `capture.pcap` (sha256 …)") with a re-upload
+  control, and contestants do not see it until it has its bytes.
+- An upload the box already holds with the same sha256 is skipped; its
+  bytes in the bundle are not used.
+- Before anything is written, the import checks each file's bytes against
+  its sha256 and recorded size. It also checks the caps: 5 MiB per file,
+  10 attachments per challenge, and 50 MiB for the whole event. A tampered
+  file, or a bundle whose files would push the event past 50 MiB, is
+  refused whole, and the refusal names the cap and the current usage.
 - A re-upload whose sha256 differs from the recorded one is refused.
 - A challenge-bundle import still never deletes: a file on the box that the
   bundle does not mention stays. A link matches by name and URL, an upload
   by sha256. (An event-archive import is a full replace, files included.)
+
+A bundle with files can be large: 50 MiB of uploads is about 67 MB of
+base64. The Jeopardy tab sends every import to
+`POST /api/admin/classic/bundle`, which accepts a body of up to 75 MB
+(the archive import's limit). A larger file is refused with a `413` that
+names the limit. A file too large to edit is loaded but not shown in the
+import box, the same way the event archive's import handles it. The file
+holds every flag and every attachment, so treat it like the archive.
 
 ## AI
 
@@ -1823,9 +2127,8 @@ like classic.
 
 **Position ordering is a plain editable number**, not drag-and-drop. Unlike
 quiz's and classic's question/challenge lists, this panel has no
-reorder-by-dragging UI — organizers curate a long-running board there;
-nothing about this task called for the same parity here, so `order` is just
-another field the form edits directly.
+reorder-by-dragging UI — organizers curate a long-running board there,
+so `order` is the **Position** number field the form edits directly.
 
 **The integration panel** is what an external challenge actually wires up
 against. It comes in two parts. The **Endpoints** block sits once, above the
@@ -1871,10 +2174,10 @@ carries:
   hard-coded server-side, never taken from the request — so nothing is
   written: no nonce is claimed, no points are awarded. It is safe to click
   against a live event, and it relays that handler's real verdict verbatim
-  rather than inventing one. The panel renders exactly one of two lines
+  rather than inventing one. The panel renders exactly one line
   under the button: a green **Would award — the dry run verified end to
-  end.** for the good case, or a red **Test result: `<name>`** for anything
-  else, where `<name>` is the verdict or error string the route handed back
+  end.** for the good case, or **Test result: `<name>`** for anything
+  else — green for `solved` or `would-award`, red for a refusal or failure — where `<name>` is the verdict or error string the route handed back
   (or `unavailable` when it handed back nothing readable — a 503, or the
   request itself failing). The panel now prints a one-sentence explanation
   under that name for every verdict listed below, so the table here is a
@@ -1884,10 +2187,11 @@ carries:
     token, rate limit, team and schedule. Before launch the test runs as an
     admin preview, which skips the team and schedule gates, so the verdict
     vouches for signature, token and rate limit only.
-  - **`paused`**, **`solved`**, **`no-team`** — the signature and token
-    were fine and a gate refused the award, relayed as-is. `solved`: the
-    organizer's own login already holds this challenge. After launch only:
-    `paused` means scoring is frozen or outside its scheduled window, and
+  - **`paused`**, **`ended`**, **`solved`**, **`no-team`** — the signature
+    and token were fine and a gate refused the award, relayed as-is.
+    `solved`: the organizer's own login already holds this challenge. After
+    launch only: `paused` means scoring is frozen or before its scheduled
+    start, `ended` that the scheduled scoring end has passed (#567), and
     `no-team` means the organizer is on no team (the event route refuses a
     teamless login before the award, organizers included). Before launch a
     preview skips both of those gates. None of these is a fault on the
@@ -1912,7 +2216,11 @@ carries:
 **graded flag path**: a signed event has no wrong answer to rate-limit, so
 it is never subject to this cooldown. `null` (the field left blank) means
 the **5-second default**; set a value in `[0, 3600]` seconds to override it,
-the same bounds classic's own cooldown enforces.
+the same bounds classic's own cooldown enforces. Like classic's, it is
+**per contestant, while a solve counts for the team**: each teammate has
+their own cooldown on each challenge, so a team of N can submit N flags per
+period on the same challenge. That is by design (one player's guessing never
+locks out the team); size the cooldown with the team cap in mind.
 
 **What contestants see:** the board (`/ai`) lists every challenge with its
 category, points, and a 💡 marker where a hint is on offer. Opening one
@@ -1954,6 +2262,23 @@ any browser or phone, no login:
   — `null` when the settings couldn't be read; it never fails the check. `sync.ageSec` is how long since the poller last
   polled — if that number keeps growing while Secure Development is live,
   score comments are piling up on GitHub and the leaderboard is not moving.
+
+### Admin state: through the API, not the rendered panel
+
+Most `/admin` tabs load their data client-side — the page shell and loading
+skeleton are server-rendered, while each tab's data is fetched in the
+browser — so when verifying admin state, ask the API rather than the panel:
+an authenticated `GET` such as `/api/admin/sponsors`
+or `/api/admin/metrics`, run from a logged-in browser tab — the session
+cookie carries the auth, and a cookie on a command line is readable by
+every local user. What the JSON says is the state; it also separates "the
+panel did not draw it" from "the box does not have it".
+
+If a client-rendered panel sits on `Loading…`, check
+`document.visibilityState` in that tab and bring it to the foreground
+**before** diagnosing a rendering failure: a panel driven from a backgrounded
+tab can sit there while a manual `fetch` from the same page's own JS context
+answers immediately (#433). The API answers; the tab is the variable.
 
 ### The box under load: `scripts/load-test.sh`
 
@@ -2189,12 +2514,12 @@ $ curl -s https://ctf.example.org/health
 | `builtAt` | When the image was built. Distinguishes two deploys of the same commit — a redeploy after a config or secret change rebuilds the image without moving the sha. |
 
 `revision` and `builtAt` are baked at build time from `APP_BUILD_REV` and
-`APP_BUILT_AT` (Docker build args). `deploy/fly/deploy.sh`,
-`deploy/aws-terraform/deploy.sh` and `scripts/dev-stack` fill them in; a build
-that passes neither reports
-`"unknown"` and `null` rather than failing. `deploy.sh` deliberately reports
-`unknown` when the working tree is dirty, because the sha would not describe
-the image it built.
+`APP_BUILT_AT` (Docker build args). `deploy/fly/deploy.sh` and
+`deploy/aws-terraform/deploy.sh` fill in both; `scripts/dev-stack` fills in
+only `builtAt`, so a dev stack always reports `revision: "unknown"`. A build
+that passes neither reports `"unknown"` and `null` rather than failing. Both
+`deploy.sh` scripts deliberately report `unknown` when `apps/web/` (the app's
+build context) is dirty, because the sha would not describe the image built.
 
 Watching for a deploy to land:
 
@@ -2233,11 +2558,8 @@ The scorer engine has two more gates of its own:
 `acceptance-scorer.sh` closes the judge → PR-comment marker → leaderboard loop
 against a fake target app: it POSTs the marker the judge wrote the way `sync`
 does, and asserts the leaderboard then shows rubric-derived points. It also
-runs the judge twice, once with `SCORE_API`/`SCORE_TOKEN` set and once with
-neither, and requires the two reports to be byte-identical — that environment
-is dead since push ingest was removed
-([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377)), and this is the
-assertion that keeps it dead.
+checks the report carries the score-action regexes with the expected count,
+and that no probe internal leaks into it.
 `acceptance-target.sh` is the **stock-scores-zero gate**: it boots the real,
 unpatched upstream image and asserts every challenge fails against it. Any
 challenge that passes there asserts the exploit rather than the fix, and the
@@ -2425,7 +2747,9 @@ template, or fork and open PRs, before the event starts.
      everyone a head start. It needs `EVENT_URL` in `.env` to see the press,
      and refuses without it.
    - Then it makes every fork **public**, within one poll interval of the
-     press. If Launch never comes, nothing was changed.
+     press, and applies the `ctf` branch protection that `org` deferred (the
+     free plan cannot protect a private repo), checking it before it reports
+     success. If Launch never comes, nothing was changed.
 
    It uses your own `gh` login; the box never holds a GitHub admin
    credential. Every step is idempotent: after a partial failure it names
@@ -2457,14 +2781,11 @@ on from other OWASP-CTF repos landed here instead:
    org secrets of its own — the comment is the transport, so there is nothing
    for it to authenticate to.
 
-What none of that bounds: **no real event has yet driven real contestant PRs
-through real GitHub end to end**, and nothing here has been exercised at the
-concurrency of a full cohort. A live instance catches what mocks cannot — an
-end-to-end pass over one is where a batch of real defects were found, several
-of them invisible to a green CI run — but one operator clicking through a
-deployed box is not forty contestants pushing at once. Until an event has run,
-treat `scripts/smoke.sh` as the source of truth that the pipeline works, and
-the live box as evidence that it works when deployed.
+**It has run a real event.** The first one ran on October 7–9, 2026, on the
+AWS module behind Cloudflare: 28 teams and 41 players, 498 Secure
+Development score comments ingested with none dropped, and about 465,000
+requests on the two busiest days. That is the measured load: a larger
+cohort, or a single box on venue wifi, is still beyond what has been run.
 
 Known limits, in the open:
 
@@ -2484,7 +2805,7 @@ Known limits, in the open:
   example). The app is wired to it today for real team-membership and
   hint-purchase data. That the app's Redis client stays inside that subset
   is no longer unverified: `apps/web/src/lib/upstash.ts` exposes exactly two
-  entry points, `upstashPipeline` and `upstashEval`, and the seven
-  `*.upstash.test.ts` suites drive both against a real Redis behind `srh` in
+  entry points, `upstashPipeline` and `upstashEval`, and every
+  `*.upstash.test.ts` suite drives both against a real Redis behind `srh` in
   the `app` CI job — with `CTF_LUA_SUITES_REQUIRED=1` turning a skip into a
   failure, so pipelining and `EVAL` are exercised end to end on every run.

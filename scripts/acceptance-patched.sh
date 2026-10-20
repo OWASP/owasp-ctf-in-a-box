@@ -125,6 +125,7 @@ CATALOGUE="scorer/rubric.owasp/$TARGET/tests/challenges/catalogue.$TARGET.json"
 CAT_N="$(grep -c '"key":' "$CATALOGUE" || true)"
 [ "${CAT_N:-0}" -gt 0 ] || { echo "FAIL: no challenges found in $CATALOGUE"; exit 1; }
 
+# pins: the scorer image acc_build_scorer builds from this checkout
 IMG="ctf-score:acceptance-$TARGET"
 NET="ctf-acceptance-$TARGET"
 TMP="$(mktemp -d)"
@@ -285,7 +286,7 @@ run_probe() {
       [ "$code" = "200" ] || fail "positive control: GET /rest/user/whoami?fields=email returned $code, not 200 — the patch broke the endpoint."
       grep -q "$em" "$CTRL_BODY" || fail "positive control: whoami?fields=email served no email — the patch gutted the projection instead of allow-listing it."
       pwbody="$(curl -s -H "Cookie: token=$tok" "$1/rest/user/whoami?fields=password")"
-      if printf '%s' "$pwbody" | grep -q '"password"'; then fail "positive control: whoami?fields=password STILL returns a password field — the fix did not close the leak."; fi
+      if grep -q '"password"' <<< "$pwbody"; then fail "positive control: whoami?fields=password STILL returns a password field — the fix did not close the leak."; fi
       echo "  control OK: whoami?fields=email → 200 serving the user's email; whoami?fields=password no longer returns the hash."
       ;;
     challenge-23-sql-injection-dml-update)
@@ -345,6 +346,7 @@ case "$CTRL_STRATEGY" in
       # runtime-only (COPY target/*.jar) so a bare `docker build $WS` has no jar and
       # dies; vulnerableapp would otherwise re-run a multi-minute gradle build. Every
       # source-build bring-up tags its image ctf-app-under-test on the host daemon.
+      # pins: built locally from the PR checkout, never pulled
       BOOT_IMG="ctf-app-under-test"
       docker image inspect "$BOOT_IMG" >/dev/null 2>&1 || fail "expected the judge's $BOOT_IMG image for the control, but it is gone."
     else

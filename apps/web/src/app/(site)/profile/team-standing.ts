@@ -3,7 +3,7 @@ import "server-only";
 // The team's scoring picture for the profile's Team progress panel, built from
 // the SAME pipeline (and the same overlay order) the public leaderboard runs —
 // getLeaderboard → withModuleContributions → withTeamStandings →
-// withHintPenalties — so the panel and the board can never disagree about a
+// withHintPenalties → withScoreAdjustments — so the panel and the board can never disagree about a
 // team's total.
 //
 // A failed read drops the panel, never the page: this is a progress display,
@@ -12,10 +12,11 @@ import "server-only";
 import type { LeaderboardEntry, TeamStanding } from "@/lib/leaderboard/types";
 import { getLeaderboardSource } from "@/lib/leaderboard/source";
 import { withHintPenalties } from "@/lib/leaderboard/hint-penalties";
+import { withScoreAdjustments } from "@/lib/leaderboard/score-adjustments";
 import { withModuleContributions } from "@/lib/leaderboard/module-contributions";
 import { withTeamStandings } from "@/lib/leaderboard/team-standings";
 
-export type TeamPanelData = {
+type TeamPanelData = {
   standing: TeamStanding | null;
   /** One entry per roster member, in roster order; null when that member has
    *  no scored activity yet. */
@@ -32,7 +33,8 @@ export async function loadTeamStanding(
       .getLeaderboard()
       .then(withModuleContributions)
       .then(withTeamStandings)
-      .then(withHintPenalties);
+      .then(withHintPenalties)
+      .then(withScoreAdjustments);
     const standing = data.teams.find((t) => t.slug === team.slug) ?? null;
     // The store's roster wins; the standing's member list covers the mock
     // fallback path where `team.members` arrives empty.

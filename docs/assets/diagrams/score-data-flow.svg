@@ -1,6 +1,6 @@
 <svg viewBox="0 0 880 512" xmlns="http://www.w3.org/2000/svg" width="100%" role="img" aria-labelledby="ttl desc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
   <title id="ttl">Data flow for a score</title>
-  <desc id="desc">A contestant opens a PR; a pull_request_target Action judges the patch in the base repo; it posts a PR comment carrying the score marker, the one score transport since push ingest was removed in v0.6 per issue 377; sync's tick then filters comments by author, parses and validates, then POSTs to /score itself; scorer is the one writer, landing the score in redis via srh monotonically; the app then reads GET /leaderboard and composes the overlay pipeline (module-contributions, then team-standings, then hint-penalties folded last) before rendering. The score marker is trust-authoritative and only ever comes from the judge's own output, never from the PR checkout.</desc>
+  <desc id="desc">A contestant opens a PR; a pull_request_target Action judges the patch in the base repo; it posts a PR comment carrying the score marker, the one score transport since push ingest was removed in v0.6 per issue 377; sync's tick then filters comments by author, parses and validates, then POSTs to /score itself; scorer is the one writer, landing the score in redis via srh monotonically; the app then reads GET /leaderboard and composes the overlay pipeline (module-contributions, then team-standings, then hint-penalties, then score adjustments last) before rendering. The score marker is trust-authoritative and only ever comes from the judge's own output, never from the PR checkout.</desc>
   <style>
     :root {
       --bg: #ffffff; --surface: #f6f8fa; --surface-2: #eaeef2; --border: #d0d7de;
@@ -104,7 +104,7 @@
 
   <text x="560" y="432" font-size="10" fill="var(--text-muted)">overlay, in order:</text>
   <text x="560" y="446" font-size="10" fill="var(--text-muted)">module-contributions &#8594; team-standings</text>
-  <text x="560" y="460" font-size="10" fill="var(--text-muted)">&#8594; hint-penalties (folded last)</text>
+  <text x="560" y="460" font-size="10" fill="var(--text-muted)">&#8594; hint-penalties &#8594; score adjustments</text>
 
   <text x="40" y="502" font-size="10" fill="var(--text-muted)">the score marker is trust-authoritative &#8212; it only ever comes from the judge's own output, never from the PR checkout</text>
 </svg>

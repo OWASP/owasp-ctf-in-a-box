@@ -162,10 +162,19 @@ run_bringup() {
 
 @test "the acceptance gate stages that source into the workspace for 'none'" {
   # Into the WORKSPACE specifically: that is what makes `webgoat none` take the
-  # same branch a contestant's PR takes instead of a gate-only shortcut.
-  grep -qF 'git -C "$WS" fetch --depth 1 -q origin "$WG_UPSTREAM_REF"' \
-    "$REPO_ROOT/scripts/acceptance-target.sh"
-  grep -qF '[ -f "$WS/Dockerfile" ]' "$REPO_ROOT/scripts/acceptance-target.sh"
+  # same branch a contestant's PR takes instead of a gate-only shortcut. The
+  # staging itself moved into acc_stage_source (#504 M15): the gate must still
+  # hand it the WORKSPACE and the pinned ref, and the helper must still fetch
+  # that exact commit into it and assert the root Dockerfile the bring-up keys
+  # on — without both halves the source path is a shortcut again.
+  missing=""
+  grep -qF 'acc_stage_source "$WS" "$WG_UPSTREAM_REPO" "$WG_UPSTREAM_REF"' \
+    "$REPO_ROOT/scripts/acceptance-target.sh" || missing="$missing gate-call"
+  grep -qF 'git -C "$ws" fetch --depth 1 -q origin "$ref"' \
+    "$REPO_ROOT/scripts/lib/acceptance-lib.sh" || missing="$missing lib-fetch-commit"
+  grep -qF '[ ! -f "$ws/Dockerfile" ]' \
+    "$REPO_ROOT/scripts/lib/acceptance-lib.sh" || missing="$missing lib-dockerfile-assert"
+  [ -z "$missing" ] || { echo "FAIL: the 'none' source path no longer stages into the workspace (missing:$missing)"; return 1; }
 }
 
 @test "stock-scores-zero gates both WebGoat boot paths" {

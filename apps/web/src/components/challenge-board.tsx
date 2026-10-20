@@ -16,7 +16,9 @@
 
 import Link from "next/link";
 import ProgressSummary from "@/components/progress-summary";
-import type { ChallengeView } from "@/components/challenge-detail";
+import { type ChallengeView } from "@/components/challenge-detail";
+import { teamsLabel } from "@/lib/solve-labels";
+import FirstBloodLine from "@/components/first-blood-line";
 
 // Re-exported so every existing consumer of the view types keeps one import
 // path — the types themselves moved with the interactive surface. Both the
@@ -90,7 +92,7 @@ export default function ChallengeBoard({
                   <li key={challenge.id}>
                     <Link
                       href={`${basePath}/${encodeURIComponent(challenge.id)}`}
-                      aria-label={`${challenge.title}, ${challenge.points} points${solved ? ", solved" : ""}${hintIds.includes(challenge.id) ? ", paid hint available" : ""}`}
+                      aria-label={`${challenge.title}, ${challenge.points} points${solved ? ", solved" : ""}${hintIds.includes(challenge.id) ? ", paid hint available" : ""}${challenge.firstBlood ? `, first blood by ${challenge.firstBlood}` : ""}`}
                       className={`ds-card flex h-full min-h-24 flex-col justify-between gap-2 rounded-lg border p-4 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017] ${
                         solved
                           ? "border-[#22c55e]/40 bg-[#22c55e]/[0.08]"
@@ -103,9 +105,11 @@ export default function ChallengeBoard({
                         {challenge.title}
                         {solved && <span className="sr-only"> (solved)</span>}
                       </span>
+                      {challenge.firstBlood && <FirstBloodLine login={challenge.firstBlood} />}
                       <span className="flex items-baseline justify-between">
                         <span className={`font-mono text-xs tabular-nums ${solved ? "text-[#22c55e]/80" : "text-muted"}`}>
                           {challenge.points} pts
+                          {challenge.teamsSolved !== null && <> · {teamsLabel(challenge.teamsSolved)}</>}
                           {hintIds.includes(challenge.id) && (
                             <span title="A paid hint is available on this challenge's page." className="ml-1.5">
                               💡

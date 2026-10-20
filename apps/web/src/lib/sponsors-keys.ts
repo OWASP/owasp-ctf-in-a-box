@@ -20,7 +20,7 @@ export const SPONSOR_LOGO_MAX_DIMENSION = 4096;
 
 export type SponsorTier = "gold" | "silver" | "community";
 
-export const SPONSOR_TIERS: readonly SponsorTier[] = ["gold", "silver", "community"];
+const SPONSOR_TIERS: readonly SponsorTier[] = ["gold", "silver", "community"];
 
 /** Tier is display ordering and a label only — every sponsor still appears on
  *  all three public surfaces. Used to group `/sponsors` and to give a
@@ -59,7 +59,7 @@ export function isSponsorLogoSize(value: unknown): value is SponsorLogoSize {
  *  string the browser attached to the file. */
 export const SPONSOR_LOGO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 
-export type SponsorLogoMime = (typeof SPONSOR_LOGO_MIME_TYPES)[number];
+type SponsorLogoMime = (typeof SPONSOR_LOGO_MIME_TYPES)[number];
 
 /** The matching constant from the list above, or null — never the caller's
  *  own string back, so a value that passes this check is one of three

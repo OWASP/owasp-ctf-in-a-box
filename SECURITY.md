@@ -42,11 +42,11 @@ What we do want reports on is the **kit's own infrastructure** — the code
 that operates the event, not the practice targets it hosts:
 
 - `scorer/` — the judge and leaderboard scoring engine
-- `sync/` — the poll/push scoring transport
+- `sync/` — the poll scoring transport
 - `apps/web/` — the contestant web app (auth, teams, admin panel)
 - `setup/` — `ctf-setup.sh` and event provisioning
 - `deploy/` — the optional cloud deploy modules (IAM roles, security groups,
-  secrets handling, cloud-init bring-up)
+  secrets handling, task definitions and deploy scripts)
 - `patches/` — the reference patches shipped for the targets
 - `scripts/`, `.github/workflows/` — CI, smoke tests, and automation
 

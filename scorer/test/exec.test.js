@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { runExec } from "../src/exec.js";
 
@@ -118,26 +118,24 @@ test("stops spawning once the target proves unreachable", async () => {
   // children each burn one full safety window before the second arms the
   // abort; the remaining three must be short-circuited before ever spawning.
   //
-  // The direct proof of that is HANG_SPAWN_MARKER: Hang.test.js appends to it
-  // on start, so counting appends tells us exactly how many children were
-  // spawned — independent of wall-clock speed. The elapsed-time assertion is
-  // kept only as a secondary sanity net (expressed as a multiple of the
-  // injected safety window, not a bare literal) against total wedging.
-  const markerDir = mkdtempSync(join(tmpdir(), "ctf-score-hang-"));
-  const marker = join(markerDir, "spawns");
+  // The direct proof of that is `spawned`, counted by the runner at the spawn
+  // decision. It must NOT be a marker the child writes itself: under CPU load
+  // a child can be reaped by its safety kill before `node --test` boots far
+  // enough to run a line, so a child-written count undercounts and flakes
+  // (issue #643). The elapsed-time assertion is kept only as a secondary
+  // sanity net (a multiple of the injected safety window, not a bare literal)
+  // against total wedging — `spawned` is what proves the early abort.
   const hang = (id) => ({
     id, name: id, points: 1,
     exec: { file: "Hang.test.js", key: "Hang", byName: false, testsDir },
   });
   const safetyMs = 300;
   const started = Date.now();
-  const { solved, aborted } = await runExec([hang("a"), hang("b"), hang("c"), hang("d"), hang("e")], {
+  const { solved, aborted, spawned } = await runExec([hang("a"), hang("b"), hang("c"), hang("d"), hang("e")], {
     concurrency: 1,
-    env: { ...process.env, CTF_SCORE_SAFETY_MS: String(safetyMs), HANG_SPAWN_MARKER: marker },
+    env: { ...process.env, CTF_SCORE_SAFETY_MS: String(safetyMs) },
   });
   const elapsed = Date.now() - started;
-  const spawnCount = existsSync(marker) ? readFileSync(marker, "utf8").length : 0;
-  rmSync(markerDir, { recursive: true, force: true });
 
   assert.deepEqual(solved, []);
   // The zero above is NOT a score, and runExec has to say so: three of the five
@@ -146,8 +144,8 @@ test("stops spawning once the target proves unreachable", async () => {
   assert.equal(aborted, true, "an unreachable target must report aborted");
   // Effect-based proof: exactly the two children that armed the abort ever
   // spawned; c, d, and e were short-circuited by the abort gate.
-  assert.equal(spawnCount, 2, `expected exactly 2 children spawned before abort armed, got ${spawnCount}`);
+  assert.equal(spawned, 2, `expected exactly 2 children spawned before abort armed, got ${spawned}`);
   // Sanity net only — a generous multiple of the injected safety window, well
   // clear of the ~2× cost the effect assertion above already proves.
-  assert.ok(elapsed < 6 * safetyMs, `expected early abort, took ${elapsed}ms (bound ${6 * safetyMs}ms)`);
+  assert.ok(elapsed < 20 * safetyMs, `expected early abort, took ${elapsed}ms (bound ${20 * safetyMs}ms)`);
 });

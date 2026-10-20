@@ -24,7 +24,7 @@
 // panel calls after every other successful write; errors go with it — a
 // resolved import error is as stale as a resolved success.
 
-import { useState, type ChangeEvent } from "react";
+import { useMemo, useState, type ChangeEvent } from "react";
 import { type DescribeError, NETWORK_ERROR, parseJson } from "@/components/admin/fetch";
 
 /** One import problem, as both `quiz-io` and `classic-io` shape it. */
@@ -39,12 +39,18 @@ export const FILE_READ_ERROR: ImportError = {
   message: "Couldn’t read that file — try choosing it again.",
 };
 
+/** Past this many characters a pasted or chosen file is held, not shown in
+ *  the textarea: a bundle or archive with files is tens of MB, and a
+ *  controlled textarea of it freezes the tab. */
+export const IMPORT_TEXTAREA_MAX = 256 * 1024;
+
 /** What a module's `parseBundle` returns, as far as this hook cares. */
 export type BundleParse = { ok: true } | { ok: false; errors: ImportError[] };
 
 /** The counts a successful import reply carries. `categories` is classic's,
- *  and so is `stories` — sent only for a v2 bundle (#463). */
-export type ImportReply = { created?: number; updated?: number; categories?: number; stories?: number };
+ *  and so are `stories` — sent only for a v2 bundle (#463) — and `files`,
+ *  sent only for a bundle that carried files. */
+type ImportReply = { created?: number; updated?: number; categories?: number; stories?: number; files?: number };
 
 /** The client-side gate on the Import button. Convenience only — the server
  *  re-validates the raw text regardless — and skipped entirely on an empty
@@ -75,7 +81,7 @@ export function downloadJson(text: string, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export type BundleImportState<Summary> = {
+type BundleImportState<Summary> = {
   text: string;
   /** Replaces the textarea's text and retires any stale summary or error. */
   setText: (value: string) => void;
@@ -179,7 +185,9 @@ export function useBundleImport<Summary>({
     }
   }
 
-  const { errors: clientErrors, canImport } = clientValidation(text, parse);
+  // Memoized on the text: a bundle with files is tens of MB, and re-parsing
+  // it on every render (pending, a summary) would stall the panel.
+  const { errors: clientErrors, canImport } = useMemo(() => clientValidation(text, parse), [text, parse]);
 
   return { text, setText, pending, clientErrors, importErrors, result, canImport, submit, handleFile, retire };
 }

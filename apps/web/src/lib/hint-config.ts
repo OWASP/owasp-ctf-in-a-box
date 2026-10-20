@@ -49,6 +49,12 @@ export async function resolveHintConfig(): Promise<{
   minSolves: number;
   unlockAfterMin: number;
   scoringStartsAt: string | null;
+  /** The scoring window's other two inputs (#566): a paid reveal closes
+   *  with scoring — the manual freeze and a passed scheduled end — exactly
+   *  as a flag or quiz submit does. Carried here so the gate reads settings
+   *  ONCE, like every other hint policy field. */
+  paused: boolean;
+  scoringEndsAt: string | null;
 }> {
   const s = await getAdminSettings();
   return {
@@ -59,6 +65,8 @@ export async function resolveHintConfig(): Promise<{
     minSolves: s.hintsMinSolves ?? HINT_MIN_SOLVES,
     unlockAfterMin: s.hintsUnlockAfterMin ?? HINT_UNLOCK_AFTER_MIN,
     scoringStartsAt: s.scoringStartsAt,
+    paused: s.paused === true,
+    scoringEndsAt: s.scoringEndsAt ?? null,
   };
 }
 

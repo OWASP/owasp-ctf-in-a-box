@@ -142,6 +142,10 @@ export function describeRefusal(reason: string): string {
       return "The event hasn't launched yet — nothing counts until it starts.";
     case "paused":
       return "Scoring is paused right now. Try again later.";
+    case "ended":
+      // #567: the scheduled end has passed. Final — no "try again", which
+      // is the pause's promise and false once the event is over.
+      return "Scoring has closed — the event has ended.";
     case "answered":
       return "You already answered this one.";
     case "exhausted":

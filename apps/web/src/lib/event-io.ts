@@ -8,7 +8,7 @@
 // admin-store.ts, classic-store.ts, quiz-store.ts, ai-store.ts) or anything
 // that pulls in Upstash/Redis. It may only import from classic-io.ts,
 // quiz-io.ts and ai-io.ts, themselves client-safe for the same reason, and
-// the dependency-free attachments-keys.ts (#186).
+// attachment-files.ts, the files validator it shares with classic-io.ts.
 //
 // `settings` is deliberately an ALLOWLIST of policy fields
 // (`EVENT_POLICY_FIELDS`), not a passthrough object: the live admin settings
@@ -31,7 +31,7 @@
 // quiz-io.ts's header): one validator per format, never two independent
 // answers to the same question.
 
-import { ATTACHMENT_MAX_BYTES } from "@/lib/attachments-keys";
+import { type AttachmentFile, validateAttachmentFiles } from "@/lib/attachment-files";
 import { parseBundle as parseAiBundle, type AiBundle } from "@/lib/ai-io";
 import { parseBundle as parseClassicBundle, type ClassicBundle } from "@/lib/classic-io";
 import { parseBundle as parseQuizBundle, type QuizBundle } from "@/lib/quiz-io";
@@ -81,9 +81,8 @@ export const EVENT_POLICY_FIELDS = [
 
 const EVENT_POLICY_FIELD_SET = new Set<string>(EVENT_POLICY_FIELDS);
 
-export type EventBundleEvent = {
+type EventBundleEvent = {
   name: string;
-  theme?: string;
   dates?: string;
   location?: string;
   ctfStartsAt?: string | null;
@@ -119,11 +118,11 @@ export type EventBundle = {
   eventImages?: EventImagesBundle;
 };
 
-export type AttachmentFile = { item: string; sha256: string; bytes: string };
+export type { AttachmentFile };
 
 export type EventImportError = { where: string; message: string };
 
-export type EventParseResult = { ok: true; bundle: EventBundle } | { ok: false; errors: EventImportError[] };
+type EventParseResult = { ok: true; bundle: EventBundle } | { ok: false; errors: EventImportError[] };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -192,15 +191,12 @@ export function parseEventBundle(raw: string): EventParseResult {
   } else {
     // A present-but-wrong-typed optional identity field is REJECTED, not
     // silently dropped — every other bundle field follows that rule, and
-    // event-store's `typeof bundle.event.theme === "string"` guard at import
+    // event-store's `typeof bundle.event.location === "string"` guard at import
     // would otherwise ignore a non-string value with no error at all (finding
     // M4). `dates`/`ctfStartsAt` are still baked identity facts (PR 3 of #386
     // derives them from the scoring schedule instead), so they get the same
-    // treatment as theme/location here even though nothing currently applies
+    // treatment as location here even though nothing currently applies
     // them on import.
-    if (parsed.event.theme !== undefined && typeof parsed.event.theme !== "string") {
-      errors.push({ where: "event.theme", message: '"event.theme" must be a string' });
-    }
     if (parsed.event.location !== undefined && typeof parsed.event.location !== "string") {
       errors.push({ where: "event.location", message: '"event.location" must be a string' });
     }
@@ -249,6 +245,13 @@ export function parseEventBundle(raw: string): EventParseResult {
     const res = parseClassicBundle(JSON.stringify(parsed.classic));
     if (!res.ok) {
       for (const e of res.errors) errors.push({ where: "classic." + e.where, message: e.message });
+    } else if (res.bundle.attachmentFiles !== undefined) {
+      // The archive's import fills uploads from its top-level files only; a
+      // classic section's own would be imported as metadata, bytes dropped.
+      errors.push({
+        where: "classic.attachmentFiles",
+        message: 'An archive carries files in its top-level "attachmentFiles", not inside "classic"',
+      });
     } else {
       classic = res.bundle;
     }
@@ -286,7 +289,16 @@ export function parseEventBundle(raw: string): EventParseResult {
 
   let attachmentFiles: AttachmentFile[] | undefined;
   if (parsed.attachmentFiles !== undefined) {
-    attachmentFiles = validateAttachmentFiles(parsed.attachmentFiles, classic, parsed.classic !== undefined, errors);
+    if (parsed.classic === undefined) {
+      errors.push({ where: "attachmentFiles", message: '"attachmentFiles" needs a "classic" section to attach to' });
+    } else {
+      attachmentFiles = validateAttachmentFiles(
+        parsed.attachmentFiles,
+        classic?.challenges ?? [],
+        "No classic upload in this archive matches this file's item and sha256",
+        errors,
+      );
+    }
   }
 
   let eventImages: EventImagesBundle | undefined;
@@ -307,7 +319,7 @@ export function parseEventBundle(raw: string): EventParseResult {
     ...(quiz !== undefined ? { quiz } : {}),
     ...(ai !== undefined ? { ai } : {}),
     ...(sponsors !== undefined ? { sponsors } : {}),
-      ...(attachmentFiles ? { attachmentFiles } : {}),
+    ...(attachmentFiles ? { attachmentFiles } : {}),
     ...(eventImages ? { eventImages } : {}),
   };
   return { ok: true, bundle };
@@ -321,63 +333,6 @@ export function parseEventBundle(raw: string): EventParseResult {
  *  classic/quiz section must still serialize. */
 export function serializeEventBundle(bundle: EventBundle): string {
   return JSON.stringify(bundle, null, 2) + "\n";
-}
-
-const FILE_KEYS = new Set(["item", "sha256", "bytes"]);
-const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
-/** The same shape `classic-io.ts` requires of an upload's metadata sha256. */
-const SHA256_RE = /^[0-9a-f]{64}$/;
-
-/** Shape of the archive's upload bytes (#186). Client-safe: the sha256 of
- *  the decoded bytes is verified server-side (event-store) before the import
- *  resets anything. Each file must name a classic upload's `(item, sha256)`
- *  in this archive — bytes for nothing are refused, not silently dropped. */
-function validateAttachmentFiles(
-  raw: unknown,
-  classic: ClassicBundle | undefined,
-  classicPresent: boolean,
-  errors: EventImportError[],
-): AttachmentFile[] {
-  const where = "attachmentFiles";
-  if (!Array.isArray(raw)) {
-    errors.push({ where, message: '"attachmentFiles" must be an array' });
-    return [];
-  }
-  if (!classicPresent) {
-    errors.push({ where, message: '"attachmentFiles" needs a "classic" section to attach to' });
-    return [];
-  }
-  const named = new Set<string>();
-  for (const c of classic?.challenges ?? []) {
-    for (const a of c.attachments ?? []) if ("sha256" in a) named.add(`${c.id}\n${a.sha256}`);
-  }
-  const out: AttachmentFile[] = [];
-  raw.forEach((f, i) => {
-    const at = `${where}[${i}]`;
-    if (!isPlainObject(f)) return void errors.push({ where: at, message: "Each file must be an object" });
-    // #500: every message below names the indexed path and the rule, never
-    // the file's own `item`, `sha256` or key names — this list is echoed to
-    // the client verbatim, and an archive's values are arbitrary text.
-    const unknown = Object.keys(f).filter((k) => !FILE_KEYS.has(k));
-    if (unknown.length > 0) {
-      errors.push({ where: at, message: `Unknown key(s) (${unknown.length}) — a file is exactly { item, sha256, bytes }` });
-    }
-    if (typeof f.item !== "string" || typeof f.sha256 !== "string" || typeof f.bytes !== "string") {
-      return void errors.push({ where: at, message: "A file is { item, sha256, bytes } — all strings" });
-    }
-    if (f.bytes.length % 4 !== 0 || !BASE64_RE.test(f.bytes)) {
-      errors.push({ where: `${at}.bytes`, message: "bytes must be base64" });
-    } else if (Math.floor((f.bytes.length * 3) / 4) > ATTACHMENT_MAX_BYTES + 2) {
-      errors.push({ where: `${at}.bytes`, message: `A file can be at most ${ATTACHMENT_MAX_BYTES} bytes` });
-    }
-    if (!SHA256_RE.test(f.sha256)) {
-      errors.push({ where: `${at}.sha256`, message: "sha256 must be 64 lowercase hex digits" });
-    } else if (!named.has(`${f.item}\n${f.sha256}`)) {
-      errors.push({ where: at, message: "No classic upload in this archive matches this file's item and sha256" });
-    }
-    out.push({ item: f.item, sha256: f.sha256, bytes: f.bytes });
-  });
-  return out;
 }
 
 /** The `eventImages` section's SHAPE (#529): an object of known slots, each

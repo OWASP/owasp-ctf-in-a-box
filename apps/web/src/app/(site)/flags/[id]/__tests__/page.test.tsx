@@ -4,6 +4,10 @@
 // unknown id), the view model deriving the same states the board derives,
 // and the flag having no path into the markup.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// #560 source-level regression: this suite renders static markup, which
+// cannot observe a component unmounting across router.refresh().
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 // #464 pre-launch lock: launched by default in this file; the "pre-launch
 // lock" test below drives the refused path. The lock itself is unit-tested in
 // lib/__tests__/launch.test.ts.
@@ -11,16 +15,20 @@ const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
   getLaunchAccess: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
+vi.mock("@/lib/team-solve-counts", () => ({ teamSolveCounts }));
 vi.mock("@/lib/launch", () => launchLock);
+// #616: the first-open record Insights measures time to solve from.
+const firstOpen = vi.hoisted(() => ({ recordFirstOpen: vi.fn(async () => {}) }));
+vi.mock("@/lib/first-open", () => firstOpen);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { moduleLive, isAdminLogin, getSession, listChallenges, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints, getClassicHintLadder } =
+const { moduleLive, isAdminLogin, getSession, listChallenges, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints, getClassicHintLadder } =
   vi.hoisted(() => ({
     moduleLive: vi.fn(),
     isAdminLogin: vi.fn(),
     getSession: vi.fn(),
     listChallenges: vi.fn(),
-    getSolveCounts: vi.fn(),
+    teamSolveCounts: vi.fn(),
     getViewerClassic: vi.fn(),
     getAdminSettings: vi.fn(),
     getResolvedModules: vi.fn(),
@@ -54,7 +62,7 @@ vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: storyMocks.getTe
 vi.mock("@/lib/classic-store", () => ({
   listStories: storyMocks.listStories,
   listChallenges,
-  getSolveCounts,
+  teamSolveCounts,
   getViewerClassic,
   CLASSIC_COOLDOWN_SEC: 5,
 }));
@@ -87,7 +95,7 @@ beforeEach(() => {
   isAdminLogin.mockReturnValue(false);
   getSession.mockResolvedValue({ user: { login: "alice" } });
   listChallenges.mockResolvedValue([record]);
-  getSolveCounts.mockResolvedValue(new Map([["c1", 7]]));
+  teamSolveCounts.mockResolvedValue(new Map([["c1", 7]]));
   getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
   getAdminSettings.mockResolvedValue({ classicCooldownSec: 300 });
   getResolvedModules.mockResolvedValue([
@@ -97,6 +105,30 @@ beforeEach(() => {
   getHintNotice.mockResolvedValue({ active: false, cost: 10 });
   getViewerHints.mockResolvedValue({ purchased: {}, classic: {}, classicLevels: {}, spent: 0, count: 0 });
   getClassicHintLadder.mockResolvedValue([]);
+});
+
+describe("first-open record (#616)", () => {
+  it("records a signed-in contestant opening a visible challenge", async () => {
+    renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("classic", "alice", "c1");
+  });
+
+  it("records nothing for a signed-out visitor", async () => {
+    getSession.mockResolvedValue(null);
+    renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+  });
+
+  it("records nothing for an admin preview before launch", async () => {
+    launchLock.redirectIfNotLaunched.mockResolvedValueOnce({ allowed: true, preview: true });
+    renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+  });
+
+  it("records nothing for an unknown id", async () => {
+    await expect(ClassicChallengePage(params("nope"))).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+  });
 });
 
 describe("challenge page gates", () => {
@@ -120,7 +152,7 @@ describe("challenge page", () => {
     expect(html).toContain("Robots Only");
     expect(html).toContain("Recon");
     expect(html).toContain("50 pts");
-    expect(html).toContain("7 solve");
+    expect(html).toContain("7 teams solved");
     expect(html).toMatch(/case-sensitive/i);
     // Markdown rendered, not echoed raw.
     expect(html).toMatch(/<strong[^>]*>nothing<\/strong>/);
@@ -130,7 +162,7 @@ describe("challenge page", () => {
 
   it("decodes an encoded id from the URL", async () => {
     listChallenges.mockResolvedValue([{ ...record, id: "web/one two" }]);
-    getSolveCounts.mockResolvedValue(new Map());
+    teamSolveCounts.mockResolvedValue(new Map());
     const html = renderToStaticMarkup(await ClassicChallengePage(params("web%2Fone%20two")));
     expect(html).toContain("Robots Only");
   });
@@ -262,6 +294,19 @@ describe("challenge page hint", () => {
     const none = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(none).not.toContain("💡");
   });
+
+  // #560: after a paid reveal the button calls router.refresh(), and the
+  // server then reports the hint owned. The owned state must be this SAME
+  // component receiving the text as a prop — a separate owned <p> at this
+  // slot is an element-type change that unmounts HintRevealButton and the
+  // "−N pts spent · M pts left" ack with it. Static markup cannot see an
+  // unmount, so this pin is SOURCE-level.
+  it("hands each owned rung's text to HintRevealButton instead of swapping in a separate <p> (#560)", () => {
+    const src = readFileSync(fileURLToPath(new URL("../page.tsx", import.meta.url)), "utf8");
+    expect(src).toMatch(/ownedHintLevels\[rung\.level\]/);
+    expect(src).toMatch(/<HintRevealButton[\s\S]*?ownedText=\{text\}/);
+    expect(src).not.toMatch(/<p[\s\S]*?💡 \{text\}/);
+  });
 });
 
 describe("challenge page metadata", () => {
@@ -321,5 +366,62 @@ describe("a locked story step's own page (#463)", () => {
   it("renders normally once the team has solved the step before it", async () => {
     storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon"]));
     expect(renderToStaticMarkup(await ClassicChallengePage(params("c1")))).toContain(record.title);
+  });
+});
+
+// A hidden challenge does not exist on its own URL: the page is the same 404
+// an unknown id gets, the metadata carries nothing, and nothing is recorded.
+describe("a hidden challenge", () => {
+  it("is a 404 like an unknown id, records no first open, and has no metadata", async () => {
+    listChallenges.mockResolvedValue([{ ...record, enabled: false }]);
+    await expect(ClassicChallengePage(params("c1"))).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+    expect(attachmentMocks.listAttachments).not.toHaveBeenCalled();
+    expect(await generateMetadata(params("c1"))).toEqual({});
+  });
+
+  it("opens for an admin preview, so an organizer can check it before it goes live", async () => {
+    isAdminLogin.mockReturnValue(true);
+    launchLock.redirectIfNotLaunched.mockResolvedValue({ allowed: true, preview: true });
+    launchLock.getLaunchAccess.mockResolvedValue({ allowed: true, preview: true });
+    listChallenges.mockResolvedValue([{ ...record, enabled: false }]);
+    expect(renderToStaticMarkup(await ClassicChallengePage(params("c1")))).toContain("Robots Only");
+    launchLock.redirectIfNotLaunched.mockResolvedValue({ allowed: true, preview: false });
+    launchLock.getLaunchAccess.mockResolvedValue({ allowed: true, preview: false });
+  });
+});
+
+// An admin may open a hidden or scheduled challenge after launch, to check it
+// before it goes live. The page says plainly that contestants cannot see it,
+// and nothing is recorded for the admin.
+describe("a hidden challenge, opened by an admin after launch", () => {
+  it("renders with a Hidden from contestants banner naming why, and records no first open", async () => {
+    isAdminLogin.mockReturnValue(true);
+    listChallenges.mockResolvedValue([{ ...record, enabled: false }]);
+    const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+    expect(html).toContain("Robots Only");
+    expect(html).toContain("Hidden from contestants");
+    expect(html).toContain("Disabled");
+    expect(firstOpen.recordFirstOpen).not.toHaveBeenCalled();
+    expect((await generateMetadata(params("c1"))).title).toBe("Robots Only");
+  });
+
+  it("names a scheduled release on the event clock", async () => {
+    isAdminLogin.mockReturnValue(true);
+    listChallenges.mockResolvedValue([{ ...record, enabled: false, releaseAt: "2099-10-08T13:00:00.000Z" }]);
+    const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+    expect(html).toContain("Hidden from contestants");
+    expect(html).toContain("Releases Oct 8, 13:00 UTC");
+  });
+
+  it("shows no banner on a live challenge", async () => {
+    isAdminLogin.mockReturnValue(true);
+    expect(renderToStaticMarkup(await ClassicChallengePage(params("c1")))).not.toContain("Hidden from contestants");
+  });
+
+  it("is still a 404 for a contestant", async () => {
+    isAdminLogin.mockReturnValue(false);
+    listChallenges.mockResolvedValue([{ ...record, enabled: false }]);
+    await expect(ClassicChallengePage(params("c1"))).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
   });
 });

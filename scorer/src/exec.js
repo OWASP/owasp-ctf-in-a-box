@@ -180,6 +180,12 @@ function scoreOne(challenge, abort, env) {
   // recursive test invocation when runExec is itself called from a test.
   const { NODE_TEST_CONTEXT: _ctx, NODE_TEST_WORKER_ID: _wid, ...childEnv } = env;
 
+  // Recorded HERE, at the spawn decision, not by the child: a child that never
+  // gets scheduled before its safety kill (CPU contention) can be reaped
+  // without ever running a line, so a marker it writes itself cannot be trusted
+  // to count spawns. The gate above has already run, so a skipped challenge is
+  // never counted.
+  abort.spawned += 1;
   return runChild(args, childEnv, isDone).then(({ output, bareTimeout }) => {
     if (bareTimeout) {
       // If anything has already reported, the app is proven reachable: this is
@@ -224,11 +230,12 @@ function scoreOne(challenge, abort, env) {
 /**
  * Run every challenge's test in isolation.
  *
- * Returns `{ solved, aborted }`: the solved ids in input order, and whether the
- * run gave up early because the target proved unreachable. `aborted` is NOT a
- * score — the short-circuited challenges were never attempted, so a caller that
- * reported `solved` alone would be telling the contestant their patch earned
- * nothing when in truth nothing was measured. Callers must fail loudly on it.
+ * Returns `{ solved, aborted, spawned }`: the solved ids in input order, whether
+ * the run gave up early because the target proved unreachable, and how many
+ * probes were actually spawned. `aborted` is NOT a score — the short-circuited
+ * challenges were never attempted, so a caller that reported `solved` alone
+ * would be telling the contestant their patch earned nothing when in truth
+ * nothing was measured. Callers must fail loudly on it.
  *
  * @param {Array} challenges  challenge objects carrying an `exec` descriptor
  * @param {object} opts
@@ -236,7 +243,7 @@ function scoreOne(challenge, abort, env) {
  * @param {object} opts.env          process env forwarded to children
  */
 export async function runExec(challenges, { concurrency = 1, env = process.env } = {}) {
-  const abort = { bareTimeouts: 0, aborted: false, anyReported: false, skipped: 0 };
+  const abort = { bareTimeouts: 0, aborted: false, anyReported: false, skipped: 0, spawned: 0 };
   const outcomes = await runPool(
     challenges,
     (c) => scoreOne(c, abort, env),
@@ -250,5 +257,6 @@ export async function runExec(challenges, { concurrency = 1, env = process.env }
     // the meantime still went unmeasured, and a score is only honest if every
     // challenge in it was tried.
     aborted: abort.skipped > 0,
+    spawned: abort.spawned,
   };
 }

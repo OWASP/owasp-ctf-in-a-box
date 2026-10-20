@@ -108,7 +108,7 @@ export * from "@/components/admin-quiz-model";
 
 type NumericSettingKey = "quizMaxAttempts" | "quizRetryAfterMin";
 
-export type AdminQuizControlsProps = {
+type AdminQuizControlsProps = {
   /** Parent-wide "a settings POST is in flight" flag — shared with every
    *  other section's inputs, same as the hint knobs. */
   pending: boolean;
@@ -214,7 +214,7 @@ export default function AdminQuizControls({
       <AdminNumberField
         id="quiz-retry-after-min"
         label="Retry after (min)"
-        help="Minutes a contestant must wait after their last attempt before retrying the same question. 0 = no cooldown."
+        help="Minutes a contestant must wait after their last attempt before retrying the same question. 0 = no cooldown. Counted per contestant, not per team: each teammate has their own."
         value={quizRetryAfterInput}
         placeholder={String(QUIZ_RETRY_AFTER_MIN)}
         disabled={pending}

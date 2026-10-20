@@ -42,7 +42,7 @@ export function moduleVerb(id: ModuleId | string): string {
   return MODULE_VERB[id] ?? "solved";
 }
 
-export type ProgressRowProps = {
+type ProgressRowProps = {
   label: string;
   /** Target accent, where the level has one. Modules use the default white. */
   accent?: string;

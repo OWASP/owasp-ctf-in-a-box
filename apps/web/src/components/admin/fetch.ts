@@ -37,7 +37,7 @@ export function describeAdminError(status: number, message: string | undefined, 
  *  already applied. What the module panels export as `describeXError`. */
 export type DescribeError = (status: number, message?: string) => string;
 
-export type SendResult<T> = { ok: true; status: number; data: T } | { ok: false; message: string };
+type SendResult<T> = { ok: true; status: number; data: T } | { ok: false; message: string };
 
 /** One JSON request with the headers every module write uses. A non-2xx
  *  reply is resolved to the described message; a network failure to

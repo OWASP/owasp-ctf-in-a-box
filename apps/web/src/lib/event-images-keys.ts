@@ -10,7 +10,7 @@
 // dimensions); the bytes are read only by the two image routes.
 //
 // NOT in the master reset's RESET_PREFIXES: like the rest of the event's
-// identity (name, tagline — stored in ctf:admin:settings, which a reset
+// identity (name, location — stored in ctf:admin:settings, which a reset
 // keeps), these brand the event, they are not progress from one run of it.
 
 export const EVENT_IMAGES_KEY = "ctf:event:images";
@@ -63,7 +63,7 @@ export type EventImagesMeta = Partial<Record<EventImageSlot, EventImageMeta>>;
 export type EventImagesBundle = Partial<Record<EventImageSlot, { data: string }>>;
 
 /** The public URL a slot is served from. */
-export const EVENT_IMAGE_PATH: Record<EventImageSlot, string> = {
+const EVENT_IMAGE_PATH: Record<EventImageSlot, string> = {
   logo: "/api/event/logo",
   icon: "/api/event/icon",
 };

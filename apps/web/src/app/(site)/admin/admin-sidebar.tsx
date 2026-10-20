@@ -21,7 +21,7 @@
 import { useState } from "react";
 import { adminTabHref } from "@/app/(site)/admin/admin-tabs";
 
-export type SidebarItem = { id: string; label: string };
+type SidebarItem = { id: string; label: string };
 export type SidebarGroup = { heading: string; items: readonly SidebarItem[] };
 
 export default function AdminSidebar({

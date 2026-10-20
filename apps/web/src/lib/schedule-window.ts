@@ -2,8 +2,8 @@
 //
 // This is the app's copy of the pause/schedule contract's window logic —
 // `outsideWindow` (generic: absent bound = open, used by the registration
-// window) and `outsideScoringWindow` (a start is REQUIRED: no start = not
-// launched, issue #464) —
+// window), `outsideScoringWindow` (a start is REQUIRED: no start = not
+// launched, ADR 59) and `pausedAt` (the freeze at an instant, ADR 67) —
 // kept IDENTICAL in scorer/src/store.js and sync/src/redis.js; change all
 // three together (AGENTS.md: "the pause/schedule contract lives in THREE
 // readers"). It lives here rather than in admin-store.ts because admin-store
@@ -37,6 +37,66 @@ export function outsideScoringWindow(nowMs: number, startsAt: string | null, end
   return outsideWindow(nowMs, startsAt, endsAt);
 }
 
+/** Whether the manual freeze covered the instant `tMs`: inside a closed
+ *  interval [from, to) of the pause log (`ctf:admin:pauses`, one JSON
+ *  `{from, to}` per entry, written by admin-store's settings script), or at or
+ *  after `pausedSince`, the start of the pause still open. An open pause whose
+ *  start is absent or unparseable covers every instant (when it began is
+ *  unknown); a log entry that does not parse covers nothing. The scorer judges
+ *  a Secure Development score's comment time with its copy (ADR 67); the app's
+ *  own submits are judged on arrival, where `paused` alone already answers.
+ *  Kept IDENTICAL in scorer/src/store.js and sync/src/redis.js, pinned by
+ *  test/fixtures/pause-interval-corpus.json. */
+export function pausedAt(tMs: number, paused: boolean, pausedSince: string | null, pauses: readonly string[]): boolean {
+  if (paused) {
+    const since = pausedSince ? Date.parse(pausedSince) : NaN;
+    if (!Number.isFinite(since) || tMs >= since) return true;
+  }
+  for (const raw of pauses) {
+    let entry: unknown;
+    try {
+      entry = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const bounds = entry !== null && typeof entry === "object" ? (entry as { from?: unknown; to?: unknown }) : {};
+    const from = typeof bounds.from === "string" ? Date.parse(bounds.from) : NaN;
+    const to = typeof bounds.to === "string" ? Date.parse(bounds.to) : NaN;
+    if (Number.isFinite(from) && Number.isFinite(to) && tMs >= from && tMs < to) return true;
+  }
+  return false;
+}
+
+/** WHY scoring is closed right now, or null while it is live (#567).
+ *  `effectivePaused` (admin-store) folds the manual freeze and the schedule
+ *  into one boolean — right for the scorer/sync readers, which only need
+ *  "count or don't" — but the contestant-facing refusal has to tell a pause
+ *  ("try again later") from the END of the event (final). A passed scheduled
+ *  end wins over everything: a freeze toggled on after the close is still
+ *  the end. Everything else that closes scoring — the manual freeze, a
+ *  start still ahead, no start at all (#464) — reads as "paused", exactly
+ *  what `outsideScoringWindow` and the freeze refuse on today. App-only: the
+ *  scorer and sync keep their boolean. */
+export function scoringClosure(
+  nowMs: number,
+  paused: boolean,
+  startsAt: string | null,
+  endsAt: string | null,
+): "paused" | "ended" | null {
+  if (scoringEnded(nowMs, endsAt)) return "ended";
+  if (paused || outsideScoringWindow(nowMs, startsAt, endsAt)) return "paused";
+  return null;
+}
+
+/** Whether the scheduled scoring END has passed — `outsideWindow`'s end
+ *  bound on its own (`now > e`, unparseable/absent = no end). The hint gate
+ *  (#566) asks this directly: a paid reveal closes with the freeze and the
+ *  end, but NOT with "not launched", which the route's launch lock owns. */
+export function scoringEnded(nowMs: number, endsAt: string | null): boolean {
+  const e = endsAt ? Date.parse(endsAt) : NaN;
+  return Number.isFinite(e) && nowMs > e;
+}
+
 /** Effective registration state: the manual toggle AND inside the
  *  registration window (absent bound = open). Here rather than only in
  *  admin-store (server-only, which re-exports it) so Server and Client
@@ -59,7 +119,7 @@ export function isLaunched(nowMs: number, startsAt: string | null): boolean {
 /** The /admin Launch block's state (#464): not launched (no or an
  *  unparseable start), scheduled (a start still ahead), or live (the start has
  *  passed). Instants come back normalised to ISO-8601 UTC. */
-export type LaunchState = { kind: "not-launched" } | { kind: "scheduled"; at: string } | { kind: "live"; since: string };
+type LaunchState = { kind: "not-launched" } | { kind: "scheduled"; at: string } | { kind: "live"; since: string };
 
 export function launchState(nowMs: number, startsAt: string | null): LaunchState {
   const s = startsAt ? Date.parse(startsAt) : NaN;

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Offline e2e: mock-github -> sync -> mock-scorer -> leaderboard.
 # Proves the poll pipeline (trust filter included) with zero external services.
+# The scorer here is a stand-in that records what it is sent; the real
+# scorer's judgment of a score's time (window, freeze, reset) is gated by
+# acceptance-scorer.sh against a real Redis.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -25,7 +28,8 @@ trap cleanup EXIT
 compose up -d --build redis srh scorer mock-github sync
 
 echo "--- redis answers"
-compose exec -T redis redis-cli ping | grep -q PONG
+pong="$(compose exec -T redis redis-cli ping 2>&1 || true)"
+grep -qx PONG <<< "$pong" || { echo "FAIL: redis did not answer PING with PONG: $pong"; exit 1; }
 
 # The two halves of the Redis hardening, asserted rather than assumed. Both
 # are the kind of control that looks present in a compose file and is absent
@@ -68,13 +72,14 @@ until compose run --rm --no-deps --entrypoint sh sync -c \
   sleep 1
 done
 
-echo "--- unlaunched event: sync holds ingestion (holding 6s)"
-# No scoringStartsAt on a fresh box means "not launched" (#464): the poller
-# must not ingest anything. Anti-vacuous: the SAME fixtures do ingest right
-# after the launch below, so an empty board here is the lock holding, not a
-# poller that never works.
-# First prove the poller is ticking AND refusing: its heartbeat must report
-# paused. Without this, an empty board could just mean "hadn't polled yet".
+echo "--- unlaunched event: the sync heartbeat reports scoring as paused"
+# No scoringStartsAt on a fresh box means "not launched" (ADR 59). The poller
+# reports it, but does not hold its cursor for it: every score goes to the
+# scorer with its comment's own time, and the scorer refuses one posted
+# before the launch, during a freeze or after the end (ADR 67). That judgment
+# is the real scorer's and is gated against a real Redis by
+# acceptance-scorer.sh; this profile runs a stand-in that records what it is
+# sent, so what is checked here is the poller's half.
 # 30s, like the ingest wait: a tick that started while srh was still booting
 # can sit in two 10s pipeline timeouts (isPaused + writeStatus) first.
 prelaunch_deadline=$((SECONDS + 30))
@@ -82,19 +87,17 @@ until compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | 
   [ "$SECONDS" -ge "$prelaunch_deadline" ] && { echo "FAIL: sync heartbeat never reported paused before launch"; compose logs sync; exit 1; }
   sleep 1
 done
-hold_until=$((SECONDS + 6))
-while [ "$SECONDS" -lt "$hold_until" ]; do
-  if curl -sf http://localhost:4000/leaderboard | grep -q '"octocat"'; then
-    echo "FAIL: sync ingested scores before launch (scoringStartsAt unset)"; compose logs sync; exit 1
-  fi
-  sleep 2
-done
 
 echo "--- launch: write scoringStartsAt"
 # The app isn't in this profile, so write the field /admin's Launch writes
 # straight onto the settings hash the poller reads.
 launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 compose exec -T redis redis-cli HSET ctf:admin:settings scoringStartsAt "$launched_at" >/dev/null
+launch_deadline=$((SECONDS + 15))
+until compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | grep -q '^0$'; do
+  [ "$SECONDS" -ge "$launch_deadline" ] && { echo "FAIL: sync heartbeat never reported live after the launch"; compose logs sync; exit 1; }
+  sleep 1
+done
 
 echo "--- sync ingests fixture comments (waiting up to 30s)"
 deadline=$((SECONDS + 30))
@@ -107,26 +110,34 @@ board=$(curl -sf http://localhost:4000/leaderboard)
 echo "$board"
 
 echo "--- scores match fixtures (1 point per solved id)"
-echo "$board" | grep -q '"author":"octocat","points":2'
-echo "$board" | grep -q '"author":"mona","points":1'
+# Here-strings, not `echo | grep -q`: under pipefail a large board can lose
+# the SIGPIPE race and fail on a line that matched.
+grep -qF '"author":"octocat","points":2' <<< "$board" \
+  || { echo "FAIL: leaderboard has no octocat at 2 points"; exit 1; }
+grep -qF '"author":"mona","points":1' <<< "$board" \
+  || { echo "FAIL: leaderboard has no mona at 1 point"; exit 1; }
+
+echo "--- each score carries its own comment's time, not the time it was read"
+grep -q '"author":"octocat","points":2,"solved":\[[^]]*\],"at":"2026-08-13T10:00:00Z"' <<< "$board" \
+  || { echo "FAIL: octocat's score did not carry its comment's updated_at"; exit 1; }
+grep -q '"author":"mona","points":1,"solved":\[[^]]*\],"at":"2026-08-13T10:10:00Z"' <<< "$board" \
+  || { echo "FAIL: mona's score did not carry its comment's updated_at"; exit 1; }
 
 echo "--- forged comment from mallory was ignored (trust filter)"
-if echo "$board" | grep -q '"author":"mallory"'; then
+if grep -qF '"author":"mallory"' <<< "$board"; then
   echo "FAIL: forged comment was scored"; exit 1
 fi
 
 echo "--- unauthenticated POST /score rejected"
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:4000/score \
   -H 'content-type: application/json' -d '{"author":"evil","target":"dvwa","solved":["x"]}')
-[ "$code" = "401" ]
+[ "$code" = "401" ] || { echo "FAIL: unauthenticated POST /score answered $code, not 401"; exit 1; }
 
-echo "--- organizer freeze holds ingestion (poll mode)"
+echo "--- organizer freeze: the poller reports it and keeps reading"
 # The app isn't in this smoke profile (only redis/srh/scorer/mock-github/sync
 # are brought up), so there's no /api/admin/settings route to call here.
 # Set the pause flag straight on the same ctf:admin:settings hash the sync
-# poller reads (sync/src/redis.js isPaused()) — the write path differs from
-# the dashboard's, but the read path the poller exercises is identical, so
-# this genuinely proves the poll-mode freeze, not just a Redis fact.
+# poller reads (sync/src/redis.js isPaused()).
 compose exec -T redis redis-cli HSET ctf:admin:settings paused 1 >/dev/null
 
 echo "--- sync heartbeat reports paused (waiting up to 15s)"
@@ -138,37 +149,36 @@ done
 
 # Queue a fresh score comment behind the flag: mock-github serves it only
 # once this marker file exists (test/fixtures/mock-github.mjs), simulating a
-# contributor's PR getting scored while the organizer is holding ingestion.
+# contributor's PR getting scored while the organizer has frozen scoring.
 compose exec -T mock-github touch /tmp/extra-comment >/dev/null
 
-echo "--- paused poller does not ingest the queued score (holding 5s)"
-sleep 5
-board=$(curl -sf http://localhost:4000/leaderboard)
-if echo "$board" | grep -q '"author":"trinity"'; then
-  echo "FAIL: trinity was scored while paused"; exit 1
-fi
-compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | grep -q '^1$' \
-  || { echo "FAIL: ctf:sync:status paused was not 1 after the hold"; exit 1; }
-
-echo "--- clearing the freeze resumes ingestion"
-compose exec -T redis redis-cli HDEL ctf:admin:settings paused >/dev/null
-
-echo "--- queued score is ingested once unpaused (waiting up to 15s)"
-resume_deadline=$((SECONDS + 15))
+echo "--- a frozen poller still forwards the queued score, with its comment's time (waiting up to 15s)"
+# Holding the cursor would score a comment posted during the freeze once it
+# lifts, and delay one posted before it; the scorer decides on the comment's
+# time instead, so the poller hands it over now.
+frozen_deadline=$((SECONDS + 15))
 until curl -sf http://localhost:4000/leaderboard | grep -q '"trinity"'; do
-  [ "$SECONDS" -ge "$resume_deadline" ] && { echo "FAIL: trinity never appeared after unpausing"; compose logs sync; exit 1; }
+  [ "$SECONDS" -ge "$frozen_deadline" ] && { echo "FAIL: the poller held trinity's score during the freeze"; compose logs sync; exit 1; }
   sleep 1
 done
-curl -sf http://localhost:4000/leaderboard | grep -q '"author":"trinity","points":1' \
-  || { echo "FAIL: trinity's score did not match the queued fixture"; exit 1; }
-compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | grep -q '^0$' \
-  || { echo "FAIL: ctf:sync:status paused was not 0 after resuming"; exit 1; }
+curl -sf http://localhost:4000/leaderboard | grep -q '"author":"trinity","points":1,"solved":\["dvwa:csrf-low"\],"at":"2026-08-13T10:15:00Z"' \
+  || { echo "FAIL: trinity's score did not match the queued fixture and its comment time"; exit 1; }
+compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | grep -q '^1$' \
+  || { echo "FAIL: ctf:sync:status paused was not 1 while frozen"; exit 1; }
 
-# The scheduled scoring window (admin "auto dates") must freeze ingestion the
+echo "--- clearing the freeze: the heartbeat reports live again"
+compose exec -T redis redis-cli HDEL ctf:admin:settings paused >/dev/null
+resume_deadline=$((SECONDS + 15))
+until compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | grep -q '^0$'; do
+  [ "$SECONDS" -ge "$resume_deadline" ] && { echo "FAIL: ctf:sync:status paused never returned to 0"; compose logs sync; exit 1; }
+  sleep 1
+done
+
+# The scheduled scoring window (admin "auto dates") must read as paused the
 # same way the manual toggle does — the poller's isPaused() honors both. Set a
 # scoringEndsAt in the past directly on the hash the poller reads
 # (sync/src/redis.js), same read path as the dashboard's write.
-echo "--- scheduled scoring window (past end) holds ingestion"
+echo "--- scheduled scoring window (past end) reports paused"
 compose exec -T redis redis-cli HSET ctf:admin:settings scoringEndsAt "2000-01-01T00:00:00.000Z" >/dev/null
 win_deadline=$((SECONDS + 15))
 until compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | grep -q '^1$'; do
@@ -176,7 +186,7 @@ until compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | 
   sleep 1
 done
 
-echo "--- clearing the window resumes ingestion"
+echo "--- clearing the window reports live again"
 compose exec -T redis redis-cli HDEL ctf:admin:settings scoringEndsAt >/dev/null
 resume2_deadline=$((SECONDS + 15))
 until compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | grep -q '^0$'; do

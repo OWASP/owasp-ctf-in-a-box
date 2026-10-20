@@ -464,10 +464,14 @@ describe("AiIntegrationPanel — Send test rendering", () => {
   // docs/operations.md and nowhere on the panel, so a dry run answering
   // `no-team` looked like an integration fault when it means the organizer is
   // simply not on a team.
-  it("explains the three refusals that are not faults", () => {
-    for (const label of ["paused", "solved", "no-team"]) {
+  it("explains the refusals that are not faults", () => {
+    for (const label of ["paused", "ended", "solved", "no-team"]) {
       expect(testOutcomeHelp(label)).toMatch(/^Not a fault/);
     }
+    // #567: after the scheduled end the verdict is `ended`, and the help
+    // must say so rather than send the organizer looking for a freeze.
+    expect(testOutcomeHelp("ended")).toMatch(/scheduled scoring end has passed/);
+    expect(testOutcomeHelp("ended")).not.toBe(testOutcomeHelp("paused"));
   });
 
   it("explains the three that ARE something to fix", () => {

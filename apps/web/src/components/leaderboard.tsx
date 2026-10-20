@@ -30,7 +30,7 @@ type SortKey = "points" | "solved";
  *  query. The bare query on a board with nobody scored draws the podium
  *  ("empty"); a typed query with nothing to match falls through to
  *  no-match, same as a populated board with zero hits. */
-export type IndividualBoardState = "empty" | "no-match" | "list";
+type IndividualBoardState = "empty" | "no-match" | "list";
 export function individualBoardState(
   entryCount: number,
   query: string,
@@ -44,8 +44,8 @@ export function individualBoardState(
 /** View plus whichever row is expanded. Switching views always closes
  *  whatever row is open: a team row shares its key space with the
  *  individual rows, so carrying the slug over reopens the wrong row. */
-export type BoardUi = { view: View; expanded: string | null };
-export type BoardUiAction =
+type BoardUi = { view: View; expanded: string | null };
+type BoardUiAction =
   | { type: "switchView"; view: View }
   | { type: "toggleRow"; key: string };
 export function boardUiReducer(state: BoardUi, action: BoardUiAction): BoardUi {
@@ -142,6 +142,10 @@ export function NoMatch({ noun, query, onClear, boardEmpty }: { noun: string; qu
   );
 }
 
+/** The board: search, sort, view toggle, empty states and the rows
+ *  themselves. Ordering and rendering only — `data` (including the
+ *  `completable` denominator the contestant rows divide by) arrives already
+ *  folded by the server-side pipeline. */
 export default function Leaderboard({
   data,
   viewerLogin,
@@ -337,6 +341,20 @@ export default function Leaderboard({
           just made can take a moment to appear here.
         </p>
       )}
+      {/* Story-lock disclaimer — only while some row on the board still
+          has locked story steps. Gated on `detail.locked > 0`, never on the
+          denominator being defined: a classic detail with nothing locked is
+          the ordinary case and must say nothing. Both row kinds are scanned
+          because either one can be the row holding the lock. */}
+      {modules.some((m) => m.id === "classic") &&
+        [...data.entries, ...data.teams].some((row) => {
+          const d = row.modules?.classic?.detail;
+          return d?.kind === "classic" && d.locked > 0;
+        }) && (
+        <p className="px-1 text-xs text-muted">
+          Totals count unlocked challenges only — story steps add to the total as your team unlocks them.
+        </p>
+      )}
 
       {activeView === "individual" && data.entries.length > 0 && (
         <div className="flex items-center gap-4 px-1 text-xs uppercase tracking-wider text-muted">
@@ -363,7 +381,7 @@ export default function Leaderboard({
           is active: the solved sort is self-describing. */}
       {activeView === "individual" && data.entries.length > 0 && sort === "points" && (
         <p className="px-1 text-xs leading-relaxed text-muted">
-          Ranked by points; ties go to more items completed, then to whoever got there first.
+          Ranked by points; ties go to more items completed, then to whoever earned their last points first.
         </p>
       )}
 

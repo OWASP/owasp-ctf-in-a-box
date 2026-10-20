@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import ImportPanel from "@/components/admin/import-panel";
-import { type BundleParse, FILE_READ_ERROR, clientValidation } from "@/components/admin/use-bundle-import";
+import { type BundleParse, FILE_READ_ERROR, IMPORT_TEXTAREA_MAX, clientValidation } from "@/components/admin/use-bundle-import";
 
 const noop = () => {};
 
@@ -98,5 +98,32 @@ describe("ImportPanel", () => {
     // panel needs somewhere to put it, and this is that slot.
     const html = render({ importErrors: [FILE_READ_ERROR] });
     expect(html).toContain("<li>(file): Couldn’t read that file — try choosing it again.</li>");
+  });
+
+  it("offers no Include files option unless the module passes one", () => {
+    expect(render()).not.toContain("Include files");
+  });
+
+  it("renders an unticked Include files checkbox next to Export, ticked when asked", () => {
+    const off = render({ includeFiles: false, onIncludeFiles: noop });
+    expect(off).toMatch(/<input[^>]*type="checkbox"[^>]*>[^<]*Include files/);
+    expect(off).not.toMatch(/<input[^>]*checked=""[^>]*type="checkbox"|<input[^>]*type="checkbox"[^>]*checked=""/);
+    expect(render({ includeFiles: true, onIncludeFiles: noop })).toMatch(/<input[^>]*checked=""[^>]*>|<input[^>]*type="checkbox"[^>]*checked=""/);
+  });
+
+  it("shows an export error and the in-flight export label", () => {
+    const html = render({ exportError: "Couldn't read the files — try again.", exportPending: true });
+    expect(html).toContain("Couldn&#x27;t read the files — try again.");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Exporting…</);
+  });
+
+  // A bundle with files is tens of MB: a controlled textarea of it freezes
+  // the tab, so it is held, validated and sent as-is, and described instead.
+  it("holds a bundle too large to edit out of the textarea, with a Clear button", () => {
+    const html = render({ text: "x".repeat(IMPORT_TEXTAREA_MAX + 1) });
+    expect(html).not.toContain("<textarea");
+    expect(html).toMatch(/too large to show here/);
+    expect(html).toMatch(/<button[^>]*>Clear</);
+    expect(render({ text: "{}" })).toContain("<textarea");
   });
 });

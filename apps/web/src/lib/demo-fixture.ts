@@ -4,8 +4,8 @@
 // NOT loaded in production paths — the seed route is admin-gated (issue #419
 // dropped the DEMO_MODE env var this used to also require).
 
-export type DemoContestant = { login: string; solves: Record<string, string[]> };
-export type DemoTeam = { slug: string; name: string; captain: string; members: string[] };
+type DemoContestant = { login: string; solves: Record<string, string[]> };
+type DemoTeam = { slug: string; name: string; captain: string; members: string[] };
 
 // ai (externally hosted AI/LLM challenge) demo data ('Seed demo data', ai
 // module only). Mirrors the `AiChallenge` shape ai-store.ts expects
@@ -28,7 +28,7 @@ export type DemoTeam = { slug: string; name: string; captain: string; members: s
 // challenges are flag-gradable so the board plays end to end. What event mode
 // looks like is documented in docs/ai-module.md §5, which is the right place
 // for it — an honest demo of that mode needs a second system.
-export type DemoAiChallenge = {
+type DemoAiChallenge = {
   id: string;
   title: string;
   category: string;
@@ -81,7 +81,7 @@ export const DEMO_AI_CHALLENGES: DemoAiChallenge[] = [
   },
 ];
 
-export type DemoAiSolve = { login: string; challengeId: string };
+type DemoAiSolve = { login: string; challengeId: string };
 
 // Spread across several demo contestants so the ai board's contribution to
 // the combined leaderboard is visible. Every (login, challengeId) pair is
@@ -100,7 +100,7 @@ export const DEMO_AI_SOLVES: DemoAiSolve[] = [
 // shape; it exists here only so seedDemoData can derive `ctf:classic:flag`
 // (as authored) and `ctf:classic:flagnorm` (via `normalizeFlag`) the same way
 // `upsertChallenge` does.
-export type DemoChallenge = {
+type DemoChallenge = {
   id: string;
   title: string;
   category: string;
@@ -254,7 +254,7 @@ export const DEMO_CHALLENGES: DemoChallenge[] = [
   },
 ];
 
-export type DemoClassicSolve = { login: string; challengeId: string };
+type DemoClassicSolve = { login: string; challengeId: string };
 
 /** #186: tiny synthetic artifacts, so the two forensics challenges ship the
  *  file they ask about instead of pretending. Made for this kit (nothing
@@ -267,7 +267,7 @@ export type DemoClassicSolve = { login: string; challengeId: string };
  *  carry it; see the seed test "NO flag in the public record"). So the stored
  *  flag never sits in a file a contestant can download (the secrecy boundary,
  *  docs/reviewing.md); admin-store.seed.test.ts decodes both and pins that. */
-export type DemoClassicAttachment = { challengeId: string; name: string; base64: string };
+type DemoClassicAttachment = { challengeId: string; name: string; base64: string };
 
 export const DEMO_CLASSIC_ATTACHMENTS: DemoClassicAttachment[] = [
   {
@@ -322,9 +322,9 @@ export const DEMO_CLASSIC_SOLVES: DemoClassicSolve[] = [
 // NOT part of the public `Question` shape written to `ctf:quiz:questions` —
 // it is used only to derive `ctf:quiz:key`'s sorted, deduped array (the same
 // recipe `upsertQuestion` applies) and each demo answer's banked `choices`.
-export type DemoChoice = { id: string; label: string };
-export type DemoQuestionType = "single" | "multi";
-export type DemoQuestion = {
+type DemoChoice = { id: string; label: string };
+type DemoQuestionType = "single" | "multi";
+type DemoQuestion = {
   id: string;
   prompt: string;
   type: DemoQuestionType;
@@ -362,7 +362,7 @@ export const DEMO_QUESTIONS: DemoQuestion[] = [
       { id: "c", label: "Cross-Site Scripting" },
       { id: "d", label: "Broken Access Control" },
     ],
-    correct: ["a", "b"],
+    correct: ["a", "b", "c"],
   },
   {
     id: "owasp-top10-2021",
@@ -408,7 +408,7 @@ export const DEMO_QUESTIONS: DemoQuestion[] = [
   },
 ];
 
-export type DemoQuizAnswer = { login: string; questionId: string };
+type DemoQuizAnswer = { login: string; questionId: string };
 
 // Spread across every demo contestant (not just the top solver) so DEMO_MODE
 // shows a genuinely combined leaderboard — patching points AND quiz points
@@ -664,9 +664,9 @@ export const DEMO_TEAMS: DemoTeam[] = [
 // seedDemoData derives `bytes`/`etag` from these bytes itself (the same
 // sha256-of-decoded-bytes recipe sponsors-store.ts uses), so nothing here
 // needs to hand-carry a hash that could drift from the actual pixels.
-export type DemoSponsorLogo = { data: string; type: "image/png"; w: number; h: number };
+type DemoSponsorLogo = { data: string; type: "image/png"; w: number; h: number };
 
-export type DemoSponsor = {
+type DemoSponsor = {
   id: string;
   name: string;
   url: string;

@@ -231,7 +231,7 @@ describe("Leaderboard", () => {
     });
     const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
     // Default sort is "points", so the rule is visible on first paint.
-    expect(html).toContain("Ranked by points; ties go to more items completed, then to whoever got there first.");
+    expect(html).toContain("Ranked by points; ties go to more items completed, then to whoever earned their last points first.");
     expect(html).not.toContain("Rank rewards breadth");
   });
 });
@@ -586,5 +586,85 @@ describe("Leaderboard score-cadence note (#552)", () => {
       <Leaderboard data={data({ entries: [], teams: [] })} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
     );
     expect(html).not.toMatch(/about once a minute/i);
+  });
+});
+
+// #570: the story-lock disclaimer. Gated on `detail.locked > 0` — never on a
+// denominator merely being defined, which is the ordinary unlocked case every
+// classic row has. Contestant rows and team rows each carry their own locked
+// count, so the board scans both.
+describe("the story-lock disclaimer (#570)", () => {
+  const CLASSIC: readonly ResolvedModule[] = [{ id: "classic", title: "Classic", blurb: "" }];
+  const DISCLAIMER = "Totals count unlocked challenges only";
+
+  const classicModules = (locked: number) => ({
+    classic: {
+      points: 10,
+      completed: 1,
+      lastActivityAt: null,
+      detail: { kind: "classic" as const, solved: 1, total: 2, points: 10, locked },
+    },
+  });
+
+  const render = (d: LeaderboardData) =>
+    renderToStaticMarkup(<Leaderboard data={d} viewerLogin={null} modules={CLASSIC} enabledApps={apps} />);
+
+  it("says nothing when nothing is locked — a defined denominator is not a lock", () => {
+    const html = render(
+      data({
+        entries: [entry({ modules: classicModules(0) })],
+        capabilities: { apps: false, teams: false, challenges: false },
+        completable: 6,
+      }),
+    );
+    // The cross-module denominator is still there (6 completable, nothing
+    // locked, 4 completed); only the note is withheld.
+    expect(html).toContain("/ 6");
+    expect(html).not.toContain(DISCLAIMER);
+  });
+
+  it("says nothing when no row carries a classic block at all", () => {
+    const html = render(data({ entries: [entry()] }));
+    expect(html).not.toContain(DISCLAIMER);
+  });
+
+  it("shows the disclaimer when a contestant's row has locked steps", () => {
+    const html = render(
+      data({ entries: [entry({ modules: classicModules(2) })], capabilities: { apps: false, teams: false, challenges: false } }),
+    );
+    expect(html).toContain(DISCLAIMER);
+  });
+
+  it("shows it from a team's locked count, where the reachable count is computed", () => {
+    const html = render(
+      data({
+        entries: [entry({ modules: classicModules(0) })],
+        teams: [team({ modules: classicModules(1) })],
+        capabilities: { apps: false, teams: true, challenges: false },
+      }),
+    );
+    expect(html).toContain(DISCLAIMER);
+  });
+});
+
+// #591: a team's organizer adjustment is already in its points; the row says
+// so with an explicit signed marker, and shows nothing when there is none.
+describe("team row adjustment marker (#591)", () => {
+  it("shows a penalty and a bonus as signed adjustments", () => {
+    const penalty = renderToStaticMarkup(
+      <TeamRow team={team({ members: ["alice"], captain: "alice", adjustment: -10 })} topPoints={150} isOpen={false} onToggle={() => {}} enabledApps={apps} />,
+    );
+    expect(penalty).toContain("−10 adjustment");
+    const bonus = renderToStaticMarkup(
+      <TeamRow team={team({ members: ["alice"], captain: "alice", adjustment: 50 })} topPoints={150} isOpen={false} onToggle={() => {}} enabledApps={apps} />,
+    );
+    expect(bonus).toContain("+50 adjustment");
+  });
+
+  it("shows no marker without an adjustment", () => {
+    const html = renderToStaticMarkup(
+      <TeamRow team={team({ members: ["alice"], captain: "alice" })} topPoints={150} isOpen={false} onToggle={() => {}} enabledApps={apps} />,
+    );
+    expect(html).not.toContain("adjustment");
   });
 });

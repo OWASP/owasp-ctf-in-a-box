@@ -64,8 +64,13 @@ two modes — **serve** (the leaderboard API and the bearer-authed
 fork's Action). See [scorer.md](scorer.md).
 
 **Freeze vs scoring window** — two ways scoring stops. **Freeze** is the
-manual switch: ingestion holds (queued, never lost), fork Actions keep
-running. The **scoring window** (`scoringStartsAt`/`scoringEndsAt`) does the
+manual switch: nothing scores while it is on, fork Actions keep running, and
+a Secure Development PR is judged by when its score comment was posted, so
+one scored during a freeze never counts and one scored before it still does
+([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)),
+except under a freeze hand-set in Redis with no recorded start, which holds
+scores until it lifts instead.
+The **scoring window** (`scoringStartsAt`/`scoringEndsAt`) does the
 same on a schedule, and an empty `scoringStartsAt` means the event is **not
 launched** and nothing scores ([ADR 59](decisions.md#adr-59-every-event-needs-an-official-launch-an-empty-scoring-start-means-not-launched)).
 Both are evaluated at read time by three independent readers that must
@@ -123,10 +128,10 @@ was renamed**, which is most of the reason this table exists:
 | **OWASP CTF in a Box** | The product / brand, as approved by the OWASP Foundation, **and** the default event name every deployment shows until an organizer renames it. The two are deliberately the same string; real events override the event name from `/admin` → Event → Identity (a runtime setting since #386). One consequence to know: since the name is never baked, a misconfigured box does not betray itself by its name — check for an empty `ADMIN_LOGINS` and a 403 on `/admin` instead. The project was called **OWASP CTF** until September 2026; that name is retired, and the earlier `CHANGELOG.md` entries using it are history rather than current usage. |
 | `owasp-ctf-in-a-box` | The **repo** (`OWASP/owasp-ctf-in-a-box`) and the docs site (`owasp.github.io/owasp-ctf-in-a-box`). |
 | `ctf-in-a-box` | The slug of the project's home page on the Foundation's site, [owasp.org/projects/ctf-in-a-box](https://owasp.org/projects/ctf-in-a-box) — shorter than the repo name, and not derived from it. |
-| `owasp-ctf` | The local repo directory, the lowercase image namespace, and the Fly app (`app = "owasp-ctf"` in `deploy/fly/fly.toml`). Deliberately unchanged by the rename: renaming an image namespace breaks every `SCORE_IMAGE` already sitting in someone's `.env`, and renaming a Fly app moves its `*.fly.dev` hostname. |
+| `owasp-ctf` | The local repo directory and the Fly app (`app = "owasp-ctf"` in `deploy/fly/fly.toml`), whose images live under `registry.fly.io/owasp-ctf`. Deliberately unchanged by the rename: renaming a Fly app moves its `*.fly.dev` hostname. |
 | `ctf-*` | The lowercase service identifiers, which are also the runtime log prefixes they are pinned to: `ctf-sync` (`sync/package.json`, and the `ctf-sync:` every poller line starts with), `ctf-score-engine` (`scorer/package.json` and `scorer/src/*.js`'s `ctf-score-engine:`), `ctf-setup`, the `ctf:` Redis key namespace, the `CTF_*` environment variables, and the pretend `ctf` program the app's 404 and error pages run in their terminal-idiom flourish (`$ ctf goto --route not_found`). Deliberately unchanged: these are read out of logs and `redis-cli` by whoever is debugging a live box, and the package name and the log prefix have to keep matching. The `ctf` command is the one place the brand does *not* belong — a program with spaces in its name reads as garbage, and the brand is a wordmark, carried by the header and footer as `$ <event name>`. |
-| `OWASP-CTF` | The GitHub **org** the canonical targets are forked into (`GITHUB_ORG` in `.env`). Not the `OWASP` org the kit itself lives in. |
-| `ghcr.io/owasp-ctf/score` | The scorer image path. The lowercase `owasp-ctf` here is a registry-namespace convenience, not the `OWASP-CTF` org; override `SCORE_IMAGE` to your own org's GHCR. |
+| `OWASP-CTF` | The upstream event's GitHub **org**: it hosts `dc34-owasp-secure-development-ctf`, the spec and rubric source, and the `ghcr.io/owasp-ctf/score` image. It is not a `GITHUB_ORG` value — each event forks its targets into its own org, named in `.env`'s `GITHUB_ORG` — and not the `OWASP` org the kit itself lives in. |
+| `ghcr.io/owasp-ctf/score` | The upstream scorer image, published under the `OWASP-CTF` org (GHCR lowercases the namespace). It is private and is only the compose fallback; set `SCORE_IMAGE` to your own build from `scorer/` on your org's GHCR. |
 | `dc34-owasp-secure-development-ctf` | The upstream repo the rubrics are vendored from (see `scorer/rubric.owasp/PROVENANCE.md`). |
 
 One further string keeps the old brand on purpose, because it names a thing

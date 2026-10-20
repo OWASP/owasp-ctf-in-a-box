@@ -27,17 +27,19 @@ export type FieldStatus =
   | { state: "rejected"; message: string };
 
 /** The shell's decision on blur, as data. `noop` when nothing changed;
- *  `post` with the parsed whole number; `snapback` with the sentence the field
- *  shows while the draft is reset to `current`. The server accepts no null for
- *  these keys (only the date fields clear that way), so blanking a field over a
- *  stored value is a snap-back, not a clear. Exported for direct testing. */
+ *  `post` with the parsed whole number, or null when a stored value is blanked
+ *  (the server clears it and the default applies again); `snapback` with the
+ *  sentence the field shows while the draft is reset to `current`. Exported
+ *  for direct testing. */
 export function parseNumberCommit(
   raw: string,
   current: number | null,
-): { kind: "noop" } | { kind: "post"; value: number } | { kind: "snapback"; message: string } {
+): { kind: "noop" } | { kind: "post"; value: number | null } | { kind: "snapback"; message: string } {
   const kept = current === null ? "the default" : String(current);
+  // Blank over a stored value clears the override: the server removes it and
+  // the default (the field's placeholder) applies again.
   if (raw.trim() === "") {
-    return current === null ? { kind: "noop" } : { kind: "snapback", message: `Blank is not a value — kept ${kept}.` };
+    return current === null ? { kind: "noop" } : { kind: "post", value: null };
   }
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 0) {

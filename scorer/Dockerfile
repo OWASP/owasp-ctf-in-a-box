@@ -18,9 +18,11 @@ FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18
 
 # docker-cli: the judge entrypoint drives sibling containers over the mounted
 # docker.sock (boot the app under test, self-attach to the ctf network).
-# Pinned to the version in the base image's Alpine release (the base is pinned
-# by digest above, so this is deterministic too); bump both together.
-RUN apk add --no-cache docker-cli=29.8.2-r0
+# Pinned to the version in the base image's Alpine release; bump it with the
+# base. The base digest does not freeze it: Alpine keeps only the latest
+# package revision in its index, so a rebuild there (-r0 -> -r1) breaks a
+# fresh build with "unable to select packages" until this pin follows it.
+RUN apk add --no-cache docker-cli=29.8.2-r1
 
 WORKDIR /app
 

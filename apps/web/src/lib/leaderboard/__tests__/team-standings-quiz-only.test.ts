@@ -126,8 +126,8 @@ describe("withTeamStandings on a quiz-only event", () => {
       ["blue", 20],
       ["grey", 0],
     ]);
-    // A team with no answers gets no block rather than an empty one.
-    expect(out.teams.find((t) => t.slug === "grey")!.modules?.["quiz"]).toBeUndefined();
+    // A team with no answers gets a zero block that adds nothing.
+    expect(out.teams.find((t) => t.slug === "grey")!.modules?.["quiz"]).toMatchObject({ points: 0, completed: 0 });
   });
 
   // Rows created from quiz points carry the QUIZ store's spelling of the

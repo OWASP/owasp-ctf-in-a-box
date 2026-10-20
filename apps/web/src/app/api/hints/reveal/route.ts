@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { launchApiAccess } from "@/lib/launch";
 import { revealHint } from "@/lib/hint-store";
+import { adminSeesHidden } from "@/lib/classic-visibility";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 
 /** Buys (or re-views) one hint. Charging is atomic and idempotent in Redis —
@@ -42,22 +43,29 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => ({}));
-  // A confirmed price is the number the contestant actually saw. It is
-  // optional so an older client (or a direct call) still works, but when it
-  // is present the reveal script refuses a stale one with 409 rather than
-  // silently charging the new price (#557/#594). A present non-number is a
-  // malformed body, not a missing quote.
-  if (body.confirmedCost !== undefined && (typeof body.confirmedCost !== "number" || !Number.isFinite(body.confirmedCost))) {
-    return NextResponse.json({ error: "confirmedCost must be a number" }, { status: 400 });
+  // The price on the contestant's confirm button (#557). Absent, the reveal
+  // charges the current price, as an older page did; present, it must be a
+  // whole, non-negative number of points, and the script charges exactly
+  // that or nothing. `confirmedCost` is the older name for the same quote.
+  const hasQuote = body !== null && typeof body === "object" && ("quotedCost" in body || "confirmedCost" in body);
+  const quotedCost: unknown =
+    body !== null && typeof body === "object" ? (body.quotedCost ?? body.confirmedCost) : undefined;
+  if (hasQuote && !(typeof quotedCost === "number" && Number.isInteger(quotedCost) && quotedCost >= 0)) {
+    return NextResponse.json({ error: "Invalid quoted cost" }, { status: 400 });
   }
   const level = body.level === undefined ? 1 : body.level;
   if (typeof level !== "number" || !Number.isInteger(level) || level < 1) {
     return NextResponse.json({ error: "level must be a positive integer" }, { status: 400 });
   }
-  const result = await revealHint(login, typeof body.app === "string" ? body.app : "", typeof body.id === "string" ? body.id : "", {
-    dryRun: preview,
+  const app = typeof body.app === "string" ? body.app : "";
+  const id = typeof body.id === "string" ? body.id : "";
+  // An admin on a Jeopardy challenge contestants cannot see reads its hint
+  // as a dry run, like a preview: shown, never charged.
+  const dryRun = preview || (app === "classic" && id !== "" && (await adminSeesHidden(login, id)));
+  const result = await revealHint(login, app, id, {
+    dryRun,
     level,
-    ...(typeof body.confirmedCost === "number" ? { confirmedCost: body.confirmedCost } : {}),
+    ...(typeof quotedCost === "number" ? { quotedCost } : {}),
   });
   if (!result.ok) {
     const status = result.repriced ? 409 : result.missing ? 404 : result.forbidden ? 403 : 400;

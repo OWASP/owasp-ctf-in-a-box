@@ -115,7 +115,7 @@ variable "github_org" {
   // definitions as-is, and name a fork path nothing can resolve.
   validation {
     condition     = !var.enable_secure_development || trimspace(var.github_org) != ""
-    error_message = "github_org must name a GitHub org when Secure Development is enabled, in either ingest mode — blank or whitespace-only will not do: sync exits at startup without a usable GITHUB_ORG (see sync/src/config.js), and push mode leaves the app with no org to build fork links from."
+    error_message = "github_org must name a GitHub org when Secure Development is enabled — blank or whitespace-only will not do: sync exits at startup without a usable GITHUB_ORG (see sync/src/config.js), and the app has no org to build fork links from."
   }
 }
 

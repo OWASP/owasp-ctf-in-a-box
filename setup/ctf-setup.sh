@@ -16,7 +16,9 @@
 #             + print install steps, mirror scorer image
 #             (idempotent/re-runnable: every step is skipped once its
 #             target state is already satisfied, so re-running `org` after
-#             a partial run or failure just resumes where it left off)
+#             a partial run or failure just resumes where it left off.
+#             ctf protection the free plan refuses on private repos is
+#             reported PENDING until launch, not as a failure
 #   render    (re)render just the per-target scoring workflows into dist/workflows/
 #   upgrade   re-commit the rendered scoring workflow to every fork whose
 #             committed copy is behind the template's
@@ -24,12 +26,12 @@
 #             reaches an event that is ALREADY provisioned (`org` does this
 #             too, but also re-mirrors the scorer image)
 #   private   set each DETACHED fork private while the event is not launched
-#             (#465; `org` runs this too — re-run it after detaching)
+#             (`org` runs this too — re-run it after detaching)
 #   launch    launch-day for Secure Development: check every fork is detached
 #             and the scorer package private, wait for Launch in /admin
 #             (polls EVENT_URL/health/deep), then flip every fork PUBLIC
 #   teardown  archive event repos after the event
-#   doctor    read-only status check: verify a previously-provisioned org
+#   doctor    read-only status check: verify an already-provisioned org
 #             matches targets.tsv (no mutation, no --dry-run needed)
 #   app-manifest  open a self-submitting form to create the sync GitHub App
 #                 from sync/app-manifest.json against the event org (removes
@@ -46,7 +48,7 @@
 # open /admin, and SCORE_IMAGE being NON-EMPTY is how a box says "this event
 # runs Secure Development" — with it empty there are no forks to provision, no
 # scorer to mirror and nothing to poll. Which modules run, and which Secure
-# Development targets, are runtime settings in /admin (config v2, #386).
+# Development targets, are runtime settings in /admin (config v2).
 #
 # Global flags: --dry-run (print mutating commands), --out <path> (default .env)
 set -euo pipefail
@@ -57,6 +59,11 @@ set -euo pipefail
 # $0 is the sourcing shell's own name rather than this file's path.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 WORKFLOW_TEMPLATE="$SCRIPT_DIR/../scorer/consumer-workflow.example.yml"
+
+# The one env-file reader every shell entry point shares: env_val and env_has
+# below are thin wrappers over it.
+# shellcheck source=scripts/lib/dotenv.sh
+. "$SCRIPT_DIR/../scripts/lib/dotenv.sh"
 
 # ANSI colors — only when stdout is a TTY and NO_COLOR is unset (respect the
 # NO_COLOR convention + non-interactive/piped output stays plain for logs/CI).
@@ -135,12 +142,12 @@ STEPS="fork ctf-branch drop-old protect workflow disable-inherited pr-template v
 fork_detached() { [ "$(gh api "repos/$1" --jq '.fork' 2>/dev/null)" = "false" ]; }
 package_private() { [ "$(gh api "orgs/$1/packages/container/score" --jq '.visibility' 2>/dev/null)" = "private" ]; }
 
-# #465: a fork's visibility ("public"/"private"; empty on a gh error — the
+# A fork's visibility ("public"/"private"; empty on a gh error — the
 # caller treats that as unknown, never as either answer) and the flip.
 fork_visibility() { gh api "repos/$1" --jq '.visibility' 2>/dev/null; }
 set_fork_visibility() { gh api -X PATCH "repos/$1" -f "visibility=$2" >/dev/null 2>&1; }
 
-# The box's launch state from its public /health/deep (#464): echoes
+# The box's launch state from its public /health/deep: echoes
 # `launched`, `not-launched`, or `unknown` (no EVENT_URL, no answer, or the
 # box could not read its own settings). No -f: a degraded box answers 503
 # and that body still carries `launched`. Never called under --dry-run.
@@ -159,7 +166,7 @@ box_launch_state() {
 
 # The per-fork package Read grant has no API to read back — but it has an
 # OBSERVABLE consequence, which is nearly as good and a great deal better than
-# the bare reminder this replaced: the fork's own scoring workflow either
+# the bare reminder: the fork's own scoring workflow either
 # pulled the image or was refused. `ctf-score.yml` runs that pull in a step
 # named "Pull scorer image" for exactly this reason.
 #
@@ -173,7 +180,7 @@ box_launch_state() {
 #            missing, and the doctor line must not say it does.
 #   error    GitHub did not answer (the runs or a run's jobs could not be
 #            read), so nothing was observed. Distinct from `unknown` because
-#            `launch` must refuse on it (#477 review): "no run yet" is a fact
+#            `launch` must refuse on it: "no run yet" is a fact
 #            about the fork, "could not ask" is not. doctor, advisory, shows
 #            both as unverified.
 #
@@ -185,8 +192,8 @@ box_launch_state() {
 # Only the newest few runs are inspected: a grant, once given, is not taken
 # back, so an old refusal under a recent success is history rather than news —
 # hence first-success-wins over first-failure-wins in the loop below. But a
-# run whose jobs cannot be READ stops the walk (#496): it may have been the
-# refusal, and an older success no longer proves anything (a re-mirrored
+# run whose jobs cannot be READ stops the walk: it may have been the
+# refusal, and an older success proves nothing (a re-mirrored
 # package starts with no grants), so that answers `error`, not `granted`.
 # "1 fork", "3 forks": $1 the count, $2 singular, $3 plural.
 plural() {
@@ -220,9 +227,9 @@ pull_grant_status() {
 # The rendered `ctf-score.yml` carries `# ctf-workflow-version: N`, copied
 # verbatim from the template. Comparing a fork's number against the
 # template's is what makes a fix to the scoring workflow reachable on an
-# event that is already provisioned: before this, `org`'s workflow step
-# checked only that the file EXISTED, so it skipped every fork that had any
-# version of it, and a fix could only be delivered by hand, per fork.
+# event that is already provisioned: a presence-only check would skip every
+# fork that has any version of it, and a fix could only be delivered by
+# hand, per fork.
 
 # The template's version. A template with no marker is a bug in this repo,
 # not a condition to tolerate — every comparison below depends on it, and a
@@ -261,13 +268,15 @@ fork_workflow_version() {
 # make disable-inherited never settle (doctor stuck red, provisioning looping).
 INHERITED_JQ='.workflows[] | select(.path | startswith(".github/workflows/")) | select(.path != ".github/workflows/ctf-score.yml") | select(.state=="active") | .id'
 
+# One DRY-RUN narration line for a provisioning step: what apply_step would
+# do. Narration only — `org --dry-run` makes zero gh calls.
 plan_step() {
   local id="$1" t="$2" org="$3" name; name="$(prov_repo_name "$t")"
   case "$id" in
     fork) echo "DRY-RUN: gh repo fork $(prov_field "$t" 2) --org $org --fork-name $name --clone=false" ;;
     ctf-branch) echo "DRY-RUN: create refs/heads/ctf on $org/$name from $(prov_field "$t" 2)@$(prov_field "$t" 3); set default_branch=ctf" ;;
     drop-old) echo "DRY-RUN: delete master/main on $org/$name if present and != ctf" ;;
-    protect) echo "DRY-RUN: PUT branch protection on $org/$name:ctf (1 approving review, no force-push/deletion)" ;;
+    protect) echo "DRY-RUN: PUT branch protection on $org/$name:ctf (1 approving review, no force-push/deletion); while the fork is private on a free plan this stays pending until launch" ;;
     workflow) echo "DRY-RUN: render ctf-score.yml v$(template_workflow_version) (TARGET=$t) and PUT to $org/$name:.github/workflows/ctf-score.yml on ctf" ;;
     disable-inherited) echo "DRY-RUN: disable every workflow on $org/$name except .github/workflows/ctf-score.yml" ;;
     pr-template) echo "DRY-RUN: PUT setup/PULL_REQUEST_TEMPLATE.md to $org/$name:.github/PULL_REQUEST_TEMPLATE.md on ctf" ;;
@@ -279,21 +288,63 @@ plan_step() {
   esac
 }
 
+# Whether one branch exists on a repo: `present`, `absent`, or `unknown`.
+# Only GitHub's 404 is `absent`; any other failure (auth, rate limit, a 5xx,
+# no network) is `unknown`, which every caller treats as "not satisfied" —
+# an API blip must never read as "already deleted". The reply's name is
+# checked too: GitHub answers a request for a RENAMED branch with the branch
+# it became, and that is not the one asked for.
+branch_state() {
+  local slug="$1" branch="$2" got err
+  if got="$(gh api "repos/$slug/branches/$branch" --jq '.name' 2>/dev/null)"; then
+    if [ "$got" = "$branch" ]; then
+      echo present
+    elif [ -n "$got" ]; then
+      echo absent
+    else
+      echo unknown
+    fi
+    return 0
+  fi
+  err="$(gh api "repos/$slug/branches/$branch" 2>&1 >/dev/null)" || true
+  case "$err" in
+  *"HTTP 404"*) echo absent ;;
+  *) echo unknown ;;
+  esac
+}
+
+# True when one provisioning step is already in its target state — the
+# idempotency probe behind org's skip-if-done and doctor's matrix cells.
+# Fails closed: an unreadable or unexpected reply is "not satisfied".
 check_step() {
   local id="$1" t="$2" org="$3" name; name="$(prov_repo_name "$t")"
   case "$id" in
     fork) gh_ok "repos/$org/$name" ;;
     ctf-branch) [ "$(gh api "repos/$org/$name" --jq '.default_branch' 2>/dev/null)" = "ctf" ] ;;
     drop-old)
-      local branches
-      branches="$(gh api "repos/$org/$name/branches" --jq '.[].name' 2>/dev/null)" || return 1
-      ! printf '%s\n' "$branches" | grep -qxE 'master|main'
+      # Each branch is asked for by name rather than read out of the branch
+      # list, which GitHub pages at 30: on a fork with more branches than
+      # that, `main` can sit on page two and the list reads as "gone". Only
+      # an answer of absent for BOTH counts as done; a branch that is present,
+      # or one GitHub did not answer for, is not.
+      [ "$(branch_state "$org/$name" main)" = absent ] || return 1
+      [ "$(branch_state "$org/$name" master)" = absent ]
       ;;
     protect)
-      local n
-      n="$(gh api "repos/$org/$name/branches/ctf/protection" \
-        --jq '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null)" || n=0
-      [ "${n:-0}" -ge 1 ]
+      # The full protection payload, not just the review count: `launch`
+      # verifies all three properties before reporting success, and `org`'s
+      # idempotency check must not skip a fork whose force-pushes or deletions
+      # were later enabled. GitHub returns allow_force_pushes and
+      # allow_deletions as OBJECTS ({ "enabled": false }), not booleans, so
+      # the filter reads `.enabled`. Fails closed: an unreadable reply (404 =
+      # no protection, a gh error) never reads as satisfied; a missing field
+      # (null.enabled == false is false) is not either; and a boolean where
+      # the object belongs errors the filter itself, which `||` reads as
+      # unsatisfied.
+      local ok
+      ok="$(gh api "repos/$org/$name/branches/ctf/protection" \
+        --jq '(((.required_pull_request_reviews.required_approving_review_count // 0) >= 1) and (.allow_force_pushes.enabled == false) and (.allow_deletions.enabled == false))' 2>/dev/null)" || ok=false
+      [ "$ok" = true ]
       ;;
     # Version-aware, not merely present. A fork carrying an OLDER workflow is
     # not "already done": that is exactly the state a security fix has to get
@@ -326,6 +377,49 @@ check_step() {
   esac
 }
 
+# PUT the ctf branch protection — the one payload `org` and `launch` both
+# apply. Returns:
+#   0  applied (or already in place)
+#   2  REFUSED specifically by GitHub's free plan on a private repository:
+#      the ONE observed refusal this defers — HTTP 403 carrying "Upgrade to
+#      GitHub Pro or make this repository public", on a fork that reads back
+#      private. Not an error — the caller defers it until launch makes the
+#      fork public. No output: the refusal is the expected state of a
+#      private fork on a free org.
+#   1  any other failure — including that same refusal when the fork is not
+#      CONFIRMED private (a visibility GitHub did not answer is not
+#      confirmation) — the caller fails on it, like every check_step.
+# The plan refusal is told apart by the status and the complete message
+# GitHub answers with, on the only endpoint this runs against, plus the
+# fork's actual visibility — never by exit status alone, or every protection
+# error would silently become a deferral.
+apply_protect() {
+  local org="$1" name="$2" err
+  if err="$(gh api -X PUT "repos/$org/$name/branches/ctf/protection" --input - 2>&1 >/dev/null <<'JSON'
+{ "required_status_checks": null, "enforce_admins": false,
+  "required_pull_request_reviews": { "required_approving_review_count": 1 },
+  "restrictions": null, "allow_force_pushes": false, "allow_deletions": false }
+JSON
+)"; then
+    return 0
+  fi
+  case "$err" in
+    *"HTTP 403"*"Upgrade to GitHub Pro or make this repository public"*)
+      # Only the complete, observed refusal counts — and only on a fork that
+      # reads back private, which is what makes this the free-plan state
+      # rather than a 403 of another kind. An unreadable visibility is not
+      # `private`, so it falls through and fails closed.
+      if [ "$(fork_visibility "$org/$name")" = private ]; then
+        return 2
+      fi
+      ;;
+  esac
+  printf '%s\n' "${err:-gh api PUT branches/ctf/protection failed for $org/$name}" >&2
+  return 1
+}
+
+# Perform one provisioning step for a fork — the mutation plan_step only
+# narrates. Idempotent: re-running resumes where a partial run stopped.
 apply_step() {
   local id="$1" t="$2" org="$3" name; name="$(prov_repo_name "$t")"
   case "$id" in
@@ -342,17 +436,17 @@ apply_step() {
     drop-old)
       local b
       for b in master main; do
-        if gh_ok "repos/$org/$name/branches/$b"; then
+        # Anything but a confirmed absence gets the delete attempt: the
+        # check_step that follows is what decides whether it worked.
+        if [ "$(branch_state "$org/$name" "$b")" != absent ]; then
           gh api -X DELETE "repos/$org/$name/git/refs/heads/$b" >/dev/null 2>&1 || true
         fi
       done
       ;;
     protect)
-      gh api -X PUT "repos/$org/$name/branches/ctf/protection" --input - >/dev/null <<'JSON'
-{ "required_status_checks": null, "enforce_admins": false,
-  "required_pull_request_reviews": { "required_approving_review_count": 1 },
-  "restrictions": null, "allow_force_pushes": false, "allow_deletions": false }
-JSON
+      # Propagates apply_protect's 2 (deferred on a free-plan private repo)
+      # for the caller to record as pending — do_step passes it through.
+      apply_protect "$org" "$name"
       ;;
     workflow)
       local base_url lb_url="" tmp
@@ -389,13 +483,13 @@ do_step() {
 
 # Read-only per-step status. Non-manual missing steps make it exit non-zero so
 # CI / the future admin wizard can gate on a clean provision.
-# Check (c) of `doctor`, a function so the --dry-run path (#496 M20) can
+# Check (c) of `doctor`, a function so the --dry-run path can
 # run it — it narrates under --dry-run — before returning ahead of every gh
 # read. Returns 1 when the check fails.
 doctor_check_sync_app() {
   local org="$1" crc=0
-  # Check (c) — the sync GitHub App (GITHUB_APP_ID) is installed on the org
-  # (issue #382). Only meaningful when Secure Development runs at all: an
+  # Check (c) — the sync GitHub App (GITHUB_APP_ID) is installed on the org.
+  # Only meaningful when Secure Development runs at all: an
   # app-only event has no poller/pusher that needs a token, so there is
   # nothing to verify — but we are past the `runs_secdev` early-return above,
   # so it is always true here.
@@ -405,8 +499,8 @@ doctor_check_sync_app() {
       "$C_RED" "${OUT:-.env}" "$C_RESET"
     crc=1
   elif case "$sync_app_id" in *[!0-9]*|0*) true ;; *) false ;; esac; then
-    # Malformed is a configuration error, found before any call (#536
-    # review): an App id is a positive decimal, never 0 or a leading zero.
+    # Malformed is a configuration error, found before any call: an App id
+    # is a positive decimal, never 0 or a leading zero.
     printf '%s❌ GITHUB_APP_ID must be a positive number in %s (got %s)%s\n' \
       "$C_RED" "${OUT:-.env}" "$sync_app_id" "$C_RESET"
     crc=1
@@ -418,7 +512,7 @@ doctor_check_sync_app() {
     # installed": a non-zero exit (missing admin:org scope, network, a
     # revoked token) and empty output from an otherwise-successful call —
     # both are treated as UNVERIFIED, never as "installed", so a broken token
-    # never reads as a clean bill of health (R4 / #382).
+    # never reads as a clean bill of health.
     local sync_rows sync_found_id="" sync_found_slug=""
     if sync_rows="$(gh api "orgs/$org/installations" \
         --jq '.installations[] | "\(.app_id) \(.app_slug)"' 2>/dev/null)" && [ -n "$sync_rows" ]; then
@@ -450,64 +544,71 @@ doctor_check_sync_app() {
   return $crc
 }
 
-cmd_doctor() {
-  require_env_file
-  local org; org="$(env_val GITHUB_ORG)"
-  local rc=0 t id cell name want_v have vis forks
-
-  # Check (a) — ADMIN_LOGINS (issue #382). Always checked, regardless of
-  # Secure Development: an event with no admins is broken either way, and the
-  # failure (every login 403s on /admin) is otherwise silent until someone
-  # tries the panel.
-  local admins; admins="$(env_val ADMIN_LOGINS)"
+# Check (a) — ADMIN_LOGINS. Always checked, regardless of
+# Secure Development: an event with no admins is broken either way, and the
+# failure (every login 403s on /admin) is otherwise silent until someone
+# tries the panel.
+doctor_check_admin_logins() {
+  local crc=0 admins; admins="$(env_val ADMIN_LOGINS)"
   if [ -n "$admins" ]; then
     printf '%s✅ ADMIN_LOGINS: %s%s\n' "$C_GREEN" "$admins" "$C_RESET"
   else
     printf '%s❌ ADMIN_LOGINS is empty — nobody can open /admin; set it in .env and restart the app%s\n' \
       "$C_RED" "$C_RESET"
-    rc=1
+    crc=1
   fi
+  return $crc
+}
 
-  # Check (b) — GITHUB_ORG. This command takes no --org flag, so "the org
-  # doctor inspects" IS `env_val GITHUB_ORG`, resolved once into $org above —
-  # the two cannot disagree today, only be missing. Whether a missing value
-  # is tolerable depends on whether this event runs Secure Development at
-  # all: an app-only event has no org to fork into and none is required.
+# Check (b) — GITHUB_ORG. This command takes no --org flag, so "the org
+# doctor inspects" IS `env_val GITHUB_ORG`, resolved once into $org by
+# cmd_doctor — the two cannot disagree today, only be missing. Whether a
+# missing value is tolerable depends on whether this event runs Secure
+# Development at all: an app-only event has no org to fork into and none is
+# required.
+doctor_check_github_org() {
+  local org="$1" crc=0
   if [ -n "$org" ]; then
     printf '%s✅ GITHUB_ORG: %s%s\n' "$C_GREEN" "$org" "$C_RESET"
   elif runs_secdev; then
     printf '%s❌ GITHUB_ORG is empty in %s — Secure Development is on (SCORE_IMAGE set) but there is no org to fork into; set it (or run the wizard)%s\n' \
       "$C_RED" "${OUT:-.env}" "$C_RESET"
-    rc=1
+    crc=1
   else
     printf '%s⚠️  GITHUB_ORG is empty in %s — fine for now: this event does not run Secure Development%s\n' \
       "$C_YELLOW" "${OUT:-.env}" "$C_RESET"
   fi
   echo
+  return $crc
+}
 
-  # Redis now requires a password, and docker-compose.yml uses `${REDIS_PASSWORD:?}`
-  # — so an .env written before this change does not bring up a weaker stack,
-  # it fails to bring up at all. Checked HERE because doctor is where an
-  # organizer looks when something is wrong, and compose's own error names a
-  # variable without saying where it comes from. Advisory (no `rc=1`): this is
-  # a local .env concern, not a provisioning defect, and doctor's exit code
-  # gates the org-side steps.
+# Redis requires a password, and docker-compose.yml uses `${REDIS_PASSWORD:?}`
+# — so an .env that lacks one does not bring up a weaker stack, it fails to
+# bring up at all. Checked HERE because doctor is where an
+# organizer looks when something is wrong, and compose's own error names a
+# variable without saying where it comes from. Advisory (no `rc=1`): this is
+# a local .env concern, not a provisioning defect, and doctor's exit code
+# gates the org-side steps.
+doctor_check_redis_password() {
   if [ -f "${OUT:-.env}" ] && ! grep -q "^REDIS_PASSWORD=." "${OUT:-.env}"; then
     printf '%s⚠️  %s has no REDIS_PASSWORD — "docker compose up" will refuse to start.%s\n' \
       "$C_YELLOW" "${OUT:-.env}" "$C_RESET"
     printf '    Add:  REDIS_PASSWORD=%s\n\n' "$(openssl rand -hex 24)"
   fi
+  return 0
+}
 
-  # Every event needs an official launch (#464): until then contestants see
-  # the landing page only and nothing scores. Asked of the box itself (the
-  # public /health/deep carries `launched`), and only when this .env names the
-  # box. Advisory like the notices above: a box that is not launched YET is
-  # the normal state before kickoff, and an unreachable one is named once,
-  # neutrally — doctor is not a monitor.
+# Every event needs an official launch: until then contestants see
+# the landing page only and nothing scores. Asked of the box itself (the
+# public /health/deep carries `launched`), and only when this .env names the
+# box. Advisory like the notices above: a box that is not launched YET is
+# the normal state before kickoff, and an unreachable one is named once,
+# neutrally — doctor is not a monitor.
+doctor_check_launch() {
   local event_url; event_url="$(env_val EVENT_URL)"
-  # Kept for the fork-visibility check below (#465): launched | not-launched
-  # | unknown. Unknown judges nothing.
-  local doctor_launch=unknown
+  # Sets the caller's `doctor_launch`, kept for the fork-visibility check
+  # below: launched | not-launched | unknown. Unknown judges nothing.
+  doctor_launch=unknown
   if [ -n "$event_url" ] && [ "$DRY_RUN" -eq 1 ]; then
     printf 'DRY-RUN: would read the launch state from %s/health/deep\n\n' "${event_url%/}"
   elif [ -n "$event_url" ]; then
@@ -533,11 +634,13 @@ cmd_doctor() {
       printf 'ℹ️  could not read the launch state from %s/health/deep (box down, or not deployed yet).\n\n' "${event_url%/}"
     fi
   fi
+  return 0
+}
 
-  # Nothing org-scoped left to inspect without an org: SD-on already failed
-  # loudly above; SD-off simply has nothing further to check here.
-  [ -n "$org" ] || return $rc
-
+# The org-scoped existence probe: advisory, like the notices above (a missing
+# org is named with the create-URL rather than failing the exit).
+doctor_check_org_exists() {
+  local org="$1"
   if [ "$DRY_RUN" -eq 1 ]; then
     printf 'DRY-RUN: would check that org %s exists\n\n' "$org"
   elif gh_ok "orgs/$org"; then
@@ -545,7 +648,204 @@ cmd_doctor() {
   else
     printf '%s⚠️  org %s — create it: https://github.com/account/organizations/new%s\n\n' "$C_YELLOW" "$org" "$C_RESET"
   fi
+  return 0
+}
 
+# Secure Development IS on: every event provisions all six targets.tsv
+# targets (config v2) — which ones actually RUN is chosen at
+# runtime in /admin -> Secure Development.
+# One row per target, one column per provisioning step (+ fork-detach). Each
+# cell: ✅ done · ❌ missing (automatable — fails the exit code) · ⚠️ manual
+# step not yet done (advisory) · – not applicable to this target. The second
+# argument is the box's launch state (doctor_check_launch's out-param):
+# only an explicit not-launched turns a missing protection on a private fork
+# into ⏳ pending; launched or unknown reports it ❌ like any other miss.
+doctor_check_matrix() {
+  local org="$1" doctor_launch="${2:-unknown}" crc=0 t id cell name
+  printf '%s%-18s %-5s %-5s %-5s %-5s %-5s %-5s %-5s %-5s %-5s%s\n' "$C_BOLD" \
+    "target" fork ctf old prot wkfl disI pr vapp detch "$C_RESET"
+  for t in $(all_targets); do
+    name="$(prov_repo_name "$t")"
+    printf '%-18s ' "$t"
+    for id in $STEPS; do
+      if [ "$id" = vapp-dockerfile ] && [ "$t" != vulnerableapp ]; then
+        cell="–"
+      elif check_step "$id" "$t" "$org"; then
+        cell="✅"
+      elif [ "$id" = protect ] && [ "$doctor_launch" = not-launched ] && [ "$(fork_visibility "$org/$name")" = private ]; then
+        # The free plan refuses protection on a private repo, so before
+        # launch `org` records this as pending until launch, not missing —
+        # and only a launch state the box itself reported as not-launched
+        # earns that: launched or unknown, a missing protection is a real
+        # miss (❌). An unreadable visibility is not `private` either, so a
+        # real miss stays ❌ (fail closed).
+        cell="⏳"
+      else
+        cell="❌"; crc=1
+      fi
+      # ✅/❌ render ~2 cols, the n/a dash ~1 — pad it one extra to keep columns.
+      if [ "$cell" = "–" ]; then printf '%s     ' "$cell"; else printf '%s    ' "$cell"; fi
+    done
+    if fork_detached "$org/$name"; then cell="✅"; else cell="⚠️"; fi
+    printf '%s\n' "$cell"
+  done
+
+  echo
+  echo "legend: fork=forked ctf=ctf-branch old=drop-old prot=protected wkfl=workflow"
+  echo "        disI=disable-inherited pr=pr-template vapp=vapp-dockerfile detch=fork-detached (–=n/a)"
+  echo "❌ = automatable step missing (fails exit); ⚠️ = UI-only step to finish by hand"
+  echo "⏳ = branch protection pending until launch (GitHub's free plan cannot protect a private repo; shown only while not-launched)"
+  return $crc
+}
+
+# Fork visibility against the launch: private until launch, public
+# after. Advisory — the organizer's launch-day sequence fixes both — and
+# silent while the launch state is unknown.
+doctor_check_fork_visibility() {
+  local org="$1" doctor_launch="$2" vis_note=0 t name vis forks
+  if [ "$doctor_launch" != unknown ]; then
+    for t in $(all_targets); do
+      name="$(prov_repo_name "$t")"
+      vis="$(fork_visibility "$org/$name")" || vis=""
+      if [ "$doctor_launch" = not-launched ] && [ "$vis" = public ]; then
+        [ "$vis_note" -eq 1 ] || echo; vis_note=1
+        # `private` deliberately leaves a fork contestants already forked
+        # public (making it private would cut their forks off), so it is not
+        # the advice for one.
+        forks="$(gh api "repos/$org/$name" --jq '.forks_count' 2>/dev/null)" || forks=""
+        case "$forks" in
+          0)
+            printf '%s⚠️  %s is public before launch — contestants can see its ctf branch; detach it and run '"'"'ctf-setup.sh private'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET" ;;
+          ''|*[!0-9]*)
+            # Unread is neither "no forks" (run private) nor "has forks" (leave
+            # it): advise nothing, like an unreadable visibility above.
+            printf '%s⚠️  %s is public before launch, and GitHub did not answer how many forks it has — could not read %s'"'"'s fork count, so no advice; re-run doctor.%s\n' "$C_YELLOW" "$name" "$name" "$C_RESET" ;;
+          *)
+            printf '%s⚠️  %s is public before launch and already has %s — leave it public: '"'"'ctf-setup.sh private'"'"' skips it on purpose, since making it private would cut those forks off.%s\n' "$C_YELLOW" "$name" "$(plural "$forks" fork forks)" "$C_RESET" ;;
+        esac
+      elif [ -z "$vis" ]; then
+        [ "$vis_note" -eq 1 ] || echo; vis_note=1
+        printf 'ℹ️  could not read %s'"'"'s visibility (GitHub did not answer).\n' "$name"
+      elif [ "$doctor_launch" = launched ] && [ "$vis" = private ]; then
+        [ "$vis_note" -eq 1 ] || echo; vis_note=1
+        printf '%s⚠️  %s is still private after launch — contestants cannot fork it; run '"'"'ctf-setup.sh launch'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET"
+      fi
+    done
+  fi
+  return 0
+}
+
+# Org-level (not per-target): scorer package.
+doctor_check_package_private() {
+  local org="$1"
+  echo
+  if package_private "$org"; then
+    printf '%s✅ scorer package private%s\n' "$C_GREEN" "$C_RESET"
+  else
+    printf '%s⚠️  scorer package NOT private (or missing) — keep it private: https://github.com/orgs/%s/packages%s\n' "$C_YELLOW" "$org" "$C_RESET"
+  fi
+  return 0
+}
+
+# Scoring-workflow version per fork. The matrix's `wkfl` cell already goes
+# ❌ when a fork is behind, but ❌ there reads as "missing" — and "present
+# but three versions old" is a different problem with a different fix, so
+# it gets said in those words, with the command that resolves it.
+doctor_check_workflow_versions() {
+  local org="$1" want_v have t name
+  want_v="$(template_workflow_version)" || want_v=""
+  if [ -n "$want_v" ]; then
+    echo
+    echo "scoring workflow version (template is v$want_v):"
+    for t in $(all_targets); do
+      name="$(prov_repo_name "$t")"
+      case "$(fork_workflow_version "$org/$name")" in
+        none)
+          printf '  %-18s %s❌ absent%s — no ctf-score.yml on ctf; run: ./setup/ctf-setup.sh org\n' \
+            "$t" "$C_RED" "$C_RESET" ;;
+        0)
+          printf '  %-18s %s❌ pre-versioning%s — provisioned before workflow stamping; run: ./setup/ctf-setup.sh upgrade\n' \
+            "$t" "$C_RED" "$C_RESET" ;;
+        "$want_v")
+          printf '  %-18s %s✅ v%s%s\n' "$t" "$C_GREEN" "$want_v" "$C_RESET" ;;
+        *)
+          have="$(fork_workflow_version "$org/$name")"
+          if [ "$have" -gt "$want_v" ]; then
+            printf '  %-18s %s⚠️  v%s%s — AHEAD of this checkout (v%s); update the kit rather than downgrading the fork\n' \
+              "$t" "$C_YELLOW" "$have" "$C_RESET" "$want_v"
+          else
+            printf '  %-18s %s❌ v%s%s — stale (template v%s); run: ./setup/ctf-setup.sh upgrade\n' \
+              "$t" "$C_RED" "$have" "$C_RESET" "$want_v"
+          fi ;;
+      esac
+    done
+  fi
+  return 0
+}
+
+# No API exposes the per-fork "Manage Actions access" grants directly, so
+# this is verified by OBSERVATION instead — see `pull_grant_status`. It is
+# the one provisioning step with no API and the one whose failure looks like
+# something else entirely (a scoring failure on a contestant's PR), so
+# leaving it as a bare "confirm this by hand" reminder meant it stayed
+# unverified until an event was already running.
+doctor_check_pull_grants() {
+  local org="$1" crc=0 t name
+  echo
+  echo "per-fork package Read grant (no API — read back from each fork's own scoring runs):"
+  for t in $(all_targets); do
+    name="$(prov_repo_name "$t")"
+    case "$(pull_grant_status "$org/$name")" in
+      granted)
+        printf '  %-18s %s✅ granted%s (a scoring run pulled the image)\n' "$t" "$C_GREEN" "$C_RESET" ;;
+      MISSING)
+        printf '  %-18s %s❌ MISSING%s — a run was refused the image; grant this fork Read under "Manage Actions access"\n' \
+          "$t" "$C_RED" "$C_RESET"
+        crc=1 ;;
+      error)
+        # GitHub did not answer: fails the exit like any
+        # check_step that cannot read its evidence — not the advisory below.
+        printf '  %-18s %s❌ unreadable%s — GitHub did not answer for its scoring runs, so the grant is unchecked; re-run doctor\n' \
+          "$t" "$C_RED" "$C_RESET"
+        crc=1 ;;
+      *)
+        # NOT "no run has pulled yet" — that reads as a factual claim about
+        # the fork and is routinely false. `pull_grant_status` looks for a
+        # step named "Pull scorer image", which only exists from workflow v2
+        # onward; under v1 the pull happened inside "Run scorer", so a fork
+        # that has scored successfully many times still lands here. Observed
+        # on the test org: juice-shop scored 2/141 under v1 and read
+        # "no scoring run has pulled yet", which sends an organizer chasing a
+        # grant that was never missing. Say what is actually unknown.
+        printf '  %-18s %s⚠️  unverified%s — no run has reached the named pull step (needs a scoring run on workflow v2+); confirm by hand, or re-trigger a PR\n' \
+          "$t" "$C_YELLOW" "$C_RESET" ;;
+    esac
+  done
+  printf '  package settings: https://github.com/orgs/%s/packages\n' "$org"
+  return $crc
+}
+
+# `doctor`: read-only health report — the box's launch state, the org, and
+# one cell per provisioning step per target. A real miss is ❌ and sets a
+# nonzero exit; ⏳ appears only while the box itself reports not-launched.
+cmd_doctor() {
+  require_env_file
+  local org; org="$(env_val GITHUB_ORG)"
+  local rc=0
+  # launched | not-launched | unknown — the out-param doctor_check_launch
+  # leaves for the fork-visibility check.
+  local doctor_launch=unknown
+
+  doctor_check_admin_logins || rc=1
+  doctor_check_github_org "$org" || rc=1
+  doctor_check_redis_password
+  doctor_check_launch
+
+  # Nothing org-scoped left to inspect without an org: SD-on already failed
+  # loudly above; SD-off simply has nothing further to check here.
+  [ -n "$org" ] || return $rc
+
+  doctor_check_org_exists "$org"
 
   # No SCORE_IMAGE: this event does not run Secure Development, so there are
   # no forks, no scorer image and nothing in the per-target matrix below to
@@ -574,150 +874,12 @@ cmd_doctor() {
     return $rc
   fi
 
-  # Secure Development IS on: every event provisions all six targets.tsv
-  # targets (config v2 PR2, #386) — which ones actually RUN is chosen at
-  # runtime in /admin -> Secure Development.
-  # One row per target, one column per provisioning step (+ fork-detach). Each
-  # cell: ✅ done · ❌ missing (automatable — fails the exit code) · ⚠️ manual
-  # step not yet done (advisory) · – not applicable to this target.
-  printf '%s%-18s %-5s %-5s %-5s %-5s %-5s %-5s %-5s %-5s %-5s%s\n' "$C_BOLD" \
-    "target" fork ctf old prot wkfl disI pr vapp detch "$C_RESET"
-  for t in $(all_targets); do
-    name="$(prov_repo_name "$t")"
-    printf '%-18s ' "$t"
-    for id in $STEPS; do
-      if [ "$id" = vapp-dockerfile ] && [ "$t" != vulnerableapp ]; then
-        cell="–"
-      elif check_step "$id" "$t" "$org"; then
-        cell="✅"
-      else
-        cell="❌"; rc=1
-      fi
-      # ✅/❌ render ~2 cols, the n/a dash ~1 — pad it one extra to keep columns.
-      if [ "$cell" = "–" ]; then printf '%s     ' "$cell"; else printf '%s    ' "$cell"; fi
-    done
-    if fork_detached "$org/$name"; then cell="✅"; else cell="⚠️"; fi
-    printf '%s\n' "$cell"
-  done
-
-  echo
-  echo "legend: fork=forked ctf=ctf-branch old=drop-old prot=protected wkfl=workflow"
-  echo "        disI=disable-inherited pr=pr-template vapp=vapp-dockerfile detch=fork-detached (–=n/a)"
-  echo "❌ = automatable step missing (fails exit); ⚠️ = UI-only step to finish by hand"
-
-  # Fork visibility against the launch (#465): private until launch, public
-  # after. Advisory — the organizer's launch-day sequence fixes both — and
-  # silent while the launch state is unknown.
-  if [ "$doctor_launch" != unknown ]; then
-    local vis_note=0
-    for t in $(all_targets); do
-      name="$(prov_repo_name "$t")"
-      vis="$(fork_visibility "$org/$name")" || vis=""
-      if [ "$doctor_launch" = not-launched ] && [ "$vis" = public ]; then
-        [ "$vis_note" -eq 1 ] || echo; vis_note=1
-        # `private` deliberately leaves a fork contestants already forked
-        # public (making it private would cut their forks off), so it is not
-        # the advice for one (#496 M18).
-        forks="$(gh api "repos/$org/$name" --jq '.forks_count' 2>/dev/null)" || forks=""
-        case "$forks" in
-          0)
-            printf '%s⚠️  %s is public before launch — contestants can see its ctf branch; detach it and run '"'"'ctf-setup.sh private'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET" ;;
-          ''|*[!0-9]*)
-            # Unread is neither "no forks" (run private) nor "has forks" (leave
-            # it): advise nothing, like an unreadable visibility above.
-            printf '%s⚠️  %s is public before launch, and GitHub did not answer how many forks it has — could not read %s'"'"'s fork count, so no advice; re-run doctor.%s\n' "$C_YELLOW" "$name" "$name" "$C_RESET" ;;
-          *)
-            printf '%s⚠️  %s is public before launch and already has %s — leave it public: '"'"'ctf-setup.sh private'"'"' skips it on purpose, since making it private would cut those forks off.%s\n' "$C_YELLOW" "$name" "$(plural "$forks" fork forks)" "$C_RESET" ;;
-        esac
-      elif [ -z "$vis" ]; then
-        [ "$vis_note" -eq 1 ] || echo; vis_note=1
-        printf 'ℹ️  could not read %s'"'"'s visibility (GitHub did not answer).\n' "$name"
-      elif [ "$doctor_launch" = launched ] && [ "$vis" = private ]; then
-        [ "$vis_note" -eq 1 ] || echo; vis_note=1
-        printf '%s⚠️  %s is still private after launch — contestants cannot fork it; run '"'"'ctf-setup.sh launch'"'"'.%s\n' "$C_YELLOW" "$name" "$C_RESET"
-      fi
-    done
-  fi
-
-  # Org-level (not per-target): scorer package.
-  echo
-  if package_private "$org"; then
-    printf '%s✅ scorer package private%s\n' "$C_GREEN" "$C_RESET"
-  else
-    printf '%s⚠️  scorer package NOT private (or missing) — keep it private: https://github.com/orgs/%s/packages%s\n' "$C_YELLOW" "$org" "$C_RESET"
-  fi
-
+  doctor_check_matrix "$org" "$doctor_launch" || rc=1
+  doctor_check_fork_visibility "$org" "$doctor_launch"
+  doctor_check_package_private "$org"
   doctor_check_sync_app "$org" || rc=1
-
-  # No API exposes the per-fork "Manage Actions access" grants directly, so
-  # this is verified by OBSERVATION instead — see `pull_grant_status`. It is
-  # the one provisioning step with no API and the one whose failure looks like
-  # something else entirely (a scoring failure on a contestant's PR), so
-  # leaving it as a bare "confirm this by hand" reminder meant it stayed
-  # unverified until an event was already running.
-  # Scoring-workflow version per fork. The matrix's `wkfl` cell already goes
-  # ❌ when a fork is behind, but ❌ there reads as "missing" — and "present
-  # but three versions old" is a different problem with a different fix, so
-  # it gets said in those words, with the command that resolves it.
-  want_v="$(template_workflow_version)" || want_v=""
-  if [ -n "$want_v" ]; then
-    echo
-    echo "scoring workflow version (template is v$want_v):"
-    for t in $(all_targets); do
-      name="$(prov_repo_name "$t")"
-      case "$(fork_workflow_version "$org/$name")" in
-        none)
-          printf '  %-18s %s❌ absent%s — no ctf-score.yml on ctf; run: ./setup/ctf-setup.sh org\n' \
-            "$t" "$C_RED" "$C_RESET" ;;
-        0)
-          printf '  %-18s %s❌ pre-versioning%s — provisioned before workflow stamping; run: ./setup/ctf-setup.sh upgrade\n' \
-            "$t" "$C_RED" "$C_RESET" ;;
-        "$want_v")
-          printf '  %-18s %s✅ v%s%s\n' "$t" "$C_GREEN" "$want_v" "$C_RESET" ;;
-        *)
-          have="$(fork_workflow_version "$org/$name")"
-          if [ "$have" -gt "$want_v" ]; then
-            printf '  %-18s %s⚠️  v%s%s — AHEAD of this checkout (v%s); update the kit rather than downgrading the fork\n' \
-              "$t" "$C_YELLOW" "$have" "$C_RESET" "$want_v"
-          else
-            printf '  %-18s %s❌ v%s%s — stale (template v%s); run: ./setup/ctf-setup.sh upgrade\n' \
-              "$t" "$C_RED" "$have" "$C_RESET" "$want_v"
-          fi ;;
-      esac
-    done
-  fi
-
-  echo
-  echo "per-fork package Read grant (no API — read back from each fork's own scoring runs):"
-  for t in $(all_targets); do
-    name="$(prov_repo_name "$t")"
-    case "$(pull_grant_status "$org/$name")" in
-      granted)
-        printf '  %-18s %s✅ granted%s (a scoring run pulled the image)\n' "$t" "$C_GREEN" "$C_RESET" ;;
-      MISSING)
-        printf '  %-18s %s❌ MISSING%s — a run was refused the image; grant this fork Read under "Manage Actions access"\n' \
-          "$t" "$C_RED" "$C_RESET"
-        rc=1 ;;
-      error)
-        # GitHub did not answer (#536 review): fails the exit like any
-        # check_step that cannot read its evidence — not the advisory below.
-        printf '  %-18s %s❌ unreadable%s — GitHub did not answer for its scoring runs, so the grant is unchecked; re-run doctor\n' \
-          "$t" "$C_RED" "$C_RESET"
-        rc=1 ;;
-      *)
-        # NOT "no run has pulled yet" — that reads as a factual claim about
-        # the fork and is routinely false. `pull_grant_status` looks for a
-        # step named "Pull scorer image", which only exists from workflow v2
-        # onward; under v1 the pull happened inside "Run scorer", so a fork
-        # that has scored successfully many times still lands here. Observed
-        # on the test org: juice-shop scored 2/141 under v1 and read
-        # "no scoring run has pulled yet", which sends an organizer chasing a
-        # grant that was never missing. Say what is actually unknown.
-        printf '  %-18s %s⚠️  unverified%s — no run has reached the named pull step (needs a scoring run on workflow v2+); confirm by hand, or re-trigger a PR\n' \
-          "$t" "$C_YELLOW" "$C_RESET" ;;
-    esac
-  done
-  printf '  package settings: https://github.com/orgs/%s/packages\n' "$org"
+  doctor_check_workflow_versions "$org"
+  doctor_check_pull_grants "$org" || rc=1
   return $rc
 }
 
@@ -790,20 +952,16 @@ app_url_for() {
 # substitution takes the whole script down — silently, with no output and exit
 # 1. `render` on a machine with no .env did exactly that.
 #
-# A trailing `# comment` and surrounding whitespace are stripped: organizers
-# annotate this file (`GITHUB_ORG=myorg  # the disposable one`), and the value
-# this script forks into, or prints as the org it inspected, must be the org
-# and not the org plus prose. docker compose's own .env reader does the same.
-# A `#` INSIDE the value is only stripped when whitespace precedes it, so a
-# token that legitimately contains one survives.
+# The value is read by scripts/lib/dotenv.sh, the reader dev-stack and the Fly
+# scripts share, with docker compose's semantics: quotes, a leading `export `,
+# `KEY = value`, CRLF and a trailing ` # comment` all read the way compose
+# reads them. Organizers annotate this file (`GITHUB_ORG=myorg  # the
+# disposable one`), and the value this script forks into must be the org, not
+# the org plus prose. Reading it any other way than compose
+# does would let `SCORE_IMAGE=""` — empty to compose, so no scorer starts —
+# read as the two-character string `""` here, and call Secure Development on.
 env_val() {
-  local out="${OUT:-.env}" v
-  [ -f "$out" ] || return 0
-  v="$(sed -n "s/^$1=//p" "$out" | tail -1)"
-  v="${v%%[[:space:]]#*}"
-  # Trim both ends without a subshell per call: bash 3.2-safe extglob-free.
-  v="${v#"${v%%[![:space:]]*}"}"
-  printf '%s' "${v%"${v##*[![:space:]]}"}"
+  dotenv_get "${OUT:-.env}" "$1"
 }
 
 # Is the key PRESENT in the env file, whatever its value? Distinct from
@@ -812,9 +970,7 @@ env_val() {
 # Development", while no such line at all is a file that has not been asked
 # the question yet — one the wizard must ask rather than resume past.
 env_has() {
-  local out="${OUT:-.env}"
-  [ -f "$out" ] || return 1
-  grep -q "^$1=" "$out"
+  dotenv_has "${OUT:-.env}" "$1"
 }
 
 # Refuse to act on an absent env file, for the commands whose whole input it
@@ -832,15 +988,14 @@ require_env_file() {
 
 # EVENT_URL, out of the env file — never out of an event config (ADR 43).
 #
-# It used to be an `event.url` field in the event config file config v2
-# deleted, which put a DEPLOYMENT fact in the EVENT file. One event is
-# deployed to a box, to AWS and to fly.io on three
+# A `url:` in an event file would put a DEPLOYMENT fact in the EVENT file
+# (ADR 43). One event is deployed to a box, to AWS and to fly.io on three
 # different hostnames — that is why .env and .env.fly hold different
 # EVENT_URLs for one event — so a single `url:` could not be right for all of
-# them. Worse, it lost silently: EVENT_URL is what BETTER_AUTH_URL, the app's
-# HTTPS start-up guard and the CSRF origin check read, so a stale `event.url`
-# left sign-in working perfectly while every fork's score comment pointed
-# contestants at a dead leaderboard.
+# them. Worse, it would be read silently: EVENT_URL is what BETTER_AUTH_URL,
+# the app's HTTPS start-up guard and the CSRF origin check read, so a stale
+# `event.url` leaves sign-in working perfectly while every fork's score
+# comment points contestants at a dead leaderboard.
 env_url() {
   env_val EVENT_URL
 }
@@ -856,19 +1011,24 @@ env_url() {
 # configured for Secure Development when its env file says otherwise.
 score_image() {
   local v="${SCORE_IMAGE:-}"
-  [ -n "$v" ] || v="$(env_val SCORE_IMAGE)"
+  if [ -z "$v" ]; then v="$(env_val SCORE_IMAGE)" || exit 1; fi
   printf '%s' "$v"
 }
 
 # Does this event run Secure Development? NON-EMPTY SCORE_IMAGE in the env
-# file is the whole switch (config v2, #386): its containers only exist when
+# file is the whole switch (config v2): its containers only exist when
 # an image reference does, so the same value that names the image also says
 # whether there is anything to fork, mirror, poll or verify. Empty is not an
 # error — an event can run quiz, classic or ai alone, and those are app-side
 # only — so every caller says "this event does not run Secure Development"
 # rather than just "nothing to do".
+# A SCORE_IMAGE the reader refuses (an unterminated quote, interpolation, an
+# unreadable file) is neither answer: the script stops, with the reason
+# dotenv_get printed, instead of guessing on or off.
 runs_secdev() {
-  [ -n "$(env_val SCORE_IMAGE)" ]
+  local v
+  v="$(env_val SCORE_IMAGE)" || exit 1
+  [ -n "$v" ]
 }
 
 run() {
@@ -998,10 +1158,10 @@ cmd_secrets() {
     echo "GITHUB_APP_PRIVATE_KEY="
     echo "GITHUB_APP_INSTALLATION_ID="
     echo "EVENT_URL=http://localhost"
-    # The two keys the deleted event config file used to carry (config v2,
-    # #386). Emitted even though they are empty: a key that is absent is a
-    # key nobody knows to fill in, and both fail CLOSED — no org means
-    # nothing to poll or fork, and no admin means a /admin nobody can open.
+    # GITHUB_ORG and ADMIN_LOGINS are emitted even though they are empty:
+    # a key that is absent is a key nobody knows to fill in, and both fail
+    # CLOSED — no org means nothing to poll or fork, and no admin means a
+    # /admin nobody can open.
     echo "# GITHUB_ORG: the disposable per-event GitHub org. The app links forks"
     echo "# there, sync polls its repos, and ctf-setup provisions it."
     echo "GITHUB_ORG="
@@ -1018,6 +1178,10 @@ cmd_secrets() {
   echo "wrote $out — fill in GITHUB_ORG, ADMIN_LOGINS, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY, SCORE_IMAGE"
 }
 
+# `org`: provision every target's fork — fork, ctf branch, branch
+# protection, workflow, inherited-workflow disable, PR template. Steps
+# already satisfied are skipped; a free-plan protection refusal on a
+# confirmed-private fork is recorded pending, not failed.
 cmd_org() {
   require_env_file
   # The switch first: with SCORE_IMAGE empty this event does not run Secure
@@ -1043,16 +1207,45 @@ cmd_org() {
 
   require_targets
   echo "== provisioning $org (idempotent — re-run safe)"
-  local t
+  # Targets whose ctf protection could not be applied because GitHub's
+  # free plan refuses it on private repositories — recorded as pending until
+  # launch (which opens the forks and applies it), never as completed, and
+  # never a reason to stop: every remaining step and repo still runs.
+  local deferred_protect="" t
   for t in $(all_targets); do
     echo "== $t -> $org/$(prov_repo_name "$t")"
     local id
-    for id in $STEPS; do do_step "$id" "$t" "$org"; done
+    for id in $STEPS; do
+      if [ "$id" = protect ]; then
+        local prc=0
+        do_step protect "$t" "$org" || prc=$?
+        if [ "$prc" -eq 2 ]; then
+          echo "  ⏳ protect ($t): pending until launch — GitHub's free plan does not support branch protection on private repos"
+          deferred_protect="$deferred_protect $t"
+        elif [ "$prc" -ne 0 ]; then
+          return "$prc"
+        fi
+      else
+        do_step "$id" "$t" "$org"
+      fi
+    done
   done
 
   mirror_image "$org" "$src"
 
-  # Forks stay private until launch (#465). A fork still in its fork network
+  # The pending list, said plainly and before the manual steps: deferred is
+  # not done, and 'launch' is what clears it (applies + verifies each fork's
+  # protection once it is public).
+  if [ -n "$deferred_protect" ]; then
+    echo
+    echo "== branch protection PENDING until launch (the free plan refuses it on"
+    echo "   private repos; 'ctf-setup.sh launch' applies it once each fork is public):"
+    for t in $deferred_protect; do
+      echo "   - $org/$(prov_repo_name "$t"):ctf"
+    done
+  fi
+
+  # Forks stay private until launch. A fork still in its fork network
   # cannot be made private, so this skips it by name — re-run
   # `ctf-setup.sh private` after the detach below.
   privatize_forks "$org" || echo "   (fork visibility: see the errors above; re-run 'ctf-setup.sh private')"
@@ -1071,7 +1264,7 @@ cmd_org() {
 EOF
 }
 
-# #465: keep Secure Development forks private until launch, so nobody sees
+# Keep Secure Development forks private until launch, so nobody sees
 # the event's branch, workflow or PR template — or forks and opens PRs —
 # before it starts. Only a DETACHED fork can be private, and only while the
 # event is not launched: a launched event's forks stay public, and when the
@@ -1154,18 +1347,21 @@ cmd_private() {
   privatize_forks "$org"
 }
 
-# #465: launch day for an event running Secure Development, with the
+# Launch day for an event running Secure Development, with the
 # organizer's own `gh` login — the box never holds a GitHub admin credential.
 #   1. Pre-flight, fail closed: every fork detached, the scorer package
 #      private, and no fork refused the scorer image. A gh error counts as a
 #      problem, never as "OK". Anything wrong refuses BEFORE any change.
 #   2. Wait for Launch: the organizer presses it in /admin → Event, and this
 #      polls EVENT_URL/health/deep until the box reports `launched`. The forks
-#      stay private throughout (#477 review): they ARE the event's content —
+#      stay private throughout: they ARE the event's content —
 #      the ctf branch, the workflow, the PR template — and opening them first
 #      handed everyone a head start for as long as the press took.
 #   3. Flip every fork public (an already-public one is skipped), within one
-#      poll interval of the press.
+#      poll interval of the press — and, as each fork goes public, apply the
+#      ctf branch protection `org` deferred on a free plan (it refuses
+#      protection on private repos), then verify it on every fork
+#      before reporting success.
 # Every step is idempotent, so after a partial failure the report names the
 # state and a re-run finishes it. LAUNCH_WAIT_SECS (default 1800) and
 # LAUNCH_POLL_SECS (default 5) bound the wait.
@@ -1196,6 +1392,11 @@ cmd_launch() {
     echo "DRY-RUN: would wait for $url/health/deep to report launched (press Launch in /admin → Event), with every fork still private"
     for t in $(all_targets); do
       echo "DRY-RUN: gh api -X PATCH repos/$org/$(prov_repo_name "$t") -f visibility=public"
+    done
+    # The free plan could not protect the forks while they were private;
+    # launch applies the same protection `org` applies, then verifies it.
+    for t in $(all_targets); do
+      echo "DRY-RUN: PUT branch protection on $org/$(prov_repo_name "$t"):ctf once public (1 approving review, no force-push/deletion), then verify it"
     done
     return 0
   fi
@@ -1262,10 +1463,31 @@ cmd_launch() {
         exit 1
         ;;
     esac
+    # Immediately after the fork is public, apply the same idempotent
+    # check-then-apply ctf protection `org` uses — the free plan could not set
+    # it while the repo was private. Any failure here is a real one (the repo
+    # is public now, so the plan refusal cannot recur) and stops the launch.
+    do_step protect "$t" "$org" || {
+      echo "❌ could not apply ctf branch protection on $name (1 approving review required, force-pushes and deletions disabled)." >&2
+      echo "   Made public so far:${flipped:- none}. Fix the cause and re-run 'ctf-setup.sh launch' — it picks up where this stopped." >&2
+      exit 1
+    }
+  done
+
+  # Verify every fork's protection before reporting launch success:
+  # one approving review required, force-pushes and deletions disabled.
+  for t in $(all_targets); do
+    name="$(prov_repo_name "$t")"
+    if ! check_step protect "$t" "$org"; then
+      echo "❌ $name: ctf branch protection is not verified (needs 1 approving review, with force-pushes and deletions disabled) — not reporting launch." >&2
+      echo "   Re-run 'ctf-setup.sh launch' — it is idempotent and picks up where this stopped." >&2
+      exit 1
+    fi
   done
 
   echo "== launched ✓ $url (confirmed $launched_at)"
   echo "   forks made public now:${flipped:- none — every fork was already public}"
+  echo "   ctf branch protection applied and verified on every fork"
 }
 
 # Just the workflow-render step of cmd_org — for re-rendering after an
@@ -1411,7 +1633,6 @@ cmd_app_manifest() {
   fi
 
   local manifest_json; manifest_json="$(cat "$manifest")"
-  # Insert redirect_url as the first field, right after the opening brace.
   manifest_json="{
   \"redirect_url\": \"${redirect}\",${manifest_json#\{}"
 
@@ -1536,11 +1757,10 @@ wiz_step() { echo; printf '%s── %s%s\n' "$C_BOLD$C_CYAN" "$1" "$C_RESET"; }
 # ASCII banner shown at the top of the wizard. It is a LOGOTYPE — it spells the
 # project's brand, "OWASP CTF in a Box", so it moves whenever the brand does. It
 # names nothing in anyone's GitHub account, unlike the `OWASP CTF sync` App name
-# below, which is why that one keeps the pre-September-2026 brand and this one
-# does not. One line, in figlet's `small` font: the full name in the `standard`
-# font the old "OWASP CTF" banner used runs ~91 columns, and the wizard has to
-# read on an 80-column terminal; `small` fits it in 76 at four rows, one row
-# shorter than before. The brand's own casing ("in a Box"), which is also what
+# below, which exists in GitHub accounts and cannot follow the brand as freely.
+# One line, in figlet's `small` font: the full name in the `standard` font runs
+# ~91 columns, and the wizard has to read on an 80-column terminal; `small` fits
+# it in 76 at four rows. The brand's own casing ("in a Box"), which is also what
 # keeps it under 80 — all caps lands on exactly 80, one wrap away from garbage.
 # Quoted heredoc — every backslash and backtick below is art, not an escape.
 wiz_banner() {
@@ -1666,10 +1886,10 @@ require_targets() {
 # where nothing was written.
 #
 # Three keys, and only three: GITHUB_ORG, ADMIN_LOGINS and SCORE_IMAGE.
-# Everything an organizer used to put in the deleted event config file — the
-# event's name and branding, which modules run, which Secure Development
-# targets run, the schedule — is a RUNTIME setting in /admin now (config v2,
-# #386), so it is neither asked here nor written anywhere on disk.
+# Everything else an event needs — the event's name and branding, which
+# modules run, which Secure Development targets run, the schedule — is a
+# RUNTIME setting in /admin (config v2), so it is neither asked here nor
+# written anywhere on disk.
 #
 # Its own function, not inline in cmd_wizard, so the suite can drive the
 # questions with piped answers instead of walking nine steps to reach one
@@ -1752,16 +1972,15 @@ wiz_event_basics() {
   WIZ_SCORE_IMAGE="$ev_score"
 }
 
-# The optional step after the nine: put this same event on fly.io (issue #371).
+# The optional step after the nine: put this same event on fly.io.
 #
 # The nine steps stand up a LOCAL box — $1 is its bootstrap file and step 8
 # brings compose up against it. Fly is a SECOND deployment of the same event,
 # on a different hostname, with its own env file: that is why
 # `deploy/fly/deploy.sh init` copies $1 to .env.fly and rewrites EVENT_URL
-# there rather than sharing one file (ADR 43, and `env_url`'s comment). An
-# organizer used to have to discover that whole sequence — init, the hostname,
-# the second OAuth callback, the certificate — out of docs/fly.md; this offers
-# it inline instead.
+# there rather than sharing one file (ADR 43, and `env_url`'s comment). The
+# whole sequence — init, the hostname, the second OAuth callback, the
+# certificate — otherwise lives only in docs/fly.md; this offers it inline.
 #
 # Default NO, and non-fatal in EVERY direction. Answering no, having no
 # flyctl, or abandoning the deploy half-way must all leave the run exactly as
@@ -1958,26 +2177,12 @@ wiz_fly_deploy() {
   return 0
 }
 
-# The default front door: walk a brand-new organizer from zero to a running,
-# scored event, doing every automatable step and guiding + verifying each
-# UI-only one. Resumable — it inspects state (check/doctor/the env file) and
-# only prompts for what's missing, so re-running picks up where you left off.
-# The discrete subcommands remain for scripting/CI; the wizard just orchestrates
-# them. Stops with instructions whenever it needs you to do something off-box
-# (edit a file, click Create in GitHub's UI); complete it and re-run.
-cmd_wizard() {
-  local out="${OUT:-.env}"
-  # The SCORE_IMAGE step 3 settled on, for the later steps to key off when
-  # there is nothing written to read it back from (--dry-run).
-  WIZ_SCORE_IMAGE=""
-  wiz_banner
-  printf '%sOWASP CTF in a Box setup wizard%s — walks you to a running, scored event. Safe to re-run — it resumes.\n' "$C_BOLD" "$C_RESET"
-  [ "$DRY_RUN" -eq 1 ] && echo "(dry-run: nothing will be changed)"
-
-  # 1. Prerequisites (subshelled so cmd_check's exit doesn't kill the wizard).
-  # Under --dry-run this is narrated, not probed: cmd_check runs `gh auth
-  # status` and `docker compose version`, and --dry-run makes zero gh/docker
-  # calls (AGENTS.md).
+# Step 1 of the wizard: local prerequisites (subshelled so cmd_check's exit
+# doesn't kill the wizard).
+# Under --dry-run this is narrated, not probed: cmd_check runs `gh auth
+# status` and `docker compose version`, and --dry-run makes zero gh/docker
+# calls (AGENTS.md).
+wiz_prereqs() {
   wiz_step "1/9  Prerequisites"
   if [ "$DRY_RUN" -eq 1 ]; then
     echo "  DRY-RUN: would check for gh, docker, compose, openssl and gh auth"
@@ -1988,37 +2193,40 @@ cmd_wizard() {
     echo "  Fix the above, then re-run the wizard."
     exit 1
   fi
+}
 
-  # 2. Secrets (.env).
-  #
-  # `url_asked` stops step 3 asking for EVENT_URL a second time on a first
-  # run: this step already has the answer, and two prompts for one value read
-  # as a bug in the wizard.
+# Step 2 of the wizard: secrets (.env).
+#
+# `url_asked` (the caller's local) stops step 3 asking for EVENT_URL a second
+# time on a first run: this step already has the answer, and two prompts for
+# one value read as a bug in the wizard.
+wiz_secret_env() {
+  local out="$1" ev_url
   wiz_step "2/9  Secrets ($out)"
-  local url_asked=0
   if [ -f "$out" ]; then
     echo "  ✅ $out present"
   elif [ "$DRY_RUN" -eq 1 ]; then
     echo "  DRY-RUN: would generate $out via 'secrets' and prompt EVENT_URL"
   else
     cmd_secrets
-    local ev_url
     wiz_ask ev_url "Box URL contestants reach (https:// for a real event)" "$(env_val EVENT_URL)"
     set_env_var "$out" EVENT_URL "$ev_url"
     echo "  ✅ EVENT_URL=$ev_url"
     url_asked=1
   fi
+}
 
-  # 3. Event basics — the whole of what this wizard writes.
-  #
-  # Already answered when there is an admin (the one key every event needs;
-  # empty makes /admin forbid everyone), the Secure Development question has
-  # been PUT at all (the SCORE_IMAGE line exists, empty or not — `secrets`
-  # writes it empty, so only a hand-rolled file lacks it), and, if that
-  # answer was yes, an org to fork into. An app-only event legitimately has
-  # no GITHUB_ORG, so demanding one here would re-ask it every single run.
+# Step 3 of the wizard: Event basics — the whole of what this wizard writes.
+#
+# Already answered when there is an admin (the one key every event needs;
+# empty makes /admin forbid everyone), the Secure Development question has
+# been PUT at all (the SCORE_IMAGE line exists, empty or not — `secrets`
+# writes it empty, so only a hand-rolled file lacks it), and, if that
+# answer was yes, an org to fork into. An app-only event legitimately has
+# no GITHUB_ORG, so demanding one here would re-ask it every single run.
+wiz_basics() {
+  local out="$1" url_asked="$2" basics_done=0
   wiz_step "3/9  Event basics ($out)"
-  local basics_done=0
   if [ -n "$(env_val ADMIN_LOGINS)" ] && env_has SCORE_IMAGE; then
     if ! runs_secdev || [ -n "$(env_val GITHUB_ORG)" ]; then basics_done=1; fi
   fi
@@ -2039,21 +2247,12 @@ cmd_wizard() {
     echo "  Fix that and re-run the wizard — it resumes." >&2
     exit 1
   fi
+}
 
-  # Everything from here on that touches forks, the scorer image or the poll
-  # App belongs to Secure Development, and SCORE_IMAGE is the one fact that
-  # says whether this event runs it (config v2, #386). An app-only event has
-  # no repos to fork, no image to build and nothing to poll, so those steps
-  # are reported as not-applicable rather than asking an organizer for
-  # credentials they will never use.
-  local secdev=0 provisioned=0
-  if [ -n "$WIZ_SCORE_IMAGE" ]; then secdev=1; fi
-  local org=""
-  org="$(env_val GITHUB_ORG)"
-
-  # 4. Scorer image.
+# Step 4 of the wizard: scorer image.
+wiz_scorer_image() {
+  local secdev="$1" img="$WIZ_SCORE_IMAGE"
   wiz_step "4/9  Scorer image (SCORE_IMAGE)"
-  local img="$WIZ_SCORE_IMAGE"
   if [ "$secdev" -eq 0 ]; then
     echo "  ⏭  not needed — SCORE_IMAGE is empty, so this event does not run Secure Development"
   elif [ "$DRY_RUN" -eq 1 ]; then
@@ -2079,8 +2278,11 @@ cmd_wizard() {
     echo "     docker build --platform linux/amd64 -t $img $SCRIPT_DIR/../scorer"
     echo "     docker login ghcr.io && docker push $img"
   fi
+}
 
-  # 5. Sync GitHub App (poll auth).
+# Step 5 of the wizard: sync GitHub App (poll auth).
+wiz_sync_app() {
+  local secdev="$1"
   wiz_step "5/9  Sync GitHub App (poll auth)"
   if [ "$secdev" -eq 0 ]; then
     echo "  ⏭  not needed — this event does not run Secure Development (nothing to poll)"
@@ -2100,8 +2302,11 @@ cmd_wizard() {
       ask_yn "  Re-enter the App ID / .pem path?" || break
     done
   fi
+}
 
-  # 6. Sign-in OAuth app.
+# Step 6 of the wizard: sign-in OAuth app.
+wiz_oauth_app() {
+  local org="$1"
   wiz_step "6/9  Sign-in OAuth app"
   if [ -n "$(env_val GITHUB_CLIENT_ID)" ] && [ -n "$(env_val GITHUB_CLIENT_SECRET)" ]; then
     echo "  ✅ OAuth app configured"
@@ -2128,14 +2333,19 @@ cmd_wizard() {
       ask_yn "  Re-enter the Client ID / secret?" || break
     done
   fi
+}
 
-  # 7. Create + provision the org.
-  #
-  # The org exists for ONE reason: Secure Development forks into it. An
-  # app-only event has no org (GITHUB_ORG is legitimately empty), so this
-  # whole step — including the "create it, then re-run" stop, which used to
-  # end such a run at step 7 with steps 8 and 9 never reached — is skipped
-  # rather than asked.
+# Step 7 of the wizard: create + provision the org. Sets the caller's
+# `provisioned` when provisioning ran in THIS run, so the UI-only pause that
+# follows can offer itself only then.
+#
+# The org exists for ONE reason: Secure Development forks into it. An
+# app-only event has no org (GITHUB_ORG is legitimately empty), so this
+# whole step — including the "create it, then re-run" stop, which would
+# end such a run at step 7 with steps 8 and 9 never reached — is skipped
+# rather than asked.
+wiz_org() {
+  local org="$1" secdev="$2"
   wiz_step "7/9  Event org (${org:-<none>})"
   if [ "$secdev" -eq 0 ]; then
     echo "  ⏭  not needed — this event does not run Secure Development (no org to fork into)"
@@ -2168,19 +2378,23 @@ cmd_wizard() {
       echo "  Skipped. Run 'ctf-setup.sh org' (preview with --dry-run) when ready."
     fi
   fi
-  # The UI-only steps come NOW, before verification, not after it. doctor used
-  # to run right here, the instant provisioning finished, and only then did the
-  # wizard say "finish the UI-only steps" — so every first run ended on a
-  # table of ⚠️ for steps the organizer had not yet been given the chance to
-  # do, and had to re-run doctor by hand to see it clean (issue #370). cmd_org
-  # has just printed the checklist; pause on it, bring the stack up, and
-  # verify once at the very end (step 9).
-  #
-  # Only when the forks were actually provisioned in THIS run: with the offer
-  # declined there is nothing on GitHub to detach or grant yet, and a pause
-  # would ask the organizer to confirm work that does not exist. --dry-run
-  # never provisions, so it narrates the path a real run would take when
-  # Secure Development is on.
+}
+
+# The UI-only steps between provisioning and verification.
+#
+# The UI-only steps come NOW, before verification, not after it. Running
+# doctor right after provisioning would end every first run on a table of
+# ⚠️ for steps the organizer has not yet been given the chance to do. cmd_org
+# has just printed the checklist; pause on it, bring the stack up, and
+# verify once at the very end (step 9).
+#
+# Only when the forks were actually provisioned in THIS run: with the offer
+# declined there is nothing on GitHub to detach or grant yet, and a pause
+# would ask the organizer to confirm work that does not exist. --dry-run
+# never provisions, so it narrates the path a real run would take when
+# Secure Development is on.
+wiz_ui_only_steps() {
+  local org="$1" secdev="$2" provisioned="$3"
   if [ "$DRY_RUN" -eq 1 ] && [ "$secdev" -eq 1 ]; then
     echo
     echo "  DRY-RUN: would pause for the UI-only steps (fork-network detach, package Read grant)"
@@ -2191,19 +2405,21 @@ cmd_wizard() {
     echo "    2. ghcr.io/$org/score: keep PRIVATE, grant each fork Read (Manage Actions access)"
     pause_confirm "  Press Enter when done (or to continue now — step 9 re-checks, and 'ctf-setup.sh doctor' can re-run anytime)…"
   fi
+}
 
-  # 8. Bring the containers up.
-  #
-  # Compose profiles follow SCORE_IMAGE: `app` always, plus `secdev` — the
-  # scorer AND the poller — only when this event runs Secure Development. An
-  # app-only event needs neither: it has nothing to poll and no scorer image
-  # to pull, and asking for one would fail the bring-up outright. There is no
-  # second branch here any more: push ingest and its profile are REMOVED
-  # (#377, ADR 56), so poll is the transport and `secdev` is the only answer.
-  #
-  # No build-arg: the app reads GITHUB_ORG and ADMIN_LOGINS from the env file
-  # at RUN time now (config v2, #386) — nothing is baked into the image, so
-  # changing an admin is an edit and a restart, not a rebuild.
+# Step 8 of the wizard: bring the containers up.
+#
+# Compose profiles follow SCORE_IMAGE: `app` always, plus `secdev` — the
+# scorer AND the poller — only when this event runs Secure Development. An
+# app-only event needs neither: it has nothing to poll and no scorer image
+# to pull, and asking for one would fail the bring-up outright. Poll is the
+# transport (#377, ADR 56), so `secdev` is the only answer.
+#
+# No build-arg: the app reads GITHUB_ORG and ADMIN_LOGINS from the env file
+# at RUN time (config v2) — nothing is baked into the image, so
+# changing an admin is an edit and a restart, not a rebuild.
+wiz_bring_up() {
+  local secdev="$1"
   wiz_step "8/9  Bring the containers up"
   local profiles=(--profile app)
   if [ "$secdev" -eq 1 ]; then
@@ -2213,11 +2429,15 @@ cmd_wizard() {
   if ask_yn "  Bring the containers up now?" Y; then
     docker compose "${profiles[@]}" up -d --build
   fi
+}
 
-  # 9. Verify — last, on purpose (issue #370). This is the wizard's closing
-  # screen: after the UI-only steps have had their pause and the stack is up,
-  # a clean doctor table here means the event is ready, and a ⚠️ names the
-  # one thing still to do. --dry-run makes zero gh calls, so it narrates.
+# Step 9 of the wizard: verify — last, on purpose. This is the
+# wizard's closing screen: after the UI-only steps have had their pause and
+# the stack is up, a clean doctor table here means the event is ready, and a
+# ⚠️ names the one thing still to do. --dry-run makes zero gh calls, so it
+# narrates.
+wiz_verify() {
+  local secdev="$1"
   wiz_step "9/9  Verify"
   # secdev first, then dry-run: an app-only dry run must say the same thing
   # the real run would — nothing to verify — not that it would run doctor.
@@ -2228,21 +2448,16 @@ cmd_wizard() {
   else
     ( cmd_doctor ) || true
   fi
+}
 
-  # Optional, and deliberately NOT a tenth numbered step: the nine above stand
-  # up the local box, and this offers to put the same event on fly.io as well
-  # (issue #371). Default no, so a run that just wants the box is unchanged.
-  # `|| true` because an abandoned or failed Fly deploy must never take the
-  # wizard down after its .env work is already done — the function returns 0
-  # on every skip itself, and this is the belt to that braces.
-  wiz_fly_deploy "$out" || true
-
-  # The closing screen. It names the KEYS the bootstrap file carries, never
-  # their values: the same file holds BETTER_AUTH_SECRET, SRH_TOKEN,
-  # SCORER_TOKEN and REDIS_PASSWORD, and a wizard that echoed them would put
-  # every secret in a scrollback and a CI log.
+# The closing screen. It names the KEYS the bootstrap file carries, never
+# their values: the same file holds BETTER_AUTH_SECRET, SRH_TOKEN,
+# SCORER_TOKEN and REDIS_PASSWORD, and a wizard that echoed them would put
+# every secret in a scrollback and a CI log.
+wiz_done() {
+  local out="$1" secdev="$2" open_at
   echo
-  local open_at; open_at="$(env_url)"
+  open_at="$(env_url)"
   if [ -n "$open_at" ]; then
     echo "== Done. Open $open_at, sign in, and check /admin."
   else
@@ -2261,7 +2476,68 @@ cmd_wizard() {
   fi
 }
 
+# The default front door: walk a brand-new organizer from zero to a running,
+# scored event, doing every automatable step and guiding + verifying each
+# UI-only one. Resumable — it inspects state (check/doctor/the env file) and
+# only prompts for what's missing, so re-running picks up where you left off.
+# The discrete subcommands remain for scripting/CI; the wizard just orchestrates
+# them. Stops with instructions whenever it needs you to do something off-box
+# (edit a file, click Create in GitHub's UI); complete it and re-run.
+cmd_wizard() {
+  local out="${OUT:-.env}"
+  local url_asked=0
+  # The SCORE_IMAGE step 3 settled on, for the later steps to key off when
+  # there is nothing written to read it back from (--dry-run).
+  WIZ_SCORE_IMAGE=""
+  wiz_banner
+  printf '%sOWASP CTF in a Box setup wizard%s — walks you to a running, scored event. Safe to re-run — it resumes.\n' "$C_BOLD" "$C_RESET"
+  [ "$DRY_RUN" -eq 1 ] && echo "(dry-run: nothing will be changed)"
+
+  wiz_prereqs
+  wiz_secret_env "$out"
+  wiz_basics "$out" "$url_asked"
+
+  # Everything from here on that touches forks, the scorer image or the poll
+  # App belongs to Secure Development, and SCORE_IMAGE is the one fact that
+  # says whether this event runs it (config v2). An app-only event has
+  # no repos to fork, no image to build and nothing to poll, so those steps
+  # are reported as not-applicable rather than asking an organizer for
+  # credentials they will never use.
+  local secdev=0 provisioned=0
+  if [ -n "$WIZ_SCORE_IMAGE" ]; then secdev=1; fi
+  local org=""
+  org="$(env_val GITHUB_ORG)"
+
+  wiz_scorer_image "$secdev"
+  wiz_sync_app "$secdev"
+  wiz_oauth_app "$org"
+  wiz_org "$org" "$secdev"
+  wiz_ui_only_steps "$org" "$secdev" "$provisioned"
+  wiz_bring_up "$secdev"
+  wiz_verify "$secdev"
+
+  # Optional, and deliberately NOT a tenth numbered step: the nine above stand
+  # up the local box, and this offers to put the same event on fly.io as well.
+  # Default no, so a run that just wants the box is unchanged.
+  # `|| true` because an abandoned or failed Fly deploy must never take the
+  # wizard down after its .env work is already done — the function returns 0
+  # on every skip itself, and this is the belt to that braces.
+  wiz_fly_deploy "$out" || true
+
+  wiz_done "$out" "$secdev"
+}
+
+# Every key this script reads out of the env file, checked once, here, in the
+# script's own shell: a refusal inside a `$(env_val ...)` stops only that
+# subshell, and a caller such as `[ -n "$(env_val X)" ]` would read it as
+# empty. `check` reads no env file, so a broken one does not block it.
+ENV_KEYS="SCORE_IMAGE GITHUB_ORG ADMIN_LOGINS EVENT_URL GITHUB_APP_ID
+GITHUB_APP_PRIVATE_KEY GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET"
 if [ "$CMD" != "__selftest" ]; then
+  if [ "$CMD" != check ]; then
+    # shellcheck disable=SC2086 # the key list is split into words on purpose
+    dotenv_check "${OUT:-.env}" $ENV_KEYS || exit 1
+  fi
   case "$CMD" in
     ""|wizard) cmd_wizard ;;
     check) cmd_check ;;

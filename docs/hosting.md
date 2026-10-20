@@ -28,9 +28,10 @@ guides + verifies each UI-only one, and resumes if you stop:
 ./setup/ctf-setup.sh            # guided, prompts for values, resumable
 ```
 
-Every discrete step is also its own subcommand — `check`, `secrets`, `org`,
-`render`, `upgrade`, `teardown`, `doctor`, `app-manifest`, `app-config`,
-`oauth-app`, `oauth-config` — with the global flags `--dry-run` (print
+Every discrete step is also its own subcommand — `wizard` (the guided run
+itself), `check`, `secrets`, `org`, `render`, `upgrade`, `teardown`, `doctor`,
+`private`, `launch`, `app-manifest`, `app-config`, `oauth-app`,
+`oauth-config` — with the global flags `--dry-run` (print
 mutating commands instead of running them) and `--out <path>` (default
 `.env`, the file every subcommand reads and `secrets` writes). The numbered
 sequence below names each one where it's used; `teardown` is covered in
@@ -75,7 +76,8 @@ The `SCORE_INGEST` key that used to answer that question is gone — the wizard
 writes no such line and rewrites none, because nothing reads it. A line an
 upgraded `.env` still carries is inert: delete it. (`doctor` named such a line
 in v0.6 only; v0.7 removed that notice, #503.) `EVENT_URL` is asked once: at step 2 when the wizard
-creates `.env`, or at step 3 when an existing file has no value for it.
+creates `.env`, or at step 3 whenever it asks the event basics of an existing
+file, with the current value as the default (Enter keeps it).
 
 **Secure Development decides which later steps run.** With `SCORE_IMAGE` set,
 steps 4–7 do the scorer image, the `sync` GitHub App, and the org: forks,
@@ -93,7 +95,7 @@ afterward from `/admin` → Secure Development → Targets, live, with no
 rebuild — see [docs/operations.md](operations.md#targets).
 
 **Everything else is a runtime setting, so the wizard does not ask for it.**
-Which modules run, the event's name, tagline, location, contact and Discord
+Which modules run, the event's name, location, time zone, contact and Discord
 invite, the scoring window and dates, hint policy, team caps, the quiz's
 attempt and cooldown knobs: all of them live in `ctf:admin:settings` and are
 changed from `/admin` while the event is up (config v2, #386). There is no
@@ -158,7 +160,8 @@ git clone https://github.com/OWASP/owasp-ctf-in-a-box && cd owasp-ctf-in-a-box
 #    Pin linux/amd64 — GitHub runners are amd64; an arm64 image (the default on
 #    Apple Silicon) fails scoring with "no matching manifest for linux/amd64".
 docker login ghcr.io   # token with write:packages
-docker buildx build --platform linux/amd64 -t ghcr.io/<your-org>/score:latest --push scorer/
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+  -t ghcr.io/<your-org>/score:latest --push scorer/
 #    MANUAL: edit SCORE_IMAGE=ghcr.io/<your-org>/score:latest in .env
 #    (the wizard builds + pins amd64 for you at step 4)
 
@@ -253,7 +256,8 @@ Build your own scorer from the engine in `scorer/` — that is the
 self-contained path and it needs no upstream access:
 
 ```sh
-docker buildx build --platform linux/amd64 -t ghcr.io/<your-org>/score:latest --push scorer/
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+  -t ghcr.io/<your-org>/score:latest --push scorer/
 ```
 
 (`--platform linux/amd64` is required — GitHub runners are amd64, and
@@ -779,6 +783,50 @@ module, and three things read it as the answer.
 `ctf-setup.sh` reads it the same way: with no `SCORE_IMAGE` it skips every
 fork, mirror and poll step instead of failing.
 
+**Every script reads the same subset of compose's `.env` syntax, and refuses
+the rest.** `ctf-setup.sh`, `scripts/dev-stack` and both Fly scripts share
+one reader, `scripts/lib/dotenv.sh`, so they cannot disagree with each other
+about the same file. Within the subset below, each value is read exactly as
+`docker compose` reads it:
+
+- **Empty values.** `SCORE_IMAGE=`, `SCORE_IMAGE=""` and `SCORE_IMAGE=''` are
+  all empty, which means no Secure Development, everywhere.
+- **Quotes.** Quotes are stripped, and a `#` inside them is part of the
+  value.
+- **`export` and spacing.** A leading `export `, `KEY = value` and
+  `KEY: value` all count as assignments.
+- **Comments.** An unquoted value ends at the first ` #`, a space followed by
+  `#`. One compose quirk carries over on purpose: in `SCORE_IMAGE= # none`
+  the `#` is not preceded by a space once the value is trimmed, so the value
+  is `# none`, which is not empty. Leave the value blank, or write `""`.
+- **Line endings.** Windows (CRLF) line endings read the same as Unix ones.
+- **Repeated keys.** The last assignment of a key wins, even when it is
+  empty.
+
+Some things compose reads differently on purpose, and the reader **refuses**
+them. The command stops with an error naming the key and the file, never the
+value, and does not guess. An empty value would switch Secure Development off,
+and the literal text of an expression would switch it on.
+
+- **Interpolation**, outside single quotes: `$NAME`, `${NAME:-default}` and
+  the `$$` escape. Compose fills these in from your shell; the scripts do not,
+  so write the literal value. A `$` that compose leaves alone is fine, such as
+  `pa$5word`, a trailing `$`, or anything inside single quotes.
+- **Backslash escapes inside double quotes**, such as `\n` or `\"`, and `\'`
+  inside single quotes. Compose interprets them and the scripts do not. Use
+  single quotes (without `\'`), or no quotes.
+- **An unterminated quote.** Compose carries a double-quoted value on to the
+  next lines; the scripts read one line per key.
+- **An env file that exists but cannot be read**, because of its permissions
+  or because it is a directory. A file that does not exist reads as "not set".
+
+`test/fixtures/dotenv-corpus.env` holds every accepted case, each checked
+against `docker compose config`, and
+`test/fixtures/dotenv-corpus-rejected.env` holds every refused one. A
+differential test also has `docker compose config` read every generated
+combination of key form, value form, line ending and duplicate key, and fails
+if the scripts would read any of them differently.
+
 ### What `/admin` owns
 
 Everything below is a runtime setting in `ctf:admin:settings`, changed from the
@@ -791,7 +839,8 @@ panel while the event is running, and covered in
   setup script forks and provisions all six; the panel picks the live subset,
   and `sync` re-reads it every tick.
 - **The event's identity** — Event → Identity: name (default
-  `OWASP CTF in a Box`), tagline, location, contact e-mail, Discord invite.
+  `OWASP CTF in a Box`), location, time zone, contact e-mail, Discord invite
+  and logo link.
 - **The scoring schedule and the freeze** — Event → Schedule: scoring opens,
   scoring closes, and the manual pause.
 - **Hints, teams and caps** — the hint switch and prices, the registration
@@ -894,7 +943,7 @@ reads **no build-time configuration at all**, and no image in the kit takes a
 config build-arg. That is the point of #386: an image is the same image on
 every box, and a build that forgot a variable can no longer ship an event with
 an empty admin list. Dates come from the scoring schedule (**Scoring opens** /
-**Scoring closes**) set in `/admin` → Event, same as name, tagline, location,
+**Scoring closes**) set in `/admin` → Event, same as name, location,
 contact e-mail and Discord invite — all runtime settings, read on every
 request.
 
@@ -930,7 +979,7 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 | `BETTER_AUTH_SECRET` | `lib/auth.ts` | required | Session-signing secret. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | `lib/auth.ts` | required | The sign-in OAuth app (not the poll GitHub App). |
 | `ALLOW_INSECURE_EVENT_URL` | `instrumentation.ts` | unset | `1` downgrades the `http://` non-loopback refusal to a start-up warning. TLS-less closed networks only. |
-| `LEADERBOARD_SOURCE` | `lib/leaderboard/source.ts` | *fixed*: `lambda` | `mock` / `lambda` / `upstash`. With `secure-development` disabled the mode is forced to `empty` (no scorer read; the board is built from the module overlays alone); an unknown value falls back to `mock` with a warning. |
+| `LEADERBOARD_SOURCE` | `lib/leaderboard/source.ts` | *fixed*: `lambda` | `mock` / `lambda`. With `secure-development` disabled the mode is forced to `empty` (no scorer read; the board is built from the module overlays alone); an unknown value falls back to `mock` with a warning. |
 | `LEADERBOARD_API_URL` | `lib/challenges.ts`, `lib/leaderboard/lambda.ts` | *fixed*: `http://scorer:4000` | Scorer base URL for the challenge catalogue and the board. |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | `lib/upstash.ts`; also `scorer/src/store.js`, `sync/src/redis.js` | *fixed*: `http://srh:80`, `SRH_TOKEN` | Redis-over-REST endpoint. Hints, teams, admin settings and module content live behind it. |
 | `TEAM_WRITES_ENABLED` | `lib/team-store.ts` | *fixed*: `"true"` | Enables team create/join writes; off in mock mode. |
@@ -979,7 +1028,7 @@ workflow):
 
 | Variable | Read by | Default | Meaning |
 |---|---|---|---|
-| `WEBGOAT_JDK_IMAGE` | `webgoat.sh` | `eclipse-temurin:23-jdk-noble` | JDK used to build a fork from source through its own `./mvnw`. |
+| `WEBGOAT_JDK_IMAGE` | `webgoat.sh` | `eclipse-temurin:23-jdk-noble@sha256:7cb6c8eff24b…` | JDK used to build a fork from source through its own `./mvnw`. |
 | `SS_UPSTREAM_REPO`, `SS_UPSTREAM_REF` | `securityshepherd.sh` | `OWASP/SecurityShepherd` @ `662771b…` | Source cloned when the workspace has none. Pinned to a commit, never a branch. |
 | `WEBWOLF_URL`, `WEBGOAT_LEAKED_ADMIN_PW`, `WEBGOAT_DESER_PAYLOAD` | exported by `webgoat.sh`, read by the WebGoat rubric's tests | *computed* | Not inputs: the bring-up derives them from the running container and always exports them (an *empty* payload means "patched", an *absent* one would fail two challenges outright). |
 | `<TARGET>_UPSTREAM_REPO`, `<TARGET>_UPSTREAM_REF` | `scripts/acceptance-patched.sh` (`JS_`, `DVWA_`, `WEBGOAT_`, `VULNERABLEAPP_`, `VAMPI_`, `SS_`), `scripts/acceptance-target.sh` (`WG_`) | pinned per script | Local acceptance only: which fork and ref to judge as the patched or stock baseline. |

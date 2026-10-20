@@ -316,3 +316,53 @@ test("the first poll after a reset reports how many stale comments it skipped (#
   await tick(CFG, { repos: {} }, { fetchImpl: f, log: (m) => logs.push(m), redis: withReset(resetAt) });
   assert.ok(logs.some((l) => /poll DVWA: 2 preReset/.test(l)), JSON.stringify(logs));
 });
+
+// ── the score comment's time travels with the score ──────────────────────────
+
+test("each score carries its comment's updated_at as `at`", async () => {
+  const posts = [];
+  const c = ghComment(21);
+  c.updated_at = "2026-08-13T11:42:07Z";
+  const f = routes(() => new Response(JSON.stringify([c]), { status: 200 }), 202, posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {} });
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].at, "2026-08-13T11:42:07Z");
+});
+
+test("a marker cannot choose its own `at`: the comment's time wins", async () => {
+  const posts = [];
+  const c = ghComment(22, `<!-- ctf-score: {"author":"octocat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc","at":"2000-01-01T00:00:00Z"} -->`);
+  const f = routes(() => new Response(JSON.stringify([c]), { status: 200 }), 202, posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {} });
+  assert.equal(posts[0].at, c.updated_at);
+});
+
+// A 422 is the scorer's final verdict on WHEN the score was posted (during a
+// freeze, outside the window, before a reset). The rule worked as intended,
+// so it is not a drop: no counter an organizer has to chase, but one log
+// line naming the PR and the reason, and the revision stays seen.
+test("a final refusal (422) is marked seen, logged with its reason, and not counted as dropped", async () => {
+  const posts = [];
+  const f = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/issues/comments")) return new Response(JSON.stringify([ghComment(23)]), { status: 200, headers: { etag: 'W/"r"' } });
+    if (u.endsWith("/score")) {
+      posts.push(JSON.parse(opts.body));
+      return new Response(JSON.stringify({ error: "frozen", refused: "paused" }), { status: 422 });
+    }
+    throw new Error(`unexpected url ${u}`);
+  };
+  const state = { repos: {} };
+  const logs = [];
+  await tick(CFG, state, { fetchImpl: f, log: (m) => logs.push(m) });
+  assert.equal(posts.length, 1);
+  assert.equal(state.dropped, 0);
+  assert.equal(state.ingested, 0);
+  assert.equal(state.lastDrop, undefined);
+  assert.ok(logs.some((l) => /DVWA#7: refused \(paused\), not scored/.test(l)), logs.join("\n"));
+  assert.ok(logs.some((l) => /poll DVWA: .*1 refused/.test(l)), logs.join("\n"));
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(23, "2026-08-13T11:00:00Z")), true);
+  assert.equal(state.repos.DVWA.etag, 'W/"r"'); // the cursor moved on: nothing to retry
+  await tick(CFG, state, { fetchImpl: f, log: () => {} });
+  assert.equal(posts.length, 1, "a refused revision is never re-presented");
+});

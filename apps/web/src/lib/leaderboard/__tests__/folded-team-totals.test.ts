@@ -27,12 +27,17 @@ const mocks = vi.hoisted(() => ({
   getClassicTotals: vi.fn(),
   getTeamClassicTotalsBatch: vi.fn(),
   listChallenges: vi.fn(),
+  listStories: vi.fn(),
   getAiTotals: vi.fn(),
   getTeamAiTotalsBatch: vi.fn(),
   listAiChallenges: vi.fn(),
   listTeams: vi.fn(),
   penalties: new Map<string, number>(),
+  adjustments: new Map<string, number>(),
+  upstashPipeline: vi.fn(),
 }));
+// #591: the organizer's team adjustments, folded last.
+vi.mock("@/lib/adjustments-store", () => ({ teamAdjustments: async () => mocks.adjustments }));
 
 vi.mock("../source", () => ({
   getLeaderboardSource: async () => ({ getLeaderboard: async () => mocks.board() }),
@@ -47,6 +52,7 @@ vi.mock("@/lib/classic-store", () => ({
   getClassicTotals: mocks.getClassicTotals,
   getTeamClassicTotalsBatch: mocks.getTeamClassicTotalsBatch,
   listChallenges: mocks.listChallenges,
+  listStories: mocks.listStories,
 }));
 vi.mock("@/lib/ai-store", () => ({
   getAiTotals: mocks.getAiTotals,
@@ -60,9 +66,7 @@ vi.mock("@/lib/hint-config", () => ({
 }));
 // withModuleSeries reads each member's per-item hashes to chart them; an empty
 // result per command is "nothing to chart" and leaves `points` untouched.
-vi.mock("@/lib/upstash", () => ({
-  upstashPipeline: async (commands: unknown[]) => commands.map(() => ({ result: [] })),
-}));
+vi.mock("@/lib/upstash", () => ({ upstashPipeline: mocks.upstashPipeline }));
 
 import { getFoldedLeaderboard, resetFoldedLeaderboardCache } from "../folded";
 
@@ -97,6 +101,10 @@ beforeEach(() => {
   resetFoldedLeaderboardCache();
   mocks.board = scorerBoard;
   mocks.penalties = new Map();
+  mocks.adjustments = new Map();
+  mocks.upstashPipeline.mockImplementation(async (commands: unknown[]) =>
+    commands.map(() => ({ result: [] })),
+  );
 
   mocks.getQuizTotals.mockResolvedValue(
     new Map([
@@ -127,6 +135,7 @@ beforeEach(() => {
   );
   mocks.listQuestions.mockResolvedValue(["q1", "q2", "q3", "q4", "q5"].map((id) => ({ id })));
   mocks.listChallenges.mockResolvedValue(["c1", "c2", "c3", "c4", "c5", "c6"].map((id) => ({ id })));
+  mocks.listStories.mockResolvedValue([]);
   mocks.listAiChallenges.mockResolvedValue(["a1", "a2", "a3"].map((id) => ({ id })));
 
   mocks.listTeams.mockResolvedValue([
@@ -152,6 +161,18 @@ describe("the production fold's team totals (issue #520)", () => {
     expect(byteMe.modules?.ai?.points).toBe(650);
     const chipSum = Object.values(byteMe.modules ?? {}).reduce((n, m) => n + (m?.points ?? 0), 0);
     expect(chipSum).toBe(byteMe.points);
+  });
+
+  // #591: the production fold applies the team adjustment after hint
+  // penalties: a hint spend and a penalty both come off the same total.
+  it("applies a team adjustment after the hint fold, and ranks on it", async () => {
+    mocks.penalties = new Map([["alice", 100]]);
+    mocks.adjustments = new Map([["byte-me", 500]]);
+    const out = await getFoldedLeaderboard();
+    const byteMe = out.teams.find((t) => t.slug === "byte-me")!;
+    expect(byteMe.points).toBe(58 + 275 + 1125 + 650 - 100 + 500);
+    expect(byteMe.adjustment).toBe(500);
+    expect(out.teams.map((t) => t.slug).slice(0, 2)).toEqual(["byte-me", "sd-heavy"]);
   });
 
   it("ranks the teams on the single-counted totals", async () => {
@@ -212,5 +233,75 @@ describe("the production fold's team totals (issue #520)", () => {
       ["sd-heavy", 2500, 1],
       ["byte-me", 2108, 2],
     ]);
+  });
+
+  // #446 review: the chart must select its top ten from the FINAL ranking. A
+  // hint penalty drops player1 out of the players' ten, and an organizer
+  // adjustment lifts team12 (whose player12 is outside the entries' ten) into
+  // the teams' ten — so the read set and both emitted series follow the
+  // adjusted order, not the source's.
+  it("charts the final top ten after hint penalties and score adjustments", async () => {
+    const points = (n: number) => 1010 - 10 * n;
+    const ranked = Array.from({ length: 12 }, (_, i) => i + 1);
+    mocks.board = () => ({
+      entries: ranked.map((n) => ({
+        rank: n,
+        login: `player${n}`,
+        team: `team${n}`,
+        points: points(n),
+        patched: 0,
+        failed: 0,
+        total: 0,
+        apps: {},
+        updatedAt: null,
+      })),
+      teams: ranked.map((n) => ({
+        rank: n,
+        slug: `team${n}`,
+        name: `Team ${n}`,
+        captain: `player${n}`,
+        members: [`player${n}`],
+        points: points(n),
+      })),
+      generatedAt: "2026-10-09T00:00:00.000Z",
+      capabilities: { apps: true, teams: true, challenges: false },
+    });
+    mocks.listTeams.mockResolvedValue(
+      ranked.map((n) => ({ slug: `team${n}`, name: `Team ${n}`, members: [`player${n}`] })),
+    );
+    mocks.getQuizTotals.mockResolvedValue(new Map());
+    mocks.getClassicTotals.mockResolvedValue(new Map());
+    mocks.getAiTotals.mockResolvedValue(new Map());
+    mocks.getTeamQuizTotalsBatch.mockResolvedValue(
+      ranked.map(() => ({ points: 0, answered: 0, lastAt: null })),
+    );
+    mocks.getTeamClassicTotalsBatch.mockResolvedValue(
+      ranked.map(() => ({ points: 0, solved: 0, lastAt: null })),
+    );
+    mocks.getTeamAiTotalsBatch.mockResolvedValue(
+      ranked.map(() => ({ points: 0, solved: 0, lastAt: null })),
+    );
+    mocks.penalties = new Map([["player1", 200]]);
+    mocks.adjustments = new Map([["team12", 500]]);
+    mocks.upstashPipeline.mockImplementation(async (commands: unknown[][]) =>
+      commands.map((_, i) =>
+        i === 0
+          ? { result: ["q1", JSON.stringify({ points: 5, at: "2026-10-09T01:00:00.000Z" })] }
+          : { result: [] },
+      ),
+    );
+
+    const out = await getFoldedLeaderboard();
+    expect(out.series?.map((s) => s.login)).toEqual(ranked.slice(1, 11).map((n) => `player${n}`));
+    expect(out.teamSeries?.map((t) => t.slug)).toEqual([
+      "team12",
+      ...ranked.slice(1, 10).map((n) => `team${n}`),
+    ]);
+
+    const keys = (mocks.upstashPipeline.mock.calls[0][0] as string[][]).map(([, key]) => key);
+    const read = new Set(
+      keys.map((key) => key.replace(/^ctf:(?:quiz:answers|classic:solves|ai:solves):/, "")),
+    );
+    expect([...read].sort()).toEqual(ranked.slice(1).map((n) => `player${n}`).sort());
   });
 });

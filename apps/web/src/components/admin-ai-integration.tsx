@@ -36,7 +36,7 @@ import CopyButton from "@/components/copy-button";
 import AiEndpointDemo, { ENDPOINT_DEMOS } from "@/components/admin-ai-endpoint-demos";
 import type { AiChallenge } from "@/lib/ai-store";
 
-export type AdminAiIntegrationProps = {
+type AdminAiIntegrationProps = {
   challenge: AiChallenge;
   signingKey: string;
   onRotate: () => Promise<void>;
@@ -52,7 +52,7 @@ const TOKEN_CAPTION =
 
 const MASKED_KEY = "aik_…";
 
-export type AiTestOutcome = { kind: "award" } | { kind: "named"; label: string };
+type AiTestOutcome = { kind: "award" } | { kind: "named"; label: string };
 
 /** Classifies a `/api/admin/ai/test` response into a render-ready outcome.
  *  `ok` is the HTTP-level `res.ok` of the admin route's OWN response — a
@@ -120,7 +120,11 @@ export function testOutcomeTone(outcome: AiTestOutcome): "good" | "bad" {
 export function testOutcomeHelp(label: string): string | null {
   switch (label) {
     case "paused":
-      return "Not a fault: scoring is frozen, the event is outside its scheduled window, or it is not launched yet (no scoring start set). The dry run honours the schedule exactly as a real submission would.";
+      return "Not a fault: scoring is frozen, the event is before its scheduled start, or it is not launched yet (no scoring start set). The dry run honours the schedule exactly as a real submission would.";
+    case "ended":
+      // #567: the scheduled end has passed. Named apart from `paused` so an
+      // organizer re-checking after the event is not sent looking for a freeze.
+      return "Not a fault: the event's scheduled scoring end has passed, so every award is refused — the dry run honours the schedule exactly as a real submission would.";
     case "solved":
       return "Not a fault: the signature and token were accepted, and your own login already holds this challenge.";
     case "no-team":

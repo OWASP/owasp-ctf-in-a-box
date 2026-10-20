@@ -102,7 +102,6 @@ beforeEach(() => {
     scoringStartsAt: "2026-01-01T00:00:00Z", paused: true, updatedBy: "alice", updatedAt: "x",
     eventIdentity: {
       eventName: "Runtime CTF",
-      eventTheme: "Ship",
       eventLocation: "Online",
       eventContact: "org@example.org",
       eventDiscord: "https://discord.gg/x",
@@ -139,19 +138,17 @@ describe("exportEventBundle", () => {
     expect(s).not.toContain('"admins"');
   });
 
-  // #250: the ai catalogue is the third archivable content module. Included
-  // exactly when `ai` is in the resolved enabled set, like classic and quiz.
-  it("carries the ai catalogue when the ai module is enabled, and omits the section when it is not", async () => {
-    m.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["classic", "quiz", "ai"], paused: true });
-    const withAi = await exportEventBundle(new Date());
-    expect(withAi.bundle.ai).toEqual({ version: 1, categories: ["Prompt Injection"], challenges: [] });
-    expect(m.exportAi).toHaveBeenCalledTimes(1);
-
-    m.exportAi.mockClear();
-    m.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["classic", "quiz"], paused: true });
-    const withoutAi = await exportEventBundle(new Date());
-    expect("ai" in withoutAi.bundle).toBe(false);
-    expect(m.exportAi).not.toHaveBeenCalled();
+  // Import clears all three content stores, so the export must carry
+  // all three whatever the module toggle says — a switched-off module's
+  // content would otherwise be deleted by its own round trip. Which modules
+  // are on travels separately, in settings.enabledModuleIds.
+  it("carries every module's content when its module is switched off, with the toggle in settings", async () => {
+    m.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["quiz"], paused: true });
+    const { bundle } = await exportEventBundle(new Date());
+    expect(bundle.ai).toEqual({ version: 1, categories: ["Prompt Injection"], challenges: [] });
+    expect(bundle.classic?.challenges.map((c) => c.id)).toEqual(["web-one-ab12cd"]);
+    expect(bundle.quiz).toEqual({ version: 1, questions: [] });
+    expect(bundle.settings.enabledModuleIds).toEqual(["quiz"]);
   });
 
   // #405: sponsors are a PLATFORM feature, not gated on enabledModuleIds —
@@ -369,6 +366,21 @@ describe("importEventBundle", () => {
     vi.mocked(adminStore.updateAdminSettings).mockResolvedValue({} as Awaited<ReturnType<typeof adminStore.updateAdminSettings>>);
   });
 
+  it("round-trips a switched-off module: its content is re-imported and it stays off", async () => {
+    vi.mocked(aiStore.importBundle).mockResolvedValue({ created: 0, updated: 0, categories: 1 });
+    m.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["quiz"], paused: true });
+    const { bundle } = await exportEventBundle(new Date());
+
+    m.getAdminSettings.mockResolvedValue({ paused: true });
+    await importEventBundle(JSON.parse(JSON.stringify(bundle)), "alice");
+
+    expect(classicStore.importBundle).toHaveBeenCalledWith(bundle.classic);
+    expect(aiStore.importBundle).toHaveBeenCalledWith(bundle.ai);
+    expect(quizStore.importBundle).toHaveBeenCalledWith(bundle.quiz);
+    const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
+    expect(patch.enabledModules).toEqual(["quiz"]);
+  });
+
   it("refuses to import into a live event", async () => {
     m.effectivePaused.mockReturnValue(false);
     await expect(importEventBundle(bundleFixture(), "alice")).rejects.toBeInstanceOf(EventLiveError);
@@ -378,13 +390,24 @@ describe("importEventBundle", () => {
 
   it("clears content before importing (true replace), then sweeps run state", async () => {
     await importEventBundle(bundleFixture(), "alice");
-    expect(adminStore.resetEvent).toHaveBeenCalledWith("alice");
+    expect(adminStore.resetEvent).toHaveBeenCalledWith("alice", { keepLaunchKey: true });
     expect(classicStore.clearChallenges).toHaveBeenCalled();
     expect(classicStore.importBundle).toHaveBeenCalled();
     // clear must precede import
     const clearOrder = vi.mocked(classicStore.clearChallenges).mock.invocationCallOrder[0];
     const importOrder = vi.mocked(classicStore.importBundle).mock.invocationCallOrder[0];
     expect(clearOrder).toBeLessThan(importOrder);
+  });
+
+  // #653: an archive import replaces the catalogue but must NOT rotate the
+  // module's launch keypair — it is module identity, not catalogue content
+  // (ADR 53). The import opts `resetEvent` out of the launch-key wipe;
+  // admin-store.reset.test.ts pins that the option actually skips it and that
+  // the default (an ordinary reset) still clears it.
+  it("preserves the ai launch keypair by opting resetEvent out of the launch-key wipe", async () => {
+    await importEventBundle(bundleFixture(), "alice");
+    expect(adminStore.resetEvent).toHaveBeenCalledWith("alice", { keepLaunchKey: true });
+    expect(aiStore.clearAiChallenges).toHaveBeenCalled();
   });
 
   it("clears ALL THREE content stores on replace, even when the bundle carries only one module (a quiz-only archive must still wipe stale classic and ai content already on the target)", async () => {
@@ -620,14 +643,13 @@ describe("importEventBundle", () => {
 // suite already uses for importEventBundle — reused here rather than a new
 // one, per the same pattern.
 describe("event identity in the archive (issue #386)", () => {
-  it("exports name/theme/location and the logo link from the runtime identity, never contact or Discord", async () => {
+  it("exports name/location and the logo link from the runtime identity, never contact or Discord", async () => {
     const { bundle } = await exportEventBundle();
     // dates/ctfStartsAt come off the default fixture's scoringStartsAt
     // ("2026-01-01T00:00:00Z", no scoringEndsAt) via resolveSite/
     // formatDateRange — config v2, PR 3A, not event.yaml.
     expect(bundle.event).toEqual({
       name: "Runtime CTF",
-      theme: "Ship",
       dates: "From Dec 31, 2025",
       location: "Online",
       ctfStartsAt: "2026-01-01T00:00:00Z",
@@ -671,10 +693,10 @@ describe("event identity in the archive (issue #386)", () => {
       vi.mocked(adminStore.updateAdminSettings).mockResolvedValue({} as Awaited<ReturnType<typeof adminStore.updateAdminSettings>>);
     });
 
-    it("applies the bundle's name/theme/location through the settings patch, before anything destructive", async () => {
-      await importEventBundle({ ...bundleFixture(), event: { name: "Imported CTF", theme: "Again", location: "Montevideo" } }, "alice");
+    it("applies the bundle's name/location through the settings patch, before anything destructive", async () => {
+      await importEventBundle({ ...bundleFixture(), event: { name: "Imported CTF", location: "Montevideo" } }, "alice");
       const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
-      expect(patch).toMatchObject({ eventName: "Imported CTF", eventTheme: "Again", eventLocation: "Montevideo" });
+      expect(patch).toMatchObject({ eventName: "Imported CTF", eventLocation: "Montevideo" });
       expect(vi.mocked(adminStore.updateAdminSettings).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(adminStore.resetEvent).mock.invocationCallOrder[0],
       );
@@ -694,11 +716,19 @@ describe("event identity in the archive (issue #386)", () => {
       expect(patch).toMatchObject({ eventTimeZone: "Europe/Madrid" });
     });
 
-    it("leaves theme/location untouched when the bundle omits them", async () => {
+    // Archives exported before the tagline was dropped still carry
+    // `event.theme`; they import, and the value goes nowhere.
+    it("imports an archive that still carries event.theme without writing it", async () => {
+      await importEventBundle({ ...bundleFixture(), event: { name: "Older CTF", theme: "Again" } as never }, "alice");
+      const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
+      expect(patch).toMatchObject({ eventName: "Older CTF" });
+      expect(patch).not.toHaveProperty("eventTheme");
+    });
+
+    it("leaves location untouched when the bundle omits them", async () => {
       await importEventBundle({ ...bundleFixture(), event: { name: "Only Name" } }, "alice");
       const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
       expect(patch).toMatchObject({ eventName: "Only Name" });
-      expect(patch).not.toHaveProperty("eventTheme");
       expect(patch).not.toHaveProperty("eventLocation");
       expect(patch).not.toHaveProperty("eventLogoUrl");
       expect(patch).not.toHaveProperty("eventTimeZone");

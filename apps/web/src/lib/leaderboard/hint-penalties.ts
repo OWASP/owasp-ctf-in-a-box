@@ -4,7 +4,7 @@ import { errorLabel } from "@/lib/error-label";
 // hint-balance.ts, for the affordability gate, #553), so the policy reads the
 // fold needs live in a leaf both can import without a cycle.
 import { getHintPenalties, HINTS_AVAILABLE } from "@/lib/hint-config";
-import { compareStanding } from "./rank";
+import { compareStanding, compareTeamStanding } from "./rank";
 import type { LeaderboardData } from "./types";
 
 /**
@@ -12,11 +12,13 @@ import type { LeaderboardData } from "./types";
  * the scorer's data is never mutated, so penalties survive re-scores. Scores
  * are floored at 0 and both boards are re-ranked.
  *
- * THE PIPELINE'S LAST STAGE, deliberately: the penalty nets the FINAL
- * all-module total. It used to run first, netting scorer points alone —
+ * THE LAST ROW-TOTAL STAGE BEFORE TEAM ADJUSTMENTS, deliberately: the
+ * penalty nets the FINAL all-module total. It used to run first, netting
+ * scorer points alone —
  * which made hints free in every case where the row's points arrived later:
  * a classic- or quiz-only contestant (row created by module contributions),
- * and upstash-path teams (rows synthesised by team standings). Module blocks
+ * and a team whose module points team standings folds in (source rows alike,
+ * plus the membership-only rows it synthesises). Module blocks
  * everywhere show GROSS module points; the penalty appears exactly once, at
  * the row level, as the −N hints marker.
  *
@@ -95,9 +97,9 @@ export async function withHintPenalties(data: LeaderboardData): Promise<Leaderbo
             : team,
       };
     })
-    // TeamStanding carries no lastSolveAt, so points decide and the original
-    // position (the source's own tie-break) holds any tie.
-    .sort((a, b) => b.team.points - a.team.points || a.i - b.i)
+    // The team rule: points, items, then whoever earned their last
+    // points first in any module; the original position holds what is left.
+    .sort((a, b) => compareTeamStanding(a.team, b.team) || a.i - b.i)
     .map(({ team }, i) => ({ ...team, rank: i + 1 }));
 
   return { ...data, entries, teams };

@@ -25,7 +25,7 @@ import { upstashEval } from "@/lib/upstash";
  * fail-open reasoning the freeze reads use — see AGENTS.md.
  */
 
-export type RateLimitVerdict =
+type RateLimitVerdict =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
 

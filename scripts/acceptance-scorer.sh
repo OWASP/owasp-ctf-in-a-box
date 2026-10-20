@@ -36,6 +36,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# pins: the scorer image acc_build_scorer builds from this checkout
 IMG=ctf-score:acceptance
 NET=ctf-scorer-acceptance
 SERVE_CTR=ctf-scorer-acceptance-serve
@@ -114,6 +115,7 @@ docker build -t "$IMG" --build-arg RUBRIC_DIR=rubric.example scorer/
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
 
 echo "--- boot score serve (memory store)"
+# pins: $IMG is the scorer image this script builds
 docker run -d --name "$SERVE_CTR" --network "$NET" \
   -p "127.0.0.1:$SERVE_PORT:4000" -e SCORER_TOKEN=test-token "$IMG" >/dev/null
 
@@ -147,6 +149,7 @@ import("./sync/src/parse.js").then(({ parseScoreComment }) => {
 echo "--- run judge via the score-action contract"
 # No --network on purpose: score-action starts the scorer on the default
 # bridge and the entrypoint must self-attach to $NET over docker.sock.
+# pins: $IMG is the scorer image this script builds
 docker run --rm \
   --entrypoint /usr/local/bin/entrypoint.sh \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -172,8 +175,10 @@ REPORT="$WS_PATCHED/ctf-score.md"
 [ -f "$REPORT" ] || { echo "FAIL: judge wrote no ctf-score.md"; exit 1; }
 
 echo "--- report carries the score-action regexes with the expected count"
-grep -qF '## 🏆 CTF Patch Score' "$REPORT"
-grep -qF '**2 / 3** challenges patched' "$REPORT"
+grep -qF '## 🏆 CTF Patch Score' "$REPORT" \
+  || { echo "FAIL: ctf-score.md has no '## 🏆 CTF Patch Score' heading"; cat "$REPORT"; exit 1; }
+grep -qF '**2 / 3** challenges patched' "$REPORT" \
+  || { echo "FAIL: ctf-score.md does not say '**2 / 3** challenges patched'"; cat "$REPORT"; exit 1; }
 
 echo "--- oracle discipline: no probe internals leak into the comment"
 for secret in '/rest/products/search' 'alert(1)' '/rest/user/login' '/ftp/acquisitions.md' 'bodyMissing'; do
@@ -240,6 +245,7 @@ JS
 )
 write_fake_app "$WS_STOCK" "$STOCK_APP_JS"
 
+# pins: $IMG is the scorer image this script builds
 docker run --rm \
   --entrypoint /usr/local/bin/entrypoint.sh \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -257,7 +263,8 @@ docker rm -f ctf-app-juice-shop >/dev/null 2>&1 || true
 
 STOCK_REPORT="$WS_STOCK/ctf-score.md"
 [ -f "$STOCK_REPORT" ] || { echo "FAIL: stock judge wrote no ctf-score.md"; exit 1; }
-grep -qF '**0 / 3** challenges patched' "$STOCK_REPORT"
+grep -qF '**0 / 3** challenges patched' "$STOCK_REPORT" \
+  || { echo "FAIL: stock ctf-score.md does not say '**0 / 3** challenges patched'"; cat "$STOCK_REPORT"; exit 1; }
 # An empty solve list is a real result, not a failure to report: the scorer
 # takes it (202) and the author stays at zero.
 post_marker "$STOCK_REPORT"
@@ -279,11 +286,11 @@ process.stdin.on("data", (c) => (s += c)).on("end", () => {
 '
 
 echo "--- freeze: boot a second serve instance backed by real Redis (via SRH)"
-docker run -d --name "$FREEZE_REDIS_CTR" --network "$NET" redis:7-alpine >/dev/null
+docker run -d --name "$FREEZE_REDIS_CTR" --network "$NET" redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 >/dev/null
 docker run -d --name "$FREEZE_SRH_CTR" --network "$NET" \
   -e SRH_MODE=env -e SRH_TOKEN="$FREEZE_SRH_TOKEN" \
   -e SRH_CONNECTION_STRING="redis://$FREEZE_REDIS_CTR:6379" \
-  hiett/serverless-redis-http:latest >/dev/null
+  hiett/serverless-redis-http:latest@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150 >/dev/null
 
 srh_deadline=$((SECONDS + 30))
 until docker exec "$FREEZE_SRH_CTR" wget -qO- \
@@ -293,6 +300,7 @@ until docker exec "$FREEZE_SRH_CTR" wget -qO- \
   sleep 1
 done
 
+# pins: $IMG is the scorer image this script builds
 docker run -d --name "$FREEZE_SERVE_CTR" --network "$NET" \
   -p "127.0.0.1:$FREEZE_PORT:4000" \
   -e SCORER_TOKEN=test-token \
@@ -330,5 +338,48 @@ echo "--- freeze: clearing paused resumes normal scoring"
 docker exec "$FREEZE_REDIS_CTR" redis-cli HSET ctf:admin:settings paused 0 >/dev/null
 code=$(score_freeze)
 [ "$code" = "202" ] || { echo "FAIL: expected 202 after resume, got $code"; exit 1; }
+
+# A score sent with `at` (the score comment's time, which sync sends) is timed
+# by it and judged AT it: the launch, the freeze and the reset epoch as they
+# stood then, read from the settings hash and the pause log over srh (ADR 67).
+# The checks above send no `at`, the older sync's arrival-time path.
+score_at() { # $1 = author, $2 = at
+  curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$FREEZE_PORT/score" \
+    -H "authorization: Bearer test-token" -H 'content-type: application/json' \
+    -d "{\"author\":\"$1\",\"target\":\"juice-shop\",\"solved\":[\"reflected-xss-search\"],\"at\":\"$2\"}"
+}
+expect_code() { # $1 = expected, $2 = actual, $3 = what
+  [ "$2" = "$1" ] || { echo "FAIL: $3: expected $1, got $2"; exit 1; }
+}
+redis_freeze() { docker exec "$FREEZE_REDIS_CTR" redis-cli "$@" >/dev/null; }
+
+echo "--- comment time: a score posted before the launch is refused for good (422)"
+expect_code 422 "$(score_at before-launch 1999-12-31T23:59:59Z)" "a score posted before scoringStartsAt"
+
+echo "--- comment time: recorded at the comment's time, not at arrival"
+expect_code 202 "$(score_at early-bird 2001-02-03T04:05:06Z)" "a score posted during play"
+curl -sf "http://127.0.0.1:$FREEZE_PORT/leaderboard" | grep -q '"author":"early-bird","points":[0-9]*,"lastSolveAt":"2001-02-03T04:05:06.000Z"' \
+  || { echo "FAIL: early-bird's solve was not timed by its comment"; exit 1; }
+
+echo "--- comment time: frozen since T, a score from before T scores and one from T on is refused"
+redis_freeze HSET ctf:admin:settings paused 1 pausedSince 2020-01-01T00:00:00.000Z
+expect_code 202 "$(score_at before-freeze 2019-12-31T23:59:59Z)" "a score posted before the freeze, read during it"
+expect_code 422 "$(score_at in-freeze 2020-01-01T00:00:00Z)" "a score posted at the freeze's start"
+
+echo "--- comment time: once lifted, the logged interval still refuses, and after it scores"
+redis_freeze HDEL ctf:admin:settings paused pausedSince
+redis_freeze LPUSH ctf:admin:pauses '{"from":"2020-01-01T00:00:00.000Z","to":"2020-01-02T00:00:00.000Z"}'
+expect_code 422 "$(score_at in-logged-freeze 2020-01-01T12:00:00Z)" "a score posted inside a logged freeze"
+expect_code 202 "$(score_at after-freeze 2020-01-02T00:00:00Z)" "a score posted as the freeze lifted"
+
+echo "--- comment time: a freeze with no recorded start answers 503 (retry), not a final refusal"
+redis_freeze HSET ctf:admin:settings paused 1
+expect_code 503 "$(score_at unknown-start 2021-01-01T00:00:00Z)" "a score under a freeze with no pausedSince"
+redis_freeze HDEL ctf:admin:settings paused
+
+echo "--- comment time: a score older than the master-reset epoch is refused (422)"
+redis_freeze HSET ctf:admin:settings resetAt 1640995200000
+expect_code 422 "$(score_at pre-reset 2021-06-01T00:00:00Z)" "a score posted before the reset epoch"
+expect_code 202 "$(score_at post-reset 2022-06-01T00:00:00Z)" "a score posted after the reset epoch"
 
 echo "ACCEPTANCE PASS"

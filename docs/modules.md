@@ -160,8 +160,13 @@ the sections below are the enforceable contract behind it.
    no second write path. A module MUST NOT invent one.
 
 2. Payload MUST be `{author, target, solved: string[], pr: number, sha:
-   string}`, delivered as a bearer-authenticated JSON POST, and a success
-   response is `202`:
+   string, at: string}`, delivered as a bearer-authenticated JSON POST, and a
+   success response is `202`. `at` is when the score was earned — for the
+   poll pipeline, the score comment's GitHub `updated_at` — and the scorer
+   times the solve by it and judges the scoring window, the freeze and the
+   master-reset epoch at it ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)).
+   A `422` is a final refusal on that time (never retry it); a payload with
+   no `at` is timed on arrival, the older rule:
 
    ```js
    // sync/src/submit.js
@@ -172,8 +177,8 @@ the sections below are the enforceable contract behind it.
    });
    ```
 
-   (`sync/test/submit.test.js`: "POSTs payload with bearer token, true on
-   202".)
+   (`sync/test/submit.test.js`: "POSTs payload with bearer token, accepted
+   on 202", "refused on 422, carrying the scorer's reason".)
 
 3. `author` MUST match the GitHub-login grammar before it is ever sent,
    because it becomes a datastore key on the scorer side:
@@ -343,10 +348,12 @@ level, since points are what the board ranks on. A module whose source
 reports no ceiling shows what was earned rather than an `N / 0 pts` fraction — the page's headline total was already net and correct before
 this, what it was missing was the per-module breakdown behind it; the admin
 panel
-(`app/(site)/admin/admin-controls.tsx`) is a tab shell — seven control-plane
+(`app/(site)/admin/admin-controls.tsx`) is a tab shell — eight control-plane
 tabs that belong to the platform itself (**Overview**, **Event**, **Hints**,
-**Admins**, **Support**, **Activity**, **Insights**), then one tab per
-enabled module, labelled with that module's organizer-resolved `title` — with
+**Admins**, **Sponsors**, **Support**, **Activity**, **Insights**), then one
+tab per enabled module, labelled with that module's organizer-resolved
+`title`, grouped in the sidebar as Run, Content (the module tabs) and Setup
+(`app/(site)/admin/use-admin-nav.ts`) — with
 the four hint controls on the Hints tab (they are event policy shared by
 every module that sells hints), Secure Development's re-run cooldown in its
 own tab (`app/(site)/admin/admin-secure-dev-tab.tsx`), the quiz's two retry-gate
@@ -454,9 +461,24 @@ third module isn't mistaken for a fully general n-module platform:
   - **Fails closed.** A stories read that fails errors the request instead of
     guessing.
   - **Authoring.** The `/admin` Jeopardy tab has a Stories editor
-    (`POST /api/admin/classic` with exactly `{ stories }`). Bundles carry
-    stories as version 2 and merge them by id on import. See
-    `docs/operations.md`'s "Jeopardy" section.
+    (`POST /api/admin/classic` with exactly `{ stories }`). Stories need
+    bundle version 2 or later; an export is stamped with the oldest version
+    that knows every field it carries (up to 4), and an import merges
+    stories by id. See `docs/operations.md`'s "Jeopardy" section.
+- **`classic` challenges can be hidden or scheduled (issue #189).** A
+  challenge stores `enabled` (absent means live) and an optional
+  `releaseAt`; visibility is derived at read time, never by a job on the box.
+  - **One predicate.** `isChallengeVisible` (`lib/classic-release.ts`)
+    answers it for every contestant reader, and `classicVisibility`
+    (`lib/classic-visibility.ts`) wraps it for the challenge page, its
+    metadata and the attachment download. A hidden challenge is left out of
+    every server payload, not just unrendered.
+  - **Enforced in Lua.** `SUBMIT_SCRIPT` and `REVEAL_SCRIPT` read the
+    record and Redis's `TIME`, and answer a hidden challenge exactly like an
+    unknown one, before any attempt or charge.
+  - **Bundles carry it** as version 4, stamped only when some challenge is
+    hidden or scheduled. See
+    [ADR 68](decisions.md#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock).
 - **`classic` HAS paid hints (issue #190).** An organizer attaches optional
   hint text in the admin classic form (or a bundle's `hint` field); the text
   is secret until purchased — its own hash, `ctf:classic:hints`, exactly the
@@ -728,9 +750,10 @@ of one module's shape.
      store read or write, and returns the response it hands back: **HTTP 403
      `{ "error": "not-launched" }`** — its own error, never a wrong-answer
      shape and never a redirect. Today that is `POST /api/classic/submit`,
-     `POST /api/quiz/answer`, `POST /api/hints/reveal` and
-     `GET /api/board/items`. A module's UI should name the refusal (the
-     classic, quiz and hint UIs do) rather than render it as "wrong".
+     `POST /api/quiz/answer`, `POST /api/hints/reveal`,
+     `GET /api/board/items` and `GET /api/attachments/<id>`. A module's UI
+     should name the refusal (the classic, quiz and hint UIs do) rather than
+     render it as "wrong".
    - **Server actions and tokens.** A server action is an API too: the ai
      module's in-box flag action (`/ai/[id]/actions.ts`) checks
      `getLaunchAccess(login)` and answers `{ error: "not-launched" }`. The ai
@@ -760,17 +783,18 @@ of one module's shape.
    The check lives in each page and route, **not** in `proxy.ts`: the proxy
    makes no Redis reads (its matcher is only `/profile` and `/api/*`, for
    the sign-in redirect and the cross-origin write assertion — minus
-   `/api/admin/event`, the archive import, which the proxy would truncate past
-   10 MB and which runs the same origin check itself), and a
+   `/api/admin/event`, the archive import, and `/api/admin/classic/bundle`,
+   the classic bundle import that carries files, which the proxy would
+   truncate past 10 MB and which run the same origin check themselves), and a
    page-level check runs on every request, soft navigations included, where a
    layout would not. The failure mode that design invites — a new module page
    or route that forgets the guard — is closed by
-   `src/__tests__/launch-guard-coverage.test.ts`, which walks every page under
-   the module page trees and every route under the module API trees on disk
-   and fails if one does not call the guard. A new module adds its page and
-   API roots to that test's lists; an exemption (today only
-   `GET /api/hints`, which returns the caller's own purchases and never hint
-   text) is named there with its reason.
+   `src/__tests__/launch-guard-coverage.test.ts`. It derives the page roots
+   from `ALL_MODULE_ROUTES` in `lib/modules.ts` (plus `/leaderboard`), so a
+   new module's board is checked as soon as it is registered, and it walks
+   every route under `app/api` outside `api/admin/`. A page or route that does
+   not call the guard fails the test unless the route is listed in the test's
+   `API_EXEMPT` map, which names each deliberate exemption with its reason.
 
    Deliberately **not** locked: `/api/auth/*` (signing in before kickoff is
    intended), `/api/admin/*` (organizers configure the event before it
@@ -813,15 +837,15 @@ of one module's shape.
 
 ## Section 6. Security requirements (non-negotiable)
 
-1. Contestant code MUST run only inside sandboxed containers on an internal
-   Docker network — never on the host, never with any token access. This
-   is the `pull_request_target` pattern `secure-development` uses: the
-   scoring workflow runs in the base (org) repo's context, where the org
-   `GITHUB_TOKEN` (needed to pull the org-mirrored scorer image and read org
-   secrets) lives, while the untrusted PR code under test executes in a
-   sandboxed container on an internal Docker network with no access to
-   that token — the isolation pattern the kit's own consumer workflow
-   template (`scorer/consumer-workflow.example.yml`) implements, the same
+1. Contestant code MUST run only inside sandboxed containers — never on the
+   host, never with any token access. This is the `pull_request_target`
+   pattern `secure-development` uses: the scoring workflow runs in the base
+   (org) repo's context, where the org `GITHUB_TOKEN` (needed to pull the
+   org-mirrored scorer image) lives, while the untrusted PR code under test
+   runs in a sibling container on a dedicated user-defined bridge network
+   (not `--internal`; `scorer/entrypoint.sh`) with no published host ports
+   and no access to that token — the isolation pattern the kit's own
+   consumer workflow template (`scorer/consumer-workflow.example.yml`) implements, the same
    workflow `setup/ctf-setup.sh`'s `cmd_org` renders per target and commits
    into each forked target repo automatically (§7.2; the `render`
    subcommand's `dist/workflows/` output is the offline/manual alternative).
@@ -841,9 +865,7 @@ of one module's shape.
    PR per hour), so a contestant cannot brute-force the scorer's judgment
    with rapid speculative pushes. (`secure-development`'s shipped consumer
    workflow, `scorer/consumer-workflow.example.yml`, enforces this itself
-   with a per-PR `concurrency` group plus a `COOLDOWN_MINUTES` gate; the
-   upstream `score-action` path still doesn't — see
-   [Status and upstream dependencies](operations.md#status-and-upstream-dependencies).
+   with a per-PR `concurrency` group plus a `COOLDOWN_MINUTES` gate.
    Any new module's scoring workflow MUST ship its own cap regardless.)
 
 4. **Stock-scores-zero invariant**: an unpatched, stock copy of a target
@@ -870,9 +892,9 @@ provisioning. Concretely, that means `ctf-setup.sh org`/`render`/`doctor`
 MUST tolerate `secure-development` being the *only* provisioning-needing
 module and simply absent — not merely tolerate it being present alongside
 `quiz` — and report "nothing to provision/check" rather than erroring
-(`has_module secure-development` gates each of the three; see the ADR
-referenced in §1.2). A module standing alone this way still owes the rest of
-the contract in full: display metadata (§5.1), a challenge catalogue if it
+(`runs_secdev`, true when `SCORE_IMAGE` is non-empty, gates each of the
+three; see the ADR referenced in §1.2). A module standing alone this way
+still owes the rest of the contract in full: display metadata (§5.1), a challenge catalogue if it
 has one (§4.2/§5.2), its own leaderboard progress semantics (§5.3), and the
 UI composition surfaces in §5.5/§5.6 — "first-class" means the platform
 never assumes a *different* module is also enabled, not that this module
@@ -936,11 +958,11 @@ org.
 ## Section 8. Versioning
 
 Targets MUST be pinned to exact versions/digests — never `:latest`.
-`secure-development` inherits this from its upstream: the event org's fork
-of each target is "pinned to the canonical vulnerable version" (the
-upstream `OWASP-CTF/<target>` repo already sits at a known-vulnerable
-commit; `gh repo fork` copies that state as-is, so the fork "inherits the
-correct pinned vulnerable version" rather than tracking upstream `HEAD`).
+`secure-development` pins in `setup/targets.tsv`: each row names the real
+upstream repo the event org forks and a `ref` (a tag or commit). After
+forking, `setup/ctf-setup.sh` creates a `ctf` branch at that `ref`'s commit
+and makes it the fork's default branch, so contestants branch from the
+pinned vulnerable version rather than from upstream `HEAD`.
 
 The reason this is load-bearing, not cosmetic: the scoring rubric is
 regression tests written against a specific vulnerable version. If a
@@ -975,7 +997,7 @@ build-time vendoring step first). Until then, a new module `<name>` with target
 | File | What to add |
 |---|---|
 | `sync/src/config.js` | add `<t>` to `TARGETS` + `REPO_NAMES` (sync has no module list — see §1.3) |
-| `apps/web/src/lib/modules.ts` | register the module's display name / description |
+| `apps/web/src/lib/module-defs/<name>.ts` + `apps/web/src/lib/modules.ts` | the module's display name, description, nav and copy blocks in its own def file, registered in `modules.ts`'s `REGISTRY` |
 | `apps/web/src/lib/apps.ts` | add `<t>` to `AppId` / `REPO_NAMES` / `apps[]` |
 | `scorer/src/targets.js` | add `<t>`'s scoring shape (`name` / `catalogueFile` / `byName` / `defaultConcurrency` / `urlEnv`) |
 | `scorer/entrypoints/<t>.sh` | the target's bring-up |
@@ -1006,7 +1028,7 @@ different, smaller set of files, since none of `scorer/`'s rows apply and
 | `apps/web/src/app/(site)/flags/page.tsx` + `apps/web/src/components/challenge-board.tsx` + `apps/web/src/components/challenge-detail.tsx` | the contestant-facing board and the challenge page it links to (both shared with `ai`, parameterised by `basePath`) |
 | `apps/web/src/components/admin-classic-controls.tsx` | the organizer's cooldown knob, category manager, and challenge authoring UI |
 | `apps/web/src/lib/leaderboard/module-contributions.ts` + `apps/web/src/lib/leaderboard/team-fold.ts` | the leaderboard overlay (points added, never attributed) and the union-by-item team dedupe it shares with `quiz` |
-| `apps/web/src/lib/modules.ts` | register display name/description/nav plus the `home`/`guide`/`rules`/`faq`/`terms`/`routeCard` copy blocks (§5.5–5.7) |
+| `apps/web/src/lib/module-defs/classic.ts` + `apps/web/src/lib/modules.ts` | display name/description/nav plus the `home`/`guide`/`rules`/`faq`/`terms`/`routeCard` copy blocks (§5.5–5.7) in the module's def file, registered in `modules.ts`'s `REGISTRY` |
 | `README.md` | document the module |
 
 `ai`'s actual footprint in this PR series — a module shaped like `classic`
@@ -1035,7 +1057,7 @@ two independent ways to report a solve back:
 | `apps/web/src/lib/activity-keys.ts` | an `ai-solve` activity type, logged on fresh solves only |
 | `apps/web/src/lib/admin-store.ts` | the `aiCooldownSec` runtime setting (validated, capped at `AI_COOLDOWN_SEC_MAX`) and the module's rows in `resetEvent`'s PROGRESS/CONTENT split |
 | `apps/web/src/lib/demo-fixture.ts` | demo seed data for the `ai` board, gated the same way `quiz`'s and `classic`'s are — a disabled `ai` module leaves the seed byte-for-byte identical to pre-`ai` behavior |
-| `apps/web/src/lib/modules.ts` | register display name/description/nav plus the `home`/`guide`/`rules`/`faq`/`terms`/`routeCard` copy blocks (§5.5–5.7) |
+| `apps/web/src/lib/module-defs/ai.ts` + `apps/web/src/lib/modules.ts` | display name/description/nav plus the `home`/`guide`/`rules`/`faq`/`terms`/`routeCard` copy blocks (§5.5–5.7) in the module's def file, registered in `modules.ts`'s `REGISTRY` |
 | `docs/decisions.md` | [ADR 53](decisions.md#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric) — why the launch token is asymmetric while event signatures stay symmetric |
 | `docs/ai-module.md` + `README.md` | the external integrator's contract, and documenting the module for organizers |
 

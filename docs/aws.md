@@ -109,14 +109,22 @@ placeholder is refused at plan time with a sentence naming `deploy.sh`.
 Afterwards a redeploy is one command:
 
 ```sh
-./deploy.sh --apply        # with SCORE_IMAGE exported, or --scorer-source again
+# Falls back to the repo-root .env when exported SCORE_IMAGE is unset or empty.
+./deploy.sh --apply
 ```
 
 **`deploy.sh` publishes every image the stack runs** into the stack's own ECR
 repositories and writes their refs into `image.auto.tfvars` (#476). It builds
 the app from the repo root with `-f apps/web/Dockerfile`, and sync from
-`./sync`. It **mirrors** the scorer: it pulls `--scorer-source` (default
-`$SCORE_IMAGE`, the event `.env`'s value), then tags and pushes it. Fargate
+`./sync`. It **mirrors** the scorer: it pulls `--scorer-source`, then tags
+and pushes it. The source defaults to non-empty exported `SCORE_IMAGE`, or,
+when that variable is unset or empty, `SCORE_IMAGE` in the repo-root `.env`
+(independent of the working directory). `--scorer-source` wins over both.
+The shared reader accepts literal quoted values and refuses unsupported
+interpolation or an unreadable file; it never executes `.env`. A missing file does not itself
+fail parsing, but a Secure Development deploy still requires a scorer source.
+Stacks without Secure Development ignore this setting and do not read `.env`.
+Fargate
 cannot pull the scorer package itself, because the package is private until
 launch, and sync is published nowhere. Everything is built or pulled for
 `linux/amd64`, the architecture every task definition declares. An Apple
@@ -160,7 +168,12 @@ and `.next` are excluded, along with anything else your git ignore rules
 exclude — and the tag changes with it. That is what keeps a work-in-progress
 deploy off the tag an earlier one already pushed, which on an immutable
 registry would have redeployed the earlier image.
-`./deploy.sh --dry-run` prints every command and runs none of them.
+`./deploy.sh --dry-run` prints every command and runs none of them. It
+redacts secrets with the same rules as the Fly deploy (`scripts/lib/redact.sh`).
+The value of any variable whose name looks like a credential is replaced
+(`SECRET`, `TOKEN`, `PASSWORD`, `PRIVATE_KEY`, `CONNECTION_STRING`, `API_KEY`,
+a `_KEY` or `AUTH` suffix, and similar), while the name stays visible. Any
+`scheme://user:pass@host` is printed as `scheme://***@host`.
 
 Watch a rollout:
 
@@ -194,11 +207,11 @@ on ECS: where the logs are, how to get a shell, what each failure looks
 like, and how to roll back and tear down. Symptom-first recipes are in
 [docs/troubleshooting.md](troubleshooting.md).
 
-**Not yet verified on a live stack.** This module has not been applied end
-to end yet. The rehearsal tracked in
-[#476](https://github.com/OWASP/owasp-ctf-in-a-box/issues/476) runs every
-drill below against a throwaway stack, and it is where this runbook gets
-corrected. Run that rehearsal before you rely on AWS for a real event.
+**Run at a real event.** This module hosted the first live event, on
+October 7–9, 2026. What that event taught — monitoring, snapshots, the
+deploy script, hardening and sizing — is tracked in
+[#593](https://github.com/OWASP/owasp-ctf-in-a-box/issues/593). Rehearse the
+drills below on a throwaway stack before you rely on them at your own event.
 
 Every command below uses these names:
 
@@ -314,9 +327,9 @@ audit log.
 
 Freeze from `/admin` → **Event** → **Freeze scoring**, exactly as on any
 other box. See the **Freeze** entry in
-[the admin panel section](operations.md#organizer-admin-panel). It stops
-ingestion and the scorer's writes, and nothing is lost: judged PRs wait in
-their comments until you unfreeze.
+[the admin panel section](operations.md#organizer-admin-panel). Fork Actions
+keep judging, but a PR scored while frozen never counts, not even after you
+unfreeze: its contestant has to push again once scoring resumes.
 
 If `/admin` itself is unreachable, set the same field from an ECS Exec shell
 in the app container, with the `node -e` line above and these arguments:
@@ -327,7 +340,10 @@ HDEL ctf:admin:settings paused       # unfreeze: absent means not paused, never 
 ```
 
 The app, the scorer and sync all read that field on their next check, so no
-restart is needed.
+restart is needed. A freeze set this way records no start time, so the scorer
+cannot tell which PR scores came in during it: it holds every one it reads and
+judges them once you unfreeze (see **Freeze** in
+[the admin panel section](operations.md#organizer-admin-panel)).
 
 ### Failure drills
 

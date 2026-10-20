@@ -28,6 +28,7 @@ import { joinAppNames } from "@/lib/apps";
 import { getEnabledApps, getEnabledTotals } from "@/lib/enabled-apps";
 import { getChallengeCatalog } from "@/lib/challenges";
 import { listChallenges } from "@/lib/classic-store";
+import { visibleNow } from "@/lib/classic-release";
 import { listQuestions } from "@/lib/quiz-store";
 import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { DOCS_URL, type HomeContext } from "@/lib/modules";
@@ -173,7 +174,8 @@ export default async function Home({
   const classicLive = live.has("classic");
   const [quizCount, classicCount] = await Promise.all([
     quizLive ? listQuestions().then((q) => q.length).catch(() => null) : Promise.resolve(null),
-    classicLive ? listChallenges().then((c) => c.length).catch(() => null) : Promise.resolve(null),
+    // Visible challenges only: a hidden one does not exist for a visitor.
+    classicLive ? listChallenges().then((c) => visibleNow(c).length).catch(() => null) : Promise.resolve(null),
   ]);
   const countFor = (id: string): string | null => {
     if (id === "secure-development")
@@ -253,13 +255,12 @@ export default async function Home({
       {/* Hero: the event, its games in one breath, ONE action. */}
       <div className="border-b border-white/[0.09] bg-[#1a1a2e]">
         <main id="main-content" className="mx-auto flex w-full max-w-5xl flex-col items-start gap-6 px-6 py-12 sm:py-16">
-          {/* OWASP brand mark — four of the six targets are OWASP projects
-              and the event format comes from the OWASP-CTF work. An event
-              with its own logo (#529, /admin → Event) leads with that, as
-              uploaded (no invert: the admin hint asks for a version made for
-              this navy hero), and keeps a smaller OWASP mark beside it — the
-              Project Policy wants OWASP branding prominent on any domain the
-              kit runs on, so an organizer adds a logo, never removes OWASP's. */}
+          {/* The project logo, which carries the OWASP mark. An event with
+              its own logo (/admin → Event) leads with that, as uploaded (the
+              admin hint asks for a version made for this navy hero), and
+              keeps a smaller project logo beside it — the Project Policy
+              wants OWASP branding prominent on any domain the kit runs on,
+              so an organizer adds a logo, never removes OWASP's (ADR 65). */}
           {eventLogo ? (
             <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-6">
               {/* The event's logo is the main presence (#538): bounded by a
@@ -293,18 +294,18 @@ export default async function Home({
                   </a>
                 ) : img;
               })()}
-              {/* OWASP beside it, credited for what it is — the kit this
-                  event runs on — never as an organizer or an endorsement. */}
+              {/* The kit beside it, credited for what it is — the platform
+                  this event runs on — never as an organizer or an endorsement. */}
               <a
                 href={event.owaspProjectUrl}
                 className="group flex flex-col items-start gap-1.5 sm:border-l sm:border-white/10 sm:pl-6"
               >
                 <Image
-                  src="/owasp-logo.png"
-                  alt="OWASP"
-                  width={88}
-                  height={30}
-                  className="invert opacity-70 transition-opacity group-hover:opacity-100"
+                  src="/logo.png"
+                  alt="OWASP CTF in a Box"
+                  width={112}
+                  height={48}
+                  className="opacity-80 transition-opacity group-hover:opacity-100"
                 />
                 <span className="font-mono text-[11px] tracking-wide text-[#8f8f9b] transition-colors group-hover:text-zinc-300">
                   Built with OWASP CTF in a Box
@@ -313,12 +314,11 @@ export default async function Home({
             </div>
           ) : (
             <Image
-              src="/owasp-logo.png"
-              alt="OWASP"
-              width={200}
-              height={69}
+              src="/logo.png"
+              alt="OWASP CTF in a Box"
+              width={320}
+              height={136}
               priority
-              className="invert"
             />
           )}
           {taglines && (
@@ -385,7 +385,7 @@ export default async function Home({
                     >
                       {i + 1}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-white">{row.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-white"><bdi>{row.name}</bdi></span>
                     <span className="flex-none font-semibold tabular-nums text-white">
                       {row.points.toLocaleString("en-US")}
                       <span className="ml-1 text-xs font-normal text-[#8f8f9b]">pts</span>

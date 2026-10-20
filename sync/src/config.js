@@ -29,7 +29,7 @@ function resolveAuth(env, apiUrl) {
   }
   // The org picks the installation when no id is set (appAuth.js).
   const auth = makeAppAuth({ appId: env.GITHUB_APP_ID, privateKey, installationId, org: (env.GITHUB_ORG ?? "").trim(), apiUrl });
-  return { authMode: "app", getToken: (fetchImpl) => auth.getToken(fetchImpl) };
+  return { getToken: (fetchImpl) => auth.getToken(fetchImpl) };
 }
 
 /** A numeric env knob that must be an integer in [1, max].
@@ -69,11 +69,10 @@ export function loadConfig(env = process.env) {
   if (!org) throw new Error("GITHUB_ORG is not set");
   if (!env.SCORER_TOKEN) throw new Error("SCORER_TOKEN env var is required");
   const apiUrl = env.GITHUB_API_URL ?? "https://api.github.com";
-  const { authMode, getToken } = resolveAuth(env, apiUrl);
+  const { getToken } = resolveAuth(env, apiUrl);
   return {
     org,
     getToken,
-    authMode,
     apiUrl,
     scorerUrl: env.SCORER_URL ?? "http://scorer:4000",
     scorerToken: env.SCORER_TOKEN,

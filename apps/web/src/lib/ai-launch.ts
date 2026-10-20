@@ -24,7 +24,7 @@ import { signLaunchToken, type AiTokenClaims, type AiTokenProgress } from "@/lib
  * anything else). `randomBytes(16).toString("base64url")` is 22 chars of the
  * exact charset — the test pins the agreement so the two can never drift.
  */
-export type LaunchClaimInputs = {
+type LaunchClaimInputs = {
   origin: string;
   login: string;
   challenge: AiChallenge;

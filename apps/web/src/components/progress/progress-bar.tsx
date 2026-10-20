@@ -17,7 +17,7 @@
  *  see that they are on the board. */
 export const MIN_FILL_PX = 4;
 
-export type BarReading = {
+type BarReading = {
   /** What the bar fills to. */
   value: number;
   /** What it fills against. */

@@ -4,9 +4,11 @@
 // one button that charges and reveals through the SAME /api/hints/reveal
 // endpoint the secure-development rows use — the server is the boundary that
 // gates, charges idempotently, and never sends a text that wasn't paid for.
-// Already-owned hints never reach this component: the page renders their
-// text server-side and this button only exists while there is something to
-// buy. `app` is the target this reveal is charged against (Task 1's
+// An already-owned hint reaches this component too, as `ownedText` (#560):
+// the page hands the server-known text over so this SAME element renders it,
+// before and after router.refresh() — swapping in a plain <p> there unmounted
+// the component and took the spend/balance acknowledgement with it. `app` is
+// the target this reveal is charged against (Task 1's
 // `HintTarget`) — originally hardcoded to "classic", now the caller's prop so
 // flags/[id] and ai/[id] share one component instead of a copy each.
 //
@@ -31,25 +33,27 @@ export default function HintRevealButton({
   id,
   level = 1,
   cost,
+  ownedText,
 }: {
   app: HintTarget;
   id: string;
   /** Jeopardy ladder rung (#594); 1 for the single-hint ai target. */
   level?: number;
   cost: number;
+  // The hint text the SERVER already knows this viewer owns (#560). Rendered
+  // by this same component so a post-reveal refresh never replaces the
+  // element (and never unmounts the acknowledgement below).
+  ownedText?: string | null;
 }) {
   const router = useRouter();
   const [state, setState] = useState<"idle" | "confirm" | "pending">("idle");
+  // The price on the buttons, and the quote the purchase carries (#557):
+  // the render-time cost until the server answers that it changed, then the
+  // server's new price, which the contestant confirms again. Not re-synced
+  // from the prop: a stale price is answered 409 with the current one.
+  const [price, setPrice] = useState(cost);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
-  // The price the contestant is confirming. Seeded from the render-time prop
-  // and updated when the server answers `repriced` (#557/#594), so the second
-  // confirm states the authoritative figure rather than the stale one. The
-  // `{ prop, value }` pair lets a refresh hand down a new price by resetting
-  // during render (the documented alternative to a setState effect).
-  const [quote, setQuote] = useState({ prop: cost, value: cost });
-  if (quote.prop !== cost) setQuote({ prop: cost, value: cost });
-  const currentCost = quote.value;
   // The points actually deducted by THIS reveal, or null when it charged
   // nothing (an admin preview, or an already-owned reveal). Only a real charge
   // gets the "−N pts spent" acknowledgement, and it uses the server's figure.
@@ -96,7 +100,7 @@ export default function HintRevealButton({
       const res = await fetch("/api/hints/reveal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ app, id, level, confirmedCost: currentCost }),
+        body: JSON.stringify({ app, id, level, quotedCost: price }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         hint?: string;
@@ -107,15 +111,6 @@ export default function HintRevealButton({
         dryRun?: boolean;
         repriced?: boolean;
       };
-      // The confirmed price no longer matched the authoritative one: nothing
-      // was charged and no text was read. Re-seed the confirm step with the
-      // current price so the contestant re-confirms knowingly (#557/#594).
-      if (res.status === 409 && data.repriced && typeof data.cost === "number") {
-        setQuote({ prop: cost, value: data.cost });
-        setError(data.error ?? `This hint now costs ${data.cost} points.`);
-        setState("idle");
-        return;
-      }
       if (res.ok && typeof data.hint === "string") {
         // A preview (dryRun) and an already-owned reveal both return the hint
         // but deduct nothing — only a real charge is acknowledged, with the
@@ -125,13 +120,19 @@ export default function HintRevealButton({
         // already-owned reveal charge nothing, and a configured cost of 0
         // deducts nothing either — none of those should render "−0 pts spent".
         const deducted =
-          !data.dryRun && !data.alreadyOwned ? (typeof data.cost === "number" ? data.cost : currentCost) : 0;
+          !data.dryRun && !data.alreadyOwned ? (typeof data.cost === "number" ? data.cost : price) : 0;
         setChargedCost(deducted > 0 ? deducted : null);
         setBalance(deducted > 0 && typeof data.balance === "number" ? data.balance : null);
         setText(data.hint);
         // Resync the page's server state (spent total, owned set) — the
         // revealed text itself stays in local state so it shows instantly.
         router.refresh();
+      } else if (res.status === 409 && typeof data.cost === "number") {
+        // The price changed since the page rendered (#557): nothing was
+        // charged. Show the new price and ask again rather than buying at it.
+        setPrice(data.cost);
+        setError(typeof data.error === "string" ? data.error : `This hint now costs ${data.cost} pts.`);
+        setState("confirm");
       } else {
         // A failed reveal charges nothing; drop back to idle so the contestant
         // can retry, with the reason shown below the button.
@@ -148,7 +149,10 @@ export default function HintRevealButton({
   // a live region the click consumed points and produced silence for a
   // screen-reader user, with focus dropped to the document body. The spent
   // acknowledgement rides in the same region so the deduction is heard too.
-  if (text) {
+  // `text` (this reveal's response) wins over the prop (a server-known
+  // ownership from before this component mounted).
+  const shown = text ?? ownedText;
+  if (shown) {
     return (
       <p
         ref={revealedRef}
@@ -157,7 +161,7 @@ export default function HintRevealButton({
         className="rounded border-l-2 border-[#d4a017]/50 bg-[#d4a017]/[0.06] px-3 py-2 text-sm leading-relaxed text-[#d4a017]/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
       >
         <span aria-hidden="true">💡</span> <span className="sr-only">Hint: </span>
-        {text}
+        {shown}
         {chargedCost !== null && (
           <span className="mt-1 block text-xs text-[#d4a017]/70">
             −{chargedCost} pts spent{balance !== null && <> · {balance} pts left</>}
@@ -171,7 +175,7 @@ export default function HintRevealButton({
     return (
       <div className="flex flex-col gap-1">
         <span className="sr-only" role="status">
-          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${currentCost} points on this hint.`}
+          {state === "pending" ? "Revealing hint…" : `Confirm: spend  points on this hint.`}
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -185,7 +189,7 @@ export default function HintRevealButton({
               "Revealing…"
             ) : (
               <>
-                <span aria-hidden="true">💡</span> Confirm (−{currentCost} pts)
+                <span aria-hidden="true">💡</span> Confirm (−{price} pts)
               </>
             )}
           </button>
@@ -198,6 +202,11 @@ export default function HintRevealButton({
             Cancel
           </button>
         </div>
+        {error && (
+          <p role="alert" className="text-xs text-[#e53e3e]">
+            {error}
+          </p>
+        )}
       </div>
     );
   }
@@ -210,7 +219,7 @@ export default function HintRevealButton({
         onClick={() => setState("confirm")}
         className="w-fit rounded-md border border-[#d4a017]/40 px-3 py-1.5 text-sm text-[#d4a017] transition-colors hover:bg-[#d4a017]/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
       >
-        <span aria-hidden="true">💡</span> Reveal hint (−{currentCost} pts)
+        <span aria-hidden="true">💡</span> Reveal hint (−{price} pts)
       </button>
       {error && (
         <p role="alert" className="text-xs text-[#e53e3e]">

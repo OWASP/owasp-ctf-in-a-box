@@ -25,7 +25,7 @@ submitted code is the product.
 | 4 | Org's scorer image private, forks granted Read | Scoring fails on every PR; a private rubric leaks |
 | 5 | Sync GitHub App is private and least-privilege | Third parties can install your event's App |
 | 6 | No leftover `LEADERBOARD_URL` / `LEADERBOARD_TOKEN` org secrets | A score-writing token sits in org secrets that contestant-triggered runs can read |
-| 7 | `admins:` lists only real organizers | `/admin` can freeze scoring and wipe the event |
+| 7 | `ADMIN_LOGINS` lists only real organizers | `/admin` can freeze scoring and wipe the event |
 | 8 | Treat `better-auth` bumps as security changes | The login-identity denylist can regress |
 
 ---

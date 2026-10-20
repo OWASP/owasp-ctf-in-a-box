@@ -17,21 +17,82 @@ vi.mock("server-only", () => ({}));
 
 describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   let AUDIT_CAP: number;
+  let PAUSE_LOG_CAP: number;
   let getAdminSettings: (typeof import("@/lib/admin-store"))["getAdminSettings"];
   let updateAdminSettings: (typeof import("@/lib/admin-store"))["updateAdminSettings"];
   let upstashPipeline: (typeof import("@/lib/upstash"))["upstashPipeline"];
 
   beforeAll(async () => {
-    ({ AUDIT_CAP, getAdminSettings, updateAdminSettings } = await import("@/lib/admin-store"));
+    ({ AUDIT_CAP, PAUSE_LOG_CAP, getAdminSettings, updateAdminSettings } = await import("@/lib/admin-store"));
     ({ upstashPipeline } = await import("@/lib/upstash"));
   });
 
   beforeEach(async () => {
-    await upstashPipeline([["DEL", "ctf:admin:settings"], ["DEL", "ctf:admin:audit"]]);
+    await upstashPipeline([["DEL", "ctf:admin:settings"], ["DEL", "ctf:admin:audit"], ["DEL", "ctf:admin:pauses"]]);
   });
 
   afterAll(async () => {
-    await upstashPipeline([["DEL", "ctf:admin:settings"], ["DEL", "ctf:admin:audit"]]);
+    await upstashPipeline([["DEL", "ctf:admin:settings"], ["DEL", "ctf:admin:audit"], ["DEL", "ctf:admin:pauses"]]);
+  });
+
+  // The pause log: a Secure Development score is judged at its comment's
+  // time, so the box records WHEN scoring was frozen, not only whether it is.
+  // Written by the same script as the flag, so the two can never disagree.
+  const settingsField = async (field: string) =>
+    (await upstashPipeline([["HGET", "ctf:admin:settings", field]]))[0].result as string | null;
+  const pauseLog = async () =>
+    ((await upstashPipeline([["LRANGE", "ctf:admin:pauses", 0, -1]]))[0].result as string[]).map((e) => JSON.parse(e));
+
+  it("pausing records when the freeze began, and pausing again keeps that start", async () => {
+    const first = await updateAdminSettings({ paused: true }, "alice");
+    expect(await settingsField("pausedSince")).toBe(first.updatedAt);
+    await new Promise((r) => setTimeout(r, 5));
+    const again = await updateAdminSettings({ paused: true }, "bob");
+    expect(again.updatedAt).not.toBe(first.updatedAt);
+    expect(await settingsField("pausedSince")).toBe(first.updatedAt);
+    expect(await pauseLog()).toEqual([]);
+  });
+
+  it("unpausing closes the interval into the log and clears the open start", async () => {
+    const paused = await updateAdminSettings({ paused: true }, "alice");
+    await updateAdminSettings({ hintCost: 5 }, "alice"); // an unrelated save leaves the pause open
+    expect(await settingsField("pausedSince")).toBe(paused.updatedAt);
+    const resumed = await updateAdminSettings({ paused: false }, "alice");
+    expect(await settingsField("pausedSince")).toBeNull();
+    expect(await pauseLog()).toEqual([{ from: paused.updatedAt, to: resumed.updatedAt }]);
+  });
+
+  it("logs each freeze once, newest first; unpausing an unpaused event logs nothing", async () => {
+    await updateAdminSettings({ paused: false }, "alice");
+    const p1 = await updateAdminSettings({ paused: true }, "alice");
+    const r1 = await updateAdminSettings({ paused: false }, "alice");
+    await updateAdminSettings({ paused: false }, "alice");
+    const p2 = await updateAdminSettings({ paused: true }, "alice");
+    const r2 = await updateAdminSettings({ paused: false }, "alice");
+    expect(await pauseLog()).toEqual([
+      { from: p2.updatedAt, to: r2.updatedAt },
+      { from: p1.updatedAt, to: r1.updatedAt },
+    ]);
+  });
+
+  it("a freeze with no recorded start lifts without logging an interval it cannot bound", async () => {
+    await upstashPipeline([["HSET", "ctf:admin:settings", "paused", "1"]]);
+    await updateAdminSettings({ paused: true }, "alice"); // already frozen: the unknown start stays unknown
+    expect(await settingsField("pausedSince")).toBeNull();
+    await updateAdminSettings({ paused: false }, "alice");
+    expect(await settingsField("paused")).toBeNull();
+    expect(await pauseLog()).toEqual([]);
+  });
+
+  it("caps the pause log at PAUSE_LOG_CAP, dropping the oldest", async () => {
+    let last: { updatedAt: string | null } | null = null;
+    for (let i = 0; i < PAUSE_LOG_CAP + 2; i++) {
+      await updateAdminSettings({ paused: true }, "bot");
+      last = await updateAdminSettings({ paused: false }, "bot");
+    }
+    const [len] = await upstashPipeline([["LLEN", "ctf:admin:pauses"]]);
+    expect(Number(len.result)).toBe(PAUSE_LOG_CAP);
+    expect((await pauseLog())[0].to).toBe(last!.updatedAt);
   });
 
   it("writes settings and an audit line atomically", async () => {
@@ -68,6 +129,18 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     expect(settings.paused).toBe(false);
   });
 
+  // #600: a numeric knob clears back to "follow the default" — the field is
+  // gone from the hash, not stored as a value equal to the default.
+  it("clears a numeric knob to absent when sent null", async () => {
+    await updateAdminSettings({ hintsMinSolves: 1, teamMaxMembers: 6 }, "alice");
+    await updateAdminSettings({ hintsMinSolves: null }, "alice");
+    const [res] = await upstashPipeline([["HMGET", "ctf:admin:settings", "hintsMinSolves", "teamMaxMembers"]]);
+    expect(res.result).toEqual([null, "6"]);
+    const s = await getAdminSettings();
+    expect(s.hintsMinSolves).toBeNull();
+    expect(s.teamMaxMembers).toBe(6);
+  });
+
   it("round-trips an explicitly empty module set", async () => {
     const s = await updateAdminSettings({ enabledModules: [] }, "alice");
     expect(s.enabledModuleIds).toEqual([]);
@@ -76,18 +149,18 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
 
   it("round-trips the event identity fields and clears them on empty (issue #386)", async () => {
     await updateAdminSettings(
-      { eventName: "Live CTF", eventTheme: "Ship it", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live" },
+      { eventName: "Live CTF", eventLocation: "Montevideo", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live" },
       "alice",
     );
     let s = await getAdminSettings();
     expect(s.eventIdentity).toEqual({
-      eventName: "Live CTF", eventTheme: "Ship it", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live",
+      eventName: "Live CTF", eventLocation: "Montevideo", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live",
     });
-    await updateAdminSettings({ eventTheme: "", eventDiscord: "" }, "alice");
+    await updateAdminSettings({ eventLocation: "", eventDiscord: "" }, "alice");
     s = await getAdminSettings();
     expect(s.eventIdentity).toEqual({ eventName: "Live CTF", eventContact: "org@example.org" });
     const [fields] = await upstashPipeline([["HKEYS", "ctf:admin:settings"]]);
-    expect(fields.result).not.toContain("eventTheme");
+    expect(fields.result).not.toContain("eventLocation");
     expect(fields.result).not.toContain("eventDiscord");
   });
 
@@ -143,7 +216,7 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     const settingsKey = liveKey("admin", freshId("settings"));
     const auditKey = liveKey("admin", freshId("audit"));
     await upstashPipeline([["HSET", settingsKey, "scoringStartsAt", "2000-01-01T00:00:00.000Z", "eventName", "Kept"]]);
-    await upstashEval(RESET_SCRIPT, [settingsKey, auditKey], ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9]);
+    await upstashEval(RESET_SCRIPT, [settingsKey, auditKey, liveKey("admin", freshId("pauses"))], ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9]);
     const [start, paused, name] = await upstashPipeline([
       ["HGET", settingsKey, "scoringStartsAt"],
       ["HGET", settingsKey, "paused"],
@@ -153,5 +226,27 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     expect(paused.result).toBe("1");
     expect(name.result).toBe("Kept"); // settings other than the launch survive
     await upstashPipeline([["DEL", settingsKey, auditKey]]);
+  });
+
+  it("RESET_SCRIPT clears the pause log and opens the reset's freeze at the reset instant", async () => {
+    const { RESET_SCRIPT } = await import("@/lib/admin-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const settingsKey = liveKey("admin", freshId("settings"));
+    const auditKey = liveKey("admin", freshId("audit"));
+    const pausesKey = liveKey("admin", freshId("pauses"));
+    await upstashPipeline([
+      ["HSET", settingsKey, "paused", "1", "pausedSince", "2026-09-01T00:00:00.000Z"],
+      ["LPUSH", pausesKey, '{"from":"2026-08-01T00:00:00.000Z","to":"2026-08-01T01:00:00.000Z"}'],
+    ]);
+    await upstashEval(RESET_SCRIPT, [settingsKey, auditKey, pausesKey], ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9]);
+    const [since, paused, log] = await upstashPipeline([
+      ["HGET", settingsKey, "pausedSince"],
+      ["HGET", settingsKey, "paused"],
+      ["EXISTS", pausesKey],
+    ]);
+    expect(paused.result).toBe("1");
+    expect(since.result).toBe("2026-10-01T00:00:00.000Z");
+    expect(Number(log.result)).toBe(0);
+    await upstashPipeline([["DEL", settingsKey, auditKey, pausesKey]]);
   });
 });

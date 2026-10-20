@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { LOGIN_RE } from "@/lib/admin-admins";
 import { getViewerAi, listAiChallenges } from "@/lib/ai-store";
 import { getViewerClassic, listChallenges, listStories } from "@/lib/classic-store";
+import { visibleNow } from "@/lib/classic-release";
 import { isLocked, lockedLabel, storyPositions } from "@/lib/story-lock";
-import { getTeamClassicSolvedIds } from "@/lib/classic-team";
+import { getTeamClassicSolvedIds, unlockingSolvedIds } from "@/lib/classic-team";
 import { auth } from "@/lib/auth";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { requireLaunchedApi } from "@/lib/launch";
@@ -12,7 +13,9 @@ import { getViewerQuiz, listQuestions } from "@/lib/quiz-store";
 /** How many logins one request may union — a team's roster, not a scrape. */
 const MAX_LOGINS = 8;
 
-type Item = { id: string; label: string; points: number; done: boolean; earnedPoints?: number };
+/** `hidden` marks a story step redacted for this viewer: placeholder label,
+ *  0 points, never `done` — nothing about it per position (ADR 60). */
+type Item = { id: string; label: string; points: number; done: boolean; earnedPoints?: number; hidden?: true };
 
 /**
  * Per-item quiz/classic/ai completion for a login (an expanded leaderboard
@@ -62,24 +65,43 @@ export async function GET(request: Request) {
   }
 
   let classic: Item[] | null = null;
+  let classicHiddenSolved = 0;
   if (classicLive) {
-    const [challenges, viewers, stories] = await Promise.all([
+    const [storedChallenges, viewers, stories] = await Promise.all([
       listChallenges(),
       Promise.all(logins.map((l) => getViewerClassic(l))),
       listStories(),
     ]);
+    // A hidden challenge (disabled, or not yet released) does not exist here,
+    // for the team that solved it too: left out before anything is built, so
+    // the story chain below closes up around it.
+    const challenges = visibleNow(storedChallenges);
     // #463: a story step is redacted to its position alone — label, points
     // AND id, since an id is derived from the title — unless it is open BOTH
     // for the queried logins (the team whose row this is) AND for the
     // VIEWER's own team. This route is public, so the queried team alone
     // would let anyone read the leader's unlocked steps by expanding a row.
     const positions = storyPositions(stories, new Set(challenges.map((c) => c.id)));
+    // What the team SOLVED (the union its points fold) is not what it has
+    // UNLOCKED: a member's solve opens the next step only if they made it
+    // while on their current team (#602, ADR 60), so a step carried in from
+    // another team counts toward the points and the done marks, not the lock.
     const teamSolved = new Set(viewers.flatMap((v) => Object.keys(v.solved)));
-    const viewerSolved = positions.size > 0 && viewerLogin ? await getTeamClassicSolvedIds(viewerLogin) : new Set<string>();
+    const [teamUnlocked, viewerSolved] =
+      positions.size > 0
+        ? await Promise.all([
+            unlockingSolvedIds(logins),
+            viewerLogin ? getTeamClassicSolvedIds(viewerLogin) : Promise.resolve(new Set<string>()),
+          ])
+        : [new Set<string>(), new Set<string>()];
     classic = challenges.map((c) => {
       const pos = positions.get(c.id);
-      if (pos && (isLocked(pos, teamSolved) || isLocked(pos, viewerSolved))) {
-        return { id: `locked:${pos.storyId}:${pos.position}`, label: lockedLabel(pos), points: 0, done: false };
+      if (pos && (isLocked(pos, teamUnlocked) || isLocked(pos, viewerSolved))) {
+        // Nothing per position crosses (ADR 60): not which hidden steps the
+        // team solved, not their points. Only the count below does, which
+        // the row's own solved figure already implies.
+        if (teamSolved.has(c.id)) classicHiddenSolved += 1;
+        return { id: `locked:${pos.storyId}:${pos.position}`, label: lockedLabel(pos), points: 0, done: false, hidden: true };
       }
       const hit = viewers.map((v) => v.solved[c.id]).find(Boolean);
       return { id: c.id, label: c.title, points: c.points, done: Boolean(hit), earnedPoints: hit?.points };
@@ -98,5 +120,5 @@ export async function GET(request: Request) {
     });
   }
 
-  return NextResponse.json({ quiz, classic, ai });
+  return NextResponse.json({ quiz, classic, ai, classicHiddenSolved });
 }

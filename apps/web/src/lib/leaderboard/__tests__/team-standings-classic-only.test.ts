@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   getClassicTotals: vi.fn(),
   getTeamClassicTotalsBatch: vi.fn(),
   listChallenges: vi.fn(),
+  listStories: vi.fn(),
 }));
 
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
@@ -28,6 +29,7 @@ vi.mock("@/lib/classic-store", () => ({
   getClassicTotals: mocks.getClassicTotals,
   getTeamClassicTotalsBatch: mocks.getTeamClassicTotalsBatch,
   listChallenges: mocks.listChallenges,
+  listStories: mocks.listStories,
 }));
 
 import { withModuleContributions } from "../module-contributions";
@@ -60,6 +62,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getClassicTotals.mockResolvedValue(new Map());
   mocks.listChallenges.mockResolvedValue([{ id: "c1" }, { id: "c2" }, { id: "c3" }]);
+  mocks.listStories.mockResolvedValue([]);
   mocks.getTeamClassicTotalsBatch.mockImplementation((teams: readonly string[][]) =>
     Promise.resolve(teams.map(() => totals(0, 0))),
   );
@@ -87,6 +90,7 @@ describe("a classic-only event", () => {
       solved: 4,
       total: 4, // clamped: 4 solves against a 3-challenge list
       points: 40,
+      locked: 0,
     });
   });
 
@@ -183,6 +187,7 @@ describe("a classic-only event", () => {
         solved: 4,
         total: 4,
         points: 40,
+        locked: 0,
       });
     } finally {
       err.mockRestore();

@@ -44,11 +44,15 @@ export const AI_SOLVECOUNT_KEY = "ctf:ai:solvecount";
 export const AI_LAST_AT_KEY = "ctf:ai:lastAt";
 export const AI_SOLVES_PREFIX = "ctf:ai:solves:";
 export const AI_ATTEMPTS_PREFIX = "ctf:ai:attempts:";
+/** challengeId -> ISO time this login first opened the challenge's page
+ * , written once (HSETNX). Insights measures time to solve from it. */
+export const AI_OPENED_PREFIX = "ctf:ai:opened:";
 /** Replay guard, one key per spent event `jti`, written with NX EX. */
 export const AI_NONCE_PREFIX = "ctf:ai:nonce:";
 
 export const aiSolvesKey = (login: string) => `${AI_SOLVES_PREFIX}${login}`;
 export const aiAttemptsKey = (login: string) => `${AI_ATTEMPTS_PREFIX}${login}`;
+export const aiOpenedKey = (login: string) => `${AI_OPENED_PREFIX}${login}`;
 export const aiNonceKey = (jti: string) => `${AI_NONCE_PREFIX}${jti}`;
 
 /** Same id shape and cap as classic's, validated in the same places (store
@@ -86,7 +90,7 @@ export function isAiMode(value: unknown): value is AiMode {
   return typeof value === "string" && (AI_MODES as readonly string[]).includes(value);
 }
 
-export type UrlTemplateCheck = { ok: true; value: string } | { ok: false; reason: string };
+type UrlTemplateCheck = { ok: true; value: string } | { ok: false; reason: string };
 
 /** Validates a launch template.
  *

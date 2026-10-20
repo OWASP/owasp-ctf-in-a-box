@@ -179,7 +179,7 @@ export function signLaunchToken(claims: AiTokenClaims, privateKeyPem: string): s
   return `${signingInput}.${signature.toString("base64url")}`;
 }
 
-export type AiTokenCheck =
+type AiTokenCheck =
   | { ok: true; claims: AiTokenClaims }
   | { ok: false; error: "malformed" | "invalid-signature" | "expired" | "audience" };
 

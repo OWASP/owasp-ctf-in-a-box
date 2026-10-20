@@ -33,7 +33,7 @@ const web: ClassicChallengeView = {
   category: "Web",
   description: "Find the flag hidden behind a login form.",
   points: 50,
-  solveCount: 3,
+  teamsSolved: 3,
   status: "unsolved",
 };
 
@@ -254,6 +254,16 @@ describe("describeRefusal", () => {
     expect(describeRefusal("something-new")).toBe(generic);
   });
 
+  // #567: after the scheduled end the server answers `ended`, not `paused`.
+  // The copy must say the event is over — no "try again later", which is
+  // the pause's promise and false once the end has passed.
+  it("names the end of the event as final, not as a pause", () => {
+    expect(describeRefusal("ended")).not.toBe(generic);
+    expect(describeRefusal("ended")).toMatch(/ended|over|closed/i);
+    expect(describeRefusal("ended")).not.toMatch(/try again/i);
+    expect(describeRefusal("ended")).not.toBe(describeRefusal("paused"));
+  });
+
   // Reachable, unlike `gate`: a session can expire while the page stays open,
   // and the action's own session re-check (ai/[id]/actions.ts) then returns
   // this slug for a submit made from an already-rendered form. Names the fix
@@ -268,5 +278,23 @@ describe("dry-run result copy (#464 admin preview)", () => {
     expect(describeCorrect(50, false, true)).toBe("Correct — preview only, nothing was recorded (+50 once the event launches).");
     expect(describeIncorrect(true)).toBe("Not quite — preview only, nothing was recorded.");
     expect(describeIncorrect(false)).toBe("Not quite.");
+  });
+});
+
+// #595: the detail page uses the board's figure, teams.
+describe("ChallengeDetail solve count", () => {
+  it("says how many teams solved it", () => {
+    const html = renderToStaticMarkup(<ChallengeDetail challenge={web} authenticated submitPath="/api/classic/submit" />);
+    expect(html).toContain("3 teams solved");
+    expect(html).not.toContain("3 solves");
+  });
+
+  it("names one team in the singular, and says nothing when the count is unknown", () => {
+    expect(renderToStaticMarkup(<ChallengeDetail challenge={{ ...web, teamsSolved: 1 }} authenticated submitPath="/api/classic/submit" />)).toContain(
+      "1 team solved",
+    );
+    expect(renderToStaticMarkup(<ChallengeDetail challenge={{ ...web, teamsSolved: null }} authenticated submitPath="/api/classic/submit" />)).not.toMatch(
+      /teams? solved/,
+    );
   });
 });

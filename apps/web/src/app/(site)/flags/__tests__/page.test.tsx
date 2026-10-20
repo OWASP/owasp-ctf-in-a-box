@@ -9,17 +9,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const launchLock = vi.hoisted(() => ({
   redirectIfNotLaunched: vi.fn(async () => ({ allowed: true, preview: false })),
 }));
+// #188: the page reads counts and first blood in one go (teamSolveBoard).
+// Wrapped over the teamSolveCounts mock, so a test sets counts as before and
+// first blood through `firstBloods`.
+const firstBloods = vi.hoisted(() => ({ map: new Map<string, { login: string; at: string | null }>() }));
+vi.mock("@/lib/team-solve-counts", () => ({
+  teamSolveCounts,
+  teamSolveBoard: async (module: "classic" | "ai") => {
+    const counts = (await teamSolveCounts(module)) as Map<string, number> | null;
+    return counts ? { counts, firstBlood: firstBloods.map } : null;
+  },
+}));
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { moduleLive, isAdminLogin, getSession, listChallenges, listCategories, getSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, deriveStatusSpy } =
+const { moduleLive, isAdminLogin, getSession, listChallenges, listCategories, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, deriveStatusSpy } =
   vi.hoisted(() => ({
     moduleLive: vi.fn(),
     isAdminLogin: vi.fn(),
     getSession: vi.fn(),
     listChallenges: vi.fn(),
     listCategories: vi.fn(),
-    getSolveCounts: vi.fn(),
+    teamSolveCounts: vi.fn(),
     getViewerClassic: vi.fn(),
     getAdminSettings: vi.fn(),
     getResolvedModules: vi.fn(),
@@ -47,12 +58,14 @@ const storyMocks = vi.hoisted(() => ({
   listStories: vi.fn(async () => [] as { id: string; title: string; intro: string; steps: string[] }[]),
   getTeamClassicSolvedIds: vi.fn(async () => new Set<string>()),
 }));
-vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: storyMocks.getTeamClassicSolvedIds }));
+// storyLockLua: classic-store builds its grading script from it at load; no
+// script runs here.
+vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: storyMocks.getTeamClassicSolvedIds, storyLockLua: () => "" }));
 vi.mock("@/lib/classic-store", () => ({
   listStories: storyMocks.listStories,
   listChallenges,
   listCategories,
-  getSolveCounts,
+  teamSolveCounts,
   getViewerClassic,
   CLASSIC_COOLDOWN_SEC: 5,
 }));
@@ -85,7 +98,8 @@ beforeEach(() => {
     { id: "classic", title: "Jeopardy", blurb: "Find the flag, submit the string, take the points." },
   ]);
   listCategories.mockResolvedValue(["Web", "Crypto"]);
-  getSolveCounts.mockResolvedValue(new Map());
+  teamSolveCounts.mockResolvedValue(new Map());
+  firstBloods.map = new Map();
 });
 
 describe("flags page gate", () => {
@@ -328,6 +342,19 @@ describe("stories on the board (#463)", () => {
     expect(html.indexOf("Operation CTF")).toBeLessThan(html.indexOf("Crypto"));
   });
 
+  // #595: the open step shows how many teams solved it; the locked step's
+  // count never leaves the server (ADR 60: a locked step is invisible).
+  it("shows the open step's team count and never the locked step's", async () => {
+    getSession.mockResolvedValue({ user: { login: "alice" } });
+    listChallenges.mockResolvedValue(baseChallenges);
+    storyMocks.listStories.mockResolvedValue([op]);
+    storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
+    teamSolveCounts.mockResolvedValue(new Map([["c1", 2], ["c2", 5]]));
+    const html = renderToStaticMarkup(await FlagsPage());
+    expect(html).toContain("2 teams");
+    expect(html).not.toContain("5 teams");
+  });
+
   it("opens the next step once the team has solved the one before it", async () => {
     getSession.mockResolvedValue({ user: { login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
@@ -356,3 +383,49 @@ describe("stories on the board (#463)", () => {
   });
 });
 
+
+// #188: first blood on the board, derived from the same read as the counts.
+describe("first blood on the board (#188)", () => {
+  const op = { id: "op", title: "Operation CTF", intro: "", steps: ["c1", "c2"] };
+  beforeEach(() => {
+    moduleLive.mockReset();
+    moduleLive.mockReturnValue(true);
+    getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
+    getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
+    getSession.mockResolvedValue({ user: { login: "alice" } });
+    listChallenges.mockResolvedValue(baseChallenges);
+    storyMocks.listStories.mockResolvedValue([]);
+  });
+
+  it("names each challenge's first solver on its tile", async () => {
+    teamSolveCounts.mockResolvedValue(new Map([["c3", 1]]));
+    firstBloods.map = new Map([["c3", { login: "Zed-Hacker", at: "2026-10-01T12:00:00.000Z" }]]);
+    const html = renderToStaticMarkup(await FlagsPage());
+    expect(html).toContain("First blood: Zed-Hacker");
+    expect(html).toContain("Never attempted, 30 points, first blood by Zed-Hacker");
+    // Once as text (the title attribute repeats it for a truncated login).
+    expect(html.match(/<\/span>First blood:/g)).toHaveLength(1);
+  });
+
+  // ADR 60 / #463: a locked step is invisible, so who solved it first is not
+  // the viewer's to know. The open step's first blood still shows.
+  it("never carries a locked story step's first blood, while an open step shows its own", async () => {
+    storyMocks.listStories.mockResolvedValue([op]);
+    storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
+    teamSolveCounts.mockResolvedValue(new Map([["c1", 1], ["c2", 1]]));
+    firstBloods.map = new Map([
+      ["c1", { login: "opener", at: "2026-10-01T12:00:00.000Z" }],
+      ["c2", { login: "locked-step-solver", at: "2026-10-01T12:00:01.000Z" }],
+    ]);
+    const html = renderToStaticMarkup(await FlagsPage());
+    expect(html).toContain("First blood: opener");
+    expect(html).not.toContain("locked-step-solver");
+  });
+
+  it("shows no first blood (and no counts) when the solves could not be read", async () => {
+    teamSolveCounts.mockResolvedValue(null);
+    firstBloods.map = new Map([["c3", { login: "Zed-Hacker", at: "2026-10-01T12:00:00.000Z" }]]);
+    const html = renderToStaticMarkup(await FlagsPage());
+    expect(html).not.toMatch(/first blood/i);
+  });
+});

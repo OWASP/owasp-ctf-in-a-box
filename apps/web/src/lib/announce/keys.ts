@@ -34,7 +34,7 @@ export const ANNOUNCE_FIRST_KEY = "ctf:announce:first";
  *  marks for the new window rather than inheriting the old one's claims. */
 export const ANNOUNCE_MILESTONE_KEY = "ctf:announce:milestone";
 
-/** The observed lifecycle state (`v1|L<0|1>P<0|1>C<0|1>`), advanced
+/** The observed lifecycle state (`v2|L<0|1>P<0|1>C<0|1>A<0|1>`), advanced
  *  atomically by ANNOUNCE_STATE_SCRIPT so exactly one replica announces
  *  each transition. */
 export const ANNOUNCE_LIFECYCLE_KEY = "ctf:announce:lifecycle";

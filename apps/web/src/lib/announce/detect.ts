@@ -59,7 +59,7 @@ export function announcedLifecyclePause(prev: LifecycleSnapshot | null, next: Li
     return Boolean(prev?.announced && next.closed);
   }
   if (!prev) return false;
-  if (prev.paused && prev.announced) return true;
+  if (prev.announced) return true;
   if (!next.launched || next.closed) return false;
   // Launching already paused is a pause edge even though `prev.paused` was
   // already true: the pre-launch hold was never announced, so the launch is

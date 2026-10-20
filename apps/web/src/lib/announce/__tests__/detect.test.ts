@@ -199,6 +199,35 @@ describe("lifecycleEdges", () => {
     expect(lifecycleEdges(unfrozenClosed, reopened).map((e) => e.kind)).toEqual(["resume"]);
     expect(lifecycleEdges(reopened, reopened).map((e) => e.kind)).toEqual([]);
   });
+
+  it("keeps an owed resume through a refreeze while closed (#590)", () => {
+    // freeze → close → unfreeze → refreeze → extend → unfreeze: the owe made
+    // live must survive a second freeze while the window is closed, so the
+    // eventual reopen still posts exactly one resume and no extra pause.
+    const base = { scoringStartsAt: "2026-01-01T00:00:00Z", scoringEndsAt: "2026-01-02T00:00:00Z", paused: false };
+    const extendedBase = { ...base, scoringEndsAt: "2026-01-10T00:00:00Z" };
+    const live = advance(null, base, Date.parse("2026-01-01T12:00:00Z"));
+    const frozen = advance(live, { ...base, paused: true }, Date.parse("2026-01-01T12:00:00Z"));
+    const closed = advance(frozen, { ...base, paused: true }, Date.parse("2026-01-03T00:00:00Z"));
+    const unfrozenClosed = advance(closed, base, Date.parse("2026-01-03T00:00:00Z"));
+    const refrozen = advance(unfrozenClosed, { ...base, paused: true }, Date.parse("2026-01-04T00:00:00Z"));
+    const extended = advance(refrozen, { ...extendedBase, paused: true }, Date.parse("2026-01-04T00:00:00Z"));
+    const unfrozen = advance(extended, extendedBase, Date.parse("2026-01-05T00:00:00Z"));
+    expect([closed, unfrozenClosed, refrozen, extended, unfrozen].map((s) => [s.paused, s.closed, s.announced])).toEqual([
+      [true, true, true],
+      [false, true, true],
+      [true, true, true],
+      [true, false, true],
+      [false, false, false],
+    ]);
+    expect(lifecycleEdges(live, frozen).map((e) => e.kind)).toEqual(["pause"]);
+    expect(lifecycleEdges(frozen, closed).map((e) => e.kind)).toEqual([]);
+    expect(lifecycleEdges(closed, unfrozenClosed).map((e) => e.kind)).toEqual([]);
+    expect(lifecycleEdges(unfrozenClosed, refrozen).map((e) => e.kind)).toEqual([]);
+    expect(lifecycleEdges(refrozen, extended).map((e) => e.kind)).toEqual([]);
+    expect(lifecycleEdges(extended, unfrozen).map((e) => e.kind)).toEqual(["resume"]);
+    expect(lifecycleEdges(unfrozen, unfrozen).map((e) => e.kind)).toEqual([]);
+  });
 });
 
 describe("lifecycleSnapshotFrom", () => {

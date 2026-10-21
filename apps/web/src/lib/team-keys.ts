@@ -38,7 +38,8 @@ export const HINTS_SPENT_KEY = "ctf:hints:spent";
  *
  *  Under `ctf:hints:` deliberately, so the master reset's `ctf:hints:*` prefix
  *  already sweeps it and it cannot become the key a reset leaves behind. */
-export const userHintTimesKey = (login: string) => `ctf:hints:at:${login}`;
+export const HINT_TIMES_PREFIX = "ctf:hints:at:";
+export const userHintTimesKey = (login: string) => `${HINT_TIMES_PREFIX}${login}`;
 
 /** What each hint ACTUALLY cost when it was bought: hash,
  *  `<app>/<id>[#<level>]` -> points. `ctf:hints:spent` stays the authoritative

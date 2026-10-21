@@ -591,6 +591,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     // classic and ai slots against this login's own solve rows, already
     // loaded above. The target stays in the key so two targets sharing a
     // challenge id cannot cross-match.
+    const helpedBeforeSolve = new Set<string>();
     for (const [slot, boughtAt] of hintTimes) {
       const parsed = parseHintPurchaseKey(String(slot));
       if (!parsed) continue;
@@ -602,21 +603,24 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       // count toward the event-wide before/after-solve figures below.
       let levelStat: (HintLevelStat & { buyersSet: Set<string> }) | undefined;
       if (target === "classic") {
-        levelStat = hintLevels.get(parsed.level) ?? {
-          level: parsed.level,
-          buyers: 0,
-          totalSpend: 0,
-          boughtBeforeSolving: 0,
-          boughtAfterSolving: 0,
-          buyersSet: new Set<string>(),
-        };
-        hintLevels.set(parsed.level, levelStat);
-        if (!levelStat.buyersSet.has(login)) {
-          levelStat.buyersSet.add(login);
-          levelStat.buyers += 1;
-        }
         const recordedCost = hintCosts.get(String(slot));
+        // A purchase with no usable cost record cannot price a level. Leave it
+        // out rather than reporting a buyer and a zero-spend row that the
+        // event-wide aggregate still includes.
         if (typeof recordedCost === "number" && Number.isFinite(recordedCost) && recordedCost >= 0) {
+          levelStat = hintLevels.get(parsed.level) ?? {
+            level: parsed.level,
+            buyers: 0,
+            totalSpend: 0,
+            boughtBeforeSolving: 0,
+            boughtAfterSolving: 0,
+            buyersSet: new Set<string>(),
+          };
+          hintLevels.set(parsed.level, levelStat);
+          if (!levelStat.buyersSet.has(login)) {
+            levelStat.buyersSet.add(login);
+            levelStat.buyers += 1;
+          }
           levelStat.totalSpend += recordedCost;
         }
       }
@@ -639,7 +643,13 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         if (levelStat) levelStat.boughtBeforeSolving += 1;
         if (target === "classic" || target === "ai") {
           const key = `${target}:${challengeId}`;
-          hintHelpedById.set(key, (hintHelpedById.get(key) ?? 0) + 1);
+          // A contestant who bought several rungs before solving still counts
+          // once for this challenge; the per-level totals above count each
+          // qualifying purchase.
+          if (!helpedBeforeSolve.has(key)) {
+            helpedBeforeSolve.add(key);
+            hintHelpedById.set(key, (hintHelpedById.get(key) ?? 0) + 1);
+          }
         }
       } else {
         hintsAfterSolve += 1;

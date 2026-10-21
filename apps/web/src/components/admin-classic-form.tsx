@@ -194,12 +194,11 @@ export function ChallengeForm({
     }
     const bought = purchases.byId[editor.id] ?? 0;
     if (bought === 0) return null;
-    // Only rows with text survive the save; a blanked row is a removal, and
-    // the rungs after it shift even though the draft still holds the row.
+    // Only rows with text survive the save. Appending a rung leaves every
+    // baseline position untouched; removing, clearing or moving one changes
+    // which text an existing purchase reveals.
     const saved = draft.hints.filter((hint) => hint.text.trim());
-    const shapeChanged =
-      saved.length !== editor.hintBaseline.length ||
-      saved.some((hint, i) => hint.id !== editor.hintBaseline[i]);
+    const shapeChanged = editor.hintBaseline.some((id, i) => saved[i]?.id !== id);
     if (!shapeChanged) return null;
     return `${bought} purchase${bought === 1 ? "" : "s"} already point at these rungs by position. Reordering or removing a hint changes which text they reveal; adding one at the end does not.`;
   })();

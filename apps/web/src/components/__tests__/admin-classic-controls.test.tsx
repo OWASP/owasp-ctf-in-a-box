@@ -357,11 +357,20 @@ describe("ChallengeForm — the masking/preview/no-id properties an organizer ac
     };
     expect(render(cleared)).toMatch(/2 purchases already point at these rungs by position/i);
 
+    const filledAppend = {
+      ...editor,
+      draft: {
+        ...editor.draft,
+        hints: [...editor.draft.hints, { id: "hint-row-new", text: "three", cost: "" }],
+      },
+    };
+    expect(render(filledAppend)).not.toMatch(/purchase.*point at these rungs/i);
+
     const blankAppend = {
       ...editor,
       draft: {
         ...editor.draft,
-        hints: [...editor.draft.hints, { id: "hint-row-new", text: "", cost: "" }],
+        hints: [...editor.draft.hints, { id: "hint-row-blank", text: "", cost: "" }],
       },
     };
     expect(render(blankAppend)).not.toMatch(/purchase.*point at these rungs/i);

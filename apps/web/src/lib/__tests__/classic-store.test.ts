@@ -15,6 +15,9 @@
 // compromised mock for both.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { HINT_TIMES_PREFIX } from "@/lib/team-keys";
 
 const mocks = vi.hoisted(() => ({ upstashEval: vi.fn(), upstashPipeline: vi.fn() }));
 vi.mock("server-only", () => ({}));
@@ -339,6 +342,13 @@ describe("listChallengesForAdmin", () => {
 });
 
 describe("countClassicHintPurchases", () => {
+  it("scans the shared hint-time prefix rather than an open-coded key", () => {
+    expect(HINT_TIMES_PREFIX).toBe("ctf:hints:at:");
+    const src = readFileSync(fileURLToPath(new URL("../classic-store.ts", import.meta.url)), "utf8");
+    expect(src).toMatch(/HINT_TIMES_PREFIX/);
+    expect(src).not.toMatch(/ctf:hints:at:/);
+  });
+
   it("counts classic purchases per challenge and ignores other targets", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce([
       { result: ["0", ["ctf:hints:at:alice", "ctf:hints:at:bob"]] },

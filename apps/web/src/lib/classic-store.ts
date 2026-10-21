@@ -18,6 +18,7 @@ import { CLASSIC_COOLDOWN_SEC } from "./classic-defaults";
 import { getAdminSettings } from "@/lib/admin-store";
 import { scoringClosure } from "@/lib/schedule-window";
 import { errorLabel } from "@/lib/error-label";
+import { HINT_TIMES_PREFIX } from "@/lib/team-keys";
 import { readLastAt } from "@/lib/last-at";
 import {
   bundleVersionFor,
@@ -455,14 +456,14 @@ export async function listChallengesForAdmin(): Promise<AdminChallenge[]> {
 }
 
 /** How many hint purchases exist per classic challenge, from the purchase
- *  timestamps every reveal writes (`ctf:hints:at:<login>`, field
+ *  timestamps every reveal writes (the `userHintTimesKey` hashes, field
  *  `<target>/<id>[#<n>]`). The admin editor uses it only to warn before a
  *  ladder is reordered or shortened: purchases are position-based, so a
  *  changed shape makes an owned rung point at a different text. Returns null
  *  when the read fails, so the editor can say the history is unknown rather
  *  than claim there are none. */
 export async function countClassicHintPurchases(): Promise<Record<string, number> | null> {
-  const prefix = "ctf:hints:at:";
+  const prefix = HINT_TIMES_PREFIX;
   try {
     const keys: string[] = [];
     let cursor = "0";

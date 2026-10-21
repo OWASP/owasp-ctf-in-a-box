@@ -837,6 +837,48 @@ describe("hint ordering", () => {
     ]);
   });
 
+  it("omits classic purchases without a usable recorded cost from byLevel", async () => {
+    mockStore({
+      logins: ["alice"],
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(50, "2026-08-22T10:10:00Z") },
+          hintTimes: {
+            "classic/c1": "2026-08-22T10:00:00Z",
+            "classic/c1#2": "2026-08-22T10:01:00Z",
+            "classic/c1#3": "2026-08-22T10:02:00Z",
+          },
+          hintCosts: { "classic/c1": 7, "classic/c1#2": -1, "classic/c1#3": Number.NaN },
+        },
+      },
+    });
+    const m = await computeEventMetrics();
+    expect(m.hints.boughtBeforeSolving).toBe(3);
+    expect(m.hints.byLevel).toEqual([
+      { level: 1, buyers: 1, totalSpend: 7, boughtBeforeSolving: 1, boughtAfterSolving: 0 },
+    ]);
+  });
+
+  it("counts a contestant once in solvedAfterHint across multiple pre-solve rungs", async () => {
+    mockStore({
+      logins: ["alice"],
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(50, "2026-08-22T10:10:00Z") },
+          hintTimes: { "classic/c1": "2026-08-22T10:00:00Z", "classic/c1#2": "2026-08-22T10:05:00Z" },
+          hintCosts: { "classic/c1": 10, "classic/c1#2": 15 },
+        },
+      },
+    });
+    const m = await computeEventMetrics();
+    expect(m.hints.boughtBeforeSolving).toBe(2);
+    const byLevel = new Map(m.hints.byLevel.map((r) => [r.level, r]));
+    expect(byLevel.get(1)).toMatchObject({ buyers: 1, totalSpend: 10, boughtBeforeSolving: 1 });
+    expect(byLevel.get(2)).toMatchObject({ buyers: 1, totalSpend: 15, boughtBeforeSolving: 1 });
+    const stat = m.challenges.find((c) => c.module === "classic" && c.id === "c1");
+    expect(stat?.solvedAfterHint).toBe(1);
+  });
+
   // #190: classic slots compare against the login's OWN solve rows, and the
   // per-challenge stat gains a real solvedAfterHint figure.
   it("orders a CLASSIC hint against the login's own solve time, per challenge", async () => {

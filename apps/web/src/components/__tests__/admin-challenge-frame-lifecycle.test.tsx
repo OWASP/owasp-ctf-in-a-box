@@ -373,6 +373,12 @@ describe("ChallengeFrame — DOM interaction tests", () => {
       fireEvent.click(screen.getByRole("button", { name: "Delete challenge" }));
     });
 
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/challenges",
+      expect.objectContaining({ method: "DELETE", body: JSON.stringify({ id: "c2" }) }),
+    );
+    await waitFor(() => expect(screen.queryByLabelText('More actions for "Challenge 2"')).toBeNull());
+
     // Editor for Challenge 1 must remain open
     expect(screen.getByTestId("mock-form")).not.toBeNull();
     expect(screen.getByTestId("form-title").textContent).toBe("Challenge 1");
@@ -381,7 +387,18 @@ describe("ChallengeFrame — DOM interaction tests", () => {
   it("switching challenges after revealing a flag re-masks it", () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({ challenges: [], categories: ["Web"] }), { status: 200 })),
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            challenges: [
+              { challenge: { id: "c1", title: "Challenge 1", category: "Web" } },
+              { challenge: { id: "c2", title: "Challenge 2", category: "Web" } },
+            ],
+            categories: ["Web"],
+          }),
+          { status: 200 },
+        ),
+      ),
     );
     render(<InteractiveFrameHarness />);
 
@@ -402,7 +419,18 @@ describe("ChallengeFrame — DOM interaction tests", () => {
   it("cancelling a challenge switch preserves the revealed flag", () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({ challenges: [], categories: ["Web"] }), { status: 200 })),
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            challenges: [
+              { challenge: { id: "c1", title: "Challenge 1", category: "Web" } },
+              { challenge: { id: "c2", title: "Challenge 2", category: "Web" } },
+            ],
+            categories: ["Web"],
+          }),
+          { status: 200 },
+        ),
+      ),
     );
     render(<InteractiveFrameHarness />);
 
@@ -434,7 +462,18 @@ describe("ChallengeFrame — DOM interaction tests", () => {
   it("each successive new-challenge draft starts with its flag masked", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({ challenges: [], categories: ["Web"] }), { status: 200 })),
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            challenges: [
+              { challenge: { id: "c1", title: "Challenge 1", category: "Web" } },
+              { challenge: { id: "c2", title: "Challenge 2", category: "Web" } },
+            ],
+            categories: ["Web"],
+          }),
+          { status: 200 },
+        ),
+      ),
     );
     render(<InteractiveFrameHarness />);
 

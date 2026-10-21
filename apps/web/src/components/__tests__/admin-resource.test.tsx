@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 // The list-plus-editor state the quiz, classic and ai admin panels share.
-// This repo's tests run `renderToStaticMarkup` in vitest's node environment:
-// hooks render once and effects never run, so the async flows are proven
-// through the two exported transport functions the hook is built on
-// (`loadResource`, `postRow`, against a stubbed `fetch`) and the initial
-// state through a probe component that renders what the hook hands back.
+// This suite runs under happy-dom so `renderHook` can mount the hook with
+// effects and asynchronous state updates. The transport functions
+// (`loadResource`, `postRow`, `writeBackReorder`) are proven directly against
+// a stubbed `fetch`, the initial state through a static probe, and remove()
+// through mounted hooks that observe editor, rows and error state.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, renderHook } from "@testing-library/react";
@@ -288,5 +288,7 @@ describe("useAdminResource — remove and closesOnDelete interaction", () => {
     });
 
     expect(result.current.editing).toEqual({ id: "a", title: "A" });
+    expect(result.current.rows.map((row) => row.item.id)).not.toContain("b");
+    expect(result.current.deleteError).toBeNull();
   });
 });

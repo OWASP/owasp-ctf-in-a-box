@@ -94,7 +94,12 @@ async function snapshot() {
 }
 async function roundTrip() {
   const exported = await exportBundle();
-  expect(parsed(exported)).toEqual(exported);
+  // A pre-v5 export writes a one-rung ladder as the legacy `hint` string while
+  // the parser normalizes it to `hints`; both are the same bundle, so compare
+  // their canonical serialized form and require parsing to be idempotent.
+  const canonical = parsed(exported);
+  expect(JSON.parse(serializeBundle(exported))).toEqual(JSON.parse(serializeBundle(canonical)));
+  expect(parsed(canonical)).toEqual(canonical);
   return exported;
 }
 

@@ -5,6 +5,12 @@ environment, how to build and test each piece, what CI will hold you to, the
 testing conventions this repo deliberately keeps, and the process for getting
 a change merged.
 
+Questions and chat go to
+[the project's channel](https://owasp.slack.com/archives/C0C2RKGSKD5) on the
+OWASP Slack (no account yet? [join OWASP on Slack](https://owasp.org/slack/invite)).
+Claims, assignments and decisions stay on GitHub issues, where the record
+lasts.
+
 ## Dev environment
 
 - **Node 22** across the board (`sync`, `scorer`, `apps/web` all pin it in
@@ -258,6 +264,7 @@ who asked first is not the one who loses.
   first). A reply that does not assign you is not a go-ahead: wait for the
   assignment. If nobody has answered at all, say so on the issue and go
   ahead: the claim is yours.
+- **A claim lives on the issue.** Saying so in Slack does not claim it.
 - **One open claim at a time**, unless a maintainer says otherwise.
 - **An assignment lapses after 7 days** without a draft PR or an update on
   the issue. Then the issue is open to the next claim.

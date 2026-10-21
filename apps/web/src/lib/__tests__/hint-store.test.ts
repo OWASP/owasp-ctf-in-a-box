@@ -1428,6 +1428,38 @@ describe("classic hint lookups never read the text hash", () => {
     expectNoTextRead(commands);
   });
 
+  // The price/existence gate runs before the charge script. If it cannot
+  // answer, the reveal closes: no eval, no charge, a retryable refusal.
+  it("fails closed when the price read rejects, without running the charge script", async () => {
+    const store = await loadStore();
+    mocks.upstashPipeline.mockRejectedValueOnce(new Error("NOAUTH"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(store.revealHint("octocat", "classic", "web-robots-only")).resolves.toEqual({
+        ok: false,
+        error: "Hint reveal failed. Try again",
+      });
+      expect(mocks.upstashEval).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("fails closed on a resolved per-command price-read error, without running the charge script", async () => {
+    const store = await loadStore();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "WRONGTYPE" }, { result: null }]);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(store.revealHint("octocat", "classic", "web-robots-only")).resolves.toEqual({
+        ok: false,
+        error: "Hint reveal failed. Try again",
+      });
+      expect(mocks.upstashEval).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("builds the ladder from presence and per-rung prices, stopping at the first gap", async () => {
     const store = await loadStore();
     const reads: { result?: unknown; error?: string }[] = [];

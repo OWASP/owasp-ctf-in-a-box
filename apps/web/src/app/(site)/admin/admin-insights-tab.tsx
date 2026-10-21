@@ -60,6 +60,46 @@ type EventMetrics = {
   caveats: string[];
 };
 
+type HintLevelStat = NonNullable<EventMetrics["hints"]["byLevel"]>[number];
+
+/** The per-rung Jeopardy hint table. Split out so the static-render suite can
+ *  pin the row shape without driving the metrics fetch. */
+export function HintsByLevelTable({ byLevel }: { byLevel: HintLevelStat[] }) {
+  if (byLevel.length === 0) return null;
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold text-white">Hints by level</h3>
+      <p className="text-sm text-muted">
+        Jeopardy ladders sell in order; later rungs are only bought after the ones before them.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="text-xs uppercase tracking-wide text-muted">
+            <tr>
+              <th className="py-1 pr-4 font-medium">Level</th>
+              <th className="py-1 pr-4 font-medium">Buyers</th>
+              <th className="py-1 pr-4 font-medium">Points spent</th>
+              <th className="py-1 pr-4 font-medium">Before solving</th>
+              <th className="py-1 font-medium">After solving</th>
+            </tr>
+          </thead>
+          <tbody className="tabular-nums text-white">
+            {byLevel.map((level) => (
+              <tr key={level.level} className="border-t border-white/[0.06]">
+                <td className="py-1 pr-4">{level.level}</td>
+                <td className="py-1 pr-4">{level.buyers}</td>
+                <td className="py-1 pr-4">{level.totalSpend}</td>
+                <td className="py-1 pr-4">{level.boughtBeforeSolving}</td>
+                <td className="py-1">{level.boughtAfterSolving}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function Figure({ label, value, hint }: { label: string; value: number; hint?: string }) {
   return (
     <div className="rounded-md border border-white/[0.06] bg-white/[0.02] p-3">
@@ -380,38 +420,7 @@ export default function AdminInsightsTab({
             </div>
           </section>
 
-          {(metrics.hints.byLevel?.length ?? 0) > 0 && (
-            <section className="flex flex-col gap-2">
-              <h3 className="text-sm font-semibold text-white">Hints by level</h3>
-              <p className="text-sm text-muted">
-                Jeopardy ladders sell in order; later rungs are only bought after the ones before them.
-              </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="text-xs uppercase tracking-wide text-muted">
-                    <tr>
-                      <th className="py-1 pr-4 font-medium">Level</th>
-                      <th className="py-1 pr-4 font-medium">Buyers</th>
-                      <th className="py-1 pr-4 font-medium">Points spent</th>
-                      <th className="py-1 pr-4 font-medium">Before solving</th>
-                      <th className="py-1 font-medium">After solving</th>
-                    </tr>
-                  </thead>
-                  <tbody className="tabular-nums text-white">
-                    {metrics.hints.byLevel!.map((level) => (
-                      <tr key={level.level} className="border-t border-white/[0.06]">
-                        <td className="py-1 pr-4">{level.level}</td>
-                        <td className="py-1 pr-4">{level.buyers}</td>
-                        <td className="py-1 pr-4">{level.totalSpend}</td>
-                        <td className="py-1 pr-4">{level.boughtBeforeSolving}</td>
-                        <td className="py-1">{level.boughtAfterSolving}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
+          <HintsByLevelTable byLevel={metrics.hints.byLevel ?? []} />
 
           <section className="flex flex-col gap-1 border-t border-white/[0.06] pt-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">

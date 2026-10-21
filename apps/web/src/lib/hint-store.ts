@@ -402,7 +402,10 @@ async function classicHintPrice(
 ): Promise<{ present: boolean; price: number }> {
   const field = hintField(id, level);
   // Presence is a FIELD check: the text is the protected thing and this runs
-  // before the purchase checks, so it must never be read here.
+  // before the purchase checks, so it must never be read here. Fails CLOSED:
+  // either a rejected pipeline or a per-command error throws, so `revealHint`
+  // refuses with "try again" and never evals the charge script — without the
+  // server verifying the hint and its authoritative price, no purchase is safe.
   const [existsRes, costRes] = await upstashPipeline([
     ["HEXISTS", CLASSIC_HINTS_KEY, field],
     ["HGET", CLASSIC_HINT_COSTS_KEY, field],

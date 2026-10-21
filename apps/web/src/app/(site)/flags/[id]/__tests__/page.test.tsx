@@ -297,6 +297,31 @@ describe("challenge page hint", () => {
     expect(html).not.toMatch(/Reveal hint \(−40 pts\)/);
   });
 
+  // The secrecy boundary has two sides: the owned rung renders, and NO
+  // unpurchased rung's text reaches the markup. The extra `text` fields on
+  // the ladder stand in for a wider rung record, so a future spread of one
+  // into props fails here rather than leaking.
+  it("renders only the purchased rung's text, never an unpurchased rung's", async () => {
+    const rungText = ["First rung text.", "Second rung text.", "Third rung text."];
+    getClassicHintLadder.mockResolvedValue([
+      { level: 1, price: 25, text: rungText[0] },
+      { level: 2, price: 30, text: rungText[1] },
+      { level: 3, price: 40, text: rungText[2] },
+    ]);
+    getViewerHints.mockResolvedValue({
+      purchased: {},
+      classic: { c1: rungText[0] },
+      classicLevels: { c1: { 1: rungText[0] } },
+      spent: 25,
+      count: 1,
+    });
+    const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+
+    expect(html).toContain(rungText[0]);
+    expect(html).not.toContain(rungText[1]);
+    expect(html).not.toContain(rungText[2]);
+  });
+
   it("tells a signed-out visitor a hint exists without an affordance that would 401", async () => {
     getSession.mockResolvedValue(null);
     getClassicHintLadder.mockResolvedValue([{ level: 1, price: 25 }]);

@@ -84,6 +84,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   receive distinct form keys to cleanly remount form state and re-trigger
   focus effects, and the Add button is guarded against clicks while categories
   are reordering, not yet loaded, or when the initial load failed.
+- **Changed: admin challenge lifecycle tests drive real DOM interactions (#676).**
+  `apps/web` adds `@testing-library/react` and `happy-dom`, so deleting an open
+  challenge, switching editors with a revealed flag, cancelling a draft switch
+  and successive new-challenge drafts are covered through rendered components
+  rather than static markup alone.
 
 ## v1.0.0 — 2026-10-16
 

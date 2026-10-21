@@ -234,8 +234,9 @@ Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the dev
 environment, the CI gates and how to propose a module (start with an issue,
 not a PR); [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies. Comment on an
 issue to claim it and wait to be assigned before opening a PR, unless it is
-a typo or small docs fix or an issue you filed yourself
-([Claiming an issue](CONTRIBUTING.md#claiming-an-issue)). Small,
+a typo or small docs fix, or an issue you filed yourself and said on it that
+you are working on ([Claiming an issue](CONTRIBUTING.md#claiming-an-issue)).
+Small,
 well-specified work is tagged
 [`good first issue`](https://github.com/OWASP/owasp-ctf-in-a-box/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 Sign off every commit with `git commit -s`

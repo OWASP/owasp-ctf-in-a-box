@@ -253,8 +253,11 @@ who asked first is not the one who loses.
 
 - **Comment on the issue to claim it, then wait to be assigned** before you
   open a pull request. A plan in the comment is welcome, not required.
-- **A maintainer answers a claim within 3 days.** If nobody has, say so on
-  the issue and go ahead: the claim is yours.
+- **A maintainer answers a claim within 3 days**, by assigning you or by
+  saying why not (someone else has it, or the issue needs a design decision
+  first). A reply that does not assign you is not a go-ahead: wait for the
+  assignment. If nobody has answered at all, say so on the issue and go
+  ahead: the claim is yours.
 - **One open claim at a time**, unless a maintainer says otherwise.
 - **An assignment lapses after 7 days** without a draft PR or an update on
   the issue. Then the issue is open to the next claim.
@@ -267,8 +270,8 @@ claim, with no wait for assignment.
 
 ## Pull request flow
 
-1. Claim the issue and wait to be assigned
-   (see [Claiming an issue](#claiming-an-issue)), then branch off `main`.
+1. Unless the change is exempt, claim the issue and wait to be assigned
+   (see [Claiming an issue](#claiming-an-issue)). Then branch off `main`.
 2. Make your change. Keep commits scoped and use
    [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`,
    `fix:`, `docs:`, `test:`, `chore:`, `ci:`, ...). Sign off every commit

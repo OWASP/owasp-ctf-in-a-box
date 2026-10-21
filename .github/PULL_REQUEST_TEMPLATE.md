@@ -33,6 +33,11 @@
 
 ## Checklist
 
+- [ ] I am assigned the issue this PR closes, or no maintainer answered my
+      claim within 3 days and I said so on the issue, or it is exempt (a
+      typo or small docs fix, or an issue I filed and said on it that I am
+      working on). See
+      [Claiming an issue](../CONTRIBUTING.md#claiming-an-issue).
 - [ ] CI is green.
 - [ ] My tests can FAIL: I can name the single-token mutation of this change
       that each new/changed test would catch. (A test satisfiable whether or

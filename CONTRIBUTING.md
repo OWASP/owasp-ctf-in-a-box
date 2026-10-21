@@ -246,9 +246,29 @@ git rebase --signoff origin/main   # then force-push the branch
 forbids: no `Generated with`, and no `Co-authored-by:` naming an AI tool or
 agent (see [AI-assisted contributions](#ai-assisted-contributions)).
 
+## Claiming an issue
+
+Claim before you build, so two people never write the same PR and the one
+who asked first is not the one who loses.
+
+- **Comment on the issue to claim it, then wait to be assigned** before you
+  open a pull request. A plan in the comment is welcome, not required.
+- **A maintainer answers a claim within 3 days.** If nobody has, say so on
+  the issue and go ahead: the claim is yours.
+- **One open claim at a time**, unless a maintainer says otherwise.
+- **An assignment lapses after 7 days** without a draft PR or an update on
+  the issue. Then the issue is open to the next claim.
+- **A pull request for an issue assigned to someone else, or for one nobody
+  claimed, may be closed without review.**
+
+Exempt: typo and small docs fixes, which need no issue at all; and an issue
+you filed yourself, where saying on it that you are working on it is the
+claim, with no wait for assignment.
+
 ## Pull request flow
 
-1. Branch off `main`.
+1. Claim the issue and wait to be assigned
+   (see [Claiming an issue](#claiming-an-issue)), then branch off `main`.
 2. Make your change. Keep commits scoped and use
    [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`,
    `fix:`, `docs:`, `test:`, `chore:`, `ci:`, ...). Sign off every commit
@@ -265,6 +285,9 @@ agent (see [AI-assisted contributions](#ai-assisted-contributions)).
 
 A PR is ready when all of these are true:
 
+- You are currently assigned the issue it closes, your claim went unanswered for 3
+  days and you said so on the issue, or it is exempt
+  (see [Claiming an issue](#claiming-an-issue)).
 - The commands for the touched area in AGENTS.md were run locally
   (or the PR says why they could not be — e.g. no Docker).
 - New tests can fail: the summary names the single-token mutation

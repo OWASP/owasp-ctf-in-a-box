@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { CLASSIC_BUNDLE_VERSION, parseBundle, serializeBundle, type ClassicBundle } from "@/lib/classic-io";
+import { CLASSIC_BUNDLE_VERSION, carriesLadder, parseBundle, serializeBundle, type ClassicBundle } from "@/lib/classic-io";
 
 const valid: ClassicBundle = {
   version: 1,
@@ -290,10 +290,10 @@ describe("classic import errors never echo the submitted value (#500)", () => {
   });
 });
 
-// #594: hint ladders. v5 carries `hints` (an ordered list of {text, cost});
+// Hint ladders. v5 carries `hints` (an ordered list of {text, cost});
 // each rung's cost is optional and falls back to the event-wide price. The
 // v1-v4 `hint` string is a ONE-rung ladder, normalized without migration.
-describe("hint ladders (#594)", () => {
+describe("hint ladders", () => {
   const v5 = (challenges: unknown[], version = 5) => ({ ...valid, version, challenges });
   const rung = (over: Record<string, unknown> = {}) => ({
     id: "web-one-ab12cd",
@@ -304,6 +304,15 @@ describe("hint ladders (#594)", () => {
     order: 0,
     flag: "ctfbox{One}",
     ...over,
+  });
+
+  it("only needs v5 for more than one rung or an explicit rung price", () => {
+    expect(carriesLadder(undefined)).toBe(false);
+    expect(carriesLadder([])).toBe(false);
+    expect(carriesLadder([{ text: "one", cost: null }])).toBe(false);
+    expect(carriesLadder([{ text: "one", cost: 0 }])).toBe(true);
+    expect(carriesLadder([{ text: "one", cost: 5 }])).toBe(true);
+    expect(carriesLadder([{ text: "one", cost: null }, { text: "two", cost: null }])).toBe(true);
   });
 
   it("accepts a priced ladder and preserves its order", () => {

@@ -114,10 +114,10 @@ export function isHintTarget(value: string): value is HintTarget {
 // Charge-if-new + return the hint in one atomic script: SADD's return value
 // is the idempotency guard, so a double-click (or a race across two tabs)
 // can never charge twice. `hint` is re-checked inside the script — a stale
-// availability cache can't charge for a hint that no longer exists.
-// #594 extends the same script to ordered Jeopardy ladders. The rung is a
-// field in the text/cost hashes and a purchase key in the user's set:
-// level 1 keeps the LEGACY bare id (so every pre-ladder hint, purchase and
+// availability cache can't charge for a hint that no longer exists. The same
+// script also serves ordered Jeopardy ladders: the rung is a field in the
+// text/cost hashes and a purchase key in the user's set. Level 1 keeps the
+// LEGACY bare id (so every pre-ladder hint, purchase and
 // timestamp is level 1), later rungs use `<id>#<n>`. The script enforces
 // ordering, the client-confirmed price and the charge atomically; the caller
 // resolves a ladder only to render it, never as the authority.
@@ -128,7 +128,7 @@ export function isHintTarget(value: string): value is HintTarget {
 //       [7]=the admin settings hash (#566 live `paused` + `hintCost`);
 //       [8]=the Jeopardy challenge records, for the visibility check ([14]);
 //       [9]=the per-hint price hash (classic only; ignored when [15] is "");
-//       [10]=per-purchase actual-cost hash (#594);
+//       [10]=per-purchase actual-cost hash;
 //       [11..]=the story lock's (solves hash, user record) pair per teammate
 //       (#463, #602), when any.
 // ARGV: [1]=text field [2]=purchase key [3]=login [4]=fallback price
@@ -270,7 +270,7 @@ if ARGV[9] and ARGV[9] ~= '' then
   if (tonumber(redis.call('GET', KEYS[6]) or '0') or 0) > 0 then return {'stale'} end
   if (redis.call('GET', KEYS[5]) or '0') ~= ARGV[9] then return {'stale'} end
 end
--- Ordered ladder (#594): level N exists only after N-1 was bought. The
+-- Ordered ladder: level N exists only after N-1 was bought. The
 -- previous key is the legacy bare key for level 2 and the canonical key
 -- above it, so a legacy challenge-only purchase counts as hint 1.
 if ARGV[16] and ARGV[16] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[16]) == 0 then
@@ -308,7 +308,7 @@ type RevealResult =
       error: string;
       missing?: boolean;
       forbidden?: boolean;
-      /** The authoritative price the client must re-confirm (#557/#594). */
+      /** The authoritative price the client must re-confirm (#557). */
       repriced?: true;
       cost?: number;
       /** Spend total at the refusal, when the script had already read it. */
@@ -533,13 +533,11 @@ export async function revealHint(
   login: string,
   target: string,
   id: string,
-  opts: { dryRun?: boolean; level?: number; confirmedCost?: number; quotedCost?: number } = {},
+  opts: { dryRun?: boolean; level?: number; quotedCost?: number } = {},
 ): Promise<RevealResult> {
   const dryRun = opts.dryRun === true;
   const level = opts.level ?? 1;
-  // `confirmedCost` is the older name for the same client-supplied quote.
-  const quotedCost = opts.quotedCost ?? opts.confirmedCost;
-  const quoted = quotedCost === undefined ? "" : String(quotedCost);
+  const quoted = opts.quotedCost === undefined ? "" : String(opts.quotedCost);
   // Fails CLOSED: unlike the scoring freeze, a settings-read error here must
   // never let a purchase through unpriced/ungated — `resolveHintConfig`'s
   // `getAdminSettings` throws on any read failure (transport or per-command),
@@ -552,7 +550,7 @@ export async function revealHint(
   if (!Number.isInteger(level) || level < 1 || level > HINT_LEVELS_MAX) {
     return { ok: false, missing: true, error: "No hint available for this challenge" };
   }
-  // Ladders are a Jeopardy feature (#594); ai and secure-development keep
+  // Ladders are a Jeopardy feature; ai and secure-development keep
   // their single hint, so a level above 1 is indistinguishable from a guess.
   if (target !== "classic" && level !== 1) {
     return { ok: false, missing: true, error: "No hint available for this challenge" };
@@ -695,7 +693,7 @@ async function attemptReveal(
         // KEYS[8]: the Jeopardy records, for the visibility check (ARGV[14]).
         CLASSIC_CHALLENGES_KEY,
         // KEYS[9]: per-rung prices; KEYS[10]: what each purchase actually
-        // charged, which the metrics tab sums per level (#594).
+        // charged, which the metrics tab sums per level.
         CLASSIC_HINT_COSTS_KEY,
         userHintCostsKey(login),
         ...lockKeys,
@@ -760,7 +758,7 @@ async function attemptReveal(
     return { ok: false, forbidden: true, error: "Buy the previous hint first" };
   }
   // The contestant confirmed a price that no longer matches the authoritative
-  // one (#557/#594). Nothing was charged and the text was not read.
+  // one (#557). Nothing was charged and the text was not read.
   if (status === "repriced") {
     return repricedResult(effectivePrice, Number(spent) || undefined);
   }
@@ -809,7 +807,7 @@ type ViewerHints = {
   /** Bought CLASSIC level-1 hints, keyed by challenge id (#190). Kept for
    *  callers that predate ladders; `classicLevels` carries every rung. */
   classic: Record<string, string>;
-  /** Bought CLASSIC hints by challenge id and level (#594). */
+  /** Bought CLASSIC hints by challenge id and level. */
   classicLevels: Record<string, Record<number, string>>;
   /** Bought AI hints, keyed by challenge id (issue #211). */
   ai: Record<string, string>;

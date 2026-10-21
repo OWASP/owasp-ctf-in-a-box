@@ -26,6 +26,7 @@ const {
   listStories,
   setStories,
   listChallengeIds,
+  countClassicHintPurchases,
   writeAdminAudit,
   ClassicValidationError,
 } = vi.hoisted(() => {
@@ -53,6 +54,7 @@ const {
     listStories: vi.fn(),
     setStories: vi.fn(),
     listChallengeIds: vi.fn(),
+    countClassicHintPurchases: vi.fn(),
     writeAdminAudit: vi.fn(),
     ClassicValidationError,
   };
@@ -83,6 +85,7 @@ vi.mock("@/lib/classic-store", () => ({
   listStories,
   setStories,
   listChallengeIds,
+  countClassicHintPurchases,
   getSolveCounts: counts.getSolveCounts,
   ClassicValidationError,
 }));
@@ -153,12 +156,14 @@ beforeEach(() => {
   listStories.mockReset();
   setStories.mockReset();
   listChallengeIds.mockReset();
+  countClassicHintPurchases.mockReset();
   writeAdminAudit.mockReset();
   listStories.mockResolvedValue([]);
   listChallengeIds.mockResolvedValue(new Set(["c-1", "c-2"]));
   allowAdmin();
   listChallengesForAdmin.mockResolvedValue([ADMIN_ROW]);
   listCategories.mockResolvedValue(["Web"]);
+  countClassicHintPurchases.mockResolvedValue({});
   writeAdminAudit.mockResolvedValue(undefined);
 });
 
@@ -184,7 +189,7 @@ describe("GET /api/admin/classic", () => {
   it("returns challenges (with flags) and categories for an admin", async () => {
     const res = await GET(adminReq("GET"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [], attachments: {}, solves: { [ADMIN_ROW.challenge.id]: { teams: 0, players: 0 } } });
+    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [], attachments: {}, solves: { [ADMIN_ROW.challenge.id]: { teams: 0, players: 0 } }, hintPurchases: {} });
   });
 
   // #595: an organizer spots a flag nobody can solve from the list itself.
@@ -374,7 +379,7 @@ describe("POST /api/admin/classic — challenge upsert", () => {
 
     expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-upsert", { challengeId: "c-1" });
   });
-  // #594: a hints ladder is validated at the boundary and handed to the store
+  // A hints ladder is validated at the boundary and handed to the store
   // as the parsed list (blank text or a bad price is refused, not written).
   it("passes a validated hints ladder through, and echoes it back", async () => {
     upsertChallenge.mockResolvedValue({

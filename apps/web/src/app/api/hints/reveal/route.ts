@@ -46,10 +46,9 @@ export async function POST(request: Request) {
   // The price on the contestant's confirm button (#557). Absent, the reveal
   // charges the current price, as an older page did; present, it must be a
   // whole, non-negative number of points, and the script charges exactly
-  // that or nothing. `confirmedCost` is the older name for the same quote.
-  const hasQuote = body !== null && typeof body === "object" && ("quotedCost" in body || "confirmedCost" in body);
-  const quotedCost: unknown =
-    body !== null && typeof body === "object" ? (body.quotedCost ?? body.confirmedCost) : undefined;
+  // that or nothing. There is one field for it: `quotedCost`.
+  const hasQuote = body !== null && typeof body === "object" && "quotedCost" in body;
+  const quotedCost: unknown = body !== null && typeof body === "object" ? body.quotedCost : undefined;
   if (hasQuote && !(typeof quotedCost === "number" && Number.isInteger(quotedCost) && quotedCost >= 0)) {
     return NextResponse.json({ error: "Invalid quoted cost" }, { status: 400 });
   }

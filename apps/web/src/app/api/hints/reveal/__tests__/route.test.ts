@@ -173,7 +173,7 @@ describe("POST /api/hints/reveal", () => {
     expect(res.status).toBe(403);
   });
 
-  // #594: the ladder level is validated at the boundary (a positive integer),
+  // The ladder level is validated at the boundary (a positive integer),
   // defaulting to 1 so an older client keeps working.
   it("passes a rung's level through to the store", async () => {
     revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10, cost: 10 });
@@ -189,18 +189,17 @@ describe("POST /api/hints/reveal", () => {
     expect(revealHint).not.toHaveBeenCalled();
   });
 
-  // #557/#594: a present confirmed quote must be a finite number, and it rides
-  // through to the store's authoritative re-check. The older `confirmedCost`
-  // name is normalized to the store's `quotedCost`.
+  // #557: a present confirmed quote must be a finite number, and it rides
+  // through to the store's authoritative re-check.
   it("passes a confirmed price through when it is a number", async () => {
     revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10, cost: 10 });
-    await POST(req({ app: "classic", id: "c1", level: 2, confirmedCost: 7 }));
+    await POST(req({ app: "classic", id: "c1", level: 2, quotedCost: 7 }));
     expect(revealHint).toHaveBeenCalledWith("alice", "classic", "c1", { dryRun: false, level: 2, quotedCost: 7 });
   });
 
   it("400s a present non-number confirmed price, without touching the store", async () => {
-    for (const confirmedCost of ["7", null, NaN]) {
-      const res = await POST(req({ app: "classic", id: "c1", confirmedCost }));
+    for (const quotedCost of ["7", null, NaN]) {
+      const res = await POST(req({ app: "classic", id: "c1", quotedCost }));
       expect(res.status).toBe(400);
     }
     expect(revealHint).not.toHaveBeenCalled();
@@ -210,7 +209,7 @@ describe("POST /api/hints/reveal", () => {
   // re-confirm — never a silent charge at the new figure.
   it("409s a repriced reveal with the authoritative cost", async () => {
     revealHint.mockResolvedValue({ ok: false, repriced: true, cost: 7, error: "This hint now costs 7 points." });
-    const res = await POST(req({ app: "classic", id: "c1", level: 2, confirmedCost: 4 }));
+    const res = await POST(req({ app: "classic", id: "c1", level: 2, quotedCost: 4 }));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "This hint now costs 7 points.", repriced: true, cost: 7 });
   });

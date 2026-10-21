@@ -276,6 +276,27 @@ describe("challenge page hint", () => {
     expect(html).not.toMatch(/Reveal hint/);
   });
 
+  it("renders rung 1 owned, rung 2 purchasable, and rung 3 gated behind rung 2", async () => {
+    getClassicHintLadder.mockResolvedValue([
+      { level: 1, price: 25 },
+      { level: 2, price: 30 },
+      { level: 3, price: 40 },
+    ]);
+    getViewerHints.mockResolvedValue({
+      purchased: {},
+      classic: { c1: "Hint one text." },
+      classicLevels: { c1: { 1: "Hint one text." } },
+      spent: 25,
+      count: 1,
+    });
+    const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+
+    expect(html).toContain("Hint one text.");
+    expect(html).toMatch(/Reveal hint \(−30 pts\)/);
+    expect(html).toContain("Hint 3 — 40 pts · buy hint 2 first");
+    expect(html).not.toMatch(/Reveal hint \(−40 pts\)/);
+  });
+
   it("tells a signed-out visitor a hint exists without an affordance that would 401", async () => {
     getSession.mockResolvedValue(null);
     getClassicHintLadder.mockResolvedValue([{ level: 1, price: 25 }]);

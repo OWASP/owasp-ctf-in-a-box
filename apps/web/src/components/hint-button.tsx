@@ -106,7 +106,7 @@ export default function HintButton({
     return (
       <span className="flex flex-none items-center gap-1">
         <span className="sr-only" role="status">
-          {state === "pending" ? "Revealing hint…" : `Confirm: spend  points on this hint.`}
+          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${price} points on this hint.`}
         </span>
         <button
           ref={confirmRef}
@@ -115,9 +115,9 @@ export default function HintButton({
           disabled={state === "pending"}
           className={`${CHIP} border-[#d4a017]/60 text-[#d4a017] hover:bg-[#d4a017]/10 disabled:opacity-50`}
         >
-          <span aria-hidden="true">{state === "pending" ? "…" : `− pts ✓`}</span>
+          <span aria-hidden="true">{state === "pending" ? "…" : `−${price} pts ✓`}</span>
           <span className="sr-only">
-            {state === "pending" ? "Revealing" : `Confirm, spend  points`}
+            {state === "pending" ? "Revealing" : `Confirm, spend ${price} points`}
           </span>
         </button>
         <button
@@ -138,11 +138,11 @@ export default function HintButton({
       ref={chipRef}
       type="button"
       onClick={() => setState("confirm")}
-      title={state === "error" ? ` (click to retry)` : `Reveal hint for  points`}
+      title={state === "error" ? `${error} (click to retry)` : `Reveal hint for ${price} points`}
       aria-label={
         state === "error"
-          ? `. Retry revealing this hint for  points`
-          : `Reveal hint for  points`
+          ? `${error}. Retry revealing this hint for ${price} points`
+          : `Reveal hint for ${price} points`
       }
       className={`${CHIP} ${
         state === "error"
@@ -150,7 +150,7 @@ export default function HintButton({
           : "border-white/10 text-muted hover:border-[#d4a017]/60 hover:text-[#d4a017]"
       }`}
     >
-      <span aria-hidden="true">{state === "error" ? "⚠ retry" : `💡 −`}</span>
+      <span aria-hidden="true">{state === "error" ? "⚠ retry" : `💡 −${price}`}</span>
       {/* The failure is also announced once, politely: the chip's own name
           only reaches a screen reader if the user happens to be on it. */}
       {state === "error" && (

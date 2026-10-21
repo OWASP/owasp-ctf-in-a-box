@@ -37,7 +37,7 @@ export default function HintRevealButton({
 }: {
   app: HintTarget;
   id: string;
-  /** Jeopardy ladder rung (#594); 1 for the single-hint ai target. */
+  /** Jeopardy ladder rung; 1 for the single-hint ai target. */
   level?: number;
   cost: number;
   // The hint text the SERVER already knows this viewer owns (#560). Rendered
@@ -175,7 +175,7 @@ export default function HintRevealButton({
     return (
       <div className="flex flex-col gap-1">
         <span className="sr-only" role="status">
-          {state === "pending" ? "Revealing hint…" : `Confirm: spend  points on this hint.`}
+          {state === "pending" ? "Revealing hint…" : `Confirm: spend ${price} points on this hint.`}
         </span>
         <div className="flex items-center gap-2">
           <button

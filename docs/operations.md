@@ -1616,6 +1616,19 @@ turns every typo fix into a chance to silently redefine what counts as
 solved. Treat `/admin` access itself as the actual secrecy boundary for
 every flag on the board.
 
+**Hints are an ordered ladder.** Each challenge may carry up to ten hints;
+contestants buy them in order, and a rung may have its own price (a blank
+price uses the event-wide hint cost). The text is secret until bought, like
+the flag. **A purchase is tied to a rung's position, not to its text.** Adding
+a rung at the end, or editing an existing rung's text or price in place, is
+always safe. Reordering rungs or removing one changes which text an existing
+buyer sees: the editor warns when that challenge already has purchases, but
+the warning is advisory, not a migration. The safest mid-event changes are
+therefore append-only; if you must reorder, check Insights → Hints by level
+first and tell affected contestants. Old purchases cannot be reassigned
+automatically — there is no per-purchase record of which text was shown, only
+the position that was bought.
+
 **You don't type a challenge id.** Adding a challenge mints one from its
 title plus a short random suffix when you save, exactly like the quiz's
 question ids, and for the same reason: it's the reference every contestant's
@@ -1735,9 +1748,11 @@ box (paste JSON, or choose a `.json` file) for authoring — or backing up —
 many challenges in one pass. A bundle is a single JSON object: a
 `categories` list, and a `challenges` array where each entry has exactly the
 fields the admin form itself collects, flag included — plus the form's two
-optional ones: `caseSensitive` (absent means false) and `hint` (absent means
-no hint; as secret as `flag` itself). For example, a two-challenge,
-two-category bundle:
+optional ones: `caseSensitive` (absent means false) and the hint field: v1-v4
+use a single `hint` string, while v5 uses an ordered `hints` list of
+`{ text, cost }` (both as secret as `flag` itself). An export is v5 only for a
+real ladder and writes a single unpriced rung back as v4's `hint`. For
+example, a two-challenge, two-category bundle:
 
 ```json
 {

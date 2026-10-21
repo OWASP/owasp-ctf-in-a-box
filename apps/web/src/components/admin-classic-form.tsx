@@ -35,19 +35,22 @@ import {
   type ChallengeEditor,
   confirmPhraseFromTitle,
   isDraftValid,
+  newHintRowId,
 } from "@/components/admin-classic-model";
 
 
-/** The ordered ladder editor (#594). One row per rung, in purchase order;
+/** The ordered ladder editor. One row per rung, in purchase order;
  *  blank price means the event-wide hintCost. Reordering is explicit
  *  up/down buttons rather than drag so keyboard users get the same control. */
 function HintLadderField({
   hints,
   disabled,
+  warning,
   onChange,
 }: {
   hints: ChallengeDraft["hints"];
   disabled: boolean;
+  warning: string | null;
   onChange: (hints: ChallengeDraft["hints"]) => void;
 }) {
   const replace = (index: number, patch: Partial<ChallengeDraft["hints"][number]>) =>
@@ -65,9 +68,14 @@ function HintLadderField({
         Hints (optional). Contestants buy these in order — hint 2 unlocks only after hint 1 is bought.
         Leave a price empty to use the event-wide hint cost. Secret until purchased, like the flag.
       </span>
+      {warning && (
+        <p role="status" className="rounded border border-[#d4a017]/40 bg-[#d4a017]/10 px-2 py-1 text-xs text-[#d4a017]">
+          {warning}
+        </p>
+      )}
       {hints.length === 0 && <p className="text-xs text-muted">No hints for this challenge.</p>}
       {hints.map((hint, i) => (
-        <div key={i} className="flex flex-col gap-2 rounded-md border border-white/10 p-2">
+        <div key={hint.id} className="flex flex-col gap-2 rounded-md border border-white/10 p-2">
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs uppercase tracking-wide text-muted">Hint {i + 1}</span>
             <div className="flex gap-1">
@@ -126,7 +134,7 @@ function HintLadderField({
       <button
         type="button"
         disabled={disabled || hints.length >= HINT_LEVELS_MAX}
-        onClick={() => onChange([...hints, { text: "", cost: "" }])}
+        onClick={() => onChange([...hints, { id: newHintRowId(), text: "", cost: "" }])}
         className="w-fit rounded-md border border-white/10 px-3 py-1.5 text-sm text-muted hover:text-white disabled:opacity-40"
       >
         Add hint
@@ -135,7 +143,16 @@ function HintLadderField({
   );
 }
 
-/** The event’s time zone, which the "Release at" field reads and writes on.
+/** How many hint purchases the admin GET found per challenge. `known: false`
+ *  means the purchase history could not be read, so the editor warns that it
+ *  cannot tell rather than showing no warning. A context for the same reason
+ *  as the time zone: ChallengeFrame's form slot has a fixed set of props. */
+export const ClassicHintPurchasesContext = createContext<{
+  known: boolean;
+  byId: Record<string, number>;
+}>({ known: true, byId: {} });
+
+/** The event's time zone, which the "Release at" field reads and writes on.
  *  A context rather than a prop because the form is mounted by the shared
  *  ChallengeFrame, whose form slot has a fixed set of props. */
 export const ClassicTimeZoneContext = createContext("UTC");
@@ -166,9 +183,26 @@ export function ChallengeForm({
 }) {
   const draft = editor.draft;
   const zone = useContext(ClassicTimeZoneContext);
+  const purchases = useContext(ClassicHintPurchasesContext);
   const isNew = editor.mode === "new";
   const set = (patch: Partial<ChallengeDraft>) => onChange({ ...draft, ...patch });
   const phrase = editor.mode === "edit" ? confirmPhraseFromTitle(draft.title, editor.id) : "";
+  const purchaseWarning = (() => {
+    if (editor.mode !== "edit") return null;
+    if (!purchases.known) {
+      return "Hint purchase history could not be read. Purchases are tied to a rung's position, so check Insights before reordering or removing hints.";
+    }
+    const bought = purchases.byId[editor.id] ?? 0;
+    if (bought === 0) return null;
+    // Only rows with text survive the save; a blanked row is a removal, and
+    // the rungs after it shift even though the draft still holds the row.
+    const saved = draft.hints.filter((hint) => hint.text.trim());
+    const shapeChanged =
+      saved.length !== editor.hintBaseline.length ||
+      saved.some((hint, i) => hint.id !== editor.hintBaseline[i]);
+    if (!shapeChanged) return null;
+    return `${bought} purchase${bought === 1 ? "" : "s"} already point at these rungs by position. Reordering or removing a hint changes which text they reveal; adding one at the end does not.`;
+  })();
 
   return (
     <EditorFrame
@@ -235,7 +269,12 @@ export function ChallengeForm({
         onChange={(releaseAt) => set(releaseAt ? { releaseAt, enabled: false } : { releaseAt })}
       />
 
-      <HintLadderField hints={draft.hints} disabled={pending} onChange={(hints) => set({ hints })} />
+      <HintLadderField
+        hints={draft.hints}
+        disabled={pending}
+        warning={purchaseWarning}
+        onChange={(hints) => set({ hints })}
+      />
 
       <DescriptionField value={draft.description} disabled={pending} onChange={(description) => set({ description })} />
 

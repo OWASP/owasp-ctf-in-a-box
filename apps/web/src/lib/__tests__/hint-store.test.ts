@@ -150,7 +150,7 @@ describe("revealHint", () => {
       // The Jeopardy records, for the visibility check.
       "ctf:classic:challenges",
       // The ladder's price hash and the per-purchase record of what was
-      // actually charged (#594), ahead of any story-lock keys.
+      // actually charged, ahead of any story-lock keys.
       "ctf:classic:hintcosts",
       "ctf:hints:cost:octocat",
     ]);
@@ -639,7 +639,7 @@ describe("revealHint", () => {
     expect(mocks.hintBalance).not.toHaveBeenCalled();
   });
 
-  // #594: a classic rung's price comes from its OWN cost hash field, not the
+  // A classic rung's price comes from its OWN cost hash field, not the
   // event-wide fallback, and the level travels as the ladder field and the
   // previous-rung purchase key.
   it("prices each classic rung from its own cost hash", async () => {
@@ -663,7 +663,7 @@ describe("revealHint", () => {
     mocks.getAdminSettings.mockResolvedValue({ ...BASE_SETTINGS, hintCost: 10 });
     classicHintRead(7);
     mocks.upstashEval.mockResolvedValueOnce(["repriced", "", 0, "7"]);
-    const result = await store.revealHint("octocat", "classic", "web-robots-only", { level: 2, confirmedCost: 4 });
+    const result = await store.revealHint("octocat", "classic", "web-robots-only", { level: 2, quotedCost: 4 });
     expect(result).toEqual({
       ok: false,
       repriced: true,
@@ -1408,6 +1408,44 @@ describe("getHintPenalties", () => {
   });
 });
 
+describe("classic hint lookups never read the text hash", () => {
+  const textReads = new Set(["HGET", "HMGET", "HGETALL"]);
+
+  function expectNoTextRead(commands: (string | number)[][]) {
+    for (const [op, key] of commands) {
+      if (key === "ctf:classic:hints") expect(textReads.has(String(op))).toBe(false);
+    }
+  }
+
+  it("prices a reveal with HEXISTS and the cost hash alone", async () => {
+    const store = await loadStore();
+    classicHintRead(25);
+    mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 25]);
+    await store.revealHint("octocat", "classic", "web-robots-only");
+    const commands = mocks.upstashPipeline.mock.calls.flatMap(([batch]) => batch);
+    expect(commands).toContainEqual(["HEXISTS", "ctf:classic:hints", "web-robots-only"]);
+    expect(commands).toContainEqual(["HGET", "ctf:classic:hintcosts", "web-robots-only"]);
+    expectNoTextRead(commands);
+  });
+
+  it("builds the ladder from presence and per-rung prices, stopping at the first gap", async () => {
+    const store = await loadStore();
+    const reads: { result?: unknown; error?: string }[] = [];
+    for (let level = 1; level <= 10; level += 1) {
+      reads.push({ result: level <= 3 ? 1 : 0 });
+      reads.push({ result: level <= 3 ? [String(level * 10)] : [null] });
+    }
+    mocks.upstashPipeline.mockResolvedValueOnce(reads);
+    await expect(store.getClassicHintLadder("web-robots-only", 5)).resolves.toEqual([
+      { level: 1, price: 10 },
+      { level: 2, price: 20 },
+      { level: 3, price: 30 },
+    ]);
+    const commands = mocks.upstashPipeline.mock.calls.flatMap(([batch]) => batch);
+    expectNoTextRead(commands);
+  });
+});
+
 describe("the story lock on classic hints (#463)", () => {
   it("hands the script the prerequisite, the teammates' lock pairs and the team, and reports `locked` exactly as a missing hint", async () => {
     const store = await loadStore();
@@ -1424,7 +1462,7 @@ describe("the story lock on classic hints (#463)", () => {
     expect(result).toEqual({ ok: false, missing: true, error: "No hint available for this challenge" });
     const [, keys, argv] = mocks.upstashEval.mock.calls.at(-1)!;
     // After the six fixed reads, settings and the challenge records (#566),
-    // the ladder price hash and the per-purchase cost record (#594), come the
+    // The ladder price hash and the per-purchase cost record, come the
     // teammates' lock keys.
     expect(keys[7]).toBe("ctf:classic:challenges");
     expect(keys[8]).toBe("ctf:classic:hintcosts");

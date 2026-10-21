@@ -1456,8 +1456,11 @@ Storage stays additive so an event upgraded mid-flight keeps its data:
   timestamps are read as hint 1 rather than orphaned. The price actually charged
   is written to `ctf:hints:cost:<login>` per purchase, which is what the
   Insights "hints by level" table prices spend from.
-- Bundle version 3 carries `hints: [{ text, cost|null }]`; v1/v2's single
-  `hint` string imports as a one-rung ladder, and v3 rejects the legacy field.
+- Bundle version 5 carries `hints: [{ text, cost|null }]`. An export is
+  stamped v5 only for a real ladder — more than one rung, or any explicit rung
+  price — while a single rung at the event-wide price exports as v4's `hint`
+  string, so an older box can still import it. A v1-v4 bundle's single `hint`
+  imports as a one-rung ladder, and v5 rejects the legacy field.
 
 `ctf:hints:spent` remains the accumulated **points** penalty, never a count, so
 the leaderboard marker and `hint-penalties.ts` are unchanged; the ordering, the

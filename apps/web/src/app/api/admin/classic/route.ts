@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
 import {
   ClassicValidationError,
+  countClassicHintPurchases,
   deleteChallenge,
   getSolveCounts,
   listCategories,
@@ -136,7 +137,7 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
   // shrug at. A string "false" would otherwise make a challenge case-sensitive
   // that the organizer explicitly turned off.
   if (body.caseSensitive !== undefined && typeof body.caseSensitive !== "boolean") return null;
-  // Optional ordered paid-hint ladder (#190, #594); a present array must be
+  // Optional ordered paid-hint ladder (#190); a present array must be
   // well formed. An empty list is a deliberate CLEAR, passed through so the
   // store deletes every rung.
   let hints: HintLevelConfig[] | undefined;
@@ -267,12 +268,14 @@ export async function GET(request: Request) {
   let categories: string[];
   let stories: Story[];
   let files: Map<string, Attachment[]>;
+  let hintPurchases: Record<string, number> | null;
   try {
-    [challenges, categories, stories, files] = await Promise.all([
+    [challenges, categories, stories, files, hintPurchases] = await Promise.all([
       listChallengesForAdmin(),
       listCategories(),
       listStories(),
       listAllAttachments("classic"),
+      countClassicHintPurchases(),
     ]);
   } catch (err) {
     return errorResponse(err);
@@ -297,7 +300,7 @@ export async function GET(request: Request) {
       { teams: teams ? (teams.get(id) ?? 0) : null, players: players ? (players.get(id) ?? 0) : null },
     ]),
   );
-  return NextResponse.json({ challenges, categories, stories, attachments, solves });
+  return NextResponse.json({ challenges, categories, stories, attachments, solves, hintPurchases });
 }
 
 export async function POST(request: Request) {

@@ -75,8 +75,8 @@ const LADDER_VERSION = 5;
 /** The version an export is stamped with: the oldest one that knows every
  *  field it carries, so a bundle without files, visibility or a ladder stays
  *  importable on a box built before any of them. */
-export function bundleVersionFor(hasFiles: boolean, hasVisibility = false, hasHints = false): number {
-  if (hasHints) return LADDER_VERSION;
+export function bundleVersionFor(hasFiles: boolean, hasVisibility = false, hasLadder = false): number {
+  if (hasLadder) return LADDER_VERSION;
   if (hasVisibility) return VISIBILITY_VERSION;
   return hasFiles ? FILES_VERSION : STORIES_VERSION;
 }
@@ -84,6 +84,14 @@ export function bundleVersionFor(hasFiles: boolean, hasVisibility = false, hasHi
 /** Whether a bundle row carries a visibility field (and so needs version 4). */
 export function carriesVisibility(c: { enabled?: boolean; releaseAt?: string | null }): boolean {
   return c.enabled === false || typeof c.releaseAt === "string";
+}
+
+/** Whether a ladder needs v5. One rung at the event-wide price is exactly
+ *  what v1-v4's `hint` string expresses, so it stays a v4 archive; a second
+ *  rung or any explicit per-rung cost (including 0) needs the ordered list. */
+export function carriesLadder(hints: readonly HintLevelConfig[] | undefined): boolean {
+  if (!hints || hints.length === 0) return false;
+  return hints.length > 1 || hints.some((hint) => hint.cost !== null && hint.cost !== undefined);
 }
 const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
@@ -102,7 +110,7 @@ export type ClassicBundleChallenge = {
    *  rather than required so every bundle exported before #193 still imports,
    *  which is the whole contract of a versioned bundle. */
   caseSensitive?: boolean;
-  /** Optional paid-hint ladder (#594). Absent = no hint. Secret like `flag`:
+  /** Optional paid-hint ladder. Absent = no hint. Secret like `flag`:
    *  a bundle is an ORGANIZER artifact and already carries every answer.
    *  A `cost` of null (or absent) means the event-wide hint cost; level N is
    *  only purchasable after N-1. */
@@ -299,7 +307,7 @@ function validateChallenge(
   }
 
   // Optional paid-hint text/ladder. v1-v4 carry one string (#190); v5
-  // carries ordered rungs (#594). Both are capped here exactly as the store
+  // Carries ordered rungs. Both are capped here exactly as the store
   // caps them, so a bundle that parses cannot fail the write later.
   if (!hasLadder) {
     if (raw.hint !== undefined) {

@@ -1,5 +1,5 @@
-// Client-safe helpers for ordered, independently priced Jeopardy hints
-// (#594). Deliberately dependency-free: the admin editor, the bundle parser,
+// Client-safe helpers for ordered, independently priced Jeopardy hints.
+// Deliberately dependency-free: the admin editor, the bundle parser,
 // the contestant page and the server store all need the SAME spelling of a
 // hint field and a purchase key, and a second implementation is how two
 // readers drift apart.
@@ -19,9 +19,9 @@ export type HintLevelConfig = {
 export const HINT_LEVELS_MAX = 10;
 
 /** The field a level's text (and explicit cost) uses inside the classic hint
- *  hashes. Level 1 keeps the BARE challenge id — the pre-#594 storage shape —
- *  so every hint written before ladders existed is automatically level 1,
- *  and so is its purchase record and timestamp. */
+ *  hashes. Level 1 keeps the BARE challenge id — the single-hint shape — so
+ *  every hint written before ladders existed is automatically level 1, and
+ *  so is its purchase record and timestamp. */
 export function hintField(id: string, level: number): string {
   return level <= 1 ? id : `${id}#${level}`;
 }
@@ -40,10 +40,10 @@ export function parseHintField(field: string): { id: string; level: number } | n
   return level >= 2 && level <= HINT_LEVELS_MAX ? { id, level } : null;
 }
 
-/** A user's purchase record: the same shape the pre-#594 single-hint store
- *  already holds (`<target>/<id>`), with `<target>/<id>#<n>` for later
- *  rungs. The base key stays bare for level 1 so old records and old
- *  timestamps read as hint 1, exactly as the issue requires. */
+/** A user's purchase record: the same shape the single-hint store already
+ *  holds (`<target>/<id>`), with `<target>/<id>#<n>` for later rungs. The
+ *  base key stays bare for level 1 so old records and old timestamps read as
+ *  hint 1. */
 export function hintPurchaseKey(target: string, id: string, level: number): string {
   return level <= 1 ? `${target}/${id}` : `${target}/${id}#${level}`;
 }

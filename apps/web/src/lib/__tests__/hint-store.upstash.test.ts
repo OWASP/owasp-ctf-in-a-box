@@ -277,7 +277,7 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     // KEYS[5..6] are the score revision and the in-progress counter (#553),
     // KEYS[7] the settings hash (#566), KEYS[8] the Jeopardy records,
     // KEYS[9..10] the ladder price hash and the per-purchase cost record
-    // (#594); the story-lock keys follow at KEYS[11..], as (solves hash,
+    // The story-lock keys follow at KEYS[11..], as (solves hash,
     // user record) pairs, with the team slug in ARGV[11] (#602).
     const [set, spent, hints, at, rev, lowering, cfg, recs, costs, costrec, teammate, bob] = [
       "set", "spent", "hints", "at", "rev", "lowering", "cfg", "recs", "costs", "costrec", "bob", "user-bob",
@@ -400,13 +400,13 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     }
   });
 
-  // #594: the ordered ladder, the per-rung price hash (KEYS[7]) and the
+  // The ordered ladder, the per-rung price hash (KEYS[7]) and the
   // client-confirmed quote all live in the script. A level-2 rung is refused
   // until its predecessor is owned; the confirmed quote is checked against the
   // AUTHORITATIVE hash field and a mismatch answers `repriced` with no text
   // read and no charge; and the price actually charged is recorded per
   // purchase (KEYS[10]) so Insights can price every level.
-  it("REVEAL_SCRIPT enforces the ordered ladder, the per-rung price hash and the confirmed quote (#594)", async () => {
+  it("REVEAL_SCRIPT enforces the ordered ladder, the per-rung price hash and the confirmed quote", async () => {
     const { REVEAL_SCRIPT } = await import("@/lib/hint-store");
     const { upstashEval } = await import("@/lib/upstash");
     const k = (n: string) => `ctf-test:hint-ladder:${RUN}:${n}`;

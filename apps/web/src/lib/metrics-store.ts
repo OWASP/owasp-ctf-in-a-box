@@ -596,22 +596,29 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       if (!parsed) continue;
       const target = parsed.target;
       const challengeId = parsed.id;
-      const levelStat = hintLevels.get(parsed.level) ?? {
-        level: parsed.level,
-        buyers: 0,
-        totalSpend: 0,
-        boughtBeforeSolving: 0,
-        boughtAfterSolving: 0,
-        buyersSet: new Set<string>(),
-      };
-      hintLevels.set(parsed.level, levelStat);
-      if (!levelStat.buyersSet.has(login)) {
-        levelStat.buyersSet.add(login);
-        levelStat.buyers += 1;
-      }
-      const recordedCost = hintCosts.get(String(slot));
-      if (typeof recordedCost === "number" && Number.isFinite(recordedCost) && recordedCost >= 0) {
-        levelStat.totalSpend += recordedCost;
+      // The by-level table is the Jeopardy ladder. Secure Development and AI
+      // hints have no rungs, so counting their single purchase as "level 1"
+      // would report a ladder that does not exist. Their purchases still
+      // count toward the event-wide before/after-solve figures below.
+      let levelStat: (HintLevelStat & { buyersSet: Set<string> }) | undefined;
+      if (target === "classic") {
+        levelStat = hintLevels.get(parsed.level) ?? {
+          level: parsed.level,
+          buyers: 0,
+          totalSpend: 0,
+          boughtBeforeSolving: 0,
+          boughtAfterSolving: 0,
+          buyersSet: new Set<string>(),
+        };
+        hintLevels.set(parsed.level, levelStat);
+        if (!levelStat.buyersSet.has(login)) {
+          levelStat.buyersSet.add(login);
+          levelStat.buyers += 1;
+        }
+        const recordedCost = hintCosts.get(String(slot));
+        if (typeof recordedCost === "number" && Number.isFinite(recordedCost) && recordedCost >= 0) {
+          levelStat.totalSpend += recordedCost;
+        }
       }
       let solvedAt: string | undefined;
       if (target === "classic") {
@@ -629,14 +636,14 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       if (Number.isNaN(boughtMs) || Number.isNaN(solvedMs)) continue;
       if (boughtMs <= solvedMs) {
         hintsBeforeSolve += 1;
-        levelStat.boughtBeforeSolving += 1;
+        if (levelStat) levelStat.boughtBeforeSolving += 1;
         if (target === "classic" || target === "ai") {
           const key = `${target}:${challengeId}`;
           hintHelpedById.set(key, (hintHelpedById.get(key) ?? 0) + 1);
         }
       } else {
         hintsAfterSolve += 1;
-        levelStat.boughtAfterSolving += 1;
+        if (levelStat) levelStat.boughtAfterSolving += 1;
       }
     }
 
@@ -790,29 +797,10 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   caveats.push(
     "The timeline plots solves, not submissions: attempt rows carry a first and a last time but not one per try.",
     "Time-to-solve and hint ordering are blank for anything earned before those timestamps were added, so early-event figures cover fewer contestants than late-event ones.",
+    "Hints by level covers Jeopardy only: a purchase made before per-purchase costs were recorded, or a Secure Development/AI hint, is not in that table.",
     "Signing in leaves no record; the funnel starts at 'ever on a team'.",
     "Secure Development items have no per-challenge attempt data — its scores arrive from GitHub already judged, so it contributes to participation and points only.",
   );
-
-  // Legacy purchases (pre-#594) stored no per-purchase cost. Attribute the
-  // unaccounted remainder to level 1 — the only rung that existed then — so
-  // the by-level figures add up to the authoritative aggregate rather than
-  // silently omitting old spend.
-  const aggregateHintSpend = hintsSpent.reduce((sum, [, spent]) => sum + spent, 0);
-  const knownHintSpend = [...hintLevels.values()].reduce((sum, stat) => sum + stat.totalSpend, 0);
-  const legacyHintSpend = aggregateHintSpend - knownHintSpend;
-  if (legacyHintSpend > 0) {
-    const level1 = hintLevels.get(1) ?? {
-      level: 1,
-      buyers: 0,
-      totalSpend: 0,
-      boughtBeforeSolving: 0,
-      boughtAfterSolving: 0,
-      buyersSet: new Set<string>(),
-    };
-    level1.totalSpend += legacyHintSpend;
-    hintLevels.set(1, level1);
-  }
 
   return {
     generatedAt: new Date().toISOString(),

@@ -40,7 +40,7 @@ export const HINTS_SPENT_KEY = "ctf:hints:spent";
  *  already sweeps it and it cannot become the key a reset leaves behind. */
 export const userHintTimesKey = (login: string) => `ctf:hints:at:${login}`;
 
-/** What each hint ACTUALLY cost when it was bought (#594): hash,
+/** What each hint ACTUALLY cost when it was bought: hash,
  *  `<app>/<id>[#<level>]` -> points. `ctf:hints:spent` stays the authoritative
  *  aggregate (and is never a count); this hash exists so Insights can report
  *  spend BY LEVEL after an organizer reprices a later rung. Written in the

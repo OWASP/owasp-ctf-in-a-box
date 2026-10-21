@@ -23,6 +23,7 @@ import type { AdminChallenge, Challenge } from "@/lib/classic-store";
 import AdminClassicControls, {
   CLASSIC_POINTS_MAX,
   ChallengeForm,
+  ClassicHintPurchasesContext,
   categoriesRequestBody,
   categoryUsageCount,
   changedOrderRows,
@@ -319,6 +320,77 @@ describe("ChallengeForm — the masking/preview/no-id properties an organizer ac
     expect(html).toMatch(/fixed for the life of the challenge/i);
   });
 
+  it("warns when a purchased ladder is reordered, but not while its shape is unchanged", () => {
+    const editor = editorFromChallenge({
+      challenge: c1,
+      flag: "f",
+      hints: [{ text: "one", cost: null }, { text: "two", cost: null }],
+    });
+    const render = (current: typeof editor) =>
+      renderToStaticMarkup(
+        <ClassicHintPurchasesContext.Provider value={{ known: true, byId: { [c1.id]: 2 } }}>
+          <ChallengeForm
+            editor={current}
+            categories={["Web"]}
+            pending={false}
+            error={null}
+            flagRevealed={false}
+            setFlagRevealed={noop}
+            onChange={noop}
+            onCancel={noop}
+            onSubmit={noop}
+          />
+        </ClassicHintPurchasesContext.Provider>,
+      );
+
+    expect(render(editor)).not.toMatch(/purchase.*point at these rungs/i);
+
+    const reordered = {
+      ...editor,
+      draft: { ...editor.draft, hints: [editor.draft.hints[1], editor.draft.hints[0]] },
+    };
+    expect(render(reordered)).toMatch(/2 purchases already point at these rungs by position/i);
+
+    const cleared = {
+      ...editor,
+      draft: { ...editor.draft, hints: [editor.draft.hints[0], { ...editor.draft.hints[1], text: "" }] },
+    };
+    expect(render(cleared)).toMatch(/2 purchases already point at these rungs by position/i);
+
+    const blankAppend = {
+      ...editor,
+      draft: {
+        ...editor.draft,
+        hints: [...editor.draft.hints, { id: "hint-row-new", text: "", cost: "" }],
+      },
+    };
+    expect(render(blankAppend)).not.toMatch(/purchase.*point at these rungs/i);
+  });
+
+  it("warns that purchase history is unknown instead of implying there are none", () => {
+    const editor = editorFromChallenge({
+      challenge: c1,
+      flag: "f",
+      hints: [{ text: "one", cost: null }],
+    });
+    const html = renderToStaticMarkup(
+      <ClassicHintPurchasesContext.Provider value={{ known: false, byId: {} }}>
+        <ChallengeForm
+          editor={editor}
+          categories={["Web"]}
+          pending={false}
+          error={null}
+          flagRevealed={false}
+          setFlagRevealed={noop}
+          onChange={noop}
+          onCancel={noop}
+          onSubmit={noop}
+        />
+      </ClassicHintPurchasesContext.Provider>,
+    );
+    expect(html).toMatch(/purchase history could not be read/i);
+  });
+
   // The preview renders through the SAME <Markdown> component the contestant
   // board uses. A second renderer here would drift and stop being a preview
   // of anything real.
@@ -432,9 +504,11 @@ describe("exportBundleFrom", () => {
       { challenge: c2, flag: "CTF{other}", hints: [] },
     ];
     const bundle = exportBundleFrom(rows, ["Web"]);
-    expect(bundle.challenges[0]).toMatchObject({ caseSensitive: true, hints: [{ text: "Look closer.", cost: null }] });
+    expect(bundle.version).toBe(4);
+    expect(bundle.challenges[0]).toMatchObject({ caseSensitive: true, hint: "Look closer." });
+    expect(bundle.challenges[0]).not.toHaveProperty("hints");
     expect(bundle.challenges[1]).not.toHaveProperty("caseSensitive");
-    expect(bundle.challenges[1]).not.toHaveProperty("hints");
+    expect(bundle.challenges[1]).not.toHaveProperty("hint");
   });
 });
 

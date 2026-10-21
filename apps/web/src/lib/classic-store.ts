@@ -21,6 +21,7 @@ import { errorLabel } from "@/lib/error-label";
 import { readLastAt } from "@/lib/last-at";
 import {
   bundleVersionFor,
+  carriesLadder,
   carriesVisibility,
   type ClassicBundle,
   type ClassicBundleChallenge,
@@ -29,13 +30,14 @@ import { HINT_COST_MAX } from "@/lib/hint-defaults";
 import {
   HINT_LEVELS_MAX,
   hintField,
+  parseHintPurchaseKey,
   type HintLevelConfig,
   validateHintLevels,
 } from "@/lib/hint-ladder";
 import { isChallengeVisible, isReleaseInstant } from "@/lib/classic-release";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
-import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   CLASSIC_CHALLENGES_KEY as CHALLENGES_KEY,
@@ -450,6 +452,44 @@ export async function listChallengesForAdmin(): Promise<AdminChallenge[]> {
   }));
   rows.sort((a, b) => compareChallenges(a.challenge, b.challenge));
   return rows;
+}
+
+/** How many hint purchases exist per classic challenge, from the purchase
+ *  timestamps every reveal writes (`ctf:hints:at:<login>`, field
+ *  `<target>/<id>[#<n>]`). The admin editor uses it only to warn before a
+ *  ladder is reordered or shortened: purchases are position-based, so a
+ *  changed shape makes an owned rung point at a different text. Returns null
+ *  when the read fails, so the editor can say the history is unknown rather
+ *  than claim there are none. */
+export async function countClassicHintPurchases(): Promise<Record<string, number> | null> {
+  const prefix = "ctf:hints:at:";
+  try {
+    const keys: string[] = [];
+    let cursor = "0";
+    do {
+      const [scan] = await upstashPipeline([["SCAN", cursor, "MATCH", `${prefix}*`, "COUNT", 1000]]);
+      const [next, found] = parseScanPage(scan, "classic hint purchases");
+      keys.push(...found.filter((key) => key.startsWith(prefix)));
+      cursor = next;
+    } while (cursor !== "0");
+
+    const counts: Record<string, number> = {};
+    for (let i = 0; i < keys.length; i += 100) {
+      const replies = await upstashPipeline(keys.slice(i, i + 100).map((key) => ["HGETALL", key]));
+      const failed = replies.find((reply) => reply?.error);
+      if (failed) throw new Error(failed.error);
+      for (const reply of replies) {
+        for (const [slot] of flatHashMap(reply.result)) {
+          const parsed = parseHintPurchaseKey(slot);
+          if (parsed?.target === "classic") counts[parsed.id] = (counts[parsed.id] ?? 0) + 1;
+        }
+      }
+    }
+    return counts;
+  } catch (err) {
+    console.error("classic: hint purchase history unavailable:", errorLabel(err));
+    return null;
+  }
 }
 
 /** The organizer's category list, in the display order they chose. Stored as
@@ -915,8 +955,9 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // appeared on every row.
     ...(challenge.caseSensitive ? { caseSensitive: true as const } : {}),
     // Same only-when-set rule as caseSensitive: a hint-less board exports
-    // without a `hints` key. Cost null means the event-wide hintCost.
-    ...(hints.length > 0 ? { hints } : {}),
+    // without a hint field. A single rung at the event-wide price is written
+    // as v4's `hint` string; only a real ladder needs v5's ordered `hints`.
+    ...(hints.length === 0 ? {} : carriesLadder(hints) ? { hints } : { hint: hints[0].text }),
     // Visibility, only when it says something (v4): a backup restores a
     // hidden challenge hidden, never live.
     ...(challenge.enabled === false ? { enabled: false } : {}),
@@ -935,8 +976,8 @@ export async function exportBundle(): Promise<ClassicBundle> {
   return {
     version: bundleVersionFor(
       false,
-      challenges.some(carriesVisibility),
-      challenges.some((c) => (c.hints?.length ?? 0) > 0),
+      challenges.some(carriesVisibility) || rows.some(({ hints }) => hints.length > 0 && !carriesLadder(hints)),
+      rows.some(({ hints }) => carriesLadder(hints)),
     ),
     categories,
     challenges,

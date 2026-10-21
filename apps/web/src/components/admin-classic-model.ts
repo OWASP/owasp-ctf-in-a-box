@@ -12,7 +12,7 @@ import type { AttachmentFile } from "@/lib/attachment-files";
 import type { Story } from "@/lib/story-lock";
 import type { AttachmentMeta } from "@/lib/attachments-keys";
 import { generateChallengeId, CLASSIC_HINT_MAX, CLASSIC_POINTS_MAX } from "@/lib/classic-keys";
-import { bundleVersionFor, carriesVisibility, type ClassicBundle } from "@/lib/classic-io";
+import { bundleVersionFor, carriesLadder, carriesVisibility, type ClassicBundle } from "@/lib/classic-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { HINT_COST_MAX } from "@/lib/hint-defaults";
 import { HINT_LEVELS_MAX, type HintLevelConfig } from "@/lib/hint-ladder";
@@ -118,9 +118,10 @@ export type ChallengeDraft = {
    *  rather than the string every other field here is: those are strings
    *  because a number input can hold "" mid-edit, which a checkbox cannot. */
   caseSensitive: boolean;
-  /** Ordered paid-hint ladder (#594). An empty list clears every hint; a
-   *  blank price means the event-wide hintCost. */
-  hints: { text: string; cost: string }[];
+  /** Ordered paid-hint ladder. An empty list clears every hint; a blank
+   *  price means the event-wide hintCost. `id` is a client-only row identity:
+   *  React keys must survive reorder/removal or focus and edits jump rows. */
+  hints: { id: string; text: string; cost: string }[];
   /** "Visible to contestants". Off keeps the challenge out of every
    *  contestant payload until it is switched back on, or until `releaseAt`. */
   enabled: boolean;
@@ -136,7 +137,15 @@ export type ChallengeDraft = {
  *  and an EXISTING one's is fixed. */
 export type ChallengeEditor =
   | { mode: "new"; order: number; draft: ChallengeDraft }
-  | { mode: "edit"; id: string; order: number; draft: ChallengeDraft };
+  | {
+      mode: "edit";
+      id: string;
+      order: number;
+      draft: ChallengeDraft;
+      /** The draft's rung ids when the editor opened it, for the purchase
+       *  warning: order and count are what a purchase is tied to. */
+      hintBaseline: string[];
+    };
 
 /** The POST body `/api/admin/classic` parses for a challenge upsert. Mirrors
  *  that route's `ChallengePayload` (its exported `CHALLENGE_KEYS` names the
@@ -155,6 +164,15 @@ export type ChallengePayload = {
   enabled?: boolean;
   releaseAt?: string;
 };
+
+let hintRowSeq = 0;
+
+/** A stable identity for one editor row. Client-only: the server never sees
+ *  it, and `hintsFromDraft` drops it before the payload. */
+export function newHintRowId(): string {
+  hintRowSeq += 1;
+  return `hint-row-${hintRowSeq}`;
+}
 
 export function emptyDraft(defaultCategory: string = ""): ChallengeDraft {
   return { title: "", category: defaultCategory, description: "", points: "10", flag: "", caseSensitive: false, hints: [], enabled: true, releaseAt: "" };
@@ -181,7 +199,7 @@ export function draftFromChallenge({ challenge: c, flag, hints }: AdminChallenge
     description: c.description,
     points: String(c.points),
     flag,
-    hints: hints.map((hint) => ({ text: hint.text, cost: hint.cost === null ? "" : String(hint.cost) })),
+    hints: hints.map((hint) => ({ id: newHintRowId(), text: hint.text, cost: hint.cost === null ? "" : String(hint.cost) })),
     // Coerced, because the stored field is absent-when-false and a checkbox
     // needs a real boolean — an `undefined` here makes React switch the input
     // from controlled to uncontrolled the first time it is ticked.
@@ -196,7 +214,14 @@ export function draftFromChallenge({ challenge: c, flag, hints }: AdminChallenge
 export function editorFromChallenge(row: AdminChallenge): ChallengeEditor {
   // Called from a click, never during render, so reading the clock here is
   // the moment the organizer opened the form.
-  return { mode: "edit", id: row.challenge.id, order: row.challenge.order, draft: draftFromChallenge(row) };
+  const draft = draftFromChallenge(row);
+  return {
+    mode: "edit",
+    id: row.challenge.id,
+    order: row.challenge.order,
+    draft,
+    hintBaseline: draft.hints.map((hint) => hint.id),
+  };
 }
 
 /** Whether `draft` could be submitted as-is, mirroring the store's own rules
@@ -266,7 +291,7 @@ export function payloadFromEditor(
     order: editor.order,
     flag: d.flag,
     // The ladder is ALWAYS sent: an empty list is a deliberate clear, and the
-    // store deletes every rung (#190, #594).
+    // store deletes every rung (#190).
     hints: hintsFromDraft(d),
     // Sent only when true, matching the route's parser and the store's stored
     // shape — one challenge has one representation whichever door it came
@@ -395,7 +420,7 @@ export function exportBundleFrom(
     // #210 caught hint; caseSensitive had the same latent hole), and a
     // re-import of such a bundle downgrades grading and deletes hints.
     ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
-    ...(hints.length > 0 ? { hints } : {}),
+    ...(hints.length === 0 ? {} : carriesLadder(hints) ? { hints } : { hint: hints[0].text }),
     // Visibility (v4), the server export's rule: a backup restores a hidden
     // challenge hidden.
     ...(c.enabled === false ? { enabled: false } : {}),
@@ -406,8 +431,8 @@ export function exportBundleFrom(
   return {
     version: bundleVersionFor(
       withFiles !== undefined,
-      challenges.some(carriesVisibility),
-      challenges.some((c) => (c.hints?.length ?? 0) > 0),
+      challenges.some(carriesVisibility) || rows.some(({ hints }) => hints.length > 0 && !carriesLadder(hints)),
+      rows.some(({ hints }) => carriesLadder(hints)),
     ),
     categories: [...categories],
     stories: stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) })),

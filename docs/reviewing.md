@@ -332,6 +332,10 @@ ADR, not the code.
 - CI (`.github/workflows/ci.yml`) — the per-area jobs, the vacuous-sweep
   gate, and the acceptance scripts, which are the strongest anti-vacuous
   layer in the repo.
+- `.github/copilot-instructions.md` — a short summary of Section 1 for
+  GitHub Copilot code review, which is advisory (it only comments, never
+  approves or blocks) and reads only the start of that file. When an
+  invariant here is added or renamed, update its line there too.
 - This page — the reader-facing rationale. Keep the three in lockstep: a
   `.coderabbit.yaml` path instruction covers this page and the config as a
   pair, so a PR changing one side's rules without the other draws a warning

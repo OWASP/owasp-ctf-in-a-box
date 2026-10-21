@@ -162,9 +162,9 @@ export type EventMetrics = {
     boughtBeforeSolving: number;
     boughtAfterSolving: number;
     /** The same four figures per Jeopardy ladder rung, level 1 first. Spend
-     *  uses the cost recorded at purchase time; a purchase made before a
-     *  ladder price record exists is attributed to level 1, so the level
-     *  totals still sum to `totalSpend`. */
+     *  uses the cost recorded at purchase time. Purchases without a usable
+     *  cost record, and every Secure Development/AI hint, are excluded, so
+     *  by-level totals may differ from `totalSpend`. */
     byLevel: HintLevelStat[];
   };
   /** What these numbers do NOT measure, in the payload rather than only in the

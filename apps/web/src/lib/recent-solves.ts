@@ -66,8 +66,10 @@ export const RECORD_SCRIPT = `
 if redis.call('ZSCORE', KEYS[1], ARGV[1]) then return 0 end
 redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1])
 redis.call('HSET', KEYS[2], ARGV[1], ARGV[3])
-local removed = redis.call('ZREMRANGEBYRANK', KEYS[1], 0, -(tonumber(ARGV[4]) + 1))
-for i = 1, #removed do redis.call('HDEL', KEYS[2], removed[i]) end
+local last = -(tonumber(ARGV[4]) + 1)
+local evicted = redis.call('ZRANGE', KEYS[1], 0, last)
+redis.call('ZREMRANGEBYRANK', KEYS[1], 0, last)
+for i = 1, #evicted do redis.call('HDEL', KEYS[2], evicted[i]) end
 return 1
 `;
 

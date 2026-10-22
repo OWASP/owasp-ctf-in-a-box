@@ -795,10 +795,10 @@ const RESET_PREFIXES: readonly [string, string][] = [
   // solves — a record of what people did during the event — so a reset wipes
   // it. Leaving it would let a "fresh" event open with last event's sign-ins.
   ["activity", ACTIVITY_LOG_KEY],
-  // The projector feed (#542) is a derived view of this event's solves, but a
-  // reset starts a new event: leaving the old lines would project last run's
-  // teams and titles over a fresh, not-yet-launched board. Both feed keys
-  // share the `ctf:feed:` prefix.
+  // The projector feed is a derived view of this event's solves, but a reset
+  // starts a new event: leaving the old lines would project last run's teams
+  // and titles over a fresh, not-yet-launched board. Both feed keys share the
+  // `ctf:feed:` prefix.
   ["recentSolves", "ctf:feed:*"],
   // Sponsors are the one exception to the CONTENT/PROGRESS split every other
   // entry above follows: unlike a challenge's flag/description, a sponsor

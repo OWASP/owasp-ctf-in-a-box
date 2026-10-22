@@ -16,7 +16,8 @@ overrides:
   # starts at or above 5.0.12.
   "brace-expansion@5": "5.0.12"
   # Security pin for vite's launch-editor (vitest → vite, test-only — the
-  # runtime image never ships it): exact, scoped to major 8, the smallest move
-  # off 8.1.3. GHSA alerts 25–27 (launch-editor command execution and Windows
-  # escaping). Drop once vitest resolves vite at or above 8.1.6 on its own.
-  "vite@8": "8.1.6"
+  # runtime image never ships it): exact, scoped to the vulnerable range so a
+  # newer vite 8 is untouched. Dependabot alerts 25–27 (launch-editor command
+  # execution and Windows escaping). Drop once vitest resolves vite at or
+  # above 8.1.6 on its own.
+  "vite@>=8.0.0 <8.1.6": "8.1.6"

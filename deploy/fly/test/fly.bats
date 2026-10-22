@@ -1323,6 +1323,20 @@ ENV
   echo "$output" | grep -qE '^ +memory = "1280mb"$'
 }
 
+@test "a zero-padded or overlong FLY_VM_MEMORY is refused, not read as octal" {
+  need_docker
+  cd "$REPO"
+  # 02000 is octal 1024: read as a number it would pass every range and step
+  # check and render memory = "02000mb".
+  for v in 02000 02048 1234567; do
+    cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+    echo "FLY_VM_MEMORY=$v" >> "$BATS_TEST_TMPDIR/env.vm"
+    run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+    [ "$status" -ne 0 ]
+    echo "$output" | grep -qF "FLY_VM_MEMORY=$v is not a whole number of megabytes"
+  done
+}
+
 @test "a FLY_VM_MEMORY below 1024 MB is refused" {
   need_docker
   cd "$REPO"

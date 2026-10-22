@@ -1120,9 +1120,13 @@ if [ -n "$VM_SIZE" ]; then
   esac
 fi
 if [ -n "$VM_MEMORY" ]; then
+  # Digits only, no leading zero (shell arithmetic would read 02000 as octal
+  # 1024), and at most six of them: Fly's largest machine is 131072 MB, and
+  # a longer string would overflow the arithmetic below.
   case "$VM_MEMORY" in
-    *[!0-9]*)
-      echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is not a whole number of megabytes." >&2
+    *[!0-9]*|0*|???????*)
+      echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is not a whole number of megabytes" >&2
+      echo "      (digits only, no leading zero, e.g. 2048)." >&2
       exit 1 ;;
   esac
   if [ "$VM_MEMORY" -lt 1024 ]; then

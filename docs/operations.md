@@ -34,7 +34,11 @@ live-GitHub scoring. For standing the kit up in the first place, see
   every viewer for **10 seconds**, then recomputed on the next request
   (`apps/web/src/lib/leaderboard/folded.ts`). So a quiz answer, a flag or an
   AI solve appears on `/leaderboard` and the landing strip after ingestion,
-  subject to the 10 s fold memo and the projector board's 30 s refresh.
+  subject to the 10 s fold memo and the projector board's 30 s refresh. Its
+  recent-solves feed (`?display=1`) is a separate public route polled every
+  15 s, so app-module solves appear there without waiting for the standings
+  fold; Secure Development lines appear when the scorer banks the solve,
+  following the same ingestion cadence as its points.
   Secure Development points follow the same app-side caching behavior:
   `lambda.ts` reads the scorer uncached (`cache: "no-store"`), but the
   poller's ingestion cadence comes first. End-to-end freshness depends on

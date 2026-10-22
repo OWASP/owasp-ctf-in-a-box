@@ -6,6 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { CLASSIC_ID_RE, submitFlag } from "@/lib/classic-store";
+import { recordRecentSolve } from "@/lib/recent-solves";
 import { hasTeam } from "@/lib/team-store";
 
 /** Hard cap on a submitted flag's length, checked BEFORE the store ever sees
@@ -121,11 +122,16 @@ export async function POST(request: Request) {
         : NextResponse.json({ correct: false, dryRun: true });
     }
     if (!result.correct) return NextResponse.json({ correct: false });
-    // Activity log (issue #212): fresh solves only — an idempotent
-    // re-submission banked nothing and would double-count the event. The id,
-    // never the flag; logActivity is fail-open, so it cannot fail a solve
-    // that already landed.
-    if (!result.already) await logActivity("classic-solve", login, challengeId);
+    // Activity log (issue #212) and the projector feed (#542): fresh solves
+    // only — an idempotent re-submission banked nothing and would double-count
+    // the event. The id, never the flag; both writers are fail-open, so
+    // neither can fail a solve that already landed.
+    if (!result.already) {
+      await Promise.all([
+        logActivity("classic-solve", login, challengeId),
+        recordRecentSolve({ module: "classic", challengeId, points: result.points, login }),
+      ]);
+    }
     // `already` (this login had banked this flag before — see SubmitResult)
     // rides along so the client can say so, instead of reading the
     // accompanying `points: 0` as an award of nothing.

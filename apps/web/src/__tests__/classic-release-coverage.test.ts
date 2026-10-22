@@ -42,6 +42,11 @@ const EXEMPT: Record<string, { calls: number; reason: string }> = {
     reason:
       "the visibility gate itself: classicVisibility hands an admin the whole list and everyone else visibleChallenges(all), and adminSeesHidden looks one record up to ask whether it is hidden; neither returns challenge data",
   },
+  "lib/recent-solves.ts": {
+    calls: 1,
+    reason:
+      "classicTitles resolves an already-solved challenge's public title for the projector feed, then drops the whole line when isChallengeVisible or the story lock hides it; it returns only title strings, never a challenge record",
+  },
   "lib/classic-store.ts": {
     calls: 1,
     reason:

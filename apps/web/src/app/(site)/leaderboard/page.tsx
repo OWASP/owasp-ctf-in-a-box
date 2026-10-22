@@ -27,6 +27,7 @@ import { eventImageUrl } from "@/lib/event-images-keys";
 import Image from "next/image";
 import HeaderLogo from "@/components/header-logo";
 import SponsorStrip from "@/components/sponsor-strip";
+import { listRecentSolves } from "@/lib/recent-solves";
 
 export async function generateMetadata(): Promise<Metadata> {
   const event = await getSite();
@@ -98,13 +99,17 @@ export default async function LeaderboardPage({
     // the landing strip reads, so one /admin control sizes both surfaces.
     // `getAdminSettingsSnapshot` already fails open to null internally, and
     // DisplayBoard's own `?? "md"` covers "nothing stored yet".
-    const [phaseInfo, sponsors, settings, images] = await Promise.all([
+    const [phaseInfo, sponsors, settings, images, recentSolves] = await Promise.all([
       resolvePhase(),
       listSponsors().catch(() => []),
       getAdminSettingsSnapshot(),
       // The event's logo for the wall (#543). getEventImages fails open to
       // "none stored", so a read error leaves the header as the name alone.
       getEventImages(),
+      // Cosmetic like the sponsor credits: a feed read must never blank the
+      // projector board itself. The route also serves the same data for the
+      // 15 s client refresh; this first read avoids an empty section on load.
+      listRecentSolves().catch(() => []),
     ]);
     // Teams when the event has them, individuals otherwise — the same
     // primary view the interactive board defaults to.
@@ -141,6 +146,7 @@ export default async function LeaderboardPage({
           h: s.logo?.h,
           logoType: s.logo?.type,
         }))}
+        recentSolves={recentSolves}
       />
     );
   }

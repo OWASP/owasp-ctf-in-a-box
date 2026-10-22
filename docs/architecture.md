@@ -965,6 +965,19 @@ readable and writable while the stack is running, without a restart:
   other progress keys; distinct from `ctf:admin:audit`, which records what
   *organizers* changed.
 
+- **`ctf:feed:recent-solves` + `ctf:feed:recent-solves:data`** (issue #542) —
+  the projector's latest solves. The sorted set scores deterministic
+  team-plus-challenge ids by solve time; the hash holds one small event per id
+  (module, optional app, challenge id, points, team slug/name at solve time,
+  time). Both are written atomically by a Lua script and trimmed together to
+  50, so a team's second solve of the same item is a no-op. The app writes
+  classic/quiz/AI lines on a fresh solve; the scorer writes Secure Development
+  lines when its own `HSETNX` reports a fresh one. The login is never stored.
+  The public read resolves titles from the current public listers and drops a
+  line whose module, target, challenge or story step is no longer visible.
+  Wiped by the master reset. Cosmetic and fail-open: a feed write never fails
+  the solve that produced it.
+
 ### Support operations (ADR 48)
 
 `POST`/`DELETE /api/admin/ops/user` and `/api/admin/ops/team`, behind
@@ -1184,10 +1197,10 @@ all event data — `SCAN`+`DEL` of `ctf:solves:*`, `ctf:team:*`, `ctf:user:*`,
 Insights measures from, #616), the spent replay nonces `ctf:ai:nonce:*`, the
 module-wide `ctf:ai:launchkey` (so no launch token issued before the reset
 survives it — see "AI data flow" above), the activity log
-(`ctf:activity:log`), both sponsor hashes (`ctf:sponsors` and
-`ctf:sponsors:logo` — a sponsor list belongs to one event run, and deleting
-it is the only off switch) and the organizer's score adjustments
-(`ctf:adjustments`) — keeps `ctf:admin:settings`
+(`ctf:activity:log`), the projector feed (`ctf:feed:*`), both sponsor hashes
+(`ctf:sponsors` and `ctf:sponsors:logo` — a sponsor list belongs to one event
+run, and deleting it is the only off switch) and the organizer's score
+adjustments (`ctf:adjustments`) — keeps `ctf:admin:settings`
 and (deliberately) the organizer's authored content,
 `ctf:quiz:questions`/`ctf:quiz:key`, `ctf:classic:challenges`/
 `ctf:classic:flag`/`ctf:classic:flagnorm`/`ctf:classic:categories` and

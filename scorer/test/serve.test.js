@@ -20,8 +20,8 @@ const clock = (times = T) => {
   return () => times[Math.min(i++, times.length - 1)];
 };
 
-async function boot(t, { rubric = RUBRIC, now = clock() } = {}) {
-  const server = await startServer({ rubric, store: createMemoryStore(), token: TOKEN, now });
+async function boot(t, { rubric = RUBRIC, now = clock(), store = createMemoryStore() } = {}) {
+  const server = await startServer({ rubric, store, token: TOKEN, now });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`;
   const post = (body, auth = `Bearer ${TOKEN}`) =>
@@ -31,7 +31,7 @@ async function boot(t, { rubric = RUBRIC, now = clock() } = {}) {
       body: typeof body === "string" ? body : JSON.stringify(body),
     });
   const board = async () => (await fetch(`${base}/leaderboard`)).json();
-  return { base, post, board };
+  return { base, post, board, store };
 }
 
 const solve = (author, target, solved) => ({ author, target, solved, pr: 7, sha: "abc123" });
@@ -118,6 +118,64 @@ test("unknown challenge ids are dropped silently, request still 202s", async (t)
   assert.equal(leaderboard.length, 1);
   assert.equal(leaderboard[0].points, 1);
   assert.deepEqual(leaderboard[0].apps.dvwa, { solved: 1, total: 1, solvedIds: ["sqli-low"] });
+});
+
+test("fresh solves write the projector feed with points, team-at-solve-time and no login", async (t) => {
+  const store = createMemoryStore({
+    teams: [{ slug: "red", name: "Red Team", captain: "alice", members: ["alice"] }],
+  });
+  const { post } = await boot(t, { store });
+
+  await post(solve("alice", "dvwa", ["sqli-low"]));
+  await post(solve("alice", "dvwa", ["sqli-low"])); // replay: no second line
+  await post(solve("alice", "juice-shop", ["reflected-xss-search"]));
+
+  const feed = await store.getRecentSolves();
+  assert.deepEqual(feed, [
+    {
+      module: "secure-development",
+      app: "juice-shop",
+      challengeId: "reflected-xss-search",
+      points: 10,
+      team: "red",
+      teamName: "Red Team",
+      at: T[2],
+    },
+    {
+      module: "secure-development",
+      app: "dvwa",
+      challengeId: "sqli-low",
+      points: 1,
+      team: "red",
+      teamName: "Red Team",
+      at: T[0],
+    },
+  ]);
+  assert.equal(JSON.stringify(feed).includes("alice"), false);
+});
+
+test("a teamless login scores normally but writes no feed line", async (t) => {
+  const store = createMemoryStore();
+  const { post, board } = await boot(t, { store });
+  assert.equal((await post(solve("alice", "dvwa", ["sqli-low"]))).status, 202);
+  assert.equal((await board()).leaderboard[0].points, 1);
+  assert.deepEqual(await store.getRecentSolves(), []);
+});
+
+test("a feed failure never fails the solve", async (t) => {
+  const store = createMemoryStore({
+    teams: [{ slug: "red", name: "Red Team", captain: "alice", members: ["alice"] }],
+  });
+  store.recordRecentSolves = async () => {
+    throw new Error("feed down");
+  };
+  const error = t.mock.method(console, "error", () => {});
+  const { post, board } = await boot(t, { store });
+
+  assert.equal((await post(solve("alice", "dvwa", ["sqli-low"]))).status, 202);
+  assert.equal((await board()).leaderboard[0].points, 1);
+  assert.equal(error.mock.calls.length, 1);
+  assert.match(String(error.mock.calls[0].arguments[0]), /feed write failed/);
 });
 
 test("monotonic: replaying a solve changes neither points nor lastSolveAt", async (t) => {

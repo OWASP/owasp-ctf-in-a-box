@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 // The activity log, so the dry-run test below can see that nothing was logged.
 const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
 vi.mock("@/lib/activity-log", () => activityLog);
+const recent = vi.hoisted(() => ({ recordRecentSolve: vi.fn(async () => {}) }));
+vi.mock("@/lib/recent-solves", () => recent);
 import { vi } from "vitest";
 
 const { getSession, submitFlag, requireLaunchedApi, launchApiAccess, hasTeam, isModuleLive, CLASSIC_ID_RE } = vi.hoisted(() => ({
@@ -72,6 +74,7 @@ beforeEach(() => {
   adminAuth.isAdminLogin.mockResolvedValue(false);
   adminView.adminSeesHidden.mockClear();
   activityLog.logActivity.mockClear();
+  recent.recordRecentSolve.mockClear();
 });
 
 describe("POST /api/classic/submit", () => {
@@ -230,6 +233,12 @@ describe("POST /api/classic/submit", () => {
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ correct: true, points: 50 });
+    expect(recent.recordRecentSolve).toHaveBeenCalledWith({
+      module: "classic",
+      challengeId: "c-1",
+      points: 50,
+      login: "alice",
+    });
   });
 
   it("carries `already` through for a re-submitted correct flag", async () => {
@@ -238,6 +247,7 @@ describe("POST /api/classic/submit", () => {
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ correct: true, points: 0, already: true });
+    expect(recent.recordRecentSolve).not.toHaveBeenCalled();
   });
 
   it.each(["paused", "solved", "unavailable"] as const)(
@@ -295,6 +305,7 @@ describe("a dry-run answer (#464 admin preview)", () => {
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect((await res.json()).dryRun).toBe(true);
     expect(activityLog.logActivity).not.toHaveBeenCalled();
+    expect(recent.recordRecentSolve).not.toHaveBeenCalled();
   });
 });
 

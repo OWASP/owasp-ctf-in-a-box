@@ -9,6 +9,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 ## Unreleased
 
 ### Changes
+- **New: the projector board shows a recent-solves feed (#542).** Beneath the
+  top ten, `?display=1` now lists the five newest team solves — public title,
+  module, points and the team name captured at solve time — and refreshes
+  from a launch-locked public route every 15 s. It covers classic, quiz, AI
+  and Secure Development; a line is dropped when its module is off, its
+  target is disabled, its challenge is gone, or its classic story step is
+  locked to an anonymous viewer. The stored event never carries a login, and
+  the response carries no challenge id, app id, team slug or activity-log
+  row. Feed writes are fail-open, so a feed failure never fails a solve; the
+  master reset clears the feed with the rest of the event data.
+
 - **Fixed: the leaderboard could show stale scores due to an extra fetch cache (#598).**
   Normal scorer requests now bypass Next.js's 30-second fetch cache, while the
   leaderboard retains its 10-second fold memoization to avoid unnecessary

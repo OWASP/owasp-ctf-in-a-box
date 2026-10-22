@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   consumeRateLimit: vi.fn(),
   hasTeam: vi.fn(),
   logActivity: vi.fn(),
+  recordRecentSolve: vi.fn(),
   // Holds the REAL implementation, set once by the `@/lib/ai-token` mock
   // factory below — a plain mutable slot, not a mock itself, so `vi.hoisted`
   // is safe here. Used only by the rotation tests, which need the actual
@@ -57,6 +58,7 @@ vi.mock("@/lib/rate-limit-store", async (orig) => ({
 }));
 vi.mock("@/lib/team-store", () => ({ hasTeam: mocks.hasTeam }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: mocks.logActivity }));
+vi.mock("@/lib/recent-solves", () => ({ recordRecentSolve: mocks.recordRecentSolve }));
 
 import { OPTIONS, POST } from "@/app/api/ai/event/route";
 import { generateSigningKey, signEventBody } from "@/lib/ai-token";
@@ -161,17 +163,24 @@ describe("POST /api/ai/event", () => {
     expect(mocks.awardAiEvent).toHaveBeenCalledWith("alice", CHAL, { dryRun: false, preview: false });
   });
 
-  it("logs a fresh award to the activity log, naming the event path", async () => {
+  it("logs and feeds a fresh award, naming the event path", async () => {
     allGatesOpen();
     await POST(signed(bodyFor()));
     expect(mocks.logActivity).toHaveBeenCalledWith("ai-solve", "alice", `${CHAL} via event`);
+    expect(mocks.recordRecentSolve).toHaveBeenCalledWith({
+      module: "ai",
+      challengeId: CHAL,
+      points: 400,
+      login: "alice",
+    });
   });
 
-  it("does not log an already-banked award", async () => {
+  it("does not log or feed an already-banked award", async () => {
     allGatesOpen();
     mocks.awardAiEvent.mockResolvedValue({ ok: true, correct: true, points: 400, already: true });
     await POST(signed(bodyFor()));
     expect(mocks.logActivity).not.toHaveBeenCalled();
+    expect(mocks.recordRecentSolve).not.toHaveBeenCalled();
   });
 
   it("does not log any refusal (paused, wrong mode, unknown challenge, teamless, replay)", async () => {
@@ -521,7 +530,8 @@ describe("POST /api/ai/event", () => {
       const res = await POST(signed(raw, NOW_SEC, { "x-ctf-signature": signature }));
 
       expect(res.status).toBe(200);
-      expect(await res.json()).toMatchObject({ dryRun: true, wouldAward: true });
+    expect(await res.json()).toMatchObject({ dryRun: true, wouldAward: true });
+    expect(mocks.recordRecentSolve).not.toHaveBeenCalled();
       expect(mocks.claimAiNonce).not.toHaveBeenCalled();
     });
   });

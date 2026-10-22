@@ -440,9 +440,11 @@ FLY_VM_SIZE=shared-cpu-2x   # a Fly preset; empty = fly.toml's shared-cpu-1x
 FLY_VM_MEMORY=2048          # megabytes, at least 1024; empty = fly.toml's 1 GB
 ```
 
-`deploy.sh` passes them to `fly deploy` as `--vm-size` / `--vm-memory`, so
-the event size survives every redeploy — a hotfix shipped mid-event does not
-shrink the machine back. Do not size it with `fly scale vm` by hand: the next
+`deploy.sh` renders them into a temporary copy of `fly.toml`'s `[[vm]]`
+block and deploys that (the same way as `FLY_AUTO_STOP`; `fly.toml` itself is
+never edited), so the event size survives every redeploy — a hotfix shipped
+mid-event does not shrink the machine back. The deploy prints the size it
+rendered. Do not size it with `fly scale vm` by hand: the next
 deploy re-applies `fly.toml`'s minimum. With neither key set, every deploy
 prints a NOTE saying how to size up. A preset that is not Fly's, or memory
 under 1024, is refused before the deploy starts.

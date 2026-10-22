@@ -1035,7 +1035,7 @@ cleanup_rendered() {
   # The autostop config is a derived copy of fly.toml and holds nothing
   # sensitive, but it goes too: leaving it behind invites someone to edit the
   # copy and wonder why their change never deploys.
-  rm -f "$FLY_DIR/.fly.autostop.toml"
+  rm -f "$FLY_DIR/.fly.autostop.toml" "$FLY_DIR/.fly.vm.toml"
 }
 trap cleanup_rendered EXIT INT TERM
 
@@ -1074,76 +1074,29 @@ fly_run secrets set --detach --app "$APP" \
   "REDISCLI_AUTH=$REDIS_PASSWORD"
 
 # ---------------------------------------------------------------------------
-# FLY_AUTO_STOP — let the machine stop when idle. OFF unless asked for.
-#
-# There is no `fly deploy` flag for this: `auto_stop_machines` lives in
-# fly.toml, and `fly machine update --autostop` is undone by the next deploy.
-# So when the knob is set, the committed fly.toml is rendered to a temporary
-# copy with the value substituted and THAT is deployed. fly.toml itself is
-# never edited — a deploy that dirties a tracked file is a deploy that gets
-# committed by accident.
-#
-#   off      (default) always running
-#   stop     stopped when idle; cold start on the next request
-#   suspend  memory snapshotted and restored; much faster wake, costs storage
-#
-# min_machines_running must drop to 0 alongside it, or Fly keeps one machine up
-# and the setting does nothing — a silent no-op that looks like it worked.
-# ---------------------------------------------------------------------------
-DEPLOY_TOML="$CONFIG_TOML"
-AUTO_STOP="$(env_value FLY_AUTO_STOP)"
-[ -n "$AUTO_STOP" ] || AUTO_STOP="off"
-case "$AUTO_STOP" in
-  off) ;;
-  stop|suspend)
-    echo
-    echo "WARNING: FLY_AUTO_STOP=$AUTO_STOP — this machine will stop when idle." >&2
-    echo "         It holds redis AND the sync poller, so while it is stopped the" >&2
-    echo "         leaderboard does not advance: PR score comments pile up on" >&2
-    echo "         GitHub and are only collected once someone loads a page and" >&2
-    echo "         wakes the machine. Fine between events, wrong during one." >&2
-    echo "         Set FLY_AUTO_STOP=off in $ENV_FILE before the event starts." >&2
-    echo
-    DEPLOY_TOML="$FLY_DIR/.fly.autostop.toml"
-    if [ -z "$DRY_RUN" ]; then
-      sed -e "s/^  auto_stop_machines = false/  auto_stop_machines = \"$AUTO_STOP\"/" \
-          -e "s/^  min_machines_running = 1/  min_machines_running = 0/" \
-          "$CONFIG_TOML" > "$DEPLOY_TOML"
-      # Fail loudly rather than deploying a config where the substitution
-      # silently missed — a renamed key here would just quietly keep the
-      # machine running forever while the operator believed otherwise.
-      grep -q "auto_stop_machines = \"$AUTO_STOP\"" "$DEPLOY_TOML" || {
-        echo "FAIL: could not set auto_stop_machines in $CONFIG_TOML." >&2
-        rm -f "$DEPLOY_TOML"
-        exit 1
-      }
-    fi
-    ;;
-  *)
-    echo "FAIL: FLY_AUTO_STOP=$AUTO_STOP is not valid. Use off, stop or suspend." >&2
-    exit 1 ;;
-esac
-
-# ---------------------------------------------------------------------------
 # FLY_VM_SIZE / FLY_VM_MEMORY — the machine size, per deployment.
 #
 # fly.toml carries the minimum (shared-cpu-1x, 1 GB): right between events,
 # too small for one — the pre-event load check wants machine memory under 80 %
-# at 10 req/s, and the idle stack alone is ~65 % of 1 GB. Every `fly deploy`
-# re-applies the size it is given, so a `fly scale vm` by hand is undone by the
-# next deploy; a hotfix shipped mid-event would silently shrink the machine.
-# Read from the env file and passed as `--vm-size` / `--vm-memory` instead, the
-# event size survives every deploy until someone changes the file.
+# at 10 req/s, and the idle stack alone is ~65 % of 1 GB. A `fly scale vm` by
+# hand is undone by the next deploy, so a hotfix shipped mid-event would
+# silently shrink the machine. Set here, the event size survives every deploy
+# until someone changes the env file.
+#
+# Rendered into a temporary copy of fly.toml's [[vm]] block, not passed as
+# `fly deploy --vm-*` flags: fly.toml's [[vm]] can take precedence over them,
+# and a flag it outranks would look honoured and change nothing. Same
+# reasoning, and same never-edit-fly.toml rule, as FLY_AUTO_STOP below.
 #
 #   FLY_VM_SIZE    a Fly preset, e.g. shared-cpu-2x (empty: fly.toml's)
 #   FLY_VM_MEMORY  megabytes, at least 1024 (empty: fly.toml's)
 # ---------------------------------------------------------------------------
-VM_ARGS=()
+DEPLOY_TOML="$CONFIG_TOML"
 VM_SIZE="$(env_value FLY_VM_SIZE)"
 VM_MEMORY="$(env_value FLY_VM_MEMORY)"
 if [ -n "$VM_SIZE" ]; then
   case "$VM_SIZE" in
-    shared-cpu-[1248]x|performance-cpu-[1248]x|performance-cpu-16x) VM_ARGS+=(--vm-size "$VM_SIZE") ;;
+    shared-cpu-[1248]x|performance-cpu-[1248]x|performance-cpu-16x) ;;
     *)
       echo "FAIL: FLY_VM_SIZE=$VM_SIZE is not a Fly machine preset." >&2
       echo "      Use shared-cpu-1x/2x/4x/8x or performance-cpu-1x/2x/4x/8x/16x." >&2
@@ -1161,9 +1114,29 @@ if [ -n "$VM_MEMORY" ]; then
     echo "      about 665 MB idle; less than 1 GB leaves them nothing to grow into." >&2
     exit 1
   fi
-  VM_ARGS+=(--vm-memory "$VM_MEMORY")
 fi
-if [ ${#VM_ARGS[@]} -eq 0 ]; then
+if [ -n "$VM_SIZE$VM_MEMORY" ]; then
+  # A preset replaces cpu_kind/cpus outright (keeping both would let the
+  # explicit cpus line contradict the preset); memory replaces memory.
+  DEPLOY_TOML="$FLY_DIR/.fly.vm.toml"
+  awk -v size="$VM_SIZE" -v mem="$VM_MEMORY" '
+    /^\[\[vm\]\]/ { invm = 1; print; if (size != "") print "  size = \"" size "\""; next }
+    /^\[/          { invm = 0 }
+    invm && size != "" && /^ *(cpu_kind|cpus|size) *=/ { next }
+    invm && mem != "" && /^ *memory *=/ { print "  memory = \"" mem "mb\""; next }
+    { print }
+  ' "$CONFIG_TOML" > "$DEPLOY_TOML"
+  # Fail loudly rather than deploy a config where the substitution missed: a
+  # reshaped [[vm]] block would otherwise ship the minimum to an event.
+  if { [ -n "$VM_SIZE" ] && ! grep -qF "size = \"$VM_SIZE\"" "$DEPLOY_TOML"; } ||
+     { [ -n "$VM_MEMORY" ] && ! grep -qF "memory = \"${VM_MEMORY}mb\"" "$DEPLOY_TOML"; }; then
+    echo "FAIL: could not set the machine size in $CONFIG_TOML's [[vm]] block." >&2
+    rm -f "$DEPLOY_TOML"
+    exit 1
+  fi
+  echo "   machine size from $ENV_FILE:"
+  sed -n '/^\[\[vm\]\]/,/^\[/p' "$DEPLOY_TOML" | grep -E '^ *(size|memory|cpu_kind|cpus) *=' | sed 's/^/     /'
+else
   echo
   echo "NOTE: machine size is fly.toml's minimum (shared-cpu-1x, 1 GB) — fine" >&2
   echo "      between events, too small for one. Before an event set, in $ENV_FILE:" >&2
@@ -1172,6 +1145,58 @@ if [ ${#VM_ARGS[@]} -eq 0 ]; then
   echo "      and redeploy; remove them after the event to drop back." >&2
   echo
 fi
+
+# ---------------------------------------------------------------------------
+# FLY_AUTO_STOP — let the machine stop when idle. OFF unless asked for.
+#
+# There is no `fly deploy` flag for this: `auto_stop_machines` lives in
+# fly.toml, and `fly machine update --autostop` is undone by the next deploy.
+# So when the knob is set, the committed fly.toml is rendered to a temporary
+# copy with the value substituted and THAT is deployed. fly.toml itself is
+# never edited — a deploy that dirties a tracked file is a deploy that gets
+# committed by accident.
+#
+#   off      (default) always running
+#   stop     stopped when idle; cold start on the next request
+#   suspend  memory snapshotted and restored; much faster wake, costs storage
+#
+# min_machines_running must drop to 0 alongside it, or Fly keeps one machine up
+# and the setting does nothing — a silent no-op that looks like it worked.
+# ---------------------------------------------------------------------------
+AUTO_STOP="$(env_value FLY_AUTO_STOP)"
+[ -n "$AUTO_STOP" ] || AUTO_STOP="off"
+case "$AUTO_STOP" in
+  off) ;;
+  stop|suspend)
+    echo
+    echo "WARNING: FLY_AUTO_STOP=$AUTO_STOP — this machine will stop when idle." >&2
+    echo "         It holds redis AND the sync poller, so while it is stopped the" >&2
+    echo "         leaderboard does not advance: PR score comments pile up on" >&2
+    echo "         GitHub and are only collected once someone loads a page and" >&2
+    echo "         wakes the machine. Fine between events, wrong during one." >&2
+    echo "         Set FLY_AUTO_STOP=off in $ENV_FILE before the event starts." >&2
+    echo
+    AUTOSTOP_SRC="$DEPLOY_TOML"
+    DEPLOY_TOML="$FLY_DIR/.fly.autostop.toml"
+    if [ -z "$DRY_RUN" ]; then
+      # From the current copy, so a machine size set above is kept.
+      sed -e "s/^  auto_stop_machines = false/  auto_stop_machines = \"$AUTO_STOP\"/" \
+          -e "s/^  min_machines_running = 1/  min_machines_running = 0/" \
+          "$AUTOSTOP_SRC" > "$DEPLOY_TOML"
+      # Fail loudly rather than deploying a config where the substitution
+      # silently missed — a renamed key here would just quietly keep the
+      # machine running forever while the operator believed otherwise.
+      grep -q "auto_stop_machines = \"$AUTO_STOP\"" "$DEPLOY_TOML" || {
+        echo "FAIL: could not set auto_stop_machines in $CONFIG_TOML." >&2
+        rm -f "$DEPLOY_TOML"
+        exit 1
+      }
+    fi
+    ;;
+  *)
+    echo "FAIL: FLY_AUTO_STOP=$AUTO_STOP is not valid. Use off, stop or suspend." >&2
+    exit 1 ;;
+esac
 
 echo "== 5/5 deploy"
 # `--image`, AND IT IS REQUIRED HERE.
@@ -1193,9 +1218,7 @@ echo "== 5/5 deploy"
 # does not work: flyctl's compose parser refuses a file where more than one
 # service declares `build:` ("only one service can specify build"), which
 # docker-compose.yml does twice (app and sync).
-# ${VM_ARGS[@]+...}: an empty array under `set -u` is an unbound-variable
-# error on bash before 4.4, which is what macOS ships.
-fly_run deploy --config "$DEPLOY_TOML" --app "$APP" --image "$APP_IMAGE" --primary-region "$REGION" ${VM_ARGS[@]+"${VM_ARGS[@]}"}
+fly_run deploy --config "$DEPLOY_TOML" --app "$APP" --image "$APP_IMAGE" --primary-region "$REGION"
 
 echo "== done"
 cat <<EOF

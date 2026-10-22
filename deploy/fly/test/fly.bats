@@ -1215,13 +1215,13 @@ ENV
   uncommented "$FLY/fly.toml" | grep -qE '^ *cpus *= *1$'
 }
 
-@test "with no size knobs the deploy passes no --vm flags and says how to size up" {
+@test "with no size knobs fly.toml deploys as-is and the deploy says how to size up" {
   need_docker
   cd "$REPO"
   run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env"
   [ "$status" -eq 0 ]
   echo "$output" | grep -qF 'FLY_VM_SIZE=shared-cpu-2x'
-  [ -z "$(echo "$output" | grep -E 'fly deploy .*--vm-')" ]
+  echo "$output" | grep -qF 'fly deploy --config deploy/fly/fly.toml'
 }
 
 @test "FLY_VM_SIZE and FLY_VM_MEMORY reach fly deploy, so a redeploy keeps the event size" {
@@ -1229,10 +1229,26 @@ ENV
   cd "$REPO"
   cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
   printf 'FLY_VM_SIZE=shared-cpu-2x\nFLY_VM_MEMORY=2048\n' >> "$BATS_TEST_TMPDIR/env.vm"
-  # /bin/bash is 3.2 on macOS: an empty or set array must both expand cleanly.
   run /bin/bash ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -qE 'fly deploy .*--vm-size shared-cpu-2x --vm-memory 2048'
+  # Rendered into a copy of fly.toml's [[vm]] block, never passed as flags
+  # fly.toml could outrank; the deploy prints the block it rendered.
+  echo "$output" | grep -qF 'fly deploy --config deploy/fly/.fly.vm.toml'
+  echo "$output" | grep -qE '^ +size = "shared-cpu-2x"$'
+  echo "$output" | grep -qE '^ +memory = "2048mb"$'
+  # A preset replaces cpus outright, so no explicit line can contradict it.
+  [ -z "$(echo "$output" | grep -E '^ +cpus = ')" ]
+}
+
+@test "a machine size and FLY_AUTO_STOP combine in one deployed config" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  printf 'FLY_VM_MEMORY=2048\nFLY_AUTO_STOP=stop\n' >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qE '^ +memory = "2048mb"$'
+  echo "$output" | grep -qF 'fly deploy --config deploy/fly/.fly.autostop.toml'
 }
 
 @test "a FLY_VM_SIZE that is not a Fly preset is refused" {
@@ -1314,6 +1330,10 @@ ENV
 
 @test "the autostop override file is gitignored" {
   cd "$REPO" && git check-ignore -q deploy/fly/.fly.autostop.toml
+}
+
+@test "the machine-size override file is gitignored" {
+  cd "$REPO" && git check-ignore -q deploy/fly/.fly.vm.toml
 }
 
 # ---------------------------------------------------------------------------

@@ -118,8 +118,9 @@ primary_region = "iad"
 # 665 MB at peak (Next.js ~320, srh ~100, scorer ~100, sync ~90, redis ~55),
 # and 512 MB cannot hold that. The scorer's judge runs on GitHub's runners, so
 # here it only serves. This is the between-events default; an event sizes up
-# with FLY_VM_SIZE / FLY_VM_MEMORY in the env file (deploy.sh passes them to
-# `fly deploy`, so a hotfix deploy mid-event keeps the event size). See
+# with FLY_VM_SIZE / FLY_VM_MEMORY in the env file (deploy.sh renders them
+# into a deployed copy of this file, so a hotfix deploy mid-event keeps the
+# event size). See
 # "Machine size" in docs/fly.md.
 [[vm]]
   memory = "1gb"

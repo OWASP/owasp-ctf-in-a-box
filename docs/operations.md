@@ -2390,8 +2390,9 @@ route, which would spend real cooldowns and attempt caps). See
 [docs/troubleshooting.md](troubleshooting.md) for what a 503 means and what
 to do.
 
-On AWS, the first and last checks do not apply: there is no Fly machine to
-suspend, and no Cloudflare rule unless you put one in front of the ALB.
+On AWS, the first, second and last checks do not apply: there is no Fly
+machine to suspend or size, and no Cloudflare rule unless you put one in front
+of the ALB.
 `scripts/load-test.sh` does not run against an ECS stack either. The AWS
 checks, and how to run the load pass by hand, are in the
 [AWS event-day runbook](aws.md#before-the-event).

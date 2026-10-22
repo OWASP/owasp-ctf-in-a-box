@@ -1295,6 +1295,34 @@ ENV
   echo "$output" | grep -qF "maximum of 2048 MB"
 }
 
+@test "a FLY_VM_MEMORY Fly cannot allocate is refused, per CPU kind" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  # In range for one shared CPU, but not a 256 MB step.
+  echo "FLY_VM_MEMORY=1500" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'is not a multiple of 256 MB'
+  # A 256 MB step that is not a 1024 MB step is fine shared, refused on
+  # performance CPUs.
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  printf 'FLY_VM_SIZE=performance-1x\nFLY_VM_MEMORY=2304\n' >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'is not a multiple of 1024 MB'
+}
+
+@test "a FLY_VM_MEMORY on a 256 MB step is accepted for shared CPUs" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  echo "FLY_VM_MEMORY=1280" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qE '^ +memory = "1280mb"$'
+}
+
 @test "a FLY_VM_MEMORY below 1024 MB is refused" {
   need_docker
   cd "$REPO"

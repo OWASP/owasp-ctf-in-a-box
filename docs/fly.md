@@ -450,7 +450,8 @@ deploy re-applies `fly.toml`'s minimum. With neither key set, every deploy
 prints a NOTE saying how to size up. A preset that is not Fly's (`fly
 platform vm-sizes` lists them), memory under 1024, or memory outside what the
 preset's CPUs allow (256–2048 MB per shared CPU, 2048–8192 MB per
-performance CPU) is refused before the deploy starts.
+performance CPU), or not in Fly's steps (256 MB shared, 1024 MB performance)
+is refused before the deploy starts.
 
 **Set both before an event, redeploy, and run the load check. Remove them
 after the event and redeploy to drop back to the minimum.**

@@ -1098,8 +1098,11 @@ VM_MEMORY="$(env_value FLY_VM_MEMORY)"
 # 256 to 2048 MB per shared CPU, 2048 to 8192 MB per performance CPU. Listed
 # here rather than asked of flyctl because --dry-run makes no fly calls. With
 # no preset the machine keeps fly.toml's one shared CPU, so 2048 MB at most.
+# Fly allocates shared memory in 256 MB steps and performance memory in
+# 1024 MB steps; any other value is refused mid-deploy.
 PRESET_MIN_MB=0
 PRESET_MAX_MB=2048
+PRESET_STEP_MB=256
 if [ -n "$VM_SIZE" ]; then
   case "$VM_SIZE" in
     shared-cpu-[12468]x)
@@ -1107,7 +1110,8 @@ if [ -n "$VM_SIZE" ]; then
       PRESET_MIN_MB=$(( n * 256 )); PRESET_MAX_MB=$(( n * 2048 )) ;;
     performance-[12468]x|performance-1[0246]x)
       n="${VM_SIZE#performance-}"; n="${n%x}"
-      PRESET_MIN_MB=$(( n * 2048 )); PRESET_MAX_MB=$(( n * 8192 )) ;;
+      PRESET_MIN_MB=$(( n * 2048 )); PRESET_MAX_MB=$(( n * 8192 ))
+      PRESET_STEP_MB=1024 ;;
     *)
       echo "FAIL: FLY_VM_SIZE=$VM_SIZE is not a Fly machine preset." >&2
       echo "      Use shared-cpu-1x/2x/4x/6x/8x or performance-1x/2x/4x/.../16x" >&2
@@ -1134,6 +1138,11 @@ if [ -n "$VM_MEMORY" ]; then
     size_label="${VM_SIZE:-shared-cpu-1x}"
     echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is above $size_label's maximum of $PRESET_MAX_MB MB." >&2
     echo "      Pick a larger FLY_VM_SIZE as well." >&2
+    exit 1
+  fi
+  if [ $(( VM_MEMORY % PRESET_STEP_MB )) -ne 0 ]; then
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is not a multiple of $PRESET_STEP_MB MB," >&2
+    echo "      the step Fly allocates ${VM_SIZE:-shared-cpu-1x} memory in." >&2
     exit 1
   fi
 elif [ "$PRESET_MIN_MB" -gt 1024 ]; then

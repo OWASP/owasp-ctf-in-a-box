@@ -33,16 +33,16 @@ live-GitHub scoring. For standing the kit up in the first place, see
   team totals, the chart, hint penalties — are computed once and shared by
   every viewer for **10 seconds**, then recomputed on the next request
   (`apps/web/src/lib/leaderboard/folded.ts`). So a quiz answer, a flag or an
-  AI solve shows on `/leaderboard` and the landing strip within 10 s rather
-  than on the contestant's very next page load. Secure Development points
-  take longer: the app's read of the scorer is itself cached for 30 s
-  (`next: { revalidate: 30 }` in `lambda.ts`), and the 10 s memo sits on top
-  of it, so a score the poller has already ingested can take up to about
-  40 s to reach the board — and the poller's own cadence comes before either.
-  The projector board refreshes every 30 s regardless. A contestant's own
-  `/profile`, `/quiz`, `/flags` and `/challenges` read live and show their
-  solve at once. A read that fails is never cached — the next request
-  retries.
+  AI solve appears on `/leaderboard` and the landing strip after ingestion,
+  subject to the 10 s fold memo and the projector board's 30 s refresh.
+  Secure Development points follow the same app-side caching behavior:
+  `lambda.ts` reads the scorer uncached (`cache: "no-store"`), but the
+  poller's ingestion cadence comes first. End-to-end freshness depends on
+  the deployment path and should be measured with the three-task freshness
+  check before making a stronger timing claim. A contestant's own
+  `/profile`, `/quiz`, `/flags` and `/challenges` read live, but scorer-backed
+  results still depend on poller ingestion. A read that fails is never cached — the next
+  request retries.
 - Poller logs: `docker compose logs -f sync`.
 - All state lives in named Docker volumes, so a box reboot loses nothing.
 - **On AWS (ECS)**, the logs, a shell, the failure drills, rollback and

@@ -21,11 +21,9 @@ import type { LeaderboardData } from "./types";
  * against 10 demanded after the payload fix (#443), with ~370 ms of CPU per
  * request. Six folds a minute instead of six hundred is the difference.
  *
- * TTL. Ten seconds — under the display board's own 30 s refresh and under the
- * scorer fetch's 30 s `revalidate`, so no viewer sees data older than the
- * board could already show them. A contestant's own quiz/flag solve appears
- * here within 10 s rather than on the next request; /profile and the module
- * pages read their own data and are unaffected.
+ * TTL. Ten seconds, under the display board's own 30 s refresh. The scorer
+ * fetch bypasses Next.js's fetch cache, so this memo is the only application-level
+ * cache in front of the scorer read.
  *
  * FAIL OPEN, NEVER CACHE A FAILURE. A fold that throws is not stored: the
  * caller sees the error exactly as before, and the next request retries. A
@@ -77,10 +75,10 @@ type Clock = () => number;
  *  request/render latency on a live box: the load test's autocannon
  *  percentiles are whole-request numbers, and this line is the fold's share
  *  of them (issue #446). */
-const defaultFold: Fold = async ({ fresh = false } = {}) => {
+const defaultFold: Fold = async () => {
   const started = Date.now();
   const data = await (await getLeaderboardSource())
-    .getLeaderboard({ fresh })
+    .getLeaderboard()
     .then(withModuleContributions)
     .then(withTeamStandings)
     .then(withHintPenalties)

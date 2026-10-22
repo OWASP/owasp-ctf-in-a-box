@@ -9,6 +9,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 ## Unreleased
 
 ### Changes
+- **Fixed: the leaderboard could show stale scores due to an extra fetch cache (#598).**
+  Normal scorer requests now bypass Next.js's 30-second fetch cache, while the
+  leaderboard retains its 10-second fold memoization to avoid unnecessary
+  recomputation. The Secure Development caption now says the board updates about
+  every 10 seconds.
 
 - **Fixed: the scorer's unreachable-target early-abort test no longer flakes
   under CPU load (#643).** `runExec` now also returns `spawned`, the number of

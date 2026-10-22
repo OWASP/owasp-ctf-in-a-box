@@ -1284,6 +1284,17 @@ ENV
   echo "$output" | grep -qF "below shared-cpu-8x's minimum of 2048 MB"
 }
 
+@test "a FLY_VM_MEMORY above what the CPUs allow is refused" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  # No preset keeps fly.toml's one shared CPU, which Fly caps at 2048 MB.
+  echo "FLY_VM_MEMORY=4096" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF "maximum of 2048 MB"
+}
+
 @test "a FLY_VM_MEMORY below 1024 MB is refused" {
   need_docker
   cd "$REPO"

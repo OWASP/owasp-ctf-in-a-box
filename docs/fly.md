@@ -437,7 +437,8 @@ wants machine memory under 80 % at 10 req/s, and the idle stack alone is about
 
 ```sh
 FLY_VM_SIZE=shared-cpu-2x   # a Fly preset; empty = fly.toml's shared-cpu-1x
-FLY_VM_MEMORY=2048          # megabytes, at least 1024; empty = fly.toml's 1 GB
+FLY_VM_MEMORY=2048          # megabytes, at least 1024; empty = 1 GB, or the
+                            # preset's own minimum when that is more
 ```
 
 `deploy.sh` renders them into a temporary copy of `fly.toml`'s `[[vm]]`
@@ -446,8 +447,10 @@ never edited), so the event size survives every redeploy — a hotfix shipped
 mid-event does not shrink the machine back. The deploy prints the size it
 rendered. Do not size it with `fly scale vm` by hand: the next
 deploy re-applies `fly.toml`'s minimum. With neither key set, every deploy
-prints a NOTE saying how to size up. A preset that is not Fly's, or memory
-under 1024, is refused before the deploy starts.
+prints a NOTE saying how to size up. A preset that is not Fly's (`fly
+platform vm-sizes` lists them), memory under 1024, or memory outside what the
+preset's CPUs allow (256–2048 MB per shared CPU, 2048–8192 MB per
+performance CPU) is refused before the deploy starts.
 
 **Set both before an event, redeploy, and run the load check. Remove them
 after the event and redeploy to drop back to the minimum.**

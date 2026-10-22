@@ -556,6 +556,18 @@ ENV
   [ -z "$(grep -E '^    (build|networks|volumes|profiles):' "$RENDERED")" ]
 }
 
+@test "render: no restart key survives, so containers inherit the machine policy" {
+  need_docker
+  # Anti-vacuous: the source must still declare restart policies, or this
+  # test would pass on a file that never had any.
+  grep -qE '^    restart: unless-stopped' "$REPO/docker-compose.yml"
+  render
+  # Fly Machines reject Docker's `unless-stopped`; flyctl 0.4.120 refuses the
+  # whole machine update over it. Without the key each container inherits the
+  # machine's own on-failure policy.
+  [ -z "$(grep -E '^    restart:' "$RENDERED")" ]
+}
+
 @test "render: no service is left with an empty environment key" {
   need_docker
   render

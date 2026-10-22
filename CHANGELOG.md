@@ -16,6 +16,18 @@ and push the scorer image after upgrading: the VAmPI rubric fix (#661) and
 the probe-count fix (#643) ship inside it.
 
 ### Changes
+- **Fixed: the Fly deploy fails on flyctl 0.4.120 with "restart policy
+  `unless-stopped` is not supported by Fly Machines".** flyctl now reads the
+  compose `restart:` key it used to ignore, and refuses the whole machine
+  update. `deploy/fly/render-compose.sh` drops `restart:` from the rendered
+  file, so every container inherits the machine's `on-failure` policy — the
+  same behaviour as before, verified by the container-kill drill (#437).
+  Docker Compose bring-ups keep their `restart:` policies unchanged.
+- **Fixed: `ctf-setup.sh`'s amd64 rebuild hint builds an image Fly accepts.**
+  The hint now includes `--provenance=false --sbom=false`, as
+  `docs/hosting.md` already does. Without them buildx pushes an OCI index
+  carrying an attestation, which Fly's registry refuses with `400 Bad
+  Request` when the deploy mirrors the scorer.
 - **Fixed: `apps/web` pins vite to 8.1.6 for the launch-editor advisories.**
   A `pnpm-workspace.yaml` override moves the test-only vite that vitest pulls
   in from 8.1.3 to 8.1.6, clearing Dependabot's three launch-editor alerts

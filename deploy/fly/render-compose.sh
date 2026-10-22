@@ -60,6 +60,10 @@
 #   5. Named volumes and networks are dropped. Fly ignores both; volumes are
 #      declared as `[[mounts]]` in fly.toml, and a single machine has no
 #      networks to join.
+#   6. `restart:` is dropped. Fly Machines reject Docker's `unless-stopped`
+#      (flyctl 0.4.120 refuses the whole machine update over it), and with the
+#      key absent every container inherits the machine's own `on-failure`
+#      policy — the behaviour the container-kill drill verified.
 set -euo pipefail
 
 # The env-file reader every shell entry point shares; resolved from this
@@ -277,7 +281,9 @@ indent == 4 && section == "services" {
   # profiles: flyctl does not implement them; selection already happened, in
   #           `docker compose config SERVICE...`. Leaving them would suggest
   #           Fly honours a filter it ignores entirely.
-  if (key == "build" || key == "volumes" || key == "networks" || key == "profiles") {
+  # restart:  Fly Machines reject `unless-stopped`; without the key each
+  #           container inherits the machine `on-failure` policy (header, 6).
+  if (key == "build" || key == "volumes" || key == "networks" || key == "profiles" || key == "restart") {
     skip_indent = 4
     next
   }

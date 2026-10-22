@@ -63,7 +63,7 @@
 #   6. `restart:` is dropped. Fly Machines reject Docker's `unless-stopped`
 #      (flyctl 0.4.120 refuses the whole machine update over it), and with the
 #      key absent every container inherits the machine's own `on-failure`
-#      policy — the behaviour the container-kill drill (#437) verified.
+#      policy — the behaviour the container-kill drill verified.
 set -euo pipefail
 
 # The env-file reader every shell entry point shares; resolved from this

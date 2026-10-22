@@ -1385,6 +1385,26 @@ _basics_dry() {
   [ "$status" -eq 0 ]
 }
 
+@test "mirror_image refuses a non-amd64 image with a rebuild hint Fly can deploy" {
+  # The hint must build a plain image: without --provenance=false
+  # --sbom=false, buildx pushes an OCI index carrying an attestation, and
+  # Fly's registry refuses it when deploy/fly/deploy.sh mirrors the scorer.
+  mkdir -p "$BATS_TEST_TMPDIR/stubs"
+  cat > "$BATS_TEST_TMPDIR/stubs/docker" <<'EOF2'
+#!/usr/bin/env bash
+# pull succeeds; image inspect reports an arm64 image; nothing else is reached
+case "$1 $2" in
+  "image inspect") echo arm64 ;;
+esac
+exit 0
+EOF2
+  chmod +x "$BATS_TEST_TMPDIR/stubs/docker"
+  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" bash -c 'CMD=__selftest source "'"$SCRIPT"'"; DRY_RUN=0; mirror_image test-event-org ghcr.io/fixture/score:latest'
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF "is arm64, not amd64"
+  echo "$output" | grep -qF "docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t ghcr.io/test-event-org/score:latest --push scorer/"
+}
+
 @test "expand_tilde resolves a leading ~ but leaves absolute paths alone" {
   run bash -c 'CMD=__selftest source "'"$SCRIPT"'"; expand_tilde "~/Downloads/k.pem"'
   [ "$output" = "$HOME/Downloads/k.pem" ]

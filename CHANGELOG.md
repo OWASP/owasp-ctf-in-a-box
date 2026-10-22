@@ -25,6 +25,11 @@ the probe-count fix (#643) ship inside it.
   keys are set** (`FLY_VM_SIZE=shared-cpu-2x`, `FLY_VM_MEMORY=2048` restores
   the old size). A preset Fly does not know, or memory under 1024 MB, is
   refused before the deploy.
+- **Fixed: a fresh scorer image build fails at `apk add docker-cli` (#687).**
+  Alpine moved `docker-cli` from 29.8.2-r1 to 29.9.2-r0 and keeps only the
+  latest revision in its index, so the pinned `-r1` could no longer be
+  installed. The scorer Dockerfile now pins `29.9.2-r0`. An image you already
+  built still works; this affects only a clean build.
 - **Fixed: the Fly deploy fails on flyctl 0.4.120 with "restart policy
   `unless-stopped` is not supported by Fly Machines".** flyctl now reads the
   compose `restart:` key it used to ignore, and refuses the whole machine

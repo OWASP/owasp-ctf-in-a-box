@@ -1207,6 +1207,55 @@ ENV
 }
 
 # ---------------------------------------------------------------------------
+# FLY_VM_SIZE / FLY_VM_MEMORY — machine size per deployment.
+# ---------------------------------------------------------------------------
+
+@test "fly.toml carries the minimum machine: shared-cpu-1x, 1 GB" {
+  uncommented "$FLY/fly.toml" | grep -qE '^ *memory *= *"1gb"'
+  uncommented "$FLY/fly.toml" | grep -qE '^ *cpus *= *1$'
+}
+
+@test "with no size knobs the deploy passes no --vm flags and says how to size up" {
+  need_docker
+  cd "$REPO"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'FLY_VM_SIZE=shared-cpu-2x'
+  [ -z "$(echo "$output" | grep -E 'fly deploy .*--vm-')" ]
+}
+
+@test "FLY_VM_SIZE and FLY_VM_MEMORY reach fly deploy, so a redeploy keeps the event size" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  printf 'FLY_VM_SIZE=shared-cpu-2x\nFLY_VM_MEMORY=2048\n' >> "$BATS_TEST_TMPDIR/env.vm"
+  # /bin/bash is 3.2 on macOS: an empty or set array must both expand cleanly.
+  run /bin/bash ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qE 'fly deploy .*--vm-size shared-cpu-2x --vm-memory 2048'
+}
+
+@test "a FLY_VM_SIZE that is not a Fly preset is refused" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  echo "FLY_VM_SIZE=2gb" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'is not a Fly machine preset'
+}
+
+@test "a FLY_VM_MEMORY below 1024 MB is refused" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  echo "FLY_VM_MEMORY=512" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'is below 1024'
+}
+
+# ---------------------------------------------------------------------------
 # FLY_AUTO_STOP — opt-in idle shutdown.
 # ---------------------------------------------------------------------------
 

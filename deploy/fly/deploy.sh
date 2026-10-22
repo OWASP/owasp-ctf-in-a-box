@@ -168,7 +168,7 @@ count_key_lines() {
 READ_KEYS="EVENT_URL BETTER_AUTH_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
 SCORER_TOKEN SRH_TOKEN REDIS_PASSWORD SCORE_IMAGE GITHUB_ORG
 ADMIN_LOGINS GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID
-FLY_REGION FLY_AUTO_STOP REDIS_DIR STATE_PATH"
+FLY_REGION FLY_AUTO_STOP FLY_VM_SIZE FLY_VM_MEMORY REDIS_DIR STATE_PATH"
 
 # Both env files this script reads, checked once, here, in its own shell. A
 # value the shared reader refuses (an unterminated quote, interpolation, an
@@ -1124,6 +1124,55 @@ case "$AUTO_STOP" in
     exit 1 ;;
 esac
 
+# ---------------------------------------------------------------------------
+# FLY_VM_SIZE / FLY_VM_MEMORY — the machine size, per deployment.
+#
+# fly.toml carries the minimum (shared-cpu-1x, 1 GB): right between events,
+# too small for one — the pre-event load check wants machine memory under 80 %
+# at 10 req/s, and the idle stack alone is ~65 % of 1 GB. Every `fly deploy`
+# re-applies the size it is given, so a `fly scale vm` by hand is undone by the
+# next deploy; a hotfix shipped mid-event would silently shrink the machine.
+# Read from the env file and passed as `--vm-size` / `--vm-memory` instead, the
+# event size survives every deploy until someone changes the file.
+#
+#   FLY_VM_SIZE    a Fly preset, e.g. shared-cpu-2x (empty: fly.toml's)
+#   FLY_VM_MEMORY  megabytes, at least 1024 (empty: fly.toml's)
+# ---------------------------------------------------------------------------
+VM_ARGS=()
+VM_SIZE="$(env_value FLY_VM_SIZE)"
+VM_MEMORY="$(env_value FLY_VM_MEMORY)"
+if [ -n "$VM_SIZE" ]; then
+  case "$VM_SIZE" in
+    shared-cpu-[1248]x|performance-cpu-[1248]x|performance-cpu-16x) VM_ARGS+=(--vm-size "$VM_SIZE") ;;
+    *)
+      echo "FAIL: FLY_VM_SIZE=$VM_SIZE is not a Fly machine preset." >&2
+      echo "      Use shared-cpu-1x/2x/4x/8x or performance-cpu-1x/2x/4x/8x/16x." >&2
+      exit 1 ;;
+  esac
+fi
+if [ -n "$VM_MEMORY" ]; then
+  case "$VM_MEMORY" in
+    *[!0-9]*)
+      echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is not a whole number of megabytes." >&2
+      exit 1 ;;
+  esac
+  if [ "$VM_MEMORY" -lt 1024 ]; then
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is below 1024. The five containers hold" >&2
+    echo "      about 665 MB idle; less than 1 GB leaves them nothing to grow into." >&2
+    exit 1
+  fi
+  VM_ARGS+=(--vm-memory "$VM_MEMORY")
+fi
+if [ ${#VM_ARGS[@]} -eq 0 ]; then
+  echo
+  echo "NOTE: machine size is fly.toml's minimum (shared-cpu-1x, 1 GB) — fine" >&2
+  echo "      between events, too small for one. Before an event set, in $ENV_FILE:" >&2
+  echo "        FLY_VM_SIZE=shared-cpu-2x" >&2
+  echo "        FLY_VM_MEMORY=2048" >&2
+  echo "      and redeploy; remove them after the event to drop back." >&2
+  echo
+fi
+
 echo "== 5/5 deploy"
 # `--image`, AND IT IS REQUIRED HERE.
 #
@@ -1144,7 +1193,9 @@ echo "== 5/5 deploy"
 # does not work: flyctl's compose parser refuses a file where more than one
 # service declares `build:` ("only one service can specify build"), which
 # docker-compose.yml does twice (app and sync).
-fly_run deploy --config "$DEPLOY_TOML" --app "$APP" --image "$APP_IMAGE" --primary-region "$REGION"
+# ${VM_ARGS[@]+...}: an empty array under `set -u` is an unbound-variable
+# error on bash before 4.4, which is what macOS ships.
+fly_run deploy --config "$DEPLOY_TOML" --app "$APP" --image "$APP_IMAGE" --primary-region "$REGION" ${VM_ARGS[@]+"${VM_ARGS[@]}"}
 
 echo "== done"
 cat <<EOF

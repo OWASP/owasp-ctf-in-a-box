@@ -2373,8 +2373,10 @@ is a redacted label — never the token or a URL. Not seeded on purpose:
 raise; the harness omits it because an exact clean could not lower it back
 safely — and hint purchases.
 
-Before an event, four checks in this order: `FLY_AUTO_STOP=off` is set and
+Before an event, five checks in this order: `FLY_AUTO_STOP=off` is set and
 deployed (an idle-suspended machine takes Redis and the poller down with it);
+on Fly, `FLY_VM_SIZE` / `FLY_VM_MEMORY` size the machine up from the 1 GB
+between-events default (see "Machine size" in docs/fly.md) and are deployed;
 `/health/deep` is 200; the external monitor described in
 [docs/hosting.md](hosting.md#monitoring) is enabled and posting to the
 organizers' channel; the Cloudflare rate-limiting rule on `/api/*` described

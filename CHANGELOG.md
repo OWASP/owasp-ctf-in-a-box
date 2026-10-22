@@ -8,6 +8,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+## v1.0.1 — 2026-10-22
+
+A fixes-only release: the build that runs the OWASP Global AppSec USA 2026
+demo (November 5). No breaking changes and no configuration change. Rebuild
+and push the scorer image after upgrading: the VAmPI rubric fix (#661) and
+the probe-count fix (#643) ship inside it.
+
 ### Changes
 - **Fixed: `apps/web` pins vite to 8.1.6 for the launch-editor advisories.**
   A `pnpm-workspace.yaml` override moves the test-only vite that vitest pulls

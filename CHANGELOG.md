@@ -9,6 +9,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 ## Unreleased
 
 ### Changes
+- **Fixed: `apps/web` pins vite to 8.1.6 for the launch-editor advisories.**
+  A `pnpm-workspace.yaml` override moves the test-only vite that vitest pulls
+  in from 8.1.3 to 8.1.6, clearing Dependabot's three launch-editor alerts
+  (one high). The runtime image never ships vite, so the box was not exposed.
 - **Fixed: the leaderboard could show stale scores due to an extra fetch cache (#598).**
   Normal scorer requests now bypass Next.js's 30-second fetch cache, while the
   leaderboard retains its 10-second fold memoization to avoid unnecessary

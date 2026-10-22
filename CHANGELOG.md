@@ -16,6 +16,15 @@ and push the scorer image after upgrading: the VAmPI rubric fix (#661) and
 the probe-count fix (#643) ship inside it.
 
 ### Changes
+- **Changed: the Fly machine defaults to the minimum, `shared-cpu-1x` with
+  1 GB (was `shared-cpu-2x`, 2 GB).** The five containers hold about 665 MB
+  idle, so 1 GB is the floor and the right size between events. An event sizes
+  up with two new `.env.fly` keys, `FLY_VM_SIZE` and `FLY_VM_MEMORY`, which
+  `deploy.sh` renders into the deployed copy of `fly.toml`, so a redeploy
+  mid-event keeps the event size. **An existing Fly box shrinks to 1 GB on its next deploy unless both
+  keys are set** (`FLY_VM_SIZE=shared-cpu-2x`, `FLY_VM_MEMORY=2048` restores
+  the old size). A preset Fly does not know, or memory under 1024 MB, is
+  refused before the deploy.
 - **Fixed: the Fly deploy fails on flyctl 0.4.120 with "restart policy
   `unless-stopped` is not supported by Fly Machines".** flyctl now reads the
   compose `restart:` key it used to ignore, and refuses the whole machine

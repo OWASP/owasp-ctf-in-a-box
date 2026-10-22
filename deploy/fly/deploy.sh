@@ -168,7 +168,7 @@ count_key_lines() {
 READ_KEYS="EVENT_URL BETTER_AUTH_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
 SCORER_TOKEN SRH_TOKEN REDIS_PASSWORD SCORE_IMAGE GITHUB_ORG
 ADMIN_LOGINS GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID
-FLY_REGION FLY_AUTO_STOP REDIS_DIR STATE_PATH"
+FLY_REGION FLY_AUTO_STOP FLY_VM_SIZE FLY_VM_MEMORY REDIS_DIR STATE_PATH"
 
 # Both env files this script reads, checked once, here, in its own shell. A
 # value the shared reader refuses (an unterminated quote, interpolation, an
@@ -1035,7 +1035,7 @@ cleanup_rendered() {
   # The autostop config is a derived copy of fly.toml and holds nothing
   # sensitive, but it goes too: leaving it behind invites someone to edit the
   # copy and wonder why their change never deploys.
-  rm -f "$FLY_DIR/.fly.autostop.toml"
+  rm -f "$FLY_DIR/.fly.autostop.toml" "$FLY_DIR/.fly.vm.toml"
 }
 trap cleanup_rendered EXIT INT TERM
 
@@ -1074,6 +1074,118 @@ fly_run secrets set --detach --app "$APP" \
   "REDISCLI_AUTH=$REDIS_PASSWORD"
 
 # ---------------------------------------------------------------------------
+# FLY_VM_SIZE / FLY_VM_MEMORY — the machine size, per deployment.
+#
+# fly.toml carries the minimum (shared-cpu-1x, 1 GB): right between events,
+# too small for one — the pre-event load check wants machine memory under 80 %
+# at 10 req/s, and the idle stack alone is ~65 % of 1 GB. A `fly scale vm` by
+# hand is undone by the next deploy, so a hotfix shipped mid-event would
+# silently shrink the machine. Set here, the event size survives every deploy
+# until someone changes the env file.
+#
+# Rendered into a temporary copy of fly.toml's [[vm]] block, not passed as
+# `fly deploy --vm-*` flags: fly.toml's [[vm]] can take precedence over them,
+# and a flag it outranks would look honoured and change nothing. Same
+# reasoning, and same never-edit-fly.toml rule, as FLY_AUTO_STOP below.
+#
+#   FLY_VM_SIZE    a Fly preset, e.g. shared-cpu-2x (empty: fly.toml's)
+#   FLY_VM_MEMORY  megabytes, at least 1024 (empty: fly.toml's)
+# ---------------------------------------------------------------------------
+DEPLOY_TOML="$CONFIG_TOML"
+VM_SIZE="$(env_value FLY_VM_SIZE)"
+VM_MEMORY="$(env_value FLY_VM_MEMORY)"
+# Fly's presets (`fly platform vm-sizes`) and the memory range each takes:
+# 256 to 2048 MB per shared CPU, 2048 to 8192 MB per performance CPU. Listed
+# here rather than asked of flyctl because --dry-run makes no fly calls. With
+# no preset the machine keeps fly.toml's one shared CPU, so 2048 MB at most.
+# Fly allocates shared memory in 256 MB steps and performance memory in
+# 1024 MB steps; any other value is refused mid-deploy.
+PRESET_MIN_MB=0
+PRESET_MAX_MB=2048
+PRESET_STEP_MB=256
+if [ -n "$VM_SIZE" ]; then
+  case "$VM_SIZE" in
+    shared-cpu-[12468]x)
+      n="${VM_SIZE#shared-cpu-}"; n="${n%x}"
+      PRESET_MIN_MB=$(( n * 256 )); PRESET_MAX_MB=$(( n * 2048 )) ;;
+    performance-[12468]x|performance-1[0246]x)
+      n="${VM_SIZE#performance-}"; n="${n%x}"
+      PRESET_MIN_MB=$(( n * 2048 )); PRESET_MAX_MB=$(( n * 8192 ))
+      PRESET_STEP_MB=1024 ;;
+    *)
+      echo "FAIL: FLY_VM_SIZE=$VM_SIZE is not a Fly machine preset." >&2
+      echo "      Use shared-cpu-1x/2x/4x/6x/8x or performance-1x/2x/4x/.../16x" >&2
+      echo "      (\`fly platform vm-sizes\` lists them)." >&2
+      exit 1 ;;
+  esac
+fi
+if [ -n "$VM_MEMORY" ]; then
+  # Digits only, no leading zero (shell arithmetic would read 02000 as octal
+  # 1024), and at most six of them: Fly's largest machine is 131072 MB, and
+  # a longer string would overflow the arithmetic below.
+  case "$VM_MEMORY" in
+    *[!0-9]*|0*|???????*)
+      echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is not a whole number of megabytes" >&2
+      echo "      (digits only, no leading zero, e.g. 2048)." >&2
+      exit 1 ;;
+  esac
+  if [ "$VM_MEMORY" -lt 1024 ]; then
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is below 1024. The five containers hold" >&2
+    echo "      about 665 MB idle; less than 1 GB leaves them nothing to grow into." >&2
+    exit 1
+  fi
+  if [ "$VM_MEMORY" -lt "$PRESET_MIN_MB" ]; then
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is below $VM_SIZE's minimum of $PRESET_MIN_MB MB." >&2
+    exit 1
+  fi
+  if [ "$VM_MEMORY" -gt "$PRESET_MAX_MB" ]; then
+    size_label="${VM_SIZE:-shared-cpu-1x}"
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is above $size_label's maximum of $PRESET_MAX_MB MB." >&2
+    echo "      Pick a larger FLY_VM_SIZE as well." >&2
+    exit 1
+  fi
+  if [ $(( VM_MEMORY % PRESET_STEP_MB )) -ne 0 ]; then
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is not a multiple of $PRESET_STEP_MB MB," >&2
+    echo "      the step Fly allocates ${VM_SIZE:-shared-cpu-1x} memory in." >&2
+    exit 1
+  fi
+elif [ "$PRESET_MIN_MB" -gt 1024 ]; then
+  # A preset alone would keep fly.toml's 1 GB, below what the preset takes —
+  # a config Fly refuses mid-deploy. Raise it to the preset's own minimum.
+  VM_MEMORY="$PRESET_MIN_MB"
+fi
+if [ -n "$VM_SIZE$VM_MEMORY" ]; then
+  # A preset replaces cpu_kind/cpus outright (keeping both would let the
+  # explicit cpus line contradict the preset); memory replaces memory.
+  DEPLOY_TOML="$FLY_DIR/.fly.vm.toml"
+  awk -v size="$VM_SIZE" -v mem="$VM_MEMORY" '
+    /^\[\[vm\]\]/ { invm = 1; print; if (size != "") print "  size = \"" size "\""; next }
+    /^\[/          { invm = 0 }
+    invm && size != "" && /^ *(cpu_kind|cpus|size) *=/ { next }
+    invm && mem != "" && /^ *memory *=/ { print "  memory = \"" mem "mb\""; next }
+    { print }
+  ' "$CONFIG_TOML" > "$DEPLOY_TOML"
+  # Fail loudly rather than deploy a config where the substitution missed: a
+  # reshaped [[vm]] block would otherwise ship the minimum to an event.
+  if { [ -n "$VM_SIZE" ] && ! grep -qF "size = \"$VM_SIZE\"" "$DEPLOY_TOML"; } ||
+     { [ -n "$VM_MEMORY" ] && ! grep -qF "memory = \"${VM_MEMORY}mb\"" "$DEPLOY_TOML"; }; then
+    echo "FAIL: could not set the machine size in $CONFIG_TOML's [[vm]] block." >&2
+    rm -f "$DEPLOY_TOML"
+    exit 1
+  fi
+  echo "   machine size from $ENV_FILE:"
+  sed -n '/^\[\[vm\]\]/,/^\[/p' "$DEPLOY_TOML" | grep -E '^ *(size|memory|cpu_kind|cpus) *=' | sed 's/^/     /'
+else
+  echo
+  echo "NOTE: machine size is fly.toml's minimum (shared-cpu-1x, 1 GB) — fine" >&2
+  echo "      between events, too small for one. Before an event set, in $ENV_FILE:" >&2
+  echo "        FLY_VM_SIZE=shared-cpu-2x" >&2
+  echo "        FLY_VM_MEMORY=2048" >&2
+  echo "      and redeploy; remove them after the event to drop back." >&2
+  echo
+fi
+
+# ---------------------------------------------------------------------------
 # FLY_AUTO_STOP — let the machine stop when idle. OFF unless asked for.
 #
 # There is no `fly deploy` flag for this: `auto_stop_machines` lives in
@@ -1090,7 +1202,6 @@ fly_run secrets set --detach --app "$APP" \
 # min_machines_running must drop to 0 alongside it, or Fly keeps one machine up
 # and the setting does nothing — a silent no-op that looks like it worked.
 # ---------------------------------------------------------------------------
-DEPLOY_TOML="$CONFIG_TOML"
 AUTO_STOP="$(env_value FLY_AUTO_STOP)"
 [ -n "$AUTO_STOP" ] || AUTO_STOP="off"
 case "$AUTO_STOP" in
@@ -1104,11 +1215,13 @@ case "$AUTO_STOP" in
     echo "         wakes the machine. Fine between events, wrong during one." >&2
     echo "         Set FLY_AUTO_STOP=off in $ENV_FILE before the event starts." >&2
     echo
+    AUTOSTOP_SRC="$DEPLOY_TOML"
     DEPLOY_TOML="$FLY_DIR/.fly.autostop.toml"
     if [ -z "$DRY_RUN" ]; then
+      # From the current copy, so a machine size set above is kept.
       sed -e "s/^  auto_stop_machines = false/  auto_stop_machines = \"$AUTO_STOP\"/" \
           -e "s/^  min_machines_running = 1/  min_machines_running = 0/" \
-          "$CONFIG_TOML" > "$DEPLOY_TOML"
+          "$AUTOSTOP_SRC" > "$DEPLOY_TOML"
       # Fail loudly rather than deploying a config where the substitution
       # silently missed — a renamed key here would just quietly keep the
       # machine running forever while the operator believed otherwise.

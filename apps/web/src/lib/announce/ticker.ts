@@ -256,7 +256,13 @@ async function tickLifecycle(config: DiscordFullConfig, settings: AdminSettings,
     // announced live stays announced across a close and an extension, while
     // one born while closed never is. The CAS still swaps on the pack string,
     // so a racing replica still loses cleanly.
-    const snap = { ...derived, announced: announcedLifecyclePause(decodeLifecycleState(expected), derived) };
+    const prevSnap = decodeLifecycleState(expected);
+    let announced = announcedLifecyclePause(prevSnap, derived);
+    // A pause edge the switch suppresses tells the channel nothing, so it owes
+    // no resume later. Keep a bit carried from the previous state: that pause
+    // was already announced, and a switch change must not un-announce it.
+    if (announced && !prevSnap?.announced && !kindEnabled(config, "pause")) announced = false;
+    const snap = { ...derived, announced };
     const next = encodeLifecycleState(snap);
     if (expected === next) return;
     const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next);

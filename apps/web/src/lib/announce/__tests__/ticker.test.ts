@@ -202,6 +202,34 @@ describe("lifecycle tick", () => {
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
 
+  it("does not store an announced pause the disabled switch never posted", async () => {
+    // Launch on, pause off: the live freeze is recorded but never announced,
+    // so it must not leave an `announced` bit that later owes a lone resume.
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true, pause: false }));
+    mocks.getAdminSettings.mockResolvedValue(settings({ paused: true }));
+    mocks.readStatePack.mockResolvedValue("v2|L1P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
+    await runAnnounceTick(T0);
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P1C0A0");
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+
+    // Enabling pause announcements during the same freeze does not turn the
+    // old, unheard hold into an announced one.
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true, pause: true }));
+    mocks.readStatePack.mockResolvedValue("v2|L1P1C0A0");
+    await runAnnounceTick(T0 + 30_000);
+    expect(mocks.stateCompareSet).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+
+    // Unfreezing posts nothing: no pause was ever announced, so no resume is owed.
+    mocks.getAdminSettings.mockResolvedValue(settings({ paused: false }));
+    mocks.readStatePack.mockResolvedValue("v2|L1P1C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 3, prev: "v2|L1P1C0A0" });
+    await runAnnounceTick(T0 + 60_000);
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P1C0A0", "v2|L1P0C0A0");
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
   it("freezes the lifecycle state while launch and pause are both off", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ firstBlood: true }));
     await runAnnounceTick(T0);

@@ -1094,12 +1094,20 @@ fly_run secrets set --detach --app "$APP" \
 DEPLOY_TOML="$CONFIG_TOML"
 VM_SIZE="$(env_value FLY_VM_SIZE)"
 VM_MEMORY="$(env_value FLY_VM_MEMORY)"
+# Fly's presets (`fly platform vm-sizes`) and the least memory each takes:
+# 256 MB per shared CPU, 2048 MB per performance CPU. Listed here rather than
+# asked of flyctl because --dry-run makes no fly calls.
+PRESET_MIN_MB=0
 if [ -n "$VM_SIZE" ]; then
   case "$VM_SIZE" in
-    shared-cpu-[1248]x|performance-cpu-[1248]x|performance-cpu-16x) ;;
+    shared-cpu-[12468]x)
+      n="${VM_SIZE#shared-cpu-}"; PRESET_MIN_MB=$(( ${n%x} * 256 )) ;;
+    performance-[12468]x|performance-1[0246]x)
+      n="${VM_SIZE#performance-}"; PRESET_MIN_MB=$(( ${n%x} * 2048 )) ;;
     *)
       echo "FAIL: FLY_VM_SIZE=$VM_SIZE is not a Fly machine preset." >&2
-      echo "      Use shared-cpu-1x/2x/4x/8x or performance-cpu-1x/2x/4x/8x/16x." >&2
+      echo "      Use shared-cpu-1x/2x/4x/6x/8x or performance-1x/2x/4x/.../16x" >&2
+      echo "      (\`fly platform vm-sizes\` lists them)." >&2
       exit 1 ;;
   esac
 fi
@@ -1114,6 +1122,14 @@ if [ -n "$VM_MEMORY" ]; then
     echo "      about 665 MB idle; less than 1 GB leaves them nothing to grow into." >&2
     exit 1
   fi
+  if [ "$VM_MEMORY" -lt "$PRESET_MIN_MB" ]; then
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is below $VM_SIZE's minimum of $PRESET_MIN_MB MB." >&2
+    exit 1
+  fi
+elif [ "$PRESET_MIN_MB" -gt 1024 ]; then
+  # A preset alone would keep fly.toml's 1 GB, below what the preset takes —
+  # a config Fly refuses mid-deploy. Raise it to the preset's own minimum.
+  VM_MEMORY="$PRESET_MIN_MB"
 fi
 if [ -n "$VM_SIZE$VM_MEMORY" ]; then
   # A preset replaces cpu_kind/cpus outright (keeping both would let the

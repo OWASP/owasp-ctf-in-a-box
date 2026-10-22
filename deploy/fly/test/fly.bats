@@ -1255,10 +1255,33 @@ ENV
   need_docker
   cd "$REPO"
   cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
-  echo "FLY_VM_SIZE=2gb" >> "$BATS_TEST_TMPDIR/env.vm"
+  echo "FLY_VM_SIZE=performance-cpu-1x" >> "$BATS_TEST_TMPDIR/env.vm"
   run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
   [ "$status" -ne 0 ]
   echo "$output" | grep -qF 'is not a Fly machine preset'
+}
+
+@test "Fly's real preset names are accepted, and a preset alone gets its minimum memory" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  # performance-1x takes at least 2048 MB; fly.toml's 1 GB would be refused
+  # by Fly mid-deploy, so the render raises it.
+  echo "FLY_VM_SIZE=performance-1x" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qE '^ +size = "performance-1x"$'
+  echo "$output" | grep -qE '^ +memory = "2048mb"$'
+}
+
+@test "a FLY_VM_MEMORY below its preset's minimum is refused" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  printf 'FLY_VM_SIZE=shared-cpu-8x\nFLY_VM_MEMORY=1024\n' >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF "below shared-cpu-8x's minimum of 2048 MB"
 }
 
 @test "a FLY_VM_MEMORY below 1024 MB is refused" {

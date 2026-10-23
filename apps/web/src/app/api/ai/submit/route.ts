@@ -1,4 +1,5 @@
 import { logActivity } from "@/lib/activity-log";
+import { notifyFirstBlood } from "@/lib/announce/notify";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { AI_ID_RE } from "@/lib/ai-keys";
 import { aiAwardResponse, aiJson, aiPreflight, aiRoute, readRawBody } from "@/lib/ai-http";
@@ -150,6 +151,9 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   // Never for a dry run (#464 admin preview): nothing was solved.
   if (result.ok && result.correct && !result.already && !result.dryRun) {
     await logActivity("ai-solve", claims.sub, `${aud} via flag`);
+    // First blood (#590): non-blocking, fresh solves only — same contract
+    // as classic/submit's hook.
+    void notifyFirstBlood({ module: "ai", challengeId: aud, login: claims.sub });
   }
   return aiAwardResponse(result);
 });

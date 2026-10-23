@@ -1,5 +1,24 @@
 import { checkEventUrl } from "@/lib/secure-url";
 
+/** Starts the Discord-announcer ticker (#590) once per server instance, in
+ *  the nodejs runtime only (the announcer's stores are server-only Redis
+ *  readers; the Edge copy of this file must not load them), fire-and-forget
+ *  — instrumentation's register() completes before the first request, so a
+ *  slow first tick must never gate serving. Every failure inside the ticker
+ *  is already logged and swallowed; startAnnounceTicker itself no-ops when
+ *  Redis env is absent or when already started. */
+async function startDiscordAnnouncer(): Promise<void> {
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  try {
+    const { startAnnounceTicker } = await import("@/lib/announce/ticker");
+    startAnnounceTicker();
+  } catch (err) {
+    // A boot that cannot load the announcer still serves the event — the
+    // announcer is optional by construction.
+    console.error("ctf-app: discord announcer not started:", err instanceof Error ? err.message : "unknown error");
+  }
+}
+
 /**
  * Next's server-startup hook: called once per server instance, and completes
  * before the first request is served.
@@ -21,6 +40,8 @@ export function register() {
     nodeEnv: process.env.NODE_ENV,
     allowInsecure: process.env.ALLOW_INSECURE_EVENT_URL === "1",
   });
+
+  startDiscordAnnouncer();
 
   if (verdict.level === "ok") return;
 

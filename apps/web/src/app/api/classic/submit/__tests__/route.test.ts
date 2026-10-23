@@ -37,6 +37,10 @@ vi.mock("@/lib/classic-visibility", () => adminView);
 // Admins are the only callers whose body is read before the team check.
 const adminAuth = vi.hoisted(() => ({ isAdminLogin: vi.fn<(login: string | undefined) => Promise<boolean>>(async () => false) }));
 vi.mock("@/lib/admin-auth", () => adminAuth);
+// The first-blood hook (#590): asserted below, and mocked so no test can
+// reach the real announcer (Redis + Discord).
+const announceNotify = vi.hoisted(() => ({ notifyFirstBlood: vi.fn(async () => {}) }));
+vi.mock("@/lib/announce/notify", () => announceNotify);
 
 import { POST } from "@/app/api/classic/submit/route";
 
@@ -72,6 +76,8 @@ beforeEach(() => {
   adminAuth.isAdminLogin.mockResolvedValue(false);
   adminView.adminSeesHidden.mockClear();
   activityLog.logActivity.mockClear();
+  announceNotify.notifyFirstBlood.mockReset();
+  announceNotify.notifyFirstBlood.mockResolvedValue(undefined);
 });
 
 describe("POST /api/classic/submit", () => {
@@ -355,5 +361,52 @@ describe("an admin on a hidden challenge after launch", () => {
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
     expect(res.status).toBe(404);
+  });
+});
+
+// First blood (#590): the hook fires for a FRESH solve only, carries the
+// SESSION's login, and must never be able to fail the solve that already
+// banked its points (non-blocking by contract).
+describe("the first-blood hook (#590)", () => {
+  it("announces a fresh solve with the session's login, module and id", async () => {
+    session("alice");
+    storeReturns({ ok: true, correct: true, points: 50 });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledTimes(1);
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledWith({ module: "classic", challengeId: "c-1", login: "alice" });
+  });
+
+  it("does NOT announce an idempotent re-submission (it banked nothing)", async () => {
+    session("alice");
+    storeReturns({ ok: true, correct: true, points: 0, already: true });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("does NOT announce a dry run (an admin preview is not a solve)", async () => {
+    session("boss");
+    adminAuth.isAdminLogin.mockResolvedValue(true);
+    adminView.adminSeesHidden.mockResolvedValueOnce(true);
+    storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("does NOT announce a wrong flag or a gate refusal", async () => {
+    session("alice");
+    storeReturns({ ok: true, correct: false });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    storeReturns({ ok: false, reason: "paused" });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("the hook never blocks the response — a notify that never settles still yields 200", async () => {
+    session("alice");
+    storeReturns({ ok: true, correct: true, points: 50 });
+    announceNotify.notifyFirstBlood.mockReturnValue(new Promise<never>(() => {}));
+    const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ correct: true, points: 50 });
   });
 });

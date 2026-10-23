@@ -10,13 +10,14 @@
 // been called — a refusal that still wrote is not a refusal.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getSession, isModuleLive, getLaunchAccess, hasTeam, submitAiFlag, logActivity } = vi.hoisted(() => ({
+const { getSession, isModuleLive, getLaunchAccess, hasTeam, submitAiFlag, logActivity, notifyFirstBlood } = vi.hoisted(() => ({
   getSession: vi.fn(),
   isModuleLive: vi.fn(),
   getLaunchAccess: vi.fn(),
   hasTeam: vi.fn(),
   submitAiFlag: vi.fn(),
   logActivity: vi.fn(),
+  notifyFirstBlood: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -27,6 +28,7 @@ vi.mock("@/lib/launch", () => ({ getLaunchAccess }));
 vi.mock("@/lib/team-store", () => ({ hasTeam }));
 vi.mock("@/lib/ai-store", () => ({ submitAiFlag }));
 vi.mock("@/lib/activity-log", () => ({ logActivity }));
+vi.mock("@/lib/announce/notify", () => ({ notifyFirstBlood }));
 
 import { submitAiFlagAction } from "@/app/(site)/ai/[id]/actions";
 
@@ -222,5 +224,38 @@ describe("a teamless admin preview in the AI form (#464)", () => {
     hasTeam.mockResolvedValue(false);
     submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40, dryRun: true });
     expect(await submitAiFlagAction("a1", "CTF{x}")).toMatchObject({ correct: true, dryRun: true });
+  });
+});
+
+// First blood (#590): this action is the THIRD award surface, with the same
+// hook contract as api/ai/submit and api/ai/event — fresh solves only,
+// session login, never blocking the form's answer. Kept last so the
+// one-shot never-settling mock below cannot outlive this block (clearAllMocks
+// clears calls, not implementations).
+describe("submitAiFlagAction first-blood hook (#590)", () => {
+  it("announces a fresh solve exactly once, with the session's login and the id", async () => {
+    submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40 });
+    await submitAiFlagAction("a1", "CTF{x}");
+    expect(notifyFirstBlood).toHaveBeenCalledTimes(1);
+    expect(notifyFirstBlood).toHaveBeenCalledWith({ module: "ai", challengeId: "a1", login: "alice" });
+  });
+
+  it("does NOT announce an already-banked solve, a wrong flag, a refusal or a dry run", async () => {
+    submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 0, already: true });
+    await submitAiFlagAction("a1", "CTF{x}");
+    submitAiFlag.mockResolvedValue({ ok: true, correct: false });
+    await submitAiFlagAction("a1", "nope");
+    submitAiFlag.mockResolvedValue({ ok: false, reason: "paused" });
+    await submitAiFlagAction("a1", "CTF{x}");
+    getLaunchAccess.mockResolvedValue({ allowed: true, preview: true });
+    submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40, dryRun: true });
+    await submitAiFlagAction("a1", "CTF{x}");
+    expect(notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("the hook never blocks the form — a notify that never settles still resolves the answer", async () => {
+    submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40 });
+    notifyFirstBlood.mockImplementationOnce(() => new Promise<never>(() => {}));
+    await expect(submitAiFlagAction("a1", "CTF{x}")).resolves.toEqual({ correct: true, points: 40, already: false });
   });
 });

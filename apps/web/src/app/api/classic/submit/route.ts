@@ -6,6 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { CLASSIC_ID_RE, submitFlag } from "@/lib/classic-store";
+import { notifyFirstBlood } from "@/lib/announce/notify";
 import { hasTeam } from "@/lib/team-store";
 
 /** Hard cap on a submitted flag's length, checked BEFORE the store ever sees
@@ -126,6 +127,10 @@ export async function POST(request: Request) {
     // never the flag; logActivity is fail-open, so it cannot fail a solve
     // that already landed.
     if (!result.already) await logActivity("classic-solve", login, challengeId);
+    // First blood (#590): non-blocking by contract — notifyFirstBlood never
+    // throws, and this solve has already banked, so a Discord hiccup can
+    // never surface here. Fresh solves only, same guard as logActivity.
+    if (!result.already) void notifyFirstBlood({ module: "classic", challengeId, login });
     // `already` (this login had banked this flag before — see SubmitResult)
     // rides along so the client can say so, instead of reading the
     // accompanying `points: 0` as an award of nothing.

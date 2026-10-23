@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { logActivity } from "@/lib/activity-log";
+import { notifyFirstBlood } from "@/lib/announce/notify";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { answerQuestion, QUIZ_ID_RE } from "@/lib/quiz-store";
@@ -111,6 +112,9 @@ export async function POST(request: Request) {
     // logActivity is fail-open, so it cannot fail an answer that already
     // landed.
     if (!result.already) await logActivity("quiz-solve", login, questionId);
+    // First blood (#590): non-blocking, fresh solves only — same contract
+    // as classic/submit's hook.
+    if (!result.already) void notifyFirstBlood({ module: "quiz", challengeId: questionId, login });
     // `already` (this login had banked this question before — see
     // AnswerResult) rides along so the client can say so, instead of
     // reading the accompanying `points: 0` as an award of nothing.

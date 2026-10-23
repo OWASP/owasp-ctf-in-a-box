@@ -111,6 +111,13 @@ ENV
     [ -z "$(uncommented "$FLY/fly.toml" | grep -F '/health/deep')" ]
 }
 
+@test "fly.toml's machine check runs every 10 s, so a container crash costs seconds" {
+  # The proxy routes to the app again only after the next passing check, so the
+  # interval, not the container restart, sets how long contestants see errors.
+  # A 30 s interval meant ~30 s of failures for a 2 s restart (the v1.0.1 drill).
+  uncommented "$FLY/fly.toml" | grep -qE '^ *interval *= *"10s"$'
+}
+
 @test "deploy.sh renders to the path fly.toml will actually look in" {
   # The pair above and below only agree if deploy.sh writes the file where
   # flyctl reads it. Asserting each half separately is what let them disagree.

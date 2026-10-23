@@ -88,8 +88,12 @@ primary_region = "iad"
   # Fly restarting the one machine because Redis blipped would be worse than
   # the blip. Dependency health is /health/deep, watched by an external
   # monitor, never by this block. grace_period covers the compose bring-up.
+  #
+  # interval also bounds recovery: after a failed check the proxy treats the
+  # app as down until the next passing one, so a container that restarts in
+  # two seconds still costs a whole interval of errors. Keep it short.
   [[http_service.checks]]
-    interval = "30s"
+    interval = "10s"
     timeout = "5s"
     grace_period = "20s"
     method = "GET"

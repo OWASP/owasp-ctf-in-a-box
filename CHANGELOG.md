@@ -8,6 +8,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+### Changes
+- **Fixed: an app-container crash on Fly costs ~30 seconds of errors (#691).**
+  The container restarts in about two seconds, but Fly's proxy routes to it
+  again only after the next passing health check, and `fly.toml` checked every
+  30 seconds. The check now runs every 10 seconds. It still watches `/health`
+  (liveness) only. Takes effect on the next `deploy.sh` run.
+
 ## v1.0.1 — 2026-10-22
 
 A fixes-only release: the build that runs the OWASP Global AppSec USA 2026

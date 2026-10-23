@@ -23,6 +23,8 @@ what runs at the event is what you exercised locally.
 - [The rendered compose file](#the-rendered-compose-file)
 - [Security differences from compose](#security-differences-from-compose)
 - [Cost and shape](#cost-and-shape)
+  - [Machine size](#machine-size)
+  - [Autostop](#autostop)
 - [Tear down](#tear-down)
 - [CI](#ci)
 - [Who can read the secrets](#who-can-read-the-secrets)
@@ -38,6 +40,10 @@ what runs at the event is what you exercised locally.
 | A GitHub OAuth app | Its callback must match the deployed hostname exactly |
 | Access to a `SCORE_IMAGE` | Mirrored into Fly's registry so the forks and the leaderboard judge with the same artifact |
 
+**Fly needs a `SCORE_IMAGE`.** The machine runs the scorer and the poller too,
+so `deploy.sh` refuses to start without one. A Quiz/Jeopardy-only event, with
+no Secure Development, uses Compose or [AWS](aws.md) instead.
+
 **One public port is all a Fly machine needs.** Scores arrive by outbound
 polling — `sync` reads GitHub and submits over the machine's internal network
 — so `fly.toml` exposes only the app on port 3000 and nothing has to reach in.
@@ -50,6 +56,19 @@ line left over in `.env` or `.env.fly` is inert: nothing here reads it, and
 
 ## Deploy
 
+First pick a Fly app name for the event and set it in
+`deploy/fly/fly.toml`, **before** `init`:
+
+```toml
+app = "my-event-ctf"
+```
+
+Fly app names are unique across all of Fly, and the default `owasp-ctf` is
+taken, so the first deploy fails at app create until this is changed.
+`deploy.sh` reads the name from `fly.toml`, and `init` derives `EVENT_URL`
+from it (`https://<app>.fly.dev`), so renaming afterwards means fixing
+`EVENT_URL` in `.env.fly` as well.
+
 ```sh
 # 1. Prepare the Fly env file. Touches nothing on Fly, needs no CLI.
 #    Asks which region to run in.
@@ -61,6 +80,11 @@ line left over in `.env` or `.env.fly` is inert: nothing here reads it, and
 # 3. Go.
 ./deploy/fly/deploy.sh
 ```
+
+Before the event itself, size the machine up: set `FLY_VM_SIZE` and
+`FLY_VM_MEMORY` in `.env.fly`, redeploy, and run the load check
+([Machine size](#machine-size)). The default machine is the between-events
+minimum.
 
 `init` writes `.env.fly` (mode 600, gitignored) from `.env`, rewrites
 `EVENT_URL` to your app's Fly hostname, and generates `SRH_TOKEN` and
@@ -395,6 +419,9 @@ On top of that, the render:
   containers in one namespace, including hosts that follow userinfo, as in
   `redis://:PASSWORD@redis:6379`
 - **drops** bind mounts, named volumes, networks and profiles
+- **drops `restart:`** — Fly Machines reject Docker's `unless-stopped`
+  (flyctl 0.4.120 refuses the machine update over it), so every container
+  inherits the machine's own `on-failure` policy
 
 Never edit the rendered file. Every change belongs in `docker-compose.yml`,
 which is the point of rendering it.
@@ -485,7 +512,7 @@ machine up regardless, so the setting looks applied and does nothing.
 ## Tear down
 
 ```sh
-fly apps destroy owasp-ctf
+fly apps destroy <app>   # the app name in deploy/fly/fly.toml
 ```
 
 That takes the volume with it. Export anything you want to keep first.

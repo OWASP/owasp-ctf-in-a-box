@@ -231,6 +231,9 @@ Every event needs:
 - [`gh` CLI](https://cli.github.com), authenticated (`gh auth login`) —
   `ctf-setup.sh check` requires it whatever the module mix.
 - `openssl` — `ctf-setup.sh check` requires it (used for secret generation).
+- Memory: with Secure Development, the app, scorer, sync, srh and redis
+  containers idle at about 665 MB, so give the event box about 2 GB. Without
+  it, scorer and sync do not run and the stack needs less.
 
 Only an event that runs **Secure Development** (`SCORE_IMAGE` set in `.env`)
 also needs:
@@ -494,8 +497,10 @@ score comment; the PR is never merged. Detaching the fork network (manual step
 A Secure Development score travels one way. The fork's scoring Action judges
 the PR and posts the verdict as a comment on it; the `sync` service polls the
 event org's target repos for those comments and submits what it finds to the
-scorer. A score lands on the leaderboard roughly 30 seconds after the Action
-finishes. There is nothing to configure and nothing to choose: push ingest —
+scorer. A score normally shows on the leaderboard within about 40 seconds of
+the score comment: one poll (about every 30 seconds) plus the board's
+10-second recompute, both measured in the v1.0.1 release check (see "How
+fresh the board is" in [docs/operations.md](operations.md)). There is nothing to configure and nothing to choose: push ingest —
 the Action POSTing the score straight at a `/score` route on your box — was
 removed in v0.6 ([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
 [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed)),
@@ -561,9 +566,7 @@ not have to pick by hand.
 
 Prefer the cloud over your own machine? [Deploy on AWS](aws.md) ships a
 Terraform module for an ECS Fargate stack behind an ALB, over managed
-ElastiCache — `terraform apply` up, `terraform destroy` down. It replaced a
-single-EC2 deploy, so an existing box upgrades by migration rather than by
-`apply`.
+ElastiCache — `terraform apply` up, `terraform destroy` down.
 
 ### Poll auth: GitHub App
 
@@ -616,9 +619,7 @@ This sets `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.env`; the app
 reads them at runtime. `EVENT_URL` in `.env` is **the** event URL — Caddy, the app's
 auth flow, the HTTPS start-up guard, the CSRF origin check and the leaderboard
 link in every fork's score comment all read it, and nothing else carries a
-second copy. The deleted config file used to carry a `url:` field beside it;
-it was a deployment fact living in an event file, it disagreed silently, and
-it is gone ([ADR 43](decisions.md#adr-43-one-url-and-it-lives-in-env-not-eventyaml)).
+second copy ([ADR 43](decisions.md#adr-43-one-url-and-it-lives-in-env-not-eventyaml)).
 You can also set both by hand instead of using the helpers, and you may
 register the OAuth app on your personal account rather than the org.
 
@@ -712,6 +713,11 @@ account-level WAF page, which is a paid add-on):
 | Same characteristics | IP |
 | Rate | 100 requests per 10 seconds |
 | Action | Block, 10 seconds |
+
+The rule counts by public IP, so a room that shares one address (venue wifi,
+a campus network, an office NAT) counts as one client and can trip it for
+everyone at once. For a session like that, raise the rate or turn the rule
+off until it ends.
 
 `/leaderboard` and `?display=1` are **not** under `/api/`, so the projector
 board's 30 s refresh and a room full of people reloading the standings are
@@ -921,9 +927,8 @@ page offers the button, and whether the leaderboard shows hint penalties. There
 is no environment variable and no rebuild involved; see
 [docs/operations.md](operations.md#organizer-admin-panel).
 
-The one thing an organizer setting cannot do is turn hints on without
-`UPSTASH_REDIS_REST_*` credentials — hint text lives only in Upstash, so
-without them there is nothing to reveal. What a
+Hint text lives in the stack's Redis, which every stack runs, so there are
+no extra credentials to add for hints. What a
 module must provide to
 plug in — scoring contract, the score transport, security requirements,
 provisioning — is documented in [docs/modules.md](modules.md).
@@ -933,9 +938,9 @@ provisioning — is documented in [docs/modules.md](modules.md).
 | What you changed | What it takes |
 |---|---|
 | Anything in `/admin` — modules, targets, identity, schedule, hints, teams, content | Nothing. It is live on the next request. |
-| `ADMIN_LOGINS`, `GITHUB_ORG`, `EVENT_URL`, a secret | Edit `.env`, then bring the stack back up with the same profiles the table above gives for your event — `--profile app` with no `SCORE_IMAGE`, `--profile secdev --profile app` with one — to recreate the containers with the new environment. No rebuild in any case. |
+| `ADMIN_LOGINS`, `GITHUB_ORG`, `EVENT_URL`, a secret | Edit `.env`, then bring the stack back up with the same profiles the table above gives for your event — `--profile app` with no `SCORE_IMAGE`, `--profile secdev --profile app` with one — to recreate the containers with the new environment. No rebuild in any case. A new `EVENT_URL` also needs the GitHub OAuth app's callback changed to `<EVENT_URL>/api/auth/callback/github`, or sign-in fails. |
 | `SCORE_IMAGE` (adding or dropping Secure Development's containers) | Edit `.env`, then bring the stack up with the profiles that now match it: `--profile secdev --profile app` once it is set, `--profile app` alone once it is empty. |
-| The app's own code (a kit upgrade) | `docker compose --profile app build app`, then `up -d`. |
+| The app's own code (a kit upgrade) | Without `SCORE_IMAGE`: `docker compose --profile app up -d --build`. With it, update the scorer image too: if you build your own, rebuild and push it (`docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t <SCORE_IMAGE> --push scorer/`); if `SCORE_IMAGE` points at an image someone else publishes, wait for their new build. Then re-run `./setup/ctf-setup.sh org` so the event org's mirror picks it up, then `docker compose --profile secdev pull scorer` (the scorer is an `image:` service, so `up --build` alone keeps the cached one) and `docker compose --profile secdev --profile app up -d --build`. Per-release upgrade notes are in the [CHANGELOG](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/CHANGELOG.md). |
 
 The contestant app (`apps/web/`, vendored — see
 [`apps/web/VENDORED.md`](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/apps/web/VENDORED.md))

@@ -497,9 +497,10 @@ score comment; the PR is never merged. Detaching the fork network (manual step
 A Secure Development score travels one way. The fork's scoring Action judges
 the PR and posts the verdict as a comment on it; the `sync` service polls the
 event org's target repos for those comments and submits what it finds to the
-scorer. A score normally shows on the leaderboard within about 40 seconds of the
-score comment: one poll (about every 30 seconds) plus the leaderboard's
-10-second recompute, which runs on the next page load after it expires. There is nothing to configure and nothing to choose: push ingest —
+scorer. A score normally shows on the leaderboard within about 40 seconds of
+the score comment: one poll (about every 30 seconds) plus the board's
+10-second recompute, both measured in the v1.0.1 release check (see "How
+fresh the board is" in [docs/operations.md](operations.md)). There is nothing to configure and nothing to choose: push ingest —
 the Action POSTing the score straight at a `/score` route on your box — was
 removed in v0.6 ([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
 [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed)),

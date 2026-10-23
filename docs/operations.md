@@ -32,17 +32,15 @@ live-GitHub scoring. For standing the kit up in the first place, see
 - **How fresh the board is.** The folded standings — every module's points,
   team totals, the chart, hint penalties — are computed once and shared by
   every viewer for **10 seconds**, then recomputed on the next request
-  (`apps/web/src/lib/leaderboard/folded.ts`). So a quiz answer, a flag or an
-  AI solve appears on `/leaderboard` and the landing strip after ingestion,
-  subject to the 10 s fold memo and the projector board's 30 s refresh.
-  Secure Development points follow the same app-side caching behavior:
-  `lambda.ts` reads the scorer uncached (`cache: "no-store"`), but the
-  poller's ingestion cadence comes first. End-to-end freshness depends on
-  the deployment path and should be measured with the three-task freshness
-  check before making a stronger timing claim. A contestant's own
-  `/profile`, `/quiz`, `/flags` and `/challenges` read live, but scorer-backed
-  results still depend on poller ingestion. A read that fails is never cached — the next
-  request retries.
+  (`apps/web/src/lib/leaderboard/folded.ts`). A quiz answer, a flag or an AI
+  solve therefore reaches `/leaderboard` and the landing strip within about
+  10 seconds; the projector board refreshes itself every 30. A Secure
+  Development score has one more hop: the `sync` poller reads the score
+  comment on its next poll (about every 30 seconds), and the app reads the
+  scorer uncached, so a score normally shows within about 40 seconds of the
+  comment (the v1.0.1 release check measured 27). A contestant's own
+  `/profile`, `/quiz`, `/flags` and `/challenges` read live. A read that
+  fails is never cached — the next request retries.
 - Poller logs: `docker compose logs -f sync`. On Fly: `fly logs --app <app>`.
 - All state lives in named Docker volumes, so a box reboot loses nothing.
 - **On AWS (ECS)**, the logs, a shell, the failure drills, rollback and

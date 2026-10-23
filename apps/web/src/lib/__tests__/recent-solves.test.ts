@@ -65,7 +65,15 @@ const stored = (over: Partial<Event> = {}): Event => ({
 /** Feed ids in stored order + their raw hash values. */
 function readReturns(rows: [id: string, event: unknown][]) {
   mocks.upstashPipeline.mockImplementation(async (commands: string[][]) => {
-    if (commands[0][0] === "ZREVRANGE") return [{ result: rows.map(([id]) => id) }];
+    if (commands[0][0] === "ZREVRANGE") {
+      // Honor the range so a read that asks for only `limit` entries really
+      // returns only those; otherwise a hidden-entry bug cannot be observed.
+      const start = Number(commands[0][2]);
+      const stop = Number(commands[0][3]);
+      const ids = rows.map(([id]) => id);
+      const end = stop < 0 ? ids.length + stop : stop;
+      return [{ result: ids.slice(start, end + 1) }];
+    }
     if (commands[0][0] === "HMGET") {
       const ids = commands[0].slice(2);
       return [{ result: ids.map((id) => rows.find(([rowId]) => rowId === id)?.[1] ?? null) }];
@@ -133,6 +141,68 @@ describe("recordRecentSolve", () => {
       await expect(pending).resolves.toBeUndefined();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("starts the deadline before a slow team lookup and never writes after it", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.getViewerTeam.mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ slug: "red", name: "Red Team", members: ["alice"] }), 5000),
+          ),
+      );
+      let settled = false;
+      const pending = recordRecentSolve({
+        module: "classic",
+        challengeId: "c1",
+        points: 50,
+        login: "alice",
+      }).then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(1499);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toBeUndefined();
+      expect(settled).toBe(true);
+
+      // The lookup may finish later; the expired operation must not write.
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(mocks.upstashEval).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("swallows a team lookup rejection that arrives after the deadline", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let rejectTeam: (err: Error) => void = () => {};
+      mocks.getViewerTeam.mockImplementation(
+        () =>
+          new Promise((_, reject) => {
+            rejectTeam = reject;
+          }),
+      );
+      const pending = recordRecentSolve({
+        module: "classic",
+        challengeId: "c1",
+        points: 50,
+        login: "alice",
+      });
+      await vi.advanceTimersByTimeAsync(1500);
+      await expect(pending).resolves.toBeUndefined();
+
+      rejectTeam(new Error("late team read failure"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      warn.mockRestore();
     }
   });
 
@@ -205,6 +275,45 @@ describe("listRecentSolves", () => {
     expect(out.map((item) => item.points)).not.toContain(20);
   });
 
+  it("does not let hidden newest lines consume the projector's slots", async () => {
+    mocks.listChallenges.mockResolvedValue([
+      { id: "step1", title: "Step One", points: 10 },
+      { id: "step2", title: "Locked Two", points: 20 },
+      { id: "step3", title: "Locked Three", points: 30 },
+    ]);
+    mocks.listStories.mockResolvedValue([{ id: "s", title: "Story", intro: "", steps: ["step1", "step2", "step3"] }]);
+    mocks.listQuestions.mockResolvedValue(
+      Array.from({ length: 6 }, (_, i) => ({ id: `q${i + 1}`, prompt: `Question ${i + 1}`, points: 10 })),
+    );
+    const quizRows = Array.from(
+      { length: 6 },
+      (_, i): [string, string] => [
+        `quiz:-:q${i + 1}:red`,
+        JSON.stringify(stored({ module: "quiz", challengeId: `q${i + 1}`, points: 10 })),
+      ],
+    );
+    readReturns([
+      // Newest three are ineligible: two locked story steps and a deleted
+      // challenge. They must not displace the five visible quiz solves.
+      ["classic:-:step2:red", JSON.stringify(stored({ challengeId: "step2", points: 20 }))],
+      ["classic:-:step3:blue", JSON.stringify(stored({ challengeId: "step3", points: 30, team: "blue" }))],
+      ["classic:-:gone:red", JSON.stringify(stored({ challengeId: "gone" }))],
+      ...quizRows,
+    ]);
+
+    const out = await listRecentSolves();
+    expect(out.map((item) => item.title)).toEqual([
+      "Question 1",
+      "Question 2",
+      "Question 3",
+      "Question 4",
+      "Question 5",
+    ]);
+    expect(JSON.stringify(out)).not.toContain("Locked");
+    const [commands] = mocks.upstashPipeline.mock.calls[0];
+    expect(commands[0]).toEqual(["ZREVRANGE", RECENT_SOLVES_KEY, 0, RECENT_SOLVES_MAX - 1]);
+  });
+
   it("drops every line whose module is switched off", async () => {
     mocks.isModuleLive.mockImplementation(async (id: string) => id === "quiz");
     readReturns([
@@ -227,14 +336,28 @@ describe("listRecentSolves", () => {
     await expect(listRecentSolves()).rejects.toThrow("recent solves read failed");
   });
 
-  it("bounds the read to the requested limit and never asks for zero", async () => {
+  it("reads the bounded retained window and never asks for zero", async () => {
     readReturns([]);
     expect(await listRecentSolves(0)).toEqual([]);
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
 
     readReturns([]);
+    await listRecentSolves();
+    expect(mocks.upstashPipeline.mock.calls[0][0][0]).toEqual([
+      "ZREVRANGE",
+      RECENT_SOLVES_KEY,
+      0,
+      RECENT_SOLVES_MAX - 1,
+    ]);
+
+    mocks.upstashPipeline.mockClear();
+    readReturns([]);
     await listRecentSolves(999);
-    const [commands] = mocks.upstashPipeline.mock.calls[0];
-    expect(commands[0]).toEqual(["ZREVRANGE", RECENT_SOLVES_KEY, 0, RECENT_SOLVES_MAX - 1]);
+    expect(mocks.upstashPipeline.mock.calls[0][0][0]).toEqual([
+      "ZREVRANGE",
+      RECENT_SOLVES_KEY,
+      0,
+      RECENT_SOLVES_MAX - 1,
+    ]);
   });
 });

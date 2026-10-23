@@ -135,8 +135,24 @@ export async function recordRecentSolve(input: {
   login: string;
   at?: string;
 }): Promise<void> {
-  try {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let expired = false;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      expired = true;
+      resolve();
+    }, WRITE_TIMEOUT_MS);
+  });
+  // The deadline starts before the team lookup: that read is itself a Redis
+  // round trip (sometimes several), so waiting for it first would let a slow
+  // store hold the solve route past WRITE_TIMEOUT_MS. The operation is
+  // fail-open and keeps running after a timeout, so its rejection is caught
+  // here rather than surfacing as an unhandled rejection.
+  const operation = (async () => {
     const team = await getViewerTeam(input.login);
+    // Do not start a write after the caller has already given up: the feed is
+    // cosmetic and a late line is not worth a Redis round trip.
+    if (expired) return;
     if (!team || !team.slug || !team.name) return;
     const at = input.at ?? new Date().toISOString();
     const ms = Date.parse(at);
@@ -148,7 +164,7 @@ export async function recordRecentSolve(input: {
       teamName: team.name,
       at,
     };
-    const write = upstashEval(
+    await upstashEval(
       RECORD_SCRIPT,
       [RECENT_SOLVES_KEY, RECENT_SOLVES_DATA_KEY],
       [
@@ -161,17 +177,13 @@ export async function recordRecentSolve(input: {
       () => undefined,
       (err) => console.warn("[recent-solves] write failed", errorLabel(err)),
     );
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, WRITE_TIMEOUT_MS);
-    });
-    try {
-      await Promise.race([write, timeout]);
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch (err) {
+  })().catch((err) => {
     console.warn("[recent-solves] write failed", errorLabel(err));
+  });
+  try {
+    await Promise.race([operation, timeout]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -245,7 +257,11 @@ export async function listRecentSolves(limit: number = RECENT_SOLVES_LIMIT): Pro
   const take = Math.max(0, Math.min(Math.trunc(limit), RECENT_SOLVES_MAX));
   if (take === 0) return [];
 
-  const [range] = await upstashPipeline([["ZREVRANGE", RECENT_SOLVES_KEY, 0, take - 1]]);
+  // Read the whole retained window, not just the requested count: a hidden
+  // line (locked story step, disabled module, deleted challenge) must not
+  // consume one of the projector's slots. Visibility is applied to the
+  // bounded window below, and only then is the result limited.
+  const [range] = await upstashPipeline([["ZREVRANGE", RECENT_SOLVES_KEY, 0, RECENT_SOLVES_MAX - 1]]);
   if (range.error) throw new Error("recent solves read failed");
   const ids = Array.isArray(range.result) ? range.result.filter((id): id is string => typeof id === "string") : [];
   if (ids.length === 0) return [];
@@ -279,5 +295,5 @@ export async function listRecentSolves(limit: number = RECENT_SOLVES_LIMIT): Pro
       at: event.at,
     });
   }
-  return out;
+  return out.slice(0, take);
 }

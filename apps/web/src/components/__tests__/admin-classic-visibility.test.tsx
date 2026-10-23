@@ -21,7 +21,7 @@ import AdminClassicControls, {
 const noop = () => {};
 const live: Challenge = { id: "live-ab12cd", title: "Live one", category: "Web", description: "", points: 10, order: 1 };
 const off: Challenge = { id: "off-ab12cd", title: "Off one", category: "Web", description: "", points: 20, order: 2, enabled: false };
-const row = (c: Challenge): AdminChallenge => ({ challenge: c, flag: "CTF{x}", hint: null });
+const row = (c: Challenge): AdminChallenge => ({ challenge: c, flag: "CTF{x}", hints: [] });
 
 describe("the draft and its payloads", () => {
   it("starts a new challenge visible, as before the switch existed", () => {

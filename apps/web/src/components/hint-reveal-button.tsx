@@ -31,11 +31,14 @@ import type { HintTarget } from "@/lib/hint-store";
 export default function HintRevealButton({
   app,
   id,
+  level = 1,
   cost,
   ownedText,
 }: {
   app: HintTarget;
   id: string;
+  /** Jeopardy ladder rung; 1 for the single-hint ai target. */
+  level?: number;
   cost: number;
   // The hint text the SERVER already knows this viewer owns (#560). Rendered
   // by this same component so a post-reveal refresh never replaces the
@@ -97,7 +100,7 @@ export default function HintRevealButton({
       const res = await fetch("/api/hints/reveal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ app, id, quotedCost: price }),
+        body: JSON.stringify({ app, id, level, quotedCost: price }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         hint?: string;
@@ -106,6 +109,7 @@ export default function HintRevealButton({
         balance?: number;
         alreadyOwned?: boolean;
         dryRun?: boolean;
+        repriced?: boolean;
       };
       if (res.ok && typeof data.hint === "string") {
         // A preview (dryRun) and an already-owned reveal both return the hint

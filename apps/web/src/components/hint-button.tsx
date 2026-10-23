@@ -82,7 +82,7 @@ export default function HintButton({
       const res = await fetch("/api/hints/reveal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ app, id, quotedCost: price }),
+        body: JSON.stringify({ app, id, level: 1, quotedCost: price }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 409 && typeof data.cost === "number") {

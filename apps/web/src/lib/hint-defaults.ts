@@ -24,6 +24,11 @@ export const HINT_DEFAULT_ENABLED = true;
  *  count), so purchases made before a price change keep their old price. */
 export const HINT_COST = 10;
 
+/** Largest allowed event-wide or per-hint price. Lives here (not in the
+ *  server-only admin store) because the client-safe bundle validator and the
+ *  per-hint editor must enforce the same bound as `updateAdminSettings`. */
+export const HINT_COST_MAX = 100000;
+
 /** Solves required on a target before its hints can be bought. 0 disables the
  *  gate. */
 export const HINT_MIN_SOLVES = 1;

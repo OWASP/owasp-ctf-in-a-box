@@ -463,7 +463,7 @@ third module isn't mistaken for a fully general n-module platform:
   - **Authoring.** The `/admin` Jeopardy tab has a Stories editor
     (`POST /api/admin/classic` with exactly `{ stories }`). Stories need
     bundle version 2 or later; an export is stamped with the oldest version
-    that knows every field it carries (up to 4), and an import merges
+    that knows every field it carries (up to 5), and an import merges
     stories by id. See `docs/operations.md`'s "Jeopardy" section.
 - **`classic` challenges can be hidden or scheduled (issue #189).** A
   challenge stores `enabled` (absent means live) and an optional
@@ -479,14 +479,18 @@ third module isn't mistaken for a fully general n-module platform:
   - **Bundles carry it** as version 4, stamped only when some challenge is
     hidden or scheduled. See
     [ADR 68](decisions.md#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock).
-- **`classic` HAS paid hints (issue #190).** An organizer attaches optional
-  hint text in the admin classic form (or a bundle's `hint` field); the text
-  is secret until purchased — its own hash, `ctf:classic:hints`, exactly the
-  flag hashes' storage rule — and contestants buy it on the challenge's own
-  page through the SAME reveal machinery, cost, gating knobs and penalty
+- **`classic` HAS paid hints (issue #190), as an ordered ladder (#594).** An
+  organizer attaches one or more hints in the admin classic form; each rung
+  may carry its own price and rung `N` is purchasable only after `N-1`. The
+  text is secret until purchased — its own hash, `ctf:classic:hints`, exactly
+  the flag hashes' storage rule — and contestants buy it on the challenge's
+  own page through the SAME reveal machinery, cost, gating knobs and penalty
   fold as secure-development's hints. The anti-burner gate counts solves on
   the whole classic board (categories are display groupings, not progress
-  domains).
+  domains). Bundles carry the ladder as version 5's `hints` list; a v1-v4
+  bundle's single `hint` string imports as rung 1, and a one-rung ladder at
+  the event-wide price exports back as a v4 `hint` string so older boxes can
+  import it.
 
 This section remains the contract a *new* module (forensics, api-security,
 cloud, …) must satisfy to plug into the same UI: it is now proven against

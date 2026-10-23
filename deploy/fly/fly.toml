@@ -89,9 +89,11 @@ primary_region = "iad"
   # the blip. Dependency health is /health/deep, watched by an external
   # monitor, never by this block. grace_period covers the compose bring-up.
   #
-  # interval also bounds recovery: after a failed check the proxy treats the
-  # app as down until the next passing one, so a container that restarts in
-  # two seconds still costs a whole interval of errors. Keep it short.
+  # interval bounds recovery from a CONTAINER restart (the machine stays up):
+  # after a failed check the proxy treats the app as down until the next
+  # passing one, so a container back in two seconds still costs up to one
+  # interval of errors. Keep it short. A full MACHINE restart is slower: no
+  # check runs until grace_period has passed after the machine starts.
   [[http_service.checks]]
     interval = "10s"
     timeout = "5s"

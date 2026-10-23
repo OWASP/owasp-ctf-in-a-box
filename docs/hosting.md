@@ -231,8 +231,9 @@ Every event needs:
 - [`gh` CLI](https://cli.github.com), authenticated (`gh auth login`) —
   `ctf-setup.sh check` requires it whatever the module mix.
 - `openssl` — `ctf-setup.sh check` requires it (used for secret generation).
-- Memory: the app, scorer, sync, srh and redis containers idle at about
-  665 MB, so give an event box about 2 GB.
+- Memory: with Secure Development, the app, scorer, sync, srh and redis
+  containers idle at about 665 MB, so give the event box about 2 GB. Without
+  it, scorer and sync do not run and the stack needs less.
 
 Only an event that runs **Secure Development** (`SCORE_IMAGE` set in `.env`)
 also needs:
@@ -496,9 +497,9 @@ score comment; the PR is never merged. Detaching the fork network (manual step
 A Secure Development score travels one way. The fork's scoring Action judges
 the PR and posts the verdict as a comment on it; the `sync` service polls the
 event org's target repos for those comments and submits what it finds to the
-scorer. A score shows on the leaderboard within about 40 seconds of the score
-comment: one poll (about every 30 seconds) plus the leaderboard's 10-second
-recompute. There is nothing to configure and nothing to choose: push ingest —
+scorer. A score normally shows on the leaderboard within about 40 seconds of the
+score comment: one poll (about every 30 seconds) plus the leaderboard's
+10-second recompute, which runs on the next page load after it expires. There is nothing to configure and nothing to choose: push ingest —
 the Action POSTing the score straight at a `/score` route on your box — was
 removed in v0.6 ([#377](https://github.com/OWASP/owasp-ctf-in-a-box/issues/377),
 [ADR 56](decisions.md#adr-56-poll-is-the-score-transport-push-ingest-is-removed)),
@@ -938,7 +939,7 @@ provisioning — is documented in [docs/modules.md](modules.md).
 | Anything in `/admin` — modules, targets, identity, schedule, hints, teams, content | Nothing. It is live on the next request. |
 | `ADMIN_LOGINS`, `GITHUB_ORG`, `EVENT_URL`, a secret | Edit `.env`, then bring the stack back up with the same profiles the table above gives for your event — `--profile app` with no `SCORE_IMAGE`, `--profile secdev --profile app` with one — to recreate the containers with the new environment. No rebuild in any case. A new `EVENT_URL` also needs the GitHub OAuth app's callback changed to `<EVENT_URL>/api/auth/callback/github`, or sign-in fails. |
 | `SCORE_IMAGE` (adding or dropping Secure Development's containers) | Edit `.env`, then bring the stack up with the profiles that now match it: `--profile secdev --profile app` once it is set, `--profile app` alone once it is empty. |
-| The app's own code (a kit upgrade) | Without `SCORE_IMAGE`: `docker compose --profile app up -d --build`. With it, rebuild and push the scorer image too (`docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t <SCORE_IMAGE> --push scorer/`), re-run `./setup/ctf-setup.sh org` so the event org's mirror picks it up, then `docker compose --profile secdev --profile app up -d --build`. Per-release upgrade notes are in the [CHANGELOG](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/CHANGELOG.md). |
+| The app's own code (a kit upgrade) | Without `SCORE_IMAGE`: `docker compose --profile app up -d --build`. With it, update the scorer image too: if you build your own, rebuild and push it (`docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t <SCORE_IMAGE> --push scorer/`); if `SCORE_IMAGE` points at an image someone else publishes, wait for their new build. Then re-run `./setup/ctf-setup.sh org` so the event org's mirror picks it up, then `docker compose --profile secdev --profile app up -d --build`. Per-release upgrade notes are in the [CHANGELOG](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/CHANGELOG.md). |
 
 The contestant app (`apps/web/`, vendored — see
 [`apps/web/VENDORED.md`](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/apps/web/VENDORED.md))

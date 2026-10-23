@@ -20,6 +20,44 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   row. Feed writes are fail-open, so a feed failure never fails a solve; the
   master reset clears the feed with the rest of the event data.
 
+## v1.0.1 — 2026-10-22
+
+A fixes-only release: the build that runs the OWASP Global AppSec USA 2026
+demo (November 5). No breaking changes and no configuration change. Rebuild
+and push the scorer image after upgrading: the VAmPI rubric fix (#661) and
+the probe-count fix (#643) ship inside it.
+
+### Changes
+- **Changed: the Fly machine defaults to the minimum, `shared-cpu-1x` with
+  1 GB (was `shared-cpu-2x`, 2 GB).** The five containers hold about 665 MB
+  idle, so 1 GB is the floor and the right size between events. An event sizes
+  up with two new `.env.fly` keys, `FLY_VM_SIZE` and `FLY_VM_MEMORY`, which
+  `deploy.sh` renders into the deployed copy of `fly.toml`, so a redeploy
+  mid-event keeps the event size. **An existing Fly box shrinks to 1 GB on its next deploy unless both
+  keys are set** (`FLY_VM_SIZE=shared-cpu-2x`, `FLY_VM_MEMORY=2048` restores
+  the old size). A preset Fly does not know, or memory under 1024 MB, is
+  refused before the deploy.
+- **Fixed: a fresh scorer image build fails at `apk add docker-cli` (#687).**
+  Alpine moved `docker-cli` from 29.8.2-r1 to 29.9.2-r0 and keeps only the
+  latest revision in its index, so the pinned `-r1` could no longer be
+  installed. The scorer Dockerfile now pins `29.9.2-r0`. An image you already
+  built still works; this affects only a clean build.
+- **Fixed: the Fly deploy fails on flyctl 0.4.120 with "restart policy
+  `unless-stopped` is not supported by Fly Machines".** flyctl now reads the
+  compose `restart:` key it used to ignore, and refuses the whole machine
+  update. `deploy/fly/render-compose.sh` drops `restart:` from the rendered
+  file, so every container inherits the machine's `on-failure` policy — the
+  same behaviour as before, verified by the container-kill drill (#437).
+  Docker Compose bring-ups keep their `restart:` policies unchanged.
+- **Fixed: `ctf-setup.sh`'s amd64 rebuild hint builds an image Fly accepts.**
+  The hint now includes `--provenance=false --sbom=false`, as
+  `docs/hosting.md` already does. Without them buildx pushes an OCI index
+  carrying an attestation, which Fly's registry refuses with `400 Bad
+  Request` when the deploy mirrors the scorer.
+- **Fixed: `apps/web` pins vite to 8.1.6 for the launch-editor advisories.**
+  A `pnpm-workspace.yaml` override moves the test-only vite that vitest pulls
+  in from 8.1.3 to 8.1.6, clearing Dependabot's three launch-editor alerts
+  (one high). The runtime image never ships vite, so the box was not exposed.
 - **Fixed: the leaderboard could show stale scores due to an extra fetch cache (#598).**
   Normal scorer requests now bypass Next.js's 30-second fetch cache, while the
   leaderboard retains its 10-second fold memoization to avoid unnecessary

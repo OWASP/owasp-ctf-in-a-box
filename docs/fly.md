@@ -421,9 +421,40 @@ never public, and the datastore reachable from nothing outside the machine.
 
 ## Cost and shape
 
-One machine — `shared-cpu-2x`, 2 GB — plus one 1 GB volume. Sized for five
-containers with Next.js as the heavy one; the scorer only *serves* here, since
-judging runs on GitHub's runners.
+One machine plus one 1 GB volume. The machine defaults to the smallest that
+holds the five containers — `shared-cpu-1x`, 1 GB — and an event sizes it up
+(below). The scorer only *serves* here, since judging runs on GitHub's runners.
+
+### Machine size
+
+Idle, the five containers hold about 665 MB at peak: Next.js ~320 MB, srh and
+the scorer ~100 MB each, sync ~90 MB, redis ~55 MB. That makes 1 GB the floor
+(512 MB cannot hold the stack) and the right size **between** events. It is
+too small **for** one: the pre-event load check in
+[docs/operations.md](operations.md)
+wants machine memory under 80 % at 10 req/s, and the idle stack alone is about
+65 % of 1 GB. So the size is a knob in `.env.fly`:
+
+```sh
+FLY_VM_SIZE=shared-cpu-2x   # a Fly preset; empty = fly.toml's shared-cpu-1x
+FLY_VM_MEMORY=2048          # megabytes, at least 1024; empty = 1 GB, or the
+                            # preset's own minimum when that is more
+```
+
+`deploy.sh` renders them into a temporary copy of `fly.toml`'s `[[vm]]`
+block and deploys that (the same way as `FLY_AUTO_STOP`; `fly.toml` itself is
+never edited), so the event size survives every redeploy — a hotfix shipped
+mid-event does not shrink the machine back. The deploy prints the size it
+rendered. Do not size it with `fly scale vm` by hand: the next
+deploy re-applies `fly.toml`'s minimum. With neither key set, every deploy
+prints a NOTE saying how to size up. A preset that is not Fly's (`fly
+platform vm-sizes` lists them), memory under 1024, or memory outside what the
+preset's CPUs allow (256–2048 MB per shared CPU, 2048–8192 MB per
+performance CPU), or not in Fly's steps (256 MB shared, 1024 MB performance)
+is refused before the deploy starts.
+
+**Set both before an event, redeploy, and run the load check. Remove them
+after the event and redeploy to drop back to the minimum.**
 
 ### Autostop
 

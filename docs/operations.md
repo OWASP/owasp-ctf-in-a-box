@@ -2348,7 +2348,9 @@ at exit: it returns 0 only when the run was valid *and* every criterion was
 met, 1 when the run could not be trusted or the bar was missed (each miss is
 named on stderr as `BAR MISSED: …`), 2 on a usage error — so a run inside a
 shell loop or CI cannot pass by accident. The report carries every number
-either way. A miss on memory means `fly scale vm`; a miss on `/leaderboard`
+either way. A miss on memory means a larger `FLY_VM_SIZE` / `FLY_VM_MEMORY`
+in `.env.fly` and a redeploy ("Machine size" in
+[docs/fly.md](fly.md)); a miss on `/leaderboard`
 alone means the page's own cost is the problem (see #434, #444, #446).
 `/api/admin/metrics` needs an admin session the script deliberately does not
 carry (a cookie in a command line is readable by every local user) — time it
@@ -2377,8 +2379,10 @@ is a redacted label — never the token or a URL. Not seeded on purpose:
 raise; the harness omits it because an exact clean could not lower it back
 safely — and hint purchases.
 
-Before an event, four checks in this order: `FLY_AUTO_STOP=off` is set and
+Before an event, five checks in this order: `FLY_AUTO_STOP=off` is set and
 deployed (an idle-suspended machine takes Redis and the poller down with it);
+on Fly, `FLY_VM_SIZE` / `FLY_VM_MEMORY` size the machine up from the 1 GB
+between-events default (see "Machine size" in docs/fly.md) and are deployed;
 `/health/deep` is 200; the external monitor described in
 [docs/hosting.md](hosting.md#monitoring) is enabled and posting to the
 organizers' channel; the Cloudflare rate-limiting rule on `/api/*` described
@@ -2392,8 +2396,9 @@ route, which would spend real cooldowns and attempt caps). See
 [docs/troubleshooting.md](troubleshooting.md) for what a 503 means and what
 to do.
 
-On AWS, the first and last checks do not apply: there is no Fly machine to
-suspend, and no Cloudflare rule unless you put one in front of the ALB.
+On AWS, the first, second and last checks do not apply: there is no Fly
+machine to suspend or size, and no Cloudflare rule unless you put one in front
+of the ALB.
 `scripts/load-test.sh` does not run against an ECS stack either. The AWS
 checks, and how to run the load pass by hand, are in the
 [AWS event-day runbook](aws.md#before-the-event).

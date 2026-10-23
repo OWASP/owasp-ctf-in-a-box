@@ -556,6 +556,18 @@ ENV
   [ -z "$(grep -E '^    (build|networks|volumes|profiles):' "$RENDERED")" ]
 }
 
+@test "render: no restart key survives, so containers inherit the machine policy" {
+  need_docker
+  # Anti-vacuous: the source must still declare restart policies, or this
+  # test would pass on a file that never had any.
+  grep -qE '^    restart: unless-stopped' "$REPO/docker-compose.yml"
+  render
+  # Fly Machines reject Docker's `unless-stopped`; flyctl 0.4.120 refuses the
+  # whole machine update over it. Without the key each container inherits the
+  # machine's own on-failure policy.
+  [ -z "$(grep -E '^    restart:' "$RENDERED")" ]
+}
+
 @test "render: no service is left with an empty environment key" {
   need_docker
   render
@@ -1195,6 +1207,147 @@ ENV
 }
 
 # ---------------------------------------------------------------------------
+# FLY_VM_SIZE / FLY_VM_MEMORY — machine size per deployment.
+# ---------------------------------------------------------------------------
+
+@test "fly.toml carries the minimum machine: shared-cpu-1x, 1 GB" {
+  uncommented "$FLY/fly.toml" | grep -qE '^ *memory *= *"1gb"'
+  uncommented "$FLY/fly.toml" | grep -qE '^ *cpus *= *1$'
+}
+
+@test "with no size knobs fly.toml deploys as-is and the deploy says how to size up" {
+  need_docker
+  cd "$REPO"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'FLY_VM_SIZE=shared-cpu-2x'
+  echo "$output" | grep -qF 'fly deploy --config deploy/fly/fly.toml'
+}
+
+@test "FLY_VM_SIZE and FLY_VM_MEMORY reach fly deploy, so a redeploy keeps the event size" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  printf 'FLY_VM_SIZE=shared-cpu-2x\nFLY_VM_MEMORY=2048\n' >> "$BATS_TEST_TMPDIR/env.vm"
+  run /bin/bash ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -eq 0 ]
+  # Rendered into a copy of fly.toml's [[vm]] block, never passed as flags
+  # fly.toml could outrank; the deploy prints the block it rendered.
+  echo "$output" | grep -qF 'fly deploy --config deploy/fly/.fly.vm.toml'
+  echo "$output" | grep -qE '^ +size = "shared-cpu-2x"$'
+  echo "$output" | grep -qE '^ +memory = "2048mb"$'
+  # A preset replaces cpus outright, so no explicit line can contradict it.
+  [ -z "$(echo "$output" | grep -E '^ +cpus = ')" ]
+}
+
+@test "a machine size and FLY_AUTO_STOP combine in one deployed config" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  printf 'FLY_VM_MEMORY=2048\nFLY_AUTO_STOP=stop\n' >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qE '^ +memory = "2048mb"$'
+  echo "$output" | grep -qF 'fly deploy --config deploy/fly/.fly.autostop.toml'
+}
+
+@test "a FLY_VM_SIZE that is not a Fly preset is refused" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  echo "FLY_VM_SIZE=performance-cpu-1x" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'is not a Fly machine preset'
+}
+
+@test "Fly's real preset names are accepted, and a preset alone gets its minimum memory" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  # performance-1x takes at least 2048 MB; fly.toml's 1 GB would be refused
+  # by Fly mid-deploy, so the render raises it.
+  echo "FLY_VM_SIZE=performance-1x" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qE '^ +size = "performance-1x"$'
+  echo "$output" | grep -qE '^ +memory = "2048mb"$'
+}
+
+@test "a FLY_VM_MEMORY below its preset's minimum is refused" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  printf 'FLY_VM_SIZE=shared-cpu-8x\nFLY_VM_MEMORY=1024\n' >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF "below shared-cpu-8x's minimum of 2048 MB"
+}
+
+@test "a FLY_VM_MEMORY above what the CPUs allow is refused" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  # No preset keeps fly.toml's one shared CPU, which Fly caps at 2048 MB.
+  echo "FLY_VM_MEMORY=4096" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF "maximum of 2048 MB"
+}
+
+@test "a FLY_VM_MEMORY Fly cannot allocate is refused, per CPU kind" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  # In range for one shared CPU, but not a 256 MB step.
+  echo "FLY_VM_MEMORY=1500" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'is not a multiple of 256 MB'
+  # A 256 MB step that is not a 1024 MB step is fine shared, refused on
+  # performance CPUs.
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  printf 'FLY_VM_SIZE=performance-1x\nFLY_VM_MEMORY=2304\n' >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'is not a multiple of 1024 MB'
+}
+
+@test "a FLY_VM_MEMORY on a 256 MB step is accepted for shared CPUs" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  echo "FLY_VM_MEMORY=1280" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qE '^ +memory = "1280mb"$'
+}
+
+@test "a zero-padded or overlong FLY_VM_MEMORY is refused, not read as octal" {
+  need_docker
+  cd "$REPO"
+  # 02000 is octal 1024: read as a number it would pass every range and step
+  # check and render memory = "02000mb".
+  for v in 02000 02048 1234567; do
+    cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+    echo "FLY_VM_MEMORY=$v" >> "$BATS_TEST_TMPDIR/env.vm"
+    run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+    [ "$status" -ne 0 ]
+    echo "$output" | grep -qF "FLY_VM_MEMORY=$v is not a whole number of megabytes"
+  done
+}
+
+@test "a FLY_VM_MEMORY below 1024 MB is refused" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.vm"
+  echo "FLY_VM_MEMORY=512" >> "$BATS_TEST_TMPDIR/env.vm"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.vm"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'is below 1024'
+}
+
+# ---------------------------------------------------------------------------
 # FLY_AUTO_STOP — opt-in idle shutdown.
 # ---------------------------------------------------------------------------
 
@@ -1253,6 +1406,10 @@ ENV
 
 @test "the autostop override file is gitignored" {
   cd "$REPO" && git check-ignore -q deploy/fly/.fly.autostop.toml
+}
+
+@test "the machine-size override file is gitignored" {
+  cd "$REPO" && git check-ignore -q deploy/fly/.fly.vm.toml
 }
 
 # ---------------------------------------------------------------------------

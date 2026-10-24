@@ -19,6 +19,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   the response carries no challenge id, app id, team slug or activity-log
   row. Feed writes are fail-open, so a feed failure never fails a solve; the
   master reset clears the feed with the rest of the event data.
+- **Fixed: an app-container crash on Fly costs ~30 seconds of errors (#691).**
+  The container restarts in about two seconds, but Fly's proxy routes to it
+  again only after the next passing health check, and `fly.toml` checked every
+  30 seconds. The check now runs every 10 seconds. It still watches `/health`
+  (liveness) only. Takes effect on the next `deploy.sh` run.
 
 ## v1.0.1 — 2026-10-22
 

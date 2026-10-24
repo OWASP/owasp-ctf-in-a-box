@@ -92,6 +92,8 @@ can automate, and walks you through the few that need the GitHub website.
 admin logins (and the org, if you run Secure Development). Everything
 else — the event's name, which modules run, which targets — is set at
 runtime in `/admin`, so there is no config file to edit.
+With Secure Development, the five containers idle at about 665 MB, so give
+the event box about 2 GB of memory; without it, scorer and sync do not run.
 
 <p align="center">
   <img alt="The ctf-setup.sh guided wizard: ASCII banner and step-by-step prompts" src="docs/assets/wizard.jpg" width="820">
@@ -99,15 +101,18 @@ runtime in `/admin`, so there is no config file to edit.
 
 **In a cloud instead?** [docs/aws.md](docs/aws.md) (Terraform: ECS Fargate,
 ElastiCache and an ALB) or [docs/fly.md](docs/fly.md) (one Fly machine).
-Every step in detail:
+Fly runs the whole stack, scorer included, so it needs a scorer image
+(`SCORE_IMAGE`) and suits an event that runs Secure Development; a
+Quiz/Jeopardy-only event uses Compose or AWS. Every step in detail:
 [docs/hosting.md](docs/hosting.md#quickstart-zero-to-a-scored-event).
 
 ## The modules
 
 **Secure Development** — a GitHub Action in the contestant's fork runs the
 target's tests against the patch and posts the result on the pull request.
-The box polls for it about every 30 seconds, and the leaderboard cache can
-add up to about 40 more, so a score shows within about 70 seconds.
+The box polls for it about every 30 seconds and the leaderboard recomputes
+every 10, so a score normally shows within about 40 seconds of the score
+comment.
 Six targets, 321 challenges. An unpatched app scores 0, and a correct patch
 earns its points; CI checks both directions.
 

@@ -20,6 +20,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The activity log, so the dry-run test below can see that nothing was logged.
 const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
 vi.mock("@/lib/activity-log", () => activityLog);
+const recent = vi.hoisted(() => ({ recordRecentSolve: vi.fn(async () => {}) }));
+vi.mock("@/lib/recent-solves", () => recent);
 
 const {
   getSession,
@@ -151,6 +153,7 @@ beforeEach(() => {
   isModuleLive.mockReset();
   isModuleLive.mockResolvedValue(true);
   activityLog.logActivity.mockClear();
+  recent.recordRecentSolve.mockClear();
 });
 
 describe("POST /api/quiz/answer", () => {
@@ -304,6 +307,12 @@ describe("POST /api/quiz/answer", () => {
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ correct: true, points: 10 });
+    expect(recent.recordRecentSolve).toHaveBeenCalledWith({
+      module: "quiz",
+      challengeId: "q1",
+      points: 10,
+      login: "alice",
+    });
   });
 
   it("a wrong-answer response never includes the correct choice ids", async () => {
@@ -686,6 +695,7 @@ describe("a dry-run answer (#464 admin preview)", () => {
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect((await res.json()).dryRun).toBe(true);
     expect(activityLog.logActivity).not.toHaveBeenCalled();
+    expect(recent.recordRecentSolve).not.toHaveBeenCalled();
   });
 });
 

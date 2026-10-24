@@ -5,6 +5,7 @@ import { aiAwardResponse, aiJson, aiPreflight, aiRoute, readRawBody } from "@/li
 import { previewClaimStillValid } from "@/lib/ai-preview";
 import { getAiLaunchPublicKey, listAiChallenges, submitAiFlag } from "@/lib/ai-store";
 import { decodeTokenUnverified, verifyLaunchToken } from "@/lib/ai-token";
+import { recordRecentSolve } from "@/lib/recent-solves";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 import { hasTeam } from "@/lib/team-store";
 
@@ -143,13 +144,17 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   // same script, writing nothing. The claim is signed, so a contestant cannot
   // add it to their own token.
   const result = await submitAiFlag(claims.sub, aud, flag, { dryRun: preview });
-  // Activity log (issue #212): fresh solves only — an idempotent
-  // re-submission banked nothing and would double-count the event. The id
-  // and the path, never the flag; logActivity is fail-open, so it cannot
-  // fail an award that already landed. Mirrors classic/submit's guard.
-  // Never for a dry run (#464 admin preview): nothing was solved.
+  // Activity log (issue #212) and the projector feed (#542): fresh solves
+  // only — an idempotent re-submission banked nothing and would double-count
+  // the event. The id and the path, never the flag; both writers are
+  // fail-open, so neither can fail an award that already landed. Mirrors
+  // classic/submit's guard. Never for a dry run (#464 admin preview): nothing
+  // was solved.
   if (result.ok && result.correct && !result.already && !result.dryRun) {
-    await logActivity("ai-solve", claims.sub, `${aud} via flag`);
+    await Promise.all([
+      logActivity("ai-solve", claims.sub, `${aud} via flag`),
+      recordRecentSolve({ module: "ai", challengeId: aud, points: result.points, login: claims.sub }),
+    ]);
   }
   return aiAwardResponse(result);
 });

@@ -5,6 +5,26 @@
 
 export const solvesKey = (target) => `ctf:solves:${target}`;
 const solveField = (author, id) => `${author}:${id}`;
+// The projector feed (#542): the app writes app-module solves with the same
+// keys and event shape (apps/web/src/lib/recent-solves.ts), and this service
+// writes Secure Development solves here because it is where HSETNX tells a
+// fresh solve from a replay. The event carries no login.
+export const RECENT_SOLVES_KEY = "ctf:feed:recent-solves";
+export const RECENT_SOLVES_DATA_KEY = "ctf:feed:recent-solves:data";
+export const RECENT_SOLVES_MAX = 50;
+const recentId = (target, id, team) => `secure-development:${target}:${id}:${team}`;
+// Same atomic write as the app's RECORD_SCRIPT: dedupe by team + item, then
+// trim the sorted set and its data hash together.
+export const RECENT_SCRIPT = `
+if redis.call('ZSCORE', KEYS[1], ARGV[1]) then return 0 end
+redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1])
+redis.call('HSET', KEYS[2], ARGV[1], ARGV[3])
+local last = -(tonumber(ARGV[4]) + 1)
+local evicted = redis.call('ZRANGE', KEYS[1], 0, last)
+redis.call('ZREMRANGEBYRANK', KEYS[1], 0, last)
+for i = 1, #evicted do redis.call('HDEL', KEYS[2], evicted[i]) end
+return 1
+`;
 // Same key/field the app (admin-store.ts) writes and the sync poller
 // (sync/src/redis.js) reads — "1" means paused, anything else does not.
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
@@ -65,6 +85,7 @@ export function pausedAt(tMs, paused, pausedSince, pauses) {
 
 export function createMemoryStore({ teams = [] } = {}) {
   const hashes = new Map(); // key -> Map(field -> ISO timestamp)
+  const recent = new Map(); // id -> { score, event }, newest-first on read
   let paused = false; // test seam mirroring ctf:admin:settings.paused
   // No event settings to judge a score's time against until a test sets
   // some — the same answer the Redis store gives when it cannot read them.
@@ -73,10 +94,15 @@ export function createMemoryStore({ teams = [] } = {}) {
     async recordSolves(target, author, ids, at) {
       let hash = hashes.get(solvesKey(target));
       if (!hash) hashes.set(solvesKey(target), (hash = new Map()));
+      const added = [];
       for (const id of ids) {
         const field = solveField(author, id);
-        if (!hash.has(field)) hash.set(field, at); // HSETNX: replays no-op
+        if (!hash.has(field)) {
+          hash.set(field, at); // HSETNX: replays no-op
+          added.push(id);
+        }
       }
+      return added;
     },
     async getSolves(target) {
       return Object.fromEntries(hashes.get(solvesKey(target)) ?? []);
@@ -98,6 +124,37 @@ export function createMemoryStore({ teams = [] } = {}) {
     // this store has no ctf:team:* data of its own to read.
     async getTeams() {
       return teams.map((t) => ({ ...t, members: [...t.members].sort() }));
+    },
+    async getTeamForLogin(login) {
+      const team = teams.find((t) => t.members.includes(login));
+      return team ? { slug: team.slug, name: team.name || team.slug } : null;
+    },
+    async recordRecentSolves(entries) {
+      for (const entry of entries) {
+        const id = recentId(entry.target, entry.id, entry.team);
+        if (recent.has(id)) continue;
+        const event = {
+          module: "secure-development",
+          app: entry.target,
+          challengeId: entry.id,
+          points: entry.points,
+          team: entry.team,
+          teamName: entry.teamName,
+          at: entry.at,
+        };
+        const score = Date.parse(entry.at);
+        recent.set(id, { score: Number.isFinite(score) ? score : Date.now(), event });
+      }
+      const kept = [...recent.entries()]
+        .sort((a, b) => b[1].score - a[1].score)
+        .slice(0, RECENT_SOLVES_MAX);
+      recent.clear();
+      for (const [id, row] of kept) recent.set(id, row);
+    },
+    async getRecentSolves() {
+      return [...recent.values()]
+        .sort((a, b) => b.score - a.score)
+        .map((row) => row.event);
     },
   };
 }
@@ -152,8 +209,43 @@ export function createRedisStore({
 
   return {
     async recordSolves(target, author, ids, at) {
-      if (ids.length === 0) return;
-      await pipeline(ids.map((id) => ["HSETNX", solvesKey(target), solveField(author, id), at]));
+      if (ids.length === 0) return [];
+      const results = await pipeline(ids.map((id) => ["HSETNX", solvesKey(target), solveField(author, id), at]));
+      return ids.filter((_, i) => results[i] === 1);
+    },
+    async getTeamForLogin(login) {
+      const [slug] = await pipeline([["HGET", `ctf:user:${login}`, "team"]]);
+      if (typeof slug !== "string" || !slug) return null;
+      const [name] = await pipeline([["HGET", `ctf:team:${slug}`, "name"]]);
+      return { slug, name: typeof name === "string" && name ? name : slug };
+    },
+    async recordRecentSolves(entries) {
+      if (entries.length === 0) return;
+      await pipeline(
+        entries.map((entry) => {
+          const event = {
+            module: "secure-development",
+            app: entry.target,
+            challengeId: entry.id,
+            points: entry.points,
+            team: entry.team,
+            teamName: entry.teamName,
+            at: entry.at,
+          };
+          const score = Date.parse(entry.at);
+          return [
+            "EVAL",
+            RECENT_SCRIPT,
+            2,
+            RECENT_SOLVES_KEY,
+            RECENT_SOLVES_DATA_KEY,
+            recentId(entry.target, entry.id, entry.team),
+            String(Number.isFinite(score) ? score : Date.now()),
+            JSON.stringify(event),
+            String(RECENT_SOLVES_MAX),
+          ];
+        }),
+      );
     },
     async getSolves(target) {
       const [raw] = await pipeline([["HGETALL", solvesKey(target)]]);

@@ -4,6 +4,7 @@ import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { answerQuestion, QUIZ_ID_RE } from "@/lib/quiz-store";
+import { recordRecentSolve } from "@/lib/recent-solves";
 import { hasTeam } from "@/lib/team-store";
 
 /** Validating against `quiz-store`'s own exported `QUIZ_ID_RE` (rather than
@@ -106,11 +107,16 @@ export async function POST(request: Request) {
         : NextResponse.json({ correct: false, dryRun: true });
     }
     if (!result.correct) return NextResponse.json({ correct: false });
-    // Activity log (issue #212): fresh solves only — an idempotent
-    // re-submission banked nothing. The question id, never the choices;
-    // logActivity is fail-open, so it cannot fail an answer that already
-    // landed.
-    if (!result.already) await logActivity("quiz-solve", login, questionId);
+    // Activity log (issue #212) and the projector feed (#542): fresh solves
+    // only — an idempotent re-submission banked nothing. The question id,
+    // never the choices; both writers are fail-open, so neither can fail an
+    // answer that already landed.
+    if (!result.already) {
+      await Promise.all([
+        logActivity("quiz-solve", login, questionId),
+        recordRecentSolve({ module: "quiz", challengeId: questionId, points: result.points, login }),
+      ]);
+    }
     // `already` (this login had banked this question before — see
     // AnswerResult) rides along so the client can say so, instead of
     // reading the accompanying `points: 0` as an award of nothing.

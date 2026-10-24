@@ -154,8 +154,32 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     );
     const solvedAt = await solveTime(at);
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
-    await store.recordSolves(target, author, ids, solvedAt.iso);
+    const added = await store.recordSolves(target, author, ids, solvedAt.iso);
     if (!rubric) seenTargets.add(target);
+    // The projector feed (#542): only FRESH HSETNX writes become lines, with
+    // the team captured now — a later rename or roster move must not rewrite
+    // history. Cosmetic and fail-open: the solve already landed, so a feed or
+    // team-read failure is logged and never fails the 202. No rubric means no
+    // points to show, so degenerate mode writes no feed.
+    if (rubric && added.length > 0) {
+      try {
+        const team = await store.getTeamForLogin(author);
+        if (team) {
+          await store.recordRecentSolves(
+            added.map((id) => ({
+              target,
+              id,
+              points: rubric.pointsFor(target, id) ?? 0,
+              at: solvedAt.iso,
+              team: team.slug,
+              teamName: team.name,
+            })),
+          );
+        }
+      } catch (err) {
+        console.error(`[recent-solves] secure-development feed write failed: ${err.message}`);
+      }
+    }
     res.writeHead(202).end();
   }
 

@@ -34,13 +34,21 @@ live-GitHub scoring. For standing the kit up in the first place, see
   every viewer for **10 seconds**, then recomputed on the next request
   (`apps/web/src/lib/leaderboard/folded.ts`). A quiz answer, a flag or an AI
   solve therefore reaches `/leaderboard` and the landing strip within about
-  10 seconds; the projector board refreshes itself every 30. A Secure
-  Development score has one more hop: the `sync` poller reads the score
-  comment on its next poll (about every 30 seconds), and the app reads the
-  scorer uncached, so a score normally shows within about 40 seconds of the
-  comment (the v1.0.1 release check measured 27). A contestant's own
-  `/profile`, `/quiz`, `/flags` and `/challenges` read live. A read that
-  fails is never cached — the next request retries.
+  10 seconds; the projector board refreshes itself every 30. Its recent-solves
+  feed (`?display=1`) is a separate public route,
+  `/api/board/recent-solves`, polled every 15 s, so app-module solves appear
+  there without waiting for the standings fold; a Secure Development line
+  appears when the scorer banks the solve, ahead of the poller hop its points
+  take. The feed covers classic, quiz, AI and Secure Development, and a line
+  is dropped when its module is off, its target is disabled, its challenge is
+  gone, or its classic story step is locked to an anonymous viewer; the
+  response carries no login, challenge id, app id, team slug or activity-log
+  row. A Secure Development score has one more hop: the `sync` poller reads
+  the score comment on its next poll (about every 30 seconds), and the app
+  reads the scorer uncached, so a score normally shows within about 40
+  seconds of the comment (the v1.0.1 release check measured 27). A
+  contestant's own `/profile`, `/quiz`, `/flags` and `/challenges` read live.
+  A read that fails is never cached — the next request retries.
 - Poller logs: `docker compose logs -f sync`. On Fly: `fly logs --app <app>`.
 - All state lives in named Docker volumes, so a box reboot loses nothing.
 - **On AWS (ECS)**, the logs, a shell, the failure drills, rollback and

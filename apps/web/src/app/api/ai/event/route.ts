@@ -8,6 +8,7 @@ import { AI_ID_RE } from "@/lib/ai-keys";
 import { awardAiEvent, claimAiNonce, getAiLaunchPublicKey, getAiSigningKey, listAiChallenges, releaseAiNonce } from "@/lib/ai-store";
 import { previewClaimStillValid } from "@/lib/ai-preview";
 import { verifyEventSignature, verifyLaunchToken, withinSkew } from "@/lib/ai-token";
+import { recordRecentSolve } from "@/lib/recent-solves";
 import { RATE_LIMITS, consumeRateLimit } from "@/lib/rate-limit-store";
 import { hasTeam } from "@/lib/team-store";
 
@@ -148,13 +149,17 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
     });
   }
 
-  // Activity log (issue #212): fresh solves only — an `already` award banked
-  // nothing further and would double-count the event, and the dryRun branch
-  // above has already returned, so this can only see a real attempt. The id
-  // and the path, never the flag; logActivity is fail-open, so it cannot
-  // fail an award that already landed. Mirrors classic/submit's guard.
+  // Activity log (issue #212) and the projector feed (#542): fresh solves
+  // only — an `already` award banked nothing further and would double-count
+  // the event, and the dryRun branch above has already returned, so this can
+  // only see a real attempt. The id and the path, never the flag; both
+  // writers are fail-open, so neither can fail an award that already landed.
+  // Mirrors classic/submit's guard.
   if (result.ok && result.correct && !result.already) {
-    await logActivity("ai-solve", login, `${challengeId} via event`);
+    await Promise.all([
+      logActivity("ai-solve", login, `${challengeId} via event`),
+      recordRecentSolve({ module: "ai", challengeId, points: result.points, login }),
+    ]);
   }
 
   // 10. The nonce guards the replay of an award that HAPPENED. If the award did

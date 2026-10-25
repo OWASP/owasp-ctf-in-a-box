@@ -14,6 +14,12 @@ These are the authoritative commands — they match what CI runs in
 (`.nvmrc` pins it, so `nvm use` picks it up); run
 the suites on 22 — a sync/scorer suite was green on Node 25 and red on 22 in
 CI (#256, an unref'd `AbortSignal.timeout` timer).
+`apps/web/package.json` says the same thing as a range, `engines.node:
+"^22.12.0"` (vitest 5's floor on the 22 line), on purpose: `.nvmrc` and CI's
+`node-version: 22` resolve to the latest 22.x on each run and Dependabot
+refreshes the image digest weekly, so an exact pin there would be stale after
+the first refresh and nothing would move it. The three sources agree on the
+LINE; the patch floats everywhere by design.
 
 **sync** (the score poller):
 

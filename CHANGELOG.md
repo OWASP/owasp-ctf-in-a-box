@@ -8,6 +8,39 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+## v1.0.3 — 2026-10-25
+
+The second security patch on the v1.0.1 freeze, one day after the first: a
+zod denial of service that the public sign-in route reaches, carried in with
+the week's dependency bumps as one release. No breaking change, no
+configuration change. Redeploy the app; the scorer and sync images pick up
+the refreshed Node base on their next build.
+
+### Changes
+- **Security: `zod` 4.5.4 → 4.6.7 (#711).** GHSA-mrhx-c7xc-m3w5 (high): an
+  array schema without a length cap accumulates one issue object per failing
+  element, so a large array of wrong-typed items exhausts memory. zod is
+  transitive here, through `better-auth` and `better-call`, and the body of
+  `POST /api/auth/sign-in/social` carries `scopes: z.array(z.string())` with
+  no cap. That route is public on every box that signs in with GitHub, which
+  is all of them, and nothing in front of the app limits a request body. One
+  request could take the app container down; the 10 s health check (v1.0.2)
+  brought it back, but the request repeats.
+- **Security: `better-auth` 1.7.7 → 1.7.12 (#711).** 1.7.12 runs the same
+  issuer and nonce checks on OAuth callbacks completed through the OAuth
+  proxy as on the standard callback, and rejects ID tokens without `exp` or
+  `iat` or from a provider with no client ID. The kit uses neither the proxy
+  nor ID-token sign-in; the bump is hygiene on the auth library, and it moves
+  `better-call` to 1.4.4.
+- **Security: `happy-dom` 21.0.3 → 21.0.4 (#711).** GHSA-834v-8h66-3h79
+  (high), an incomplete fix for CVE-2026-33943. Test-only: happy-dom is the
+  vitest DOM and never ships in the runtime image.
+- **Deps: `react` and `react-dom` 19.3.0 → 19.3.1, `vitest` 5.0.4 → 5.0.5,
+  the `node:22-alpine` digest in all three Dockerfiles, `codeql-action`
+  4.39.1, `hashicorp/aws` 6.70.0 (#711).** The eight Dependabot PRs of the
+  week (#695, #699, #701, #702, #707, #708, #709, #710) land as this one
+  change so they get one CI run, one review and one deploy.
+
 ## v1.0.2 — 2026-10-24
 
 A security patch for the v1.0.1 freeze: the Next.js advisories of October 22

@@ -18,8 +18,9 @@ CI (#256, an unref'd `AbortSignal.timeout` timer).
 "^22.12.0"` (vitest 5's floor on the 22 line), on purpose: `.nvmrc` and CI's
 `node-version: 22` resolve to the latest 22.x on each run and Dependabot
 refreshes the image digest weekly, so an exact pin there would be stale after
-the first refresh and nothing would move it. The three sources agree on the
-LINE; the patch floats everywhere by design.
+the first refresh and nothing would move it. The package range, `.nvmrc` and
+CI target the 22 line and take its latest patch; the container stays on its
+digest-pinned patch until the weekly Dependabot refresh merges.
 
 **sync** (the score poller):
 

@@ -39,7 +39,9 @@ the refreshed Node base on their next build.
   the `node:22-alpine` digest in all three Dockerfiles, `codeql-action`
   4.39.1, `hashicorp/aws` 6.70.0 (#711).** The eight Dependabot PRs of the
   week (#695, #699, #701, #702, #707, #708, #709, #710) land as this one
-  change so they get one CI run, one review and one deploy.
+  change so they get one CI run, one review and one deploy. `engines.node`
+  in `apps/web` narrows from `>=22` to `^22.12.0`, the line CI, `.nvmrc` and
+  the images actually run and the floor vitest 5 declares.
 
 ## v1.0.2 — 2026-10-24
 

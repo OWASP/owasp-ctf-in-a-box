@@ -8,7 +8,25 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+## v1.0.2 — 2026-10-24
+
+A security patch for the v1.0.1 freeze: the Next.js advisories of October 22
+and the Fly health-check interval. No breaking change, no configuration
+change, no scorer rebuild. Upgrade a public box now; the Server Actions
+denial of service reaches any App Router deployment with a server action,
+and this kit has one.
+
 ### Changes
+- **Security: `next` 16.4.0 → 16.4.2 (#703).** Closes three advisories
+  published 2026-10-22 and patched in 16.4.1: GHSA-p3m5-59mp-jv5r (high, a
+  denial of service through Server Actions; crafted requests pin the app's
+  CPU, and this kit's `ai` module carries a server action whether or not the
+  module is switched on), GHSA-2464-fhr4-w9xw (critical, remote code
+  execution in Image Optimization with SVG input; the shipped lockfile
+  already carried sharp 0.35.5, the advisory's workaround, and the image is
+  musl-based) and GHSA-673q-mjm6-r5xr (critical, remote code execution in
+  `use cache` functions; the kit has none). `eslint-config-next` moves with
+  it.
 - **Fixed: an app-container crash on Fly costs ~30 seconds of errors (#691).**
   The container restarts in about two seconds, but Fly's proxy routes to it
   again only after the next passing health check, and `fly.toml` checked every

@@ -10,15 +10,35 @@
 // to dispatch and nothing in the static markup that reveals the POST body.
 // What IS checkable, and what actually regresses if this component reverts to
 // a single hardcoded target, is the source of the request itself.
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+const renderState = vi.hoisted(() => ({ value: "idle" as "idle" | "confirm" | "pending" }));
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return {
+    ...actual,
+    useState: (initial: unknown) => {
+      const [value, setValue] = actual.useState(initial);
+      return [initial === "idle" ? renderState.value : value, setValue];
+    },
+  };
+});
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {} }) }));
+
+import HintRevealButton from "../hint-reveal-button";
 
 const src = readFileSync(fileURLToPath(new URL("../hint-reveal-button.tsx", import.meta.url)), "utf8");
 
 describe("HintRevealButton posts the target app in its reveal request", () => {
   it("builds the POST body from the app prop", () => {
-    expect(src).toMatch(/body:\s*JSON\.stringify\(\{\s*app,\s*id,\s*quotedCost:\s*price\s*\}\)/);
+    // The ladder level and the client-confirmed price ride along too:
+    // the server re-checks the quote before charging.
+    expect(src).toMatch(/body:\s*JSON\.stringify\(\{\s*app,\s*id,\s*level,\s*quotedCost:\s*price\s*\}\)/);
   });
 
   it.each(["classic", "ai"] as const)('never hardcodes app: "%s"', (app) => {
@@ -123,5 +143,29 @@ describe("HintRevealButton charges only the price it showed (#557)", () => {
     expect(src).toMatch(/res\.status === 409 && typeof data\.cost === "number"/);
     expect(src).toMatch(/setPrice\(data\.cost\)/);
     expect(src).toMatch(/setState\("confirm"\)/);
+  });
+});
+
+// A source-level assertion can pass while the confirmation's screen-reader
+// sentence says "spend  points". Render both states with the state hook
+// pinned so the amount the contestant is told they will spend is asserted.
+describe("HintRevealButton renders the price it charges", () => {
+  const props = { app: "classic" as const, id: "c1", level: 2, cost: 25 };
+
+  beforeEach(() => {
+    renderState.value = "idle";
+  });
+
+  it("renders the price on the idle button", () => {
+    const html = renderToStaticMarkup(createElement(HintRevealButton, props));
+    expect(html).toContain("Reveal hint (−25 pts)");
+  });
+
+  it("renders the price in the visible and screen-reader confirmation", () => {
+    renderState.value = "confirm";
+    const html = renderToStaticMarkup(createElement(HintRevealButton, props));
+    expect(html).toContain("Confirm (−25 pts)");
+    expect(html).toContain("Confirm: spend 25 points on this hint.");
+    expect(html).not.toContain("spend  points");
   });
 });

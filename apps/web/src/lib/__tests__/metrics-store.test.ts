@@ -51,9 +51,9 @@ const attempt = (attempts: number, lastAt = "2026-08-22T10:00:00Z") =>
  *   2. SCAN ctf:solves:*        (secure-dev sweep; repeats until cursor 0)
  *   3. HGETALL of each solves key found
  *   3b. SCAN ctf:user:*        (user-record sweep; empty in these tests)
- *   4. EIGHT commands per contestant, batched (answers, solves, ai solves,
+ *   4. ELEVEN commands per contestant, batched (answers, solves, ai solves,
  *      quiz attempts, classic attempts, ai attempts, firstTeamAt, hint
- *      purchase times)
+ *      purchase times, hint purchase costs, classic opened, ai opened)
  *
  * Written as a queue rather than per-call mocks because `vi.clearAllMocks()`
  * does NOT clear queued one-shot implementations — leftovers from one test
@@ -77,6 +77,8 @@ function mockStore(opts: {
       firstTeamAt?: string | null;
       /** `<app>/<challengeId>` -> ISO bought-at. */
       hintTimes?: Record<string, string>;
+      /** Purchase key -> points actually charged, for spend-by-level. */
+      hintCosts?: Record<string, number>;
       /** challengeId -> ISO first opened (#616). */
       classicOpened?: Record<string, string>;
       aiOpened?: Record<string, string>;
@@ -154,6 +156,7 @@ function mockStore(opts: {
           { result: hash(p.aiAttempts ?? {}) },
           { result: [p.firstTeamAt ?? null] },
           { result: hash(p.hintTimes ?? {}) },
+          { result: hash(p.hintCosts ?? {}) },
           { result: hash(p.classicOpened ?? {}) },
           { result: hash(p.aiOpened ?? {}) },
         ];
@@ -787,6 +790,93 @@ describe("hint ordering", () => {
     const m = await computeEventMetrics();
     expect(m.hints.boughtBeforeSolving).toBe(1);
     expect(m.hints.boughtAfterSolving).toBe(1);
+  });
+
+  // Spend by level comes from the recorded per-purchase cost hash, not
+  // from a re-derivation, so a rung's price at the moment it was bought is what
+  // the Insights table shows.
+  it("prices spend by level from the recorded per-purchase cost", async () => {
+    mockStore({
+      logins: ["alice", "bob"],
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(50, "2026-08-22T10:10:00Z") },
+          hintTimes: { "classic/c1": "2026-08-22T10:00:00Z", "classic/c1#2": "2026-08-22T10:05:00Z" },
+          hintCosts: { "classic/c1": 10, "classic/c1#2": 15 },
+        },
+        bob: {
+          classicSolves: { c1: earned(50, "2026-08-22T10:10:00Z") },
+          hintTimes: { "classic/c1": "2026-08-22T10:20:00Z" },
+          hintCosts: { "classic/c1": 12 },
+        },
+      },
+    });
+    const m = await computeEventMetrics();
+    const byLevel = new Map(m.hints.byLevel.map((r) => [r.level, r]));
+    expect(byLevel.get(1)).toMatchObject({ buyers: 2, totalSpend: 22, boughtBeforeSolving: 1, boughtAfterSolving: 1 });
+    expect(byLevel.get(2)).toMatchObject({ buyers: 1, totalSpend: 15, boughtBeforeSolving: 1, boughtAfterSolving: 0 });
+  });
+
+  it("counts only classic rungs in the by-level ladder, never SD or AI single hints", async () => {
+    mockStore({
+      logins: ["alice"],
+      perLogin: {
+        alice: {
+          hintTimes: {
+            "ai/prompt-1": "2026-08-22T10:00:00Z",
+            "dvwa/Challenge-1": "2026-08-22T10:01:00Z",
+            "classic/c1": "2026-08-22T10:02:00Z",
+          },
+          hintCosts: { "ai/prompt-1": 5, "dvwa/Challenge-1": 10, "classic/c1": 7 },
+        },
+      },
+    });
+    const m = await computeEventMetrics();
+    expect(m.hints.byLevel).toEqual([
+      { level: 1, buyers: 1, totalSpend: 7, boughtBeforeSolving: 0, boughtAfterSolving: 0 },
+    ]);
+  });
+
+  it("omits classic purchases without a usable recorded cost from byLevel", async () => {
+    mockStore({
+      logins: ["alice"],
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(50, "2026-08-22T10:10:00Z") },
+          hintTimes: {
+            "classic/c1": "2026-08-22T10:00:00Z",
+            "classic/c1#2": "2026-08-22T10:01:00Z",
+            "classic/c1#3": "2026-08-22T10:02:00Z",
+          },
+          hintCosts: { "classic/c1": 7, "classic/c1#2": -1, "classic/c1#3": Number.NaN },
+        },
+      },
+    });
+    const m = await computeEventMetrics();
+    expect(m.hints.boughtBeforeSolving).toBe(3);
+    expect(m.hints.byLevel).toEqual([
+      { level: 1, buyers: 1, totalSpend: 7, boughtBeforeSolving: 1, boughtAfterSolving: 0 },
+    ]);
+  });
+
+  it("counts a contestant once in solvedAfterHint across multiple pre-solve rungs", async () => {
+    mockStore({
+      logins: ["alice"],
+      perLogin: {
+        alice: {
+          classicSolves: { c1: earned(50, "2026-08-22T10:10:00Z") },
+          hintTimes: { "classic/c1": "2026-08-22T10:00:00Z", "classic/c1#2": "2026-08-22T10:05:00Z" },
+          hintCosts: { "classic/c1": 10, "classic/c1#2": 15 },
+        },
+      },
+    });
+    const m = await computeEventMetrics();
+    expect(m.hints.boughtBeforeSolving).toBe(2);
+    const byLevel = new Map(m.hints.byLevel.map((r) => [r.level, r]));
+    expect(byLevel.get(1)).toMatchObject({ buyers: 1, totalSpend: 10, boughtBeforeSolving: 1 });
+    expect(byLevel.get(2)).toMatchObject({ buyers: 1, totalSpend: 15, boughtBeforeSolving: 1 });
+    const stat = m.challenges.find((c) => c.module === "classic" && c.id === "c1");
+    expect(stat?.solvedAfterHint).toBe(1);
   });
 
   // #190: classic slots compare against the login's OWN solve rows, and the

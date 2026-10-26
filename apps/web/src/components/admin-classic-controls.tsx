@@ -123,7 +123,7 @@ import { useAdminResource } from "@/components/admin/use-admin-resource";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import AdminNumberField, { type FieldStatus } from "@/components/admin-number-field";
 import type { ModuleSettingsSlot } from "@/components/admin/settings-card";
-import { ChallengeForm, ClassicTimeZoneContext } from "@/components/admin-classic-form";
+import { ChallengeForm, ClassicHintPurchasesContext, ClassicTimeZoneContext } from "@/components/admin-classic-form";
 import {
   CHALLENGE_ROWS,
   type ChallengeEditor,
@@ -145,7 +145,7 @@ import {
 
 export * from "@/components/admin-classic-model";
 export { ChallengeForm } from "@/components/admin-classic-form";
-export { ClassicTimeZoneContext } from "@/components/admin-classic-form";
+export { ClassicHintPurchasesContext, ClassicTimeZoneContext } from "@/components/admin-classic-form";
 
 type NumericSettingKey = "classicCooldownSec";
 
@@ -207,6 +207,12 @@ export default function AdminClassicControls({
   const [attachmentMetaById, setAttachmentMetaById] = useState<Record<string, AttachmentMeta[]>>({});
   // #595: how many teams and players solved each challenge — same GET.
   const [solvesById, setSolvesById] = useState<Record<string, ChallengeSolves>>({});
+  // Ordered hint purchases are position-based; the editor warns before a
+  // ladder is reshaped. Null from the route means the history is unknown.
+  const [hintPurchases, setHintPurchases] = useState<{ known: boolean; byId: Record<string, number> }>({
+    known: true,
+    byId: {},
+  });
   // The clock the status chips read, taken once per mount: a chip is a
   // statement about the stored state, not a live countdown.
   const [nowMs] = useState(() => Date.now());
@@ -225,6 +231,10 @@ export default function AdminClassicControls({
         setAttachmentMetaById(data.attachments as Record<string, AttachmentMeta[]>);
       }
       if (data.solves && typeof data.solves === "object") setSolvesById(data.solves as Record<string, ChallengeSolves>);
+      if (data.hintPurchases === null) setHintPurchases({ known: false, byId: {} });
+      else if (data.hintPurchases && typeof data.hintPurchases === "object") {
+        setHintPurchases({ known: true, byId: data.hintPurchases as Record<string, number> });
+      }
       return {
         rows: Array.isArray(data.challenges) ? (data.challenges as AdminChallenge[]) : [],
         categories: Array.isArray(data.categories) ? (data.categories as string[]) : [],
@@ -237,7 +247,11 @@ export default function AdminClassicControls({
     parseUpsert: (data, payload) => {
       const challenge = data.challenge as Challenge | undefined;
       if (!challenge) return null;
-      return { challenge, flag: (data.flag as string | undefined) ?? payload.flag, hint: (data.hint as string | null | undefined) ?? null };
+      return {
+        challenge,
+        flag: (data.flag as string | undefined) ?? payload.flag,
+        hints: Array.isArray(data.hints) ? (data.hints as AdminChallenge["hints"]) : [],
+      };
     },
     toPayload: payloadFromEditor,
     rowPayload: payloadFromRow,
@@ -342,79 +356,81 @@ export default function AdminClassicControls({
   // pieces below are classic's and not the frame's.
   return (
     <ClassicTimeZoneContext.Provider value={timeZone}>
-    <ChallengeFrame
-      resource={resource}
-      categoryEditor={categoryEditor}
-      moduleSettings={moduleSettings}
-      knob={knob}
-      newEditor={newChallengeEditor}
-      editorFromRow={editorFromChallenge}
-      deleteConfirm={challengeDeleteConfirm}
-      meta={(row) => {
-        const solves = solvesLabel(solvesById[row.challenge.id]);
-        const chip = statusChip(row.challenge, nowMs, timeZone);
-        return (
-          <>
-            <span
-              data-status={chip.kind}
-              className={`mr-1.5 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
-                chip.kind === "live"
-                  ? "border-[#14b8a6]/40 text-[#14b8a6]"
-                  : chip.kind === "scheduled"
-                    ? "border-[#d4a017]/40 text-[#d4a017]"
-                    : "border-white/15 text-zinc-400"
-              }`}
-            >
-              {chip.label}
-            </span>
-            {row.challenge.points} pt
-            {row.challenge.points === 1 ? "" : "s"}
-            {solves && <> · {solves}</>}
-          </>
-        );
-      }}
-      Form={ChallengeForm}
-      beforePanel={
-        <AdminClassicStories
-          key={storiesRev}
-          loading={!resource.loaded}
-          challenges={challenges.map((row) => ({ id: row.challenge.id, title: row.challenge.title }))}
-          stories={stories}
-          onSaved={takeStories}
-        />
-      }
-      afterPanel={
-        <ImportPanel
-          exportDescription="Downloads every challenge currently on the board as one JSON file, flags included. Include files adds every uploaded file's bytes, so another box needs no re-upload."
-          exportLabel="Export challenges"
-          exportDisabled={challenges.length === 0}
-          onExport={() => void exportChallenges()}
-          exportPending={exportPending}
-          exportError={exportError}
-          includeFiles={includeFiles}
-          onIncludeFiles={setIncludeFiles}
-          notice={
-            <>
-              Import never deletes existing challenges — anything already on the board that isn&rsquo;t in the file
-              is left untouched. Categories the bundle mentions are added to the existing list, never used to
-              replace it.
-            </>
+      <ClassicHintPurchasesContext.Provider value={hintPurchases}>
+        <ChallengeFrame
+          resource={resource}
+          categoryEditor={categoryEditor}
+          moduleSettings={moduleSettings}
+          knob={knob}
+          newEditor={newChallengeEditor}
+          editorFromRow={editorFromChallenge}
+          deleteConfirm={challengeDeleteConfirm}
+          meta={(row) => {
+            const solves = solvesLabel(solvesById[row.challenge.id]);
+            const chip = statusChip(row.challenge, nowMs, timeZone);
+            return (
+              <>
+                <span
+                  data-status={chip.kind}
+                  className={`mr-1.5 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                    chip.kind === "live"
+                      ? "border-[#14b8a6]/40 text-[#14b8a6]"
+                      : chip.kind === "scheduled"
+                        ? "border-[#d4a017]/40 text-[#d4a017]"
+                        : "border-white/15 text-zinc-400"
+                  }`}
+                >
+                  {chip.label}
+                </span>
+                {row.challenge.points} pt
+                {row.challenge.points === 1 ? "" : "s"}
+                {solves && <> · {solves}</>}
+              </>
+            );
+          }}
+          Form={ChallengeForm}
+          beforePanel={
+            <AdminClassicStories
+              key={storiesRev}
+              loading={!resource.loaded}
+              challenges={challenges.map((row) => ({ id: row.challenge.id, title: row.challenge.title }))}
+              stories={stories}
+              onSaved={takeStories}
+            />
           }
-          text={bundleImport.text}
-          pending={bundleImport.pending}
-          clientErrors={bundleImport.clientErrors}
-          importErrors={bundleImport.importErrors}
-          summary={bundleImport.result ? formatImportSummary(bundleImport.result) : null}
-          canImport={bundleImport.canImport}
-          onText={bundleImport.setText}
-          onFile={(e) => void bundleImport.handleFile(e)}
-          onSubmit={() => void bundleImport.submit()}
+          afterPanel={
+            <ImportPanel
+              exportDescription="Downloads every challenge currently on the board as one JSON file, flags included. Include files adds every uploaded file's bytes, so another box needs no re-upload."
+              exportLabel="Export challenges"
+              exportDisabled={challenges.length === 0}
+              onExport={() => void exportChallenges()}
+              exportPending={exportPending}
+              exportError={exportError}
+              includeFiles={includeFiles}
+              onIncludeFiles={setIncludeFiles}
+              notice={
+                <>
+                  Import never deletes existing challenges — anything already on the board that isn&rsquo;t in the file
+                  is left untouched. Categories the bundle mentions are added to the existing list, never used to
+                  replace it.
+                </>
+              }
+              text={bundleImport.text}
+              pending={bundleImport.pending}
+              clientErrors={bundleImport.clientErrors}
+              importErrors={bundleImport.importErrors}
+              summary={bundleImport.result ? formatImportSummary(bundleImport.result) : null}
+              canImport={bundleImport.canImport}
+              onText={bundleImport.setText}
+              onFile={(e) => void bundleImport.handleFile(e)}
+              onSubmit={() => void bundleImport.submit()}
+            />
+          }
+          intro="Drag a challenge to reorder it, or use Move up / Move down from its ⋯ menu. Contestants see them in this order within each category."
+          reorderPending={reorderPending}
+          onMove={(from, to) => void resource.move(from, to)}
         />
-      }
-      intro="Drag a challenge to reorder it, or use Move up / Move down from its ⋯ menu. Contestants see them in this order within each category."
-      reorderPending={reorderPending}
-      onMove={(from, to) => void resource.move(from, to)}
-    />
+      </ClassicHintPurchasesContext.Provider>
     </ClassicTimeZoneContext.Provider>
   );
 }

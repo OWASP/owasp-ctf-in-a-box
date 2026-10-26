@@ -13,12 +13,14 @@ const base = (version: number, extra: Record<string, unknown> = {}) => ({
 });
 
 describe("bundleVersionFor", () => {
-  it("stamps 4 whenever a challenge carries visibility, 3 for files alone, 2 otherwise", () => {
-    expect(CLASSIC_BUNDLE_VERSION).toBe(4);
+  it("stamps the oldest version that carries every feature: 5 for a ladder, 4 for visibility, 3 for files, 2 otherwise", () => {
+    expect(CLASSIC_BUNDLE_VERSION).toBe(5);
     expect(bundleVersionFor(false)).toBe(2);
     expect(bundleVersionFor(true)).toBe(3);
     expect(bundleVersionFor(false, true)).toBe(4);
     expect(bundleVersionFor(true, true)).toBe(4);
+    expect(bundleVersionFor(false, false, true)).toBe(5);
+    expect(bundleVersionFor(true, true, true)).toBe(5);
   });
 });
 

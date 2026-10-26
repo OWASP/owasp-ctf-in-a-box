@@ -28,6 +28,7 @@ import AdminSwitch from "@/components/admin-switch";
 import { FREEZE_HELP, freezeConfirm } from "./freeze-copy";
 import { IdentityField } from "./admin-module-identity";
 import AdminEventImages from "./admin-event-images";
+import AdminEventAnnouncements from "./admin-event-announcements";
 import { moduleToggleConfirm, moduleToggleState, type ModuleToggleChoice } from "./module-toggle";
 import type { CommitNumber, ConfirmState } from "./types";
 
@@ -341,6 +342,13 @@ export default function AdminEventTab({
           status={statusOf("displayQr")}
           onChange={(next) => void applyField("displayQr", { displayQr: next }, "Projector QR code")}
         />
+      </section>
+
+      {/* Discord announcements (#590) — also stored apart from the settings
+          hash (its own keys, its own endpoints), so it self-contains like
+          the images section above. */}
+      <section className="flex flex-col gap-3 border-b border-white/[0.06] pb-4">
+        <AdminEventAnnouncements setConfirm={setConfirm} />
       </section>
 
       <section className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">

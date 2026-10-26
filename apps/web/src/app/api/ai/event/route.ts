@@ -1,4 +1,5 @@
 import { logActivity } from "@/lib/activity-log";
+import { notifyFirstBlood } from "@/lib/announce/notify";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { aiAwardResponse, aiJson, aiPreflight, aiRoute, readRawBody } from "@/lib/ai-http";
 import { AI_ID_RE } from "@/lib/ai-keys";
@@ -155,6 +156,9 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   // fail an award that already landed. Mirrors classic/submit's guard.
   if (result.ok && result.correct && !result.already) {
     await logActivity("ai-solve", login, `${challengeId} via event`);
+    // First blood (#590): non-blocking, fresh solves only — same contract
+    // as the other award surfaces' hooks.
+    void notifyFirstBlood({ module: "ai", challengeId, login });
   }
 
   // 10. The nonce guards the replay of an award that HAPPENED. If the award did

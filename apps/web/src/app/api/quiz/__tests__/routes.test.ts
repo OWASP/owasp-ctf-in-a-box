@@ -20,6 +20,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The activity log, so the dry-run test below can see that nothing was logged.
 const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
 vi.mock("@/lib/activity-log", () => activityLog);
+// The first-blood hook (#590): asserted below, and mocked so no test can
+// reach the real announcer (Redis + Discord).
+const announceNotify = vi.hoisted(() => ({ notifyFirstBlood: vi.fn(async () => {}) }));
+vi.mock("@/lib/announce/notify", () => announceNotify);
 
 const {
   getSession,
@@ -151,6 +155,8 @@ beforeEach(() => {
   isModuleLive.mockReset();
   isModuleLive.mockResolvedValue(true);
   activityLog.logActivity.mockClear();
+  announceNotify.notifyFirstBlood.mockReset();
+  announceNotify.notifyFirstBlood.mockResolvedValue(undefined);
 });
 
 describe("POST /api/quiz/answer", () => {
@@ -320,6 +326,47 @@ describe("POST /api/quiz/answer", () => {
       expect(text).not.toContain(choice.id);
       expect(text).not.toContain(choice.label);
     }
+  });
+});
+
+// First blood (#590): the hook fires for a FRESH solve only, carries the
+// SESSION's login, and must never be able to fail an answer that already
+// banked its points (non-blocking by contract).
+describe("the first-blood hook (#590)", () => {
+  it("announces a fresh solve with the session's login, module and id", async () => {
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
+    await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledTimes(1);
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledWith({ module: "quiz", challengeId: "q1", login: "alice" });
+  });
+
+  it("does NOT announce an idempotent re-submission (it banked nothing)", async () => {
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 0, already: true });
+    await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("does NOT announce a dry run (an admin preview is not a solve)", async () => {
+    launchApiAccess.mockResolvedValue({ refused: null, preview: true });
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10, dryRun: true });
+    await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("does NOT announce a wrong answer or a gate refusal", async () => {
+    answerQuestion.mockResolvedValue({ ok: true, correct: false });
+    await answerPOST(answerReq({ questionId: "q1", choices: ["a"] }));
+    answerQuestion.mockResolvedValue({ ok: false, reason: "paused" });
+    await answerPOST(answerReq({ questionId: "q1", choices: ["a"] }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("the hook never blocks the response — a notify that never settles still yields 200", async () => {
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
+    announceNotify.notifyFirstBlood.mockReturnValue(new Promise<never>(() => {}));
+    const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ correct: true, points: 10 });
   });
 });
 

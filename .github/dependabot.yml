@@ -52,6 +52,14 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      # codeql.yml runs `init` and `analyze` from github/codeql-action, and the
+      # analyze step refuses to run against a database `init` built with another
+      # version. Ungrouped, Dependabot opens one PR per step and each fails
+      # CodeQL on its own.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   # Base images are digest-pinned (issue #49), which is what makes a build
   # reproducible and a swapped image detectable. It also means a pin is frozen

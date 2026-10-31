@@ -531,13 +531,19 @@ reviews:
       instructions: |
         Supply chain. Flag ⚠️ WARNING: <description> — <fix> for:
 
-        Unpinned versions — npm/pnpm ranges (^, ~, *, >, >=, "latest"); a
-        Docker image on :latest, no tag, or a tag without a digest; a Terraform
-        provider or module with no version constraint. Digest pinning is a
-        documented decision here, so an unpinned image is a regression, not a
-        style choice. Warn if the matching lockfile (pnpm-lock.yaml,
-        package-lock.json, .terraform.lock.hcl) wasn't committed alongside.
-        This repo has several package.json files — check the one that changed.
+        Unpinned versions — npm/pnpm ranges (^, ~, *, >, >=, "latest") in
+        dependency fields: dependencies, devDependencies,
+        optionalDependencies, peerDependencies, pnpm.overrides, overrides and
+        resolutions; a Docker image on :latest, no tag, or a tag without a
+        digest; a Terraform provider or module with no version constraint.
+        Digest pinning is a documented decision here, so an unpinned image is a
+        regression, not a style choice. Warn if the matching lockfile
+        (pnpm-lock.yaml, package-lock.json, .terraform.lock.hcl) wasn't
+        committed alongside. This repo has several package.json files — check
+        the one that changed. Do NOT apply the loose-version rule to engines or
+        packageManager: a caret range in engines is a valid compatibility
+        declaration, not an installed dependency, and packageManager should
+        remain exact.
 
         Overrides — a new or changed "overrides"/"resolutions"/"pnpm.overrides"
         entry with no explanation of why a transitive version is forced.
@@ -764,9 +770,15 @@ reviews:
 
           Flag ⚠️ WARNING: <description> — <fix> for:
 
-          npm/pnpm — a version using ^, ~, *, >, >=, or "latest"; a missing or
-          uncommitted lockfile alongside a manifest change. Several package.json
-          files exist (apps/web, sync, scorer); check the one that changed.
+          npm/pnpm — a version using ^, ~, *, >, >=, or "latest" in a
+          dependency field (dependencies, devDependencies,
+          optionalDependencies, peerDependencies, pnpm.overrides, overrides,
+          resolutions); a missing or uncommitted lockfile alongside a manifest
+          change. Several package.json files exist (apps/web, sync, scorer);
+          check the one that changed. Do NOT apply the loose-version rule to
+          engines or packageManager: a caret range in engines is a valid
+          compatibility declaration, not an installed dependency, and
+          packageManager should remain exact.
 
           Docker — an image on :latest, no tag, or a tag without a digest. Also
           an OS package install (apt-get install, apk add) with no per-package

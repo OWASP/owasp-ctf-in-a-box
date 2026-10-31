@@ -14,7 +14,7 @@
 #   cp -r /path/to/private-rubric scorer/rubric
 #   docker build -t ghcr.io/<org>/score:latest --build-arg RUBRIC_DIR=rubric scorer/
 # RUBRIC_DIR is resolved relative to the context root (scorer/); keep it inside.
-FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
 
 # docker-cli: the judge entrypoint drives sibling containers over the mounted
 # docker.sock (boot the app under test, self-attach to the ctf network).
@@ -22,7 +22,7 @@ FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18
 # base. The base digest does not freeze it: Alpine keeps only the latest
 # package revision in its index, so a rebuild there (-r0 -> -r1) breaks a
 # fresh build with "unable to select packages" until this pin follows it.
-RUN apk add --no-cache docker-cli=29.8.2-r1
+RUN apk add --no-cache docker-cli=29.9.2-r0
 
 WORKDIR /app
 

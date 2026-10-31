@@ -32,18 +32,16 @@ live-GitHub scoring. For standing the kit up in the first place, see
 - **How fresh the board is.** The folded standings — every module's points,
   team totals, the chart, hint penalties — are computed once and shared by
   every viewer for **10 seconds**, then recomputed on the next request
-  (`apps/web/src/lib/leaderboard/folded.ts`). So a quiz answer, a flag or an
-  AI solve shows on `/leaderboard` and the landing strip within 10 s rather
-  than on the contestant's very next page load. Secure Development points
-  take longer: the app's read of the scorer is itself cached for 30 s
-  (`next: { revalidate: 30 }` in `lambda.ts`), and the 10 s memo sits on top
-  of it, so a score the poller has already ingested can take up to about
-  40 s to reach the board — and the poller's own cadence comes before either.
-  The projector board refreshes every 30 s regardless. A contestant's own
-  `/profile`, `/quiz`, `/flags` and `/challenges` read live and show their
-  solve at once. A read that fails is never cached — the next request
-  retries.
-- Poller logs: `docker compose logs -f sync`.
+  (`apps/web/src/lib/leaderboard/folded.ts`). A quiz answer, a flag or an AI
+  solve therefore reaches `/leaderboard` and the landing strip within about
+  10 seconds; the projector board refreshes itself every 30. A Secure
+  Development score has one more hop: the `sync` poller reads the score
+  comment on its next poll (about every 30 seconds), and the app reads the
+  scorer uncached, so a score normally shows within about 40 seconds of the
+  comment (the v1.0.1 release check measured 27). A contestant's own
+  `/profile`, `/quiz`, `/flags` and `/challenges` read live. A read that
+  fails is never cached — the next request retries.
+- Poller logs: `docker compose logs -f sync`. On Fly: `fly logs --app <app>`.
 - All state lives in named Docker volumes, so a box reboot loses nothing.
 - **On AWS (ECS)**, the logs, a shell, the failure drills, rollback and
   tear-down are in the [AWS event-day runbook](aws.md#running-the-event-on-aws).
@@ -188,9 +186,9 @@ screen: the phase and time remaining, **Scoring** and **Registration** as
 switches you can flip from there, the team / player / submitted / stuck
 figures (stuck leads when it is non-zero), the poller's sync health line
 (one line — last poll, ingested, dropped, running/paused — that opens into
-the full breakdown, repos polled, last drop and last error, the old Status
-card), the five most recent activity rows, and a setup-status line per
-module ("checking…" until that module's own panel has reported its counts;
+the full breakdown, repos polled, last drop and last error), the five most
+recent activity rows, and a setup-status line per module ("checking…"
+until that module's own panel has reported its counts;
 "enabled" for a module with nothing countable). The figures and the activity
 rows load when you open Overview and, **while the event phase is live,
 refresh every 15 seconds**; the stamp on the phase row ("updated 12s ago ·
@@ -214,12 +212,8 @@ show a browser spinner: type the value, tab out, read the line under it.
 
 The hint policy has its own **Hints** destination because it is event-wide:
 Secure Development, Jeopardy and AI all sell their hints through the same
-four settings. (It sat on the Secure Development tab for a while, which left
-a classic-only or ai-only event with no hint switch at all, then in a section
-of Event.) **Every move has been a UI relocation only** — the underlying
-storage keys (`hintsEnabled`, `hintCost`, `hintsMinSolves`,
-`hintsUnlockAfterMin`) and their validation are completely unchanged, so no
-deployed event's settings, or their meaning, changed by upgrading.
+four settings (`hintsEnabled`, `hintCost`, `hintsMinSolves`,
+`hintsUnlockAfterMin`).
 
 **Every module screen opens with a sticky header and a setup status line.**
 The header is the module's name and its **Enabled** switch — the same control
@@ -525,8 +519,8 @@ The panel offers:
   banner, and whether the leaderboard shows the **hint-penalty** column.
   Turning hints off does not forgive points already spent: the spend stays
   recorded, so switching back on restores the penalties rather than wiping
-  them. The one thing the toggle cannot do is turn hints on without
-  `UPSTASH_REDIS_REST_*` credentials — the hint text lives only there.
+  them. Hint text lives in the stack's Redis, which every stack runs, so
+  there are no extra credentials to add for hints.
 - **Hint gating** — two knobs that decide *who* may buy a hint and *when*,
   enforced server-side in `revealHint` (the API is the boundary; the UI only
   hides things):
@@ -837,6 +831,14 @@ The panel offers:
   refused with "Scores are being updated. Try again in a moment" (#553): the
   price is checked against a score that is being rewritten. It is a matter
   of seconds.
+
+  **Starting over with new content.** A master reset keeps everything you
+  authored, and a module's own import (Jeopardy, Quiz or AI) only adds and
+  updates — it never deletes. To replace the content outright, import an
+  event archive ([Archiving and replaying an event](#archiving-and-replaying-an-event)):
+  it runs the same reset first, wiping teams, solves and the rest of the
+  run state, freezing scoring and clearing the scoring start, then replaces
+  the Jeopardy board, Quiz bank and AI catalogue with what the file holds.
 
 - **Quiz controls** (Quiz tab, present only when the `quiz` module is enabled) — the two
   retry-gate knobs (max attempts, accepted from 0 to **100**; retry cooldown,
@@ -2344,7 +2346,9 @@ at exit: it returns 0 only when the run was valid *and* every criterion was
 met, 1 when the run could not be trusted or the bar was missed (each miss is
 named on stderr as `BAR MISSED: …`), 2 on a usage error — so a run inside a
 shell loop or CI cannot pass by accident. The report carries every number
-either way. A miss on memory means `fly scale vm`; a miss on `/leaderboard`
+either way. A miss on memory means a larger `FLY_VM_SIZE` / `FLY_VM_MEMORY`
+in `.env.fly` and a redeploy ("Machine size" in
+[docs/fly.md](fly.md)); a miss on `/leaderboard`
 alone means the page's own cost is the problem (see #434, #444, #446).
 `/api/admin/metrics` needs an admin session the script deliberately does not
 carry (a cookie in a command line is readable by every local user) — time it
@@ -2373,8 +2377,10 @@ is a redacted label — never the token or a URL. Not seeded on purpose:
 raise; the harness omits it because an exact clean could not lower it back
 safely — and hint purchases.
 
-Before an event, four checks in this order: `FLY_AUTO_STOP=off` is set and
+Before an event, five checks in this order: `FLY_AUTO_STOP=off` is set and
 deployed (an idle-suspended machine takes Redis and the poller down with it);
+on Fly, `FLY_VM_SIZE` / `FLY_VM_MEMORY` size the machine up from the 1 GB
+between-events default (see "Machine size" in docs/fly.md) and are deployed;
 `/health/deep` is 200; the external monitor described in
 [docs/hosting.md](hosting.md#monitoring) is enabled and posting to the
 organizers' channel; the Cloudflare rate-limiting rule on `/api/*` described
@@ -2388,8 +2394,9 @@ route, which would spend real cooldowns and attempt caps). See
 [docs/troubleshooting.md](troubleshooting.md) for what a 503 means and what
 to do.
 
-On AWS, the first and last checks do not apply: there is no Fly machine to
-suspend, and no Cloudflare rule unless you put one in front of the ALB.
+On AWS, the first, second and last checks do not apply: there is no Fly
+machine to suspend or size, and no Cloudflare rule unless you put one in front
+of the ALB.
 `scripts/load-test.sh` does not run against an ECS stack either. The AWS
 checks, and how to run the load pass by hand, are in the
 [AWS event-day runbook](aws.md#before-the-event).
@@ -2503,7 +2510,7 @@ box?":
 
 ```console
 $ curl -s https://ctf.example.org/health
-{"status":"ok","version":"0.4.0","revision":"d3399e9abcde","builtAt":"2026-09-07T02:01:49.000Z"}
+{"status":"ok","version":"1.0.1","revision":"dbe1f1eac6b2","builtAt":"2026-10-22T18:04:11.000Z"}
 ```
 
 | Field | Means |

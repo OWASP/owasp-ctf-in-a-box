@@ -1110,7 +1110,7 @@ mirror_image() {
   arch="$(docker image inspect --format '{{.Architecture}}' "$src" 2>/dev/null || true)"
   if [ "$arch" != "amd64" ]; then
     echo "ERROR: $src is $arch, not amd64 — GitHub runners need linux/amd64." >&2
-    echo "Rebuild + push amd64:  docker buildx build --platform linux/amd64 -t $dest --push scorer/" >&2
+    echo "Rebuild + push amd64:  docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t $dest --push scorer/" >&2
     return 1
   fi
   docker tag "$src" "$dest"

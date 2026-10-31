@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Ask a question on Slack
+    url: https://owasp.slack.com/archives/C0C2RKGSKD5
+    about: Questions and chat go to the project's channel on the OWASP Slack (join at https://owasp.org/slack/invite). Claim an issue on the issue itself, not in Slack.
   - name: Report a security vulnerability
     url: https://github.com/OWASP/owasp-ctf-in-a-box/security/advisories/new
     about: Please report vulnerabilities in the kit's own infrastructure via GitHub private vulnerability reporting — see SECURITY.md. Do not open a public issue.

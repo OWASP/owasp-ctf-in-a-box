@@ -451,13 +451,33 @@ async function reachableByLogin(
     const { rosterBySlug, teamByLogin } = mergeTeamRosters(data, await listTeams());
 
     const rows: { login: string; roster: string[] }[] = [];
-    for (const [login, total] of classicTotals) {
-      if (total.solved <= 0) continue;
+
+    // Preserve the classic totals' login spelling for existing solvers.
+    // Add existing leaderboard contestants who have no personal Classic solves.
+    const logins = new Map<string, string>();
+
+    for (const login of classicTotals.keys()) {
+      logins.set(login.toLowerCase(), login);
+    }
+
+    for (const entry of data.entries) {
+      const key = entry.login.toLowerCase();
+
+      if (teamByLogin.has(key) && !logins.has(key)) {
+        logins.set(key, entry.login);
+      }
+    }
+
+    for (const login of logins.values()) {
       const members = rosterBySlug.get(teamByLogin.get(login.toLowerCase()) ?? "");
+
       // The login's own spelling leads: the solves hash is keyed on whatever
       // spelling wrote it, so a roster stored in another case must add to it,
-      // never replace it (the rule `classic-team.ts` states for the profile).
-      rows.push({ login, roster: members ? [...new Set([login, ...members])] : [login] });
+      // never replace it.
+      rows.push({
+        login,
+        roster: members ? [...new Set([login, ...members])] : [login],
+      });
     }
     if (rows.length === 0) return undefined;
 
@@ -943,6 +963,7 @@ function attributeEntry(entry: LeaderboardEntry, secureDev: boolean, overlay: Ov
   }
 
   const classicTotal = overlay.classicByLogin.get(key);
+
   if (classicTotal && classicTotal.solved > 0) {
     modules["classic"] = classicModule(
       classicTotal,
@@ -951,6 +972,13 @@ function attributeEntry(entry: LeaderboardEntry, secureDev: boolean, overlay: Ov
       overlay.classicReachable?.get(key),
     );
     points += classicTotal.points;
+  } else if (modules.classic && overlay.classicReachable?.has(key)) {
+    modules["classic"] = classicModule(
+      NO_SOLVES,
+      overlay.classicTotalChallenges,
+      overlay.classicLiveIds,
+      overlay.classicReachable.get(key),
+    );
   }
 
   const aiTotal = overlay.aiByLogin.get(key);

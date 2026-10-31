@@ -718,6 +718,76 @@ describe("withModuleContributions", () => {
       });
     });
 
+    it("gives a zero-solve teammate the same reachable denominator as the solver", async () => {
+      mocks.listTeams.mockResolvedValue([
+        { slug: "red", name: "Red", members: ["ada", "cyd"] },
+      ]);
+
+      mocks.listChallenges.mockResolvedValue([
+        { id: "c1", points: 10 },
+        { id: "c2", points: 20 },
+        { id: "c3", points: 30 },
+      ]);
+
+      mocks.listStories.mockResolvedValue([
+        { id: "s1", title: "Story", intro: "", steps: ["c1", "c2"] },
+      ]);
+
+      // Only Ada has a personal Jeopardy solve.
+      mocks.getClassicTotals.mockResolvedValue(
+        new Map([["ada", { points: 10, solved: 1, lastAt: null }]]),
+      );
+
+      // The team has solved c1, which unlocks c2 for both members.
+      mocks.getTeamClassicTotalsBatch.mockResolvedValue([
+        {
+          points: 10,
+          solved: 1,
+          lastAt: null,
+          itemIds: ["c1"],
+          itemPoints: { c1: 10 },
+        },
+      ]);
+
+      mocks.upstashPipeline.mockImplementation(
+        unlockPipeline({
+          ada: {
+            solves: { c1: SOLVED_AT },
+            team: "red",
+            joinedAt: JOINED_AT,
+          },
+          cyd: {
+            solves: {},
+            team: "red",
+            joinedAt: JOINED_AT,
+          },
+        }),
+      );
+
+      // Both contestants already exist in the scoring source.
+      const out = await withModuleContributions(
+        data([entry("ada", 0, 0), entry("cyd", 0, 0)]),
+      );
+
+      const ada = out.entries.find((row) => row.login === "ada")!;
+      const cyd = out.entries.find((row) => row.login === "cyd")!;
+
+      expect(ada.modules!["classic"]!.detail).toMatchObject({
+        solved: 1,
+        total: 3,
+        points: 10,
+      });
+
+      expect(cyd.modules!["classic"]!.detail).toMatchObject({
+        solved: 0,
+        total: 3,
+        points: 0,
+      });
+
+      // This is a display-only correction.
+      expect(out.entries).toHaveLength(2);
+    });
+
     // A failed roster or solves read must not INVENT a lock: the row keeps
     // the clamp it always used (never below its own numerator) and reports
     // nothing locked, so a blip costs precision and never hides a step.

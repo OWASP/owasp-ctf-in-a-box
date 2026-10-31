@@ -10,6 +10,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ### Changes
 
+- **Fixed: individual leaderboard rows now include team-unlocked Jeopardy
+  story steps in their denominator (#689).** Reachability is now calculated
+  for existing leaderboard contestants even when they have no personal
+  Jeopardy solves, using their team's roster and shared unlock progress.
+  Solve-less teammates therefore see the same reachable challenge total as
+  their teammates, without changing points, rankings or leaderboard row
+  creation.
+
 - **Fixed: the scorer's unreachable-target early-abort test no longer flakes
   under CPU load (#643).** `runExec` now also returns `spawned`, the number of
   probes it actually launched — counted at the spawn decision, not by a marker

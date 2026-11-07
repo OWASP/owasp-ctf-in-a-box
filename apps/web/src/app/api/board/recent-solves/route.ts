@@ -19,6 +19,11 @@ import { RECENT_SOLVES_LIMIT } from "@/lib/recent-solves-keys";
  * redacted.
  */
 export async function GET(request: Request) {
+  // Session lookup errors fail closed (`.catch(() => null)`): if auth is
+  // unavailable or credentials cannot be verified, `login` evaluates to
+  // `undefined`, so `requireLaunchedApi` denies access with 403 before launch.
+  // Auth errors must never fail open to bypass the launch guard or allow
+  // unlaunched feed reads.
   const session = await auth.api.getSession({ headers: request.headers }).catch(() => null);
   const login = (session?.user as { login?: string } | undefined)?.login;
   const refused = await requireLaunchedApi(login);

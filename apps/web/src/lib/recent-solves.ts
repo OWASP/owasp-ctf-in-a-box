@@ -18,6 +18,17 @@
 // off, its challenge is gone, its target is disabled, or its classic story
 // step is locked for an anonymous viewer (ADR 60). The admin-only activity
 // log is never read here.
+//
+// FAIL-CLOSED DIRECTION FOR CONTENT DISCLOSURE: challenge and module listers
+// (`listChallenges`, `listStories`, `listQuestions`, `listAiChallenges`,
+// `getChallengeCatalog`, `getEnabledApps`) run across each module to resolve
+// titles and verify active visibility. If any lister fails or rejects, its
+// title map resolves to null, causing solves for that module to be omitted.
+// The projector board is a public, unauthenticated display surface: displaying
+// a solve whose release schedule, disabled status, or story-step lock cannot
+// be positively verified risks leaking unreleased challenges or locked story
+// titles to contestants. Failing closed by omitting unverified lines preserves
+// this confidentiality boundary.
 import "server-only";
 import type { AppId } from "@/lib/apps";
 import { getChallengeCatalog } from "@/lib/challenges";
@@ -187,17 +198,22 @@ export async function recordRecentSolve(input: {
   }
 }
 
+/**
+ * Resolves visible classic challenge titles. Story positions are constructed
+ * using visible challenges only: an unreleased or disabled challenge cannot
+ * advance a story step or affect the locked status of subsequent steps. If
+ * challenge or story retrieval fails, returns null so classic lines are omitted
+ * (fail closed on disclosure).
+ */
 async function classicTitles(): Promise<Map<string, string> | null> {
   if (!(await isModuleLive("classic"))) return null;
   try {
     const [challenges, stories] = await Promise.all([listChallenges(), listStories()]);
-    const positions = storyPositions(stories, new Set(challenges.map((c) => c.id)));
     const nowMs = Date.now();
+    const visibleChallenges = challenges.filter((c) => isChallengeVisible(c, nowMs));
+    const positions = storyPositions(stories, new Set(visibleChallenges.map((c) => c.id)));
     const titles = new Map<string, string>();
-    for (const challenge of challenges) {
-      // A disabled or not-yet-released challenge is hidden from contestants
-      // (#637); the projector is a contestant surface, so its line goes too.
-      if (!isChallengeVisible(challenge, nowMs)) continue;
+    for (const challenge of visibleChallenges) {
       const pos = positions.get(challenge.id);
       // A story step beyond the first is locked for a signed-out projector
       // audience regardless of which team solved it. Drop the line rather
@@ -211,6 +227,7 @@ async function classicTitles(): Promise<Map<string, string> | null> {
   }
 }
 
+/** Resolves live quiz prompts. Returns null on store error to omit quiz feed lines (fail closed). */
 async function quizTitles(): Promise<Map<string, string> | null> {
   if (!(await isModuleLive("quiz"))) return null;
   try {
@@ -220,6 +237,7 @@ async function quizTitles(): Promise<Map<string, string> | null> {
   }
 }
 
+/** Resolves live AI challenge titles. Returns null on store error to omit AI feed lines (fail closed). */
 async function aiTitles(): Promise<Map<string, string> | null> {
   if (!(await isModuleLive("ai"))) return null;
   try {
@@ -230,7 +248,8 @@ async function aiTitles(): Promise<Map<string, string> | null> {
 }
 
 /** SD catalogue keys are `<app>:<id>`; only targets the event still serves
- *  are included. A failed/empty catalogue hides all SD lines for this read. */
+ *  are included. A failed/empty catalogue hides all SD lines for this read
+ *  (fail closed on disclosure). */
 async function secureDevTitles(): Promise<Map<string, string> | null> {
   if (!(await isModuleLive("secure-development"))) return null;
   try {

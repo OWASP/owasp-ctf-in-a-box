@@ -78,6 +78,19 @@ const LOGO_FALLBACK_TEXT_CLASSES: Record<SponsorLogoSize, string> = {
   lg: "text-[2.2vh]",
 };
 
+/**
+ * Format an ISO timestamp deterministically in UTC as HH:mm:ss for projector display.
+ * Avoids browser/system timezone variance so wall clocks and projector snapshots stay consistent.
+ */
+export function formatSolveTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
 export default function DisplayBoard({
   rows,
   eventName,
@@ -137,13 +150,21 @@ export default function DisplayBoard({
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       try {
         const res = await fetch("/api/board/recent-solves", { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (!cancelled) setPolled(null);
+          return;
+        }
         const body = (await res.json()) as { solves?: unknown };
-        if (cancelled || !Array.isArray(body.solves)) return;
+        if (cancelled) return;
+        if (!Array.isArray(body.solves)) {
+          setPolled(null);
+          return;
+        }
         setPolled(body.solves as RecentSolveItem[]);
       } catch {
-        // Cosmetic surface: a failed poll keeps the last good feed rather
-        // than blanking the wall.
+        // Reset to null on error or failed poll: restores the server-filtered seed
+        // rather than retaining potentially stale hidden challenge titles.
+        if (!cancelled) setPolled(null);
       }
     };
     const id = setInterval(load, 15_000);
@@ -194,24 +215,32 @@ export default function DisplayBoard({
         </div>
       </div>
 
-      <ol className="mt-[3vh] flex min-h-0 flex-1 flex-col justify-evenly overflow-hidden">
+      <ol
+        className={`flex min-h-0 flex-1 flex-col justify-evenly overflow-hidden ${recent.length > 0 ? "mt-[1.5vh]" : "mt-[3vh]"}`}
+      >
         {rows.map((row) => (
           <li key={row.key} className="flex items-baseline gap-[2vw]">
             <span
-              className="w-[6vw] flex-none text-right font-display text-[4.2vh] font-black tabular-nums"
+              className={`w-[6vw] flex-none text-right font-display font-black tabular-nums ${recent.length > 0 ? "text-[3.2vh] leading-tight" : "text-[4.2vh]"}`}
               style={{ color: PODIUM[row.rank] ?? "#8f8f9b" }}
             >
               {row.rank}
             </span>
-            <span className="min-w-0 flex-1 truncate font-display text-[4.2vh] font-bold text-white">
+            <span
+              className={`min-w-0 flex-1 truncate font-display font-bold text-white ${recent.length > 0 ? "text-[3.2vh] leading-tight" : "text-[4.2vh]"}`}
+            >
               <bdi>{row.name}</bdi>
             </span>
             {row.solved !== undefined && (
-              <span className="flex-none font-mono text-[2vh] tabular-nums text-[#22c55e]">
+              <span
+                className={`flex-none font-mono tabular-nums text-[#22c55e] ${recent.length > 0 ? "text-[1.6vh]" : "text-[2vh]"}`}
+              >
                 {row.solved} solved
               </span>
             )}
-            <span className="w-[14vw] flex-none text-right font-mono text-[4.2vh] font-bold tabular-nums text-white">
+            <span
+              className={`w-[14vw] flex-none text-right font-mono font-bold tabular-nums text-white ${recent.length > 0 ? "text-[3.2vh] leading-tight" : "text-[4.2vh]"}`}
+            >
               {row.points.toLocaleString("en-US")}
             </span>
           </li>
@@ -234,6 +263,9 @@ export default function DisplayBoard({
                 key={`${solve.at}:${solve.team}:${solve.title}:${i}`}
                 className="flex items-baseline gap-[1.2vw] border-t border-white/[0.06] pt-[0.65vh] font-mono text-[1.7vh]"
               >
+                <time dateTime={solve.at} className="w-[5vw] flex-none text-right tabular-nums text-[#8f8f9b]">
+                  {formatSolveTime(solve.at)}
+                </time>
                 <span className="w-[17vw] flex-none truncate font-bold text-white">
                   {solve.team}
                 </span>

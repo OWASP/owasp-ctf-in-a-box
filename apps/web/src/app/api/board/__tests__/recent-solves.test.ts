@@ -58,6 +58,18 @@ describe("GET /api/board/recent-solves", () => {
     expect(mocks.listRecentSolves).not.toHaveBeenCalled();
   });
 
+  it("fails closed when session retrieval errors: passes no login to launch guard, returns refusal and never reads feed", async () => {
+    mocks.getSession.mockRejectedValue(new Error("auth service down"));
+    const refused = new Response(JSON.stringify({ error: "not-launched" }), { status: 403 });
+    mocks.requireLaunchedApi.mockResolvedValue(refused);
+
+    const res = await GET(new Request("http://box/api/board/recent-solves"));
+    expect(res).toBe(refused);
+    expect(res.status).toBe(403);
+    expect(mocks.requireLaunchedApi).toHaveBeenCalledWith(undefined);
+    expect(mocks.listRecentSolves).not.toHaveBeenCalled();
+  });
+
   it("503s with a generic body when the feed read fails", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.listRecentSolves.mockRejectedValue(new Error("NOAUTH"));

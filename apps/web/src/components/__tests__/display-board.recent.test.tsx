@@ -43,6 +43,20 @@ describe("DisplayBoard — recent solves", () => {
     expect(html).toContain("Prompt Leak");
     expect(html).toContain("+100");
     expect(html).toContain("AI");
+    expect(html).toContain('<time dateTime="2026-08-24T10:00:00.000Z"');
+    expect(html).toContain(">10:00:00</time>");
+    expect(html).toContain('<time dateTime="2026-08-24T09:59:00.000Z"');
+    expect(html).toContain(">09:59:00</time>");
+  });
+
+  it("tightens standings row text size and line height when the feed is shown", () => {
+    const withFeed = render();
+    expect(withFeed).toContain("text-[3.2vh] leading-tight");
+    expect(withFeed).not.toContain("text-[4.2vh]");
+
+    const emptyFeed = render([]);
+    expect(emptyFeed).toContain("text-[4.2vh]");
+    expect(emptyFeed).not.toContain("text-[3.2vh] leading-tight");
   });
 
   it("shows no section when the feed is empty", () => {

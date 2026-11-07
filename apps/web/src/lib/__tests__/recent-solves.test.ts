@@ -5,6 +5,7 @@
 //   2. The READ is a field-by-field public projection: a hidden module,
 //      deleted item, disabled target or locked classic story step is DROPPED,
 //      not redacted, and a failed Redis read throws for the route to 503.
+import { inspect } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RECENT_SOLVES_DATA_KEY,
@@ -223,6 +224,58 @@ describe("recordRecentSolve", () => {
       warn.mockRestore();
     }
   });
+
+  it("never logs flags, tokens or own properties when recording fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const secretErr = new Error("upstash connection reset");
+      Object.assign(secretErr, {
+        command: ["EVAL", "RECORD_SCRIPT"],
+        flag: "CTF{super_secret_flag}",
+        token: "bearer-secret-token",
+        cause: { internalKey: "secret-key-12345" },
+      });
+      mocks.upstashEval.mockRejectedValueOnce(secretErr);
+
+      await recordRecentSolve({
+        module: "classic",
+        challengeId: "c1",
+        points: 50,
+        login: "alice",
+      });
+
+      expect(warn).toHaveBeenCalled();
+      for (const call of warn.mock.calls) {
+        for (const arg of call) {
+          expect(typeof arg).toBe("string");
+        }
+      }
+      const logged = warn.mock.calls.map((call) => call.map((arg) => inspect(arg, { depth: 5 })).join(" ")).join("\n");
+      expect(logged).not.toContain("CTF{super_secret_flag}");
+      expect(logged).not.toContain("bearer-secret-token");
+      expect(logged).not.toContain("secret-key-12345");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("sanitizes non-Error throws so thrown strings or objects never leak into logs", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      mocks.upstashEval.mockRejectedValueOnce("CTF{thrown_string_flag}");
+      await recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice" });
+
+      mocks.upstashEval.mockRejectedValueOnce({ leak: "CTF{thrown_object_flag}" });
+      await recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice" });
+
+      const logged = warn.mock.calls.map((call) => call.map((arg) => inspect(arg, { depth: 5 })).join(" ")).join("\n");
+      expect(logged).not.toContain("CTF{thrown_string_flag}");
+      expect(logged).not.toContain("CTF{thrown_object_flag}");
+      expect(logged).toContain("non-Error throw");
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe("listRecentSolves", () => {
@@ -273,6 +326,66 @@ describe("listRecentSolves", () => {
     expect(out).toEqual([{ team: "Red Team", title: "Step One", module: "classic", points: 10, at: T }]);
     expect(JSON.stringify(out)).not.toContain("Hidden Step Two");
     expect(out.map((item) => item.points)).not.toContain(20);
+  });
+
+  it("filters unreleased classic challenges before calculating story positions", async () => {
+    // Challenge 1 is unreleased (disabled with future releaseAt), Challenge 2 is live.
+    const futureMs = Date.now() + 1_000_000;
+    mocks.listChallenges.mockResolvedValue([
+      { id: "c1", title: "Unreleased Step One", points: 10, enabled: false, releaseAt: new Date(futureMs).toISOString() },
+      { id: "c2", title: "Step Two", points: 20 },
+    ]);
+    mocks.listStories.mockResolvedValue([{ id: "s", title: "Story", intro: "", steps: ["c1", "c2"] }]);
+    readReturns([
+      ["classic:-:c2:red", JSON.stringify(stored({ challengeId: "c2", points: 20 }))],
+      ["classic:-:c1:red", JSON.stringify(stored({ challengeId: "c1", points: 10 }))],
+    ]);
+
+    const out = await listRecentSolves();
+    // c1 is unreleased and omitted; c2 is now position 1 (first visible step) and appears
+    expect(out).toEqual([{ team: "Red Team", title: "Step Two", module: "classic", points: 20, at: T }]);
+  });
+
+  it("fails closed on lister rejections: omits entries whose content cannot be verified", async () => {
+    readReturns([
+      ["classic:-:c1:red", JSON.stringify(stored())],
+      ["quiz:-:q1:red", JSON.stringify(stored({ module: "quiz", challengeId: "q1", points: 10 }))],
+      ["ai:-:a1:red", JSON.stringify(stored({ module: "ai", challengeId: "a1", points: 20 }))],
+      [
+        "secure-development:dvwa:s1:red",
+        JSON.stringify(stored({ module: "secure-development", app: "dvwa", challengeId: "s1", points: 30 })),
+      ],
+    ]);
+
+    // 1. listChallenges rejects -> classic omitted, other 3 remain
+    mocks.listChallenges.mockRejectedValueOnce(new Error("disk error"));
+    const withoutClassic = await listRecentSolves();
+    expect(withoutClassic.map((s) => s.module)).toEqual(["quiz", "ai", "secure-development"]);
+
+    // 2. listStories rejects -> classic omitted
+    mocks.listStories.mockRejectedValueOnce(new Error("stories unavailable"));
+    const withoutClassicStories = await listRecentSolves();
+    expect(withoutClassicStories.map((s) => s.module)).toEqual(["quiz", "ai", "secure-development"]);
+
+    // 3. listQuestions rejects -> quiz omitted
+    mocks.listQuestions.mockRejectedValueOnce(new Error("quiz store down"));
+    const withoutQuiz = await listRecentSolves();
+    expect(withoutQuiz.map((s) => s.module)).toEqual(["classic", "ai", "secure-development"]);
+
+    // 4. listAiChallenges rejects -> ai omitted
+    mocks.listAiChallenges.mockRejectedValueOnce(new Error("ai store down"));
+    const withoutAi = await listRecentSolves();
+    expect(withoutAi.map((s) => s.module)).toEqual(["classic", "quiz", "secure-development"]);
+
+    // 5. getChallengeCatalog rejects -> secure-development omitted
+    mocks.getChallengeCatalog.mockRejectedValueOnce(new Error("catalog unavailable"));
+    const withoutCatalog = await listRecentSolves();
+    expect(withoutCatalog.map((s) => s.module)).toEqual(["classic", "quiz", "ai"]);
+
+    // 6. getEnabledApps rejects -> secure-development omitted
+    mocks.getEnabledApps.mockRejectedValueOnce(new Error("enabled apps unavailable"));
+    const withoutEnabledApps = await listRecentSolves();
+    expect(withoutEnabledApps.map((s) => s.module)).toEqual(["classic", "quiz", "ai"]);
   });
 
   it("does not let hidden newest lines consume the projector's slots", async () => {

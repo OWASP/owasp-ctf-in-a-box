@@ -83,7 +83,7 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-export function createHandler({ rubric = null, store, token, now = () => new Date().toISOString() }) {
+export function createHandler({ rubric = null, store, token, now = () => new Date().toISOString(), onFeedTask = null }) {
   if (!token) throw new Error("refusing to start: set CTF_SCORE_BEARER_TOKEN or SCORER_TOKEN");
   // Without a rubric the board can only cover targets this process has seen
   // solves for — degenerate, but honest.
@@ -156,31 +156,37 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
     const added = await store.recordSolves(target, author, ids, solvedAt.iso);
     if (!rubric) seenTargets.add(target);
+    res.writeHead(202).end();
     // The projector feed (#542): only FRESH HSETNX writes become lines, with
     // the team captured now — a later rename or roster move must not rewrite
-    // history. Cosmetic and fail-open: the solve already landed, so a feed or
-    // team-read failure is logged and never fails the 202. No rubric means no
-    // points to show, so degenerate mode writes no feed.
+    // history. Cosmetic and fail-open: the score is acknowledged immediately (202)
+    // so cosmetic feed writes never delay a scoring response. No rubric means
+    // no points to show, so degenerate mode writes no feed.
     if (rubric && added.length > 0) {
-      try {
-        const team = await store.getTeamForLogin(author);
-        if (team) {
-          await store.recordRecentSolves(
-            added.map((id) => ({
-              target,
-              id,
-              points: rubric.pointsFor(target, id) ?? 0,
-              at: solvedAt.iso,
-              team: team.slug,
-              teamName: team.name,
-            })),
-          );
+      const task = (async () => {
+        try {
+          const team = await store.getTeamForLogin(author);
+          if (team) {
+            await store.recordRecentSolves(
+              added.map((id) => ({
+                target,
+                id,
+                points: rubric.pointsFor(target, id) ?? 0,
+                at: solvedAt.iso,
+                team: team.slug,
+                teamName: team.name,
+              })),
+            );
+          }
+        } catch (err) {
+          const label = err instanceof Error ? err.message : "non-Error throw";
+          console.error(`[recent-solves] secure-development feed write failed: ${label}`);
         }
-      } catch (err) {
-        console.error(`[recent-solves] secure-development feed write failed: ${err.message}`);
+      })();
+      if (typeof onFeedTask === "function") {
+        onFeedTask(task);
       }
     }
-    res.writeHead(202).end();
   }
 
   return async (req, res) => {

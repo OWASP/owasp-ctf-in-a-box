@@ -19,6 +19,61 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   the response carries no challenge id, app id, team slug or activity-log
   row. Feed writes are fail-open, so a feed failure never fails a solve; the
   master reset clears the feed with the rest of the event data.
+
+## v1.0.3 — 2026-10-25
+
+The second security patch on the v1.0.1 freeze, one day after the first: a
+zod denial of service that the public sign-in route reaches, carried in with
+the week's dependency bumps as one release. No breaking change, no
+configuration change. Redeploy the app; the scorer and sync images pick up
+the refreshed Node base on their next build.
+
+### Changes
+- **Security: `zod` 4.5.4 → 4.6.7 (#711).** GHSA-mrhx-c7xc-m3w5 (high): an
+  array schema without a length cap accumulates one issue object per failing
+  element, so a large array of wrong-typed items exhausts memory. zod is
+  transitive here, through `better-auth` and `better-call`, and the body of
+  `POST /api/auth/sign-in/social` carries `scopes: z.array(z.string())` with
+  no cap. That route is public on every box that signs in with GitHub, which
+  is all of them, and nothing in front of the app limits a request body. One
+  request could take the app container down; the 10 s health check (v1.0.2)
+  brought it back, but the request repeats.
+- **Security: `better-auth` 1.7.7 → 1.7.12 (#711).** 1.7.12 runs the same
+  issuer and nonce checks on OAuth callbacks completed through the OAuth
+  proxy as on the standard callback, and rejects ID tokens without `exp` or
+  `iat` or from a provider with no client ID. The kit uses neither the proxy
+  nor ID-token sign-in; the bump is hygiene on the auth library, and it moves
+  `better-call` to 1.4.4.
+- **Security: `happy-dom` 21.0.3 → 21.0.4 (#711).** GHSA-834v-8h66-3h79
+  (high), an incomplete fix for CVE-2026-33943. Test-only: happy-dom is the
+  vitest DOM and never ships in the runtime image.
+- **Deps: `react` and `react-dom` 19.3.0 → 19.3.1, `vitest` 5.0.4 → 5.0.5,
+  the `node:22-alpine` digest in all three Dockerfiles, `codeql-action`
+  4.39.1, `hashicorp/aws` 6.70.0 (#711).** The eight Dependabot PRs of the
+  week (#695, #699, #701, #702, #707, #708, #709, #710) land as this one
+  change so they get one CI run, one review and one deploy. `engines.node`
+  in `apps/web` narrows from `>=22` to `^22.12.0`, the line CI, `.nvmrc` and
+  the images actually run and the floor vitest 5 declares.
+
+## v1.0.2 — 2026-10-24
+
+A security patch for the v1.0.1 freeze: the Next.js advisories of October 22
+and the Fly health-check interval. No breaking change, no configuration
+change, no scorer rebuild. Upgrade a public box now; the Server Actions
+denial of service reaches any App Router deployment with a server action,
+and this kit has one.
+
+### Changes
+- **Security: `next` 16.4.0 → 16.4.2 (#703).** Closes three advisories
+  published 2026-10-22 and patched in 16.4.1: GHSA-p3m5-59mp-jv5r (high, a
+  denial of service through Server Actions; crafted requests pin the app's
+  CPU, and this kit's `ai` module carries a server action whether or not the
+  module is switched on), GHSA-2464-fhr4-w9xw (critical, remote code
+  execution in Image Optimization with SVG input; the shipped lockfile
+  already carried sharp 0.35.5, the advisory's workaround, and the image is
+  musl-based) and GHSA-673q-mjm6-r5xr (critical, remote code execution in
+  `use cache` functions; the kit has none). `eslint-config-next` moves with
+  it.
 - **Fixed: an app-container crash on Fly costs ~30 seconds of errors (#691).**
   The container restarts in about two seconds, but Fly's proxy routes to it
   again only after the next passing health check, and `fly.toml` checked every

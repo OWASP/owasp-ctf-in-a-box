@@ -11,6 +11,13 @@ export const RECENT_SOLVES_KEY = "ctf:feed:recent-solves";
  *  while its display data still carries the team name from solve time. */
 export const RECENT_SOLVES_DATA_KEY = "ctf:feed:recent-solves:data";
 
+/** The reset-generation fence for the feed. A writer captures this before a
+ *  solve is scored and its Lua write only lands while the value is unchanged,
+ *  so a solve in flight across a master reset cannot repopulate the fresh
+ *  event. Lives outside `ctf:feed:*` so the reset's prefix sweep cannot delete
+ *  the value the atomic reset script is about to advance. */
+export const RECENT_SOLVES_GENERATION_KEY = "ctf:admin:feed-generation";
+
 /** How many events the sorted set (and its data hash) retains. The response
  *  only returns `RECENT_SOLVES_LIMIT`. Bounded on every write. */
 export const RECENT_SOLVES_MAX = 50;

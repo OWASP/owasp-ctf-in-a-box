@@ -11,6 +11,7 @@ describe.skipIf(!liveConfigured)("recent-solves RECORD_SCRIPT against a live Red
   const K = {
     zset: liveKey("recent-solves", "zset"),
     data: liveKey("recent-solves", "data"),
+    generation: liveKey("recent-solves", "generation"),
   };
   let script: string;
   let evalRedis: (typeof import("@/lib/upstash"))["upstashEval"];
@@ -31,9 +32,13 @@ describe.skipIf(!liveConfigured)("recent-solves RECORD_SCRIPT against a live Red
     if (pipeline) await pipeline([["DEL", ...Object.values(K)]]);
   });
 
-  async function write(id: string, score: number, event: unknown, max: number) {
+  async function write(id: string, score: number, event: unknown, max: number, generation = "0") {
     await load();
-    return evalRedis(script, [K.zset, K.data], [id, String(score), JSON.stringify(event), String(max)]);
+    return evalRedis(
+      script,
+      [K.zset, K.data, K.generation],
+      [id, String(score), JSON.stringify(event), String(max), generation],
+    );
   }
 
   it("adds without trimming while the feed is under the cap", async () => {
@@ -99,5 +104,30 @@ describe.skipIf(!liveConfigured)("recent-solves RECORD_SCRIPT against a live Red
     expect(hlen.result).toBe(50);
     expect((keys.result as string[]).sort()).toEqual([...kept].sort());
     expect(JSON.parse(String(newest.result))).toEqual({ n: 54 });
+  });
+
+  it("rejects a pre-reset write after the generation advances, then records a post-reset solve", async () => {
+    const pre = liveKey("recent-solves", "pre-reset");
+    // A write captured at generation 0 lands before the reset.
+    expect(await write(pre, 1000, { n: "pre" }, 50, "0")).toBe(1);
+
+    // The reset's atomic step: clear both feed keys and advance the fence.
+    await pipeline([
+      ["DEL", K.zset, K.data],
+      ["INCR", K.generation],
+    ]);
+
+    // The delayed pre-reset write must not restore the old line.
+    expect(await write(pre, 1000, { n: "pre" }, 50, "0")).toBe(-1);
+    const [zcard] = await pipeline([["ZCARD", K.zset]]);
+    const [hlen] = await pipeline([["HLEN", K.data]]);
+    expect(zcard.result).toBe(0);
+    expect(hlen.result).toBe(0);
+
+    // A solve captured after the reset writes normally.
+    const post = liveKey("recent-solves", "post-reset");
+    expect(await write(post, 2000, { n: "post" }, 50, "1")).toBe(1);
+    const [members] = await pipeline([["ZRANGE", K.zset, 0, -1]]);
+    expect(members.result).toEqual([post]);
   });
 });

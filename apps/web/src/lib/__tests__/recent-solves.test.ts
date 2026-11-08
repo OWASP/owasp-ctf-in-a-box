@@ -9,6 +9,7 @@ import { inspect } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RECENT_SOLVES_DATA_KEY,
+  RECENT_SOLVES_GENERATION_KEY,
   RECENT_SOLVES_KEY,
   RECENT_SOLVES_MAX,
 } from "@/lib/recent-solves-keys";
@@ -39,7 +40,7 @@ vi.mock("@/lib/ai-store", () => ({ listAiChallenges: mocks.listAiChallenges }));
 vi.mock("@/lib/challenges", () => ({ getChallengeCatalog: mocks.getChallengeCatalog }));
 vi.mock("@/lib/enabled-apps", () => ({ getEnabledApps: mocks.getEnabledApps }));
 
-import { listRecentSolves, recordRecentSolve } from "@/lib/recent-solves";
+import { captureRecentSolvesGeneration, listRecentSolves, recordRecentSolve } from "@/lib/recent-solves";
 
 const T = "2026-08-24T10:00:00.000Z";
 
@@ -108,13 +109,14 @@ beforeEach(() => {
 
 describe("recordRecentSolve", () => {
   it("stores the team captured now, with no login in the event", async () => {
-    await recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice", at: T });
+    await recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice", at: T, generation: "7" });
     expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
     const [, keys, args] = mocks.upstashEval.mock.calls[0];
-    expect(keys).toEqual([RECENT_SOLVES_KEY, RECENT_SOLVES_DATA_KEY]);
+    expect(keys).toEqual([RECENT_SOLVES_KEY, RECENT_SOLVES_DATA_KEY, RECENT_SOLVES_GENERATION_KEY]);
     expect(args[0]).toBe("classic:-:c1:red");
     expect(args[1]).toBe(String(Date.parse(T)));
     expect(args[3]).toBe(String(RECENT_SOLVES_MAX));
+    expect(args[4]).toBe("7"); // captured reset generation, checked atomically
     const event = JSON.parse(String(args[2]));
     expect(event).toEqual({
       module: "classic",
@@ -129,7 +131,13 @@ describe("recordRecentSolve", () => {
 
   it("writes no line for a teamless solve", async () => {
     mocks.getViewerTeam.mockResolvedValue(null);
-    await recordRecentSolve({ module: "quiz", challengeId: "q1", points: 10, login: "alice" });
+    await recordRecentSolve({ module: "quiz", challengeId: "q1", points: 10, login: "alice", generation: "0" });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when the reset-generation capture failed", async () => {
+    await recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice", generation: null });
+    expect(mocks.getViewerTeam).not.toHaveBeenCalled();
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 
@@ -137,7 +145,7 @@ describe("recordRecentSolve", () => {
     vi.useFakeTimers();
     try {
       mocks.upstashEval.mockReturnValue(new Promise(() => {}));
-      const pending = recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice" });
+      const pending = recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice", generation: "0" });
       await vi.advanceTimersByTimeAsync(1500);
       await expect(pending).resolves.toBeUndefined();
     } finally {
@@ -160,6 +168,7 @@ describe("recordRecentSolve", () => {
         challengeId: "c1",
         points: 50,
         login: "alice",
+        generation: "0",
       }).then(() => {
         settled = true;
       });
@@ -194,6 +203,7 @@ describe("recordRecentSolve", () => {
         challengeId: "c1",
         points: 50,
         login: "alice",
+        generation: "0",
       });
       await vi.advanceTimersByTimeAsync(1500);
       await expect(pending).resolves.toBeUndefined();
@@ -212,12 +222,12 @@ describe("recordRecentSolve", () => {
     try {
       mocks.getViewerTeam.mockRejectedValueOnce(new Error("redis down"));
       await expect(
-        recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice" }),
+        recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice", generation: "0" }),
       ).resolves.toBeUndefined();
 
       mocks.upstashEval.mockRejectedValueOnce(new Error("redis down"));
       await expect(
-        recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice" }),
+        recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice", generation: "0" }),
       ).resolves.toBeUndefined();
       expect(warn).toHaveBeenCalledTimes(2);
     } finally {
@@ -242,6 +252,7 @@ describe("recordRecentSolve", () => {
         challengeId: "c1",
         points: 50,
         login: "alice",
+        generation: "0",
       });
 
       expect(warn).toHaveBeenCalled();
@@ -263,15 +274,37 @@ describe("recordRecentSolve", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       mocks.upstashEval.mockRejectedValueOnce("CTF{thrown_string_flag}");
-      await recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice" });
+      await recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice", generation: "0" });
 
       mocks.upstashEval.mockRejectedValueOnce({ leak: "CTF{thrown_object_flag}" });
-      await recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice" });
+      await recordRecentSolve({ module: "classic", challengeId: "c1", points: 50, login: "alice", generation: "0" });
 
       const logged = warn.mock.calls.map((call) => call.map((arg) => inspect(arg, { depth: 5 })).join(" ")).join("\n");
       expect(logged).not.toContain("CTF{thrown_string_flag}");
       expect(logged).not.toContain("CTF{thrown_object_flag}");
       expect(logged).toContain("non-Error throw");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("captureRecentSolvesGeneration", () => {
+  it("returns the stored generation, treating an absent key as 0", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "5" }]);
+    await expect(captureRecentSolvesGeneration()).resolves.toBe("5");
+    expect(mocks.upstashPipeline).toHaveBeenLastCalledWith([["GET", RECENT_SOLVES_GENERATION_KEY]]);
+
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
+    await expect(captureRecentSolvesGeneration()).resolves.toBe("0");
+  });
+
+  it("returns null on a failed read instead of throwing into the solve route", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
+      await expect(captureRecentSolvesGeneration()).resolves.toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
     } finally {
       warn.mockRestore();
     }

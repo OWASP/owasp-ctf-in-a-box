@@ -20,7 +20,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The activity log, so the dry-run test below can see that nothing was logged.
 const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
 vi.mock("@/lib/activity-log", () => activityLog);
-const recent = vi.hoisted(() => ({ recordRecentSolve: vi.fn(async () => {}) }));
+const recent = vi.hoisted(() => ({
+  recordRecentSolve: vi.fn(async () => {}),
+  captureRecentSolvesGeneration: vi.fn(async () => "0"),
+}));
 vi.mock("@/lib/recent-solves", () => recent);
 
 const {
@@ -154,6 +157,7 @@ beforeEach(() => {
   isModuleLive.mockResolvedValue(true);
   activityLog.logActivity.mockClear();
   recent.recordRecentSolve.mockClear();
+  recent.captureRecentSolvesGeneration.mockClear();
 });
 
 describe("POST /api/quiz/answer", () => {
@@ -312,6 +316,7 @@ describe("POST /api/quiz/answer", () => {
       challengeId: "q1",
       points: 10,
       login: "alice",
+      generation: "0",
     });
   });
 

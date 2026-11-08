@@ -8,7 +8,7 @@ import { AI_ID_RE } from "@/lib/ai-keys";
 import { awardAiEvent, claimAiNonce, getAiLaunchPublicKey, getAiSigningKey, listAiChallenges, releaseAiNonce } from "@/lib/ai-store";
 import { previewClaimStillValid } from "@/lib/ai-preview";
 import { verifyEventSignature, verifyLaunchToken, withinSkew } from "@/lib/ai-token";
-import { recordRecentSolve } from "@/lib/recent-solves";
+import { captureRecentSolvesGeneration, recordRecentSolve } from "@/lib/recent-solves";
 import { RATE_LIMITS, consumeRateLimit } from "@/lib/rate-limit-store";
 import { hasTeam } from "@/lib/team-store";
 
@@ -133,7 +133,10 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
     return aiJson({ error: "replay" }, 409);
   }
 
-  // 9. The award itself, atomic in the store.
+  // 9. The award itself, atomic in the store. The feed generation is captured
+  //    just before it: a master reset between grading and the async feed write
+  //    must reject that write rather than repopulate the fresh event.
+  const feedGeneration = dry ? null : await captureRecentSolvesGeneration();
   const result = await awardAiEvent(login, challengeId, { dryRun, preview });
 
   if (dry) {
@@ -158,7 +161,7 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   if (result.ok && result.correct && !result.already) {
     await Promise.all([
       logActivity("ai-solve", login, `${challengeId} via event`),
-      recordRecentSolve({ module: "ai", challengeId, points: result.points, login }),
+      recordRecentSolve({ module: "ai", challengeId, points: result.points, login, generation: feedGeneration }),
     ]);
   }
 

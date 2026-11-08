@@ -18,7 +18,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   locked to an anonymous viewer. The stored event never carries a login, and
   the response carries no challenge id, app id, team slug or activity-log
   row. Feed writes are fail-open, so a feed failure never fails a solve; the
-  master reset clears the feed with the rest of the event data.
+  master reset clears the feed with the rest of the event data, and a solve
+  still in flight across that reset cannot repopulate it.
 
 ## v1.0.3 — 2026-10-25
 

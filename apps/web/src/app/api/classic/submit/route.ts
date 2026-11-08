@@ -6,7 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { CLASSIC_ID_RE, submitFlag } from "@/lib/classic-store";
-import { recordRecentSolve } from "@/lib/recent-solves";
+import { captureRecentSolvesGeneration, recordRecentSolve } from "@/lib/recent-solves";
 import { hasTeam } from "@/lib/team-store";
 
 /** Hard cap on a submitted flag's length, checked BEFORE the store ever sees
@@ -111,6 +111,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
+  // Captured before grading: a master reset during grading must reject the
+  // eventual feed write rather than let this pre-reset solve into the new event.
+  const feedGeneration = dryRun ? null : await captureRecentSolvesGeneration();
   const result = await submitFlag(login, challengeId, flag, { dryRun });
   if (result.ok) {
     // An admin preview (#464): graded by the same script, nothing recorded —
@@ -129,7 +132,7 @@ export async function POST(request: Request) {
     if (!result.already) {
       await Promise.all([
         logActivity("classic-solve", login, challengeId),
-        recordRecentSolve({ module: "classic", challengeId, points: result.points, login }),
+        recordRecentSolve({ module: "classic", challengeId, points: result.points, login, generation: feedGeneration }),
       ]);
     }
     // `already` (this login had banked this flag before — see SubmitResult)

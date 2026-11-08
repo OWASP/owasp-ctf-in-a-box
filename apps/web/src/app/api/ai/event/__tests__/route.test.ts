@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   hasTeam: vi.fn(),
   logActivity: vi.fn(),
   recordRecentSolve: vi.fn(),
+  captureRecentSolvesGeneration: vi.fn(),
   // Holds the REAL implementation, set once by the `@/lib/ai-token` mock
   // factory below — a plain mutable slot, not a mock itself, so `vi.hoisted`
   // is safe here. Used only by the rotation tests, which need the actual
@@ -58,7 +59,10 @@ vi.mock("@/lib/rate-limit-store", async (orig) => ({
 }));
 vi.mock("@/lib/team-store", () => ({ hasTeam: mocks.hasTeam }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: mocks.logActivity }));
-vi.mock("@/lib/recent-solves", () => ({ recordRecentSolve: mocks.recordRecentSolve }));
+vi.mock("@/lib/recent-solves", () => ({
+  recordRecentSolve: mocks.recordRecentSolve,
+  captureRecentSolvesGeneration: mocks.captureRecentSolvesGeneration,
+}));
 
 import { OPTIONS, POST } from "@/app/api/ai/event/route";
 import { generateSigningKey, signEventBody } from "@/lib/ai-token";
@@ -103,6 +107,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW_MS);
   for (const m of Object.values(mocks)) if (vi.isMockFunction(m)) m.mockReset();
+  mocks.captureRecentSolvesGeneration.mockResolvedValue("0");
   modules.isModuleLive.mockReset();
   modules.isModuleLive.mockResolvedValue(true);
 });
@@ -172,6 +177,7 @@ describe("POST /api/ai/event", () => {
       challengeId: CHAL,
       points: 400,
       login: "alice",
+      generation: "0",
     });
   });
 

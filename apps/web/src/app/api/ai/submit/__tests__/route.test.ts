@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   hasTeam: vi.fn(),
   logActivity: vi.fn(),
   recordRecentSolve: vi.fn(),
+  captureRecentSolvesGeneration: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -43,7 +44,10 @@ vi.mock("@/lib/rate-limit-store", async (orig) => ({
 }));
 vi.mock("@/lib/team-store", () => ({ hasTeam: mocks.hasTeam }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: mocks.logActivity }));
-vi.mock("@/lib/recent-solves", () => ({ recordRecentSolve: mocks.recordRecentSolve }));
+vi.mock("@/lib/recent-solves", () => ({
+  recordRecentSolve: mocks.recordRecentSolve,
+  captureRecentSolvesGeneration: mocks.captureRecentSolvesGeneration,
+}));
 
 import { OPTIONS, POST } from "@/app/api/ai/submit/route";
 
@@ -63,6 +67,7 @@ function tokenIsGood(sub = "alice") {
 
 beforeEach(() => {
   for (const m of Object.values(mocks)) m.mockReset();
+  mocks.captureRecentSolvesGeneration.mockResolvedValue("0");
   modules.isModuleLive.mockReset();
   modules.isModuleLive.mockResolvedValue(true);
 });
@@ -125,6 +130,7 @@ describe("POST /api/ai/submit", () => {
       challengeId: CHAL,
       points: 300,
       login: "alice",
+      generation: "0",
     });
   });
 

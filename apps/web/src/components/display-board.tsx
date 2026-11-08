@@ -151,20 +151,21 @@ export default function DisplayBoard({
       try {
         const res = await fetch("/api/board/recent-solves", { cache: "no-store" });
         if (!res.ok) {
-          if (!cancelled) setPolled(null);
+          if (!cancelled) setPolled([]);
           return;
         }
         const body = (await res.json()) as { solves?: unknown };
         if (cancelled) return;
         if (!Array.isArray(body.solves)) {
-          setPolled(null);
+          setPolled([]);
           return;
         }
         setPolled(body.solves as RecentSolveItem[]);
       } catch {
-        // Reset to null on error or failed poll: restores the server-filtered seed
-        // rather than retaining potentially stale hidden challenge titles.
-        if (!cancelled) setPolled(null);
+        // A failed poll clears the feed rather than restoring the server seed:
+        // the seed can still carry titles a previous successful poll filtered
+        // out (a challenge hidden since), so reviving it would expose them.
+        if (!cancelled) setPolled([]);
       }
     };
     const id = setInterval(load, 15_000);

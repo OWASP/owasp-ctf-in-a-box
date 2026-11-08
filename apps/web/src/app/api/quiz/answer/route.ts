@@ -4,7 +4,7 @@ import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { answerQuestion, QUIZ_ID_RE } from "@/lib/quiz-store";
-import { recordRecentSolve } from "@/lib/recent-solves";
+import { captureRecentSolvesGeneration, recordRecentSolve } from "@/lib/recent-solves";
 import { hasTeam } from "@/lib/team-store";
 
 /** Validating against `quiz-store`'s own exported `QUIZ_ID_RE` (rather than
@@ -96,6 +96,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
+  // Captured before grading: a master reset during grading must reject the
+  // eventual feed write rather than let this pre-reset solve into the new event.
+  const feedGeneration = preview ? null : await captureRecentSolvesGeneration();
   const result = await answerQuestion(login, questionId, choices, { dryRun: preview });
   if (result.ok) {
     // An admin preview (#464): graded by the same script, nothing recorded —
@@ -114,7 +117,7 @@ export async function POST(request: Request) {
     if (!result.already) {
       await Promise.all([
         logActivity("quiz-solve", login, questionId),
-        recordRecentSolve({ module: "quiz", challengeId: questionId, points: result.points, login }),
+        recordRecentSolve({ module: "quiz", challengeId: questionId, points: result.points, login, generation: feedGeneration }),
       ]);
     }
     // `already` (this login had banked this question before — see

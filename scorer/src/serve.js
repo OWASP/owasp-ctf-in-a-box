@@ -154,6 +154,19 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     );
     const solvedAt = await solveTime(at);
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
+    // Captured BEFORE the score write: a master reset during scoring advances
+    // the generation, and the async feed write below then refuses to restore a
+    // pre-reset solve into the fresh event. A failed capture only skips the
+    // cosmetic feed line; it never fails the score.
+    let feedGeneration = null;
+    if (rubric) {
+      try {
+        feedGeneration = await store.getFeedGeneration();
+      } catch (err) {
+        const label = err instanceof Error ? err.message : "non-Error throw";
+        console.error(`[recent-solves] feed generation read failed: ${label}`);
+      }
+    }
     const added = await store.recordSolves(target, author, ids, solvedAt.iso);
     if (!rubric) seenTargets.add(target);
     res.writeHead(202).end();
@@ -162,7 +175,7 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     // history. Cosmetic and fail-open: the score is acknowledged immediately (202)
     // so cosmetic feed writes never delay a scoring response. No rubric means
     // no points to show, so degenerate mode writes no feed.
-    if (rubric && added.length > 0) {
+    if (rubric && added.length > 0 && feedGeneration !== null) {
       const task = (async () => {
         try {
           const team = await store.getTeamForLogin(author);
@@ -176,6 +189,7 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
                 team: team.slug,
                 teamName: team.name,
               })),
+              feedGeneration,
             );
           }
         } catch (err) {

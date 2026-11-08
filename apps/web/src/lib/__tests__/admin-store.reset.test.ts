@@ -182,7 +182,14 @@ describe("resetEvent", () => {
     expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(script).toContain("'paused', '1'");
-    expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit", "ctf:admin:pauses"]);
+    expect(keys).toEqual([
+      "ctf:admin:settings",
+      "ctf:admin:audit",
+      "ctf:admin:pauses",
+      "ctf:admin:feed-generation",
+      "ctf:feed:recent-solves",
+      "ctf:feed:recent-solves:data",
+    ]);
     expect(args[0]).toBe("alice"); // actor
     const auditLine = JSON.parse(String(args[3]));
     expect(auditLine).toMatchObject({ by: "alice", action: "reset", cleared: { solves: 2, teams: 2 } });
@@ -195,6 +202,21 @@ describe("resetEvent", () => {
     await resetEvent("alice");
     const [script] = mocks.upstashEval.mock.calls[0];
     expect(script).toMatch(/redis\.call\('HDEL', KEYS\[1\], 'scoringStartsAt'\)/);
+  });
+
+  // The feed fence advances only together with the wipe, so an in-flight feed
+  // write captured before the reset cannot repopulate the fresh event.
+  it("advances the feed generation and clears both feed keys in the same eval", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [[]]));
+    await resetEvent("alice");
+    const [script, keys] = mocks.upstashEval.mock.calls[0];
+    expect(script).toMatch(/redis\.call\('INCR', KEYS\[4\]\)/);
+    expect(script).toMatch(/redis\.call\('DEL', KEYS\[5\], KEYS\[6\]\)/);
+    expect(keys.slice(3)).toEqual([
+      "ctf:admin:feed-generation",
+      "ctf:feed:recent-solves",
+      "ctf:feed:recent-solves:data",
+    ]);
   });
 
   // The reset starts a fresh pause log: the old event's intervals go, and the

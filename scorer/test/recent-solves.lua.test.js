@@ -78,10 +78,25 @@ test(
 
     const zset = "ctf:feed:test:zset";
     const data = "ctf:feed:test:data";
+    const generation = "ctf:feed:test:generation";
     const cli = (...args) =>
       execFileSync("redis-cli", ["-p", String(port), "--raw", ...args], { encoding: "utf8" }).trim();
-    const write = (id, score, event, max) =>
-      Number(cli("--eval", scriptPath, zset, data, ",", id, String(score), JSON.stringify(event), String(max)));
+    const write = (id, score, event, max, expected = "0") =>
+      Number(
+        cli(
+          "--eval",
+          scriptPath,
+          zset,
+          data,
+          generation,
+          ",",
+          id,
+          String(score),
+          JSON.stringify(event),
+          String(max),
+          expected,
+        ),
+      );
 
     // Under the cap: the script must succeed without trimming anything.
     assert.equal(write("under", 1000, { n: 1 }, RECENT_SOLVES_MAX), 1);
@@ -105,6 +120,19 @@ test(
     assert.deepEqual(lines(cli("ZRANGE", zset, "0", "-1")), kept);
     assert.deepEqual(lines(cli("HKEYS", data)).sort(), kept);
     assert.deepEqual(JSON.parse(cli("HGET", data, "trim:7")), { n: 7 });
+
+    // A reset advances the generation in the same atomic step that clears the
+    // feed; a write captured before it must not restore an old line.
+    cli("SET", generation, "0");
+    assert.equal(write("pre-reset", 1000, { n: "pre" }, RECENT_SOLVES_MAX, "0"), 1);
+    cli("DEL", zset, data);
+    cli("INCR", generation);
+    assert.equal(write("pre-reset", 1000, { n: "pre" }, RECENT_SOLVES_MAX, "0"), -1);
+    assert.equal(cli("ZCARD", zset), "0");
+    assert.equal(cli("HLEN", data), "0");
+    assert.equal(write("post-reset", 2000, { n: "post" }, RECENT_SOLVES_MAX, "1"), 1);
+    assert.deepEqual(lines(cli("ZRANGE", zset, "0", "-1")), ["post-reset"]);
+    cli("DEL", generation);
 
     // The production cap keeps exactly the newest 50, hash included.
     cli("DEL", zset, data);

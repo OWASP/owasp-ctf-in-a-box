@@ -175,9 +175,9 @@ test("a slow feed write never delays the 202 score response", async (t) => {
     teams: [{ slug: "red", name: "Red Team", captain: "alice", members: ["alice"] }],
   });
   const origRecord = store.recordRecentSolves.bind(store);
-  store.recordRecentSolves = async (entries) => {
+  store.recordRecentSolves = async (entries, generation) => {
     await feedBlocked;
-    return origRecord(entries);
+    return origRecord(entries, generation);
   };
   const { post, awaitFeed } = await boot(t, { store });
 
@@ -191,6 +191,44 @@ test("a slow feed write never delays the 202 score response", async (t) => {
   await awaitFeed();
   const feed = await store.getRecentSolves();
   assert.equal(feed.length, 1);
+});
+
+test("a feed write in flight across a reset cannot restore the old solve", async (t) => {
+  let releaseFeed;
+  const feedBlocked = new Promise((resolve) => {
+    releaseFeed = resolve;
+  });
+  let feedStarted;
+  const started = new Promise((resolve) => {
+    feedStarted = resolve;
+  });
+  const store = createMemoryStore({
+    teams: [{ slug: "red", name: "Red Team", captain: "alice", members: ["alice"] }],
+  });
+  const origRecord = store.recordRecentSolves.bind(store);
+  store.recordRecentSolves = async (entries, generation) => {
+    feedStarted();
+    await feedBlocked;
+    return origRecord(entries, generation);
+  };
+  const { post, awaitFeed } = await boot(t, { store });
+
+  // The solve captured the pre-reset generation, then its feed write stalls.
+  assert.equal((await post(solve("alice", "dvwa", ["sqli-low"]))).status, 202);
+  await started;
+
+  // The event is reset while that write is still in flight.
+  store.__resetFeed();
+  releaseFeed();
+  await awaitFeed();
+  assert.deepEqual(await store.getRecentSolves(), []);
+
+  // A solve captured after the reset records normally.
+  assert.equal((await post(solve("alice", "juice-shop", ["sql-injection-login"]))).status, 202);
+  await awaitFeed();
+  const feed = await store.getRecentSolves();
+  assert.equal(feed.length, 1);
+  assert.equal(feed[0].challengeId, "sql-injection-login");
 });
 
 test("a teamless login scores normally but writes no feed line", async (t) => {

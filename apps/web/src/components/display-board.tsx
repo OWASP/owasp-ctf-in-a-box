@@ -7,15 +7,21 @@
 //
 // Refreshes itself with router.refresh() every 30 seconds: the board is a
 // Server Component's data, so a refresh re-reads the standings without a full
-// reload — the cadence poll-mode scores land at anyway. The interval is
-// cleared on unmount and skipped entirely under reduced data? No — refresh is
-// data, not motion; reduced-motion governs animation and this is neither.
+// reload — the cadence poll-mode scores land at anyway. The recent-solves
+// feed is a separate public route and polls faster (15 s), so app-side solves
+// do not wait for the standings fold. Neither interval is motion:
+// reduced-motion governs animation, and the feed simply stacks with no
+// animation at all.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import DisplayClock from "@/components/display-clock";
 import type { SponsorLogoSize } from "@/lib/sponsors-keys";
+import {
+  RECENT_SOLVE_MODULE_LABELS,
+  type RecentSolveItem,
+} from "@/lib/recent-solves-keys";
 
 type DisplayRow = {
   key: string;
@@ -72,6 +78,19 @@ const LOGO_FALLBACK_TEXT_CLASSES: Record<SponsorLogoSize, string> = {
   lg: "text-[2.2vh]",
 };
 
+/**
+ * Format an ISO timestamp deterministically in UTC as HH:mm:ss for projector display.
+ * Avoids browser/system timezone variance so wall clocks and projector snapshots stay consistent.
+ */
+export function formatSolveTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
 export default function DisplayBoard({
   rows,
   eventName,
@@ -82,10 +101,15 @@ export default function DisplayBoard({
   scoringStartsAt = null,
   scoringEndsAt = null,
   qr = null,
+  recentSolves = [],
 }: {
   rows: DisplayRow[];
   eventName: string;
   phaseLabel: string | null;
+  /** The public recent-solves projection (#542). The server seeds it and the
+   *  component keeps it fresh from `/api/board/recent-solves`; an empty list
+   *  renders no section at all. */
+  recentSolves?: RecentSolveItem[];
   /** The event's uploaded logo (#529), shown beside the name on the wall
    *  (#543 P1). Null: no logo stored, or the read failed — name only. */
   eventLogo?: { src: string; w: number; h: number } | null;
@@ -107,10 +131,49 @@ export default function DisplayBoard({
   const router = useRouter();
   const logoClasses = LOGO_SIZE_CLASSES[logoSize ?? "md"];
   const fallbackTextClasses = LOGO_FALLBACK_TEXT_CLASSES[logoSize ?? "md"];
+  // `null` until the first successful poll, so the server-seeded feed renders
+  // immediately and a router.refresh() prop still wins on a cold start. Once
+  // polling has answered, that (fresher) snapshot stays until the next poll;
+  // the route reads the same source, so there is nothing for the prop to say
+  // that the poll does not say sooner.
+  const [polled, setPolled] = useState<RecentSolveItem[] | null>(null);
+  const recent = polled ?? recentSolves;
+
   useEffect(() => {
     const id = setInterval(() => router.refresh(), 30_000);
     return () => clearInterval(id);
   }, [router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      try {
+        const res = await fetch("/api/board/recent-solves", { cache: "no-store" });
+        if (!res.ok) {
+          if (!cancelled) setPolled([]);
+          return;
+        }
+        const body = (await res.json()) as { solves?: unknown };
+        if (cancelled) return;
+        if (!Array.isArray(body.solves)) {
+          setPolled([]);
+          return;
+        }
+        setPolled(body.solves as RecentSolveItem[]);
+      } catch {
+        // A failed poll clears the feed rather than restoring the server seed:
+        // the seed can still carry titles a previous successful poll filtered
+        // out (a challenge hidden since), so reviving it would expose them.
+        if (!cancelled) setPolled([]);
+      }
+    };
+    const id = setInterval(load, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-[#1a1a2e] px-[4vw] py-[3vh]">
@@ -153,29 +216,73 @@ export default function DisplayBoard({
         </div>
       </div>
 
-      <ol className="mt-[3vh] flex flex-1 flex-col justify-evenly">
+      <ol
+        className={`flex min-h-0 flex-1 flex-col justify-evenly overflow-hidden ${recent.length > 0 ? "mt-[1.5vh]" : "mt-[3vh]"}`}
+      >
         {rows.map((row) => (
           <li key={row.key} className="flex items-baseline gap-[2vw]">
             <span
-              className="w-[6vw] flex-none text-right font-display text-[4.2vh] font-black tabular-nums"
+              className={`w-[6vw] flex-none text-right font-display font-black tabular-nums ${recent.length > 0 ? "text-[3.2vh] leading-tight" : "text-[4.2vh]"}`}
               style={{ color: PODIUM[row.rank] ?? "#8f8f9b" }}
             >
               {row.rank}
             </span>
-            <span className="min-w-0 flex-1 truncate font-display text-[4.2vh] font-bold text-white">
+            <span
+              className={`min-w-0 flex-1 truncate font-display font-bold text-white ${recent.length > 0 ? "text-[3.2vh] leading-tight" : "text-[4.2vh]"}`}
+            >
               <bdi>{row.name}</bdi>
             </span>
             {row.solved !== undefined && (
-              <span className="flex-none font-mono text-[2vh] tabular-nums text-[#22c55e]">
+              <span
+                className={`flex-none font-mono tabular-nums text-[#22c55e] ${recent.length > 0 ? "text-[1.6vh]" : "text-[2vh]"}`}
+              >
                 {row.solved} solved
               </span>
             )}
-            <span className="w-[14vw] flex-none text-right font-mono text-[4.2vh] font-bold tabular-nums text-white">
+            <span
+              className={`w-[14vw] flex-none text-right font-mono font-bold tabular-nums text-white ${recent.length > 0 ? "text-[3.2vh] leading-tight" : "text-[4.2vh]"}`}
+            >
               {row.points.toLocaleString("en-US")}
             </span>
           </li>
         ))}
       </ol>
+
+      {recent.length > 0 && (
+        <section className="mt-[2vh] flex-none" aria-label="Recent solves">
+          <div className="flex items-baseline justify-between gap-[2vw]">
+            <h2 className="font-mono text-[1.5vh] uppercase tracking-widest text-[#a1a1aa]">
+              Recent solves
+            </h2>
+            <span className="font-mono text-[1.3vh] uppercase tracking-widest text-[#8f8f9b]">
+              live
+            </span>
+          </div>
+          <ul className="mt-[1vh] grid gap-[0.65vh]">
+            {recent.map((solve, i) => (
+              <li
+                key={`${solve.at}:${solve.team}:${solve.title}:${i}`}
+                className="flex items-baseline gap-[1.2vw] border-t border-white/[0.06] pt-[0.65vh] font-mono text-[1.7vh]"
+              >
+                <time dateTime={solve.at} className="w-[5vw] flex-none text-right tabular-nums text-[#8f8f9b]">
+                  {formatSolveTime(solve.at)}
+                </time>
+                <span className="w-[17vw] flex-none truncate font-bold text-white">
+                  {solve.team}
+                </span>
+                <span className="flex-none text-[#8f8f9b]">solved</span>
+                <span className="min-w-0 flex-1 truncate text-[#d4d4d8]">{solve.title}</span>
+                <span className="w-[6vw] flex-none text-right tabular-nums text-[#22c55e]">
+                  +{solve.points.toLocaleString("en-US")}
+                </span>
+                <span className="w-[8vw] flex-none text-right uppercase tracking-widest text-[#8f8f9b]">
+                  {RECENT_SOLVE_MODULE_LABELS[solve.module]}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <div className="mt-[2vh] flex items-center justify-between gap-[2vw]">
         {sponsors.length > 0 ? (
@@ -210,7 +317,9 @@ export default function DisplayBoard({
         <div className="flex flex-none items-end gap-[1.5vw]">
           {/* Not `text-[#8f8f9b]/60` — that composites to 2.86:1 (issue #316),
               and this is a projector surface read from across a room. */}
-          <p className="text-right font-mono text-[1.4vh] text-muted">refreshes every 30s</p>
+          <p className="text-right font-mono text-[1.4vh] text-muted">
+            board 30s · feed 15s
+          </p>
           {qr && (
             // Below the standings, never over them. Dark modules on a white
             // card: phones read dark-on-light, and the path already carries

@@ -416,12 +416,12 @@ reviews:
 
         Public surface growth — GET /api/public/scoring, GET
         /api/ai/launch-key, GET /api/board/items, GET
-        /api/sponsors/logo/[id], GET /api/attachments/[id], GET
-        /api/event/logo and GET /api/event/icon are the ONLY
-        sanctioned unauthenticated GET routes, and POST /api/stats/visit (the
-        no-PII per-country reach counter, always 204) the ONLY sanctioned
-        unauthenticated POST — the same eight docs/reviewing.md invariant 11
-        names (the pre-event password
+        /api/board/recent-solves, GET /api/sponsors/logo/[id], GET
+        /api/attachments/[id], GET /api/event/logo and GET /api/event/icon are
+        the ONLY sanctioned unauthenticated GET routes, and POST
+        /api/stats/visit (the no-PII per-country reach counter, always 204) the
+        ONLY sanctioned unauthenticated POST — the same nine
+        docs/reviewing.md invariant 11 names (the pre-event password
         check, POST /api/gate, was removed in #464; do not restore it). The
         GETs must stay read-only, policy or public-by-design content out and
         never facts in, with
@@ -431,7 +431,11 @@ reviews:
         public leaderboard's expansion (who solved what — already on the
         board as counts) built only from the contestant-safe listers, ids and
         banked points, capped at a team roster's worth of logins per request;
-        sponsors/logo/[id] (issue #405, ADR 57) serves only PNG/WebP bytes an
+        board/recent-solves (#542) serves the projector's five newest lines,
+        launch-locked like board/items, as team name + current public title +
+        points + module only — no login, challenge id, app id, team slug or
+        activity-log row, and hidden/disabled/locked items dropped rather than
+        redacted; sponsors/logo/[id] (issue #405, ADR 57) serves only PNG/WebP bytes an
         organizer explicitly uploaded to be shown publicly, already sniffed
         by magic number at upload (never SVG), keyed by an id validated
         against SPONSOR_ID_RE before any Redis command — it exists so a
@@ -445,7 +449,7 @@ reviews:
         hero logo and favicon, public before launch on purpose, one fixed
         slot per route and only bytes sniffed at upload (never SVG).
         Flag any OTHER new unauthenticated route, any secret appearing in any
-        of the seven payloads, and anything letting a fork report facts to
+        of the eight payloads, and anything letting a fork report facts to
         the box rather than only read policy from it.
 
         Origin assertion bypass — a mutating route opting out of the

@@ -20,8 +20,18 @@ const clock = (times = T) => {
   return () => times[Math.min(i++, times.length - 1)];
 };
 
-async function boot(t, { rubric = RUBRIC, now = clock() } = {}) {
-  const server = await startServer({ rubric, store: createMemoryStore(), token: TOKEN, now });
+async function boot(t, { rubric = RUBRIC, now = clock(), store = createMemoryStore(), onFeedTask } = {}) {
+  const feedTasks = [];
+  const server = await startServer({
+    rubric,
+    store,
+    token: TOKEN,
+    now,
+    onFeedTask: (task) => {
+      feedTasks.push(task);
+      onFeedTask?.(task);
+    },
+  });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`;
   const post = (body, auth = `Bearer ${TOKEN}`) =>
@@ -31,7 +41,8 @@ async function boot(t, { rubric = RUBRIC, now = clock() } = {}) {
       body: typeof body === "string" ? body : JSON.stringify(body),
     });
   const board = async () => (await fetch(`${base}/leaderboard`)).json();
-  return { base, post, board };
+  const awaitFeed = () => Promise.all(feedTasks);
+  return { base, post, board, store, awaitFeed };
 }
 
 const solve = (author, target, solved) => ({ author, target, solved, pr: 7, sha: "abc123" });
@@ -118,6 +129,132 @@ test("unknown challenge ids are dropped silently, request still 202s", async (t)
   assert.equal(leaderboard.length, 1);
   assert.equal(leaderboard[0].points, 1);
   assert.deepEqual(leaderboard[0].apps.dvwa, { solved: 1, total: 1, solvedIds: ["sqli-low"] });
+});
+
+test("fresh solves write the projector feed with points, team-at-solve-time and no login", async (t) => {
+  const store = createMemoryStore({
+    teams: [{ slug: "red", name: "Red Team", captain: "alice", members: ["alice"] }],
+  });
+  const { post, awaitFeed } = await boot(t, { store });
+
+  await post(solve("alice", "dvwa", ["sqli-low"]));
+  await post(solve("alice", "dvwa", ["sqli-low"])); // replay: no second line
+  await post(solve("alice", "juice-shop", ["reflected-xss-search"]));
+  await awaitFeed();
+
+  const feed = await store.getRecentSolves();
+  assert.deepEqual(feed, [
+    {
+      module: "secure-development",
+      app: "juice-shop",
+      challengeId: "reflected-xss-search",
+      points: 10,
+      team: "red",
+      teamName: "Red Team",
+      at: T[2],
+    },
+    {
+      module: "secure-development",
+      app: "dvwa",
+      challengeId: "sqli-low",
+      points: 1,
+      team: "red",
+      teamName: "Red Team",
+      at: T[0],
+    },
+  ]);
+  assert.equal(JSON.stringify(feed).includes("alice"), false);
+});
+
+test("a slow feed write never delays the 202 score response", async (t) => {
+  let releaseFeed;
+  const feedBlocked = new Promise((resolve) => {
+    releaseFeed = resolve;
+  });
+  const store = createMemoryStore({
+    teams: [{ slug: "red", name: "Red Team", captain: "alice", members: ["alice"] }],
+  });
+  const origRecord = store.recordRecentSolves.bind(store);
+  store.recordRecentSolves = async (entries, generation) => {
+    await feedBlocked;
+    return origRecord(entries, generation);
+  };
+  const { post, awaitFeed } = await boot(t, { store });
+
+  // The 202 arrives while the feed write is still blocked.
+  const res = await post(solve("alice", "dvwa", ["sqli-low"]));
+  assert.equal(res.status, 202);
+  assert.deepEqual(await store.getRecentSolves(), []);
+
+  // Once unblocked, the feed lands.
+  releaseFeed();
+  await awaitFeed();
+  const feed = await store.getRecentSolves();
+  assert.equal(feed.length, 1);
+});
+
+test("a feed write in flight across a reset cannot restore the old solve", async (t) => {
+  let releaseFeed;
+  const feedBlocked = new Promise((resolve) => {
+    releaseFeed = resolve;
+  });
+  let feedStarted;
+  const started = new Promise((resolve) => {
+    feedStarted = resolve;
+  });
+  const store = createMemoryStore({
+    teams: [{ slug: "red", name: "Red Team", captain: "alice", members: ["alice"] }],
+  });
+  const origRecord = store.recordRecentSolves.bind(store);
+  store.recordRecentSolves = async (entries, generation) => {
+    feedStarted();
+    await feedBlocked;
+    return origRecord(entries, generation);
+  };
+  const { post, awaitFeed } = await boot(t, { store });
+
+  // The solve captured the pre-reset generation, then its feed write stalls.
+  assert.equal((await post(solve("alice", "dvwa", ["sqli-low"]))).status, 202);
+  await started;
+
+  // The event is reset while that write is still in flight.
+  store.__resetFeed();
+  releaseFeed();
+  await awaitFeed();
+  assert.deepEqual(await store.getRecentSolves(), []);
+
+  // A solve captured after the reset records normally.
+  assert.equal((await post(solve("alice", "juice-shop", ["sql-injection-login"]))).status, 202);
+  await awaitFeed();
+  const feed = await store.getRecentSolves();
+  assert.equal(feed.length, 1);
+  assert.equal(feed[0].challengeId, "sql-injection-login");
+});
+
+test("a teamless login scores normally but writes no feed line", async (t) => {
+  const store = createMemoryStore();
+  const { post, board, awaitFeed } = await boot(t, { store });
+  assert.equal((await post(solve("alice", "dvwa", ["sqli-low"]))).status, 202);
+  await awaitFeed();
+  assert.equal((await board()).leaderboard[0].points, 1);
+  assert.deepEqual(await store.getRecentSolves(), []);
+});
+
+test("a feed failure never fails the solve", async (t) => {
+  const store = createMemoryStore({
+    teams: [{ slug: "red", name: "Red Team", captain: "alice", members: ["alice"] }],
+  });
+  store.recordRecentSolves = async () => {
+    throw new Error("feed down");
+  };
+  const error = t.mock.method(console, "error", () => {});
+  const { post, board, awaitFeed } = await boot(t, { store });
+
+  assert.equal((await post(solve("alice", "dvwa", ["sqli-low"]))).status, 202);
+  await awaitFeed();
+  assert.equal((await board()).leaderboard[0].points, 1);
+  assert.equal(error.mock.calls.length, 1);
+  assert.match(String(error.mock.calls[0].arguments[0]), /feed write failed/);
 });
 
 test("monotonic: replaying a solve changes neither points nor lastSolveAt", async (t) => {

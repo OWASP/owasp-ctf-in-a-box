@@ -215,8 +215,15 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     const { upstashEval } = await import("@/lib/upstash");
     const settingsKey = liveKey("admin", freshId("settings"));
     const auditKey = liveKey("admin", freshId("audit"));
+    const generationKey = liveKey("admin", freshId("generation"));
+    const zsetKey = liveKey("feed", freshId("zset"));
+    const dataKey = liveKey("feed", freshId("data"));
     await upstashPipeline([["HSET", settingsKey, "scoringStartsAt", "2000-01-01T00:00:00.000Z", "eventName", "Kept"]]);
-    await upstashEval(RESET_SCRIPT, [settingsKey, auditKey, liveKey("admin", freshId("pauses"))], ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9]);
+    await upstashEval(
+      RESET_SCRIPT,
+      [settingsKey, auditKey, liveKey("admin", freshId("pauses")), generationKey, zsetKey, dataKey],
+      ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9],
+    );
     const [start, paused, name] = await upstashPipeline([
       ["HGET", settingsKey, "scoringStartsAt"],
       ["HGET", settingsKey, "paused"],
@@ -225,7 +232,7 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     expect(start.result).toBeNull();
     expect(paused.result).toBe("1");
     expect(name.result).toBe("Kept"); // settings other than the launch survive
-    await upstashPipeline([["DEL", settingsKey, auditKey]]);
+    await upstashPipeline([["DEL", settingsKey, auditKey, generationKey, zsetKey, dataKey]]);
   });
 
   it("RESET_SCRIPT clears the pause log and opens the reset's freeze at the reset instant", async () => {
@@ -234,11 +241,18 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     const settingsKey = liveKey("admin", freshId("settings"));
     const auditKey = liveKey("admin", freshId("audit"));
     const pausesKey = liveKey("admin", freshId("pauses"));
+    const generationKey = liveKey("admin", freshId("generation"));
+    const zsetKey = liveKey("feed", freshId("zset"));
+    const dataKey = liveKey("feed", freshId("data"));
     await upstashPipeline([
       ["HSET", settingsKey, "paused", "1", "pausedSince", "2026-09-01T00:00:00.000Z"],
       ["LPUSH", pausesKey, '{"from":"2026-08-01T00:00:00.000Z","to":"2026-08-01T01:00:00.000Z"}'],
     ]);
-    await upstashEval(RESET_SCRIPT, [settingsKey, auditKey, pausesKey], ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9]);
+    await upstashEval(
+      RESET_SCRIPT,
+      [settingsKey, auditKey, pausesKey, generationKey, zsetKey, dataKey],
+      ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9],
+    );
     const [since, paused, log] = await upstashPipeline([
       ["HGET", settingsKey, "pausedSince"],
       ["HGET", settingsKey, "paused"],
@@ -247,6 +261,38 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     expect(paused.result).toBe("1");
     expect(since.result).toBe("2026-10-01T00:00:00.000Z");
     expect(Number(log.result)).toBe(0);
-    await upstashPipeline([["DEL", settingsKey, auditKey, pausesKey]]);
+    await upstashPipeline([["DEL", settingsKey, auditKey, pausesKey, generationKey, zsetKey, dataKey]]);
+  });
+
+  // The reset's atomic fence: the generation advances in the SAME eval that
+  // clears both feed keys, so no in-flight pre-reset write can survive.
+  it("RESET_SCRIPT clears both feed keys and advances the generation atomically", async () => {
+    const { RESET_SCRIPT } = await import("@/lib/admin-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const settingsKey = liveKey("admin", freshId("settings"));
+    const auditKey = liveKey("admin", freshId("audit"));
+    const pausesKey = liveKey("admin", freshId("pauses"));
+    const generationKey = liveKey("admin", freshId("generation"));
+    const zsetKey = liveKey("feed", freshId("zset"));
+    const dataKey = liveKey("feed", freshId("data"));
+    await upstashPipeline([
+      ["SET", generationKey, "4"],
+      ["ZADD", zsetKey, "1", "old-solve"],
+      ["HSET", dataKey, "old-solve", "{}"],
+    ]);
+    await upstashEval(
+      RESET_SCRIPT,
+      [settingsKey, auditKey, pausesKey, generationKey, zsetKey, dataKey],
+      ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9],
+    );
+    const [generation, zset, data] = await upstashPipeline([
+      ["GET", generationKey],
+      ["EXISTS", zsetKey],
+      ["EXISTS", dataKey],
+    ]);
+    expect(generation.result).toBe("5");
+    expect(Number(zset.result)).toBe(0);
+    expect(Number(data.result)).toBe(0);
+    await upstashPipeline([["DEL", settingsKey, auditKey, pausesKey, generationKey, zsetKey, dataKey]]);
   });
 });

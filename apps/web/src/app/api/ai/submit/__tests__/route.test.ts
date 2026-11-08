@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   consumeRateLimit: vi.fn(),
   hasTeam: vi.fn(),
   logActivity: vi.fn(),
+  recordRecentSolve: vi.fn(),
+  captureRecentSolvesGeneration: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -42,6 +44,10 @@ vi.mock("@/lib/rate-limit-store", async (orig) => ({
 }));
 vi.mock("@/lib/team-store", () => ({ hasTeam: mocks.hasTeam }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: mocks.logActivity }));
+vi.mock("@/lib/recent-solves", () => ({
+  recordRecentSolve: mocks.recordRecentSolve,
+  captureRecentSolvesGeneration: mocks.captureRecentSolvesGeneration,
+}));
 
 import { OPTIONS, POST } from "@/app/api/ai/submit/route";
 
@@ -61,6 +67,7 @@ function tokenIsGood(sub = "alice") {
 
 beforeEach(() => {
   for (const m of Object.values(mocks)) m.mockReset();
+  mocks.captureRecentSolvesGeneration.mockResolvedValue("0");
   modules.isModuleLive.mockReset();
   modules.isModuleLive.mockResolvedValue(true);
 });
@@ -113,18 +120,26 @@ describe("POST /api/ai/submit", () => {
     expect(mocks.submitAiFlag).toHaveBeenCalledWith("alice", CHAL, "CTF{x}", { dryRun: false });
   });
 
-  it("logs a fresh correct solve to the activity log, naming the flag path", async () => {
+  it("logs and feeds a fresh correct solve, naming the flag path", async () => {
     tokenIsGood();
     mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 300 });
     await POST(post({ token: "t", flag: "CTF{x}" }));
     expect(mocks.logActivity).toHaveBeenCalledWith("ai-solve", "alice", `${CHAL} via flag`);
+    expect(mocks.recordRecentSolve).toHaveBeenCalledWith({
+      module: "ai",
+      challengeId: CHAL,
+      points: 300,
+      login: "alice",
+      generation: "0",
+    });
   });
 
-  it("does not log an already-banked resubmission", async () => {
+  it("does not log or feed an already-banked resubmission", async () => {
     tokenIsGood();
     mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 0, already: true });
     await POST(post({ token: "t", flag: "CTF{x}" }));
     expect(mocks.logActivity).not.toHaveBeenCalled();
+    expect(mocks.recordRecentSolve).not.toHaveBeenCalled();
   });
 
   it("does not log a wrong flag", async () => {
@@ -334,6 +349,7 @@ describe("POST /api/ai/submit with a preview token (#464)", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ correct: true, points: 300, already: false, dryRun: true });
     expect(mocks.submitAiFlag).toHaveBeenCalledWith("alice", CHAL, "CTF{x}", { dryRun: true });
+    expect(mocks.recordRecentSolve).not.toHaveBeenCalled();
   });
 });
 

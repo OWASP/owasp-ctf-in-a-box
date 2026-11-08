@@ -155,14 +155,15 @@ rebuild. The last three of those are machine-enforced as well: `.coderabbit.yaml
 carries path instructions for `bootstrap-env.ts` and the snapshot readers, and
 for `apps/web/src/**/*.tsx` (the client-bundle read and the prerendered `/`).
 
-**11. The public surface is a named list, not a shape.** Exactly eight routes
+**11. The public surface is a named list, not a shape.** Exactly nine routes
 under `/api` answer without a session or a verified launch token, and each is
-on the list for its own stated reason — a ninth does not inherit an exemption
-by resembling one that has it; it needs its own case. Seven are read-only,
+on the list for its own stated reason — a tenth does not inherit an exemption
+by resembling one that has it; it needs its own case. Eight are read-only,
 policy or public-by-design content out and never facts in, nothing secret in
 the response: `GET /api/public/scoring`, `GET /api/ai/launch-key`, `GET
-/api/board/items`, `GET /api/sponsors/logo/[id]`, `GET
-/api/attachments/[id]`, `GET /api/event/logo` and `GET /api/event/icon`. One is a POST that exists
+/api/board/items`, `GET /api/board/recent-solves`, `GET
+/api/sponsors/logo/[id]`, `GET /api/attachments/[id]`, `GET /api/event/logo`
+and `GET /api/event/icon`. One is a POST that exists
 *before* identity: `POST /api/stats/visit` (the approximate, no-PII
 per-country reach counter, always `204`, whose own header comment documents
 that it is not a security boundary). The pre-event password check
@@ -175,8 +176,19 @@ expansion, and like the board it is public only once the event is launched —
 before that it answers `403 not-launched` to anyone but an admin. Who
 solved what is already on the board as counts, the items are built only from the contestant-safe listers (ids, labels, banked points —
 never a flag, hint, or key), and the login list is capped at a team roster's
-size so it reads like the board, not like a scrape. `launch-key` is the
-sharpest test of the "nothing secret" half: it exists to publish the launch
+size so it reads like the board, not like a scrape. `board/recent-solves`
+(#542) is the projector's feed and follows the same launch lock: `403
+not-launched` before launch to anyone but an admin preview, then at most five
+newest-first lines of team name, public challenge title, points and module.
+The stored event has no login field at all; the response has no challenge id,
+app id, team slug or activity-log row. A title is resolved from the current
+public lister on every read, and a line is dropped — not redacted — when its
+module is off, its target is disabled, its challenge is gone, or its classic
+story step is locked to an anonymous viewer. It is public because those three
+facts are already on the board (a team's name, a public challenge title, the
+points a solve is worth); the finding to watch for is an internal id, slug or
+login reaching that projection, or the read happening before the launch lock.
+`launch-key` is the sharpest test of the "nothing secret" half: it exists to publish the launch
 token's public key, `kid`, and algorithm so an external integrator can verify
 a token without holding a credential, and the finding to watch for is the
 private half (or any per-challenge signing key) drifting into that same

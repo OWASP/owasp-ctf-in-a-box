@@ -129,16 +129,17 @@ describe("resetEvent", () => {
       aiNonces: 2,
       aiLaunchKey: 2,
       activity: 2,
+      recentSolves: 2,
       sponsors: 2,
       sponsorsLogo: 2,
       adjustments: 2,
     });
     expect(out.resetAt).toMatch(/^\d+$/);
 
-    // one SCAN + one DEL per prefix (30 prefixes) = 60 pipeline calls
+    // one SCAN + one DEL per prefix (31 prefixes) = 62 pipeline calls
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(30);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(30);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(31);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(31);
     // every wiped prefix, and NOT settings/audit/sync
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
@@ -171,6 +172,7 @@ describe("resetEvent", () => {
       "ctf:ai:nonce:*",
       "ctf:ai:launchkey",
       "ctf:activity:log",
+      "ctf:feed:*",
       "ctf:sponsors",
       "ctf:sponsors:logo",
       "ctf:adjustments",
@@ -180,7 +182,14 @@ describe("resetEvent", () => {
     expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(script).toContain("'paused', '1'");
-    expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit", "ctf:admin:pauses"]);
+    expect(keys).toEqual([
+      "ctf:admin:settings",
+      "ctf:admin:audit",
+      "ctf:admin:pauses",
+      "ctf:admin:feed-generation",
+      "ctf:feed:recent-solves",
+      "ctf:feed:recent-solves:data",
+    ]);
     expect(args[0]).toBe("alice"); // actor
     const auditLine = JSON.parse(String(args[3]));
     expect(auditLine).toMatchObject({ by: "alice", action: "reset", cleared: { solves: 2, teams: 2 } });
@@ -193,6 +202,21 @@ describe("resetEvent", () => {
     await resetEvent("alice");
     const [script] = mocks.upstashEval.mock.calls[0];
     expect(script).toMatch(/redis\.call\('HDEL', KEYS\[1\], 'scoringStartsAt'\)/);
+  });
+
+  // The feed fence advances only together with the wipe, so an in-flight feed
+  // write captured before the reset cannot repopulate the fresh event.
+  it("advances the feed generation and clears both feed keys in the same eval", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [[]]));
+    await resetEvent("alice");
+    const [script, keys] = mocks.upstashEval.mock.calls[0];
+    expect(script).toMatch(/redis\.call\('INCR', KEYS\[4\]\)/);
+    expect(script).toMatch(/redis\.call\('DEL', KEYS\[5\], KEYS\[6\]\)/);
+    expect(keys.slice(3)).toEqual([
+      "ctf:admin:feed-generation",
+      "ctf:feed:recent-solves",
+      "ctf:feed:recent-solves:data",
+    ]);
   });
 
   // The reset starts a fresh pause log: the old event's intervals go, and the
@@ -330,12 +354,12 @@ describe("resetEvent", () => {
       .map((c) => c[0][0][3]);
     expect(patterns).not.toContain("ctf:ai:launchkey");
     expect(out.cleared.aiLaunchKey).toBeUndefined();
-    // Nothing else is affected: the other 29 prefixes are still swept.
+    // Nothing else is affected: the other 30 prefixes are still swept.
     expect(patterns).toContain("ctf:ai:nonce:*");
     expect(patterns).toContain("ctf:ai:solves:*");
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(29);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(29);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(30);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(30);
   });
 
   it("KEEPS the ai challenge bank, flag/flagnorm, hints, signing keys and categories across a reset", async () => {

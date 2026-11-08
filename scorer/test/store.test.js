@@ -1,7 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createMemoryStore, createRedisStore, solvesKey } from "../src/store.js";
+import {
+  createMemoryStore,
+  createRedisStore,
+  RECENT_SOLVES_DATA_KEY,
+  RECENT_SOLVES_GENERATION_KEY,
+  RECENT_SOLVES_KEY,
+  RECENT_SOLVES_MAX,
+  solvesKey,
+} from "../src/store.js";
 
 const T0 = "2026-08-14T10:00:00.000Z";
 const T1 = "2026-08-14T11:00:00.000Z";
@@ -15,6 +23,67 @@ test("memory store keeps first-solve timestamps; replays no-op", async () => {
     "octocat:xss-dom": T0,
   });
   assert.deepEqual(await store.getSolves("juice-shop"), {}); // targets isolated
+});
+
+test("memory store recordSolves returns only the FRESH ids", async () => {
+  const store = createMemoryStore();
+  assert.deepEqual(await store.recordSolves("dvwa", "octocat", ["a", "b"], T0), ["a", "b"]);
+  assert.deepEqual(await store.recordSolves("dvwa", "octocat", ["a", "c"], T1), ["c"]);
+});
+
+test("memory store: team-at-solve-time feed is newest-first, deduped and capped", async () => {
+  const store = createMemoryStore({
+    teams: [{ slug: "red", name: "Red Team", captain: "alice", members: ["alice"] }],
+  });
+  assert.deepEqual(await store.getTeamForLogin("alice"), { slug: "red", name: "Red Team" });
+  // Team membership is case-insensitive: GitHub logins are too.
+  assert.deepEqual(await store.getTeamForLogin("Alice"), { slug: "red", name: "Red Team" });
+  assert.deepEqual(await store.getTeamForLogin("ALICE"), { slug: "red", name: "Red Team" });
+  assert.equal(await store.getTeamForLogin("nobody"), null);
+
+  const entries = Array.from({ length: RECENT_SOLVES_MAX + 5 }, (_, i) => ({
+    target: "dvwa",
+    id: `c${i}`,
+    points: i,
+    at: new Date(Date.parse(T0) + i * 60_000).toISOString(),
+    team: "red",
+    teamName: "Red Team",
+  }));
+  const generation = await store.getFeedGeneration();
+  await store.recordRecentSolves(entries, generation);
+  await store.recordRecentSolves([entries.at(-1)], generation); // replay: no duplicate
+  const feed = await store.getRecentSolves();
+
+  assert.equal(feed.length, RECENT_SOLVES_MAX);
+  assert.equal(feed[0].challengeId, `c${RECENT_SOLVES_MAX + 4}`);
+  assert.equal(feed.at(-1).challengeId, "c5");
+  assert.equal(JSON.stringify(feed).includes("alice"), false);
+});
+
+test("memory store: a pre-reset feed write cannot repopulate the feed", async () => {
+  const store = createMemoryStore({
+    teams: [{ slug: "red", name: "Red Team", captain: "alice", members: ["alice"] }],
+  });
+  const entry = {
+    target: "dvwa",
+    id: "sqli-low",
+    points: 1,
+    at: T0,
+    team: "red",
+    teamName: "Red Team",
+  };
+  const preReset = await store.getFeedGeneration();
+  await store.recordRecentSolves([entry], preReset);
+  assert.equal((await store.getRecentSolves()).length, 1);
+
+  store.__resetFeed();
+  // A delayed write captured before the reset is refused...
+  await store.recordRecentSolves([entry], preReset);
+  assert.deepEqual(await store.getRecentSolves(), []);
+
+  // ...but a solve captured after it is recorded.
+  await store.recordRecentSolves([entry], await store.getFeedGeneration());
+  assert.equal((await store.getRecentSolves()).length, 1);
 });
 
 test("redis store: HSETNX command arrays via SRH pipeline, bearer token", async (t) => {
@@ -44,6 +113,145 @@ test("redis store: HSETNX command arrays via SRH pipeline, bearer token", async 
 
   await store.recordSolves("dvwa", "octocat", [], T1);
   assert.equal(calls.length, 1); // nothing to write, no round-trip
+});
+
+test("redis store: feed writes one EVAL per entry, with the app's keys and event shape", async (t) => {
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    return new Response(JSON.stringify([{ result: 1 }]), { status: 200 });
+  };
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const store = createRedisStore({ url: "http://srh:80/", token: "redis-token" });
+  await store.recordRecentSolves(
+    [
+      {
+        target: "dvwa",
+        id: "sqli-low",
+        points: 1,
+        at: T0,
+        team: "red",
+        teamName: "Red Team",
+      },
+    ],
+    "3",
+  );
+
+  assert.equal(bodies.length, 1);
+  const [command] = bodies[0];
+  assert.equal(command[0], "EVAL");
+  assert.equal(command[2], 3);
+  assert.equal(command[3], RECENT_SOLVES_KEY);
+  assert.equal(command[4], RECENT_SOLVES_DATA_KEY);
+  assert.equal(command[5], RECENT_SOLVES_GENERATION_KEY);
+  assert.equal(command[6], "secure-development:dvwa:sqli-low:red");
+  assert.equal(command[7], String(Date.parse(T0)));
+  assert.equal(command[9], String(RECENT_SOLVES_MAX));
+  assert.equal(command[10], "3");
+  assert.deepEqual(JSON.parse(command[8]), {
+    module: "secure-development",
+    app: "dvwa",
+    challengeId: "sqli-low",
+    points: 1,
+    team: "red",
+    teamName: "Red Team",
+    at: T0,
+  });
+
+  await store.recordRecentSolves([], "3");
+  assert.equal(bodies.length, 1); // nothing to write, no round-trip
+});
+
+test("redis store: getTeamForLogin reads the user's team slug then its name", async (t) => {
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    return new Response(
+      JSON.stringify([{ result: bodies.length === 1 ? "red" : "Red Team" }]),
+      { status: 200 },
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const store = createRedisStore({ url: "http://srh:80", token: "redis-token" });
+  assert.deepEqual(await store.getTeamForLogin("alice"), { slug: "red", name: "Red Team" });
+  assert.deepEqual(bodies, [
+    [["HGET", "ctf:user:alice", "team"]],
+    [["HGET", "ctf:team:red", "name"]],
+  ]);
+});
+
+test("redis store: getTeamForLogin misses are null and an empty name falls back to the slug", async (t) => {
+  const realFetch = globalThis.fetch;
+  let response = [null];
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify([{ result: response.shift() }]), { status: 200 });
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const store = createRedisStore({ url: "http://srh:80", token: "redis-token" });
+  assert.equal(await store.getTeamForLogin("nobody"), null);
+
+  response = ["red", ""];
+  assert.deepEqual(await store.getTeamForLogin("alice"), { slug: "red", name: "red" });
+});
+
+test("redis store: getTeamForLogin matches a differently cased stored member", async (t) => {
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, opts) => {
+    const commands = JSON.parse(opts.body);
+    bodies.push(commands);
+    const [verb, key] = commands[0];
+    let result = null;
+    if (verb === "SCAN") result = ["0", ["ctf:team:red:members"]];
+    else if (verb === "SMEMBERS") result = ["alice"];
+    else if (verb === "HGET" && key === "ctf:team:red") result = "Red Team";
+    return new Response(JSON.stringify([{ result }]), { status: 200 });
+  };
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const store = createRedisStore({ url: "http://srh:80", token: "redis-token" });
+  // The exact `ctf:user:Alice` key misses; the membership set stores "alice".
+  assert.deepEqual(await store.getTeamForLogin("Alice"), { slug: "red", name: "Red Team" });
+  assert.deepEqual(bodies[0], [["HGET", "ctf:user:Alice", "team"]]);
+  assert.deepEqual(bodies[1], [["SCAN", "0", "MATCH", "ctf:team:*:members", "COUNT", 1000]]);
+  assert.deepEqual(bodies[2], [["SMEMBERS", "ctf:team:red:members"]]);
+
+  // A login on no team still misses after the case-insensitive walk.
+  assert.equal(await store.getTeamForLogin("bob"), null);
+});
+
+test("redis store: getFeedGeneration reads the fence key, absent as 0", async (t) => {
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  let reply = "4";
+  globalThis.fetch = async (_url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    return new Response(JSON.stringify([{ result: reply }]), { status: 200 });
+  };
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const store = createRedisStore({ url: "http://srh:80", token: "redis-token" });
+  assert.equal(await store.getFeedGeneration(), "4");
+  reply = null;
+  assert.equal(await store.getFeedGeneration(), "0");
+  assert.deepEqual(bodies, [
+    [["GET", RECENT_SOLVES_GENERATION_KEY]],
+    [["GET", RECENT_SOLVES_GENERATION_KEY]],
+  ]);
 });
 
 test("redis store: HGETALL parses the flat field/value array", async (t) => {

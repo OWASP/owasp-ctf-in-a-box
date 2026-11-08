@@ -46,6 +46,7 @@ import {
 } from "@/lib/ai-keys";
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-audit-keys";
+import { RECENT_SOLVES_DATA_KEY, RECENT_SOLVES_GENERATION_KEY, RECENT_SOLVES_KEY } from "@/lib/recent-solves-keys";
 import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSize } from "@/lib/sponsors-keys";
 
 // The audit trail's key and cap live in a dependency-free leaf so
@@ -795,6 +796,13 @@ const RESET_PREFIXES: readonly [string, string][] = [
   // solves — a record of what people did during the event — so a reset wipes
   // it. Leaving it would let a "fresh" event open with last event's sign-ins.
   ["activity", ACTIVITY_LOG_KEY],
+  // The projector feed is a derived view of this event's solves, but a reset
+  // starts a new event: leaving the old lines would project last run's teams
+  // and titles over a fresh, not-yet-launched board. Both feed keys share the
+  // `ctf:feed:` prefix. The generation key lives under `ctf:admin:` instead,
+  // so this sweep cannot delete it; RESET_SCRIPT advances it and clears both
+  // feed keys atomically, which is what fences an in-flight pre-reset write.
+  ["recentSolves", "ctf:feed:*"],
   // Sponsors are the one exception to the CONTENT/PROGRESS split every other
   // entry above follows: unlike a challenge's flag/description, a sponsor
   // configuration is scoped to ONE event run (sponsors funded last year's
@@ -841,13 +849,17 @@ async function scanDelByPrefix(pattern: string): Promise<number> {
 // organizer launches it again), start a fresh pause log (the old event's
 // intervals go; the reset's own freeze is open from the reset instant), and
 // append the audit record. One atomic script so a reset can never land
-// without its audit line. Exported for the live suite only.
-// KEYS: [1]=settings [2]=audit [3]=pause log
+// without its audit line, and so the feed's reset fence advances only together
+// with the wipe that makes old lines wrong. Exported for the live suite only.
+// KEYS: [1]=settings [2]=audit [3]=pause log [4]=feed generation
+//       [5]=feed sorted set [6]=feed data hash
 // ARGV: [1]=actor [2]=at [3]=resetAt [4]=auditLine [5]=cap-1
 export const RESET_SCRIPT = `
 redis.call('HSET', KEYS[1], 'paused', '1', 'pausedSince', ARGV[2], 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
 redis.call('HDEL', KEYS[1], 'scoringStartsAt')
 redis.call('DEL', KEYS[3])
+redis.call('DEL', KEYS[5], KEYS[6])
+redis.call('INCR', KEYS[4])
 redis.call('LPUSH', KEYS[2], ARGV[4])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
 
@@ -897,7 +909,14 @@ export async function resetEvent(
     const audit = JSON.stringify({ at, by: actor, action: "reset", cleared });
     await upstashEval(
       RESET_SCRIPT,
-      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
+      [
+        ADMIN_SETTINGS_KEY,
+        ADMIN_AUDIT_KEY,
+        ADMIN_PAUSES_KEY,
+        RECENT_SOLVES_GENERATION_KEY,
+        RECENT_SOLVES_KEY,
+        RECENT_SOLVES_DATA_KEY,
+      ],
       [actor, at, resetAt, audit, String(AUDIT_CAP - 1)],
     );
     return { cleared, resetAt };

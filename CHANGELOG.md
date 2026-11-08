@@ -8,6 +8,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Fixed: a fresh scorer image build fails at `apk add docker-cli` (#724).**
+  Alpine moved `docker-cli` from 29.9.2-r0 to 29.9.3-r0 and keeps only the
+  latest revision in its index, so the pinned 29.9.2-r0 could no longer be
+  installed. The scorer Dockerfile now pins `29.9.3-r0`. An image you already
+  built still works; this affects only a clean build.
+
 ## v1.0.3 — 2026-10-25
 
 The second security patch on the v1.0.1 freeze, one day after the first: a

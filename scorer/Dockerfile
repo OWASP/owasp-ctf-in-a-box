@@ -22,7 +22,7 @@ FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf
 # base. The base digest does not freeze it: Alpine keeps only the latest
 # package revision in its index, so a rebuild there (-r0 -> -r1) breaks a
 # fresh build with "unable to select packages" until this pin follows it.
-RUN apk add --no-cache docker-cli=29.9.2-r0
+RUN apk add --no-cache docker-cli=29.9.3-r0
 
 WORKDIR /app
 

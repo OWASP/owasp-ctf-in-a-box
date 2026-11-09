@@ -303,6 +303,12 @@ export type ModuleDef = {
    *  (a Client Component renders it), which only holds because there is no
    *  function here to break the RSC boundary. Keep it that way. */
   emptyBoard?: { line: string; cta: { href: string; label: string } };
+  /** Set on a module that is on its way out: one sentence for the organizer
+   *  saying when it goes and what to use instead. The admin switch for the
+   *  module shows it as its help line and in the enable confirmation
+   *  (module-toggle.ts); the module keeps working until it is removed.
+   *  Plain data, like `emptyBoard`, so it can ride on ResolvedModule. */
+  deprecated?: string;
 };
 
 // Display metadata per registered module, one file per entry (#504 M10) —

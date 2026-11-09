@@ -1983,6 +1983,11 @@ holds every flag and every attachment, so treat it like the archive.
 
 ## AI
 
+> **Deprecated.** The AI module keeps working in v1.x and is removed in
+> v2.0.0 ([ADR 69](decisions.md#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)). For a new event, run AI security
+> challenges as Jeopardy challenges with flags: host the target anywhere,
+> reveal the flag on a solve, and add it under its own category.
+
 Switch AI on from `/admin` → Event → Modules and contestants get a third way
 to earn points: prompt-injection and guardrail challenges hosted on an
 **external** site, graded **inside** the box. Like the quiz and classic, it

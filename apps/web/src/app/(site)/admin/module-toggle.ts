@@ -19,6 +19,9 @@ export type ModuleToggleChoice = {
    *  image. `reason` says so on the row instead of leaving a dead control. */
   toggleable: boolean;
   reason?: string;
+  /** The registry's deprecation sentence (`ModuleDef.deprecated`), shown as
+   *  the switch's help and in the enable confirmation. */
+  deprecated?: string;
 };
 
 /** One row per registered module. Secure Development is locked only when
@@ -31,6 +34,7 @@ export function moduleChoices(secureDevAvailable: boolean): readonly ModuleToggl
     id: id as string,
     label: moduleDefById(id)?.displayName ?? (id as string),
     toggleable: id !== "secure-development" || secureDevAvailable,
+    deprecated: moduleDefById(id)?.deprecated,
     reason:
       id === "secure-development" && !secureDevAvailable
         ? "This deployment has no scorer image (SCORE_IMAGE is unset), so Secure Development cannot run here. Configure SCORE_IMAGE for this deployment and redeploy."
@@ -54,9 +58,11 @@ export function moduleToggleState(
   live: ReadonlySet<string>,
 ): { on: boolean; disabled: boolean; help: string | undefined } {
   const on = live.has(mod.id);
-  if (mod.toggleable) return { on, disabled: false, help: undefined };
-  if (on) return { on, disabled: false, help: `${mod.reason} It is switched off on your next change to any module.` };
-  return { on, disabled: true, help: mod.reason };
+  const withDeprecation = (help: string | undefined) =>
+    [help, mod.deprecated].filter(Boolean).join(" ") || undefined;
+  if (mod.toggleable) return { on, disabled: false, help: withDeprecation(undefined) };
+  if (on) return { on, disabled: false, help: withDeprecation(`${mod.reason} It is switched off on your next change to any module.`) };
+  return { on, disabled: true, help: withDeprecation(mod.reason) };
 }
 
 /** The confirmation for flipping one module, and the enabled set it writes.
@@ -70,7 +76,7 @@ export function moduleToggleConfirm(
   return {
     title: next ? `Enable ${mod.label}?` : `Disable ${mod.label}?`,
     body: next
-      ? `${mod.label} appears in the nav and its board opens, for everyone, on their next page load.`
+      ? `${mod.label} appears in the nav and its board opens, for everyone, on their next page load.${mod.deprecated ? ` ${mod.deprecated}` : ""}`
       : `${mod.label} disappears from the nav and its board stops resolving, for everyone, on their next page load. Nothing is deleted — enabling it again brings the same board back.`,
     confirmLabel: next ? "Enable" : "Disable",
     ids,

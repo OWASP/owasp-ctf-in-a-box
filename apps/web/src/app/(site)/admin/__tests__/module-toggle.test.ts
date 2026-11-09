@@ -79,3 +79,30 @@ describe("moduleToggleConfirm", () => {
     expect(c.body).toMatch(/Nothing is deleted/);
   });
 });
+
+// ADR 69: the AI module is deprecated. The registry's sentence reaches both
+// switches through the choice, and only the AI row carries one.
+describe("a deprecated module", () => {
+  const ai = moduleChoices(true).find((c) => c.id === "ai")!;
+
+  it("only the AI module is marked deprecated, and the sentence names the release and the replacement", () => {
+    expect(ai.deprecated).toMatch(/removed in v2\.0\.0/);
+    expect(ai.deprecated).toMatch(/Jeopardy/);
+    for (const c of moduleChoices(true).filter((c) => c.id !== "ai")) expect(c.deprecated).toBeUndefined();
+  });
+
+  it("shows the deprecation as the switch's help, whether it is on or off", () => {
+    expect(moduleToggleState(ai, new Set(["ai"]))).toEqual({ on: true, disabled: false, help: ai.deprecated });
+    expect(moduleToggleState(ai, new Set(["quiz"]))).toEqual({ on: false, disabled: false, help: ai.deprecated });
+  });
+
+  it("keeps a lock reason and adds the deprecation after it", () => {
+    const locked = { ...secdev, deprecated: "Deprecated." };
+    expect(moduleToggleState(locked, new Set(["quiz"])).help).toBe("This deployment has no scorer image. Deprecated.");
+  });
+
+  it("repeats the deprecation in the enable confirmation, not the disable one", () => {
+    expect(moduleToggleConfirm(ai, true, new Set(["quiz"])).body).toContain(ai.deprecated!);
+    expect(moduleToggleConfirm(ai, false, new Set(["ai", "quiz"])).body).not.toContain(ai.deprecated!);
+  });
+});

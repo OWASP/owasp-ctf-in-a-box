@@ -8,6 +8,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Deprecated: the AI module (#726, #728).** It keeps working in v1.x, with
+  security fixes only, and is removed in v2.0.0. Its switch in `/admin`
+  (Event → Modules and the AI panel's header) now says so, and so does the
+  confirmation when you enable it. For a new event, run AI security
+  challenges as Jeopardy challenges with flags. ADR 69 records why; it
+  supersedes ADR 53.
 - **Fixed: a fresh scorer image build fails at `apk add docker-cli` (#724).**
   Alpine moved `docker-cli` from 29.9.2-r0 to 29.9.3-r0 and keeps only the
   latest revision in its index, so the pinned 29.9.2-r0 could no longer be

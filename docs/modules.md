@@ -30,7 +30,8 @@ mode flag/event/both, the external launch URL, categories, an optional paid
 hint, a submission cooldown — and a contestant plays it on the external site
 or types a flag back on `/ai/[id]`; see
 [docs/ai-module.md](ai-module.md) for the external integrator's side of the
-contract). This document is
+contract; `ai` is deprecated and removed in v2.0.0, see
+[ADR 69](decisions.md#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)). This document is
 the contract a new
 module (forensics, api-security, cloud, …) must satisfy to plug in, with
 `secure-development` as the worked example throughout, since it is the one

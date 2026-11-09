@@ -25,10 +25,10 @@ module contributed, and its per-target breakdown.</sup>
 OWASP CTF in a Box is a control plane, not a single game. It gives an event its
 shared spine — a GitHub org, team registration, a live leaderboard, an
 organizer admin panel, and the scoring pipeline that feeds it — and **modules**
-plug challenge content into that spine. Four modules ship today — **OWASP
-Secure Development**, **Quiz**, **Jeopardy** and **AI** — and any
-subset can
-run alone or together; the box is built to host further modules on the same
+plug challenge content into that spine. Three modules ship today — **OWASP
+Secure Development**, **Quiz** and **Jeopardy** — and any subset can
+run alone or together (a fourth, **AI**, is deprecated and removed in v2.0.0;
+run AI security challenges as Jeopardy challenges with flags instead); the box is built to host further modules on the same
 spine. The [module contract](modules.md) is the boundary between platform and
 module.
 
@@ -40,8 +40,8 @@ machinery — no forks, no GitHub org, no scoring pipeline. They are graded
 inside the app, so an event running only those boots with a single compose
 profile. Their organizer guides are
 [Quiz](operations.md#quiz), [Jeopardy](operations.md#jeopardy) and
-[AI](operations.md#ai) — AI additionally has its own external integrator
-contract, [ai-module.md](ai-module.md).
+[AI](operations.md#ai) (deprecated) — AI additionally has its own external
+integrator contract, [ai-module.md](ai-module.md).
 
 Until now, running one meant standing up Vercel, Upstash, Lambda and DynamoDB,
 holding the cloud bill, and having access to a private scoring image. This kit
@@ -237,8 +237,9 @@ Pick the doc for what you're doing right now:
 - [Architecture](architecture.md) — what runs where, how a score gets from a
   contestant's PR to the leaderboard.
 - [Module contract](modules.md) — what a CTF vertical must satisfy to plug in.
-- [AI module](ai-module.md) — the external integrator's contract for the `ai`
-  module: launch tokens, verifying them, and reporting a solve back.
+- [AI module](ai-module.md) — deprecated, removed in v2.0.0. The external
+  integrator's contract for the `ai` module: launch tokens, verifying them,
+  and reporting a solve back.
 - [Scorer](scorer.md) — both rubric grammars, building your own scorer image,
   and wiring the self-contained scoring workflow.
 - [Decisions](decisions.md) — numbered ADRs for why the kit is built the way

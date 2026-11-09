@@ -20,7 +20,8 @@ as opposed to the challenge content plugged into it. The boundary is the
 challenges, scoring logic, and provisioning. Four ids are registered:
 `secure-development`, `quiz`, `classic` and `ai`. Any subset runs alone or
 together. See [modules.md](modules.md) and, for `ai` specifically, the
-external integrator's contract in [docs/ai-module.md](ai-module.md).
+external integrator's contract in [docs/ai-module.md](ai-module.md). `ai` is
+deprecated and removed in v2.0.0.
 
 **Target** — one deliberately vulnerable app the Secure Development module
 scores (Juice Shop, DVWA, WebGoat, Security Shepherd, VulnerableApp, VAmPI).

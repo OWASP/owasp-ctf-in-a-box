@@ -84,6 +84,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
 - [ADR 67 — A Secure Development solve is timed, and judged, by its score comment](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
 - [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
+- [ADR 69 — The AI module is retired; AI security challenges run as Jeopardy challenges with flags](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -2974,7 +2975,7 @@ under-disclosure is the wrong direction to be wrong in.
 
 ## ADR 53. ai launch tokens are asymmetric; event signatures stay symmetric
 
-**Status.** Accepted.
+**Status.** Superseded 2026-11-09 by [ADR 69](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags) — the `ai` module is deprecated and deleted in v2.0.0, taking both signatures with it. Until then this entry still describes every v1.x box. The body below is kept as the record of the decision as it stood.
 
 **Context.** An `ai` challenge is hosted outside the box. Two signatures make
 that work: the box mints a per-user **launch token** the contestant carries to
@@ -4214,3 +4215,48 @@ the board shows the challenge on the next read. The reveal script's lock
 keys move from `KEYS[8..]` to `KEYS[9..]`. A future reader of the challenge
 list has to filter, and the source scan says so if it does not.
 
+
+## ADR 69. The AI module is retired; AI security challenges run as Jeopardy challenges with flags
+
+**Context.** Issues #728, #730. The `ai` module lists a challenge hosted on
+an external site and scores it inside the box. To run one, an organizer
+needs a site that verifies a per-contestant Ed25519 launch token, reports a
+solve with an HMAC-signed event and a replay nonce, and keeps one secret key
+per challenge in step with `/admin` ([ADR 53](#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric),
+[docs/ai-module.md](ai-module.md)). That contract is the hard part of every
+AI event, and the module is the largest the kit maintains: about 100 files
+in `apps/web`, its own award script and upstash suite, an acceptance script
+and CI job, and an integrator's document. Meanwhile Jeopardy already has
+what an AI security category needs: categories, paid hints, story locks,
+attachments and scheduled release (ADR 68). A flag already proves a solve.
+
+**Decision.**
+- **v1.1.0 deprecates.** The module keeps working unchanged, with security
+  fixes only. Its admin switch, on Event and on its own panel, says so as
+  its help line and in the enable confirmation, from one registry field
+  (`ModuleDef.deprecated`, read by `module-toggle.ts`). The docs mark it
+  deprecated, and the module lists drop it.
+- **v2.0.0 deletes it.** Removal ships with kit-owned accounts (#731), so an
+  organizer takes one breaking upgrade, not two. v2.0.0 starts from a clean
+  Redis and does not read v1 archives, so no AI points, settings or bundles
+  reach a v2 box, and the deletion carries none of them: no read-only fold
+  of old AI totals, no tombstone module id, no import handling. An event that
+  wants its AI results exports its archive on v1.x.
+- **AI security categories run as Jeopardy challenges.** The target is
+  hosted anywhere; solving it reveals a flag; the flag goes on the board
+  under its own category, with hints and story locks as usual. The
+  organizer's guide is #727.
+
+This was chosen over keeping the module as a flag-only mode (a second
+Jeopardy with its own store), over moving launch tokens into Jeopardy (it
+keeps the integration that makes AI events hard), and over removing it in
+v1.2.0 (a breaking minor between the deprecation and v2.0.0, plus the work
+of carrying AI points across an in-place upgrade that v2.0.0 then discards).
+
+**Consequences.** A challenge site no longer learns who is playing or
+reports a solve by itself: a contestant types the flag. A shared flag can be
+passed between teams, the exposure every Jeopardy flag already has. On a
+v1.x box nothing changes until the organizer moves to v2.0.0. Deleting the
+module removes its routes, admin panel, award script, upstash suite,
+`acceptance-ai-only.sh` and its CI job, and this ADR then supersedes ADR 53
+outright.

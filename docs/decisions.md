@@ -4240,8 +4240,11 @@ attachments and scheduled release (ADR 68). A flag already proves a solve.
   organizer takes one breaking upgrade, not two. v2.0.0 starts from a clean
   Redis and does not read v1 archives, so no AI points, settings or bundles
   reach a v2 box, and the deletion carries none of them: no read-only fold
-  of old AI totals, no tombstone module id, no import handling. An event that
-  wants its AI results exports its archive on v1.x.
+  of old AI totals, no tombstone module id, no import handling. AI results
+  do not carry over at all: the event archive holds content and settings,
+  not contestant progress, and v2.0.0 does not read it anyway. An event that
+  wants its AI results records them from its v1.x box before upgrading, or
+  keeps that box.
 - **AI security categories run as Jeopardy challenges.** The target is
   hosted anywhere; solving it reveals a flag; the flag goes on the board
   under its own category, with hints and story locks as usual. The

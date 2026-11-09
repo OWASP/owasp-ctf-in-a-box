@@ -25,10 +25,10 @@ module contributed, and its per-target breakdown.</sup>
 OWASP CTF in a Box is a control plane, not a single game. It gives an event its
 shared spine — a GitHub org, team registration, a live leaderboard, an
 organizer admin panel, and the scoring pipeline that feeds it — and **modules**
-plug challenge content into that spine. Three modules ship today — **OWASP
-Secure Development**, **Quiz** and **Jeopardy** — and any subset can
-run alone or together (a fourth, **AI**, is deprecated and removed in v2.0.0;
-run AI security challenges as Jeopardy challenges with flags instead); the box is built to host further modules on the same
+plug challenge content into that spine. Four modules ship in v1.x — **OWASP
+Secure Development**, **Quiz**, **Jeopardy** and **AI**, the last deprecated
+and removed in v2.0.0 (run AI security challenges as Jeopardy challenges with
+flags instead) — and any subset can run alone or together; the box is built to host further modules on the same
 spine. The [module contract](modules.md) is the boundary between platform and
 module.
 

@@ -6,6 +6,13 @@ title: AI module
 
 # AI module: the external integrator's contract
 
+> **Deprecated.** The AI module keeps working in v1.x, with security fixes
+> only, and is removed in v2.0.0
+> ([ADR 69](decisions.md#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)).
+> For a new event, run AI security challenges as
+> [Jeopardy](operations.md#jeopardy) challenges with flags: host the target
+> anywhere, reveal the flag on a solve, and add it under its own category.
+
 **For whoever builds the challenge site.** The `ai` module lets an organizer
 list a challenge that is hosted entirely outside the box — an LLM red-team
 exercise, a prompt-injection sandbox, anything with its own backend — and

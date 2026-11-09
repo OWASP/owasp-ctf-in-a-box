@@ -34,8 +34,10 @@ together on one leaderboard:
 - **Quiz** — single- and multi-select security questions.
 - **Jeopardy** — a board of flag challenges in categories, with optional
   paid hints.
-- **AI** — prompt-injection and guardrail challenges hosted on an external
-  site, scored back on the leaderboard.
+
+A fourth module, **AI**, is deprecated: it keeps working in v1.x and is
+removed in v2.0.0. Run AI security challenges as Jeopardy challenges with
+flags instead.
 
 It runs from Docker Compose on a laptop, a spare desktop or a small VPS, plus
 one free GitHub org if you run Secure Development. The scoring rubrics for
@@ -124,10 +126,11 @@ challenge is marked case-sensitive, with a submission cooldown and optional
 paid hints. Challenges can be hidden or scheduled for later release. Needs no
 GitHub.
 
-**AI** — each contestant gets a personal launch link to the external
-challenge site; a solve reports back through that site's callback or a flag
-typed into the app. Needs no GitHub. The site's side of the contract is in
-[docs/ai-module.md](docs/ai-module.md).
+**AI (deprecated, removed in v2.0.0)** — each contestant gets a personal
+launch link to the external challenge site; a solve reports back through that
+site's callback or a flag typed into the app. Needs no GitHub. The site's side
+of the contract is in [docs/ai-module.md](docs/ai-module.md). For a new event,
+run AI security challenges as Jeopardy challenges with flags.
 
 Quiz, Jeopardy and AI content is written in `/admin` or imported as one JSON
 bundle. Around whichever modules you enable, the platform provides:

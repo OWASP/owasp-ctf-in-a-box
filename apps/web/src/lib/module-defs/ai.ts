@@ -14,6 +14,11 @@ export const AI_DEF: ModuleDef = {
   id: "ai",
   displayName: "AI",
   description: "Prompt-injection and guardrail challenges hosted outside the box, scored inside it.",
+  // ADR 69: deprecated in v1.1.0, deleted in v2.0.0.
+  deprecated: {
+    note: "Deprecated: the AI module is removed in v2.0.0 and keeps working until then. For a new event, run AI security challenges as Jeopardy challenges with flags.",
+    guide: { href: `${DOCS_URL}operations#jeopardy`, label: "Jeopardy organizer guide" },
+  },
   // /ai exists now (the pages PR), so the module gets its nav entry — and
   // the 404's route directory.
   nav: { href: "/ai", label: "AI" },

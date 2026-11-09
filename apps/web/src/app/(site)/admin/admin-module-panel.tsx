@@ -29,6 +29,7 @@ import AdminSwitch from "@/components/admin-switch";
 import type { FieldStatus } from "@/components/admin-number-field";
 import type { ModuleSettingsSlot } from "@/components/admin/settings-card";
 import AdminModuleIdentity from "./admin-module-identity";
+import { withDeprecation } from "./module-deprecation";
 import { moduleToggleConfirm, moduleToggleState, type ModuleToggleChoice } from "./module-toggle";
 import type { ConfirmState } from "./types";
 
@@ -110,7 +111,7 @@ export default function AdminModulePanel({
               const c = moduleToggleConfirm(choice, next, live);
               setConfirm({
                 title: c.title,
-                body: c.body,
+                body: withDeprecation(c.body, c.deprecated),
                 confirmLabel: c.confirmLabel,
                 onConfirm: () => applyField(`module:${mod.id}`, { enabledModules: c.ids }, choice.label),
               });
@@ -119,7 +120,9 @@ export default function AdminModulePanel({
         </div>
       </div>
 
-      {toggle.help && <p className="-mt-2 text-sm text-muted">{toggle.help}</p>}
+      {(toggle.help || toggle.deprecated) && (
+        <p className="-mt-2 text-sm text-muted">{withDeprecation(toggle.help, toggle.deprecated)}</p>
+      )}
 
       {setup && <AdminModuleSetup title={mod.title} setup={setup} inventory={inventory} />}
 

@@ -4219,12 +4219,15 @@ list has to filter, and the source scan says so if it does not.
 ## ADR 69. The AI module is retired; AI security challenges run as Jeopardy challenges with flags
 
 **Context.** Issues #728, #730. The `ai` module lists a challenge hosted on
-an external site and scores it inside the box. To run one, an organizer
-needs a site that verifies a per-contestant Ed25519 launch token, reports a
-solve with an HMAC-signed event and a replay nonce, and keeps one secret key
-per challenge in step with `/admin` ([ADR 53](#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric),
-[docs/ai-module.md](ai-module.md)). That contract is the hard part of every
-AI event, and the module is the largest the kit maintains: about 100 files
+an external site and scores it inside the box. A flag-mode challenge only
+needs the site to show a flag, which the contestant types into the box. An
+event-mode challenge, the one that reports its own solve, needs a site that
+verifies a per-contestant Ed25519 launch token, POSTs an HMAC-signed event
+with a replay nonce, and keeps one secret key per challenge in step with
+`/admin` ([ADR 53](#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric),
+[docs/ai-module.md](ai-module.md)). That event-mode contract is the hard
+part of an AI event, and flag mode alone is what Jeopardy already does. The
+module is also the largest the kit maintains: about 100 files
 in `apps/web`, its own award script and upstash suite, an acceptance script
 and CI job, and an integrator's document. Meanwhile Jeopardy already has
 what an AI security category needs: categories, paid hints, story locks,
@@ -4233,8 +4236,9 @@ attachments and scheduled release (ADR 68). A flag already proves a solve.
 **Decision.**
 - **v1.1.0 deprecates.** The module keeps working unchanged, with security
   fixes only. Its admin switch, on Event and on its own panel, says so as
-  its help line and in the enable confirmation, from one registry field
-  (`ModuleDef.deprecated`, read by `module-toggle.ts`). The docs mark it
+  its help line and in the enable confirmation, with a link to the Jeopardy
+  guide, from one registry field (`ModuleDef.deprecated`, carried by
+  `module-toggle.ts` and rendered by `module-deprecation.tsx`). The docs mark it
   deprecated, and the module lists drop it.
 - **v2.0.0 deletes it.** Removal ships with kit-owned accounts (#731), so an
   organizer takes one breaking upgrade, not two. v2.0.0 starts from a clean
@@ -4256,8 +4260,10 @@ keeps the integration that makes AI events hard), and over removing it in
 v1.2.0 (a breaking minor between the deprecation and v2.0.0, plus the work
 of carrying AI points across an in-place upgrade that v2.0.0 then discards).
 
-**Consequences.** A challenge site no longer learns who is playing or
-reports a solve by itself: a contestant types the flag. A shared flag can be
+**Consequences.** Jeopardy sends no launch token, so a challenge site no
+longer gets the contestant's identity from the box (it can still run its own
+sign-in), and it cannot report a solve by itself: a contestant types the
+flag. A shared flag can be
 passed between teams, the exposure every Jeopardy flag already has. On a
 v1.x box nothing changes until the organizer moves to v2.0.0. Deleting the
 module removes its routes, admin panel, award script, upstash suite,

@@ -28,6 +28,7 @@ import AdminSwitch from "@/components/admin-switch";
 import { FREEZE_HELP, freezeConfirm } from "./freeze-copy";
 import { IdentityField } from "./admin-module-identity";
 import AdminEventImages from "./admin-event-images";
+import { withDeprecation } from "./module-deprecation";
 import { moduleToggleConfirm, moduleToggleState, type ModuleToggleChoice } from "./module-toggle";
 import type { CommitNumber, ConfirmState } from "./types";
 
@@ -362,7 +363,7 @@ export default function AdminEventTab({
               key={mod.id}
               id={`module-${mod.id}`}
               label={mod.label}
-              help={toggle.help}
+              help={withDeprecation(toggle.help, toggle.deprecated)}
               checked={toggle.on}
               disabled={pending || toggle.disabled}
               status={statusOf(`module:${mod.id}`)}
@@ -370,7 +371,7 @@ export default function AdminEventTab({
                 const c = moduleToggleConfirm(mod, next, live);
                 setConfirm({
                   title: c.title,
-                  body: c.body,
+                  body: withDeprecation(c.body, c.deprecated),
                   confirmLabel: c.confirmLabel,
                   onConfirm: () => applyField(`module:${mod.id}`, { enabledModules: c.ids }, mod.label),
                 });

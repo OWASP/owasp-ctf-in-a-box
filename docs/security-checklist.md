@@ -32,8 +32,8 @@ submitted code is the product.
 
 ## 1. `EVENT_URL` must be HTTPS
 
-The session cookie is only marked `Secure` over HTTPS, and this app keeps
-**no server-side session store** — the cookie *is* the identity. Sniffing an
+The session cookie is only marked `Secure` over HTTPS, and a captured
+session cookie is the account until it expires or is revoked. Sniffing an
 organizer's cookie on the venue wifi is a full admin takeover, not a
 nuisance.
 

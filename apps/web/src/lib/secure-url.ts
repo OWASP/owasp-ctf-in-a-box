@@ -6,8 +6,8 @@
 // the scheme of its baseURL. Ship an event on `http://ctf.example.org` and
 // every session cookie — including an organizer's, whose login is in
 // `.env`'s `ADMIN_LOGINS` — travels in cleartext on whatever conference wifi
-// the contestants are sharing. This app has no server-side session store: the
-// cookie IS the identity, so sniffing one is a full admin takeover, not a
+// the contestants are sharing. A captured session cookie is the account until
+// it expires or is revoked, so sniffing one is a full admin takeover, not a
 // nuisance. The default in .env.example is `http://localhost`, which is
 // correct for a local trial and catastrophic if an organizer edits the host
 // and not the scheme — a one-token mistake with no visible symptom.
@@ -69,7 +69,7 @@ export function checkEventUrl(opts: {
   const detail =
     `BETTER_AUTH_URL is ${url} — plain HTTP to a non-local host. ` +
     `The session cookie will be sent WITHOUT the Secure flag, so anyone on the network path can capture it, ` +
-    `and this app keeps no server-side session store: a captured cookie IS the account, including an organizer's. ` +
+    `and a captured session cookie is the account until it expires or is revoked, including an organizer's. ` +
     `Set EVENT_URL to an https:// address (the bundled Caddy will get a certificate for a real domain automatically).`;
 
   // Development is where an organizer legitimately points a LAN address at the

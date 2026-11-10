@@ -20,7 +20,10 @@ import { recordCallbackLogin } from "@/lib/activity-log";
  *     `cookieCache.maxAge`, so that is the longest a sign-out or deleted
  *     session keeps working on another device.
  *
- * Bump `session.cookieCache.version` to invalidate every cookie at once.
+ * Bumping `session.cookieCache.version` only makes every request re-read its
+ * session from Redis; nobody is signed out. The mass sign-out levers are
+ * deleting the `ctf:auth:session` rows (and their index sets) or rotating
+ * `BETTER_AUTH_SECRET`.
  */
 export const authOptions = {
   database: redisAdapter(),

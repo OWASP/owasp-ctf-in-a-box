@@ -8,6 +8,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Changed: `/api/classic/submit` and `/api/quiz/answer` now return HTTP
+  `429` with `Retry-After` on cooldown refusals (#753).** Both endpoints
+  previously returned `403` without `Retry-After`, unlike `/api/ai/submit`,
+  `/api/hints/reveal`, and `/api/team/join`. Both routes now include a
+  `Retry-After` header in whole seconds until `retryAt` while preserving
+  `{ error: "cooldown", retryAt }` in the body; other `403` refusals
+  (`paused`, `solved`, `unavailable`, `not-launched`) remain unchanged.
 - **AWS deploys now check credentials before reading Terraform outputs (#750).**
   An expired SSO session fails with a credential message before image work
   starts, while dry runs still make no AWS calls.

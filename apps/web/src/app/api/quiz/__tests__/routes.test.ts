@@ -292,11 +292,19 @@ describe("POST /api/quiz/answer", () => {
     },
   );
 
-  it("403 with retryAt for a cooldown refusal", async () => {
-    answerQuestion.mockResolvedValue({ ok: false, reason: "cooldown", retryAt: "2026-01-01T00:00:00.000Z" });
-    const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ error: "cooldown", retryAt: "2026-01-01T00:00:00.000Z" });
+  it("429 with Retry-After header and retryAt for a cooldown refusal", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-12-31T23:59:00.000Z"));
+    try {
+      const retryAt = "2026-01-01T00:00:00.000Z";
+      answerQuestion.mockResolvedValue({ ok: false, reason: "cooldown", retryAt });
+      const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("60");
+      expect(await res.json()).toEqual({ error: "cooldown", retryAt });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("200 with correct:true and points for a correct answer", async () => {

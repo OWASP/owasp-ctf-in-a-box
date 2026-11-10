@@ -223,6 +223,22 @@ describe("dispatchSubmit", () => {
       fetchSpy.mockRestore();
     }
   });
+
+  it("parses a 429 cooldown refusal as not-ok with error and retryAt (#753)", async () => {
+    const retryAt = "2026-08-19T10:00:00.000Z";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "cooldown", retryAt }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "42" },
+      }),
+    );
+    try {
+      const out = await dispatchSubmit("web-sqli-101", "CTF{y}", { submitPath: "/api/classic/submit" });
+      expect(out).toEqual({ ok: false, data: { error: "cooldown", retryAt } });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 });
 
 // Every reason the in-box form can now put in front of a contestant gets its

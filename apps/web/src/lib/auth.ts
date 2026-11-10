@@ -36,7 +36,11 @@ export const authOptions = {
       enabled: true,
       maxAge: 5 * 60, // bounds how long a revoked session keeps working
       strategy: "jwe",
-      refreshCache: true,
+      // No `refreshCache`: it reissues the cookie cache without reading the
+      // session row, so a revoked session would never be noticed. better-auth
+      // ignores it with a database configured; leaving it out keeps that true
+      // even if it stops doing so. `version` must never be "1": cookies minted
+      // under "1" are stateless caches valid for 7 days, and would be trusted.
       version: "2",
     },
   },
@@ -78,7 +82,7 @@ export const authOptions = {
     // session.user.login.
     "/update-user",
     // Same shape as /update-user: an arbitrary body behind sessionMiddleware,
-    // parsed into the re-signed session. Inert only because this app declares
+    // parsed into the session row. Inert only because this app declares
     // no session.additionalFields, so the parse always comes back empty.
     // Declaring one would make this writable, silently.
     "/update-session",
@@ -150,7 +154,7 @@ export const authOptions = {
       // `input: false` fields when mapping the OAuth profile, which leaves
       // session.user.login undefined and breaks the /profile gate. Do not
       // "harden" this to `input: false` — verified against the installed
-      // better-auth 1.6.23, it regresses sign-in.
+      // better-auth 1.7.16, it regresses sign-in.
       //
       // The consequence is that `login` remains writable by any endpoint that
       // funnels a request body through parseUserInput. The only such endpoint

@@ -106,6 +106,14 @@ describe("Redis-backed sign-in state (#736)", () => {
     expect(authOptions.session.cookieCache.maxAge).toBeLessThanOrEqual(300);
   });
 
+  it("never reissues the cookie cache without reading the session row", () => {
+    // refreshCache would let a revoked session live on; version "1" would
+    // trust the 7-day stateless caches minted under it.
+    const cache: { refreshCache?: unknown; version?: string } = authOptions.session.cookieCache;
+    expect(cache.refreshCache).toBeFalsy();
+    expect(cache.version).not.toBe("1");
+  });
+
   it("refreshes the GitHub login on every sign-in", () => {
     expect(authOptions.socialProviders.github.overrideUserInfoOnSignIn).toBe(true);
   });

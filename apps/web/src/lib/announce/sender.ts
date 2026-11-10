@@ -24,6 +24,7 @@
 // the URL or the payload is absolute — errors go through errorLabel only.
 
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { errorLabel } from "@/lib/error-label";
 import { kindEnabled, type AnnouncementKind } from "@/lib/discord-config";
 import type { DiscordMessage } from "./messages";
@@ -67,11 +68,12 @@ export function droppedEnqueues(): number {
   return droppedCount;
 }
 
-/** The outbox id for one enqueue: time + an in-process counter + the kind,
- *  so a same-millisecond burst never collides. */
+/** The outbox id for one enqueue: time + an in-process counter + random
+ *  entropy + the kind, so concurrent replicas and same-millisecond bursts
+ *  cannot collide or overwrite entries in the outbox hash. */
 function nextId(kind: AnnouncementKind): string {
   enqueueCounter += 1;
-  return `${Date.now()}-${enqueueCounter}-${kind}`;
+  return `${Date.now()}-${enqueueCounter}-${randomUUID().slice(0, 8)}-${kind}`;
 }
 
 /** Enqueues one announcement, if its switch is on and a webhook is

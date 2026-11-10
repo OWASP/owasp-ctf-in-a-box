@@ -93,6 +93,10 @@ describe("the admin gate", () => {
     expect(mocks.updateAnnounceConfig).not.toHaveBeenCalled();
     expect(mocks.setAnnounceWebhook).not.toHaveBeenCalled();
     expect(mocks.postToDiscord).not.toHaveBeenCalled();
+    expect(mocks.nudgeAnnounceTicker).not.toHaveBeenCalled();
+    expect(mocks.deleteLifecycleState).not.toHaveBeenCalled();
+    expect(mocks.readStatus).not.toHaveBeenCalled();
+    expect(mocks.writeAdminAudit).not.toHaveBeenCalled();
   });
 });
 
@@ -134,12 +138,16 @@ describe("config POST", () => {
     expect(mocks.nudgeAnnounceTicker).toHaveBeenCalledTimes(1);
   });
 
-  it("deletes lifecycle state when transitioning lifecycle pass from disabled to enabled before nudging", async () => {
+  it("deletes lifecycle state before saving config and nudging ticker on off-to-on transition", async () => {
     mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false });
     mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: true, pause: false });
     const order: string[] = [];
     mocks.deleteLifecycleState.mockImplementation(async () => {
       order.push("delete");
+    });
+    mocks.updateAnnounceConfig.mockImplementation(async () => {
+      order.push("save");
+      return { webhookConfigured: true, launch: true, pause: false };
     });
     mocks.nudgeAnnounceTicker.mockImplementation(() => {
       order.push("nudge");
@@ -148,8 +156,20 @@ describe("config POST", () => {
     const res = await POST(req("POST", { launch: true }));
     expect(res.status).toBe(200);
     expect(mocks.deleteLifecycleState).toHaveBeenCalledTimes(1);
+    expect(mocks.updateAnnounceConfig).toHaveBeenCalledTimes(1);
     expect(mocks.nudgeAnnounceTicker).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(["delete", "nudge"]);
+    expect(order).toEqual(["delete", "save", "nudge"]);
+  });
+
+  it("fails closed without saving config or nudging ticker when deleteLifecycleState fails", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false });
+    mocks.deleteLifecycleState.mockRejectedValue(new Error("redis delete error"));
+
+    const res = await POST(req("POST", { launch: true }));
+    expect(res.status).toBe(503);
+    expect(mocks.deleteLifecycleState).toHaveBeenCalledTimes(1);
+    expect(mocks.updateAnnounceConfig).not.toHaveBeenCalled();
+    expect(mocks.nudgeAnnounceTicker).not.toHaveBeenCalled();
   });
 
   it("does not delete lifecycle state on unrelated saves", async () => {

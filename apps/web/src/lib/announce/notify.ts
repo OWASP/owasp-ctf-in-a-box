@@ -39,7 +39,7 @@ import { errorLabel } from "@/lib/error-label";
 // announcement describes the solving TEAM, server-side, not a browser's
 // current view of it.
 import { listTeams } from "@/lib/team-store";
-import { listChallenges, listStories } from "@/lib/classic-store";
+import { listStories, readChallengeRecords } from "@/lib/classic-store";
 import { visibleNow } from "@/lib/classic-release";
 import { listQuestions } from "@/lib/quiz-store";
 import { listAiChallenges } from "@/lib/ai-store";
@@ -109,10 +109,10 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     // off the hot path for the default (unconfigured) box.
     if (!config.webhookConfigured || !config.firstBlood) return;
 
-    let classicVisible: Awaited<ReturnType<typeof listChallenges>> | null = null;
-    let classicChallenge: Awaited<ReturnType<typeof listChallenges>>[number] | null = null;
+    let classicVisible: Awaited<ReturnType<typeof readChallengeRecords>> | null = null;
+    let classicChallenge: Awaited<ReturnType<typeof readChallengeRecords>>[number] | null = null;
     if (input.module === "classic") {
-      const all = await listChallenges();
+      const all = await readChallengeRecords();
       const existing = all.find((x) => x.id === input.challengeId);
       const visible = visibleNow(all);
       const c = visible.find((x) => x.id === input.challengeId);

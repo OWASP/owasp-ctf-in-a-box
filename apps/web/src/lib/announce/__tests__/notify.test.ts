@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   claimLedgerField: vi.fn(),
   enqueueAnnouncement: vi.fn(),
   listTeams: vi.fn(),
-  listChallenges: vi.fn(),
+  readChallengeRecords: vi.fn(),
   listStories: vi.fn(),
   listQuestions: vi.fn(),
   listAiChallenges: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock("@/lib/announce/store", () => ({
 }));
 vi.mock("@/lib/announce/sender", () => ({ enqueueAnnouncement: mocks.enqueueAnnouncement }));
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
-vi.mock("@/lib/classic-store", () => ({ listChallenges: mocks.listChallenges, listStories: mocks.listStories }));
+vi.mock("@/lib/classic-store", () => ({ readChallengeRecords: mocks.readChallengeRecords, listStories: mocks.listStories }));
 vi.mock("@/lib/quiz-store", () => ({ listQuestions: mocks.listQuestions }));
 vi.mock("@/lib/ai-store", () => ({ listAiChallenges: mocks.listAiChallenges }));
 
@@ -39,7 +39,7 @@ beforeEach(() => {
   mocks.claimLedgerField.mockReset().mockResolvedValue(true);
   mocks.enqueueAnnouncement.mockReset().mockResolvedValue(undefined);
   mocks.listTeams.mockReset().mockResolvedValue([{ slug: "t1", name: "Team One", members: ["Alice"] }]);
-  mocks.listChallenges.mockReset().mockResolvedValue([{ id: "web-1", title: "Web 1", category: "web", points: 100 }]);
+  mocks.readChallengeRecords.mockReset().mockResolvedValue([{ id: "web-1", title: "Web 1", category: "web", points: 100 }]);
   mocks.listStories.mockReset().mockResolvedValue([]);
   mocks.listQuestions.mockReset().mockResolvedValue([]);
   mocks.listAiChallenges.mockReset().mockResolvedValue([]);
@@ -86,7 +86,7 @@ describe("notifyFirstBlood", () => {
 
   it("falls back to the bare login and to the id when the challenge vanished", async () => {
     mocks.listTeams.mockResolvedValue([]);
-    mocks.listChallenges.mockResolvedValue([]);
+    mocks.readChallengeRecords.mockResolvedValue([]);
     await notifyFirstBlood({ module: "classic", challengeId: "gone-1", login: "alice" });
     const msg = mocks.enqueueAnnouncement.mock.calls[0][1] as { embeds: { description?: string }[] };
     expect(msg.embeds[0].description).toContain("alice");
@@ -95,8 +95,24 @@ describe("notifyFirstBlood", () => {
   });
 
   it("never announces a HIDDEN challenge — returns without claiming or enqueueing", async () => {
-    mocks.listChallenges.mockResolvedValue([{ id: "web-9", title: "Secret Unreleased Title", category: "web", points: 100, enabled: false }]);
+    mocks.readChallengeRecords.mockResolvedValue([{ id: "web-9", title: "Secret Unreleased Title", category: "web", points: 100, enabled: false }]);
     await notifyFirstBlood({ module: "classic", challengeId: "web-9", login: "alice" });
+    expect(mocks.claimLedgerField).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("returns without claiming or enqueueing when a classic challenge has a future releaseAt", async () => {
+    mocks.readChallengeRecords.mockResolvedValue([
+      { id: "web-future", title: "Future Challenge", category: "web", points: 100, enabled: false, releaseAt: "2099-01-01T00:00:00Z" },
+    ]);
+    await notifyFirstBlood({ module: "classic", challengeId: "web-future", login: "alice" });
+    expect(mocks.claimLedgerField).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a per-command HGETALL read error — no claim, no post, no throw", async () => {
+    mocks.readChallengeRecords.mockRejectedValue(new Error("Upstash HGETALL failed: ERR command error"));
+    await expect(notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" })).resolves.toBeUndefined();
     expect(mocks.claimLedgerField).not.toHaveBeenCalled();
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
@@ -146,7 +162,7 @@ describe("story-lock secrecy gate (ADR 60)", () => {
   ];
 
   beforeEach(() => {
-    mocks.listChallenges.mockResolvedValue(both);
+    mocks.readChallengeRecords.mockResolvedValue(both);
     mocks.listStories.mockResolvedValue(story);
   });
 

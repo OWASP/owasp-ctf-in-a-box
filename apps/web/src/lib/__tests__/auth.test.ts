@@ -114,6 +114,11 @@ describe("Redis-backed sign-in state (#736)", () => {
     expect(cache.version).not.toBe("1");
   });
 
+  it("never links a GitHub identity to an existing user by email", () => {
+    expect(authOptions.account.accountLinking.disableImplicitLinking).toBe(true);
+    expect(authOptions.account.storeAccountCookie).toBe(false);
+  });
+
   it("refreshes the GitHub login on every sign-in", () => {
     expect(authOptions.socialProviders.github.overrideUserInfoOnSignIn).toBe(true);
   });

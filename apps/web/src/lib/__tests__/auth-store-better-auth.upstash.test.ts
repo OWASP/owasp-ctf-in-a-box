@@ -8,6 +8,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { betterAuth } from "better-auth";
+import { handleOAuthUserInfo } from "better-auth/oauth2";
 import { authOptions } from "@/lib/auth";
 import * as keys from "@/lib/auth-store/keys";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
@@ -116,5 +117,25 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
     );
     const owner = await ia.findAccountOwnerByKey({ providerId: "github", accountId: "888" });
     expect(owner && "user" in owner ? (owner.user as User).id : null).toBe(first.user.id);
+  });
+
+  it("does not put a second GitHub identity with the same verified email on the first user", async () => {
+    const { ctx } = await build();
+    const ia = ctx.internalAdapter;
+    const first = await ia.createOAuthUser(profile("mover"), githubAccount("1001"));
+
+    // The callback's own decision, with the email the first account holds now
+    // reported verified for a different GitHub account id.
+    const c = { context: ctx } as unknown as Parameters<typeof handleOAuthUserInfo>[0];
+    const second = await handleOAuthUserInfo(c, {
+      userInfo: { ...profile("mover-two"), email: first.user.email, id: "1002" },
+      account: { ...githubAccount("1002"), scope: "" },
+    });
+
+    expect(second.data).toBeNull();
+    expect(second.error).toBe("account not linked");
+    expect(await ia.findAccountByKey({ providerId: "github", accountId: "1002" })).toBeNull();
+    expect(await ctx.adapter.count({ model: "user" })).toBe(1);
+    expect((await ia.findAccounts(first.user.id)).map((a) => a.accountId)).toEqual(["1001"]);
   });
 });

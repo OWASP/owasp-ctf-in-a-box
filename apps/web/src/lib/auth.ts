@@ -52,6 +52,11 @@ export const authOptions = {
     // surface with no use (OWASP A04, data minimisation). The adapter also
     // nulls the tokens on the stored account row.
     storeAccountCookie: false,
+    // A verified email does not prove two GitHub accounts are one person (an
+    // address can move between accounts), so a sign-in from a GitHub identity
+    // that has no account row never attaches to a user found by email: each
+    // GitHub identity is its own user. Explicit linking stays available.
+    accountLinking: { disableImplicitLinking: true },
   },
   // better-auth mounts its full default endpoint set behind the catch-all at
   // app/api/auth/[...all]. This app only ever calls four of them: /sign-in/social,

@@ -52,6 +52,11 @@ const EXEMPT: Record<string, { calls: number; reason: string }> = {
     reason:
       "revealHint builds the story chain from the visible records and checks the hint's challenge exists; it returns no challenge data, and REVEAL_SCRIPT refuses a hidden challenge itself",
   },
+  "lib/announce/notify.ts": {
+    calls: 1,
+    reason:
+      "notifyFirstBlood looks the challenge record up to decide whether it exists but is hidden so it can return without claiming or enqueueing, and announces only visible challenges",
+  },
 };
 
 const READERS = new Set(["listChallenges", "readChallengeRecords"]);

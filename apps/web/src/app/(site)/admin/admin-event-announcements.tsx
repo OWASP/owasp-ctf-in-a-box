@@ -75,6 +75,16 @@ export function foldReloaded(prev: Load, fresh: { config: DiscordPublicConfig; s
   return prev.state === "ready" ? { ...prev, status: fresh.status } : { state: "ready", config: fresh.config, status: fresh.status };
 }
 
+/** Folds a failed GET into the load state for `reload`. When a ready state
+ *  already exists (Send test refreshing delivery status), the already-loaded
+ *  configuration and controls are preserved so a network glitch does not
+ *  replace the controls on screen with an error banner. Only switches to
+ *  `failed` when no configuration has loaded.
+ *  Exported so the suite can pin it without a DOM. */
+export function foldReloadFailure(prev: Load, message: string): Load {
+  return prev.state === "ready" ? prev : { state: "failed", message };
+}
+
 /** The confirm dialog Clear opens (the panel's shared ConfirmState, minus
  *  the action): the webhook URL is write-only — the server never returns it —
  *  so a cleared URL can only come back by being pasted again, which is what
@@ -115,13 +125,15 @@ export default function AdminEventAnnouncements({ setConfirm }: { setConfirm: (c
 
   /** Re-reads config + status after an action whose own response is not the
    *  fresh config (Send test): only the delivery status is refreshed — the
-   *  config already on screen is the newer truth (see `foldReloaded`). */
+   *  config already on screen is the newer truth (see `foldReloaded`). If
+   *  the refresh fails, the loaded config and controls are preserved. */
   const reload = useCallback(async () => {
     try {
       const body = await readConfig();
       setLoad((prev) => foldReloaded(prev, body));
     } catch (err) {
-      setLoad({ state: "failed", message: err instanceof Error ? err.message : "Could not read the announcement settings." });
+      const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
+      setLoad((prev) => foldReloadFailure(prev, message));
     }
   }, [readConfig]);
 

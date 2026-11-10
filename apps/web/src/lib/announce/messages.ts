@@ -92,17 +92,18 @@ export function buildTestMessage(eventName: string): DiscordMessage {
   });
 }
 
-export type FirstBloodInput = { challengeTitle: string; points: number; who: string; url: string };
+export type FirstBloodInput = { challengeTitle: string; points: number; who: string; url?: string };
 
 /** First blood: the first TEAM (or solo login) to solve a challenge. */
 export function buildFirstBloodMessage(input: FirstBloodInput): DiscordMessage {
-  return msg({
+  const embed: DiscordEmbed = {
     title: "🩸 First blood",
-    url: input.url,
     color: COLOR.firstBlood,
     description: `**${escapeForDiscord(input.who)}** solved **${escapeForDiscord(input.challengeTitle)}** first!`,
     fields: [{ name: "Points", value: String(input.points), inline: true }],
-  });
+  };
+  if (input.url) embed.url = input.url;
+  return msg(embed);
 }
 
 export type LifecycleKind = "launch" | "pause" | "resume" | "milestone";

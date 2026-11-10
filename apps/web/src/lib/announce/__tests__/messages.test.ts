@@ -31,6 +31,14 @@ describe("builders", () => {
   it("every message carries at least one embed", () => {
     for (const message of all()) expect(message.embeds.length).toBeGreaterThan(0);
   });
+
+  it("includes the url field in the embed only when provided", () => {
+    const withUrl = buildFirstBloodMessage({ challengeTitle: "T", points: 100, who: "Alice", url: "https://ctf.example/flags/t" });
+    expect(withUrl.embeds[0].url).toBe("https://ctf.example/flags/t");
+
+    const withoutUrl = buildFirstBloodMessage({ challengeTitle: "T", points: 100, who: "Alice" });
+    expect("url" in withoutUrl.embeds[0]).toBe(false);
+  });
 });
 
 describe("escapeForDiscord", () => {

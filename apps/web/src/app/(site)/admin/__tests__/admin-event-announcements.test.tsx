@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
-import AdminEventAnnouncements, { blurNeedsSave, clearWebhookConfirm, foldReloaded, mergePatched, type Load } from "../admin-event-announcements";
+import AdminEventAnnouncements, { blurNeedsSave, clearWebhookConfirm, foldReloaded, foldReloadFailure, mergePatched, type Load } from "../admin-event-announcements";
 import type { DiscordPublicConfig } from "@/lib/discord-config";
 import type { AnnounceStatus } from "@/lib/announce/store";
 
@@ -144,6 +144,29 @@ describe("foldReloaded", () => {
 
   it("folds the GET through foldReloaded — reload never replaces the whole state", () => {
     expect(source()).toContain("setLoad((prev) => foldReloaded(prev, body))");
+  });
+});
+
+describe("foldReloadFailure", () => {
+  it("preserves already-loaded configuration and controls when refresh fails", () => {
+    const displayed: Load = { state: "ready", config: config({ launch: true }), status: status({ lastError: null }) };
+    const next = foldReloadFailure(displayed, "refresh failed");
+    expect(next).toBe(displayed);
+  });
+
+  it("switches to failed only when no configuration has loaded", () => {
+    expect(foldReloadFailure({ state: "loading" }, "503 Service Unavailable")).toEqual({
+      state: "failed",
+      message: "503 Service Unavailable",
+    });
+    expect(foldReloadFailure({ state: "failed", message: "initial error" }, "second error")).toEqual({
+      state: "failed",
+      message: "second error",
+    });
+  });
+
+  it("routes reload failure through foldReloadFailure at source", () => {
+    expect(source()).toContain("setLoad((prev) => foldReloadFailure(prev, message))");
   });
 });
 

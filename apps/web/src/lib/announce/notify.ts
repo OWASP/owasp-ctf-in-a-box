@@ -39,7 +39,6 @@ import { errorLabel } from "@/lib/error-label";
 // announcement describes the solving TEAM, server-side, not a browser's
 // current view of it.
 import { listTeams } from "@/lib/team-store";
-import { resolveOrigin } from "@/lib/app-origin";
 import { listChallenges, listStories } from "@/lib/classic-store";
 import { visibleNow } from "@/lib/classic-release";
 import { listQuestions } from "@/lib/quiz-store";
@@ -75,6 +74,28 @@ async function lookupItem(module: "quiz" | "ai", id: string): Promise<{ title: s
   return c ? { title: c.title, points: c.points } : null;
 }
 
+/** Resolves an absolute HTTP(S) URL for a challenge/board link from
+ *  BETTER_AUTH_URL. Returns undefined when BETTER_AUTH_URL is missing,
+ *  not an absolute URL, or uses a non-HTTP(S) protocol so an invalid
+ *  URL is never sent in an announcement embed. */
+export function challengeEmbedUrl(
+  module: "classic" | "quiz" | "ai",
+  challengeId: string,
+  authUrl?: string | null,
+): string | undefined {
+  const target = arguments.length > 2 ? authUrl : process.env.BETTER_AUTH_URL;
+  if (!target) return undefined;
+  try {
+    const parsed = new URL(target);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+    const origin = parsed.origin;
+    const path = module === "quiz" ? "/quiz" : `/${module === "classic" ? "flags" : "ai"}/${challengeId}`;
+    return `${origin}${path}`;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Announces first blood for one fresh solve, if the announcer is armed for
  *  it. Never throws; never logs the login or any challenge content beyond
  *  the public title the message itself carries. */
@@ -87,6 +108,20 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     // silent sweep. This gate is also what keeps the content lookups below
     // off the hot path for the default (unconfigured) box.
     if (!config.webhookConfigured || !config.firstBlood) return;
+
+    let classicVisible: Awaited<ReturnType<typeof listChallenges>> | null = null;
+    let classicChallenge: Awaited<ReturnType<typeof listChallenges>>[number] | null = null;
+    if (input.module === "classic") {
+      const all = await listChallenges();
+      const existing = all.find((x) => x.id === input.challengeId);
+      const visible = visibleNow(all);
+      const c = visible.find((x) => x.id === input.challengeId);
+      // Hidden challenge: if it exists in the kit but is currently hidden,
+      // return immediately without claiming or enqueueing an announcement.
+      if (existing && !c) return;
+      classicVisible = visible;
+      classicChallenge = c ?? null;
+    }
 
     const field = challengeField(input.module, input.challengeId);
     const claimed = await claimLedgerField(ANNOUNCE_FIRST_KEY, field);
@@ -105,12 +140,10 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
       // the whole announcement — not even the bare id, which the board also
       // redacts because ids are derived from titles. A read that throws lands
       // in the outer catch: unreadable means NO post, never a guess.
-      const visible = visibleNow(await listChallenges());
-      const positions = storyPositions(await listStories(), new Set(visible.map((c) => c.id)));
+      const positions = storyPositions(await listStories(), new Set((classicVisible ?? []).map((c) => c.id)));
       const pos = positions.get(input.challengeId);
       if (pos && isLocked(pos, new Set())) return;
-      const c = visible.find((x) => x.id === input.challengeId);
-      item = c ? { title: c.title, points: c.points } : null;
+      item = classicChallenge ? { title: classicChallenge.title, points: classicChallenge.points } : null;
     } else {
       item = await lookupItem(input.module, input.challengeId).catch(() => null);
     }
@@ -122,11 +155,7 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     const teams = await listTeams().catch(() => []);
     const team = teams.find((t) => t.members.some((m) => m.toLowerCase() === lower));
     const who = team?.name || input.login;
-    const origin = resolveOrigin();
-    // Quiz has no per-question page — the board is the right link. Classic
-    // and ai each have a per-challenge page.
-    const url =
-      input.module === "quiz" ? `${origin}/quiz` : `${origin}/${input.module === "classic" ? "flags" : "ai"}/${input.challengeId}`;
+    const url = challengeEmbedUrl(input.module, input.challengeId);
 
     await enqueueAnnouncement(
       "first-blood",
@@ -136,7 +165,7 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
         challengeTitle: item?.title ?? input.challengeId,
         points: item?.points ?? 0,
         who,
-        url,
+        ...(url ? { url } : {}),
       }),
     );
   } catch (err) {

@@ -12,7 +12,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   eslint's TypeScript parser pulled in minimatch 10.2.6, which has a
   denial-of-service advisory. The fix is a new major that no dependant's range
   reaches yet, so an exact override in `apps/web/pnpm-workspace.yaml` brings it
-  in. Lint-only: the runtime image never ships it, so the box was not exposed.
+  in. Only lint loads it; the app never calls it at runtime. The
+  `brace-expansion@5` pin is dropped: minimatch 11 already requires 5.0.12.
 
 - **Deprecated: the AI module (#726, #728).** It keeps working in v1.x, with
   security fixes only, and is removed in v2.0.0. Its switch in `/admin`

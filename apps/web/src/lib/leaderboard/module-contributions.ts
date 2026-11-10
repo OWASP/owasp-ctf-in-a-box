@@ -436,7 +436,7 @@ export function mergeTeamRosters(
  *  stage overlays membership), so on a classic-only event the entry field
  *  alone would call every contestant teamless. A row no roster places is a
  *  team of one and uses its own solves, which is the same rule `/profile`
- *  applies to a viewer with no team.
+ *  applies to a viewer with no team (the rule `classic-team.ts` states for the profile).
  *
  *  Returns `undefined` rather than a partial answer: a failed roster, fold or
  *  eligibility read leaves every row on the clamp it used before, which can

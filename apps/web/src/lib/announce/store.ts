@@ -319,6 +319,14 @@ export async function readStatePack(stateKey: typeof ANNOUNCE_LIFECYCLE_KEY): Pr
   }
 }
 
+/** Deletes the stored lifecycle observation so the next pass seeds silently
+ *  from the current reality rather than announcing transitions that happened
+ *  while lifecycle announcements were disabled. */
+export async function deleteLifecycleState(): Promise<void> {
+  const [res] = await upstashPipeline([["DEL", ANNOUNCE_LIFECYCLE_KEY]]);
+  if (res.error) throw new Error(`lifecycle state delete failed: ${res.error}`);
+}
+
 // --- outbox ------------------------------------------------------------------
 
 /** `skipped` = the entry's type switch was off at flush time, so it was

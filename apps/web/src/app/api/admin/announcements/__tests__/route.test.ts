@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   getAdminSettings: vi.fn(),
   writeAdminAudit: vi.fn(),
   nudgeAnnounceTicker: vi.fn(),
+  deleteLifecycleState: vi.fn(),
 }));
 
 class AnnounceValidationError extends Error {}
@@ -44,7 +45,11 @@ vi.mock("@/lib/announce/store", () => ({
   readStatus: mocks.readStatus,
 }));
 vi.mock("@/lib/announce/sender", () => ({ postToDiscord: mocks.postToDiscord }));
-vi.mock("@/lib/announce/ticker", () => ({ nudgeAnnounceTicker: mocks.nudgeAnnounceTicker }));
+vi.mock("@/lib/announce/ticker", () => ({
+  nudgeAnnounceTicker: mocks.nudgeAnnounceTicker,
+  deleteLifecycleState: mocks.deleteLifecycleState,
+  isLifecyclePassEnabled: (c: { launch?: boolean; pause?: boolean }) => Boolean(c?.launch || c?.pause),
+}));
 
 const { GET, POST } = await import("@/app/api/admin/announcements/route");
 const { POST: WEBHOOK } = await import("@/app/api/admin/announcements/webhook/route");
@@ -71,6 +76,7 @@ beforeEach(() => {
   mocks.getWebhookUrl.mockResolvedValue(URL);
   mocks.postToDiscord.mockResolvedValue(true);
   mocks.getAdminSettings.mockRejectedValue(new Error("no settings"));
+  mocks.deleteLifecycleState.mockResolvedValue(undefined);
 });
 
 describe("the admin gate", () => {
@@ -126,6 +132,44 @@ describe("config POST", () => {
   it("triggers an immediate observation pass after a landed save", async () => {
     expect((await POST(req("POST", { launch: true }))).status).toBe(200);
     expect(mocks.nudgeAnnounceTicker).toHaveBeenCalledTimes(1);
+  });
+
+  it("deletes lifecycle state when transitioning lifecycle pass from disabled to enabled before nudging", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false });
+    mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: true, pause: false });
+    const order: string[] = [];
+    mocks.deleteLifecycleState.mockImplementation(async () => {
+      order.push("delete");
+    });
+    mocks.nudgeAnnounceTicker.mockImplementation(() => {
+      order.push("nudge");
+    });
+
+    const res = await POST(req("POST", { launch: true }));
+    expect(res.status).toBe(200);
+    expect(mocks.deleteLifecycleState).toHaveBeenCalledTimes(1);
+    expect(mocks.nudgeAnnounceTicker).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["delete", "nudge"]);
+  });
+
+  it("does not delete lifecycle state on unrelated saves", async () => {
+    // Already enabled -> enabling pause does not transition from disabled
+    mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: true, pause: false });
+    mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: true, pause: true });
+    expect((await POST(req("POST", { pause: true }))).status).toBe(200);
+    expect(mocks.deleteLifecycleState).not.toHaveBeenCalled();
+
+    // Completely unrelated switches (firstBlood, milestones) while lifecycle stays off
+    mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false, milestones: false });
+    mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false, milestones: true });
+    expect((await POST(req("POST", { milestones: true }))).status).toBe(200);
+    expect(mocks.deleteLifecycleState).not.toHaveBeenCalled();
+
+    // Disabling lifecycle does not delete lifecycle state
+    mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: true, pause: false });
+    mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false });
+    expect((await POST(req("POST", { launch: false }))).status).toBe(200);
+    expect(mocks.deleteLifecycleState).not.toHaveBeenCalled();
   });
 
   it("maps a store failure to 503 without nudging the ticker", async () => {

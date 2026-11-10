@@ -59,7 +59,15 @@ import {
 import { buildLifecycleMessage } from "./messages";
 import { enqueueAnnouncement, flushRetries } from "./sender";
 import { ANNOUNCE_LIFECYCLE_KEY, ANNOUNCE_MILESTONE_KEY } from "./keys";
-import { claimLedgerFields, getAnnounceConfig, outboxPrune, readStatePack, stateCompareSet } from "./store";
+import { claimLedgerFields, deleteLifecycleState, getAnnounceConfig, outboxPrune, readStatePack, stateCompareSet } from "./store";
+
+export { deleteLifecycleState };
+
+/** Whether the ticker's lifecycle observation pass is enabled: both switches
+ *  off means no observation and no posts. */
+export function isLifecyclePassEnabled(config: { launch?: boolean; pause?: boolean }): boolean {
+  return Boolean(config.launch || config.pause);
+}
 
 /** The interval while the announcer is configured and armed. 30s: lifecycle
  *  edges land within half a minute of the change without hammering Redis. */

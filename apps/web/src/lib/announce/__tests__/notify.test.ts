@@ -3,7 +3,7 @@
 // team-name resolution and the message the sender receives. Store, sender,
 // team-store and the module lists are mocked; story-lock itself is real.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getAnnounceConfig: vi.fn(),
@@ -28,11 +28,13 @@ vi.mock("@/lib/classic-store", () => ({ listChallenges: mocks.listChallenges, li
 vi.mock("@/lib/quiz-store", () => ({ listQuestions: mocks.listQuestions }));
 vi.mock("@/lib/ai-store", () => ({ listAiChallenges: mocks.listAiChallenges }));
 
-import { notifyFirstBlood } from "@/lib/announce/notify";
+import { challengeEmbedUrl, notifyFirstBlood } from "@/lib/announce/notify";
 
 const armed = { webhookConfigured: true, firstBlood: true };
+const origAuthUrl = process.env.BETTER_AUTH_URL;
 
 beforeEach(() => {
+  process.env.BETTER_AUTH_URL = "https://ctf.example.com";
   mocks.getAnnounceConfig.mockReset().mockResolvedValue(armed);
   mocks.claimLedgerField.mockReset().mockResolvedValue(true);
   mocks.enqueueAnnouncement.mockReset().mockResolvedValue(undefined);
@@ -41,6 +43,11 @@ beforeEach(() => {
   mocks.listStories.mockReset().mockResolvedValue([]);
   mocks.listQuestions.mockReset().mockResolvedValue([]);
   mocks.listAiChallenges.mockReset().mockResolvedValue([]);
+});
+
+afterEach(() => {
+  if (origAuthUrl === undefined) delete process.env.BETTER_AUTH_URL;
+  else process.env.BETTER_AUTH_URL = origAuthUrl;
 });
 
 describe("notifyFirstBlood", () => {
@@ -87,12 +94,32 @@ describe("notifyFirstBlood", () => {
     expect(msg.embeds[0].description).toContain("gone\\-1");
   });
 
-  it("never leaks a HIDDEN challenge's title — the announcement carries only its id", async () => {
+  it("never announces a HIDDEN challenge — returns without claiming or enqueueing", async () => {
     mocks.listChallenges.mockResolvedValue([{ id: "web-9", title: "Secret Unreleased Title", category: "web", points: 100, enabled: false }]);
     await notifyFirstBlood({ module: "classic", challengeId: "web-9", login: "alice" });
-    const msg = mocks.enqueueAnnouncement.mock.calls[0][1] as { embeds: { description?: string }[] };
-    expect(msg.embeds[0].description).not.toContain("Secret Unreleased Title");
-    expect(msg.embeds[0].description).toContain("web\\-9");
+    expect(mocks.claimLedgerField).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("omits the embed url entirely when BETTER_AUTH_URL is missing or invalid", async () => {
+    mocks.listQuestions.mockResolvedValue([{ id: "q1", prompt: "Q?", points: 10 }]);
+
+    delete process.env.BETTER_AUTH_URL;
+    await notifyFirstBlood({ module: "quiz", challengeId: "q1", login: "alice" });
+    let msg = mocks.enqueueAnnouncement.mock.calls[0][1] as { embeds: Record<string, unknown>[] };
+    expect("url" in msg.embeds[0]).toBe(false);
+
+    mocks.enqueueAnnouncement.mockClear();
+    process.env.BETTER_AUTH_URL = "not-a-valid-url";
+    await notifyFirstBlood({ module: "quiz", challengeId: "q1", login: "alice" });
+    msg = mocks.enqueueAnnouncement.mock.calls[0][1] as { embeds: Record<string, unknown>[] };
+    expect("url" in msg.embeds[0]).toBe(false);
+
+    mocks.enqueueAnnouncement.mockClear();
+    process.env.BETTER_AUTH_URL = "ftp://invalid-scheme.example";
+    await notifyFirstBlood({ module: "quiz", challengeId: "q1", login: "alice" });
+    msg = mocks.enqueueAnnouncement.mock.calls[0][1] as { embeds: Record<string, unknown>[] };
+    expect("url" in msg.embeds[0]).toBe(false);
   });
 
   it("links the quiz board for quiz (no per-question page) and /ai/<id> for ai", async () => {
@@ -144,5 +171,22 @@ describe("story-lock secrecy gate (ADR 60)", () => {
     await expect(notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" })).resolves.toBeUndefined();
     expect(mocks.claimLedgerField).toHaveBeenCalled();
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+});
+
+describe("challengeEmbedUrl", () => {
+  it("validates BETTER_AUTH_URL as an absolute HTTP(S) URL", () => {
+    expect(challengeEmbedUrl("quiz", "q1", "https://ctf.example.com")).toBe("https://ctf.example.com/quiz");
+    expect(challengeEmbedUrl("classic", "web-1", "https://ctf.example.com:8443")).toBe("https://ctf.example.com:8443/flags/web-1");
+    expect(challengeEmbedUrl("ai", "inj-1", "http://localhost:3000")).toBe("http://localhost:3000/ai/inj-1");
+  });
+
+  it("returns undefined when missing or invalid", () => {
+    expect(challengeEmbedUrl("classic", "web-1", undefined)).toBeUndefined();
+    expect(challengeEmbedUrl("classic", "web-1", "")).toBeUndefined();
+    expect(challengeEmbedUrl("classic", "web-1", "not-a-url")).toBeUndefined();
+    expect(challengeEmbedUrl("classic", "web-1", "/flags/web-1")).toBeUndefined();
+    expect(challengeEmbedUrl("classic", "web-1", "ftp://example.com")).toBeUndefined();
+    expect(challengeEmbedUrl("classic", "web-1", "javascript:alert(1)")).toBeUndefined();
   });
 });

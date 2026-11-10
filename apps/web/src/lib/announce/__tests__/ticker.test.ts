@@ -33,7 +33,7 @@ vi.mock("@/lib/announce/sender", () => ({
   flushRetries: mocks.flushRetries,
 }));
 
-import { runAnnounceTick } from "@/lib/announce/ticker";
+import { isLifecyclePassEnabled, runAnnounceTick } from "@/lib/announce/ticker";
 
 const T0 = Date.parse("2026-10-14T12:00:00Z");
 
@@ -108,6 +108,17 @@ describe("lifecycle tick", () => {
   it("seeds the first observation silently (CAS code 2) and announces nothing", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
     await runAnnounceTick(T0);
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L1P0C0A0");
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("when lifecycle state was deleted on re-enable, seeds silently rather than announcing stale launch history", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
+    mocks.readStatePack.mockResolvedValue(null);
+    mocks.stateCompareSet.mockResolvedValue({ code: 2, seq: 1, prev: "" });
+
+    await runAnnounceTick(T0);
+
     expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L1P0C0A0");
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
@@ -350,5 +361,15 @@ describe("boot cadence", () => {
       if (previousToken === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
       else process.env.UPSTASH_REDIS_REST_TOKEN = previousToken;
     }
+  });
+});
+
+describe("isLifecyclePassEnabled", () => {
+  it("is true if launch or pause is on, false when both are off", () => {
+    expect(isLifecyclePassEnabled({ launch: true, pause: false })).toBe(true);
+    expect(isLifecyclePassEnabled({ launch: false, pause: true })).toBe(true);
+    expect(isLifecyclePassEnabled({ launch: true, pause: true })).toBe(true);
+    expect(isLifecyclePassEnabled({ launch: false, pause: false })).toBe(false);
+    expect(isLifecyclePassEnabled({})).toBe(false);
   });
 });

@@ -3,7 +3,7 @@ import { readBoundedBody } from "@/lib/bounded-body";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel } from "@/lib/admin-store";
 import type { DiscordConfigPatch } from "@/lib/discord-config";
-import { nudgeAnnounceTicker } from "@/lib/announce/ticker";
+import { deleteLifecycleState, isLifecyclePassEnabled, nudgeAnnounceTicker } from "@/lib/announce/ticker";
 import { AnnounceValidationError, getAnnounceConfig, publicConfig, readStatus, updateAnnounceConfig } from "@/lib/announce/store";
 
 /**
@@ -67,7 +67,11 @@ export async function POST(request: Request) {
   }
 
   try {
+    const prev = await getAnnounceConfig();
     const config = await updateAnnounceConfig(gate.login, body as DiscordConfigPatch);
+    if (!isLifecyclePassEnabled(prev) && isLifecyclePassEnabled(config)) {
+      await deleteLifecycleState();
+    }
     // The write landed: observe it now rather than waiting out an idle
     // backoff, so an opt-in just before launch still sees the pre-launch
     // baseline.

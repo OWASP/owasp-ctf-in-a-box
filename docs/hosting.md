@@ -748,12 +748,15 @@ Cloudflare's WAF and rate limiting entirely.
 Organizers can discover the public IPs with:
 
 ```sh
-fly ips list
+fly ips list --app <app-name>
 ```
 
+Replace `<app-name>` with your Fly app name.
+
 To restrict traffic to Cloudflare only, consider removing the Fly IP ranges
-from any allowlist or using [Cloudflare Tunnel](#) instead of exposing the
-Fly origin directly. See the [hardening page](../docs/architecture.md#hardening)
+from any allowlist or using [Cloudflare Tunnel](https://www.cloudflare.com/products/cloudflare-tunnel/)
+instead of exposing the Fly origin directly. See the
+[security model](../docs/architecture.md#security-model)
 for full CSP, origin reachability around Cloudflare, and consistent 429 rate
 limiting (tracked in [issue #690](https://github.com/OWASP/owasp-ctf-in-a-box/issues/690)).
 

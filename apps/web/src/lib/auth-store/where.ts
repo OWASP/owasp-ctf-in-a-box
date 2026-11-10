@@ -3,12 +3,18 @@
 import type { CleanedWhere } from "better-auth/adapters";
 import { INDEXED_FIELDS } from "./keys";
 
+/**
+ * Normalizes a value for comparison: dates to epoch ms, strings lowercased when case-insensitive.
+ */
 function norm(v: unknown, insensitive: boolean): unknown {
   if (v instanceof Date) return v.getTime();
   if (insensitive && typeof v === "string") return v.toLowerCase();
   return v;
 }
 
+/**
+ * Whether `row` satisfies one where clause.
+ */
 function matchesOne(row: Record<string, unknown>, c: CleanedWhere): boolean {
   const insensitive = c.mode === "insensitive";
   const rowRaw = row[c.field] ?? null;
@@ -47,8 +53,11 @@ function matchesOne(row: Record<string, unknown>, c: CleanedWhere): boolean {
   }
 }
 
-// Clauses fold left to right, each joined to the running result by its own
-// connector (the semantics of better-auth's other adapters).
+/**
+ * Whether `row` satisfies the whole clause list. Clauses fold left to right, each
+ * joined to the running result by its own connector (the semantics of
+ * better-auth's other adapters).
+ */
 export function matchesWhere(
   row: Record<string, unknown>,
   where: CleanedWhere[],
@@ -62,8 +71,10 @@ export function matchesWhere(
   return result;
 }
 
-// An index answers only a pure-AND, case-sensitive equality on a string
-// value; anything else must scan.
+/**
+ * The indexed equality an index can answer, or null when the clause must scan.
+ * An index answers only a pure-AND, case-sensitive equality on a string value.
+ */
 export function indexLookup(
   model: string,
   where: CleanedWhere[],
@@ -83,9 +94,11 @@ export function indexLookup(
   return null;
 }
 
-// Row ids are the rows hash's fields, so a pure-AND, case-sensitive `id eq`
-// or `id in` over strings names its candidate rows directly. The caller still
-// filters them through the full where clause.
+/**
+ * The row ids a pure-AND, case-sensitive `id eq` or `id in` names directly, or
+ * null. Ids are the rows hash's fields; the caller still filters the candidates
+ * through the full where clause.
+ */
 export function idLookup(where: CleanedWhere[]): string[] | null {
   if (where.some((c) => c.connector === "OR")) return null;
   for (const c of where) {
@@ -98,6 +111,9 @@ export function idLookup(where: CleanedWhere[]): string[] | null {
   return null;
 }
 
+/**
+ * Three-way comparison for sorting, with null ordered first.
+ */
 function cmp(a: unknown, b: unknown): number {
   const x = norm(a ?? null, false);
   const y = norm(b ?? null, false);
@@ -107,6 +123,9 @@ function cmp(a: unknown, b: unknown): number {
   return (x as number) < (y as number) ? -1 : 1;
 }
 
+/**
+ * Sorts rows by one field and applies offset and limit.
+ */
 export function sortAndPage<T extends Record<string, unknown>>(
   rows: T[],
   opts: {

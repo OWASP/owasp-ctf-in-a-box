@@ -35,6 +35,9 @@ const MAX_RETRIES = 3;
 // never holds one: a leaked Redis dump must not hand out GitHub tokens.
 const PROVIDER_TOKEN_FIELDS = ["accessToken", "refreshToken", "idToken"] as const;
 
+/**
+ * Builds the better-auth database adapter over the app's Redis, with every key under `opts.prefix` (default `AUTH_PREFIX`).
+ */
 export function redisAdapter(opts: { prefix?: string } = {}) {
   const prefix = opts.prefix ?? AUTH_PREFIX;
 
@@ -50,9 +53,15 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       transaction: false,
     },
     adapter: ({ getFieldAttributes, getFieldName, getDefaultModelName }) => {
+      /**
+       * Builds the error thrown for a failed store operation.
+       */
       const fail = (op: string, model: string, error: unknown): Error =>
         new Error(`auth store: ${op} ${model} failed: ${error instanceof Error ? error.message : String(error)}`);
 
+      /**
+       * Runs one pipeline and returns each reply's result, throwing on a transport error, a short reply or any per-command error.
+       */
       async function run(op: string, model: string, commands: (string | number)[][]): Promise<unknown[]> {
         let replies;
         try {
@@ -71,6 +80,9 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       }
 
       const dateFields = new Map<string, boolean>();
+      /**
+       * Whether `field` of `model` is a date in the better-auth schema (memoized).
+       */
       function isDateField(model: string, field: string): boolean {
         const key = `${model}\0${field}`;
         let hit = dateFields.get(key);
@@ -85,13 +97,18 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         return hit;
       }
 
+      /**
+       * Parses an ISO string into a Date so dates compare as instants; other values pass through.
+       */
       function asInstant(v: unknown): unknown {
         if (typeof v !== "string") return v;
         const d = new Date(v);
         return Number.isNaN(d.getTime()) ? v : d;
       }
 
-      // The row as matching and sorting see it: date fields as Date objects.
+      /**
+       * The row as matching and sorting see it: date fields as Date objects.
+       */
       function view(model: string, row: Row): Row {
         const out: Row = { ...row };
         for (const field of Object.keys(out)) {
@@ -100,6 +117,9 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         return out;
       }
 
+      /**
+       * The where clauses with Date-field values converted the same way as `view`.
+       */
       function viewWhere(model: string, where: CleanedWhere[]): CleanedWhere[] {
         return where.map((c) => {
           if (!isDateField(model, c.field)) return c;
@@ -108,6 +128,9 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         });
       }
 
+      /**
+       * Parses a stored row JSON, throwing when it is not a JSON object.
+       */
       function parseRow(op: string, model: string, json: string): Row {
         let row: unknown;
         try {
@@ -119,8 +142,11 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         return row as Row;
       }
 
-      // HGETALL: a flat [field, value, ...] array, or the object form some
-      // REST proxies send. Anything else is a broken reply, not an empty hash.
+      /**
+       * Reads an HGETALL reply into [field, value] pairs. It accepts the flat array or
+       * the object form some REST proxies send; anything else is a broken reply, not
+       * an empty hash.
+       */
       function pairs(op: string, model: string, reply: unknown): [string, string][] {
         const out: [string, string][] = [];
         if (Array.isArray(reply)) {
@@ -141,6 +167,9 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         throw fail(op, model, `HGETALL reply is ${reply === null ? "null" : typeof reply}, not an array`);
       }
 
+      /**
+       * Checks that a reply is an array of strings.
+       */
       function stringList(op: string, model: string, command: string, reply: unknown): string[] {
         if (!Array.isArray(reply) || reply.some((m) => typeof m !== "string")) {
           throw fail(op, model, `${command} reply is not an array of strings`);
@@ -148,7 +177,9 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         return reply as string[];
       }
 
-      // HMGET: one string-or-null per requested id, in order.
+      /**
+       * HMGET: the [id, json] pairs for the ids that exist, in request order.
+       */
       async function fetchRows(op: string, model: string, ids: string[]): Promise<[string, string][]> {
         if (ids.length === 0) return [];
         const [values] = await run(op, model, [["HMGET", rowsKey(prefix, model), ...ids]]);
@@ -164,13 +195,18 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         return out;
       }
 
-      // HGET: the row JSON, or null when there is no such row.
+      /**
+       * HGET: the row JSON, or null when there is no such row.
+       */
       async function fetchRow(op: string, model: string, id: string): Promise<string | null> {
         const [json] = await run(op, model, [["HGET", rowsKey(prefix, model), id]]);
         if (json !== null && typeof json !== "string") throw fail(op, model, "HGET reply is not a string or null");
         return json;
       }
 
+      /**
+       * Fetches the candidate rows for a where clause by id, by index or by full scan, narrowest first.
+       */
       async function load(op: string, model: string, where: CleanedWhere[]): Promise<[string, string][]> {
         const ids = idLookup(where);
         if (ids) {
@@ -187,6 +223,9 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         return fetchRows(op, model, stringList(op, model, "SMEMBERS", members));
       }
 
+      /**
+       * Loads, filters, sorts and pages the rows matching `where`, keeping each row's JSON for compare-and-set.
+       */
       async function read(
         op: string,
         model: string,
@@ -203,11 +242,17 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         return sortAndPage([...byView.keys()], page).map((v) => byView.get(v)!);
       }
 
+      /**
+       * Restricts a row to the `select`ed fields.
+       */
       function trim(row: Row, select?: string[]): Row {
         if (!select?.length) return row;
         return Object.fromEntries(Object.entries(row).filter(([k]) => select.includes(k)));
       }
 
+      /**
+       * Nulls the provider token fields of an account row so no token reaches Redis.
+       */
       function scrub(model: string, row: Row): Row {
         if (getDefaultModelName(model) !== "account") return row;
         const out = { ...row };
@@ -215,14 +260,22 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         return out;
       }
 
+      /**
+       * The model's indexed fields as the CSV the scripts take.
+       */
       const csv = (model: string) => (INDEXED_FIELDS[model] ?? []).join(",");
+      /**
+       * The model's unique fields.
+       */
       const uniques = (model: string) => UNIQUE_FIELDS[model] ?? [];
 
-      // A taken unique value fails the write, it is never retried. That is
-      // fail closed on purpose: when a GitHub email moves to another
-      // contestant's account, the sign-in that would copy it onto a second user
-      // row fails until the first row stops holding it (its owner signs in
-      // again with their new email).
+      /**
+       * Writes `next` (or deletes the row when null) only if the stored row still equals `snap`.
+       * Returns false on a lost race. A taken unique value fails the write instead of
+       * retrying: when a GitHub email moves to another contestant's account, the
+       * sign-in that would copy it onto a second user row fails until the first row
+       * stops holding it.
+       */
       async function cas(op: string, model: string, snap: Snapshot | null, id: string, next: Row | null): Promise<boolean> {
         const command =
           next === null
@@ -247,9 +300,11 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         throw fail(op, model, `unexpected script reply ${JSON.stringify(result)}`);
       }
 
-      // Applies `change` to every snapshot by compare-and-set. A lost race
-      // re-reads the row: if it no longer matches `where` it is dropped,
-      // otherwise the change is retried against the fresh snapshot.
+      /**
+       * Applies `change` to every snapshot by compare-and-set. A lost race re-reads
+       * the row: if it no longer matches `where` it is dropped, otherwise the change
+       * is retried against the fresh snapshot.
+       */
       async function writeEach(
         op: string,
         model: string,
@@ -278,6 +333,9 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         return written;
       }
 
+      /**
+       * Builds a row change that merges `update` over the row, keeping its id and scrubbing tokens.
+       */
       const patch = (model: string, update: Row) => (row: Row) => scrub(model, { ...row, ...update, id: row.id });
 
       return {

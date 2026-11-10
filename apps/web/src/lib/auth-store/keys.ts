@@ -27,10 +27,16 @@ export const UNIQUE_FIELDS: Readonly<Record<string, readonly string[]>> = {
   account: ["providerId+accountId"],
 };
 
+/**
+ * Key of the hash holding every row of `model`, by row id.
+ */
 export function rowsKey(prefix: string, model: string): string {
   return `${prefix}:${model}`;
 }
 
+/**
+ * Key of the set of row ids whose indexed `field` equals `value`.
+ */
 export function indexKey(
   prefix: string,
   model: string,

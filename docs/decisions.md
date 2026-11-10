@@ -88,7 +88,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 70 — Unattributed Secure Development scores are held, not dropped](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)
 - [ADR 71 — The AI module is retired in v2.0.0](#adr-71-the-ai-module-is-retired-in-v200)
 - [ADR 72 — Admins are claimed with a one-time code, not named in `.env`](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)
-- [ADR 73 — Reserved for Discord announcements](#adr-73-reserved-for-discord-announcements)
+- [ADR 73 — Discord announcements are app-scheduled, outbox-delivered, and claim-first](#adr-73-discord-announcements-are-app-scheduled-outbox-delivered-and-claim-first)
 - [ADR 74 — Players are kit accounts; GitHub is needed only for Secure Development](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
@@ -4224,7 +4224,6 @@ the board shows the challenge on the next read. The reveal script's lock
 keys move from `KEYS[8..]` to `KEYS[9..]`. A future reader of the challenge
 list has to filter, and the source scan says so if it does not.
 
-
 ## ADR 69. The AI module is retired; AI security challenges run as Jeopardy challenges with flags
 
 **Status.** Accepted (#728, #730). Its v2.0.0 deletion is carried out 2026-11-15 by [ADR 71](#adr-71-the-ai-module-is-retired-in-v200), which supersedes the v2.0.0 half of the decision below. The link to the integrator's document points at its v1.1.0 copy, the last release that ships it.
@@ -4472,12 +4471,163 @@ race on a public URL. Admins named by username in `.env`: usernames are
 self-chosen at open sign-up, so the name can be taken first. A slow password
 hash for the code: there is no low entropy for it to protect.
 
-## ADR 73. Reserved for Discord announcements
+## ADR 73. Discord announcements are app-scheduled, outbox-delivered, and claim-first
 
-**Status.** Reserved. The number belongs to the Discord announcements
-decision (#590), which its pull request (#639) writes here in full when it
-merges, replacing this entry.
+**Context.** Issue #590. Event organizers run their community on Discord:
+first bloods, the event's own launch/pause/resume edges and time-remaining
+checks all want to land in a channel as they happen. The kit had no
+outbound announcement surface at all — `eventDiscord` on the landing page is
+an invite link, and push ingest was removed in v0.6 (ADR 56), so the box has
+no inbound scoring surface to hang a webhook on either. The obvious
+alternatives each fail somewhere: a Discord bot (another credential, another
+process, another thing to keep in step with the event state), an external
+scheduler (the box already runs a server; a cron sidecar is one more
+container to deploy and clock-sync), and piggybacking on the solve routes
+alone (first blood yes, but the lifecycle edges and the time marks have no
+request to piggyback on, and a restart between solve and post would lose the
+announcement). The scope is deliberately five kinds — `first-blood`,
+`launch`, `pause`, `resume` and organizer-set `milestone` time checks, all
+of them event facts the box already observes. Per-challenge releases,
+leaderboard moves, registration close and daily digests were considered and
+cut before this shipped (maintainer direction on #590): each of them is a
+fact the box would have to go observe and claim on every tick, which is the
+work an event without the feature must never pay for.
 
+**Decision.** An in-app announcer, configured at `/admin` → Event:
+
+- **Configuration is runtime, and apart from the settings hash.** The
+  webhook URL lives in `ctf:admin:discord:webhook`, its own key, and every
+  other field (the per-type switches and the mark list) in
+  `ctf:admin:discord`. Neither is a build argument (ADR 55's lesson); both
+  survive the master reset like the event images, because a webhook the
+  organizer set up is something they set, not event data. The URL is
+  validated to a discord.com `/api/webhooks/<id>/<token>` on https before it
+  is stored — both the SSRF boundary (no organizer-supplied host ever gets a
+  POST from the box) and the "that is not a webhook" sanity check — is never
+  returned by any API (the public shape carries a `webhookConfigured`
+  boolean), never logged, and never audited by value (only "set"/"cleared").
+  Everything defaults OFF: a configured webhook turns nothing on by itself.
+
+- **Scheduling is an observation loop in the app** (started from
+  `instrumentation.ts`, nodejs runtime, unref'd, fire-and-forget), not a
+  cron and not the request path. Each tick reads its own configuration
+  FIRST, and a box with no webhook or with every switch off ends the tick
+  there: one Redis read, no settings read, no state write, no outbox sweep —
+  the default state of an event that never opted in. While the box stays in
+  that state the loop backs off from its 30-second active interval to a
+  much longer one (one config read per backoff period per process), and an
+  armed tick restores the normal interval — an idle box must not hammer
+  Redis from every process, and a config read that FAILS keeps the current
+  interval rather than masquerading as "all off"; the boot default is the
+  ACTIVE interval, so a first read that fails does not push a configured
+  box onto the five-minute backoff. The config is re-read every tick, so an
+  `/admin` change takes effect on the next pass with no restart, and the
+  config and webhook save endpoints nudge the loop to run that pass
+  immediately: enabling announcements shortly before launch records the
+  pre-launch baseline, so the launch is announced rather than swallowed by
+  a first observation that seeds an already-launched box silently. The
+  observation itself is a plain read of what the event IS —
+  launched, paused, where the remaining time stands — compared against what
+  was last observed, stored under `ctf:announce:*`; the loop uses only
+  connection-free pipeline reads, because a React `cache()` that awaits
+  Next's `connection()` would throw outside a request scope. A passed
+  scoring window is its own observed state (`closed`), never a pause: the
+  channel is never told "paused — submits are on hold until it resumes" at
+  the event's end, where nothing will resume. Remaining-time marks post
+  only while the event is launched and unpaused — a close time with no
+  scoring start (ADR 59) or a manual freeze never announces "time
+  remaining".
+
+- **Dedup is claim-first, and the claims are atomic.** First blood is
+  trigger-driven (the submit routes call a non-blocking `notifyFirstBlood`
+  after a fresh solve) but still claim-first: `HSETNX` on
+  `ctf:announce:first` decides the single winner across replicas, retries
+  and races, and a box with the feature off never claims — so enabling later
+  cannot replay history. Lifecycle edges advance through one tiny Lua
+  compare-and-swap (read pack, swap-if-expected, bump a seq id): exactly one
+  replica announces each edge, the loser's stale read simply does not match.
+  That pass runs only while launch or pause is switched on; with both off
+  the stored observation freezes, so an opted-out box does no state work,
+  and the first observation a box ever makes (fresh boot, post-reset) seeds
+  silently — nothing that predates the observation is announced. A freeze
+  that spans the scoring window's close and an extension of that window is
+  one announced pause: reopening while still frozen is not a new edge.
+  Remaining-
+  time marks are `HSETNX` claims on `<closeInstant>:<markMs>` (keyed by the
+  scoring-close instant, so moving Scoring closes re-arms the marks for the
+  new window); on the tick that first sees marks crossed, ALL of them are
+  claimed in one pipeline and at most ONE post — the current time left —
+  goes out, so a restart, a duplicate tick or a mid-event enable can never
+  burst a backlog of "1h left" / "15m left" checks.
+
+- **Delivery is a leased Redis outbox, at-least-once.** Every announcement
+  is written to `ctf:announce:outbox` and delivered by a coalescing flush
+  (250 ms) or the ticker's retry pass: `SET NX PX` lease per id so two
+  replicas or a retry and a live flush can never both deliver, ≤10 embeds
+  per POST (Discord's batch limit), a 5s timeout, and three attempts before
+  an entry is parked as `failed`. At-least-once is the chosen direction —
+  a POST that succeeded but whose `sent` write was lost will be retried,
+  because a rare duplicate announcement beats a silent drop — and the lease
+  bounds that window to a crashed owner's lease expiry. The kind switch is
+  re-checked at flush time: turning a type off stops its pending posts
+  immediately, without draining them.
+
+- **Failure isolation is total on the background path.** State readers
+  fail toward no-announcement (an unavailable Redis means no post); the
+  config reader is the deliberate exception and THROWS on a failed read —
+  per-command `{ error }` included — because a NOAUTH or a blip read as
+  "all off" would silently disable a configured announcer, so each caller
+  applies its own direction instead (the ticker skips the tick and keeps
+  its cadence, the solve hook posts nothing, the /admin GET answers 503).
+  Background delivery failures — the enqueue, the flush, the retry pass,
+  the ticker's own ticks — are logged through the label-only error helpers
+  and swallowed; the solve routes call the notifier fire-and-forget, so a
+  Discord outage can never fail a solve that already banked; and
+  instrumentation starts the ticker in a try/catch so a boot that cannot
+  load the announcer still serves the event. Admin configuration saves are
+  the deliberate opposite: a config write that fails THROWS and its
+  endpoint answers 503, so an organizer is told their change did not land
+  instead of being left to believe it did.
+
+- **Secrecy is structural, not conventional.** Message builders are pure
+  and accept only public metadata (a title, a category, points, a team
+  name, a link) — there is no field a flag, an answer or a locked story
+  step's internals could ride in on. Every message sets
+  `allowed_mentions: { parse: [] }` so Discord resolves no mentions at all,
+  and the text escape additionally neutralises `@everyone`/`@here` and raw
+  user/role/channel syntax in rendered text, backslash-escapes Markdown
+  (so a team named `[Claim your prize](…)` cannot become a clickable
+  phishing link under the event's authority) and splits `https://` so
+  Discord autolinks nothing out of untrusted text. A classic challenge
+  still locked behind its story step is never announced: the notifier
+  spends its claim first (so nobody can post it later either) and then
+  checks the same unlock computation the board makes from the no-solve view
+  (ADR 60), withholding the ENTIRE post — title, points and the bare id the
+  board also redacts — when the step is locked, or when the story line it
+  needs cannot be read at all. The admin "Send test" and the per-type
+  previews are built by the same builders the live announcer uses, so a
+  preview demonstrates the live message format — the same embeds, mention
+  suppression and escaping — on sample data, not the real content of any
+  future post.
+
+**Consequences.** Announcements are an organizer opt-in with no new
+credential to manage beyond the webhook itself, and no new process to
+deploy — and the opt-in is cheap to leave half-done: the switches are
+independent, and a webhook with nothing enabled costs one Redis read per
+tick. The `ctf:announce:*` state is wiped by the master reset (so a fresh
+run starts silent: the lifecycle pack re-seeds without replaying, and a
+fresh first blood is claimable again) while the webhook setup survives with
+the other organizer-set things. The pause/schedule contract is NOT
+re-implemented: the ticker reads the same `ctf:admin:settings` fields
+through the app's own `schedule-window.ts`, so the three-reader rule holds.
+No unauthenticated route joins the surface: all four routes under
+`/api/admin/announcements*` — the config, webhook, test and preview
+endpoints — require `requireAdmin` before they touch the store. What this
+does not cover: the cut kinds above (they stay cut until there is a proven
+organizer need that justifies their per-tick observation cost), per-
+contestant DMs (needs a bot, not a webhook), richer widgets (buttons,
+threads), and announcing Secure Development's per-PR scores — the poller
+already has its own cadence and the scorer owns that story.
 ## ADR 74. Players are kit accounts; GitHub is needed only for Secure Development
 
 **Status.** Accepted (#731, built in #736–#744). Amended 2026-11-17 (#798): GitHub is the one OAuth provider; Google and Discord were dropped before release. Amends [ADR 19](#adr-19-organizer-admin-panel-runtime-override-layer), [ADR 40](#adr-40-csrf-assertion-in-the-proxy-rate-limits-keyed-on-the-login), [ADR 47](#adr-47-a-team-is-required-to-score-enforced-at-the-route-and-signposted-at-the-page), [ADR 48](#adr-48-per-contestant-support-actions-and-why-they-refuse-some-things), [ADR 49](#adr-49-firstteamat-records-the-funnels-conversion-moment-joinedat-does-not) and [ADR 50](#adr-50-metrics-are-computed-from-stored-data-forks-report-nothing): wherever they key a record on, or identify a player by, a GitHub login, read the player id. Admin access is [ADR 72](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env).

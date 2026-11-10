@@ -22,7 +22,7 @@ const firstOpen = vi.hoisted(() => ({ recordFirstOpen: vi.fn(async () => {}) }))
 vi.mock("@/lib/first-open", () => firstOpen);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { moduleLive, isAdminLogin, getSession, listChallenges, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints } =
+const { moduleLive, isAdminLogin, getSession, listChallenges, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints, getClassicHintLadder } =
   vi.hoisted(() => ({
     moduleLive: vi.fn(),
     isAdminLogin: vi.fn(),
@@ -35,6 +35,7 @@ const { moduleLive, isAdminLogin, getSession, listChallenges, teamSolveCounts, g
     getClassicHintIds: vi.fn(),
     getHintNotice: vi.fn(),
     getViewerHints: vi.fn(),
+    getClassicHintLadder: vi.fn(),
   }));
 
 vi.mock("server-only", () => ({}));
@@ -51,7 +52,7 @@ vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
-vi.mock("@/lib/hint-store", () => ({ getClassicHintIds, getHintNotice, getViewerHints }));
+vi.mock("@/lib/hint-store", () => ({ getClassicHintIds, getHintNotice, getViewerHints, getClassicHintLadder }));
 // #463 stories: none by default; the story tests below set some.
 const storyMocks = vi.hoisted(() => ({
   listStories: vi.fn(async () => [] as { id: string; title: string; intro: string; steps: string[] }[]),
@@ -102,7 +103,8 @@ beforeEach(() => {
   ]);
   getClassicHintIds.mockResolvedValue([]);
   getHintNotice.mockResolvedValue({ active: false, cost: 10 });
-  getViewerHints.mockResolvedValue({ purchased: {}, classic: {}, spent: 0, count: 0 });
+  getViewerHints.mockResolvedValue({ purchased: {}, classic: {}, classicLevels: {}, spent: 0, count: 0 });
+  getClassicHintLadder.mockResolvedValue([]);
 });
 
 describe("first-open record (#616)", () => {
@@ -255,19 +257,74 @@ describe("challenge page hint", () => {
   });
 
   it("offers the reveal button (with the price) to a signed-in non-owner", async () => {
+    getClassicHintLadder.mockResolvedValue([{ level: 1, price: 25 }]);
     const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(html).toMatch(/Reveal hint \(−25 pts\)/);
   });
 
   it("renders an owned hint's text server-side, with no buy button", async () => {
-    getViewerHints.mockResolvedValue({ purchased: {}, classic: { c1: "Look at robots.txt." }, spent: 25, count: 1 });
+    getClassicHintLadder.mockResolvedValue([{ level: 1, price: 25 }]);
+    getViewerHints.mockResolvedValue({
+      purchased: {},
+      classic: { c1: "Look at robots.txt." },
+      classicLevels: { c1: { 1: "Look at robots.txt." } },
+      spent: 25,
+      count: 1,
+    });
     const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(html).toContain("Look at robots.txt.");
     expect(html).not.toMatch(/Reveal hint/);
   });
 
+  it("renders rung 1 owned, rung 2 purchasable, and rung 3 gated behind rung 2", async () => {
+    getClassicHintLadder.mockResolvedValue([
+      { level: 1, price: 25 },
+      { level: 2, price: 30 },
+      { level: 3, price: 40 },
+    ]);
+    getViewerHints.mockResolvedValue({
+      purchased: {},
+      classic: { c1: "Hint one text." },
+      classicLevels: { c1: { 1: "Hint one text." } },
+      spent: 25,
+      count: 1,
+    });
+    const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+
+    expect(html).toContain("Hint one text.");
+    expect(html).toMatch(/Reveal hint \(−30 pts\)/);
+    expect(html).toContain("Hint 3 — 40 pts · buy hint 2 first");
+    expect(html).not.toMatch(/Reveal hint \(−40 pts\)/);
+  });
+
+  // The secrecy boundary has two sides: the owned rung renders, and NO
+  // unpurchased rung's text reaches the markup. The extra `text` fields on
+  // the ladder stand in for a wider rung record, so a future spread of one
+  // into props fails here rather than leaking.
+  it("renders only the purchased rung's text, never an unpurchased rung's", async () => {
+    const rungText = ["First rung text.", "Second rung text.", "Third rung text."];
+    getClassicHintLadder.mockResolvedValue([
+      { level: 1, price: 25, text: rungText[0] },
+      { level: 2, price: 30, text: rungText[1] },
+      { level: 3, price: 40, text: rungText[2] },
+    ]);
+    getViewerHints.mockResolvedValue({
+      purchased: {},
+      classic: { c1: rungText[0] },
+      classicLevels: { c1: { 1: rungText[0] } },
+      spent: 25,
+      count: 1,
+    });
+    const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
+
+    expect(html).toContain(rungText[0]);
+    expect(html).not.toContain(rungText[1]);
+    expect(html).not.toContain(rungText[2]);
+  });
+
   it("tells a signed-out visitor a hint exists without an affordance that would 401", async () => {
     getSession.mockResolvedValue(null);
+    getClassicHintLadder.mockResolvedValue([{ level: 1, price: 25 }]);
     const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(html).toContain("sign in to reveal it");
     expect(html).not.toMatch(/Reveal hint \(/);
@@ -290,10 +347,11 @@ describe("challenge page hint", () => {
   // slot is an element-type change that unmounts HintRevealButton and the
   // "−N pts spent · M pts left" ack with it. Static markup cannot see an
   // unmount, so this pin is SOURCE-level.
-  it("hands the owned text to HintRevealButton instead of swapping in a separate <p> (#560)", () => {
+  it("hands each owned rung's text to HintRevealButton instead of swapping in a separate <p> (#560)", () => {
     const src = readFileSync(fileURLToPath(new URL("../page.tsx", import.meta.url)), "utf8");
-    expect(src).toMatch(/<HintRevealButton[\s\S]*?ownedText=\{viewerHints\?\.classic\[challenge\.id\]/);
-    expect(src).not.toMatch(/viewerHints\?\.classic\[challenge\.id\] \? \(/);
+    expect(src).toMatch(/ownedHintLevels\[rung\.level\]/);
+    expect(src).toMatch(/<HintRevealButton[\s\S]*?ownedText=\{text\}/);
+    expect(src).not.toMatch(/<p[\s\S]*?💡 \{text\}/);
   });
 });
 

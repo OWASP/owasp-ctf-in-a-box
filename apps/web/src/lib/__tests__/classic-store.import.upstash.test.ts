@@ -94,7 +94,12 @@ async function snapshot() {
 }
 async function roundTrip() {
   const exported = await exportBundle();
-  expect(parsed(exported)).toEqual(exported);
+  // A pre-v5 export writes a one-rung ladder as the legacy `hint` string while
+  // the parser normalizes it to `hints`; both are the same bundle, so compare
+  // their canonical serialized form and require parsing to be idempotent.
+  const canonical = parsed(exported);
+  expect(JSON.parse(serializeBundle(exported))).toEqual(JSON.parse(serializeBundle(canonical)));
+  expect(parsed(canonical)).toEqual(canonical);
   return exported;
 }
 
@@ -140,7 +145,7 @@ describe.skipIf(!liveConfigured)("Classic bundle category union against real Red
     expect(await snapshot()).toEqual(before);
     await importBundle(parsed(await roundTrip()));
     expect(await snapshot()).toEqual(before);
-    expect((await listChallengesForAdmin())[0]).toMatchObject({ flag: "Flag{Original}", hint: "Original hint", challenge: { points: 25 } });
+    expect((await listChallengesForAdmin())[0]).toMatchObject({ flag: "Flag{Original}", hints: [{ text: "Original hint", cost: null }], challenge: { points: 25 } });
   });
 
   it("returns categories/400 without changing any content, file bytes or audit entry", async () => {

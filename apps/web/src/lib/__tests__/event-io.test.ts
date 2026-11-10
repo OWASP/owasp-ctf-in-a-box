@@ -359,6 +359,37 @@ describe("the eventImages section", () => {
   });
 });
 
+// The archive delegates its classic section to classic-io's serializer, so a
+// legacy `hint` comes back as the field its own version accepts.
+describe("parseEventBundle and classic hint ladders", () => {
+  const classicWith = (version: number, extra: Record<string, unknown>) => ({
+    ...valid,
+    classic: { ...valid.classic!, version, challenges: [{ ...valid.classic!.challenges[0], ...extra }] },
+  });
+
+  it("round-trips a v4 section's legacy hint as one rung", () => {
+    const bundle = classicWith(4, { hint: "look closer" });
+    const res = parseEventBundle(serializeEventBundle(bundle));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.classic?.challenges[0].hints).toEqual([{ text: "look closer", cost: null }]);
+
+    const text = serializeEventBundle(res.bundle);
+    expect(text).toContain('"hint": "look closer"');
+    expect(text).not.toContain('"hints"');
+    const again = parseEventBundle(text);
+    if (!again.ok) throw new Error(JSON.stringify(again.errors));
+    expect(again.bundle).toEqual(res.bundle);
+  });
+
+  it("keeps a v5 section's ladder as hints", () => {
+    const ladder = [{ text: "first", cost: 5 }, { text: "second", cost: null }];
+    const bundle = classicWith(5, { hints: ladder });
+    const res = parseEventBundle(serializeEventBundle(bundle));
+    if (!res.ok) throw new Error(JSON.stringify(res.errors));
+    expect(res.bundle.classic?.challenges[0].hints).toEqual(ladder);
+  });
+});
+
 // The event archive carries a Jeopardy challenge's visibility through the same
 // classic parser: a v4 section keeps it, an older one carrying it is refused
 // by position, never by value.

@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
 import {
   ClassicValidationError,
+  countClassicHintPurchases,
   deleteChallenge,
   getSolveCounts,
   listCategories,
@@ -18,6 +19,9 @@ import {
   type Challenge,
 } from "@/lib/classic-store";
 import type { Story } from "@/lib/story-lock";
+import { HINT_COST_MAX } from "@/lib/hint-defaults";
+import { validateHintLevels, type HintLevelConfig } from "@/lib/hint-ladder";
+import { CLASSIC_HINT_MAX } from "@/lib/classic-keys";
 import { type Attachment, attachmentMeta } from "@/lib/attachments-keys";
 import { listAllAttachments } from "@/lib/attachments-store";
 import { teamSolveCounts } from "@/lib/team-solve-counts";
@@ -77,7 +81,7 @@ import { importBundleResponse } from "@/app/api/admin/classic/import-response";
  * shape through the same handler, outside the proxy.
  */
 
-type ChallengePayload = Challenge & { flag: string; hint?: string };
+type ChallengePayload = Challenge & { flag: string; hints?: HintLevelConfig[] };
 
 /** The two POST shapes' allowed key sets. Exported (not just module-private)
  *  so a test can assert, structurally, that they stay disjoint — see the
@@ -96,7 +100,7 @@ export const CHALLENGE_KEYS = new Set([
   "order",
   "flag",
   "caseSensitive",
-  "hint",
+  "hints",
   "enabled",
   "releaseAt",
 ]);
@@ -133,10 +137,18 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
   // shrug at. A string "false" would otherwise make a challenge case-sensitive
   // that the organizer explicitly turned off.
   if (body.caseSensitive !== undefined && typeof body.caseSensitive !== "boolean") return null;
-  // Optional paid-hint text (#190); a present non-string is malformed. An
-  // empty/whitespace hint is a deliberate CLEAR, passed through so the store
-  // deletes the row.
-  if (body.hint !== undefined && typeof body.hint !== "string") return null;
+  // Optional ordered paid-hint ladder (#190); a present array must be
+  // well formed. An empty list is a deliberate CLEAR, passed through so the
+  // store deletes every rung.
+  let hints: HintLevelConfig[] | undefined;
+  if (body.hints !== undefined) {
+    const parsed = validateHintLevels(body.hints, {
+      maxTextLength: CLASSIC_HINT_MAX,
+      maxCost: HINT_COST_MAX,
+    });
+    if (!parsed.ok) return null;
+    hints = parsed.levels;
+  }
   // Optional; a present non-boolean is malformed, for the caseSensitive
   // reason: a string "false" would publish the challenge.
   if (body.enabled !== undefined && typeof body.enabled !== "boolean") return null;
@@ -153,7 +165,7 @@ function parseChallengePayload(body: unknown): ChallengePayload | null {
     points: body.points,
     order: body.order,
     flag: body.flag,
-    ...(body.hint !== undefined ? { hint: body.hint } : {}),
+    ...(hints !== undefined ? { hints } : {}),
     // Normalized to "present only when true", the same shape the store writes
     // and the bundle exports, so one challenge has one representation
     // whichever door it came through.
@@ -256,12 +268,14 @@ export async function GET(request: Request) {
   let categories: string[];
   let stories: Story[];
   let files: Map<string, Attachment[]>;
+  let hintPurchases: Record<string, number> | null;
   try {
-    [challenges, categories, stories, files] = await Promise.all([
+    [challenges, categories, stories, files, hintPurchases] = await Promise.all([
       listChallengesForAdmin(),
       listCategories(),
       listStories(),
       listAllAttachments("classic"),
+      countClassicHintPurchases(),
     ]);
   } catch (err) {
     return errorResponse(err);
@@ -286,7 +300,7 @@ export async function GET(request: Request) {
       { teams: teams ? (teams.get(id) ?? 0) : null, players: players ? (players.get(id) ?? 0) : null },
     ]),
   );
-  return NextResponse.json({ challenges, categories, stories, attachments, solves });
+  return NextResponse.json({ challenges, categories, stories, attachments, solves, hintPurchases });
 }
 
 export async function POST(request: Request) {
@@ -347,11 +361,11 @@ export async function POST(request: Request) {
   const parsed = parseChallengePayload(body);
   if (!parsed) return NextResponse.json({ error: "invalid request payload" }, { status: 400 });
 
-  const { flag, hint, ...challenge } = parsed;
+  const { flag, hints, ...challenge } = parsed;
   const c: Challenge = challenge;
   let saved: AdminChallenge;
   try {
-    saved = await upsertChallenge(c, flag, hint);
+    saved = await upsertChallenge(c, flag, hints ?? null);
   } catch (err) {
     return errorResponse(err);
   }
@@ -360,7 +374,7 @@ export async function POST(request: Request) {
   // Echoes the STORED record (flag trimmed by `upsertChallenge`), not the raw
   // payload, so the authoring client's state matches what a subsequent GET
   // would return rather than drifting from it.
-  return NextResponse.json({ challenge: saved.challenge, flag: saved.flag, hint: saved.hint });
+  return NextResponse.json({ challenge: saved.challenge, flag: saved.flag, hints: saved.hints });
 }
 
 export async function DELETE(request: Request) {

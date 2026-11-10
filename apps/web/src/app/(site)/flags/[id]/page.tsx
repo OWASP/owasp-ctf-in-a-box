@@ -40,7 +40,7 @@ import { listAttachments } from "@/lib/attachments-store";
 import type { AttachmentView } from "@/components/attachment-list";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { redirectIfNotLaunched } from "@/lib/launch";
-import { getClassicHintIds, getHintNotice, getViewerHints } from "@/lib/hint-store";
+import { getClassicHintIds, getClassicHintLadder, getHintNotice, getViewerHints } from "@/lib/hint-store";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 import TeamlessNotice from "@/components/teamless-notice";
@@ -127,6 +127,13 @@ export default async function ClassicChallengePage({ params }: { params: Promise
 
   const moduleTitle = modules.find((m) => m.id === "classic")?.title ?? "Jeopardy";
   const cooldownMs = (settings.classicCooldownSec ?? CLASSIC_COOLDOWN_SEC) * 1000;
+  // The ladder's prices are shown BEFORE purchase, including rungs the
+  // contestant cannot buy yet. The text never leaves the server until bought.
+  const hintLadder = hintNotice.active && hintIds.includes(challenge.id)
+    ? await getClassicHintLadder(challenge.id, hintNotice.cost)
+    : [];
+  const ownedHintLevels = viewerHints?.classicLevels[challenge.id] ?? {};
+  const nextHintLevel = hintLadder.find((rung) => !ownedHintLevels[rung.level])?.level ?? null;
 
   // Field by field, never a spread — a spread of the store record is how a
   // flag would leak into props.
@@ -170,27 +177,52 @@ export default async function ClassicChallengePage({ params }: { params: Promise
         </h1>
       </div>
 
-      {/* Paid hint (#190): hints are on and this challenge has one; the
-          signed-in viewer gets the reveal control, with the server-known
-          owned text passed in as a prop so the SAME component renders it
-          before and after router.refresh() (#560) — a separate owned <p>
-          would unmount it and lose the spend/balance acknowledgement. A
-          signed-out visitor sees that a hint exists without an affordance
-          that would 401. */}
-      {hintNotice.active && hintIds.includes(challenge.id) && (
-        <div className="max-w-xl">
-          {login ? (
-            <HintRevealButton
-              app="classic"
-              id={challenge.id}
-              cost={hintNotice.cost}
-              ownedText={viewerHints?.classic[challenge.id] ?? null}
-            />
-          ) : (
-            <p className="text-xs text-muted">
-              This one has a paid hint ({hintNotice.cost} pts) — sign in to reveal it.
-            </p>
-          )}
+      {/* Paid hint (#190): the ladder's prices render before purchase, but
+          never a text the viewer did not buy. Owned rungs go through the SAME
+          HintRevealButton with `ownedText` (#560), so a post-reveal
+          router.refresh() does not unmount the spend/balance acknowledgement.
+          The buy control exists only for the next rung of a signed-in
+          viewer — a signed-out visitor sees that hints exist without an
+          affordance that would 401. */}
+      {hintLadder.length > 0 && (
+        <div className="flex max-w-xl flex-col gap-2">
+          <p className="text-xs text-muted">
+            This challenge has {hintLadder.length} paid hint{hintLadder.length === 1 ? "" : "s"}, bought
+            in order.
+          </p>
+          {hintLadder.map((rung) => {
+            const text = ownedHintLevels[rung.level];
+            if (text) {
+              return (
+                <div key={rung.level} className="flex flex-col gap-1">
+                  <span className="text-xs uppercase tracking-wide text-[#d4a017]/70">Hint {rung.level}</span>
+                  <HintRevealButton
+                    app="classic"
+                    id={challenge.id}
+                    level={rung.level}
+                    cost={rung.price}
+                    ownedText={text}
+                  />
+                </div>
+              );
+            }
+            if (login && rung.level === nextHintLevel) {
+              return <HintRevealButton key={rung.level} app="classic" id={challenge.id} level={rung.level} cost={rung.price} />;
+            }
+            return (
+              <p
+                key={rung.level}
+                className="rounded border border-white/10 px-3 py-2 text-sm text-muted"
+              >
+                Hint {rung.level} — {rung.price} pts
+                {rung.level !== nextHintLevel
+                  ? ` · buy hint ${rung.level - 1} first`
+                  : login
+                    ? ""
+                    : " · sign in to reveal it"}
+              </p>
+            );
+          })}
         </div>
       )}
 

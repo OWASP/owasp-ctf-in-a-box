@@ -4,7 +4,30 @@
 // through the exported pure helper.
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import AdminInsightsTab, { SolvesChart, axisLabels, bucketHeight, bucketTitle, bucketWidthLabel, medianTimeCell } from "@/app/(site)/admin/admin-insights-tab";
+import AdminInsightsTab, { HintsByLevelTable, SolvesChart, axisLabels, bucketHeight, bucketTitle, bucketWidthLabel, medianTimeCell } from "@/app/(site)/admin/admin-insights-tab";
+
+describe("Hints by level", () => {
+  it("renders one row per rung with its buyers, spend and timing", () => {
+    const html = renderToStaticMarkup(
+      <HintsByLevelTable
+        byLevel={[
+          { level: 1, buyers: 4, totalSpend: 100, boughtBeforeSolving: 3, boughtAfterSolving: 1 },
+          { level: 2, buyers: 2, totalSpend: 60, boughtBeforeSolving: 2, boughtAfterSolving: 0 },
+        ]}
+      />,
+    );
+    expect(html).toContain("Hints by level");
+    expect(html).toContain("Jeopardy ladders sell in order");
+    expect(html).toContain("<td class=\"py-1 pr-4\">1</td>");
+    expect(html).toContain("<td class=\"py-1 pr-4\">4</td>");
+    expect(html).toContain("<td class=\"py-1 pr-4\">100</td>");
+    expect(html).toContain("<td class=\"py-1 pr-4\">2</td>");
+  });
+
+  it("renders nothing when no level has data", () => {
+    expect(renderToStaticMarkup(<HintsByLevelTable byLevel={[]} />)).toBe("");
+  });
+});
 
 describe("AdminInsightsTab initial view", () => {
   it("offers the compute button, as primary, and says where the numbers come from", () => {

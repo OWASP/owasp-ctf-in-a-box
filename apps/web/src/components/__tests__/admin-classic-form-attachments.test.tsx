@@ -28,7 +28,7 @@ describe("ChallengeForm — Files (#186)", () => {
       editorFromChallenge({
         challenge: { id: "web-one", title: "One", category: "Web", description: "", points: 10, order: 0 },
         flag: "CTF{x}",
-        hint: null,
+        hints: [],
       }),
     );
     expect(html).toContain(">Files<");

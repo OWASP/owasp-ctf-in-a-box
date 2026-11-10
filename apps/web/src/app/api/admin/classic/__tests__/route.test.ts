@@ -26,6 +26,7 @@ const {
   listStories,
   setStories,
   listChallengeIds,
+  countClassicHintPurchases,
   writeAdminAudit,
   ClassicValidationError,
 } = vi.hoisted(() => {
@@ -53,6 +54,7 @@ const {
     listStories: vi.fn(),
     setStories: vi.fn(),
     listChallengeIds: vi.fn(),
+    countClassicHintPurchases: vi.fn(),
     writeAdminAudit: vi.fn(),
     ClassicValidationError,
   };
@@ -83,6 +85,7 @@ vi.mock("@/lib/classic-store", () => ({
   listStories,
   setStories,
   listChallengeIds,
+  countClassicHintPurchases,
   getSolveCounts: counts.getSolveCounts,
   ClassicValidationError,
 }));
@@ -127,7 +130,7 @@ const CHALLENGE = {
 
 const validPayload = { ...CHALLENGE, flag: "CTF{flag}" };
 
-const ADMIN_ROW = { challenge: CHALLENGE, flag: "CTF{flag}", hint: null };
+const ADMIN_ROW = { challenge: CHALLENGE, flag: "CTF{flag}", hints: [] };
 
 function allowAdmin() {
   requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
@@ -153,12 +156,14 @@ beforeEach(() => {
   listStories.mockReset();
   setStories.mockReset();
   listChallengeIds.mockReset();
+  countClassicHintPurchases.mockReset();
   writeAdminAudit.mockReset();
   listStories.mockResolvedValue([]);
   listChallengeIds.mockResolvedValue(new Set(["c-1", "c-2"]));
   allowAdmin();
   listChallengesForAdmin.mockResolvedValue([ADMIN_ROW]);
   listCategories.mockResolvedValue(["Web"]);
+  countClassicHintPurchases.mockResolvedValue({});
   writeAdminAudit.mockResolvedValue(undefined);
 });
 
@@ -184,7 +189,7 @@ describe("GET /api/admin/classic", () => {
   it("returns challenges (with flags) and categories for an admin", async () => {
     const res = await GET(adminReq("GET"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [], attachments: {}, solves: { [ADMIN_ROW.challenge.id]: { teams: 0, players: 0 } } });
+    expect(await res.json()).toEqual({ challenges: [ADMIN_ROW], categories: ["Web"], stories: [], attachments: {}, solves: { [ADMIN_ROW.challenge.id]: { teams: 0, players: 0 } }, hintPurchases: {} });
   });
 
   // #595: an organizer spots a flag nobody can solve from the list itself.
@@ -367,12 +372,32 @@ describe("POST /api/admin/classic — challenge upsert", () => {
     upsertChallenge.mockResolvedValue(ADMIN_ROW);
     const res = await POST(adminReq("POST", validPayload));
     expect(res.status).toBe(200);
-    // A payload without a hint passes `undefined` through — the store leaves
-    // the hint row alone only via an explicit empty string, never a default.
-    expect(upsertChallenge).toHaveBeenCalledWith(CHALLENGE, "CTF{flag}", undefined);
-    expect(await res.json()).toEqual({ challenge: CHALLENGE, flag: "CTF{flag}", hint: null });
+    // A payload without hints passes null through — a deliberate clear, the
+    // same shape an empty ladder has.
+    expect(upsertChallenge).toHaveBeenCalledWith(CHALLENGE, "CTF{flag}", null);
+    expect(await res.json()).toEqual({ challenge: CHALLENGE, flag: "CTF{flag}", hints: [] });
 
     expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-upsert", { challengeId: "c-1" });
+  });
+  // A hints ladder is validated at the boundary and handed to the store
+  // as the parsed list (blank text or a bad price is refused, not written).
+  it("passes a validated hints ladder through, and echoes it back", async () => {
+    upsertChallenge.mockResolvedValue({
+      challenge: CHALLENGE,
+      flag: "CTF{flag}",
+      hints: [{ text: "first", cost: 5 }, { text: "second", cost: null }],
+    });
+    const hints = [{ text: "first", cost: 5 }, { text: "second", cost: null }];
+    const res = await POST(adminReq("POST", { ...validPayload, hints }));
+    expect(res.status).toBe(200);
+    expect(upsertChallenge).toHaveBeenCalledWith(CHALLENGE, "CTF{flag}", hints);
+    expect(await res.json()).toMatchObject({ hints });
+  });
+
+  it("400s an invalid hints ladder without writing", async () => {
+    const res = await POST(adminReq("POST", { ...validPayload, hints: [{ text: "", cost: 1 }] }));
+    expect(res.status).toBe(400);
+    expect(upsertChallenge).not.toHaveBeenCalled();
   });
 });
 
@@ -657,9 +682,9 @@ describe("POST /api/admin/classic — visibility", () => {
   it("passes enabled:false to the store, and drops enabled:true (absent means live)", async () => {
     upsertChallenge.mockResolvedValue(ADMIN_ROW);
     await POST(adminReq("POST", { ...validPayload, enabled: false }));
-    expect(upsertChallenge).toHaveBeenLastCalledWith({ ...CHALLENGE, enabled: false }, "CTF{flag}", undefined);
+    expect(upsertChallenge).toHaveBeenLastCalledWith({ ...CHALLENGE, enabled: false }, "CTF{flag}", null);
     await POST(adminReq("POST", { ...validPayload, enabled: true }));
-    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", undefined);
+    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", null);
   });
 
   it("400s a non-boolean enabled without writing", async () => {
@@ -676,12 +701,12 @@ describe("POST /api/admin/classic — release time", () => {
     expect(upsertChallenge).toHaveBeenLastCalledWith(
       { ...CHALLENGE, enabled: false, releaseAt: "2099-10-08T13:00:00.000Z" },
       "CTF{flag}",
-      undefined,
+      null,
     );
     await POST(adminReq("POST", { ...validPayload, releaseAt: null }));
-    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", undefined);
+    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", null);
     await POST(adminReq("POST", { ...validPayload, releaseAt: "" }));
-    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", undefined);
+    expect(upsertChallenge).toHaveBeenLastCalledWith(CHALLENGE, "CTF{flag}", null);
   });
 
   it("400s an unreadable or non-string release time without writing", async () => {

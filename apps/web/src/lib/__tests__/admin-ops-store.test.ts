@@ -97,7 +97,7 @@ function mockModuleResets(
  *  module scripts: 2 DEL + 2 HDEL for quiz, 2 DEL + 1 HDEL for hints, then
  *  the HDEL of quiz's award time (#522). */
 function mockQuizAndHintsPipeline() {
-  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1, 1, 1, 1, 1));
+  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1, 1, 1, 1, 1, 1, 1));
 }
 
 beforeEach(() => {
@@ -378,6 +378,8 @@ describe("resetUserProgress", () => {
       "ctf:quiz:answered#octocat",
       "ctf:user:octocat:hints",
       "ctf:hints:at:octocat",
+      // The per-purchase cost record is this login's hint history too.
+      "ctf:hints:cost:octocat",
       "ctf:hints:spent#octocat",
       // #522: the award time goes with the totals it orders.
       "ctf:quiz:lastAt#octocat",

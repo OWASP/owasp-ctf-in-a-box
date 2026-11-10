@@ -46,26 +46,35 @@ export async function POST(request: Request) {
   // The price on the contestant's confirm button (#557). Absent, the reveal
   // charges the current price, as an older page did; present, it must be a
   // whole, non-negative number of points, and the script charges exactly
-  // that or nothing.
+  // that or nothing. There is one field for it: `quotedCost`.
   const hasQuote = body !== null && typeof body === "object" && "quotedCost" in body;
-  const quotedCost: unknown = hasQuote ? body.quotedCost : undefined;
+  const quotedCost: unknown = body !== null && typeof body === "object" ? body.quotedCost : undefined;
   if (hasQuote && !(typeof quotedCost === "number" && Number.isInteger(quotedCost) && quotedCost >= 0)) {
     return NextResponse.json({ error: "Invalid quoted cost" }, { status: 400 });
+  }
+  const level = body.level === undefined ? 1 : body.level;
+  if (typeof level !== "number" || !Number.isInteger(level) || level < 1) {
+    return NextResponse.json({ error: "level must be a positive integer" }, { status: 400 });
   }
   const app = typeof body.app === "string" ? body.app : "";
   const id = typeof body.id === "string" ? body.id : "";
   // An admin on a Jeopardy challenge contestants cannot see reads its hint
   // as a dry run, like a preview: shown, never charged.
   const dryRun = preview || (app === "classic" && id !== "" && (await adminSeesHidden(login, id)));
-  const result = await revealHint(login, app, id, typeof quotedCost === "number" ? { dryRun, quotedCost } : { dryRun });
-  if (!result.ok && "repriced" in result) {
-    // 409: the confirmed price is stale. Only the new price goes back, so
-    // the control can ask again; nothing was charged.
-    return NextResponse.json({ error: result.error, cost: result.cost }, { status: 409 });
-  }
+  const result = await revealHint(login, app, id, {
+    dryRun,
+    level,
+    ...(typeof quotedCost === "number" ? { quotedCost } : {}),
+  });
   if (!result.ok) {
-    const status = result.missing ? 404 : result.forbidden ? 403 : 400;
-    return NextResponse.json({ error: result.error }, { status });
+    const status = result.repriced ? 409 : result.missing ? 404 : result.forbidden ? 403 : 400;
+    return NextResponse.json(
+      {
+        error: result.error,
+        ...(result.repriced ? { repriced: true, cost: result.cost } : {}),
+      },
+      { status },
+    );
   }
   return NextResponse.json({
     hint: result.hint,

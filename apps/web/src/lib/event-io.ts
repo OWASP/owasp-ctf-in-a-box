@@ -33,7 +33,7 @@
 
 import { type AttachmentFile, validateAttachmentFiles } from "@/lib/attachment-files";
 import { parseBundle as parseAiBundle, type AiBundle } from "@/lib/ai-io";
-import { parseBundle as parseClassicBundle, type ClassicBundle } from "@/lib/classic-io";
+import { parseBundle as parseClassicBundle, serializeBundle as serializeClassicBundle, type ClassicBundle } from "@/lib/classic-io";
 import { parseBundle as parseQuizBundle, type QuizBundle } from "@/lib/quiz-io";
 import { parseBundle as parseSponsorsBundle, type SponsorsBundle } from "@/lib/sponsors-io";
 import { EVENT_IMAGE_SLOTS, isEventImageSlot, type EventImagesBundle } from "@/lib/event-images-keys";
@@ -326,13 +326,19 @@ export function parseEventBundle(raw: string): EventParseResult {
 }
 
 /** Indented, not minified — an organizer edits this file by hand. Ends in a
- *  trailing newline, like every other text file in the repo. A single
- *  `JSON.stringify` over the whole composed object already produces the same
- *  indentation classic-io.ts's and quiz-io.ts's own serializers use, so there
- *  is nothing to delegate to them — and a bundle without an embedded
- *  classic/quiz section must still serialize. */
+ *  trailing newline, like every other text file in the repo. The classic
+ *  section goes through its own serializer first: parsing normalizes a
+ *  pre-v5 `hint` into a one-rung `hints` ladder, and only classic-io knows to
+ *  write that back as the legacy field its own version accepts. */
 export function serializeEventBundle(bundle: EventBundle): string {
-  return JSON.stringify(bundle, null, 2) + "\n";
+  return JSON.stringify(
+    {
+      ...bundle,
+      ...(bundle.classic ? { classic: JSON.parse(serializeClassicBundle(bundle.classic)) as ClassicBundle } : {}),
+    },
+    null,
+    2,
+  ) + "\n";
 }
 
 /** The `eventImages` section's SHAPE (#529): an object of known slots, each

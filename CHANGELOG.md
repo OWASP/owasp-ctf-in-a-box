@@ -8,6 +8,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Fixed: `apps/web` pins minimatch to 11.0.1 for GHSA-g3hv-75wg-m249 (#734).**
+  eslint's TypeScript parser pulled in minimatch 10.2.6, which has a
+  denial-of-service advisory. The fix is a new major that no dependant's range
+  reaches yet, so an exact override in `apps/web/pnpm-workspace.yaml` brings it
+  in. Lint-only: the runtime image never ships it, so the box was not exposed.
+
 - **Deprecated: the AI module (#726, #728).** It keeps working in v1.x, with
   security fixes only, and is removed in v2.0.0. Its switch in `/admin`
   (Event → Modules and the AI panel's header) now says so, and so does the

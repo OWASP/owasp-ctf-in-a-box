@@ -15,6 +15,13 @@ overrides:
   # within ^5.0.8 on its own. GHSA-q2hr-2g5m-vwhr. Drop once minimatch's range
   # starts at or above 5.0.12.
   "brace-expansion@5": "5.0.12"
+  # Security pin for eslint's minimatch (eslint → minimatch, lint-only — the
+  # runtime image never ships it): exact, per the repo's pinned-dependencies
+  # rule, and scoped to major 10 so the 3.x copy (outside the vulnerable range)
+  # is untouched. The fix is a new major, so no dependant's range reaches it
+  # and Dependabot cannot bump it. GHSA-g3hv-75wg-m249. Drop once eslint's
+  # range starts at or above 11.0.1.
+  "minimatch@10": "11.0.1"
   # Security pin for vite's launch-editor (vitest → vite, test-only — the
   # runtime image never ships it): exact on both sides, per the repo's
   # pinned-dependencies rule, and keyed to the one vulnerable version the lock

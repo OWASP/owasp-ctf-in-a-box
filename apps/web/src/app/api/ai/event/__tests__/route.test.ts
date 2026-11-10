@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   consumeRateLimit: vi.fn(),
   hasTeam: vi.fn(),
   logActivity: vi.fn(),
+  notifyFirstBlood: vi.fn(),
   // Holds the REAL implementation, set once by the `@/lib/ai-token` mock
   // factory below — a plain mutable slot, not a mock itself, so `vi.hoisted`
   // is safe here. Used only by the rotation tests, which need the actual
@@ -57,6 +58,7 @@ vi.mock("@/lib/rate-limit-store", async (orig) => ({
 }));
 vi.mock("@/lib/team-store", () => ({ hasTeam: mocks.hasTeam }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: mocks.logActivity }));
+vi.mock("@/lib/announce/notify", () => ({ notifyFirstBlood: mocks.notifyFirstBlood }));
 
 import { OPTIONS, POST } from "@/app/api/ai/event/route";
 import { generateSigningKey, signEventBody } from "@/lib/ai-token";
@@ -530,6 +532,41 @@ describe("POST /api/ai/event", () => {
     const res = await OPTIONS();
     expect(res.status).toBe(204);
     expect(res.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+});
+
+// First blood (#590): the hook fires for a FRESH award only (same guard as
+// the activity log), carries the token's subject, and must never be able to
+// fail an award that already landed (non-blocking by contract).
+describe("the first-blood hook (#590)", () => {
+  it("announces a fresh award with the token's subject and the challenge id", async () => {
+    allGatesOpen();
+    await POST(signed(bodyFor()));
+    expect(mocks.notifyFirstBlood).toHaveBeenCalledTimes(1);
+    expect(mocks.notifyFirstBlood).toHaveBeenCalledWith({ module: "ai", challengeId: CHAL, login: "alice" });
+  });
+
+  it("does NOT announce an already-banked award, a wrong verdict, a dry run or a refusal", async () => {
+    allGatesOpen();
+    mocks.awardAiEvent.mockResolvedValue({ ok: true, correct: true, points: 400, already: true });
+    await POST(signed(bodyFor()));
+    allGatesOpen();
+    mocks.awardAiEvent.mockResolvedValue({ ok: true, correct: false });
+    await POST(signed(bodyFor()));
+    allGatesOpen();
+    await POST(signed(bodyFor({ dryRun: true })));
+    allGatesOpen();
+    mocks.awardAiEvent.mockResolvedValue({ ok: false, reason: "paused" });
+    await POST(signed(bodyFor()));
+    expect(mocks.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("the hook never blocks the response — a notify that never settles still yields 200", async () => {
+    allGatesOpen();
+    mocks.notifyFirstBlood.mockReturnValue(new Promise<never>(() => {}));
+    const res = await POST(signed(bodyFor()));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ correct: true, points: 400, already: false });
   });
 });
 

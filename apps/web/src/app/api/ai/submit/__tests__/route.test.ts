@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   consumeRateLimit: vi.fn(),
   hasTeam: vi.fn(),
   logActivity: vi.fn(),
+  notifyFirstBlood: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -42,6 +43,7 @@ vi.mock("@/lib/rate-limit-store", async (orig) => ({
 }));
 vi.mock("@/lib/team-store", () => ({ hasTeam: mocks.hasTeam }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: mocks.logActivity }));
+vi.mock("@/lib/announce/notify", () => ({ notifyFirstBlood: mocks.notifyFirstBlood }));
 
 import { OPTIONS, POST } from "@/app/api/ai/submit/route";
 
@@ -322,6 +324,53 @@ describe("POST /api/ai/submit", () => {
     mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: false });
     const res = await POST(post({ token: "t", flag: "CTF{secret}" }));
     expect(await res.text()).not.toContain("CTF{secret}");
+  });
+});
+
+// First blood (#590): the hook fires for a FRESH solve only (same guard as
+// the activity log), carries the token's subject, and must never be able to
+// fail an award that already landed (non-blocking by contract).
+describe("the first-blood hook (#590)", () => {
+  it("announces a fresh solve with the token's subject and the challenge id", async () => {
+    tokenIsGood();
+    mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 300 });
+    await POST(post({ token: "t", flag: "CTF{x}" }));
+    expect(mocks.notifyFirstBlood).toHaveBeenCalledTimes(1);
+    expect(mocks.notifyFirstBlood).toHaveBeenCalledWith({ module: "ai", challengeId: CHAL, login: "alice" });
+  });
+
+  it("does NOT announce an already-banked resubmission, a wrong flag or a dry run", async () => {
+    tokenIsGood();
+    mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 0, already: true });
+    await POST(post({ token: "t", flag: "CTF{x}" }));
+    mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: false });
+    await POST(post({ token: "t", flag: "nope" }));
+    mocks.verifyLaunchToken.mockReturnValue({ ok: true, claims: { sub: "alice", aud: CHAL, jti: "n1", ctf: { preview: true } } });
+    mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 300, dryRun: true });
+    await POST(post({ token: "t", flag: "CTF{x}" }));
+    expect(mocks.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("does NOT announce any refusal (bad token, no team, unknown challenge, store refusal)", async () => {
+    tokenIsGood();
+    mocks.verifyLaunchToken.mockReturnValue({ ok: false, error: "expired" });
+    await POST(post({ token: "t", flag: "CTF{x}" }));
+    tokenIsGood();
+    mocks.hasTeam.mockResolvedValue(false);
+    await POST(post({ token: "t", flag: "CTF{x}" }));
+    tokenIsGood();
+    mocks.submitAiFlag.mockResolvedValue({ ok: false, reason: "paused" });
+    await POST(post({ token: "t", flag: "CTF{x}" }));
+    expect(mocks.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("the hook never blocks the response — a notify that never settles still yields 200", async () => {
+    tokenIsGood();
+    mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 300 });
+    mocks.notifyFirstBlood.mockReturnValue(new Promise<never>(() => {}));
+    const res = await POST(post({ token: "t", flag: "CTF{x}" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ correct: true, points: 300, already: false });
   });
 });
 

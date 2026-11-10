@@ -123,6 +123,28 @@ describe("lifecycle tick", () => {
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
 
+  it("announces nothing when the lifecycle CAS is lost (code 0)", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
+    mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 0, seq: 0, prev: "v2|L0P0C0A0" });
+
+    await runAnnounceTick(T0);
+
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L0P0C0A0", "v2|L1P0C0A0");
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("seeds silently and announces nothing when stored lifecycle state is unrecognized", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
+    mocks.readStatePack.mockResolvedValue("corrupted-unrecognized-state");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "corrupted-unrecognized-state" });
+
+    await runAnnounceTick(T0);
+
+    expect(mocks.stateCompareSet).toHaveBeenCalled();
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
   it("announces a won pause edge exactly once", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ pause: true }));
     // The observation is a LIVE event under a manual pause; the stored pack

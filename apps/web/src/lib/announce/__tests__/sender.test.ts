@@ -95,6 +95,13 @@ describe("enqueueAnnouncement", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(mocks.outboxPending).toHaveBeenCalled();
   });
+
+  it("generates an outbox id containing an 8-character random component", async () => {
+    await enqueueAnnouncement("first-blood", message);
+    const id = mocks.outboxEnqueue.mock.calls[0][0] as string;
+    expect(id).toMatch(/^\d+-\d+-[0-9a-f]{8}-first-blood$/);
+    await vi.advanceTimersByTimeAsync(300);
+  });
 });
 
 describe("flush", () => {

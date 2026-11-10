@@ -67,11 +67,13 @@ export async function POST(request: Request) {
   }
 
   try {
+    const patch = body as DiscordConfigPatch;
     const prev = await getAnnounceConfig();
-    const config = await updateAnnounceConfig(gate.login, body as DiscordConfigPatch);
-    if (!isLifecyclePassEnabled(prev) && isLifecyclePassEnabled(config)) {
+    const nextConfig = { ...prev, ...patch };
+    if (!isLifecyclePassEnabled(prev) && isLifecyclePassEnabled(nextConfig)) {
       await deleteLifecycleState();
     }
+    const config = await updateAnnounceConfig(gate.login, patch);
     // The write landed: observe it now rather than waiting out an idle
     // backoff, so an opt-in just before launch still sees the pre-launch
     // baseline.

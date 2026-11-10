@@ -738,6 +738,25 @@ Cloudflare stops gross floods before they reach the box.
 Issue #438 tracks the per-login buckets still missing on the two submit
 routes and an Insights view of throttled logins.
 
+### Origin reachable around Cloudflare
+
+The origin — `*.fly.dev` and the Fly IP addresses — is reachable without
+Cloudflare. Cloudflare rules are **not a hard boundary**: anyone who knows
+the Fly app hostname or IP can reach the origin directly and bypass
+Cloudflare's WAF and rate limiting entirely.
+
+Organizers can discover the public IPs with:
+
+```sh
+fly ips list
+```
+
+To restrict traffic to Cloudflare only, consider removing the Fly IP ranges
+from any allowlist or using [Cloudflare Tunnel](#) instead of exposing the
+Fly origin directly. See the [hardening page](../docs/architecture.md#hardening)
+for full CSP, origin reachability around Cloudflare, and consistent 429 rate
+limiting (tracked in [issue #690](https://github.com/OWASP/owasp-ctf-in-a-box/issues/690)).
+
 ## Configuration
 
 **There is no configuration file.** Since #386 an event is configured in

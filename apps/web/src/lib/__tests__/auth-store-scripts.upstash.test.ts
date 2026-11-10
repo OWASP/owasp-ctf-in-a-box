@@ -99,4 +99,17 @@ describe.skipIf(!liveConfigured)("auth-store row scripts against a live SRH prox
     expect(await smembers(indexKey(P, "user", "email", ""))).toEqual([]);
     expect(await smembers(indexKey(P, "user", "email", "null"))).toEqual([]);
   });
+
+  it.each(["not json", "null", "5"])("rejects the payload %j before any write", async (bad) => {
+    const { P, put, smembers, hget } = ctx("session");
+    const row = { id: "s1", token: "a", userId: "u1" };
+    await put("", row);
+    const [res] = await upstashPipeline([
+      ["EVAL", PUT_ROW_SCRIPT, 1, rowsKey(P, "session"), P, "session", "s1", json(row), bad, "token,userId"],
+    ]);
+    expect(res.error).toMatch(/newJson is not a JSON object/);
+    expect(await hget("s1")).toBe(json(row));
+    expect(await smembers(indexKey(P, "session", "token", "a"))).toEqual(["s1"]);
+    expect(await smembers(indexKey(P, "session", "userId", "u1"))).toEqual(["s1"]);
+  });
 });

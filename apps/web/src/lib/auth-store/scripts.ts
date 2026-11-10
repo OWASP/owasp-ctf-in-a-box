@@ -18,6 +18,14 @@ local function indexable(v)
   return t == "string" or t == "number" or t == "boolean"
 end
 
+local function decode_object(json, what)
+  local ok, row = pcall(cjson.decode, json)
+  if not ok or type(row) ~= "table" then
+    return nil, "auth store: " .. what .. " is not a JSON object"
+  end
+  return row, nil
+end
+
 local function each_field(csv)
   return string.gmatch(csv, "[^,]+")
 end
@@ -39,16 +47,22 @@ export const PUT_ROW_SCRIPT = `${INDEX_HELPERS}
 local prefix, model, id = ARGV[1], ARGV[2], ARGV[3]
 local expected, newJson, csv = ARGV[4], ARGV[5], ARGV[6]
 
+local row, rowErr = decode_object(newJson, "newJson")
+if not row then return redis.error_reply(rowErr) end
+
 local current = redis.call("HGET", KEYS[1], id)
+local old
 if expected == "" then
   if current then return 0 end
 else
   if current ~= expected then return 0 end
-  unindex(prefix, model, id, cjson.decode(current), csv)
+  local oldErr
+  old, oldErr = decode_object(current, "stored row")
+  if not old then return redis.error_reply(oldErr) end
 end
 
+if old then unindex(prefix, model, id, old, csv) end
 redis.call("HSET", KEYS[1], id, newJson)
-local row = cjson.decode(newJson)
 for field in each_field(csv) do
   local v = row[field]
   if indexable(v) then
@@ -68,7 +82,9 @@ local expected, csv = ARGV[4], ARGV[5]
 local current = redis.call("HGET", KEYS[1], id)
 if current ~= expected then return 0 end
 
-unindex(prefix, model, id, cjson.decode(current), csv)
+local old, oldErr = decode_object(current, "stored row")
+if not old then return redis.error_reply(oldErr) end
+unindex(prefix, model, id, old, csv)
 redis.call("HDEL", KEYS[1], id)
 return 1
 `;

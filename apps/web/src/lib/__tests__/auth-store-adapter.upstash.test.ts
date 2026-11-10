@@ -6,6 +6,8 @@
 
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { BetterAuthOptions } from "better-auth";
+import { indexKey } from "@/lib/auth-store/keys";
+import { upstashPipeline } from "@/lib/upstash";
 import { freshId, liveConfigured, liveKey } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
@@ -21,6 +23,15 @@ describe.skipIf(!liveConfigured)("redisAdapter against a live SRH proxy", () => 
   });
 
   const fresh = (): Adapter => make({ prefix: liveKey("auth-adapter", freshId("p")) })({} as BetterAuthOptions);
+  const freshWithPrefix = () => {
+    const prefix = liveKey("auth-adapter", freshId("p"));
+    return { prefix, adapter: make({ prefix })({} as BetterAuthOptions) };
+  };
+  async function smembers(key: string): Promise<string[]> {
+    const [res] = await upstashPipeline([["SMEMBERS", key]]);
+    if (res.error) throw new Error(res.error);
+    return res.result as string[];
+  }
 
   async function makeUser(adapter: Adapter) {
     return adapter.create<Record<string, unknown>, Row>({
@@ -122,5 +133,51 @@ describe.skipIf(!liveConfigured)("redisAdapter against a live SRH proxy", () => 
     });
     expect(page.map((s) => s.token)).toEqual(["t2", "t1"]);
     expect(await adapter.count({ model: "session", where: [{ field: "userId", value: user.id }] })).toBe(3);
+  });
+
+  it("lets exactly one of two concurrent users with the same email be created", async () => {
+    const { prefix, adapter } = freshWithPrefix();
+    const data = { name: "Ada", email: "same@example.test", emailVerified: false };
+    const results = await Promise.allSettled([
+      adapter.create<Record<string, unknown>, Row>({ model: "user", data }),
+      adapter.create<Record<string, unknown>, Row>({ model: "user", data }),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(String(rejected.reason)).toMatch(/auth store: create user failed: unique email taken/);
+    const won = (results.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<Row>).value;
+    expect(await adapter.count({ model: "user" })).toBe(1);
+    expect(await smembers(indexKey(prefix, "user", "email", "same@example.test"))).toEqual([won.id]);
+  });
+
+  it("lets exactly one of two concurrent accounts with the same provider and accountId be created", async () => {
+    const { prefix, adapter } = freshWithPrefix();
+    const results = await Promise.allSettled(
+      ["u1", "u2"].map((userId) =>
+        adapter.create<Record<string, unknown>, Row>({
+          model: "account",
+          data: { userId, providerId: "github", accountId: "42" },
+        }),
+      ),
+    );
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(String(rejected.reason)).toMatch(/auth store: create account failed: unique providerId\+accountId taken/);
+    const won = (results.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<Row>).value;
+    expect(await adapter.count({ model: "account" })).toBe(1);
+    expect(await smembers(indexKey(prefix, "account", "providerId+accountId", "github:42"))).toEqual([won.id]);
+  });
+
+  it("refuses an update to an email another user holds, leaving both rows unchanged", async () => {
+    const adapter = fresh();
+    const a = await makeUser(adapter);
+    const b = await makeUser(adapter);
+    const before = await adapter.findMany({ model: "user", where: [{ field: "id", value: [a.id, b.id], operator: "in" }] });
+    await expect(
+      adapter.update({ model: "user", where: [{ field: "id", value: b.id }], update: { email: (a as { email?: string }).email } }),
+    ).rejects.toThrow(/auth store: update user failed: unique email taken/);
+    const after = await adapter.findMany({ model: "user", where: [{ field: "id", value: [a.id, b.id], operator: "in" }] });
+    expect(after).toHaveLength(2);
+    expect(after).toEqual(before);
   });
 });

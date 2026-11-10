@@ -1,7 +1,8 @@
 // The Redis adapter against a mocked `upstashPipeline`: which commands each
 // read issues, that a per-command error throws instead of reading as "no
-// row", that provider tokens are never written, and how a lost
-// compare-and-set is retried. What the scripts do to Redis is pinned by the
+// row", that a reply of the wrong shape throws instead of reading as "no
+// rows", that provider tokens are never written, how a taken unique value
+// fails a write, and how a lost compare-and-set is retried. What the scripts do to Redis is pinned by the
 // live suites.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -160,7 +161,7 @@ describe("redisAdapter (mocked pipeline)", () => {
       update: { token: "t2" },
     });
     expect(updated?.token).toBe("t2");
-    expect(names()).toEqual(["HGETALL", "EVAL", "HGET", "EVAL"]);
+    expect(names()).toEqual(["HGET", "EVAL", "HGET", "EVAL"]);
   });
 
   it("drops a row that stopped matching after a lost compare-and-set", async () => {
@@ -174,6 +175,119 @@ describe("redisAdapter (mocked pipeline)", () => {
     const n = await adapter.deleteMany({ model: "session", where: [w("userId", "u1")] });
     expect(n).toBe(0);
     expect(names().filter((x) => x === "EVAL")).toHaveLength(1);
+  });
+
+  it("reads `id eq` with HGET and `id in` with HMGET, never HGETALL", async () => {
+    const other = { ...session, id: "s2", token: "u" };
+    fakeRedis({ s1: JSON.stringify(session), s2: JSON.stringify(other) });
+    const one = await adapter.findOne<{ id: string }>({ model: "session", where: [w("id", "s1")] });
+    expect(one?.id).toBe("s1");
+    expect(sent()).toEqual([["HGET", `${P}:session`, "s1"]]);
+
+    pipeline.mockClear();
+    const many = await adapter.findMany<{ id: string }>({
+      model: "session",
+      where: [{ field: "id", value: ["s1", "s2", "gone"], operator: "in" }],
+    });
+    expect(many.map((r) => r.id).sort()).toEqual(["s1", "s2"]);
+    expect(sent()).toEqual([["HMGET", `${P}:session`, "s1", "s2", "gone"]]);
+
+    pipeline.mockClear();
+    expect(await adapter.findOne({ model: "session", where: [w("id", "s1"), w("userId", "nobody")] })).toBeNull();
+    expect(names()).toEqual(["HGET"]);
+  });
+
+  it("scans for an `id` clause joined by OR", async () => {
+    fakeRedis({ s1: JSON.stringify(session) });
+    await adapter.findMany({
+      model: "session",
+      where: [w("id", "s1"), { field: "token", value: "x", operator: "eq", connector: "OR" }],
+    });
+    expect(names()).toEqual(["HGETALL"]);
+  });
+
+  it("passes the model's unique fields to the write script", async () => {
+    fakeRedis({});
+    await adapter.create({ model: "user", data: { name: "A", email: "a@x.test", emailVerified: false } });
+    expect(evalArgs().slice(5)).toEqual(["email", "email"]);
+    pipeline.mockClear();
+    await adapter.create({ model: "account", data: { userId: "u", providerId: "github", accountId: "1" } });
+    expect(evalArgs().slice(5)).toEqual(["userId,accountId,providerId+accountId", "providerId+accountId"]);
+    pipeline.mockClear();
+    await adapter.create({ model: "session", data: session });
+    expect(evalArgs()[6]).toBe("");
+  });
+
+  it("throws on script reply 2 (a unique value held by another row), without retrying", async () => {
+    fakeRedis({}, [2]);
+    await expect(
+      adapter.create({ model: "user", data: { name: "A", email: "a@x.test", emailVerified: false } }),
+    ).rejects.toThrow("auth store: create user failed: unique email taken");
+
+    const user = { id: "u1", name: "A", email: "a@x.test", emailVerified: false };
+    fakeRedis({ u1: JSON.stringify(user) }, [2]);
+    pipeline.mockClear();
+    await expect(
+      adapter.update({ model: "user", where: [w("id", "u1")], update: { email: "b@x.test" } }),
+    ).rejects.toThrow("auth store: update user failed: unique email taken");
+    expect(names().filter((n) => n === "EVAL")).toHaveLength(1);
+  });
+
+  describe("fails closed on a reply of the wrong shape", () => {
+    const byEmail = () => adapter.findOne({ model: "user", where: [w("email", "a@x.test")] });
+    const scan = () => adapter.findMany({ model: "user", where: [w("name", "A")] });
+    const byId = () => adapter.findOne({ model: "user", where: [w("id", "u1")] });
+
+    it("throws when the pipeline returns fewer replies than commands", async () => {
+      pipeline.mockResolvedValueOnce([]);
+      await expect(byEmail()).rejects.toThrow(/auth store: findOne user failed: expected 1 replies, got 0/);
+    });
+
+    it("throws when the pipeline returns more replies than commands", async () => {
+      pipeline.mockResolvedValueOnce([{ result: [] }, { result: [] }]);
+      await expect(byEmail()).rejects.toThrow(/expected 1 replies, got 2/);
+    });
+
+    it("throws when the pipeline reply is not an array", async () => {
+      pipeline.mockResolvedValueOnce(null);
+      await expect(byEmail()).rejects.toThrow(/auth store: findOne user failed/);
+    });
+
+    it.each([null, "x", 5])("throws on SMEMBERS reply %j", async (bad) => {
+      pipeline.mockResolvedValueOnce([{ result: bad }]);
+      await expect(byEmail()).rejects.toThrow(/SMEMBERS reply is not an array of strings/);
+    });
+
+    it("throws on an HMGET reply shorter than the ids", async () => {
+      pipeline.mockResolvedValueOnce([{ result: ["u1", "u2"] }]).mockResolvedValueOnce([{ result: ["{}"] }]);
+      await expect(byEmail()).rejects.toThrow(/HMGET reply is not 2 values/);
+    });
+
+    it("throws on an HMGET reply that is not an array", async () => {
+      pipeline.mockResolvedValueOnce([{ result: ["u1"] }]).mockResolvedValueOnce([{ result: null }]);
+      await expect(byEmail()).rejects.toThrow(/HMGET reply is not 1 values/);
+    });
+
+    it.each([null, "x", 5])("throws on HGETALL reply %j", async (bad) => {
+      pipeline.mockResolvedValueOnce([{ result: bad }]);
+      await expect(scan()).rejects.toThrow(/HGETALL reply is/);
+    });
+
+    it("throws on an odd-length HGETALL reply", async () => {
+      pipeline.mockResolvedValueOnce([{ result: ["u1"] }]);
+      await expect(scan()).rejects.toThrow(/HGETALL reply has an odd length/);
+    });
+
+    it("reads the object form of HGETALL", async () => {
+      const user = { id: "u1", name: "A", email: "a@x.test" };
+      pipeline.mockResolvedValueOnce([{ result: { u1: JSON.stringify(user) } }]);
+      expect((await scan()).length).toBe(1);
+    });
+
+    it("throws on an HGET reply that is neither a string nor null", async () => {
+      pipeline.mockResolvedValueOnce([{ result: 5 }]);
+      await expect(byId()).rejects.toThrow(/HGET reply is not a string or null/);
+    });
   });
 
   it("trims returned fields to select", async () => {

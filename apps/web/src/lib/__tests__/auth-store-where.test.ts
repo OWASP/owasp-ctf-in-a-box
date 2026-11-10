@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CleanedWhere } from "better-auth/adapters";
-import { indexLookup, matchesWhere, sortAndPage } from "@/lib/auth-store/where";
-import { indexKey, rowsKey } from "@/lib/auth-store/keys";
+import { idLookup, indexLookup, matchesWhere, sortAndPage } from "@/lib/auth-store/where";
+import { INDEXED_FIELDS, UNIQUE_FIELDS, indexKey, rowsKey } from "@/lib/auth-store/keys";
 
 function w(
   field: string,
@@ -24,6 +24,30 @@ describe("keys", () => {
     expect(indexKey("ctf:auth", "session", "token", "t1")).toBe(
       "ctf:auth:session:by:token:t1",
     );
+  });
+});
+
+describe("UNIQUE_FIELDS", () => {
+  it("is a subset of INDEXED_FIELDS, so the script maintains every set it checks", () => {
+    for (const [model, fields] of Object.entries(UNIQUE_FIELDS)) {
+      for (const f of fields) expect(INDEXED_FIELDS[model]).toContain(f);
+    }
+  });
+});
+
+describe("idLookup", () => {
+  it("names the row for `id eq` and the rows for `id in`", () => {
+    expect(idLookup([w("id", "u1"), w("name", "x")])).toEqual(["u1"]);
+    expect(idLookup([w("id", ["a", "b", "a"], { operator: "in" })])).toEqual(["a", "b"]);
+  });
+
+  it("declines OR, insensitive, non-string and other operators", () => {
+    expect(idLookup([w("id", "u1"), w("name", "x", { connector: "OR" })])).toBeNull();
+    expect(idLookup([w("id", "u1", { mode: "insensitive" })])).toBeNull();
+    expect(idLookup([w("id", 5)])).toBeNull();
+    expect(idLookup([w("id", ["a", 5], { operator: "in" })])).toBeNull();
+    expect(idLookup([w("id", "u1", { operator: "ne" })])).toBeNull();
+    expect(idLookup([w("email", "u1")])).toBeNull();
   });
 });
 

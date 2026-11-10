@@ -83,6 +83,21 @@ export function indexLookup(
   return null;
 }
 
+// Row ids are the rows hash's fields, so a pure-AND, case-sensitive `id eq`
+// or `id in` over strings names its candidate rows directly. The caller still
+// filters them through the full where clause.
+export function idLookup(where: CleanedWhere[]): string[] | null {
+  if (where.some((c) => c.connector === "OR")) return null;
+  for (const c of where) {
+    if (c.field !== "id" || c.mode !== "sensitive") continue;
+    if (c.operator === "eq" && typeof c.value === "string") return [c.value];
+    if (c.operator === "in" && Array.isArray(c.value) && c.value.every((v) => typeof v === "string")) {
+      return [...new Set(c.value as string[])];
+    }
+  }
+  return null;
+}
+
 function cmp(a: unknown, b: unknown): number {
   const x = norm(a ?? null, false);
   const y = norm(b ?? null, false);

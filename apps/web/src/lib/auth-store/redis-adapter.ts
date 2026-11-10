@@ -1,10 +1,16 @@
 import "server-only";
 
-// better-auth's database adapter over the app's Redis (issue #736). Each model
+// better-auth's database adapter over the app's Redis. Each model
 // is one hash of id -> row JSON (`rowsKey`), with index sets for the fields in
 // INDEXED_FIELDS. Every write is a compare-and-set against the JSON the
 // adapter just read (scripts.ts), so a row and its index entries change
-// atomically and two writers that read the same row cannot both win.
+// atomically and two writers that read the same row cannot both win. A write
+// that would give a UNIQUE_FIELDS value (a user's email, an account's
+// provider+accountId) to a second row fails instead.
+//
+// Every reply is checked for shape: a short pipeline reply, or a read reply
+// that is not the array Redis sends, throws rather than reading as "no rows",
+// because "no user with this email" is what makes the caller create one.
 //
 // The factory serializes for us: with supportsDates/supportsJSON off it hands
 // `create`/`update` ISO strings and JSON strings, turns Date-valued where
@@ -14,9 +20,9 @@ import "server-only";
 
 import { createAdapterFactory, type CleanedWhere } from "better-auth/adapters";
 import { upstashPipeline } from "@/lib/upstash";
-import { AUTH_PREFIX, INDEXED_FIELDS, indexKey, rowsKey } from "./keys";
+import { AUTH_PREFIX, INDEXED_FIELDS, UNIQUE_FIELDS, indexKey, rowsKey } from "./keys";
 import { DEL_ROW_SCRIPT, PUT_ROW_SCRIPT } from "./scripts";
-import { indexLookup, matchesWhere, sortAndPage } from "./where";
+import { idLookup, indexLookup, matchesWhere, sortAndPage } from "./where";
 
 type Row = Record<string, unknown>;
 type Snapshot = { id: string; json: string; row: Row };
@@ -54,7 +60,11 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         } catch (err) {
           throw fail(op, model, err);
         }
+        if (!Array.isArray(replies) || replies.length !== commands.length) {
+          throw fail(op, model, `expected ${commands.length} replies, got ${Array.isArray(replies) ? replies.length : typeof replies}`);
+        }
         return replies.map((r) => {
+          if (!r || typeof r !== "object") throw fail(op, model, "malformed reply");
           if (r.error) throw fail(op, model, r.error);
           return r.result;
         });
@@ -109,31 +119,72 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         return row as Row;
       }
 
-      function pairs(reply: unknown): [string, string][] {
+      // HGETALL: a flat [field, value, ...] array, or the object form some
+      // REST proxies send. Anything else is a broken reply, not an empty hash.
+      function pairs(op: string, model: string, reply: unknown): [string, string][] {
+        const out: [string, string][] = [];
         if (Array.isArray(reply)) {
-          const out: [string, string][] = [];
-          for (let i = 0; i + 1 < reply.length; i += 2) out.push([String(reply[i]), String(reply[i + 1])]);
+          if (reply.length % 2 !== 0) throw fail(op, model, "HGETALL reply has an odd length");
+          for (let i = 0; i < reply.length; i += 2) {
+            if (typeof reply[i] !== "string" || typeof reply[i + 1] !== "string") throw fail(op, model, "HGETALL reply holds a non-string");
+            out.push([reply[i], reply[i + 1]]);
+          }
           return out;
         }
         if (reply && typeof reply === "object") {
-          return Object.entries(reply as Record<string, unknown>).map(([k, v]) => [k, String(v)]);
+          for (const [k, v] of Object.entries(reply as Record<string, unknown>)) {
+            if (typeof v !== "string") throw fail(op, model, "HGETALL reply holds a non-string");
+            out.push([k, v]);
+          }
+          return out;
         }
-        return [];
+        throw fail(op, model, `HGETALL reply is ${reply === null ? "null" : typeof reply}, not an array`);
+      }
+
+      function stringList(op: string, model: string, command: string, reply: unknown): string[] {
+        if (!Array.isArray(reply) || reply.some((m) => typeof m !== "string")) {
+          throw fail(op, model, `${command} reply is not an array of strings`);
+        }
+        return reply as string[];
+      }
+
+      // HMGET: one string-or-null per requested id, in order.
+      async function fetchRows(op: string, model: string, ids: string[]): Promise<[string, string][]> {
+        if (ids.length === 0) return [];
+        const [values] = await run(op, model, [["HMGET", rowsKey(prefix, model), ...ids]]);
+        if (!Array.isArray(values) || values.length !== ids.length) {
+          throw fail(op, model, `HMGET reply is not ${ids.length} values`);
+        }
+        const out: [string, string][] = [];
+        values.forEach((v, i) => {
+          if (v === null) return; // no such row, or a stale index entry: it matches nothing
+          if (typeof v !== "string") throw fail(op, model, "HMGET reply holds a non-string");
+          out.push([ids[i], v]);
+        });
+        return out;
+      }
+
+      // HGET: the row JSON, or null when there is no such row.
+      async function fetchRow(op: string, model: string, id: string): Promise<string | null> {
+        const [json] = await run(op, model, [["HGET", rowsKey(prefix, model), id]]);
+        if (json !== null && typeof json !== "string") throw fail(op, model, "HGET reply is not a string or null");
+        return json;
       }
 
       async function load(op: string, model: string, where: CleanedWhere[]): Promise<[string, string][]> {
+        const ids = idLookup(where);
+        if (ids) {
+          if (ids.length !== 1) return fetchRows(op, model, ids);
+          const json = await fetchRow(op, model, ids[0]);
+          return json === null ? [] : [[ids[0], json]];
+        }
         const hit = indexLookup(model, where);
         if (!hit) {
           const [all] = await run(op, model, [["HGETALL", rowsKey(prefix, model)]]);
-          return pairs(all);
+          return pairs(op, model, all);
         }
         const [members] = await run(op, model, [["SMEMBERS", indexKey(prefix, model, hit.field, hit.value)]]);
-        const ids = Array.isArray(members) ? members.map(String) : [];
-        if (ids.length === 0) return [];
-        const [values] = await run(op, model, [["HMGET", rowsKey(prefix, model), ...ids]]);
-        const list = Array.isArray(values) ? values : [];
-        // An id whose row is gone is a stale index entry; it matches nothing.
-        return ids.flatMap((id, i) => (typeof list[i] === "string" ? [[id, list[i] as string] as [string, string]] : []));
+        return fetchRows(op, model, stringList(op, model, "SMEMBERS", members));
       }
 
       async function read(
@@ -165,15 +216,34 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       }
 
       const csv = (model: string) => (INDEXED_FIELDS[model] ?? []).join(",");
+      const uniques = (model: string) => UNIQUE_FIELDS[model] ?? [];
 
+      // A taken unique value fails the write, it is never retried. That is
+      // fail closed on purpose: when a GitHub email moves to another
+      // contestant's account, the sign-in that would copy it onto a second user
+      // row fails until the first row stops holding it (its owner signs in
+      // again with their new email).
       async function cas(op: string, model: string, snap: Snapshot | null, id: string, next: Row | null): Promise<boolean> {
         const command =
           next === null
             ? ["EVAL", DEL_ROW_SCRIPT, 1, rowsKey(prefix, model), prefix, model, id, snap?.json ?? "", csv(model)]
-            : ["EVAL", PUT_ROW_SCRIPT, 1, rowsKey(prefix, model), prefix, model, id, snap?.json ?? "", JSON.stringify(next), csv(model)];
+            : [
+                "EVAL",
+                PUT_ROW_SCRIPT,
+                1,
+                rowsKey(prefix, model),
+                prefix,
+                model,
+                id,
+                snap?.json ?? "",
+                JSON.stringify(next),
+                csv(model),
+                uniques(model).join(","),
+              ];
         const [result] = await run(op, model, [command]);
         if (result === 1) return true;
         if (result === 0) return false;
+        if (result === 2 && next !== null) throw fail(op, model, `unique ${uniques(model).join(", ")} taken`);
         throw fail(op, model, `unexpected script reply ${JSON.stringify(result)}`);
       }
 
@@ -198,8 +268,8 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
               break;
             }
             if (attempt === MAX_RETRIES) throw fail(op, model, `row ${snap.id} kept changing (compare-and-set lost ${attempt + 1} times)`);
-            const [json] = await run(op, model, [["HGET", rowsKey(prefix, model), snap.id]]);
-            if (typeof json !== "string") break;
+            const json = await fetchRow(op, model, snap.id);
+            if (json === null) break;
             const row = parseRow(op, model, json);
             if (!matchesWhere(view(model, row), clauses)) break;
             snap = { id: snap.id, json, row };

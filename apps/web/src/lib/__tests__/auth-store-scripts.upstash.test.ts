@@ -24,13 +24,14 @@ describe.skipIf(!liveConfigured)("auth-store row scripts against a live SRH prox
 
   const json = (r: Row) => JSON.stringify(r);
   const csvFor = (model: string) =>
-    ({ user: "email", session: "token,userId" })[model] ?? "";
+    ({ user: "email", session: "token,userId", account: "userId,accountId,providerId+accountId" })[model] ?? "";
+  const uniqueFor = (model: string) => ({ user: "email", account: "providerId+accountId" })[model] ?? "";
 
   // Each test gets its own prefix so index sets never collide.
   function ctx(model: string) {
     const P = liveKey("auth-scripts", freshId("p"));
     const put = async (expected: string, row: Row) =>
-      upstashEval(PUT_ROW_SCRIPT, [rowsKey(P, model)], [P, model, String(row.id), expected, json(row), csvFor(model)]);
+      upstashEval(PUT_ROW_SCRIPT, [rowsKey(P, model)], [P, model, String(row.id), expected, json(row), csvFor(model), uniqueFor(model)]);
     const del = async (id: string, expected: string) =>
       upstashEval(DEL_ROW_SCRIPT, [rowsKey(P, model)], [P, model, id, expected, csvFor(model)]);
     const smembers = async (key: string) => {
@@ -98,6 +99,68 @@ describe.skipIf(!liveConfigured)("auth-store row scripts against a live SRH prox
     expect(await put("", { id: "u2" })).toBe(1);
     expect(await smembers(indexKey(P, "user", "email", ""))).toEqual([]);
     expect(await smembers(indexKey(P, "user", "email", "null"))).toEqual([]);
+  });
+
+  it("lets exactly one of two concurrent creates with the same email win", async () => {
+    const { P, put, hget, smembers } = ctx("user");
+    const results = await Promise.all([
+      put("", { id: "u1", email: "same@x.test" }),
+      put("", { id: "u2", email: "same@x.test" }),
+    ]);
+    expect([...(results as number[])].sort()).toEqual([1, 2]);
+    const winner = results[0] === 1 ? "u1" : "u2";
+    const loser = winner === "u1" ? "u2" : "u1";
+    expect(await hget(loser)).toBeNull();
+    expect(await smembers(indexKey(P, "user", "email", "same@x.test"))).toEqual([winner]);
+  });
+
+  it("lets exactly one of two concurrent accounts with the same provider and accountId win", async () => {
+    const { P, put, hget, smembers } = ctx("account");
+    const results = await Promise.all([
+      put("", { id: "a1", userId: "u1", providerId: "github", accountId: "42" }),
+      put("", { id: "a2", userId: "u2", providerId: "github", accountId: "42" }),
+    ]);
+    expect([...(results as number[])].sort()).toEqual([1, 2]);
+    const winner = results[0] === 1 ? "a1" : "a2";
+    expect(await hget(winner === "a1" ? "a2" : "a1")).toBeNull();
+    expect(await smembers(indexKey(P, "account", "providerId+accountId", "github:42"))).toEqual([winner]);
+    expect(await smembers(indexKey(P, "account", "accountId", "42"))).toEqual([winner]);
+  });
+
+  it("allows the same accountId under another provider", async () => {
+    const { put } = ctx("account");
+    expect(await put("", { id: "a1", userId: "u1", providerId: "github", accountId: "42" })).toBe(1);
+    expect(await put("", { id: "a2", userId: "u2", providerId: "gitlab", accountId: "42" })).toBe(1);
+  });
+
+  it("refuses an update to an email another row holds, and changes neither row", async () => {
+    const { P, put, hget, smembers } = ctx("user");
+    const a = { id: "u1", email: "a@x.test" };
+    const b = { id: "u2", email: "b@x.test" };
+    await put("", a);
+    await put("", b);
+    expect(await put(json(b), { id: "u2", email: "a@x.test" })).toBe(2);
+    expect(await hget("u1")).toBe(json(a));
+    expect(await hget("u2")).toBe(json(b));
+    expect(await smembers(indexKey(P, "user", "email", "a@x.test"))).toEqual(["u1"]);
+    expect(await smembers(indexKey(P, "user", "email", "b@x.test"))).toEqual(["u2"]);
+    // Keeping its own value is not a conflict.
+    expect(await put(json(b), { id: "u2", email: "b@x.test", name: "B" })).toBe(1);
+  });
+
+  it("ignores a stale index member whose row is gone", async () => {
+    const { P, put } = ctx("user");
+    const [res] = await upstashPipeline([["SADD", indexKey(P, "user", "email", "x@x.test"), "ghost"]]);
+    expect(res.error).toBeUndefined();
+    expect(await put("", { id: "u1", email: "x@x.test" })).toBe(1);
+  });
+
+  it("drops the composite index entry on delete", async () => {
+    const { P, put, del, smembers } = ctx("account");
+    const row = { id: "a1", userId: "u1", providerId: "github", accountId: "42" };
+    await put("", row);
+    expect(await del("a1", json(row))).toBe(1);
+    expect(await smembers(indexKey(P, "account", "providerId+accountId", "github:42"))).toEqual([]);
   });
 
   it.each(["not json", "null", "5"])("rejects the payload %j before any write", async (bad) => {

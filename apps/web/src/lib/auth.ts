@@ -1,39 +1,49 @@
 import { betterAuth } from "better-auth";
 import { createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
+import type { BetterAuthOptions } from "better-auth";
+import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { recordCallbackLogin } from "@/lib/activity-log";
 
 /**
- * Stateless better-auth instance: no `database` key, so sessions live entirely
- * in signed/encrypted cookies. The only persistent backend this app has is a
- * read-only Upstash token, so there is nowhere to put user/session tables —
- * and for a weekend event, cookie sessions are all we need. Bump
- * `session.cookieCache.version` to force-invalidate every session at once.
+ * better-auth instance backed by the app's Redis (`redisAdapter`): users,
+ * linked accounts and sessions are records under `ctf:auth:`, so a session can
+ * be revoked server-side.
+ *
+ * Invariants:
+ *   - `ctf:auth:` sits outside every master-reset prefix (`RESET_PREFIXES`), so
+ *     a reset keeps accounts and signed-in contestants stay signed in.
+ *   - The event archive never reads or writes these keys.
+ *   - Provider tokens are never stored: the adapter nulls the GitHub access,
+ *     refresh and id tokens on every write, and `storeAccountCookie` is off.
+ *   - The JWE cookie cache lets a request skip the Redis read for up to
+ *     `cookieCache.maxAge`, so that is the longest a sign-out or deleted
+ *     session keeps working on another device.
+ *
+ * Bump `session.cookieCache.version` to invalidate every cookie at once.
  */
-export const auth = betterAuth({
+export const authOptions = {
+  database: redisAdapter(),
   baseURL: process.env.BETTER_AUTH_URL,
   secret: process.env.BETTER_AUTH_SECRET,
   session: {
+    expiresIn: 7 * 24 * 60 * 60,
+    updateAge: 24 * 60 * 60,
     cookieCache: {
       enabled: true,
-      maxAge: 7 * 24 * 60 * 60, // survive the whole con weekend
+      maxAge: 5 * 60, // bounds how long a revoked session keeps working
       strategy: "jwe",
       refreshCache: true,
-      version: "1",
+      version: "2",
     },
   },
   account: {
-    // Without a `database`, better-auth force-enables this
-    // (context/create-context.mjs: `if (!options.database) ... storeAccountCookie: true`),
-    // which writes the GitHub access AND refresh token into a client-side
-    // `better-auth.account_data` cookie for 7 days. It's JWE-encrypted with a
-    // key derived from BETTER_AUTH_SECRET, so it isn't readable by the client
-    // — but this app never calls the GitHub API. It only ever reads
-    // session.user.{login,name,email,image}. Shipping token material we have
-    // no use for is unnecessary attack surface (OWASP A04, data minimisation),
-    // so turn it off. An explicit `false` correctly overrides the forced
-    // default, since better-auth merges with defu, which only fills in
-    // undefined/null.
+    // better-auth would otherwise be free to mirror the GitHub access and
+    // refresh tokens into a client-side `better-auth.account_data` cookie. This
+    // app never calls the GitHub API and only reads
+    // session.user.{login,name,email,image}, so token material is attack
+    // surface with no use (OWASP A04, data minimisation). The adapter also
+    // nulls the tokens on the stored account row.
     storeAccountCookie: false,
   },
   // better-auth mounts its full default endpoint set behind the catch-all at
@@ -58,13 +68,11 @@ export const auth = betterAuth({
     // THE IMPORTANT ONE. /update-user takes an arbitrary
     // `z.record(z.string(), z.any())` body behind nothing but sessionMiddleware,
     // runs it through parseUserInput — which accepts any additionalField whose
-    // `input` is not false, i.e. `login` — and then, because this app configures
-    // no `database`, falls through internalAdapter.updateUser()'s
-    // `?? { ...session.user, ...additionalFields }` and re-signs the session
-    // cookie. With no server session store that cookie IS the identity, so any
-    // signed-in contestant could POST {"login":"someone-else"} and thereafter
-    // spend that person's points on hints or move them between teams. Six
-    // handlers key their store writes off session.user.login.
+    // `input` is not false, i.e. `login` — and writes the result to the user
+    // row and the session. Any signed-in contestant could POST
+    // {"login":"someone-else"} and thereafter spend that person's points on
+    // hints or move them between teams. Six handlers key their store writes off
+    // session.user.login.
     "/update-user",
     // Same shape as /update-user: an arbitrary body behind sessionMiddleware,
     // parsed into the re-signed session. Inert only because this app declares
@@ -87,8 +95,8 @@ export const auth = betterAuth({
     "/reset-password",
     "/delete-user",
     "/delete-user/callback",
-    // Session enumeration and revocation. Sessions here live only in the
-    // client's cookie, so there is no server-side store for these to act on.
+    // Session enumeration and revocation by the client. The app signs out
+    // through /sign-out only; nothing needs to list or revoke other sessions.
     "/list-sessions",
     "/revoke-session",
     "/revoke-sessions",
@@ -99,12 +107,10 @@ export const auth = betterAuth({
     "/list-accounts",
     "/account-info",
     // These two exist purely to hand a provider token back to the caller.
-    // /get-access-token decrypts the account cookie server-side and returns the
-    // raw access token as JSON to anyone holding a valid session cookie — a
-    // decrypt-on-demand oracle that turns a stolen session into a usable GitHub
-    // token. Disabling them means that even if storeAccountCookie is ever
-    // flipped back on, a session compromise can't be escalated into a GitHub
-    // token.
+    // /get-access-token returns a provider access token as JSON to anyone
+    // holding a valid session cookie — an oracle that would turn a stolen
+    // session into a usable GitHub token. Disabling them means a session compromise can't be escalated
+    // into a GitHub token.
     "/get-access-token",
     "/refresh-token",
   ],
@@ -125,6 +131,9 @@ export const auth = betterAuth({
       // The GitHub login is the leaderboard row key (the scorer records the
       // PR author's login), so capture it — name/email/image aren't enough.
       mapProfileToUser: (profile) => ({ login: profile.login }),
+      // Re-applies the profile on every sign-in so `login` follows a renamed
+      // GitHub account; the stored user row would otherwise keep the old one.
+      overrideUserInfoOnSignIn: true,
     },
   },
   user: {
@@ -144,13 +153,15 @@ export const auth = betterAuth({
       // funnels a request body through parseUserInput. The only such endpoint
       // is /update-user, which is closed above. If you add an auth plugin that
       // registers another one (phone-number and email-otp both do), it inherits
-      // the same write path and must be closed too. The durable fix, if this
-      // app ever grows a database, is to resolve `login` from the linked GitHub
-      // account rather than trusting the session copy.
+      // the same write path and must be closed too. The durable fix is to
+      // resolve `login` from the linked GitHub account row rather than trusting
+      // the user row's copy.
       login: { type: "string", required: false },
     },
   },
   plugins: [nextCookies()], // keep last
-});
+} satisfies BetterAuthOptions;
+
+export const auth = betterAuth(authOptions);
 
 export type Session = typeof auth.$Infer.Session;

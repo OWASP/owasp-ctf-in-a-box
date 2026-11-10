@@ -56,10 +56,11 @@ on its own.
 
 ## 2. Use the generated `BETTER_AUTH_SECRET`
 
-Sessions are stateless JWE cookies; their integrity rests entirely on this
-value. `./setup/ctf-setup.sh secrets` generates one. Do not hand-set a short
-or memorable value, and do not reuse one across events — a leaked secret from
-a past event forges identities in the current one.
+Sessions are server-side records in Redis behind a 5-minute JWE cookie cache;
+the cookie's integrity rests on this value. `./setup/ctf-setup.sh secrets`
+generates one. Do not hand-set a short or memorable value, and do not reuse
+one across events — a leaked secret from a past event forges identities in
+the current one.
 
 Rotating it invalidates every live session, which is the correct response to
 a suspected leak mid-event.

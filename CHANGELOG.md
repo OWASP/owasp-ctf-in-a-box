@@ -8,6 +8,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Changed: sign-in state lives in Redis (#736).** Users, linked accounts and
+  sessions are stored under `ctf:auth:` in the box's Redis instead of only in
+  the session cookie, so a session can be revoked. Everyone signs in once more
+  after upgrading. A master reset keeps accounts; the event archive never
+  contains them; GitHub access tokens are not stored.
 - **Fixed: individual leaderboard rows now include team-unlocked Jeopardy
   story steps in their denominator (#689).** Reachability is now calculated
   for existing leaderboard contestants even when they have no personal

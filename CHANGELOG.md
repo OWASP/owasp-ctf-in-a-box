@@ -8,6 +8,10 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Security: `.dockerignore` now excludes `.env` and `.env.*` at any depth (#749).**
+  A `.dockerignore` pattern without a leading `**/` matched only at the repo
+  root, allowing nested developer secret files (such as `apps/web/.env.local`)
+  to be sent to the build context and baked into the app image.
 - **Fixed: individual leaderboard rows now include team-unlocked Jeopardy
   story steps in their denominator (#689).** Reachability is now calculated
   for existing leaderboard contestants even when they have no personal

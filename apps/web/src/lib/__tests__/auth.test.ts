@@ -5,8 +5,7 @@
 // mattered was POST /update-user: an arbitrary JSON body behind nothing but
 // sessionMiddleware, run through parseUserInput (which accepts `login`,
 // because that field must stay `input: true` for OAuth profile mapping to
-// work), landing in a re-signed session cookie that IS the identity here
-// because no `database` is configured. Any signed-in contestant could have
+// work) and written to the user row. Any signed-in contestant could have
 // become any other contestant and spent their points.
 //
 // The test that matters is the first one: it fails when a better-auth upgrade
@@ -30,7 +29,7 @@ vi.hoisted(() => {
   process.env.GITHUB_CLIENT_SECRET ??= "test-client-secret";
 });
 
-import { auth } from "@/lib/auth";
+import { auth, authOptions } from "@/lib/auth";
 
 /**
  * The only endpoints this app actually exercises over HTTP.
@@ -95,6 +94,33 @@ describe("better-auth exposed surface", () => {
 
   it("never disables an endpoint the app depends on", () => {
     for (const path of IN_USE) expect(disabledPaths).not.toContain(path);
+  });
+});
+
+describe("Redis-backed sign-in state (#736)", () => {
+  it("stores users and sessions in the Redis adapter", () => {
+    expect(authOptions.database).toBeDefined();
+  });
+
+  it("re-checks the stored session at least every 5 minutes", () => {
+    expect(authOptions.session.cookieCache.maxAge).toBeLessThanOrEqual(300);
+  });
+
+  it("never reissues the cookie cache without reading the session row", () => {
+    // refreshCache would let a revoked session live on; version "1" would
+    // trust the 7-day stateless caches minted under it.
+    const cache: { refreshCache?: unknown; version?: string } = authOptions.session.cookieCache;
+    expect(cache.refreshCache).toBeFalsy();
+    expect(cache.version).not.toBe("1");
+  });
+
+  it("never links a GitHub identity to an existing user by email", () => {
+    expect(authOptions.account.accountLinking.disableImplicitLinking).toBe(true);
+    expect(authOptions.account.storeAccountCookie).toBe(false);
+  });
+
+  it("refreshes the GitHub login on every sign-in", () => {
+    expect(authOptions.socialProviders.github.overrideUserInfoOnSignIn).toBe(true);
   });
 });
 

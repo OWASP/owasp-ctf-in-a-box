@@ -1,0 +1,141 @@
+// better-auth's own internal adapter driven over the Redis store against a
+// real Redis behind srh: the calls the GitHub callback, getSession and
+// sign-out make (account-owner lookup with its user join, the session join,
+// the verification cleanup sweep) reach the adapter only in shapes better-auth
+// builds, so they are pinned here rather than by hand-written where clauses.
+// The instance is the app's real config with only `database` swapped for a
+// suite-scoped prefix.
+
+import { describe, expect, it, vi } from "vitest";
+import { betterAuth } from "better-auth";
+import { handleOAuthUserInfo } from "better-auth/oauth2";
+import { authOptions } from "@/lib/auth";
+import * as keys from "@/lib/auth-store/keys";
+import { redisAdapter } from "@/lib/auth-store/redis-adapter";
+import { upstashPipeline as pipeline } from "@/lib/upstash";
+import { freshId, liveConfigured, liveKey } from "./live-redis";
+
+vi.mock("server-only", () => ({}));
+
+// auth.ts builds its own instance at import; vi.hoisted runs before imports.
+vi.hoisted(() => {
+  process.env.BETTER_AUTH_URL ??= "http://localhost:3000";
+  process.env.BETTER_AUTH_SECRET ??= "0123456789abcdef0123456789abcdef";
+  process.env.GITHUB_CLIENT_ID ??= "test-client-id";
+  process.env.GITHUB_CLIENT_SECRET ??= "test-client-secret";
+});
+
+type User = { id: string; email: string; login?: string };
+
+async function build() {
+  const prefix = liveKey("auth-better-auth", freshId("p"));
+  const instance = betterAuth({ ...authOptions, database: redisAdapter({ prefix }) });
+  return { prefix, ctx: await instance.$context };
+}
+
+describe.skipIf(!liveConfigured)("better-auth over the Redis store against a live SRH proxy", () => {
+  async function redis(cmd: (string | number)[]): Promise<unknown> {
+    const [res] = await pipeline([cmd]);
+    if (res.error) throw new Error(res.error);
+    return res.result;
+  }
+
+  const profile = (login: string) => ({
+    name: "Octo Cat",
+    email: `${login}@example.test`,
+    emailVerified: true,
+    image: null,
+    login,
+  });
+  const githubAccount = (accountId: string) => ({ providerId: "github", accountId, accessToken: "gho_secret" });
+
+  it("signs in, reads the session, follows a rename, consumes state, and signs out", async () => {
+    const { prefix, ctx } = await build();
+    const ia = ctx.internalAdapter;
+
+    const { user, account } = await ia.createOAuthUser(profile("octo"), githubAccount("4242"));
+    expect(account?.userId).toBe(user.id);
+
+    // The callback's lookup: providerId + accountId, joined to its user.
+    const owner = await ia.findAccountOwnerByKey({ providerId: "github", accountId: "4242" });
+    expect(owner?.kind).toBe("owned");
+    expect(owner && "user" in owner ? (owner.user as User).id : null).toBe(user.id);
+    expect((await ia.findAccountByKey({ providerId: "github", accountId: "4242" }))?.userId).toBe(user.id);
+    expect((await ia.findUserByEmail("OCTO@example.test"))?.user.id).toBe(user.id);
+    expect((await ia.findAccounts(user.id)).map((a) => a.accessToken ?? null)).toEqual([null]);
+    const storedAccount = (await redis(["HGET", keys.rowsKey(prefix, "account"), account!.id])) as string;
+    expect(storedAccount).not.toMatch(/gho_secret/);
+
+    const session = await ia.createSession(user.id);
+    const found = await ia.findSession(session.token);
+    expect(found?.session.id).toBe(session.id);
+    expect((found?.user as User | undefined)?.login).toBe("octo");
+
+    // overrideUserInfoOnSignIn: the next sign-in rewrites `login` by user id.
+    await ia.updateUser(user.id, { login: "octo-renamed" });
+    expect(((await ia.findSession(session.token))?.user as User | undefined)?.login).toBe("octo-renamed");
+
+    // OAuth state: written at /sign-in/social, read and dropped at the callback.
+    await ia.createVerificationValue({ identifier: "state-old", value: "x", expiresAt: new Date(Date.now() - 60_000) });
+    await ia.createVerificationValue({ identifier: "state-1", value: "v1", expiresAt: new Date(Date.now() + 600_000) });
+    expect((await ia.findVerificationValue("state-1"))?.value).toBe("v1");
+    // findVerificationValue sweeps expired rows as it reads.
+    expect(await ctx.adapter.count({ model: "verification" })).toBe(1);
+    await ia.deleteVerificationByIdentifier("state-1");
+    expect(await ia.findVerificationValue("state-1")).toBeNull();
+    expect(await ctx.adapter.count({ model: "verification" })).toBe(0);
+
+    await ia.deleteSession(session.token);
+    expect(await ia.findSession(session.token)).toBeNull();
+    expect(await redis(["HLEN", keys.rowsKey(prefix, "session")])).toBe(0);
+    expect(await redis(["SMEMBERS", keys.indexKey(prefix, "session", "token", session.token)])).toEqual([]);
+    expect(await redis(["SMEMBERS", keys.indexKey(prefix, "session", "userId", user.id)])).toEqual([]);
+  });
+
+  it("leaves exactly one user and one account after two concurrent first sign-ins", async () => {
+    const { ctx } = await build();
+    const ia = ctx.internalAdapter;
+    const results = await Promise.allSettled([
+      ia.createOAuthUser(profile("racer"), githubAccount("777")),
+      ia.createOAuthUser(profile("racer"), githubAccount("777")),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(await ctx.adapter.count({ model: "user" })).toBe(1);
+    expect(await ctx.adapter.count({ model: "account" })).toBe(1);
+    // The lookup that throws on duplicates keeps working.
+    const owner = await ia.findAccountOwnerByKey({ providerId: "github", accountId: "777" });
+    expect(owner?.kind).toBe("owned");
+  });
+
+  it("refuses a second account for the same GitHub identity under another user", async () => {
+    const { ctx } = await build();
+    const ia = ctx.internalAdapter;
+    const first = await ia.createOAuthUser(profile("one"), githubAccount("888"));
+    const { user: other } = await ia.createOAuthUser(profile("two"), githubAccount("999"));
+    await expect(ia.linkAccount({ ...githubAccount("888"), userId: other.id })).rejects.toThrow(
+      /unique providerId\+accountId taken/,
+    );
+    const owner = await ia.findAccountOwnerByKey({ providerId: "github", accountId: "888" });
+    expect(owner && "user" in owner ? (owner.user as User).id : null).toBe(first.user.id);
+  });
+
+  it("does not put a second GitHub identity with the same verified email on the first user", async () => {
+    const { ctx } = await build();
+    const ia = ctx.internalAdapter;
+    const first = await ia.createOAuthUser(profile("mover"), githubAccount("1001"));
+
+    // The callback's own decision, with the email the first account holds now
+    // reported verified for a different GitHub account id.
+    const c = { context: ctx } as unknown as Parameters<typeof handleOAuthUserInfo>[0];
+    const second = await handleOAuthUserInfo(c, {
+      userInfo: { ...profile("mover-two"), email: first.user.email, id: "1002" },
+      account: { ...githubAccount("1002"), scope: "" },
+    });
+
+    expect(second.data).toBeNull();
+    expect(second.error).toBe("account not linked");
+    expect(await ia.findAccountByKey({ providerId: "github", accountId: "1002" })).toBeNull();
+    expect(await ctx.adapter.count({ model: "user" })).toBe(1);
+    expect((await ia.findAccounts(first.user.id)).map((a) => a.accountId)).toEqual(["1001"]);
+  });
+});

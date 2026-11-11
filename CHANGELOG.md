@@ -8,6 +8,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Fixed: a fresh scorer image build fails at `apk add docker-cli` (#756).**
+  Alpine rebuilt `docker-cli` 29.9.3 as `-r1` and keeps only the latest
+  revision, so the pinned `-r0` could no longer be installed. The scorer now
+  copies the `docker` binary from the official `docker:29.9.3-cli` image,
+  pinned by digest, so an Alpine package rebuild can no longer break the
+  build. Dependabot keeps that image current with the base.
 - **Changed: sign-in state lives in Redis (#736).** Users, linked accounts and
   sessions are stored under `ctf:auth:` in the box's Redis instead of only in
   the session cookie, so a session can be revoked. Everyone signs in once more

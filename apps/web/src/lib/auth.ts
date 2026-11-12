@@ -29,6 +29,14 @@ export const authOptions = {
   database: redisAdapter(),
   baseURL: process.env.BETTER_AUTH_URL,
   secret: process.env.BETTER_AUTH_SECRET,
+  advanced: {
+    database: {
+      // Lowercase v4 UUIDs: a `.toLowerCase()` join is then the identity on a
+      // player id, and no id contains ":" (the solves hash splits
+      // `<player>:<challenge>` at the first one). See PLAYER_ID_RE.
+      generateId: () => crypto.randomUUID(),
+    },
+  },
   session: {
     expiresIn: 7 * 24 * 60 * 60,
     updateAge: 24 * 60 * 60,

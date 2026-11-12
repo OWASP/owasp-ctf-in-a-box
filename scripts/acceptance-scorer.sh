@@ -130,7 +130,10 @@ done
 # with the bearer token. Push ingest used to have the judge make this POST
 # itself; that hook is removed (#377), so the score reaches the leaderboard
 # the one way it now can, and this script exercises that path rather than
-# asserting around it.
+# asserting around it. Sync resolves the marker's GitHub login to the player's
+# kit id; the two fixed ids below stand in for that lookup.
+OCTOCAT_ID=11111111-1111-4111-8111-111111111111
+MALLORY_ID=22222222-2222-4222-8222-222222222222
 post_marker() {
   local report="$1" body code
   body="$(node -e '
@@ -138,9 +141,12 @@ const { readFileSync } = require("node:fs");
 import("./sync/src/parse.js").then(({ parseScoreComment }) => {
   const r = parseScoreComment(readFileSync(process.argv[1], "utf8"), { targets: ["juice-shop"] });
   if (!r) { console.error("FAIL: marker did not parse"); process.exit(1); }
-  process.stdout.write(JSON.stringify(r));
+  const ids = { octocat: process.argv[2], mallory: process.argv[3] };
+  const { author, ...rest } = r;
+  if (!ids[author]) { console.error("FAIL: no player id for " + author); process.exit(1); }
+  process.stdout.write(JSON.stringify({ player: ids[author], ...rest }));
 }).catch((e) => { console.error(e); process.exit(1); });
-' "$report")" || { echo "FAIL: could not read the marker from $report"; exit 1; }
+' "$report" "$OCTOCAT_ID" "$MALLORY_ID")" || { echo "FAIL: could not read the marker from $report"; exit 1; }
   code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$SERVE_PORT/score" \
     -H "authorization: Bearer test-token" -H 'content-type: application/json' -d "$body")"
   [ "$code" = "202" ] || { echo "FAIL: POST /score for $report returned $code"; exit 1; }
@@ -212,7 +218,7 @@ let s = "";
 process.stdin.on("data", (c) => (s += c)).on("end", () => {
   const { leaderboard } = JSON.parse(s);
   const e = leaderboard && leaderboard[0];
-  if (!e || leaderboard.length !== 1 || e.rank !== 1 || e.author !== "octocat" ||
+  if (!e || leaderboard.length !== 1 || e.rank !== 1 || e.player !== process.argv[1] ||
       e.points !== 20 ||
       !e.apps || !e.apps["juice-shop"] ||
       e.apps["juice-shop"].solved !== 2 || e.apps["juice-shop"].total !== 3) {
@@ -220,7 +226,7 @@ process.stdin.on("data", (c) => (s += c)).on("end", () => {
   }
   console.log("leaderboard ok: " + s);
 });
-'
+' "$OCTOCAT_ID"
 
 echo "--- stock-scores-zero (modules.md 6.4): judge an unpatched fake app"
 # Second webhook payload: a different author, so the leaderboard check below
@@ -274,16 +280,16 @@ curl -sf "http://127.0.0.1:$SERVE_PORT/leaderboard" | node -e '
 let s = "";
 process.stdin.on("data", (c) => (s += c)).on("end", () => {
   const { leaderboard } = JSON.parse(s);
-  const mallory = leaderboard.find((e) => e.author === "mallory");
+  const mallory = leaderboard.find((e) => e.player === process.argv[2]);
   if (mallory && (mallory.points !== 0 || mallory.apps["juice-shop"].solved !== 0)) {
     console.error("FAIL: stock target handed out points: " + s); process.exit(1);
   }
-  if (leaderboard.length !== 1 || leaderboard[0].author !== "octocat") {
+  if (leaderboard.length !== 1 || leaderboard[0].player !== process.argv[1]) {
     console.error("FAIL: unexpected leaderboard after stock run: " + s); process.exit(1);
   }
   console.log("stock-zero ok: " + s);
 });
-'
+' "$OCTOCAT_ID" "$MALLORY_ID"
 
 echo "--- freeze: boot a second serve instance backed by real Redis (via SRH)"
 docker run -d --name "$FREEZE_REDIS_CTR" --network "$NET" redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 >/dev/null
@@ -317,7 +323,7 @@ done
 score_freeze() {
   curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$FREEZE_PORT/score" \
     -H "authorization: Bearer test-token" -H 'content-type: application/json' \
-    -d '{"author":"octocat","target":"juice-shop","solved":["reflected-xss-search"]}'
+    -d "{\"player\":\"$OCTOCAT_ID\",\"target\":\"juice-shop\",\"solved\":[\"reflected-xss-search\"]}"
 }
 
 echo "--- freeze: an unlaunched event (no scoringStartsAt) rejects POST /score with 503"
@@ -343,10 +349,13 @@ code=$(score_freeze)
 # by it and judged AT it: the launch, the freeze and the reset epoch as they
 # stood then, read from the settings hash and the pause log over srh (ADR 67).
 # The checks above send no `at`, the older sync's arrival-time path.
-score_at() { # $1 = author, $2 = at
+player_for() { # $1 = label -> a stable v4 player id
+  printf '%08x-0000-4000-8000-000000000000' "$(printf '%s' "$1" | cksum | cut -d' ' -f1)"
+}
+score_at() { # $1 = player label, $2 = at
   curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$FREEZE_PORT/score" \
     -H "authorization: Bearer test-token" -H 'content-type: application/json' \
-    -d "{\"author\":\"$1\",\"target\":\"juice-shop\",\"solved\":[\"reflected-xss-search\"],\"at\":\"$2\"}"
+    -d "{\"player\":\"$(player_for "$1")\",\"target\":\"juice-shop\",\"solved\":[\"reflected-xss-search\"],\"at\":\"$2\"}"
 }
 expect_code() { # $1 = expected, $2 = actual, $3 = what
   [ "$2" = "$1" ] || { echo "FAIL: $3: expected $1, got $2"; exit 1; }
@@ -358,7 +367,7 @@ expect_code 422 "$(score_at before-launch 1999-12-31T23:59:59Z)" "a score posted
 
 echo "--- comment time: recorded at the comment's time, not at arrival"
 expect_code 202 "$(score_at early-bird 2001-02-03T04:05:06Z)" "a score posted during play"
-curl -sf "http://127.0.0.1:$FREEZE_PORT/leaderboard" | grep -q '"author":"early-bird","points":[0-9]*,"lastSolveAt":"2001-02-03T04:05:06.000Z"' \
+curl -sf "http://127.0.0.1:$FREEZE_PORT/leaderboard" | grep -q "\"player\":\"$(player_for early-bird)\",\"points\":[0-9]*,\"lastSolveAt\":\"2001-02-03T04:05:06.000Z\"" \
   || { echo "FAIL: early-bird's solve was not timed by its comment"; exit 1; }
 
 echo "--- comment time: frozen since T, a score from before T scores and one from T on is refused"

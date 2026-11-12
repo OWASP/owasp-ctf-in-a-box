@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { pid } from "./players.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -34,7 +36,7 @@ async function boot(t, { rubric = RUBRIC, now = clock() } = {}) {
   return { base, post, board };
 }
 
-const solve = (author, target, solved) => ({ author, target, solved, pr: 7, sha: "abc123" });
+const solve = (name, target, solved) => ({ player: pid(name), target, solved, pr: 7, sha: "abc123" });
 
 // Standings-only view of the board — drops the rubric-derived `catalog`, which
 // is present whenever a rubric is loaded regardless of what has been solved.
@@ -87,17 +89,40 @@ test("a wrong-length bearer is rejected, not thrown on", async (t) => {
   assert.equal((await post(body)).status, 202);
 });
 
-test("POST validation: 400 on bad author, bad target, bad solved, broken JSON", async (t) => {
+test("POST validation: 400 on bad player, bad target, bad solved, broken JSON", async (t) => {
   const { post } = await boot(t);
-  assert.equal((await post(solve("a:b", "dvwa", []))).status, 400); // key-injection grammar
-  assert.equal((await post(solve("-octocat", "dvwa", []))).status, 400);
+  const bad = (player) => ({ ...solve("octocat", "dvwa", []), player });
+  assert.equal((await post(bad("a:b"))).status, 400); // key-injection grammar
+  assert.equal((await post(bad("OctoCat"))).status, 400); // a GitHub login is not a player id
+  assert.equal((await post(bad("0123456789abcdef0123456789ABCDEF"))).status, 400);
+  assert.equal((await post(bad("ABCDEF01-ABCD-4ABC-8ABC-ABCDEF012345"))).status, 400);
+  assert.equal((await post(bad(`${pid("octocat")}:x`))).status, 400);
+  assert.equal((await post(bad(undefined))).status, 400);
   assert.equal((await post(solve("octocat", "webgoat", []))).status, 400); // not in rubric
   assert.equal((await post(solve("octocat", "DVWA!", []))).status, 400); // charset
   assert.equal((await post(solve("octocat", "dvwa", "sqli-low"))).status, 400); // non-array
   assert.equal((await post(solve("octocat", "dvwa", [1]))).status, 400); // non-string entry
-  assert.equal((await post(`{"author":`)).status, 400); // broken JSON
-  assert.equal((await post(solve("octocat[bot]", "dvwa", []))).status, 202); // bot suffix OK
+  assert.equal((await post(`{"player":`)).status, 400); // broken JSON
+  assert.equal((await post({ ...solve("octocat", "dvwa", []), player: randomUUID() })).status, 202);
 });
+
+test("POST with author and no player is 400 invalid player", async (t) => {
+  const { post } = await boot(t);
+  const res = await post({ author: "octocat", target: "dvwa", solved: [], pr: 7, sha: "abc123" });
+  assert.equal(res.status, 400);
+  assert.deepEqual(await res.json(), { error: "invalid player" });
+});
+
+test("a UUID player is stored as <uuid>:<challenge> and shows on the board as player", async () => {
+  const store = createMemoryStore();
+  const player = randomUUID();
+  await store.recordSolves("dvwa", player, ["sqli-low"], T[0]);
+  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), [`${player}:sqli-low`]);
+  const { entries } = await buildLeaderboard({ store, rubric: RUBRIC, targets: ["dvwa"] });
+  assert.equal(entries[0].player, player);
+  assert.equal("author" in entries[0], false);
+});
+
 
 test("POST /score rejects bodies over 64 KiB with 413 (authed callers, defense-in-depth)", async (t) => {
   const { post, board } = await boot(t);
@@ -139,7 +164,7 @@ test("leaderboard pins the full lambda.ts contract shape", async (t) => {
     leaderboard: [
       {
         rank: 1,
-        author: "alice",
+        player: pid("alice"),
         points: 16,
         lastSolveAt: T[1],
         apps: {
@@ -149,7 +174,7 @@ test("leaderboard pins the full lambda.ts contract shape", async (t) => {
       },
       {
         rank: 2,
-        author: "bob",
+        player: pid("bob"),
         points: 5,
         lastSolveAt: T[2],
         apps: {
@@ -160,7 +185,7 @@ test("leaderboard pins the full lambda.ts contract shape", async (t) => {
     ],
     series: [
       {
-        login: "alice",
+        player: pid("alice"),
         // Both juice-shop ids land on T[0] (one POST -> one timestamp);
         // "reflected-xss-search" < "sql-injection-login" breaks the tie.
         points: [
@@ -169,7 +194,7 @@ test("leaderboard pins the full lambda.ts contract shape", async (t) => {
           { t: T[1], score: 16 },
         ],
       },
-      { login: "bob", points: [{ t: T[2], score: 5 }] },
+      { player: pid("bob"), points: [{ t: T[2], score: 5 }] },
     ],
     teams: [], // no team data on this store -> empty rollup
     teamSeries: [],
@@ -193,12 +218,12 @@ test("ties break by earlier lastSolveAt, then author asc", async (t) => {
   await post(solve("alpha", "app", ["d"])); // T[2]
   const { leaderboard } = await board();
   assert.deepEqual(
-    leaderboard.map((e) => [e.rank, e.author]),
+    leaderboard.map((e) => [e.rank, e.player]),
     [
-      [1, "zed"], // earliest solve wins the points tie despite author order
-      [2, "abe"],
-      [3, "alpha"], // exact-timestamp tie: author asc
-      [4, "zeta"],
+      [1, pid("zed")], // earliest solve wins the points tie despite author order
+      [2, pid("abe")],
+      [3, pid("alpha")], // exact-timestamp tie: author asc
+      [4, pid("zeta")],
     ],
   );
 });
@@ -249,14 +274,14 @@ test("no-rubric degenerate mode: 1 point per solve, totals from distinct ids see
     leaderboard: [
       {
         rank: 1,
-        author: "octocat",
+        player: pid("octocat"),
         points: 2,
         lastSolveAt: T[0],
         apps: { "anything-goes": { solved: 2, total: 3, solvedIds: ["a", "b"] } },
       },
       {
         rank: 2,
-        author: "hubot",
+        player: pid("hubot"),
         points: 2,
         lastSolveAt: T[1],
         apps: { "anything-goes": { solved: 2, total: 3, solvedIds: ["b", "c"] } },
@@ -277,9 +302,9 @@ test("series: cumulative step series per player, out-of-order writes still sort 
   const store = createMemoryStore();
   // Written out of chronological order: juice-shop (T[1]) is recorded before
   // dvwa (T[0]) — the series must still come out ascending by timestamp.
-  await store.recordSolves("juice-shop", "alice", ["reflected-xss-search"], T[1]); // 10 pts
-  await store.recordSolves("dvwa", "alice", ["sqli-low"], T[0]); // 1 pt
-  await store.recordSolves("juice-shop", "bob", ["sql-injection-login"], T[2]); // 5 pts
+  await store.recordSolves("juice-shop", pid("alice"), ["reflected-xss-search"], T[1]); // 10 pts
+  await store.recordSolves("dvwa", pid("alice"), ["sqli-low"], T[0]); // 1 pt
+  await store.recordSolves("juice-shop", pid("bob"), ["sql-injection-login"], T[2]); // 5 pts
 
   const { entries, series } = await buildLeaderboard({
     store,
@@ -289,33 +314,33 @@ test("series: cumulative step series per player, out-of-order writes still sort 
 
   assert.deepEqual(series, [
     {
-      login: "alice",
+      player: pid("alice"),
       points: [
         { t: T[0], score: 1 },
         { t: T[1], score: 11 },
       ],
     },
-    { login: "bob", points: [{ t: T[2], score: 5 }] },
+    { player: pid("bob"), points: [{ t: T[2], score: 5 }] },
   ]);
   // Last point of each series matches that player's final leaderboard score.
   for (const s of series) {
     const last = s.points.at(-1).score;
-    assert.equal(last, entries.find((e) => e.author === s.login).points);
+    assert.equal(last, entries.find((e) => e.player === s.player).points);
   }
 });
 
 test("series: rubric = null yields no series (no per-challenge points to accumulate)", async (t) => {
   const store = createMemoryStore();
-  await store.recordSolves("app", "octocat", ["a"], T[0]);
+  await store.recordSolves("app", pid("octocat"), ["a"], T[0]);
   const { series } = await buildLeaderboard({ store, rubric: null, targets: ["app"] });
   assert.deepEqual(series, []);
 });
 
 test("series: single player, single solve produces one point", async (t) => {
   const store = createMemoryStore();
-  await store.recordSolves("dvwa", "solo", ["sqli-low"], T[0]);
+  await store.recordSolves("dvwa", pid("solo"), ["sqli-low"], T[0]);
   const { series } = await buildLeaderboard({ store, rubric: RUBRIC, targets: ["dvwa", "juice-shop"] });
-  assert.deepEqual(series, [{ login: "solo", points: [{ t: T[0], score: 1 }] }]);
+  assert.deepEqual(series, [{ player: pid("solo"), points: [{ t: T[0], score: 1 }] }]);
 });
 
 test("series: capped at the top 10 players by final score", async (t) => {
@@ -328,13 +353,13 @@ test("series: capped at the top 10 players by final score", async (t) => {
   // explicit `points` -> defaults to 1) — ranking falls back to earliest
   // lastSolveAt, so p0..p9 (earliest 10) make the cut and p10 does not.
   for (let i = 0; i < stamps.length; i++) {
-    await store.recordSolves("dvwa", `p${i}`, ["sqli-low"], stamps[i]);
+    await store.recordSolves("dvwa", `${i.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`, ["sqli-low"], stamps[i]);
   }
   const { series } = await buildLeaderboard({ store, rubric: RUBRIC, targets: ["dvwa", "juice-shop"] });
   assert.equal(series.length, 10);
   assert.deepEqual(
-    series.map((s) => s.login),
-    Array.from({ length: 10 }, (_, i) => `p${i}`),
+    series.map((s) => s.player),
+    Array.from({ length: 10 }, (_, i) => `${i.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`),
   );
 });
 
@@ -346,9 +371,9 @@ const teamStore = (teams) => createMemoryStore({ teams });
 const TARGETS = ["dvwa", "juice-shop"];
 
 test("team rollup: same flag solved by two members counts once, not doubled", async () => {
-  const store = teamStore([{ slug: "red", name: "Red", captain: "alice", members: ["alice", "bob"] }]);
-  await store.recordSolves("dvwa", "alice", ["sqli-low"], T[1]);
-  await store.recordSolves("dvwa", "bob", ["sqli-low"], T[0]); // same flag, earlier
+  const store = teamStore([{ slug: "red", name: "Red", captain: pid("alice"), members: [pid("alice"), pid("bob")] }]);
+  await store.recordSolves("dvwa", pid("alice"), ["sqli-low"], T[1]);
+  await store.recordSolves("dvwa", pid("bob"), ["sqli-low"], T[0]); // same flag, earlier
   const { teams } = await buildLeaderboard({ store, rubric: RUBRIC, targets: TARGETS });
   assert.equal(teams.length, 1);
   assert.equal(teams[0].points, 1); // ONCE, not 2
@@ -357,9 +382,9 @@ test("team rollup: same flag solved by two members counts once, not doubled", as
 });
 
 test("team rollup: disjoint flags sum across members", async () => {
-  const store = teamStore([{ slug: "red", name: "Red", captain: "alice", members: ["alice", "bob"] }]);
-  await store.recordSolves("juice-shop", "alice", ["reflected-xss-search"], T[0]); // 10
-  await store.recordSolves("juice-shop", "bob", ["sql-injection-login"], T[1]); // 5
+  const store = teamStore([{ slug: "red", name: "Red", captain: pid("alice"), members: [pid("alice"), pid("bob")] }]);
+  await store.recordSolves("juice-shop", pid("alice"), ["reflected-xss-search"], T[0]); // 10
+  await store.recordSolves("juice-shop", pid("bob"), ["sql-injection-login"], T[1]); // 5
   const { teams } = await buildLeaderboard({ store, rubric: RUBRIC, targets: TARGETS });
   assert.equal(teams[0].points, 15);
   assert.deepEqual(teams[0].apps["juice-shop"], {
@@ -373,31 +398,31 @@ test("team rollup: disjoint flags sum across members", async () => {
 test("team rollup: a solve recorded for a login before it appears in getTeams still rolls in", async () => {
   // Rollup is by membership at read time, so a historical solve counts
   // retroactively once the login is a member — seed both, then assert.
-  const store = teamStore([{ slug: "blue", name: "Blue", captain: "carol", members: ["carol"] }]);
-  await store.recordSolves("dvwa", "carol", ["sqli-low"], T[0]);
+  const store = teamStore([{ slug: "blue", name: "Blue", captain: pid("carol"), members: [pid("carol")] }]);
+  await store.recordSolves("dvwa", pid("carol"), ["sqli-low"], T[0]);
   const { teams } = await buildLeaderboard({ store, rubric: RUBRIC, targets: TARGETS });
   assert.equal(teams[0].points, 1);
   assert.equal(teams[0].lastSolveAt, T[0]);
 });
 
 test("team rollup: a solo team's points equal that member's individual points", async () => {
-  const store = teamStore([{ slug: "solo", name: "Solo", captain: "dave", members: ["dave"] }]);
-  await store.recordSolves("juice-shop", "dave", ["reflected-xss-search", "sql-injection-login"], T[0]);
-  await store.recordSolves("dvwa", "dave", ["sqli-low"], T[1]);
+  const store = teamStore([{ slug: "solo", name: "Solo", captain: pid("dave"), members: [pid("dave")] }]);
+  await store.recordSolves("juice-shop", pid("dave"), ["reflected-xss-search", "sql-injection-login"], T[0]);
+  await store.recordSolves("dvwa", pid("dave"), ["sqli-low"], T[1]);
   const { entries, teams } = await buildLeaderboard({ store, rubric: RUBRIC, targets: TARGETS });
-  const dave = entries.find((e) => e.author === "dave");
+  const dave = entries.find((e) => e.player === pid("dave"));
   assert.equal(teams[0].points, dave.points);
   assert.equal(teams[0].points, 16);
   assert.equal(teams[0].lastSolveAt, dave.lastSolveAt);
-  assert.deepEqual(teams[0].members, ["dave"]);
-  assert.equal(teams[0].captain, "dave");
+  assert.deepEqual(teams[0].members, [pid("dave")]);
+  assert.equal(teams[0].captain, pid("dave"));
 });
 
 test("teamSeries: cumulative and deduped — a shared flag adds once at the earlier timestamp", async () => {
-  const store = teamStore([{ slug: "red", name: "Red", captain: "alice", members: ["alice", "bob"] }]);
-  await store.recordSolves("juice-shop", "alice", ["reflected-xss-search"], T[0]); // 10 @ T0
-  await store.recordSolves("dvwa", "bob", ["sqli-low"], T[1]); // 1 @ T1
-  await store.recordSolves("dvwa", "alice", ["sqli-low"], T[2]); // dup of bob's flag, later
+  const store = teamStore([{ slug: "red", name: "Red", captain: pid("alice"), members: [pid("alice"), pid("bob")] }]);
+  await store.recordSolves("juice-shop", pid("alice"), ["reflected-xss-search"], T[0]); // 10 @ T0
+  await store.recordSolves("dvwa", pid("bob"), ["sqli-low"], T[1]); // 1 @ T1
+  await store.recordSolves("dvwa", pid("alice"), ["sqli-low"], T[2]); // dup of bob's flag, later
   const { teamSeries, teams } = await buildLeaderboard({ store, rubric: RUBRIC, targets: TARGETS });
   assert.deepEqual(teamSeries, [
     {
@@ -415,11 +440,11 @@ test("teamSeries: cumulative and deduped — a shared flag adds once at the earl
 
 test("team ranking: equal points break by earlier lastSolveAt", async () => {
   const store = teamStore([
-    { slug: "late", name: "Late", captain: "x", members: ["x"] },
-    { slug: "early", name: "Early", captain: "y", members: ["y"] },
+    { slug: "late", name: "Late", captain: pid("x"), members: [pid("x")] },
+    { slug: "early", name: "Early", captain: pid("y"), members: [pid("y")] },
   ]);
-  await store.recordSolves("dvwa", "y", ["sqli-low"], T[0]); // early: 1 @ T0
-  await store.recordSolves("dvwa", "x", ["sqli-low"], T[1]); // late: 1 @ T1
+  await store.recordSolves("dvwa", pid("y"), ["sqli-low"], T[0]); // early: 1 @ T0
+  await store.recordSolves("dvwa", pid("x"), ["sqli-low"], T[1]); // late: 1 @ T1
   const { teams } = await buildLeaderboard({ store, rubric: RUBRIC, targets: TARGETS });
   assert.deepEqual(
     teams.map((tm) => [tm.rank, tm.slug]),
@@ -432,10 +457,10 @@ test("team ranking: equal points break by earlier lastSolveAt", async () => {
 
 test("team rollup is additive: individual entries/series are unchanged by the team columns", async () => {
   const seed = async (store) => {
-    await store.recordSolves("juice-shop", "alice", ["reflected-xss-search"], T[0]);
-    await store.recordSolves("dvwa", "bob", ["sqli-low"], T[1]);
+    await store.recordSolves("juice-shop", pid("alice"), ["reflected-xss-search"], T[0]);
+    await store.recordSolves("dvwa", pid("bob"), ["sqli-low"], T[1]);
   };
-  const withTeams = teamStore([{ slug: "red", name: "Red", captain: "alice", members: ["alice", "bob"] }]);
+  const withTeams = teamStore([{ slug: "red", name: "Red", captain: pid("alice"), members: [pid("alice"), pid("bob")] }]);
   const without = createMemoryStore();
   await seed(withTeams);
   await seed(without);
@@ -448,8 +473,8 @@ test("team rollup is additive: individual entries/series are unchanged by the te
 });
 
 test("teamSeries: empty without a rubric (no per-challenge points to accumulate)", async () => {
-  const store = teamStore([{ slug: "red", name: "Red", captain: "alice", members: ["alice"] }]);
-  await store.recordSolves("app", "alice", ["a"], T[0]);
+  const store = teamStore([{ slug: "red", name: "Red", captain: pid("alice"), members: [pid("alice")] }]);
+  await store.recordSolves("app", pid("alice"), ["a"], T[0]);
   const { teams, teamSeries } = await buildLeaderboard({ store, rubric: null, targets: ["app"] });
   assert.equal(teams[0].points, 1); // degenerate mode: 1 point per solve
   assert.deepEqual(teamSeries, []);
@@ -567,14 +592,14 @@ async function bootWith(t, { policy = LAUNCHED, now = () => NOW, rubric = RUBRIC
   return { store, post, board };
 }
 
-const timed = (author, target, solved, at) => ({ ...solve(author, target, solved), at });
+const timed = (name, target, solved, at) => ({ ...solve(name, target, solved), at });
 
 test("`at` is the recorded solve time, normalised to ISO-8601 with milliseconds", async (t) => {
   const { store, post } = await bootWith(t);
   // GitHub's updated_at carries no milliseconds; stored times are compared as
   // strings, so the scorer stores one shape.
   assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202);
-  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": "2026-08-14T10:00:00.000Z" });
+  assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: "2026-08-14T10:00:00.000Z" });
 });
 
 test("a backlog ingested late keeps each solve's own comment time", async (t) => {
@@ -582,15 +607,15 @@ test("a backlog ingested late keeps each solve's own comment time", async (t) =>
   assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T09:30:00Z"))).status, 202);
   assert.equal((await post(timed("hubot", "juice-shop", ["sql-injection-login"], "2026-08-14T09:45:00Z"))).status, 202);
   const { leaderboard } = await board();
-  const at = Object.fromEntries(leaderboard.map((e) => [e.author, e.lastSolveAt]));
-  assert.deepEqual(at, { octocat: "2026-08-14T09:30:00.000Z", hubot: "2026-08-14T09:45:00.000Z" });
+  const at = Object.fromEntries(leaderboard.map((e) => [e.player, e.lastSolveAt]));
+  assert.deepEqual(at, { [pid("octocat")]: "2026-08-14T09:30:00.000Z", [pid("hubot")]: "2026-08-14T09:45:00.000Z" });
 });
 
 test("the first time a solve was seen is kept: a later comment time does not move it", async (t) => {
   const { store, post } = await bootWith(t);
   await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
   await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T11:00:00Z"));
-  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": "2026-08-14T10:00:00.000Z" });
+  assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: "2026-08-14T10:00:00.000Z" });
 });
 
 test("a points tie goes to the earlier comment time, not the earlier arrival", async (t) => {
@@ -599,13 +624,13 @@ test("a points tie goes to the earlier comment time, not the earlier arrival", a
   await post(timed("zed", "juice-shop", ["sql-injection-login"], "2026-08-14T10:30:00Z"));
   await post(timed("abe", "juice-shop", ["sql-injection-login"], "2026-08-14T10:00:00Z"));
   const { leaderboard } = await board();
-  assert.deepEqual(leaderboard.map((e) => [e.rank, e.author]), [[1, "abe"], [2, "zed"]]);
+  assert.deepEqual(leaderboard.map((e) => [e.rank, e.player]), [[1, pid("abe")], [2, pid("zed")]]);
 });
 
 test("an absent `at` falls back to the arrival time (an older sync)", async (t) => {
   const { store, post } = await bootWith(t);
   assert.equal((await post(solve("octocat", "dvwa", ["sqli-low"]))).status, 202);
-  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": NOW });
+  assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: NOW });
 });
 
 test("an unparseable or non-string `at` is refused with 400 and records nothing", async (t) => {
@@ -623,8 +648,8 @@ test("an `at` more than five minutes ahead is clamped to now; within the skew it
   assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T12:05:00.001Z"))).status, 202);
   assert.equal((await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T12:05:00.000Z"))).status, 202);
   assert.deepEqual(await store.getSolves("dvwa"), {
-    "octocat:sqli-low": NOW,
-    "hubot:sqli-low": "2026-08-14T12:05:00.000Z",
+    [pid("octocat") + ":sqli-low"]: NOW,
+    [pid("hubot") + ":sqli-low"]: "2026-08-14T12:05:00.000Z",
   });
 });
 
@@ -635,7 +660,7 @@ test("an `at` before the master-reset epoch is refused with a final 422", async 
   assert.equal(res.status, 422);
   assert.equal((await res.json()).refused, "pre-reset");
   assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202);
-  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": "2026-08-14T10:00:00.000Z" });
+  assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: "2026-08-14T10:00:00.000Z" });
 });
 
 test("an `at` outside the scoring window is refused with a final 422, judged on the comment time", async (t) => {
@@ -649,7 +674,7 @@ test("an `at` outside the scoring window is refused with a final 422, judged on 
   // The window has closed by NOW (12:00), but this comment landed during
   // play: it counts, however late it arrives.
   assert.equal((await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T10:59:00Z"))).status, 202);
-  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), ["hubot:sqli-low"]);
+  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), [pid("hubot") + ":sqli-low"]);
 });
 
 test("an `at` on an event that was never launched is refused with a final 422", async (t) => {
@@ -666,7 +691,7 @@ test("an `at` inside a logged pause is refused with a final 422, even after the 
   assert.equal(res.status, 422);
   assert.equal((await res.json()).refused, "paused");
   assert.equal((await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T10:30:00Z"))).status, 202);
-  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), ["hubot:sqli-low"]);
+  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), [pid("hubot") + ":sqli-low"]);
 });
 
 test("while frozen, a comment from BEFORE the pause still scores; one from during it does not", async (t) => {
@@ -677,7 +702,7 @@ test("while frozen, a comment from BEFORE the pause still scores; one from durin
   const res = await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T11:00:00Z"));
   assert.equal(res.status, 422);
   assert.equal((await res.json()).refused, "paused");
-  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), ["octocat:sqli-low"]);
+  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), [pid("octocat") + ":sqli-low"]);
 });
 
 // A freeze set with no recorded start (set by hand, or before the pause log
@@ -701,5 +726,5 @@ test("the window and reset refusals stay final even under a freeze with no recor
 test("an unreadable scoring policy fails OPEN: the score is recorded at its comment time", async (t) => {
   const { store, post } = await bootWith(t, { policy: null });
   assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202);
-  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": "2026-08-14T10:00:00.000Z" });
+  assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: "2026-08-14T10:00:00.000Z" });
 });

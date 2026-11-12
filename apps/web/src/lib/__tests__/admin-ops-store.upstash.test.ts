@@ -140,9 +140,17 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     ...buckets.map((b): [string, string?] => [`ctf:rl:${b}:${id}`]),
   ];
 
+  // Runs whether or not the test passed: a delete that failed half-way must
+  // not leave this run's per-player rows behind. Every key and field here is
+  // named by this run's fresh id, team slug, target or challenge, so nothing
+  // another suite wrote is touched.
   afterAll(async () => {
     if (!pipeline) return;
+    const standalone = perPlayer.filter(([, f]) => f === undefined).map(([k]) => k);
+    const fields = perPlayer.filter((p): p is [string, string] => p[1] !== undefined);
     await pipeline([
+      ["DEL", ...standalone],
+      ...fields.map(([k, f]) => ["HDEL", k, f]),
       ["DEL", `ctf:team:${slug}`, `ctf:team:${slug}:members`, `ctf:solves:${target}`, `ctf:user:${mate}`],
       ["DEL", `ctf:link:github:${login}`, `ctf:link:user:${id}`],
       ["HDEL", "ctf:auth:user", id],

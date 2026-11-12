@@ -431,6 +431,16 @@ test("every seeded player is an account row with a display name and an email ind
   assert.ok(!cmds.some((c) => c[1].startsWith("ctf:link:")), "a synthetic name must not claim a GitHub login");
 });
 
+test("--clean deletes every seeded email index key whole", () => {
+  const { cmds, players } = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
+  const emailKeys = cmds.filter((c) => c[0] === "SADD" && c[1].startsWith(`${AUTH_USER_KEY}:by:email:`)).map((c) => c[1]);
+  assert.equal(emailKeys.length, players.length);
+  const m = manifestFor(cmds);
+  for (const k of emailKeys) assert.ok(m.keys.includes(k), `manifest does not own ${k}`);
+  const deleted = new Set(cleanCommands(m).cmds.filter((c) => c[0] === "DEL").flatMap((c) => c.slice(1)));
+  for (const k of emailKeys) assert.ok(deleted.has(k), `clean leaves ${k} behind`);
+});
+
 test("every key and field the seed attaches data to is a player id, never a raw login", () => {
   const { cmds, players } = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
   const ids = new Set(players);

@@ -2652,13 +2652,17 @@ setting.
 Watch a new score land live, without a real PR:
 
 ```sh
-./scripts/dev-stack score <login> <juice-shop|dvwa> <n>   # marks the first <n> catalogue challenges solved
+./scripts/dev-stack score <player> <juice-shop|dvwa> <n>   # <player> is a player id or a linked login; marks the first <n> catalogue challenges solved
 ./scripts/dev-stack score alice-dev juice-shop 3
 ./scripts/dev-stack score carol-dev dvwa 2
 ```
 
 Those are the only two targets the script knows — it seeds a curated slice
 of each one's rubric catalogue, and refuses any other target name.
+
+The four demo players are real accounts with fixed ids (`up` writes their
+auth rows and GitHub link keys), so `score` takes a login or a player id; a
+login with no link key is refused by name rather than sent to the scorer.
 
 Tear down with `./scripts/dev-stack down` (keeps seeded data in the Redis
 volume for next time) or `./scripts/dev-stack down --wipe` (also drops it).

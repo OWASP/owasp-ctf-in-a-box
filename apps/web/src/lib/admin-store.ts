@@ -742,7 +742,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
 // the award-time hash (`ctf:classic:lastAt`) the leaderboard reads — and deliberately KEEPS `ctf:classic:challenges` /
 // `ctf:classic:flag` / `ctf:classic:flagnorm` / `ctf:classic:categories`,
 // which are organizer CONTENT, not something a reset should ever destroy.
-const RESET_PREFIXES: readonly [string, string][] = [
+export const RESET_PREFIXES: readonly [string, string][] = [
   ["solves", "ctf:solves:*"],
   ["teams", "ctf:team:*"],
   ["users", "ctf:user:*"],

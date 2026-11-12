@@ -358,9 +358,8 @@ smoke stack's mock service.
 **Symptom.** Logs say it is refusing to serve because `EVENT_URL` is
 `http://` on a non-loopback host.
 
-**Diagnosis.** Deliberate: sessions are cookie-only and the cookie is only
-`Secure` over HTTPS — serving a real event over HTTP makes every session
-(an organizer's included) sniffable.
+**Diagnosis.** Deliberate: the session cookie is only `Secure` over HTTPS — serving a
+real event over HTTP makes every session (an organizer's included) sniffable.
 
 **Fix.** Set an `https://` `EVENT_URL` (Caddy provisions TLS). Only for a
 deliberately TLS-less closed network: `ALLOW_INSECURE_EVENT_URL=1` in

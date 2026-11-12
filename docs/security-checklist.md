@@ -32,8 +32,8 @@ submitted code is the product.
 
 ## 1. `EVENT_URL` must be HTTPS
 
-The session cookie is only marked `Secure` over HTTPS, and this app keeps
-**no server-side session store** — the cookie *is* the identity. Sniffing an
+The session cookie is only marked `Secure` over HTTPS, and a captured
+session cookie is the account until it expires or is revoked. Sniffing an
 organizer's cookie on the venue wifi is a full admin takeover, not a
 nuisance.
 
@@ -56,10 +56,11 @@ on its own.
 
 ## 2. Use the generated `BETTER_AUTH_SECRET`
 
-Sessions are stateless JWE cookies; their integrity rests entirely on this
-value. `./setup/ctf-setup.sh secrets` generates one. Do not hand-set a short
-or memorable value, and do not reuse one across events — a leaked secret from
-a past event forges identities in the current one.
+Sessions are server-side records in Redis behind a 5-minute JWE cookie cache;
+the cookie's integrity rests on this value. `./setup/ctf-setup.sh secrets`
+generates one. Do not hand-set a short or memorable value, and do not reuse
+one across events — a leaked secret from a past event forges identities in
+the current one.
 
 Rotating it invalidates every live session, which is the correct response to
 a suspected leak mid-event.

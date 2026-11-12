@@ -14,15 +14,21 @@
 #   cp -r /path/to/private-rubric scorer/rubric
 #   docker build -t ghcr.io/<org>/score:latest --build-arg RUBRIC_DIR=rubric scorer/
 # RUBRIC_DIR is resolved relative to the context root (scorer/); keep it inside.
+# The docker CLI: the judge entrypoint drives sibling containers over the
+# mounted docker.sock (boot the app under test, self-attach to the ctf
+# network). It comes from the official CLI image by digest, not from apk:
+# Alpine keeps only the latest package revision in its index, so an apk pin
+# breaks a fresh build ("unable to select packages") every time Alpine
+# rebuilds the package, and the base digest does not freeze the index.
+# Dependabot's docker ecosystem for /scorer bumps this stage like any FROM.
+FROM docker:29.9.3-cli@sha256:2357639ad1ea7d0194134bf3292622fd4e562483966ed674e5d7c945b5f3b28d AS docker-cli
+
 FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
 
-# docker-cli: the judge entrypoint drives sibling containers over the mounted
-# docker.sock (boot the app under test, self-attach to the ctf network).
-# Pinned to the version in the base image's Alpine release; bump it with the
-# base. The base digest does not freeze it: Alpine keeps only the latest
-# package revision in its index, so a rebuild there (-r0 -> -r1) breaks a
-# fresh build with "unable to select packages" until this pin follows it.
-RUN apk add --no-cache docker-cli=29.9.3-r0
+# Only the static `docker` binary, no buildx/compose plugins: the judge's
+# entrypoints call plain `docker` subcommands, and an inner build that needs
+# a newer CLI runs its own digest-pinned docker image (see webgoat.sh).
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
 WORKDIR /app
 

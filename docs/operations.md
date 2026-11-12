@@ -804,7 +804,9 @@ The panel offers:
   [Sponsors](#sponsors)); it **keeps** everything you authored — quiz
   questions and their answer key, classic and AI challenges with their flags,
   hints and categories — along with your admin settings, and appends the
-  reset to the audit log. It does rotate the AI
+  reset to the audit log. Sign-in state survives it too: contestant accounts,
+  admin sign-ins and sessions (the `ctf:auth:` keys) are untouched, so players
+  stay signed in across a reset. It does rotate the AI
   module's launch keypair (see [below](#ai)), so an external challenge site
   re-fetches the public key on its next verification. It is server-side and
   admin-gated, and requires **typing the event name** — the current runtime

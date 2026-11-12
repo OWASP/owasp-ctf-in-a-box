@@ -8,6 +8,24 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Fixed: a fresh scorer image build fails at `apk add docker-cli` (#756).**
+  Alpine rebuilt `docker-cli` 29.9.3 as `-r1` and keeps only the latest
+  revision, so the pinned `-r0` could no longer be installed. The scorer now
+  copies the `docker` binary from the official `docker:29.9.3-cli` image,
+  pinned by digest, so an Alpine package rebuild can no longer break the
+  build. Dependabot keeps that image current with the base.
+- **Changed: sign-in state lives in Redis (#736).** Users, linked accounts and
+  sessions are stored under `ctf:auth:` in the box's Redis instead of only in
+  the session cookie, so a session can be revoked. Everyone signs in once more
+  after upgrading. A master reset keeps accounts; the event archive never
+  contains them; GitHub access tokens are not stored.
+- **Fixed: individual leaderboard rows now include team-unlocked Jeopardy
+  story steps in their denominator (#689).** Reachability is now calculated
+  for existing leaderboard contestants even when they have no personal
+  Jeopardy solves, using their team's roster and shared unlock progress.
+  Solve-less teammates therefore see the same reachable challenge total as
+  their teammates, without changing points, rankings or leaderboard row
+  creation.
 - **Added: optional Discord webhook announcements (#590).** `/admin` → Event
   now has a "Discord announcements" section: paste a discord.com webhook URL
   (stored in its own Redis key, never returned by any API, never logged, and
@@ -162,7 +180,6 @@ the probe-count fix (#643) ship inside it.
   leaderboard retains its 10-second fold memoization to avoid unnecessary
   recomputation. The Secure Development caption now says the board updates about
   every 10 seconds.
-
 - **Fixed: the scorer's unreachable-target early-abort test no longer flakes
   under CPU load (#643).** `runExec` now also returns `spawned`, the number of
   probes it actually launched — counted at the spawn decision, not by a marker

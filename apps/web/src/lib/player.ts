@@ -3,7 +3,7 @@ import "server-only";
 import { auth } from "@/lib/auth";
 import { AUTH_PREFIX, rowsKey } from "@/lib/auth-store/keys";
 import { displayNameOf, type NameParts } from "@/lib/display-name";
-import { upstashPipeline } from "@/lib/upstash";
+import { parseScanPage, upstashPipeline } from "@/lib/upstash";
 
 // Player ids are lowercase v4 UUIDs (auth.ts generateId). Lowercase means a
 // `.toLowerCase()` join is the identity on them, and no id holds ":", which
@@ -55,4 +55,35 @@ export async function getPlayerProfiles(
     out.set(ids[i], toPlayer({ ...row, id: ids[i] }));
   });
   return out;
+}
+
+/** Rows read per HSCAN page: bounds each round trip on a large event. */
+const FIND_SCAN_COUNT = 200;
+
+/**
+ * Players whose display name or GitHub login contains `query`, ignoring case,
+ * in scan order, at most `limit` of them. Walks the user rows hash with HSCAN
+ * and stops as soon as it has `limit` matches. A blank query matches nobody.
+ * Throws on a command error or a row that is not JSON: an admin search must
+ * not answer "nobody" because the read failed.
+ */
+export async function findPlayers(query: string, limit = 20, prefix: string = AUTH_PREFIX): Promise<Player[]> {
+  const needle = query.trim().toLowerCase();
+  if (!needle || limit <= 0) return [];
+  const found: Player[] = [];
+  let cursor = "0";
+  do {
+    const [reply] = await upstashPipeline([["HSCAN", rowsKey(prefix, "user"), cursor, "COUNT", FIND_SCAN_COUNT]]);
+    if (!reply) throw new Error("find players: HSCAN returned no reply");
+    const [next, flat] = parseScanPage(reply, "find players");
+    cursor = next;
+    for (let i = 0; i + 1 < flat.length && found.length < limit; i += 2) {
+      const id = flat[i];
+      const row = JSON.parse(flat[i + 1]) as NameParts & { image?: string | null };
+      const player = toPlayer({ ...row, id });
+      const login = (player.githubLogin ?? "").toLowerCase();
+      if (player.name.toLowerCase().includes(needle) || login.includes(needle)) found.push(player);
+    }
+  } while (cursor !== "0" && found.length < limit);
+  return found;
 }

@@ -727,11 +727,13 @@ The panel offers:
   destructive control was the master reset below, so an organizer facing a
   single stuck contestant chose between doing nothing and wiping the event.
 
-  Look a contestant up by GitHub login and the tab shows their team, their
-  points and solves per module, their attempt count and their hint spend. Every
-  action stays disabled until a lookup returns — seeing the score you are about
-  to delete is the guard against resetting the wrong person from a
-  half-remembered username while a room waits.
+  Search for a contestant by name (their display name or GitHub login, any
+  part of it, any case), pick them from the matches, and the tab shows their
+  team, their points and solves per module, their attempt count and their hint
+  spend. Every action stays disabled until that lookup returns, and every
+  action is sent with the picked player's id, never a typed name — seeing the
+  score you are about to delete is the guard against resetting the wrong
+  person while a room waits.
 
   ![The Support tab after a contestant lookup: their team and captain status, when they first joined a team, points and solves per module, attempt count and hint spend, with the reset and delete controls beneath](assets/admin-support.jpg)
 
@@ -739,21 +741,23 @@ The panel offers:
   From there: **reset progress** (clears their Secure Development solves on
   every target, their quiz answers, classic and AI solves, attempts and hints;
   keeps the account and the team), **delete contestant** (all of that
-  plus the team membership and the account record), **remove from team**, or
+  plus the team membership, their event record and their rate-limit counters;
+  the sign-in account and its GitHub link stay), **remove from team**, or
   **add to team** / **move to team**: type a team slug and the player goes
   onto it, leaving their current team if they have one, whatever the
   registration state. This is how a player who left after registration
   closed gets back. The team-size cap applies unless you tick **over the
   team-size cap**; a captain of a team with other members must hand it over
   first, as with leaving; a team their move empties is deleted with its join
-  code, as when its last member leaves. The player is found by the spelling
-  they signed in with, so a login that has never signed in is refused. Their
+  code, as when its last member leaves. Only a player with an account can be
+  added; an id with none is refused. Their
   points count for the new team on the next board read, and their `joinedAt`
   is the move, so earlier solves do not open the new team's story steps. The
   move is in the admin audit log (`ops:team-add-member`) and the activity log
   (as a team join).
   Team-side, there is **transfer captaincy** and **disband** — the captain-only
-  controls, available to an organizer for when the captain is unreachable. That
+  controls, available to an organizer for when the captain is unreachable. To
+  transfer, pick the new captain in the search first; the button names them. That
   is the common live ticket: a captainless team cannot rename, remove a member,
   regenerate its code, or disband on its own, and nothing else can rescue it.
 

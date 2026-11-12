@@ -12,14 +12,19 @@ import AdminSupportTab, {
   addToTeamLabel,
   addToTeamNotice,
   contestantStats,
+  lookupUrl,
+  playerActionBody,
+  playerSearchUrl,
   resetProgressConfirm,
   teamCardSummary,
   type UserDetail,
 } from "@/app/(site)/admin/admin-support-tab";
 
+const OCTO = "0c7aca70-0000-4000-8000-00000000000a";
 const detail: UserDetail = {
-  login: "octocat",
-  team: { slug: "e2e-crew", name: "E2E Crew", captain: "octocat", isCaptain: true, joinedAt: "2026-09-03T01:45:00.000Z" },
+  id: OCTO,
+  name: "octocat",
+  team: { slug: "e2e-crew", name: "E2E Crew", captain: OCTO, isCaptain: true, joinedAt: "2026-09-03T01:45:00.000Z" },
   firstTeamAt: "2026-08-22T19:09:00.000Z",
   quiz: { answered: 3, points: 200, attempts: 5 },
   classic: { solved: 3, points: 70, attempts: 7 },
@@ -33,6 +38,8 @@ describe("AdminSupportTab", () => {
   it("renders the lookup form with every action disabled at rest", () => {
     const html = renderToStaticMarkup(<AdminSupportTab setConfirm={() => {}} />);
     expect(html).toContain("Find a contestant");
+    // Searched by name: the box asks for a name, not a GitHub login.
+    expect(html).toContain('placeholder="Name or GitHub login"');
     expect(html).toContain("Team actions");
     // Look up, Transfer captaincy, Disband team, Add adjustment: nothing is
     // live before a lookup, a filled slug, or a complete adjustment.
@@ -118,7 +125,33 @@ describe("add or move to a team (#597)", () => {
   });
 
   it("says where the player went, and from where", () => {
-    expect(addToTeamNotice({ login: "ChrisZoc", from: null }, "red")).toBe("Added ChrisZoc to red.");
-    expect(addToTeamNotice({ login: "bob", from: "blue" }, "red")).toBe("Moved bob from blue to red.");
+    expect(addToTeamNotice({ name: "ChrisZoc", from: null }, "red")).toBe("Added ChrisZoc to red.");
+    expect(addToTeamNotice({ name: "bob", from: "blue" }, "red")).toBe("Moved bob from blue to red.");
+  });
+});
+
+// #742: the tab finds a player by name and then acts on the chosen row's id.
+// Nothing it sends names a GitHub login.
+describe("search by name, act by id (#742)", () => {
+  it("searches the players endpoint with the typed name", () => {
+    expect(playerSearchUrl("  Octo Cat ")).toBe("/api/admin/players?q=Octo%20Cat");
+  });
+
+  it("looks the chosen row up by its id", () => {
+    expect(lookupUrl(OCTO)).toBe(`/api/admin/ops/user?id=${OCTO}`);
+  });
+
+  it("acts on the chosen row's id, never a login", () => {
+    const body = JSON.parse(playerActionBody(detail, { action: "reset" })) as Record<string, unknown>;
+    expect(body).toEqual({ id: OCTO, action: "reset" });
+    const team = JSON.parse(playerActionBody(detail, { slug: "red", action: "add-member", overrideCap: false })) as Record<string, unknown>;
+    expect(team).toEqual({ id: OCTO, slug: "red", action: "add-member", overrideCap: false });
+    expect(team).not.toHaveProperty("login");
+  });
+
+  it("names the player in the confirmations, and has the organizer type that name", () => {
+    const c = resetProgressConfirm(detail);
+    expect(c.title).toBe("Reset octocat's progress?");
+    expect(c.requireType).toBe("octocat");
   });
 });

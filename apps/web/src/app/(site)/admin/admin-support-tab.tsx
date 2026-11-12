@@ -6,10 +6,12 @@
 // so an organizer facing a single stuck contestant chose between doing nothing
 // and wiping the event. This tab is the missing middle.
 //
-// Look up first, then act. Every destructive control here stays disabled until
-// a lookup has returned, because the whole failure mode this tab has to avoid
-// is an organizer resetting the wrong person from a half-remembered username
-// while a room waits. Seeing the score you are about to delete is the guard.
+// Find first, then act. The organizer searches by name (GET
+// /api/admin/players), picks a row, and every action after that carries the
+// chosen row's player id, never a typed name. Every destructive control stays
+// disabled until that player's lookup has returned, because the whole failure
+// mode this tab has to avoid is an organizer resetting the wrong person while
+// a room waits. Seeing the score you are about to delete is the guard.
 //
 // Self-contained state, same reasoning as admin-admins-tab: this talks to its
 // own endpoints with their own shapes, and folding it into the shell's shared
@@ -25,7 +27,8 @@ import { adminTime } from "@/lib/event-time";
  *  client bundle). Exported so the pure builders below can be tested against
  *  a hand-built record. */
 export type UserDetail = {
-  login: string;
+  id: string;
+  name: string;
   team: { slug: string; name: string; captain: string | null; isCaptain: boolean; joinedAt: string | null } | null;
   firstTeamAt: string | null;
   quiz: { answered: number; points: number; attempts: number };
@@ -35,6 +38,26 @@ export type UserDetail = {
   hints: { bought: number; spent: number };
   known: boolean;
 };
+
+/** One search result: what `GET /api/admin/players` answers per player. */
+export type PlayerRow = { id: string; name: string; image: string | null };
+
+/** The search request for what the organizer typed. */
+export function playerSearchUrl(query: string): string {
+  return `/api/admin/players?q=${encodeURIComponent(query.trim())}`;
+}
+
+/** The lookup request for a chosen player. */
+export function lookupUrl(id: string): string {
+  return `/api/admin/ops/user?id=${encodeURIComponent(id)}`;
+}
+
+/** The JSON body of every per-player action: the chosen player's id plus the
+ *  action's own fields. The id is the only way a player is named to the
+ *  server, so a display name can never select the wrong account. */
+export function playerActionBody(detail: Pick<UserDetail, "id">, extra: Record<string, unknown>): string {
+  return JSON.stringify({ id: detail.id, ...extra });
+}
 
 /** The figures the contestant card shows, in reading order — every module
  *  the reset below touches (quiz, classic, ai) plus Secure Development and
@@ -70,8 +93,8 @@ export function resetProgressConfirm(detail: UserDetail): {
 } {
   const total = detail.quiz.points + detail.classic.points + detail.ai.points;
   return {
-    title: `Reset ${detail.login}'s progress?`,
-    requireType: detail.login,
+    title: `Reset ${detail.name}'s progress?`,
+    requireType: detail.name,
     confirmLabel: "Reset progress",
     body: `Clears their quiz answers, classic and AI solves, attempts and hints — ${total} points in total. Their account and team stay.`,
     warning:
@@ -101,8 +124,8 @@ export function addToTeamLabel(team: { slug: string } | null): "Add to team" | "
 }
 
 /** The notice after an add or move, naming the team they came from. */
-export function addToTeamNotice(data: { login: string; from: string | null }, slug: string): string {
-  return data.from ? `Moved ${data.login} from ${data.from} to ${slug}.` : `Added ${data.login} to ${slug}.`;
+export function addToTeamNotice(data: { name: string; from: string | null }, slug: string): string {
+  return data.from ? `Moved ${data.name} from ${data.from} to ${slug}.` : `Added ${data.name} to ${slug}.`;
 }
 
 export function teamCardSummary(detail: UserDetail): { joined: string | null; actionSlug: string | null } {
@@ -142,7 +165,8 @@ export default function AdminSupportTab({
 }: {
   setConfirm: (c: ConfirmState | null) => void;
 }) {
-  const [login, setLogin] = useState("");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<PlayerRow[] | null>(null);
   const [detail, setDetail] = useState<UserDetail | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -152,7 +176,6 @@ export default function AdminSupportTab({
   /** The team-actions slug field, so the contestant card can hand it the
    *  slug it already knows and put the cursor there (audit F21). */
   const teamSlugRef = useRef<HTMLInputElement>(null);
-  const [teamLogin, setTeamLogin] = useState("");
   const [addSlug, setAddSlug] = useState("");
   const [addOverride, setAddOverride] = useState(false);
 
@@ -183,14 +206,34 @@ export default function AdminSupportTab({
     }
   }
 
-  async function lookup(target = login) {
-    const trimmed = target.trim();
-    if (!trimmed) return;
+  async function search() {
+    if (!query.trim()) return;
     setPending(true);
     setError(null);
     setNotice(null);
     try {
-      const res = await fetch(`/api/admin/ops/user?login=${encodeURIComponent(trimmed)}`);
+      const res = await fetch(playerSearchUrl(query));
+      const data = (await res.json().catch(() => ({}))) as { players?: PlayerRow[]; error?: string };
+      if (!res.ok || !Array.isArray(data.players)) {
+        setError(data.error ?? "Search failed");
+        setResults(null);
+        return;
+      }
+      setResults(data.players);
+    } catch {
+      setError("Search failed");
+      setResults(null);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function lookup(id: string) {
+    setPending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(lookupUrl(id));
       const data = (await res.json().catch(() => ({}))) as UserDetail & { error?: string };
       if (!res.ok) {
         setError(data.error ?? "Lookup failed");
@@ -207,7 +250,7 @@ export default function AdminSupportTab({
   }
 
   const refresh = async () => {
-    if (detail) await lookup(detail.login);
+    if (detail) await lookup(detail.id);
   };
 
   /** Warnings the server returns (the Secure Development re-ingest caveat)
@@ -224,34 +267,56 @@ export default function AdminSupportTab({
         <div>
           <h3 className="text-sm font-semibold text-white">Find a contestant</h3>
           <p className="text-sm text-muted">
-            Look them up before acting. Every control below stays disabled until a lookup returns.
+            Search by name, then pick the player. Every control below stays disabled until you have picked one.
           </p>
         </div>
         <div className="flex gap-2">
           <input
-            id="support-login"
-            value={login}
-            onChange={(e) => setLogin(e.target.value)}
+            id="support-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") void lookup();
+              if (e.key === "Enter") void search();
             }}
-            placeholder="GitHub login"
-            aria-label="GitHub login"
+            placeholder="Name or GitHub login"
+            aria-label="Name or GitHub login"
             className={FIELD}
           />
-          <button type="button" disabled={pending || !login.trim()} onClick={() => void lookup()} className={BTN}>
-            Look up
+          <button type="button" disabled={pending || !query.trim()} onClick={() => void search()} className={BTN}>
+            Search
           </button>
         </div>
+        {results && results.length === 0 && <p className="text-sm text-muted">No player matches that name.</p>}
+        {results && results.length > 0 && (
+          <ul className="flex flex-col gap-1" aria-label="Matching players">
+            {results.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  disabled={pending}
+                  aria-pressed={detail?.id === p.id}
+                  onClick={() => void lookup(p.id)}
+                  className="flex w-full items-center gap-2 rounded-md border border-white/10 px-2.5 py-1.5 text-left text-sm text-zinc-300 transition-colors hover:border-[#2563eb]/60 hover:text-white aria-pressed:border-[#2563eb]/60 aria-pressed:text-white disabled:opacity-40"
+                >
+                  {p.image && (
+                    // eslint-disable-next-line @next/next/no-img-element -- a GitHub avatar URL, not a local asset to optimize
+                    <img src={p.image} alt="" width={20} height={20} className="h-5 w-5 rounded-full" />
+                  )}
+                  <bdi className="font-mono">{p.name}</bdi>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {detail && (
         <section className="flex flex-col gap-3 rounded-md border border-white/[0.06] bg-white/[0.02] p-4">
           <div className="flex items-center justify-between gap-2">
-            <p className="font-mono text-white">{detail.login}</p>
+            <bdi className="font-mono text-white">{detail.name}</bdi>
             {!detail.known && (
               <span className="rounded border border-[#d4a017]/40 bg-[#d4a017]/10 px-1.5 py-0.5 text-xs uppercase tracking-wide text-[#d4a017]">
-                no data — check the spelling
+                no data yet
               </span>
             )}
           </div>
@@ -338,9 +403,9 @@ export default function AdminSupportTab({
                         fetch("/api/admin/ops/user", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ login: detail.login, action: "reset" }),
+                          body: playerActionBody(detail, { action: "reset" }),
                         }),
-                      (data) => withWarnings(`Reset ${detail.login}.`, data),
+                      (data) => withWarnings(`Reset ${detail.name}.`, data),
                       refresh,
                     ),
                 });
@@ -355,9 +420,9 @@ export default function AdminSupportTab({
               className={DANGER}
               onClick={() =>
                 setConfirm({
-                  title: `Delete ${detail.login}?`,
+                  title: `Delete ${detail.name}?`,
                   danger: true,
-                  requireType: detail.login,
+                  requireType: detail.name,
                   confirmLabel: "Delete contestant",
                   body: (
                     <>
@@ -378,10 +443,13 @@ export default function AdminSupportTab({
                         fetch("/api/admin/ops/user", {
                           method: "DELETE",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ login: detail.login }),
+                          body: playerActionBody(detail, {}),
                         }),
-                      (data) => withWarnings(`Deleted ${detail.login}.`, data),
-                      async () => setDetail(null),
+                      (data) => withWarnings(`Deleted ${detail.name}.`, data),
+                      async () => {
+                        setDetail(null);
+                        setResults(null);
+                      },
                     ),
                 })
               }
@@ -396,7 +464,7 @@ export default function AdminSupportTab({
                 className={DANGER}
                 onClick={() =>
                   setConfirm({
-                    title: `Remove ${detail.login} from ${detail.team?.name}?`,
+                    title: `Remove ${detail.name} from ${detail.team?.name}?`,
                     danger: true,
                     confirmLabel: "Remove from team",
                     body: <>Their progress is kept — only the membership goes.</>,
@@ -406,13 +474,9 @@ export default function AdminSupportTab({
                           fetch("/api/admin/ops/team", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              slug: detail.team?.slug,
-                              login: detail.login,
-                              action: "remove-member",
-                            }),
+                            body: playerActionBody(detail, { slug: detail.team?.slug, action: "remove-member" }),
                           }),
-                        () => `Removed ${detail.login} from ${detail.team?.slug}.`,
+                        () => `Removed ${detail.name} from ${detail.team?.slug}.`,
                         refresh,
                       ),
                   })
@@ -453,11 +517,11 @@ export default function AdminSupportTab({
                     fetch("/api/admin/ops/team", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ slug, login: detail.login, action: "add-member", overrideCap: addOverride }),
+                      body: playerActionBody(detail, { slug, action: "add-member", overrideCap: addOverride }),
                     }),
                   (data) =>
                     addToTeamNotice(
-                      { login: typeof data.login === "string" ? data.login : detail.login, from: typeof data.from === "string" ? data.from : null },
+                      { name: typeof data.name === "string" ? data.name : detail.name, from: typeof data.from === "string" ? data.from : null },
                       slug,
                     ),
                   async () => {
@@ -479,7 +543,8 @@ export default function AdminSupportTab({
           <h3 className="text-sm font-semibold text-white">Team actions</h3>
           <p className="text-sm text-muted">
             The captain-only controls, for when the captain is unreachable — a captainless team
-            cannot rename, remove anyone, regenerate its code, or disband on its own.
+            cannot rename, remove anyone, regenerate its code, or disband on its own. To hand a
+            team over, find the new captain above first.
           </p>
         </div>
 
@@ -493,24 +558,17 @@ export default function AdminSupportTab({
             aria-label="Team slug"
             className={FIELD}
           />
-          <input
-            id="support-team-login"
-            value={teamLogin}
-            onChange={(e) => setTeamLogin(e.target.value)}
-            placeholder="new captain's login"
-            aria-label="New captain's login"
-            className={FIELD}
-          />
         </div>
 
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={pending || !teamSlug.trim() || !teamLogin.trim()}
+            disabled={pending || !teamSlug.trim() || !detail}
             className={BTN}
-            onClick={() =>
+            onClick={() => {
+              if (!detail) return;
               setConfirm({
-                title: `Make ${teamLogin.trim()} captain of ${teamSlug.trim()}?`,
+                title: `Make ${detail.name} captain of ${teamSlug.trim()}?`,
                 confirmLabel: "Transfer captaincy",
                 body: <>They must already be a member of that team.</>,
                 onConfirm: () =>
@@ -519,19 +577,15 @@ export default function AdminSupportTab({
                       fetch("/api/admin/ops/team", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          slug: teamSlug.trim(),
-                          login: teamLogin.trim(),
-                          action: "transfer-captain",
-                        }),
+                        body: playerActionBody(detail, { slug: teamSlug.trim(), action: "transfer-captain" }),
                       }),
-                    () => `${teamLogin.trim()} now captains ${teamSlug.trim()}.`,
+                    () => `${detail.name} now captains ${teamSlug.trim()}.`,
                     refresh,
                   ),
-              })
-            }
+              });
+            }}
           >
-            Transfer captaincy
+            {detail ? `Make ${detail.name} captain` : "Transfer captaincy"}
           </button>
 
           <button

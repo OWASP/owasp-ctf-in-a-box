@@ -104,3 +104,9 @@ export const RATE_LIMITS = {
    *  approach this in a normal session. */
   aiAdminTest: { bucket: "ai-admin-test", limit: 10, windowSeconds: 60 },
 } as const;
+
+/** Every rate-limit counter `player` can hold, one per budget above. The
+ *  admin delete clears them with the rest of the player's state. */
+export function rateLimitKeysFor(player: string): string[] {
+  return Object.values(RATE_LIMITS).map((r) => rateKey(r.bucket, player));
+}

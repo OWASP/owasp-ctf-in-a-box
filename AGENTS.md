@@ -371,12 +371,19 @@ suggestions.
   "none yet" and wrote that emptiness back over the box's list (#261). Check
   `error` and throw so the caller's fail direction applies and says so. The
   `sync` and `scorer` clients throw for you (#256); the app's does not.
-- **Logins join case-insensitively, everywhere.** The scorer records the PR
-  author's spelling, the app stores the session's, and GitHub logins are
-  unique only case-insensitively — so every login join lowercases both sides
-  (`module-contributions`, `team-standings`, `hint-penalties`, `admin-auth`).
-  Two verbatim joins made one contestant's hints free and showed a scoring
-  teammate at 0 pts (#216).
+- **Player records are keyed by the player id, never the GitHub login.** The
+  id is the lowercase UUID v4 better-auth assigns (`ctf:auth:`); solves,
+  teams, hints, quiz/classic/AI state, the activity log and metrics all key on
+  it, and names are resolved from the auth store at display time. The GitHub
+  login exists only to link a PR to a player: the app writes
+  `ctf:link:github:<lowercased login>` (player id) and
+  `ctf:link:user:<id>` (login) at every GitHub sign-in, sync resolves the
+  score marker's `author` through the first, and an unlinked author is
+  dropped. GitHub logins are unique only case-insensitively, so the link key
+  and the `ADMIN_LOGINS` check lowercase both sides. Never key a record on a
+  login, and never join across the two keyings (#216 was a verbatim login
+  join that made hints free; #742 removed the class). Sync needs Redis for
+  the link lookup and refuses to start without it.
 - **Diagrams are hand-authored animated SVGs sharing one style.** Every one
   lives in `docs/assets/diagrams/<name>.svg` and is embedded with a plain
   `<img>` — never a `mermaid` code fence, which cannot animate and cannot be

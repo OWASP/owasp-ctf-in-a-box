@@ -221,9 +221,9 @@ services:
       SCORER_TOKEN: ${SCORER_TOKEN}
       SCORER_URL: http://scorer:4000
       # Same srh proxy as app/scorer above — lets sync read the organizer's
-      # pause flag (ctf:admin:settings) and publish its heartbeat
-      # (ctf:sync:status). Without this, sync's redis client stays null and
-      # the admin-panel freeze never reaches the poller.
+      # pause flag (ctf:admin:settings), resolve a PR author's GitHub login to
+      # a player (ctf:link:github:*) and publish its heartbeat
+      # (ctf:sync:status). Sync refuses to start without it.
       UPSTASH_REDIS_REST_URL: http://srh:80
       UPSTASH_REDIS_REST_TOKEN: ${SRH_TOKEN}
       # The poller's LEGACY state file. The cursor itself lives in Redis

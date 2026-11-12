@@ -160,8 +160,9 @@ the sections below are the enforceable contract behind it.
    implements, and the poll pipeline is the only thing that walks it; there is
    no second write path. A module MUST NOT invent one.
 
-2. Payload MUST be `{author, target, solved: string[], pr: number, sha:
-   string, at: string}`, delivered as a bearer-authenticated JSON POST, and a
+2. Payload MUST be `{player, target, solved: string[], pr: number, sha:
+   string, at: string}`, where `player` is the kit's player id (a lowercase
+   UUID, not a GitHub login), delivered as a bearer-authenticated JSON POST, and a
    success response is `202`. `at` is when the score was earned — for the
    poll pipeline, the score comment's GitHub `updated_at` — and the scorer
    times the solve by it and judges the scoring window, the freeze and the
@@ -181,18 +182,21 @@ the sections below are the enforceable contract behind it.
    (`sync/test/submit.test.js`: "POSTs payload with bearer token, accepted
    on 202", "refused on 422, carrying the scorer's reason".)
 
-3. `author` MUST match the GitHub-login grammar before it is ever sent,
-   because it becomes a datastore key on the scorer side:
+3. The score comment's `author` (the GitHub login the judge saw) MUST match
+   the GitHub-login grammar before sync looks it up, and sync then resolves it
+   to a player id through the link key `ctf:link:github:<lowercased login>`.
+   An author no player has linked is dropped, never sent. The scorer accepts
+   only a lowercase-UUID `player` (anything else is a `400 invalid player`),
+   because it becomes a datastore key on the scorer side. The login grammar:
 
    ```
    /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/
    ```
 
-   (`sync/src/parse.js`, `GITHUB_LOGIN` — the comment there is explicit:
-   "Same grammar the scorer enforces — author becomes a Redis key segment
-   there.") A module's scoring path MUST validate any author string against
-   this grammar before it reaches `POST /score`; never pass through an
-   unvalidated string from PR/comment metadata.
+   (`sync/src/parse.js`, `GITHUB_LOGIN`.) A module's scoring path MUST
+   validate any author string against this grammar and resolve it to a player
+   id before it reaches `POST /score`; never pass through an unvalidated
+   string from PR/comment metadata.
 
 4. Writes MUST be treated as monotonic/idempotent on the receiving end —
    modules MAY deliver at-least-once. `sync`'s own poller relies on this:
@@ -245,12 +249,12 @@ the sections below are the enforceable contract behind it.
 ## Section 4. Leaderboard mapping
 
 1. The scorer exposes `GET /leaderboard`; the local test fixture
-   (`test/fixtures/mock-scorer.mjs`) returns `{leaderboard: [{author,
+   (`test/fixtures/mock-scorer.mjs`) returns `{leaderboard: [{player,
    points, solved}]}` computed as one point per solved challenge ID — a
    simplified stand-in for smoke-testing, not the real scoring/pricing
    logic (that lives in this repo's scorer engine, `scorer/src/serve.js`'s
    `buildLeaderboard`). The real scorer's leaderboard entries carry, per
-   author, points plus a per-target solved/total breakdown.
+   player, points plus a per-target solved/total breakdown.
 
 2. A module MUST define its own challenge catalogue: a fixed set of target
    keys (`secure-development`'s is the `TARGETS` enum in
@@ -1004,7 +1008,7 @@ build-time vendoring step first). Until then, a new module `<name>` with target
 | `scorer/entrypoints/<t>.sh` | the target's bring-up |
 | `scorer/rubric.owasp/<t>/` | the vendored rubric, with its catalogue at `tests/challenges/catalogue.<t>.json` |
 | `setup/ctf-setup.sh` | the module's own provisioning step, if it has one (§7) |
-| `apps/web/src/lib/metrics-store.ts` | add `<name>` to the per-login read list, the `earnedRows` fold and the `modules` split, or Insights reports nothing for it (§10.4) |
+| `apps/web/src/lib/metrics-store.ts` | add `<name>` to the per-player read list, the `earnedRows` fold and the `modules` split, or Insights reports nothing for it (§10.4) |
 | `apps/web/src/lib/activity-keys.ts` | add a `<name>-solve` type and call `logActivity` from the module's submit route on FRESH solves only (id in `detail`, never the answer), or the admin Activity tab never sees the module |
 | README target table + [docs/operations.md](operations.md) | document the target for organizers |
 
@@ -1054,7 +1058,7 @@ two independent ways to report a solve back:
 | `apps/web/src/components/hint-reveal-button.tsx` | extended to cover an `ai` hint purchase alongside secure-development's and classic's |
 | `apps/web/src/lib/hint-store.ts` | `ai` added to `HintTarget`; the anti-burner solve-count gate reads `ai`'s whole-board solve count the same way it reads `classic`'s |
 | `apps/web/src/lib/leaderboard/module-contributions.ts` | the leaderboard overlay's `ai` case — points added, never attributed, same verb as `quiz`/`classic` |
-| `apps/web/src/lib/metrics-store.ts` | `ai` added to the per-login read list, the `earnedRows` fold and the `modules` split, so Insights reports on it (§10.4) |
+| `apps/web/src/lib/metrics-store.ts` | `ai` added to the per-player read list, the `earnedRows` fold and the `modules` split, so Insights reports on it (§10.4) |
 | `apps/web/src/lib/activity-keys.ts` | an `ai-solve` activity type, logged on fresh solves only |
 | `apps/web/src/lib/admin-store.ts` | the `aiCooldownSec` runtime setting (validated, capped at `AI_COOLDOWN_SEC_MAX`) and the module's rows in `resetEvent`'s PROGRESS/CONTENT split |
 | `apps/web/src/lib/demo-fixture.ts` | demo seed data for the `ai` board, gated the same way `quiz`'s and `classic`'s are — a disabled `ai` module leaves the seed byte-for-byte identical to pre-`ai` behavior |
@@ -1087,21 +1091,21 @@ for the fold itself.
 
 ### 10.1 What a module must store to be measurable
 
-Two per-login hashes, both keyed by **lowercased** GitHub login, both with the
+Two per-player hashes, both keyed by the player id (a lowercase UUID), both with the
 **item id** as the field. A module that keeps them gets the full per-challenge
 table for free; a module that keeps neither is still counted in participation
 and points, and appears nowhere else.
 
 | Hash | Field | Value | What it drives |
 |---|---|---|---|
-| `ctf:<module>:<earned>:<login>` — `ctf:quiz:answers:<login>`, `ctf:classic:solves:<login>` | item id | `{"points":<n>,"at":"<iso>"}` — the fields the fold reads; a module may store more (quiz rows also carry `choices`) | `scored`, the solves-over-time timeline, per-challenge `solves`, and the numerator of `solveRate` |
-| `ctf:<module>:attempts:<login>` | item id | `{"attempts":<n>,"firstAt":"<iso>","lastAt":"<iso>","lastAtMs":<ms>}` | `attempted` and `stuck`, per-challenge `attempts`, `avgAttemptsToSolve`, `medianSecondsToSolve` |
+| `ctf:<module>:<earned>:<id>` — `ctf:quiz:answers:<id>`, `ctf:classic:solves:<id>` | item id | `{"points":<n>,"at":"<iso>"}` — the fields the fold reads; a module may store more (quiz rows also carry `choices`) | `scored`, the solves-over-time timeline, per-challenge `solves`, and the numerator of `solveRate` |
+| `ctf:<module>:attempts:<id>` | item id | `{"attempts":<n>,"firstAt":"<iso>","lastAt":"<iso>","lastAtMs":<ms>}` | `attempted` and `stuck`, per-challenge `attempts`, `avgAttemptsToSolve`, `medianSecondsToSolve` |
 
 Plus one aggregate the leaderboard already requires:
 
 | Key | Field | Value | What it drives |
 |---|---|---|---|
-| `ctf:<module>:points` | login | integer | the per-module scorer split, and the per-team point sum |
+| `ctf:<module>:points` | player id | integer | the per-module scorer split, and the per-team point sum |
 
 Three rules about those rows, each of which has cost this repo a wrong number:
 
@@ -1135,7 +1139,7 @@ solves, one with solves and no attempts.
 Ids must also be **unique within the module**. They do not need to be unique
 across modules (the `<module>:` prefix separates them), but anything that
 matches rows across two namespaces must carry both parts of the key —
-`readSecureDevSolves` keeps the target in `<target>/<login>/<challengeId>`
+`readSecureDevSolves` keeps the target in `<target>/<id>/<challengeId>`
 precisely because challenge ids are unique within a target's catalogue and
 nothing makes them unique between targets.
 
@@ -1143,7 +1147,7 @@ nothing makes them unique between targets.
 
 `secure-development` is this case, and it is a legitimate one. Its scores
 arrive from GitHub already judged: there is a timestamped solve
-(`ctf:solves:<target>`, field `<login>:<challengeId>`) but no attempt record,
+(`ctf:solves:<target>`, field `<id>:<challengeId>`) but no attempt record,
 because the attempts happened in a fork the box deliberately does not measure.
 It therefore contributes to participation, points and hint ordering, and
 contributes **nothing** to the per-challenge difficulty table or the timeline.
@@ -1157,7 +1161,7 @@ reads as "measured, and none".
 
 Adding a module does not add it to Insights. `computeEventMetrics`
 (`apps/web/src/lib/metrics-store.ts`) names quiz, classic and ai explicitly — the
-per-login read list, the `earnedRows` pair it folds, and the `modules` split in
+per-player read list, the `earnedRows` pair it folds, and the `modules` split in
 the response. A new module with both hashes still reports nothing until it is
 added in those three places.
 
@@ -1178,9 +1182,9 @@ the next module author finds it in the contract rather than in an empty tab.
 - **Do not add a write purely to feed a metric.** If a figure needs a new
   write, it needs a decision record first: every per-contestant field added is
   one edit away from making an admin payload carry a login.
-- **Do not read a module's aggregate counter where a fold over per-login rows
+- **Do not read a module's aggregate counter where a fold over per-player rows
   will do.** `ctf:classic:solvecount` and `ctf:ai:solvecount` exist and would
   be free per-module shortcuts; the fold deliberately ignores them, because
-  folding per-login rows produces the same figure for **all three** app-scored
+  folding per-player rows produces the same figure for **all three** app-scored
   modules from one source. Reading both invites the two to disagree with no
   way to tell which is right.

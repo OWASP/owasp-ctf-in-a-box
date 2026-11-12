@@ -307,4 +307,35 @@ describe("members sharing a display name", () => {
     expect(html).toMatch(/<option value="aaaaaaaa-[^"]*">Sam \(aaaaaaaa\)<\/option>/);
     expect(html).not.toContain("Ada (");
   });
+
+  describe("when a display name equals a generated label", () => {
+    const D = "dddddddd-4444-4444-8444-444444444444";
+    const tricky = { [A]: "Sam", [B]: "Sam", [D]: "Sam (aaaaaaaa)" };
+
+    it("keeps every label distinct", () => {
+      const labels = [...rosterLabels([A, B, D], tricky).values()];
+      expect(new Set(labels.map((l) => l.toLowerCase())).size).toBe(3);
+    });
+
+    it("shows distinct labels on the roster, the remove confirmations and the transfer options", () => {
+      const labels = rosterLabels([A, B, D], tricky);
+      const html = renderToStaticMarkup(
+        <TeamCard
+          team={{ slug: "red", name: "Red", members: [C, A, B, D] }}
+          writesEnabled
+          maxMembers={5}
+          isCaptain
+          captain={C}
+          joinCode="abc123"
+          memberNames={{ ...tricky, [C]: "Ada" }}
+        />,
+      );
+      for (const m of [A, B, D]) {
+        const label = labels.get(m)!.replace(/[()]/g, "\\$&");
+        expect(html).toContain(`aria-label="Remove ${labels.get(m)}"`);
+        expect(html).toMatch(new RegExp(`<option value="${m}">${label}</option>`));
+        expect(html.split(`<bdi>${labels.get(m)}</bdi>`).length - 1).toBe(1);
+      }
+    });
+  });
 });

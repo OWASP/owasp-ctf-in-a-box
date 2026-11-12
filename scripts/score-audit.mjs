@@ -607,7 +607,7 @@ export function diffBoard(expected, served) {
     cmp(who, "points (net)", exp.points, got.points);
     cmp(who, "hint penalty", exp.penalty, got.hintPenalty);
     cmp(who, "team", exp.team, got.team);
-    if (exp.name !== null && exp.name !== undefined && got.name !== null) cmp(who, "name", exp.name, got.name);
+    if (exp.name !== null && exp.name !== undefined) cmp(who, "name", exp.name, got.name ?? "(no name served)");
     cmpModules(who, exp.modules, got.modules);
     inRange(who, exp.rankRange, got.rank);
   }

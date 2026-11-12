@@ -197,10 +197,13 @@ gate_scripts() {
 # given), so only the account row and the id keys prove the real shape.
 @test "each *-only gate seeds its contestant by player id and never by login" {
   bad=""
-  for f in "$QUIZ" "$CLASSIC" "$AI"; do
+  for pair in "$QUIZ:quiz:answered:answers" "$CLASSIC:classic:solved:solves" "$AI:ai:solved:solves"; do
+    f="${pair%%:*}"; rest="${pair#*:}"; m="${rest%%:*}"; rest="${rest#*:}"; counter="${rest%%:*}"; rows="${rest#*:}"
     if grep -qF 'CONTESTANT_LOGIN' "$f"; then bad="$bad $f(CONTESTANT_LOGIN)"; fi
     if ! grep -qE '^CONTESTANT_ID=[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' "$f"; then bad="$bad $f(no v4 CONTESTANT_ID)"; fi
-    if ! grep -qF 'HSET "ctf:' "$f" || ! grep -qF '$CONTESTANT_ID' "$f"; then bad="$bad $f(rows not keyed by CONTESTANT_ID)"; fi
+    for pin in "HSET ctf:$m:points \"\$CONTESTANT_ID\"" "HSET ctf:$m:$counter \"\$CONTESTANT_ID\"" "HSET \"ctf:$m:$rows:\$CONTESTANT_ID\""; do
+      if ! grep -qF -- "$pin" "$f"; then bad="$bad $f(missing: $pin)"; fi
+    done
   done
   if [ -n "$bad" ]; then
     echo "gates still seed by login:$bad"

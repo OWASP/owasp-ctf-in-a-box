@@ -467,3 +467,13 @@ test("a board whose rows carry the old login key instead of a player id is refus
   for (const e of b.entries) { e.login = e.name; delete e.playerId; }
   assert.throws(() => audit(snapshot(), toFlight(b)), /entries\[0\]\.playerId/);
 });
+
+test("a board that stops serving names is a finding for every row, not silence", () => {
+  const b = correctBoard();
+  for (const e of b.entries) delete e.name;
+  const named = audit(snapshot(), toFlight(b)).mismatches.filter((m) => m.field === "name");
+  assert.equal(named.length, b.entries.length);
+  assert.equal(named[0].served, "(no name served)");
+  b.entries[0].name = 42;
+  assert.ok(audit(snapshot(), toFlight(b)).mismatches.some((m) => m.field === "name" && m.who.includes(b.entries[0].playerId)));
+});

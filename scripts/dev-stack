@@ -330,10 +330,12 @@ seed_demo_accounts() {
   for login in $DEMO_LOGINS; do
     id="$(demo_player_id "$login")" || { echo "dev-stack: no player id for demo login '$login'" >&2; return 1; }
     row="{\"id\":\"$id\",\"name\":\"$login\",\"email\":\"$login@dev-stack.invalid\",\"emailVerified\":true,\"image\":null,\"createdAt\":\"$now\",\"updatedAt\":\"$now\"}"
-    if ! { compose exec -T redis redis-cli HSETNX ctf:auth:user "$id" "$row" >/dev/null \
-      && compose exec -T redis redis-cli SADD "ctf:auth:user:by:email:$login@dev-stack.invalid" "$id" >/dev/null \
-      && compose exec -T redis redis-cli SETNX "ctf:link:github:$login" "$id" >/dev/null \
-      && compose exec -T redis redis-cli SETNX "ctf:link:user:$id" "$login" >/dev/null; }; then
+    # -e: redis-cli exits 0 on an error reply (WRONGTYPE, NOAUTH) without it,
+    # which would read a failed write as a seeded account.
+    if ! { compose exec -T redis redis-cli -e HSETNX ctf:auth:user "$id" "$row" >/dev/null \
+      && compose exec -T redis redis-cli -e SADD "ctf:auth:user:by:email:$login@dev-stack.invalid" "$id" >/dev/null \
+      && compose exec -T redis redis-cli -e SETNX "ctf:link:github:$login" "$id" >/dev/null \
+      && compose exec -T redis redis-cli -e SETNX "ctf:link:user:$id" "$login" >/dev/null; }; then
       echo "dev-stack: could not write the demo account for '$login' to redis" >&2
       return 1
     fi

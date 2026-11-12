@@ -19,6 +19,11 @@ setup() {
   cat > "$BATS_TEST_TMPDIR/bin/docker" <<STUB
 #!/bin/sh
 echo "\$*" >> "\$CALLS"
+if [ -n "\${FAIL_ON:-}" ]; then
+  case "\$*" in
+    *"\$FAIL_ON"*) echo "WRONGTYPE Operation against a key holding the wrong kind of value"; exit 1 ;;
+  esac
+fi
 case "\$*" in
   *"redis-cli GET ctf:link:github:alice-dev") echo "$ID" ;;
   *"redis-cli GET ctf:link:github:"*) : ;;
@@ -58,9 +63,20 @@ STUB
   . scripts/dev-stack
   run seed_demo_accounts
   [ "$status" -eq 0 ]
-  grep -qF 'redis-cli HSETNX ctf:auth:user a11ce000-0000-4000-8000-000000000001 {"id":"a11ce000-0000-4000-8000-000000000001","name":"alice-dev","email":"alice-dev@dev-stack.invalid","emailVerified":true,"image":null,"createdAt":' "$CALLS"
-  grep -qF 'redis-cli SADD ctf:auth:user:by:email:alice-dev@dev-stack.invalid a11ce000-0000-4000-8000-000000000001' "$CALLS"
-  grep -qF 'redis-cli SETNX ctf:link:user:a11ce000-0000-4000-8000-000000000001 alice-dev' "$CALLS"
+  grep -qF 'redis-cli -e HSETNX ctf:auth:user a11ce000-0000-4000-8000-000000000001 {"id":"a11ce000-0000-4000-8000-000000000001","name":"alice-dev","email":"alice-dev@dev-stack.invalid","emailVerified":true,"image":null,"createdAt":' "$CALLS"
+  grep -qF 'redis-cli -e SADD ctf:auth:user:by:email:alice-dev@dev-stack.invalid a11ce000-0000-4000-8000-000000000001' "$CALLS"
+  grep -qF 'redis-cli -e SETNX ctf:link:user:a11ce000-0000-4000-8000-000000000001 alice-dev' "$CALLS"
   if grep -qE 'redis-cli SET ctf:link' "$CALLS"; then return 1; fi
-  grep -qF 'redis-cli SETNX ctf:link:github:mallory-dev ba11a000-0000-4000-8000-000000000004' "$CALLS"
+  grep -qF 'redis-cli -e SETNX ctf:link:github:mallory-dev ba11a000-0000-4000-8000-000000000004' "$CALLS"
+}
+
+@test "seed_demo_accounts fails on a redis error reply instead of reading it as seeded" {
+  export ENV_FILE=/dev/null
+  export FAIL_ON="redis-cli -e SADD ctf:auth:user:by:email:alice-dev"
+  cd "$SANDBOX"
+  # shellcheck disable=SC1091
+  . scripts/dev-stack
+  run seed_demo_accounts
+  [ "$status" -eq 1 ]
+  printf '%s\n' "$output" | grep -qF "could not write the demo account for 'alice-dev'"
 }

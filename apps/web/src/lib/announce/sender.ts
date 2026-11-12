@@ -124,7 +124,16 @@ export async function flush(): Promise<void> {
       queue = [];
       return;
     }
-    const url = await getWebhookUrl();
+    let url: string | null;
+    try {
+      url = await getWebhookUrl();
+    } catch (err) {
+      // A failed read is not "no webhook": leave the local queue and every
+      // outbox entry untouched so the next pass (or the ticker's retry
+      // sweep) delivers them instead of marking them sent or skipped.
+      console.error("[announce] webhook read failed, leaving announcements queued:", errorLabel(err));
+      return;
+    }
     if (!url) {
       queue = [];
       return;
@@ -182,7 +191,15 @@ export async function flushRetries(): Promise<void> {
   try {
     const config = await getAnnounceConfig();
     if (!config.webhookConfigured) return;
-    const url = await getWebhookUrl();
+    let url: string | null;
+    try {
+      url = await getWebhookUrl();
+    } catch (err) {
+      // See flush(): a failed read leaves pending/retryable entries for the
+      // next sweep rather than dropping them.
+      console.error("[announce] webhook read failed, leaving retries queued:", errorLabel(err));
+      return;
+    }
     if (!url) return;
     const [pending, retryable] = await Promise.all([outboxPending(), outboxRetryable()]);
     // One id can only have one status, but dedupe anyway so a store change

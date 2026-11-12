@@ -1,3 +1,4 @@
+import { errorLabel } from "@/lib/error-label";
 import { checkEventUrl } from "@/lib/secure-url";
 
 /** Starts the Discord-announcer ticker (#590) once per server instance, in
@@ -14,8 +15,10 @@ async function startDiscordAnnouncer(): Promise<void> {
     startAnnounceTicker();
   } catch (err) {
     // A boot that cannot load the announcer still serves the event — the
-    // announcer is optional by construction.
-    console.error("ctf-app: discord announcer not started:", err instanceof Error ? err.message : "unknown error");
+    // announcer is optional by construction. errorLabel caps the value to a
+    // name+message and never stringifies a non-Error throw, so a raw
+    // exception message or secret cannot enter the log.
+    console.error("ctf-app: discord announcer not started:", errorLabel(err));
   }
 }
 

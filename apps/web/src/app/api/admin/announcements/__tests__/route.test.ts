@@ -263,6 +263,14 @@ describe("test POST", () => {
     mocks.getWebhookUrl.mockResolvedValue(null);
     expect((await TEST(req("POST", undefined, "/api/admin/announcements/test"))).status).toBe(400);
   });
+
+  it("a failed webhook read is a 503, not a 400 'no webhook'", async () => {
+    mocks.getWebhookUrl.mockRejectedValue(new Error("redis down"));
+    const res = await TEST(req("POST", undefined, "/api/admin/announcements/test"));
+    expect(res.status).toBe(503);
+    expect(JSON.stringify(await res.json())).not.toContain(URL);
+    expect(mocks.postToDiscord).not.toHaveBeenCalled();
+  });
 });
 
 describe("preview POST", () => {

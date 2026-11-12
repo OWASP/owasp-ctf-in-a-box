@@ -152,6 +152,15 @@ describe("flush", () => {
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 
+  it("a failed webhook read leaves pending entries untouched for a retry", async () => {
+    mocks.getWebhookUrl.mockRejectedValue(new Error("redis down"));
+    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
+    await flush();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxClaim).not.toHaveBeenCalled();
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+
   it("re-arms the coalescing timer when a pass is already active, so the skipped flush is not stranded", async () => {
     // First pass is in flight (flushing set); the enqueue timer firing now
     // must not just return — it must arm a LATER pass for the new entry.
@@ -268,5 +277,14 @@ describe("flushRetries", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mocks.outboxComplete).toHaveBeenCalledTimes(1);
     expect(mocks.outboxComplete).toHaveBeenCalledWith("same", "sent");
+  });
+
+  it("a failed webhook read leaves retryable entries untouched for the next sweep", async () => {
+    mocks.getWebhookUrl.mockRejectedValue(new Error("redis down"));
+    mocks.outboxRetryable.mockResolvedValue([{ id: "9", entry: entry("launch", "failed", 1) }]);
+    await flushRetries();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxClaim).not.toHaveBeenCalled();
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 });

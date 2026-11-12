@@ -55,12 +55,22 @@ describe("register()", () => {
     expect(mocks.startAnnounceTicker).not.toHaveBeenCalled();
   });
 
-  it("a ticker that throws on start is logged, not propagated — the boot still serves", async () => {
+  it("a ticker that throws on start is logged by label, not propagated — the boot still serves", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     mocks.startAnnounceTicker.mockImplementationOnce(() => {
       throw new Error("boom");
     });
     expect(() => register()).not.toThrow();
-    await vi.waitFor(() => expect(console.error).toHaveBeenCalledWith("ctf-app: discord announcer not started:", "boom"));
+    await vi.waitFor(() => expect(console.error).toHaveBeenCalledWith("ctf-app: discord announcer not started:", "Error: boom"));
+  });
+
+  it("logs a fixed label for a non-Error throw, never the thrown value", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    mocks.startAnnounceTicker.mockImplementationOnce(() => {
+      throw "FLAG{secret-in-a-thrown-string}";
+    });
+    expect(() => register()).not.toThrow();
+    await vi.waitFor(() => expect(console.error).toHaveBeenCalledWith("ctf-app: discord announcer not started:", "non-Error throw"));
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("FLAG{secret-in-a-thrown-string}");
   });
 });

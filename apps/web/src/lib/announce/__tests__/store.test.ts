@@ -11,12 +11,14 @@ const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
   upstashPipeline: vi.fn<(commands: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
   writeAdminAudit: vi.fn<(actor: string, action: string, detail: Record<string, unknown>) => Promise<void>>(),
+  getAdminSettings: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: mocks.upstashPipeline, upstashEval: mocks.upstashEval }));
 vi.mock("@/lib/admin-store", () => ({
   writeAdminAudit: mocks.writeAdminAudit,
+  getAdminSettings: mocks.getAdminSettings,
   adminErrorLabel: (err: unknown) => (err instanceof Error ? err.message : "unknown"),
 }));
 
@@ -50,8 +52,12 @@ beforeEach(() => {
   mocks.upstashPipeline.mockReset();
   mocks.upstashEval.mockReset();
   mocks.writeAdminAudit.mockReset();
+  mocks.getAdminSettings.mockReset();
   // Default: every command succeeds with an empty result.
   mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: [] as unknown[] })));
+  // The pre-launch baseline used by the webhook-set reconciliation.
+  mocks.getAdminSettings.mockResolvedValue({ scoringStartsAt: null, scoringEndsAt: null, paused: false });
+  mocks.upstashEval.mockResolvedValue([2, 1, ""]);
 });
 
 describe("getAnnounceConfig", () => {
@@ -143,11 +149,48 @@ describe("setAnnounceWebhook", () => {
     mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: "OK" })));
     const result = await setAnnounceWebhook("admin", VALID_URL);
     expect(result).toEqual({ webhookConfigured: true });
-    const set = mocks.upstashPipeline.mock.calls[0][0][0];
-    expect(set[0]).toBe("SET");
-    expect(set[1]).toBe(DISCORD_WEBHOOK_KEY);
+    const set = mocks.upstashPipeline.mock.calls
+      .flatMap((call) => call[0])
+      .find((cmd) => cmd[0] === "SET" && cmd[1] === DISCORD_WEBHOOK_KEY);
+    expect(set).toBeDefined();
     expect(mocks.writeAdminAudit).toHaveBeenCalledWith("admin", "announce-webhook", { state: "set" });
     expect(JSON.stringify(mocks.writeAdminAudit.mock.calls)).not.toContain(VALID_URL);
+  });
+
+  it("reconciles the stored lifecycle before arming, so a launch/close during a cleared webhook is not replayed", async () => {
+    mocks.getAdminSettings.mockResolvedValue({
+      scoringStartsAt: "2020-01-01T10:00:00Z",
+      scoringEndsAt: "2020-01-01T11:00:00Z",
+      paused: false,
+    });
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => (cmd[0] === "GET" ? { result: "v2|L0P0C0A0" } : { result: "OK" })),
+    );
+    mocks.upstashEval.mockResolvedValue([1, 5, "v2|L0P0C0A0"]);
+    await setAnnounceWebhook("admin", VALID_URL);
+    expect(mocks.upstashEval).toHaveBeenCalledWith(expect.any(String), ["ctf:announce:lifecycle", "ctf:announce:seq"], [
+      "v2|L0P0C0A0",
+      "v2|L1P0C1A0",
+      expect.any(String),
+    ]);
+  });
+
+  it("preserves an already-announced pause while reconciling, so its resume is still owed", async () => {
+    mocks.getAdminSettings.mockResolvedValue({
+      scoringStartsAt: "2020-01-01T10:00:00Z",
+      scoringEndsAt: "2020-01-01T11:00:00Z",
+      paused: false,
+    });
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => (cmd[0] === "GET" ? { result: "v2|L1P1C0A1" } : { result: "OK" })),
+    );
+    mocks.upstashEval.mockResolvedValue([1, 6, "v2|L1P1C0A1"]);
+    await setAnnounceWebhook("admin", VALID_URL);
+    expect(mocks.upstashEval).toHaveBeenCalledWith(expect.any(String), ["ctf:announce:lifecycle", "ctf:announce:seq"], [
+      "v2|L1P1C0A1",
+      "v2|L1P0C1A1",
+      expect.any(String),
+    ]);
   });
 
   it("refuses a non-Discord URL with a validation error and writes nothing", async () => {
@@ -164,21 +207,23 @@ describe("setAnnounceWebhook", () => {
 });
 
 describe("getWebhookUrl", () => {
-  it("returns the stored URL for the sender's use, and null on failure", async () => {
+  it("returns the stored URL, and null only when the key is genuinely absent", async () => {
     mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: VALID_URL })));
     expect(await getWebhookUrl()).toBe(VALID_URL);
     mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: null })));
     expect(await getWebhookUrl()).toBeNull();
-    mocks.upstashPipeline.mockRejectedValue(new Error("down"));
+    mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: "" })));
     expect(await getWebhookUrl()).toBeNull();
   });
 
-  it("handles a per-command error by logging and returning null", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("THROWS on a transport failure — a failed read is not a missing webhook", async () => {
+    mocks.upstashPipeline.mockRejectedValue(new Error("down"));
+    await expect(getWebhookUrl()).rejects.toThrow("down");
+  });
+
+  it("THROWS on a per-command error instead of returning null", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ error: "NOAUTH" }]);
-    expect(await getWebhookUrl()).toBeNull();
-    expect(errorSpy).toHaveBeenCalledWith("[announce] webhook read failed:", expect.any(String));
-    errorSpy.mockRestore();
+    await expect(getWebhookUrl()).rejects.toThrow(/webhook read failed/);
   });
 });
 

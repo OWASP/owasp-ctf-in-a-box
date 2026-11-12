@@ -26,7 +26,7 @@
 
 import "server-only";
 import { upstashPipeline, upstashEval } from "@/lib/upstash";
-import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
+import { adminErrorLabel, getAdminSettings, writeAdminAudit } from "@/lib/admin-store";
 import {
   ANNOUNCEMENT_KINDS,
   DISCORD_DEFAULTS,
@@ -48,6 +48,7 @@ import {
   DISCORD_CONFIG_KEY,
   DISCORD_WEBHOOK_KEY,
 } from "./keys";
+import { decodeLifecycleState, encodeLifecycleState, lifecycleSnapshotFrom } from "./detect";
 
 // --- config ------------------------------------------------------------------
 
@@ -184,6 +185,11 @@ export async function setAnnounceWebhook(actor: string, raw: unknown): Promise<{
   }
   const checked = checkDiscordWebhookUrl(raw);
   if (!checked.ok) throw new AnnounceValidationError(checked.message);
+  // Reconcile BEFORE the URL lands: while the box is still unconfigured a
+  // concurrent tick cannot observe the new webhook against a pack frozen at
+  // the last edge before it was cleared, replaying a launch (or other
+  // transition) that already happened.
+  await reconcileLifecycleState();
   const [res] = await upstashPipeline([["SET", DISCORD_WEBHOOK_KEY, checked.value]]);
   if (res.error) throw new Error(`webhook write failed: ${res.error}`);
   await writeAdminAudit(actor, "announce-webhook", { state: "set" });
@@ -191,16 +197,14 @@ export async function setAnnounceWebhook(actor: string, raw: unknown): Promise<{
 }
 
 /** The webhook URL, for the sender's use ONLY. Never part of an API
- *  response; callers that need a boolean ask for `webhookConfigured`. */
+ *  response; callers that need a boolean ask for `webhookConfigured`. A
+ *  missing key is a genuine "no webhook" and returns null; a FAILED read
+ *  THROWS, because reading a Redis blip as "no webhook" would let senders
+ *  clear their queues or skip outbox entries they should retry. */
 export async function getWebhookUrl(): Promise<string | null> {
-  try {
-    const [res] = await upstashPipeline([["GET", DISCORD_WEBHOOK_KEY]]);
-    if (res.error) throw new Error(res.error);
-    return typeof res.result === "string" && res.result !== "" ? res.result : null;
-  } catch (err) {
-    console.error("[announce] webhook read failed:", adminErrorLabel(err));
-    return null;
-  }
+  const [res] = await upstashPipeline([["GET", DISCORD_WEBHOOK_KEY]]);
+  if (res.error) throw new Error(`webhook read failed: ${res.error}`);
+  return typeof res.result === "string" && res.result !== "" ? res.result : null;
 }
 
 // --- dedup ledgers -----------------------------------------------------------
@@ -325,6 +329,36 @@ export async function readStatePack(stateKey: typeof ANNOUNCE_LIFECYCLE_KEY): Pr
 export async function deleteLifecycleState(): Promise<void> {
   const [res] = await upstashPipeline([["DEL", ANNOUNCE_LIFECYCLE_KEY]]);
   if (res.error) throw new Error(`lifecycle state delete failed: ${res.error}`);
+}
+
+/** Advances the stored observation to the CURRENT event state without
+ *  announcing anything. The lifecycle pass only runs while a webhook is
+ *  configured, so clearing it freezes the pack at the last observed edge;
+ *  arming it again against that stale pack would replay every transition
+ *  since (a launch, a close) into the channel. An already-announced pause
+ *  bit is carried forward: that hold WAS posted, so the resume it owes must
+ *  still announce later. The CAS keeps a racing observer from clobbering a
+ *  newer pack: a lost swap re-reads and reconciles against what won. */
+async function reconcileLifecycleState(nowMs: number = Date.now()): Promise<void> {
+  const settings = await getAdminSettings();
+  const derived = lifecycleSnapshotFrom(
+    {
+      scoringStartsAt: settings.scoringStartsAt,
+      scoringEndsAt: settings.scoringEndsAt,
+      paused: settings.paused,
+    },
+    nowMs,
+  );
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const expected = (await readStatePack(ANNOUNCE_LIFECYCLE_KEY)) ?? "";
+    const prev = decodeLifecycleState(expected);
+    const next = encodeLifecycleState({ ...derived, announced: Boolean(prev?.announced) });
+    if (expected === next) return;
+    const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next);
+    // 1 = our silent write won, 2 = seeded from no previous state. 0 = a
+    // racing writer moved the pack; re-read it and reconcile again.
+    if (cas.code !== 0) return;
+  }
 }
 
 // --- outbox ------------------------------------------------------------------

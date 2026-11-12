@@ -223,6 +223,36 @@ describe("lifecycle tick", () => {
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
 
+  it("does not replay a launch that happened while the webhook was cleared, and keeps an owed resume", async () => {
+    // The webhook was cleared before launch, so the lifecycle pass froze at
+    // the pre-clear pack. Setting it again reconciles the observation to the
+    // current (launched and closed) state, carrying the announced pause bit.
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true, pause: true }));
+    mocks.getAdminSettings.mockResolvedValue(
+      settings({ scoringStartsAt: "2026-10-14T11:00:00Z", scoringEndsAt: "2026-10-14T11:30:00Z" }),
+    );
+    mocks.readStatePack.mockResolvedValue("v2|L1P0C1A1");
+    await runAnnounceTick(T0);
+    // Already at the reconciled state: no CAS, so no stale launch post.
+    expect(mocks.stateCompareSet).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+
+    // Extend the window and unfreeze: the pause announced before the clear
+    // still owes its resume.
+    mocks.getAdminSettings.mockResolvedValue(
+      settings({ scoringStartsAt: "2026-10-14T11:00:00Z", scoringEndsAt: "2026-10-14T13:00:00Z" }),
+    );
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 3, prev: "v2|L1P0C1A1" });
+    await runAnnounceTick(T0 + 30_000);
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C1A1", "v2|L1P0C0A0");
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith(
+      "resume",
+      expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring resumed" })] }),
+    );
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalledWith("launch", expect.anything());
+  });
+
   it("advances the state but posts nothing when the edge's switch is off", async () => {
     // launch on (the pass runs), pause off: the observed pause edge is a
     // real transition this replica must record, but it must not post.

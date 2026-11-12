@@ -3,6 +3,7 @@ import { createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import type { BetterAuthOptions } from "better-auth";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
+import { linkOnUserWrite } from "@/lib/github-link";
 import { recordCallbackLogin } from "@/lib/activity-log";
 
 /**
@@ -134,6 +135,16 @@ export const authOptions = {
     "/get-access-token",
     "/refresh-token",
   ],
+  databaseHooks: {
+    // The GitHub login a player signs in with is recorded as their link
+    // (github-link.ts). better-auth writes the user row on every GitHub
+    // sign-in: create for a new player, update (overrideUserInfoOnSignIn
+    // below) for a returning one, so a renamed account re-links here.
+    user: {
+      create: { after: async (user) => linkOnUserWrite(user) },
+      update: { after: async (user) => linkOnUserWrite(user) },
+    },
+  },
   hooks: {
     // Sign-in timestamps for the admin activity log (issue #212). The after
     // hook runs on EVERY auth endpoint; recordCallbackLogin filters to the

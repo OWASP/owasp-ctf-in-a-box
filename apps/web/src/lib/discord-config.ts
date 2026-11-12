@@ -33,12 +33,21 @@ export type DiscordPublicConfig = {
 };
 
 /** The server-only full config (announce/store.ts) — the same fields plus
- *  the URL and the webhook generation an enqueue stamps onto its entry.
- *  Never crosses an API boundary. */
+ *  the URL, the webhook generation, and each kind's switch epoch. An
+ *  enqueue stamps both counters onto its entry; disabling a switch advances
+ *  its epoch so an entry from before the disable is rejected even after the
+ *  switch is turned back on. Never crosses an API boundary. */
 export type DiscordFullConfig = DiscordPublicConfig & {
   webhookUrl: string | null;
   webhookGeneration: number;
+  kindEpochs: Record<AnnouncementKind, number>;
 };
+
+/** The all-zero switch epochs, for a full-config fallback that must not
+ *  borrow a live epoch it did not read. */
+export function zeroKindEpochs(): Record<AnnouncementKind, number> {
+  return { "first-blood": 0, launch: 0, pause: 0, resume: 0, milestone: 0 };
+}
 
 /** Announcement kinds, keyed by the config switch that gates them. Used by
  *  the sender's flush-time filter ("stop disabled announcements immediately")

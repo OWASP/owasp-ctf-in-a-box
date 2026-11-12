@@ -4,7 +4,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel } from "@/lib/admin-store";
 import { nudgeAnnounceTicker } from "@/lib/announce/ticker";
 import { AnnounceValidationError, getAnnounceConfig, publicConfig, setAnnounceWebhook } from "@/lib/announce/store";
-import { DISCORD_DEFAULTS, type DiscordFullConfig } from "@/lib/discord-config";
+import { DISCORD_DEFAULTS, zeroKindEpochs, type DiscordFullConfig } from "@/lib/discord-config";
 
 /**
  * Set or clear the Discord webhook URL (#590). Its OWN endpoint, separate
@@ -58,6 +58,7 @@ export async function POST(request: Request) {
       webhookConfigured: result.webhookConfigured,
       webhookUrl: null,
       webhookGeneration: 0,
+      kindEpochs: zeroKindEpochs(),
     };
     try {
       config = await getAnnounceConfig();

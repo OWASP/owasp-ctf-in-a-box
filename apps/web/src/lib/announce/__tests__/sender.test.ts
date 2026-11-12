@@ -51,11 +51,12 @@ const configured = (over: Record<string, unknown> = {}) => ({
   marks: "",
   webhookUrl: URL,
   webhookGeneration: 0,
+  kindEpochs: { "first-blood": 0, launch: 0, pause: 0, resume: 0, milestone: 0 },
   ...over,
 });
 
-function entry(kind: string, status = "pending", n = 0, webhookGeneration = 0) {
-  return { kind, payload: message, at: new Date().toISOString(), n, status, webhookGeneration };
+function entry(kind: string, status = "pending", n = 0, webhookGeneration = 0, kindEpoch = 0) {
+  return { kind, payload: message, at: new Date().toISOString(), n, status, webhookGeneration, kindEpoch };
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -99,7 +100,7 @@ describe("enqueueAnnouncement", () => {
   it("enqueues and arms a coalesced flush when armed", async () => {
     await enqueueAnnouncement("first-blood", message);
     expect(mocks.outboxEnqueue).toHaveBeenCalledTimes(1);
-    expect(mocks.outboxEnqueue).toHaveBeenCalledWith(expect.any(String), "first-blood", message, 0);
+    expect(mocks.outboxEnqueue).toHaveBeenCalledWith(expect.any(String), "first-blood", message, 0, 0);
     await vi.advanceTimersByTimeAsync(300);
     expect(mocks.outboxPending).toHaveBeenCalled();
   });
@@ -168,6 +169,16 @@ describe("flush", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.outboxClaim).not.toHaveBeenCalled();
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+
+  it("a rejected lease claim does not post or complete the entry", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
+    mocks.outboxClaim.mockRejectedValue(new Error("redis down"));
+    await flush();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("re-arms the coalescing timer when a pass is already active, so the skipped flush is not stranded", async () => {
@@ -294,6 +305,20 @@ describe("flushRetries", () => {
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.outboxClaim).not.toHaveBeenCalled();
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+
+  it("rejects an entry enqueued from before a switch disable after it is re-enabled", async () => {
+    // A producer read firstBlood: true (epoch 0) and enqueued after the
+    // disable's cancellation scan. Turning it back on keeps the advanced
+    // epoch, so the retained entry must not post.
+    mocks.getAnnounceConfig.mockResolvedValue(
+      configured({ kindEpochs: { "first-blood": 1, launch: 0, pause: 0, resume: 0, milestone: 0 } }),
+    );
+    mocks.outboxPending.mockResolvedValue([{ id: "race", entry: entry("first-blood", "pending", 0, 0, 0) }]);
+    await flushRetries();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxSkip).toHaveBeenCalledWith("race");
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 

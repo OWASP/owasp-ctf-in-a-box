@@ -33,6 +33,7 @@ import {
   DISCORD_DEFAULTS,
   checkDiscordWebhookUrl,
   parseMarks,
+  zeroKindEpochs,
   type AnnouncementKind,
   type DiscordConfigPatch,
   type DiscordFullConfig,
@@ -64,10 +65,21 @@ export class AnnounceValidationError extends Error {
   }
 }
 
-/** Parses the internal generation counter. A missing key is generation 0;
- *  a malformed value THROWS rather than reading as 0, because 0 would let an
- *  entry stamped before a clear pass as current. */
-function parseWebhookGeneration(value: unknown): number {
+/** The config-hash field holding each kind's switch epoch. It lives in the
+ *  config hash, not the outbox, so the disable write can advance it in the
+ *  same atomic step that turns the switch off. */
+const KIND_EPOCH_FIELDS: Record<AnnouncementKind, string> = {
+  "first-blood": "epoch:first-blood",
+  launch: "epoch:launch",
+  pause: "epoch:pause",
+  resume: "epoch:resume",
+  milestone: "epoch:milestone",
+};
+
+/** Parses an internal counter. A missing value is 0; a malformed value
+ *  THROWS rather than reading as 0, because 0 would let an entry stamped
+ *  before a clear or switch disable pass as current. */
+function parseCounter(value: unknown, label: string): number {
   if (value === null || value === undefined || value === "") return 0;
   const n =
     typeof value === "number"
@@ -75,8 +87,20 @@ function parseWebhookGeneration(value: unknown): number {
       : typeof value === "string" && /^\d+$/.test(value)
         ? Number(value)
         : Number.NaN;
-  if (!Number.isSafeInteger(n) || n < 0) throw new Error("invalid webhook generation");
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error(`invalid ${label}`);
   return n;
+}
+
+function parseWebhookGeneration(value: unknown): number {
+  return parseCounter(value, "webhook generation");
+}
+
+function parseKindEpochs(raw: Record<string, string>): Record<AnnouncementKind, number> {
+  const epochs = zeroKindEpochs();
+  for (const kind of ANNOUNCEMENT_KINDS) {
+    epochs[kind] = parseCounter(raw[KIND_EPOCH_FIELDS[kind]], "switch epoch");
+  }
+  return epochs;
 }
 
 /** Reads the config + generation + webhook in ONE pipeline, then merges the
@@ -117,6 +141,7 @@ export async function getAnnounceConfig(timeoutMs?: number): Promise<DiscordFull
   return {
     webhookConfigured: webhookUrl !== null,
     webhookGeneration: parseWebhookGeneration(genRes.result),
+    kindEpochs: parseKindEpochs(raw),
     firstBlood: raw.firstBlood === "1",
     launch: raw.launch === "1",
     pause: raw.pause === "1",
@@ -141,6 +166,26 @@ export function publicConfig(config: DiscordFullConfig): DiscordPublicConfig {
     marks: config.marks,
   };
 }
+
+/** Applies switch writes and advances the epochs of every kind they turn
+ *  off in ONE atomic step. A producer can read `firstBlood: true` and then
+ *  enqueue after the cancellation scan; the epoch it stamps is the one it
+ *  read, and the switch-off moves past it before the producer can write.
+ *  Doing the switch write and the bumps in one script also means no reader
+ *  can observe the switch ON with the new epoch — which would stamp a fresh
+ *  entry from a state that was already disabled. */
+export const SWITCH_DISABLE_SCRIPT = `
+local n = tonumber(ARGV[1])
+local i = 2
+for _ = 1, n do
+  redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1])
+  i = i + 2
+end
+for j = i, #ARGV do
+  redis.call('HINCRBY', KEYS[1], ARGV[j], 1)
+end
+return 1
+`;
 
 /** Validates a patch field-by-field and writes only the recognised,
  *  validated fields. Unknown keys are refused outright (same contract as
@@ -189,8 +234,17 @@ export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPa
   // switch ON and the entries deliverable rather than silently stranded.
   if (disabledKinds.length > 0) await cancelOutboxEntriesFor(disabledKinds);
   if (writes.length > 0) {
-    const [res] = await upstashPipeline([["HSET", DISCORD_CONFIG_KEY, ...writes.flat()]]);
-    if (res.error) throw new Error(`config write failed: ${res.error}`);
+    if (disabledKinds.length > 0) {
+      const epochFields = disabledKinds.map((kind) => KIND_EPOCH_FIELDS[kind]);
+      await upstashEval(SWITCH_DISABLE_SCRIPT, [DISCORD_CONFIG_KEY], [
+        String(writes.length),
+        ...writes.flat(),
+        ...epochFields,
+      ]);
+    } else {
+      const [res] = await upstashPipeline([["HSET", DISCORD_CONFIG_KEY, ...writes.flat()]]);
+      if (res.error) throw new Error(`config write failed: ${res.error}`);
+    }
   }
   if (Object.keys(changed).length > 0) {
     // The patch's values are all public prefs — no secret can be in here —
@@ -208,7 +262,13 @@ export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPa
     current = await getAnnounceConfig();
   } catch (err) {
     console.error("[announce] config read-back failed after save:", adminErrorLabel(err));
-    current = { ...DISCORD_DEFAULTS, webhookConfigured: false, webhookUrl: null, webhookGeneration: 0 };
+    current = {
+      ...DISCORD_DEFAULTS,
+      webhookConfigured: false,
+      webhookUrl: null,
+      webhookGeneration: 0,
+      kindEpochs: zeroKindEpochs(),
+    };
   }
   return publicConfig({ ...current, ...changed });
 }
@@ -452,6 +512,7 @@ export type OutboxEntry = {
   n: number;
   status: OutboxStatus;
   webhookGeneration: number;
+  kindEpoch: number;
 };
 
 /** The outbox id for one announcement. `seq` comes from the CAS bump (or a
@@ -461,16 +522,25 @@ export function outboxId(seq: number, kind: string): string {
   return `${Date.now()}-${seq}-${kind}`;
 }
 
-/** Appends an entry to the outbox with the generation its enqueue observed.
- *  The payload is the builder's OUTPUT (a DiscordMessage), so a retry replays
- *  exactly what was first composed. */
+/** Appends an entry to the outbox with the webhook generation and switch
+ *  epoch its enqueue observed. The payload is the builder's OUTPUT (a
+ *  DiscordMessage), so a retry replays exactly what was first composed. */
 export async function outboxEnqueue(
   id: string,
   kind: AnnouncementKind,
   payload: unknown,
   webhookGeneration: number,
+  kindEpoch: number,
 ): Promise<void> {
-  const entry: OutboxEntry = { kind, payload, at: new Date().toISOString(), n: 0, status: "pending", webhookGeneration };
+  const entry: OutboxEntry = {
+    kind,
+    payload,
+    at: new Date().toISOString(),
+    n: 0,
+    status: "pending",
+    webhookGeneration,
+    kindEpoch,
+  };
   const [res] = await upstashPipeline([["HSET", ANNOUNCE_OUTBOX_KEY, id, JSON.stringify(entry)]]);
   if (res.error) console.error("[announce] outbox enqueue failed:", adminErrorLabel(new Error(res.error)));
 }
@@ -493,21 +563,29 @@ return 0
  *  count still match `seen`. Returns an owner token on success, null when
  *  the entry was already completed, moved to another retry state, or is
  *  currently leased by another worker. The token goes into the lease value so
- *  completion can prove it still owns the lease. */
+ *  completion can prove it still owns the lease. A command error or rejected
+ *  Redis call ALSO returns null: nothing is claimed, the entry stays
+ *  `pending` or `failed` for the next flush or retry sweep, and delivery
+ *  fails closed rather than risking a double post. */
 export async function outboxClaim(
   id: string,
   seen: Pick<OutboxEntry, "status" | "n">,
   leaseMs: number = ANNOUNCE_LEASE_MS,
 ): Promise<string | null> {
   const token = randomUUID();
-  const [res] = await upstashPipeline([
-    ["EVAL", OUTBOX_CLAIM_SCRIPT, 2, ANNOUNCE_OUTBOX_KEY, `${ANNOUNCE_LEASE_PREFIX}${id}`, id, seen.status, seen.n, leaseMs, token],
-  ]);
-  if (res.error) {
-    console.error("[announce] outbox claim failed:", adminErrorLabel(new Error(res.error)));
+  try {
+    const [res] = await upstashPipeline([
+      ["EVAL", OUTBOX_CLAIM_SCRIPT, 2, ANNOUNCE_OUTBOX_KEY, `${ANNOUNCE_LEASE_PREFIX}${id}`, id, seen.status, seen.n, leaseMs, token],
+    ]);
+    if (res.error) {
+      console.error("[announce] outbox claim failed:", adminErrorLabel(new Error(res.error)));
+      return null;
+    }
+    return res.result === 1 ? token : null;
+  } catch (err) {
+    console.error("[announce] outbox claim failed:", adminErrorLabel(err));
     return null;
   }
-  return res.result === 1 ? token : null;
 }
 
 /** Writes an entry's terminal status and releases its lease, but ONLY if the

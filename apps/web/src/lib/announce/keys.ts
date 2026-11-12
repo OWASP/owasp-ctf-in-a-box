@@ -52,12 +52,14 @@ export const ANNOUNCE_LIFECYCLE_KEY = "ctf:announce:lifecycle";
 export const ANNOUNCE_SEQ_KEY = "ctf:announce:seq";
 
 /** The delivery outbox: field = announcement id, value = JSON
- *  `{kind, payload, at, n, status, webhookGeneration}`. `status` is
- *  `pending` (queued here or on another replica, guarded by its lease key),
- *  `sent`, or `failed` (retryable until `n` reaches
+ *  `{kind, payload, at, n, status, webhookGeneration, kindEpoch}`. `status`
+ *  is `pending` (queued here or on another replica, guarded by its lease
+ *  key), `sent`, or `failed` (retryable until `n` reaches
  *  ANNOUNCE_MAX_ATTEMPTS). `webhookGeneration` is the generation the enqueue
  *  observed, so an entry produced from a snapshot taken before a clear is
- *  rejected instead of delivered to a later URL. */
+ *  rejected instead of delivered to a later URL. `kindEpoch` is the switch
+ *  epoch it observed, so an entry produced from a snapshot taken before a
+ *  switch disable is rejected after the switch is turned back on. */
 export const ANNOUNCE_OUTBOX_KEY = "ctf:announce:outbox";
 
 /** Per-id delivery lease: `ctf:announce:lease:<id>` SET NX PX, the single

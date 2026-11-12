@@ -118,7 +118,7 @@ describe("reset and the webhook generation", () => {
 
     // The producer's outbox write lands after the reset deleted the outbox,
     // but it still carries the generation its config read observed.
-    await outboxEnqueue("race", "launch", { embeds: [] }, before.webhookGeneration);
+    await outboxEnqueue("race", "launch", { embeds: [] }, before.webhookGeneration, before.kindEpochs.launch);
     expect(state.outbox.get("race")?.status).toBe("pending");
 
     await flushRetries();

@@ -196,12 +196,12 @@ export async function withModuleSeries(data: LeaderboardData): Promise<Leaderboa
   // — so the read set is the charted entries plus the charted teams'
   // rosters, nothing else.
   //
-  // The read set carries each player id's SPELLING, not its lowercase, because
-  // the stores and the join disagree on case: each module's hash is keyed on
-  // the player id exactly as the session spelled it, so a lowercased read of a
-  // mixed-case player id finds an empty hash and drops that contestant's
-  // app-side points from the chart. The series join case-insensitively, so a
-  // player id stored under two spellings is one contestant with one line.
+  // The read set holds each player id as stored, not lowercased: each
+  // module's hash is keyed on the id as written, so a lowercased read of a
+  // record stored under another case would find an empty hash and drop that
+  // contestant's app-side points from the chart. Kit ids are lowercase, so
+  // the two agree in practice; the series join case-insensitively, so an id
+  // stored under two cases is one contestant with one line.
   const chartedEntries = data.entries.filter((e) => e.rank <= SERIES_TOP_N);
   const chartedTeams = data.teams.filter((t) => t.rank <= SERIES_TOP_N);
   const spellings = new Set<string>();

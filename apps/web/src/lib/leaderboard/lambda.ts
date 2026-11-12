@@ -18,10 +18,10 @@ import type {
 // { leaderboard: [{ rank, player, points, lastSolveAt,
 //                   apps: { "juice-shop": { solved, total }, ... } }],
 //   series: [{ player, points: [{ t, score }, ...] }, ...],
-// `player` (on a row and on a series line) is the kit user id; each
-// becomes the row's `playerId`, and names are attached by the fold.
 //   teams: [{ rank, slug, name, captain, members, points, lastSolveAt, apps }, ...],
 //   teamSeries: [{ slug, name, points: [{ t, score }, ...] }, ...] }
+// `player` (on a row and on a series line) is the kit user id; each
+// becomes the row's `playerId`, and names are attached by the fold.
 // There is no per-app point/max breakdown in this source. `series`/`teams`/
 // `teamSeries` are all additive — read defensively since an older scorer
 // deployment may not send any of them at all.

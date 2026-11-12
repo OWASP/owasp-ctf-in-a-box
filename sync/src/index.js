@@ -132,7 +132,7 @@ export async function tick(cfg, state, deps = {}) {
 
   // Master-reset epoch: when it advances, drop the cursor so this poll
   // re-reads from scratch; the caller persists `state` after this tick.
-  if (redis?.getResetAt) {
+  if (redis.getResetAt) {
     const resetAt = await redis.getResetAt();
     if (resetAt && resetAt !== state.resetAt) {
       state.repos = {};

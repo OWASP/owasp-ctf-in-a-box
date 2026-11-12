@@ -56,14 +56,13 @@ export async function withHintPenalties(data: LeaderboardData): Promise<Leaderbo
   }
   if (penalties.size === 0) return data;
 
-  // Logins are matched case-insensitively, like every other player id join in
-  // this codebase (module-contributions, team-standings): the scorer records
-  // the PR author's spelling, the spend hash the session's at purchase time.
-  // A case disagreement must not exempt the row — the union fold upstream
-  // already merged the two spellings into ONE row, so the penalty has to land
-  // on it. Case-variant fields are SUMMED, not last-wins: the spend hash
-  // accumulates historically, so a case-only GitHub login rename mid-event
-  // leaves one person's spend split across two fields — all of it is theirs.
+  // Player ids are matched case-insensitively, like every other player id
+  // join in this codebase (module-contributions, team-standings). Kit ids are
+  // lowercase, so the fold is the identity on them; a case disagreement still
+  // must not exempt the row, since the union fold upstream merges case
+  // variants into ONE row and the penalty has to land on it. Case-variant
+  // fields are SUMMED, not last-wins: the spend hash accumulates, so every
+  // field that folds to one player is that player's spend.
   const byPlayer = new Map<string, number>();
   for (const [playerId, points] of penalties) {
     const key = playerId.toLowerCase();

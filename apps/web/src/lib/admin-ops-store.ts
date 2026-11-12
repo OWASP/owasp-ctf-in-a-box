@@ -53,9 +53,10 @@ import {
  * contestant, or one team, without touching anybody else.
  *
  * Every function takes `actor` and writes an audit line naming BOTH the actor
- * (their player id and name) and the target (a player id, or a team slug). Support actions are precisely the ones that have to be
- * explicable afterwards — "who deleted that team, and when" is a question that
- * gets asked after an event, not during it.
+ * (their player id and name) and the target (a player id, or a team slug).
+ * Support actions are precisely the ones that have to be explicable
+ * afterwards — "who deleted that team, and when" is a question that gets
+ * asked after an event, not during it.
  *
  * Callers gate on `requireAdmin`. Nothing here re-checks authorization: these
  * are the privileged primitives, and giving them a second, weaker opinion

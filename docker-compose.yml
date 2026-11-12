@@ -229,8 +229,7 @@ services:
       # The poller's LEGACY state file. The cursor itself lives in Redis
       # (ctf:sync:state, through srh above); this file is read once, to carry
       # an older box's cursor into Redis, then renamed state.json.migrated.
-      # It is the store only when sync has no Redis client. The volume stays
-      # so that migration has something to read. Same reasoning as redis's
+      # The volume stays so that migration has something to read. Same reasoning as redis's
       # REDIS_DIR above: the default is exactly what compose has always used,
       # and .env.fly moves it
       # to /data/sync/state.json so both services fit the single volume a Fly

@@ -1,4 +1,4 @@
-import { loadConfig, REPO_NAMES, TARGETS } from "./config.js";
+import { loadConfig, REPO_NAMES } from "./config.js";
 import { fetchNewScoreComments } from "./github.js";
 import { hasScoreMarker, parseScoreComment } from "./parse.js";
 import { submitScore } from "./submit.js";
@@ -79,6 +79,10 @@ function summarize(repo, tally) {
 
 export async function tick(cfg, state, deps = {}) {
   const { fetchImpl = fetch, log = console.error, redis = null } = deps;
+  // Every read below (freeze, targets, reset epoch, PR author links) is a
+  // Redis read; main() refuses to start without a client, and a tick without
+  // one must not guess.
+  if (!redis) throw new Error("tick needs a Redis client");
   const nowIso = deps.nowIso ?? (() => new Date().toISOString());
   state.ingested ??= 0;
   state.dropped ??= 0;
@@ -99,7 +103,7 @@ export async function tick(cfg, state, deps = {}) {
   // pause and read during it must still score, and one posted during it must
   // not score after the resume. Read before the target list so even the
   // unreadable-targets heartbeat below carries the real value.
-  const paused = redis ? await redis.isPaused() : false;
+  const paused = await redis.isPaused();
 
   // Resolve THIS TICK's target list before anything else touches state or
   // Redis. With no admin override this is the app's full six-target
@@ -111,23 +115,19 @@ export async function tick(cfg, state, deps = {}) {
   // deliberately unlike the isPaused/getResetAt reads, which fail open/silent
   // because a miss there already has its own safe direction.
   let targets;
-  if (redis) {
-    try {
-      targets = await redis.getSecureDevTargets();
-    } catch (err) {
-      await writeStatusSafely(redis, log, {
-        lastPollAt: nowIso(),
-        ingested: state.ingested,
-        dropped: state.dropped,
-        lastDrop: state.lastDrop ?? null,
-        reposPolled: 0,
-        paused,
-        lastError: `targets unreadable: ${err.message}`,
-      });
-      return state;
-    }
-  } else {
-    targets = TARGETS;
+  try {
+    targets = await redis.getSecureDevTargets();
+  } catch (err) {
+    await writeStatusSafely(redis, log, {
+      lastPollAt: nowIso(),
+      ingested: state.ingested,
+      dropped: state.dropped,
+      lastDrop: state.lastDrop ?? null,
+      reposPolled: 0,
+      paused,
+      lastError: `targets unreadable: ${err.message}`,
+    });
+    return state;
   }
 
   // Master-reset epoch: when it advances, drop the cursor so this poll
@@ -197,7 +197,7 @@ export async function tick(cfg, state, deps = {}) {
         // at it.
         // Resolved inside the try so a Redis error un-marks the comment like
         // a transient submit failure: the next poll retries it.
-        const player = redis?.resolveGithubLogin ? await redis.resolveGithubLogin(payload.author) : null;
+        const player = await redis.resolveGithubLogin(payload.author);
         if (!player) {
           tally.unlinked++;
           drop(`submit ${repo}#${payload.pr}: unlinked (no player claimed the PR author), dropped`);
@@ -232,17 +232,15 @@ export async function tick(cfg, state, deps = {}) {
     rs.etag = stopAt ? null : result.cursor.etag;
   }
 
-  if (redis) {
-    await writeStatusSafely(redis, log, {
-      lastPollAt: nowIso(),
-      ingested: state.ingested,
-      dropped: state.dropped,
-      lastDrop: state.lastDrop ?? null,
-      reposPolled,
-      paused,
-      lastError,
-    });
-  }
+  await writeStatusSafely(redis, log, {
+    lastPollAt: nowIso(),
+    ingested: state.ingested,
+    dropped: state.dropped,
+    lastDrop: state.lastDrop ?? null,
+    reposPolled,
+    paused,
+    lastError,
+  });
   return state;
 }
 

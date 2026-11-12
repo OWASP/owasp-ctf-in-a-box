@@ -151,19 +151,3 @@ test('stored ["vampi"] → only VAmPI polled', async () => {
   assert.equal(status.reposPolled, 1);
   assert.deepEqual(polled, ["VAmPI"]);
 });
-
-// R5: no Redis client at all (main() logs this once at boot, see
-// main.test.js) — tick() must still poll something rather than going dark.
-// TARGETS (all six) is the documented fallback; there is no `status` object
-// to read reposPolled from here (the final writeStatusSafely is itself
-// gated on `redis`), so this asserts on which repos were actually fetched.
-test("no redis client → falls back to polling all six targets", async () => {
-  const polled = [];
-  const fetchImpl = async (url) => {
-    polled.push(new URL(String(url)).pathname.split("/")[3]);
-    return { status: 200, headers: { get: () => null }, json: async () => [] };
-  };
-  await tick(pollableCfg, baseState(), { fetchImpl, log: () => {} }); // no `redis` key
-  assert.equal(polled.length, TARGETS.length);
-  assert.deepEqual(polled.sort(), Object.values(REPO_NAMES).sort());
-});

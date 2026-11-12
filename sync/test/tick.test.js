@@ -412,3 +412,18 @@ test("a resolver error leaves the comment unseen so the next poll retries it", a
   assert.equal(posts.length, 1);
   assert.equal(posts[0].player, LINKS.octocat);
 });
+
+test("an unlinked author's comment stays seen: the next tick does not retry or re-count it", async () => {
+  const posts = [];
+  const body = `<!-- ctf-score: {"author":"stranger","target":"dvwa","solved":["sqli-low"],"pr":9,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {} });
+  await tick(CFG, state, { fetchImpl: f, log: () => {} });
+  assert.equal(posts.length, 0);
+  assert.equal(state.dropped, 1);
+});
+
+test("a tick with no Redis client refuses rather than treating authors as unlinked", async () => {
+  await assert.rejects(rawTick(CFG, { repos: {} }, { fetchImpl: async () => { throw new Error("no"); }, log: () => {} }), /Redis client/);
+});

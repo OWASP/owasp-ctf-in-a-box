@@ -85,8 +85,8 @@ export function redisErrorText(error) {
 }
 
 /** The poller's Redis client, or null when UPSTASH_REDIS_REST_URL/TOKEN are
- *  unset (a poller with no Redis still polls; it just cannot report the
- *  freeze or write its heartbeat). `fetchImpl`, `log` and `timeoutMs` are seams. */
+ *  unset (main() refuses to start without one: the freeze, the targets, the
+ *  durable state and the PR author links all live there). `fetchImpl`, `log` and `timeoutMs` are seams. */
 export function makeRedis(env = process.env, fetchImpl = fetch, log = console.error, { timeoutMs = PIPELINE_TIMEOUT_MS } = {}) {
   const url = env.UPSTASH_REDIS_REST_URL;
   const token = env.UPSTASH_REDIS_REST_TOKEN;

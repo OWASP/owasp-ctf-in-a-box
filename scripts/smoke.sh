@@ -28,18 +28,21 @@ trap cleanup EXIT
 # Sync attributes a PR author to the player who claimed their GitHub login
 # (`ctf:link:github:<lowercased login>`), so the links are in Redis BEFORE
 # sync's first poll: an unlinked author's comment is consumed and dropped.
-# mallory stays unlinked, as well as forged.
+# mallory is linked too, so the bot-author trust filter is the ONLY thing
+# keeping her forged comment off the board (unlinked would drop it anyway).
 OCTOCAT_ID=11111111-1111-4111-8111-111111111111
 MONA_ID=33333333-3333-4333-8333-333333333333
 TRINITY_ID=44444444-4444-4444-8444-444444444444
+MALLORY_ID=22222222-2222-4222-8222-222222222222
 compose up -d --build redis srh scorer mock-github
 link_deadline=$((SECONDS + 30))
 until compose exec -T redis redis-cli ping 2>/dev/null | grep -qx PONG; do
   [ "$SECONDS" -ge "$link_deadline" ] && { echo "FAIL: redis never answered before the link keys were seeded"; exit 1; }
   sleep 1
 done
-for pair in "octocat:$OCTOCAT_ID" "mona:$MONA_ID" "trinity:$TRINITY_ID"; do
-  compose exec -T redis redis-cli SET "ctf:link:github:${pair%%:*}" "${pair#*:}" >/dev/null
+for pair in "octocat:$OCTOCAT_ID" "mona:$MONA_ID" "trinity:$TRINITY_ID" "mallory:$MALLORY_ID"; do
+  compose exec -T redis redis-cli SET "ctf:link:github:${pair%%:*}" "${pair#*:}" >/dev/null \
+    || { echo "FAIL: could not seed link key for ${pair%%:*}"; exit 1; }
 done
 compose up -d --build sync
 
@@ -140,9 +143,11 @@ grep -q "\"player\":\"$MONA_ID\",\"points\":1,\"solved\":\[[^]]*\],\"at\":\"2026
   || { echo "FAIL: mona's score did not carry its comment's updated_at"; exit 1; }
 
 echo "--- forged comment from mallory was ignored (trust filter)"
-if grep -qF 'mallory' <<< "$board"; then
-  echo "FAIL: forged comment was scored"; exit 1
+if grep -qF "$MALLORY_ID" <<< "$board"; then
+  echo "FAIL: mallory's forged comment was scored (player $MALLORY_ID is on the board)"; exit 1
 fi
+dropped="$(compose exec -T redis redis-cli HGET ctf:sync:status dropped 2>/dev/null | tr -d '\r')"
+[ "$dropped" = "0" ] || { echo "FAIL: sync dropped $dropped comments, expected 0 (a linked author must never drop)"; exit 1; }
 
 echo "--- unauthenticated POST /score rejected"
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:4000/score \

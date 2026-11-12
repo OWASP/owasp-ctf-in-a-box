@@ -16,7 +16,7 @@ const m = vi.hoisted(() => ({
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/admin-auth", () => ({
-  requireAdmin: async () => (m.admin ? { ok: true, login: "boss" } : { ok: false, status: 403 }),
+  requireAdmin: async () => (m.admin ? { ok: true, login: "boss", player: { ...actor("boss"), image: null, githubLogin: "boss" } } : { ok: false, status: 403 }),
 }));
 vi.mock("@/lib/admin-store", () => ({
   writeAdminAudit: m.audit,
@@ -38,6 +38,7 @@ vi.mock("@/lib/attachments-store", async () => {
 import { AttachmentError } from "@/lib/attachments-store";
 import { ATTACHMENT_MAX_BYTES } from "@/lib/attachments-keys";
 import { DELETE, GET, POST } from "@/app/api/admin/attachments/route";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const url = (q: string) => `http://x/api/admin/attachments?${q}`;
 const upload = (bytes: Uint8Array, q = "module=classic&item=web-one&name=cap.pcap", headers: Record<string, string> = {}) =>
@@ -72,7 +73,7 @@ describe("/api/admin/attachments", () => {
     expect(res.status).toBe(200);
     expect(m.addUpload).toHaveBeenCalledWith("classic", "web-one", "cap.pcap", new Uint8Array([1, 2, 3]));
     expect((await res.json()).attachment).not.toHaveProperty("chunks");
-    expect(m.audit).toHaveBeenCalledWith("boss", "attachment-add", { item: "web-one", kind: "upload", name: "cap.pcap", size: 3 });
+    expect(m.audit).toHaveBeenCalledWith(actor("boss"), "attachment-add", { item: "web-one", kind: "upload", name: "cap.pcap", size: 3 });
   });
 
   it("413s a declared or actual body over 5 MiB without storing it", async () => {
@@ -120,7 +121,7 @@ describe("/api/admin/attachments", () => {
     expect(ok.status).toBe(200);
     expect(m.fillMissingUpload).toHaveBeenCalledWith("a0123456789abcdef", new Uint8Array([1, 2, 3]));
     expect(m.addUpload).not.toHaveBeenCalled();
-    expect(m.audit).toHaveBeenCalledWith("boss", "attachment-reupload", { id: "a0123456789abcdef", size: 3 });
+    expect(m.audit).toHaveBeenCalledWith(actor("boss"), "attachment-reupload", { id: "a0123456789abcdef", size: 3 });
     m.fillMissingUpload.mockRejectedValueOnce(new AttachmentError("sha256 mismatch: cap.pcap was recorded as …"));
     const bad = await upload(new Uint8Array([9]), "reupload=a0123456789abcdef");
     expect(bad.status).toBe(400);
@@ -140,7 +141,7 @@ describe("/api/admin/attachments", () => {
     expect((await list.json()).attachments[0]).not.toHaveProperty("chunks");
     const del = await DELETE(new Request(url("id=a0123456789abcdef"), { method: "DELETE" }));
     expect(del.status).toBe(200);
-    expect(m.audit).toHaveBeenCalledWith("boss", "attachment-remove", { id: "a0123456789abcdef" });
+    expect(m.audit).toHaveBeenCalledWith(actor("boss"), "attachment-remove", { id: "a0123456789abcdef" });
     m.removeAttachment.mockResolvedValueOnce(false);
     expect((await DELETE(new Request(url("id=a0123456789abcdef"), { method: "DELETE" }))).status).toBe(404);
   });

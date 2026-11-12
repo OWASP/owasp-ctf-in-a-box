@@ -45,7 +45,7 @@ import {
   AI_LAUNCHKEY_KEY,
 } from "@/lib/ai-keys";
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
-import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-audit-keys";
+import { ADMIN_AUDIT_KEY, AUDIT_CAP, type AuditActor } from "@/lib/admin-audit-keys";
 import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSize } from "@/lib/sponsors-keys";
 
 // The audit trail's key and cap live in a dependency-free leaf so
@@ -97,8 +97,8 @@ export const adminErrorLabel: (err: unknown) => string = errorLabel;
  *  write already succeeded. `detail` must carry identifiers only, never a
  *  flag, a signing key, or a minted token — callers are responsible for
  *  keeping it that way. */
-export async function writeAdminAudit(actor: string, action: string, detail: Record<string, unknown>): Promise<void> {
-  const audit = JSON.stringify({ at: new Date().toISOString(), by: actor, action, ...detail });
+export async function writeAdminAudit(actor: AuditActor, action: string, detail: Record<string, unknown>): Promise<void> {
+  const audit = JSON.stringify({ at: new Date().toISOString(), by: actor.id, name: actor.name, action, ...detail });
   try {
     await upstashPipeline([
       ["LPUSH", ADMIN_AUDIT_KEY, audit],
@@ -177,6 +177,7 @@ export type AdminSettings = {
   scoringEndsAt: string | null;
   registrationStartsAt: string | null;
   registrationEndsAt: string | null;
+  /** Display name of the admin who last changed a setting, as it was then. */
   updatedBy: string | null;
   updatedAt: string | null;
   /** Organizer-authored title/blurb overrides, keyed by module id. Unknown or
@@ -488,7 +489,7 @@ function windowRefusal(start: string, end: string): AdminValidationError {
   );
 }
 
-export async function updateAdminSettings(patch: SettingsPatch, actor: string): Promise<AdminSettings> {
+export async function updateAdminSettings(patch: SettingsPatch, actor: AuditActor): Promise<AdminSettings> {
   const keys = Object.keys(patch);
   if (keys.length === 0) throw new AdminValidationError("patch", "empty patch");
   const fields: string[] = [];
@@ -686,7 +687,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
     throw windowRefusal(patchedStart, patchedEnd);
   }
   const at = new Date().toISOString();
-  const audit = JSON.stringify({ at, by: actor, changed });
+  const audit = JSON.stringify({ at, by: actor.id, name: actor.name, changed });
   // A settings write can LOWER a contestant's folded score: the fold counts
   // only the ENABLED modules' points (`withModuleContributions`), so a module
   // switched off takes its points out. So the write sits inside a
@@ -706,7 +707,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
     result = await upstashEval(
       UPDATE_SCRIPT,
       [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
-      [actor, at, audit, String(AUDIT_CAP - 1), String(dels.length), ...dels, ...fields],
+      [actor.name, at, audit, String(AUDIT_CAP - 1), String(dels.length), ...dels, ...fields],
     );
   } finally {
     await endScoreLowering();
@@ -874,7 +875,7 @@ export type ResetEventOptions = {
  * live PR comments, so a post-event wipe also needs those comments gone.
  */
 export async function resetEvent(
-  actor: string,
+  actor: AuditActor,
   opts: ResetEventOptions = {},
 ): Promise<{ cleared: Record<string, number>; resetAt: string }> {
   const cleared: Record<string, number> = {};
@@ -894,11 +895,11 @@ export async function resetEvent(
     }
     const at = new Date().toISOString();
     const resetAt = String(Date.now());
-    const audit = JSON.stringify({ at, by: actor, action: "reset", cleared });
+    const audit = JSON.stringify({ at, by: actor.id, name: actor.name, action: "reset", cleared });
     await upstashEval(
       RESET_SCRIPT,
       [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
-      [actor, at, resetAt, audit, String(AUDIT_CAP - 1)],
+      [actor.name, at, resetAt, audit, String(AUDIT_CAP - 1)],
     );
     return { cleared, resetAt };
   } finally {
@@ -919,7 +920,7 @@ import { runDemoSeed } from "@/lib/demo-seed";
 /** See lib/demo-seed.ts for the seed itself; this wrapper exists only to do
  *  the settings read this module owns. */
 export async function seedDemoData(
-  actor: string,
+  actor: AuditActor,
 ): Promise<{ contestants: number; teams: number; solves: number; sponsors: number }> {
   return runDemoSeed(await getAdminSettings(), actor);
 }
@@ -943,14 +944,14 @@ redis.call('LPUSH', KEYS[2], ARGV[3])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]))
 return redis.call('SMEMBERS', KEYS[1])`;
 
-async function mutateAdmins(action: "add" | "remove", login: string, actor: string): Promise<string[]> {
+async function mutateAdmins(action: "add" | "remove", login: string, actor: AuditActor): Promise<string[]> {
   const normalized = login.trim().toLowerCase();
   if (!normalized) throw new AdminValidationError("login", "login is required");
   if (!LOGIN_RE.test(normalized)) {
     throw new AdminValidationError("login", `'${login}' is not a GitHub login`);
   }
   const at = new Date().toISOString();
-  const audit = JSON.stringify({ at, by: actor, action: `admin:${action}`, login: normalized });
+  const audit = JSON.stringify({ at, by: actor.id, name: actor.name, action: `admin:${action}`, login: normalized });
   const res = await upstashEval(
     ADMINS_SCRIPT,
     [ADMIN_ADMINS_KEY, ADMIN_AUDIT_KEY],
@@ -961,13 +962,13 @@ async function mutateAdmins(action: "add" | "remove", login: string, actor: stri
 }
 
 /** Grant admin to `login` at runtime. Idempotent (SADD). */
-export async function addStoredAdmin(login: string, actor: string): Promise<string[]> {
+export async function addStoredAdmin(login: string, actor: AuditActor): Promise<string[]> {
   return mutateAdmins("add", login, actor);
 }
 
 /** Revoke a RUNTIME grant. Cannot touch a baked admin — the route refuses
  *  that before calling here, because a baked login is the lockout recovery
  *  path and must survive any mistake made through the panel. */
-export async function removeStoredAdmin(login: string, actor: string): Promise<string[]> {
+export async function removeStoredAdmin(login: string, actor: AuditActor): Promise<string[]> {
   return mutateAdmins("remove", login, actor);
 }

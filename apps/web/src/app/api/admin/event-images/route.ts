@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, writeAdminAudit } from "@/lib/admin-store";
 import { isEventImageSlot, type EventImageSlot } from "@/lib/event-images-keys";
 import { clearEventImage, EventImageValidationError, getEventImagesMeta, setEventImage } from "@/lib/event-images-store";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
  * Organizer route for the event's own images (#529): the hero logo and the
@@ -91,7 +92,7 @@ export async function POST(request: Request) {
   } catch (err) {
     return storeFailure(err);
   }
-  await writeAdminAudit(gate.login, "event-image-set", { slot, etag: image.etag });
+  await writeAdminAudit(auditActor(gate.player), "event-image-set", { slot, etag: image.etag });
   return NextResponse.json({ slot, image });
 }
 
@@ -110,6 +111,6 @@ export async function DELETE(request: Request) {
   } catch (err) {
     return storeFailure(err);
   }
-  await writeAdminAudit(gate.login, "event-image-clear", { slot });
+  await writeAdminAudit(auditActor(gate.player), "event-image-clear", { slot });
   return NextResponse.json({ ok: true });
 }

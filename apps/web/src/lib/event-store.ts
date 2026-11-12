@@ -1,4 +1,5 @@
 import "server-only";
+import type { AuditActor } from "@/lib/admin-audit-keys";
 import { exportBundle as exportClassic, clearChallenges, importBundle as importClassic } from "@/lib/classic-store";
 import { exportBundle as exportQuiz, clearQuestions, importBundle as importQuiz } from "@/lib/quiz-store";
 import { exportBundle as exportAi, clearAiChallenges, importBundle as importAi } from "@/lib/ai-store";
@@ -267,7 +268,7 @@ export type EventImportSummary = {
  *  same split classic/quiz import routes already use. */
 export async function importEventBundle(
   bundle: EventBundle,
-  actor: string,
+  actor: AuditActor,
   now: Date = new Date(),
 ): Promise<{ summary: EventImportSummary; skipped: string[] }> {
   // Guard FIRST: nothing destructive below this line may run before the

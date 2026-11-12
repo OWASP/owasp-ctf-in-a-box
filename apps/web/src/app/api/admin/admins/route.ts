@@ -7,6 +7,7 @@ import {
   listStoredAdmins,
   removeStoredAdmin,
 } from "@/lib/admin-store";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
  * Runtime admin management (issue #147). GET lists, POST grants, DELETE
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const stored = await addStoredAdmin(login, gate.login);
+    const stored = await addStoredAdmin(login, auditActor(gate.player));
     return NextResponse.json(payload(listEnvAdmins(), stored));
   } catch (err) {
     if (err instanceof AdminValidationError) {
@@ -101,7 +102,7 @@ export async function DELETE(request: Request) {
   // away should not need someone else to revoke them. It cannot lock the event
   // out, because a baked admin always remains. The UI warns before doing it.
   try {
-    const stored = await removeStoredAdmin(login, gate.login);
+    const stored = await removeStoredAdmin(login, auditActor(gate.player));
     return NextResponse.json(payload(listEnvAdmins(), stored));
   } catch (err) {
     if (err instanceof AdminValidationError) {

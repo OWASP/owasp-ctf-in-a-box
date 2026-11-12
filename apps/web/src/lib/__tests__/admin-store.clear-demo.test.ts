@@ -18,6 +18,7 @@ vi.mock("@/lib/leaderboard/fold-cache", () => ({
 
 import { clearDemoData } from "@/lib/admin-store";
 import { DEMO_CONTESTANTS, DEMO_TEAMS, DEMO_SPONSORS } from "@/lib/demo-fixture";
+import { ALICE, actor } from "./audit-actor";
 
 type Cmd = (string | number)[];
 
@@ -37,7 +38,7 @@ describe("clearDemoData", () => {
   // from the ~10 s fold memo. Dropped once, after the pipeline that did the
   // removing — and not at all when that pipeline failed and nothing changed.
   it("opens the score-lowering bracket before the clearing pipeline and closes it after", async () => {
-    await clearDemoData("alice");
+    await clearDemoData(actor("alice"));
     expect(mocks.beginScoreLowering).toHaveBeenCalledTimes(1);
     expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
     const write = mocks.upstashPipeline.mock.invocationCallOrder[0];
@@ -47,24 +48,24 @@ describe("clearDemoData", () => {
 
   it("still closes the bracket when the clear failed — a per-command failure leaves the other deletions standing", async () => {
     mocks.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }]);
-    await expect(clearDemoData("alice")).rejects.toThrow(/NOAUTH/);
+    await expect(clearDemoData(actor("alice"))).rejects.toThrow(/NOAUTH/);
     expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
   });
 
   it("ABORTS before the pipeline when the bracket cannot be opened — fail closed", async () => {
     mocks.beginScoreLowering.mockRejectedValue(new Error("upstash down"));
-    await expect(clearDemoData("alice")).rejects.toThrow("upstash down");
+    await expect(clearDemoData(actor("alice"))).rejects.toThrow("upstash down");
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
     expect(mocks.endScoreLowering).not.toHaveBeenCalled();
   });
 
   it("issues exactly one pipeline call — no settings read, unlike seedDemoData", async () => {
-    await clearDemoData("alice");
+    await clearDemoData(actor("alice"));
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
   });
 
   it("HDELs every secure-development fake solve seedDemoData writes", async () => {
-    await clearDemoData("alice");
+    await clearDemoData(actor("alice"));
     const c = cmds();
     for (const contestant of DEMO_CONTESTANTS) {
       for (const [target, ids] of Object.entries(contestant.solves)) {
@@ -76,7 +77,7 @@ describe("clearDemoData", () => {
   });
 
   it("removes every demo team, its member set, and each member's membership fields", async () => {
-    await clearDemoData("alice");
+    await clearDemoData(actor("alice"));
     const c = cmds();
     for (const t of DEMO_TEAMS) {
       expect(c).toContainEqual(["DEL", `ctf:team:${t.slug}`]);
@@ -88,7 +89,7 @@ describe("clearDemoData", () => {
   });
 
   it("removes each demo contestant's per-login quiz/classic/ai rows, regardless of which modules are live", async () => {
-    await clearDemoData("alice");
+    await clearDemoData(actor("alice"));
     const c = cmds();
     for (const contestant of DEMO_CONTESTANTS) {
       expect(c).toContainEqual(["DEL", `ctf:quiz:answers:${contestant.login}`]);
@@ -112,7 +113,7 @@ describe("clearDemoData", () => {
   });
 
   it("HDELs every demo sponsor's metadata and logo row", async () => {
-    await clearDemoData("alice");
+    await clearDemoData(actor("alice"));
     const c = cmds();
     for (const s of DEMO_SPONSORS) {
       expect(c).toContainEqual(["HDEL", "ctf:sponsors", s.id]);
@@ -121,7 +122,7 @@ describe("clearDemoData", () => {
   });
 
   it("never touches the demo questions/challenges/flags/categories hashes — authored content, left for the organizer to remove by hand", async () => {
-    await clearDemoData("alice");
+    await clearDemoData(actor("alice"));
     const c = cmds();
     const touchesAuthoredContent = c.some(
       (cmd) =>
@@ -134,17 +135,18 @@ describe("clearDemoData", () => {
   });
 
   it("appends a clear-demo audit entry", async () => {
-    await clearDemoData("alice");
+    await clearDemoData(actor("alice"));
     const c = cmds();
     const push = c.find((cmd) => cmd[0] === "LPUSH" && cmd[1] === "ctf:admin:audit");
     expect(push).toBeTruthy();
-    const audit = JSON.parse(String(push![2])) as { by: string; action: string };
-    expect(audit.by).toBe("alice");
+    const audit = JSON.parse(String(push![2])) as { by: string; name: string; action: string };
+    expect(audit.by).toBe(ALICE.id);
+    expect(audit.name).toBe("alice");
     expect(audit.action).toBe("clear-demo");
   });
 
   it("returns the fixture counts", async () => {
-    const result = await clearDemoData("alice");
+    const result = await clearDemoData(actor("alice"));
     expect(result).toEqual({
       contestants: DEMO_CONTESTANTS.length,
       teams: DEMO_TEAMS.length,
@@ -154,7 +156,7 @@ describe("clearDemoData", () => {
 
   it("throws when the pipeline reports a per-command failure (upstashPipeline does not throw on its own)", async () => {
     mocks.upstashPipeline.mockResolvedValue([{ error: "NOAUTH Authentication required." }]);
-    await expect(clearDemoData("alice")).rejects.toThrow(/Clear demo data failed/);
+    await expect(clearDemoData(actor("alice"))).rejects.toThrow(/Clear demo data failed/);
   });
 
   it("logs but does not throw when only the trailing audit LPUSH/LTRIM fail — cleanup already succeeded", async () => {
@@ -162,7 +164,7 @@ describe("clearDemoData", () => {
       Promise.resolve(c.map((_, i) => (i >= c.length - 2 ? { error: "NOAUTH Authentication required." } : { result: "OK" }))),
     );
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const result = await clearDemoData("alice");
+    const result = await clearDemoData(actor("alice"));
     expect(result).toEqual({
       contestants: DEMO_CONTESTANTS.length,
       teams: DEMO_TEAMS.length,

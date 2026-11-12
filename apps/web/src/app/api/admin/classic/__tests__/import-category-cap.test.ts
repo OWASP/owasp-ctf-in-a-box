@@ -24,6 +24,7 @@ import { POST as postClassic } from "@/app/api/admin/classic/route";
 import { POST as postBundle } from "@/app/api/admin/classic/bundle/route";
 import { parseBundle } from "@/lib/classic-io";
 import { CLASSIC_CATEGORIES_MAX } from "@/lib/classic-keys";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const id = "existing";
 const uploadId = "a0123456789abcdef";
@@ -44,7 +45,7 @@ const raw = JSON.stringify({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.requireAdmin.mockResolvedValue({ ok: true, login: "organizer" });
+  mocks.requireAdmin.mockResolvedValue({ ok: true, login: "organizer", player: { ...actor("organizer"), image: null, githubLogin: "organizer" } });
   mocks.upstashEval.mockResolvedValue(["ok"]);
   const replies = new Map<string, unknown>([
     [JSON.stringify(["HKEYS", "ctf:classic:challenges"]), [id]],

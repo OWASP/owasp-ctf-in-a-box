@@ -285,7 +285,7 @@ describe("POST /api/admin/ai/test", () => {
   it("writes an audit line naming the challenge id, never the token or key", async () => {
     allGatesOpen();
     await POST(adminReq());
-    expect(mocks.writeAdminAudit).toHaveBeenCalledWith("organizer", "ai-send-test", { id: CHAL });
+    expect(mocks.writeAdminAudit).toHaveBeenCalledWith({ id: ORGANIZER_ID, name: "organizer" }, "ai-send-test", { id: CHAL });
     const serialized = JSON.stringify(mocks.writeAdminAudit.mock.calls[0]);
     expect(serialized).not.toContain("aik_");
     expect(serialized).not.toContain("PRIVATE KEY");

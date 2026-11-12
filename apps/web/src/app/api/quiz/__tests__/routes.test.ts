@@ -101,6 +101,7 @@ import {
   QUESTION_KEYS,
   IMPORT_KEYS,
 } from "@/app/api/admin/quiz/route";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const answerReq = (body?: unknown) =>
   new Request("http://x/api/quiz/answer", { method: "POST", body: JSON.stringify(body ?? {}) });
@@ -144,7 +145,7 @@ beforeEach(() => {
   deleteQuestion.mockReset();
   writeAdminAudit.mockReset();
   getSession.mockResolvedValue(SESSION);
-  requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
   requireLaunchedApi.mockResolvedValue(null);
   launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
   hasTeam.mockResolvedValue(true);
@@ -494,7 +495,7 @@ describe("POST /api/admin/quiz", () => {
     expect(upsertQuestion).toHaveBeenCalledWith(QUESTION, ["opt-right"]);
     expect(await res.json()).toEqual({ question: QUESTION, correct: ["opt-right"] });
 
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "quiz-upsert", { questionId: "q1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "quiz-upsert", { questionId: "q1" });
   });
 
   it("echoes the STORED correct set, not the caller's raw array", async () => {
@@ -537,7 +538,7 @@ describe("DELETE /api/admin/quiz", () => {
     const res = await adminDELETE(adminReq("DELETE", { id: "q1" }));
     expect(res.status).toBe(200);
     expect(deleteQuestion).toHaveBeenCalledWith("q1");
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "quiz-delete", { questionId: "q1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "quiz-delete", { questionId: "q1" });
   });
 
   it("400 with the message for a QuizValidationError from the store", async () => {
@@ -593,7 +594,7 @@ describe("POST /api/admin/quiz (bulk import)", () => {
   };
 
   beforeEach(() => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
     importBundle.mockClear();
     importBundle.mockResolvedValue({ created: 1, updated: 0 });
   });
@@ -649,7 +650,7 @@ describe("POST /api/admin/quiz (bulk import)", () => {
   it("audits the import with its counts", async () => {
     importBundle.mockResolvedValue({ created: 3, updated: 2 });
     await adminPOST(adminReq("POST", { import: JSON.stringify(VALID_BUNDLE) }));
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "quiz-import", { created: 3, updated: 2 });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "quiz-import", { created: 3, updated: 2 });
   });
 
   it("503s a store failure rather than blaming the organizer's file", async () => {

@@ -94,6 +94,23 @@ describe("notifyFirstBlood", () => {
     expect(msg.embeds[0].description).toContain("gone\\-1");
   });
 
+  it("fails open to the bare id and 0 points when the quiz/ai list read rejects", async () => {
+    mocks.listQuestions.mockRejectedValue(new Error("redis down"));
+    mocks.listAiChallenges.mockRejectedValue(new Error("redis down"));
+    await notifyFirstBlood({ module: "quiz", challengeId: "qmissing", login: "alice" });
+    await notifyFirstBlood({ module: "ai", challengeId: "aimissing", login: "alice" });
+
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledTimes(2);
+    const ids = ["qmissing", "aimissing"];
+    for (const [index, id] of ids.entries()) {
+      const msg = mocks.enqueueAnnouncement.mock.calls[index][1] as {
+        embeds: { description?: string; fields?: { name: string; value: string }[] }[];
+      };
+      expect(msg.embeds[0].description).toContain(id);
+      expect(msg.embeds[0].fields).toEqual([{ name: "Points", value: "0", inline: true }]);
+    }
+  });
+
   it("never announces a HIDDEN challenge — returns without claiming or enqueueing", async () => {
     mocks.readChallengeRecords.mockResolvedValue([{ id: "web-9", title: "Secret Unreleased Title", category: "web", points: 100, enabled: false }]);
     await notifyFirstBlood({ module: "classic", challengeId: "web-9", login: "alice" });

@@ -31,12 +31,15 @@ import {
   getWebhookUrl,
   ledgerFields,
   OUTBOX_CLAIM_SCRIPT,
+  OUTBOX_COMPLETE_SCRIPT,
+  OUTBOX_SKIP_SCRIPT,
   outboxClaim,
   outboxComplete,
   outboxEnqueue,
   outboxPending,
   outboxPrune,
   outboxRetryable,
+  outboxSkip,
   publicConfig,
   readStatePack,
   readStatus,
@@ -142,6 +145,46 @@ describe("updateAnnounceConfig", () => {
     expect(hset).toContain(DISCORD_CONFIG_KEY);
     expect(mocks.writeAdminAudit).toHaveBeenCalledWith("admin", "announce-config", { firstBlood: true, marks: "15m, 5m" });
   });
+
+  it("cancels retained entries for every stream a patch turns off, before the config write", async () => {
+    const at = new Date().toISOString();
+    const entry = (kind: string, status: string, n = 0) => JSON.stringify({ kind, payload: {}, at, n, status });
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => {
+        if (cmd[0] === "HGETALL" && cmd[1] === ANNOUNCE_OUTBOX_KEY) {
+          return {
+            result: [
+              "p1", entry("pause", "pending"),
+              "r1", entry("milestone", "failed", 1),
+              "old", entry("milestone", "failed", 5),
+              "done", entry("pause", "sent"),
+              "keep", entry("first-blood", "pending"),
+            ],
+          };
+        }
+        return { result: [] };
+      }),
+    );
+    await updateAnnounceConfig("admin", { pause: false, milestones: false });
+    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
+    const skipped = commands
+      .filter((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT)
+      .map((cmd) => cmd[5]);
+    expect(skipped.sort()).toEqual(["p1", "r1"]);
+    const firstSkip = commands.findIndex((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT);
+    const configWrite = commands.findIndex((cmd) => cmd[0] === "HSET" && cmd.includes(DISCORD_CONFIG_KEY));
+    expect(firstSkip).toBeGreaterThan(-1);
+    expect(firstSkip).toBeLessThan(configWrite);
+  });
+
+  it("a failed cancellation leaves the switch ON rather than stranding entries", async () => {
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => (cmd[0] === "HGETALL" && cmd[1] === ANNOUNCE_OUTBOX_KEY ? { error: "NOAUTH" } : { result: [] })),
+    );
+    await expect(updateAnnounceConfig("admin", { launch: false })).rejects.toThrow(/outbox read failed/);
+    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
+    expect(commands.some((cmd) => cmd[0] === "HSET" && cmd.includes(DISCORD_CONFIG_KEY))).toBe(false);
+  });
 });
 
 describe("setAnnounceWebhook", () => {
@@ -203,6 +246,63 @@ describe("setAnnounceWebhook", () => {
     const result = await setAnnounceWebhook("admin", null);
     expect(result).toEqual({ webhookConfigured: false });
     expect(mocks.writeAdminAudit).toHaveBeenCalledWith("admin", "announce-webhook", { state: "cleared" });
+  });
+
+  it("cancels every retained entry before clearing the webhook", async () => {
+    const at = new Date().toISOString();
+    const entry = (kind: string, status: string) => JSON.stringify({ kind, payload: {}, at, n: 0, status });
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => {
+        if (cmd[0] === "HGETALL" && cmd[1] === ANNOUNCE_OUTBOX_KEY) {
+          return { result: ["p1", entry("pause", "pending"), "l1", entry("launch", "failed"), "s1", entry("launch", "sent")] };
+        }
+        return { result: 1 };
+      }),
+    );
+    await setAnnounceWebhook("admin", null);
+    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
+    const skipped = commands
+      .filter((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT)
+      .map((cmd) => cmd[5]);
+    expect(skipped.sort()).toEqual(["l1", "p1"]);
+    const firstSkip = commands.findIndex((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT);
+    const del = commands.findIndex((cmd) => cmd[0] === "DEL" && cmd[1] === DISCORD_WEBHOOK_KEY);
+    expect(firstSkip).toBeLessThan(del);
+  });
+
+  it("does not clear the webhook when cancelling its retained entries fails", async () => {
+    const entry = JSON.stringify({ kind: "launch", payload: {}, at: new Date().toISOString(), n: 0, status: "pending" });
+    mocks.upstashPipeline
+      .mockResolvedValueOnce([{ result: ["l1", entry] }])
+      .mockResolvedValueOnce([{ error: "OOM" }]);
+    await expect(setAnnounceWebhook("admin", null)).rejects.toThrow(/outbox cancel failed/);
+    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
+    expect(commands.some((cmd) => cmd[0] === "DEL" && cmd[1] === DISCORD_WEBHOOK_KEY)).toBe(false);
+  });
+
+  it("refuses to arm the webhook when the lifecycle pack cannot be read", async () => {
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => (cmd[0] === "GET" && cmd[1] === "ctf:announce:lifecycle" ? { error: "NOAUTH" } : { result: "OK" })),
+    );
+    await expect(setAnnounceWebhook("admin", VALID_URL)).rejects.toThrow(/state read failed/);
+    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
+    expect(commands.some((cmd) => cmd[0] === "SET" && cmd[1] === DISCORD_WEBHOOK_KEY)).toBe(false);
+  });
+
+  it("refuses to arm the webhook when the lifecycle pack keeps moving", async () => {
+    mocks.getAdminSettings.mockResolvedValue({
+      scoringStartsAt: "2020-01-01T10:00:00Z",
+      scoringEndsAt: "2020-01-01T11:00:00Z",
+      paused: false,
+    });
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => (cmd[0] === "GET" ? { result: "v2|L0P0C0A0" } : { result: "OK" })),
+    );
+    mocks.upstashEval.mockResolvedValue([0, 1, "v2|L0P0C0A0"]);
+    await expect(setAnnounceWebhook("admin", VALID_URL)).rejects.toThrow(/did not converge/);
+    expect(mocks.upstashEval).toHaveBeenCalledTimes(3);
+    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
+    expect(commands.some((cmd) => cmd[0] === "SET" && cmd[1] === DISCORD_WEBHOOK_KEY)).toBe(false);
   });
 });
 
@@ -281,9 +381,10 @@ describe("outbox", () => {
     expect(String(cmd[3])).toContain('"status":"pending"');
   });
 
-  it("claims the lease atomically when status and attempts match", async () => {
+  it("claims the lease atomically when status and attempts match, returning its owner token", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
-    expect(await outboxClaim("id-1", { status: "pending", n: 0 })).toBe(true);
+    const token = await outboxClaim("id-1", { status: "pending", n: 0 });
+    expect(typeof token).toBe("string");
     const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
     expect(cmd[0]).toBe("EVAL");
     expect(cmd[1]).toBe(OUTBOX_CLAIM_SCRIPT);
@@ -294,32 +395,60 @@ describe("outbox", () => {
     expect(cmd[6]).toBe("pending");
     expect(cmd[7]).toBe(0);
     expect(cmd[8]).toBe(90_000);
+    expect(cmd[9]).toBe(token);
   });
 
-  it("reproduces the race: returns false when another worker marked the entry sent", async () => {
+  it("reproduces the race: returns no lease when another worker marked the entry sent", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 0 }]);
-    expect(await outboxClaim("id-1", { status: "pending", n: 0 })).toBe(false);
+    expect(await outboxClaim("id-1", { status: "pending", n: 0 })).toBeNull();
   });
 
-  it("returns false and logs when Redis returns a command error", async () => {
+  it("returns no lease and logs when Redis returns a command error", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ error: "ERR timeout" }]);
-    expect(await outboxClaim("id-1", { status: "pending", n: 0 })).toBe(false);
+    expect(await outboxClaim("id-1", { status: "pending", n: 0 })).toBeNull();
   });
 
-  it("completes an entry, bumping attempts on failure and dropping the lease", async () => {
+  it("completes an entry under its owner token, bumping attempts on failure", async () => {
     const entry = JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending" });
     mocks.upstashPipeline.mockImplementation(async (commands) => commands.map((cmd) => (cmd[0] === "HGET" ? { result: entry } : { result: 1 })));
-    await outboxComplete("id-1", "failed");
-    // The HGET (to bump attempts) and the HSET+DEL write are two pipelines;
-    // the assertion spans both.
-    const hset = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]).find((c) => c[0] === "HSET");
-    expect(String(hset?.[3])).toContain('"n":1');
+    await outboxComplete("id-1", "failed", "token-1");
+    const evalCmd = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]).find((c) => c[0] === "EVAL");
+    expect(evalCmd?.[1]).toBe(OUTBOX_COMPLETE_SCRIPT);
+    expect(evalCmd?.[2]).toBe(2);
+    expect(evalCmd?.[3]).toBe(ANNOUNCE_OUTBOX_KEY);
+    expect(evalCmd?.[4]).toBe("ctf:announce:lease:id-1");
+    expect(evalCmd?.[5]).toBe("token-1");
+    expect(evalCmd?.[6]).toBe("id-1");
+    expect(String(evalCmd?.[7])).toContain('"n":1');
+  });
+
+  it("leaves status and lease untouched when the caller no longer owns the lease", async () => {
+    const entry = JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending" });
+    mocks.upstashPipeline
+      .mockResolvedValueOnce([{ result: entry }])
+      .mockResolvedValueOnce([{ result: 0 }]);
+    await outboxComplete("id-1", "sent", "stale-token");
+    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
+    expect(commands.some((c) => c[0] === "HSET")).toBe(false);
+    expect(commands.some((c) => c[0] === "DEL")).toBe(false);
+  });
+
+  it("skips an unclaimed entry with the conditional script", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
+    await outboxSkip("id-1");
+    const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
+    expect(cmd[0]).toBe("EVAL");
+    expect(cmd[1]).toBe(OUTBOX_SKIP_SCRIPT);
+    expect(cmd[2]).toBe(2);
+    expect(cmd[3]).toBe(ANNOUNCE_OUTBOX_KEY);
+    expect(cmd[4]).toBe("ctf:announce:lease:id-1");
+    expect(cmd[5]).toBe("id-1");
   });
 
   it("logs and returns when outboxComplete encounters a read error", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.upstashPipeline.mockImplementation(async () => [{ error: "NOAUTH" }]);
-    await outboxComplete("id-1", "sent");
+    await outboxComplete("id-1", "sent", "token-1");
     expect(errorSpy).toHaveBeenCalledWith("[announce] outbox read failed:", expect.any(String));
     errorSpy.mockRestore();
   });
@@ -329,8 +458,8 @@ describe("outbox", () => {
     const entry = JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending" });
     mocks.upstashPipeline
       .mockResolvedValueOnce([{ result: entry }])
-      .mockResolvedValueOnce([{ error: "OOM" }, { result: 1 }]);
-    await outboxComplete("id-1", "sent");
+      .mockResolvedValueOnce([{ error: "OOM" }]);
+    await outboxComplete("id-1", "sent", "token-1");
     expect(errorSpy).toHaveBeenCalledWith("[announce] outbox complete failed:", expect.any(String));
     errorSpy.mockRestore();
   });

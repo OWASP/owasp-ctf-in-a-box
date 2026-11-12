@@ -1,7 +1,8 @@
 // Integration tests for the announcer's atomicity primitives (#590), against
 // a REAL Redis behind srh: the lifecycle compare-and-swap Lua (exactly one
-// replica announces a transition) and the HSETNX dedup ledgers (exactly one
-// caller wins a first-blood or mark claim). These are the only
+// replica announces a transition), the HSETNX dedup ledgers (exactly one
+// caller wins a first-blood or mark claim), and the outbox lease scripts
+// (only the current owner writes a terminal status). These are the only
 // places those guarantees are actually enforced — a mocked pipeline can only
 // pin what the store SENDS, not what Redis DOES with it.
 //
@@ -18,7 +19,14 @@ import { RUN, liveConfigured, liveKey } from "@/lib/__tests__/live-redis";
 vi.mock("server-only", () => ({}));
 
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
-import { OUTBOX_CLAIM_SCRIPT, STATE_CAS_SCRIPT, claimLedgerField, claimLedgerFields } from "@/lib/announce/store";
+import {
+  OUTBOX_CLAIM_SCRIPT,
+  OUTBOX_COMPLETE_SCRIPT,
+  OUTBOX_SKIP_SCRIPT,
+  STATE_CAS_SCRIPT,
+  claimLedgerField,
+  claimLedgerFields,
+} from "@/lib/announce/store";
 
 const STATE_KEY = liveKey("announce-cas", "state");
 const SEQ_KEY = liveKey("announce-cas", "seq");
@@ -81,18 +89,21 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     await upstashPipeline([["DEL", LEASE_KEY]]);
   });
 
-  it("OUTBOX_CLAIM_SCRIPT claims an unchanged entry, but rejects once marked sent", async () => {
+  it("OUTBOX_CLAIM_SCRIPT claims an unchanged entry with an owner token, but rejects once marked sent", async () => {
     const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending" };
+    const token = `${RUN}-owner-a`;
 
     await upstashPipeline([
       ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY],
       ["HSET", OUTBOX_KEY, CLAIM_ID, JSON.stringify(entry)],
     ]);
 
-    const win = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [CLAIM_ID, "pending", 0, 90_000]);
+    const win = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [CLAIM_ID, "pending", 0, 90_000, token]);
     expect(win).toBe(1);
+    const [lease] = await upstashPipeline([["GET", CLAIM_LEASE_KEY]]);
+    expect(lease.result).toBe(token);
 
-    const held = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [CLAIM_ID, "pending", 0, 90_000]);
+    const held = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-owner-b`]);
     expect(held).toBe(0);
 
     const completed = { ...entry, status: "sent" };
@@ -101,8 +112,70 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
       ["DEL", CLAIM_LEASE_KEY],
     ]);
 
-    const stale = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [CLAIM_ID, "pending", 0, 90_000]);
+    const stale = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [CLAIM_ID, "pending", 0, 90_000, token]);
     expect(stale).toBe(0);
+
+    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY]]);
+  });
+
+  it("OUTBOX_COMPLETE_SCRIPT writes only for the current lease owner", async () => {
+    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending" };
+    const token = `${RUN}-complete-owner`;
+    const sent = { ...entry, status: "sent" };
+
+    await upstashPipeline([
+      ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY],
+      ["HSET", OUTBOX_KEY, CLAIM_ID, JSON.stringify(entry)],
+      ["SET", CLAIM_LEASE_KEY, token, "PX", 90_000, "NX"],
+    ]);
+
+    const wrong = await upstashEval(OUTBOX_COMPLETE_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [`${RUN}-stale`, CLAIM_ID, JSON.stringify(sent)]);
+    expect(wrong).toBe(0);
+    const [beforeComplete] = await upstashPipeline([["HGET", OUTBOX_KEY, CLAIM_ID]]);
+    expect(JSON.parse(beforeComplete.result as string).status).toBe("pending");
+
+    const won = await upstashEval(OUTBOX_COMPLETE_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [token, CLAIM_ID, JSON.stringify(sent)]);
+    expect(won).toBe(1);
+    const [afterComplete] = await upstashPipeline([["HGET", OUTBOX_KEY, CLAIM_ID], ["GET", CLAIM_LEASE_KEY]]);
+    expect(JSON.parse(afterComplete.result as string).status).toBe("sent");
+    const [leaseAfter] = await upstashPipeline([["GET", CLAIM_LEASE_KEY]]);
+    expect(leaseAfter.result).toBeNull();
+
+    const again = await upstashEval(OUTBOX_COMPLETE_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [token, CLAIM_ID, JSON.stringify(sent)]);
+    expect(again).toBe(0);
+
+    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY]]);
+  });
+
+  it("OUTBOX_SKIP_SCRIPT cancels pending/failed entries but never a terminal one", async () => {
+    const base = { kind: "launch", payload: {}, at: new Date().toISOString() };
+    const pending = { ...base, n: 0, status: "pending" };
+    const failed = { ...base, n: 1, status: "failed" };
+    const sent = { ...base, n: 0, status: "sent" };
+
+    await upstashPipeline([
+      ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY],
+      ["HSET", OUTBOX_KEY, `${RUN}-skip-pending`, JSON.stringify(pending), `${RUN}-skip-failed`, JSON.stringify(failed), `${RUN}-skip-sent`, JSON.stringify(sent)],
+      ["SET", CLAIM_LEASE_KEY, `${RUN}-skip-owner`, "PX", 90_000, "NX"],
+    ]);
+
+    const skipPending = await upstashEval(OUTBOX_SKIP_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [`${RUN}-skip-pending`]);
+    expect(skipPending).toBe(1);
+    const skipFailed = await upstashEval(OUTBOX_SKIP_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [`${RUN}-skip-failed`]);
+    expect(skipFailed).toBe(1);
+    const skipSent = await upstashEval(OUTBOX_SKIP_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [`${RUN}-skip-sent`]);
+    expect(skipSent).toBe(0);
+
+    const [pendingRaw, failedRaw, sentRaw, lease] = await upstashPipeline([
+      ["HGET", OUTBOX_KEY, `${RUN}-skip-pending`],
+      ["HGET", OUTBOX_KEY, `${RUN}-skip-failed`],
+      ["HGET", OUTBOX_KEY, `${RUN}-skip-sent`],
+      ["GET", CLAIM_LEASE_KEY],
+    ]);
+    expect(JSON.parse(pendingRaw.result as string).status).toBe("skipped");
+    expect(JSON.parse(failedRaw.result as string).status).toBe("skipped");
+    expect(JSON.parse(sentRaw.result as string).status).toBe("sent");
+    expect(lease.result).toBeNull();
 
     await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY]]);
   });

@@ -25,6 +25,7 @@
 // here include the webhook URL.
 
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { upstashPipeline, upstashEval } from "@/lib/upstash";
 import { adminErrorLabel, getAdminSettings, writeAdminAudit } from "@/lib/admin-store";
 import {
@@ -133,12 +134,19 @@ export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPa
 
   const writes: [string, string][] = [];
   const changed: Partial<Omit<DiscordFullConfig, "webhookUrl">> = {};
+  const disabledKinds: AnnouncementKind[] = [];
   for (const key of boolKeys) {
     if (key in patch) {
       const v = patch[key];
       if (typeof v !== "boolean") throw new AnnounceValidationError(`${key} must be a boolean`);
       writes.push([key, v ? "1" : "0"]);
       changed[key] = v;
+      if (!v) {
+        if (key === "firstBlood") disabledKinds.push("first-blood");
+        else if (key === "launch") disabledKinds.push("launch");
+        else if (key === "pause") disabledKinds.push("pause", "resume");
+        else disabledKinds.push("milestone");
+      }
     }
   }
   if ("marks" in patch) {
@@ -149,6 +157,12 @@ export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPa
     changed.marks = value;
   }
 
+  // Turning a stream off cancels what it already retained: a pending or
+  // retryable entry left in the outbox would otherwise post when the switch
+  // (or the webhook) is enabled again, replaying announcements the organizer
+  // opted out of. Do it before the write so a cancellation failure leaves the
+  // switch ON and the entries deliverable rather than silently stranded.
+  if (disabledKinds.length > 0) await cancelOutboxEntriesFor(disabledKinds);
   if (writes.length > 0) {
     const [res] = await upstashPipeline([["HSET", DISCORD_CONFIG_KEY, ...writes.flat()]]);
     if (res.error) throw new Error(`config write failed: ${res.error}`);
@@ -178,6 +192,11 @@ export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPa
  *  ONLY "set"/"cleared" — never the URL, which is a live credential. */
 export async function setAnnounceWebhook(actor: string, raw: unknown): Promise<{ webhookConfigured: boolean }> {
   if (raw === null) {
+    // Clearing the URL must cancel everything already retained, for the same
+    // reason a switch-off does: a later set would deliver it to the new URL.
+    // Cancel before the DEL so a failed cancellation leaves the old webhook
+    // in place instead of clearing it with retryable entries still queued.
+    await cancelOutboxEntriesFor(ANNOUNCEMENT_KINDS);
     const [res] = await upstashPipeline([["DEL", DISCORD_WEBHOOK_KEY]]);
     if (res.error) throw new Error(`webhook clear failed: ${res.error}`);
     await writeAdminAudit(actor, "announce-webhook", { state: "cleared" });
@@ -323,6 +342,16 @@ export async function readStatePack(stateKey: typeof ANNOUNCE_LIFECYCLE_KEY): Pr
   }
 }
 
+/** The state pack for a write decision: a failed read THROWS rather than
+ *  reading as "no previous state". reconciliation MUST NOT treat an
+ *  unreadable pack as absent — it would seed over the old one and let the
+ *  next tick announce its transitions as new edges. */
+async function readStatePackStrict(stateKey: typeof ANNOUNCE_LIFECYCLE_KEY): Promise<string | null> {
+  const [res] = await upstashPipeline([["GET", stateKey]]);
+  if (res.error) throw new Error(`state read failed: ${res.error}`);
+  return typeof res.result === "string" ? res.result : null;
+}
+
 /** Deletes the stored lifecycle observation so the next pass seeds silently
  *  from the current reality rather than announcing transitions that happened
  *  while lifecycle announcements were disabled. */
@@ -350,7 +379,7 @@ async function reconcileLifecycleState(nowMs: number = Date.now()): Promise<void
     nowMs,
   );
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const expected = (await readStatePack(ANNOUNCE_LIFECYCLE_KEY)) ?? "";
+    const expected = (await readStatePackStrict(ANNOUNCE_LIFECYCLE_KEY)) ?? "";
     const prev = decodeLifecycleState(expected);
     const next = encodeLifecycleState({ ...derived, announced: Boolean(prev?.announced) });
     if (expected === next) return;
@@ -359,6 +388,10 @@ async function reconcileLifecycleState(nowMs: number = Date.now()): Promise<void
     // racing writer moved the pack; re-read it and reconcile again.
     if (cas.code !== 0) return;
   }
+  // A pack that keeps moving (or an unreadable one) must fail the webhook
+  // write: arming the URL while the observation is unreconciled would let the
+  // next tick announce the old pack's transitions as fresh edges.
+  throw new Error("lifecycle state reconcile did not converge");
 }
 
 // --- outbox ------------------------------------------------------------------
@@ -401,31 +434,63 @@ if not raw then return 0 end
 local ok, e = pcall(cjson.decode, raw)
 if not ok or type(e) ~= 'table' then return 0 end
 if e.status ~= ARGV[2] or tonumber(e.n) ~= tonumber(ARGV[3]) then return 0 end
-if redis.call('SET', KEYS[2], '1', 'PX', ARGV[4], 'NX') then return 1 end
+if redis.call('SET', KEYS[2], ARGV[5], 'PX', ARGV[4], 'NX') then return 1 end
 return 0
 `;
 
 /** Claims the delivery lease for one outbox entry iff its status and retry
- *  count still match `seen`. `true` = this caller owns delivery; `false` =
+ *  count still match `seen`. Returns an owner token on success, null when
  *  the entry was already completed, moved to another retry state, or is
- *  currently leased by another worker. */
+ *  currently leased by another worker. The token goes into the lease value so
+ *  completion can prove it still owns the lease. */
 export async function outboxClaim(
   id: string,
   seen: Pick<OutboxEntry, "status" | "n">,
   leaseMs: number = ANNOUNCE_LEASE_MS,
-): Promise<boolean> {
+): Promise<string | null> {
+  const token = randomUUID();
   const [res] = await upstashPipeline([
-    ["EVAL", OUTBOX_CLAIM_SCRIPT, 2, ANNOUNCE_OUTBOX_KEY, `${ANNOUNCE_LEASE_PREFIX}${id}`, id, seen.status, seen.n, leaseMs],
+    ["EVAL", OUTBOX_CLAIM_SCRIPT, 2, ANNOUNCE_OUTBOX_KEY, `${ANNOUNCE_LEASE_PREFIX}${id}`, id, seen.status, seen.n, leaseMs, token],
   ]);
   if (res.error) {
     console.error("[announce] outbox claim failed:", adminErrorLabel(new Error(res.error)));
-    return false;
+    return null;
   }
-  return res.result === 1;
+  return res.result === 1 ? token : null;
 }
 
-/** Marks an entry sent or failed and releases its lease. */
-export async function outboxComplete(id: string, status: OutboxStatus): Promise<void> {
+/** Writes an entry's terminal status and releases its lease, but ONLY if the
+ *  caller still owns that lease. A worker that outlived its 90s lease must not
+ *  overwrite the result a newer owner recorded, nor delete the newer owner's
+ *  live lease. */
+export const OUTBOX_COMPLETE_SCRIPT = `
+local lease = redis.call('GET', KEYS[2])
+if not lease or lease ~= ARGV[1] then return 0 end
+redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+redis.call('DEL', KEYS[2])
+return 1
+`;
+
+/** Cancels an entry nobody will deliver: pending, or failed with attempts
+ *  remaining, becomes skipped. A conditional write, so it cannot overwrite a
+ *  terminal sent/skipped result, and it drops the lease so a stalled worker's
+ *  later completion fails its token check instead of resurrecting the entry. */
+export const OUTBOX_SKIP_SCRIPT = `
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+if not raw then return 0 end
+local ok, e = pcall(cjson.decode, raw)
+if not ok or type(e) ~= 'table' then return 0 end
+if e.status ~= 'pending' and e.status ~= 'failed' then return 0 end
+e.status = 'skipped'
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(e))
+redis.call('DEL', KEYS[2])
+return 1
+`;
+
+/** Marks an entry sent or failed and releases its lease — only while the
+ *  caller's claim token still owns that lease. A stale owner returns without
+ *  touching the status or the newer owner's lease. */
+export async function outboxComplete(id: string, status: OutboxStatus, token: string): Promise<void> {
   try {
     const [entryRes] = await upstashPipeline([["HGET", ANNOUNCE_OUTBOX_KEY, id]]);
     if (entryRes.error) {
@@ -441,15 +506,35 @@ export async function outboxComplete(id: string, status: OutboxStatus): Promise<
     }
     entry.status = status;
     if (status === "failed") entry.n += 1;
-    const writes = await upstashPipeline([
-      ["HSET", ANNOUNCE_OUTBOX_KEY, id, JSON.stringify(entry)],
-      ["DEL", `${ANNOUNCE_LEASE_PREFIX}${id}`],
+    const [res] = await upstashPipeline([
+      [
+        "EVAL",
+        OUTBOX_COMPLETE_SCRIPT,
+        2,
+        ANNOUNCE_OUTBOX_KEY,
+        `${ANNOUNCE_LEASE_PREFIX}${id}`,
+        token,
+        id,
+        JSON.stringify(entry),
+      ],
     ]);
-    for (const res of writes) {
-      if (res.error) console.error("[announce] outbox complete failed:", adminErrorLabel(new Error(res.error)));
-    }
+    if (res.error) console.error("[announce] outbox complete failed:", adminErrorLabel(new Error(res.error)));
   } catch (err) {
     console.error("[announce] outbox complete failed:", adminErrorLabel(err));
+  }
+}
+
+/** Cancels an unclaimed entry (switch off, webhook cleared, local queue
+ *  overflow) as skipped. The script is conditional on a non-terminal status,
+ *  so it cannot overwrite a delivery another worker already recorded. */
+export async function outboxSkip(id: string): Promise<void> {
+  try {
+    const [res] = await upstashPipeline([
+      ["EVAL", OUTBOX_SKIP_SCRIPT, 2, ANNOUNCE_OUTBOX_KEY, `${ANNOUNCE_LEASE_PREFIX}${id}`, id],
+    ]);
+    if (res.error) console.error("[announce] outbox skip failed:", adminErrorLabel(new Error(res.error)));
+  } catch (err) {
+    console.error("[announce] outbox skip failed:", adminErrorLabel(err));
   }
 }
 
@@ -467,33 +552,70 @@ export async function outboxRetryable(): Promise<{ id: string; entry: OutboxEntr
   return outboxEntries((e) => e.status === "failed" && e.n < ANNOUNCE_MAX_ATTEMPTS);
 }
 
-/** The outbox hash entries `keep` accepts, oldest first. An unparsable entry
- *  is skipped, never delivered; a Redis failure logs and returns nothing. */
+/** Parses the outbox hash entries `keep` accepts, oldest first. An
+ *  unparsable entry is skipped, never delivered; a Redis failure THROWS so
+ *  callers that must not act on a partial view (cancellation) can fail
+ *  closed. */
+async function parseOutboxEntries(
+  keep: (entry: OutboxEntry) => boolean,
+): Promise<{ id: string; entry: OutboxEntry }[]> {
+  const [res] = await upstashPipeline([["HGETALL", ANNOUNCE_OUTBOX_KEY]]);
+  if (res.error) throw new Error(`outbox read failed: ${res.error}`);
+  const flat = Array.isArray(res.result) ? (res.result as string[]) : [];
+  const out: { id: string; entry: OutboxEntry }[] = [];
+  for (let i = 0; i < flat.length; i += 2) {
+    const id = flat[i];
+    const raw = flat[i + 1];
+    if (typeof id !== "string" || typeof raw !== "string") continue;
+    let entry: OutboxEntry;
+    try {
+      entry = JSON.parse(raw) as OutboxEntry;
+    } catch {
+      continue;
+    }
+    if (keep(entry)) out.push({ id, entry });
+  }
+  out.sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at));
+  return out;
+}
+
+/** The outbox entries `keep` accepts, failing open to nothing on a Redis
+ *  failure — the sweep readers' contract. */
 async function outboxEntries(
   keep: (entry: OutboxEntry) => boolean,
 ): Promise<{ id: string; entry: OutboxEntry }[]> {
   try {
-    const [res] = await upstashPipeline([["HGETALL", ANNOUNCE_OUTBOX_KEY]]);
-    if (res.error) throw new Error(res.error);
-    const flat = Array.isArray(res.result) ? (res.result as string[]) : [];
-    const out: { id: string; entry: OutboxEntry }[] = [];
-    for (let i = 0; i < flat.length; i += 2) {
-      const id = flat[i];
-      const raw = flat[i + 1];
-      if (typeof id !== "string" || typeof raw !== "string") continue;
-      let entry: OutboxEntry;
-      try {
-        entry = JSON.parse(raw) as OutboxEntry;
-      } catch {
-        continue;
-      }
-      if (keep(entry)) out.push({ id, entry });
-    }
-    out.sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at));
-    return out;
+    return await parseOutboxEntries(keep);
   } catch (err) {
     console.error("[announce] outbox read failed:", adminErrorLabel(err));
     return [];
+  }
+}
+
+/** Cancels outstanding deliveries for `kinds`: pending entries and failed
+ *  ones with attempts remaining become skipped. A failed read or cancel
+ *  THROWS so the config/webhook write that triggered this does not land with
+ *  retained entries that a later enable would replay. */
+async function cancelOutboxEntriesFor(kinds: readonly AnnouncementKind[]): Promise<void> {
+  const wanted = new Set(kinds);
+  const entries = await parseOutboxEntries(
+    (e) =>
+      wanted.has(e.kind) &&
+      (e.status === "pending" || (e.status === "failed" && e.n < ANNOUNCE_MAX_ATTEMPTS)),
+  );
+  if (entries.length === 0) return;
+  const results = await upstashPipeline(
+    entries.map(({ id }) => [
+      "EVAL",
+      OUTBOX_SKIP_SCRIPT,
+      2,
+      ANNOUNCE_OUTBOX_KEY,
+      `${ANNOUNCE_LEASE_PREFIX}${id}`,
+      id,
+    ]),
+  );
+  for (const res of results) {
+    if (res.error) throw new Error(`outbox cancel failed: ${res.error}`);
   }
 }
 

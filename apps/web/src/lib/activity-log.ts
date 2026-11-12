@@ -26,7 +26,11 @@ import { ACTIVITY_LOG_KEY, ACTIVITY_LOG_MAX, type ActivityType } from "@/lib/act
 export type ActivityEntry = {
   at: string;
   type: string;
-  userId: string;
+  /** Null on a row that names its player by GitHub login only (`login`, no
+   *  `userId`): the list outlives deploys, so it can hold rows in that shape,
+   *  and they render under that login rather than vanishing while `total`
+   *  still counts them. */
+  userId: string | null;
   name: string;
   detail?: string;
 };
@@ -162,13 +166,17 @@ export async function listActivity(offset: number, limit: number): Promise<{ ent
   for (const row of rows) {
     if (typeof row !== "string") continue;
     try {
-      const parsed = JSON.parse(row) as Partial<ActivityEntry>;
-      if (typeof parsed.at !== "string" || typeof parsed.type !== "string" || typeof parsed.userId !== "string") continue;
+      const parsed = JSON.parse(row) as Partial<ActivityEntry> & { login?: unknown };
+      if (typeof parsed.at !== "string" || typeof parsed.type !== "string") continue;
+      const userId = typeof parsed.userId === "string" && parsed.userId ? parsed.userId : null;
+      const login = typeof parsed.login === "string" && parsed.login ? parsed.login : null;
+      const fallback = userId ?? login;
+      if (!fallback) continue;
       entries.push({
         at: parsed.at,
         type: parsed.type,
-        userId: parsed.userId,
-        name: typeof parsed.name === "string" && parsed.name ? parsed.name : parsed.userId,
+        userId,
+        name: typeof parsed.name === "string" && parsed.name ? parsed.name : fallback,
         ...(typeof parsed.detail === "string" ? { detail: parsed.detail } : {}),
       });
     } catch {

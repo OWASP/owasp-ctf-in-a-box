@@ -167,6 +167,12 @@ describe("filterEntries", () => {
     expect(q("type:solve")).toEqual([entries[1]]);
   });
 
+  it("reads login: as player:", () => {
+    expect(q("login:octo")).toEqual(q("player:octo"));
+    expect(q("login:octo").map((e) => e.name)).toEqual(["octocat", "OctoCat"]);
+    expect(q("login:")).toEqual(entries);
+  });
+
   it("matches team: on team events only", () => {
     expect(q("team:octo")).toEqual([entries[3]]);
     expect(q("team:crypto")).toEqual([]);

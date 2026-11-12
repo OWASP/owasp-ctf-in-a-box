@@ -53,7 +53,12 @@ export async function POST(request: Request) {
     // 503. The panel folds only `webhookConfigured` from this response, so
     // the fallback carries that flag from the write itself and the default
     // switches — the read-back is best-effort.
-    let config: DiscordFullConfig = { ...DISCORD_DEFAULTS, webhookConfigured: result.webhookConfigured, webhookUrl: null };
+    let config: DiscordFullConfig = {
+      ...DISCORD_DEFAULTS,
+      webhookConfigured: result.webhookConfigured,
+      webhookUrl: null,
+      webhookGeneration: 0,
+    };
     try {
       config = await getAnnounceConfig();
     } catch (err) {

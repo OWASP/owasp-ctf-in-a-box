@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getAnnounceConfig: vi.fn(),
   getWebhookUrl: vi.fn(),
+  getWebhookGeneration: vi.fn(),
   outboxEnqueue: vi.fn(),
   outboxPending: vi.fn(),
   outboxRetryable: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("@/lib/error-label", () => ({ errorLabel: () => "label" }));
 vi.mock("@/lib/announce/store", () => ({
   getAnnounceConfig: mocks.getAnnounceConfig,
   getWebhookUrl: mocks.getWebhookUrl,
+  getWebhookGeneration: mocks.getWebhookGeneration,
   outboxEnqueue: mocks.outboxEnqueue,
   outboxPending: mocks.outboxPending,
   outboxRetryable: mocks.outboxRetryable,
@@ -48,11 +50,12 @@ const configured = (over: Record<string, unknown> = {}) => ({
   milestones: true,
   marks: "",
   webhookUrl: URL,
+  webhookGeneration: 0,
   ...over,
 });
 
-function entry(kind: string, status = "pending", n = 0) {
-  return { kind, payload: message, at: new Date().toISOString(), n, status };
+function entry(kind: string, status = "pending", n = 0, webhookGeneration = 0) {
+  return { kind, payload: message, at: new Date().toISOString(), n, status, webhookGeneration };
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -64,6 +67,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getAnnounceConfig.mockResolvedValue(configured());
   mocks.getWebhookUrl.mockResolvedValue(URL);
+  mocks.getWebhookGeneration.mockResolvedValue(0);
   mocks.outboxEnqueue.mockResolvedValue(undefined);
   mocks.outboxPending.mockResolvedValue([]);
   mocks.outboxRetryable.mockResolvedValue([]);
@@ -95,6 +99,7 @@ describe("enqueueAnnouncement", () => {
   it("enqueues and arms a coalesced flush when armed", async () => {
     await enqueueAnnouncement("first-blood", message);
     expect(mocks.outboxEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.outboxEnqueue).toHaveBeenCalledWith(expect.any(String), "first-blood", message, 0);
     await vi.advanceTimersByTimeAsync(300);
     expect(mocks.outboxPending).toHaveBeenCalled();
   });
@@ -289,6 +294,28 @@ describe("flushRetries", () => {
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.outboxClaim).not.toHaveBeenCalled();
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+
+  it("rejects an entry enqueued from a pre-clear snapshot after the cancellation scan", async () => {
+    // A producer read the old config (generation 0) and enqueued after the
+    // clear's cancellation scan. The clear advanced the generation, so this
+    // entry must not reach the webhook configured afterwards.
+    mocks.outboxPending.mockResolvedValue([{ id: "race", entry: entry("launch", "pending", 0, 0) }]);
+    mocks.getWebhookGeneration.mockResolvedValue(1);
+    await flushRetries();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxSkip).toHaveBeenCalledWith("race");
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+
+  it("a failed generation read leaves retryable entries untouched", async () => {
+    mocks.getWebhookGeneration.mockRejectedValue(new Error("redis down"));
+    mocks.outboxRetryable.mockResolvedValue([{ id: "9", entry: entry("launch", "failed", 1) }]);
+    await flushRetries();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxClaim).not.toHaveBeenCalled();
+    expect(mocks.outboxSkip).not.toHaveBeenCalled();
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 });

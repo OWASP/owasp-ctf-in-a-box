@@ -33,8 +33,12 @@ export type DiscordPublicConfig = {
 };
 
 /** The server-only full config (announce/store.ts) — the same fields plus
- *  the URL. Never crosses an API boundary. */
-export type DiscordFullConfig = DiscordPublicConfig & { webhookUrl: string | null };
+ *  the URL and the webhook generation an enqueue stamps onto its entry.
+ *  Never crosses an API boundary. */
+export type DiscordFullConfig = DiscordPublicConfig & {
+  webhookUrl: string | null;
+  webhookGeneration: number;
+};
 
 /** Announcement kinds, keyed by the config switch that gates them. Used by
  *  the sender's flush-time filter ("stop disabled announcements immediately")

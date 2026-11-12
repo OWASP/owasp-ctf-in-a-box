@@ -45,10 +45,18 @@ export const ANNOUNCE_LIFECYCLE_KEY = "ctf:announce:lifecycle";
 export const ANNOUNCE_SEQ_KEY = "ctf:announce:seq";
 
 /** The delivery outbox: field = announcement id, value = JSON
- *  `{kind, payload, at, n, status}`. `status` is `pending` (queued here or
- *  on another replica, guarded by its lease key), `sent`, or `failed`
- *  (retryable until `n` reaches ANNOUNCE_MAX_ATTEMPTS). */
+ *  `{kind, payload, at, n, status, webhookGeneration}`. `status` is
+ *  `pending` (queued here or on another replica, guarded by its lease key),
+ *  `sent`, or `failed` (retryable until `n` reaches
+ *  ANNOUNCE_MAX_ATTEMPTS). `webhookGeneration` is the generation the enqueue
+ *  observed, so an entry produced from a snapshot taken before a clear is
+ *  rejected instead of delivered to a later URL. */
 export const ANNOUNCE_OUTBOX_KEY = "ctf:announce:outbox";
+
+/** Bumped atomically when the webhook is cleared. An entry whose
+ *  `webhookGeneration` predates the current value is stale: its producer read
+ *  the old config before the clear and enqueued after the cancellation scan. */
+export const ANNOUNCE_WEBHOOK_GENERATION_KEY = "ctf:announce:webhook-generation";
 
 /** Per-id delivery lease: `ctf:announce:lease:<id>` SET NX PX, the single
  *  cross-replica guard on "who delivers this". A crashed owner's lease

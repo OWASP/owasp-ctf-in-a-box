@@ -31,6 +31,7 @@ import type { DiscordMessage } from "./messages";
 import {
   bumpStatus,
   getAnnounceConfig,
+  getWebhookGeneration,
   getWebhookUrl,
   outboxClaim,
   outboxComplete,
@@ -84,7 +85,7 @@ export async function enqueueAnnouncement(kind: AnnouncementKind, message: Disco
   const config = await getAnnounceConfig();
   if (!config.webhookConfigured || !kindEnabled(config, kind)) return;
   const id = nextId(kind);
-  await outboxEnqueue(id, kind, message);
+  await outboxEnqueue(id, kind, message, config.webhookGeneration);
   queue.push(id);
   while (queue.length > MAX_QUEUE) {
     const droppedId = queue.shift();
@@ -139,9 +140,22 @@ export async function flush(): Promise<void> {
       queue = [];
       return;
     }
+    let generation: number;
+    try {
+      generation = await getWebhookGeneration();
+    } catch (err) {
+      // A failed generation read is not "generation 0": leave entries for
+      // the next pass rather than deliver work from an unknown boundary.
+      console.error("[announce] webhook generation read failed, leaving announcements queued:", errorLabel(err));
+      return;
+    }
     const pending = await outboxPending();
     const candidates: { id: string; entry: OutboxEntry }[] = [];
     for (const item of pending) {
+      if (item.entry.webhookGeneration !== generation) {
+        await outboxSkip(item.id);
+        continue;
+      }
       if (!kindEnabled(config, item.entry.kind)) {
         await outboxSkip(item.id);
         continue;
@@ -203,6 +217,13 @@ export async function flushRetries(): Promise<void> {
       return;
     }
     if (!url) return;
+    let generation: number;
+    try {
+      generation = await getWebhookGeneration();
+    } catch (err) {
+      console.error("[announce] webhook generation read failed, leaving retries queued:", errorLabel(err));
+      return;
+    }
     const [pending, retryable] = await Promise.all([outboxPending(), outboxRetryable()]);
     // One id can only have one status, but dedupe anyway so a store change
     // (or a concurrent status flip) cannot put the same announcement in two
@@ -213,6 +234,10 @@ export async function flushRetries(): Promise<void> {
     }
     const candidates: { id: string; entry: OutboxEntry }[] = [];
     for (const item of [...byId.values()].sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at))) {
+      if (item.entry.webhookGeneration !== generation) {
+        await outboxSkip(item.id);
+        continue;
+      }
       if (!kindEnabled(config, item.entry.kind)) {
         await outboxSkip(item.id);
         continue;

@@ -26,7 +26,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   unchanged. A master reset keeps accounts and GitHub links, and the event
   archive never contains them, so demo and load-test accounts survive a reset
   until **Clear demo data** or `scripts/load-seed.mjs --clean` removes them.
-  The AI launch token's `sub` is now the player id. Data written by an
+  The AI launch token's `sub` is now the player id. `GET /api/hints` is
+  behind the pre-launch lock like the other module routes (403
+  `not-launched` before launch, admins pass as a preview). Data written by an
   earlier version is not migrated: v2 refuses it (#743).
 - **AWS deploys now check credentials before reading Terraform outputs (#750).**
   An expired SSO session fails with a credential message before image work

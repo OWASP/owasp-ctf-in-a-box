@@ -754,7 +754,7 @@ fly ips list --app <app-name>
 Replace `<app-name>` with your Fly app name.
 
 Two ways to close the gap, neither set up by the kit today: serve the box
-through a [Cloudflare Tunnel](https://www.cloudflare.com/products/cloudflare-tunnel/),
+through a [Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/get-started/),
 then release the app's public IPs with `fly ips release <address> --app <app-name>`
 so the only way in is through Cloudflare. The tracked fix is
 [issue #690](https://github.com/OWASP/owasp-ctf-in-a-box/issues/690).

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   outboxRetryable: vi.fn(),
   outboxClaim: vi.fn(),
   outboxComplete: vi.fn(),
+  outboxSkip: vi.fn(),
   outboxPrune: vi.fn(),
   bumpStatus: vi.fn(),
   postToDiscord: undefined as unknown as ReturnType<typeof vi.fn>,
@@ -28,6 +29,7 @@ vi.mock("@/lib/announce/store", () => ({
   outboxRetryable: mocks.outboxRetryable,
   outboxClaim: mocks.outboxClaim,
   outboxComplete: mocks.outboxComplete,
+  outboxSkip: mocks.outboxSkip,
   outboxPrune: mocks.outboxPrune,
   bumpStatus: mocks.bumpStatus,
 }));
@@ -65,8 +67,9 @@ beforeEach(() => {
   mocks.outboxEnqueue.mockResolvedValue(undefined);
   mocks.outboxPending.mockResolvedValue([]);
   mocks.outboxRetryable.mockResolvedValue([]);
-  mocks.outboxClaim.mockResolvedValue(true);
+  mocks.outboxClaim.mockResolvedValue("lease-token");
   mocks.outboxComplete.mockResolvedValue(undefined);
+  mocks.outboxSkip.mockResolvedValue(undefined);
   mocks.outboxPrune.mockResolvedValue(undefined);
   mocks.bumpStatus.mockResolvedValue(undefined);
   fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
@@ -116,8 +119,8 @@ describe("flush", () => {
     const body = JSON.parse(init.body as string) as { embeds: unknown[]; allowed_mentions: unknown };
     expect(body.embeds).toHaveLength(2);
     expect(body.allowed_mentions).toEqual({ parse: [] });
-    expect(mocks.outboxComplete).toHaveBeenCalledWith("1", "sent");
-    expect(mocks.outboxComplete).toHaveBeenCalledWith("2", "sent");
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("1", "sent", "lease-token");
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("2", "sent", "lease-token");
     expect(mocks.outboxClaim).toHaveBeenCalledWith("1", expect.objectContaining({ kind: "first-blood", status: "pending" }));
     expect(mocks.outboxClaim).toHaveBeenCalledWith("2", expect.objectContaining({ kind: "launch", status: "pending" }));
     // The URL is the only thing fetch ever sees as a destination.
@@ -133,14 +136,15 @@ describe("flush", () => {
     mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     await flush();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(mocks.outboxComplete).toHaveBeenCalledWith("1", "skipped");
+    expect(mocks.outboxSkip).toHaveBeenCalledWith("1");
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 
   it("marks a failed POST failed and records the status", async () => {
     mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     fetchMock.mockResolvedValue({ ok: false, status: 404 });
     await flush();
-    expect(mocks.outboxComplete).toHaveBeenCalledWith("1", "failed");
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("1", "failed", "lease-token");
     expect(mocks.bumpStatus).toHaveBeenCalledWith("first-blood", "failed", expect.any(String));
   });
 
@@ -198,15 +202,15 @@ describe("flush", () => {
       { id: "1", entry: entry("first-blood") },
       { id: "2", entry: entry("launch") },
     ]);
-    mocks.outboxClaim.mockImplementation(async (id: string) => id === "2");
+    mocks.outboxClaim.mockImplementation(async (id: string) => (id === "2" ? "token-2" : null));
     await flush();
     expect(mocks.outboxClaim).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as { embeds: unknown[] };
     expect(body.embeds).toHaveLength(1);
-    expect(mocks.outboxComplete).not.toHaveBeenCalledWith("1", expect.anything());
-    expect(mocks.outboxComplete).toHaveBeenCalledWith("2", "sent");
+    expect(mocks.outboxComplete).not.toHaveBeenCalledWith("1", expect.anything(), expect.anything());
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("2", "sent", "token-2");
   });
 
   it("claims leases per batch immediately before posting, preserving lease validity across sequential batches", async () => {
@@ -219,7 +223,7 @@ describe("flush", () => {
     const callOrder: string[] = [];
     mocks.outboxClaim.mockImplementation(async (id: string) => {
       callOrder.push(`claim:${id}`);
-      return true;
+      return `token-${id}`;
     });
     fetchMock.mockImplementation(async () => {
       callOrder.push("fetch");
@@ -248,7 +252,7 @@ describe("flushRetries", () => {
     mocks.outboxRetryable.mockResolvedValue([{ id: "9", entry: entry("launch", "failed", 1) }]);
     await flushRetries();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(mocks.outboxComplete).toHaveBeenCalledWith("9", "sent");
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("9", "sent", "lease-token");
   });
 
   it("delivers a pending entry stranded by a restart or interrupted flush", async () => {
@@ -258,12 +262,12 @@ describe("flushRetries", () => {
     await flushRetries();
     expect(mocks.outboxClaim).toHaveBeenCalledWith("p1", expect.objectContaining({ status: "pending", n: 0 }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(mocks.outboxComplete).toHaveBeenCalledWith("p1", "sent");
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("p1", "sent", "lease-token");
   });
 
-  it("skips candidate when atomic claim returns false during retry sweep", async () => {
+  it("skips candidate when the atomic claim returns no lease during retry sweep", async () => {
     mocks.outboxRetryable.mockResolvedValue([{ id: "r1", entry: entry("launch", "failed", 1) }]);
-    mocks.outboxClaim.mockResolvedValue(false);
+    mocks.outboxClaim.mockResolvedValue(null);
     await flushRetries();
     expect(mocks.outboxClaim).toHaveBeenCalledWith("r1", expect.objectContaining({ status: "failed", n: 1 }));
     expect(fetchMock).not.toHaveBeenCalled();
@@ -276,7 +280,7 @@ describe("flushRetries", () => {
     await flushRetries();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mocks.outboxComplete).toHaveBeenCalledTimes(1);
-    expect(mocks.outboxComplete).toHaveBeenCalledWith("same", "sent");
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("same", "sent", "lease-token");
   });
 
   it("a failed webhook read leaves retryable entries untouched for the next sweep", async () => {

@@ -38,6 +38,7 @@ import {
   outboxPending,
   outboxPrune,
   outboxRetryable,
+  outboxSkip,
   type OutboxEntry,
 } from "./store";
 
@@ -88,7 +89,7 @@ export async function enqueueAnnouncement(kind: AnnouncementKind, message: Disco
   while (queue.length > MAX_QUEUE) {
     const droppedId = queue.shift();
     droppedCount += 1;
-    if (droppedId) await outboxComplete(droppedId, "skipped");
+    if (droppedId) await outboxSkip(droppedId);
   }
   scheduleFlush();
 }
@@ -142,7 +143,7 @@ export async function flush(): Promise<void> {
     const candidates: { id: string; entry: OutboxEntry }[] = [];
     for (const item of pending) {
       if (!kindEnabled(config, item.entry.kind)) {
-        await outboxComplete(item.id, "skipped");
+        await outboxSkip(item.id);
         continue;
       }
       candidates.push(item);
@@ -153,23 +154,24 @@ export async function flush(): Promise<void> {
 
     for (let i = 0; i < candidates.length; i += PACK_EMBEDS) {
       const candidateBatch = candidates.slice(i, i + PACK_EMBEDS);
-      const batch: { id: string; entry: OutboxEntry }[] = [];
+      const batch: { item: { id: string; entry: OutboxEntry }; token: string }[] = [];
       for (const item of candidateBatch) {
-        if (await outboxClaim(item.id, item.entry)) batch.push(item);
+        const token = await outboxClaim(item.id, item.entry);
+        if (token) batch.push({ item, token });
       }
       if (batch.length === 0) continue;
-      const embeds = batch.flatMap((item) => {
+      const embeds = batch.flatMap(({ item }) => {
         const payload = item.entry.payload as DiscordMessage | null;
         return Array.isArray(payload?.embeds) ? payload.embeds : [];
       });
       if (embeds.length === 0) {
-        for (const item of batch) await outboxComplete(item.id, "failed");
+        for (const { item, token } of batch) await outboxComplete(item.id, "failed", token);
         continue;
       }
       const body = { embeds: embeds.slice(0, PACK_EMBEDS), allowed_mentions: { parse: [] } };
       const ok = await postToDiscord(url, body);
-      for (const item of batch) {
-        await outboxComplete(item.id, ok ? "sent" : "failed");
+      for (const { item, token } of batch) {
+        await outboxComplete(item.id, ok ? "sent" : "failed", token);
         await bumpStatus(item.entry.kind, ok ? "sent" : "failed", ok ? undefined : "discord post failed");
       }
     }
@@ -212,30 +214,31 @@ export async function flushRetries(): Promise<void> {
     const candidates: { id: string; entry: OutboxEntry }[] = [];
     for (const item of [...byId.values()].sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at))) {
       if (!kindEnabled(config, item.entry.kind)) {
-        await outboxComplete(item.id, "skipped");
+        await outboxSkip(item.id);
         continue;
       }
       candidates.push(item);
     }
     for (let i = 0; i < candidates.length; i += PACK_EMBEDS) {
       const candidateBatch = candidates.slice(i, i + PACK_EMBEDS);
-      const batch: { id: string; entry: OutboxEntry }[] = [];
+      const batch: { item: { id: string; entry: OutboxEntry }; token: string }[] = [];
       for (const item of candidateBatch) {
-        if (await outboxClaim(item.id, item.entry)) batch.push(item);
+        const token = await outboxClaim(item.id, item.entry);
+        if (token) batch.push({ item, token });
       }
       if (batch.length === 0) continue;
-      const embeds = batch.flatMap((item) => {
+      const embeds = batch.flatMap(({ item }) => {
         const payload = item.entry.payload as DiscordMessage | null;
         return Array.isArray(payload?.embeds) ? payload.embeds : [];
       });
       if (embeds.length === 0) {
-        for (const item of batch) await outboxComplete(item.id, "failed");
+        for (const { item, token } of batch) await outboxComplete(item.id, "failed", token);
         continue;
       }
       const body = { embeds: embeds.slice(0, PACK_EMBEDS), allowed_mentions: { parse: [] } };
       const ok = await postToDiscord(url, body);
-      for (const item of batch) {
-        await outboxComplete(item.id, ok ? "sent" : "failed");
+      for (const { item, token } of batch) {
+        await outboxComplete(item.id, ok ? "sent" : "failed", token);
         await bumpStatus(item.entry.kind, ok ? "sent" : "failed", ok ? undefined : "discord post failed (retry)");
       }
     }

@@ -25,7 +25,23 @@ compose() { docker compose -f docker-compose.yml -f docker-compose.smoke.yml --p
 cleanup() { compose down -v --remove-orphans >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-compose up -d --build redis srh scorer mock-github sync
+# Sync attributes a PR author to the player who claimed their GitHub login
+# (`ctf:link:github:<lowercased login>`), so the links are in Redis BEFORE
+# sync's first poll: an unlinked author's comment is consumed and dropped.
+# mallory stays unlinked, as well as forged.
+OCTOCAT_ID=11111111-1111-4111-8111-111111111111
+MONA_ID=33333333-3333-4333-8333-333333333333
+TRINITY_ID=44444444-4444-4444-8444-444444444444
+compose up -d --build redis srh scorer mock-github
+link_deadline=$((SECONDS + 30))
+until compose exec -T redis redis-cli ping 2>/dev/null | grep -qx PONG; do
+  [ "$SECONDS" -ge "$link_deadline" ] && { echo "FAIL: redis never answered before the link keys were seeded"; exit 1; }
+  sleep 1
+done
+for pair in "octocat:$OCTOCAT_ID" "mona:$MONA_ID" "trinity:$TRINITY_ID"; do
+  compose exec -T redis redis-cli SET "ctf:link:github:${pair%%:*}" "${pair#*:}" >/dev/null
+done
+compose up -d --build sync
 
 echo "--- redis answers"
 pong="$(compose exec -T redis redis-cli ping 2>&1 || true)"
@@ -101,7 +117,7 @@ done
 
 echo "--- sync ingests fixture comments (waiting up to 30s)"
 deadline=$((SECONDS + 30))
-until curl -sf http://localhost:4000/leaderboard | grep -q '"octocat"'; do
+until curl -sf http://localhost:4000/leaderboard | grep -qF "\"$OCTOCAT_ID\""; do
   [ "$SECONDS" -ge "$deadline" ] && { echo "FAIL: octocat never appeared"; compose logs sync; exit 1; }
   sleep 2
 done
@@ -112,25 +128,25 @@ echo "$board"
 echo "--- scores match fixtures (1 point per solved id)"
 # Here-strings, not `echo | grep -q`: under pipefail a large board can lose
 # the SIGPIPE race and fail on a line that matched.
-grep -qF '"author":"octocat","points":2' <<< "$board" \
+grep -qF "\"player\":\"$OCTOCAT_ID\",\"points\":2" <<< "$board" \
   || { echo "FAIL: leaderboard has no octocat at 2 points"; exit 1; }
-grep -qF '"author":"mona","points":1' <<< "$board" \
+grep -qF "\"player\":\"$MONA_ID\",\"points\":1" <<< "$board" \
   || { echo "FAIL: leaderboard has no mona at 1 point"; exit 1; }
 
 echo "--- each score carries its own comment's time, not the time it was read"
-grep -q '"author":"octocat","points":2,"solved":\[[^]]*\],"at":"2026-08-13T10:00:00Z"' <<< "$board" \
+grep -q "\"player\":\"$OCTOCAT_ID\",\"points\":2,\"solved\":\[[^]]*\],\"at\":\"2026-08-13T10:00:00Z\"" <<< "$board" \
   || { echo "FAIL: octocat's score did not carry its comment's updated_at"; exit 1; }
-grep -q '"author":"mona","points":1,"solved":\[[^]]*\],"at":"2026-08-13T10:10:00Z"' <<< "$board" \
+grep -q "\"player\":\"$MONA_ID\",\"points\":1,\"solved\":\[[^]]*\],\"at\":\"2026-08-13T10:10:00Z\"" <<< "$board" \
   || { echo "FAIL: mona's score did not carry its comment's updated_at"; exit 1; }
 
 echo "--- forged comment from mallory was ignored (trust filter)"
-if grep -qF '"author":"mallory"' <<< "$board"; then
+if grep -qF 'mallory' <<< "$board"; then
   echo "FAIL: forged comment was scored"; exit 1
 fi
 
 echo "--- unauthenticated POST /score rejected"
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:4000/score \
-  -H 'content-type: application/json' -d '{"author":"evil","target":"dvwa","solved":["x"]}')
+  -H 'content-type: application/json' -d '{"player":"55555555-5555-4555-8555-555555555555","target":"dvwa","solved":["x"]}')
 [ "$code" = "401" ] || { echo "FAIL: unauthenticated POST /score answered $code, not 401"; exit 1; }
 
 echo "--- organizer freeze: the poller reports it and keeps reading"
@@ -157,11 +173,11 @@ echo "--- a frozen poller still forwards the queued score, with its comment's ti
 # lifts, and delay one posted before it; the scorer decides on the comment's
 # time instead, so the poller hands it over now.
 frozen_deadline=$((SECONDS + 15))
-until curl -sf http://localhost:4000/leaderboard | grep -q '"trinity"'; do
+until curl -sf http://localhost:4000/leaderboard | grep -qF "\"$TRINITY_ID\""; do
   [ "$SECONDS" -ge "$frozen_deadline" ] && { echo "FAIL: the poller held trinity's score during the freeze"; compose logs sync; exit 1; }
   sleep 1
 done
-curl -sf http://localhost:4000/leaderboard | grep -q '"author":"trinity","points":1,"solved":\["dvwa:csrf-low"\],"at":"2026-08-13T10:15:00Z"' \
+curl -sf http://localhost:4000/leaderboard | grep -q "\"player\":\"$TRINITY_ID\",\"points\":1,\"solved\":\[\"dvwa:csrf-low\"\],\"at\":\"2026-08-13T10:15:00Z\"" \
   || { echo "FAIL: trinity's score did not match the queued fixture and its comment time"; exit 1; }
 compose exec -T redis redis-cli HGET ctf:sync:status paused 2>/dev/null | grep -q '^1$' \
   || { echo "FAIL: ctf:sync:status paused was not 1 while frozen"; exit 1; }

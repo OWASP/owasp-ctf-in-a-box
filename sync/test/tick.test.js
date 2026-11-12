@@ -14,7 +14,9 @@ const CFG = {
 // selection itself is covered separately (tick-redis.test.js, redis.test.js).
 // A fixed single-target stub keeps these tests scoped to DVWA exactly as
 // before, instead of every call now looping the full six-target catalogue.
-const redisStub = { getSecureDevTargets: async () => ["dvwa"], isPaused: async () => false, writeStatus: async () => {} };
+const LINKS = { octocat: "11111111-1111-4111-8111-111111111111", mona: "33333333-3333-4333-8333-333333333333" };
+const resolveGithubLogin = async (login) => LINKS[login.toLowerCase()] ?? null;
+const redisStub = { resolveGithubLogin, getSecureDevTargets: async () => ["dvwa"], isPaused: async () => false, writeStatus: async () => {} };
 const tick = (cfg, state, deps = {}) => rawTick(cfg, state, { redis: redisStub, ...deps });
 
 const scoreBody = `<!-- ctf-score: {"author":"octocat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc"} -->`;
@@ -38,7 +40,7 @@ test("polls, parses and submits new score comments once", async () => {
   const state = { repos: {} };
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
   assert.equal(posts.length, 1);
-  assert.equal(posts[0].author, "octocat");
+  assert.equal(posts[0].player, LINKS.octocat);
   // second tick with same comment id: seen-set suppresses the repost
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
   assert.equal(posts.length, 1);
@@ -96,7 +98,7 @@ test("2-comment batch: first fails 5xx, second succeeds 202; cursor stops at fir
       const payload = JSON.parse(opts.body);
       posts.push(payload);
       // 5xx for octocat, 202 for mona
-      return new Response(null, { status: payload.author === "octocat" ? 503 : 202 });
+      return new Response(null, { status: payload.player === LINKS.octocat ? 503 : 202 });
     }
     throw new Error(`unexpected url ${u}`);
   };
@@ -107,8 +109,8 @@ test("2-comment batch: first fails 5xx, second succeeds 202; cursor stops at fir
 
   // both were attempted to be submitted
   assert.equal(posts.length, 2);
-  assert.equal(posts[0].author, "octocat");
-  assert.equal(posts[1].author, "mona");
+  assert.equal(posts[0].player, LINKS.octocat);
+  assert.equal(posts[1].player, LINKS.mona);
 
   // seen: 1 was un-marked (failed), 2 was kept (succeeded)
   assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), false);
@@ -138,7 +140,7 @@ test("2-comment batch: first fails 5xx, second succeeds 202; cursor stops at fir
 
   // comment 1 was re-submitted (un-marked on first tick), comment 2 was skipped (still in seen)
   assert.equal(posts2.length, 1);
-  assert.equal(posts2[0].author, "octocat");
+  assert.equal(posts2[0].player, LINKS.octocat);
 
   // both in seen now, cursor advanced fully
   assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), true);
@@ -217,7 +219,7 @@ test("ingests the real score when a placeholder comment is later edited into one
   current = scored;
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
   assert.equal(posts.length, 1, "the edit carrying the real score MUST be ingested");
-  assert.equal(posts[0].author, "octocat");
+  assert.equal(posts[0].player, LINKS.octocat);
   assert.deepEqual(posts[0].solved, ["sqli-low"]);
 
   // …and still exactly once: a third tick with no further edit re-submits nothing.
@@ -265,7 +267,7 @@ test("after a reset, a bot comment last edited before the epoch is skipped and o
   const state = { repos: {} };
   await tick(CFG, state, { fetchImpl: f, log: () => {}, redis: withReset(resetAt) });
   assert.equal(posts.length, 1, "only the post-reset revision reaches the scorer");
-  assert.equal(posts[0].author, "mona");
+  assert.equal(posts[0].player, LINKS.mona);
   // The skipped comment is still marked seen: the next tick must not re-walk it.
   assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), true);
 });
@@ -365,4 +367,48 @@ test("a final refusal (422) is marked seen, logged with its reason, and not coun
   assert.equal(state.repos.DVWA.etag, 'W/"r"'); // the cursor moved on: nothing to retry
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
   assert.equal(posts.length, 1, "a refused revision is never re-presented");
+});
+
+// #742: a score is attributed to the player who claimed the PR author's GitHub
+// login (`ctf:link:github:<lowercased login>`), never to the login itself.
+test("a mixed-case author resolves through the lowercased link key", async () => {
+  const keys = [];
+  const redis = { ...redisStub, resolveGithubLogin: async (l) => { keys.push(l); return LINKS[l.toLowerCase()] ?? null; } };
+  const posts = [];
+  const body = `<!-- ctf-score: {"author":"OctoCat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].player, LINKS.octocat);
+  assert.equal("author" in posts[0], false, "the login is not sent to the scorer");
+});
+
+test("an unlinked author is dropped as `unlinked` without naming the login", async () => {
+  const posts = [];
+  const logs = [];
+  const body = `<!-- ctf-score: {"author":"stranger","target":"dvwa","solved":["sqli-low"],"pr":9,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: (m) => logs.push(m) });
+  assert.equal(posts.length, 0);
+  assert.equal(state.dropped, 1);
+  assert.match(state.lastDrop, /DVWA#9/);
+  assert.match(state.lastDrop, /unlinked/);
+  assert.equal(logs.join("\n").includes("stranger"), false);
+  assert.equal(JSON.stringify(state).includes("stranger"), false);
+});
+
+test("a resolver error leaves the comment unseen so the next poll retries it", async () => {
+  let fail = true;
+  const redis = { ...redisStub, resolveGithubLogin: async (l) => { if (fail) throw new Error("upstash: NOAUTH"); return LINKS[l]; } };
+  const posts = [];
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(posts.length, 0);
+  assert.equal(state.dropped ?? 0, 0);
+  fail = false;
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].player, LINKS.octocat);
 });

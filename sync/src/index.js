@@ -2,7 +2,7 @@ import { loadConfig, REPO_NAMES, TARGETS } from "./config.js";
 import { fetchNewScoreComments } from "./github.js";
 import { hasScoreMarker, parseScoreComment } from "./parse.js";
 import { submitScore } from "./submit.js";
-import { loadState, markSeen, parseState, repoState, retireStateFile, saveState, seenKey } from "./state.js";
+import { loadState, markSeen, parseState, repoState, retireStateFile, seenKey } from "./state.js";
 import { makeRedis, SYNC_STATE_KEY } from "./redis.js";
 
 // Fail-safe wrapper: a broken deps.redis (whatever its origin) must never
@@ -33,9 +33,12 @@ async function writeStatusSafely(redis, log, status) {
  *     distinguishing them is what would make a "dropped" figure permanently
  *     nonzero — and a counter that is always nonzero is a counter nobody
  *     reads.
- *   - `invalid` / `rejected` are NOT routine. Each one is a score that
- *     existed on a PR and will never reach the leaderboard without a human.
- *     These two are what `state.dropped` counts and what /admin shows.
+ *   - `invalid` / `rejected` / `unlinked` are NOT routine. Each one is a score
+ *     that existed on a PR and will never reach the leaderboard without a
+ *     human. These are what `state.dropped` counts and what /admin shows.
+ *     `unlinked` is a PR author whose GitHub login no player has claimed
+ *     (`ctf:link:github:<login>`); the drop names the repo and PR, never the
+ *     login.
  *   - `retried` is a submission that failed transiently and was deliberately
  *     un-marked; the next tick re-presents it. Worth logging, not worth
  *     counting as lost.
@@ -48,7 +51,7 @@ async function writeStatusSafely(redis, log, status) {
  *     marked seen), and reported once, so the first poll after a reset says
  *     how much of the past it declined to re-bank.
  */
-const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, retried: 0, preReset: 0, refused: 0 });
+const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, unlinked: 0, retried: 0, preReset: 0, refused: 0 });
 
 /** The master-reset epoch as milliseconds, or null when there is none. The
  *  admin panel writes it as epoch milliseconds (`resetEvent`); a state file
@@ -67,7 +70,7 @@ function resetEpochMs(resetAt) {
  *  re-read), so a quiet poller stays quiet and any line it does print means
  *  something. */
 function summarize(repo, tally) {
-  if (tally.noMarker + tally.invalid + tally.rejected + tally.retried + tally.preReset + tally.refused === 0) return null;
+  if (tally.noMarker + tally.invalid + tally.rejected + tally.unlinked + tally.retried + tally.preReset + tally.refused === 0) return null;
   const parts = Object.entries(tally)
     .filter(([, n]) => n > 0)
     .map(([name, n]) => `${n} ${name}`);
@@ -192,7 +195,16 @@ export async function tick(cfg, state, deps = {}) {
         // The comment's own GitHub time, never a field of the marker: the
         // scorer times the solve by it and judges the window and the freeze
         // at it.
-        const verdict = await submitScore(cfg, { ...payload, at: c.updated_at }, fetchImpl);
+        // Resolved inside the try so a Redis error un-marks the comment like
+        // a transient submit failure: the next poll retries it.
+        const player = redis?.resolveGithubLogin ? await redis.resolveGithubLogin(payload.author) : null;
+        if (!player) {
+          tally.unlinked++;
+          drop(`submit ${repo}#${payload.pr}: unlinked (no player claimed the PR author), dropped`);
+          continue;
+        }
+        const { author: _login, ...rest } = payload;
+        const verdict = await submitScore(cfg, { player, ...rest, at: c.updated_at }, fetchImpl);
         if (verdict.outcome === "accepted") {
           state.ingested++;
           tally.ingested++;
@@ -251,7 +263,6 @@ export async function main(deps = {}) {
     log = console.log,
     logErr = console.error,
     readState = loadState,
-    writeState = saveState,
     retireFile = retireStateFile,
     makeRedisImpl = makeRedis,
     runTick = tick,
@@ -268,37 +279,31 @@ export async function main(deps = {}) {
   }
 
   const redis = makeRedisImpl();
+  if (!redis) {
+    logErr("ctf-sync: Secure Development needs Redis to attribute PRs to players");
+    return exit(1);
+  }
   // No static repo count here any more: which of the six targets get polled
   // is decided per tick from Redis (config-v2), so a count printed once at
   // startup would just be stale the moment an organizer changes it in /admin.
   logErr(`ctf-sync: polling ${cfg.org} every ${cfg.pollIntervalMs}ms`);
-  // With no Redis client there is nothing to read secureDevTargets from, so
-  // tick() falls back to TARGETS (all six) every tick — worth saying once at
-  // boot rather than leaving an organizer to infer it from the poll logs.
-  if (!redis) logErr("ctf-sync: no Redis client — polling all six targets");
-
-  // Where the durable state lives (ADR 64). With Redis, in `ctf:sync:state`,
-  // next to the scores; the file is read at most once, as a migration seed.
-  // With no Redis client (a dev poller), the file at STATE_PATH, as before.
-  // `logErr` so a state repair lands in the same stream as the poller's other
-  // operational lines — a warning nobody sees is the silent repair this guards
-  // against (#63).
-  const state = redis
-    ? await loadDurableState(cfg, redis, { readState, retire: retireFile, logErr, sleep })
-    : readState(cfg.statePath, { log: logErr });
-  const persist = redis
-    ? async () => {
-        try {
-          await redis.writePollState(state);
-        } catch (err) {
-          // Not fatal: the in-memory state stays authoritative for this
-          // process and the next tick writes again. Only a restart before a
-          // write lands rewinds the cursor to the last one that did, and the
-          // re-read that causes is idempotent (the scorer's HSETNX).
-          logErr(`ctf-sync: could not save poll state to Redis (${SYNC_STATE_KEY}): ${err.message} — retrying next tick`);
-        }
-      }
-    : async () => writeState(cfg.statePath, state);
+  // Where the durable state lives (ADR 64): in `ctf:sync:state`, next to the
+  // scores; the file is read at most once, as a migration seed. `logErr` so a
+  // state repair lands in the same stream as the poller's other operational
+  // lines — a warning nobody sees is the silent repair this guards against
+  // (#63).
+  const state = await loadDurableState(cfg, redis, { readState, retire: retireFile, logErr, sleep });
+  const persist = async () => {
+    try {
+      await redis.writePollState(state);
+    } catch (err) {
+      // Not fatal: the in-memory state stays authoritative for this process
+      // and the next tick writes again. Only a restart before a write lands
+      // rewinds the cursor to the last one that did, and the re-read that
+      // causes is idempotent (the scorer's HSETNX).
+      logErr(`ctf-sync: could not save poll state to Redis (${SYNC_STATE_KEY}): ${err.message} — retrying next tick`);
+    }
+  };
 
   for (;;) {
     await runTick(cfg, state, { redis });

@@ -9,6 +9,7 @@ import { createServer } from "node:http";
 import {
   assertRedisUrl,
   assertReadOnly,
+  displayNameOfRow,
   auditAttempt,
   audit,
   diffBoard,
@@ -23,6 +24,16 @@ import {
 
 const T = (min) => new Date(Date.UTC(2026, 8, 30, 10, min)).toISOString();
 const row = (points, at) => JSON.stringify({ points, at });
+
+// Kit player ids: lowercase v4 UUIDs. The audit reports each by id with its display name beside it.
+const P = {
+  alice: "a1111111-1111-4111-8111-111111111111",
+  bob: "b2222222-2222-4222-8222-222222222222",
+  carol: "c3333333-3333-4333-8333-333333333333",
+  dave: "d4444444-4444-4444-8444-444444444444",
+  erin: "e5555555-5555-4555-8555-555555555555",
+  frank: "f6666666-6666-4666-8666-666666666666",
+};
 
 // The store. Worked totals (ai is switched OFF; hints are on by default):
 //   alice  SD c1=10 (+ an id the rubric lacks, ignored) + quiz 40      = 50 − 3 (spent as "Alice") = 47, 3 items
@@ -47,26 +58,27 @@ export function snapshot() {
       { app: "webgoat", id: "w1", points: 5 },
     ],
     sdSolves: {
-      dvwa: { "alice:c1": T(1), "alice:gone": T(2), "bob:c1": T(3), "bob:c2": T(4), "carol:c2": T(5) },
-      webgoat: { "carol:w1": T(6) },
+      dvwa: { [`${P.alice}:c1`]: T(1), [`${P.alice}:gone`]: T(2), [`${P.bob}:c1`]: T(3), [`${P.bob}:c2`]: T(4), [`${P.carol}:c2`]: T(5) },
+      webgoat: { [`${P.carol}:w1`]: T(6) },
     },
     agg: {
-      quiz: { points: { alice: "40", bob: "10" }, count: { alice: "2", bob: "1" } },
-      classic: { points: { carol: "100", erin: "50", frank: "50" }, count: { carol: "1", erin: "1", frank: "1" } },
-      ai: { points: { dave: "500" }, count: { dave: "1" } },
+      quiz: { points: { [P.alice]: "40", [P.bob]: "10" }, count: { [P.alice]: "2", [P.bob]: "1" } },
+      classic: { points: { [P.carol]: "100", [P.erin]: "50", [P.frank]: "50" }, count: { [P.carol]: "1", [P.erin]: "1", [P.frank]: "1" } },
+      ai: { points: { [P.dave]: "500" }, count: { [P.dave]: "1" } },
     },
     rows: {
-      quiz: { alice: { q1: row(10, T(20)), q2: row(30, T(21)) }, bob: { q1: row(10, T(10)) }, carol: {}, erin: {}, frank: {}, dave: {} },
-      classic: { alice: {}, bob: {}, carol: { k2: row(100, T(30)) }, erin: { k1: row(50, T(31)) }, frank: { k1: row(50, T(32)) }, dave: {} },
-      ai: { alice: {}, bob: {}, carol: {}, erin: {}, frank: {}, dave: { a1: row(500, T(40)) } },
+      quiz: { [P.alice]: { q1: row(10, T(20)), q2: row(30, T(21)) }, [P.bob]: { q1: row(10, T(10)) }, [P.carol]: {}, [P.erin]: {}, [P.frank]: {}, [P.dave]: {} },
+      classic: { [P.alice]: {}, [P.bob]: {}, [P.carol]: { k2: row(100, T(30)) }, [P.erin]: { k1: row(50, T(31)) }, [P.frank]: { k1: row(50, T(32)) }, [P.dave]: {} },
+      ai: { [P.alice]: {}, [P.bob]: {}, [P.carol]: {}, [P.erin]: {}, [P.frank]: {}, [P.dave]: { a1: row(500, T(40)) } },
     },
-    hintsSpent: { bob: "7", Alice: "3" },
+    hintsSpent: { [P.bob]: "7", [P.alice.toUpperCase()]: "3" },
     teams: [
-      { slug: "red", name: "Red", members: ["alice", "bob"] },
-      { slug: "blue", name: "$money", members: ["carol"] },
-      { slug: "green", name: "Green", members: ["erin", "frank"] },
+      { slug: "red", name: "Red", members: [P.alice, P.bob] },
+      { slug: "blue", name: "$money", members: [P.carol] },
+      { slug: "green", name: "Green", members: [P.erin, P.frank] },
     ],
-    users: { alice: "red", bob: "red", carol: "blue", erin: "green", frank: "green", dave: null },
+    users: { [P.alice]: "red", [P.bob]: "red", [P.carol]: "blue", [P.erin]: "green", [P.frank]: "green", [P.dave]: null },
+    names: { [P.alice]: "alice", [P.bob]: "bob", [P.carol]: "carol", [P.dave]: "dave", [P.erin]: "erin", [P.frank]: "frank" },
   };
 }
 
@@ -77,16 +89,16 @@ const mod = (points, completed) => ({ points, completed, lastActivityAt: null, d
 export function correctBoard() {
   return {
     entries: [
-      { rank: 1, login: "carol", team: "blue", points: 125, patched: 2, apps: {}, modules: { "secure-development": sd(25, 2), classic: mod(100, 1) } },
-      { rank: 4, login: "alice", team: "red", points: 47, hintPenalty: 3, patched: 1, apps: {}, modules: { "secure-development": sd(10, 1), quiz: mod(40, 2) } },
-      { rank: 5, login: "bob", team: "red", points: 33, hintPenalty: 7, patched: 2, apps: {}, modules: { "secure-development": sd(30, 2), quiz: mod(10, 1) } },
-      { rank: 2, login: "frank", team: "green", points: 50, patched: 0, apps: {}, modules: { classic: mod(50, 1) } },
-      { rank: 3, login: "erin", team: "green", points: 50, patched: 0, apps: {}, modules: { classic: mod(50, 1) } },
+      { rank: 1, playerId: P.carol, name: "carol", team: "blue", points: 125, patched: 2, apps: {}, modules: { "secure-development": sd(25, 2), classic: mod(100, 1) } },
+      { rank: 4, playerId: P.alice, name: "alice", team: "red", points: 47, hintPenalty: 3, patched: 1, apps: {}, modules: { "secure-development": sd(10, 1), quiz: mod(40, 2) } },
+      { rank: 5, playerId: P.bob, name: "bob", team: "red", points: 33, hintPenalty: 7, patched: 2, apps: {}, modules: { "secure-development": sd(30, 2), quiz: mod(10, 1) } },
+      { rank: 2, playerId: P.frank, name: "frank", team: "green", points: 50, patched: 0, apps: {}, modules: { classic: mod(50, 1) } },
+      { rank: 3, playerId: P.erin, name: "erin", team: "green", points: 50, patched: 0, apps: {}, modules: { classic: mod(50, 1) } },
     ],
     teams: [
-      { rank: 1, slug: "blue", name: "$money", captain: "carol", members: ["carol"], points: 125, modules: { "secure-development": mod(25, 2), classic: mod(100, 1) } },
-      { rank: 2, slug: "red", name: "Red", captain: "alice", members: ["alice", "bob"], points: 60, hintPenalty: 10, modules: { "secure-development": mod(30, 2), quiz: mod(40, 2) } },
-      { rank: 3, slug: "green", name: "Green", captain: "erin", members: ["erin", "frank"], points: 50, modules: { classic: mod(50, 1) } },
+      { rank: 1, slug: "blue", name: "$money", captain: P.carol, members: [P.carol], points: 125, modules: { "secure-development": mod(25, 2), classic: mod(100, 1) } },
+      { rank: 2, slug: "red", name: "Red", captain: P.alice, members: [P.alice, P.bob], points: 60, hintPenalty: 10, modules: { "secure-development": mod(30, 2), quiz: mod(40, 2) } },
+      { rank: 3, slug: "green", name: "Green", captain: P.erin, members: [P.erin, P.frank], points: 50, modules: { classic: mod(50, 1) } },
     ],
     generatedAt: T(50),
     capabilities: { apps: true, teams: true, challenges: true },
@@ -114,7 +126,7 @@ export function toFlight(data) {
     const b = e.modules && e.modules["secure-development"];
     if (b && b.detail) b.detail.apps = `$a:props:children:1:props:data:entries:${i}:apps`;
   });
-  const tree = ["$", "div", null, { className: "flex", children: [["$", "p", null, { children: "Standings" }], ["$", "$L4", null, { data: d, viewerLogin: null, modules: [], enabledApps: "$undefined" }]] }];
+  const tree = ["$", "div", null, { className: "flex", children: [["$", "p", null, { children: "Standings" }], ["$", "$L4", null, { data: d, viewerId: null, modules: [], enabledApps: "$undefined" }]] }];
   const text = "multi\nline ✓ text";
   return [
     '1:"$Sreact.fragment"',
@@ -130,23 +142,23 @@ test("the recompute matches the hand-worked totals", () => {
   const exp = recompute(snapshot());
   assert.deepEqual(exp.live, ["classic", "quiz", "secure-development"]);
   const e = (l) => exp.entries.get(l);
-  assert.equal(e("alice").points, 47);
-  assert.equal(e("alice").penalty, 3, "a case-variant spend field lands on the same login");
-  assert.equal(e("bob").points, 33);
-  assert.equal(e("carol").points, 125);
-  assert.equal(exp.entries.has("dave"), false, "a disabled module creates no row");
-  assert.deepEqual(e("alice").modules, { "secure-development": { points: 10, completed: 1 }, quiz: { points: 40, completed: 2 } });
+  assert.equal(e(P.alice).points, 47);
+  assert.equal(e(P.alice).penalty, 3, "a case-variant spend field lands on the same player");
+  assert.equal(e(P.bob).points, 33);
+  assert.equal(e(P.carol).points, 125);
+  assert.equal(exp.entries.has(P.dave), false, "a disabled module creates no row");
+  assert.deepEqual(e(P.alice).modules, { "secure-development": { points: 10, completed: 1 }, quiz: { points: 40, completed: 2 } });
   const t = (s) => exp.teams.get(s);
   assert.equal(t("red").points, 60);
   assert.equal(t("red").penalty, 10, "a team's penalty is the sum of its members'");
   assert.deepEqual(t("red").modules, { "secure-development": { points: 30, completed: 2 }, quiz: { points: 40, completed: 2 } });
   assert.equal(t("blue").points, 125, "a member who changed teams takes every solve to the new team");
   assert.equal(t("green").points, 50, "an item two members hold counts once");
-  assert.deepEqual(e("carol").rankRange, [1, 1]);
-  assert.deepEqual(e("erin").rankRange, [2, 3], "points outrank items (#522)");
-  assert.deepEqual(e("frank").rankRange, [2, 3], "points outrank items (#522)");
-  assert.deepEqual(e("alice").rankRange, [4, 4]);
-  assert.deepEqual(e("bob").rankRange, [5, 5]);
+  assert.deepEqual(e(P.carol).rankRange, [1, 1]);
+  assert.deepEqual(e(P.erin).rankRange, [2, 3], "points outrank items (#522)");
+  assert.deepEqual(e(P.frank).rankRange, [2, 3], "points outrank items (#522)");
+  assert.deepEqual(e(P.alice).rankRange, [4, 4]);
+  assert.deepEqual(e(P.bob).rankRange, [5, 5]);
   assert.deepEqual(exp.invariants, []);
   assert.equal(exp.stats.sdSolvesCounted, 5);
   assert.equal(exp.stats.sdSolvesIgnored, 1);
@@ -157,19 +169,19 @@ test("the recompute matches the hand-worked totals", () => {
 // across a row's modules. erin and frank are a full tie without it.
 test("an app-side award time breaks a points-and-items tie, earlier first", () => {
   const s = snapshot();
-  s.agg.classic.lastAt = { erin: T(32), frank: T(31) };
+  s.agg.classic.lastAt = { [P.erin]: T(32), [P.frank]: T(31) };
   const exp = recompute(s);
   // The tie is split, frank first — wherever the pair sits on the board.
-  const [f, e] = [exp.entries.get("frank").rankRange, exp.entries.get("erin").rankRange];
+  const [f, e] = [exp.entries.get(P.frank).rankRange, exp.entries.get(P.erin).rankRange];
   assert.equal(f[0], f[1], "frank's rank is no longer a range");
   assert.equal(e[0], f[0] + 1, "erin ranks directly after frank");
   // A time for a module that is not live, or on a row with nothing completed
   // in it, does not count — the app never builds that module block.
   const off = snapshot();
-  off.agg.ai.lastAt = { erin: T(1) };
-  off.agg.classic.lastAt = { frank: T(31) };
+  off.agg.ai.lastAt = { [P.erin]: T(1) };
+  off.agg.classic.lastAt = { [P.frank]: T(31) };
   const r = recompute(off);
-  const [f2, e2] = [r.entries.get("frank").rankRange, r.entries.get("erin").rankRange];
+  const [f2, e2] = [r.entries.get(P.frank).rankRange, r.entries.get(P.erin).rankRange];
   assert.equal(e2[0], f2[0] + 1, "frank has the only counted time, so he leads the pair");
 });
 
@@ -198,14 +210,14 @@ test("a team whose app-side module points were added twice is a finding", () => 
 
 test("a moved member's points left behind on the old team are a finding", () => {
   const b = correctBoard();
-  b.teams[1].members = ["alice", "bob", "carol"];
+  b.teams[1].members = [P.alice, P.bob, P.carol];
   const r = audit(snapshot(), toFlight(b));
   assert.ok(r.mismatches.some((m) => m.who === "team red" && m.field === "members"));
 });
 
 test("team members that differ from the store only in case are not a finding", () => {
   const b = correctBoard();
-  b.teams[1].members = ["Bob", "alice"]; // sorted by raw string, "Bob" lands first
+  b.teams[1].members = [P.bob.toUpperCase(), P.alice]; // the upper-case spelling sorts before the lower-case one
   assert.deepEqual(audit(snapshot(), toFlight(b)).mismatches, []);
 });
 
@@ -216,10 +228,11 @@ test("a hint penalty the board forgot, a wrong module block, a rank out of place
   b.entries[0].modules.classic = mod(90, 1);
   b.entries[3].rank = 1;
   b.entries[0].rank = 4;
-  b.entries.push({ rank: 6, login: "dave", team: null, points: 500, patched: 0, apps: {}, modules: { ai: mod(500, 1) } });
+  b.entries.push({ rank: 6, playerId: P.dave, name: "dave", team: null, points: 500, patched: 0, apps: {}, modules: { ai: mod(500, 1) } });
   b.teams.pop();
   const fields = audit(snapshot(), toFlight(b)).mismatches.map((m) => `${m.who}/${m.module ?? ""}/${m.field}`);
-  for (const want of ["contestant bob//points (net)", "contestant bob//hint penalty", "contestant carol/classic/points", "contestant frank//rank", "contestant dave//row", "team green//row"]) {
+  const c = (k) => `contestant ${P[k]} (${k})`;
+  for (const want of [`${c("bob")}//points (net)`, `${c("bob")}//hint penalty`, `${c("carol")}/classic/points`, `${c("frank")}//rank`, `${c("dave")}//row`, "team green//row"]) {
     assert.ok(fields.includes(want), `expected a finding ${want}; got ${fields.join(", ")}`);
   }
 });
@@ -274,15 +287,15 @@ test("the parser resolves escapes, path references and byte-sized text rows", ()
   assert.equal(rows.get("a").tag, "J");
 });
 
-test("store invariants: an aggregate that disagrees with its rows, a login on two teams, a stale user record", () => {
+test("store invariants: an aggregate that disagrees with its rows, a player on two teams, a stale user record", () => {
   const s = snapshot();
-  s.agg.quiz.points.alice = "45";
-  s.teams[2].members = ["erin", "frank", "carol"];
-  s.users.bob = "blue";
-  const kinds = recompute(s).invariants.map((f) => `${f.kind}:${f.login}`);
-  assert.ok(kinds.includes("aggregate-vs-rows:alice"));
-  assert.ok(kinds.includes("login-on-several-teams:carol"));
-  assert.ok(kinds.includes("user-team-field:bob"));
+  s.agg.quiz.points[P.alice] = "45";
+  s.teams[2].members = [P.erin, P.frank, P.carol];
+  s.users[P.bob] = "blue";
+  const kinds = recompute(s).invariants.map((f) => `${f.kind}:${f.player}`);
+  assert.ok(kinds.includes(`aggregate-vs-rows:${P.alice}`));
+  assert.ok(kinds.includes(`player-on-several-teams:${P.carol}`));
+  assert.ok(kinds.includes(`user-team-field:${P.bob}`));
 });
 
 test("module decoding follows admin-store: comma list, empty = none, unknown-only = default, no SCORE_IMAGE drops SD", () => {
@@ -300,7 +313,7 @@ test("hints switched off forgive the penalty on the board (the spend stays store
   const s = snapshot();
   s.settings.hintsEnabled = "0";
   const exp = recompute(s);
-  assert.equal(exp.entries.get("bob").points, 40);
+  assert.equal(exp.entries.get(P.bob).points, 40);
   assert.equal(exp.teams.get("red").points, 70);
 });
 
@@ -308,7 +321,7 @@ test("secure-development off: no SD points anywhere, module rows remain", () => 
   const s = snapshot();
   s.settings.enabledModules = "quiz,classic";
   const exp = recompute(s);
-  assert.equal(exp.entries.get("carol").points, 100);
+  assert.equal(exp.entries.get(P.carol).points, 100);
   assert.equal(exp.teams.get("red").points, 30);
 });
 
@@ -338,7 +351,7 @@ test("the fingerprint notices any change in the store", () => {
   const a = snapshot();
   const b = snapshot();
   assert.equal(fingerprint(a), fingerprint(b));
-  b.sdSolves.dvwa["alice:c2"] = T(9);
+  b.sdSolves.dvwa[`${P.alice}:c2`] = T(9);
   assert.notEqual(fingerprint(a), fingerprint(b));
 });
 
@@ -405,11 +418,52 @@ test("without Secure Development live the SD-cache wait is skipped", async () =>
 test("a store that moves between the two reads makes the attempt unstable", async () => {
   let n = 0;
   const r = await auditAttempt({
-    readSnapshot: async () => { const s = snapshot(); if (n++ > 0) s.hintsSpent.bob = "8"; return s; },
+    readSnapshot: async () => { const s = snapshot(); if (n++ > 0) s.hintsSpent[P.bob] = "8"; return s; },
     fetchFlight: async () => "",
     sleep: async () => {},
     sdCacheMs: 0,
     memoMs: 0,
   });
   assert.equal(r.stable, false);
+});
+
+test("every finding names the player by id with the display name beside it", () => {
+  const b = correctBoard();
+  b.entries[1].points = 40;
+  const [m] = audit(snapshot(), toFlight(b)).mismatches;
+  assert.equal(m.who, `contestant ${P.alice} (alice)`);
+  const s = snapshot();
+  s.agg.quiz.points[P.alice] = "45";
+  const inv = recompute(s).invariants.find((f) => f.kind === "aggregate-vs-rows");
+  assert.deepEqual([inv.player, inv.name], [P.alice, "alice"]);
+});
+
+test("a served name that is not the account row's display name is a finding; a player with no account row is expected under the id fallback", () => {
+  const b = correctBoard();
+  b.entries[0].name = "someone else";
+  const named = audit(snapshot(), toFlight(b)).mismatches.filter((m) => m.field === "name");
+  assert.deepEqual(named, [{ who: `contestant ${P.carol} (carol)`, field: "name", expected: "carol", served: "someone else" }]);
+
+  const s = snapshot();
+  delete s.names[P.erin];
+  const board = correctBoard();
+  board.entries[4].name = "erin";
+  const fallback = audit(s, toFlight(board)).mismatches.filter((m) => m.field === "name");
+  assert.equal(fallback.length, 1);
+  assert.equal(fallback[0].expected, `player ${P.erin.slice(0, 8)}`);
+  board.entries[4].name = `player ${P.erin.slice(0, 8)}`;
+  assert.deepEqual(audit(s, toFlight(board)).mismatches, []);
+});
+
+test("the display name follows the account row: username, then GitHub login, then name, then the short id", () => {
+  assert.equal(displayNameOfRow({ username: "u", login: "l", name: "n" }, P.alice), "u");
+  assert.equal(displayNameOfRow({ login: "l", name: "n" }, P.alice), "l");
+  assert.equal(displayNameOfRow({ name: "n" }, P.alice), "n");
+  assert.equal(displayNameOfRow({}, P.alice), "player a1111111");
+});
+
+test("a board whose rows carry the old login key instead of a player id is refused, not read as empty", () => {
+  const b = correctBoard();
+  for (const e of b.entries) { e.login = e.name; delete e.playerId; }
+  assert.throws(() => audit(snapshot(), toFlight(b)), /entries\[0\]\.playerId/);
 });

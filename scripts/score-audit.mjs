@@ -44,11 +44,11 @@
 //      classic-store.ts:950-963, ai-store.ts:471-484,
 //      module-contributions.ts:639-655.
 //  R5  The contestant rows are the union (case-insensitive) of SD authors and
-//      logins with completed > 0 in a live app-side module; a module-only
-//      login gets a created row. module-contributions.ts:546-608.
+//      players with completed > 0 in a live app-side module; a module-only
+//      player gets a created row. module-contributions.ts:546-608.
 //  R6  A team is its CURRENT `ctf:team:<slug>:members` set — the join refuses
-//      a login already on a team and leave/remove SREMs it, so a login is on
-//      at most one team, and a login that changed teams carries ALL of its
+//      a player already on a team and leave/remove SREMs it, so a player is on
+//      at most one team, and a player that changed teams carries ALL of its
 //      solves (including those made before the move) to the new team and
 //      none stay with the old one: team totals fold from membership at read
 //      time. team-store.ts:117-157 (CREATE/JOIN/LEAVE/REMOVE scripts),
@@ -56,12 +56,12 @@
 //      docs/operations.md:96-110.
 //  R7  A team's module total is the UNION of its members' items, never the
 //      sum: SD by (target, id) across members; quiz/classic/ai by item id
-//      across the members' `ctf:quiz:answers:<login>` /
-//      `ctf:classic:solves:<login>` / `ctf:ai:solves:<login>` rows
+//      across the members' `ctf:quiz:answers:<player>` /
+//      `ctf:classic:solves:<player>` / `ctf:ai:solves:<player>` rows
 //      ({points, at} JSON), the EARLIEST row winning, each module counted
 //      ONCE. scorer/src/serve.js:256-275, leaderboard/team-fold.ts:43-106,
 //      docs/operations.md:118-122 and :1164-1170 ("points count per team").
-//  R8  Hint penalty: `ctf:hints:spent` (points, per login), only while hints
+//  R8  Hint penalty: `ctf:hints:spent` (points, per player), only while hints
 //      are enabled (`hintsEnabled` absent → on, "1" → on, else off); fields
 //      summed case-insensitively; a contestant's penalty is their own spend;
 //      a TEAM's is the SUM of its members' spend (a hint two teammates both
@@ -77,16 +77,21 @@
 //  R10 Team rank: net points desc; ties keep an earlier stage's order
 //      (unmodelled — accepted within the tie group). hint-penalties.ts:97,
 //      module-contributions.ts:742.
-//  R11 Every login join is case-insensitive (AGENTS.md; hint-penalties.ts:62,
-//      module-contributions.ts:178-183, team-standings.ts:91-94). This
-//      auditor applies that to the SD team union too, where the scorer joins
-//      verbatim (scorer/src/serve.js:259) — a case disagreement there shows
-//      up as a mismatch, which is the point.
+//  R11 Rows are keyed by the kit player id (a lowercase v4 UUID), and
+//      every join still lowercases both sides (hint-penalties.ts:62,
+//      module-contributions.ts:225-229, team-standings.ts:128), which is the
+//      identity on a real id. This auditor applies the same fold to the SD
+//      team union too, where the scorer joins verbatim — a stored key that is
+//      not lowercase surfaces as a mismatch or an sd-author-case-split.
+//  R12 Names. A row's display name is the account row's username, else its
+//      GitHub login, else its name, else `player <first 8 of the id>`
+//      (display-name.ts), read from `ctf:auth:user`. Every finding names the
+//      player by id with that name beside it.
 //
 // STORE INVARIANTS it also checks (reported apart from board mismatches, and
-// they fail the run too): each app-side aggregate equals its per-login rows
-// (the grading Lua writes both atomically); a login is on at most one team,
-// and its `ctf:user:<login>` `team` field names that team.
+// they fail the run too): each app-side aggregate equals its per-player rows
+// (the grading Lua writes both atomically); a player is on at most one team,
+// and its `ctf:user:<player>` `team` field names that team.
 //
 // WHAT IT READS FROM THE APP, AND WHY THE FLIGHT PAYLOAD. `GET /leaderboard`
 // with `RSC: 1` returns the React Server Components flight stream for the
@@ -124,7 +129,7 @@ import { parseArgs } from "node:util";
 
 export const MODULES = ["secure-development", "quiz", "classic", "ai"];
 export const APP_MODULES = ["quiz", "classic", "ai"];
-/** Per-login row hash and aggregate counters for each app-side module. */
+/** Per-player row hash and aggregate counters for each app-side module. */
 export const MODULE_KEYS = {
   quiz: { points: "ctf:quiz:points", count: "ctf:quiz:answered", lastAt: "ctf:quiz:lastAt", rows: "ctf:quiz:answers:" },
   classic: { points: "ctf:classic:points", count: "ctf:classic:solved", lastAt: "ctf:classic:lastAt", rows: "ctf:classic:solves:" },
@@ -176,6 +181,17 @@ export function hintsEnabled(settings) {
 }
 
 const lc = (s) => String(s).toLowerCase();
+
+/** R12: the name shown for a player with no account row. */
+export const fallbackName = (player) => `player ${String(player).slice(0, 8)}`;
+
+/** R12: the display name an account row yields. */
+export function displayNameOfRow(row, player) {
+  return row.username || row.login || row.name || fallbackName(player);
+}
+
+/** `<id> (<name>)`, or the bare id when no name is known. */
+export const labelOf = (player, name) => (name ? `${player} (${name})` : String(player));
 const num = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -201,20 +217,22 @@ export function parseEarnedRow(raw) {
  *     scoreImage: boolean,                // SCORE_IMAGE non-empty in the container
  *     sdCatalogue: [{app, id, points}] | null,
  *     sdSolves: {target: {"<author>:<id>": iso}},
- *     agg: {quiz: {points: {login: n}, count: {login: n}, lastAt: {login: iso}}, classic: …, ai: …},
- *     rows: {quiz: {login: {itemId: json}}, classic: …, ai: …},
- *     hintsSpent: {login: n},
- *     teams: [{slug, name, members: [login]}],
- *     users: {login: teamSlug | null},    // ctf:user:<login> team field
+ *     agg: {quiz: {points: {player: n}, count: {player: n}, lastAt: {player: iso}}, classic: …, ai: …},
+ *     rows: {quiz: {player: {itemId: json}}, classic: …, ai: …},
+ *     hintsSpent: {player: n},
+ *     teams: [{slug, name, members: [player]}],
+ *     users: {player: teamSlug | null},    // ctf:user:<player> team field
  *   }
  */
 export function recompute(snapshot) {
   const live = liveModules(snapshot.settings, snapshot.scoreImage);
   const invariants = [];
-  const stats = { sdSolvesCounted: 0, sdSolvesIgnored: 0, quizAnswers: 0, classicSolves: 0, aiSolves: 0, hintLogins: 0 };
+  // R12: the name the board should show; null when the snapshot carries no account rows.
+  const nameOf = (player) => (snapshot.names ? snapshot.names[player] ?? snapshot.names[lc(player)] ?? fallbackName(player) : null);
+  const stats = { sdSolvesCounted: 0, sdSolvesIgnored: 0, quizAnswers: 0, classicSolves: 0, aiSolves: 0, hintPlayers: 0 };
 
   // --- SD per author (R2, R3) ----------------------------------------------
-  const sdAuthors = new Map(); // lower -> { login, points, patched, lastSolveAt, solves: Map<target:id, {points, at}> }
+  const sdAuthors = new Map(); // lower -> { player, points, patched, lastSolveAt, solves: Map<target:id, {points, at}> }
   if (live.has("secure-development")) {
     if (!Array.isArray(snapshot.sdCatalogue)) throw new Error("Secure Development is live but the snapshot has no scorer catalogue");
     const points = new Map();
@@ -231,7 +249,7 @@ export function recompute(snapshot) {
         stats.sdSolvesCounted += 1;
         const key = lc(author);
         let a = sdAuthors.get(key);
-        if (!a) sdAuthors.set(key, (a = { login: author, spellings: new Set(), points: 0, patched: 0, lastSolveAt: null, solves: new Map() }));
+        if (!a) sdAuthors.set(key, (a = { player: author, spellings: new Set(), points: 0, patched: 0, lastSolveAt: null, solves: new Map() }));
         a.spellings.add(author);
         a.points += p;
         a.patched += 1;
@@ -242,33 +260,33 @@ export function recompute(snapshot) {
       }
     }
     for (const a of sdAuthors.values()) {
-      if (a.spellings.size > 1) invariants.push({ kind: "sd-author-case-split", login: a.login, detail: `one login solved Secure Development under ${a.spellings.size} spellings (${[...a.spellings].join(", ")}); the scorer keeps them as separate rows` });
+      if (a.spellings.size > 1) invariants.push({ kind: "sd-author-case-split", player: a.player, detail: `one player solved Secure Development under ${a.spellings.size} spellings (${[...a.spellings].join(", ")}); the scorer keeps them as separate rows` });
     }
   }
 
-  // --- app-side aggregates per login (R4) and their rows (invariant) -------
-  const agg = {}; // module -> Map(lower -> {login, points, completed, lastAt})
+  // --- app-side aggregates per player (R4) and their rows (invariant) -------
+  const agg = {}; // module -> Map(lower -> {player, points, completed, lastAt})
   for (const m of APP_MODULES) {
     const a = (snapshot.agg || {})[m] || { points: {}, count: {} };
     const map = new Map();
-    for (const login of new Set([...Object.keys(a.points || {}), ...Object.keys(a.count || {})])) {
+    for (const player of new Set([...Object.keys(a.points || {}), ...Object.keys(a.count || {})])) {
       // lastAt joins on the counter's own spelling, as the app's totals do.
-      map.set(lc(login), { login, points: num((a.points || {})[login]) ?? 0, completed: num((a.count || {})[login]) ?? 0, lastAt: (a.lastAt || {})[login] ?? null });
+      map.set(lc(player), { player, points: num((a.points || {})[player]) ?? 0, completed: num((a.count || {})[player]) ?? 0, lastAt: (a.lastAt || {})[player] ?? null });
     }
     agg[m] = map;
-    // Invariant: the aggregate equals the per-login rows it summarises.
-    const rowsByLogin = (snapshot.rows || {})[m] || {};
-    const logins = new Set([...map.values()].map((t) => t.login));
-    for (const [login, row] of Object.entries(rowsByLogin)) if (row && Object.keys(row).length) logins.add(login);
-    for (const login of logins) {
-      const rows = Object.values(rowsByLogin[login] || {}).map(parseEarnedRow).filter(Boolean);
+    // Invariant: the aggregate equals the per-player rows it summarises.
+    const rowsByPlayer = (snapshot.rows || {})[m] || {};
+    const players = new Set([...map.values()].map((t) => t.player));
+    for (const [player, row] of Object.entries(rowsByPlayer)) if (row && Object.keys(row).length) players.add(player);
+    for (const player of players) {
+      const rows = Object.values(rowsByPlayer[player] || {}).map(parseEarnedRow).filter(Boolean);
       const rowPts = rows.reduce((s, r) => s + r.points, 0);
-      const t = map.get(lc(login));
+      const t = map.get(lc(player));
       const aggPts = t ? t.points : 0;
       const aggN = t ? t.completed : 0;
-      if (rowsByLogin[login] === undefined) continue; // rows not read for this login
+      if (rowsByPlayer[player] === undefined) continue; // rows not read for this player
       if (rowPts !== aggPts || rows.length !== aggN) {
-        invariants.push({ kind: "aggregate-vs-rows", module: m, login, detail: `aggregate ${aggPts} pts / ${aggN} items, per-login rows ${rowPts} pts / ${rows.length} items` });
+        invariants.push({ kind: "aggregate-vs-rows", module: m, player, detail: `aggregate ${aggPts} pts / ${aggN} items, per-player rows ${rowPts} pts / ${rows.length} items` });
       }
     }
     if (live.has(m)) {
@@ -282,41 +300,41 @@ export function recompute(snapshot) {
   // --- hint penalties (R8) --------------------------------------------------
   const penalty = new Map();
   if (hintsEnabled(snapshot.settings)) {
-    for (const [login, v] of Object.entries(snapshot.hintsSpent || {})) {
+    for (const [player, v] of Object.entries(snapshot.hintsSpent || {})) {
       const p = num(v);
       if (p === null || p <= 0) continue;
-      penalty.set(lc(login), (penalty.get(lc(login)) ?? 0) + p);
+      penalty.set(lc(player), (penalty.get(lc(player)) ?? 0) + p);
     }
   }
-  stats.hintLogins = penalty.size;
+  stats.hintPlayers = penalty.size;
 
   // --- team membership (R6) -------------------------------------------------
   const teams = snapshot.teams || [];
-  const teamOf = new Map(); // lower login -> slug (first seen)
-  const onTeams = new Map(); // lower login -> [slug]
+  const teamOf = new Map(); // lower player -> slug (first seen)
+  const onTeams = new Map(); // lower player -> [slug]
   for (const t of teams) for (const m of t.members) {
     const k = lc(m);
     if (!teamOf.has(k)) teamOf.set(k, t.slug);
     onTeams.set(k, [...(onTeams.get(k) || []), t.slug]);
   }
-  for (const [login, slugs] of onTeams) {
-    if (slugs.length > 1) invariants.push({ kind: "login-on-several-teams", login, detail: `on ${slugs.join(", ")} — its points count for every one of them` });
+  for (const [player, slugs] of onTeams) {
+    if (slugs.length > 1) invariants.push({ kind: "player-on-several-teams", player, detail: `on ${slugs.join(", ")} — its points count for every one of them` });
   }
   for (const t of teams) for (const m of t.members) {
     const users = snapshot.users || {};
     if (!(m in users)) continue;
-    if (users[m] !== t.slug) invariants.push({ kind: "user-team-field", login: m, detail: `in ctf:team:${t.slug}:members but ctf:user:${m} team = ${JSON.stringify(users[m])}` });
+    if (users[m] !== t.slug) invariants.push({ kind: "user-team-field", player: m, detail: `in ctf:team:${t.slug}:members but ctf:user:${m} team = ${JSON.stringify(users[m])}` });
   }
 
   // --- contestant rows (R3, R4, R5, R8) --------------------------------------
   const entries = new Map();
-  const touch = (login) => {
-    const k = lc(login);
-    if (!entries.has(k)) entries.set(k, { login, modules: {}, gross: 0, completed: 0, lastSolveAt: null, moduleTimes: [] });
+  const touch = (player) => {
+    const k = lc(player);
+    if (!entries.has(k)) entries.set(k, { player, modules: {}, gross: 0, completed: 0, lastSolveAt: null, moduleTimes: [] });
     return entries.get(k);
   };
   for (const a of sdAuthors.values()) {
-    const e = touch(a.login);
+    const e = touch(a.player);
     e.modules["secure-development"] = { points: a.points, completed: a.patched };
     e.gross += a.points;
     e.completed += a.patched;
@@ -326,7 +344,7 @@ export function recompute(snapshot) {
     if (!live.has(m)) continue;
     for (const t of agg[m].values()) {
       if (t.completed <= 0) continue;
-      const e = touch(t.login);
+      const e = touch(t.player);
       e.modules[m] = { points: t.points, completed: t.completed };
       e.gross += t.points;
       e.completed += t.completed;
@@ -343,6 +361,7 @@ export function recompute(snapshot) {
     e.activityMs = stamps.length ? Math.max(...stamps) : Number.MAX_SAFE_INTEGER;
     delete e.moduleTimes;
     e.team = teamOf.get(k) ?? null;
+    e.name = nameOf(e.player);
   }
 
   // --- team rows (R6, R7, R8) -------------------------------------------------
@@ -386,7 +405,7 @@ export function recompute(snapshot) {
   assignRankRanges([...entries.values()], entryKey);
   assignRankRanges([...teamRows.values()], (t) => [-t.points]);
 
-  return { live: [...live].sort(), hints: hintsEnabled(snapshot.settings), entries, teams: teamRows, invariants, stats };
+  return { live: [...live].sort(), hints: hintsEnabled(snapshot.settings), entries, teams: teamRows, invariants: invariants.map((f) => ({ ...f, name: nameOf(f.player) })), stats };
 }
 
 /** Sorts rows on `key` (a tuple, ascending) and gives each the rank RANGE its tie group occupies. */
@@ -482,7 +501,7 @@ export function resolveRefs(node, rows, path = "data", depth = 0) {
 }
 
 const isBoardProps = (o) =>
-  o && typeof o === "object" && !Array.isArray(o) && "viewerLogin" in o && o.data && typeof o.data === "object" &&
+  o && typeof o === "object" && !Array.isArray(o) && "viewerId" in o && o.data && typeof o.data === "object" &&
   Array.isArray(o.data.entries) && Array.isArray(o.data.teams) && o.data.capabilities && typeof o.data.generatedAt === "string";
 
 /** The served board from a flight stream: exactly one <Leaderboard> props object, resolved and validated. */
@@ -498,7 +517,7 @@ export function extractBoard(text) {
     }
   };
   for (const r of rows.values()) if (r.tag === "J") walk(r.value);
-  if (found.length === 0) throw new Error("flight: no <Leaderboard> props (an object with viewerLogin and data.entries/teams/capabilities/generatedAt) — the page shape changed; refusing to report 'no diffs'");
+  if (found.length === 0) throw new Error("flight: no <Leaderboard> props (an object with viewerId and data.entries/teams/capabilities/generatedAt) — the page shape changed; refusing to report 'no diffs'");
   if (found.length > 1) throw new Error(`flight: ${found.length} objects look like the board props — ambiguous; refusing to guess`);
   const data = resolveRefs(found[0].data, rows);
   return validateBoard(data);
@@ -523,12 +542,12 @@ export function validateBoard(data) {
   const entries = data.entries.map((e, i) => {
     const p = `entries[${i}]`;
     if (!e || typeof e !== "object") fail(p, "is not an object");
-    if (typeof e.login !== "string" || !e.login) fail(`${p}.login`, "is not a string");
+    if (typeof e.playerId !== "string" || !e.playerId) fail(`${p}.playerId`, "is not a string");
     if (!isNum(e.points)) fail(`${p}.points`, "is not a number");
     if (!Number.isInteger(e.rank) || e.rank < 1) fail(`${p}.rank`, "is not a positive integer");
     if (!(e.team === null || e.team === undefined || typeof e.team === "string")) fail(`${p}.team`, "is not a slug or null");
     if (!(e.hintPenalty === undefined || isNum(e.hintPenalty))) fail(`${p}.hintPenalty`, "is not a number");
-    return { login: e.login, rank: e.rank, points: e.points, team: e.team ?? null, hintPenalty: e.hintPenalty ?? 0, modules: mods(e.modules, `${p}.modules`) };
+    return { player: e.playerId, name: typeof e.name === "string" ? e.name : null, rank: e.rank, points: e.points, team: e.team ?? null, hintPenalty: e.hintPenalty ?? 0, modules: mods(e.modules, `${p}.modules`) };
   });
   const teams = data.teams.map((t, i) => {
     const p = `teams[${i}]`;
@@ -536,7 +555,7 @@ export function validateBoard(data) {
     if (typeof t.slug !== "string" || !t.slug) fail(`${p}.slug`, "is not a string");
     if (!isNum(t.points)) fail(`${p}.points`, "is not a number");
     if (!Number.isInteger(t.rank) || t.rank < 1) fail(`${p}.rank`, "is not a positive integer");
-    if (!Array.isArray(t.members) || !t.members.every((m) => typeof m === "string")) fail(`${p}.members`, "is not a list of logins");
+    if (!Array.isArray(t.members) || !t.members.every((m) => typeof m === "string")) fail(`${p}.members`, "is not a list of players");
     if (!(t.hintPenalty === undefined || isNum(t.hintPenalty))) fail(`${p}.hintPenalty`, "is not a number");
     return { slug: t.slug, name: t.name, rank: t.rank, points: t.points, members: [...t.members].sort(), hintPenalty: t.hintPenalty ?? 0, modules: mods(t.modules, `${p}.modules`) };
   });
@@ -576,22 +595,23 @@ export function diffBoard(expected, served) {
   // contestants
   const servedEntries = new Map();
   for (const e of served.entries) {
-    const k = lc(e.login);
-    if (servedEntries.has(k)) add(`contestant ${e.login}`, "row", "one row", "duplicate row");
+    const k = lc(e.player);
+    if (servedEntries.has(k)) add(`contestant ${labelOf(e.player, e.name)}`, "row", "one row", "duplicate row");
     servedEntries.set(k, e);
   }
   for (const [k, exp] of expected.entries) {
     const got = servedEntries.get(k);
-    const who = `contestant ${exp.login}`;
+    const who = `contestant ${labelOf(exp.player, exp.name)}`;
     if (!got) { add(who, "row", `${exp.points} pts`, "missing from the board"); continue; }
     compared.contestants += 1;
     cmp(who, "points (net)", exp.points, got.points);
     cmp(who, "hint penalty", exp.penalty, got.hintPenalty);
     cmp(who, "team", exp.team, got.team);
+    if (exp.name !== null && exp.name !== undefined && got.name !== null) cmp(who, "name", exp.name, got.name);
     cmpModules(who, exp.modules, got.modules);
     inRange(who, exp.rankRange, got.rank);
   }
-  for (const [k, got] of servedEntries) if (!expected.entries.has(k)) add(`contestant ${got.login}`, "row", "no row (no counted solve in a live module)", `${got.points} pts`);
+  for (const [k, got] of servedEntries) if (!expected.entries.has(k)) add(`contestant ${labelOf(got.player, got.name)}`, "row", "no row (no counted solve in a live module)", `${got.points} pts`);
   ranksArePermutation("contestants", served.entries.map((e) => e.rank));
 
   // teams
@@ -783,22 +803,39 @@ export async function readSnapshot() {
     return { slug, name: teamReplies[i * 2] || slug, members: [...members].sort() };
   });
 
-  // Per-login rows: for every team member (the team union) and every login an aggregate names (the invariant).
-  const logins = new Set();
-  for (const t of teams) for (const m of t.members) logins.add(m);
-  for (const m of APP_MODULES) for (const l of [...Object.keys(agg[m].points), ...Object.keys(agg[m].count)]) logins.add(l);
-  const loginList = [...logins].sort();
-  const rowCmds = loginList.flatMap((l) => [...APP_MODULES.map((m) => ["HGETALL", `${MODULE_KEYS[m].rows}${l}`]), ["HGET", `ctf:user:${l}`, "team"]]);
+  // Per-player rows: for every team member (the team union) and every player an aggregate names (the invariant).
+  const players = new Set();
+  for (const t of teams) for (const m of t.members) players.add(m);
+  for (const m of APP_MODULES) for (const l of [...Object.keys(agg[m].points), ...Object.keys(agg[m].count)]) players.add(l);
+  const playerList = [...players].sort();
+  // Display names, for the report and the name check (R12): every player the store names, including SD authors.
+  const named = new Set(players);
+  for (const solves of Object.values(sdSolves)) for (const field of Object.keys(solves)) { const i = field.indexOf(":"); if (i > 0) named.add(field.slice(0, i)); }
+  for (const p of Object.keys(hintsSpent)) named.add(p);
+  const nameIds = [...named].sort();
+  const names = {};
+  const nameCmds = [];
+  for (let i = 0; i < nameIds.length; i += 100) nameCmds.push(["HMGET", "ctf:auth:user", ...nameIds.slice(i, i + 100)]);
+  const nameReplies = nameCmds.length ? await batched(nameCmds) : [];
+  nameIds.forEach((id, i) => {
+    const json = nameReplies[Math.floor(i / 100)][i % 100];
+    if (json === null || json === undefined) { names[id] = fallbackName(id); return; }
+    let row;
+    try { row = JSON.parse(json); } catch { throw new Error("a ctf:auth:user row is not JSON"); }
+    if (!row || typeof row !== "object") throw new Error("a ctf:auth:user row is not an object");
+    names[id] = displayNameOfRow(row, id);
+  });
+  const rowCmds = playerList.flatMap((l) => [...APP_MODULES.map((m) => ["HGETALL", `${MODULE_KEYS[m].rows}${l}`]), ["HGET", `ctf:user:${l}`, "team"]]);
   const rowReplies = await batched(rowCmds);
   const rows = { quiz: {}, classic: {}, ai: {} };
   const users = {};
   const per = APP_MODULES.length + 1;
-  loginList.forEach((l, i) => {
+  playerList.forEach((l, i) => {
     APP_MODULES.forEach((m, j) => { rows[m][l] = flat(rowReplies[i * per + j]); });
     users[l] = rowReplies[i * per + APP_MODULES.length] ?? null;
   });
 
-  return { settings, scoreImage, sdCatalogue, sdSolves, agg, rows, hintsSpent, teams, users, orphanTargets: orphanTargets.sort() };
+  return { settings, scoreImage, sdCatalogue, sdSolves, agg, rows, hintsSpent, teams, users, names, orphanTargets: orphanTargets.sort() };
 }
 
 /**
@@ -871,12 +908,12 @@ export function summarize(report) {
   const out = [];
   out.push(`score-audit: live modules [${(report.live || []).join(", ")}], hints ${report.hintsEnabled ? "on" : "off"}`);
   out.push(`  compared ${c.comparedContestants ?? 0}/${c.expectedContestants ?? 0} contestants (board shows ${c.servedContestants ?? 0}), ${c.comparedTeams ?? 0}/${c.expectedTeams ?? 0} teams (board shows ${c.servedTeams ?? 0}), ${c.comparedValues ?? 0} values`);
-  out.push(`  from ${c.sdSolvesCounted ?? 0} Secure Development solves (${c.sdSolvesIgnored ?? 0} ignored: not in the rubric), ${c.quizAnswers ?? 0} quiz answers, ${c.classicSolves ?? 0} flag solves, ${c.aiSolves ?? 0} ai solves, ${c.hintLogins ?? 0} logins with hint spend`);
+  out.push(`  from ${c.sdSolvesCounted ?? 0} Secure Development solves (${c.sdSolvesIgnored ?? 0} ignored: not in the rubric), ${c.quizAnswers ?? 0} quiz answers, ${c.classicSolves ?? 0} flag solves, ${c.aiSolves ?? 0} ai solves, ${c.hintPlayers ?? 0} players with hint spend`);
   if (report.orphanTargets && report.orphanTargets.length) out.push(`  note: solve hashes for targets outside the rubric (ignored by the scorer): ${report.orphanTargets.join(", ")}`);
   out.push(`  board mismatches: ${(report.mismatches || []).length}; store invariant findings: ${(report.invariants || []).length}`);
   for (const m of (report.mismatches || []).slice(0, 200)) out.push(`  MISMATCH ${m.who}${m.module ? ` [${m.module}]` : ""} ${m.field}: expected ${JSON.stringify(m.expected)}, served ${JSON.stringify(m.served)}`);
   if ((report.mismatches || []).length > 200) out.push(`  … ${(report.mismatches || []).length - 200} more in the JSON report`);
-  for (const f of (report.invariants || []).slice(0, 100)) out.push(`  INVARIANT ${f.kind}${f.module ? ` [${f.module}]` : ""} ${f.login}: ${f.detail}`);
+  for (const f of (report.invariants || []).slice(0, 100)) out.push(`  INVARIANT ${f.kind}${f.module ? ` [${f.module}]` : ""} ${labelOf(f.player, f.name)}: ${f.detail}`);
   if (report.error) out.push(`  AUDIT FAILED: ${report.error}`);
   return out.join("\n");
 }

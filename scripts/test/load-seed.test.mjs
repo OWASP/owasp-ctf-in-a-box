@@ -22,7 +22,10 @@ import {
   isSharedHash,
   liveModules,
   lockValue,
-  loginFor,
+  playerFor,
+  nameFor,
+  userRow,
+  AUTH_USER_KEY,
   manifestFor,
   partitionTeams,
   pickSubset,
@@ -49,17 +52,23 @@ function storeAfter(cmds, extra = { keys: [], fields: {} }) {
   return { keys, fields };
 }
 
-test("logins are zero-padded and prefixed so a clean can find them", () => {
-  assert.equal(loginFor(1), "load-0001");
-  assert.equal(loginFor(200), "load-0200");
+const PLAYER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+test("seeded players are lowercase v4 ids, stable per index and distinct, with a zero-padded display name", () => {
+  const ids = Array.from({ length: 500 }, (_, i) => playerFor(i + 1));
+  for (const id of ids) assert.match(id, PLAYER_ID_RE);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(playerFor(7), playerFor(7));
+  assert.equal(nameFor(1), "Load Player 0001");
+  assert.equal(nameFor(200), "Load Player 0200");
 });
 
-test("every login lands on exactly one team of 2–4 (a trailing solo only when unavoidable)", () => {
+test("every player lands on exactly one team of 2–4 (a trailing solo only when unavoidable)", () => {
   for (const n of [2, 3, 5, 7, 100, 200]) {
-    const logins = Array.from({ length: n }, (_, i) => loginFor(i + 1));
-    const teams = partitionTeams(logins, rng(n));
+    const players = Array.from({ length: n }, (_, i) => playerFor(i + 1));
+    const teams = partitionTeams(players, rng(n));
     const seen = teams.flatMap((t) => t.members);
-    assert.deepEqual(seen, logins, `n=${n}: every login once, in order`);
+    assert.deepEqual(seen, players, `n=${n}: every player once, in order`);
     for (const t of teams) {
       assert.ok(t.members.length >= 1 && t.members.length <= 4, `n=${n}: size ${t.members.length}`);
       assert.equal(t.captain, t.members[0]);
@@ -93,29 +102,29 @@ test("attempt rows carry the four fields the app's parser reads, firstAt clamped
   assert.equal(row.firstAt, new Date(earned - 60_000).toISOString(), "clamped to the floor, not 25 min earlier");
 });
 
-test("writes only the seed's key families, and the aggregates match the per-login rows", () => {
+test("writes only the seed's key families, and the aggregates match the per-player rows", () => {
   const { cmds } = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
-  const families = new Set(cmds.map((c) => c[1].replace(/load-[0-9]+|load-team-[0-9]+|(dvwa|webgoat)$/g, "*")));
+  const families = new Set(cmds.map((c) => c[1].replace(/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|load-[0-9]+@load\.invalid|load-team-[0-9]+|(dvwa|webgoat)$/g, "*")));
   assert.deepEqual(
     [...families].sort(),
-    ["ctf:classic:attempts:*", "ctf:classic:lastAt", "ctf:classic:points", "ctf:classic:solved", "ctf:classic:solves:*", "ctf:quiz:answered", "ctf:quiz:answers:*", "ctf:quiz:attempts:*", "ctf:quiz:lastAt", "ctf:quiz:points", "ctf:solves:*", "ctf:team:*", "ctf:team:*:members", "ctf:user:*"],
+    ["ctf:auth:user", "ctf:auth:user:by:email:*", "ctf:classic:attempts:*", "ctf:classic:lastAt", "ctf:classic:points", "ctf:classic:solved", "ctf:classic:solves:*", "ctf:quiz:answered", "ctf:quiz:answers:*", "ctf:quiz:attempts:*", "ctf:quiz:lastAt", "ctf:quiz:points", "ctf:solves:*", "ctf:team:*", "ctf:team:*:members", "ctf:user:*"],
   );
   // The seeder writes no catalogue and never touches solvecount or hints.
   assert.ok(!cmds.some((c) => /questions|challenges|solvecount|hints|flag/.test(c[1])));
-  // quiz points aggregate == sum of that login's answers
+  // quiz points aggregate == sum of that player's answers
   const answers = {};
   const points = {};
   for (const c of cmds) {
     if (c[0] === "HSET" && c[1].startsWith("ctf:quiz:answers:")) {
-      const login = c[1].slice("ctf:quiz:answers:".length);
-      answers[login] = (answers[login] || 0) + JSON.parse(c[3]).points;
+      const player = c[1].slice("ctf:quiz:answers:".length);
+      answers[player] = (answers[player] || 0) + JSON.parse(c[3]).points;
     }
     if (c[0] === "HSET" && c[1] === "ctf:quiz:points") points[c[2]] = c[3];
   }
   assert.deepEqual(points, answers);
 });
 
-// #522: the app's grading scripts leave each login's latest award time in
+// #522: the app's grading scripts leave each player's latest award time in
 // ctf:<m>:lastAt; the seed writes the same value, so a seeded board has a
 // "whoever got there first" tiebreak to audit.
 test("the award-time hashes hold each login's latest row time", () => {
@@ -124,9 +133,9 @@ test("the award-time hashes hold each login's latest row time", () => {
     const latest = {};
     for (const c of cmds) {
       if (c[0] !== "HSET" || !c[1].startsWith(rows)) continue;
-      const login = c[1].slice(rows.length);
+      const player = c[1].slice(rows.length);
       const at = JSON.parse(c[3]).at;
-      if (!latest[login] || Date.parse(at) > Date.parse(latest[login])) latest[login] = at;
+      if (!latest[player] || Date.parse(at) > Date.parse(latest[player])) latest[player] = at;
     }
     const seeded = Object.fromEntries(cmds.filter((c) => c[0] === "HSET" && c[1] === lastAt).map((c) => [c[2], c[3]]));
     assert.ok(Object.keys(latest).length > 1, `${rows} has rows to compare`);
@@ -196,7 +205,7 @@ test("a seed refuses to write over an existing key or field it does not own, and
   assert.deepEqual(collisions(m, after, m), []);
   // ...and a real row that appeared since is still caught.
   after.keys.add("ctf:team:load-team-01"); // already ours — claimed
-  after.fields["ctf:solves:dvwa"].add(`${loginFor(2)}:ch-1`); // maybe ours, maybe not: only a collision if the manifest lacks it
+  after.fields["ctf:solves:dvwa"].add(`${playerFor(2)}:ch-1`); // maybe ours, maybe not: only a collision if the manifest lacks it
   const extra = collisions(m, after, m);
   assert.ok(extra.every((x) => !m.keys.includes(x)), "claimed keys never collide");
 });
@@ -248,7 +257,7 @@ test("planBatches is linear: 100k commands plan in well under the time a quadrat
 test("ops are shaped for the seed script, and claimed exactly when an earlier batch or run already owns the row", () => {
   const seed = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
   const previous = { keys: ["ctf:user:load-0001"], fields: { "ctf:quiz:points": ["load-0001"] } };
-  const batches = [...planBatches(seed.cmds, previous, 7)]; // small batches so logins straddle boundaries
+  const batches = [...planBatches(seed.cmds, previous, 7)]; // small batches so players straddle boundaries
   const seenKeys = new Set(previous.keys);
   const seenFields = new Set(["ctf:quiz:points#load-0001"]);
   for (const batch of batches) {
@@ -270,7 +279,7 @@ test("ops are shaped for the seed script, and claimed exactly when an earlier ba
     for (const k of thisBatchKeys) seenKeys.add(k);
     for (const f of thisBatchFields) seenFields.add(f);
   }
-  // At least one whole key is written in two different batches (a login's rows straddle), and its second op is claimed.
+  // At least one whole key is written in two different batches (a player's rows straddle), and its second op is claimed.
   const firstBatchOf = new Map();
   let straddled = false;
   batches.forEach((b, i) => b.ops.forEach((op) => { if (op.field === undefined) { if (firstBatchOf.has(op.key) && firstBatchOf.get(op.key) !== i) { straddled = true; assert.ok(op.claimed); } else firstBatchOf.set(op.key, i); } }));
@@ -402,4 +411,37 @@ test("errorLabel never carries a token, a URL, a stack, or an arbitrary thrown v
   assert.equal(errorLabel({ message: "object with a message and the token xyz" }), "failed (non-Error throw)");
   assert.equal(errorLabel("a string with http://host/secret"), "failed (non-Error throw)");
   assert.ok(errorLabel(new Error("x".repeat(500))).length <= 220);
+});
+
+// The board shows names, not id fallbacks, only when each seeded player is an
+// account row. The row goes through the same encoding and index key the app's
+// auth store writes (apps/web/src/lib/auth-store), and links no GitHub login.
+test("every seeded player is an account row with a display name and an email index entry, and no GitHub link", () => {
+  const { cmds, players } = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
+  const rows = cmds.filter((c) => c[0] === "HSET" && c[1] === AUTH_USER_KEY);
+  assert.deepEqual(rows.map((c) => c[2]), players);
+  players.forEach((id, i) => {
+    const row = JSON.parse(rows[i][3]);
+    assert.equal(row.id, id);
+    assert.equal(row.name, nameFor(i + 1));
+    assert.equal(rows[i][3], userRow(i + 1, row.createdAt));
+    assert.ok(cmds.some((c) => c[0] === "SADD" && c[1] === `${AUTH_USER_KEY}:by:email:${row.email}` && c[2] === id), `no email index for ${id}`);
+  });
+  assert.ok(isSharedHash(AUTH_USER_KEY), "the account hash is a shared one: fields are owned, never the whole key");
+  assert.ok(!cmds.some((c) => c[1].startsWith("ctf:link:")), "a synthetic name must not claim a GitHub login");
+});
+
+test("every key and field the seed attaches data to is a player id, never a raw login", () => {
+  const { cmds, players } = buildCommands({ count: 20, catalogue, now: 1_000_000_000_000 });
+  const ids = new Set(players);
+  const idIn = (s) => s.match(/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/g) || [];
+  for (const c of cmds) {
+    const perPlayerKey = /^ctf:(quiz:(answers|attempts)|classic:(solves|attempts)|user):/.test(c[1]);
+    if (perPlayerKey) assert.ok(ids.has(c[1].slice(c[1].lastIndexOf(":") + 1)), `key not keyed by a seeded id: ${c[1]}`);
+    if (/^ctf:(quiz|classic):(points|answered|solved|lastAt)$/.test(c[1])) assert.ok(ids.has(c[2]), `${c[1]} field is not a seeded id: ${c[2]}`);
+    if (c[1].startsWith("ctf:solves:")) assert.ok(ids.has(c[2].slice(0, c[2].indexOf(":"))), `solve field not <id>:<challenge>: ${c[2]}`);
+    if (c[1].endsWith(":members")) for (const m of c.slice(2)) assert.ok(ids.has(m), `roster holds a non-id: ${m}`);
+    if (c[1].startsWith("ctf:team:") && !c[1].endsWith(":members")) assert.ok(ids.has(c[c.indexOf("captain") + 1]), "captain is not a seeded id");
+  }
+  assert.ok(idIn(cmds.find((c) => c[1].startsWith("ctf:user:"))[1]).length === 1);
 });

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   upstashPipeline: vi.fn<(c: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
 }));
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/auth", () => ({ auth: {} }));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
 // The demo ships two real forensics artifacts through the attachments
 // store, which has its own suites — here, only what the seed asks of it.
@@ -16,6 +17,9 @@ const files = vi.hoisted(() => ({
 vi.mock("@/lib/attachments-store", () => files);
 
 import { seedDemoData, SEED_CATEGORIES_SCRIPT } from "@/lib/admin-store";
+import { demoPlayerId } from "@/lib/demo-seed";
+import { PLAYER_ID_RE } from "@/lib/player";
+import { PUT_ROW_SCRIPT } from "@/lib/auth-store/scripts";
 import { upsertQuestion } from "@/lib/quiz-store";
 import { normalizeFlag, flagComparisonForm, CLASSIC_CATEGORIES_MAX } from "@/lib/classic-keys";
 import { AI_CATEGORIES_MAX } from "@/lib/ai-keys";
@@ -185,7 +189,7 @@ describe("seedDemoData", () => {
         Object.values(a.solves).reduce((m, i) => m + i.length, 0),
     )[0];
     const times = cmds
-      .filter((c) => c[0] === "HSET" && String(c[1]).startsWith("ctf:solves:") && String(c[2]).startsWith(`${top.login}:`))
+      .filter((c) => c[0] === "HSET" && String(c[1]).startsWith("ctf:solves:") && String(c[2]).startsWith(`${demoPlayerId(top.login)}:`))
       .map((c) => Date.parse(String(c[3])))
       .sort((a, b) => a - b);
     const windowMs = 6 * 60 * 60 * 1000;
@@ -251,6 +255,44 @@ describe("seedDemoData", () => {
     expect(stamps.length).toBeGreaterThan(0);
     // Never future-dated — the fallback is yesterday's now-minus-6h window.
     for (const t of stamps) expect(t).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("keys the demo roster by v4 player ids, never by the fixture login", async () => {
+    const ids = DEMO_CONTESTANTS.map((c) => demoPlayerId(c.login));
+    for (const id of ids) expect(id).toMatch(PLAYER_ID_RE);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(demoPlayerId("neo-anderson")).toBe(demoPlayerId("neo-anderson"));
+
+    await seedDemoData(actor("alice"));
+    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
+    const logins = new Set(DEMO_CONTESTANTS.map((c) => c.login));
+    for (const t of DEMO_TEAMS) {
+      const team = cmds.find((c) => c[0] === "HSET" && c[1] === `ctf:team:${t.slug}`)!;
+      expect(team[team.indexOf("captain") + 1]).toBe(demoPlayerId(t.captain));
+      const roster = cmds.find((c) => c[0] === "SADD" && c[1] === `ctf:team:${t.slug}:members`)!;
+      expect(roster.slice(2)).toEqual(t.members.map(demoPlayerId));
+    }
+    for (const c of cmds) {
+      if (c[0] !== "HSET" && c[0] !== "SADD") continue;
+      expect(logins.has(String(c[2])), `${String(c[1])} is keyed by a raw login`).toBe(false);
+      expect(String(c[1]).startsWith("ctf:user:") && logins.has(String(c[1]).slice("ctf:user:".length))).toBe(false);
+    }
+  });
+
+  it("creates each demo player as an account row with a display name, and links no GitHub login", async () => {
+    await seedDemoData(actor("alice"));
+    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
+    const puts = cmds.filter((c) => c[0] === "EVAL" && c[1] === PUT_ROW_SCRIPT);
+    expect(puts).toHaveLength(DEMO_CONTESTANTS.length);
+    for (const c of DEMO_CONTESTANTS) {
+      const put = puts.find((p) => p[6] === demoPlayerId(c.login))!;
+      expect(put.slice(2, 6)).toEqual([1, "ctf:auth:user", "ctf:auth", "user"]);
+      expect(put[7]).toBe(""); // create only: an existing row is left as it is
+      const row = JSON.parse(String(put[8]));
+      expect(row).toMatchObject({ id: demoPlayerId(c.login), name: c.login, login: c.login });
+    }
+    expect(cmds.some((c) => String(c[1]).startsWith("ctf:link:"))).toBe(false);
+    expect(cmds.some((c) => String(c[1]).startsWith("ctf:auth:") && c[0] !== "EVAL")).toBe(false);
   });
 
   it("puts every demo contestant on a team (no soloists left off the team board)", () => {
@@ -329,7 +371,7 @@ describe("seedDemoData", () => {
     expect(pointsCmds.length).toBe(logins.size);
     expect(answeredCmds.length).toBe(logins.size);
     for (const login of logins) {
-      const expectedAnswers = DEMO_QUIZ_ANSWERS.filter((a) => a.login === login);
+      const expectedAnswers = DEMO_QUIZ_ANSWERS.filter((a) => demoPlayerId(a.login) === login);
       const expectedPoints = expectedAnswers.reduce(
         (sum, a) => sum + DEMO_QUESTIONS.find((q) => q.id === a.questionId)!.points,
         0,
@@ -418,7 +460,7 @@ describe("seedDemoData", () => {
     expect(pointsCmds.length).toBe(logins.size);
     expect(solvedCmds.length).toBe(logins.size);
     for (const login of logins) {
-      const rowsForLogin = DEMO_CLASSIC_SOLVES.filter((s) => s.login === login);
+      const rowsForLogin = DEMO_CLASSIC_SOLVES.filter((s) => demoPlayerId(s.login) === login);
       const expectedPoints = rowsForLogin.reduce(
         (sum, s) => sum + DEMO_CHALLENGES.find((c) => c.id === s.challengeId)!.points,
         0,
@@ -572,7 +614,7 @@ describe("seedDemoData", () => {
     expect(pointsCmds.length).toBe(logins.size);
     expect(solvedCmds.length).toBe(logins.size);
     for (const login of logins) {
-      const rowsForLogin = DEMO_AI_SOLVES.filter((s) => s.login === login);
+      const rowsForLogin = DEMO_AI_SOLVES.filter((s) => demoPlayerId(s.login) === login);
       const expectedPoints = rowsForLogin.reduce(
         (sum, s) => sum + DEMO_AI_CHALLENGES.find((c) => c.id === s.challengeId)!.points,
         0,

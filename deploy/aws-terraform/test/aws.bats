@@ -210,15 +210,17 @@ me"
   echo "$output" | grep -q 'ecr_app_repository_url'
 }
 
-@test "expired AWS credentials fail before Terraform reads state" {
+@test "AWS credential check preserves CLI errors before Terraform reads state" {
   cat > "$STUBS/aws" <<EOF
 #!/bin/sh
 echo "aws \$*" >> "$CALLS"
+echo "Could not connect to the endpoint URL" >&2
 exit 1
 EOF
   run "$SCRIPT"
   [ "$status" -ne 0 ] &&
-    echo "$output" | grep -Fq 'AWS credentials are missing or expired' &&
+    echo "$output" | grep -Fq 'Could not connect to the endpoint URL' &&
+    echo "$output" | grep -Fq 'AWS credential check failed' &&
     [ "$(cat "$CALLS")" = "aws sts get-caller-identity" ]
 }
 

@@ -249,9 +249,9 @@ if [ -n "$DRY_RUN" ]; then
   echo "   (dry run: the real registry comes from terraform output; Secure Development assumed on)"
 else
   # Fail closed: an unavailable credential check stops deployment before reading Terraform state.
-  if ! aws sts get-caller-identity >/dev/null 2>&1; then
-    echo "FAIL: AWS credentials are missing or expired." >&2
-    echo "      Refresh them before deploying (for SSO, run aws sso login --profile <profile>)." >&2
+  if ! aws sts get-caller-identity >/dev/null; then
+    echo "FAIL: AWS credential check failed." >&2
+    echo "      If your SSO session expired, run aws sso login --profile <profile>." >&2
     exit 1
   fi
   if ! REPO_URL="$(terraform -chdir="$HERE" output -raw ecr_app_repository_url 2>/dev/null)" ||

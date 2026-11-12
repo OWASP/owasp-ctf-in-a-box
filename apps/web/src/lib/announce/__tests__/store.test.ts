@@ -34,6 +34,7 @@ import {
   OUTBOX_CLAIM_SCRIPT,
   OUTBOX_COMPLETE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
+  SWITCH_DISABLE_SCRIPT,
   WEBHOOK_CLEAR_SCRIPT,
   outboxClaim,
   outboxComplete,
@@ -111,12 +112,25 @@ describe("getAnnounceConfig", () => {
           ? { result: "4" }
           : cmd[1] === DISCORD_WEBHOOK_KEY
             ? { result: VALID_URL }
-            : { result: [] },
+            : cmd[1] === DISCORD_CONFIG_KEY
+              ? { result: ["epoch:first-blood", "2"] }
+              : { result: [] },
       ),
     );
     const config = await getAnnounceConfig();
     expect(config.webhookGeneration).toBe(4);
     expect(config.webhookConfigured).toBe(true);
+    expect(config.kindEpochs["first-blood"]).toBe(2);
+    expect(config.kindEpochs.launch).toBe(0);
+  });
+
+  it("THROWS on a malformed switch epoch instead of reading it as 0", async () => {
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) =>
+        cmd[1] === DISCORD_CONFIG_KEY ? { result: ["epoch:first-blood", "not-a-counter"] } : { result: null },
+      ),
+    );
+    await expect(getAnnounceConfig()).rejects.toThrow(/invalid switch epoch/);
   });
 
   it("THROWS when the transport fails — a failed read is not an all-off box", async () => {
@@ -200,10 +214,27 @@ describe("updateAnnounceConfig", () => {
       .filter((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT)
       .map((cmd) => cmd[5]);
     expect(skipped.sort()).toEqual(["p1", "r1"]);
-    const firstSkip = commands.findIndex((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT);
-    const configWrite = commands.findIndex((cmd) => cmd[0] === "HSET" && cmd.includes(DISCORD_CONFIG_KEY));
-    expect(firstSkip).toBeGreaterThan(-1);
-    expect(firstSkip).toBeLessThan(configWrite);
+    const firstSkipCall = mocks.upstashPipeline.mock.calls.findIndex((call) =>
+      call[0].some((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT),
+    );
+    expect(firstSkipCall).toBeGreaterThan(-1);
+    const disable = mocks.upstashEval.mock.calls.find((call) => call[0] === SWITCH_DISABLE_SCRIPT);
+    expect(disable).toBeDefined();
+    expect(mocks.upstashPipeline.mock.invocationCallOrder[firstSkipCall]).toBeLessThan(
+      mocks.upstashEval.mock.invocationCallOrder[0],
+    );
+    const [, keys, args] = disable!;
+    expect(keys).toEqual([DISCORD_CONFIG_KEY]);
+    expect(args).toEqual([
+      "2",
+      "pause",
+      "0",
+      "milestones",
+      "0",
+      "epoch:pause",
+      "epoch:resume",
+      "epoch:milestone",
+    ]);
   });
 
   it("a failed cancellation leaves the switch ON rather than stranding entries", async () => {
@@ -213,6 +244,7 @@ describe("updateAnnounceConfig", () => {
     await expect(updateAnnounceConfig("admin", { launch: false })).rejects.toThrow(/outbox read failed/);
     const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
     expect(commands.some((cmd) => cmd[0] === "HSET" && cmd.includes(DISCORD_CONFIG_KEY))).toBe(false);
+    expect(mocks.upstashEval.mock.calls.some((call) => call[0] === SWITCH_DISABLE_SCRIPT)).toBe(false);
   });
 });
 
@@ -422,14 +454,15 @@ describe("stateCompareSet / readStatePack", () => {
 });
 
 describe("outbox", () => {
-  it("enqueues a pending entry stamped with the observed webhook generation", async () => {
+  it("enqueues a pending entry stamped with the observed webhook generation and switch epoch", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
-    await outboxEnqueue("id-1", "first-blood", { embeds: [] }, 7);
+    await outboxEnqueue("id-1", "first-blood", { embeds: [] }, 7, 3);
     const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
     expect(cmd[0]).toBe("HSET");
     expect(cmd[1]).toBe(ANNOUNCE_OUTBOX_KEY);
     expect(String(cmd[3])).toContain('"status":"pending"');
     expect(String(cmd[3])).toContain('"webhookGeneration":7');
+    expect(String(cmd[3])).toContain('"kindEpoch":3');
   });
 
   it("claims the lease atomically when status and attempts match, returning its owner token", async () => {
@@ -455,8 +488,19 @@ describe("outbox", () => {
   });
 
   it("returns no lease and logs when Redis returns a command error", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.upstashPipeline.mockImplementation(async () => [{ error: "ERR timeout" }]);
     expect(await outboxClaim("id-1", { status: "pending", n: 0 })).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith("[announce] outbox claim failed:", "ERR timeout");
+    errorSpy.mockRestore();
+  });
+
+  it("returns no lease and logs when the Redis call is rejected", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockRejectedValue(new Error("down"));
+    expect(await outboxClaim("id-1", { status: "pending", n: 0 })).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith("[announce] outbox claim failed:", "down");
+    errorSpy.mockRestore();
   });
 
   it("completes an entry under its owner token, bumping attempts on failure", async () => {

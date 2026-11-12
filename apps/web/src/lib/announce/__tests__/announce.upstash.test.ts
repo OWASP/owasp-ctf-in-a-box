@@ -24,6 +24,7 @@ import {
   OUTBOX_COMPLETE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
   STATE_CAS_SCRIPT,
+  SWITCH_DISABLE_SCRIPT,
   claimLedgerField,
   claimLedgerFields,
 } from "@/lib/announce/store";
@@ -36,14 +37,15 @@ const LEASE_KEY = `ctf:announce:lease:${LEASE_ID}`;
 const CLAIM_ID = `${RUN}-claim`;
 const CLAIM_LEASE_KEY = `ctf:announce:lease:${CLAIM_ID}`;
 const OUTBOX_KEY = liveKey("announce-outbox", "box");
+const SWITCH_KEY = liveKey("announce-switch", "config");
 
 describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
   beforeAll(async () => {
-    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, OUTBOX_KEY]]);
+    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, OUTBOX_KEY, SWITCH_KEY]]);
   });
 
   afterAll(async () => {
-    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, OUTBOX_KEY]]);
+    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, OUTBOX_KEY, SWITCH_KEY]]);
   });
 
   it("first observation with expected='' seeds silently (code 2) and bumps the seq", async () => {
@@ -178,5 +180,32 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     expect(lease.result).toBeNull();
 
     await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY]]);
+  });
+
+  it("SWITCH_DISABLE_SCRIPT writes switches and advances only the disabled kinds' epochs", async () => {
+    await upstashPipeline([
+      ["DEL", SWITCH_KEY],
+      ["HSET", SWITCH_KEY, "firstBlood", "1", "launch", "1", "epoch:first-blood", "4", "epoch:pause", "2", "epoch:resume", "2", "epoch:milestone", "3"],
+    ]);
+    const res = await upstashEval(SWITCH_DISABLE_SCRIPT, [SWITCH_KEY], [
+      "2",
+      "firstBlood", "0",
+      "launch", "1",
+      "epoch:first-blood",
+      "epoch:pause",
+      "epoch:resume",
+    ]);
+    expect(res).toBe(1);
+    const [flat] = await upstashPipeline([["HGETALL", SWITCH_KEY]]);
+    const config = new Map<string, string>();
+    const arr = flat.result as string[];
+    for (let i = 0; i < arr.length; i += 2) config.set(arr[i], arr[i + 1]);
+    expect(config.get("firstBlood")).toBe("0");
+    expect(config.get("launch")).toBe("1");
+    expect(config.get("epoch:first-blood")).toBe("5");
+    expect(config.get("epoch:pause")).toBe("3");
+    expect(config.get("epoch:resume")).toBe("3");
+    expect(config.get("epoch:milestone")).toBe("3");
+    await upstashPipeline([["DEL", SWITCH_KEY]]);
   });
 });

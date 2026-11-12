@@ -85,7 +85,7 @@ export async function enqueueAnnouncement(kind: AnnouncementKind, message: Disco
   const config = await getAnnounceConfig();
   if (!config.webhookConfigured || !kindEnabled(config, kind)) return;
   const id = nextId(kind);
-  await outboxEnqueue(id, kind, message, config.webhookGeneration);
+  await outboxEnqueue(id, kind, message, config.webhookGeneration, config.kindEpochs[kind]);
   queue.push(id);
   while (queue.length > MAX_QUEUE) {
     const droppedId = queue.shift();
@@ -151,8 +151,15 @@ export async function flush(): Promise<void> {
     }
     const pending = await outboxPending();
     const candidates: { id: string; entry: OutboxEntry }[] = [];
+    // An entry is stale if the webhook changed after it was enqueued
+    // (generation) or its switch was disabled and re-enabled (epoch). Both
+    // counters were captured with this config read; a producer that raced the
+    // disabling write still carries the old one.
     for (const item of pending) {
-      if (item.entry.webhookGeneration !== generation) {
+      if (
+        item.entry.webhookGeneration !== generation ||
+        item.entry.kindEpoch !== config.kindEpochs[item.entry.kind]
+      ) {
         await outboxSkip(item.id);
         continue;
       }
@@ -234,7 +241,10 @@ export async function flushRetries(): Promise<void> {
     }
     const candidates: { id: string; entry: OutboxEntry }[] = [];
     for (const item of [...byId.values()].sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at))) {
-      if (item.entry.webhookGeneration !== generation) {
+      if (
+        item.entry.webhookGeneration !== generation ||
+        item.entry.kindEpoch !== config.kindEpochs[item.entry.kind]
+      ) {
         await outboxSkip(item.id);
         continue;
       }

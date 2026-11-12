@@ -115,6 +115,19 @@ const PAIRED_ACTION_CLASS =
   "transition-colors hover:border-[#2563eb]/60 hover:bg-white/[0.06] hover:text-white " +
   "disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-transparent disabled:text-zinc-500";
 
+/** The label each member shows under on the roster, the remove confirmation
+ *  and the transfer selector: their display name, with a short id suffix when
+ *  another member shows the same name (ignoring case), so a captain can tell
+ *  who they are removing or handing the team to. */
+export function rosterLabels(members: readonly string[], memberNames: Readonly<Record<string, string>>): Map<string, string> {
+  const base = new Map(members.map((m) => [m, memberNames[m] ?? displayNameOf({ id: m })]));
+  const uses = new Map<string, number>();
+  for (const name of base.values()) uses.set(name.toLowerCase(), (uses.get(name.toLowerCase()) ?? 0) + 1);
+  return new Map(
+    [...base].map(([m, name]) => [m, (uses.get(name.toLowerCase()) ?? 0) > 1 ? `${name} (${m.slice(0, 8)})` : name]),
+  );
+}
+
 export default function TeamCard({
   team,
   writesEnabled,
@@ -195,7 +208,8 @@ export default function TeamCard({
   const displayCode = latestCode ?? joinCode;
   const [copied, setCopied] = useState(false);
   const otherMembers = (team?.members ?? []).filter((member) => member !== captain);
-  const nameOf = (member: string) => memberNames[member] ?? displayNameOf({ id: member });
+  const labels = rosterLabels(team?.members ?? [], memberNames);
+  const nameOf = (member: string) => labels.get(member) ?? memberNames[member] ?? displayNameOf({ id: member });
 
   return (
     <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] p-5">

@@ -190,7 +190,13 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   // than inventing a locked step.
   const classicReachableRead =
     classicStories.length > 0 && classicChallenges.length > 0
-      ? reachableByPlayer(data, classicTotals, classicChallenges, classicStories)
+      ? reachableByPlayer(
+          data,
+          classicTotals,
+          createdRowCandidates(quizTotals, aiReads),
+          classicChallenges,
+          classicStories,
+        )
       : Promise.resolve(undefined);
 
   let aiTotals = new Map<string, AiTotal>();
@@ -421,6 +427,24 @@ export function mergeTeamRosters(
   return { sourceTeams, rosterBySlug, teamByPlayer };
 }
 
+/** The ids `createdEntries` turns into rows from quiz or ai progress: the
+ *  same `answered`/`solved` > 0 gate. Awaits the ai totals read the caller
+ *  already started; a failed one contributes nothing, as it does there. */
+async function createdRowCandidates(
+  quizTotals: ReadonlyMap<string, QuizTotal>,
+  aiReads: Promise<[PromiseSettledResult<Map<string, AiTotal>>, PromiseSettledResult<unknown>]> | null,
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (const [playerId, total] of quizTotals) if (total.answered > 0) ids.push(playerId);
+  if (aiReads) {
+    const [totalsResult] = await aiReads;
+    if (totalsResult.status === "fulfilled") {
+      for (const [playerId, total] of totalsResult.value) if (total.solved > 0) ids.push(playerId);
+    }
+  }
+  return ids;
+}
+
 /** Story-lock reachability for every contestant row that will carry a classic
  *  block, in two reads batched over the whole board: the team fold, whose
  *  solve records are what the CEILING counts, and `unlockingSolvedIdsBatch`,
@@ -429,7 +453,7 @@ export function mergeTeamRosters(
  *  nothing there. No team is named to that second read: a board roster means
  *  each member's solves count for the team they are on now.
  *
- *  A row's team is looked up by LOGIN through `mergeTeamRosters`, so it sees
+ *  A row's team is looked up by player id through `mergeTeamRosters`, so it sees
  *  the same complete membership `withTeamStandings` ranks a stage later and a
  *  teammate's solve unlocks the same step for the player row and the team row.
  *  Looking the team up by player id rather than by `entry.team` matters because
@@ -445,27 +469,34 @@ export function mergeTeamRosters(
 async function reachableByPlayer(
   data: LeaderboardData,
   classicTotals: ReadonlyMap<string, ClassicTotal>,
+  createdCandidates: Promise<readonly string[]>,
   challenges: readonly Challenge[],
   stories: readonly Story[],
 ): Promise<Map<string, Reachable> | undefined> {
   try {
-    const { rosterBySlug, teamByPlayer } = mergeTeamRosters(data, await listTeams());
+    const [{ rosterBySlug, teamByPlayer }, candidates] = await Promise.all([
+      listTeams().then((teams) => mergeTeamRosters(data, teams)),
+      createdCandidates,
+    ]);
 
     const rows: { playerId: string; roster: string[] }[] = [];
 
-    // Preserve the classic totals' player id spelling for existing solvers.
-    // Add existing leaderboard contestants who have no personal Classic solves.
+    // Classic solvers keep the id as their totals hold it. A contestant with
+    // no Classic solve of their own gets a row only when a team places them:
+    // a source entry, or a row `createdEntries` adds for quiz or ai points.
+    // Without one a teammate's unlock would not reach them and their block
+    // would read the no-solves zero.
     const playerIds = new Map<string, string>();
 
     for (const playerId of classicTotals.keys()) {
       playerIds.set(playerId.toLowerCase(), playerId);
     }
 
-    for (const entry of data.entries) {
-      const key = entry.playerId.toLowerCase();
+    for (const playerId of [...data.entries.map((entry) => entry.playerId), ...candidates]) {
+      const key = playerId.toLowerCase();
 
       if (teamByPlayer.has(key) && !playerIds.has(key)) {
-        playerIds.set(key, entry.playerId);
+        playerIds.set(key, playerId);
       }
     }
 
@@ -899,7 +930,13 @@ function createdEntries(
     // targets to show.
     const modules: Partial<Record<ModuleId, ModuleProgress>> = { ...zeros };
     if (quiz) modules["quiz"] = quizModule(quiz, quizTotalQuestions);
-    if (classic) modules["classic"] = classicModule(classic, classicTotalChallenges, classicLiveIds, classicReachable?.get(key));
+    if (classic) {
+      modules["classic"] = classicModule(classic, classicTotalChallenges, classicLiveIds, classicReachable?.get(key));
+    } else if (modules.classic && classicReachable?.has(key)) {
+      // No Classic solve of their own, but a team: the zero block reaches
+      // what the team has unlocked, like a source row's (`attributeEntry`).
+      modules["classic"] = classicModule(NO_SOLVES, classicTotalChallenges, classicLiveIds, classicReachable.get(key));
+    }
     if (ai) modules["ai"] = aiModule(ai, aiTotalChallenges);
     // The modules' own activity time is the only honest value for all three
     // (neither aggregate read has one to give today, so it is null in
@@ -907,7 +944,7 @@ function createdEntries(
     const lastAt = laterOf(laterOf(quiz?.lastAt ?? null, classic?.lastAt ?? null), ai?.lastAt ?? null);
     created.push({
       rank: 0, // stamped by rankByStanding below
-      playerId: playerId,
+      playerId,
       // Named by the fold's last stage (names.ts).
       ...unnamed(playerId),
       // Membership is withTeamStandings' to overlay, one step later.

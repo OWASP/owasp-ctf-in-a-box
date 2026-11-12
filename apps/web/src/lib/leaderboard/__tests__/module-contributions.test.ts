@@ -718,6 +718,39 @@ describe("withModuleContributions", () => {
       });
     });
 
+    // A contestant whose only points are quiz points is not a source entry
+    // and holds no Classic solve; their row is created by this stage. A
+    // teammate's unlock still reaches them, as it does a source row.
+    it("gives a quiz-only teammate the team's reachability with an empty scorer source", async () => {
+      mocks.moduleLive.mockImplementation((id: string) => id === "classic" || id === "quiz");
+      mocks.listQuestions.mockResolvedValue([{ id: "q1" }, { id: "q2" }]);
+      mocks.getQuizTotals.mockResolvedValue(new Map([["bea", { points: 5, answered: 1, lastAt: null }]]));
+      mocks.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["ada", "bea"] }]);
+      mocks.listChallenges.mockResolvedValue([
+        { id: "c1", points: 10 },
+        { id: "c2", points: 20 },
+        { id: "c3", points: 30 },
+      ]);
+      mocks.listStories.mockResolvedValue([{ id: "s1", title: "Story", intro: "", steps: ["c1", "c2"] }]);
+      // Ada solved step 1, which releases step 2 for the whole team.
+      mocks.getClassicTotals.mockResolvedValue(new Map([["ada", { points: 10, solved: 1, lastAt: null }]]));
+      mocks.getTeamClassicTotalsBatch.mockImplementation((rosters: readonly string[][]) =>
+        Promise.resolve(rosters.map(() => ({ points: 10, solved: 1, lastAt: null, itemIds: ["c1"], itemPoints: { c1: 10 } }))),
+      );
+      mocks.upstashPipeline.mockImplementation(
+        unlockPipeline({
+          ada: { solves: { c1: SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
+          bea: { solves: {}, team: "red", joinedAt: JOINED_AT },
+        }),
+      );
+
+      const out = await withModuleContributions(data([]));
+
+      const bea = out.entries.find((row) => row.playerId === "bea")!;
+      expect(bea.points).toBe(5);
+      expect(bea.modules!["classic"]!.detail).toEqual({ kind: "classic", solved: 0, total: 3, points: 0, locked: 0 });
+    });
+
     it("gives a zero-solve teammate the same reachable denominator as the solver", async () => {
       mocks.listTeams.mockResolvedValue([
         { slug: "red", name: "Red", members: ["ada", "cyd"] },

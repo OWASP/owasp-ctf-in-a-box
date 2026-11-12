@@ -145,6 +145,12 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
       if (pos && isLocked(pos, new Set())) return;
       item = classicChallenge ? { title: classicChallenge.title, points: classicChallenge.points } : null;
     } else {
+      // A failed lookup fails OPEN to the bare challenge id with 0 points.
+      // That leaks nothing: these lists are the public boards (never admin
+      // data or a flag), so a title/points can only come from an item that
+      // is actually public, and the fallback is only the id the submit
+      // route already knows. The claim above is already spent, so not
+      // posting would silently consume the first blood instead.
       item = await lookupItem(input.module, input.challengeId).catch(() => null);
     }
 

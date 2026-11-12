@@ -175,6 +175,10 @@ The value of any variable whose name looks like a credential is replaced
 a `_KEY` or `AUTH` suffix, and similar), while the name stays visible. Any
 `scheme://user:pass@host` is printed as `scheme://***@host`.
 
+Without `--dry-run`, the script checks AWS credentials before reading Terraform
+outputs. If an SSO session has expired, run
+`aws sso login --profile <profile>` and retry.
+
 Watch a rollout:
 
 ```sh

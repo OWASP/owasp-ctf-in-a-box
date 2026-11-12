@@ -8,6 +8,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **AWS deploys now check credentials before reading Terraform outputs (#750).**
+  An expired SSO session fails with a credential message before image work
+  starts, while dry runs still make no AWS calls.
 - **Fixed: a fresh scorer image build fails at `apk add docker-cli` (#756).**
   Alpine rebuilt `docker-cli` 29.9.3 as `-r1` and keeps only the latest
   revision, so the pinned `-r0` could no longer be installed. The scorer now

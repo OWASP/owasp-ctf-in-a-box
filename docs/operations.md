@@ -2660,9 +2660,11 @@ Watch a new score land live, without a real PR:
 Those are the only two targets the script knows — it seeds a curated slice
 of each one's rubric catalogue, and refuses any other target name.
 
-The four demo players are real accounts with fixed ids (`up` writes their
+The four demo players (`alice-dev`, `bob-dev`, `carol-dev`, `mallory-dev`) are real accounts with fixed ids (`up` writes their
 auth rows and GitHub link keys), so `score` takes a login or a player id; a
 login with no link key is refused by name rather than sent to the scorer.
+`up` never overwrites an existing link key, so a real developer whose login
+matches a demo one keeps their own link.
 
 Tear down with `./scripts/dev-stack down` (keeps seeded data in the Redis
 volume for next time) or `./scripts/dev-stack down --wipe` (also drops it).

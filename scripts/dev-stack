@@ -19,7 +19,7 @@
 # the app image, and everything else — the event's name, which modules run,
 # which Secure Development targets — is an `/admin` setting.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # shellcheck source=scripts/lib/dotenv.sh
 . scripts/lib/dotenv.sh
@@ -332,8 +332,8 @@ seed_demo_accounts() {
     row="{\"id\":\"$id\",\"name\":\"$login\",\"email\":\"$login@dev-stack.invalid\",\"emailVerified\":true,\"image\":null,\"createdAt\":\"$now\",\"updatedAt\":\"$now\"}"
     if ! { compose exec -T redis redis-cli HSETNX ctf:auth:user "$id" "$row" >/dev/null \
       && compose exec -T redis redis-cli SADD "ctf:auth:user:by:email:$login@dev-stack.invalid" "$id" >/dev/null \
-      && compose exec -T redis redis-cli SET "ctf:link:github:$login" "$id" >/dev/null \
-      && compose exec -T redis redis-cli SET "ctf:link:user:$id" "$login" >/dev/null; }; then
+      && compose exec -T redis redis-cli SETNX "ctf:link:github:$login" "$id" >/dev/null \
+      && compose exec -T redis redis-cli SETNX "ctf:link:user:$id" "$login" >/dev/null; }; then
       echo "dev-stack: could not write the demo account for '$login' to redis" >&2
       return 1
     fi
@@ -544,6 +544,9 @@ cmd_score() {
   player="$(resolve_player "$1")" || exit 1
   submit_solves "$player" "$2" "$3"
 }
+
+# Sourcing (the bats suite) defines the functions without running a command.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
 case "${1:-}" in
   up|"") cmd_up ;;

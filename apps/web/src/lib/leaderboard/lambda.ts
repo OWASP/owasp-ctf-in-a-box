@@ -15,10 +15,10 @@ import type {
 } from "./types";
 
 // Shape returned by the deployed Lambda's real scoring endpoint:
-// { leaderboard: [{ rank, author, points, lastSolveAt,
+// { leaderboard: [{ rank, player, points, lastSolveAt,
 //                   apps: { "juice-shop": { solved, total }, ... } }],
-//   series: [{ login, points: [{ t, score }, ...] }, ...],
-// `author` and a series line's `login` are the scorer's player keys; each
+//   series: [{ player, points: [{ t, score }, ...] }, ...],
+// `player` (on a row and on a series line) is the kit user id; each
 // becomes the row's `playerId`, and names are attached by the fold.
 //   teams: [{ rank, slug, name, captain, members, points, lastSolveAt, apps }, ...],
 //   teamSeries: [{ slug, name, points: [{ t, score }, ...] }, ...] }
@@ -34,7 +34,7 @@ type LambdaAppProgress = {
 };
 type LambdaEntry = {
   rank: number;
-  author: string;
+  player: string;
   points: number;
   /** ISO time of the most recent solve — added for tie-breaking. */
   lastSolveAt?: string | null;
@@ -46,7 +46,7 @@ type LambdaCatalog = Partial<Record<AppId, LambdaCatalogEntry[]>>;
 // Loosely typed on purpose — this is unvalidated network input, tolerated
 // (not assumed) to match the documented `series`/`teams`/`teamSeries` shapes.
 type RawSeriesPoint = { t?: unknown; score?: unknown };
-type RawPlayerSeries = { login?: unknown; points?: unknown };
+type RawPlayerSeries = { player?: unknown; points?: unknown };
 type RawTeam = {
   rank?: unknown;
   slug?: unknown;
@@ -75,13 +75,13 @@ function toSeries(raw: unknown): PlayerSeries[] | undefined {
   const series: PlayerSeries[] = [];
   for (const item of raw as RawPlayerSeries[]) {
     if (!item || typeof item !== "object") continue;
-    const { login, points } = item;
-    if (typeof login !== "string" || !Array.isArray(points)) continue;
+    const { player, points } = item;
+    if (typeof player !== "string" || !Array.isArray(points)) continue;
     const validPoints = (points as RawSeriesPoint[]).filter(
       (p): p is { t: string; score: number } =>
         !!p && typeof p === "object" && typeof p.t === "string" && typeof p.score === "number" && Number.isFinite(p.score),
     );
-    if (validPoints.length > 0) series.push({ playerId: login, ...unnamed(login), points: validPoints });
+    if (validPoints.length > 0) series.push({ playerId: player, ...unnamed(player), points: validPoints });
   }
   return series.length > 0 ? series : undefined;
 }
@@ -247,8 +247,8 @@ function toEntry(raw: LambdaEntry, catalog: LambdaCatalog): LeaderboardEntry {
   }
   return {
     rank: raw.rank,
-    playerId: raw.author,
-    ...unnamed(raw.author),
+    playerId: raw.player,
+    ...unnamed(raw.player),
     team: null,
     points: raw.points,
     patched,

@@ -146,6 +146,17 @@ describe("flush", () => {
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 
+  it("leaves an entry with a newer switch epoch pending for a fresh-config pass", async () => {
+    // The switch was disabled+re-enabled after this pass read the config, so
+    // the entry's epoch is newer than the snapshot. Skipping it would be
+    // terminal; it belongs to the next pass.
+    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood", "pending", 0, 0, 1) }]);
+    await flush();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxSkip).not.toHaveBeenCalled();
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+
   it("marks a failed POST failed and records the status", async () => {
     mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     fetchMock.mockResolvedValue({ ok: false, status: 404 });
@@ -305,6 +316,14 @@ describe("flushRetries", () => {
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.outboxClaim).not.toHaveBeenCalled();
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+
+  it("leaves a retryable entry with a newer switch epoch pending", async () => {
+    mocks.outboxRetryable.mockResolvedValue([{ id: "9", entry: entry("launch", "failed", 1, 0, 1) }]);
+    await flushRetries();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxSkip).not.toHaveBeenCalled();
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 

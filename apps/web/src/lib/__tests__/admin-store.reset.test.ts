@@ -27,6 +27,7 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
 });
 
 import { resetEvent } from "@/lib/admin-store";
+import { ANNOUNCE_WEBHOOK_GENERATION_KEY } from "@/lib/announce/keys";
 
 beforeEach(() => {
   mocks.upstashEval.mockReset();
@@ -233,6 +234,7 @@ describe("resetEvent", () => {
     expect(patterns).toContain("ctf:announce:*");
     expect(patterns).not.toContain("ctf:admin:discord");
     expect(patterns).not.toContain("ctf:admin:discord:webhook");
+    expect(patterns).not.toContain(ANNOUNCE_WEBHOOK_GENERATION_KEY);
     const [, evalKeys] = mocks.upstashEval.mock.calls[0];
     expect(evalKeys).not.toContain("ctf:admin:discord");
     expect(evalKeys).not.toContain("ctf:admin:discord:webhook");

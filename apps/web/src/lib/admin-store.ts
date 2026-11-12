@@ -45,6 +45,7 @@ import {
   AI_LAUNCHKEY_KEY,
 } from "@/lib/ai-keys";
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
+import { ANNOUNCE_WEBHOOK_GENERATION_KEY } from "@/lib/announce/keys";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-audit-keys";
 import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSize } from "@/lib/sponsors-keys";
 
@@ -801,10 +802,12 @@ export const RESET_PREFIXES: readonly [string, string][] = [
   // and a fresh run starts SILENT: the lifecycle pack re-seeds on the first
   // tick without replaying old transitions, and a fresh first blood is
   // claimable again. The organizer's CONFIGURATION (`ctf:admin:discord`,
-  // `ctf:admin:discord:webhook`) deliberately does NOT live under this
-  // prefix: like the event images and the settings hash, a webhook the
-  // organizer set up is something they set, not event data, and survives
-  // the reset.
+  // `ctf:admin:discord:webhook`, `ctf:admin:discord:webhook-generation`)
+  // deliberately does NOT live under this prefix: like the event images and
+  // the settings hash, a webhook the organizer set up is something they set,
+  // not event data, and survives the reset. `resetEvent` increments that
+  // generation before this sweep so an entry enqueued from a pre-reset config
+  // snapshot cannot match the post-reset value.
   ["announcements", "ctf:announce:*"],
   // Sponsors are the one exception to the CONTENT/PROGRESS split every other
   // entry above follows: unlike a challenge's flag/description, a sponsor
@@ -899,6 +902,15 @@ export async function resetEvent(
   // (`scanDelByPrefix` does not undo).
   await beginScoreLowering();
   try {
+    // Advance BEFORE the announcement wipe: a producer that read generation
+    // 0 before the reset can still write its outbox entry after the reset
+    // deletes the outbox. That entry keeps 0; the generation it must match
+    // is already 1, so the delivery sweeps skip it instead of posting it to
+    // the webhook the reset retained.
+    assertPipelineOk(
+      await upstashPipeline([["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]]),
+      "reset webhook generation",
+    );
     for (const [label, pattern] of RESET_PREFIXES) {
       if (opts.keepLaunchKey && pattern === AI_LAUNCHKEY_KEY) continue;
       cleared[label] = await scanDelByPrefix(pattern);

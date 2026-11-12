@@ -22,6 +22,13 @@ export const DISCORD_CONFIG_KEY = "ctf:admin:discord";
  *  audited by value — writeAdminAudit records only "set"/"cleared". */
 export const DISCORD_WEBHOOK_KEY = "ctf:admin:discord:webhook";
 
+/** Bumped atomically when the webhook is cleared and at the start of a master
+ *  reset. An entry whose `webhookGeneration` predates the current value is
+ *  stale: its producer read the old config before the change and enqueued
+ *  after the cancellation scan. It lives OUTSIDE `ctf:announce:*` so a reset
+ *  cannot delete it back to a value a pre-reset entry still carries. */
+export const ANNOUNCE_WEBHOOK_GENERATION_KEY = "ctf:admin:discord:webhook-generation";
+
 // --- announcement state (all wiped by the master reset) ---------------------
 
 /** Per-challenge first-blood claims: field `<module>:<challengeId>` → JSON
@@ -52,11 +59,6 @@ export const ANNOUNCE_SEQ_KEY = "ctf:announce:seq";
  *  observed, so an entry produced from a snapshot taken before a clear is
  *  rejected instead of delivered to a later URL. */
 export const ANNOUNCE_OUTBOX_KEY = "ctf:announce:outbox";
-
-/** Bumped atomically when the webhook is cleared. An entry whose
- *  `webhookGeneration` predates the current value is stale: its producer read
- *  the old config before the clear and enqueued after the cancellation scan. */
-export const ANNOUNCE_WEBHOOK_GENERATION_KEY = "ctf:announce:webhook-generation";
 
 /** Per-id delivery lease: `ctf:announce:lease:<id>` SET NX PX, the single
  *  cross-replica guard on "who delivers this". A crashed owner's lease

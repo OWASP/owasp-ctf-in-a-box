@@ -753,12 +753,11 @@ fly ips list --app <app-name>
 
 Replace `<app-name>` with your Fly app name.
 
-To restrict traffic to Cloudflare only, consider removing the Fly IP ranges
-from any allowlist or using [Cloudflare Tunnel](https://www.cloudflare.com/products/cloudflare-tunnel/)
-instead of exposing the Fly origin directly. See the
-[security model](../docs/architecture.md#security-model)
-for full CSP, origin reachability around Cloudflare, and consistent 429 rate
-limiting (tracked in [issue #690](https://github.com/OWASP/owasp-ctf-in-a-box/issues/690)).
+Two ways to close the gap, neither set up by the kit today: serve the box
+through a [Cloudflare Tunnel](https://www.cloudflare.com/products/cloudflare-tunnel/),
+then release the app's public IPs with `fly ips release <address> --app <app-name>`
+so the only way in is through Cloudflare. The tracked fix is
+[issue #690](https://github.com/OWASP/owasp-ctf-in-a-box/issues/690).
 
 ## Configuration
 

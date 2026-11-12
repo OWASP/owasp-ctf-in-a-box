@@ -72,6 +72,9 @@ vi.mock("@/lib/derive-status", async (orig) => {
 
 import AiPage, { generateMetadata } from "@/app/(site)/ai/page";
 
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+const BOB_ID = "1c0f5a4d-2e3b-4d6c-9f70-8b9cad0e1f30";
+
 const baseChallenges = [
   { id: "a1", title: "Solved one", category: "Prompt Injection", description: "d1", points: 10, order: 0, mode: "flag" },
   { id: "a2", title: "Still cooling down", category: "Prompt Injection", description: "d2", points: 20, order: 1, mode: "flag" },
@@ -114,7 +117,7 @@ describe("ai page gate", () => {
   // thrown away — the "no store read" half is what pins that ordering.
   it("redirects a signed-in, teamless contestant before it loads anything", async () => {
     moduleLive.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     const redirectError = Object.assign(new Error("NEXT_REDIRECT"), {
       digest: "NEXT_REDIRECT;replace;/profile;307;",
     });
@@ -130,7 +133,7 @@ describe("ai page gate", () => {
 describe("ai page view model", () => {
   it("derives solved/cooldown/unsolved per challenge from viewer progress, in board order", async () => {
     moduleLive.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listAiChallenges.mockResolvedValue(baseChallenges);
     getViewerAi.mockResolvedValue({
       solved: { a1: { points: 10, at: "2026-08-18T00:00:00.000Z", source: "flag" } },
@@ -189,7 +192,7 @@ describe("ai page view model", () => {
   it("sends an organizer to the ai authoring tab from the empty board", async () => {
     moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listAiChallenges.mockResolvedValue([]);
     getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });
 
@@ -203,7 +206,7 @@ describe("ai page view model", () => {
   it("shows a signed-in contestant the plain empty state, with no admin link", async () => {
     moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(false);
-    getSession.mockResolvedValue({ user: { login: "bob" } });
+    getSession.mockResolvedValue({ user: { id: BOB_ID, login: "bob" } });
     listAiChallenges.mockResolvedValue([]);
     getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });
 
@@ -242,7 +245,7 @@ describe("ai page view model", () => {
   // default.
   it("still renders the board when the settings read rejects, falling the cooldown back to the module default", async () => {
     moduleLive.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listAiChallenges.mockResolvedValue(baseChallenges);
     getAdminSettings.mockRejectedValue(new Error("ECONNRESET"));
     getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });
@@ -281,7 +284,7 @@ describe("ai page view model", () => {
     vi.doUnmock("@/lib/hint-store");
 
     moduleLive.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listAiChallenges.mockResolvedValue(baseChallenges);
     getAdminSettings.mockRejectedValue(new Error("ECONNRESET"));
     getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });

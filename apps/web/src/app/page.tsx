@@ -23,7 +23,7 @@ import OAuthErrorNotice from "@/components/oauth-error-notice";
 import PhaseLine, { resolvePhase, type EventPhase } from "@/components/phase-line";
 import SiteFooter from "@/components/site-footer";
 import SponsorStrip from "@/components/sponsor-strip";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { joinAppNames } from "@/lib/apps";
 import { getEnabledApps, getEnabledTotals } from "@/lib/enabled-apps";
 import { getChallengeCatalog } from "@/lib/challenges";
@@ -188,9 +188,9 @@ export default async function Home({
   // Visitor state for the single primary action. The phase comes from the
   // same resolver the phase line uses, so the hero and the strip can never
   // disagree; the team read only runs signed-in.
-  const [phaseInfo, session, navLinks, settingsSnapshot] = await Promise.all([
+  const [phaseInfo, player, navLinks, settingsSnapshot] = await Promise.all([
     resolvePhase(),
-    auth.api.getSession({ headers: await headers() }),
+    getPlayer(await headers()),
     getNavLinks(),
     getAdminSettingsSnapshot(),
   ]);
@@ -205,19 +205,18 @@ export default async function Home({
   // The hero's SponsorStrip credits the sponsors on this page (#474).
   const footer = await SiteFooter({ navLinks, creditSponsors: false });
   const sponsorStrip = await SponsorStrip();
-  const login = (session?.user as { login?: string } | undefined)?.login ?? null;
   // hasTeam, not getViewerTeam truthiness: hasTeam is the SAME fail-open,
   // mock-mode-aware answer the submission gates use, so the hero can never
   // say "Join a team" to someone whose submissions would score (a Redis
   // blip, or a dev stack with team writes off).
-  const team = login ? await hasTeam(login) : false;
+  const team = player ? await hasTeam(player.id) : false;
   // Before launch (#464) every board redirects a contestant back here, so the
   // cards below link to a board only for whoever the board would let in: a
   // launched event, or an organizer previewing the locked one. Same answer
   // the board pages' own guard gives (fails closed).
-  const boardsOpen = (await getLaunchAccess(login ?? undefined)).allowed;
+  const boardsOpen = (await getLaunchAccess(player?.githubLogin ?? undefined)).allowed;
   const firstBoard = sections.find((s) => s.cta)?.cta ?? null;
-  const action = primaryAction(phaseInfo?.phase ?? null, Boolean(login), team, firstBoard, registrationOpen);
+  const action = primaryAction(phaseInfo?.phase ?? null, player !== null, team, firstBoard, registrationOpen);
 
   // The live strip: the top of the same standings the leaderboard shows —
   // literally the same fold, read through the 10 s cross-request memo the
@@ -341,7 +340,7 @@ export default async function Home({
           {/* Not launched and nothing scheduled (#464): no countdown to show. */}
           {phaseInfo?.phase === "registration" && !event.ctfStartsAt && (
             <p className="font-mono text-sm text-[#8f8f9b]">
-              {registrationOpen && !login ? "Launching soon. Sign in and form your team." : "Launching soon."}
+              {registrationOpen && !player ? "Launching soon. Sign in and form your team." : "Launching soon."}
             </p>
           )}
 

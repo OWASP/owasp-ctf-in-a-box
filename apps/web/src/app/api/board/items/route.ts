@@ -5,7 +5,7 @@ import { getViewerClassic, listChallenges, listStories } from "@/lib/classic-sto
 import { visibleNow } from "@/lib/classic-release";
 import { isLocked, lockedLabel, storyPositions } from "@/lib/story-lock";
 import { getTeamClassicSolvedIds, unlockingSolvedIds } from "@/lib/classic-team";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { requireLaunchedApi } from "@/lib/launch";
 import { getViewerQuiz, listQuestions } from "@/lib/quiz-store";
@@ -35,9 +35,8 @@ export async function GET(request: Request) {
   // #464 pre-launch lock: this returns challenge titles and points, which is
   // module content. The session is optional here (the board is public once
   // launched); it is read only so an admin's preview board still loads.
-  const session = await auth.api.getSession({ headers: request.headers }).catch(() => null);
-  const viewerLogin = (session?.user as { login?: string } | undefined)?.login;
-  const notLaunched = await requireLaunchedApi(viewerLogin);
+  const viewer = await getPlayer(request.headers).catch(() => null);
+  const notLaunched = await requireLaunchedApi(viewer?.githubLogin ?? undefined);
   if (notLaunched) return notLaunched;
 
   const raw = new URL(request.url).searchParams.get("logins") ?? "";
@@ -91,7 +90,7 @@ export async function GET(request: Request) {
       positions.size > 0
         ? await Promise.all([
             unlockingSolvedIds(logins),
-            viewerLogin ? getTeamClassicSolvedIds(viewerLogin) : Promise.resolve(new Set<string>()),
+            viewer ? getTeamClassicSolvedIds(viewer.id) : Promise.resolve(new Set<string>()),
           ])
         : [new Set<string>(), new Set<string>()];
     classic = challenges.map((c) => {

@@ -53,7 +53,7 @@ export async function POST(request: Request) {
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
 
   const { bucket, limit, windowSeconds } = RATE_LIMITS.aiAdminTest;
-  const budget = await consumeRateLimit(bucket, gate.login, limit, windowSeconds);
+  const budget = await consumeRateLimit(bucket, gate.player.id, limit, windowSeconds);
   if (!budget.allowed) return NextResponse.json({ error: "rate-limited" }, { status: 429 });
 
   const body = await request.json().catch(() => null);
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
   const now = Math.floor(Date.now() / 1000);
   const claims: AiTokenClaims = {
     iss: resolveOrigin(),
-    sub: gate.login,
+    sub: gate.player.id,
     aud: challengeId,
     iat: now,
     exp: now + 900,

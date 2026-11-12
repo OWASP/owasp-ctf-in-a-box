@@ -120,7 +120,7 @@ describe("GET /api/board/items pre-launch lock (#464)", () => {
   });
 
   it("asks the lock about the caller's session login, so an admin preview works", async () => {
-    mocks.getSession.mockResolvedValue({ user: { login: "organizer" } });
+    mocks.getSession.mockResolvedValue({ user: { id: "3e2b7c6f-4a5d-4f8e-b192-adbecf203152", login: "organizer" } });
     await GET(req("alice"));
     expect(mocks.requireLaunchedApi).toHaveBeenCalledWith("organizer");
   });
@@ -157,11 +157,12 @@ describe("GET /api/board/items and a locked story step (#463)", () => {
       l === "bob" ? { solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} } : { solved: {}, attempts: {} },
     );
     // The viewer is on that team (their own team has it open too — review C2).
-    mocks.getSession.mockResolvedValue({ user: { login: "alice" } });
+    mocks.getSession.mockResolvedValue({ user: { id: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f", login: "alice" } });
     mocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
     mocks.unlockingSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
     const body = JSON.stringify(await (await GET(req("alice,bob"))).json());
     expect(body).toContain("Secret SQLi");
+    expect(mocks.getTeamClassicSolvedIds).toHaveBeenCalledWith("0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f");
     expect(mocks.unlockingSolvedIds).toHaveBeenCalledWith(["alice", "bob"]);
   });
 
@@ -179,7 +180,7 @@ describe("GET /api/board/items and a locked story step (#463)", () => {
     );
     // The viewer's OWN team has step 2 open, so only the queried team's
     // carried solve is in question.
-    mocks.getSession.mockResolvedValue({ user: { login: "carol" } });
+    mocks.getSession.mockResolvedValue({ user: { id: "4f3c8d7a-5b6e-4a9f-8203-becfd0314263", login: "carol" } });
     mocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
     mocks.unlockingSolvedIds.mockResolvedValue(new Set());
     const body = await (await GET(req("alice,bob"))).json();
@@ -210,7 +211,7 @@ describe("GET /api/board/items redacts for the VIEWER too (#463, review C2)", ()
 
   it("shows it to a viewer whose OWN team has unlocked it", async () => {
     setup();
-    mocks.getSession.mockResolvedValue({ user: { login: "alice" } });
+    mocks.getSession.mockResolvedValue({ user: { id: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f", login: "alice" } });
     mocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["recon-ab12cd"]));
     const body = JSON.stringify(await (await GET(req("leader"))).json());
     expect(body).toContain("Secret SQLi");
@@ -295,7 +296,7 @@ describe("GET /api/board/items and hidden challenges", () => {
       { id: "three", title: "Three", points: 10 },
     ]);
     mocks.unlockingSolvedIds.mockResolvedValue(new Set(["one"]));
-    mocks.getSession.mockResolvedValue({ user: { login: "alice" } });
+    mocks.getSession.mockResolvedValue({ user: { id: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f", login: "alice" } });
     mocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["one"]));
     const body = await (await GET(req("alice"))).json();
     expect(body.classic.map((i: { id: string }) => i.id)).toEqual(["one", "three"]);

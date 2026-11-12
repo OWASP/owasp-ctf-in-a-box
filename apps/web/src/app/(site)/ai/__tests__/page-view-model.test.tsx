@@ -80,6 +80,8 @@ vi.mock("@/components/challenge-board", () => ({
 
 import AiPage from "@/app/(site)/ai/page";
 
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+
 // Distinctive enough that finding it anywhere in the view model is proof of a
 // leak rather than a coincidental substring.
 const LEAKED_FLAG = "CTF{leaked-ai-flag-zz9}";
@@ -110,7 +112,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   captured.challenges = [];
   moduleLive.mockReturnValue(true);
-  getSession.mockResolvedValue({ user: { login: "alice" } });
+  getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
   getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });
   getAdminSettings.mockResolvedValue({ aiCooldownSec: null });
   listAiCategories.mockResolvedValue(["Prompt Injection"]);

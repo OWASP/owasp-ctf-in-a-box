@@ -8,7 +8,7 @@ const m = vi.hoisted(() => ({
   fail: false,
 }));
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => ({ user: { login: "alice" } }) } } }));
+vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => ({ user: { id: ALICE_ID, login: "alice" } }) } } }));
 vi.mock("@/lib/hint-store", () => ({
   getViewerHints: async () => ({
     purchased: {},
@@ -27,6 +27,8 @@ vi.mock("@/lib/classic-store", () => ({
 }));
 
 import { GET } from "@/app/api/hints/route";
+
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
 
 const req = () => new Request("http://box/api/hints");
 

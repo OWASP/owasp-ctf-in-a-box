@@ -37,7 +37,7 @@ export const AI_DEF: ModuleDef = {
   //
   //   - Each challenge is hosted on an EXTERNAL site (`AiChallenge.urlTemplate`).
   //     Opening it from `/ai/[id]` mints a fresh, PERSONAL launch token
-  //     (`mintLaunchUrl`/`buildLaunchClaims`) naming the signed-in login in
+  //     (`mintLaunchUrl`/`buildLaunchClaims`) naming the signed-in player id in
   //     `sub` — nothing else on this box mints one.
   //   - `mode` is "event", "flag" or "both" (`AI_MODES`). An event-mode
   //     challenge reports its own solve back automatically, asserted by the

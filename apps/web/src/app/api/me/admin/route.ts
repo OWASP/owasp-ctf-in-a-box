@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { isAdminLogin } from "@/lib/admin-auth";
 
 /**
@@ -20,10 +20,9 @@ import { isAdminLogin } from "@/lib/admin-auth";
  * and an error status there would be noise, not information.
  */
 export async function GET(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers });
-  const login = (session?.user as { login?: string } | undefined)?.login;
   try {
-    return NextResponse.json({ admin: await isAdminLogin(login) });
+    const player = await getPlayer(request.headers);
+    return NextResponse.json({ admin: await isAdminLogin(player?.githubLogin ?? undefined) });
   } catch {
     // Fail closed, quietly. A datastore blip hides a menu item; it must never
     // reveal one, and it must not surface as an error toast on every page.

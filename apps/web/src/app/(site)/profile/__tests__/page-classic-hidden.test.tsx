@@ -93,6 +93,8 @@ vi.mock("@/lib/classic-team", () => ({ unlockingSolvedIds: async () => new Set()
 
 import ProfilePage from "@/app/(site)/profile/page";
 
+const ADA_ID = "2d1a6b5e-3f4c-4e7d-a081-9cadbe1f2041";
+
 const SECRET = "Withdrawn-title-k3";
 
 beforeEach(() => {
@@ -102,7 +104,7 @@ beforeEach(() => {
   listQuestions.mockResolvedValue([]);
   listAiChallenges.mockResolvedValue([]);
   getResolvedModules.mockResolvedValue([{ id: "classic", nav: { href: "/flags", label: "Jeopardy" }, targets: [], title: "Jeopardy", blurb: "" }]);
-  getSession.mockResolvedValue({ user: { login: "ada", image: null } });
+  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
   getUser.mockResolvedValue(null);
   getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
   classic.challenges = [
@@ -111,7 +113,7 @@ beforeEach(() => {
     { id: "gone", title: SECRET, category: "Web", description: "", points: 30, order: 2, enabled: false },
   ];
   classic.solved = { c1: { points: 10, at: "2026-10-01T00:00:00.000Z" }, gone: { points: 30, at: "2026-10-01T00:00:00.000Z" } };
-  classic.totals = new Map([["ada", { points: 40, solved: 2, lastAt: null }]]);
+  classic.totals = new Map([[ADA_ID, { points: 40, solved: 2, lastAt: null }]]);
 });
 
 describe("profile and a hidden Jeopardy challenge", () => {
@@ -127,14 +129,14 @@ describe("profile and a hidden Jeopardy challenge", () => {
 
   it("shows no off-the-board line when nothing banked is off the board", async () => {
     classic.solved = { c1: { points: 10, at: "2026-10-01T00:00:00.000Z" } };
-    classic.totals = new Map([["ada", { points: 10, solved: 1, lastAt: null }]]);
+    classic.totals = new Map([[ADA_ID, { points: 10, solved: 1, lastAt: null }]]);
     const html = renderToStaticMarkup(await ProfilePage());
     expect(html).not.toContain("no longer on the board");
   });
 
   it("leaves an unsolved hidden challenge out of the points ceiling", async () => {
     classic.solved = {};
-    classic.totals = new Map([["ada", { points: 0, solved: 0, lastAt: null }]]);
+    classic.totals = new Map([[ADA_ID, { points: 0, solved: 0, lastAt: null }]]);
     const html = renderToStaticMarkup(await ProfilePage());
     // 10 + 20 visible; the hidden 30 would make it 60.
     expect(html).toContain("0 of 30 pts available");
@@ -146,7 +148,7 @@ describe("profile and a deleted Jeopardy challenge", () => {
   it("counts points banked on a deleted challenge in the same line", async () => {
     // `old` is not in the challenge list at all: deleted, not hidden.
     classic.solved = { c1: { points: 10, at: "2026-10-01T00:00:00.000Z" }, old: { points: 15, at: "2026-10-01T00:00:00.000Z" } };
-    classic.totals = new Map([["ada", { points: 25, solved: 2, lastAt: null }]]);
+    classic.totals = new Map([[ADA_ID, { points: 25, solved: 2, lastAt: null }]]);
     const html = renderToStaticMarkup(await ProfilePage());
     expect(html).toContain("+15 pts from challenges no longer on the board");
   });

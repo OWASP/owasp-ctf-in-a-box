@@ -328,10 +328,10 @@ export default function AdminOverviewTab({
         {activity && activity.length > 0 ? (
           <ul className="flex flex-col gap-1 text-sm text-zinc-300">
             {activity.map((e, i) => (
-              <li key={`${e.at}-${e.type}-${e.login}-${i}`} className="flex gap-2">
+              <li key={`${e.at}-${e.type}-${e.userId}-${i}`} className="flex gap-2">
                 <span className="font-mono tabular-nums text-muted">{formatWhen(e.at, activityRowZone)}</span>
                 <span>{TYPE_LABELS[e.type] ?? e.type}</span>
-                <span className="font-mono text-white">{e.login}</span>
+                <span className="font-mono text-white">{e.name}</span>
               </li>
             ))}
           </ul>

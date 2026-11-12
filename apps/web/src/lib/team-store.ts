@@ -377,8 +377,8 @@ export async function createTeam(login: string, name: string): Promise<TeamActio
 
 /** How many names `createSoloTeam` tries before giving up and asking the
  *  contestant for one. Collisions are rare (the first candidate is their own
- *  GitHub login, which is unique among logins), so this only has to survive
- *  someone having taken that name as a team name first. */
+ *  display name), so this only has to survive someone having taken that name
+ *  as a team name first. */
 const SOLO_NAME_MAX_ATTEMPTS = 4;
 
 /**
@@ -389,21 +389,21 @@ const SOLO_NAME_MAX_ATTEMPTS = 4;
  * inventing a team name first — a naming decision imposed on someone who
  * explicitly does not want a team. The button removes it.
  *
- * The login is only the FIRST candidate, not a guarantee: team names live in
- * their own namespace, so nothing stops another contestant from having already
- * created a team called "octocat". A collision falls back to a suffixed name
+ * The player's display name is only the FIRST candidate, not a guarantee: team
+ * names live in their own namespace, so nothing stops another contestant from
+ * having already created a team called "octocat". A collision falls back to a suffixed name
  * rather than an error, because the whole promise of this path is that it
  * takes one click.
  */
-export async function createSoloTeam(login: string): Promise<TeamActionResult> {
-  const base = slugify(login);
+export async function createSoloTeam(playerId: string, name: string): Promise<TeamActionResult> {
+  const base = slugify(name);
   if (!base) return { ok: false, error: "Team name is required" };
   if (!TEAM_WRITES_ENABLED) return setMockTeam(base);
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
 
-  // A GitHub login runs to 39 characters and a team name stops at 32, so the
-  // login is NOT automatically a legal team name — clamped here, leaving room
-  // for the collision suffix, or this path would mint names `renameTeam` would
+  // A display name can outrun the 32-character team name, so it is NOT
+  // automatically a legal team name — clamped here, leaving room for the
+  // collision suffix, or this path would mint names `renameTeam` would
   // then refuse to accept.
   const clamped = base.slice(0, NAME_MAX_LENGTH - 4).replace(/-+$/, "");
   if (!clamped) return { ok: false, error: "Team name is required" };
@@ -413,12 +413,12 @@ export async function createSoloTeam(login: string): Promise<TeamActionResult> {
     // team name a contestant may have to read aloud to a teammate later if
     // they stop playing solo.
     const slug = attempt === 0 ? clamped : `${clamped}-${generateJoinCodeCandidate().slice(0, 3)}`;
-    const verdict = await attemptCreate(login, slug, slug);
+    const verdict = await attemptCreate(playerId, slug, slug);
     if (verdict === NAME_TAKEN) continue;
     if (verdict === "already-on-team") {
       return { ok: false, error: "Leave your current team before creating one" };
     }
-    await logActivity("team-create", login, slug);
+    await logActivity("team-create", { id: playerId, name }, slug);
     return { ok: true, team: slug };
   }
   // Four collisions in a row is not a transient condition worth retrying at

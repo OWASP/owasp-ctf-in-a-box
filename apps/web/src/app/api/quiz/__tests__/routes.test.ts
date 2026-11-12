@@ -111,7 +111,8 @@ const adminReq = (method: "GET" | "POST" | "DELETE", body?: unknown) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-const SESSION = { user: { login: "alice" } };
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+const SESSION = { user: { id: ALICE_ID, login: "alice" } };
 
 const QUESTION = {
   id: "q1",
@@ -195,10 +196,10 @@ describe("POST /api/quiz/answer", () => {
     expect(answerQuestion).not.toHaveBeenCalled();
   });
 
-  it("400 for a session with no GitHub login", async () => {
-    getSession.mockResolvedValue({ user: {} });
+  it("401 for a session whose user id is not a player id", async () => {
+    getSession.mockResolvedValue({ user: { id: "alice", login: "alice" } });
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
     expect(answerQuestion).not.toHaveBeenCalled();
   });
 
@@ -218,7 +219,7 @@ describe("POST /api/quiz/answer", () => {
     answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(res.status).toBe(200);
-    expect(answerQuestion).toHaveBeenCalledWith("alice", "q1", ["b"], { dryRun: false });
+    expect(answerQuestion).toHaveBeenCalledWith(ALICE_ID, "q1", ["b"], { dryRun: false });
   });
 
   // --- the team requirement (issue #153) ------------------------------------
@@ -239,7 +240,7 @@ describe("POST /api/quiz/answer", () => {
     // a body-supplied login would let anyone borrow a team's membership.
     hasTeam.mockResolvedValue(false);
     await answerPOST(answerReq({ questionId: "q1", choices: ["b"], login: "mallory" }));
-    expect(hasTeam).toHaveBeenCalledWith("alice");
+    expect(hasTeam).toHaveBeenCalledWith(ALICE_ID);
   });
 
   it("checks the launch lock BEFORE the team, so a pre-launch caller is told that first", async () => {
@@ -267,7 +268,7 @@ describe("POST /api/quiz/answer", () => {
   it("derives login from the session, never the request body", async () => {
     answerQuestion.mockResolvedValue({ ok: true, correct: false });
     await answerPOST(answerReq({ questionId: "q1", choices: ["b"], login: "mallory" }));
-    expect(answerQuestion).toHaveBeenCalledWith("alice", "q1", ["b"], { dryRun: false });
+    expect(answerQuestion).toHaveBeenCalledWith(ALICE_ID, "q1", ["b"], { dryRun: false });
   });
 
   it("404 for an unknown/missing question", async () => {
@@ -674,7 +675,7 @@ describe("POST /api/quiz/answer admin preview (#464)", () => {
     answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10, dryRun: true });
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(res.status).toBe(200);
-    expect(answerQuestion).toHaveBeenCalledWith("alice", "q1", ["b"], { dryRun: true });
+    expect(answerQuestion).toHaveBeenCalledWith(ALICE_ID, "q1", ["b"], { dryRun: true });
   });
 });
 

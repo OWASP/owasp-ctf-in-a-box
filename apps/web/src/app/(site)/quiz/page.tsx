@@ -19,7 +19,7 @@ import ModuleEmptyState from "@/components/module-empty-state";
 import PageHeader from "@/components/page-header";
 import QuizBoard, { type QuizQuestionView, type QuizStatus } from "@/components/quiz-board";
 import { isAdminLogin } from "@/lib/admin-auth";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { getAdminSettings } from "@/lib/admin-store";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { redirectIfNotLaunched } from "@/lib/launch";
@@ -79,15 +79,16 @@ function deriveStatus(
 export default async function QuizPage() {
   if (!(await isModuleLive("quiz"))) notFound();
 
-  const session = await auth.api.getSession({ headers: await headers() });
-  const login = (session?.user as { login?: string } | undefined)?.login;
+  const player = await getPlayer(await headers());
+  const playerId = player?.id;
+  const adminLogin = player?.githubLogin ?? undefined;
   // #464 pre-launch lock: before ANY content load below. A refused viewer
   // (not launched, not an admin) goes to the landing page.
-  const launch = await redirectIfNotLaunched(login);
+  const launch = await redirectIfNotLaunched(adminLogin);
   // Drives the empty state's authoring route only. Deliberately the SAME
   // check `/admin` and every `/api/admin/*` route gate on, so this can never
   // offer a link to someone the admin page would then 403 at.
-  const viewerIsAdmin = await isAdminLogin(login);
+  const viewerIsAdmin = await isAdminLogin(adminLogin);
 
   // Answers only count for a team (issue #153), and the answer route refuses a
   // teamless login. Sending them to set a team up first means nobody learns
@@ -95,11 +96,11 @@ export default async function QuizPage() {
   // below, so a redirect never follows work that was thrown away.
   // `true` only for an admin let through without a team (issue #357):
   // the notice below is the half of that exemption that was missing.
-  const viewerIsTeamless = await redirectIfTeamless(login, { isAdmin: viewerIsAdmin });
+  const viewerIsTeamless = await redirectIfTeamless(playerId, { isAdmin: viewerIsAdmin });
 
   const [questions, viewerQuiz, settings, modules] = await Promise.all([
     listQuestions(),
-    login ? getViewerQuiz(login) : Promise.resolve<ViewerQuiz>({ answered: {}, attempts: {} }),
+    playerId ? getViewerQuiz(playerId) : Promise.resolve<ViewerQuiz>({ answered: {}, attempts: {} }),
     getAdminSettings(),
     getResolvedModules(),
   ]);
@@ -134,7 +135,7 @@ export default async function QuizPage() {
   // carries the count — a sentence saying the same numbers directly above it
   // was the same fact twice, the duplication the classic board already
   // removed. Only the signed-out prompt has no strip to defer to.
-  const progress = login ? null : "Sign in with GitHub to answer questions.";
+  const progress = playerId ? null : "Sign in with GitHub to answer questions.";
 
   return (
     <div className="flex flex-col gap-8">
@@ -167,7 +168,7 @@ export default async function QuizPage() {
             authoring={viewerIsAdmin ? { href: "/admin?tab=quiz", label: "Author questions" } : null}
           />
         ) : (
-          <QuizBoard questions={viewQuestions} authenticated={Boolean(login)} maxAttempts={maxAttempts} />
+          <QuizBoard questions={viewQuestions} authenticated={Boolean(playerId)} maxAttempts={maxAttempts} />
         )}
       </div>
     </div>

@@ -149,7 +149,7 @@ export const authOptions = {
     // Sign-in timestamps for the admin activity log (issue #212). The after
     // hook runs on EVERY auth endpoint; recordCallbackLogin filters to the
     // OAuth callback (the one path where a fresh session means "signed in")
-    // and extracts the login. It is fail-open all the way down — a Redis
+    // and extracts the player. It is fail-open all the way down — a Redis
     // blip can lose the log line but can never fail the sign-in.
     after: createAuthMiddleware(async (ctx) => {
       await recordCallbackLogin(ctx.path, ctx.context.newSession);

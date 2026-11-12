@@ -7,7 +7,7 @@ import { TEAM_SETUP_PATH } from "@/lib/post-signin";
  * Page-level half of the team requirement (issue #153).
  *
  * The API routes are the boundary that actually holds — a direct POST never
- * sees a page — and they refuse a teamless login with `403 { error:
+ * sees a page — and they refuse a teamless player with `403 { error:
  * "no-team" }`. This exists so nobody discovers that by answering a question
  * and being told it didn't count: a signed-in contestant with no team is sent
  * to set one up before they reach a module at all.
@@ -54,11 +54,11 @@ export { TEAM_SETUP_PATH } from "@/lib/post-signin";
  * this to `<TeamlessNotice />` and say so before the form, not after.
  */
 export async function redirectIfTeamless(
-  login: string | undefined,
+  playerId: string | undefined,
   options: { isAdmin?: boolean } = {},
 ): Promise<boolean> {
-  if (!login) return false;
-  if (await hasTeam(login)) return false;
+  if (!playerId) return false;
+  if (await hasTeam(playerId)) return false;
   // Teamless from here down: an admin is told, anyone else is sent to fix it.
   if (options.isAdmin) return true;
   redirect(TEAM_SETUP_PATH);

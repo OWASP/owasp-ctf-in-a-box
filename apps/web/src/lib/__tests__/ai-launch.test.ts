@@ -36,7 +36,7 @@ const viewer = (solved: Record<string, { points: number; at: string; source: "fl
 function claims(over: Parameters<typeof buildLaunchClaims>[0] extends infer T ? Partial<T> : never = {}) {
   return buildLaunchClaims({
     origin: "https://ctf.example.com",
-    login: "alice",
+    playerId: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f",
     challenge: challenge(),
     challenges: [challenge(), challenge({ id: "guardrail-cd34ef", points: 400, order: 2 })],
     viewer: viewer({ "prompt-leak-ab12cd": { points: 300, at: "2026-09-01T10:00:00.000Z", source: "flag" } }),
@@ -49,7 +49,7 @@ describe("buildLaunchClaims", () => {
   it("names the box, the player and the challenge, with the spec TTL", () => {
     const c = claims();
     expect(c.iss).toBe("https://ctf.example.com");
-    expect(c.sub).toBe("alice");
+    expect(c.sub).toBe("0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f");
     expect(c.aud).toBe("prompt-leak-ab12cd");
     expect(c.iat).toBe(NOW);
     expect(c.exp).toBe(NOW + AI_TOKEN_TTL_SEC);

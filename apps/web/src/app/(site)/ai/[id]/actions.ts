@@ -35,7 +35,7 @@ import type { SubmitResponse } from "@/components/challenge-detail";
 import { logActivity } from "@/lib/activity-log";
 import { AI_ID_RE } from "@/lib/ai-keys";
 import { submitAiFlag, type AiSubmitResult } from "@/lib/ai-store";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { getLaunchAccess } from "@/lib/launch";
 import { hasTeam } from "@/lib/team-store";
@@ -80,14 +80,13 @@ function toResponse(result: AiSubmitResult): SubmitResponse {
 export async function submitAiFlagAction(challengeId: string, flag: string): Promise<SubmitResponse> {
   if (!(await isModuleLive("ai"))) return { error: "unavailable" };
 
-  const session = await auth.api.getSession({ headers: await headers() });
-  const login = (session?.user as { login?: string } | undefined)?.login;
-  if (!login) return { error: "unauthorized" };
+  const player = await getPlayer(await headers());
+  if (!player) return { error: "unauthorized" };
 
   // #464 pre-launch lock, CLOSED on uncertainty (getLaunchAccess never
   // throws: a failed read counts as "not launched"), and the opposite
   // direction from the team check below. Admins pass as a preview.
-  const launch = await getLaunchAccess(login);
+  const launch = await getLaunchAccess(player.githubLogin ?? undefined);
   if (!launch.allowed) return { error: "not-launched" };
 
   // Fails OPEN — same doctrine as the manual-freeze read, and the opposite
@@ -99,7 +98,7 @@ export async function submitAiFlagAction(challengeId: string, flag: string): Pro
   // that contract) from breaking an entitled submit.
   let teamed: boolean;
   try {
-    teamed = await hasTeam(login);
+    teamed = await hasTeam(player.id);
   } catch {
     teamed = true;
   }
@@ -110,7 +109,7 @@ export async function submitAiFlagAction(challengeId: string, flag: string): Pro
   if (typeof challengeId !== "string" || !AI_ID_RE.test(challengeId)) return { error: "invalid" };
   if (typeof flag !== "string" || !flag.trim() || flag.length > FLAG_MAX_LEN) return { error: "invalid" };
 
-  const result = await submitAiFlag(login, challengeId, flag, { dryRun: launch.preview });
+  const result = await submitAiFlag(player.id, challengeId, flag, { dryRun: launch.preview });
   // Activity log (issue #212): fresh solves only — an idempotent
   // re-submission banked nothing and would double-count the event. The id
   // and the path, never the flag; logActivity is fail-open, so it cannot
@@ -118,7 +117,7 @@ export async function submitAiFlagAction(challengeId: string, flag: string): Pro
   // this action is the third award surface and was the only one not logging.
   // Never for a dry run (#464 admin preview): nothing was solved.
   if (result.ok && result.correct && !result.already && !result.dryRun) {
-    await logActivity("ai-solve", login, `${challengeId} via flag`);
+    await logActivity("ai-solve", player, `${challengeId} via flag`);
   }
   return toResponse(result);
 }

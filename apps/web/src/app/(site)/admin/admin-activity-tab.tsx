@@ -24,7 +24,7 @@ import { MODULE_LABEL } from "./vocabulary";
 import { LIVE_POLL_MS, useLivePoll } from "./use-live-poll";
 import { activityZone, UtcToggle, useShowUtc } from "./activity-time-zone";
 
-export type ActivityEntry = { at: string; type: string; login: string; detail?: string };
+export type ActivityEntry = { at: string; type: string; userId: string; name: string; detail?: string };
 
 const PAGE_SIZE = 200;
 const FIELD_CLASS =
@@ -40,7 +40,7 @@ export function refreshLimit(loaded: number): number {
   return Math.min(LIMIT_MAX, Math.max(PAGE_SIZE, loaded));
 }
 
-const entryKey = (e: ActivityEntry) => `${e.at}\u0000${e.type}\u0000${e.login}\u0000${e.detail ?? ""}`;
+const entryKey = (e: ActivityEntry) => `${e.at}\u0000${e.type}\u0000${e.userId}\u0000${e.detail ?? ""}`;
 
 /** What a refresh from the top leaves on screen. The fresh page replaces
  *  everything it covers; rows the organizer had loaded that it did NOT reach
@@ -121,7 +121,7 @@ function matchesTerm(e: ActivityEntry, field: Field, needle: string, zone: strin
   const typeText = `${e.type} ${TYPE_LABELS[e.type] ?? ""}`;
   switch (field) {
     case "login":
-      return has(e.login);
+      return has(e.name);
     case "type":
       return has(typeText);
     case "detail":
@@ -129,7 +129,7 @@ function matchesTerm(e: ActivityEntry, field: Field, needle: string, zone: strin
     case "team":
       return e.type.startsWith("team-") && has(e.detail);
     default:
-      return has(e.login) || has(typeText) || has(e.detail) || has(formatWhen(e.at, zone));
+      return has(e.name) || has(typeText) || has(e.detail) || has(formatWhen(e.at, zone));
   }
 }
 
@@ -479,12 +479,12 @@ export default function AdminActivityTab({
                 </thead>
                 <tbody className="text-zinc-300">
                   {shown.map((e, i) => (
-                    <tr key={`${e.at}-${e.type}-${e.login}-${i}`} className="border-b border-white/[0.03]">
+                    <tr key={`${e.at}-${e.type}-${e.userId}-${i}`} className="border-b border-white/[0.03]">
                       <td className="py-1 pr-3 font-mono tabular-nums text-muted" title={e.at}>
                         {formatWhen(e.at, rowZone)}
                       </td>
                       <td className="py-1 pr-3">{TYPE_LABELS[e.type] ?? e.type}</td>
-                      <td className="py-1 pr-3 font-mono text-white">{e.login}</td>
+                      <td className="py-1 pr-3 font-mono text-white">{e.name}</td>
                       <td className="py-1 font-mono text-muted">{e.detail ?? ""}</td>
                     </tr>
                   ))}

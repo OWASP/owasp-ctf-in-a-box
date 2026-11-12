@@ -28,11 +28,13 @@ import {
   claimLedgerField,
   claimLedgerFields,
   getAnnounceConfig,
+  getWebhookGeneration,
   getWebhookUrl,
   ledgerFields,
   OUTBOX_CLAIM_SCRIPT,
   OUTBOX_COMPLETE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
+  WEBHOOK_CLEAR_SCRIPT,
   outboxClaim,
   outboxComplete,
   outboxEnqueue,
@@ -47,7 +49,13 @@ import {
   stateCompareSet,
   updateAnnounceConfig,
 } from "@/lib/announce/store";
-import { ANNOUNCE_FIRST_KEY, ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, DISCORD_WEBHOOK_KEY } from "@/lib/announce/keys";
+import {
+  ANNOUNCE_FIRST_KEY,
+  ANNOUNCE_OUTBOX_KEY,
+  ANNOUNCE_WEBHOOK_GENERATION_KEY,
+  DISCORD_CONFIG_KEY,
+  DISCORD_WEBHOOK_KEY,
+} from "@/lib/announce/keys";
 
 const VALID_URL = "https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz012345";
 
@@ -57,7 +65,9 @@ beforeEach(() => {
   mocks.writeAdminAudit.mockReset();
   mocks.getAdminSettings.mockReset();
   // Default: every command succeeds with an empty result.
-  mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: [] as unknown[] })));
+  mocks.upstashPipeline.mockImplementation(async (commands) =>
+    commands.map((cmd) => ({ result: cmd[0] === "GET" ? null : ([] as unknown[]) })),
+  );
   // The pre-launch baseline used by the webhook-set reconciliation.
   mocks.getAdminSettings.mockResolvedValue({ scoringStartsAt: null, scoringEndsAt: null, paused: false });
   mocks.upstashEval.mockResolvedValue([2, 1, ""]);
@@ -65,7 +75,9 @@ beforeEach(() => {
 
 describe("getAnnounceConfig", () => {
   it("an absent hash reads as all-off and unconfigured", async () => {
-    mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: [] as unknown[] })));
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => ({ result: cmd[0] === "GET" ? null : ([] as unknown[]) })),
+    );
     const config = await getAnnounceConfig();
     expect(config.webhookConfigured).toBe(false);
     expect(config.firstBlood).toBe(false);
@@ -90,6 +102,21 @@ describe("getAnnounceConfig", () => {
     const pub = publicConfig(config);
     expect(pub).not.toHaveProperty("webhookUrl");
     expect(JSON.stringify(pub)).not.toContain(VALID_URL);
+  });
+
+  it("carries the webhook generation captured with the same config read", async () => {
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) =>
+        cmd[1] === ANNOUNCE_WEBHOOK_GENERATION_KEY
+          ? { result: "4" }
+          : cmd[1] === DISCORD_WEBHOOK_KEY
+            ? { result: VALID_URL }
+            : { result: [] },
+      ),
+    );
+    const config = await getAnnounceConfig();
+    expect(config.webhookGeneration).toBe(4);
+    expect(config.webhookConfigured).toBe(true);
   });
 
   it("THROWS when the transport fails — a failed read is not an all-off box", async () => {
@@ -136,7 +163,9 @@ describe("updateAnnounceConfig", () => {
   });
 
   it("writes validated fields, audits only public values, and returns the public config", async () => {
-    mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: [] as unknown[] })));
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => ({ result: cmd[0] === "GET" ? null : ([] as unknown[]) })),
+    );
     const config = await updateAnnounceConfig("admin", { firstBlood: true, marks: "15m, 5m" });
     expect(config.firstBlood).toBe(true);
     expect(config.marks).toBe("15m, 5m");
@@ -162,7 +191,7 @@ describe("updateAnnounceConfig", () => {
             ],
           };
         }
-        return { result: [] };
+        return { result: cmd[0] === "GET" ? null : [] };
       }),
     );
     await updateAnnounceConfig("admin", { pause: false, milestones: false });
@@ -241,33 +270,36 @@ describe("setAnnounceWebhook", () => {
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
-  it("clears with DEL and audits only 'cleared'", async () => {
+  it("clears atomically, advancing the webhook generation, and audits only 'cleared'", async () => {
     mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: 1 })));
+    mocks.upstashEval.mockResolvedValue(1);
     const result = await setAnnounceWebhook("admin", null);
     expect(result).toEqual({ webhookConfigured: false });
+    expect(mocks.upstashEval).toHaveBeenCalledWith(WEBHOOK_CLEAR_SCRIPT, [DISCORD_WEBHOOK_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY], []);
     expect(mocks.writeAdminAudit).toHaveBeenCalledWith("admin", "announce-webhook", { state: "cleared" });
   });
 
   it("cancels every retained entry before clearing the webhook", async () => {
     const at = new Date().toISOString();
     const entry = (kind: string, status: string) => JSON.stringify({ kind, payload: {}, at, n: 0, status });
-    mocks.upstashPipeline.mockImplementation(async (commands) =>
-      commands.map((cmd) => {
+    const order: string[] = [];
+    mocks.upstashPipeline.mockImplementation(async (commands) => {
+      for (const cmd of commands) {
+        if (cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT) order.push(`skip:${cmd[5]}`);
+      }
+      return commands.map((cmd) => {
         if (cmd[0] === "HGETALL" && cmd[1] === ANNOUNCE_OUTBOX_KEY) {
           return { result: ["p1", entry("pause", "pending"), "l1", entry("launch", "failed"), "s1", entry("launch", "sent")] };
         }
         return { result: 1 };
-      }),
-    );
+      });
+    });
+    mocks.upstashEval.mockImplementation(async (script) => {
+      if (script === WEBHOOK_CLEAR_SCRIPT) order.push("clear");
+      return 1;
+    });
     await setAnnounceWebhook("admin", null);
-    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
-    const skipped = commands
-      .filter((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT)
-      .map((cmd) => cmd[5]);
-    expect(skipped.sort()).toEqual(["l1", "p1"]);
-    const firstSkip = commands.findIndex((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT);
-    const del = commands.findIndex((cmd) => cmd[0] === "DEL" && cmd[1] === DISCORD_WEBHOOK_KEY);
-    expect(firstSkip).toBeLessThan(del);
+    expect(order).toEqual(["skip:p1", "skip:l1", "clear"]);
   });
 
   it("does not clear the webhook when cancelling its retained entries fails", async () => {
@@ -276,8 +308,7 @@ describe("setAnnounceWebhook", () => {
       .mockResolvedValueOnce([{ result: ["l1", entry] }])
       .mockResolvedValueOnce([{ error: "OOM" }]);
     await expect(setAnnounceWebhook("admin", null)).rejects.toThrow(/outbox cancel failed/);
-    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
-    expect(commands.some((cmd) => cmd[0] === "DEL" && cmd[1] === DISCORD_WEBHOOK_KEY)).toBe(false);
+    expect(mocks.upstashEval.mock.calls.some(([script]) => script === WEBHOOK_CLEAR_SCRIPT)).toBe(false);
   });
 
   it("refuses to arm the webhook when the lifecycle pack cannot be read", async () => {
@@ -327,6 +358,25 @@ describe("getWebhookUrl", () => {
   });
 });
 
+describe("getWebhookGeneration", () => {
+  it("reads an absent generation as 0 and a stored counter as its number", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: null }]);
+    expect(await getWebhookGeneration()).toBe(0);
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: "12" }]);
+    expect(await getWebhookGeneration()).toBe(12);
+  });
+
+  it("THROWS on a failed read instead of guessing a generation", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ error: "NOAUTH" }]);
+    await expect(getWebhookGeneration()).rejects.toThrow(/webhook generation read failed/);
+  });
+
+  it("THROWS on a malformed generation instead of reading it as 0", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: "not-a-counter" }]);
+    await expect(getWebhookGeneration()).rejects.toThrow(/invalid webhook generation/);
+  });
+});
+
 describe("ledger claims", () => {
   it("reports the HSETNX winner and treats a command error as NOT won", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
@@ -372,13 +422,14 @@ describe("stateCompareSet / readStatePack", () => {
 });
 
 describe("outbox", () => {
-  it("enqueues a pending entry", async () => {
+  it("enqueues a pending entry stamped with the observed webhook generation", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
-    await outboxEnqueue("id-1", "first-blood", { embeds: [] });
+    await outboxEnqueue("id-1", "first-blood", { embeds: [] }, 7);
     const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
     expect(cmd[0]).toBe("HSET");
     expect(cmd[1]).toBe(ANNOUNCE_OUTBOX_KEY);
     expect(String(cmd[3])).toContain('"status":"pending"');
+    expect(String(cmd[3])).toContain('"webhookGeneration":7');
   });
 
   it("claims the lease atomically when status and attempts match, returning its owner token", async () => {

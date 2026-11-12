@@ -46,6 +46,7 @@ import {
   ANNOUNCE_OUTBOX_KEY,
   ANNOUNCE_SEQ_KEY,
   ANNOUNCE_STATUS_KEY,
+  ANNOUNCE_WEBHOOK_GENERATION_KEY,
   DISCORD_CONFIG_KEY,
   DISCORD_WEBHOOK_KEY,
 } from "./keys";
@@ -63,9 +64,28 @@ export class AnnounceValidationError extends Error {
   }
 }
 
-/** Reads the config + webhook in ONE pipeline, then merges the switches over
- *  the defaults. An absent hash means all-off — configuring nothing IS the
- *  default state, so the announcer never runs unasked. A FAILED read THROWS
+/** Parses the internal generation counter. A missing key is generation 0;
+ *  a malformed value THROWS rather than reading as 0, because 0 would let an
+ *  entry stamped before a clear pass as current. */
+function parseWebhookGeneration(value: unknown): number {
+  if (value === null || value === undefined || value === "") return 0;
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^\d+$/.test(value)
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error("invalid webhook generation");
+  return n;
+}
+
+/** Reads the config + generation + webhook in ONE pipeline, then merges the
+ *  switches over the defaults. The generation is read BEFORE the URL: a
+ *  clear that interleaves between the two then leaves an old generation with
+ *  an absent URL (no enqueue) rather than a new generation with the old URL
+ *  (an entry a later webhook would accept). An absent hash means all-off —
+ *  configuring nothing IS the default state, so the announcer never runs
+ *  unasked. A FAILED read THROWS
  *  — both a transport failure and a per-command `{ error }` (a NOAUTH or
  *  WRONGTYPE is a store failure, never a box that chose "all off"; reading
  *  it as one would silently disable a configured announcer and back its
@@ -75,14 +95,18 @@ export class AnnounceValidationError extends Error {
  *  thrown message carries a LABEL only — never a value; the values here
  *  include the webhook URL. */
 export async function getAnnounceConfig(timeoutMs?: number): Promise<DiscordFullConfig> {
-  const [cfgRes, urlRes] = await upstashPipeline([
-    ["HGETALL", DISCORD_CONFIG_KEY],
-    ["GET", DISCORD_WEBHOOK_KEY],
-  ], timeoutMs === undefined ? undefined : { timeoutMs });
-  if (cfgRes.error || urlRes.error) {
+  const [cfgRes, genRes, urlRes] = await upstashPipeline(
+    [
+      ["HGETALL", DISCORD_CONFIG_KEY],
+      ["GET", ANNOUNCE_WEBHOOK_GENERATION_KEY],
+      ["GET", DISCORD_WEBHOOK_KEY],
+    ],
+    timeoutMs === undefined ? undefined : { timeoutMs },
+  );
+  if (cfgRes.error || genRes.error || urlRes.error) {
     // Thrown by LABEL only — never a value; the values here include the
     // webhook URL. Every caller logs (or answers 503) with its own context.
-    throw new Error(`announce config read failed: ${cfgRes.error ?? urlRes.error}`);
+    throw new Error(`announce config read failed: ${cfgRes.error ?? genRes.error ?? urlRes.error}`);
   }
   const flat = Array.isArray(cfgRes.result) ? (cfgRes.result as string[]) : [];
   const raw: Record<string, string> = {};
@@ -92,6 +116,7 @@ export async function getAnnounceConfig(timeoutMs?: number): Promise<DiscordFull
   const webhookUrl = typeof urlRes.result === "string" && urlRes.result !== "" ? urlRes.result : null;
   return {
     webhookConfigured: webhookUrl !== null,
+    webhookGeneration: parseWebhookGeneration(genRes.result),
     firstBlood: raw.firstBlood === "1",
     launch: raw.launch === "1",
     pause: raw.pause === "1",
@@ -183,10 +208,19 @@ export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPa
     current = await getAnnounceConfig();
   } catch (err) {
     console.error("[announce] config read-back failed after save:", adminErrorLabel(err));
-    current = { ...DISCORD_DEFAULTS, webhookConfigured: false, webhookUrl: null };
+    current = { ...DISCORD_DEFAULTS, webhookConfigured: false, webhookUrl: null, webhookGeneration: 0 };
   }
   return publicConfig({ ...current, ...changed });
 }
+
+/** Deletes the webhook and advances its generation in one atomic step, so a
+ *  producer that read the old config cannot enqueue an entry the new webhook
+ *  will later deliver: its entry carries the old generation. */
+export const WEBHOOK_CLEAR_SCRIPT = `
+local generation = redis.call('INCR', KEYS[2])
+redis.call('DEL', KEYS[1])
+return generation
+`;
 
 /** Stores or clears the webhook URL. `null` clears. The audit trail records
  *  ONLY "set"/"cleared" — never the URL, which is a live credential. */
@@ -194,11 +228,10 @@ export async function setAnnounceWebhook(actor: string, raw: unknown): Promise<{
   if (raw === null) {
     // Clearing the URL must cancel everything already retained, for the same
     // reason a switch-off does: a later set would deliver it to the new URL.
-    // Cancel before the DEL so a failed cancellation leaves the old webhook
-    // in place instead of clearing it with retryable entries still queued.
+    // Cancel before the atomic clear so a failed cancellation leaves the old
+    // webhook in place instead of clearing it with retryable entries queued.
     await cancelOutboxEntriesFor(ANNOUNCEMENT_KINDS);
-    const [res] = await upstashPipeline([["DEL", DISCORD_WEBHOOK_KEY]]);
-    if (res.error) throw new Error(`webhook clear failed: ${res.error}`);
+    await upstashEval(WEBHOOK_CLEAR_SCRIPT, [DISCORD_WEBHOOK_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY], []);
     await writeAdminAudit(actor, "announce-webhook", { state: "cleared" });
     return { webhookConfigured: false };
   }
@@ -224,6 +257,17 @@ export async function getWebhookUrl(): Promise<string | null> {
   const [res] = await upstashPipeline([["GET", DISCORD_WEBHOOK_KEY]]);
   if (res.error) throw new Error(`webhook read failed: ${res.error}`);
   return typeof res.result === "string" && res.result !== "" ? res.result : null;
+}
+
+/** The current webhook generation, read AFTER the URL by the delivery
+ *  sweeps. A clear between those reads advances this value, so entries
+ *  stamped before the clear are rejected rather than sent to a URL armed
+ *  later. A failed read THROWS: the sweep must not guess a generation and
+ *  deliver stale work. */
+export async function getWebhookGeneration(): Promise<number> {
+  const [res] = await upstashPipeline([["GET", ANNOUNCE_WEBHOOK_GENERATION_KEY]]);
+  if (res.error) throw new Error(`webhook generation read failed: ${res.error}`);
+  return parseWebhookGeneration(res.result);
 }
 
 // --- dedup ledgers -----------------------------------------------------------
@@ -407,6 +451,7 @@ export type OutboxEntry = {
   at: string;
   n: number;
   status: OutboxStatus;
+  webhookGeneration: number;
 };
 
 /** The outbox id for one announcement. `seq` comes from the CAS bump (or a
@@ -416,10 +461,16 @@ export function outboxId(seq: number, kind: string): string {
   return `${Date.now()}-${seq}-${kind}`;
 }
 
-/** Appends an entry to the outbox. The payload is the builder's OUTPUT
- *  (a DiscordMessage), so a retry replays exactly what was first composed. */
-export async function outboxEnqueue(id: string, kind: AnnouncementKind, payload: unknown): Promise<void> {
-  const entry: OutboxEntry = { kind, payload, at: new Date().toISOString(), n: 0, status: "pending" };
+/** Appends an entry to the outbox with the generation its enqueue observed.
+ *  The payload is the builder's OUTPUT (a DiscordMessage), so a retry replays
+ *  exactly what was first composed. */
+export async function outboxEnqueue(
+  id: string,
+  kind: AnnouncementKind,
+  payload: unknown,
+  webhookGeneration: number,
+): Promise<void> {
+  const entry: OutboxEntry = { kind, payload, at: new Date().toISOString(), n: 0, status: "pending", webhookGeneration };
   const [res] = await upstashPipeline([["HSET", ANNOUNCE_OUTBOX_KEY, id, JSON.stringify(entry)]]);
   if (res.error) console.error("[announce] outbox enqueue failed:", adminErrorLabel(new Error(res.error)));
 }

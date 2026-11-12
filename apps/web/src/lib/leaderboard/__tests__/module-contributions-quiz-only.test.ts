@@ -51,7 +51,7 @@ beforeEach(() => {
 });
 
 describe("withModuleContributions on a quiz-only event", () => {
-  it("creates a row for a login with module points and no scoring entry", async () => {
+  it("creates a row for a player id with module points and no scoring entry", async () => {
     mocks.getQuizTotals.mockResolvedValue(new Map([["ada", totals(30, 3)]]));
 
     const out = await withModuleContributions(empty());
@@ -123,7 +123,7 @@ describe("withModuleContributions on a quiz-only event", () => {
     ]);
   });
 
-  // #522: getQuizTotals now carries each login's last award time, so a full
+  // #522: getQuizTotals now carries each player id's last award time, so a full
   // points-and-answers tie goes to whoever got there first — it used to fall
   // through to the source order, because no quiz row had a time at all.
   it("breaks a full points-and-answers tie on the earlier last award", async () => {
@@ -206,7 +206,7 @@ describe("withModuleContributions on a quiz-only event", () => {
     }
   });
 
-  it("creates no rows for a login that has answered nothing", async () => {
+  it("creates no rows for a player id that has answered nothing", async () => {
     mocks.getQuizTotals.mockResolvedValue(new Map([["ada", totals(0, 0)]]));
     const out = await withModuleContributions(empty());
     expect(out.entries).toEqual([]);
@@ -234,7 +234,7 @@ describe("withModuleContributions on a quiz-only event", () => {
   });
 
   // Belt and braces for the union: even on a board with no scoring backend, a
-  // row that somehow arrives with this login must not be joined by a created
+  // row that somehow arrives with this player id must not be joined by a created
   // twin.
   it("overlays onto an existing row rather than creating a second one", async () => {
     mocks.getQuizTotals.mockResolvedValue(new Map([["ada", totals(30, 3)]]));

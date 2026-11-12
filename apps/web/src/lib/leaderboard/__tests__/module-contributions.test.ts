@@ -247,8 +247,8 @@ describe("withModuleContributions", () => {
       expect(out.entries[0].modules!["secure-development"]).toMatchObject({ points: 30, completed: 3 });
     });
 
-    // The board's login set is the UNION of the source's logins and the
-    // logins holding module points. Without that union the overlay maps only
+    // The board's player id set is the UNION of the source's player ids and the
+    // player ids holding module points. Without that union the overlay maps only
     // over rows the scoring backend has already produced, so a contestant
     // whose only points are quiz points has no row to overlay onto and never
     // appears at all.
@@ -267,10 +267,10 @@ describe("withModuleContributions", () => {
     });
 
     // C3: secure-development's points are ATTRIBUTED (already inside
-    // `entry.points`), quiz points are ADDED. A login in BOTH sources must
+    // `entry.points`), quiz points are ADDED. A player id in BOTH sources must
     // therefore end up as ONE row whose total is 10 + 30 — never two rows, and
     // never 10 + 30 + 30.
-    it("counts a login present in both sources once", async () => {
+    it("counts a player id present in both sources once", async () => {
       mocks.getQuizTotals.mockResolvedValue(new Map([["ada", { points: 30, answered: 3, lastAt: null }]]));
 
       const out = await withModuleContributions(data([entry("ada", 10, 1)]));
@@ -287,12 +287,12 @@ describe("withModuleContributions", () => {
     // admin-auth and hint-store do.
     //
     // NEITHER side of this fixture is lowercase by accident. The membership
-    // decision compares the quiz store's login against a `seen` set built from
-    // the SCORED logins; if the scored spelling here were already lowercase
+    // decision compares the quiz store's player id against a `seen` set built from
+    // the SCORED player ids; if the scored spelling here were already lowercase
     // ("ada"), a case-sensitive `seen` would still match the lowercased lookup
     // key and this test would pass against broken code. "Ada" vs "ADA" makes
     // both sides differ, so only a genuinely case-insensitive union passes.
-    it("matches logins case-insensitively, so one contestant never becomes two rows", async () => {
+    it("matches player ids case-insensitively, so one contestant never becomes two rows", async () => {
       mocks.getQuizTotals.mockResolvedValue(new Map([["ADA", { points: 30, answered: 3, lastAt: null }]]));
 
       const out = await withModuleContributions(data([entry("Ada", 10, 1)]));
@@ -491,7 +491,7 @@ describe("withModuleContributions", () => {
     });
 
     // I1's display bug: `deleteQuestion` deliberately leaves banked points
-    // and the aggregate `answered` counter alone, so after a delete a login
+    // and the aggregate `answered` counter alone, so after a delete a player id
     // can hold more answers than the question list has entries. The
     // denominator must never render below the numerator ("1 / 0 answered").
     it("never renders a denominator smaller than the numerator after a question is deleted", async () => {
@@ -554,7 +554,7 @@ describe("withModuleContributions", () => {
 
     // Without this, every contestant on a classic-only event is invisible:
     // the source is `emptySource` and carries no rows at all to overlay onto.
-    it("creates a row for a login with classic points and no scored entry", async () => {
+    it("creates a row for a player id with classic points and no scored entry", async () => {
       mocks.getClassicTotals.mockResolvedValue(new Map([["alice", { points: 50, solved: 2, lastAt: null }]]));
 
       const out = await withModuleContributions(data([]));
@@ -571,7 +571,7 @@ describe("withModuleContributions", () => {
     // The scorer records the PR author's login, the classic store the
     // session's. Matching them exactly would split one contestant into two
     // rows the moment the two disagreed on case.
-    it("unions logins case-insensitively so one contestant is never two rows", async () => {
+    it("unions player ids case-insensitively so one contestant is never two rows", async () => {
       mocks.getClassicTotals.mockResolvedValue(new Map([["alice", { points: 50, solved: 2, lastAt: null }]]));
 
       const out = await withModuleContributions(data([entry("Alice", 0, 0)]));
@@ -685,7 +685,7 @@ describe("withModuleContributions", () => {
     // teammate solving the prerequisite releases the step for everyone. An
     // entry with no team of its own (`entry.team` is null until
     // withTeamStandings runs a stage later) still has to find its roster.
-    it("resolves a contestant's team by login so a teammate's solve unlocks the step", async () => {
+    it("resolves a contestant's team by player id so a teammate's solve unlocks the step", async () => {
       mocks.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["ada", "cyd"] }]);
       mocks.listChallenges.mockResolvedValue([
         { id: "c1", points: 10 },
@@ -868,14 +868,14 @@ describe("withModuleContributions", () => {
     });
 
     // A zero block, never a missing one, while the module is live.
-    it("gives a login with no solves a zero classic block", async () => {
+    it("gives a player id with no solves a zero classic block", async () => {
       mocks.getClassicTotals.mockResolvedValue(new Map([["ada", { points: 0, solved: 0, lastAt: null }]]));
 
       const out = await withModuleContributions(data([entry("ada", 30, 3)]));
 
       expect(out.entries[0].modules!["classic"]).toMatchObject({ points: 0, completed: 0, detail: { solved: 0, total: 3 } });
       expect(out.entries[0].points).toBe(30);
-      // …and a zero-solve login must not become a row of its own either.
+      // …and a zero-solve player id must not become a row of its own either.
       expect(out.entries).toHaveLength(1);
     });
 
@@ -972,7 +972,7 @@ describe("withModuleContributions", () => {
 
     it("creates ONE row carrying both modules' blocks and both modules' points", async () => {
       mocks.getQuizTotals.mockResolvedValue(new Map([["alice", { points: 15, answered: 1, lastAt: null }]]));
-      // Different casing from the quiz store's spelling of the same login.
+      // Different casing from the quiz store's spelling of the same player id.
       mocks.getClassicTotals.mockResolvedValue(new Map([["Alice", { points: 50, solved: 2, lastAt: null }]]));
 
       const out = await withModuleContributions(data([]));
@@ -1177,8 +1177,8 @@ describe("withModuleContributions", () => {
       expect(serialized).not.toContain("PRIVATE KEY");
     });
 
-    // The board's login set is the UNION of the source's logins and the
-    // logins holding module points — mirrors quiz's created-row test.
+    // The board's player id set is the UNION of the source's player ids and the
+    // player ids holding module points — mirrors quiz's created-row test.
     it("creates a row for a contestant with ai points and no scored submission", async () => {
       mocks.getAiTotals.mockResolvedValue(new Map([["cyd", { points: 30, solved: 3, lastAt: null }]]));
 
@@ -1191,7 +1191,7 @@ describe("withModuleContributions", () => {
       expect(cyd.modules!["ai"]).toMatchObject({ points: 30, completed: 3 });
     });
 
-    it("matches logins case-insensitively, so one contestant never becomes two rows", async () => {
+    it("matches player ids case-insensitively, so one contestant never becomes two rows", async () => {
       mocks.getAiTotals.mockResolvedValue(new Map([["ADA", { points: 30, solved: 3, lastAt: null }]]));
 
       const out = await withModuleContributions(data([entry("Ada", 10, 1)]));
@@ -1476,7 +1476,7 @@ describe("every enabled module is on a row from the start (#585)", () => {
     expect(cyd.modules?.quiz).toMatchObject({ points: 15, completed: 1 });
     expect(cyd.modules?.classic).toEqual(zeroClassic(2));
     expect(cyd.modules?.["secure-development"]).toBeUndefined();
-    // A login with nothing anywhere still gets no row of its own.
+    // A player id with nothing anywhere still gets no row of its own.
     expect(out.entries.map((e) => e.playerId).sort()).toEqual(["ada", "cyd"]);
   });
 

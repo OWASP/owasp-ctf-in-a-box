@@ -56,7 +56,7 @@ export async function withHintPenalties(data: LeaderboardData): Promise<Leaderbo
   }
   if (penalties.size === 0) return data;
 
-  // Logins are matched case-insensitively, like every other login join in
+  // Logins are matched case-insensitively, like every other player id join in
   // this codebase (module-contributions, team-standings): the scorer records
   // the PR author's spelling, the spend hash the session's at purchase time.
   // A case disagreement must not exempt the row — the union fold upstream
@@ -64,15 +64,15 @@ export async function withHintPenalties(data: LeaderboardData): Promise<Leaderbo
   // on it. Case-variant fields are SUMMED, not last-wins: the spend hash
   // accumulates historically, so a case-only GitHub login rename mid-event
   // leaves one person's spend split across two fields — all of it is theirs.
-  const byLogin = new Map<string, number>();
-  for (const [login, points] of penalties) {
-    const key = login.toLowerCase();
-    byLogin.set(key, (byLogin.get(key) ?? 0) + points);
+  const byPlayer = new Map<string, number>();
+  for (const [playerId, points] of penalties) {
+    const key = playerId.toLowerCase();
+    byPlayer.set(key, (byPlayer.get(key) ?? 0) + points);
   }
 
   const entries = data.entries
     .map((entry, i) => {
-      const penalty = byLogin.get(entry.playerId.toLowerCase()) ?? 0;
+      const penalty = byPlayer.get(entry.playerId.toLowerCase()) ?? 0;
       return {
         // Original position breaks any tie compareStanding can't (equal
         // points and no lastSolveAt), keeping the source order.
@@ -88,7 +88,7 @@ export async function withHintPenalties(data: LeaderboardData): Promise<Leaderbo
 
   const teams = data.teams
     .map((team, i) => {
-      const penalty = team.members.reduce((sum, m) => sum + (byLogin.get(m.toLowerCase()) ?? 0), 0);
+      const penalty = team.members.reduce((sum, m) => sum + (byPlayer.get(m.toLowerCase()) ?? 0), 0);
       return {
         i,
         team:

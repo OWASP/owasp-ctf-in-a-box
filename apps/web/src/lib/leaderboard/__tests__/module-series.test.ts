@@ -105,12 +105,12 @@ describe("withModuleSeries", () => {
     ]);
   });
 
-  // A module's solves hash is keyed on the login exactly as the session spelled
-  // it (`ctf:classic:solves:ChrisZoc`); only the JOIN between logins is
-  // case-insensitive. Reading the hash under a lowercased login finds nothing,
+  // A module's solves hash is keyed on the player id exactly as the session spelled
+  // it (`ctf:classic:solves:ChrisZoc`); only the JOIN between player ids is
+  // case-insensitive. Reading the hash under a lowercased player id finds nothing,
   // and a mixed-case contestant's line loses every app-side point. The mock
   // answers only the exact key the store writes, so a lowercased read is empty.
-  it("reads a mixed-case login's hashes under the spelling the store wrote", async () => {
+  it("reads a mixed-case player id's hashes under the spelling the store wrote", async () => {
     mocks.getEnabledModuleIds.mockResolvedValue(new Set(["secure-development", "classic"]));
     const stored = new Map([["ctf:classic:solves:ChrisZoc", hash(["flag-1", 50, "2026-10-07T12:20:00.000Z"])]]);
     mocks.upstashPipeline.mockImplementation(async (commands: string[][]) =>
@@ -207,7 +207,7 @@ describe("withModuleSeries", () => {
   });
 
   // Issue #446: the chart draws the series it is handed, and shipping every
-  // login's history put ~200 player series into each RSC payload while the
+  // player id's history put ~200 player series into each RSC payload while the
   // chart is written for the top ten. Only the top-ten rows per view are read
   // and emitted; ranks past the cap keep their row and get no line.
   it("emits series only for the top-ten entries and reads only their events", async () => {

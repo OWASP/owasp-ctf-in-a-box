@@ -87,7 +87,7 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   // team's items — and a player's story-lock reachability folding over a
   // different membership than the team row's would unlock a different set of
   // steps for the same contest.
-  const { sourceTeams, teamByLogin } = mergeTeamRosters(data, teams);
+  const { sourceTeams, teamByPlayer } = mergeTeamRosters(data, teams);
   const sourceSlugs = new Set(sourceTeams.map((team) => team.slug));
 
   const membershipOnly: TeamStanding[] = teams
@@ -125,7 +125,7 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   const standings = await withAppModulePoints([...sourceTeams, ...membershipOnly]);
 
   const entries = data.entries.map((entry) => {
-    const slug = teamByLogin.get(entry.playerId.toLowerCase());
+    const slug = teamByPlayer.get(entry.playerId.toLowerCase());
     return slug ? { ...entry, team: slug } : entry;
   });
   // Every team member gets an Individual row, a 0 one if they have not

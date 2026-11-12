@@ -156,6 +156,10 @@ export async function flush(): Promise<void> {
     // counters were captured with this config read; a producer that raced the
     // disabling write still carries the old one.
     for (const item of pending) {
+      // A NEWER epoch means this pass's config snapshot predates a disable
+      // and re-enable. Leave it pending for a pass with fresh config instead
+      // of terminally skipping an entry that may still be valid.
+      if (item.entry.kindEpoch > config.kindEpochs[item.entry.kind]) continue;
       if (
         item.entry.webhookGeneration !== generation ||
         item.entry.kindEpoch !== config.kindEpochs[item.entry.kind]
@@ -241,6 +245,9 @@ export async function flushRetries(): Promise<void> {
     }
     const candidates: { id: string; entry: OutboxEntry }[] = [];
     for (const item of [...byId.values()].sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at))) {
+      // See flush(): a newer epoch belongs to a later config snapshot than
+      // this pass saw, so leave it pending rather than terminally skipping it.
+      if (item.entry.kindEpoch > config.kindEpochs[item.entry.kind]) continue;
       if (
         item.entry.webhookGeneration !== generation ||
         item.entry.kindEpoch !== config.kindEpochs[item.entry.kind]

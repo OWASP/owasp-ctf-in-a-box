@@ -385,8 +385,8 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       const data = await (await getLeaderboardSource()).getLeaderboard();
       for (const entry of data.entries) {
         const points = Number(entry.points);
-        if (Number.isFinite(points)) sdPoints.set(entry.login.toLowerCase(), points);
-        sdSpellings.push(entry.login);
+        if (Number.isFinite(points)) sdPoints.set(entry.playerId.toLowerCase(), points);
+        sdSpellings.push(entry.playerId);
       }
     } catch (err) {
       console.error("secure-development points unavailable for metrics:", errorLabel(err));

@@ -9,12 +9,14 @@ import { compareTeamStanding, rankByStanding } from "../rank";
 import type { LeaderboardEntry, TeamStanding } from "../types";
 
 function entry(
-  login: string,
+  playerId: string,
   { patched = 0, points = 0, lastSolveAt = null as string | null } = {},
 ): LeaderboardEntry {
   return {
     rank: 0,
-    login,
+    playerId,
+    name: playerId,
+    image: null,
     team: null,
     points,
     patched,
@@ -32,7 +34,7 @@ describe("rankByStanding", () => {
       entry("low", { patched: 2, points: 90 }),
       entry("high", { patched: 2, points: 500 }),
     ]);
-    expect(ranked.map((e) => [e.login, e.rank])).toEqual([
+    expect(ranked.map((e) => [e.playerId, e.rank])).toEqual([
       ["high", 1],
       ["low", 2],
     ]);
@@ -44,7 +46,7 @@ describe("rankByStanding", () => {
       entry("grinder", { patched: 9, points: 20 }),
       entry("scorer", { patched: 1, points: 9999 }),
     ]);
-    expect(ranked.map((e) => e.login)).toEqual(["scorer", "grinder"]);
+    expect(ranked.map((e) => e.playerId)).toEqual(["scorer", "grinder"]);
   });
 
   it("breaks points ties on items completed", () => {
@@ -52,7 +54,7 @@ describe("rankByStanding", () => {
       entry("fewer", { patched: 2, points: 120 }),
       entry("more", { patched: 5, points: 120 }),
     ]);
-    expect(ranked.map((e) => e.login)).toEqual(["more", "fewer"]);
+    expect(ranked.map((e) => e.playerId)).toEqual(["more", "fewer"]);
   });
 
   it("breaks points+items ties by earlier lastSolveAt", () => {
@@ -60,7 +62,7 @@ describe("rankByStanding", () => {
       entry("later", { patched: 5, points: 50, lastSolveAt: "2026-08-07T15:00:00Z" }),
       entry("earlier", { patched: 5, points: 50, lastSolveAt: "2026-08-07T12:00:00Z" }),
     ]);
-    expect(ranked.map((e) => e.login)).toEqual(["earlier", "later"]);
+    expect(ranked.map((e) => e.playerId)).toEqual(["earlier", "later"]);
   });
 
   it("only consults time when BOTH points and items are tied", () => {
@@ -69,7 +71,7 @@ describe("rankByStanding", () => {
       entry("early", { patched: 3, points: 30, lastSolveAt: "2026-08-07T09:00:00Z" }),
       entry("late", { patched: 4, points: 30, lastSolveAt: "2026-08-07T23:00:00Z" }),
     ]);
-    expect(ranked.map((e) => e.login)).toEqual(["late", "early"]);
+    expect(ranked.map((e) => e.playerId)).toEqual(["late", "early"]);
   });
 
   it("sorts a fully tied entry without a solve time after one with it", () => {
@@ -77,7 +79,7 @@ describe("rankByStanding", () => {
       entry("no-time", { patched: 5, points: 50, lastSolveAt: null }),
       entry("timed", { patched: 5, points: 50, lastSolveAt: "2026-08-07T12:00:00Z" }),
     ]);
-    expect(ranked.map((e) => e.login)).toEqual(["timed", "no-time"]);
+    expect(ranked.map((e) => e.playerId)).toEqual(["timed", "no-time"]);
   });
 
   it("treats an unparseable timestamp like a missing one", () => {
@@ -85,7 +87,7 @@ describe("rankByStanding", () => {
       entry("garbage", { patched: 5, points: 50, lastSolveAt: "not-a-date" }),
       entry("timed", { patched: 5, points: 50, lastSolveAt: "2026-08-07T12:00:00Z" }),
     ]);
-    expect(ranked.map((e) => e.login)).toEqual(["timed", "garbage"]);
+    expect(ranked.map((e) => e.playerId)).toEqual(["timed", "garbage"]);
   });
 
   it("keeps the source order when nothing breaks the tie", () => {
@@ -93,7 +95,7 @@ describe("rankByStanding", () => {
       entry("first", { patched: 5, points: 50 }),
       entry("second", { patched: 5, points: 50 }),
     ]);
-    expect(ranked.map((e) => [e.login, e.rank])).toEqual([
+    expect(ranked.map((e) => [e.playerId, e.rank])).toEqual([
       ["first", 1],
       ["second", 2],
     ]);
@@ -106,7 +108,7 @@ describe("rankByStanding", () => {
       entry("c", { patched: 3, points: 100 }),
       entry("b", { patched: 4, points: 100 }),
     ]);
-    expect(ranked.map((e) => [e.login, e.rank])).toEqual([
+    expect(ranked.map((e) => [e.playerId, e.rank])).toEqual([
       ["b", 1],
       ["c", 2],
       ["a", 3],
@@ -116,12 +118,12 @@ describe("rankByStanding", () => {
 });
 
 const withModules = (
-  login: string,
+  playerId: string,
   patched: number,
   points: number,
   mods: LeaderboardEntry["modules"],
 ): LeaderboardEntry => ({
-  rank: 0, login, team: null, points, patched, failed: 0, total: 0,
+  rank: 0, playerId, name: playerId, image: null, team: null, points, patched, failed: 0, total: 0,
   apps: {}, updatedAt: null, lastSolveAt: null, modules: mods,
 });
 
@@ -134,13 +136,13 @@ describe("compareStanding across modules", () => {
     const bob = withModules("bob", 1, 120, {
       "secure-development": { points: 120, completed: 1, lastActivityAt: null, detail: { kind: "secure-development", apps: {} } },
     });
-    expect(rankByStanding([bob, ada]).map((e) => e.login)).toEqual(["ada", "bob"]);
+    expect(rankByStanding([bob, ada]).map((e) => e.playerId)).toEqual(["ada", "bob"]);
   });
 
   it("falls back to `patched` for the tiebreak when a source supplies no modules map", () => {
     const a = withModules("a", 5, 90, {});
     const b = withModules("b", 3, 90, {});
-    expect(rankByStanding([b, a]).map((e) => e.login)).toEqual(["a", "b"]);
+    expect(rankByStanding([b, a]).map((e) => e.playerId)).toEqual(["a", "b"]);
   });
 
   // The mirror image of the phase-2 ranking bug, which only ever got tested
@@ -150,8 +152,8 @@ describe("compareStanding across modules", () => {
   // there is no scorer feeding it. The items tiebreak must still count
   // answers rather than collapse to every row's 0.
   it("breaks points ties on module completions when there is no secure-development module", () => {
-    const quiz = (login: string, points: number, answered: number) =>
-      withModules(login, 0, points, {
+    const quiz = (playerId: string, points: number, answered: number) =>
+      withModules(playerId, 0, points, {
         quiz: {
           points,
           completed: answered,
@@ -160,10 +162,10 @@ describe("compareStanding across modules", () => {
         },
       });
     // Equal points: grinder answered four questions, hoarder one.
-    expect(rankByStanding([quiz("hoarder", 40, 1), quiz("grinder", 40, 4)]).map((e) => e.login))
+    expect(rankByStanding([quiz("hoarder", 40, 1), quiz("grinder", 40, 4)]).map((e) => e.playerId))
       .toEqual(["grinder", "hoarder"]);
     // …and points still come first.
-    expect(rankByStanding([quiz("cheap", 20, 4), quiz("dear", 50, 2)]).map((e) => e.login))
+    expect(rankByStanding([quiz("cheap", 20, 4), quiz("dear", 50, 2)]).map((e) => e.playerId))
       .toEqual(["dear", "cheap"]);
   });
 
@@ -174,7 +176,7 @@ describe("compareStanding across modules", () => {
     const late = withModules("late", 1, 10, {
       quiz: { points: 10, completed: 1, lastActivityAt: "2026-08-01T12:00:00.000Z", detail: { kind: "quiz", answered: 1, total: 5, points: 10 } },
     });
-    expect(rankByStanding([late, early]).map((e) => e.login)).toEqual(["early", "late"]);
+    expect(rankByStanding([late, early]).map((e) => e.playerId)).toEqual(["early", "late"]);
   });
 });
 

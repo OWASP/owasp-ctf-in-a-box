@@ -111,8 +111,8 @@ describe("GET /api/admin/status", () => {
     getLeaderboardSource.mockResolvedValue({
       getLeaderboard: vi.fn().mockResolvedValue({
         entries: [
-          { rank: 1, login: "a", team: null, points: 10, patched: 1, failed: 0, total: 1, apps: {}, updatedAt: "2026-08-14T10:00:00.000Z" },
-          { rank: 2, login: "b", team: null, points: 5, patched: 1, failed: 0, total: 1, apps: {}, updatedAt: "2026-08-14T12:00:00.000Z" },
+          { rank: 1, playerId: "a", name: "a", image: null, team: null, points: 10, patched: 1, failed: 0, total: 1, apps: {}, updatedAt: "2026-08-14T10:00:00.000Z" },
+          { rank: 2, playerId: "b", name: "b", image: null, team: null, points: 5, patched: 1, failed: 0, total: 1, apps: {}, updatedAt: "2026-08-14T12:00:00.000Z" },
         ],
         teams: [],
         generatedAt: "t",

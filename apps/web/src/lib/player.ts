@@ -2,6 +2,7 @@ import "server-only";
 
 import { auth } from "@/lib/auth";
 import { AUTH_PREFIX, rowsKey } from "@/lib/auth-store/keys";
+import { displayNameOf, type NameParts } from "@/lib/display-name";
 import { upstashPipeline } from "@/lib/upstash";
 
 // Player ids are lowercase v4 UUIDs (auth.ts generateId). Lowercase means a
@@ -11,15 +12,7 @@ export const PLAYER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f
 
 export type Player = { id: string; name: string; image: string | null; githubLogin: string | null };
 
-type NameParts = { id: string; username?: string | null; login?: string | null; name?: string | null };
-
-/**
- * The name shown for a player: username, then GitHub login, then profile name,
- * then a short id so a row is never blank.
- */
-export function displayNameOf(row: NameParts): string {
-  return row.username || row.login || row.name || `player ${row.id.slice(0, 8)}`;
-}
+export { displayNameOf };
 
 function toPlayer(row: NameParts & { image?: string | null }): Player {
   return {

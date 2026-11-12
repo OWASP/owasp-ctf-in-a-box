@@ -74,8 +74,8 @@ import { unlockPipeline } from "@/test/unlock-pipeline-mock";
 // would silently drift from the catalogue.
 const enabledTotalChallenges = apps.reduce((sum, a) => sum + a.challengeCount, 0);
 
-const entry = (login: string, points: number, patched: number, lastSolveAt = "2026-08-01T10:00:00.000Z"): LeaderboardEntry => ({
-  rank: 0, login, team: null, points, patched, failed: 0, total: 3,
+const entry = (playerId: string, points: number, patched: number, lastSolveAt = "2026-08-01T10:00:00.000Z"): LeaderboardEntry => ({
+  rank: 0, playerId, name: playerId, image: null, team: null, points, patched, failed: 0, total: 3,
   apps: { dvwa: { app: "dvwa", points, maxPoints: 30, patched, total: 3 } },
   updatedAt: null, lastSolveAt,
 });
@@ -132,7 +132,7 @@ describe("withModuleContributions", () => {
 
   it("re-ranks unconditionally, so ordering never depends on the hint overlay", async () => {
     const out = await withModuleContributions(data([entry("bob", 10, 1), entry("ada", 30, 3)]));
-    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([["ada", 1], ["bob", 2]]);
+    expect(out.entries.map((e) => [e.playerId, e.rank])).toEqual([["ada", 1], ["bob", 2]]);
   });
 
   it("leaves a source with no per-app data alone rather than inventing a module", async () => {
@@ -173,15 +173,15 @@ describe("withModuleContributions", () => {
   // points-descending order stands; `patched` only breaks a points tie, the
   // same way it does on lambda/mock. Pinned here so neither half drifts.
   it("keeps an upstash-shaped board's points order and breaks its ties on patched", async () => {
-    const bare = (login: string, points: number, patched: number) => ({
-      ...entry(login, points, patched), apps: {},
+    const bare = (playerId: string, points: number, patched: number) => ({
+      ...entry(playerId, points, patched), apps: {},
     });
     const out = await withModuleContributions({
       // ZRANGE order: points descending, ties in arrival order.
       ...data([bare("scorer", 90, 1), bare("fewer", 20, 1), bare("more", 20, 4)]),
       capabilities: { apps: false, teams: false, challenges: false },
     });
-    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([["scorer", 1], ["more", 2], ["fewer", 3]]);
+    expect(out.entries.map((e) => [e.playerId, e.rank])).toEqual([["scorer", 1], ["more", 2], ["fewer", 3]]);
     expect(out.entries.every((e) => Object.keys(e.modules ?? {}).length === 0)).toBe(true);
   });
 
@@ -196,10 +196,10 @@ describe("withModuleContributions", () => {
       entry("bob", 10, 1, "2026-08-01T10:00:00.000Z"),
     ];
 
-    const before = rankByStanding(raw).map((e) => [e.login, e.rank]);
+    const before = rankByStanding(raw).map((e) => [e.playerId, e.rank]);
     const out = await withModuleContributions(data(raw));
 
-    expect(out.entries.map((e) => [e.login, e.rank])).toEqual(before);
+    expect(out.entries.map((e) => [e.playerId, e.rank])).toEqual(before);
 
     for (const e of out.entries) {
       const mod = e.modules!["secure-development"]!;
@@ -257,7 +257,7 @@ describe("withModuleContributions", () => {
 
       const out = await withModuleContributions(data([entry("ada", 30, 3)]));
 
-      const cyd = out.entries.find((e) => e.login === "cyd")!;
+      const cyd = out.entries.find((e) => e.playerId === "cyd")!;
       expect(cyd.points).toBe(30);
       // No scoring entry behind this row, so nothing that comes from the
       // scorer may be non-zero on it.
@@ -299,7 +299,7 @@ describe("withModuleContributions", () => {
 
       expect(out.entries).toHaveLength(1);
       // The scored row's own spelling wins — it is the row that already exists.
-      expect(out.entries[0].login).toBe("Ada");
+      expect(out.entries[0].playerId).toBe("Ada");
       expect(out.entries[0].points).toBe(40);
     });
 
@@ -308,7 +308,7 @@ describe("withModuleContributions", () => {
 
       const out = await withModuleContributions(data([entry("bob", 10, 1)]));
 
-      expect(out.entries.map((e) => [e.login, e.rank])).toEqual([["cyd", 1], ["bob", 2]]);
+      expect(out.entries.map((e) => [e.playerId, e.rank])).toEqual([["cyd", 1], ["bob", 2]]);
     });
 
     // The module is on the row from the start, at 0 / N and 0 pts.
@@ -338,7 +338,7 @@ describe("withModuleContributions", () => {
         data([entry("ada", 30, 3), { ...entry("bob", 20, 2), apps: { dvwa: { app: "dvwa", points: 20, maxPoints: 30, patched: 2, total: 3 } } }]),
       );
 
-      expect(out.entries.map((e) => [e.login, e.points])).toEqual([["bob", 35], ["ada", 30]]);
+      expect(out.entries.map((e) => [e.playerId, e.points])).toEqual([["bob", 35], ["ada", 30]]);
       expect(out.entries.map((e) => e.rank)).toEqual([1, 2]);
     });
 
@@ -359,8 +359,8 @@ describe("withModuleContributions", () => {
     it("keeps a quiz-active row's patches in the tiebreak on an upstash-shaped board", async () => {
       mocks.getQuizTotals.mockResolvedValue(new Map([["ada", { points: 5, answered: 1, lastAt: null }]]));
 
-      const bare = (login: string, points: number, patched: number) => ({
-        ...entry(login, points, patched), apps: {},
+      const bare = (playerId: string, points: number, patched: number) => ({
+        ...entry(playerId, points, patched), apps: {},
       });
 
       const out = await withModuleContributions({
@@ -368,7 +368,7 @@ describe("withModuleContributions", () => {
         capabilities: { apps: false, teams: false, challenges: false },
       });
 
-      expect(out.entries.map((e) => [e.login, e.points])).toEqual([["ada", 30], ["bob", 30]]);
+      expect(out.entries.map((e) => [e.playerId, e.points])).toEqual([["ada", 30], ["bob", 30]]);
       expect(out.entries[0].modules!["secure-development"]).toBeUndefined();
       expect(out.entries[0].modules!["quiz"]).toBeDefined();
     });
@@ -469,7 +469,7 @@ describe("withModuleContributions", () => {
 
       // bob's 20 + 15 quiz = 35 still beats ada's 30, exactly as it would
       // have with a healthy question list.
-      expect(out.entries.map((e) => [e.login, e.points])).toEqual([["bob", 35], ["ada", 30]]);
+      expect(out.entries.map((e) => [e.playerId, e.points])).toEqual([["bob", 35], ["ada", 30]]);
       const quiz = out.entries[0].modules!["quiz"]!;
       expect(quiz.points).toBe(15);
       // Only the denominator degrades — and it degrades to the clamp, never
@@ -487,7 +487,7 @@ describe("withModuleContributions", () => {
       // C4: the totals map is where created rows come from, so a failed read
       // degrades to the quiz-less board — it must never invent rows, and
       // certainly not zero-point ones.
-      expect(out.entries.map((e) => e.login)).toEqual(["ada"]);
+      expect(out.entries.map((e) => e.playerId)).toEqual(["ada"]);
     });
 
     // I1's display bug: `deleteQuestion` deliberately leaves banked points
@@ -559,8 +559,8 @@ describe("withModuleContributions", () => {
 
       const out = await withModuleContributions(data([]));
 
-      expect(out.entries.map((e) => e.login)).toContain("alice");
-      const alice = out.entries.find((e) => e.login === "alice")!;
+      expect(out.entries.map((e) => e.playerId)).toContain("alice");
+      const alice = out.entries.find((e) => e.playerId === "alice")!;
       expect(alice.points).toBe(50);
       // Nothing behind this row came from the scorer, so nothing scorer-shaped
       // may be non-zero on it.
@@ -580,7 +580,7 @@ describe("withModuleContributions", () => {
       // The scored row's own spelling wins — it is the row that already exists
       // — and it carries the classic points, proving the LOOKUP is
       // case-insensitive too and not just the create-or-not decision.
-      expect(out.entries[0].login).toBe("Alice");
+      expect(out.entries[0].playerId).toBe("Alice");
       expect(out.entries[0].points).toBe(50);
       expect(out.entries[0].modules!["classic"]).toMatchObject({ points: 50, completed: 2 });
     });
@@ -620,7 +620,7 @@ describe("withModuleContributions", () => {
         expect(out.entries[0].modules!["classic"]).toBeUndefined();
         // The totals map is where created rows come from, so a failed read
         // degrades to the classic-less board — never invented rows.
-        expect(out.entries.map((e) => e.login)).toEqual(["ada"]);
+        expect(out.entries.map((e) => e.playerId)).toEqual(["ada"]);
       } finally {
         err.mockRestore();
       }
@@ -769,8 +769,8 @@ describe("withModuleContributions", () => {
         data([entry("ada", 0, 0), entry("cyd", 0, 0)]),
       );
 
-      const ada = out.entries.find((row) => row.login === "ada")!;
-      const cyd = out.entries.find((row) => row.login === "cyd")!;
+      const ada = out.entries.find((row) => row.playerId === "ada")!;
+      const cyd = out.entries.find((row) => row.playerId === "cyd")!;
 
       expect(ada.modules!["classic"]!.detail).toMatchObject({
         solved: 1,
@@ -855,7 +855,7 @@ describe("withModuleContributions", () => {
       const out = await withModuleContributions(data([entry("ada", 0, 0)], sourceTeams)).then(withTeamStandings);
 
       expect(mocks.getTeamClassicTotalsBatch).toHaveBeenCalledWith([["ada", "cyd"]]);
-      const playerDetail = out.entries.find((e) => e.login === "ada")?.modules?.classic?.detail;
+      const playerDetail = out.entries.find((e) => e.playerId === "ada")?.modules?.classic?.detail;
       const teamDetail = out.teams[0].modules?.classic?.detail;
       if (playerDetail?.kind !== "classic" || teamDetail?.kind !== "classic") {
         throw new Error("classic block missing from the pipeline's rows");
@@ -889,7 +889,7 @@ describe("withModuleContributions", () => {
         ]),
       );
 
-      expect(out.entries.map((e) => [e.login, e.points])).toEqual([["bob", 60], ["ada", 30]]);
+      expect(out.entries.map((e) => [e.playerId, e.points])).toEqual([["bob", 60], ["ada", 30]]);
       expect(out.entries.map((e) => e.rank)).toEqual([1, 2]);
     });
 
@@ -1052,12 +1052,12 @@ describe("withModuleContributions", () => {
       }
 
       const shape = (out: typeof green) =>
-        out.entries.map((e) => [e.login, e.points, e.rank, e.modules?.quiz, e.modules?.classic]);
+        out.entries.map((e) => [e.playerId, e.points, e.rank, e.modules?.quiz, e.modules?.classic]);
       expect(shape(degraded)).toEqual(shape(green));
       // Positive pin so two vacuously-equal (all-zeroed) runs can't pass this
       // by coincidence: the numbers themselves must be the real ones.
-      expect(degraded.entries.find((e) => e.login === "ada")!.modules!["quiz"]).toMatchObject({ points: 15 });
-      expect(degraded.entries.find((e) => e.login === "bob")!.modules!["classic"]).toMatchObject({ points: 40 });
+      expect(degraded.entries.find((e) => e.playerId === "ada")!.modules!["quiz"]).toMatchObject({ points: 15 });
+      expect(degraded.entries.find((e) => e.playerId === "bob")!.modules!["classic"]).toMatchObject({ points: 40 });
       expect(degraded.entries.every((e) => e.modules?.ai === undefined)).toBe(true);
     });
   });
@@ -1184,7 +1184,7 @@ describe("withModuleContributions", () => {
 
       const out = await withModuleContributions(data([entry("ada", 30, 3)]));
 
-      const cyd = out.entries.find((e) => e.login === "cyd")!;
+      const cyd = out.entries.find((e) => e.playerId === "cyd")!;
       expect(cyd.points).toBe(30);
       expect(cyd).toMatchObject({ patched: 0, failed: 0, total: 0, apps: {}, team: null });
       expect(cyd.modules!["secure-development"]).toBeUndefined();
@@ -1197,7 +1197,7 @@ describe("withModuleContributions", () => {
       const out = await withModuleContributions(data([entry("Ada", 10, 1)]));
 
       expect(out.entries).toHaveLength(1);
-      expect(out.entries[0].login).toBe("Ada");
+      expect(out.entries[0].playerId).toBe("Ada");
       expect(out.entries[0].points).toBe(40);
     });
 
@@ -1245,7 +1245,7 @@ describe("withModuleContributions", () => {
 
         // bob's 20 + 15 ai = 35 still beats ada's 30, exactly as it would
         // have with a healthy challenge list.
-        expect(out.entries.map((e) => [e.login, e.points])).toEqual([["bob", 35], ["ada", 30]]);
+        expect(out.entries.map((e) => [e.playerId, e.points])).toEqual([["bob", 35], ["ada", 30]]);
         const ai = out.entries[0].modules!["ai"]!;
         expect(ai.points).toBe(15);
         // Only the denominator degrades — and it degrades to the clamp, never
@@ -1263,7 +1263,7 @@ describe("withModuleContributions", () => {
         const out = await withModuleContributions(data([entry("ada", 30, 3)]));
         expect(out.entries[0].points).toBe(30);
         expect(out.entries[0].modules!["ai"]).toBeUndefined();
-        expect(out.entries.map((e) => e.login)).toEqual(["ada"]);
+        expect(out.entries.map((e) => e.playerId)).toEqual(["ada"]);
       } finally {
         err.mockRestore();
       }
@@ -1471,13 +1471,13 @@ describe("every enabled module is on a row from the start (#585)", () => {
 
     const out = await withModuleContributions(data([entry("ada", 30, 3)]));
 
-    const cyd = out.entries.find((e) => e.login === "cyd")!;
+    const cyd = out.entries.find((e) => e.playerId === "cyd")!;
     expect(cyd.points).toBe(15);
     expect(cyd.modules?.quiz).toMatchObject({ points: 15, completed: 1 });
     expect(cyd.modules?.classic).toEqual(zeroClassic(2));
     expect(cyd.modules?.["secure-development"]).toBeUndefined();
     // A login with nothing anywhere still gets no row of its own.
-    expect(out.entries.map((e) => e.login).sort()).toEqual(["ada", "cyd"]);
+    expect(out.entries.map((e) => e.playerId).sort()).toEqual(["ada", "cyd"]);
   });
 
   it("never shows a disabled module", async () => {
@@ -1568,7 +1568,7 @@ describe("every enabled module is on a row from the start (#585)", () => {
     const fold = async () => {
       const board = await withModuleContributions(data(entries, teams));
       return {
-        entries: board.entries.map((e) => [e.login, e.points, e.rank]),
+        entries: board.entries.map((e) => [e.playerId, e.points, e.rank]),
         teams: (await withTeamClassicPoints(board.teams)).map((t) => [t.slug, t.points, t.rank]),
         completable: board.completable,
       };
@@ -1585,18 +1585,18 @@ describe("every enabled module is on a row from the start (#585)", () => {
     expect(before.teams.map(([slug]) => slug)).toEqual(
       [...teams].sort((a, b) => compareTeamStanding(a, b) || a.rank - b.rank).map((t) => t.slug),
     );
-    expect(before.entries.map(([login]) => login)).toEqual(rankByStanding(entries).map((e) => e.login));
+    expect(before.entries.map(([login]) => login)).toEqual(rankByStanding(entries).map((e) => e.playerId));
   });
 
   // The upstash shape: no Secure Development block ever, so the tiebreak
   // falls back to `patched`. A zero block must not switch that fallback off.
   it("keeps patched in the tiebreak on an upstash-shaped board with zero blocks", async () => {
-    const bare = (login: string, points: number, patched: number) => ({ ...entry(login, points, patched), apps: {} });
+    const bare = (playerId: string, points: number, patched: number) => ({ ...entry(playerId, points, patched), apps: {} });
     const out = await withModuleContributions({
       ...data([bare("bob", 30, 3), bare("ada", 30, 5)]),
       capabilities: { apps: false, teams: false, challenges: false },
     });
-    expect(out.entries.map((e) => e.login)).toEqual(["ada", "bob"]);
+    expect(out.entries.map((e) => e.playerId)).toEqual(["ada", "bob"]);
     expect(out.entries[0].modules?.classic).toEqual(zeroClassic(2));
   });
 });

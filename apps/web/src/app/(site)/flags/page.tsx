@@ -124,11 +124,11 @@ export default async function FlagsPage() {
     points: c.points,
     // Teams, not players (#595): scoring is per team. Null when unread.
     teamsSolved: solveBoard ? (solveBoard.counts.get(c.id) ?? 0) : null,
-    // #188: the first solver's login, display only. Carried on every view,
+    // #188: the first solver's display name, display only. Carried on every view,
     // but a LOCKED story step's view is never rendered: its lane entry is
     // built from its position alone, below, and it is kept out of the grid
     // and the run rail.
-    firstBlood: solveBoard?.firstBlood.get(c.id)?.login ?? null,
+    firstBlood: solveBoard?.firstBlood.get(c.id)?.name ?? null,
     // Listed explicitly, like every field above it — this map is deliberately
     // NOT a spread of the store record, because a spread is how a flag leaks.
     caseSensitive: c.caseSensitive,

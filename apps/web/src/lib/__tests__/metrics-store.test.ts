@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   // each leaderboard entry. Mocked as the mode plus a fetch, which is exactly
   // the surface the store consumes (`getLeaderboardSource().getLeaderboard()`).
   getLeaderboardSourceMode: vi.fn<() => Promise<"mock" | "lambda" | "upstash" | "empty">>(),
-  getLeaderboard: vi.fn<() => Promise<{ entries: { login: string; points: number }[] }>>(),
+  getLeaderboard: vi.fn<() => Promise<{ entries: { playerId: string; points: number }[] }>>(),
   // The board's own fold, which team points now come from. Rejects by default,
   // so the long-standing tests below exercise the labelled fallback sum.
   getFoldedLeaderboard: vi.fn<() => Promise<{ teams: { slug: string; points: number }[] }>>(),
@@ -114,7 +114,7 @@ function mockStore(opts: {
   if (opts.sourceFails) mocks.getLeaderboard.mockRejectedValue(new Error("scorer unreachable"));
   else
     mocks.getLeaderboard.mockResolvedValue({
-      entries: Object.entries(opts.sdPoints ?? {}).map(([login, points]) => ({ login, points })),
+      entries: Object.entries(opts.sdPoints ?? {}).map(([playerId, points]) => ({ playerId, points })),
     });
 
   // Put every contestant on a team unless a test says otherwise. This is not

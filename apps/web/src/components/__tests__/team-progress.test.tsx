@@ -14,15 +14,22 @@ const standing: TeamStanding = {
   rank: 2,
   slug: "null-terminators",
   name: "Null Terminators",
-  captain: "alice",
+  captain: "id-alice",
   points: 120,
-  members: ["alice", "bob"],
+  members: ["id-alice", "id-bob"],
 };
 
-function entry(login: string, points: number, modules?: LeaderboardEntry["modules"]): LeaderboardEntry {
+/** A roster row whose id differs from its name, so rendering the id shows. */
+function member(name: string, entry: LeaderboardEntry | null, image: string | null = null) {
+  return { playerId: `id-${name}`, name, image, entry };
+}
+
+function entry(name: string, points: number, modules?: LeaderboardEntry["modules"]): LeaderboardEntry {
   return {
     rank: 0,
-    login,
+    playerId: `id-${name}`,
+    name,
+    image: null,
     team: "null-terminators",
     points,
     patched: 0,
@@ -40,10 +47,10 @@ describe("TeamProgress", () => {
       <TeamProgress
         standing={standing}
         memberEntries={[
-          { login: "alice", entry: entry("alice", 90) },
-          { login: "bob", entry: entry("bob", 60) },
+          member("alice", entry("alice", 90)),
+          member("bob", entry("bob", 60)),
         ]}
-        viewerLogin="bob"
+        viewerId="id-bob"
       />,
     );
     expect(html).toContain("Team progress");
@@ -58,15 +65,30 @@ describe("TeamProgress", () => {
     expect(html).toContain("captain");
   });
 
+  it("shows each member's name and profile image, never the id or a GitHub avatar URL", () => {
+    const html = renderToStaticMarkup(
+      <TeamProgress
+        standing={standing}
+        memberEntries={[member("Alice A", entry("Alice A", 90), "https://img.example/alice.png"), member("bob", null)]}
+        viewerId="id-bob"
+      />,
+    );
+    expect(html).toContain("Alice A");
+    expect(html).toContain('src="https://img.example/alice.png"');
+    expect(html).not.toContain("id-Alice A");
+    expect(html).not.toContain(">id-bob<");
+    expect(html).not.toContain("avatars.githubusercontent.com");
+  });
+
   it("says out loud that shared solves count once when member points exceed the team total", () => {
     const html = renderToStaticMarkup(
       <TeamProgress
         standing={standing}
         memberEntries={[
-          { login: "alice", entry: entry("alice", 90) },
-          { login: "bob", entry: entry("bob", 60) },
+          member("alice", entry("alice", 90)),
+          member("bob", entry("bob", 60)),
         ]}
-        viewerLogin="alice"
+        viewerId="id-alice"
       />,
     );
     // 90 + 60 = 150 > 120: the union folded shared solves.
@@ -79,10 +101,10 @@ describe("TeamProgress", () => {
       <TeamProgress
         standing={standing}
         memberEntries={[
-          { login: "alice", entry: entry("alice", 90) },
-          { login: "bob", entry: entry("bob", 30) },
+          member("alice", entry("alice", 90)),
+          member("bob", entry("bob", 30)),
         ]}
-        viewerLogin="alice"
+        viewerId="id-alice"
       />,
     );
     expect(html).not.toContain("banks each");
@@ -93,10 +115,10 @@ describe("TeamProgress", () => {
       <TeamProgress
         standing={standing}
         memberEntries={[
-          { login: "alice", entry: entry("alice", 120) },
-          { login: "bob", entry: null },
+          member("alice", entry("alice", 120)),
+          member("bob", null),
         ]}
-        viewerLogin="alice"
+        viewerId="id-alice"
       />,
     );
     expect(html).toContain("bob");
@@ -108,9 +130,9 @@ describe("TeamProgress", () => {
       <TeamProgress
         standing={standing}
         memberEntries={[
-          {
-            login: "alice",
-            entry: entry("alice", 90, {
+          member(
+            "alice",
+            entry("alice", 90, {
               "secure-development": {
                 points: 40,
                 completed: 4,
@@ -124,9 +146,9 @@ describe("TeamProgress", () => {
                 detail: { kind: "quiz", answered: 5, total: 10, points: 50 },
               },
             }),
-          },
+          ),
         ]}
-        viewerLogin="alice"
+        viewerId="id-alice"
       />,
     );
     expect(html).toContain("4 patched");
@@ -139,7 +161,7 @@ describe("TeamProgress", () => {
 describe("TeamProgress adjustment marker (#591)", () => {
   it("shows the signed adjustment", () => {
     const html = renderToStaticMarkup(
-      <TeamProgress standing={{ ...standing, adjustment: -25 }} memberEntries={[]} viewerLogin="bob" />,
+      <TeamProgress standing={{ ...standing, adjustment: -25 }} memberEntries={[]} viewerId="id-bob" />,
     );
     expect(html).toContain("−25 adjustment");
   });

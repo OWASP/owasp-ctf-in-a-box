@@ -12,7 +12,7 @@ const launchLock = vi.hoisted(() => ({
 // #188: the page reads counts and first blood in one go (teamSolveBoard).
 // Wrapped over the teamSolveCounts mock, so a test sets counts as before and
 // first blood through `firstBloods`.
-const firstBloods = vi.hoisted(() => ({ map: new Map<string, { login: string; at: string | null }>() }));
+const firstBloods = vi.hoisted(() => ({ map: new Map<string, { playerId: string; name: string; at: string | null }>() }));
 vi.mock("@/lib/team-solve-counts", () => ({
   teamSolveCounts,
   teamSolveBoard: async (module: "classic" | "ai") => {
@@ -403,11 +403,12 @@ describe("first blood on the board (#188)", () => {
 
   it("names each challenge's first solver on its tile", async () => {
     teamSolveCounts.mockResolvedValue(new Map([["c3", 1]]));
-    firstBloods.map = new Map([["c3", { login: "Zed-Hacker", at: "2026-10-01T12:00:00.000Z" }]]);
+    firstBloods.map = new Map([["c3", { playerId: "id-Zed-Hacker", name: "Zed-Hacker", at: "2026-10-01T12:00:00.000Z" }]]);
     const html = renderToStaticMarkup(await FlagsPage());
     expect(html).toContain("First blood: Zed-Hacker");
     expect(html).toContain("Never attempted, 30 points, first blood by Zed-Hacker");
-    // Once as text (the title attribute repeats it for a truncated login).
+    expect(html).not.toContain("id-Zed-Hacker");
+    // Once as text (the title attribute repeats it for a truncated name).
     expect(html.match(/<\/span>First blood:/g)).toHaveLength(1);
   });
 
@@ -418,8 +419,8 @@ describe("first blood on the board (#188)", () => {
     storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
     teamSolveCounts.mockResolvedValue(new Map([["c1", 1], ["c2", 1]]));
     firstBloods.map = new Map([
-      ["c1", { login: "opener", at: "2026-10-01T12:00:00.000Z" }],
-      ["c2", { login: "locked-step-solver", at: "2026-10-01T12:00:01.000Z" }],
+      ["c1", { playerId: "id-opener", name: "opener", at: "2026-10-01T12:00:00.000Z" }],
+      ["c2", { playerId: "id-locked-step-solver", name: "locked-step-solver", at: "2026-10-01T12:00:01.000Z" }],
     ]);
     const html = renderToStaticMarkup(await FlagsPage());
     expect(html).toContain("First blood: opener");
@@ -428,7 +429,7 @@ describe("first blood on the board (#188)", () => {
 
   it("shows no first blood (and no counts) when the solves could not be read", async () => {
     teamSolveCounts.mockResolvedValue(null);
-    firstBloods.map = new Map([["c3", { login: "Zed-Hacker", at: "2026-10-01T12:00:00.000Z" }]]);
+    firstBloods.map = new Map([["c3", { playerId: "id-Zed-Hacker", name: "Zed-Hacker", at: "2026-10-01T12:00:00.000Z" }]]);
     const html = renderToStaticMarkup(await FlagsPage());
     expect(html).not.toMatch(/first blood/i);
   });

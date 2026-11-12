@@ -63,7 +63,7 @@ import { getAdminSettings, effectiveRegistrationOpen } from "@/lib/admin-store";
 import { upstashPipeline } from "@/lib/upstash";
 import { getSite } from "@/lib/site";
 
-// TeamCard needs the captain login (to gate captain-only controls) and the
+// TeamCard needs the captain id (to gate captain-only controls) and the
 // current join code (to display it), neither of which `TeamInfo` carries, so
 // the two fields are read here from the team hash — one pipeline, both HGETs.
 // The key comes from the shared `teamKey` builder (team-keys.ts, ADR 48), never
@@ -346,7 +346,9 @@ export default async function ProfilePage() {
   // adding a second breakdown renderer for one page.
   const moduleEntry: LeaderboardEntry = {
     rank: 0,
-    login: playerId,
+    playerId,
+    name: player.name,
+    image: player.image,
     team: effectiveTeam,
     points: netPoints,
     patched: profile?.patched ?? 0,
@@ -447,6 +449,7 @@ export default async function ProfilePage() {
           maxMembers={maxMembers}
           isCaptain={isCaptain}
           captain={teamMeta.captain}
+          memberNames={Object.fromEntries(teamMemberEntries.map((m) => [m.playerId, m.name]))}
           joinCode={teamMeta.joinCode}
           registrationOpen={adminSettings === null ? true : effectiveRegistrationOpen(adminSettings)}
           secureDevEnabled={secureDevEnabled}
@@ -455,7 +458,7 @@ export default async function ProfilePage() {
           <TeamProgress
             standing={teamStanding}
             memberEntries={teamMemberEntries}
-            viewerLogin={playerId}
+            viewerId={playerId}
           />
         )}
       </div>

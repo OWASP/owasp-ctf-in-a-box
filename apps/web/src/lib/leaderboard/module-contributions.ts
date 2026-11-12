@@ -1,4 +1,5 @@
 import "server-only";
+import { unnamed } from "@/lib/display-name";
 import { errorLabel } from "@/lib/error-label";
 import { getAiTotals, getTeamAiTotalsBatch, listAiChallenges, type AiTotal } from "@/lib/ai-store";
 import { atLeast, unionTotal, classicReachableDenominator, type Story } from "@/lib/leaderboard/denominators";
@@ -461,10 +462,10 @@ async function reachableByLogin(
     }
 
     for (const entry of data.entries) {
-      const key = entry.login.toLowerCase();
+      const key = entry.playerId.toLowerCase();
 
       if (teamByLogin.has(key) && !logins.has(key)) {
-        logins.set(key, entry.login);
+        logins.set(key, entry.playerId);
       }
     }
 
@@ -867,7 +868,7 @@ function createdEntries(
   classicLiveIds?: ReadonlySet<string>,
   classicReachable?: ReadonlyMap<string, Reachable>,
 ): LeaderboardEntry[] {
-  const seen = new Set(scored.map((entry) => entry.login.toLowerCase()));
+  const seen = new Set(scored.map((entry) => entry.playerId.toLowerCase()));
   // Keyed by lowercased login so the three modules union onto one row;
   // `login` keeps the spelling of whichever module reported it first.
   const pending = new Map<string, { login: string; quiz?: QuizTotal; classic?: ClassicTotal; ai?: AiTotal }>();
@@ -906,7 +907,9 @@ function createdEntries(
     const lastAt = laterOf(laterOf(quiz?.lastAt ?? null, classic?.lastAt ?? null), ai?.lastAt ?? null);
     created.push({
       rank: 0, // stamped by rankByStanding below
-      login,
+      playerId: login,
+      // Named by the fold's last stage (names.ts).
+      ...unnamed(login),
       // Membership is withTeamStandings' to overlay, one step later.
       team: null,
       points: (quiz?.points ?? 0) + (classic?.points ?? 0) + (ai?.points ?? 0),
@@ -954,7 +957,7 @@ function attributeEntry(entry: LeaderboardEntry, secureDev: boolean, overlay: Ov
     );
   }
 
-  const key = entry.login.toLowerCase();
+  const key = entry.playerId.toLowerCase();
 
   const quizTotal = overlay.quizByLogin.get(key);
   if (quizTotal && quizTotal.answered > 0) {

@@ -94,10 +94,10 @@ export type ActivityQuery = {
   until?: number | null;
 };
 
-type Field = "any" | "login" | "type" | "detail" | "team";
-const FIELDS: readonly Field[] = ["login", "type", "detail", "team"];
+type Field = "any" | "player" | "type" | "detail" | "team";
+const FIELDS: readonly Field[] = ["player", "type", "detail", "team"];
 
-/** The search box's words, lowercased. `login:`, `type:`, `detail:` and
+/** The search box's words, lowercased. `player:`, `type:`, `detail:` and
  *  `team:` restrict a word to that field; a prefix with nothing after it is
  *  dropped rather than matching everything or nothing. */
 function parseSearch(text: string): { field: Field; needle: string }[] {
@@ -120,7 +120,7 @@ function matchesTerm(e: ActivityEntry, field: Field, needle: string, zone: strin
   const has = (value: string | undefined) => !!value && value.toLowerCase().includes(needle);
   const typeText = `${e.type} ${TYPE_LABELS[e.type] ?? ""}`;
   switch (field) {
-    case "login":
+    case "player":
       return has(e.name);
     case "type":
       return has(typeText);
@@ -142,7 +142,7 @@ function inRange(e: ActivityEntry, since?: number | null, until?: number | null)
 
 /** The client-side filter the panel applies to the log. Exported for direct
  *  testing — filter logic behind a useState toggle is invisible to a static
- *  render. Every word in the box must match somewhere in the row (login, the
+ *  render. Every word in the box must match somewhere in the row (player name, the
  *  type's id or label, the detail, or the time as displayed on the panel's
  *  clock), case-insensitively and as a substring: an organizer chasing
  *  "did dcote… solve crypto" types fragments, not exact values. */
@@ -411,7 +411,7 @@ export default function AdminActivityTab({
                 setSearch(e.target.value);
                 searchAll();
               }}
-              placeholder="search login, event, detail, time · login: type: detail: team:"
+              placeholder="search player, event, detail, time · player: type: detail: team:"
               className={`min-w-0 flex-1 basis-64 ${FIELD_CLASS}`}
             />
             <select

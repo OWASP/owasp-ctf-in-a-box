@@ -9,6 +9,7 @@
 // counts with no points.
 
 import { adjustmentLabel } from "@/lib/leaderboard/adjustment-label";
+import { displayNameOf } from "@/lib/display-name";
 import type { ModuleId, ResolvedModule } from "@/lib/modules";
 import type { AppMeta } from "@/lib/apps";
 import AppBreakdown from "@/components/app-breakdown";
@@ -65,8 +66,9 @@ function teamModuleRow(id: ModuleId, progress: ModuleProgress, team: TeamStandin
 /** AppBreakdown takes a LeaderboardEntry; a team standing is not one, and the
  *  breakdown only ever reads `apps`. The rest is filled in here rather than
  *  giving the component a second, team-shaped prop. */
-const TEAM_ENTRY_STUB: Omit<LeaderboardEntry, "login" | "apps"> = {
+const TEAM_ENTRY_STUB: Omit<LeaderboardEntry, "playerId" | "name" | "apps"> = {
   rank: 0,
+  image: null,
   team: null,
   points: 0,
   patched: 0,
@@ -78,7 +80,7 @@ const TEAM_ENTRY_STUB: Omit<LeaderboardEntry, "login" | "apps"> = {
 export function TeamRow({
   team,
   topPoints,
-  pointsByLogin,
+  players,
   isOpen,
   onToggle,
   modules = [],
@@ -87,7 +89,9 @@ export function TeamRow({
 }: {
   team: TeamStanding;
   topPoints: number;
-  pointsByLogin?: Map<string, number>;
+  /** Name, image and individual points per member player id, from the
+   *  board's entries. A member with none shows the id fallback at 0. */
+  players?: Map<string, { name: string; image: string | null; points: number }>;
   isOpen: boolean;
   onToggle: () => void;
   modules?: readonly ResolvedModule[];
@@ -156,23 +160,27 @@ export function TeamRow({
       {isOpen && (
         <div className="px-4 pb-4">
           <div className="flex flex-wrap gap-2 border-t border-white/[0.06] pt-4">
-            {team.members.map((login) => (
+            {team.members.map((playerId) => {
+              const player = players?.get(playerId);
+              const name = player?.name ?? displayNameOf({ id: playerId });
+              return (
               <span
-                key={login}
+                key={playerId}
                 className="flex items-center gap-1.5 rounded-full border border-white/10 bg-[#12121e] py-1 pl-1 pr-2 text-xs text-zinc-300"
               >
-                <Avatar login={login} size={18} />
-                {login}
-                {login === team.captain && (
+                <Avatar name={name} image={player?.image ?? null} size={18} />
+                <bdi>{name}</bdi>
+                {playerId === team.captain && (
                   <span className="flex-none rounded border border-[#d4a017]/50 bg-[#d4a017]/10 px-1 py-0.5 text-[9px] uppercase tracking-wide text-[#d4a017]">
                     captain
                   </span>
                 )}
                 <span className="flex-none rounded-full bg-white/[0.06] px-1.5 py-0.5 font-mono tabular-nums text-[11px] text-zinc-200">
-                  {(pointsByLogin?.get(login) ?? 0).toLocaleString("en-US")} pts
+                  {(player?.points ?? 0).toLocaleString("en-US")} pts
                 </span>
               </span>
-            ))}
+              );
+            })}
           </div>
           {/* Where the total CAME from — the same tree a contestant sees on
               their own profile, read-only. It replaces two half-answers: a
@@ -190,7 +198,7 @@ export function TeamRow({
             // an expansion with nothing in it.
             <div className="mt-4 border-t border-white/[0.06] pt-4">
               <p className="mb-3 text-xs uppercase tracking-wider text-muted">Target breakdown</p>
-              <AppBreakdown entry={{ ...TEAM_ENTRY_STUB, login: team.slug, apps: team.apps }} showPoints enabledApps={enabledApps} catalog={catalog} />
+              <AppBreakdown entry={{ ...TEAM_ENTRY_STUB, playerId: team.slug, name: team.name, apps: team.apps }} showPoints enabledApps={enabledApps} catalog={catalog} />
             </div>
           )}
           {moduleRows.length > 0 && (
@@ -200,7 +208,7 @@ export function TeamRow({
                   return (
                     <ProgressRow key={m.id} label={m.title} level="module" {...teamModuleRow(m.id, progress, team)}>
                       {progress.detail.kind === "secure-development" && team.apps ? (
-                        <AppBreakdown entry={{ ...TEAM_ENTRY_STUB, login: team.slug, apps: team.apps }} showPoints enabledApps={enabledApps} catalog={catalog} />
+                        <AppBreakdown entry={{ ...TEAM_ENTRY_STUB, playerId: team.slug, name: team.name, apps: team.apps }} showPoints enabledApps={enabledApps} catalog={catalog} />
                       ) : undefined}
                     </ProgressRow>
                   );
@@ -213,7 +221,7 @@ export function TeamRow({
               something outside Secure Development is completed, since every
               live module sits on the row from the start at 0 / N. */}
           {hasAppSideProgress(team.modules) && team.members.length > 0 && (
-            <BoardItemLists logins={team.members} classicPoints={team.modules?.classic?.points} />
+            <BoardItemLists players={team.members} classicPoints={team.modules?.classic?.points} />
           )}
         </div>
       )}

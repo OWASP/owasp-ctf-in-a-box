@@ -46,6 +46,10 @@ vi.mock("@/lib/player", () => ({
   getPlayerProfiles: playerDeps.getPlayerProfiles,
 }));
 
+// deleteUser reads the player's link once to name the held-score keys to clear.
+const linkDeps = vi.hoisted(() => ({ getGithubLink: vi.fn() }));
+vi.mock("@/lib/github-link", () => ({ getGithubLink: linkDeps.getGithubLink }));
+
 import {
   OpsValidationError,
   deleteUser,
@@ -117,6 +121,7 @@ function mockQuizAndHintsPipeline() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  linkDeps.getGithubLink.mockResolvedValue(null);
   playerDeps.getPlayerProfiles.mockImplementation(async (ids: string[]) => new Map(ids.map((id) => [id, profile(id, "octocat")])));
 });
 
@@ -668,6 +673,50 @@ describe("deleteUser", () => {
     expect(Math.max(...foldCache.endScoreLowering.mock.invocationCallOrder)).toBeGreaterThan(
       Math.max(...mocks.upstashPipeline.mock.invocationCallOrder),
     );
+  });
+});
+
+describe("deleteUser: held Secure Development scores", () => {
+  /** Queues the pipelines a no-team, no-SD-keys delete walks through. */
+  function queueDelete() {
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mockNoSecureDevKeys();
+    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockQuizAndHintsPipeline();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
+  }
+
+  it("clears the linked login's held scores in the tail pipeline, link untouched", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
+    queueDelete();
+    await deleteUser(OCTO, ADMIN);
+    const tail = mocks.upstashPipeline.mock.calls.map((c) => c[0]).find((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
+    expect(tail).toContainEqual(["DEL", "ctf:sd:held:by:octocat"]);
+    expect(tail).toContainEqual(["SREM", "ctf:sd:held:authors", "octocat"]);
+    expect(allCommands().some((c) => c.slice(1).some((a) => /^ctf:link:/.test(String(a))))).toBe(false);
+  });
+
+  it("clears nothing held for an unlinked player", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce(null);
+    queueDelete();
+    await deleteUser(OCTO, ADMIN);
+    expect(allCommands().some((c) => c.slice(1).some((a) => String(a).startsWith("ctf:sd:held")))).toBe(false);
+  });
+
+  it("aborts before any write when the link read fails", async () => {
+    linkDeps.getGithubLink.mockRejectedValueOnce(new Error("github link: GET failed: READONLY"));
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/github link/);
+    expect(foldCache.beginScoreLowering).not.toHaveBeenCalled();
+    expect(allCommands().some((c) => c[0] === "DEL")).toBe(false);
   });
 });
 

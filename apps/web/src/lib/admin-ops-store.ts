@@ -8,6 +8,7 @@ import { beginScoreLowering, endScoreLowering } from "@/lib/leaderboard/fold-cac
 import { sumAttempts } from "@/lib/attempt-row";
 import { logActivity } from "@/lib/activity-log";
 import { errorLabel } from "@/lib/error-label";
+import { getGithubLink } from "@/lib/github-link";
 import { resolveTeamMaxMembers } from "@/lib/team-store";
 import {
   HINTS_SPENT_KEY,
@@ -562,7 +563,9 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
  *
  * The account itself (`ctf:auth:*`) and its GitHub link (`ctf:link:*`) are
  * NOT touched: they belong to the account store, and this clears what the
- * event holds about a player, not who they are.
+ * event holds about a player, not who they are. Releasing the link (and
+ * blocking a re-link) is a separate decision. Scores sync is holding for the
+ * linked login (`ctf:sd:held:*`) are event state and are cleared.
  *
  * A captain is a deliberate refusal here — see `forceTransferCaptain`.
  */
@@ -580,6 +583,9 @@ export async function deleteUser(
     );
   }
 
+  // Read before the bracket: a failed read aborts with nothing written.
+  const heldLogin = (await getGithubLink(player))?.login.toLowerCase() ?? null;
+
   // One score-lowering bracket around the WHOLE delete: the inner
   // reset nests its own — the marker is a counter — so the in-progress flag
   // stays up through the tail writes (membership, account record), and the
@@ -593,6 +599,9 @@ export async function deleteUser(
     if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
     cmds.push(["DEL", userKey(player)]);
     for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
+    if (heldLogin) {
+      cmds.push(["DEL", `ctf:sd:held:by:${heldLogin}`], ["SREM", "ctf:sd:held:authors", heldLogin]);
+    }
     // Checked: a refused DEL reported as a delete leaves the player on the
     // team with their record in place.
     assertPipelineOk(await upstashPipeline(cmds), "delete user");

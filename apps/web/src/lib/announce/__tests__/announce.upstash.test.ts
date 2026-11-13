@@ -25,6 +25,8 @@ import {
   OUTBOX_SKIP_SCRIPT,
   STATE_CAS_SCRIPT,
   SWITCH_DISABLE_SCRIPT,
+  WEBHOOK_CLEAR_SCRIPT,
+  WEBHOOK_TARGET_SCRIPT,
   claimLedgerField,
   claimLedgerFields,
 } from "@/lib/announce/store";
@@ -38,14 +40,16 @@ const CLAIM_ID = `${RUN}-claim`;
 const CLAIM_LEASE_KEY = `ctf:announce:lease:${CLAIM_ID}`;
 const OUTBOX_KEY = liveKey("announce-outbox", "box");
 const SWITCH_KEY = liveKey("announce-switch", "config");
+const TARGET_URL_KEY = liveKey("announce-target", "url");
+const TARGET_GEN_KEY = liveKey("announce-target", "generation");
 
 describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
   beforeAll(async () => {
-    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, OUTBOX_KEY, SWITCH_KEY]]);
+    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, OUTBOX_KEY, SWITCH_KEY, TARGET_URL_KEY, TARGET_GEN_KEY]]);
   });
 
   afterAll(async () => {
-    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, OUTBOX_KEY, SWITCH_KEY]]);
+    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, OUTBOX_KEY, SWITCH_KEY, TARGET_URL_KEY, TARGET_GEN_KEY]]);
   });
 
   it("first observation with expected='' seeds silently (code 2) and bumps the seq", async () => {
@@ -207,5 +211,42 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     expect(config.get("epoch:resume")).toBe("3");
     expect(config.get("epoch:milestone")).toBe("3");
     await upstashPipeline([["DEL", SWITCH_KEY]]);
+  });
+
+  it("WEBHOOK_TARGET_SCRIPT reads the URL and generation as one coherent snapshot across a clear/re-arm", async () => {
+    const oldUrl = "https://discord.com/api/webhooks/1/retired";
+    const newUrl = "https://discord.com/api/webhooks/2/current";
+    await upstashPipeline([
+      ["DEL", TARGET_URL_KEY, TARGET_GEN_KEY],
+      ["SET", TARGET_URL_KEY, oldUrl],
+      ["SET", TARGET_GEN_KEY, "0"],
+    ]);
+
+    // Each rotation clears the webhook (generation++ and URL delete, one
+    // EVAL) then arms a new URL. Racing the reader against that must only
+    // ever yield a state Redis actually held: the old pair, no URL with the
+    // advanced generation, or a new URL with that generation — never the
+    // retired URL carrying a newer generation.
+    const rotations = Array.from({ length: 25 }, async (_, i) => {
+      const [target] = await Promise.all([
+        upstashEval(WEBHOOK_TARGET_SCRIPT, [TARGET_URL_KEY, TARGET_GEN_KEY], []) as Promise<[string, string]>,
+        (async () => {
+          await upstashEval(WEBHOOK_CLEAR_SCRIPT, [TARGET_URL_KEY, TARGET_GEN_KEY], []);
+          await upstashPipeline([["SET", TARGET_URL_KEY, `${newUrl}-${i}`]]);
+        })(),
+      ]);
+      return target;
+    });
+    const results = await Promise.all(rotations);
+    for (const [url, generation] of results) {
+      if (url === oldUrl) {
+        expect(generation).toBe("0");
+      } else if (url.startsWith(newUrl)) {
+        expect(Number(generation)).toBeGreaterThan(0);
+      } else {
+        expect(url).toBe("");
+        expect(Number(generation)).toBeGreaterThan(0);
+      }
+    }
   });
 });

@@ -40,6 +40,7 @@ import {
   outboxEnqueue,
   OUTBOX_SKIP_SCRIPT,
   SWITCH_DISABLE_SCRIPT,
+  WEBHOOK_TARGET_SCRIPT,
   updateAnnounceConfig,
   type OutboxEntry,
 } from "@/lib/announce/store";
@@ -98,6 +99,7 @@ beforeEach(() => {
   mocks.endScoreLowering.mockReset();
   mocks.upstashPipeline.mockImplementation(pipelineFor(state));
   mocks.upstashEval.mockImplementation(async (script, keys, args) => {
+    if (script === WEBHOOK_TARGET_SCRIPT) return [URL, "0"];
     if (script === SWITCH_DISABLE_SCRIPT) {
       expect(keys).toEqual([DISCORD_CONFIG_KEY]);
       const n = Number(args[0]);

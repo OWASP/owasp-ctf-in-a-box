@@ -78,7 +78,16 @@ async function build() {
   // The probe declares no body schema, so its typed input is `undefined`.
   const probe = instance.api.linkProbe as unknown as (input: { body: LinkInput }) => Promise<LinkResult>;
   const link = (body: LinkInput) => probe({ body });
-  return { prefix, ctx: await instance.$context, link };
+  return { prefix, instance, ctx: await instance.$context, link };
+}
+
+// A signed session cookie for `userId`, as the browser would send it.
+async function sessionHeaders(ctx: Awaited<ReturnType<typeof build>>["ctx"], userId: string): Promise<Headers> {
+  const { token } = await ctx.internalAdapter.createSession(userId);
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(ctx.secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = Buffer.from(await crypto.subtle.sign("HMAC", key, enc.encode(token))).toString("base64");
+  return new Headers({ cookie: `${ctx.authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${sig}`)}` });
 }
 
 describe.skipIf(!liveConfigured)("better-auth over the Redis store against a live SRH proxy", () => {
@@ -348,6 +357,37 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       expect(await linkKeys(u2.id, login)).toEqual({ owner: u1.id, at: null });
       expect(await redis(["GET", `${LINK_USER_PREFIX}${u2.id}`])).toBeNull();
       expect((await ia.findAccountByKey({ providerId: "github", accountId: "gh-2" }))?.userId).toBe(u1.id);
+    });
+
+    it("refuses /link-social for a player who already has a link, and no link key moves", async () => {
+      const { instance, ctx, link } = await build();
+      const ia = ctx.internalAdapter;
+      const u1 = await kitUser(ia, "linked");
+      const login = freshLogin();
+      expect((await link({ userId: u1.id, kitEmail: u1.email, accountId: "gh-4", login, ghEmail: "l@github.example.test" })).linked).toBe(true);
+      const before = await linkKeys(u1.id, login);
+      const headers = await sessionHeaders(ctx, u1.id);
+
+      const err = await instance.api
+        .linkSocialAccount({ body: { provider: "github", callbackURL: "/profile?linked=github" }, headers })
+        .then(() => null, (e: unknown) => e as { status?: string; body?: { code?: string } });
+
+      expect(err?.status).toBe("FORBIDDEN");
+      expect(err?.body?.code).toBe("GITHUB_ALREADY_LINKED");
+      // Refused before any OAuth state is written, so no callback can follow.
+      expect(await ctx.adapter.count({ model: "verification" })).toBe(0);
+      expect(await linkKeys(u1.id, login)).toEqual(before);
+      expect(await redis(["GET", `${LINK_USER_PREFIX}${u1.id}`])).toBe(login);
+      expect((await ia.findAccounts(u1.id)).map((a) => a.accountId)).toEqual(["gh-4"]);
+    });
+
+    it("lets an unlinked player start /link-social", async () => {
+      // The control for the refusal above: the same call, no link, goes to GitHub.
+      const { instance, ctx } = await build();
+      const u1 = await kitUser(ctx.internalAdapter, "fresh");
+      const headers = await sessionHeaders(ctx, u1.id);
+      const res = await instance.api.linkSocialAccount({ body: { provider: "github", callbackURL: "/profile?linked=github" }, headers });
+      expect(res.url).toMatch(/^https:\/\/github\.com\/login\/oauth\/authorize\?/);
     });
 
     it("re-runs the link write when the same player links the same GitHub account again", async () => {

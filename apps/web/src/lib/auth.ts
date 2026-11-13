@@ -1,10 +1,36 @@
 import { betterAuth } from "better-auth";
-import { createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import type { BetterAuthOptions } from "better-auth";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
-import { linkOnUserWrite } from "@/lib/github-link";
+import { errorLabel } from "@/lib/error-label";
+import { getGithubLink, linkOnUserWrite } from "@/lib/github-link";
 import { recordCallbackLogin } from "@/lib/activity-log";
+
+/**
+ * The `/link-social` before hook. One GitHub account links to one kit
+ * account and a player cannot unlink, so a player whose link is recorded
+ * cannot start a second one: better-auth would add a second account row and
+ * the link write would move the player's link off the old login. A link the
+ * kit refused or never recorded (no `ctf:link:user:<id>`) can still be
+ * retried. An unreadable link fails closed. A request with no session is left
+ * to the endpoint, which answers 401.
+ */
+export async function refuseSecondGithubLink(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]): Promise<void> {
+  if (ctx.path !== "/link-social") return;
+  const session = await getSessionFromCtx(ctx);
+  if (!session) return;
+  let link: Awaited<ReturnType<typeof getGithubLink>>;
+  try {
+    link = await getGithubLink(session.user.id);
+  } catch (err) {
+    console.error(`[auth] could not read github link before linking: ${errorLabel(err)}`);
+    throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your GitHub link. Try again.", code: "GITHUB_LINK_UNREADABLE" });
+  }
+  if (link) {
+    throw new APIError("FORBIDDEN", { message: "A GitHub account is already linked.", code: "GITHUB_ALREADY_LINKED" });
+  }
+}
 
 /**
  * better-auth instance backed by the app's Redis (`redisAdapter`): users,
@@ -134,7 +160,8 @@ export const authOptions = {
     "/revoke-other-sessions",
     // Unlinking, and the linked-provider disclosure endpoints. /link-social is
     // open: it starts GitHub OAuth for the signed-in player and links only
-    // after the callback proves the GitHub account. A player cannot unlink.
+    // after the callback proves the GitHub account. A player cannot unlink,
+    // and one already linked cannot start a second link (refuseSecondGithubLink).
     "/unlink-account",
     "/list-accounts",
     "/account-info",
@@ -167,6 +194,7 @@ export const authOptions = {
     },
   },
   hooks: {
+    before: createAuthMiddleware(refuseSecondGithubLink),
     // Sign-in timestamps for the admin activity log (issue #212). The after
     // hook runs on EVERY auth endpoint; recordCallbackLogin filters to the
     // OAuth callback (the one path where a fresh session means "signed in")

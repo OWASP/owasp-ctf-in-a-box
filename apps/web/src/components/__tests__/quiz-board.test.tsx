@@ -16,6 +16,7 @@ import QuizBoard, {
   QuestionCard,
   describeAttempts,
   describeCorrect,
+  dispatchAnswer,
   resultLine,
   submitDisabled,
   type Feedback,
@@ -359,5 +360,43 @@ describe("describeRefusal (quiz)", () => {
 describe("quiz dry-run result copy (#464 admin preview)", () => {
   it("says a preview grade recorded nothing", () => {
     expect(describeCorrect(20, false, true)).toBe("Correct — preview only, nothing was recorded (+20 once the event launches).");
+  });
+});
+
+describe("dispatchAnswer", () => {
+  it("POSTs questionId and choices to /api/quiz/answer and parses a 200 payload", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ correct: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    try {
+      const out = await dispatchAnswer("q1", ["a"]);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/api/quiz/answer");
+      expect(init.method).toBe("POST");
+      expect(init.body).toBe(JSON.stringify({ questionId: "q1", choices: ["a"] }));
+      expect(out).toEqual({ ok: true, data: { correct: false } });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("parses a 429 cooldown refusal as not-ok with error and retryAt (#753)", async () => {
+    const retryAt = "2026-08-19T10:00:00.000Z";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "cooldown", retryAt }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "42" },
+      }),
+    );
+    try {
+      const out = await dispatchAnswer("q1", ["a"]);
+      expect(out).toEqual({ ok: false, data: { error: "cooldown", retryAt } });
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

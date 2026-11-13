@@ -18,6 +18,7 @@ describe.skipIf(!liveConfigured)("demo accounts against a live SRH proxy", () =>
   let fixture: typeof import("@/lib/demo-fixture");
   let resetPrefixes: readonly [string, string][];
   let upstashPipeline: (typeof import("@/lib/upstash"))["upstashPipeline"];
+  let assertPipelineOk: (typeof import("@/lib/upstash"))["assertPipelineOk"];
 
   const emailKey = (login: string) => `ctf:auth:user:by:email:${login}@demo.invalid`;
 
@@ -37,7 +38,7 @@ describe.skipIf(!liveConfigured)("demo accounts against a live SRH proxy", () =>
     demo = await import("@/lib/demo-seed");
     fixture = await import("@/lib/demo-fixture");
     ({ RESET_PREFIXES: resetPrefixes } = await import("@/lib/admin-store"));
-    ({ upstashPipeline } = await import("@/lib/upstash"));
+    ({ upstashPipeline, assertPipelineOk } = await import("@/lib/upstash"));
   });
   beforeEach(async () => {
     await demo.clearDemoData(actor("alice"));
@@ -83,7 +84,7 @@ describe.skipIf(!liveConfigured)("demo accounts against a live SRH proxy", () =>
     const wipe: (string | number)[][] = [];
     for (const t of fixture.DEMO_TEAMS) wipe.push(["DEL", `ctf:team:${t.slug}`, `ctf:team:${t.slug}:members`]);
     for (const c of fixture.DEMO_CONTESTANTS) wipe.push(["DEL", `ctf:user:${demo.demoPlayerId(c.login)}`]);
-    await upstashPipeline(wipe);
+    assertPipelineOk(await upstashPipeline(wipe), "reset-style wipe");
     for (const c of fixture.DEMO_CONTESTANTS) expect(await readRow(demo.demoPlayerId(c.login))).not.toBeNull();
     await demo.clearDemoData(actor("alice"));
     for (const c of fixture.DEMO_CONTESTANTS) {
@@ -97,11 +98,11 @@ describe.skipIf(!liveConfigured)("demo accounts against a live SRH proxy", () =>
     const edited = fixture.DEMO_CONTESTANTS[0].login;
     const id = demo.demoPlayerId(edited);
     const row = { ...JSON.parse((await readRow(id))!), name: "Renamed By Organizer" };
-    await upstashPipeline([["HSET", "ctf:auth:user", id, JSON.stringify(row)]]);
+    assertPipelineOk(await upstashPipeline([["HSET", "ctf:auth:user", id, JSON.stringify(row)]]), "edit demo account");
     await demo.clearDemoData(actor("alice"));
     expect(JSON.parse((await readRow(id))!).name).toBe("Renamed By Organizer");
     const others = fixture.DEMO_CONTESTANTS.slice(1);
     for (const c of others) expect(await readRow(demo.demoPlayerId(c.login))).toBeNull();
-    await upstashPipeline([["HDEL", "ctf:auth:user", id], ["DEL", emailKey(edited)]]);
+    assertPipelineOk(await upstashPipeline([["HDEL", "ctf:auth:user", id], ["DEL", emailKey(edited)]]), "remove edited account");
   });
 });

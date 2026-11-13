@@ -418,7 +418,7 @@ export default function AdminEventAnnouncements({ setConfirm }: { setConfirm: (c
                 id="ann-marks"
                 type="text"
                 defaultValue={config?.marks ?? ""}
-                disabled={busy}
+                disabled={busy || fieldStatus.marks?.state === "pending"}
                 placeholder="1h, 15m"
                 onBlur={(e) => saveOnBlur("marks", e.currentTarget, config?.marks ?? "", (value) => ({ marks: value }))}
                 className="w-40 rounded-md border border-white/10 bg-[#1a1a2e] px-2 py-1 font-mono text-xs text-white"

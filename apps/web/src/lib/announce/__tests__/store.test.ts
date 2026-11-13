@@ -24,9 +24,13 @@ vi.mock("@/lib/admin-store", () => ({
 
 import {
   AnnounceValidationError,
+  announceCooldownMs,
   bumpStatus,
+  CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+  CLAIM_LEDGER_SCRIPT,
   claimLedgerField,
   claimLedgerFields,
+  claimLedgerFieldsAndEnqueue,
   getAnnounceConfig,
   getWebhookDeliveryTarget,
   getWebhookGeneration,
@@ -35,25 +39,31 @@ import {
   OUTBOX_CLAIM_SCRIPT,
   OUTBOX_COMPLETE_SCRIPT,
   OUTBOX_ENQUEUE_SCRIPT,
+  OUTBOX_RELEASE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
-  SWITCH_DISABLE_SCRIPT,
-  WEBHOOK_CLEAR_SCRIPT,
-  WEBHOOK_TARGET_SCRIPT,
   outboxClaim,
   outboxComplete,
   outboxEnqueue,
   outboxPending,
   outboxPrune,
+  outboxRelease,
   outboxRetryable,
   outboxSkip,
   publicConfig,
+  readLedgerField,
   readStatePack,
   readStatus,
+  setAnnounceCooldown,
   setAnnounceWebhook,
+  STATE_CAS_ENQUEUE_SCRIPT,
   stateCompareSet,
+  SWITCH_DISABLE_SCRIPT,
   updateAnnounceConfig,
+  WEBHOOK_CLEAR_SCRIPT,
+  WEBHOOK_TARGET_SCRIPT,
 } from "@/lib/announce/store";
 import {
+  ANNOUNCE_COOLDOWN_KEY,
   ANNOUNCE_FIRST_KEY,
   ANNOUNCE_OUTBOX_KEY,
   ANNOUNCE_WEBHOOK_GENERATION_KEY,
@@ -499,19 +509,53 @@ describe("getWebhookDeliveryTarget", () => {
 });
 
 describe("ledger claims", () => {
-  it("reports the HSETNX winner and treats a command error as NOT won", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
+  it("reports the atomic claim winner and treats an error as NOT won", async () => {
+    mocks.upstashEval.mockResolvedValue(["classic:a"]);
     expect(await claimLedgerField(ANNOUNCE_FIRST_KEY, "classic:a")).toBe(true);
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: 0 }]);
+    mocks.upstashEval.mockResolvedValue([]);
     expect(await claimLedgerField(ANNOUNCE_FIRST_KEY, "classic:a")).toBe(false);
-    mocks.upstashPipeline.mockImplementation(async () => [{ error: "NOAUTH" }]);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashEval.mockRejectedValue(new Error("down"));
     expect(await claimLedgerField(ANNOUNCE_FIRST_KEY, "classic:a")).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith("[announce] ledger claim failed:", "down");
+    errorSpy.mockRestore();
   });
 
-  it("bulk-claims in one pipeline and returns only the winners", async () => {
-    mocks.upstashPipeline.mockImplementation(async (commands) => commands.map((_, i) => ({ result: i === 1 ? 1 : 0 })));
-    const won = await claimLedgerFields("led", ["a", "b", "c"]);
+  it("claims a bulk batch in one script and passes the captured generation as the fence", async () => {
+    mocks.upstashEval.mockResolvedValue(["b"]);
+    const won = await claimLedgerFields("led", ["a", "b", "c"], 7);
     expect([...won]).toEqual(["b"]);
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(script).toBe(CLAIM_LEDGER_SCRIPT);
+    expect(keys).toEqual(["led", ANNOUNCE_WEBHOOK_GENERATION_KEY]);
+    expect(args.slice(0, 2)).toEqual(["3", "7"]);
+    expect(args.slice(3)).toEqual(["a", "b", "c"]);
+  });
+
+  it("claims and enqueues in one script, so a won claim can never lose its announcement", async () => {
+    mocks.upstashEval.mockResolvedValue(1);
+    expect(await claimLedgerFieldsAndEnqueue("led", ["a", "b"], 4, "milestone", 2, "id-1", { embeds: [] })).toBe(true);
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(script).toBe(CLAIM_LEDGER_AND_ENQUEUE_SCRIPT);
+    expect(keys).toEqual([ "led", ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY]);
+    expect(args[0]).toBe("2");
+    expect(args[1]).toBe("4");
+    expect(args.slice(3, 5)).toEqual(["a", "b"]);
+    expect(args[5]).toBe("id-1");
+    expect(String(args[6])).toContain('"status":"pending"');
+    expect(args.slice(7)).toEqual(["milestones", "epoch:milestone", "2"]);
+  });
+
+  it("reads a ledger field, failing closed to null", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: '{"login":"alice"}' }]);
+    expect(await readLedgerField("led", "a")).toBe('{"login":"alice"}');
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: null }]);
+    expect(await readLedgerField("led", "a")).toBeNull();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockImplementation(async () => [{ error: "NOAUTH" }]);
+    expect(await readLedgerField("led", "a")).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith("[announce] ledger read failed:", "NOAUTH");
+    errorSpy.mockRestore();
   });
 
   it("reads HKEYS as a set, failing open to empty", async () => {
@@ -527,6 +571,32 @@ describe("stateCompareSet / readStatePack", () => {
     mocks.upstashEval.mockResolvedValue([1, 7, "v1|L0P0"]);
     const cas = await stateCompareSet("ctf:announce:lifecycle", "v1|L0P0", "v1|L1P0");
     expect(cas).toEqual({ code: 1, seq: 7, prev: "v1|L0P0" });
+  });
+
+  it("writes the edge entries in the SAME script as a winning CAS", async () => {
+    mocks.upstashEval.mockResolvedValue([1, 7, "v1|L0P0", 1]);
+    const cas = await stateCompareSet("ctf:announce:lifecycle", "v1|L0P0", "v1|L1P0", [
+      {
+        id: "id-1",
+        kind: "launch",
+        payload: { embeds: [] },
+        webhookGeneration: 3,
+        kindEpoch: 2,
+      },
+    ]);
+    expect(cas).toEqual({ code: 1, seq: 7, prev: "v1|L0P0" });
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(script).toBe(STATE_CAS_ENQUEUE_SCRIPT);
+    expect(keys).toEqual([
+      "ctf:announce:lifecycle",
+      "ctf:announce:seq",
+      ANNOUNCE_OUTBOX_KEY,
+      DISCORD_CONFIG_KEY,
+      ANNOUNCE_WEBHOOK_GENERATION_KEY,
+    ]);
+    expect(args.slice(0, 4)).toEqual(["v1|L0P0", "v1|L1P0", expect.any(String), "1"]);
+    expect(args[4]).toBe("id-1");
+    expect(args.slice(6)).toEqual(["launch", "epoch:launch", "2", "3"]);
   });
 
   it("reads the pack, null on miss or error", async () => {
@@ -571,25 +641,26 @@ describe("outbox", () => {
     const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
     expect(cmd[0]).toBe("EVAL");
     expect(cmd[1]).toBe(OUTBOX_CLAIM_SCRIPT);
-    expect(cmd[2]).toBe(3);
+    expect(cmd[2]).toBe(4);
     expect(cmd[3]).toBe(ANNOUNCE_OUTBOX_KEY);
     expect(cmd[4]).toBe("ctf:announce:lease:id-1");
     expect(cmd[5]).toBe(DISCORD_CONFIG_KEY);
-    expect(cmd[6]).toBe("id-1");
-    expect(cmd[7]).toBe("pending");
-    expect(cmd[8]).toBe(0);
-    expect(cmd[9]).toBe(90_000);
-    expect(cmd[10]).toBe(token);
-    expect(cmd[11]).toBe("firstBlood");
-    expect(cmd[12]).toBe("epoch:first-blood");
+    expect(cmd[6]).toBe(ANNOUNCE_WEBHOOK_GENERATION_KEY);
+    expect(cmd[7]).toBe("id-1");
+    expect(cmd[8]).toBe("pending");
+    expect(cmd[9]).toBe(0);
+    expect(cmd[10]).toBe(90_000);
+    expect(cmd[11]).toBe(token);
+    expect(cmd[12]).toBe("firstBlood");
+    expect(cmd[13]).toBe("epoch:first-blood");
   });
 
   it("passes the pause switch for both pause and resume edges", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
     await outboxClaim("id-2", { status: "pending", n: 0, kind: "resume" });
     const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
-    expect(cmd[11]).toBe("pause");
-    expect(cmd[12]).toBe("epoch:resume");
+    expect(cmd[12]).toBe("pause");
+    expect(cmd[13]).toBe("epoch:resume");
   });
 
   it("reproduces the race: returns no lease when another worker marked the entry sent", async () => {
@@ -694,6 +765,18 @@ describe("outbox", () => {
     errorSpy.mockRestore();
   });
 
+  it("releases a lease without recording an attempt, under the owner token", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
+    await outboxRelease("id-1", "token-1");
+    const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
+    expect(cmd[0]).toBe("EVAL");
+    expect(cmd[1]).toBe(OUTBOX_RELEASE_SCRIPT);
+    expect(cmd[2]).toBe(2);
+    expect(cmd[3]).toBe(ANNOUNCE_OUTBOX_KEY);
+    expect(cmd[4]).toBe("ctf:announce:lease:id-1");
+    expect(cmd[5]).toBe("token-1");
+  });
+
   it("prunes sent entries past retention and malformed ones", async () => {
     const old = new Date(Date.now() - 48 * 3_600_000).toISOString();
     const flat = [
@@ -712,6 +795,36 @@ describe("outbox", () => {
     // second pipeline; assert on the one that carries them.
     const prune = mocks.upstashPipeline.mock.calls.map((call) => call[0]).find((cmds) => cmds.some((c) => c[0] === "HDEL")) ?? [];
     expect(prune.filter((c) => c[0] === "HDEL").flatMap((c) => c.slice(2))).toEqual(["old-sent", "skipped", "garbage"]);
+  });
+});
+
+describe("Discord cooldown", () => {
+  it("stores the retry instant as a PX expiry and reads the remaining time", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      mocks.upstashPipeline.mockResolvedValue([{ result: "OK" }]);
+      await setAnnounceCooldown(5_000);
+      const set = mocks.upstashPipeline.mock.calls[0][0][0];
+      expect(set[0]).toBe("SET");
+      expect(set[1]).toBe(ANNOUNCE_COOLDOWN_KEY);
+      expect(set[3]).toBe("PX");
+      expect(Number(set[4])).toBeGreaterThanOrEqual(5_000);
+
+      mocks.upstashPipeline.mockResolvedValue([{ result: String(Date.parse("2026-01-01T00:00:03Z")) }]);
+      expect(await announceCooldownMs()).toBe(3_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails open to 0 on a missing or unreadable cooldown", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ result: null }]);
+    expect(await announceCooldownMs()).toBe(0);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }]);
+    expect(await announceCooldownMs()).toBe(0);
+    errorSpy.mockRestore();
   });
 });
 

@@ -74,7 +74,7 @@ beforeEach(() => {
   mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, firstBlood: true });
   mocks.setAnnounceWebhook.mockResolvedValue({ webhookConfigured: true });
   mocks.getWebhookUrl.mockResolvedValue(URL);
-  mocks.postToDiscord.mockResolvedValue(true);
+  mocks.postToDiscord.mockResolvedValue({ ok: true });
   mocks.getAdminSettings.mockRejectedValue(new Error("no settings"));
   mocks.deleteLifecycleState.mockResolvedValue(undefined);
 });
@@ -253,7 +253,7 @@ describe("test POST", () => {
   });
 
   it("a rejected POST is a 502 with no endpoint in the body", async () => {
-    mocks.postToDiscord.mockResolvedValue(false);
+    mocks.postToDiscord.mockResolvedValue({ ok: false });
     const res = await TEST(req("POST", undefined, "/api/admin/announcements/test"));
     expect(res.status).toBe(502);
     expect(JSON.stringify(await res.json())).not.toContain(URL);

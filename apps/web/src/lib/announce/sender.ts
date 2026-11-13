@@ -24,21 +24,25 @@
 // the URL or the payload is absolute — errors go through errorLabel only.
 
 import "server-only";
-import { randomUUID } from "node:crypto";
 import { errorLabel } from "@/lib/error-label";
 import { kindEnabled, type AnnouncementKind } from "@/lib/discord-config";
 import type { DiscordMessage } from "./messages";
 import {
+  announceCooldownMs,
   bumpStatus,
+  claimLedgerFieldsAndEnqueue,
   getAnnounceConfig,
   getWebhookDeliveryTarget,
+  newOutboxId,
   outboxClaim,
   outboxComplete,
   outboxEnqueue,
   outboxPending,
   outboxPrune,
+  outboxRelease,
   outboxRetryable,
   outboxSkip,
+  setAnnounceCooldown,
   type OutboxEntry,
 } from "./store";
 
@@ -61,20 +65,11 @@ const MAX_QUEUE = 100;
 let queue: string[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
-let enqueueCounter = 0;
 let droppedCount = 0;
 
 /** How many enqueues were dropped by the bound. Admin-facing cosmetic. */
 export function droppedEnqueues(): number {
   return droppedCount;
-}
-
-/** The outbox id for one enqueue: time + an in-process counter + random
- *  entropy + the kind, so concurrent replicas and same-millisecond bursts
- *  cannot collide or overwrite entries in the outbox hash. */
-function nextId(kind: AnnouncementKind): string {
-  enqueueCounter += 1;
-  return `${Date.now()}-${enqueueCounter}-${randomUUID().slice(0, 8)}-${kind}`;
 }
 
 /** Enqueues one announcement, if its switch is on and a webhook is
@@ -102,8 +97,40 @@ export async function enqueueAnnouncement(
     webhookGeneration = config.webhookGeneration;
     kindEpoch = config.kindEpochs[kind];
   }
-  const id = nextId(kind);
+  const id = newOutboxId(kind);
   if (!(await outboxEnqueue(id, kind, message, webhookGeneration, kindEpoch))) return;
+  await trackEnqueued(id);
+}
+
+/** Enqueues a ledger-driven announcement and claims its ledger fields in ONE
+ *  atomic script. The switch/epoch/generation checks live inside that script,
+ *  so a rejected claim writes neither a claim nor an entry. Used for first
+ *  blood and remaining-time marks, where the claim itself is the dedup. */
+export async function enqueueLedgerAnnouncement(
+  kind: AnnouncementKind,
+  message: DiscordMessage,
+  ledgerKey: string,
+  fields: readonly string[],
+  captured: { webhookGeneration: number; kindEpoch: number },
+): Promise<boolean> {
+  const id = newOutboxId(kind);
+  const written = await claimLedgerFieldsAndEnqueue(
+    ledgerKey,
+    fields,
+    captured.webhookGeneration,
+    kind,
+    captured.kindEpoch,
+    id,
+    message,
+  );
+  if (!written) return false;
+  await trackEnqueued(id);
+  return true;
+}
+
+/** Bounds and flushes a freshly written entry. Shared by both enqueue paths
+ *  so the drop policy and coalescing timer cannot drift apart. */
+async function trackEnqueued(id: string): Promise<void> {
   queue.push(id);
   while (queue.length > MAX_QUEUE) {
     const droppedId = queue.shift();
@@ -138,6 +165,10 @@ export async function flush(): Promise<void> {
   }
   flushing = true;
   try {
+    // A 429 parks every entry untouched (no attempt spent, no status change)
+    // until Discord's retry instant. Both sweeps share this gate so a retry
+    // sweep cannot slip past the cooldown the fresh flush just recorded.
+    if ((await announceCooldownMs()) > 0) return;
     queue = queue.filter((id) => id !== ""); // defensive; ids are never ""
     const config = await getAnnounceConfig();
     if (!config.webhookConfigured) {
@@ -207,7 +238,15 @@ export async function flush(): Promise<void> {
         continue;
       }
       const body = { embeds: embeds.slice(0, PACK_EMBEDS), allowed_mentions: { parse: [] } };
-      const ok = await postToDiscord(url, body);
+      const result = await postToDiscord(url, body);
+      if (result.retryAfterMs !== undefined) {
+        // 429: release the leases WITHOUT recording an attempt, park the
+        // sweeps, and stop this pass — later batches would be refused too.
+        await setAnnounceCooldown(result.retryAfterMs);
+        for (const { item, token } of batch) await outboxRelease(item.id, token);
+        return;
+      }
+      const ok = result.ok;
       for (const { item, token } of batch) {
         await outboxComplete(item.id, ok ? "sent" : "failed", token);
         await bumpStatus(item.entry.kind, ok ? "sent" : "failed", ok ? undefined : "discord post failed");
@@ -229,6 +268,7 @@ export async function flushRetries(): Promise<void> {
   if (flushing) return;
   flushing = true;
   try {
+    if ((await announceCooldownMs()) > 0) return;
     const config = await getAnnounceConfig();
     if (!config.webhookConfigured) return;
     let url: string | null;
@@ -287,7 +327,13 @@ export async function flushRetries(): Promise<void> {
         continue;
       }
       const body = { embeds: embeds.slice(0, PACK_EMBEDS), allowed_mentions: { parse: [] } };
-      const ok = await postToDiscord(url, body);
+      const result = await postToDiscord(url, body);
+      if (result.retryAfterMs !== undefined) {
+        await setAnnounceCooldown(result.retryAfterMs);
+        for (const { item, token } of batch) await outboxRelease(item.id, token);
+        return;
+      }
+      const ok = result.ok;
       for (const { item, token } of batch) {
         await outboxComplete(item.id, ok ? "sent" : "failed", token);
         await bumpStatus(item.entry.kind, ok ? "sent" : "failed", ok ? undefined : "discord post failed (retry)");
@@ -307,7 +353,9 @@ export async function flushRetries(): Promise<void> {
  *  response alone, so a redirect-following fetch that lands on an error
  *  page cannot mark a post sent (nor one that lands elsewhere can fail a
  *  post Discord accepted). */
-export async function postToDiscord(url: string, body: unknown): Promise<boolean> {
+export type DiscordPostResult = { ok: boolean; retryAfterMs?: number };
+
+export async function postToDiscord(url: string, body: unknown): Promise<DiscordPostResult> {
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -318,12 +366,36 @@ export async function postToDiscord(url: string, body: unknown): Promise<boolean
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
     if (!res.ok) {
+      if (res.status === 429) {
+        // Discord's Retry-After is authoritative. Prefer the header, fall
+        // back to the JSON `retry_after` seconds, and default to one second
+        // if the response carried neither — never retry immediately.
+        let retryAfterMs: number | undefined;
+        try {
+          const header = res.headers?.get?.("retry-after");
+          if (header) retryAfterMs = Number(header) * 1000;
+        } catch {
+          // A response mock without headers still gets the JSON fallback.
+        }
+        if (retryAfterMs === undefined || !Number.isFinite(retryAfterMs) || retryAfterMs <= 0) {
+          try {
+            const parsed = (await res.json()) as { retry_after?: unknown };
+            const seconds = Number(parsed?.retry_after);
+            if (Number.isFinite(seconds) && seconds > 0) retryAfterMs = seconds * 1000;
+          } catch {
+            // No parseable body: use the conservative default below.
+          }
+        }
+        if (retryAfterMs === undefined) retryAfterMs = 1_000;
+        console.error("[announce] discord post rate limited: HTTP 429");
+        return { ok: false, retryAfterMs };
+      }
       console.error(`[announce] discord post failed: HTTP ${res.status}`);
-      return false;
+      return { ok: false };
     }
-    return true;
+    return { ok: true };
   } catch (err) {
     console.error("[announce] discord post failed:", errorLabel(err));
-    return false;
+    return { ok: false };
   }
 }

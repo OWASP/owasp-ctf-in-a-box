@@ -335,6 +335,7 @@ describe("the grading script's arguments", () => {
       "ctf:classic:solvecount",
       "ctf:classic:solved",
       "ctf:classic:lastAt",
+      "ctf:announce:first",
     ]);
     expect(argv[0]).toBe("chal-1");
     expect(argv[2]).toBe(new Date(Number(argv[5])).toISOString());
@@ -602,7 +603,13 @@ describe("story lock (#463)", () => {
     expect(argv[8]).toBe("recon");
     // KEYS[9..] (index 8 on): KEYS[8] is the lastAt hash (#522).
     expect(keys[7]).toBe("ctf:classic:lastAt");
-    expect(keys.slice(8)).toEqual(["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"]);
+    expect(keys.slice(8)).toEqual([
+      "ctf:classic:solves:alice",
+      "ctf:user:alice",
+      "ctf:classic:solves:bob",
+      "ctf:user:bob",
+      "ctf:announce:first",
+    ]);
     expect(argv[9]).toBe("red");
   });
 

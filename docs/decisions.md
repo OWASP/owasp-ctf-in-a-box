@@ -85,6 +85,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 67 — A Secure Development solve is timed, and judged, by its score comment](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
 - [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
 - [ADR 69 — The AI module is retired; AI security challenges run as Jeopardy challenges with flags](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)
+- [ADR 70 — Unattributed Secure Development scores are held, and a deleted player is refused](#adr-70-unattributed-secure-development-scores-are-held-and-a-deleted-player-is-refused)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -1810,7 +1811,7 @@ current advice.
 
 ## ADR 38. Counting the poller's silent drops, and refusing to count the routine ones
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-13 by [ADR 70](#adr-70-unattributed-secure-development-scores-are-held-and-a-deleted-player-is-refused), which adds the `held` bucket and a `422` for a deleted player.
 
 **Context.** Two scoring bugs were found in one evening by running a single
 real PR end to end — the upserted-comment dedupe collision (ADR-adjacent, see
@@ -1845,8 +1846,7 @@ The taxonomy is the whole decision:
 | `invalid` | Marker **present** and unusable — schema drift, truncation, forgery | **Yes** |
 | `rejected` | Scorer returned `4xx`; the comment stays marked seen, so it is never retried | **Yes** |
 | `retried` | Submission failed transiently and was un-marked; next tick re-presents it | No — logged, not lost |
-| `held` | PR author has not linked a kit account (or linked at or after the close): stored under `ctf:sd:held:*`, released by a later tick if the author links before the end, else shown to admins as `unclaimed` | No — waiting on the player, not lost |
-| `refused` | Scorer returned `422`: posted before the launch, during a freeze, after the end or before a reset ([ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)), or for a player being deleted; stays marked seen | No — the rule working, logged per PR |
+| `refused` | Scorer returned `422`: posted before the launch, during a freeze, after the end or before a reset ([ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)); stays marked seen | No — the rule working, logged per PR |
 
 **Splitting `invalid` from `noMarker` required a parser change.**
 `parseScoreComment` returned `null` for both "ordinary comment" and "claims to
@@ -4069,9 +4069,7 @@ epoch are judged at that time.
   the master-reset epoch is refused; one outside the scoring window
   (`outsideScoringWindow(at, …)`, ADR 59) is refused; one inside the freeze
   (`pausedAt(at)`) is refused. Each refusal is a **final** verdict, `422`
-  with a `refused` code (`pre-reset`, `outside-window`, `paused`; and
-  `player-deleted`, which is not about time: an organizer deleted the player
-  while the score was on its way, see `deleteUser`). sync logs
+  with a `refused` code (`pre-reset`, `outside-window`, `paused`). sync logs
   it, marks the comment seen and never re-presents it, and does not count it
   as dropped: it is the rule working, and a counter every pause bumped would
   be a counter nobody reads. Otherwise the solve is recorded with that time,
@@ -4129,7 +4127,7 @@ event stream in the audit log.* The audit list is capped by entry count
 across every admin action and is not structured for an instant lookup; the
 pause log is one short list with one shape.
 
-**Status.** Accepted (#596). Amends [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers).
+**Status.** Accepted (#596). Amends [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers). Amended 2026-11-13 by [ADR 70](#adr-70-unattributed-secure-development-scores-are-held-and-a-deleted-player-is-refused), which adds the `player-deleted` refusal.
 
 ## ADR 68. A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock
 
@@ -4272,3 +4270,49 @@ v1.x box nothing changes until the organizer moves to v2.0.0. Deleting the
 module removes its routes, admin panel, award script, upstash suite,
 `acceptance-ai-only.sh` and its CI job, and this ADR then supersedes ADR 53
 outright.
+
+## ADR 70. Unattributed Secure Development scores are held, and a deleted player is refused
+
+**Status.** Accepted (#741). Amends [ADR 38](#adr-38-counting-the-pollers-silent-drops-and-refusing-to-count-the-routine-ones) and [ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment).
+
+**Context.** Kit-owned accounts (#731) make a GitHub link optional: a
+player signs in with any provider and links GitHub only to play Secure
+Development. A PR whose author has not linked yet used to be dropped
+(`unlinked`), which loses the points of a player who links an hour into the
+event. Two further gaps showed up in review. A score sync read before an
+organizer deleted the player could reach the scorer after the delete cleared
+their solves, and the scorer's `HSETNX` wrote it back. And the scorer keeps a
+solve's first time, so the order in which sync posts two scores for the same
+solve decides which comment time sticks.
+
+**Decision.**
+- **An unattributed score is held, not dropped.** It is stored under
+  `ctf:sd:held:*` and counted in ADR 38's taxonomy as a new bucket, `held`:
+  waiting on the player, not lost. Each tick, before the comment pass, sync
+  releases the held scores of authors who linked before `scoringEndsAt` (or
+  of any author when the event has no end), oldest first, at their original
+  comment time, so ADR 67's rules judge them as they would have judged the
+  comment. A link made at or after the close never releases: the admin list
+  shows the score as `unclaimed`.
+- **A held score waits for its target.** One whose target the organizer has
+  turned off stays held until the target is back, as an unread comment on
+  that repo would.
+- **Order is kept per author and target.** While an older score for the same
+  author and target is still held, the comment pass holds a newer one behind
+  it instead of posting it.
+- **A deleted player is refused.** `deleteUser` sets
+  `ctf:deleted:<player id>` for ten minutes before it clears anything, and
+  the scorer checks that key in the same Lua script as its `HSETNX` write. A
+  score for that player is a final `422` with the code `player-deleted`,
+  which ADR 38 counts as `refused`, like ADR 67's time refusals.
+
+This was chosen over dropping unlinked scores (a late link loses points),
+over attributing an unclaimed score by hand (no path may give a score to an
+account that did not link in time), and over a global reset-epoch bump on
+delete (it would refuse every player's in-flight scores).
+
+**Consequences.** The admin Secure Development tab lists held and unclaimed
+scores. A master reset clears `ctf:sd:held:*` and keeps links. A player
+deleted and back within ten minutes has their Secure Development scores
+refused until the marker expires. The scorer's solve write is now one
+`EVAL` instead of a pipeline of `HSETNX`s.

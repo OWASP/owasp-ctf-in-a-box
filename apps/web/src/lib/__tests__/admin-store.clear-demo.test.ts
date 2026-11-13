@@ -17,6 +17,8 @@ vi.mock("@/lib/leaderboard/fold-cache", () => ({
 }));
 
 import { clearDemoData } from "@/lib/admin-store";
+import { demoPlayerId } from "@/lib/demo-seed";
+import { DEL_ROW_SCRIPT } from "@/lib/auth-store/scripts";
 import { DEMO_CONTESTANTS, DEMO_TEAMS, DEMO_SPONSORS } from "@/lib/demo-fixture";
 import { ALICE, actor } from "./audit-actor";
 
@@ -70,7 +72,7 @@ describe("clearDemoData", () => {
     for (const contestant of DEMO_CONTESTANTS) {
       for (const [target, ids] of Object.entries(contestant.solves)) {
         for (const id of ids) {
-          expect(c).toContainEqual(["HDEL", `ctf:solves:${target}`, `${contestant.login}:${id}`]);
+          expect(c).toContainEqual(["HDEL", `ctf:solves:${target}`, `${demoPlayerId(contestant.login)}:${id}`]);
         }
       }
     }
@@ -83,32 +85,43 @@ describe("clearDemoData", () => {
       expect(c).toContainEqual(["DEL", `ctf:team:${t.slug}`]);
       expect(c).toContainEqual(["DEL", `ctf:team:${t.slug}:members`]);
       for (const m of t.members) {
-        expect(c).toContainEqual(["HDEL", `ctf:user:${m}`, "team", "joinedAt", "firstTeamAt"]);
+        expect(c).toContainEqual(["HDEL", `ctf:user:${demoPlayerId(m)}`, "team", "joinedAt", "firstTeamAt"]);
       }
     }
   });
 
-  it("removes each demo contestant's per-login quiz/classic/ai rows, regardless of which modules are live", async () => {
+  it("removes each demo contestant's per-player quiz/classic/ai rows, regardless of which modules are live", async () => {
     await clearDemoData(actor("alice"));
     const c = cmds();
     for (const contestant of DEMO_CONTESTANTS) {
-      expect(c).toContainEqual(["DEL", `ctf:quiz:answers:${contestant.login}`]);
-      expect(c).toContainEqual(["DEL", `ctf:quiz:attempts:${contestant.login}`]);
-      expect(c).toContainEqual(["HDEL", "ctf:quiz:points", contestant.login]);
-      expect(c).toContainEqual(["HDEL", "ctf:quiz:answered", contestant.login]);
-      expect(c).toContainEqual(["HDEL", "ctf:quiz:lastAt", contestant.login]);
+      expect(c).toContainEqual(["DEL", `ctf:quiz:answers:${demoPlayerId(contestant.login)}`]);
+      expect(c).toContainEqual(["DEL", `ctf:quiz:attempts:${demoPlayerId(contestant.login)}`]);
+      expect(c).toContainEqual(["HDEL", "ctf:quiz:points", demoPlayerId(contestant.login)]);
+      expect(c).toContainEqual(["HDEL", "ctf:quiz:answered", demoPlayerId(contestant.login)]);
+      expect(c).toContainEqual(["HDEL", "ctf:quiz:lastAt", demoPlayerId(contestant.login)]);
 
-      expect(c).toContainEqual(["DEL", `ctf:classic:solves:${contestant.login}`]);
-      expect(c).toContainEqual(["DEL", `ctf:classic:attempts:${contestant.login}`]);
-      expect(c).toContainEqual(["HDEL", "ctf:classic:points", contestant.login]);
-      expect(c).toContainEqual(["HDEL", "ctf:classic:solved", contestant.login]);
-      expect(c).toContainEqual(["HDEL", "ctf:classic:lastAt", contestant.login]);
+      expect(c).toContainEqual(["DEL", `ctf:classic:solves:${demoPlayerId(contestant.login)}`]);
+      expect(c).toContainEqual(["DEL", `ctf:classic:attempts:${demoPlayerId(contestant.login)}`]);
+      expect(c).toContainEqual(["HDEL", "ctf:classic:points", demoPlayerId(contestant.login)]);
+      expect(c).toContainEqual(["HDEL", "ctf:classic:solved", demoPlayerId(contestant.login)]);
+      expect(c).toContainEqual(["HDEL", "ctf:classic:lastAt", demoPlayerId(contestant.login)]);
 
-      expect(c).toContainEqual(["DEL", `ctf:ai:solves:${contestant.login}`]);
-      expect(c).toContainEqual(["DEL", `ctf:ai:attempts:${contestant.login}`]);
-      expect(c).toContainEqual(["HDEL", "ctf:ai:points", contestant.login]);
-      expect(c).toContainEqual(["HDEL", "ctf:ai:solved", contestant.login]);
-      expect(c).toContainEqual(["HDEL", "ctf:ai:lastAt", contestant.login]);
+      expect(c).toContainEqual(["DEL", `ctf:ai:solves:${demoPlayerId(contestant.login)}`]);
+      expect(c).toContainEqual(["DEL", `ctf:ai:attempts:${demoPlayerId(contestant.login)}`]);
+      expect(c).toContainEqual(["HDEL", "ctf:ai:points", demoPlayerId(contestant.login)]);
+      expect(c).toContainEqual(["HDEL", "ctf:ai:solved", demoPlayerId(contestant.login)]);
+      expect(c).toContainEqual(["HDEL", "ctf:ai:lastAt", demoPlayerId(contestant.login)]);
+    }
+  });
+
+  it("deletes each demo account only while its row is still the one the seed wrote", async () => {
+    await clearDemoData(actor("alice"));
+    const dels = cmds().filter((cmd) => cmd[0] === "EVAL" && cmd[1] === DEL_ROW_SCRIPT);
+    expect(dels).toHaveLength(DEMO_CONTESTANTS.length);
+    for (const contestant of DEMO_CONTESTANTS) {
+      const del = dels.find((d) => d[6] === demoPlayerId(contestant.login))!;
+      expect(del.slice(2, 6)).toEqual([1, "ctf:auth:user", "ctf:auth", "user"]);
+      expect(JSON.parse(String(del[7]))).toMatchObject({ id: demoPlayerId(contestant.login), login: contestant.login });
     }
   });
 

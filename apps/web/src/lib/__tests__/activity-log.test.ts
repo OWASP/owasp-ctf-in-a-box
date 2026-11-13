@@ -192,6 +192,27 @@ describe("listActivity", () => {
     expect(page.entries[0].detail).toBe("x");
   });
 
+  // The list outlives deploys, so it can hold rows naming the player by
+  // GitHub login with no id. LLEN counts them, so dropping them would leave
+  // a page that is empty while the total says otherwise.
+  it("reads both row shapes: by player id, and by login with no id", async () => {
+    const legacy = JSON.stringify({ at: "2026-08-24T17:00:00.000Z", type: "team-join", login: "ChrisZoc", detail: "red" });
+    upstash.upstashPipeline.mockResolvedValue([{ result: [row(), legacy] }, { result: 2 }]);
+    const page = await listActivity(0, 10);
+    expect(page.total).toBe(2);
+    expect(page.entries).toEqual([
+      { at: "2026-08-24T18:00:00.000Z", type: "login", userId: ID, name: "octocat" },
+      { at: "2026-08-24T17:00:00.000Z", type: "team-join", userId: null, name: "ChrisZoc", detail: "red" },
+    ]);
+  });
+
+  it("names an id row with no name by its id, and skips a row naming nobody", async () => {
+    const nobody = JSON.stringify({ at: "2026-08-24T16:00:00.000Z", type: "login" });
+    upstash.upstashPipeline.mockResolvedValue([{ result: [row({ name: "" }), nobody] }, { result: 2 }]);
+    const page = await listActivity(0, 10);
+    expect(page.entries).toEqual([{ at: "2026-08-24T18:00:00.000Z", type: "login", userId: ID, name: ID }]);
+  });
+
   // Unlike the writer, the reader THROWS: it has nothing useful to degrade
   // to, and the route maps the throw to a 503.
   it("throws when Redis reports an error", async () => {

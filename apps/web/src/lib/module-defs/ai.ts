@@ -48,7 +48,7 @@ export const AI_DEF: ModuleDef = {
   //   - The launch token IS the identity carried onto the external site
   //     (`AiTokenClaims.sub`), and `/api/ai/submit` and `/api/ai/event` both
   //     act on `claims.sub` alone — cookie-blind, by design. Whoever holds a
-  //     copy of the link plays and is rate-limited/cooled-down AS that login;
+  //     copy of the link plays and is rate-limited/cooled-down AS that player;
   //     there is no second check that the browser holding it is the one it
   //     was minted for. So: it is personal, sharing it lets someone else
   //     submit as you or spend your cooldown, and every point it earns still
@@ -98,7 +98,7 @@ export const AI_DEF: ModuleDef = {
     steps: () => [
       {
         title: "Sign in with GitHub",
-        body: "Use the sign-in button in the header. Your GitHub login is how the leaderboard and your profile track your progress, and it's also the identity your personal launch link carries onto the external site.",
+        body: "Use the sign-in button in the header. Your account is how the leaderboard and your profile track your progress, and your player id is the identity your personal launch link carries onto the external site.",
       },
       {
         title: "Join a team, or play solo",
@@ -187,7 +187,7 @@ export const AI_DEF: ModuleDef = {
   }),
   terms: () => ({
     eligibility: [
-      "You need a GitHub account. Your GitHub login is your identity for scoring — it's also what your personal launch link carries onto the external site — and points are credited to that account and cannot be moved between accounts afterwards.",
+      "You need a GitHub account. Your account is your identity for scoring — your player id is what your personal launch link carries onto the external site — and points are credited to that account and cannot be moved between accounts afterwards.",
       "Organizers and anyone who wrote or reviewed the challenges may compete for fun but are not eligible for prizes.",
     ],
     scope: [
@@ -197,7 +197,7 @@ export const AI_DEF: ModuleDef = {
       "Automated or scripted play, to farm attempts or to enumerate flags, will get your account rate-limited or disqualified.",
     ],
     submissions: [
-      "Playing an external challenge sends your GitHub login and your progress on this module to that challenge's operator — that is what your personal launch link carries, and it's how the site knows you and can report your solve back.",
+      "Playing an external challenge sends your player id and your progress on this module to that challenge's operator — that is what your personal launch link carries, and it's how the site knows you and can report your solve back.",
       "Submit your own work. Passing off another contestant's solve as yours is not allowed, and neither is playing under someone else's launch link.",
       "Don't publish flags or writeups for others to copy while the event is running. Afterwards, write up whatever you like.",
     ],

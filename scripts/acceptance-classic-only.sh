@@ -22,7 +22,7 @@
 #     gated on isModuleLive("secure-development") in
 #     apps/web/src/app/(site)/challenges/page.tsx, which a classic-only event
 #     never enables)
-#   - /leaderboard shows a seeded contestant's classic points BY LOGIN. A
+#   - /leaderboard shows a seeded contestant's classic points BY NAME. A
 #     classic-only event always resolves the leaderboard source to "empty"
 #     (lib/leaderboard/source.ts — secure-development disabled means no
 #     scorer/lambda/upstash backend is even consulted), so a row landing here
@@ -56,10 +56,10 @@
 #   - ctf:classic:flagnorm     hash, id -> normalizeFlag(flag) (same: realism
 #                               only, not asserted)
 #   - ctf:classic:categories   string, JSON array of category names
-#   - ctf:classic:points       hash, login -> running points total (read by
+#   - ctf:classic:points       hash, player -> running points total (read by
 #                               the leaderboard overlay's getClassicTotals)
-#   - ctf:classic:solved       hash, login -> running solve count (ditto)
-#   - ctf:classic:solves:<login> hash, id -> JSON {points, at} (seeded for
+#   - ctf:classic:solved       hash, player -> running solve count (ditto)
+#   - ctf:classic:solves:<player> hash, id -> JSON {points, at} (seeded for
 #                               realism — a real solve always writes this
 #                               alongside the two aggregate hashes — but not
 #                               independently asserted here)
@@ -146,7 +146,7 @@ acc_boot_redis_srh "$NET" co "$SRH_TOKEN"
 # render as the same bare "142", and a bare unanchored grep for either could
 # also coincidentally match a chunk id/hash elsewhere on the page.
 #
-# `ctf:classic:flag`, `ctf:classic:flagnorm` and `ctf:classic:solves:<login>`
+# `ctf:classic:flag`, `ctf:classic:flagnorm` and `ctf:classic:solves:<player>`
 # are seeded here for realism (a real solve always writes all of these
 # together) but NOT independently asserted below — this script never
 # exercises flag submission, so their shapes are not verified by anything
@@ -159,20 +159,22 @@ CHALLENGE_DESCRIPTION="Find the flag hidden in the login form."
 CHALLENGE_POINTS=142
 CHALLENGE_ORDER=1
 CHALLENGE_FLAG="flag{acceptance-gate}"
-CONTESTANT_LOGIN="classic-acceptance-bot"
+CONTESTANT_NAME="classic-acceptance-bot"
+CONTESTANT_ID=33333333-3333-4333-8333-333333333333
 CONTESTANT_POINTS=4321
 CONTESTANT_POINTS_FORMATTED="4,321"
 
 echo "--- seeding one classic challenge + one contestant's solve"
+acc_seed_player co-redis "$CONTESTANT_ID" "$CONTESTANT_NAME"
 docker exec co-redis redis-cli HSET ctf:classic:challenges "$CHALLENGE_ID" \
   '{"id":"'"$CHALLENGE_ID"'","title":"'"$CHALLENGE_TITLE"'","category":"'"$CHALLENGE_CATEGORY"'","description":"'"$CHALLENGE_DESCRIPTION"'","points":'"$CHALLENGE_POINTS"',"order":'"$CHALLENGE_ORDER"'}' \
   >/dev/null
 docker exec co-redis redis-cli SET ctf:classic:categories '["Web"]' >/dev/null
 docker exec co-redis redis-cli HSET ctf:classic:flag "$CHALLENGE_ID" "$CHALLENGE_FLAG" >/dev/null
 docker exec co-redis redis-cli HSET ctf:classic:flagnorm "$CHALLENGE_ID" "$CHALLENGE_FLAG" >/dev/null
-docker exec co-redis redis-cli HSET ctf:classic:points "$CONTESTANT_LOGIN" "$CONTESTANT_POINTS" >/dev/null
-docker exec co-redis redis-cli HSET ctf:classic:solved "$CONTESTANT_LOGIN" 1 >/dev/null
-docker exec co-redis redis-cli HSET "ctf:classic:solves:$CONTESTANT_LOGIN" "$CHALLENGE_ID" \
+docker exec co-redis redis-cli HSET ctf:classic:points "$CONTESTANT_ID" "$CONTESTANT_POINTS" >/dev/null
+docker exec co-redis redis-cli HSET ctf:classic:solved "$CONTESTANT_ID" 1 >/dev/null
+docker exec co-redis redis-cli HSET "ctf:classic:solves:$CONTESTANT_ID" "$CHALLENGE_ID" \
   '{"points":'"$CHALLENGE_POINTS"',"at":"2026-08-19T00:00:00.000Z"}' >/dev/null
 
 # Config v2 (#386): modules are switched on in ctf:admin:settings, and that
@@ -234,11 +236,11 @@ echo "    not just be hidden from the nav)"
 CHALLENGES_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/challenges")
 [ "$CHALLENGES_CODE" = "404" ] || { echo "FAIL: /challenges returned $CHALLENGES_CODE, want 404"; exit 1; }
 
-# The row-by-login + formatted-total assertion (the anti-vacuous overlay check
+# The row-by-name + formatted-total assertion (the anti-vacuous overlay check
 # the header describes) is shared with the quiz/ai gates — its whole-page
 # match rationale (and the bounded-window regex that broke in CI once) lives
 # with acc_assert_leaderboard_contrib.
-acc_assert_leaderboard_contrib "$APP_URL" classic "$CONTESTANT_LOGIN" "$CONTESTANT_POINTS_FORMATTED"
+acc_assert_leaderboard_contrib "$APP_URL" classic "$CONTESTANT_NAME" "$CONTESTANT_POINTS_FORMATTED"
 
 # ---------------------------------------------------------------------------
 # sync: through the real docker-compose.yml (see header comment for why),

@@ -6,8 +6,9 @@
 # Subcommands:
 #   up                          bring the stack up, seed a demo leaderboard
 #   down [--wipe]                tear it down (--wipe also drops volumes)
-#   score <login> <target> <n>   mark the first <n> catalogue challenges for
-#                                 <target> solved for <login> (real scorer API)
+#   score <player> <target> <n>  mark the first <n> catalogue challenges for
+#                                 <target> solved for <player>: a player id
+#                                 (UUID) or a linked GitHub login (real scorer API)
 #
 # Reuses the same compose/SRH patterns as scripts/smoke.sh, but drives the
 # real scorer's bearer-authed POST /score instead of writing Redis keys
@@ -18,7 +19,7 @@
 # the app image, and everything else — the event's name, which modules run,
 # which Secure Development targets — is an `/admin` setting.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # shellcheck source=scripts/lib/dotenv.sh
 . scripts/lib/dotenv.sh
@@ -247,7 +248,7 @@ challenge_ids_json() {
 # scorer does not implement. Seeding through the real /score endpoint
 # is what actually renders under the compose file as shipped.
 submit_solves() {
-  local login="$1" target="$2" count="$3" ids_json status n
+  local player="$1" target="$2" count="$3" ids_json status n
   case "$target" in
     juice-shop) n=${#JUICE_SHOP_IDS[@]} ;;
     dvwa) n=${#DVWA_IDS[@]} ;;
@@ -263,13 +264,13 @@ submit_solves() {
   # decides that, not this script — no fourth copy of the window logic here.
   local rc=0
   status="$(compose exec -T \
-    -e CTF_LOGIN="$login" -e CTF_TARGET="$target" -e CTF_IDS_JSON="$ids_json" \
+    -e CTF_PLAYER="$player" -e CTF_TARGET="$target" -e CTF_IDS_JSON="$ids_json" \
     scorer node -e '
       fetch("http://localhost:4000/score", {
         method: "POST",
         headers: { authorization: "Bearer " + process.env.CTF_SCORE_BEARER_TOKEN, "content-type": "application/json" },
         body: JSON.stringify({
-          author: process.env.CTF_LOGIN,
+          player: process.env.CTF_PLAYER,
           target: process.env.CTF_TARGET,
           solved: JSON.parse(process.env.CTF_IDS_JSON),
         }),
@@ -280,11 +281,11 @@ submit_solves() {
       }).catch((err) => { console.error(String(err)); process.exit(1); });
     ')" || rc=$?
   if [ "$rc" -eq 3 ]; then
-    echo "   $login / $target: not scored — scoring is paused or not open yet (HTTP 503)"
+    echo "   $player / $target: not scored — scoring is paused or not open yet (HTTP 503)"
     return 3
   fi
   [ "$rc" -eq 0 ] || return "$rc"
-  echo "   $login / $target: submitted $count solve(s) -> HTTP $status"
+  echo "   $player / $target: submitted $count solve(s) -> HTTP $status"
 }
 
 # Every event needs an official launch (#464): with no valid scoringStartsAt,
@@ -306,23 +307,82 @@ launch_dev_event() {
   fi
 }
 
+# The demo players are real accounts with fixed ids: the scorer keys solves by
+# player id, and the board names a player from its `ctf:auth:user` row. Each
+# also gets the GitHub link keys (apps/web/src/lib/github-link.ts) so a login
+# resolves to its id. Fixed constants keep every write idempotent.
+DEMO_LOGINS="alice-dev bob-dev carol-dev mallory-dev"
+
+demo_player_id() {
+  case "$1" in
+    alice-dev) echo "a11ce000-0000-4000-8000-000000000001" ;;
+    bob-dev) echo "b0b00000-0000-4000-8000-000000000002" ;;
+    carol-dev) echo "ca401000-0000-4000-8000-000000000003" ;;
+    mallory-dev) echo "ba11a000-0000-4000-8000-000000000004" ;;
+    *) return 1 ;;
+  esac
+}
+
+seed_demo_accounts() {
+  echo "== seeding demo accounts (auth rows, email index, GitHub link keys)"
+  local login id now row
+  now="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+  for login in $DEMO_LOGINS; do
+    id="$(demo_player_id "$login")" || { echo "dev-stack: no player id for demo login '$login'" >&2; return 1; }
+    row="{\"id\":\"$id\",\"name\":\"$login\",\"email\":\"$login@dev-stack.invalid\",\"emailVerified\":true,\"image\":null,\"createdAt\":\"$now\",\"updatedAt\":\"$now\"}"
+    # -e: redis-cli exits 0 on an error reply (WRONGTYPE, NOAUTH) without it,
+    # which would read a failed write as a seeded account.
+    if ! { compose exec -T redis redis-cli -e HSETNX ctf:auth:user "$id" "$row" >/dev/null \
+      && compose exec -T redis redis-cli -e SADD "ctf:auth:user:by:email:$login@dev-stack.invalid" "$id" >/dev/null \
+      && compose exec -T redis redis-cli -e SETNX "ctf:link:github:$login" "$id" >/dev/null \
+      && compose exec -T redis redis-cli -e SETNX "ctf:link:user:$id" "$login" >/dev/null; }; then
+      echo "dev-stack: could not write the demo account for '$login' to redis" >&2
+      return 1
+    fi
+  done
+}
+
+# A player id passes through; anything else is a GitHub login, resolved
+# through its link key. An unlinked login fails here, never as a scorer 400.
+resolve_player() {
+  local who="$1" lower id
+  if printf '%s' "$who" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'; then
+    printf '%s\n' "$who"
+    return 0
+  fi
+  lower="$(printf '%s' "$who" | tr '[:upper:]' '[:lower:]')"
+  id="$(compose exec -T redis redis-cli GET "ctf:link:github:$lower" | tr -d '\r')" || {
+    echo "dev-stack: could not read ctf:link:github:$lower from redis" >&2
+    return 1
+  }
+  if [ -z "$id" ]; then
+    echo "dev-stack: '$who' is not a player id and no GitHub login '$lower' is linked (no ctf:link:github:$lower key); pass a player id, or one of: $DEMO_LOGINS" >&2
+    return 1
+  fi
+  printf '%s\n' "$id"
+}
+
 seed_demo_data() {
+  seed_demo_accounts || return 1
   echo "== seeding demo leaderboard data (real POST /score, rubric-priced)"
   # The first submission doubles as the probe: when the scorer says scoring is
   # not open (a scheduled start kept above, or a freeze), seeding is DEFERRED,
   # not a failed `up` — the stack itself is fine.
   local rc=0
-  submit_solves alice-dev juice-shop 6 || rc=$?
+  local alice bob carol mallory
+  alice="$(demo_player_id alice-dev)"; bob="$(demo_player_id bob-dev)"
+  carol="$(demo_player_id carol-dev)"; mallory="$(demo_player_id mallory-dev)"
+  submit_solves "$alice" juice-shop 6 || rc=$?
   if [ "$rc" -eq 3 ]; then
     echo "== demo seeding deferred: scoring is not open yet (scheduled start kept, or frozen)."
-    echo "   Once it opens, seed by hand: ./scripts/dev-stack score <login> <juice-shop|dvwa> <n>"
+    echo "   Once it opens, seed by hand: ./scripts/dev-stack score <player> <juice-shop|dvwa> <n>"
     return 0
   fi
   [ "$rc" -eq 0 ] || return "$rc"
-  submit_solves alice-dev dvwa 4
-  submit_solves bob-dev juice-shop 3
-  submit_solves carol-dev dvwa 5
-  submit_solves mallory-dev juice-shop 1
+  submit_solves "$alice" dvwa 4
+  submit_solves "$bob" juice-shop 3
+  submit_solves "$carol" dvwa 5
+  submit_solves "$mallory" juice-shop 1
 }
 
 # ---------------------------------------------------------------------------
@@ -429,14 +489,16 @@ cmd_up() {
  Profiles:        $profiles
  GITHUB_ORG:      $org_note
 
- Seeded demo players (real scorer POST /score, so this is the same
- code path a scored PR uses): alice-dev, bob-dev, carol-dev, mallory-dev.
+ Seeded demo players (real accounts, scored by player id through the real
+ scorer POST /score, the code path a scored PR uses): alice-dev, bob-dev,
+ carol-dev, mallory-dev.
  The board's fetch cache revalidates every 30s, so give it a few seconds
  if a fresh load still shows the old numbers.
 
  Watch a NEW score land live:
-   ./scripts/dev-stack score <login> <juice-shop|dvwa> <n>
-   (marks the first <n> catalogue challenges solved for <login>; reload
+   ./scripts/dev-stack score <player> <juice-shop|dvwa> <n>
+   (marks the first <n> catalogue challenges solved for <player>, a player
+   id or a linked GitHub login such as alice-dev; reload
    $event_url/leaderboard after ~30s)
 
  Admin panel / signed-in experience (NOT available out of the box):
@@ -477,18 +539,23 @@ cmd_down() {
 }
 
 cmd_score() {
-  [ $# -eq 3 ] || { echo "usage: dev-stack score <login> <juice-shop|dvwa> <n>" >&2; exit 2; }
+  [ $# -eq 3 ] || { echo "usage: dev-stack score <player> <juice-shop|dvwa> <n>" >&2; exit 2; }
   resolve_env_file
   [ -n "$ENV_FILE" ] || { echo "no .env or $DEV_ENV_FILE found — run 'dev-stack up' first" >&2; exit 1; }
-  submit_solves "$1" "$2" "$3"
+  local player
+  player="$(resolve_player "$1")" || exit 1
+  submit_solves "$player" "$2" "$3"
 }
+
+# Sourcing (the bats suite) defines the functions without running a command.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
 case "${1:-}" in
   up|"") cmd_up ;;
   down) shift; cmd_down "$@" ;;
   score) shift; cmd_score "$@" ;;
   *)
-    echo "usage: dev-stack {up|down [--wipe]|score <login> <juice-shop|dvwa> <n>}" >&2
+    echo "usage: dev-stack {up|down [--wipe]|score <player> <juice-shop|dvwa> <n>}" >&2
     exit 2
     ;;
 esac

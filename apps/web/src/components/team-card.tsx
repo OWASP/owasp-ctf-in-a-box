@@ -115,6 +115,40 @@ const PAIRED_ACTION_CLASS =
   "transition-colors hover:border-[#2563eb]/60 hover:bg-white/[0.06] hover:text-white " +
   "disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-transparent disabled:text-zinc-500";
 
+/** The label each member shows under on the roster, the remove confirmation
+ *  and the transfer selector: their display name, with a short id suffix when
+ *  another member shows the same label (ignoring case), so a captain can tell
+ *  who they are removing or handing the team to. A suffix can itself collide
+ *  with another member's plain name, so a member whose label still collides is
+ *  suffixed too, and a suffixed one lengthens its id prefix, until every label
+ *  is distinct. Ids are unique, so this ends at the latest on full ids. */
+export function rosterLabels(members: readonly string[], memberNames: Readonly<Record<string, string>>): Map<string, string> {
+  const base = new Map(members.map((m) => [m, memberNames[m] ?? displayNameOf({ id: m })]));
+  const prefix = new Map<string, number>();
+  const labelOf = (m: string) => {
+    const n = prefix.get(m);
+    return n === undefined ? base.get(m)! : `${base.get(m)!} (${m.slice(0, n)})`;
+  };
+  const maxLen = Math.max(0, ...members.map((m) => m.length));
+  for (let step = 0; step <= maxLen; step++) {
+    const groups = new Map<string, string[]>();
+    for (const m of base.keys()) {
+      const key = labelOf(m).toLowerCase();
+      groups.set(key, [...(groups.get(key) ?? []), m]);
+    }
+    const clashing = [...groups.values()].filter((g) => g.length > 1);
+    if (clashing.length === 0) break;
+    for (const group of clashing) {
+      const plain = group.filter((m) => !prefix.has(m));
+      // A name sharing a label with a suffixed member yields to it; only when
+      // every clash is between plain names do they all take a suffix.
+      const toChange = plain.length > 0 && plain.length < group.length ? plain : group;
+      for (const m of toChange) prefix.set(m, prefix.has(m) ? Math.min(prefix.get(m)! + 4, m.length) : Math.min(8, m.length));
+    }
+  }
+  return new Map(members.map((m) => [m, labelOf(m)]));
+}
+
 export default function TeamCard({
   team,
   writesEnabled,
@@ -195,7 +229,8 @@ export default function TeamCard({
   const displayCode = latestCode ?? joinCode;
   const [copied, setCopied] = useState(false);
   const otherMembers = (team?.members ?? []).filter((member) => member !== captain);
-  const nameOf = (member: string) => memberNames[member] ?? displayNameOf({ id: member });
+  const labels = rosterLabels(team?.members ?? [], memberNames);
+  const nameOf = (member: string) => labels.get(member) ?? memberNames[member] ?? displayNameOf({ id: member });
 
   return (
     <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] p-5">

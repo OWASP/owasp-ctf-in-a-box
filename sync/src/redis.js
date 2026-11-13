@@ -14,6 +14,7 @@ const SYNC_STATUS_KEY = "ctf:sync:status";
 // `ctf:sync:*` key alone on purpose: it clears the cursor through the
 // `resetAt` epoch instead.
 export const SYNC_STATE_KEY = "ctf:sync:state";
+const LINK_GITHUB_PREFIX = "ctf:link:github:";
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 
 // Generic scheduled window: true when `now` is before start / after end.
@@ -84,8 +85,8 @@ export function redisErrorText(error) {
 }
 
 /** The poller's Redis client, or null when UPSTASH_REDIS_REST_URL/TOKEN are
- *  unset (a poller with no Redis still polls; it just cannot report the
- *  freeze or write its heartbeat). `fetchImpl`, `log` and `timeoutMs` are seams. */
+ *  unset (main() refuses to start without one: the freeze, the targets, the
+ *  durable state and the PR author links all live there). `fetchImpl`, `log` and `timeoutMs` are seams. */
 export function makeRedis(env = process.env, fetchImpl = fetch, log = console.error, { timeoutMs = PIPELINE_TIMEOUT_MS } = {}) {
   const url = env.UPSTASH_REDIS_REST_URL;
   const token = env.UPSTASH_REDIS_REST_TOKEN;
@@ -193,6 +194,14 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
     // look fine until the next restart rewound the cursor.
     async writePollState(state) {
       await pipeline([["SET", SYNC_STATE_KEY, JSON.stringify(state)]]);
+    },
+    // The player a GitHub login has claimed, or null when none has. Throws on
+    // any read error (the pipeline does): an unreadable link is not an
+    // unlinked author, and the caller retries the comment on the next poll.
+    // Mirrors apps/web github-link.ts linkKey: the login lowercased.
+    async resolveGithubLogin(login) {
+      const [id] = await pipeline([["GET", `${LINK_GITHUB_PREFIX}${String(login).toLowerCase()}`]]);
+      return typeof id === "string" && id !== "" ? id : null;
     },
     async writeStatus(s) {
       try {

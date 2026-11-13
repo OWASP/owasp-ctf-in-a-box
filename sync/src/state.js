@@ -82,8 +82,8 @@ export function parseState(raw, where, { log = console.error } = {}) {
 
 /**
  * Reads the state FILE, repairing anything unusable (see `parseState`).
- * Since ADR 64, the file is the store only for a poller with no Redis client; with
- * Redis it is read once, as a migration seed, and then retired (index.js).
+ * The file is no longer the store: it is read once, as a migration seed into
+ * Redis, and then retired (index.js).
  *
  * A MISSING file is not a fault: that is every event's first boot, and warning
  * about it would cry wolf. Anything else is logged — or, with `strict`, thrown:
@@ -106,6 +106,7 @@ export function loadState(path, { log = console.error, strict = false } = {}) {
   return parseState(raw, path, { log });
 }
 
+// No production caller: the state is written to Redis. Kept so tests can lay down a legacy state file for the migration seed.
 export function saveState(path, state) {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;

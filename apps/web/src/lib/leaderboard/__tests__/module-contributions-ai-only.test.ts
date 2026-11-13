@@ -47,7 +47,7 @@ beforeEach(() => {
 });
 
 describe("withModuleContributions on an ai-only event", () => {
-  it("creates a row for a login with module points and no scoring entry", async () => {
+  it("creates a row for a player id with module points and no scoring entry", async () => {
     mocks.getAiTotals.mockResolvedValue(new Map([["ada", totals(30, 3)]]));
 
     const out = await withModuleContributions(empty());
@@ -166,7 +166,7 @@ describe("withModuleContributions on an ai-only event", () => {
     }
   });
 
-  it("creates no rows for a login that has solved nothing", async () => {
+  it("creates no rows for a player id that has solved nothing", async () => {
     mocks.getAiTotals.mockResolvedValue(new Map([["ada", totals(0, 0)]]));
     const out = await withModuleContributions(empty());
     expect(out.entries).toEqual([]);

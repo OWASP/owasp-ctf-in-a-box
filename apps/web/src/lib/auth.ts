@@ -159,8 +159,9 @@ export const authOptions = {
     github: {
       clientId: process.env.GITHUB_CLIENT_ID!,
       clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-      // The GitHub login is the leaderboard row key (the scorer records the
-      // PR author's login), so capture it — name/email/image aren't enough.
+      // The GitHub login is what links a PR author to this player (the
+      // ctf:link:github key sync resolves), so capture it — name/email/image
+      // aren't enough.
       mapProfileToUser: (profile) => ({ login: profile.login }),
       // Re-applies the profile on every sign-in so `login` follows a renamed
       // GitHub account; the stored user row would otherwise keep the old one.

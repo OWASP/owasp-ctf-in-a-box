@@ -7,6 +7,8 @@ import { TEAM_MAX_MEMBERS } from "@/lib/team-limits";
 import { ADMIN_SETTINGS_KEY, outsideWindow } from "@/lib/admin-store";
 import { errorLabel } from "@/lib/error-label";
 import { joinCodeKey, membersKey, teamKey, userKey } from "@/lib/team-keys";
+import { AUTH_PREFIX, rowsKey } from "@/lib/auth-store/keys";
+import { displayNameOf, type NameParts } from "@/lib/display-name";
 
 const MOCK_TEAM_COOKIE = "ctf-mock-team";
 
@@ -14,9 +16,9 @@ const MOCK_TEAM_COOKIE = "ctf-mock-team";
  * Gate for real Upstash team writes. When TEAM_WRITES_ENABLED=true, team
  * actions write to Upstash (UPSTASH_REDIS_REST_TOKEN must be a read/write
  * token) under the v2 schema:
- *   HSET ctf:team:<slug> name <name> captain <login> createdAt <iso> joinCode <code>
- *   SADD ctf:team:<slug>:members <login>     (capped at TEAM_MAX_MEMBERS)
- *   HSET ctf:user:<login> team <slug> joinedAt <iso> firstTeamAt <iso>
+ *   HSET ctf:team:<slug> name <name> captain <playerId> createdAt <iso> joinCode <code>
+ *   SADD ctf:team:<slug>:members <playerId>  (capped at TEAM_MAX_MEMBERS)
+ *   HSET ctf:user:<playerId> team <slug> joinedAt <iso> firstTeamAt <iso>
  *   SET ctf:joincode:<code> <slug>            (reverse index for join-by-code)
  *
  * The two timestamps mean DIFFERENT things and are cleared differently:
@@ -24,7 +26,7 @@ const MOCK_TEAM_COOKIE = "ctf-mock-team";
  *                join/create, and removed alongside `team` by every path that
  *                clears it (leave, remove, disband) — it is a fact about the
  *                current membership and must not outlive it.
- *   firstTeamAt  the first time this login was EVER on a team. HSETNX, so a
+ *   firstTeamAt  the first time this player was EVER on a team. HSETNX, so a
  *                second join never overwrites it, and no path deletes it short
  *                of deleting the contestant.
  *
@@ -39,7 +41,7 @@ const MOCK_TEAM_COOKIE = "ctf-mock-team";
  * a single-cookie, single-player mock.
  *
  * Callers (the /api/team route handlers) are responsible for authenticating
- * the session and deriving `login` server-side — nothing here trusts
+ * the session and deriving the player id server-side — nothing here trusts
  * client-supplied identity.
  */
 export const TEAM_WRITES_ENABLED = process.env.TEAM_WRITES_ENABLED === "true";
@@ -80,8 +82,26 @@ const REGISTRATION_CLOSED_ERROR = "Team registration is closed";
  *  /admin → Support. */
 const LEAVE_AFTER_CLOSE_WARNING =
   "Registration is closed. You won't be able to join any team again, and your points leave the team.";
-const removeAfterCloseWarning = (login: string) =>
-  `Registration is closed. ${login} won't be able to join any team again, and their points leave the team.`;
+const removeAfterCloseWarning = (name: string) =>
+  `Registration is closed. ${name} won't be able to join any team again, and their points leave the team.`;
+/** Refusal for a roster action naming someone off the team. Neutral on
+ *  purpose: the argument is a player id, which a captain must never read. */
+const NOT_ON_TEAM_ERROR = "That player is not on this team";
+
+/** The member's display name from their user row, for text a captain reads.
+ *  A missing, failed or malformed row falls back to the short-id name, so the
+ *  raw player id never reaches the message. */
+function memberDisplayName(playerId: string, reply: { result?: unknown; error?: string } | undefined): string {
+  if (reply && !reply.error && typeof reply.result === "string") {
+    try {
+      const row = JSON.parse(reply.result) as NameParts;
+      return displayNameOf({ ...row, id: playerId });
+    } catch {
+      // fall through to the id-derived name
+    }
+  }
+  return displayNameOf({ id: playerId });
+}
 
 /** The Unicode bidi controls: marks, embeddings, overrides and isolates. */
 const BIDI_CONTROLS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
@@ -210,8 +230,8 @@ return 'ok'`;
 const DISBAND_SCRIPT = `
 if redis.call('HGET', KEYS[1], 'captain') ~= ARGV[1] then return 'not-captain' end
 local members = redis.call('SMEMBERS', KEYS[2])
-for _, login in ipairs(members) do
-  redis.call('HDEL', 'ctf:user:' .. login, 'team', 'joinedAt')
+for _, member in ipairs(members) do
+  redis.call('HDEL', 'ctf:user:' .. member, 'team', 'joinedAt')
 end
 local code = redis.call('HGET', KEYS[1], 'joinCode')
 redis.call('DEL', KEYS[1], KEYS[2])
@@ -289,23 +309,23 @@ export async function resolveTeamMaxMembers(): Promise<number> {
   }
 }
 
-/** The login's team slug, or null when it has none. THROWS on a failed read,
+/** The player's team slug, or null when it has none. THROWS on a failed read,
  *  error reply included: read as null, an error looks like "on no
  *  team" — which makes `hasTeam` fail CLOSED on live submissions and
  *  `leaveTeam` report a leave that never happened. Each caller
  *  applies its own documented direction. */
-async function getUserTeamSlug(login: string): Promise<string | null> {
-  const [current] = await upstashPipeline([["HGET", userKey(login), "team"]]);
+async function getUserTeamSlug(playerId: string): Promise<string | null> {
+  const [current] = await upstashPipeline([["HGET", userKey(playerId), "team"]]);
   if (current.error) throw new Error(`Upstash HGET user team failed: ${current.error}`);
   return typeof current.result === "string" && current.result ? current.result : null;
 }
 
 /**
- * Is this login on a team? The gate every scoring path asks before banking
+ * Is this player on a team? The gate every scoring path asks before banking
  * points.
  *
  * Scoring is per TEAM: the leaderboard's per-team total is the union of its
- * members' earned items (`foldTeamTotals`), so points banked by a login that
+ * members' earned items (`foldTeamTotals`), so points banked by a player who
  * belongs to no team are folded into nothing. A teamless contestant is playing
  * a scoreboard they do not appear on and finds out only when they check.
  * Refusing the submission is the honest answer.
@@ -325,10 +345,10 @@ async function getUserTeamSlug(login: string): Promise<string | null> {
  * contestant every point they earn during the outage. The opposite choice
  * belongs to `requireAdmin`, where granting access wrongly is the worse error.
  */
-export async function hasTeam(login: string): Promise<boolean> {
+export async function hasTeam(playerId: string): Promise<boolean> {
   if (!TEAM_WRITES_ENABLED) return true;
   try {
-    return (await getUserTeamSlug(login)) !== null;
+    return (await getUserTeamSlug(playerId)) !== null;
   } catch {
     return true;
   }
@@ -343,18 +363,18 @@ const NAME_TAKEN = "name-taken";
  *  the caller's business, this is the write. Returns the script's raw verdict
  *  so `createSoloTeam` can tell a collision (retryable) from a refusal (not).
  */
-async function attemptCreate(login: string, name: string, slug: string): Promise<string> {
+async function attemptCreate(playerId: string, name: string, slug: string): Promise<string> {
   const createdAt = new Date().toISOString();
   const joinCode = await generateUniqueJoinCode();
   const verdict = await upstashEval(
     CREATE_SCRIPT,
-    [userKey(login), teamKey(slug), membersKey(slug), joinCodeKey(joinCode)],
-    [login, name, slug, createdAt, joinCode],
+    [userKey(playerId), teamKey(slug), membersKey(slug), joinCodeKey(joinCode)],
+    [playerId, name, slug, createdAt, joinCode],
   );
   return typeof verdict === "string" ? verdict : "";
 }
 
-export async function createTeam(login: string, name: string): Promise<TeamActionResult> {
+export async function createTeam(playerId: string, name: string): Promise<TeamActionResult> {
   const checked = checkTeamName(name);
   if (!checked.ok) return checked;
   const trimmed = checked.name;
@@ -365,13 +385,13 @@ export async function createTeam(login: string, name: string): Promise<TeamActio
   if (!TEAM_WRITES_ENABLED) return setMockTeam(slug);
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
 
-  const verdict = await attemptCreate(login, trimmed, slug);
+  const verdict = await attemptCreate(playerId, trimmed, slug);
   if (verdict === "already-on-team") return { ok: false, error: "Leave your current team before creating one" };
   if (verdict === NAME_TAKEN) return { ok: false, error: `Team "${slug}" already exists. Join it instead` };
   // Activity log, success paths only, real writes only (the mock
   // cookie path above records a browser-local choice, not an event fact).
   // Fail-open — a lost log line never fails the mutation it describes.
-  await logActivity("team-create", login, slug);
+  await logActivity("team-create", playerId, slug);
   return { ok: true, team: slug };
 }
 
@@ -396,8 +416,9 @@ const SOLO_NAME_MAX_ATTEMPTS = 4;
  * takes one click.
  */
 export async function createSoloTeam(playerId: string, name: string): Promise<TeamActionResult> {
-  const base = slugify(name);
-  if (!base) return { ok: false, error: "Team name is required" };
+  // A name with no ASCII letters or digits ("李雷") slugifies to nothing; the
+  // id-derived name keeps the one-click promise for those players too.
+  const base = slugify(name) || `player-${playerId.slice(0, 8)}`;
   if (!TEAM_WRITES_ENABLED) return setMockTeam(base);
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
 
@@ -428,7 +449,7 @@ export async function createSoloTeam(playerId: string, name: string): Promise<Te
 
 /** Joins a team by its captain-shared join code (not the slug). In mock mode
  *  there's no reverse index, so the code is treated as the slug directly. */
-export async function joinTeam(login: string, code: string): Promise<TeamActionResult> {
+export async function joinTeam(playerId: string, code: string): Promise<TeamActionResult> {
   const trimmedCode = code.trim();
   if (!trimmedCode) return { ok: false, error: "Join code is required" };
   if (!TEAM_WRITES_ENABLED) return setMockTeam(slugify(trimmedCode));
@@ -449,25 +470,25 @@ export async function joinTeam(login: string, code: string): Promise<TeamActionR
   const maxMembers = await resolveTeamMaxMembers();
   const verdict = await upstashEval(
     JOIN_SCRIPT,
-    [userKey(login), teamKey(slug), membersKey(slug)],
-    [login, maxMembers, slug, new Date().toISOString()],
+    [userKey(playerId), teamKey(slug), membersKey(slug)],
+    [playerId, maxMembers, slug, new Date().toISOString()],
   );
   if (verdict === "already-on-team") return { ok: false, error: "Leave your current team before joining another" };
   if (verdict === "not-found") return { ok: false, error: "That team no longer exists" };
   if (verdict === "full") return { ok: false, error: `Team is full (${maxMembers} players max)` };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
-  await logActivity("team-join", login, slug);
+  await logActivity("team-join", playerId, slug);
   return { ok: true, team: slug };
 }
 
-export async function leaveTeam(login: string, opts: { confirmClosed?: boolean } = {}): Promise<TeamActionResult> {
+export async function leaveTeam(playerId: string, opts: { confirmClosed?: boolean } = {}): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) {
     const store = await cookies();
     store.delete(MOCK_TEAM_COOKIE);
     return { ok: true, team: null };
   }
 
-  const slug = await getUserTeamSlug(login);
+  const slug = await getUserTeamSlug(playerId);
   if (!slug) return { ok: true, team: null };
   if (!opts.confirmClosed && (await isRegistrationClosed())) {
     return { ok: false, needsConfirm: true, error: LEAVE_AFTER_CLOSE_WARNING };
@@ -475,22 +496,22 @@ export async function leaveTeam(login: string, opts: { confirmClosed?: boolean }
 
   // A 'stale' verdict means the membership changed between the read and the
   // script — leaving is idempotent, so treat it as already left.
-  const verdict = await upstashEval(LEAVE_SCRIPT, [userKey(login), teamKey(slug), membersKey(slug)], [login, slug]);
+  const verdict = await upstashEval(LEAVE_SCRIPT, [userKey(playerId), teamKey(slug), membersKey(slug)], [playerId, slug]);
   if (verdict === "captain-must-transfer") {
     return { ok: false, error: "Transfer or disband before leaving" };
   }
-  // Includes the idempotent 'stale' verdict: either way this login stopped
+  // Includes the idempotent 'stale' verdict: either way this player stopped
   // being on `slug`, which is the fact the log records.
-  await logActivity("team-leave", login, slug);
+  await logActivity("team-leave", playerId, slug);
   return { ok: true, team: null };
 }
 
 /** Captain-only: removes a member from the roster. The captain can't remove
  *  themselves — they must transferCaptain or disbandTeam instead. */
 export async function removeMember(
-  captainLogin: string,
+  captainId: string,
   slug: string,
-  memberLogin: string,
+  memberId: string,
   opts: { confirmClosed?: boolean } = {},
 ): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
@@ -498,25 +519,26 @@ export async function removeMember(
     // The warning names the member and what removing them costs, so only the
     // captain gets it, and only about someone on the team. The script below
     // stays the authority for the removal itself.
-    const [captain, listed] = await upstashPipeline([
+    const [captain, listed, profile] = await upstashPipeline([
       ["HGET", teamKey(slug), "captain"],
-      ["SISMEMBER", membersKey(slug), memberLogin],
+      ["SISMEMBER", membersKey(slug), memberId],
+      ["HGET", rowsKey(AUTH_PREFIX, "user"), memberId],
     ]);
     if (captain.error || listed.error) return { ok: false, error: "Team update failed. Try again" };
-    if (captain.result !== captainLogin) return { ok: false, error: "Only the team captain can do that" };
-    if (listed.result !== 1) return { ok: false, error: `"${memberLogin}" is not on this team` };
-    return { ok: false, needsConfirm: true, error: removeAfterCloseWarning(memberLogin) };
+    if (captain.result !== captainId) return { ok: false, error: "Only the team captain can do that" };
+    if (listed.result !== 1) return { ok: false, error: NOT_ON_TEAM_ERROR };
+    return { ok: false, needsConfirm: true, error: removeAfterCloseWarning(memberDisplayName(memberId, profile)) };
   }
   const verdict = await upstashEval(
     REMOVE_MEMBER_SCRIPT,
-    [teamKey(slug), membersKey(slug), userKey(memberLogin)],
-    [captainLogin, memberLogin],
+    [teamKey(slug), membersKey(slug), userKey(memberId)],
+    [captainId, memberId],
   );
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict === "cannot-remove-captain") {
     return { ok: false, error: "The captain can't remove themselves — transfer captaincy or disband instead" };
   }
-  if (verdict === "not-member") return { ok: false, error: `"${memberLogin}" is not on this team` };
+  if (verdict === "not-member") return { ok: false, error: NOT_ON_TEAM_ERROR };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
   return { ok: true, team: slug };
 }
@@ -524,7 +546,7 @@ export async function removeMember(
 /** Captain-only: renames the team's display name. The slug/key is unchanged
  *  (join codes and membership keep working), but the new name still can't
  *  collide with another team's slug. */
-export async function renameTeam(captainLogin: string, slug: string, newName: string): Promise<TeamActionResult> {
+export async function renameTeam(captainId: string, slug: string, newName: string): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
   const checked = checkTeamName(newName);
   if (!checked.ok) return checked;
@@ -532,19 +554,19 @@ export async function renameTeam(captainLogin: string, slug: string, newName: st
   const newSlug = slugify(trimmed) || slug;
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
 
-  const verdict = await upstashEval(RENAME_SCRIPT, [teamKey(slug), teamKey(newSlug)], [captainLogin, trimmed]);
+  const verdict = await upstashEval(RENAME_SCRIPT, [teamKey(slug), teamKey(newSlug)], [captainId, trimmed]);
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict === "name-taken") return { ok: false, error: `Team "${newSlug}" already exists. Choose another name` };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
-  await logActivity("team-rename", captainLogin, slug);
+  await logActivity("team-rename", captainId, slug);
   return { ok: true, team: slug };
 }
 
 /** Captain-only: hands captaincy to another current member. */
 export async function transferCaptain(
-  captainLogin: string,
+  captainId: string,
   slug: string,
-  toMemberLogin: string,
+  toMemberId: string,
 ): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
   // NOT gated by the registration window: transfer is an EXIT for a captain who
@@ -554,28 +576,28 @@ export async function transferCaptain(
   const verdict = await upstashEval(
     TRANSFER_CAPTAIN_SCRIPT,
     [teamKey(slug), membersKey(slug)],
-    [captainLogin, toMemberLogin],
+    [captainId, toMemberId],
   );
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
-  if (verdict === "not-member") return { ok: false, error: `"${toMemberLogin}" is not on this team` };
+  if (verdict === "not-member") return { ok: false, error: NOT_ON_TEAM_ERROR };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
   return { ok: true, team: slug };
 }
 
 /** Captain-only: disbands the team, clearing every member's team field and
  *  deleting the team's keys, including its join-code reverse index. */
-export async function disbandTeam(captainLogin: string, slug: string): Promise<TeamActionResult> {
+export async function disbandTeam(captainId: string, slug: string): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
   // NOT gated by the registration window — disband is an exit for a captain (see
   // transferCaptain). Gating it would trap a captain when registration closes.
-  const verdict = await upstashEval(DISBAND_SCRIPT, [teamKey(slug), membersKey(slug)], [captainLogin]);
+  const verdict = await upstashEval(DISBAND_SCRIPT, [teamKey(slug), membersKey(slug)], [captainId]);
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
   return { ok: true, team: null };
 }
 
 /** Captain-only: invalidates the current join code and issues a new one. */
-export async function regenerateCode(captainLogin: string, slug: string): Promise<JoinCodeResult> {
+export async function regenerateCode(captainId: string, slug: string): Promise<JoinCodeResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
   if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
   const newCode = await generateUniqueJoinCode();
@@ -583,7 +605,7 @@ export async function regenerateCode(captainLogin: string, slug: string): Promis
   const verdict = await upstashEval(
     REGENERATE_CODE_SCRIPT,
     [teamKey(slug), joinCodeKey(newCode)],
-    [captainLogin, newCode, slug],
+    [captainId, newCode, slug],
   );
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
@@ -641,18 +663,18 @@ export async function listTeams(): Promise<TeamInfo[]> {
 
 /** The viewer's team as shown on the profile: live Upstash membership when
  *  writes are enabled, otherwise the per-browser mock cookie. */
-export async function getViewerTeam(login: string): Promise<TeamInfo | null> {
+export async function getViewerTeam(playerId: string): Promise<TeamInfo | null> {
   if (!TEAM_WRITES_ENABLED) {
     const store = await cookies();
     const slug = store.get(MOCK_TEAM_COOKIE)?.value ?? null;
-    return slug ? { slug, name: slug, members: [login] } : null;
+    return slug ? { slug, name: slug, members: [playerId] } : null;
   }
 
   // Unreadable membership reads as "no team" — the documented team-of-one
   // that classic-team.ts relies on (fewer unlocks, never more) — but logged.
   let slug: string | null;
   try {
-    slug = await getUserTeamSlug(login);
+    slug = await getUserTeamSlug(playerId);
   } catch (err) {
     console.error("getViewerTeam: membership read failed, showing no team:", errorLabel(err));
     return null;

@@ -33,7 +33,7 @@ import type { LeaderboardData, PlayerSeries, SeriesPoint, TeamSeries } from "./t
  * TOP-TEN ONLY (issue #446). Only the final top-`SERIES_TOP_N` entries and
  * teams get a line — the cap the scorer's own series, the mock source and the
  * display board already use — so this stage reads and emits only what those
- * lines need, not every login on the board. It runs after hint penalties and
+ * lines need, not every player id on the board. It runs after hint penalties and
  * organizer score adjustments, because either can move a row across the
  * top-ten boundary.
  */
@@ -89,21 +89,21 @@ function readEvents(moduleId: string, reply: { result?: unknown; error?: string 
   return events;
 }
 
-/** Events for every login, per enabled module, in ONE pipeline. The same read
+/** Events for every player id, per enabled module, in ONE pipeline. The same read
  *  the team totals already make (`getTeamQuizTotalsBatch` and its siblings) —
  *  this keeps the events instead of folding them into a total. */
-async function readModuleEvents(logins: readonly string[]): Promise<Map<string, Earned[]>> {
-  const byLogin = new Map<string, Earned[]>();
-  if (logins.length === 0) return byLogin;
+async function readModuleEvents(playerIds: readonly string[]): Promise<Map<string, Earned[]>> {
+  const byPlayer = new Map<string, Earned[]>();
+  if (playerIds.length === 0) return byPlayer;
 
   const live = await getEnabledModuleIds();
-  const sources: { moduleId: string; keyFn: (login: string) => string }[] = [];
+  const sources: { moduleId: string; keyFn: (playerId: string) => string }[] = [];
   if (live.has("quiz")) sources.push({ moduleId: "quiz", keyFn: quizAnswersKey });
   if (live.has("classic")) sources.push({ moduleId: "classic", keyFn: classicSolvesKey });
   if (live.has("ai")) sources.push({ moduleId: "ai", keyFn: aiSolvesKey });
-  if (sources.length === 0) return byLogin;
+  if (sources.length === 0) return byPlayer;
 
-  const commands = sources.flatMap(({ keyFn }) => logins.map((login) => ["HGETALL", keyFn(login)]));
+  const commands = sources.flatMap(({ keyFn }) => playerIds.map((playerId) => ["HGETALL", keyFn(playerId)]));
   let replies: { result?: unknown; error?: string }[];
   try {
     replies = await upstashPipeline(commands);
@@ -111,19 +111,19 @@ async function readModuleEvents(logins: readonly string[]): Promise<Map<string, 
     // The chart loses its module events; the board keeps its numbers. Failing
     // the whole page over a cosmetic overlay would be the wrong direction.
     console.error("module series unavailable:", errorLabel(err));
-    return byLogin;
+    return byPlayer;
   }
 
   sources.forEach(({ moduleId }, moduleIndex) => {
-    logins.forEach((login, loginIndex) => {
-      const events = readEvents(moduleId, replies[moduleIndex * logins.length + loginIndex]);
+    playerIds.forEach((playerId, playerIndex) => {
+      const events = readEvents(moduleId, replies[moduleIndex * playerIds.length + playerIndex]);
       if (events.length === 0) return;
-      const existing = byLogin.get(login);
+      const existing = byPlayer.get(playerId);
       if (existing) existing.push(...events);
-      else byLogin.set(login, [...events]);
+      else byPlayer.set(playerId, [...events]);
     });
   });
-  return byLogin;
+  return byPlayer;
 }
 
 /** Merges scoring events into an existing cumulative series.
@@ -167,8 +167,8 @@ function mergeCumulative(existing: readonly SeriesPoint[], earned: readonly Earn
  *  correct answer for a question more than one member holds). Summing members'
  *  events instead would re-introduce the double-count those totals avoid, and
  *  the line would end above the number in the team's own row. */
-function foldTeamEvents(members: readonly string[], byLogin: Map<string, Earned[]>): Earned[] {
-  return earliestPerItem(members.flatMap((member) => byLogin.get(member.toLowerCase()) ?? []));
+function foldTeamEvents(members: readonly string[], byPlayer: Map<string, Earned[]>): Earned[] {
+  return earliestPerItem(members.flatMap((member) => byPlayer.get(member.toLowerCase()) ?? []));
 }
 
 function earliestPerItem(events: readonly Earned[]): Earned[] {
@@ -196,12 +196,12 @@ export async function withModuleSeries(data: LeaderboardData): Promise<Leaderboa
   // — so the read set is the charted entries plus the charted teams'
   // rosters, nothing else.
   //
-  // The read set carries each login's SPELLING, not its lowercase, because
-  // the stores and the join disagree on case: each module's hash is keyed on
-  // the login exactly as the session spelled it, so a lowercased read of a
-  // mixed-case login finds an empty hash and drops that contestant's
-  // app-side points from the chart. The series join case-insensitively, so a
-  // login stored under two spellings is one contestant with one line.
+  // The read set holds each player id as stored, not lowercased: each
+  // module's hash is keyed on the id as written, so a lowercased read of a
+  // record stored under another case would find an empty hash and drop that
+  // contestant's app-side points from the chart. Kit ids are lowercase, so
+  // the two agree in practice; the series join case-insensitively, so an id
+  // stored under two cases is one contestant with one line.
   const chartedEntries = data.entries.filter((e) => e.rank <= SERIES_TOP_N);
   const chartedTeams = data.teams.filter((t) => t.rank <= SERIES_TOP_N);
   const spellings = new Set<string>();
@@ -215,23 +215,23 @@ export async function withModuleSeries(data: LeaderboardData): Promise<Leaderboa
   const display = new Map<string, string>();
   const gathered = new Map<string, Earned[]>();
   for (const spelling of spellings) {
-    const login = spelling.toLowerCase();
-    if (!display.has(login)) display.set(login, spelling);
-    gathered.set(login, [...(gathered.get(login) ?? []), ...(bySpelling.get(spelling) ?? [])]);
+    const playerId = spelling.toLowerCase();
+    if (!display.has(playerId)) display.set(playerId, spelling);
+    gathered.set(playerId, [...(gathered.get(playerId) ?? []), ...(bySpelling.get(spelling) ?? [])]);
   }
-  // The same item under two spellings of one login is one solve, kept at the
+  // The same item under two spellings of one player id is one solve, kept at the
   // earlier time — the rule a team's union applies across its members.
-  const byLogin = new Map([...gathered].map(([login, events]) => [login, earliestPerItem(events)]));
+  const byPlayer = new Map([...gathered].map(([playerId, events]) => [playerId, earliestPerItem(events)]));
 
-  const seriesByLogin = new Map((data.series ?? []).map((s) => [s.playerId.toLowerCase(), s]));
+  const seriesByPlayer = new Map((data.series ?? []).map((s) => [s.playerId.toLowerCase(), s]));
   const series: PlayerSeries[] = chartedEntries.map((entry) => {
-    const login = entry.playerId.toLowerCase();
-    const existing = seriesByLogin.get(login);
+    const playerId = entry.playerId.toLowerCase();
+    const existing = seriesByPlayer.get(playerId);
     return {
-      playerId: existing?.playerId ?? display.get(login) ?? login,
+      playerId: existing?.playerId ?? display.get(playerId) ?? playerId,
       name: entry.name,
       image: entry.image,
-      points: mergeCumulative(existing?.points ?? [], byLogin.get(login) ?? []),
+      points: mergeCumulative(existing?.points ?? [], byPlayer.get(playerId) ?? []),
     };
   });
 
@@ -241,7 +241,7 @@ export async function withModuleSeries(data: LeaderboardData): Promise<Leaderboa
     return {
       slug: team.slug,
       name: existing?.name ?? team.name,
-      points: mergeCumulative(existing?.points ?? [], foldTeamEvents(team.members, byLogin)),
+      points: mergeCumulative(existing?.points ?? [], foldTeamEvents(team.members, byPlayer)),
     };
   });
 

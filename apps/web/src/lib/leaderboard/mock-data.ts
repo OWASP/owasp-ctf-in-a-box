@@ -9,6 +9,8 @@ import { rankByStanding } from "./rank";
 import type { ChallengeCatalog, ChallengeResult, LeaderboardEntry, TeamStanding } from "./types";
 
 type Sample = {
+  // A fixed v4 UUID standing in for the player id; mock mode reads no account store, so `login` is the display name.
+  id: string;
   login: string;
   team: string | null;
   updatedAt: string;
@@ -53,6 +55,7 @@ const vampi = (statuses: ChallengeResult["status"][]): ChallengeResult[] => [
 
 const SAMPLES: Sample[] = [
   {
+    id: "00000000-0000-4000-8000-000000000001",
     login: "octocat",
     team: "seg-fault",
     updatedAt: "2026-08-07T18:03:11Z",
@@ -64,6 +67,7 @@ const SAMPLES: Sample[] = [
     },
   },
   {
+    id: "00000000-0000-4000-8000-000000000002",
     login: "mona",
     team: "seg-fault",
     updatedAt: "2026-08-07T17:41:02Z",
@@ -75,6 +79,7 @@ const SAMPLES: Sample[] = [
     },
   },
   {
+    id: "00000000-0000-4000-8000-000000000003",
     login: "hubot",
     team: "null-terminators",
     updatedAt: "2026-08-07T16:58:40Z",
@@ -85,6 +90,7 @@ const SAMPLES: Sample[] = [
     },
   },
   {
+    id: "00000000-0000-4000-8000-000000000004",
     login: "defunkt",
     team: "null-terminators",
     updatedAt: "2026-08-07T15:12:09Z",
@@ -94,6 +100,7 @@ const SAMPLES: Sample[] = [
     },
   },
   {
+    id: "00000000-0000-4000-8000-000000000005",
     login: "torvalds",
     team: "0xcafebabe",
     updatedAt: "2026-08-07T14:30:55Z",
@@ -107,6 +114,7 @@ const SAMPLES: Sample[] = [
     },
   },
   {
+    id: "00000000-0000-4000-8000-000000000006",
     login: "gaearon",
     team: "0xcafebabe",
     updatedAt: "2026-08-07T13:05:21Z",
@@ -116,6 +124,7 @@ const SAMPLES: Sample[] = [
     },
   },
   {
+    id: "00000000-0000-4000-8000-000000000007",
     login: "yyx990803",
     team: null,
     updatedAt: "2026-08-07T12:44:18Z",
@@ -125,6 +134,7 @@ const SAMPLES: Sample[] = [
     },
   },
   {
+    id: "00000000-0000-4000-8000-000000000008",
     login: "sindresorhus",
     team: null,
     updatedAt: "2026-08-07T11:20:03Z",
@@ -133,6 +143,7 @@ const SAMPLES: Sample[] = [
     },
   },
   {
+    id: "00000000-0000-4000-8000-000000000009",
     login: "tj",
     team: null,
     updatedAt: "2026-08-06T22:15:47Z",
@@ -141,6 +152,7 @@ const SAMPLES: Sample[] = [
     },
   },
   {
+    id: "00000000-0000-4000-8000-000000000010",
     login: "nobody",
     team: null,
     updatedAt: "2026-08-06T20:00:00Z",
@@ -236,9 +248,9 @@ export function buildMockEntries(): LeaderboardEntry[] {
       const { points, patched, failed, total, apps } = summarize(sample);
       return {
         rank: 0, // assigned by rankByStanding
-        // The fixture's names stand in for player ids, and carry their own
-        // display name: these players have no profile to resolve one from.
-        playerId: sample.login,
+        // The fixture carries its own display name: these players have no
+        // account row to resolve one from.
+        playerId: sample.id,
         name: sample.login,
         image: null,
         team: sample.team,
@@ -267,7 +279,7 @@ export function buildMockTeams(entries: LeaderboardEntry[]): TeamStanding[] {
     .map(([slug, members]) => ({
       slug,
       name: TEAM_NAMES[slug] ?? slug,
-      captain: TEAM_CAPTAINS[slug] ?? members[0].playerId,
+      captain: idOfLogin(TEAM_CAPTAINS[slug]) ?? members[0].playerId,
       members: members.map((m) => m.playerId),
       points: teamPoints(members),
       rank: 0,
@@ -276,6 +288,10 @@ export function buildMockTeams(entries: LeaderboardEntry[]): TeamStanding[] {
     .map((team, i) => ({ ...team, rank: i + 1 }));
 }
 
-export function findMockSample(login: string): Sample | undefined {
-  return SAMPLES.find((s) => s.login === login);
+function idOfLogin(login: string | undefined): string | undefined {
+  return SAMPLES.find((s) => s.login === login)?.id;
+}
+
+export function findMockSample(playerId: string): Sample | undefined {
+  return SAMPLES.find((s) => s.id === playerId);
 }

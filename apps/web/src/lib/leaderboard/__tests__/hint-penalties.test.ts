@@ -92,7 +92,7 @@ describe("withHintPenalties", () => {
     expect(result.entries[0].hintPenalty).toBe(30);
   });
 
-  it("matches a penalty to its row case-insensitively, like every other login join", async () => {
+  it("matches a penalty to its row case-insensitively, like every other player id join", async () => {
     // The scorer records the PR author's spelling of the login; the hint
     // purchase records the session's. module-contributions already unions the
     // two spellings into ONE row — the penalty must land on that row too, or

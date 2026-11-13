@@ -513,7 +513,7 @@ export default function AdminSupportTab({
                   confirmLabel: "Delete contestant",
                   body: (
                     <>
-                      {c.idLine} Removes their progress, hints, team membership and account record. This cannot be undone.
+                      {c.idLine} Removes their progress, hints, team membership and event record. Their sign-in account and GitHub link stay. This cannot be undone.
                       {detail.team?.isCaptain && (
                         <>
                           {" "}

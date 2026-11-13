@@ -67,8 +67,8 @@ either way, so a stock-looking name or a full target list is not a symptom of th
 problem on its own.)
 
 **Fix.** Set `ADMIN_LOGINS` in `.env` to a comma-separated list of GitHub
-logins (case doesn't matter — logins join case-insensitively everywhere in
-this repo), then restart the app container — no rebuild needed, since this is
+logins (case doesn't matter — the admin allowlist matches logins
+case-insensitively), then restart the app container — no rebuild needed, since this is
 a runtime read, not a build arg:
 
 ```sh
@@ -162,7 +162,11 @@ Work down this list — each item is a different subsystem:
    could not read the Secure Development target list from
    `ctf:admin:settings` — it waits rather than guessing, so fix Redis and the
    next tick catches up. A tick log with `dropped` counts names why a comment
-   was refused (forged author, unknown target, malformed marker).
+   was refused (forged author, unknown target, malformed marker, or `unlinked`: the PR
+   author's GitHub login has not signed in to the box, so no player owns it;
+   the poller never logs the login). Sync also refuses to start without
+   Redis (`ctf-sync: Secure Development needs Redis to attribute PRs to
+   players`).
 4. **Is the score comment authored by `github-actions[bot]`?** Only that
    author is trusted — a comment posted any other way (including by you) is
    dropped by design.

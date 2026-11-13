@@ -16,14 +16,14 @@ import { errorLabel } from "@/lib/error-label";
  *
  * There is no collection step and no new write path. Every number below is a
  * read over keys the modules already maintain: quiz answers and classic solves
- * carry `{points, at}` per item per login, Secure Development solves are
- * timestamped in `ctf:solves:<target>`, attempts are counted per login, and
+ * carry `{points, at}` per item per player, Secure Development solves are
+ * timestamped in `ctf:solves:<target>`, attempts are counted per player, and
  * `firstTeamAt` (ADR 49) supplies the funnel's conversion moment.
  *
  * The one figure that is not a Redis key of this app's own: Secure
  * Development POINTS. `ctf:solves:*` says who solved what and when, never for
  * how much — points are a rubric property the scorer applies — so the
- * per-login SD total is read from the leaderboard source (the scorer's own
+ * per-player SD total is read from the leaderboard source (the scorer's own
  * `GET /leaderboard`, or its ZSET), whose `entry.points` is exactly that
  * number before the module overlays add theirs (module-contributions.ts).
  * Without it every team here read lower than the board by
@@ -132,9 +132,9 @@ export type ChallengeStat = {
 export type EventMetrics = {
   generatedAt: string;
   funnel: {
-    /** Distinct logins on a team right now. */
+    /** Distinct players on a team right now. */
     onATeam: number;
-    /** Distinct logins that have EVER been on a team — the conversion count,
+    /** Distinct players that have EVER been on a team — the conversion count,
      *  which survives leaving and switching (ADR 49). */
     everOnATeam: number;
     /** Made at least one submission in any module. */
@@ -226,20 +226,20 @@ async function batched(commands: (string | number)[][]): Promise<UpstashResult[]
 }
 
 /**
- * Every Secure Development solve, as `<target>/<login>/<challengeId>` -> ISO.
+ * Every Secure Development solve, as `<target>/<playerId>/<challengeId>` -> ISO.
  *
  * The TARGET is kept in the key, not flattened away. Challenge ids are unique
  * within an app's catalogue but nothing makes them unique ACROSS apps, so a
  * hint bought on one target could otherwise be matched against a solve on
  * another that happens to share an id.
  */
-/** Every login with a user record (`ctf:user:<login>`), in its stored
- *  spelling. The only index that holds a player who joined a team, left it
+/** Every player id with a user record (`ctf:user:<playerId>`), as stored.
+ *  The only index that holds a player who joined a team, left it
  *  and scored nothing — no roster or points hash knows them, yet "ever on a
  *  team" exists to count them. The same pattern also matches each player's
- *  `ctf:user:<login>:hints` set, which is skipped. Throws on an unreadable
+ *  `ctf:user:<playerId>:hints` set, which is skipped. Throws on an unreadable
  *  page, like the SD sweep below, so the caller can say the funnel is short. */
-async function readUserLogins(): Promise<string[]> {
+async function readUserIds(): Promise<string[]> {
   let cursor = "0";
   const logins: string[] = [];
   do {
@@ -278,7 +278,7 @@ async function readSecureDevSolves(): Promise<Map<string, string>> {
   keys.forEach((key, i) => {
     const target = key.slice("ctf:solves:".length);
     for (const [field, at] of hashEntries(replies[i]?.result)) {
-      // field is `<login>:<challengeId>`
+      // field is `<playerId>:<challengeId>`
       const sep = field.indexOf(":");
       if (sep <= 0) continue;
       out.set(`${target}/${field.slice(0, sep).toLowerCase()}/${field.slice(sep + 1)}`, String(at));
@@ -363,7 +363,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   const aiPoints = new Map(hashEntries(aiPointsRes.result).map(([k, v]) => [k.toLowerCase(), Number(v) || 0]));
   const hintsSpent = hashEntries(hintsSpentRes.result).map(([k, v]) => [k.toLowerCase(), Number(v) || 0] as const);
 
-  // Secure Development points per login, from the leaderboard
+  // Secure Development points per player, from the leaderboard
   // source — see the file header for why no Redis key of ours holds them.
   // Gated on the source MODE, not just on whether a fetch works:
   //   - "empty" is the source's own answer when the module is off; there is
@@ -425,7 +425,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
 
   // The contestant set: anyone on a team, anyone who has scored in any module.
   // Cheaper than SCANning `ctf:user:*`, which also matches
-  // `ctf:user:<login>:hints` and would need filtering.
+  // `ctf:user:<playerId>:hints` and would need filtering.
   //
   // TEAM MEMBERSHIP IS WHAT FINDS THE STUCK. Someone who attempted everything
   // and solved nothing has no points row, so the aggregate keys do not know
@@ -442,13 +442,13 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     ...sdPoints.keys(),
   ]);
 
-  // Every per-login hash below is keyed on the login AS THE SESSION SPELLED IT
-  // (`ctf:classic:solves:ChrisZoc`); only the join between logins is
-  // case-insensitive. So each contestant is read under every spelling the box
-  // holds for them — team rosters, the points and hint-spend hashes, the
-  // scorer's entries — and their rows merged. Reading under the lowercased
-  // login alone found nothing for a mixed-case player, which at the RTS event
-  // hid 12 of 42 contestants from every figure on this panel.
+  // Every per-player hash below is keyed on the player id as stored
+  // (`ctf:classic:solves:<playerId>`), while contestants are joined
+  // case-insensitively. Kit ids are lowercase, so a contestant normally has
+  // one spelling; each is still read under every spelling the box holds for
+  // them (team rosters, the points and hint-spend hashes, the scorer's
+  // entries) and their rows merged, so a record stored under another case
+  // does not drop that contestant from every figure on this panel.
   const spellingsOf = new Map<string, Set<string>>();
   const addSpelling = (raw: string) => {
     const login = raw.toLowerCase();
@@ -464,7 +464,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   // Leavers who scored nothing are known only to their user record; without
   // this sweep "ever on a team" missed exactly the people it exists to count.
   try {
-    for (const raw of await readUserLogins()) {
+    for (const raw of await readUserIds()) {
       addSpelling(raw);
       contestants.add(raw.toLowerCase());
     }
@@ -505,10 +505,10 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   // empty hash it would drop that contestant's rows from every figure with
   // nothing saying so; failing the read sends the tab to its error state.
   const failed = replies.find((reply) => reply?.error);
-  if (failed) throw new Error(`metrics per-login read failed: ${failed.error}`);
+  if (failed) throw new Error(`metrics per-player read failed: ${failed.error}`);
 
   // One contestant's rows across their spellings. A single item held under
-  // two spellings of one login keeps its first row, which is enough: the
+  // two spellings of one player id keeps its first row, which is enough: the
   // figures below count an item once per contestant either way.
   const merged = new Map<string, { result: unknown }[]>();
   reads.forEach(({ login }, r) => {
@@ -568,7 +568,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     // bought nothing, and counting the two together turns "hints are used"
     // into a claim that "hints help" — which the data would not support.
     // Secure-development slots compare against the scorer's solve times;
-    // classic and ai slots against this login's own solve rows, already
+    // classic and ai slots against this player's own solve rows, already
     // loaded above. The target stays in the key so two targets sharing a
     // challenge id cannot cross-match.
     for (const [slot, boughtAt] of hintTimes) {
@@ -612,7 +612,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     // Secure Development counts as earned on EITHER record of it: a solve row
     // in ctf:solves:*, or points on the leaderboard source. The two are
     // written by different processes (the poller and the scorer) and can
-    // disagree for a login — a solves sweep that failed a page, an entry the
+    // disagree for a player — a solves sweep that failed a page, an entry the
     // scorer knows that the poller has not stored — and a contestant whose
     // points are in the team total below must not read as never having
     // scored in the funnel above it.

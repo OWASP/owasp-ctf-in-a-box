@@ -24,7 +24,7 @@ import { MODULE_LABEL } from "./vocabulary";
 import { LIVE_POLL_MS, useLivePoll } from "./use-live-poll";
 import { activityZone, UtcToggle, useShowUtc } from "./activity-time-zone";
 
-export type ActivityEntry = { at: string; type: string; userId: string; name: string; detail?: string };
+export type ActivityEntry = { at: string; type: string; userId: string | null; name: string; detail?: string };
 
 const PAGE_SIZE = 200;
 const FIELD_CLASS =
@@ -97,15 +97,20 @@ export type ActivityQuery = {
 type Field = "any" | "player" | "type" | "detail" | "team";
 const FIELDS: readonly Field[] = ["player", "type", "detail", "team"];
 
-/** The search box's words, lowercased. `player:`, `type:`, `detail:` and
- *  `team:` restrict a word to that field; a prefix with nothing after it is
- *  dropped rather than matching everything or nothing. */
+/** Prefixes that mean another field: `login:` is what organizers typed
+ *  before the field was named for the player, so it keeps working. */
+const FIELD_ALIASES: Readonly<Record<string, Field>> = { login: "player" };
+
+/** The search box's words, lowercased. `player:` (alias `login:`), `type:`,
+ *  `detail:` and `team:` restrict a word to that field; a prefix with nothing
+ *  after it is dropped rather than matching everything or nothing. */
 function parseSearch(text: string): { field: Field; needle: string }[] {
   const terms: { field: Field; needle: string }[] = [];
   for (const word of text.toLowerCase().split(/\s+/)) {
     if (!word) continue;
     const colon = word.indexOf(":");
-    const prefix = colon > 0 ? (word.slice(0, colon) as Field) : null;
+    const raw = colon > 0 ? word.slice(0, colon) : null;
+    const prefix = raw === null ? null : ((FIELD_ALIASES[raw] ?? raw) as Field);
     if (prefix && FIELDS.includes(prefix)) {
       const needle = word.slice(colon + 1);
       if (needle) terms.push({ field: prefix, needle });

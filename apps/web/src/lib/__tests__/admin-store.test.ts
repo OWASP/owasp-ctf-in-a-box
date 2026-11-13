@@ -1001,4 +1001,20 @@ describe("writeAdminAudit", () => {
     const line = JSON.parse(String(push[2])) as Record<string, unknown>;
     expect(line).toEqual({ at: expect.any(String), by: ALICE.id, name: "alice", action: "quiz-upsert", questionId: "q1" });
   });
+
+  // `by`, `name`, `action` and `at` belong to the line itself. A detail that
+  // happens to carry one of those keys must not rewrite who acted, what they
+  // did, or when.
+  it("keeps the actor and action when a detail carries the same keys", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ result: 1 }, { result: "OK" }]);
+    await writeAdminAudit(ALICE, "attachment-add", { name: "cap.pcap", by: "someone", action: "other", at: "then", item: "web-one" });
+    const [[push]] = mocks.upstashPipeline.mock.calls[0];
+    const line = JSON.parse(String(push[2])) as Record<string, unknown>;
+    expect(line.name).toBe("alice");
+    expect(line.by).toBe(ALICE.id);
+    expect(line.action).toBe("attachment-add");
+    expect(line.at).not.toBe("then");
+    expect(Object.keys(line).slice(0, 4)).toEqual(["at", "by", "name", "action"]);
+    expect(line.item).toBe("web-one");
+  });
 });

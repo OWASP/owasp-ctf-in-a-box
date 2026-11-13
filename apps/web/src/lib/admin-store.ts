@@ -96,9 +96,14 @@ export const adminErrorLabel: (err: unknown) => string = errorLabel;
  *  audit-write failure is logged but never fails a request whose actual data
  *  write already succeeded. `detail` must carry identifiers only, never a
  *  flag, a signing key, or a minted token — callers are responsible for
- *  keeping it that way. */
+ *  keeping it that way. A detail key named `at`, `by`, `name` or `action`
+ *  is dropped in favour of the line's own. */
 export async function writeAdminAudit(actor: AuditActor, action: string, detail: Record<string, unknown>): Promise<void> {
-  const audit = JSON.stringify({ at: new Date().toISOString(), by: actor.id, name: actor.name, action, ...detail });
+  // `at`, `by`, `name` and `action` describe the line itself, so a detail key
+  // of the same name never replaces them: spreading `entry` first fixes the
+  // key order, spreading it last makes its values win.
+  const entry = { at: new Date().toISOString(), by: actor.id, name: actor.name, action };
+  const audit = JSON.stringify({ ...entry, ...detail, ...entry });
   try {
     await upstashPipeline([
       ["LPUSH", ADMIN_AUDIT_KEY, audit],

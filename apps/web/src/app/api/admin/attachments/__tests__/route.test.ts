@@ -73,7 +73,7 @@ describe("/api/admin/attachments", () => {
     expect(res.status).toBe(200);
     expect(m.addUpload).toHaveBeenCalledWith("classic", "web-one", "cap.pcap", new Uint8Array([1, 2, 3]));
     expect((await res.json()).attachment).not.toHaveProperty("chunks");
-    expect(m.audit).toHaveBeenCalledWith(actor("boss"), "attachment-add", { item: "web-one", kind: "upload", name: "cap.pcap", size: 3 });
+    expect(m.audit).toHaveBeenCalledWith(actor("boss"), "attachment-add", { item: "web-one", kind: "upload", attachmentName: "cap.pcap", size: 3 });
   });
 
   it("413s a declared or actual body over 5 MiB without storing it", async () => {
@@ -132,6 +132,7 @@ describe("/api/admin/attachments", () => {
     const res = await json({ module: "classic", item: "web-one", link: { name: "big", url: "https://e.org/big" } });
     expect(res.status).toBe(200);
     expect(m.addLink).toHaveBeenCalledWith("classic", "web-one", "big", "https://e.org/big");
+    expect(m.audit).toHaveBeenCalledWith(actor("boss"), "attachment-add", { item: "web-one", kind: "link", attachmentName: "big" });
     expect((await json({ module: "classic", item: "web-one", link: { name: "big" } })).status).toBe(400);
     expect((await json({ module: "classic", item: "web-one", link: { name: "b", url: "https://e.org" }, extra: 1 })).status).toBe(400);
   });

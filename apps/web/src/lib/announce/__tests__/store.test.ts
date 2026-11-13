@@ -28,6 +28,7 @@ import {
   claimLedgerField,
   claimLedgerFields,
   getAnnounceConfig,
+  getWebhookDeliveryTarget,
   getWebhookGeneration,
   getWebhookUrl,
   ledgerFields,
@@ -250,7 +251,9 @@ describe("updateAnnounceConfig", () => {
 
 describe("setAnnounceWebhook", () => {
   it("stores a valid URL and audits only 'set' — never the URL", async () => {
-    mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: "OK" })));
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => (cmd[0] === "GET" ? { result: null } : { result: "OK" })),
+    );
     const result = await setAnnounceWebhook("admin", VALID_URL);
     expect(result).toEqual({ webhookConfigured: true });
     const set = mocks.upstashPipeline.mock.calls
@@ -261,14 +264,21 @@ describe("setAnnounceWebhook", () => {
     expect(JSON.stringify(mocks.writeAdminAudit.mock.calls)).not.toContain(VALID_URL);
   });
 
-  it("reconciles the stored lifecycle before arming, so a launch/close during a cleared webhook is not replayed", async () => {
+  it("reconciles a cleared webhook to the launched-and-closed event, so the stale launch is not announced", async () => {
+    // While cleared, the event launched and scoring closed. Arming again must
+    // advance the stored pack to that current state instead of leaving the
+    // pre-launch baseline for the next tick to replay as a fresh launch.
     mocks.getAdminSettings.mockResolvedValue({
       scoringStartsAt: "2020-01-01T10:00:00Z",
       scoringEndsAt: "2020-01-01T11:00:00Z",
       paused: false,
     });
     mocks.upstashPipeline.mockImplementation(async (commands) =>
-      commands.map((cmd) => (cmd[0] === "GET" ? { result: "v2|L0P0C0A0" } : { result: "OK" })),
+      commands.map((cmd) => {
+        if (cmd[0] === "GET" && cmd[1] === DISCORD_WEBHOOK_KEY) return { result: null };
+        if (cmd[0] === "GET" && cmd[1] === "ctf:announce:lifecycle") return { result: "v2|L0P0C0A0" };
+        return { result: "OK" };
+      }),
     );
     mocks.upstashEval.mockResolvedValue([1, 5, "v2|L0P0C0A0"]);
     await setAnnounceWebhook("admin", VALID_URL);
@@ -279,14 +289,43 @@ describe("setAnnounceWebhook", () => {
     ]);
   });
 
-  it("preserves an already-announced pause while reconciling, so its resume is still owed", async () => {
+  it("does not reconcile when replacing an already-configured webhook, so the next tick still announces a launch", async () => {
+    // A launch edge belongs to the running ticker. Advancing the lifecycle
+    // pack during a URL replacement would silently consume that edge.
     mocks.getAdminSettings.mockResolvedValue({
       scoringStartsAt: "2020-01-01T10:00:00Z",
       scoringEndsAt: "2020-01-01T11:00:00Z",
       paused: false,
     });
     mocks.upstashPipeline.mockImplementation(async (commands) =>
-      commands.map((cmd) => (cmd[0] === "GET" ? { result: "v2|L1P1C0A1" } : { result: "OK" })),
+      commands.map((cmd) => {
+        if (cmd[0] === "GET" && cmd[1] === DISCORD_WEBHOOK_KEY) return { result: VALID_URL };
+        if (cmd[0] === "GET" && cmd[1] === "ctf:announce:lifecycle") return { result: "v2|L0P0C0A0" };
+        return { result: "OK" };
+      }),
+    );
+    await setAnnounceWebhook("admin", VALID_URL);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(mocks.getAdminSettings).not.toHaveBeenCalled();
+    const reads = mocks.upstashPipeline.mock.calls
+      .flatMap((call) => call[0])
+      .filter((cmd) => cmd[0] === "GET")
+      .map((cmd) => cmd[1]);
+    expect(reads).not.toContain("ctf:announce:lifecycle");
+  });
+
+  it("preserves an already-announced pause's owed resume while reconciling a cleared webhook", async () => {
+    mocks.getAdminSettings.mockResolvedValue({
+      scoringStartsAt: "2020-01-01T10:00:00Z",
+      scoringEndsAt: "2020-01-01T11:00:00Z",
+      paused: false,
+    });
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => {
+        if (cmd[0] === "GET" && cmd[1] === DISCORD_WEBHOOK_KEY) return { result: null };
+        if (cmd[0] === "GET" && cmd[1] === "ctf:announce:lifecycle") return { result: "v2|L1P1C0A1" };
+        return { result: "OK" };
+      }),
     );
     mocks.upstashEval.mockResolvedValue([1, 6, "v2|L1P1C0A1"]);
     await setAnnounceWebhook("admin", VALID_URL);
@@ -345,7 +384,11 @@ describe("setAnnounceWebhook", () => {
 
   it("refuses to arm the webhook when the lifecycle pack cannot be read", async () => {
     mocks.upstashPipeline.mockImplementation(async (commands) =>
-      commands.map((cmd) => (cmd[0] === "GET" && cmd[1] === "ctf:announce:lifecycle" ? { error: "NOAUTH" } : { result: "OK" })),
+      commands.map((cmd) => {
+        if (cmd[0] === "GET" && cmd[1] === DISCORD_WEBHOOK_KEY) return { result: null };
+        if (cmd[0] === "GET" && cmd[1] === "ctf:announce:lifecycle") return { error: "NOAUTH" };
+        return { result: "OK" };
+      }),
     );
     await expect(setAnnounceWebhook("admin", VALID_URL)).rejects.toThrow(/state read failed/);
     const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
@@ -359,7 +402,11 @@ describe("setAnnounceWebhook", () => {
       paused: false,
     });
     mocks.upstashPipeline.mockImplementation(async (commands) =>
-      commands.map((cmd) => (cmd[0] === "GET" ? { result: "v2|L0P0C0A0" } : { result: "OK" })),
+      commands.map((cmd) => {
+        if (cmd[0] === "GET" && cmd[1] === DISCORD_WEBHOOK_KEY) return { result: null };
+        if (cmd[0] === "GET" && cmd[1] === "ctf:announce:lifecycle") return { result: "v2|L0P0C0A0" };
+        return { result: "OK" };
+      }),
     );
     mocks.upstashEval.mockResolvedValue([0, 1, "v2|L0P0C0A0"]);
     await expect(setAnnounceWebhook("admin", VALID_URL)).rejects.toThrow(/did not converge/);
@@ -406,6 +453,46 @@ describe("getWebhookGeneration", () => {
   it("THROWS on a malformed generation instead of reading it as 0", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: "not-a-counter" }]);
     await expect(getWebhookGeneration()).rejects.toThrow(/invalid webhook generation/);
+  });
+});
+
+describe("getWebhookDeliveryTarget", () => {
+  it("reads the URL and generation in one pipeline, so a replacement cannot pair a retired URL with a new generation", async () => {
+    let calls = 0;
+    mocks.upstashPipeline.mockImplementation(async (commands) => {
+      calls += 1;
+      // A replacement between two separate reads would let the second read
+      // observe the new URL and the newer generation; the paired read must
+      // return only the snapshot from its single call.
+      return commands.map((cmd) =>
+        cmd[1] === DISCORD_WEBHOOK_KEY
+          ? { result: "https://discord.com/api/webhooks/1/retired" }
+          : { result: calls === 1 ? "0" : "1" },
+      );
+    });
+    await expect(getWebhookDeliveryTarget()).resolves.toEqual({
+      url: "https://discord.com/api/webhooks/1/retired",
+      generation: 0,
+    });
+    expect(calls).toBe(1);
+    expect(mocks.upstashPipeline.mock.calls[0][0]).toEqual([
+      ["GET", DISCORD_WEBHOOK_KEY],
+      ["GET", ANNOUNCE_WEBHOOK_GENERATION_KEY],
+    ]);
+  });
+
+  it("an absent URL is null but its generation still comes back; a malformed counter THROWS", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: null }, { result: "3" }]);
+    await expect(getWebhookDeliveryTarget()).resolves.toEqual({ url: null, generation: 3 });
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: null }, { result: "not-a-counter" }]);
+    await expect(getWebhookDeliveryTarget()).rejects.toThrow(/invalid webhook generation/);
+  });
+
+  it("THROWS on either command error instead of returning a partial target", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ error: "NOAUTH" }, { result: "0" }]);
+    await expect(getWebhookDeliveryTarget()).rejects.toThrow(/webhook target read failed/);
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: VALID_URL }, { error: "WRONGTYPE" }]);
+    await expect(getWebhookDeliveryTarget()).rejects.toThrow(/webhook target read failed/);
   });
 });
 

@@ -297,11 +297,16 @@ export async function setAnnounceWebhook(actor: string, raw: unknown): Promise<{
   }
   const checked = checkDiscordWebhookUrl(raw);
   if (!checked.ok) throw new AnnounceValidationError(checked.message);
-  // Reconcile BEFORE the URL lands: while the box is still unconfigured a
-  // concurrent tick cannot observe the new webhook against a pack frozen at
-  // the last edge before it was cleared, replaying a launch (or other
-  // transition) that already happened.
-  await reconcileLifecycleState();
+  // A clear freezes the lifecycle pack at its last observed edge, so arming
+  // the webhook again must reconcile to the CURRENT state before the URL
+  // lands: otherwise a launch (or close) that happened while cleared replays
+  // as a fresh edge. Replacing an already-configured webhook must NOT
+  // reconcile — the live ticker owns that observation, and silently advancing
+  // it here would consume a launch that still needs to be announced.
+  const existingUrl = await getWebhookUrl();
+  if (existingUrl === null) {
+    await reconcileLifecycleState();
+  }
   const [res] = await upstashPipeline([["SET", DISCORD_WEBHOOK_KEY, checked.value]]);
   if (res.error) throw new Error(`webhook write failed: ${res.error}`);
   await writeAdminAudit(actor, "announce-webhook", { state: "set" });
@@ -319,15 +324,31 @@ export async function getWebhookUrl(): Promise<string | null> {
   return typeof res.result === "string" && res.result !== "" ? res.result : null;
 }
 
-/** The current webhook generation, read AFTER the URL by the delivery
- *  sweeps. A clear between those reads advances this value, so entries
- *  stamped before the clear are rejected rather than sent to a URL armed
- *  later. A failed read THROWS: the sweep must not guess a generation and
- *  deliver stale work. */
+/** The current webhook generation. A failed read THROWS: a sweep must not
+ *  guess a generation and deliver stale work. */
 export async function getWebhookGeneration(): Promise<number> {
   const [res] = await upstashPipeline([["GET", ANNOUNCE_WEBHOOK_GENERATION_KEY]]);
   if (res.error) throw new Error(`webhook generation read failed: ${res.error}`);
   return parseWebhookGeneration(res.result);
+}
+
+/** The webhook URL and its generation, read in ONE pipeline so a delivery
+ *  sweep cannot pair a retired URL with a generation advanced by a clear
+ *  after it. The URL is read first, then the generation: a clear racing the
+ *  pair still moves the generation past any entry staged against the old URL,
+ *  and the next sweep re-reads both. Per-command errors and malformed
+ *  counters THROW rather than being read as "no webhook" or "generation 0" —
+ *  a sweep must not act on a partial view. */
+export async function getWebhookDeliveryTarget(): Promise<{ url: string | null; generation: number }> {
+  const [urlRes, genRes] = await upstashPipeline([
+    ["GET", DISCORD_WEBHOOK_KEY],
+    ["GET", ANNOUNCE_WEBHOOK_GENERATION_KEY],
+  ]);
+  if (urlRes.error || genRes.error) {
+    throw new Error(`webhook target read failed: ${urlRes.error ?? genRes.error}`);
+  }
+  const url = typeof urlRes.result === "string" && urlRes.result !== "" ? urlRes.result : null;
+  return { url, generation: parseWebhookGeneration(genRes.result) };
 }
 
 // --- dedup ledgers -----------------------------------------------------------

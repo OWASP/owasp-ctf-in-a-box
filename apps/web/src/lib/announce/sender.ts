@@ -31,8 +31,7 @@ import type { DiscordMessage } from "./messages";
 import {
   bumpStatus,
   getAnnounceConfig,
-  getWebhookGeneration,
-  getWebhookUrl,
+  getWebhookDeliveryTarget,
   outboxClaim,
   outboxComplete,
   outboxEnqueue,
@@ -127,26 +126,19 @@ export async function flush(): Promise<void> {
       return;
     }
     let url: string | null;
+    let generation: number;
     try {
-      url = await getWebhookUrl();
+      ({ url, generation } = await getWebhookDeliveryTarget());
     } catch (err) {
-      // A failed read is not "no webhook": leave the local queue and every
-      // outbox entry untouched so the next pass (or the ticker's retry
-      // sweep) delivers them instead of marking them sent or skipped.
-      console.error("[announce] webhook read failed, leaving announcements queued:", errorLabel(err));
+      // A failed read is not "no webhook" or "generation 0": leave the local
+      // queue and every outbox entry untouched so the next pass (or the
+      // ticker's retry sweep) delivers them instead of marking them sent or
+      // skipped.
+      console.error("[announce] webhook target read failed, leaving announcements queued:", errorLabel(err));
       return;
     }
     if (!url) {
       queue = [];
-      return;
-    }
-    let generation: number;
-    try {
-      generation = await getWebhookGeneration();
-    } catch (err) {
-      // A failed generation read is not "generation 0": leave entries for
-      // the next pass rather than deliver work from an unknown boundary.
-      console.error("[announce] webhook generation read failed, leaving announcements queued:", errorLabel(err));
       return;
     }
     const pending = await outboxPending();
@@ -156,10 +148,12 @@ export async function flush(): Promise<void> {
     // counters were captured with this config read; a producer that raced the
     // disabling write still carries the old one.
     for (const item of pending) {
-      // A NEWER epoch means this pass's config snapshot predates a disable
-      // and re-enable. Leave it pending for a pass with fresh config instead
-      // of terminally skipping an entry that may still be valid.
+      // A NEWER epoch or generation means this pass's snapshot predates a
+      // re-enable or a fresh webhook. Leave it pending for a pass with fresh
+      // config instead of terminally skipping an entry that may still be
+      // valid.
       if (item.entry.kindEpoch > config.kindEpochs[item.entry.kind]) continue;
+      if (item.entry.webhookGeneration > generation) continue;
       if (
         item.entry.webhookGeneration !== generation ||
         item.entry.kindEpoch !== config.kindEpochs[item.entry.kind]
@@ -219,22 +213,16 @@ export async function flushRetries(): Promise<void> {
     const config = await getAnnounceConfig();
     if (!config.webhookConfigured) return;
     let url: string | null;
+    let generation: number;
     try {
-      url = await getWebhookUrl();
+      ({ url, generation } = await getWebhookDeliveryTarget());
     } catch (err) {
-      // See flush(): a failed read leaves pending/retryable entries for the
-      // next sweep rather than dropping them.
-      console.error("[announce] webhook read failed, leaving retries queued:", errorLabel(err));
+      // See flush(): a failed paired read leaves pending/retryable entries for
+      // the next sweep rather than dropping them.
+      console.error("[announce] webhook target read failed, leaving retries queued:", errorLabel(err));
       return;
     }
     if (!url) return;
-    let generation: number;
-    try {
-      generation = await getWebhookGeneration();
-    } catch (err) {
-      console.error("[announce] webhook generation read failed, leaving retries queued:", errorLabel(err));
-      return;
-    }
     const [pending, retryable] = await Promise.all([outboxPending(), outboxRetryable()]);
     // One id can only have one status, but dedupe anyway so a store change
     // (or a concurrent status flip) cannot put the same announcement in two
@@ -245,9 +233,11 @@ export async function flushRetries(): Promise<void> {
     }
     const candidates: { id: string; entry: OutboxEntry }[] = [];
     for (const item of [...byId.values()].sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at))) {
-      // See flush(): a newer epoch belongs to a later config snapshot than
-      // this pass saw, so leave it pending rather than terminally skipping it.
+      // See flush(): a newer epoch or generation belongs to a later config
+      // snapshot than this pass saw, so leave it pending rather than
+      // terminally skipping it.
       if (item.entry.kindEpoch > config.kindEpochs[item.entry.kind]) continue;
+      if (item.entry.webhookGeneration > generation) continue;
       if (
         item.entry.webhookGeneration !== generation ||
         item.entry.kindEpoch !== config.kindEpochs[item.entry.kind]

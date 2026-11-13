@@ -7,8 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getAnnounceConfig: vi.fn(),
-  getWebhookUrl: vi.fn(),
-  getWebhookGeneration: vi.fn(),
+  getWebhookDeliveryTarget: vi.fn(),
   outboxEnqueue: vi.fn(),
   outboxPending: vi.fn(),
   outboxRetryable: vi.fn(),
@@ -24,8 +23,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/error-label", () => ({ errorLabel: () => "label" }));
 vi.mock("@/lib/announce/store", () => ({
   getAnnounceConfig: mocks.getAnnounceConfig,
-  getWebhookUrl: mocks.getWebhookUrl,
-  getWebhookGeneration: mocks.getWebhookGeneration,
+  getWebhookDeliveryTarget: mocks.getWebhookDeliveryTarget,
   outboxEnqueue: mocks.outboxEnqueue,
   outboxPending: mocks.outboxPending,
   outboxRetryable: mocks.outboxRetryable,
@@ -67,8 +65,7 @@ beforeEach(() => {
   // assertions; implementations are re-stated right below.
   vi.clearAllMocks();
   mocks.getAnnounceConfig.mockResolvedValue(configured());
-  mocks.getWebhookUrl.mockResolvedValue(URL);
-  mocks.getWebhookGeneration.mockResolvedValue(0);
+  mocks.getWebhookDeliveryTarget.mockResolvedValue({ url: URL, generation: 0 });
   mocks.outboxEnqueue.mockResolvedValue(undefined);
   mocks.outboxPending.mockResolvedValue([]);
   mocks.outboxRetryable.mockResolvedValue([]);
@@ -157,6 +154,19 @@ describe("flush", () => {
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 
+  it("leaves an entry with a newer webhook generation pending, neither skipped nor posted", async () => {
+    // A fresh webhook landed after this pass read the generation. The entry
+    // belongs to the newer generation, so terminally skipping it would drop a
+    // still-valid announcement.
+    mocks.getWebhookDeliveryTarget.mockResolvedValue({ url: URL, generation: 1 });
+    mocks.outboxPending.mockResolvedValue([{ id: "newer", entry: entry("launch", "pending", 0, 2) }]);
+    await flush();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxClaim).not.toHaveBeenCalled();
+    expect(mocks.outboxSkip).not.toHaveBeenCalled();
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+
   it("marks a failed POST failed and records the status", async () => {
     mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     fetchMock.mockResolvedValue({ ok: false, status: 404 });
@@ -166,15 +176,15 @@ describe("flush", () => {
   });
 
   it("does nothing at all without a webhook", async () => {
-    mocks.getWebhookUrl.mockResolvedValue(null);
+    mocks.getWebhookDeliveryTarget.mockResolvedValue({ url: null, generation: 0 });
     mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     await flush();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 
-  it("a failed webhook read leaves pending entries untouched for a retry", async () => {
-    mocks.getWebhookUrl.mockRejectedValue(new Error("redis down"));
+  it("a failed webhook target read leaves pending entries untouched for a retry", async () => {
+    mocks.getWebhookDeliveryTarget.mockRejectedValue(new Error("redis down"));
     mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     await flush();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -310,8 +320,8 @@ describe("flushRetries", () => {
     expect(mocks.outboxComplete).toHaveBeenCalledWith("same", "sent", "lease-token");
   });
 
-  it("a failed webhook read leaves retryable entries untouched for the next sweep", async () => {
-    mocks.getWebhookUrl.mockRejectedValue(new Error("redis down"));
+  it("a failed webhook target read leaves retryable entries untouched for the next sweep", async () => {
+    mocks.getWebhookDeliveryTarget.mockRejectedValue(new Error("redis down"));
     mocks.outboxRetryable.mockResolvedValue([{ id: "9", entry: entry("launch", "failed", 1) }]);
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -323,6 +333,16 @@ describe("flushRetries", () => {
     mocks.outboxRetryable.mockResolvedValue([{ id: "9", entry: entry("launch", "failed", 1, 0, 1) }]);
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxSkip).not.toHaveBeenCalled();
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+
+  it("leaves a retryable entry with a newer webhook generation pending, neither skipped nor posted", async () => {
+    mocks.getWebhookDeliveryTarget.mockResolvedValue({ url: URL, generation: 1 });
+    mocks.outboxRetryable.mockResolvedValue([{ id: "newer", entry: entry("launch", "failed", 1, 2) }]);
+    await flushRetries();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.outboxClaim).not.toHaveBeenCalled();
     expect(mocks.outboxSkip).not.toHaveBeenCalled();
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
@@ -346,15 +366,15 @@ describe("flushRetries", () => {
     // clear's cancellation scan. The clear advanced the generation, so this
     // entry must not reach the webhook configured afterwards.
     mocks.outboxPending.mockResolvedValue([{ id: "race", entry: entry("launch", "pending", 0, 0) }]);
-    mocks.getWebhookGeneration.mockResolvedValue(1);
+    mocks.getWebhookDeliveryTarget.mockResolvedValue({ url: URL, generation: 1 });
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.outboxSkip).toHaveBeenCalledWith("race");
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 
-  it("a failed generation read leaves retryable entries untouched", async () => {
-    mocks.getWebhookGeneration.mockRejectedValue(new Error("redis down"));
+  it("a failed generation read in the paired target leaves retryable entries untouched", async () => {
+    mocks.getWebhookDeliveryTarget.mockRejectedValue(new Error("invalid webhook generation"));
     mocks.outboxRetryable.mockResolvedValue([{ id: "9", entry: entry("launch", "failed", 1) }]);
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();

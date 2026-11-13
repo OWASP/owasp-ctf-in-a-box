@@ -28,6 +28,18 @@ vi.mock("@/lib/auth-client", () => ({
   authClient: { linkSocial: vi.fn(), useSession: () => ({ data: null, isPending: false }) },
 }));
 vi.mock("@/lib/github-link", () => ({ getGithubLink }));
+// Records the props the page hands the real button, which still renders.
+const buttonProps = vi.hoisted(() => [] as { callbackURL?: string }[]);
+vi.mock("@/components/link-github-button", async (orig) => {
+  const mod = await orig<typeof import("@/components/link-github-button")>();
+  return {
+    ...mod,
+    default: (props: { callbackURL?: string }) => {
+      buttonProps.push(props);
+      return mod.default(props);
+    },
+  };
+});
 vi.mock("@/lib/enabled-modules", async () =>
   (await import("@/test/enabled-modules-mock")).mockEnabledModules(() => true),
 );
@@ -50,6 +62,7 @@ const render = async (sp?: Record<string, string>) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  buttonProps.length = 0;
   const dvwa = apps.find((a) => a.id === "dvwa")!;
   getEnabledApps.mockResolvedValue([dvwa]);
   getEnabledTotals.mockResolvedValue({ challenges: dvwa.challengeCount, maxPoints: dvwa.maxPoints });
@@ -71,6 +84,9 @@ describe("/challenges fork links and GitHub linking", () => {
     expect(html).not.toContain("https://github.com/");
     expect(html).toContain(NOTICE);
     expect(html).toContain("Link GitHub account");
+    // A link started here returns here, marked so the page can tell an
+    // unfinished link from a finished one.
+    expect(buttonProps).toEqual([{ callbackURL: "/challenges?linked=github" }]);
   });
 
   it("unlinked: a failed link's error code shows the shared copy, never the raw code", async () => {

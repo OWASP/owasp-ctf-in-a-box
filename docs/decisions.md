@@ -4312,8 +4312,10 @@ the `422` is `refused`.
   refusal as a lost score.
 - **A deleted player is refused.** `deleteUser` marks
   `ctf:deleted:<player id>` `pending` before it clears anything and
-  `deleted` once it has succeeded, for ten minutes; a failed delete removes
-  the mark. The scorer reads it in the same Lua script as its `HSETNX`
+  `deleted` once the player's `ctf:user:<id>` record is gone, even if other
+  cleanup failed, for ten minutes. A delete that fails with the record still
+  there removes the mark; one whose cleanup pipeline failed outright (it may
+  have run) leaves it pending. The scorer reads it in the same Lua script as its `HSETNX`
   write. `pending` answers `503`, which sync retries, because the delete may
   still fail and the player stay; `deleted` is a final `422` with the code
   `player-deleted`, which ADR 38 counts as `refused`, like ADR 67's time

@@ -37,8 +37,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   clears anything and `deleted` once it succeeds (for ten minutes), and the
   scorer reads that mark in the same script that writes a solve: `pending`
   answers `503`, which sync retries, and `deleted` a final `422`
-  (`player-deleted`). A failed delete removes the mark, so it loses no
-  score. A player deleted and back within those ten minutes has their
+  (`player-deleted`). A delete that fails with the player's record still
+  there removes the mark, so it loses no score. A player deleted and back within those ten minutes has their
   Secure Development scores refused until it expires.
 - **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
   the linked-account write failed after the user row was written, that row

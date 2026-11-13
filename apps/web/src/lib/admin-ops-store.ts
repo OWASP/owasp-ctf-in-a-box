@@ -617,43 +617,56 @@ export async function deleteUser(
       await upstashPipeline([["SET", marker, DELETE_PENDING, "EX", DELETED_TTL_SECONDS]]),
       "deletion marker",
     );
-    let reset: ResetScope;
     const leftTeam = detail.team?.slug ?? null;
+    // Whether the `ctf:user:<id>` record is gone decides what the mark ends
+    // as when something fails: "kept" (the player stays, so their scores must
+    // score again: remove it), "gone" (the player is deleted even if other
+    // cleanup failed: finish it), or "unknown" (the cleanup pipeline itself
+    // failed, so it may have run: leave it pending, a retry, until it
+    // expires).
+    let record: "kept" | "gone" | "unknown" = "kept";
+    const finishMarker = async () => {
+      try {
+        assertPipelineOk(
+          await upstashPipeline([["SET", marker, DELETE_DONE, "EX", DELETED_TTL_SECONDS]]),
+          "finish deletion marker",
+        );
+      } catch (doneErr) {
+        console.error("[admin-ops] deletion marker left pending after the record was deleted", errorLabel(doneErr));
+      }
+    };
+    let reset: ResetScope;
     try {
       reset = await resetUserProgress(player, actor);
       const cmds: (string | number)[][] = [];
       if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
-      cmds.push(["DEL", userKey(player)]);
+      const recordAt = cmds.push(["DEL", userKey(player)]) - 1;
       for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
       if (heldLogin) {
         cmds.push(["DEL", `ctf:sd:held:by:${heldLogin}`], ["SREM", "ctf:sd:held:authors", heldLogin]);
       }
+      record = "unknown";
+      const results = await upstashPipeline(cmds);
+      record = results[recordAt] && !results[recordAt].error ? "gone" : "kept";
       // Checked: a refused DEL reported as a delete leaves the player on the
       // team with their record in place.
-      assertPipelineOk(await upstashPipeline(cmds), "delete user");
+      assertPipelineOk(results, "delete user");
     } catch (err) {
-      // The player stays, so their scores must score again. If this DEL
-      // fails too, the pending marker only delays them (the scorer answers a
-      // retry) until it expires.
-      try {
-        assertPipelineOk(await upstashPipeline([["DEL", marker]]), "clear deletion marker");
-      } catch (clearErr) {
-        console.error("[admin-ops] deletion marker left pending after a failed delete", errorLabel(clearErr));
+      if (record === "gone") {
+        await finishMarker();
+      } else if (record === "kept") {
+        try {
+          assertPipelineOk(await upstashPipeline([["DEL", marker]]), "clear deletion marker");
+        } catch (clearErr) {
+          console.error("[admin-ops] deletion marker left pending after a failed delete", errorLabel(clearErr));
+        }
       }
       throw err;
     }
     // Only after the cleanup is checked: from here a score for this player is
     // refused for good, not retried. The delete has already happened, so a
-    // failure here is logged, not thrown; the pending mark stays and keeps
-    // answering a retry until it expires.
-    try {
-      assertPipelineOk(
-        await upstashPipeline([["SET", marker, DELETE_DONE, "EX", DELETED_TTL_SECONDS]]),
-        "finish deletion marker",
-      );
-    } catch (doneErr) {
-      console.error("[admin-ops] deletion marker left pending after a completed delete", errorLabel(doneErr));
-    }
+    // failure here is logged, not thrown.
+    await finishMarker();
 
     await audit("ops:user-delete", actor, { player, leftTeam });
     return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };

@@ -778,6 +778,49 @@ describe("deleteUser: the deletion marker", () => {
     expect(allCommands()).not.toContainEqual(["DEL", `ctf:deleted:${OCTO}`]);
   });
 
+  /** Queues a no-team delete up to (not including) the tail pipeline. */
+  function queueUpToTail() {
+    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
+    mockNoSecureDevKeys();
+    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockQuizAndHintsPipeline();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
+  }
+  const finish = ["SET", `ctf:deleted:${OCTO}`, "deleted", "EX", 600];
+  const clear = ["DEL", `ctf:deleted:${OCTO}`];
+
+  it("record deleted but a later cleanup command failed: the mark is finished, never cleared", async () => {
+    queueUpToTail();
+    // [DEL user, 6 rate-limit DELs, DEL held, SREM held] — the held DEL fails.
+    mocks.upstashPipeline.mockResolvedValueOnce([...Array(7).fill({ result: 1 }), { error: "READONLY" }, { result: 1 }]);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finish marker
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(allCommands()).toContainEqual(finish);
+    expect(allCommands()).not.toContainEqual(clear);
+  });
+
+  it("the record's own DEL failed: the player stays, so the mark is cleared", async () => {
+    queueUpToTail();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }, ...Array(8).fill({ result: 1 })]);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // marker DEL
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(allCommands()).toContainEqual(clear);
+    expect(allCommands()).not.toContainEqual(finish);
+  });
+
+  it("the cleanup pipeline itself failed (it may have run): the mark is left pending", async () => {
+    queueUpToTail();
+    mocks.upstashPipeline.mockRejectedValueOnce(new Error("fetch failed"));
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/fetch failed/);
+    expect(allCommands()).not.toContainEqual(clear);
+    expect(allCommands()).not.toContainEqual(finish);
+  });
+
   it("a failed delete removes the marker, so the player's scores score again", async () => {
     linkDeps.getGithubLink.mockResolvedValueOnce(null);
     mocks.upstashPipeline.mockResolvedValueOnce(

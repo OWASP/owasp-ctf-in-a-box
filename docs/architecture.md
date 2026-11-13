@@ -205,9 +205,10 @@ state; everything else that touches scores goes through it.
    start answers `503`, which the poller retries. A payload with no `at` (an
    older sync) keeps the arrival-time rule. A player an organizer is
    deleting is held off too: the delete marks `ctf:deleted:<player id>`
-   `pending` before it clears their solves and `deleted` once it has
-   succeeded (a failed delete removes the mark; it expires after ten
-   minutes), and the scorer reads that mark in the same script as its write.
+   `pending` before it clears their solves and `deleted` once their
+   `ctf:user:<id>` record is gone (a delete that fails with the record still
+   there removes the mark; one whose outcome is unknown leaves it pending; it
+   expires after ten minutes), and the scorer reads that mark in the same script as its write.
    `pending` answers `503`, which sync retries, since the delete may still
    fail; `deleted` is a final `422` (`player-deleted`). A score read before
    the delete therefore cannot restore a cleared solve. The scorer then writes the score

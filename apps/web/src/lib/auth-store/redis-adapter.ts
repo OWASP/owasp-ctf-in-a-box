@@ -17,15 +17,42 @@ import "server-only";
 // clauses on date fields into ISO strings, and parses rows back on the way
 // out. Matching and sorting still compare date fields as instants (see
 // `view`), so nothing depends on two ISO strings being formatted alike.
+//
+// Redis has no multi-command rollback here, so `transaction` compensates
+// instead: the callback runs against an adapter that records every row it
+// creates, and if the callback throws those rows are deleted again before the
+// error is rethrown. Ownership is proved by a random token, not by the row's
+// contents: each create in a transaction sends one, PUT_ROW_SCRIPT stores it
+// in the row's owner key (`ownerKey`, with a TTL) in the same step that writes
+// the row, and the undo (UNDO_CREATE_SCRIPT) deletes the row only while that
+// key still holds the token. The record is taken before the write is sent, so
+// a create whose reply was lost after Redis applied it is still undone; a
+// create Redis refused never set the key, so an identical row someone else
+// wrote is left alone, as is a row that replaced ours under the same id (every
+// delete clears the owner key). The transaction's own updates to a row it
+// created keep the key, so that row is still undone. createOAuthUser writes the
+// user and then the account inside one transaction; without this, a failed
+// account write would leave a user row that owns the email but no account,
+// and every later sign-in would find it by email and answer "account not
+// linked" (implicit linking is off).
+// Only creates are undone: an update or delete inside a failed transaction
+// stays applied.
 
+import type { BetterAuthOptions } from "better-auth";
 import { createAdapterFactory, type CleanedWhere } from "better-auth/adapters";
 import { upstashPipeline } from "@/lib/upstash";
 import { AUTH_PREFIX, INDEXED_FIELDS, UNIQUE_FIELDS, indexKey, rowsKey } from "./keys";
-import { DEL_ROW_SCRIPT, PUT_ROW_SCRIPT } from "./scripts";
+import { DEL_ROW_SCRIPT, PUT_ROW_SCRIPT, UNDO_CREATE_SCRIPT } from "./scripts";
 import { idLookup, indexLookup, matchesWhere, sortAndPage } from "./where";
 
 type Row = Record<string, unknown>;
 type Snapshot = { id: string; json: string; row: Row };
+// A row a transaction created or tried to create: the stored model name, the
+// row id and the owner token sent with the create.
+type Created = { model: string; id: string; token: string };
+// One transaction's record: its creates, and every call on its adapter still
+// in flight (see `trackAll`), which a failure waits for before undoing.
+type Journal = { created: Created[]; pending: Set<Promise<unknown>> };
 
 // Retries after a lost compare-and-set, per row. A row that keeps changing
 // under us this often is contention the caller should see, not absorb.
@@ -35,13 +62,89 @@ const MAX_RETRIES = 3;
 // never holds one: a leaked Redis dump must not hand out GitHub tokens.
 const PROVIDER_TOKEN_FIELDS = ["accessToken", "refreshToken", "idToken"] as const;
 
+// How long a create's owner key lives. It only has to outlast the transaction
+// that made the row (a sign-in takes milliseconds), so a committed
+// transaction leaves its keys to expire instead of spending a round trip on
+// every sign-up deleting them: the token is random and only the transaction
+// holding it can act on it, so a stale key grants nothing.
+const OWNER_TTL_MS = 15 * 60 * 1000;
+
 /**
  * Builds the better-auth database adapter over the app's Redis, with every key under `opts.prefix` (default `AUTH_PREFIX`).
  */
 export function redisAdapter(opts: { prefix?: string } = {}) {
   const prefix = opts.prefix ?? AUTH_PREFIX;
+  // The options better-auth built the adapter with, reused for each transaction's adapter.
+  let authOptions: BetterAuthOptions | null = null;
 
-  return createAdapterFactory({
+  /**
+   * Builds the error thrown for a failed store operation.
+   */
+  const fail = (op: string, model: string, error: unknown): Error =>
+    new Error(`auth store: ${op} ${model} failed: ${error instanceof Error ? error.message : String(error)}`);
+
+  /**
+   * Runs one pipeline and returns each reply's result, throwing on a transport error, a short reply or any per-command error.
+   */
+  async function run(op: string, model: string, commands: (string | number)[][]): Promise<unknown[]> {
+    let replies;
+    try {
+      replies = await upstashPipeline(commands);
+    } catch (err) {
+      throw fail(op, model, err);
+    }
+    if (!Array.isArray(replies) || replies.length !== commands.length) {
+      throw fail(op, model, `expected ${commands.length} replies, got ${Array.isArray(replies) ? replies.length : typeof replies}`);
+    }
+    return replies.map((r) => {
+      if (!r || typeof r !== "object") throw fail(op, model, "malformed reply");
+      if (r.error) throw fail(op, model, r.error);
+      return r.result;
+    });
+  }
+
+  /**
+   * The model's indexed fields as the CSV the scripts take.
+   */
+  const csv = (model: string) => (INDEXED_FIELDS[model] ?? []).join(",");
+
+  /**
+   * Adds `work` to the journal's in-flight set until it settles.
+   */
+  function track(journal: Journal, work: Promise<unknown>): void {
+    journal.pending.add(work);
+    const done = () => journal.pending.delete(work);
+    work.then(done, done);
+  }
+
+  /**
+   * The transaction's adapter as the callback sees it: every method's returned
+   * promise is in `journal.pending` from the moment of the call. better-auth
+   * transforms input asynchronously before it reaches the methods below, and
+   * `update`/`delete` read before they write, so tracking any later would let a
+   * failure undo and rethrow while that work is still on its way to Redis.
+   * Every function is wrapped, reads included, so a method better-auth adds
+   * later is covered too.
+   */
+  function trackAll<A extends object>(adapter: A, journal: Journal): A {
+    const out = { ...adapter } as Record<string, unknown>;
+    for (const [name, value] of Object.entries(adapter)) {
+      if (typeof value !== "function") continue;
+      out[name] = (...args: unknown[]) => {
+        const result: unknown = value.apply(adapter, args);
+        if (result instanceof Promise) track(journal, result);
+        return result;
+      };
+    }
+    return out as A;
+  }
+
+  /**
+   * Builds the adapter factory. `journal` is null outside a transaction; inside
+   * one it is that transaction's own list, so concurrent transactions never
+   * see or undo each other's rows.
+   */
+  const build = (journal: Journal | null) => createAdapterFactory({
     config: {
       adapterId: "ctf-redis",
       adapterName: "CTF Redis",
@@ -50,35 +153,32 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       supportsDates: false,
       supportsBooleans: true,
       supportsArrays: false,
-      transaction: false,
+      transaction: (callback) =>
+        (async () => {
+          if (!authOptions) throw new Error("auth store: transaction before the adapter was initialised");
+          const own: Journal = { created: [], pending: new Set() };
+          const trx = trackAll(build(own)(authOptions), own);
+          let result;
+          try {
+            result = await callback(trx);
+          } catch (err) {
+            // Work the callback started in parallel may still land after the
+            // rejection; undoing before it settles would miss its row.
+            while (own.pending.size) await Promise.allSettled([...own.pending]);
+            await undo(own.created);
+            throw err;
+          }
+          // A transaction the callback started without awaiting may still add
+          // rows here; hand them over only once it has settled. From then on
+          // they belong to the enclosing transaction, so a later failure there
+          // undoes them too.
+          while (own.pending.size) await Promise.allSettled([...own.pending]);
+          journal?.created.push(...own.created);
+          return result;
+        })(),
     },
-    adapter: ({ getFieldAttributes, getFieldName, getDefaultModelName }) => {
-      /**
-       * Builds the error thrown for a failed store operation.
-       */
-      const fail = (op: string, model: string, error: unknown): Error =>
-        new Error(`auth store: ${op} ${model} failed: ${error instanceof Error ? error.message : String(error)}`);
-
-      /**
-       * Runs one pipeline and returns each reply's result, throwing on a transport error, a short reply or any per-command error.
-       */
-      async function run(op: string, model: string, commands: (string | number)[][]): Promise<unknown[]> {
-        let replies;
-        try {
-          replies = await upstashPipeline(commands);
-        } catch (err) {
-          throw fail(op, model, err);
-        }
-        if (!Array.isArray(replies) || replies.length !== commands.length) {
-          throw fail(op, model, `expected ${commands.length} replies, got ${Array.isArray(replies) ? replies.length : typeof replies}`);
-        }
-        return replies.map((r) => {
-          if (!r || typeof r !== "object") throw fail(op, model, "malformed reply");
-          if (r.error) throw fail(op, model, r.error);
-          return r.result;
-        });
-      }
-
+    adapter: ({ options, getFieldAttributes, getFieldName, getDefaultModelName }) => {
+      authOptions = options;
       const dateFields = new Map<string, boolean>();
       /**
        * Whether `field` of `model` is a date in the better-auth schema (memoized).
@@ -261,10 +361,6 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       }
 
       /**
-       * The model's indexed fields as the CSV the scripts take.
-       */
-      const csv = (model: string) => (INDEXED_FIELDS[model] ?? []).join(",");
-      /**
        * The model's unique fields.
        */
       const uniques = (model: string) => UNIQUE_FIELDS[model] ?? [];
@@ -276,7 +372,7 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
        * sign-in that would copy it onto a second user row fails until the first row
        * stops holding it.
        */
-      async function cas(op: string, model: string, snap: Snapshot | null, id: string, next: Row | null): Promise<boolean> {
+      async function cas(op: string, model: string, snap: Snapshot | null, id: string, next: Row | null, owner?: string): Promise<boolean> {
         const command =
           next === null
             ? ["EVAL", DEL_ROW_SCRIPT, 1, rowsKey(prefix, model), prefix, model, id, snap?.json ?? "", csv(model)]
@@ -292,6 +388,7 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
                 JSON.stringify(next),
                 csv(model),
                 uniques(model).join(","),
+                ...(owner ? [owner, OWNER_TTL_MS] : []),
               ];
         const [result] = await run(op, model, [command]);
         if (result === 1) return true;
@@ -343,7 +440,14 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
           const row = scrub(model, data as Row);
           const id = row.id;
           if (typeof id !== "string" && typeof id !== "number") throw fail("create", model, "row has no id");
-          if (!(await cas("create", model, null, String(id), row))) throw fail("create", model, `row ${String(id)} already exists`);
+          // Recorded before the write is sent: a lost reply can hide a write
+          // Redis applied. A create that did not write leaves the token unset,
+          // so its undo deletes nothing.
+          const token = journal ? crypto.randomUUID() : undefined;
+          if (journal && token) journal.created.push({ model, id: String(id), token });
+          if (!(await cas("create", model, null, String(id), row, token))) {
+            throw fail("create", model, `row ${String(id)} already exists`);
+          }
           return trim(row, select) as typeof data;
         },
 
@@ -384,4 +488,28 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       };
     },
   });
+
+  /**
+   * Deletes a failed transaction's rows, newest first, each only while its owner
+   * key still holds the transaction's token (UNDO_CREATE_SCRIPT drops the index
+   * entries and the owner key in the same step). Reply 0 means the create never
+   * wrote, the row is gone, or another create owns the id now, and all three are
+   * left as they are. Best effort: a row that cannot be deleted is logged by
+   * model only (never its id or contents) and the rest are still tried, so the
+   * caller sees the transaction's own error.
+   */
+  async function undo(created: Created[]): Promise<void> {
+    for (const { model, id, token } of [...created].reverse()) {
+      try {
+        const [result] = await run("undo", model, [
+          ["EVAL", UNDO_CREATE_SCRIPT, 1, rowsKey(prefix, model), prefix, model, id, token, csv(model)],
+        ]);
+        if (result !== 0 && result !== 1) throw new Error("unexpected script reply");
+      } catch (err) {
+        console.error(`auth store: could not undo a ${model} row a failed transaction created`, err instanceof Error ? err.name : "non-Error throw");
+      }
+    }
+  }
+
+  return build(null);
 }

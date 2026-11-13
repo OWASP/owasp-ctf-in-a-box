@@ -8,6 +8,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
+  the linked-account write failed after the user row was written, that row
+  stayed behind and every later sign-in answered `account not linked`. The
+  auth store now deletes the rows a failed sign-up created, so the next
+  sign-in starts clean.
 - **Changed: `/api/classic/submit` and `/api/quiz/answer` now return HTTP
   `429` with `Retry-After` on cooldown refusals (#753).** Both endpoints
   previously returned `403` without `Retry-After`, unlike `/api/ai/submit`,

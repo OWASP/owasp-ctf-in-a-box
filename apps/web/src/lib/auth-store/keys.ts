@@ -45,3 +45,13 @@ export function indexKey(
 ): string {
   return `${prefix}:${model}:by:${field}:${value}`;
 }
+
+/**
+ * Key holding the token of the transaction that created row `id` of `model`.
+ * PUT_ROW_SCRIPT sets it with a TTL when that create writes the row, every
+ * delete removes it, and a failed transaction's undo deletes the row only
+ * while it still holds that transaction's token.
+ */
+export function ownerKey(prefix: string, model: string, id: string): string {
+  return `${prefix}:${model}:owner:${id}`;
+}

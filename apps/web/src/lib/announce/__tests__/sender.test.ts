@@ -66,7 +66,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getAnnounceConfig.mockResolvedValue(configured());
   mocks.getWebhookDeliveryTarget.mockResolvedValue({ url: URL, generation: 0 });
-  mocks.outboxEnqueue.mockResolvedValue(undefined);
+  mocks.outboxEnqueue.mockResolvedValue(true);
   mocks.outboxPending.mockResolvedValue([]);
   mocks.outboxRetryable.mockResolvedValue([]);
   mocks.outboxClaim.mockResolvedValue("lease-token");
@@ -107,6 +107,15 @@ describe("enqueueAnnouncement", () => {
     const id = mocks.outboxEnqueue.mock.calls[0][0] as string;
     expect(id).toMatch(/^\d+-\d+-[0-9a-f]{8}-first-blood$/);
     await vi.advanceTimersByTimeAsync(300);
+  });
+
+  it("stamps the producer's captured counters and drops a write the store rejects as stale", async () => {
+    mocks.outboxEnqueue.mockResolvedValue(false);
+    await enqueueAnnouncement("first-blood", message, { webhookGeneration: 3, kindEpoch: 1 });
+    expect(mocks.outboxEnqueue).toHaveBeenCalledWith(expect.any(String), "first-blood", message, 3, 1);
+    // A stale write never enters the local queue, so no flush is armed for it.
+    expect(mocks.outboxPending).not.toHaveBeenCalled();
+    expect(mocks.getAnnounceConfig).not.toHaveBeenCalled();
   });
 });
 

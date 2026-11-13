@@ -38,6 +38,7 @@ import {
 import {
   getAnnounceConfig,
   outboxEnqueue,
+  OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
   SWITCH_DISABLE_SCRIPT,
   WEBHOOK_TARGET_SCRIPT,
@@ -100,6 +101,16 @@ beforeEach(() => {
   mocks.upstashPipeline.mockImplementation(pipelineFor(state));
   mocks.upstashEval.mockImplementation(async (script, keys, args) => {
     if (script === WEBHOOK_TARGET_SCRIPT) return [URL, "0"];
+    if (script === OUTBOX_ENQUEUE_SCRIPT) {
+      const [outboxKey, configKey] = keys;
+      expect(outboxKey).toBe(ANNOUNCE_OUTBOX_KEY);
+      expect(configKey).toBe(DISCORD_CONFIG_KEY);
+      const enabled = state.config.get(String(args[4]));
+      const currentEpoch = Number(state.config.get(String(args[5])) ?? 0);
+      if (enabled !== "1" || Number(args[3]) !== currentEpoch || Number(args[2]) !== 0) return 0;
+      state.outbox.set(String(args[0]), JSON.parse(String(args[1])) as OutboxEntry);
+      return 1;
+    }
     if (script === SWITCH_DISABLE_SCRIPT) {
       expect(keys).toEqual([DISCORD_CONFIG_KEY]);
       const n = Number(args[0]);
@@ -123,7 +134,7 @@ afterEach(() => {
 });
 
 describe("switch epochs", () => {
-  it("skips an entry enqueued after a disable's cancellation scan once the switch is re-enabled", async () => {
+  it("rejects an enqueue attempted after a disable's cancellation scan even once the switch is re-enabled", async () => {
     const before = await getAnnounceConfig();
     expect(before.firstBlood).toBe(true);
     expect(before.kindEpochs["first-blood"]).toBe(0);
@@ -133,9 +144,11 @@ describe("switch epochs", () => {
     expect(state.config.get("epoch:first-blood")).toBe("1");
 
     // The producer resumes after the cancellation scan with the epoch it
-    // read before the disable.
-    await outboxEnqueue("race", "first-blood", { embeds: [] }, before.webhookGeneration, before.kindEpochs["first-blood"]);
-    expect(state.outbox.get("race")?.kindEpoch).toBe(0);
+    // read before the disable. The atomic enqueue check sees the switch off
+    // and the epoch advanced, so the entry is never written at all.
+    const accepted = await outboxEnqueue("race", "first-blood", { embeds: [] }, before.webhookGeneration, before.kindEpochs["first-blood"]);
+    expect(accepted).toBe(false);
+    expect(state.outbox.has("race")).toBe(false);
 
     await updateAnnounceConfig("admin", { firstBlood: true });
     const after = await getAnnounceConfig();
@@ -144,7 +157,6 @@ describe("switch epochs", () => {
 
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(state.skipped).toContain("race");
-    expect(state.outbox.get("race")?.status).toBe("skipped");
+    expect(state.outbox.has("race")).toBe(false);
   });
 });

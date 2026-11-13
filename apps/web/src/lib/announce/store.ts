@@ -76,6 +76,16 @@ const KIND_EPOCH_FIELDS: Record<AnnouncementKind, string> = {
   milestone: "epoch:milestone",
 };
 
+/** The config field holding each kind's on/off switch. Pause and resume are
+ *  two edges of the one "scoring paused / resumed" switch. */
+const KIND_SWITCH_FIELDS: Record<AnnouncementKind, string> = {
+  "first-blood": "firstBlood",
+  launch: "launch",
+  pause: "pause",
+  resume: "pause",
+  milestone: "milestones",
+};
+
 /** Parses an internal counter. A missing value is 0; a malformed value
  *  THROWS rather than reading as 0, because 0 would let an entry stamped
  *  before a clear or switch disable pass as current. */
@@ -560,15 +570,30 @@ export function outboxId(seq: number, kind: string): string {
 }
 
 /** Appends an entry to the outbox with the webhook generation and switch
- *  epoch its enqueue observed. The payload is the builder's OUTPUT (a
- *  DiscordMessage), so a retry replays exactly what was first composed. */
+ *  epoch its enqueue observed, but ONLY while those captured counters still
+ *  match what is stored and the kind's switch is on. A producer that read
+ *  its config before a disable, a re-enable or a webhook clear must not
+ *  stamp an older notification with the newer state: the check and the write
+ *  are one Lua script, so no concurrent admin write can interleave between
+ *  them. Returns whether the entry was written. */
+export const OUTBOX_ENQUEUE_SCRIPT = `
+local enabled = redis.call('HGET', KEYS[2], ARGV[5])
+if enabled ~= '1' then return 0 end
+local currentEpoch = tonumber(redis.call('HGET', KEYS[2], ARGV[6])) or 0
+if currentEpoch ~= tonumber(ARGV[4]) then return 0 end
+local currentGeneration = tonumber(redis.call('GET', KEYS[3])) or 0
+if currentGeneration ~= tonumber(ARGV[3]) then return 0 end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+return 1
+`;
+
 export async function outboxEnqueue(
   id: string,
   kind: AnnouncementKind,
   payload: unknown,
   webhookGeneration: number,
   kindEpoch: number,
-): Promise<void> {
+): Promise<boolean> {
   const entry: OutboxEntry = {
     kind,
     payload,
@@ -578,41 +603,70 @@ export async function outboxEnqueue(
     webhookGeneration,
     kindEpoch,
   };
-  const [res] = await upstashPipeline([["HSET", ANNOUNCE_OUTBOX_KEY, id, JSON.stringify(entry)]]);
-  if (res.error) console.error("[announce] outbox enqueue failed:", adminErrorLabel(new Error(res.error)));
+  try {
+    const res = await upstashEval(
+      OUTBOX_ENQUEUE_SCRIPT,
+      [ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY],
+      [id, JSON.stringify(entry), webhookGeneration, kindEpoch, KIND_SWITCH_FIELDS[kind], KIND_EPOCH_FIELDS[kind]],
+    );
+    return res === 1;
+  } catch (err) {
+    console.error("[announce] outbox enqueue failed:", adminErrorLabel(err));
+    return false;
+  }
 }
 
 /** Atomically claims the delivery lease for an outbox entry iff its status
- *  and retry count still match what the caller observed. Prevents duplicate
+ *  and retry count still match what the caller observed, its switch is still
+ *  on, and its kind epoch still matches the stored one. Prevents duplicate
  *  delivery when another replica completed the entry and deleted its lease
- *  between our candidate read and our lease attempt. */
+ *  between our candidate read and our lease attempt, and prevents an entry
+ *  from a disabled or since-re-enabled stream from acquiring a lease at all. */
 export const OUTBOX_CLAIM_SCRIPT = `
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 if not raw then return 0 end
 local ok, e = pcall(cjson.decode, raw)
 if not ok or type(e) ~= 'table' then return 0 end
 if e.status ~= ARGV[2] or tonumber(e.n) ~= tonumber(ARGV[3]) then return 0 end
+if redis.call('HGET', KEYS[3], ARGV[6]) ~= '1' then return 0 end
+local currentEpoch = tonumber(redis.call('HGET', KEYS[3], ARGV[7])) or 0
+if tonumber(e.kindEpoch) ~= currentEpoch then return 0 end
 if redis.call('SET', KEYS[2], ARGV[5], 'PX', ARGV[4], 'NX') then return 1 end
 return 0
 `;
 
 /** Claims the delivery lease for one outbox entry iff its status and retry
- *  count still match `seen`. Returns an owner token on success, null when
- *  the entry was already completed, moved to another retry state, or is
- *  currently leased by another worker. The token goes into the lease value so
- *  completion can prove it still owns the lease. A command error or rejected
- *  Redis call ALSO returns null: nothing is claimed, the entry stays
- *  `pending` or `failed` for the next flush or retry sweep, and delivery
- *  fails closed rather than risking a double post. */
+ *  count still match `seen`, its switch is on, and its kind epoch is current.
+ *  Returns an owner token on success, null when the entry was already
+ *  completed, moved to another retry state, is currently leased by another
+ *  worker, or belongs to a disabled/stale stream. The token goes into the
+ *  lease value so completion can prove it still owns the lease. A command
+ *  error or rejected Redis call ALSO returns null: nothing is claimed, the
+ *  entry stays `pending` or `failed` for the next flush or retry sweep, and
+ *  delivery fails closed rather than risking a double post. */
 export async function outboxClaim(
   id: string,
-  seen: Pick<OutboxEntry, "status" | "n">,
+  seen: Pick<OutboxEntry, "status" | "n" | "kind">,
   leaseMs: number = ANNOUNCE_LEASE_MS,
 ): Promise<string | null> {
   const token = randomUUID();
   try {
     const [res] = await upstashPipeline([
-      ["EVAL", OUTBOX_CLAIM_SCRIPT, 2, ANNOUNCE_OUTBOX_KEY, `${ANNOUNCE_LEASE_PREFIX}${id}`, id, seen.status, seen.n, leaseMs, token],
+      [
+        "EVAL",
+        OUTBOX_CLAIM_SCRIPT,
+        3,
+        ANNOUNCE_OUTBOX_KEY,
+        `${ANNOUNCE_LEASE_PREFIX}${id}`,
+        DISCORD_CONFIG_KEY,
+        id,
+        seen.status,
+        seen.n,
+        leaseMs,
+        token,
+        KIND_SWITCH_FIELDS[seen.kind],
+        KIND_EPOCH_FIELDS[seen.kind],
+      ],
     ]);
     if (res.error) {
       console.error("[announce] outbox claim failed:", adminErrorLabel(new Error(res.error)));

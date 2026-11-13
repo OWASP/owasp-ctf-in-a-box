@@ -39,6 +39,7 @@ import {
 import {
   getAnnounceConfig,
   outboxEnqueue,
+  OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
   WEBHOOK_TARGET_SCRIPT,
   type OutboxEntry,
@@ -95,9 +96,16 @@ beforeEach(() => {
   mocks.upstashPipeline.mockReset();
   mocks.beginScoreLowering.mockReset();
   mocks.endScoreLowering.mockReset();
-  mocks.upstashEval.mockImplementation(async (script) =>
-    script === WEBHOOK_TARGET_SCRIPT ? [URL, String(state.generation)] : 1,
-  );
+  mocks.upstashEval.mockImplementation(async (script, keys, args) => {
+    if (script === WEBHOOK_TARGET_SCRIPT) return [URL, String(state.generation)];
+    if (script === OUTBOX_ENQUEUE_SCRIPT) {
+      expect(keys).toEqual([ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY]);
+      if (Number(args[2]) !== state.generation) return 0;
+      state.outbox.set(String(args[0]), JSON.parse(String(args[1])) as OutboxEntry);
+      return 1;
+    }
+    return 1;
+  });
   mocks.upstashPipeline.mockImplementation(pipelineFor(state));
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
@@ -112,7 +120,7 @@ describe("reset and the webhook generation", () => {
     expect(ANNOUNCE_WEBHOOK_GENERATION_KEY.startsWith("ctf:announce:")).toBe(false);
   });
 
-  it("skips an entry enqueued after a reset from the generation read before it", async () => {
+  it("rejects an entry enqueued after a reset with the generation read before it", async () => {
     const before = await getAnnounceConfig();
     expect(before.webhookConfigured).toBe(true);
     expect(before.webhookGeneration).toBe(0);
@@ -124,14 +132,14 @@ describe("reset and the webhook generation", () => {
     expect(resetCalls.slice(0, 1)).toEqual([["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]]);
     expect(resetCalls.findIndex((cmd) => cmd[0] === "SCAN")).toBeGreaterThan(0);
 
-    // The producer's outbox write lands after the reset deleted the outbox,
-    // but it still carries the generation its config read observed.
-    await outboxEnqueue("race", "launch", { embeds: [] }, before.webhookGeneration, before.kindEpochs.launch);
-    expect(state.outbox.get("race")?.status).toBe("pending");
+    // The producer's outbox write lands after the reset advanced the
+    // generation, but it still carries the generation its config read
+    // observed — the atomic enqueue check rejects it outright.
+    const accepted = await outboxEnqueue("race", "launch", { embeds: [] }, before.webhookGeneration, before.kindEpochs.launch);
+    expect(accepted).toBe(false);
+    expect(state.outbox.has("race")).toBe(false);
 
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(state.skipped).toContain("race");
-    expect(state.outbox.get("race")?.status).toBe("skipped");
   });
 });

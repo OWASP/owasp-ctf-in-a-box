@@ -173,6 +173,11 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
         who,
         ...(url ? { url } : {}),
       }),
+      // The counters read BEFORE the asynchronous lookups above: the store
+      // rejects this write atomically if the stream or webhook changed while
+      // the lookup ran, instead of stamping an older first blood with the
+      // new state (and replaying it after the organizer disabled it).
+      { webhookGeneration: config.webhookGeneration, kindEpoch: config.kindEpochs["first-blood"] },
     );
   } catch (err) {
     console.error("[announce] first-blood notify failed:", errorLabel(err));

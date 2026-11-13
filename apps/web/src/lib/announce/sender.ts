@@ -79,12 +79,31 @@ function nextId(kind: AnnouncementKind): string {
 
 /** Enqueues one announcement, if its switch is on and a webhook is
  *  configured. A disabled kind or an unconfigured box is a NO-OP (no entry,
- *  no timer) — the announcer never accumulates work it will not send. */
-export async function enqueueAnnouncement(kind: AnnouncementKind, message: DiscordMessage): Promise<void> {
-  const config = await getAnnounceConfig();
-  if (!config.webhookConfigured || !kindEnabled(config, kind)) return;
+ *  no timer) — the announcer never accumulates work it will not send.
+ *
+ *  `captured` carries the generation and switch epoch a producer read BEFORE
+ *  its asynchronous lookups. When given, those exact counters are stamped
+ *  and the store rejects the write atomically if the stream was disabled,
+ *  re-enabled or the webhook rotated meanwhile — a late notification never
+ *  borrows a fresh counter it did not observe. */
+export async function enqueueAnnouncement(
+  kind: AnnouncementKind,
+  message: DiscordMessage,
+  captured?: { webhookGeneration: number; kindEpoch: number },
+): Promise<void> {
+  let webhookGeneration: number;
+  let kindEpoch: number;
+  if (captured) {
+    webhookGeneration = captured.webhookGeneration;
+    kindEpoch = captured.kindEpoch;
+  } else {
+    const config = await getAnnounceConfig();
+    if (!config.webhookConfigured || !kindEnabled(config, kind)) return;
+    webhookGeneration = config.webhookGeneration;
+    kindEpoch = config.kindEpochs[kind];
+  }
   const id = nextId(kind);
-  await outboxEnqueue(id, kind, message, config.webhookGeneration, config.kindEpochs[kind]);
+  if (!(await outboxEnqueue(id, kind, message, webhookGeneration, kindEpoch))) return;
   queue.push(id);
   while (queue.length > MAX_QUEUE) {
     const droppedId = queue.shift();

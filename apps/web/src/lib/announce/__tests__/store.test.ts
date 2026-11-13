@@ -34,6 +34,7 @@ import {
   ledgerFields,
   OUTBOX_CLAIM_SCRIPT,
   OUTBOX_COMPLETE_SCRIPT,
+  OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
   SWITCH_DISABLE_SCRIPT,
   WEBHOOK_CLEAR_SCRIPT,
@@ -542,43 +543,64 @@ describe("stateCompareSet / readStatePack", () => {
 });
 
 describe("outbox", () => {
-  it("enqueues a pending entry stamped with the observed webhook generation and switch epoch", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
-    await outboxEnqueue("id-1", "first-blood", { embeds: [] }, 7, 3);
-    const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
-    expect(cmd[0]).toBe("HSET");
-    expect(cmd[1]).toBe(ANNOUNCE_OUTBOX_KEY);
-    expect(String(cmd[3])).toContain('"status":"pending"');
-    expect(String(cmd[3])).toContain('"webhookGeneration":7');
-    expect(String(cmd[3])).toContain('"kindEpoch":3');
+  it("enqueues a pending entry stamped with the observed webhook generation and switch epoch, atomically", async () => {
+    mocks.upstashEval.mockResolvedValue(1);
+    expect(await outboxEnqueue("id-1", "first-blood", { embeds: [] }, 7, 3)).toBe(true);
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(script).toBe(OUTBOX_ENQUEUE_SCRIPT);
+    expect(keys).toEqual([ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY]);
+    expect(args[0]).toBe("id-1");
+    expect(String(args[1])).toContain('"status":"pending"');
+    expect(String(args[1])).toContain('"webhookGeneration":7');
+    expect(String(args[1])).toContain('"kindEpoch":3');
+    expect(args[2]).toBe(7);
+    expect(args[3]).toBe(3);
+    expect(args[4]).toBe("firstBlood");
+    expect(args[5]).toBe("epoch:first-blood");
   });
 
-  it("claims the lease atomically when status and attempts match, returning its owner token", async () => {
+  it("reports a rejected enqueue when a captured counter is stale or the switch is off", async () => {
+    mocks.upstashEval.mockResolvedValue(0);
+    expect(await outboxEnqueue("id-1", "first-blood", { embeds: [] }, 7, 3)).toBe(false);
+  });
+
+  it("claims the lease atomically when status, attempts, switch and epoch match, returning its owner token", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
-    const token = await outboxClaim("id-1", { status: "pending", n: 0 });
+    const token = await outboxClaim("id-1", { status: "pending", n: 0, kind: "first-blood" });
     expect(typeof token).toBe("string");
     const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
     expect(cmd[0]).toBe("EVAL");
     expect(cmd[1]).toBe(OUTBOX_CLAIM_SCRIPT);
-    expect(cmd[2]).toBe(2);
+    expect(cmd[2]).toBe(3);
     expect(cmd[3]).toBe(ANNOUNCE_OUTBOX_KEY);
     expect(cmd[4]).toBe("ctf:announce:lease:id-1");
-    expect(cmd[5]).toBe("id-1");
-    expect(cmd[6]).toBe("pending");
-    expect(cmd[7]).toBe(0);
-    expect(cmd[8]).toBe(90_000);
-    expect(cmd[9]).toBe(token);
+    expect(cmd[5]).toBe(DISCORD_CONFIG_KEY);
+    expect(cmd[6]).toBe("id-1");
+    expect(cmd[7]).toBe("pending");
+    expect(cmd[8]).toBe(0);
+    expect(cmd[9]).toBe(90_000);
+    expect(cmd[10]).toBe(token);
+    expect(cmd[11]).toBe("firstBlood");
+    expect(cmd[12]).toBe("epoch:first-blood");
+  });
+
+  it("passes the pause switch for both pause and resume edges", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
+    await outboxClaim("id-2", { status: "pending", n: 0, kind: "resume" });
+    const cmd = mocks.upstashPipeline.mock.calls[0][0][0];
+    expect(cmd[11]).toBe("pause");
+    expect(cmd[12]).toBe("epoch:resume");
   });
 
   it("reproduces the race: returns no lease when another worker marked the entry sent", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 0 }]);
-    expect(await outboxClaim("id-1", { status: "pending", n: 0 })).toBeNull();
+    expect(await outboxClaim("id-1", { status: "pending", n: 0, kind: "first-blood" })).toBeNull();
   });
 
   it("returns no lease and logs when Redis returns a command error", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.upstashPipeline.mockImplementation(async () => [{ error: "ERR timeout" }]);
-    expect(await outboxClaim("id-1", { status: "pending", n: 0 })).toBeNull();
+    expect(await outboxClaim("id-1", { status: "pending", n: 0, kind: "first-blood" })).toBeNull();
     expect(errorSpy).toHaveBeenCalledWith("[announce] outbox claim failed:", "ERR timeout");
     errorSpy.mockRestore();
   });
@@ -586,7 +608,7 @@ describe("outbox", () => {
   it("returns no lease and logs when the Redis call is rejected", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.upstashPipeline.mockRejectedValue(new Error("down"));
-    expect(await outboxClaim("id-1", { status: "pending", n: 0 })).toBeNull();
+    expect(await outboxClaim("id-1", { status: "pending", n: 0, kind: "first-blood" })).toBeNull();
     expect(errorSpy).toHaveBeenCalledWith("[announce] outbox claim failed:", "down");
     errorSpy.mockRestore();
   });

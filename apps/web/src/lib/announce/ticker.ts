@@ -148,6 +148,15 @@ export async function runAnnounceTick(nowMs: number = Date.now()): Promise<TickC
     if (!armed) return cadence;
 
     if (config.launch || config.pause || config.milestones) {
+      // The lifecycle pack is captured BEFORE the settings read. `next` is
+      // derived from those settings, so reading the pack after them could
+      // capture a state a concurrent observer already advanced from newer
+      // settings — our stale CAS would then match and overwrite it. With the
+      // pack from before the read, any concurrent update makes the CAS lose.
+      let expectedLifecycle = "";
+      if (config.launch || config.pause) {
+        expectedLifecycle = (await readStatePack(ANNOUNCE_LIFECYCLE_KEY)) ?? "";
+      }
       let settings: AdminSettings | null = null;
       try {
         settings = await getAdminSettings();
@@ -157,7 +166,7 @@ export async function runAnnounceTick(nowMs: number = Date.now()): Promise<TickC
         console.error("[announce] settings read failed, skipping lifecycle/milestones:", errorLabel(err));
       }
       if (settings) {
-        if (config.launch || config.pause) await tickLifecycle(config, settings, nowMs);
+        if (config.launch || config.pause) await tickLifecycle(config, settings, nowMs, expectedLifecycle);
         if (config.milestones) await tickMilestones(config, settings, nowMs);
       }
     }
@@ -248,8 +257,15 @@ function eventName(settings: AdminSettings): string {
  *  the stored one, and announce the edges this replica won — only for the
  *  kinds the config switches allow. The state advances while either
  *  lifecycle switch is on, so enabling the other later fires only on a real
- *  change it then watches. */
-async function tickLifecycle(config: DiscordFullConfig, settings: AdminSettings, nowMs: number): Promise<void> {
+ *  change it then watches. `expected` is the pack captured before the
+ *  settings read, so a concurrent update during that read makes the CAS lose
+ *  rather than letting this tick overwrite newer state. */
+async function tickLifecycle(
+  config: DiscordFullConfig,
+  settings: AdminSettings,
+  nowMs: number,
+  expected: string,
+): Promise<void> {
   try {
     const derived = lifecycleSnapshotFrom(
       {
@@ -259,7 +275,6 @@ async function tickLifecycle(config: DiscordFullConfig, settings: AdminSettings,
       },
       nowMs,
     );
-    const expected = (await readStatePack(ANNOUNCE_LIFECYCLE_KEY)) ?? "";
     // `announced` depends on the STORED pause, not just the settings: a hold
     // announced live stays announced across a close and an extension, while
     // one born while closed never is. The CAS still swaps on the pack string,

@@ -56,7 +56,7 @@ STUB
   printf '%s\n' "$output" | grep -qF "no GitHub login 'nobody-dev' is linked"
 }
 
-@test "seed_demo_accounts writes the auth row, email index and link keys, never overwriting a link" {
+@test "seed_demo_accounts writes the auth row, email index, link keys and link time, never overwriting a link" {
   export ENV_FILE=/dev/null
   cd "$SANDBOX"
   # shellcheck disable=SC1091
@@ -66,6 +66,9 @@ STUB
   grep -qF 'redis-cli -e HSETNX ctf:auth:user a11ce000-0000-4000-8000-000000000001 {"id":"a11ce000-0000-4000-8000-000000000001","name":"alice-dev","email":"alice-dev@dev-stack.invalid","emailVerified":true,"image":null,"createdAt":' "$CALLS"
   grep -qF 'redis-cli -e SADD ctf:auth:user:by:email:alice-dev@dev-stack.invalid a11ce000-0000-4000-8000-000000000001' "$CALLS"
   grep -qF 'redis-cli -e SETNX ctf:link:user:a11ce000-0000-4000-8000-000000000001 alice-dev' "$CALLS"
+  # A link with no time counts as made after the close, so a seeded link
+  # without one would hold its scores forever once an end is set.
+  grep -qE 'redis-cli -e HSETNX ctf:link:at a11ce000-0000-4000-8000-000000000001 [0-9]{13}$' "$CALLS"
   if grep -qE 'redis-cli SET ctf:link' "$CALLS"; then return 1; fi
   grep -qF 'redis-cli -e SETNX ctf:link:github:mallory-dev ba11a000-0000-4000-8000-000000000004' "$CALLS"
 }

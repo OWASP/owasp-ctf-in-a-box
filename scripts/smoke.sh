@@ -43,6 +43,9 @@ done
 for pair in "octocat:$OCTOCAT_ID" "mona:$MONA_ID" "trinity:$TRINITY_ID" "mallory:$MALLORY_ID"; do
   compose exec -T redis redis-cli SET "ctf:link:github:${pair%%:*}" "${pair#*:}" >/dev/null \
     || { echo "FAIL: could not seed link key for ${pair%%:*}"; exit 1; }
+  # Sync counts a link with no time as made after scoring closed.
+  compose exec -T redis redis-cli HSETNX ctf:link:at "${pair#*:}" "$(date +%s)000" >/dev/null \
+    || { echo "FAIL: could not seed link time for ${pair%%:*}"; exit 1; }
 done
 compose up -d --build sync
 

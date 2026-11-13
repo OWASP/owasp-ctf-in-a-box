@@ -96,20 +96,21 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
   });
 
   it("OUTBOX_CLAIM_SCRIPT claims an unchanged entry with an owner token, but rejects once marked sent", async () => {
-    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending" };
+    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", kindEpoch: 2 };
     const token = `${RUN}-owner-a`;
 
     await upstashPipeline([
-      ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY],
+      ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY],
       ["HSET", OUTBOX_KEY, CLAIM_ID, JSON.stringify(entry)],
+      ["HSET", SWITCH_KEY, "firstBlood", "1", "epoch:first-blood", "2"],
     ]);
 
-    const win = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [CLAIM_ID, "pending", 0, 90_000, token]);
+    const win = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY], [CLAIM_ID, "pending", 0, 90_000, token, "firstBlood", "epoch:first-blood"]);
     expect(win).toBe(1);
     const [lease] = await upstashPipeline([["GET", CLAIM_LEASE_KEY]]);
     expect(lease.result).toBe(token);
 
-    const held = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-owner-b`]);
+    const held = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-owner-b`, "firstBlood", "epoch:first-blood"]);
     expect(held).toBe(0);
 
     const completed = { ...entry, status: "sent" };
@@ -118,10 +119,42 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
       ["DEL", CLAIM_LEASE_KEY],
     ]);
 
-    const stale = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY], [CLAIM_ID, "pending", 0, 90_000, token]);
+    const stale = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY], [CLAIM_ID, "pending", 0, 90_000, token, "firstBlood", "epoch:first-blood"]);
     expect(stale).toBe(0);
 
-    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY]]);
+    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY]]);
+  });
+
+  it("OUTBOX_CLAIM_SCRIPT refuses a lease while the switch is disabled", async () => {
+    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", kindEpoch: 0 };
+    await upstashPipeline([
+      ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY],
+      ["HSET", OUTBOX_KEY, CLAIM_ID, JSON.stringify(entry)],
+      ["HSET", SWITCH_KEY, "firstBlood", "0", "epoch:first-blood", "0"],
+    ]);
+
+    const res = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-disabled`, "firstBlood", "epoch:first-blood"]);
+    expect(res).toBe(0);
+    const [lease] = await upstashPipeline([["GET", CLAIM_LEASE_KEY]]);
+    expect(lease.result).toBeNull();
+
+    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY]]);
+  });
+
+  it("OUTBOX_CLAIM_SCRIPT refuses a lease when the entry's kind epoch is stale", async () => {
+    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", kindEpoch: 1 };
+    await upstashPipeline([
+      ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY],
+      ["HSET", OUTBOX_KEY, CLAIM_ID, JSON.stringify(entry)],
+      ["HSET", SWITCH_KEY, "firstBlood", "1", "epoch:first-blood", "2"],
+    ]);
+
+    const res = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-stale-epoch`, "firstBlood", "epoch:first-blood"]);
+    expect(res).toBe(0);
+    const [lease] = await upstashPipeline([["GET", CLAIM_LEASE_KEY]]);
+    expect(lease.result).toBeNull();
+
+    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY]]);
   });
 
   it("OUTBOX_COMPLETE_SCRIPT writes only for the current lease owner", async () => {

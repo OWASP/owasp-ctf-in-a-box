@@ -399,18 +399,16 @@ export default function AdminEventAnnouncements({ setConfirm }: { setConfirm: (c
             status={fieldStatus[row.key] ?? { state: "idle" }}
             onChange={(next) => void savePatch({ [row.key]: next }, row.key)}
           />
-          {Boolean(config?.[row.key]) && (
-            <div className="ml-1">
-              <button
-                type="button"
-                onClick={() => void showPreview(row.kind)}
-                disabled={busy}
-                className="rounded-md border border-white/10 px-2 py-1 font-mono text-xs text-zinc-300 hover:border-[#2563eb]/45 hover:text-white disabled:opacity-40"
-              >
-                Preview
-              </button>
-            </div>
-          )}
+          <div className="ml-1">
+            <button
+              type="button"
+              onClick={() => void showPreview(row.kind)}
+              disabled={busy}
+              className="rounded-md border border-white/10 px-2 py-1 font-mono text-xs text-zinc-300 hover:border-[#2563eb]/45 hover:text-white disabled:opacity-40"
+            >
+              Preview
+            </button>
+          </div>
           {row.key === "milestones" && config?.milestones && (
             <div className="ml-1 flex items-center gap-2">
               <label htmlFor="ann-marks" className="text-xs text-muted">

@@ -115,6 +115,12 @@ describe("the blur-save contract, at source", () => {
     expect(code).toContain("value={webhookInput}");
     expect(code).toContain('setWebhookInput("")');
   });
+
+  it("keeps each Preview button available regardless of its switch state", () => {
+    const code = source();
+    expect(code).toContain("showPreview(row.kind)");
+    expect(code).not.toMatch(/Boolean\(config\?\.\[row\.key\]\)\s*&&/);
+  });
 });
 
 // Send test re-reads config + status, but only the STATUS is its business: a

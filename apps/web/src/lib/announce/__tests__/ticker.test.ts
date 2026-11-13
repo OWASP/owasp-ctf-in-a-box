@@ -178,6 +178,36 @@ describe("lifecycle tick", () => {
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("resume", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring resumed" })] }));
   });
 
+  it("captures the lifecycle pack before settings so a concurrent update fails the stale CAS", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
+    mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 0, seq: 0, prev: "v2|L1P0C0A0" });
+
+    let releaseSettings: (() => void) | undefined;
+    mocks.getAdminSettings.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseSettings = () => resolve(settings({ scoringStartsAt: "2026-10-14T11:00:00Z" }));
+        }),
+    );
+
+    const tick = runAnnounceTick(T0);
+    // The pack is read first: a concurrent lifecycle observer can now move
+    // the stored state while this tick waits on settings.
+    await vi.waitFor(() => {
+      expect(mocks.readStatePack).toHaveBeenCalledTimes(1);
+      expect(mocks.getAdminSettings).toHaveBeenCalledTimes(1);
+    });
+    expect(mocks.readStatePack.mock.invocationCallOrder[0]).toBeLessThan(mocks.getAdminSettings.mock.invocationCallOrder[0]);
+    releaseSettings?.();
+    await tick;
+
+    // The CAS uses the pre-settings pack, so the concurrent update makes it
+    // lose instead of being overwritten by this tick's stale derivation.
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L0P0C0A0", "v2|L1P0C0A0");
+    expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+  });
+
   it("announces the launch edge when this replica wins it", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
     mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");

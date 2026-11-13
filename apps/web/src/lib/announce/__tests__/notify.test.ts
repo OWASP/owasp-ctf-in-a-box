@@ -30,7 +30,12 @@ vi.mock("@/lib/ai-store", () => ({ listAiChallenges: mocks.listAiChallenges }));
 
 import { challengeEmbedUrl, notifyFirstBlood } from "@/lib/announce/notify";
 
-const armed = { webhookConfigured: true, firstBlood: true };
+const armed = {
+  webhookConfigured: true,
+  firstBlood: true,
+  webhookGeneration: 0,
+  kindEpochs: { "first-blood": 0, launch: 0, pause: 0, resume: 0, milestone: 0 },
+};
 const origAuthUrl = process.env.BETTER_AUTH_URL;
 
 beforeEach(() => {

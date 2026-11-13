@@ -98,11 +98,16 @@ describe.skipIf(!liveConfigured)("demo accounts against a live SRH proxy", () =>
     const edited = fixture.DEMO_CONTESTANTS[0].login;
     const id = demo.demoPlayerId(edited);
     const row = { ...JSON.parse((await readRow(id))!), name: "Renamed By Organizer" };
-    assertPipelineOk(await upstashPipeline([["HSET", "ctf:auth:user", id, JSON.stringify(row)]]), "edit demo account");
-    await demo.clearDemoData(actor("alice"));
-    expect(JSON.parse((await readRow(id))!).name).toBe("Renamed By Organizer");
-    const others = fixture.DEMO_CONTESTANTS.slice(1);
-    for (const c of others) expect(await readRow(demo.demoPlayerId(c.login))).toBeNull();
-    assertPipelineOk(await upstashPipeline([["HDEL", "ctf:auth:user", id], ["DEL", emailKey(edited)]]), "remove edited account");
+    // clearDemoData keeps an edited row, so this test removes it itself, on
+    // the failure path too.
+    try {
+      assertPipelineOk(await upstashPipeline([["HSET", "ctf:auth:user", id, JSON.stringify(row)]]), "edit demo account");
+      await demo.clearDemoData(actor("alice"));
+      expect(JSON.parse((await readRow(id))!).name).toBe("Renamed By Organizer");
+      const others = fixture.DEMO_CONTESTANTS.slice(1);
+      for (const c of others) expect(await readRow(demo.demoPlayerId(c.login))).toBeNull();
+    } finally {
+      assertPipelineOk(await upstashPipeline([["HDEL", "ctf:auth:user", id], ["DEL", emailKey(edited)]]), "remove edited account");
+    }
   });
 });

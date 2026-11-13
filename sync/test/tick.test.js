@@ -15,8 +15,11 @@ const CFG = {
 // A fixed single-target stub keeps these tests scoped to DVWA exactly as
 // before, instead of every call now looping the full six-target catalogue.
 const LINKS = { octocat: "11111111-1111-4111-8111-111111111111", mona: "33333333-3333-4333-8333-333333333333" };
-const resolveGithubLogin = async (login) => LINKS[login.toLowerCase()] ?? null;
-const redisStub = { resolveGithubLogin, getSecureDevTargets: async () => ["dvwa"], heldAuthors: async () => [], isPaused: async () => false, writeStatus: async () => {} };
+// Linked with no recorded time on an event with no end: the close rule never
+// bites, so these tests are about poll/parse/submit alone.
+const resolveGithubLink = async (login) => (LINKS[login.toLowerCase()] ? { player: LINKS[login.toLowerCase()], linkedAt: null } : null);
+const readScoringWindow = async () => ({ startsAt: "", endsAt: "" });
+const redisStub = { resolveGithubLink, readScoringWindow, getSecureDevTargets: async () => ["dvwa"], heldAuthors: async () => [], isPaused: async () => false, writeStatus: async () => {} };
 const tick = (cfg, state, deps = {}) => rawTick(cfg, state, { redis: redisStub, ...deps });
 
 const scoreBody = `<!-- ctf-score: {"author":"octocat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc"} -->`;
@@ -373,7 +376,7 @@ test("a final refusal (422) is marked seen, logged with its reason, and not coun
 // login (`ctf:link:github:<lowercased login>`), never to the login itself.
 test("a mixed-case author resolves through the lowercased link key", async () => {
   const keys = [];
-  const redis = { ...redisStub, resolveGithubLogin: async (l) => { keys.push(l); return LINKS[l.toLowerCase()] ?? null; } };
+  const redis = { ...redisStub, resolveGithubLink: async (l) => { keys.push(l); return resolveGithubLink(l); } };
   const posts = [];
   const body = `<!-- ctf-score: {"author":"OctoCat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc"} -->`;
   const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, posts);
@@ -433,7 +436,7 @@ test("holdScore throwing un-marks the revision, stops the cursor and logs retrie
 
 test("a resolver error leaves the comment unseen so the next poll retries it", async () => {
   let fail = true;
-  const redis = { ...redisStub, resolveGithubLogin: async (l) => { if (fail) throw new Error("upstash: NOAUTH"); return LINKS[l]; } };
+  const redis = { ...redisStub, resolveGithubLink: async (l) => { if (fail) throw new Error("upstash: NOAUTH"); return resolveGithubLink(l); } };
   const posts = [];
   const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, posts);
   const state = { repos: {} };
@@ -448,4 +451,85 @@ test("a resolver error leaves the comment unseen so the next poll retries it", a
 
 test("a tick with no Redis client refuses rather than treating authors as unlinked", async () => {
   await assert.rejects(rawTick(CFG, { repos: {} }, { fetchImpl: async () => { throw new Error("no"); }, log: () => {} }), /Redis client/);
+});
+
+// #741: a link made at or after the scoring close never counts, whichever
+// path first sees the score. A comment from before the close that sync reads
+// only after a late link is held (unclaimed), exactly as the release step
+// would keep it.
+const CLOSE = "2026-08-13T12:00:00Z"; // ghComment's updated_at is 11:00, inside
+const closeCase = (linkedAt, endsAt) => {
+  const posts = [];
+  const held = [];
+  const redis = {
+    ...redisStub,
+    resolveGithubLink: async () => ({ player: LINKS.octocat, linkedAt }),
+    readScoringWindow: async () => ({ startsAt: "", endsAt }),
+    holdScore: async (...a) => { held.push(a); },
+  };
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, posts);
+  return { posts, held, run: () => tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis }) };
+};
+
+test("comment pass: a link made before the close posts the score", async () => {
+  const c = closeCase(Date.parse(CLOSE) - 60_000, CLOSE);
+  await c.run();
+  assert.equal(c.posts.length, 1);
+  assert.equal(c.posts[0].player, LINKS.octocat);
+  assert.deepEqual(c.held, []);
+});
+
+test("comment pass: a link made after the close holds a score from before it", async () => {
+  const c = closeCase(Date.parse(CLOSE) + 5 * 60_000, CLOSE);
+  await c.run();
+  assert.deepEqual(c.posts, []);
+  assert.deepEqual(c.held, [["octocat", "1@2026-08-13T11:00:00Z", { target: "dvwa", solved: ["sqli-low"], pr: 7, sha: "abc", at: "2026-08-13T11:00:00Z", repo: "DVWA" }]]);
+});
+
+test("comment pass: a link at the very instant of the close is after it: held", async () => {
+  const c = closeCase(Date.parse(CLOSE), CLOSE);
+  await c.run();
+  assert.deepEqual(c.posts, []);
+  assert.equal(c.held.length, 1);
+});
+
+test("comment pass: a link with no recorded time, with an end set, holds", async () => {
+  const c = closeCase(null, CLOSE);
+  await c.run();
+  assert.deepEqual(c.posts, []);
+  assert.equal(c.held.length, 1);
+});
+
+test("comment pass: with no end set, a late or untimed link posts", async () => {
+  for (const linkedAt of [null, Date.parse(CLOSE) + 5 * 60_000]) {
+    const c = closeCase(linkedAt, "");
+    await c.run();
+    assert.equal(c.posts.length, 1, `linkedAt ${linkedAt}`);
+    assert.deepEqual(c.held, []);
+  }
+});
+
+test("comment pass: an unreadable window leaves the comment unseen for a retry, never posted", async () => {
+  const posts = [];
+  const redis = { ...redisStub, readScoringWindow: async () => { throw new Error("upstash: NOAUTH"); } };
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.deepEqual(posts, []);
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), false);
+});
+
+test("the window is read at most once per tick, shared by the release step and the comment pass", async () => {
+  let reads = 0;
+  const redis = {
+    ...redisStub,
+    readScoringWindow: async () => { reads++; return { startsAt: "", endsAt: "" }; },
+    heldAuthors: async () => ["someone"],
+    heldFor: async () => [],
+    resolveGithubLink: async (l) => (l === "someone" ? null : resolveGithubLink(l)),
+  };
+  const two = [ghComment(1), { ...ghComment(2), updated_at: "2026-08-13T11:01:00Z" }];
+  const f = routes(() => new Response(JSON.stringify(two), { status: 200, headers: {} }), 202, []);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(reads, 1);
 });

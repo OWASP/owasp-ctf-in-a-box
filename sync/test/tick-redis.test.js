@@ -53,7 +53,8 @@ test("a bumped reset epoch drops the cursor, paused or not (poll-mode wipe)", as
   const redis = {
     getSecureDevTargets: async () => ["vampi"],
     getResetAt: async () => "1001",
-    heldAuthors: async () => [], isPaused: async () => true, // a reset also freezes scoring
+    heldAuthors: async () => [],
+    isPaused: async () => true, // a reset also freezes scoring
     writeStatus: async () => {},
   };
   const state = baseState();

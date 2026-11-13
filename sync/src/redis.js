@@ -212,14 +212,6 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
     async writePollState(state) {
       await pipeline([["SET", SYNC_STATE_KEY, JSON.stringify(state)]]);
     },
-    // The player a GitHub login has claimed, or null when none has. Throws on
-    // any read error (the pipeline does): an unreadable link is not an
-    // unlinked author, and the caller retries the comment on the next poll.
-    // Mirrors apps/web github-link.ts linkKey: the login lowercased.
-    async resolveGithubLogin(login) {
-      const [id] = await pipeline([["GET", `${LINK_GITHUB_PREFIX}${String(login).toLowerCase()}`]]);
-      return typeof id === "string" && id !== "" ? id : null;
-    },
     // Parks a score whose PR author has no linked kit account, so linking later
     // can release it. `field` is the comment revision key, which makes a retried
     // hold idempotent. One pipeline: the entry and the author index never
@@ -270,7 +262,9 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
     // or null when the login is unclaimed. `linkedAt` is null when the link
     // carries no usable time in `ctf:link:at` (apps/web github-link.ts writes
     // it as a decimal string when the link is made); the release rule reads
-    // that as "cannot prove it beat the close". Throws on any read error.
+    // that as "cannot prove it beat the close". Throws on any read error: an
+    // unreadable link is not an unlinked author, and the caller retries. The
+    // key mirrors apps/web github-link.ts linkKey: the login lowercased.
     async resolveGithubLink(login) {
       const [player] = await pipeline([["GET", `${LINK_GITHUB_PREFIX}${String(login).toLowerCase()}`]]);
       if (typeof player !== "string" || player === "") return null;

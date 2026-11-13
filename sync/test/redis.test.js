@@ -264,25 +264,6 @@ test("getSecureDevTargets: a per-command error reply throws, unlike isPaused/get
   await assert.rejects(() => redis.getSecureDevTargets(), /WRONGTYPE/);
 });
 
-test("resolveGithubLogin reads the lowercased link key and returns null when unclaimed", async () => {
-  const sent = [];
-  const fetchImpl = async (_u, init) => {
-    const cmds = JSON.parse(init.body);
-    sent.push(...cmds);
-    return new Response(JSON.stringify([{ result: cmds[0][1] === "ctf:link:github:octocat" ? "11111111-1111-4111-8111-111111111111" : null }]), { status: 200 });
-  };
-  const r = makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, fetchImpl, () => {});
-  assert.equal(await r.resolveGithubLogin("OctoCat"), "11111111-1111-4111-8111-111111111111");
-  assert.equal(await r.resolveGithubLogin("nobody"), null);
-  assert.deepEqual(sent[0], ["GET", "ctf:link:github:octocat"]);
-});
-
-test("resolveGithubLogin throws on a per-command error", async () => {
-  const fetchImpl = async () => new Response(JSON.stringify([{ error: "NOAUTH nope" }]), { status: 200 });
-  const r = makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, fetchImpl, () => {});
-  await assert.rejects(r.resolveGithubLogin("octocat"), /NOAUTH/);
-});
-
 test("holdScore stores the entry under the lowercased login and indexes the author", async () => {
   const sent = [];
   const fetchImpl = async (_u, init) => {

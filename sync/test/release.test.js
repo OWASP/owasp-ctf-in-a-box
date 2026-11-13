@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { releaseHeldScores, tick } from "../src/index.js";
+import { linkAfterClose, releaseHeldScores, tick } from "../src/index.js";
 
 // Releasing a held Secure Development score: the PR author linked a kit
 // account, so the scores parked under their login go to the scorer with the
@@ -239,11 +239,19 @@ test("nothing held: one read, nothing else", async () => {
   assert.deepEqual(r, { released: 0, accepted: 0, refused: 0, rejected: 0, kept: 0, retried: 0, unreadable: 0 });
 });
 
+test("linkAfterClose: the one close rule, end-exclusive for a link", () => {
+  assert.equal(linkAfterClose({ linkedAt: T - 1 }, END), false);
+  assert.equal(linkAfterClose({ linkedAt: T }, END), true, "a link at the close instant is after it");
+  assert.equal(linkAfterClose({ linkedAt: T + 1 }, END), true);
+  assert.equal(linkAfterClose({ linkedAt: null }, END), true, "no time cannot prove it beat the close");
+  assert.equal(linkAfterClose({ linkedAt: T + 1 }, ""), false, "no end: the event never closes");
+  assert.equal(linkAfterClose({ linkedAt: null }, ""), false);
+  assert.equal(linkAfterClose({ linkedAt: T + 1 }, "not a date"), false);
+});
+
 // ── inside the tick ─────────────────────────────────────────────────────────
 
-const LINKED = { octocat: PLAYER };
 const tickRedis = (over = {}) => ({
-  resolveGithubLogin: async (l) => LINKED[l.toLowerCase()] ?? null,
   getSecureDevTargets: async () => ["dvwa"],
   isPaused: async () => false,
   writeStatus: async () => {},
@@ -299,7 +307,9 @@ test("a failed release step is logged and the comment pass still runs", async ()
   const order = [];
   const { posts, fetchImpl } = tickFetch(order);
   const logs = [];
-  const redis = tickRedis({ readScoringWindow: async () => { throw new Error("upstash: NOAUTH"); } });
+  // The author index, which only the release step reads. (An unreadable
+  // window stops the comment pass from judging a link too: tick.test.js.)
+  const redis = tickRedis({ heldAuthors: async () => { throw new Error("upstash: NOAUTH"); } });
   await tick(CFG, { repos: {} }, { redis, fetchImpl, log: (m) => logs.push(m) });
   assert.deepEqual(posts.map((p) => p.sha), ["ccc333"], "the new comment still scores");
   assert.equal(Object.keys(redis.held.octocat).length, 1, "the held entry waits for the next tick");

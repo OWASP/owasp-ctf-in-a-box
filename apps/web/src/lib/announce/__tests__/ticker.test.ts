@@ -37,6 +37,8 @@ import { isLifecyclePassEnabled, runAnnounceTick } from "@/lib/announce/ticker";
 
 const T0 = Date.parse("2026-10-14T12:00:00Z");
 
+const captured = { webhookGeneration: 0, kindEpoch: 0 };
+
 const config = (over: Record<string, unknown> = {}) => ({
   webhookConfigured: true,
   firstBlood: false,
@@ -45,6 +47,8 @@ const config = (over: Record<string, unknown> = {}) => ({
   milestones: false,
   marks: "",
   webhookUrl: "https://discord.com/api/webhooks/1/aaaaaaaaaaaaaaaaaaaaaa",
+  webhookGeneration: 0,
+  kindEpochs: { "first-blood": 0, launch: 0, pause: 0, resume: 0, milestone: 0 },
   ...over,
 });
 
@@ -153,7 +157,7 @@ describe("lifecycle tick", () => {
     mocks.readStatePack.mockResolvedValue("v2|L1P0C0A0");
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
     await runAnnounceTick(T0);
-    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("pause", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring is paused" })] }));
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("pause", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring is paused" })] }), captured);
   });
 
   it("stores the announced pause bit and announces the pause once", async () => {
@@ -164,7 +168,7 @@ describe("lifecycle tick", () => {
     await runAnnounceTick(T0);
     expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P1C0A1");
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("pause", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring is paused" })] }));
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("pause", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring is paused" })] }), captured);
   });
 
   it("uses the stored announced bit to announce the resume", async () => {
@@ -175,7 +179,7 @@ describe("lifecycle tick", () => {
     await runAnnounceTick(T0);
     expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P1C0A1", "v2|L1P0C0A0");
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("resume", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring resumed" })] }));
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("resume", expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring resumed" })] }), captured);
   });
 
   it("captures the lifecycle pack before settings so a concurrent update fails the stale CAS", async () => {
@@ -239,12 +243,22 @@ describe("lifecycle tick", () => {
     }
   });
 
+  it("stamps a lifecycle edge with the generation and epoch captured by the tick", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(
+      config({ launch: true, webhookGeneration: 4, kindEpochs: { "first-blood": 0, launch: 2, pause: 0, resume: 0, milestone: 0 } }),
+    );
+    mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L0P0C0A0" });
+    await runAnnounceTick(T0);
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("launch", expect.anything(), { webhookGeneration: 4, kindEpoch: 2 });
+  });
+
   it("announces the launch edge when this replica wins it", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
     mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L0P0C0A0" });
     await runAnnounceTick(T0);
-    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("launch", expect.objectContaining({ embeds: [expect.objectContaining({ title: "The event is live!" })] }));
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("launch", expect.objectContaining({ embeds: [expect.objectContaining({ title: "The event is live!" })] }), captured);
   });
 
   it("an opt-in shortly before launch seeds pre-launch, so the launch edge still fires", async () => {
@@ -268,7 +282,7 @@ describe("lifecycle tick", () => {
     mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L0P0C0A0" });
     await runAnnounceTick(T0 + 30_000);
-    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("launch", expect.objectContaining({ embeds: [expect.objectContaining({ title: "The event is live!" })] }));
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("launch", expect.objectContaining({ embeds: [expect.objectContaining({ title: "The event is live!" })] }), captured);
   });
 
   it("the window closing advances the state but announces nothing — no pause at the end", async () => {
@@ -310,6 +324,7 @@ describe("lifecycle tick", () => {
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith(
       "resume",
       expect.objectContaining({ embeds: [expect.objectContaining({ title: "Scoring resumed" })] }),
+      captured,
     );
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalledWith("launch", expect.anything());
   });
@@ -368,7 +383,21 @@ describe("milestones tick", () => {
     await runAnnounceTick(T0);
     expect(mocks.claimLedgerFields).toHaveBeenCalledWith("ctf:announce:milestone", [expect.stringContaining("1800000")]);
     expect(mocks.enqueueAnnouncement).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("milestone", expect.anything());
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("milestone", expect.anything(), captured);
+  });
+
+  it("stamps a milestone with the generation and epoch captured by the tick", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(
+      config({
+        milestones: true,
+        marks: "30m",
+        webhookGeneration: 5,
+        kindEpochs: { "first-blood": 0, launch: 0, pause: 0, resume: 0, milestone: 3 },
+      }),
+    );
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringEndsAt: "2026-10-14T12:20:00Z" }));
+    await runAnnounceTick(T0);
+    expect(mocks.enqueueAnnouncement).toHaveBeenCalledWith("milestone", expect.anything(), { webhookGeneration: 5, kindEpoch: 3 });
   });
 
   it("posts ONE time check when several marks are crossed at once (no burst)", async () => {

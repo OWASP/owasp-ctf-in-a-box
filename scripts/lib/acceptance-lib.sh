@@ -427,10 +427,10 @@ acc_assert_sync_refuses_no_org() {
 acc_seed_player() {
   sp_redis="$1"; sp_id="$2"; sp_name="$3"
   sp_email="${sp_name}@acceptance.invalid"
-  docker exec "$sp_redis" redis-cli HSET ctf:auth:user "$sp_id" \
+  docker exec "$sp_redis" redis-cli -e HSET ctf:auth:user "$sp_id" \
     '{"id":"'"$sp_id"'","name":"'"$sp_name"'","email":"'"$sp_email"'","emailVerified":true,"image":null,"createdAt":"2026-08-19T00:00:00.000Z","updatedAt":"2026-08-19T00:00:00.000Z"}' \
     >/dev/null || { echo "FAIL: could not seed the account row for $sp_name" >&2; return 1; }
-  docker exec "$sp_redis" redis-cli SADD "ctf:auth:user:by:email:$sp_email" "$sp_id" >/dev/null \
+  docker exec "$sp_redis" redis-cli -e SADD "ctf:auth:user:by:email:$sp_email" "$sp_id" >/dev/null \
     || { echo "FAIL: could not seed the email index for $sp_name" >&2; return 1; }
 }
 

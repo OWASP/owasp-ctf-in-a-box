@@ -166,7 +166,12 @@ state; everything else that touches scores goes through it.
    (or the event has no end), oldest comment first, POSTing each at its
    ORIGINAL comment time, so the scorer still judges the window, freeze and
    reset against that time (ADR 67). A link made at or after the close never
-   releases: the admin list shows it as `unclaimed`. Sync needs Redis for this
+   releases: the admin list shows it as `unclaimed`. A held score for a
+   target the organizer has since turned off stays held until the target is
+   back on. While an older score for the same author and target is still
+   held (its release failed, or the link landed mid-tick), the comment pass
+   holds a newer one behind it instead of posting it: the scorer keeps a
+   solve's first time, so the newer one would take its place for good. Sync needs Redis for this
    lookup and for the freeze and reset reads, so it refuses to start without
    it (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
 6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload with
@@ -177,8 +182,9 @@ state; everything else that touches scores goes through it.
    scorer compares the token in constant time: both sides are SHA-256'd and
    passed to `timingSafeEqual`, so neither the token's bytes nor its length
    are recoverable from how long a rejection takes. A `2xx` is success; a
-   `422` is the scorer's final verdict on *when* the score was posted
-   (logged as `refused`, never retried, not counted as dropped); any other
+   `422` is the scorer's final verdict on *when* the score was posted, or on
+   a player deleted while the score was on its way (logged as `refused`,
+   never retried, not counted as dropped); any other
    `4xx` is treated as a permanent rejection (dropped, logged); anything
    else throws and the poller un-marks the comment as seen so it retries
    next tick. The poller does not hold its cursor while scoring is frozen or
@@ -191,7 +197,11 @@ state; everything else that touches scores goes through it.
    over `pausedSince` and the `ctf:admin:pauses` interval log the app writes
    with the flag) is refused with a final `422`. A freeze with no recorded
    start answers `503`, which the poller retries. A payload with no `at` (an
-   older sync) keeps the arrival-time rule. The scorer then writes the score
+   older sync) keeps the arrival-time rule. A player an organizer is
+   deleting is refused too (`422`, `player-deleted`): the delete sets
+   `ctf:deleted:<player id>` for ten minutes before it clears their solves,
+   and the scorer checks that key in the same script as its write, so a
+   score read before the delete cannot restore a cleared solve. The scorer then writes the score
    to Redis (via `srh`), timed `at`, as a monotonic, idempotent-on-replay
    update — the write model is described in
    [docs/decisions.md #5](decisions.md#adr-5-single-score-writer-monotonic-writes-at-least-once-delivery).
@@ -1114,8 +1124,10 @@ floor that keeps the rate inside 0..1.
   `ingested` and `dropped` are a **pair**, and /admin shows them side by side:
   points that reached the leaderboard, and points that reached a PR and
   stopped there. A held score is waiting, not stopped. A drop is a comment
-  the poller consumed and could not turn into a score — a scorer `4xx`, or
-  a `ctf-score:` marker present but unreadable. Both are cumulative and
+  the poller consumed and could not turn into a score — a scorer `4xx`
+  other than `422`, or a `ctf-score:` marker present but unreadable. A `422`
+  is the scorer refusing a score on its time (or a deleted player) and is
+  counted as refused, not dropped. Both are cumulative and
   neither is self-clearing, unlike `lastError`, which describes only the
   tick that wrote it: a dropped score is still missing after the poller
   recovers, so the next quiet tick must not erase the pointer to the PR that

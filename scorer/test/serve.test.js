@@ -677,6 +677,16 @@ test("an `at` outside the scoring window is refused with a final 422, judged on 
   assert.deepEqual(Object.keys(await store.getSolves("dvwa")), [pid("hubot") + ":sqli-low"]);
 });
 
+test("a score for a player being deleted is refused with a final 422 and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  store.__markDeleted(pid("octocat"));
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 422);
+  assert.equal((await res.json()).refused, "player-deleted");
+  assert.equal((await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202, "only that player");
+  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), [pid("hubot") + ":sqli-low"]);
+});
+
 test("an `at` on an event that was never launched is refused with a final 422", async (t) => {
   const { post } = await bootWith(t, { policy: { ...LAUNCHED, startsAt: null } });
   const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));

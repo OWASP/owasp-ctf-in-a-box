@@ -23,7 +23,18 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   reset against that time. A link made at or after the close never releases;
   the Secure Development admin tab lists held and `unclaimed` scores
   (read-only). A master reset wipes held scores and keeps links; deleting a
-  player clears their held scores.
+  player clears their held scores. A held score for a target the organizer
+  has turned off stays held until the target is back, and a newer score
+  waits behind an older one still held for the same target, so a solve keeps
+  its first comment time.
+- **Fixed: a deleted player's Secure Development solve could come back.** A
+  score sync read before an organizer deleted the player could reach the
+  scorer after the delete cleared their solves, and the scorer wrote it
+  back. The delete now sets `ctf:deleted:<player id>` for ten minutes before
+  it clears anything, and the scorer refuses that player's scores (`422`,
+  `player-deleted`) in the same script that writes a solve. A player deleted
+  and back within those ten minutes has their Secure Development scores
+  refused until it expires.
 - **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
   the linked-account write failed after the user row was written, that row
   stayed behind and every later sign-in answered `account not linked`. The

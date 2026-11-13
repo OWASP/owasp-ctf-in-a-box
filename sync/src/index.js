@@ -116,6 +116,11 @@ const freshRelease = () => ({ released: 0, accepted: 0, refused: 0, rejected: 0,
  * beat the close), leaves the author's scores held. With no parseable end the
  * event never closes, so any link releases.
  *
+ * An entry whose target is not in this tick's `targets` (the organizer turned
+ * it off after the hold) stays held: the comment pass does not score that
+ * target either, and turning it back on releases the entry. With no `targets`
+ * every target counts.
+ *
  * Per author, entries go oldest first (the scorer keeps a solve's first-posted
  * time). A scorer verdict of any kind (accepted, refused, rejected) is final,
  * so the entry is deleted; a throw from the scorer or from Redis stops that
@@ -123,8 +128,9 @@ const freshRelease = () => ({ released: 0, accepted: 0, refused: 0, rejected: 0,
  * index or the window cannot be read; the caller logs that and polls anyway.
  * Logs carry counts and reasons, never a login, player id or PR.
  */
-export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = console.error, readWindow = () => redis.readScoringWindow() }) {
+export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = console.error, readWindow = () => redis.readScoringWindow(), targets = null }) {
   const counts = freshRelease();
+  const enabled = targets ? new Set(targets) : null;
   const authors = await redis.heldAuthors();
   if (authors.length === 0) return counts;
   const { endsAt } = await readWindow();
@@ -147,6 +153,10 @@ export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = c
         const atMs = entry && typeof entry.at === "string" ? Date.parse(entry.at) : NaN;
         if (!Number.isFinite(atMs)) {
           counts.unreadable++;
+          counts.kept++;
+          continue;
+        }
+        if (enabled && !enabled.has(entry.target)) {
           counts.kept++;
           continue;
         }
@@ -266,7 +276,7 @@ export async function tick(cfg, state, deps = {}) {
   // the scorer first. A failure of the step itself leaves every held score in
   // place for the next tick and must not stop the poll.
   try {
-    const released = await releaseHeldScores({ cfg, redis, fetchImpl, log, readWindow });
+    const released = await releaseHeldScores({ cfg, redis, fetchImpl, log, readWindow, targets });
     state.ingested += released.accepted;
     if (released.rejected > 0) {
       drop(`release: ${released.rejected} held score${released.rejected === 1 ? "" : "s"} rejected (4xx), dropped`, released.rejected);
@@ -335,6 +345,24 @@ export async function tick(cfg, state, deps = {}) {
           });
           tally.held++;
           log(`submit ${repo}#${payload.pr}: held (PR author not linked yet)`);
+          continue;
+        }
+        // An older score for the same author and target still held (its
+        // release failed this tick, the step was skipped, or the link landed
+        // after the release step ran) goes first: the scorer keeps a solve's
+        // first-posted time, so posting this one now would replace the older
+        // comment's time for good. Hold it behind the older one; the release
+        // step posts both, oldest first. An entry with no readable time never
+        // releases, so it does not hold anything back.
+        const waiting = (await redis.heldFor(payload.author)).some(
+          ({ entry }) => entry?.target === payload.target && typeof entry.at === "string" && Number.isFinite(Date.parse(entry.at)),
+        );
+        if (waiting) {
+          await redis.holdScore(payload.author, seenKey(c.id, c.updated_at), {
+            target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at: c.updated_at, repo,
+          });
+          tally.held++;
+          log(`submit ${repo}#${payload.pr}: held (an older held score for this target goes first)`);
           continue;
         }
         const player = link.player;

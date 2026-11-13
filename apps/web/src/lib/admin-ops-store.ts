@@ -567,8 +567,22 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
  * blocking a re-link) is a separate decision. Scores sync is holding for the
  * linked login (`ctf:sd:held:*`) are event state and are cleared.
  *
+ * The deletion marker (`DELETED_PREFIX`) goes up before the progress reset, so
+ * a score already on its way is either cleared by the reset or refused by the
+ * scorer. A player deleted and back within `DELETED_TTL_SECONDS` has their
+ * Secure Development scores refused until it expires.
+ *
  * A captain is a deliberate refusal here — see `forceTransferCaptain`.
  */
+/** `ctf:deleted:<id>`: up while a delete clears a player, and for a while
+ *  after. The scorer refuses a score for a player with this key in the same
+ *  script that writes the solve (scorer/src/store.js deletedKey), so a score
+ *  sync read before the delete cannot land after the progress reset and bring
+ *  a solve back. Expires: the account survives a delete, and the same player
+ *  may play again. Ten minutes outlasts any score already on its way. */
+export const DELETED_PREFIX = "ctf:deleted:";
+export const DELETED_TTL_SECONDS = 600;
+
 export async function deleteUser(
   rawId: unknown,
   actor: AuditActor,
@@ -592,6 +606,12 @@ export async function deleteUser(
   // last close comes after the last write, on the failure path too.
   await beginScoreLowering();
   try {
+    // Before the reset, and checked: without the marker, a score in flight
+    // can rewrite a solve the reset just cleared.
+    assertPipelineOk(
+      await upstashPipeline([["SET", `${DELETED_PREFIX}${player}`, "1", "EX", DELETED_TTL_SECONDS]]),
+      "deletion marker",
+    );
     const reset = await resetUserProgress(player, actor);
 
     const leftTeam = detail.team?.slug ?? null;

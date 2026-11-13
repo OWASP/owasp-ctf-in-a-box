@@ -303,17 +303,67 @@ test("a held score the scorer rejects on release is counted as dropped", async (
   assert.equal(state.ingested, 1);
 });
 
+// The author index, which only the release step reads. (An unreadable window
+// stops the comment pass from judging a link too: tick.test.js.)
+const releaseDown = (over = {}) => tickRedis({ heldAuthors: async () => { throw new Error("upstash: NOAUTH"); }, holdScore: async () => {}, ...over });
+
 test("a failed release step is logged and the comment pass still runs", async () => {
   const order = [];
   const { posts, fetchImpl } = tickFetch(order);
   const logs = [];
-  // The author index, which only the release step reads. (An unreadable
-  // window stops the comment pass from judging a link too: tick.test.js.)
-  const redis = tickRedis({ heldAuthors: async () => { throw new Error("upstash: NOAUTH"); } });
+  // The held entry is for another target, so nothing holds the new comment back.
+  const redis = releaseDown({ ...fakeRedis({ links: { octocat: { player: PLAYER, linkedAt: T - MIN } }, held: { octocat: { "2@2026-11-13T11:00:00Z": JSON.stringify(entryB) } } }), heldAuthors: async () => { throw new Error("upstash: NOAUTH"); }, holdScore: async () => {} });
   await tick(CFG, { repos: {} }, { redis, fetchImpl, log: (m) => logs.push(m) });
   assert.deepEqual(posts.map((p) => p.sha), ["ccc333"], "the new comment still scores");
   assert.equal(Object.keys(redis.held.octocat).length, 1, "the held entry waits for the next tick");
   assert.ok(logs.some((l) => /^release: skipped this tick \(upstash: NOAUTH\)/.test(l)), JSON.stringify(logs));
+});
+
+test("a newer score for a target with an older one still held is held behind it, not posted", async () => {
+  const holds = [];
+  const { posts, fetchImpl } = tickFetch([]);
+  const logs = [];
+  const redis = releaseDown({ holdScore: async (...a) => { holds.push(a); } });
+  await tick(CFG, { repos: {} }, { redis, fetchImpl, log: (m) => logs.push(m) });
+  assert.deepEqual(posts, [], "posting it would replace the older comment's solve time");
+  assert.deepEqual(holds, [["octocat", "50@2026-11-13T12:00:00Z", { target: "dvwa", solved: ["xss-low"], pr: 12, sha: "ccc333", at: "2026-11-13T12:00:00Z", repo: "DVWA" }]]);
+  assert.ok(logs.some((l) => /held \(an older held score for this target goes first\)/.test(l)), JSON.stringify(logs));
+});
+
+test("the same gate applies when the scorer fails the older release this tick", async () => {
+  const holds = [];
+  const order = [];
+  const { posts, fetchImpl } = tickFetch(order, (p) => (p.sha === "aaa111" ? 503 : 202));
+  const redis = tickRedis({ holdScore: async (...a) => { holds.push(a); } });
+  await tick(CFG, { repos: {} }, { redis, fetchImpl, log: () => {} });
+  assert.deepEqual(posts.map((p) => p.sha), ["aaa111"], "only the failed release reached the scorer");
+  assert.equal(holds.length, 1);
+  assert.equal(Object.keys(redis.held.octocat).length, 1, "the older entry is still held for the next tick");
+});
+
+test("a held entry with no readable time does not hold a newer score back", async () => {
+  const { posts, fetchImpl } = tickFetch([]);
+  const redis = releaseDown({ ...fakeRedis({ links: { octocat: { player: PLAYER, linkedAt: T - MIN } }, held: { octocat: { "1@x": JSON.stringify({ ...entryA, at: "not a time" }) } } }), heldAuthors: async () => { throw new Error("upstash: NOAUTH"); }, holdScore: async () => {} });
+  await tick(CFG, { repos: {} }, { redis, fetchImpl, log: () => {} });
+  assert.deepEqual(posts.map((p) => p.sha), ["ccc333"]);
+});
+
+test("a held entry for a target the organizer turned off stays held; the others release", async () => {
+  const redis = fakeRedis({ links: { octocat: { player: PLAYER, linkedAt: T - MIN } }, held: twoHeld() });
+  const { posts, fetchImpl } = scorer();
+  const r = await releaseHeldScores({ cfg: CFG, redis, fetchImpl, log: () => {}, targets: ["vampi"] });
+  assert.deepEqual(posts.map((p) => p.target), ["vampi"]);
+  assert.deepEqual(Object.keys(redis.held.octocat), ["1@2026-11-13T10:00:00Z"], "the dvwa entry waits for dvwa to come back");
+  assert.equal(r.kept, 1);
+  assert.equal(r.released, 1);
+});
+
+test("the tick passes its own target list to the release step", async () => {
+  const { posts, fetchImpl } = tickFetch([]);
+  const redis = tickRedis({ getSecureDevTargets: async () => ["vampi"], holdScore: async () => {} });
+  await tick(CFG, { repos: {} }, { redis, fetchImpl, log: () => {} });
+  assert.deepEqual(posts.filter((p) => p.sha === "aaa111"), [], "the dvwa entry is not released while dvwa is off");
+  assert.equal(Object.keys(redis.held.octocat).length, 1);
 });
 
 test("release log lines carry counts and reasons only — no login, player id, PR, sha, repo or comment id", async () => {

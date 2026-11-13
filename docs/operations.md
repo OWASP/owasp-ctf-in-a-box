@@ -749,8 +749,11 @@ The panel offers:
   From there: **reset progress** (clears their Secure Development solves on
   every target, their quiz answers, classic and AI solves, attempts and hints;
   keeps the account and the team), **delete contestant** (all of that
-  plus the team membership, their event record and their rate-limit counters;
-  the sign-in account and its GitHub link stay), **remove from team**, or
+  plus the team membership, their event record, their rate-limit counters and
+  any Secure Development scores held for their GitHub login; the sign-in
+  account and its GitHub link stay. For ten minutes after a delete the
+  scorer refuses that player's Secure Development scores, so one already on
+  its way cannot bring a solve back), **remove from team**, or
   **add to team** / **move to team**: type a team slug and the player goes
   onto it, leaving their current team if they have one, whatever the
   registration state. This is how a player who left after registration

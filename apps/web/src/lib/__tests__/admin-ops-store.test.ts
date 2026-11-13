@@ -638,6 +638,7 @@ describe("deleteUser", () => {
     );
     mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "a11ce000-0000-4000-8000-00000000000c"));
     mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
     mockNoSecureDevKeys(); // the reset's own sweep
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
@@ -683,6 +684,7 @@ describe("deleteUser: held Secure Development scores", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
     mockNoSecureDevKeys();
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
@@ -720,12 +722,52 @@ describe("deleteUser: held Secure Development scores", () => {
   });
 });
 
+describe("deleteUser: the deletion marker", () => {
+  const marker = ["SET", `ctf:deleted:${OCTO}`, "1", "EX", 600];
+
+  it("goes up, with an expiry, before the progress reset writes anything", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce(null);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
+    mockNoSecureDevKeys();
+    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockQuizAndHintsPipeline();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
+    await deleteUser(OCTO, ADMIN);
+    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
+    const at = calls.findIndex((cmds) => cmds.some((c) => c[0] === "SET" && c[1] === `ctf:deleted:${OCTO}`));
+    expect(calls[at]).toEqual([marker]);
+    const firstWrite = calls.findIndex((cmds) => cmds.some((c) => ["DEL", "HDEL", "SREM", "HSET", "EVAL"].includes(String(c[0]))));
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(firstWrite);
+  });
+
+  it("a refused marker aborts the delete before the reset", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce(null);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(allCommands().some((c) => c[0] === "DEL" || c[0] === "HDEL")).toBe(false);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("deleteUser: a failed tail write is not a delete", () => {
   it("rejects when the membership/account pipeline reports an error", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
     mockNoSecureDevKeys();
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();

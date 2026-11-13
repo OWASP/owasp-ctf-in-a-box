@@ -6,6 +6,7 @@ vi.mock("@/lib/admin-auth", () => ({ requireAdmin: h.requireAdmin }));
 vi.mock("@/lib/sd-held", () => ({ listHeldScores: h.listHeldScores }));
 
 import * as route from "@/app/api/admin/sd/held/route";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const get = () => route.GET(new Request("http://box.test/api/admin/sd/held"));
 
@@ -24,11 +25,12 @@ describe("GET /api/admin/sd/held", () => {
   });
 
   it("returns 503 when the store throws", async () => {
-    h.listHeldScores.mockRejectedValue(Object.assign(new Error("NOAUTH"), { login: "octo" }));
+    h.listHeldScores.mockRejectedValue(Object.assign(decoratedError("NOAUTH"), { login: "octo-held-author" }));
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await get();
     expect(res.status).toBe(503);
-    expect(JSON.stringify(err.mock.calls)).not.toContain("octo");
+    expectLabelOnly(err, { label: "NOAUTH" });
+    expect(err.mock.calls.flat().join(" ")).not.toContain("octo-held-author");
     err.mockRestore();
   });
 

@@ -5,6 +5,17 @@
 
 export const solvesKey = (target) => `ctf:solves:${target}`;
 const solveField = (player, id) => `${player}:${id}`;
+// Set with a short expiry by apps/web admin-ops-store.ts deleteUser BEFORE it
+// clears the player's solves. A score sync read before the delete can reach
+// the scorer after the clear; checking this key in the same script as the
+// write refuses it, so a deleted player's solves cannot come back. Keep the
+// key in step with DELETED_PREFIX there.
+export const deletedKey = (player) => `ctf:deleted:${player}`;
+// KEYS[1]=solves hash KEYS[2]=deleted marker  ARGV[1]=at ARGV[2..]=fields.
+// 0 = refused (player being deleted), 1 = written (HSETNX: replays no-op).
+const RECORD_SOLVES_SCRIPT = `if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+for i = 2, #ARGV do redis.call('HSETNX', KEYS[1], ARGV[i], ARGV[1]) end
+return 1`;
 // Same key/field the app (admin-store.ts) writes and the sync poller
 // (sync/src/redis.js) reads — "1" means paused, anything else does not.
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
@@ -69,14 +80,20 @@ export function createMemoryStore({ teams = [] } = {}) {
   // No event settings to judge a score's time against until a test sets
   // some — the same answer the Redis store gives when it cannot read them.
   let policy = null;
+  const deleted = new Set(); // test seam mirroring ctf:deleted:<player>
   return {
     async recordSolves(target, player, ids, at) {
+      if (deleted.has(player)) return false;
       let hash = hashes.get(solvesKey(target));
       if (!hash) hashes.set(solvesKey(target), (hash = new Map()));
       for (const id of ids) {
         const field = solveField(player, id);
         if (!hash.has(field)) hash.set(field, at); // HSETNX: replays no-op
       }
+      return true;
+    },
+    __markDeleted(player) {
+      deleted.add(player);
     },
     async getSolves(target) {
       return Object.fromEntries(hashes.get(solvesKey(target)) ?? []);
@@ -121,7 +138,8 @@ export function redisErrorText(error) {
 
 /** The Redis-backed solve store: POST /pipeline with a JSON array of command
  *  arrays, bearer token; results come back positionally as { result } or
- *  { error }. Solve persistence uses HSETNX + HGETALL; the pause reads use
+ *  { error }. Solve persistence uses one EVAL (HSETNX behind the deletion
+ *  marker) + HGETALL; the pause reads use
  *  HMGET and LRANGE, and the team read SCAN, HGET and SMEMBERS — all within the subset
  *  SRH's env mode supports. `fetchImpl`, `log` and `timeoutMs` are seams. */
 export function createRedisStore({
@@ -151,9 +169,14 @@ export function createRedisStore({
   }
 
   return {
+    // false when the player is being deleted (nothing written). One script,
+    // so the marker check and the writes cannot be split by the delete.
     async recordSolves(target, player, ids, at) {
-      if (ids.length === 0) return;
-      await pipeline(ids.map((id) => ["HSETNX", solvesKey(target), solveField(player, id), at]));
+      if (ids.length === 0) return true;
+      const keys = [solvesKey(target), deletedKey(player)];
+      const fields = ids.map((id) => solveField(player, id));
+      const [written] = await pipeline([["EVAL", RECORD_SOLVES_SCRIPT, keys.length, ...keys, at, ...fields]]);
+      return written === 1;
     },
     async getSolves(target) {
       const [raw] = await pipeline([["HGETALL", solvesKey(target)]]);

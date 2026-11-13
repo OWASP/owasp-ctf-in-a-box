@@ -1846,7 +1846,7 @@ The taxonomy is the whole decision:
 | `rejected` | Scorer returned `4xx`; the comment stays marked seen, so it is never retried | **Yes** |
 | `retried` | Submission failed transiently and was un-marked; next tick re-presents it | No — logged, not lost |
 | `held` | PR author has not linked a kit account (or linked at or after the close): stored under `ctf:sd:held:*`, released by a later tick if the author links before the end, else shown to admins as `unclaimed` | No — waiting on the player, not lost |
-| `refused` | Scorer returned `422`: posted before the launch, during a freeze, after the end or before a reset ([ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)); stays marked seen | No — the rule working, logged per PR |
+| `refused` | Scorer returned `422`: posted before the launch, during a freeze, after the end or before a reset ([ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)), or for a player being deleted; stays marked seen | No — the rule working, logged per PR |
 
 **Splitting `invalid` from `noMarker` required a parser change.**
 `parseScoreComment` returned `null` for both "ordinary comment" and "claims to
@@ -4069,7 +4069,9 @@ epoch are judged at that time.
   the master-reset epoch is refused; one outside the scoring window
   (`outsideScoringWindow(at, …)`, ADR 59) is refused; one inside the freeze
   (`pausedAt(at)`) is refused. Each refusal is a **final** verdict, `422`
-  with a `refused` code (`pre-reset`, `outside-window`, `paused`). sync logs
+  with a `refused` code (`pre-reset`, `outside-window`, `paused`; and
+  `player-deleted`, which is not about time: an organizer deleted the player
+  while the score was on its way, see `deleteUser`). sync logs
   it, marks the comment seen and never re-presents it, and does not count it
   as dropped: it is the rule working, and a counter every pause bumped would
   be a counter nobody reads. Otherwise the solve is recorded with that time,

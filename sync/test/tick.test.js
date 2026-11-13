@@ -19,7 +19,7 @@ const LINKS = { octocat: "11111111-1111-4111-8111-111111111111", mona: "33333333
 // bites, so these tests are about poll/parse/submit alone.
 const resolveGithubLink = async (login) => (LINKS[login.toLowerCase()] ? { player: LINKS[login.toLowerCase()], linkedAt: null } : null);
 const readScoringWindow = async () => ({ startsAt: "", endsAt: "" });
-const redisStub = { resolveGithubLink, readScoringWindow, getSecureDevTargets: async () => ["dvwa"], heldAuthors: async () => [], isPaused: async () => false, writeStatus: async () => {} };
+const redisStub = { resolveGithubLink, readScoringWindow, getSecureDevTargets: async () => ["dvwa"], heldAuthors: async () => [], heldFor: async () => [], isPaused: async () => false, writeStatus: async () => {} };
 const tick = (cfg, state, deps = {}) => rawTick(cfg, state, { redis: redisStub, ...deps });
 
 const scoreBody = `<!-- ctf-score: {"author":"octocat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc"} -->`;

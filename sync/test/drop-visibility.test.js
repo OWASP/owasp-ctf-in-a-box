@@ -24,7 +24,7 @@ const CFG = {
 // fixed single-target stub keeps them scoped to one repo as before.
 const LINKS = { octocat: "11111111-1111-4111-8111-111111111111", mona: "33333333-3333-4333-8333-333333333333" };
 const resolveGithubLink = async (login) => (LINKS[login.toLowerCase()] ? { player: LINKS[login.toLowerCase()], linkedAt: null } : null);
-const redisStub = { resolveGithubLink, readScoringWindow: async () => ({ startsAt: "", endsAt: "" }), getSecureDevTargets: async () => ["dvwa"], heldAuthors: async () => [], isPaused: async () => false, writeStatus: async () => {} };
+const redisStub = { resolveGithubLink, readScoringWindow: async () => ({ startsAt: "", endsAt: "" }), getSecureDevTargets: async () => ["dvwa"], heldAuthors: async () => [], heldFor: async () => [], isPaused: async () => false, writeStatus: async () => {} };
 const tick = (cfg, state, deps = {}) => rawTick(cfg, state, { redis: redisStub, ...deps });
 
 const scoreBody = `<!-- ctf-score: {"author":"octocat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc"} -->`;

@@ -15,7 +15,7 @@ import * as keys from "@/lib/auth-store/keys";
 import { LINK_AT_KEY, LINK_USER_PREFIX, linkKey } from "@/lib/github-link";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { upstashPipeline as pipeline } from "@/lib/upstash";
-import { freshId, liveConfigured, liveKey } from "./live-redis";
+import { freshId, liveConfigured, liveKey, RUN } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
 
@@ -304,10 +304,11 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
   });
 
   describe("linking GitHub to a signed-in player", () => {
-    // linkOnUserWrite writes the real ctf:link:* keys, so every login here is
-    // fresh and every key is removed afterwards.
+    // linkOnUserWrite writes the real ctf:link:* keys, outside the liveKey
+    // namespace, so every login carries this run's id (no two runs on one Redis
+    // share one) and every key is removed afterwards.
     const written: string[][] = [];
-    const freshLogin = () => `octo-${freshId("l").toLowerCase().replace(/[^a-z0-9-]/g, "")}`;
+    const freshLogin = () => `octo-${RUN}-${freshId("l")}`.toLowerCase().replace(/[^a-z0-9-]/g, "");
     async function kitUser(ia: Awaited<ReturnType<typeof build>>["ctx"]["internalAdapter"], tag: string) {
       const email = `${tag}-${freshId("u")}@demo.invalid`.toLowerCase();
       const user = await ia.createUser({ name: `Kit ${tag}`, email, emailVerified: true, image: "https://kit.example.test/me.png" }, { method: "admin" });

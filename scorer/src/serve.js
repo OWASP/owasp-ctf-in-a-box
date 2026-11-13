@@ -153,7 +153,11 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     );
     const solvedAt = await solveTime(at);
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
-    await store.recordSolves(target, player, ids, solvedAt.iso);
+    // A final refusal like the time verdicts: the player was deleted while
+    // this score was on its way, and recording it would bring a solve back.
+    if (!(await store.recordSolves(target, player, ids, solvedAt.iso))) {
+      return json(res, 422, { error: "the player was deleted", refused: "player-deleted" });
+    }
     if (!rubric) seenTargets.add(target);
     res.writeHead(202).end();
   }

@@ -69,6 +69,16 @@ describe("listHeldScores", () => {
     expect((await listHeldScores(endMs - 1000))[0].status).toBe("unclaimed");
   });
 
+  it("stays held after the close while the author linked before it, as sync still releases it", async () => {
+    seed({ authors: ["octo"], held: { octo: { "1@t": row() } }, links: { octo: "p1" }, at: { p1: String(endMs - 1) }, endsAt: END });
+    expect((await listHeldScores(endMs + 1))[0].status).toBe("held");
+  });
+
+  it.each(["", " ", "-5", "1e3", "12.5"])("treats link time %j as no time, after the close", async (raw) => {
+    seed({ authors: ["octo"], held: { octo: { "1@t": row() } }, links: { octo: "p1" }, at: { p1: raw }, endsAt: END });
+    expect((await listHeldScores(endMs - 1000))[0].status).toBe("unclaimed");
+  });
+
   it("treats a linked author with no link time as after the close", async () => {
     seed({ authors: ["octo"], held: { octo: { "1@t": row() } }, links: { octo: "p1" }, endsAt: END });
     expect((await listHeldScores(endMs - 1000))[0].status).toBe("unclaimed");

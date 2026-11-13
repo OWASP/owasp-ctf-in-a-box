@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getAdminSettings } from "@/lib/admin-store";
-import { linkKey, LINK_AT_KEY } from "@/lib/github-link";
+import { linkKey, LINK_AT_KEY, parseLinkAt } from "@/lib/github-link";
 import { assertPipelineOk, upstashPipeline } from "@/lib/upstash";
 
 // Secure Development scores sync parked for PR authors with no kit account
@@ -35,10 +35,12 @@ function parseRow(login: string, raw: string): Omit<HeldScore, "status"> | null 
 /** Every held score, oldest comment first. A row sync cannot parse is skipped
  *  here as it is left in place there.
  *
- *  `unclaimed` means no tick will ever release the score: the window has closed
- *  and the author is unlinked, or linked at or after the close. It must stay in
- *  step with `linkAfterClose` in sync/src/index.js, the rule that keeps such a
- *  score held; a link with no recorded time counts as after the close, as there. */
+ *  `unclaimed` means no tick will ever release the score: the author linked at
+ *  or after the close, or is still unlinked once it has passed. An author who
+ *  linked before the close stays `held` after it, because sync still releases
+ *  that score on a later tick. It must stay in step with `linkAfterClose` in
+ *  sync/src/index.js, the rule that keeps such a score held; a link with no
+ *  readable time counts as after the close, as there. */
 export async function listHeldScores(nowMs: number = Date.now()): Promise<HeldScore[]> {
   const [{ scoringEndsAt }, [members]] = await Promise.all([
     getAdminSettings(),
@@ -65,17 +67,17 @@ export async function listHeldScores(nowMs: number = Date.now()): Promise<HeldSc
           "sd held link times",
         )
       : [];
+  const linkedIdx = new Set(linked.map((l) => l.i));
   const afterClose = new Set<number>();
   linked.forEach((l, k) => {
-    const raw = times[k].result;
-    const at = typeof raw === "string" ? Number(raw) : NaN;
-    if ((Number.isFinite(at) ? at : Infinity) >= endMs) afterClose.add(l.i);
+    const at = parseLinkAt(times[k].result);
+    if (at === null || at >= endMs) afterClose.add(l.i);
   });
 
   const out: HeldScore[] = [];
   authors.forEach((login, i) => {
     const flat = Array.isArray(hashes[i].result) ? (hashes[i].result as string[]) : [];
-    const unclaimed = hasEnd && (nowMs >= endMs || afterClose.has(i));
+    const unclaimed = hasEnd && (afterClose.has(i) || (!linkedIdx.has(i) && nowMs >= endMs));
     for (let f = 1; f < flat.length; f += 2) {
       const row = parseRow(login, flat[f]);
       if (row) out.push({ ...row, status: unclaimed ? "unclaimed" : "held" });

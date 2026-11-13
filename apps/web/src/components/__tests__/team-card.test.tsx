@@ -331,9 +331,8 @@ describe("members sharing a display name", () => {
         />,
       );
       for (const m of [A, B, D]) {
-        const label = labels.get(m)!.replace(/[()]/g, "\\$&");
         expect(html).toContain(`aria-label="Remove ${labels.get(m)}"`);
-        expect(html).toMatch(new RegExp(`<option value="${m}">${label}</option>`));
+        expect(html).toContain(`<option value="${m}">${labels.get(m)}</option>`);
         expect(html.split(`<bdi>${labels.get(m)}</bdi>`).length - 1).toBe(1);
       }
     });

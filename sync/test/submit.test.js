@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { submitScore } from "../src/submit.js";
 
 const CFG = { scorerUrl: "http://scorer:4000", scorerToken: "s3cret" };
-const PAYLOAD = { author: "octocat", target: "dvwa", solved: ["sqli-low"], pr: 7, sha: "abc", at: "2026-08-13T11:00:00Z" };
+const PAYLOAD = { player: "11111111-1111-4111-8111-111111111111", target: "dvwa", solved: ["sqli-low"], pr: 7, sha: "abc", at: "2026-08-13T11:00:00Z" };
 
 test("POSTs payload with bearer token, accepted on 202", async () => {
   let seen;

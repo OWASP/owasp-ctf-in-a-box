@@ -6,9 +6,9 @@ import { buildMockEntries, buildMockTeams, findMockSample, buildMockCatalog } fr
 /** Small deterministic string hash — used only to vary each mock player's
  *  "solving history" (step count, stagger, curve shape) without adding a
  *  random-number dependency or making the fixture flaky between renders. */
-function seedFrom(login: string): number {
+function seedFrom(key: string): number {
   let h = 0;
-  for (let i = 0; i < login.length; i++) h = (h * 31 + login.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
   return h;
 }
 
@@ -48,7 +48,7 @@ function synthesizeSeries(entries: LeaderboardEntry[], generatedAt: string): Pla
     .filter((e) => e.points > 0)
     .slice(0, 10)
     .map((entry): PlayerSeries => {
-      const seed = seedFrom(entry.login);
+      const seed = seedFrom(entry.playerId);
       const entryEndMs = entry.updatedAt ? Date.parse(entry.updatedAt) : endMs;
       const steps = 3 + (seed % 4); // 3..6 desired points
       const increments = buildIncrements(entry.points, steps, seed);
@@ -66,12 +66,12 @@ function synthesizeSeries(entries: LeaderboardEntry[], generatedAt: string): Pla
         const t = new Date(startMs + shaped * spanMs).toISOString();
         return { t, score: cumulative };
       });
-      return { login: entry.login, points };
+      return { playerId: entry.playerId, name: entry.name, image: entry.image, points };
     });
 }
 
 /** Mirrors `synthesizeSeries` but for team totals — same staggered-start,
- *  eased-curve synthesis, keyed by team slug instead of login. Each team's
+ *  eased-curve synthesis, keyed by team slug instead of player. Each team's
  *  "history" ends around its latest member's last solve, so the team chart
  *  doesn't run further into the future than the individual one. */
 function synthesizeTeamSeries(
@@ -80,13 +80,13 @@ function synthesizeTeamSeries(
   generatedAt: string,
 ): TeamSeries[] {
   const endMs = Date.parse(generatedAt);
-  const entryByLogin = new Map(entries.map((e) => [e.login, e]));
+  const entryById = new Map(entries.map((e) => [e.playerId, e]));
   return teams
     .filter((t) => t.points > 0)
     .map((team): TeamSeries => {
       const seed = seedFrom(team.slug);
       const memberEndTimes = team.members
-        .map((login) => entryByLogin.get(login)?.updatedAt)
+        .map((playerId) => entryById.get(playerId)?.updatedAt)
         .filter((v): v is string => Boolean(v))
         .map((v) => Date.parse(v));
       const teamEndMs = memberEndTimes.length > 0 ? Math.max(...memberEndTimes) : endMs;
@@ -123,15 +123,15 @@ export const mockSource: LeaderboardSource = {
     };
   },
 
-  async getUser(login: string): Promise<UserProfile | null> {
-    if (!findMockSample(login)) return null;
+  async getUser(playerId: string): Promise<UserProfile | null> {
+    if (!findMockSample(playerId)) return null;
     const entries = buildMockEntries();
     const teams = buildMockTeams(entries);
-    const entry = entries.find((e) => e.login === login);
+    const entry = entries.find((e) => e.playerId === playerId);
     if (!entry) return null;
     const maxPoints = Object.values(entry.apps).reduce((n, a) => n + (a?.maxPoints ?? 0), 0);
     return {
-      login: entry.login,
+      playerId: entry.playerId,
       team: entry.team,
       teamName: teams.find((t) => t.slug === entry.team)?.name ?? entry.team,
       points: entry.points,

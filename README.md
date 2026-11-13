@@ -76,7 +76,7 @@ cd owasp-ctf-in-a-box
 ```
 
 It builds the stack, seeds a demo leaderboard and prints the URL to open.
-`./scripts/dev-stack score <login> juice-shop 3` lands three more solves
+`./scripts/dev-stack score alice-dev juice-shop 3` lands three more solves
 live; `./scripts/dev-stack down` tears it down.
 
 **Run a real event** with the guided wizard. You also need the

@@ -36,8 +36,8 @@ the registry still fails the build loudly; the boundary is the
 | The platform (control plane) owns | A module provides |
 |---|---|
 | The disposable per-event GitHub **org** and its lifecycle (`setup/ctf-setup.sh`). | The **targets** it forks/provisions per event, and its teardown equivalents (contract §7). |
-| **Auth** (GitHub OAuth sign-in) and the **admins** allowlist. | — (uses the platform's identity). |
-| **Team** registration, roster, join codes, the dedupe rollup, and the requirement that a contestant be on a team before anything scores (`apps/web`, `ctf:team:*`). | — (scores are per `author`; the platform maps authors to teams). |
+| **Auth** (GitHub OAuth sign-in; the account store and the GitHub link keys) and the **admins** allowlist. | — (uses the platform's identity). |
+| **Team** registration, roster, join codes, the dedupe rollup, and the requirement that a contestant be on a team before anything scores (`apps/web`, `ctf:team:*`). | — (scores are per player id; the platform maps players to teams). |
 | The **scoring pipeline**: the single audited writer `POST /score`, the poll transport, the `github-actions[bot]` trust filter (`sync/`, `scorer/`). | Its **scoring workflow** and the score payloads it submits through that one writer (contract §2–3, §6). |
 | **Leaderboard** ranking, points aggregation, the score-over-time series, and rendering (`scorer/src/serve.js`, `apps/web`). | Its **challenge catalogue** — stable target/challenge IDs with totals — plus display metadata and progress semantics (contract §4–5). |
 | The **admin panel** runtime overrides (freeze, hints, registration, module enablement, per-module display name/blurb) (`ctf:admin:settings`). | — (inherits the controls; its registry `displayName`/`description` are the defaults an organizer's `moduleTitle:<id>`/`moduleBlurb:<id>` override). |
@@ -145,8 +145,8 @@ state; everything else that touches scores goes through it.
    runs** — a forged comment from any other login is dropped at this step,
    never reaching JSON parsing.
 5. `parseScoreComment` (`sync/src/parse.js`) extracts the JSON block and
-   validates `author` against the GitHub-login grammar
-   (`GITHUB_LOGIN`), `target` against the configured target list, and
+   validates `author` (the GitHub login the judge recorded) against the
+   GitHub-login grammar (`GITHUB_LOGIN`), `target` against the configured target list, and
    `solved` as a string array, before returning a payload.
    The poller's `seen` set is keyed by comment **revision** — its id AND its
    `updated_at` — not by id alone. The scoring workflow posts ONE comment per
@@ -156,8 +156,15 @@ state; everything else that touches scores goes through it.
    carrying the real result was skipped, silently, and the cursor advanced
    past it. Re-presenting a revision is safe because the scorer's write is
    monotonic and idempotent on replay (step 7).
-6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload, plus
-   `at` — the comment's own GitHub `updated_at`, never a field of the marker —
+   Sync then resolves `author` to a player id through the link key
+   `ctf:link:github:<lowercased login>`, which the app writes at every GitHub
+   sign-in. An author no player has linked is dropped: counted in `dropped`,
+   `lastDrop` reason `unlinked`, and the login is never logged
+   (#741 will hold these instead of dropping them). Sync needs Redis for this
+   lookup and for the freeze and reset reads, so it refuses to start without
+   it (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
+6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload with
+   `author` replaced by `player` (the resolved id), plus `at` — the comment's own GitHub `updated_at`, never a field of the marker —
    to `POST /score` on `scorer` with a bearer token
    (`Authorization: Bearer ${cfg.scorerToken}`), over the compose network —
    that endpoint is reachable from inside the box and nowhere else. The
@@ -281,13 +288,13 @@ classic or ai points.
 
 Everything a contestant sees on such a board is then built by the overlay
 pipeline itself, on top of nothing. `withModuleContributions` creates a row
-for any login that holds module (quiz, classic and/or ai) points and has no
+for any player that holds module (quiz, classic and/or ai) points and has no
 entry from the
-source — the board's login set is the *union* of the source's logins and the
-logins holding module points, matched case-insensitively, so a contestant
+source — the board's player set is the *union* of the source's players and the
+players holding module points, so a contestant
 with quiz, classic or ai points but no scored PR gets a row instead of staying
 invisible
-until one exists — and a login holding more than one module's points gets ONE
+until one exists — and a player holding more than one module's points gets ONE
 row
 carrying every held block, never one row per module. A created row has every scorer-supplied field
 (`patched`/`failed`/`total`/`apps`) genuinely zero — there is no scoring
@@ -325,7 +332,7 @@ during normal contestant and authoring activity — answering, grading,
 question authoring/deletion all go through it — but two `admin-store.ts`
 bulk-maintenance paths touch `ctf:quiz:*` directly rather than calling into
 `quiz-store.ts`: `seedDemoData()` (`HSET`s the questions key, the answer key,
-a per-login answers hash, both aggregate hashes and `ctf:quiz:lastAt` when
+a per-player answers hash, both aggregate hashes and `ctf:quiz:lastAt` when
 seeding demo data) and the master reset's `scanDelByPrefix()` (`SCAN`+`DEL`s
 `ctf:quiz:answers:*`/`ctf:quiz:attempts:*`/`ctf:quiz:points`/
 `ctf:quiz:answered`/`ctf:quiz:lastAt` — see "Master reset" below). Both reuse `quiz-keys.ts`'s
@@ -338,7 +345,7 @@ answer-set format even though they're separate code paths:
   carries a correct answer.
 
   The **field name is the question id**, which is also the field name in
-  `ctf:quiz:key` and the reference every `ctf:quiz:answers:<login>` row is
+  `ctf:quiz:key` and the reference every `ctf:quiz:answers:<id>` row is
   recorded against. Organizers no longer author it: `generateQuestionId`
   (in the dependency-free, client-safe `quiz-keys.ts`, alongside the
   `QUIZ_ID_RE` the store validates with — one object, checked on both sides)
@@ -370,13 +377,13 @@ answer-set format even though they're separate code paths:
   outright. Its return type, `AdminQuestion` (`{ question, correct }`), is
   deliberately **not** assignable to `Question`, so handing an admin record
   to a contestant-facing component is a compile error rather than a leak.
-- `ctf:quiz:answers:<login>` / `ctf:quiz:attempts:<login>` — one
+- `ctf:quiz:answers:<id>` / `ctf:quiz:attempts:<id>` — one
   contestant's correctly-answered questions (points and timestamp captured
   at answer time) and every attempt, right or wrong.
-- `ctf:quiz:points` / `ctf:quiz:answered` — running per-login aggregate
+- `ctf:quiz:points` / `ctf:quiz:answered` — running per-player aggregate
   counters the leaderboard overlay reads with flat `HGETALL`s regardless of
   board size, the same trick `ctf:hints:spent` uses.
-- `ctf:quiz:lastAt` — each login's latest award time, written in the same
+- `ctf:quiz:lastAt` — each player's latest award time, written in the same
   script as the counters (#522). It is the leaderboard's "whoever got there
   first" tiebreak; classic and ai keep the same hash (`ctf:classic:lastAt`,
   `ctf:ai:lastAt`). A failed read of it logs and drops only the tiebreak,
@@ -420,7 +427,7 @@ A team's quiz total is the **union** of its members' correctly-answered
 questions (`getTeamQuizTotalsBatch`), never the sum of their individual
 aggregates — summing would double-count a question two teammates both
 answered, exactly like a shared flag would double-count under naive
-summation. Individual rows read the cheap per-login aggregate counters
+summation. Individual rows read the cheap per-player aggregate counters
 instead (`getQuizTotals`); only a team standing pays the per-member
 `HGETALL` cost. That happens in exactly one place: `withTeamStandings` calls
 `withTeamQuizPoints` (and its classic and ai counterparts) once, over the
@@ -512,15 +519,15 @@ hint-store's reveal, exactly the flag hashes' rule),
 `categories` (one JSON array, the organizer's chosen display order),
 `stories` (one JSON list of `{id, title, intro, steps}` story arcs,
 authored content like the categories, so a master reset keeps it),
-`opened:<login>` (challenge id to the time that contestant first opened its
+`opened:<id>` (challenge id to the time that contestant first opened its
 page, written once with `HSETNX`; Insights measures time to solve from it,
-and a master reset wipes it), `solves:<login>` (a contestant's banked solves —
+and a master reset wipes it), `solves:<id>` (a contestant's banked solves —
 `{points, at}`, points captured at solve time so a later re-price never
-rewrites history), `attempts:<login>` (every submission, right or wrong —
+rewrites history), `attempts:<id>` (every submission, right or wrong —
 `{attempts, firstAt, lastAt, lastAtMs}`, the cooldown's own read; Insights
 falls back to `firstAt` for time to solve when no first-open time exists), and four running
-aggregates: `points` and `solved` (per-login totals the leaderboard overlay
-reads with flat `HGETALL`s regardless of board size), `lastAt` (each login's
+aggregates: `points` and `solved` (per-player totals the leaderboard overlay
+reads with flat `HGETALL`s regardless of board size), `lastAt` (each player's
 latest award time, the leaderboard's tiebreak, #522) and `solvecount` (the
 per-challenge distinct-solver count, distinct by construction because the
 already-solved guard runs before any write; the admin list shows it as the
@@ -528,12 +535,11 @@ players column). The contestant board shows a different figure, teams that
 solved each challenge (#595, `lib/team-solve-counts.ts`), folded from the
 members' solves hashes on read. The same read names each challenge's first
 blood (#188, `teamSolveBoard` and `lib/first-blood.ts`): the member with the
-earliest solve row `at`, an exact tie going to the case-insensitively first
-login. It is display only and has no key of its own, so no grading script
+earliest solve row `at`, an exact tie going to the player id that sorts first. It is display only and has no key of its own, so no grading script
 writes it and every reset that removes a solve row or a membership removes it.
 
-**Submission**: `POST /api/classic/submit` derives `login` from the session
-(never the request body) and calls `submitFlag(login, challengeId, flag)`.
+**Submission**: `POST /api/classic/submit` derives the player id from the session
+(never the request body) and calls `submitFlag(playerId, challengeId, flag)`.
 A cheap, non-atomic JS pre-check (`evaluateGate`) short-circuits on, in
 order: scoring paused/outside the scheduled window (fails **open** — a Redis
 blip must never silently drop a submission a contestant is entitled to
@@ -562,7 +568,7 @@ rationing genuine tries the way quiz's attempt cap does. See
 `ctf:classic:challenges` at the moment of a correct solve; nothing anywhere
 lowers it as more contestants solve it, and there is no first-blood bonus.
 Re-pricing a challenge later never changes what was already banked, because
-`solves:<login>` captures `points` at solve time.
+`solves:<id>` captures `points` at solve time.
 
 **Descriptions render through a hand-rolled Markdown subset**
 (`apps/web/src/lib/markdown.ts`): bold, italics, inline code, fenced code
@@ -604,7 +610,7 @@ for the organizer-facing statement of that trade-off.
 
 **Deleting a challenge retires it — contestant history and banked points are
 untouched.** `deleteChallenge` removes the challenge and both flag rows, but
-deliberately leaves `solves:<login>`/`attempts:<login>` rows and the three
+deliberately leaves `solves:<id>`/`attempts:<id>` rows and the three
 aggregate counters alone, mirroring `deleteQuestion`. Points already banked
 for a deleted challenge stay on the leaderboard; only the master reset
 clears them.
@@ -670,7 +676,7 @@ redirects a teamless contestant away — all four before the mint is ever
 reached, so before the event is launched only an admin previewing the page can hold a token (and nothing it reports scores until the scoring window opens), and there is no code path above the mint that
 calls it without a `login` in hand. The token is Ed25519 (ADR 53), signed
 with the module-wide keypair in `ctf:ai:launchkey`, minted lazily on first
-use; its claims carry the player's login (`sub`), the one challenge it is
+use; its claims carry the player's id (`sub`), the one challenge it is
 scoped to (`aud`), and a capped progress snapshot across the whole board.
 It rides in exactly one place — the launcher `<a>`'s `href` on the
 challenge page — and nowhere else in the app renders a token-bearing URL.
@@ -702,7 +708,7 @@ arrive three ways, and every one folds into the same atomic Lua script:
   that cannot prove it is the real backend learns nothing about the token
   it presented), clock skew in both directions, then the launch token's
   Ed25519 signature and its `aud` against the challenge id. Only after both
-  proofs check out does it charge a per-login rate limit, check team
+  proofs check out does it charge a per-player rate limit, check team
   membership (fails **open**, same `hasTeam`), and claim the token's `jti`
   against the replay-guard nonce — claimed immediately before the award, so
   neither an earlier refusal burns it nor a later claim lets a race double
@@ -735,14 +741,14 @@ something any signing-key holder can assert.
   mints identity, so its holder could name any user on any challenge. It
   sits inside the same contestant secrecy boundary as the hashes above; the
   public half is the one thing in this list that is meant to be served.
-- **Progress** — `ctf:ai:solves:<login>` / `ctf:ai:attempts:<login>` (one
+- **Progress** — `ctf:ai:solves:<id>` / `ctf:ai:attempts:<id>` (one
   contestant's banked solves and every attempt, right or wrong) and the
   running aggregates the leaderboard overlay reads with flat `HGETALL`s:
   `ctf:ai:points`, `ctf:ai:solved`, `ctf:ai:lastAt` (the latest award
   time, the leaderboard tiebreak), and the per-challenge
   `ctf:ai:solvecount` (distinct-solver count, distinct by construction
   because the already-solved guard runs before any increment), plus
-  `ctf:ai:opened:<login>` (challenge id to the time that contestant first
+  `ctf:ai:opened:<id>` (challenge id to the time that contestant first
   opened its page, written once with `HSETNX`, which Insights measures time
   to solve from).
 - **Replay** — `ctf:ai:nonce:<jti>`, one key per spent event `jti`, written
@@ -774,9 +780,9 @@ that verifies nothing.
 never sees a launch token or a flag, so there is nothing of ai's to
 attribute from (same reasoning as quiz's and classic's points; see
 [Quiz data flow](#quiz-data-flow) above). `withModuleContributions`
-(`src/lib/leaderboard/module-contributions.ts`) creates a row for any login
+(`src/lib/leaderboard/module-contributions.ts`) creates a row for any player
 that holds `ai` points and has no entry from the scoring source, exactly as
-it does for quiz and classic — a login reported by more than one app-side
+it does for quiz and classic — a player reported by more than one app-side
 module still gets exactly ONE created row, carrying every reported block.
 Gross module blocks render everywhere, with hint penalties folding after
 every module stage at the row level, same as every other module.
@@ -811,7 +817,19 @@ for the integrator-facing statement of the same rotation contract.
 
 ## Contestant and team state
 
-- **`ctf:user:<login>`** — the contestant's own record: `team` (their current
+- **Player identity.** Every per-player record below is keyed by the player
+  id: the lowercase UUID v4 better-auth assigns at first sign-in
+  (`ctf:auth:`, #736), never the GitHub login. Names are resolved at display
+  time from the auth store (`username ?? login ?? name`, falling back to
+  `player <first 8 of the id>`). **`ctf:link:github:<lowercased login>`**
+  holds the player id and **`ctf:link:user:<id>`** the lowercased login; both
+  are written at every GitHub sign-in (a rename moves the link, and a login
+  already linked to another player is not taken over). They exist only so
+  sync can map a PR author to a player, sit outside the master reset's
+  prefixes (a reset keeps accounts and links), and the event archive never
+  contains `ctf:auth:*` or `ctf:link:*`. Admin access is still decided by the
+  GitHub login against `ADMIN_LOGINS` (#738).
+- **`ctf:user:<id>`** — the contestant's own record: `team` (their current
   slug), `joinedAt` (when they joined **that** team), and `firstTeamAt` (the
   first time they were **ever** on a team). The two timestamps have
   deliberately different lifetimes: `joinedAt` is cleared alongside `team` by
@@ -824,22 +842,22 @@ for the integrator-facing statement of the same rotation contract.
   **`ctf:team:<slug>:members`** (a SET) and **`ctf:joincode:<code>`** (the
   reverse index that makes `/join/<code>` resolvable, ADR 45's shareable
   invite).
-- **`ctf:user:<login>:hints`** — a SET of `<target>/<challengeId>` the
+- **`ctf:user:<id>:hints`** — a SET of `<target>/<challengeId>` the
   contestant bought, where `<target>` is a secure-development app id or the
   literal `classic` or `ai` (`hint-store.ts`'s `HintTarget`; classic hints
   are issue #190, and their text lives in `ctf:classic:hints` — named in
   `classic-keys.ts`, not here — written by the admin classic form and secret
   until purchased, exactly like the flag hashes; `ai` hints live in
   `ctf:ai:hints` under the same rules); **`ctf:hints:spent`** — a hash of
-  login → points spent, read by the leaderboard's per-team penalty fold;
-  **`ctf:hints:at:<login>`** — a hash of `<target>/<challengeId>` → ISO
+  player id → points spent, read by the leaderboard's per-team penalty fold;
+  **`ctf:hints:at:<id>`** — a hash of `<target>/<challengeId>` → ISO
   purchase time. That last one is a *separate* key
   rather than a conversion of the SET, because changing a live key's type would
   fail `WRONGTYPE` on the first purchase after deploying. It sits under
   `ctf:hints:` so the master reset's existing prefix already sweeps it.
-- **`ctf:rl:<bucket>:<login>`** — a per-login fixed-window request counter
+- **`ctf:rl:<bucket>:<id>`** — a per-player fixed-window request counter
   (`src/lib/rate-limit-store.ts`): `INCR` plus `EXPIRE` in one Lua `EVAL`,
-  login lower-cased. The buckets are `team-join`, `hint-reveal`, `ai-submit`,
+  player id. The buckets are `team-join`, `hint-reveal`, `ai-submit`,
   `ai-event`, `ai-state` and `ai-admin-test` (`RATE_LIMITS`). The key expires
   on its own at the window's end, which is why the master reset's prefix list
   does not name it. The read fails **open**, like the freeze reads: a Redis
@@ -951,6 +969,9 @@ readable and writable while the stack is running, without a restart:
   of every settings change, written atomically with the change itself (one
   Lua script, so a change can never land without its audit line). Support
   actions (below) append here too, naming both the actor and the target.
+  Every entry names its actor by player id (`by`) with their display name at
+  the time (`name`) beside it, never a GitHub login; a support action names
+  its target player by id (`player`).
 
 - **`ctf:activity:log`** (issue #212) — a capped list (`ACTIVITY_LOG_MAX` =
   5000, `LPUSH`+`LTRIM` in one pipeline, so every write carries its own trim)
@@ -987,7 +1008,7 @@ comments — so a per-contestant reset clears them and the next re-score writes
 them back. A sync restart does not: the poller's cursor is in Redis
 (`ctf:sync:state`, below), so a restarted poller does not re-read the comments
 it already consumed. `resetEvent` solves this globally by freezing and bumping `resetAt`;
-there is no per-login equivalent, so the API returns a **warning** instead of
+there is no per-player equivalent, so the API returns a **warning** instead of
 pretending. Quiz, classic and ai writes originate in the app, so those deletes are
 final.
 
@@ -1010,7 +1031,7 @@ metric whose limits travel separately from it gets quoted without them.
 `ctf:solves:*` for Secure Development, `listTeams()`, and then **ten reads
 per contestant** (`PER_LOGIN`) — their quiz answers, classic solves and ai
 solves, the three matching attempt hashes, `firstTeamAt` off
-`ctf:user:<login>`, their hint purchase times, and the classic and ai
+`ctf:user:<id>`, their hint purchase times, and the classic and ai
 first-opened hashes — batched 200 commands to a round trip. Around those it
 also reads the three catalogue hashes (`ctf:quiz:questions`,
 `ctf:classic:challenges`, `ctf:ai:challenges`) for challenge titles only,
@@ -1020,8 +1041,8 @@ module contract for those row shapes is
 [docs/modules.md §10](modules.md#section-10-engagement-metrics-contract-insights).
 
 **Who counts as a contestant** is the union of everyone on a team, everyone
-with points in any module, and everyone with a user record (`ctf:user:<login>`,
-found by `SCAN`; the `ctf:user:<login>:hints` sets the same pattern matches are
+with points in any module, and everyone with a user record (`ctf:user:<id>`,
+found by `SCAN`; the `ctf:user:<id>:hints` sets the same pattern matches are
 skipped). Team membership is what makes `stuck` measurable: someone who
 attempted everything and solved nothing has no points row, so only their team
 knows they exist. The user records are what make "ever on a team" honest: a
@@ -1030,12 +1051,10 @@ points hash, so without them the figure missed exactly the people it exists to
 count. If the scan fails, the panel says so in `caveats` rather than serving
 the short count as a measurement.
 
-**Logins are read under every spelling the box holds.** Per-login hashes are
-keyed on the login as the session spelled it (`ctf:classic:solves:ChrisZoc`);
-only the joins between logins lowercase. So each contestant's rows are read
-under every stored spelling (rosters, the points and hint-spend hashes, the
-scorer's entries, user records) and merged. Reading under the lowercased login
-alone hid 12 of 42 RTS contestants from every figure on the panel.
+**Rows are keyed by player id.** Each contestant's rows are read under their
+id alone (rosters, the points and hint-spend hashes, the scorer's entries,
+user records), so there is no spelling to merge; names are resolved from the
+auth store for display.
 
 **Team points are the leaderboard's.** The per-team figure comes from the same
 folded leaderboard the board shows (`getFoldedLeaderboard({ fresh: true })`),
@@ -1248,15 +1267,14 @@ request, with no rebuild and no restart.
 a priced hint when the contestant's net score does not cover it (#553):
 `hint-balance.ts` takes gross from the contestant's row on the folded board
 (`points + hintPenalty` — the one place every module's points are already
-summed per login) and the spend fresh from `ctf:hints:spent`, as the
-case-folded sum of the hash (a case-only login rename splits one person's
-spend across two fields), because the fold is memoized for ~10 s and a
+summed per player) and the spend fresh from `ctf:hints:spent`, as the
+sum of the hash, because the fold is memoized for ~10 s and a
 second purchase must not pass on the row's stale penalty. The gross side is
 folded **fresh** for this read (`fresh: true`), never from the ~10 s memo:
 the memo is process-local and the AWS module runs two app tasks, so a
 score-lowering write on one task could leave the other serving a pre-write
 gross for a TTL. The read is rare — it sits behind the module, enabled, time
-and progress gates, and the route is rate-limited per login — so it pays for
+and progress gates, and the route is rate-limited per player — so it pays for
 its own fold. Even a fresh fold can finish after a write on the *other* task
 lowered the score, so the gross travels with a **score revision**
 (`ctf:admin:score-rev`, read *before* the fold): the reveal script compares
@@ -1500,14 +1518,14 @@ build.
   proves who is playing. Neither key can produce the other's proof, so a
   backend holding a leaked event key can assert a solve but cannot forge a
   launch token naming an arbitrary player.
-- **Per-login rate limits on the guessable/hammerable routes.**
+- **Per-player rate limits on the guessable/hammerable routes.**
   `/api/team/join` (join-code guessing) and `/api/hints/reveal` are charged
-  against a fixed window keyed on the **authenticated login**
+  against a fixed window keyed on the **authenticated player id**
   (`src/lib/rate-limit-store.ts`), not an IP; the ai module's
   `/api/ai/submit`, `/api/ai/state` and `/api/ai/event` use the same store,
-  keyed on the login the verified launch token names, and the admin
+  keyed on the player id the verified launch token names, and the admin
   `/api/admin/ai/test` charges its own `aiAdminTest` budget against the
-  admin's session login before it mints the test token. That distinction is
+  admin's session player id before it mints the test token. That distinction is
   the point:
   an IP key is spoofable (Caddy *appends* to `x-forwarded-for`), and the app
   stores no IP address at all since the pre-event password gate and its

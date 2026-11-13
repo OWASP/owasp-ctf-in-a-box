@@ -38,7 +38,7 @@ const CAPS = { apps: false, teams: false, challenges: false } as const;
 // real points, and zeroes in every field the scorer would have filled in.
 const entry: LeaderboardEntry = {
   rank: 1,
-  login: "alice",
+  playerId: "alice", name: "alice", image: null,
   team: null,
   points: 30,
   patched: 0,
@@ -166,7 +166,7 @@ describe("the sort controls on a quiz-only event", () => {
   // separate "rank" sort would repeat "points".
   it("offers points but not rank or patched", () => {
     const html = renderToStaticMarkup(
-      <Leaderboard data={data} viewerLogin={null} modules={QUIZ_ONLY} enabledApps={[]} />,
+      <Leaderboard data={data} viewerId={null} modules={QUIZ_ONLY} enabledApps={[]} />,
     );
     expect(html).not.toContain(">rank<");
     expect(html).toContain(">points<");
@@ -179,14 +179,14 @@ describe("the sort controls on a quiz-only event", () => {
   // away with the column it was protecting.
   it("offers the solved sort on a quiz-only event too", () => {
     const html = renderToStaticMarkup(
-      <Leaderboard data={data} viewerLogin={null} modules={QUIZ_ONLY} enabledApps={[]} />,
+      <Leaderboard data={data} viewerId={null} modules={QUIZ_ONLY} enabledApps={[]} />,
     );
     expect(html).toContain(">solved<");
   });
 
   it("offers the same two keys where secure-development is enabled", () => {
     const html = renderToStaticMarkup(
-      <Leaderboard data={data} viewerLogin={null} modules={WITH_SECURE_DEV} enabledApps={[]} />,
+      <Leaderboard data={data} viewerId={null} modules={WITH_SECURE_DEV} enabledApps={[]} />,
     );
     expect(html).not.toContain(">rank<");
     expect(html).toContain(">points<");

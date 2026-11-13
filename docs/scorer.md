@@ -19,8 +19,12 @@ One image (`scorer/Dockerfile`), two modes:
 
 - **`score serve`** (the image's default CMD) — the leaderboard API that
   runs on your box as the `scorer` compose service. Four routes: `POST
-  /score` (bearer-token authed, the single score writer), `GET /leaderboard`
-  (the shape the app renders), `GET /challenges` (the challenge catalogue the
+  /score` (bearer-token authed, the single score writer; the body is
+  `{player, target, solved, pr, sha, at}` where `player` is the kit's
+  lowercase-UUID player id, and any other `player`, including a body that
+  carries `author` instead, is a `400 invalid player`), `GET /leaderboard`
+  (the shape the app renders: rows `{rank, player, points, lastSolveAt,
+  apps}` and a score-over-time series keyed by `player`), `GET /challenges` (the challenge catalogue the
   app's `/challenges` page prefers over its static per-app cards), and `GET
   /healthz`. Everything but `POST /score` is unauthenticated — it is all
   public catalogue and standings data. `POST /score` times each solve by the
@@ -55,8 +59,10 @@ and no upstream service anywhere:
    `github-actions[bot]`, carrying the machine-readable
    `<!-- ctf-score: {...} -->` marker.
 4. The kit's `sync` service polls the org's repos, trusts only
-   `github-actions[bot]` comments, parses the marker, and POSTs the score
-   to `score serve` on your box.
+   `github-actions[bot]` comments, parses the marker, resolves its `author`
+   (the GitHub login) to a player id through the link key the app wrote at
+   that player's GitHub sign-in, and POSTs the score to `score serve` on your
+   box. A PR author nobody has linked is dropped.
 5. The app reads `GET /leaderboard` from that same serve process. The
    response pairs the ranked standings with a rubric-derived `catalog`
    (per target, each challenge's `id`/`name`/`points`/`owasp` — `owasp` is

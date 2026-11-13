@@ -543,7 +543,7 @@ describe("the first-blood hook (#590)", () => {
     allGatesOpen();
     await POST(signed(bodyFor()));
     expect(mocks.notifyFirstBlood).toHaveBeenCalledTimes(1);
-    expect(mocks.notifyFirstBlood).toHaveBeenCalledWith({ module: "ai", challengeId: CHAL, login: "alice" });
+    expect(mocks.notifyFirstBlood).toHaveBeenCalledWith({ module: "ai", challengeId: CHAL, playerId: "alice" });
   });
 
   it("does NOT announce an already-banked award, a wrong verdict, a dry run or a refusal", async () => {

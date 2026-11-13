@@ -45,8 +45,10 @@ async function render(code: string) {
   return renderToStaticMarkup(await JoinPage({ params: Promise.resolve({ code }) }));
 }
 
+const PLAYER_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+
 function signedIn(login: string | null) {
-  getSession.mockResolvedValue(login ? { user: { login } } : null);
+  getSession.mockResolvedValue(login ? { user: { id: PLAYER_ID, login } } : null);
 }
 
 describe("/join/<code>", () => {
@@ -114,7 +116,7 @@ describe("/join/<code>", () => {
   it("tells someone already on a team to leave first", async () => {
     signedIn("octocat");
     lookupJoinCode.mockResolvedValue({ slug: "red-team", name: "Red Team", memberCount: 1 });
-    getViewerTeam.mockResolvedValue({ slug: "blue-team", name: "Blue Team", members: ["octocat"] });
+    getViewerTeam.mockResolvedValue({ slug: "blue-team", name: "Blue Team", members: [PLAYER_ID] });
     getAdminSettings.mockResolvedValue(OPEN_SETTINGS);
     const html = await render("ABC123");
     expect(html).toContain("already on a team");

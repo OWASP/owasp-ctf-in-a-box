@@ -12,7 +12,7 @@ const launchLock = vi.hoisted(() => ({
 // #188: the page reads counts and first blood in one go (teamSolveBoard).
 // Wrapped over the teamSolveCounts mock, so a test sets counts as before and
 // first blood through `firstBloods`.
-const firstBloods = vi.hoisted(() => ({ map: new Map<string, { login: string; at: string | null }>() }));
+const firstBloods = vi.hoisted(() => ({ map: new Map<string, { playerId: string; name: string; at: string | null }>() }));
 vi.mock("@/lib/team-solve-counts", () => ({
   teamSolveCounts,
   teamSolveBoard: async (module: "classic" | "ai") => {
@@ -82,6 +82,10 @@ vi.mock("@/lib/derive-status", async (orig) => {
 
 import FlagsPage, { generateMetadata } from "@/app/(site)/flags/page";
 
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+const BOB_ID = "1c0f5a4d-2e3b-4d6c-9f70-8b9cad0e1f30";
+const ORGANIZER_ID = "4f3c8d7a-5b6e-4a9f-8203-becfd0314263";
+
 const baseChallenges = [
   { id: "c1", title: "Solved one", category: "Web", description: "d1", points: 10, order: 0 },
   { id: "c2", title: "Still cooling down", category: "Web", description: "d2", points: 20, order: 1 },
@@ -112,7 +116,7 @@ describe("flags page gate", () => {
 describe("flags page view model", () => {
   it("derives solved/cooldown/unsolved per challenge from viewer progress and settings", async () => {
     moduleLive.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: 300 });
     getViewerClassic.mockResolvedValue({
@@ -142,7 +146,7 @@ describe("flags page view model", () => {
   // summary strip.
   it("states progress exactly once", async () => {
     moduleLive.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
     getViewerClassic.mockResolvedValue({
@@ -188,7 +192,7 @@ describe("flags page view model", () => {
   it("routes an organizer to the authoring tab from the empty state", async () => {
     moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listChallenges.mockResolvedValue([]);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
     getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
@@ -203,7 +207,7 @@ describe("flags page view model", () => {
   it("shows a signed-in contestant the plain empty state, with no admin link", async () => {
     moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(false);
-    getSession.mockResolvedValue({ user: { login: "bob" } });
+    getSession.mockResolvedValue({ user: { id: BOB_ID, login: "bob" } });
     listChallenges.mockResolvedValue([]);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
     getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
@@ -248,7 +252,7 @@ describe("flags page view model", () => {
   // to the module default.
   it("still renders the board when the settings read rejects, falling the cooldown back to the module default", async () => {
     moduleLive.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
     getAdminSettings.mockRejectedValue(new Error("ECONNRESET"));
     getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
@@ -323,7 +327,7 @@ describe("stories on the board (#463)", () => {
   });
 
   it("renders a story lane above the categories, and a LOCKED step as a placeholder that reveals nothing about it", async () => {
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
     storyMocks.listStories.mockResolvedValue([op]);
     storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
@@ -345,7 +349,7 @@ describe("stories on the board (#463)", () => {
   // #595: the open step shows how many teams solved it; the locked step's
   // count never leaves the server (ADR 60: a locked step is invisible).
   it("shows the open step's team count and never the locked step's", async () => {
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
     storyMocks.listStories.mockResolvedValue([op]);
     storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
@@ -356,7 +360,7 @@ describe("stories on the board (#463)", () => {
   });
 
   it("opens the next step once the team has solved the one before it", async () => {
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
     storyMocks.listStories.mockResolvedValue([op]);
     storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set(["c1"]));
@@ -372,7 +376,7 @@ describe("stories on the board (#463)", () => {
   });
 
   it("opens every step for an admin PREVIEW, so the whole story can be tested before launch", async () => {
-    getSession.mockResolvedValue({ user: { login: "organizer" } });
+    getSession.mockResolvedValue({ user: { id: ORGANIZER_ID, login: "organizer" } });
     listChallenges.mockResolvedValue(baseChallenges);
     storyMocks.listStories.mockResolvedValue([op]);
     storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
@@ -392,18 +396,19 @@ describe("first blood on the board (#188)", () => {
     moduleLive.mockReturnValue(true);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
     getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listChallenges.mockResolvedValue(baseChallenges);
     storyMocks.listStories.mockResolvedValue([]);
   });
 
   it("names each challenge's first solver on its tile", async () => {
     teamSolveCounts.mockResolvedValue(new Map([["c3", 1]]));
-    firstBloods.map = new Map([["c3", { login: "Zed-Hacker", at: "2026-10-01T12:00:00.000Z" }]]);
+    firstBloods.map = new Map([["c3", { playerId: "id-Zed-Hacker", name: "Zed-Hacker", at: "2026-10-01T12:00:00.000Z" }]]);
     const html = renderToStaticMarkup(await FlagsPage());
     expect(html).toContain("First blood: Zed-Hacker");
     expect(html).toContain("Never attempted, 30 points, first blood by Zed-Hacker");
-    // Once as text (the title attribute repeats it for a truncated login).
+    expect(html).not.toContain("id-Zed-Hacker");
+    // Once as text (the title attribute repeats it for a truncated name).
     expect(html.match(/<\/span>First blood:/g)).toHaveLength(1);
   });
 
@@ -414,8 +419,8 @@ describe("first blood on the board (#188)", () => {
     storyMocks.getTeamClassicSolvedIds.mockResolvedValue(new Set());
     teamSolveCounts.mockResolvedValue(new Map([["c1", 1], ["c2", 1]]));
     firstBloods.map = new Map([
-      ["c1", { login: "opener", at: "2026-10-01T12:00:00.000Z" }],
-      ["c2", { login: "locked-step-solver", at: "2026-10-01T12:00:01.000Z" }],
+      ["c1", { playerId: "id-opener", name: "opener", at: "2026-10-01T12:00:00.000Z" }],
+      ["c2", { playerId: "id-locked-step-solver", name: "locked-step-solver", at: "2026-10-01T12:00:01.000Z" }],
     ]);
     const html = renderToStaticMarkup(await FlagsPage());
     expect(html).toContain("First blood: opener");
@@ -424,7 +429,7 @@ describe("first blood on the board (#188)", () => {
 
   it("shows no first blood (and no counts) when the solves could not be read", async () => {
     teamSolveCounts.mockResolvedValue(null);
-    firstBloods.map = new Map([["c3", { login: "Zed-Hacker", at: "2026-10-01T12:00:00.000Z" }]]);
+    firstBloods.map = new Map([["c3", { playerId: "id-Zed-Hacker", name: "Zed-Hacker", at: "2026-10-01T12:00:00.000Z" }]]);
     const html = renderToStaticMarkup(await FlagsPage());
     expect(html).not.toMatch(/first blood/i);
   });

@@ -1291,7 +1291,7 @@ end
 -- Name the first SOLVER in the same atomic award that banks the solve. The
 -- announcer reads this record instead of racing its own claim, so a later
 -- notification can never hand first blood to a slower solver.
-redis.call('HSETNX', KEYS[#KEYS], ARGV[#ARGV], cjson.encode({login = ARGV[4], at = ARGV[3]}))
+redis.call('HSETNX', KEYS[#KEYS], ARGV[#ARGV], cjson.encode({playerId = ARGV[4], at = ARGV[3]}))
 return {'correct', tostring(points)}`;
 
 export type SubmitResult =

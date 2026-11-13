@@ -93,7 +93,7 @@ The claims:
 | Claim | Type | Meaning |
 |---|---|---|
 | `iss` | string | Issuer — the box's configured origin (`BETTER_AUTH_URL` normalized to origin form; never derived from a request's `Host` header). Not itself validated server-side, so pin `issuer:` in your verify call if you want that check on your side. |
-| `sub` | string | The player's login. This is the identity your event POST asserts a solve for. |
+| `sub` | string | The player's id (a lowercase UUID, not a GitHub login). This is the identity your event POST asserts a solve for. |
 | `aud` | string | The challenge id this token is scoped to. |
 | `iat` | number | Issued-at, Unix seconds. |
 | `exp` | number | Expiry, Unix seconds. Minted with a 24-hour TTL (`AI_TOKEN_TTL_SEC`). |
@@ -275,7 +275,7 @@ or already-awarded) keeps its `jti` spent.
 Set `"dryRun": true` and the box runs the entire pipeline — signature,
 token, rate limit, team check, pause/schedule gate — and writes no solve,
 points, or nonce state: nothing is banked and no `jti` is burned. The one
-thing it does spend is the per-login rate-limit budget itself — that check
+thing it does spend is the per-player rate-limit budget itself — that check
 runs before the dry-run branch, same as a real request — so a dry run is
 safe to run against a live event but is not entirely free, and a `503` can
 still follow after that budget is charged. The admin panel's "Send test"

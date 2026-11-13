@@ -1,5 +1,5 @@
 import "server-only";
-import { auth } from "@/lib/auth";
+import { getPlayer, type Player } from "@/lib/player";
 import { envAdmins } from "@/lib/bootstrap-env";
 import { listStoredAdmins } from "@/lib/admin-admins";
 
@@ -61,14 +61,19 @@ export async function isAdminLogin(login: string | undefined): Promise<boolean> 
   return stored.includes(login.toLowerCase());
 }
 
+/**
+ * The signed-in admin. Admin-ness is decided on the GitHub `login` attribute
+ * (`ADMIN_LOGINS` and runtime grants name logins); `player` is who they are
+ * to every store and audit line.
+ */
 export async function requireAdmin(
   headers: Headers,
-): Promise<{ ok: true; login: string } | { ok: false; status: 401 | 403 }> {
-  const session = await auth.api.getSession({ headers });
-  if (!session) return { ok: false, status: 401 };
-  const login = (session.user as { login?: string }).login;
+): Promise<{ ok: true; player: Player; login: string } | { ok: false; status: 401 | 403 }> {
+  const player = await getPlayer(headers);
+  if (!player) return { ok: false, status: 401 };
+  const login = player.githubLogin;
   if (typeof login !== "string" || login === "") return { ok: false, status: 403 };
-  if (isEnvAdmin(login)) return { ok: true, login };
+  if (isEnvAdmin(login)) return { ok: true, player, login };
   // Fail closed: an empty ADMIN_LOGINS refuses everyone, runtime grants
   // included — see isAdminLogin's comment. Checked before the Redis read so
   // the fail-closed path needs no store at all.
@@ -83,5 +88,5 @@ export async function requireAdmin(
     return { ok: false, status: 403 };
   }
   if (!stored.includes(login.toLowerCase())) return { ok: false, status: 403 };
-  return { ok: true, login };
+  return { ok: true, player, login };
 }

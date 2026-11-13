@@ -17,6 +17,9 @@ import {
   removeAdjustment,
   teamAdjustments,
 } from "@/lib/adjustments-store";
+import { actor } from "./audit-actor";
+
+const ADMIN = actor("admin");
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -26,14 +29,15 @@ const row = (id: string, slug: string, points: number, reason = "r") =>
 describe("addAdjustment", () => {
   it("writes the row and its audit line in one script, keyed by a fresh id", async () => {
     m.upstashEval.mockResolvedValueOnce("ok");
-    const adj = await addAdjustment("Red-Team", -10, "  late flag sharing  ", "admin");
+    const adj = await addAdjustment("Red-Team", -10, "  late flag sharing  ", ADMIN);
+    // The ledger row shows who added it by name; the audit line keys on the id.
     expect(adj).toMatchObject({ slug: "red-team", points: -10, reason: "late flag sharing", by: "admin" });
     const [script, keys, args] = m.upstashEval.mock.calls[0];
     expect(script).toContain("HSET");
     expect(script).toContain("LPUSH");
     expect(keys).toEqual([ADJUSTMENTS_KEY, "ctf:team:red-team", "ctf:admin:audit"]);
     expect(JSON.parse(String(args[1]))).toMatchObject({ id: adj.id, points: -10 });
-    expect(JSON.parse(String(args[2]))).toMatchObject({ action: "adjustment:add", by: "admin", slug: "red-team", points: -10 });
+    expect(JSON.parse(String(args[2]))).toMatchObject({ action: "adjustment:add", by: ADMIN.id, name: "admin", slug: "red-team", points: -10 });
   });
 
   it.each([
@@ -43,46 +47,49 @@ describe("addAdjustment", () => {
     ["no reason", 5, "   "],
     ["a long reason", 5, "x".repeat(201)],
   ])("refuses %s without writing", async (_what, points, reason) => {
-    await expect(addAdjustment("red-team", points, reason, "admin")).rejects.toBeInstanceOf(AdjustmentValidationError);
+    await expect(addAdjustment("red-team", points, reason, ADMIN)).rejects.toBeInstanceOf(AdjustmentValidationError);
     expect(m.upstashEval).not.toHaveBeenCalled();
   });
 
   it("refuses a team that does not exist", async () => {
     m.upstashEval.mockResolvedValueOnce("no-team");
-    await expect(addAdjustment("ghost", 5, "bonus", "admin")).rejects.toThrow(/No team "ghost"/);
+    await expect(addAdjustment("ghost", 5, "bonus", ADMIN)).rejects.toThrow(/No team "ghost"/);
   });
 });
 
 describe("removeAdjustment", () => {
   it("deletes the row and records the removal in one script", async () => {
     m.upstashEval.mockResolvedValueOnce(row("a1", "red", -10));
-    await removeAdjustment("a1", "admin");
+    await removeAdjustment("a1", ADMIN);
     const [script, keys, args] = m.upstashEval.mock.calls[0];
     expect(script).toContain("HDEL");
     expect(keys).toEqual([ADJUSTMENTS_KEY, "ctf:admin:audit"]);
     expect(args[0]).toBe("a1");
+    // The script builds the audit line from the actor's id and name.
+    expect(args[1]).toBe(ADMIN.id);
+    expect(args[4]).toBe("admin");
   });
 
   it("answers the removed row", async () => {
     m.upstashEval.mockResolvedValueOnce(row("a1", "red", -10));
-    expect(await removeAdjustment("a1", "admin")).toMatchObject({ id: "a1", row: { slug: "red", points: -10 } });
+    expect(await removeAdjustment("a1", ADMIN)).toMatchObject({ id: "a1", row: { slug: "red", points: -10 } });
   });
 
   // The script removed and audited it; an unreadable row must not turn that
   // into an error the organizer would retry.
   it("reports a malformed row's removal as done, with no row", async () => {
     m.upstashEval.mockResolvedValueOnce("{not json");
-    expect(await removeAdjustment("a1", "admin")).toEqual({ id: "a1", row: null });
+    expect(await removeAdjustment("a1", ADMIN)).toEqual({ id: "a1", row: null });
   });
 
   it("refuses with nothing changed when the audit log cannot take the line", async () => {
     m.upstashEval.mockResolvedValueOnce("audit-unwritable");
-    await expect(removeAdjustment("a1", "admin")).rejects.toThrow(/nothing was changed/);
+    await expect(removeAdjustment("a1", ADMIN)).rejects.toThrow(/nothing was changed/);
   });
 
   it("says so when the id is not there", async () => {
     m.upstashEval.mockResolvedValueOnce(null);
-    await expect(removeAdjustment("nope", "admin")).rejects.toThrow(/No adjustment/);
+    await expect(removeAdjustment("nope", ADMIN)).rejects.toThrow(/No adjustment/);
   });
 });
 

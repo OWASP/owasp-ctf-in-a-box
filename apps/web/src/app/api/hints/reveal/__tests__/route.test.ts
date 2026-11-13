@@ -34,10 +34,12 @@ vi.mock("@/lib/rate-limit-store", () => ({
 
 import { POST } from "@/app/api/hints/reveal/route";
 
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+
 const req = (body?: unknown) =>
   new Request("http://x/api/hints/reveal", { method: "POST", body: JSON.stringify(body ?? {}) });
 
-const SESSION = { user: { login: "alice" } };
+const SESSION = { user: { id: ALICE_ID, login: "alice" } };
 
 beforeEach(() => {
   getSession.mockReset();
@@ -67,10 +69,10 @@ describe("POST /api/hints/reveal rate limiting", () => {
     expect(revealHint).not.toHaveBeenCalled();
   });
 
-  it("charges the budget against the session login, not anything client-supplied", async () => {
+  it("charges the budget against the session player, not anything client-supplied", async () => {
     revealHint.mockResolvedValue({ ok: true, hint: "look at the query", alreadyOwned: false, spent: 10, cost: 10 });
     await POST(req({ app: "quiz", id: "q1", login: "someone-else" }));
-    expect(consumeRateLimit).toHaveBeenCalledWith("hint-reveal", "alice", 30, 60);
+    expect(consumeRateLimit).toHaveBeenCalledWith("hint-reveal", ALICE_ID, 30, 60);
   });
 
   it("does not charge an unauthenticated caller", async () => {
@@ -95,10 +97,10 @@ describe("POST /api/hints/reveal", () => {
     expect(revealHint).not.toHaveBeenCalled();
   });
 
-  it("400s a session with no GitHub login, without touching the store", async () => {
-    getSession.mockResolvedValue({ user: {} });
+  it("401s a session whose user id is not a player id, without touching the store", async () => {
+    getSession.mockResolvedValue({ user: { id: "alice", login: "alice" } });
     const res = await POST(req({ app: "quiz", id: "q1" }));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
     expect(revealHint).not.toHaveBeenCalled();
   });
 
@@ -118,7 +120,7 @@ describe("POST /api/hints/reveal", () => {
     revealHint.mockResolvedValue({ ok: true, hint: "look under the rug", alreadyOwned: false, spent: 10, cost: 10, balance: 90 });
     const res = await POST(req({ app: "quiz", id: "q1" }));
     expect(res.status).toBe(200);
-    expect(revealHint).toHaveBeenCalledWith("alice", "quiz", "q1", { dryRun: false });
+    expect(revealHint).toHaveBeenCalledWith(ALICE_ID, "quiz", "q1", { dryRun: false });
     // `balance` (#553) is the store's post-charge net score, passed through so
     // the page can acknowledge the resulting score next to the deduction.
     expect(await res.json()).toEqual({ hint: "look under the rug", alreadyOwned: false, spent: 10, cost: 10, balance: 90 });
@@ -180,13 +182,13 @@ describe("POST /api/hints/reveal quoted cost (#557)", () => {
   it("passes the confirmed price to the store", async () => {
     revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10, cost: 10 });
     await POST(req({ app: "classic", id: "web", quotedCost: 10 }));
-    expect(revealHint).toHaveBeenCalledWith("alice", "classic", "web", { dryRun: false, quotedCost: 10 });
+    expect(revealHint).toHaveBeenCalledWith(ALICE_ID, "classic", "web", { dryRun: false, quotedCost: 10 });
   });
 
   it("passes no quote when the body has none", async () => {
     revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10, cost: 10 });
     await POST(req({ app: "classic", id: "web" }));
-    expect(revealHint).toHaveBeenCalledWith("alice", "classic", "web", { dryRun: false });
+    expect(revealHint).toHaveBeenCalledWith(ALICE_ID, "classic", "web", { dryRun: false });
   });
 
   it.each([["a string", "10"], ["a negative", -1], ["a fraction", 2.5], ["NaN-like", null]])(
@@ -232,7 +234,7 @@ describe("an admin on a hidden challenge after launch", () => {
     revealHint.mockResolvedValue({ ok: true, hint: "h", alreadyOwned: false, spent: 0, cost: 10, dryRun: true });
     await POST(req({ app: "classic", id: "c-1" }));
     expect(adminView.adminSeesHidden).toHaveBeenLastCalledWith("alice", "c-1");
-    expect(revealHint).toHaveBeenCalledWith("alice", "classic", "c-1", { dryRun: true });
+    expect(revealHint).toHaveBeenCalledWith(ALICE_ID, "classic", "c-1", { dryRun: true });
   });
 
   it("never asks about another module's target", async () => {
@@ -240,6 +242,6 @@ describe("an admin on a hidden challenge after launch", () => {
     revealHint.mockResolvedValue({ ok: true, hint: "h", alreadyOwned: false, spent: 0, cost: 10 });
     await POST(req({ app: "ai", id: "a-1" }));
     expect(adminView.adminSeesHidden).not.toHaveBeenCalled();
-    expect(revealHint).toHaveBeenCalledWith("alice", "ai", "a-1", { dryRun: false });
+    expect(revealHint).toHaveBeenCalledWith(ALICE_ID, "ai", "a-1", { dryRun: false });
   });
 });

@@ -22,6 +22,7 @@ import { type Attachment, attachmentMeta } from "@/lib/attachments-keys";
 import { listAllAttachments } from "@/lib/attachments-store";
 import { teamSolveCounts } from "@/lib/team-solve-counts";
 import { importBundleResponse } from "@/app/api/admin/classic/import-response";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
  * Organizer authoring surface for the classic (flag) module: list (GET),
@@ -303,7 +304,7 @@ export async function POST(request: Request) {
     } catch (err) {
       return errorResponse(err);
     }
-    await writeAdminAudit(gate.login, "classic-categories", { count: categories.length });
+    await writeAdminAudit(auditActor(gate.player), "classic-categories", { count: categories.length });
     return NextResponse.json({ categories });
   }
 
@@ -321,7 +322,7 @@ export async function POST(request: Request) {
     } catch (err) {
       return errorResponse(err);
     }
-    await writeAdminAudit(gate.login, "classic-stories", { count: stories.length });
+    await writeAdminAudit(auditActor(gate.player), "classic-stories", { count: stories.length });
     return NextResponse.json({ stories });
   }
 
@@ -333,7 +334,7 @@ export async function POST(request: Request) {
     } catch (err) {
       return errorResponse(err);
     }
-    await writeAdminAudit(gate.login, "classic-category-rename", {
+    await writeAdminAudit(auditActor(gate.player), "classic-category-rename", {
       from: renamePayload.from,
       to: renamePayload.to,
       moved: result.moved,
@@ -342,7 +343,7 @@ export async function POST(request: Request) {
   }
 
   const importPayload = parseImportPayload(body);
-  if (importPayload !== null) return importBundleResponse(importPayload, gate.login);
+  if (importPayload !== null) return importBundleResponse(importPayload, auditActor(gate.player));
 
   const parsed = parseChallengePayload(body);
   if (!parsed) return NextResponse.json({ error: "invalid request payload" }, { status: 400 });
@@ -356,7 +357,7 @@ export async function POST(request: Request) {
     return errorResponse(err);
   }
 
-  await writeAdminAudit(gate.login, "classic-upsert", { challengeId: c.id });
+  await writeAdminAudit(auditActor(gate.player), "classic-upsert", { challengeId: c.id });
   // Echoes the STORED record (flag trimmed by `upsertChallenge`), not the raw
   // payload, so the authoring client's state matches what a subsequent GET
   // would return rather than drifting from it.
@@ -377,6 +378,6 @@ export async function DELETE(request: Request) {
     return errorResponse(err);
   }
 
-  await writeAdminAudit(gate.login, "classic-delete", { challengeId: id });
+  await writeAdminAudit(auditActor(gate.player), "classic-delete", { challengeId: id });
   return NextResponse.json({ ok: true });
 }

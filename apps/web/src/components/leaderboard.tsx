@@ -148,13 +148,14 @@ export function NoMatch({ noun, query, onClear, boardEmpty }: { noun: string; qu
  *  folded by the server-side pipeline. */
 export default function Leaderboard({
   data,
-  viewerLogin,
+  viewerId,
   modules,
   enabledApps,
   timeZone,
 }: {
   data: LeaderboardData;
-  viewerLogin: string | null;
+  /** The signed-in player's id, for the "you" highlight. */
+  viewerId: string | null;
   modules: readonly ResolvedModule[];
   /** The event's live target list (lib/enabled-apps.ts), resolved server-side
    *  and threaded down to every row's `AppBreakdown`/`ModuleDetail`. */
@@ -202,18 +203,20 @@ export default function Leaderboard({
     () => data.teams.reduce((max, t) => Math.max(max, t.points), 0),
     [data.teams],
   );
-  // Each member's individual score, for the expanded team row. A member's own
-  // total can exceed their marginal contribution (the team dedupes flags two
-  // members both solved), so this is "their points", not "what they added".
-  const pointsByLogin = useMemo(
-    () => new Map(data.entries.map((e) => [e.login, e.points])),
+  // Each member's name, image and individual score, for the expanded team
+  // row: team-standings gives every member an entry, so the entries are the
+  // roster's name source. A member's own total can exceed their marginal
+  // contribution (the team dedupes flags two members both solved), so this is
+  // "their points", not "what they added".
+  const players = useMemo(
+    () => new Map(data.entries.map((e) => [e.playerId, { name: e.name, image: e.image, points: e.points }])),
     [data.entries],
   );
 
   const visibleEntries = useMemo(() => {
     const q = query.trim().toLowerCase();
     return data.entries
-      .filter((e) => (q === "" ? true : e.login.toLowerCase().includes(q) || e.team?.toLowerCase().includes(q)))
+      .filter((e) => (q === "" ? true : e.name.toLowerCase().includes(q) || e.team?.toLowerCase().includes(q)))
       .sort((a, b) => {
         // "points" IS the standing order (compareStanding: points, then items,
         // then earliest activity), so it follows the rank the fold stamped
@@ -392,12 +395,12 @@ export default function Leaderboard({
           <ul className="flex flex-col gap-2.5">
             {visibleEntries.map((entry) => (
               <EntryRow
-                key={entry.login}
+                key={entry.playerId}
                 entry={entry}
                 topPoints={topPoints}
-                isOwn={viewerLogin === entry.login}
-                isOpen={expanded === entry.login}
-                onToggle={() => dispatch({ type: "toggleRow", key: entry.login })}
+                isOwn={viewerId === entry.playerId}
+                isOpen={expanded === entry.playerId}
+                onToggle={() => dispatch({ type: "toggleRow", key: entry.playerId })}
                 capabilities={data.capabilities}
                 modules={modules}
                 completable={data.completable}
@@ -416,7 +419,7 @@ export default function Leaderboard({
               key={team.slug}
               team={team}
               topPoints={topTeamPoints}
-              pointsByLogin={pointsByLogin}
+              players={players}
               modules={modules}
               isOpen={expanded === team.slug}
               onToggle={() => dispatch({ type: "toggleRow", key: team.slug })}

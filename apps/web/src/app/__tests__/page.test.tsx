@@ -28,7 +28,7 @@ vi.mock("server-only", () => ({}));
 // failing, which the page must tolerate by hiding the strip.
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 // Mutable per test (the pre-launch CTA tests below sign a viewer in).
-const viewer = vi.hoisted(() => ({ session: null as null | { user: { login: string } }, hasTeam: false }));
+const viewer = vi.hoisted(() => ({ session: null as null | { user: { id: string; login: string } }, hasTeam: false }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => viewer.session } } }));
 vi.mock("@/lib/team-store", () => ({ hasTeam: async () => viewer.hasTeam, getViewerTeam: async () => null }));
 // Switchable: the default fixture renders with the board read FAILING (the
@@ -516,7 +516,7 @@ describe("the landing page before launch (#464)", () => {
   });
 
   it("keeps the board links for an organizer previewing the locked event", async () => {
-    viewer.session = { user: { login: "boss" } };
+    viewer.session = { user: { id: "3e2b7c6f-4a5d-4f8e-b192-adbecf203152", login: "boss" } };
     await withSettings({ scoringStartsAt: null, teamRegistrationOpen: true }, (html) => {
       expect(targetCardLinks(html)).toBeGreaterThan(0);
       expect(html).toContain("Browse targets");
@@ -524,7 +524,7 @@ describe("the landing page before launch (#464)", () => {
   });
 
   it("never points a teamed contestant at a board that would bounce them back here", async () => {
-    viewer.session = { user: { login: "alice" } };
+    viewer.session = { user: { id: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f", login: "alice" } };
     viewer.hasTeam = true;
     await withSettings({ scoringStartsAt: null, teamRegistrationOpen: true }, (html) => {
       // The hero's one action is the team, not the first board's CTA.

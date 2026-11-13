@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { joinTeam } from "@/lib/team-store";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 
 export async function POST(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const login = (session.user as { login?: string }).login;
-  if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
+  const player = await getPlayer(request.headers);
+  if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const playerId = player.id;
 
   const body = await request.json().catch(() => ({}));
   const code = typeof body.code === "string" ? body.code : "";
@@ -18,7 +16,7 @@ export async function POST(request: Request) {
   // costs nothing and no code is ever tested without being charged for.
   const limit = await consumeRateLimit(
     RATE_LIMITS.teamJoin.bucket,
-    login,
+    playerId,
     RATE_LIMITS.teamJoin.limit,
     RATE_LIMITS.teamJoin.windowSeconds,
   );
@@ -29,7 +27,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = await joinTeam(login, code);
+  const result = await joinTeam(playerId, code);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json({ team: result.team });
 }

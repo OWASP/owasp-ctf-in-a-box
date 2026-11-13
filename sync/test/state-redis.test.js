@@ -12,10 +12,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, tick } from "../src/index.js";
 import { makeRedis, SYNC_STATE_KEY } from "../src/redis.js";
-import { loadState, retireStateFile, saveState } from "../src/state.js";
+import { retireStateFile, saveState } from "../src/state.js";
 
 const env = { UPSTASH_REDIS_REST_URL: "http://srh:80", UPSTASH_REDIS_REST_TOKEN: "t" };
 const STOP = new Error("stop-the-poll-loop");
+const ALICE = "11111111-1111-4111-8111-111111111111";
+const MALLORY = "22222222-2222-4222-8222-222222222222";
 const LAUNCHED = "2000-01-01T00:00:00.000Z";
 
 /** A minimal Redis behind srh's /pipeline wire protocol: strings and hashes,
@@ -23,7 +25,10 @@ const LAUNCHED = "2000-01-01T00:00:00.000Z";
  *  fail at the transport (a down srh); `errorOn` returns a per-command error
  *  reply for a given command name, inside a 200 (a NOAUTH/WRONGTYPE). */
 function fakeSrh({ settings = { scoringStartsAt: LAUNCHED, secureDevTargets: '["vampi"]' } } = {}) {
-  const strings = new Map();
+  const strings = new Map([
+    ["ctf:link:github:alice", ALICE],
+    ["ctf:link:github:mallory", MALLORY],
+  ]);
   const hashes = new Map([["ctf:admin:settings", new Map(Object.entries(settings))]]);
   const srh = { strings, hashes, failNext: 0, errorOn: null, pipelines: [] };
   const hash = (k) => {
@@ -160,7 +165,7 @@ test("a per-contestant reset survives a restart: the reset contestant's comments
   // ... organizer resets mallory here (app-side, not sync's keys) ...
   const after = fakeWorld(comments);
   await runMain({ cfg: cfgFor(tmp()), srh, world: after });
-  assert.deepEqual(after.posts.filter((p) => p.author === "mallory"), []);
+  assert.deepEqual(after.posts.filter((p) => p.player === MALLORY), []);
 });
 
 test("the /admin counters survive a restart: ingested/dropped/lastDrop carry over and the heartbeat reports them", async () => {
@@ -405,30 +410,4 @@ test("an unusable stored value is repaired loudly, keeping what survives (same r
   assert.ok(logErr.some((m) => /ctf:sync:state/.test(m) && /repos/.test(m)), JSON.stringify(logErr));
   assert.equal(stored(srh).ingested, 4);
   assert.equal(stored(srh).resetAt, "123");
-});
-
-test("with no Redis client (a dev poller) the file is still the store", async () => {
-  const dir = tmp();
-  const cfg = cfgFor(dir);
-  writeFileSync(cfg.statePath, JSON.stringify({ repos: {}, ingested: 3 }));
-  let seenIngested;
-  await assert.rejects(
-    () =>
-      main({
-        load: () => cfg,
-        log: () => {},
-        logErr: () => {},
-        makeRedisImpl: () => null,
-        runTick: async (c, state) => {
-          seenIngested = state.ingested;
-          state.ingested = 4;
-        },
-        sleep: async () => {
-          throw STOP;
-        },
-      }),
-    (err) => err === STOP,
-  );
-  assert.equal(seenIngested, 3, "the file seeded the tick");
-  assert.equal(loadState(cfg.statePath).ingested, 4);
 });

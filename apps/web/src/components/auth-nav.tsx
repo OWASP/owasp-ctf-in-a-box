@@ -6,6 +6,7 @@
 // force every static marketing page to become dynamic).
 
 import Image from "next/image";
+import { displayNameOf } from "@/lib/display-name";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -40,19 +41,19 @@ export function signOutDestination(pathname: string): string | null {
   return gated ? "/" : null;
 }
 
-/** Whether the Admin menu item should render, given the signed-in login and
+/** Whether the Admin menu item should render, given the signed-in user id and
  *  the round-trip's answer for it (`null` = not asked yet, or the menu has
- *  not opened). `false` until `granted` names THIS login — a stale answer
+ *  not opened). `false` until `granted` names THIS user — a stale answer
  *  for a previous account (see the `granted` state's comment) never shows
  *  the link for a new one. Exported for direct testing — same reason as
  *  `signOutDestination` (this repo has no @testing-library/jsdom-act setup
  *  to observe a live re-render, so the state transition is proven here as a
  *  pure function instead). */
 export function showAdminLink(
-  login: string | undefined,
-  granted: { login: string; admin: boolean } | null,
+  userId: string | undefined,
+  granted: { userId: string; admin: boolean } | null,
 ): boolean {
-  return typeof login === "string" && granted !== null && granted.login === login && granted.admin;
+  return typeof userId === "string" && granted !== null && granted.userId === userId && granted.admin;
 }
 
 export default function AuthNav() {
@@ -83,9 +84,9 @@ export default function AuthNav() {
     const timeout = setTimeout(() => setMounted(true), 0);
     return () => clearTimeout(timeout);
   }, []);
-  // Keyed by login so switching accounts cannot carry the previous viewer's
+  // Keyed by user id so switching accounts cannot carry the previous viewer's
   // answer over. `null` = not asked yet.
-  const [granted, setGranted] = useState<{ login: string; admin: boolean } | null>(null);
+  const [granted, setGranted] = useState<{ userId: string; admin: boolean } | null>(null);
 
   // Close on a pointerdown outside the menu, and on Escape. Only wired while
   // the menu is open, so a closed menu subscribes to nothing.
@@ -107,9 +108,9 @@ export default function AuthNav() {
     };
   }, [open]);
 
-  const login = (session?.user as { login?: string } | undefined)?.login;
+  const userId = session?.user.id;
 
-  // Asked WHEN THE MENU OPENS, not on mount, and only once per login — there
+  // Asked WHEN THE MENU OPENS, not on mount, and only once per account — there
   // is no instant answer any more (config v2: no client-side allowlist), so
   // nobody sees the Admin item until this resolves. `/api/me/admin` returns
   // one boolean about the caller and nothing else; see that route for why it
@@ -118,15 +119,15 @@ export default function AuthNav() {
   // In a handler rather than an effect deliberately: this is a response to a
   // user action, not synchronisation with an external system.
   async function ensureAdminChecked() {
-    if (!login || granted?.login === login) return;
+    if (!userId || granted?.userId === userId) return;
     try {
       const res = await fetch("/api/me/admin");
       const data = (res.ok ? await res.json().catch(() => ({})) : {}) as { admin?: boolean };
-      setGranted({ login, admin: data.admin === true });
+      setGranted({ userId, admin: data.admin === true });
     } catch {
       // Menu visibility only: a failed check hides the link, which is the safe
       // direction and costs a runtime admin one extra navigation.
-      setGranted({ login, admin: false });
+      setGranted({ userId, admin: false });
     }
   }
 
@@ -167,8 +168,10 @@ export default function AuthNav() {
     );
   }
 
-  const displayName = login ?? session.user.name;
-  const showAdmin = showAdminLink(login, granted);
+  // The kit's display rule (username, then GitHub login, then profile name),
+  // the same one every board row uses.
+  const displayName = displayNameOf(session.user);
+  const showAdmin = showAdminLink(userId, granted);
 
   return (
     <div ref={menuRef} className="relative flex-none">
@@ -182,14 +185,23 @@ export default function AuthNav() {
         aria-haspopup="menu"
         className="flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
       >
-        <Image
-          src={session.user.image ?? `https://avatars.githubusercontent.com/${displayName}`}
-          alt=""
-          width={26}
-          height={26}
-          className="rounded-full border border-white/10"
-          unoptimized
-        />
+        {session.user.image ? (
+          <Image
+            src={session.user.image}
+            alt=""
+            width={26}
+            height={26}
+            className="rounded-full border border-white/10"
+            unoptimized
+          />
+        ) : (
+          <span
+            aria-hidden="true"
+            className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-white/10 bg-white/[0.06] font-mono text-[11px] uppercase text-zinc-300"
+          >
+            {displayName.slice(0, 1)}
+          </span>
+        )}
         <span className="hidden font-mono text-xs text-zinc-300 sm:inline">{displayName}</span>
         {/* Below `sm:` the name is hidden and this is the whole trigger, so the
             chevron is what keeps a bare avatar reading as a menu rather than as

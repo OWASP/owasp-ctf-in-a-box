@@ -22,6 +22,7 @@
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { RUN, liveConfigured } from "./live-redis";
+import { actor } from "./audit-actor";
 
 vi.mock("server-only", () => ({}));
 // The real `isModuleLive` calls `connection()` to stay out of Next's
@@ -86,7 +87,7 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     await cleanup();
     await admin.updateAdminSettings(
       { hintsEnabled: true, hintCost: COST, hintsMinSolves: 1, hintsUnlockAfterMin: 0 },
-      `vitest-${RUN}`,
+      actor(`vitest-${RUN}`),
     );
     await pipeline([["HSET", HINT_HASH, HINT_ID, HINT_TEXT]]);
   });

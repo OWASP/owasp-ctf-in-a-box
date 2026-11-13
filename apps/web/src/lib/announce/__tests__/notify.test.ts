@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   listStories: vi.fn(),
   listQuestions: vi.fn(),
   listAiChallenges: vi.fn(),
+  getPlayerProfiles: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -23,6 +24,7 @@ vi.mock("@/lib/announce/store", () => ({
   readLedgerField: mocks.readLedgerField,
 }));
 vi.mock("@/lib/announce/sender", () => ({ enqueueLedgerAnnouncement: mocks.enqueueLedgerAnnouncement }));
+vi.mock("@/lib/player", () => ({ getPlayerProfiles: mocks.getPlayerProfiles }));
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
 vi.mock("@/lib/classic-store", () => ({ readChallengeRecords: mocks.readChallengeRecords, listStories: mocks.listStories }));
 vi.mock("@/lib/quiz-store", () => ({ listQuestions: mocks.listQuestions }));
@@ -41,9 +43,10 @@ const origAuthUrl = process.env.BETTER_AUTH_URL;
 beforeEach(() => {
   process.env.BETTER_AUTH_URL = "https://ctf.example.com";
   mocks.getAnnounceConfig.mockReset().mockResolvedValue(armed);
-  mocks.readLedgerField.mockReset().mockResolvedValue(JSON.stringify({ login: "alice", at: "2026-10-14T12:00:00Z" }));
+  mocks.readLedgerField.mockReset().mockResolvedValue(JSON.stringify({ playerId: "alice", at: "2026-10-14T12:00:00Z" }));
   mocks.enqueueLedgerAnnouncement.mockReset().mockResolvedValue(true);
-  mocks.listTeams.mockReset().mockResolvedValue([{ slug: "t1", name: "Team One", members: ["Alice"] }]);
+  mocks.listTeams.mockReset().mockResolvedValue([{ slug: "t1", name: "Team One", members: ["alice"] }]);
+  mocks.getPlayerProfiles.mockReset().mockResolvedValue(new Map());
   mocks.readChallengeRecords.mockReset().mockResolvedValue([{ id: "web-1", title: "Web 1", category: "web", points: 100 }]);
   mocks.listStories.mockReset().mockResolvedValue([]);
   mocks.listQuestions.mockReset().mockResolvedValue([]);
@@ -58,16 +61,16 @@ afterEach(() => {
 describe("notifyFirstBlood", () => {
   it("does NOT claim when unconfigured or the switch is off (enabling later must not replay)", async () => {
     mocks.getAnnounceConfig.mockResolvedValue({ ...armed, webhookConfigured: false });
-    await notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" });
+    await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     expect(mocks.readLedgerField).not.toHaveBeenCalled();
 
     mocks.getAnnounceConfig.mockResolvedValue({ ...armed, firstBlood: false });
-    await notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" });
+    await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 
   it("claims first, and posts only the winner", async () => {
-    await notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" });
+    await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     expect(mocks.readLedgerField).toHaveBeenCalledWith("ctf:announce:first", "classic:web-1");
     expect(mocks.enqueueLedgerAnnouncement).toHaveBeenCalledTimes(1);
     const [kind, msg, ledger, fields, captured] = mocks.enqueueLedgerAnnouncement.mock.calls[0];
@@ -78,31 +81,31 @@ describe("notifyFirstBlood", () => {
     expect(JSON.stringify(msg)).toContain("Web 1");
   });
 
-  it("does NOT post when another login is the recorded first solver", async () => {
-    mocks.readLedgerField.mockResolvedValue(JSON.stringify({ login: "bob", at: "2026-10-14T12:00:00Z" }));
-    await notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" });
+  it("does NOT post when another player is the recorded first solver", async () => {
+    mocks.readLedgerField.mockResolvedValue(JSON.stringify({ playerId: "bob", at: "2026-10-14T12:00:00Z" }));
+    await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 
   it("does NOT post when the first-solver record is missing or unreadable", async () => {
     mocks.readLedgerField.mockResolvedValue(null);
-    await notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" });
+    await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     mocks.readLedgerField.mockResolvedValue("not-json");
-    await notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" });
+    await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 
-  it("displays the TEAM name via a case-insensitive membership join", async () => {
-    mocks.listTeams.mockResolvedValue([{ slug: "t1", name: "Team One", members: ["ALICE"] }]);
-    await notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" });
+  it("displays the TEAM name via a player-id membership join", async () => {
+    mocks.listTeams.mockResolvedValue([{ slug: "t1", name: "Team One", members: ["alice"] }]);
+    await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     const msg = mocks.enqueueLedgerAnnouncement.mock.calls[0][1] as { embeds: { description?: string }[] };
     expect(msg.embeds[0].description).toContain("Team One");
   });
 
-  it("falls back to the bare login and to the id when the challenge vanished", async () => {
+  it("falls back to the display name and to the id when the challenge vanished", async () => {
     mocks.listTeams.mockResolvedValue([]);
     mocks.readChallengeRecords.mockResolvedValue([]);
-    await notifyFirstBlood({ module: "classic", challengeId: "gone-1", login: "alice" });
+    await notifyFirstBlood({ module: "classic", challengeId: "gone-1", playerId: "alice" });
     const msg = mocks.enqueueLedgerAnnouncement.mock.calls[0][1] as { embeds: { description?: string }[] };
     expect(msg.embeds[0].description).toContain("alice");
     // The id is escaped like any other untrusted text — `-` is Markdown.
@@ -112,8 +115,8 @@ describe("notifyFirstBlood", () => {
   it("fails open to the bare id and 0 points when the quiz/ai list read rejects", async () => {
     mocks.listQuestions.mockRejectedValue(new Error("redis down"));
     mocks.listAiChallenges.mockRejectedValue(new Error("redis down"));
-    await notifyFirstBlood({ module: "quiz", challengeId: "qmissing", login: "alice" });
-    await notifyFirstBlood({ module: "ai", challengeId: "aimissing", login: "alice" });
+    await notifyFirstBlood({ module: "quiz", challengeId: "qmissing", playerId: "alice" });
+    await notifyFirstBlood({ module: "ai", challengeId: "aimissing", playerId: "alice" });
 
     expect(mocks.enqueueLedgerAnnouncement).toHaveBeenCalledTimes(2);
     const ids = ["qmissing", "aimissing"];
@@ -128,7 +131,7 @@ describe("notifyFirstBlood", () => {
 
   it("never announces a HIDDEN challenge — returns without claiming or enqueueing", async () => {
     mocks.readChallengeRecords.mockResolvedValue([{ id: "web-9", title: "Secret Unreleased Title", category: "web", points: 100, enabled: false }]);
-    await notifyFirstBlood({ module: "classic", challengeId: "web-9", login: "alice" });
+    await notifyFirstBlood({ module: "classic", challengeId: "web-9", playerId: "alice" });
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 
@@ -136,13 +139,13 @@ describe("notifyFirstBlood", () => {
     mocks.readChallengeRecords.mockResolvedValue([
       { id: "web-future", title: "Future Challenge", category: "web", points: 100, enabled: false, releaseAt: "2099-01-01T00:00:00Z" },
     ]);
-    await notifyFirstBlood({ module: "classic", challengeId: "web-future", login: "alice" });
+    await notifyFirstBlood({ module: "classic", challengeId: "web-future", playerId: "alice" });
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 
   it("fails closed on a per-command HGETALL read error — no claim, no post, no throw", async () => {
     mocks.readChallengeRecords.mockRejectedValue(new Error("Upstash HGETALL failed: ERR command error"));
-    await expect(notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" })).resolves.toBeUndefined();
+    await expect(notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" })).resolves.toBeUndefined();
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 
@@ -150,36 +153,36 @@ describe("notifyFirstBlood", () => {
     mocks.listQuestions.mockResolvedValue([{ id: "q1", prompt: "Q?", points: 10 }]);
 
     delete process.env.BETTER_AUTH_URL;
-    await notifyFirstBlood({ module: "quiz", challengeId: "q1", login: "alice" });
+    await notifyFirstBlood({ module: "quiz", challengeId: "q1", playerId: "alice" });
     let msg = mocks.enqueueLedgerAnnouncement.mock.calls[0][1] as { embeds: Record<string, unknown>[] };
     expect("url" in msg.embeds[0]).toBe(false);
 
     mocks.enqueueLedgerAnnouncement.mockClear();
     process.env.BETTER_AUTH_URL = "not-a-valid-url";
-    await notifyFirstBlood({ module: "quiz", challengeId: "q1", login: "alice" });
+    await notifyFirstBlood({ module: "quiz", challengeId: "q1", playerId: "alice" });
     msg = mocks.enqueueLedgerAnnouncement.mock.calls[0][1] as { embeds: Record<string, unknown>[] };
     expect("url" in msg.embeds[0]).toBe(false);
 
     mocks.enqueueLedgerAnnouncement.mockClear();
     process.env.BETTER_AUTH_URL = "ftp://invalid-scheme.example";
-    await notifyFirstBlood({ module: "quiz", challengeId: "q1", login: "alice" });
+    await notifyFirstBlood({ module: "quiz", challengeId: "q1", playerId: "alice" });
     msg = mocks.enqueueLedgerAnnouncement.mock.calls[0][1] as { embeds: Record<string, unknown>[] };
     expect("url" in msg.embeds[0]).toBe(false);
   });
 
   it("links the quiz board for quiz (no per-question page) and /ai/<id> for ai", async () => {
     mocks.listQuestions.mockResolvedValue([{ id: "q1", prompt: "Q?", points: 10 }]);
-    await notifyFirstBlood({ module: "quiz", challengeId: "q1", login: "alice" });
+    await notifyFirstBlood({ module: "quiz", challengeId: "q1", playerId: "alice" });
     expect(JSON.stringify(mocks.enqueueLedgerAnnouncement.mock.calls[0][1])).toContain("/quiz");
 
     mocks.listAiChallenges.mockResolvedValue([{ id: "inj-1", title: "AI 1", category: "ai", points: 50 }]);
-    await notifyFirstBlood({ module: "ai", challengeId: "inj-1", login: "alice" });
+    await notifyFirstBlood({ module: "ai", challengeId: "inj-1", playerId: "alice" });
     expect(JSON.stringify(mocks.enqueueLedgerAnnouncement.mock.calls[1][1])).toContain("/ai/inj-1");
   });
 
   it("never throws, even when the store explodes", async () => {
     mocks.getAnnounceConfig.mockRejectedValue(new Error("redis down"));
-    await expect(notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" })).resolves.toBeUndefined();
+    await expect(notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" })).resolves.toBeUndefined();
   });
 });
 
@@ -196,14 +199,14 @@ describe("story-lock secrecy gate (ADR 60)", () => {
   });
 
   it("announces step 1 — the board shows it to everyone", async () => {
-    await notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" });
+    await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     expect(mocks.readLedgerField).toHaveBeenCalledWith("ctf:announce:first", "classic:web-1");
     const msg = mocks.enqueueLedgerAnnouncement.mock.calls[0][1] as { embeds: { description?: string }[] };
     expect(msg.embeds[0].description).toContain("Web 1");
   });
 
   it("withholds the WHOLE post for a later step — title, points AND id", async () => {
-    await notifyFirstBlood({ module: "classic", challengeId: "web-2", login: "alice" });
+    await notifyFirstBlood({ module: "classic", challengeId: "web-2", playerId: "alice" });
     // The claim is still spent first: nobody else may post it later either,
     // and nothing — not even the bare id the board also redacts — reaches
     // the sender.
@@ -213,7 +216,7 @@ describe("story-lock secrecy gate (ADR 60)", () => {
 
   it("fails CLOSED when the story line cannot be read — no post, no throw", async () => {
     mocks.listStories.mockRejectedValue(new Error("redis down"));
-    await expect(notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" })).resolves.toBeUndefined();
+    await expect(notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" })).resolves.toBeUndefined();
     expect(mocks.readLedgerField).toHaveBeenCalled();
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });

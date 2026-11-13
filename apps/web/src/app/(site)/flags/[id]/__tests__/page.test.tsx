@@ -72,6 +72,8 @@ vi.mock("@/lib/attachments-store", () => attachmentMocks);
 
 import ClassicChallengePage, { generateMetadata } from "@/app/(site)/flags/[id]/page";
 
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+
 // The store record carries grading material alongside the public fields —
 // exactly what the page must never spread into props.
 const record = {
@@ -92,7 +94,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   moduleLive.mockReturnValue(true);
   isAdminLogin.mockReturnValue(false);
-  getSession.mockResolvedValue({ user: { login: "alice" } });
+  getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
   listChallenges.mockResolvedValue([record]);
   teamSolveCounts.mockResolvedValue(new Map([["c1", 7]]));
   getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
@@ -108,7 +110,7 @@ beforeEach(() => {
 describe("first-open record (#616)", () => {
   it("records a signed-in contestant opening a visible challenge", async () => {
     renderToStaticMarkup(await ClassicChallengePage(params("c1")));
-    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("classic", "alice", "c1");
+    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("classic", ALICE_ID, "c1");
   });
 
   it("records nothing for a signed-out visitor", async () => {

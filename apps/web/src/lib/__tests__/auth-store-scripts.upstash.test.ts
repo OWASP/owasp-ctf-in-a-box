@@ -1,10 +1,10 @@
 // Live-Redis tests for the Redis user store's compare-and-set row scripts:
 // what they do to the rows hash and the index sets is only observable against
-// a real Redis. Index keys are asserted through `indexKey` so a format drift
-// between the Lua and keys.ts fails here.
+// a real Redis. Index and owner keys are asserted through `indexKey` and
+// `ownerKey` so a format drift between the Lua and keys.ts fails here.
 
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { indexKey, rowsKey } from "@/lib/auth-store/keys";
+import { indexKey, ownerKey, rowsKey } from "@/lib/auth-store/keys";
 import { freshId, liveConfigured, liveKey } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
@@ -14,11 +14,12 @@ type Row = Record<string, unknown>;
 describe.skipIf(!liveConfigured)("auth-store row scripts against a live SRH proxy", () => {
   let PUT_ROW_SCRIPT: string;
   let DEL_ROW_SCRIPT: string;
+  let UNDO_CREATE_SCRIPT: string;
   let upstashEval: (typeof import("@/lib/upstash"))["upstashEval"];
   let upstashPipeline: (typeof import("@/lib/upstash"))["upstashPipeline"];
 
   beforeAll(async () => {
-    ({ PUT_ROW_SCRIPT, DEL_ROW_SCRIPT } = await import("@/lib/auth-store/scripts"));
+    ({ PUT_ROW_SCRIPT, DEL_ROW_SCRIPT, UNDO_CREATE_SCRIPT } = await import("@/lib/auth-store/scripts"));
     ({ upstashEval, upstashPipeline } = await import("@/lib/upstash"));
   });
 
@@ -44,7 +45,16 @@ describe.skipIf(!liveConfigured)("auth-store row scripts against a live SRH prox
       if (res.error) throw new Error(res.error);
       return res.result as string | null;
     };
-    return { P, put, del, smembers, hget };
+    const putOwned = async (expected: string, row: Row, token: string) =>
+      upstashEval(PUT_ROW_SCRIPT, [rowsKey(P, model)], [P, model, String(row.id), expected, json(row), csvFor(model), uniqueFor(model), token, 60_000]);
+    const undo = async (id: string, token: string) =>
+      upstashEval(UNDO_CREATE_SCRIPT, [rowsKey(P, model)], [P, model, id, token, csvFor(model)]);
+    const raw = async (cmd: (string | number)[]) => {
+      const [res] = await upstashPipeline([cmd]);
+      if (res.error) throw new Error(res.error);
+      return res.result;
+    };
+    return { P, put, del, smembers, hget, putOwned, undo, raw };
   }
 
   it("creates only when absent", async () => {
@@ -174,5 +184,50 @@ describe.skipIf(!liveConfigured)("auth-store row scripts against a live SRH prox
     expect(await hget("s1")).toBe(json(row));
     expect(await smembers(indexKey(P, "session", "token", "a"))).toEqual(["s1"]);
     expect(await smembers(indexKey(P, "session", "userId", "u1"))).toEqual(["s1"]);
+  });
+
+  describe("owner keys and UNDO_CREATE_SCRIPT", () => {
+    it("sets the owner key with a TTL only on a create that writes, and keeps it across an update", async () => {
+      const { P, putOwned, put, raw } = ctx("session");
+      const row = { id: "s1", token: "a", userId: "u1" };
+      expect(await putOwned("", row, "tok-1")).toBe(1);
+      expect(await raw(["GET", ownerKey(P, "session", "s1")])).toBe("tok-1");
+      const ttl = (await raw(["PTTL", ownerKey(P, "session", "s1")])) as number;
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(60_000);
+      expect(await putOwned("", row, "tok-2")).toBe(0);
+      expect(await raw(["GET", ownerKey(P, "session", "s1")])).toBe("tok-1");
+      expect(await put(json(row), { ...row, token: "b" })).toBe(1);
+      expect(await raw(["GET", ownerKey(P, "session", "s1")])).toBe("tok-1");
+    });
+
+    it("undoes only with the owner token, dropping the row, its index entries and the owner key", async () => {
+      const { P, putOwned, put, undo, hget, smembers, raw } = ctx("session");
+      const row = { id: "s1", token: "a", userId: "u1" };
+      await putOwned("", row, "tok-1");
+      await put(json(row), { ...row, token: "b" });
+      expect(await undo("s1", "other")).toBe(0);
+      expect(await undo("s1", "")).toBe(0);
+      expect(await hget("s1")).not.toBeNull();
+      expect(await undo("s1", "tok-1")).toBe(1);
+      expect(await hget("s1")).toBeNull();
+      expect(await smembers(indexKey(P, "session", "token", "b"))).toEqual([]);
+      expect(await smembers(indexKey(P, "session", "userId", "u1"))).toEqual([]);
+      expect(await raw(["EXISTS", ownerKey(P, "session", "s1")])).toBe(0);
+    });
+
+    it("clears the owner key on delete and on a token-less create, so a replacement row is not undone", async () => {
+      const { P, putOwned, put, del, undo, hget, raw } = ctx("session");
+      const row = { id: "s1", token: "a", userId: "u1" };
+      await putOwned("", row, "tok-1");
+      expect(await del("s1", json(row))).toBe(1);
+      expect(await raw(["EXISTS", ownerKey(P, "session", "s1")])).toBe(0);
+      expect(await put("", row)).toBe(1);
+      expect(await undo("s1", "tok-1")).toBe(0);
+      expect(await hget("s1")).toBe(json(row));
+      await raw(["SET", ownerKey(P, "session", "s2"), "stale"]);
+      expect(await put("", { ...row, id: "s2", token: "c" })).toBe(1);
+      expect(await raw(["EXISTS", ownerKey(P, "session", "s2")])).toBe(0);
+    });
   });
 });

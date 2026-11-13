@@ -7,17 +7,17 @@
 // Dependency-free on purpose, like the leaderboard's rank.ts: the order is a
 // pure function a test can pin without a store.
 
-/** The first solver of one challenge: the login as the team's member set
- *  spells it, and the solve row's `at` (null when the row has none). */
-export type FirstBlood = { login: string; at: string | null };
+/** The first solver of one challenge: their player id, and the solve row's
+ *  `at` (null when the row has none). */
+export type FirstBlood = { playerId: string; at: string | null };
 
 /** The leaderboard's "whoever got there first" reasoning (rank.ts, the
  *  activity tiebreak), applied to one challenge's solves:
  *
  *    1. earliest solve time first, compared as instants, not strings;
  *    2. a row with no parseable time sorts after every row with one;
- *    3. an exact tie goes to the login that sorts first case-insensitively,
- *       then by exact spelling.
+ *    3. an exact tie goes to the player id that sorts first
+ *       case-insensitively, then by exact spelling.
  *
  *  (3) is where this has to go further than the leaderboard, whose last
  *  resort is source order: here the source order is the team SCAN's, which
@@ -25,7 +25,7 @@ export type FirstBlood = { login: string; at: string | null };
  *  refresh would be worse than none. Plain code-unit comparison, not
  *  `localeCompare`, so the server's locale cannot move it either. */
 export function compareFirstBlood(a: FirstBlood, b: FirstBlood): number {
-  return atMs(a.at) - atMs(b.at) || codeUnitOrder(a.login.toLowerCase(), b.login.toLowerCase()) || codeUnitOrder(a.login, b.login);
+  return atMs(a.at) - atMs(b.at) || codeUnitOrder(a.playerId.toLowerCase(), b.playerId.toLowerCase()) || codeUnitOrder(a.playerId, b.playerId);
 }
 
 /** Reducer form: the earlier of the two by `compareFirstBlood`. */

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { readBoundedBody } from "@/lib/bounded-body";
 import { requireAdmin } from "@/lib/admin-auth";
+import { auditActor } from "@/lib/admin-audit-keys";
 import { adminErrorLabel } from "@/lib/admin-store";
 import type { DiscordConfigPatch } from "@/lib/discord-config";
 import { deleteLifecycleState, isLifecyclePassEnabled, nudgeAnnounceTicker } from "@/lib/announce/ticker";
@@ -73,7 +74,7 @@ export async function POST(request: Request) {
     if (!isLifecyclePassEnabled(prev) && isLifecyclePassEnabled(nextConfig)) {
       await deleteLifecycleState();
     }
-    const config = await updateAnnounceConfig(gate.login, patch);
+    const config = await updateAnnounceConfig(auditActor(gate.player), patch);
     // The write landed: observe it now rather than waiting out an idle
     // backoff, so an opt-in just before launch still sees the pre-launch
     // baseline.

@@ -12,6 +12,7 @@ import {
 } from "@/lib/attachments-store";
 import { readBoundedBody, readBoundedBytes } from "@/lib/bounded-body";
 import { listChallengeIds } from "@/lib/classic-store";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
  * Organizer authoring for challenge attachments (#186). `requireAdmin` is the
@@ -105,7 +106,7 @@ export async function POST(request: Request) {
     try {
       if (!(await itemExists(owner, body.item))) return bad(`No challenge with id ${body.item}`);
       const att = await addLink(owner, body.item, link.name, link.url);
-      await writeAdminAudit(gate.login, "attachment-add", { item: body.item, kind: "link", name: att.name });
+      await writeAdminAudit(auditActor(gate.player), "attachment-add", { item: body.item, kind: "link", attachmentName: att.name });
       return NextResponse.json({ attachment: view(att) });
     } catch (err) {
       return failure(err);
@@ -128,7 +129,7 @@ export async function POST(request: Request) {
     if (!read.ok) return read.reason === "too_large" ? tooLarge() : bad("could not read the upload");
     try {
       const att = await fillMissingUpload(reupload, read.bytes);
-      await writeAdminAudit(gate.login, "attachment-reupload", { id: reupload, size: att.size });
+      await writeAdminAudit(auditActor(gate.player), "attachment-reupload", { id: reupload, size: att.size });
       return NextResponse.json({ attachment: view(att) });
     } catch (err) {
       return failure(err);
@@ -148,7 +149,7 @@ export async function POST(request: Request) {
   if (!read.ok) return read.reason === "too_large" ? tooLarge() : bad("could not read the upload");
   try {
     const att = await addUpload(owner, item, name, read.bytes);
-    await writeAdminAudit(gate.login, "attachment-add", { item, kind: "upload", name: att.name, size: att.size });
+    await writeAdminAudit(auditActor(gate.player), "attachment-add", { item, kind: "upload", attachmentName: att.name, size: att.size });
     return NextResponse.json({ attachment: view(att) });
   } catch (err) {
     return failure(err);
@@ -164,6 +165,6 @@ export async function DELETE(request: Request) {
   } catch (err) {
     return failure(err);
   }
-  await writeAdminAudit(gate.login, "attachment-remove", { id });
+  await writeAdminAudit(auditActor(gate.player), "attachment-remove", { id });
   return NextResponse.json({ ok: true });
 }

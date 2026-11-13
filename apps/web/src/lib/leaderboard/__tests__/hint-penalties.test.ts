@@ -18,8 +18,8 @@ vi.mock("@/lib/hint-config", () => ({
 
 import { withHintPenalties } from "../hint-penalties";
 
-function entry(login: string, points: number, lastSolveAt?: string): LeaderboardEntry {
-  return { rank: 0, login, team: null, points, patched: 0, failed: 0, total: 0, apps: {}, updatedAt: null, lastSolveAt };
+function entry(playerId: string, points: number, lastSolveAt?: string): LeaderboardEntry {
+  return { rank: 0, playerId, name: playerId, image: null, team: null, points, patched: 0, failed: 0, total: 0, apps: {}, updatedAt: null, lastSolveAt };
 }
 
 function data(entries: LeaderboardEntry[]): LeaderboardData {
@@ -39,7 +39,7 @@ describe("withHintPenalties", () => {
   it("subtracts penalties and re-ranks the affected entries", async () => {
     mocks.getHintPenalties.mockResolvedValueOnce(new Map([["ada", 70]]));
     const result = await withHintPenalties(data([entry("ada", 100), entry("bob", 40)]));
-    expect(result.entries.map((e) => [e.login, e.points, e.rank])).toEqual([
+    expect(result.entries.map((e) => [e.playerId, e.points, e.rank])).toEqual([
       ["bob", 40, 1],
       ["ada", 30, 2],
     ]);
@@ -48,7 +48,7 @@ describe("withHintPenalties", () => {
   it("floors a penalized score at 0 instead of going negative", async () => {
     mocks.getHintPenalties.mockResolvedValueOnce(new Map([["newbie", 30]]));
     const result = await withHintPenalties(data([entry("ada", 10), entry("newbie", 20)]));
-    const newbie = result.entries.find((e) => e.login === "newbie")!;
+    const newbie = result.entries.find((e) => e.playerId === "newbie")!;
     expect(newbie.points).toBe(0);
     expect(newbie.hintPenalty).toBe(30);
   });
@@ -56,8 +56,8 @@ describe("withHintPenalties", () => {
   it("marks only penalized entries with hintPenalty", async () => {
     mocks.getHintPenalties.mockResolvedValueOnce(new Map([["bob", 10]]));
     const result = await withHintPenalties(data([entry("ada", 100), entry("bob", 40)]));
-    expect(result.entries.find((e) => e.login === "ada")!.hintPenalty).toBeUndefined();
-    expect(result.entries.find((e) => e.login === "bob")!.hintPenalty).toBe(10);
+    expect(result.entries.find((e) => e.playerId === "ada")!.hintPenalty).toBeUndefined();
+    expect(result.entries.find((e) => e.playerId === "bob")!.hintPenalty).toBe(10);
   });
 
   it("breaks a penalty-created point tie by earlier lastSolveAt", async () => {
@@ -67,7 +67,7 @@ describe("withHintPenalties", () => {
     const result = await withHintPenalties(
       data([entry("ada", 50, "2026-08-07T15:00:00Z"), entry("bob", 40, "2026-08-07T12:00:00Z")]),
     );
-    expect(result.entries.map((e) => [e.login, e.rank])).toEqual([
+    expect(result.entries.map((e) => [e.playerId, e.rank])).toEqual([
       ["bob", 1],
       ["ada", 2],
     ]);
@@ -78,7 +78,7 @@ describe("withHintPenalties", () => {
     // ada drops from 50 to 40, tying bob — ada came first in the source, so
     // she keeps the higher rank.
     const result = await withHintPenalties(data([entry("ada", 50), entry("bob", 40), entry("cyd", 40)]));
-    expect(result.entries.map((e) => e.login)).toEqual(["ada", "bob", "cyd"]);
+    expect(result.entries.map((e) => e.playerId)).toEqual(["ada", "bob", "cyd"]);
   });
 
   it("sums case-variant spend fields instead of keeping only the last", async () => {
@@ -92,7 +92,7 @@ describe("withHintPenalties", () => {
     expect(result.entries[0].hintPenalty).toBe(30);
   });
 
-  it("matches a penalty to its row case-insensitively, like every other login join", async () => {
+  it("matches a penalty to its row case-insensitively, like every other player id join", async () => {
     // The scorer records the PR author's spelling of the login; the hint
     // purchase records the session's. module-contributions already unions the
     // two spellings into ONE row — the penalty must land on that row too, or

@@ -43,7 +43,9 @@ const MODULES: readonly ResolvedModule[] = [
 function entry(overrides: Partial<LeaderboardEntry> = {}): LeaderboardEntry {
   return {
     rank: 1,
-    login: "alice",
+    playerId: "id-alice",
+    name: "alice",
+    image: null,
     team: null,
     points: 100,
     patched: 3,
@@ -60,9 +62,9 @@ function team(overrides: Partial<TeamStanding> = {}): TeamStanding {
     rank: 1,
     slug: "red-team",
     name: "Red Team",
-    captain: "alice",
+    captain: "id-alice",
     points: 150,
-    members: ["alice", "bob"],
+    members: ["id-alice", "id-bob"],
     ...overrides,
   };
 }
@@ -80,11 +82,11 @@ function data(overrides: Partial<LeaderboardData> = {}): LeaderboardData {
 describe("Leaderboard", () => {
   it("defaults to the teams view when teams exist, with the toggle marked active", () => {
     const board = data({
-      entries: [entry({ login: "alice", team: "red-team" }), entry({ rank: 2, login: "bob", team: "red-team", points: 80 })],
+      entries: [entry({ playerId: "id-alice", name: "alice", image: null, team: "red-team" }), entry({ rank: 2, playerId: "id-bob", name: "bob", team: "red-team", points: 80 })],
       teams: [team()],
       capabilities: { apps: false, teams: true, challenges: false },
     });
-    const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
+    const html = renderToStaticMarkup(<Leaderboard data={board} viewerId={null} modules={MODULES} enabledApps={apps} />);
 
     // Team rows render by default.
     expect(html).toContain("Red Team");
@@ -95,8 +97,20 @@ describe("Leaderboard", () => {
   });
 
   it("shows the captain among members when a team row is expanded", () => {
+    const players = new Map([
+      ["id-alice", { name: "alice", image: null, points: 0 }],
+      ["id-bob", { name: "bob", image: null, points: 0 }],
+      ["id-carol", { name: "carol", image: null, points: 0 }],
+    ]);
     const html = renderToStaticMarkup(
-      <TeamRow team={team({ members: ["alice", "bob", "carol"], captain: "bob" })} topPoints={150} isOpen onToggle={() => {}} enabledApps={apps} />,
+      <TeamRow
+        team={team({ members: ["id-alice", "id-bob", "id-carol"], captain: "id-bob" })}
+        players={players}
+        topPoints={150}
+        isOpen
+        onToggle={() => {}}
+        enabledApps={apps}
+      />,
     );
     expect(html).toContain("alice");
     expect(html).toContain("bob");
@@ -111,15 +125,34 @@ describe("Leaderboard", () => {
   it("shows each member's points in the expanded team row", () => {
     const html = renderToStaticMarkup(
       <TeamRow
-        team={team({ members: ["alice", "bob"], captain: "alice" })}
+        team={team({ members: ["id-alice", "id-bob"], captain: "id-alice" })}
         topPoints={150}
-        pointsByLogin={new Map([["alice", 14], ["bob", 4]])}
+        players={new Map([["id-alice", { name: "alice", image: null, points: 14 }], ["id-bob", { name: "bob", image: null, points: 4 }]])}
         isOpen
         onToggle={() => {}}
       enabledApps={apps} />,
     );
     expect(html).toMatch(/14\s*pts/);
     expect(html).toMatch(/4\s*pts/);
+  });
+
+  it("names team members, never their ids, and never builds a GitHub avatar URL", () => {
+    const html = renderToStaticMarkup(
+      <TeamRow
+        team={team({ members: ["id-alice", "id-gone"], captain: "id-alice" })}
+        topPoints={150}
+        players={new Map([["id-alice", { name: "Alice A", image: "https://img.example/alice.png", points: 3 }]])}
+        isOpen
+        onToggle={() => {}}
+        enabledApps={apps}
+      />,
+    );
+    expect(html).toContain("Alice A");
+    expect(html).toContain('src="https://img.example/alice.png"');
+    // A member with no entry gets the id fallback name and the initial.
+    expect(html).toContain("player id-gone");
+    expect(html).not.toContain(">id-alice<");
+    expect(html).not.toContain("avatars.githubusercontent.com");
   });
 
   it("renders team score lines in the chart when the default view is teams", () => {
@@ -144,27 +177,25 @@ describe("Leaderboard", () => {
           ],
         },
       ],
-      series: [{ login: "alice", points: [{ t: "2026-08-01T00:00:00.000Z", score: 10 }] }],
+      series: [{ playerId: "id-alice", name: "alice", image: null, points: [{ t: "2026-08-01T00:00:00.000Z", score: 10 }] }],
     });
-    const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
+    const html = renderToStaticMarkup(<Leaderboard data={board} viewerId={null} modules={MODULES} enabledApps={apps} />);
     expect(html).toMatch(/Top 2 teams/);
   });
 
   it("keeps the individual view (and player chart) unchanged when there are no teams", () => {
     const board = data({
-      entries: [entry({ login: "alice" }), entry({ rank: 2, login: "bob", points: 80 })],
+      entries: [entry({ playerId: "id-alice", name: "alice" }), entry({ rank: 2, playerId: "id-bob", name: "bob", points: 80 })],
       teams: [],
       capabilities: { apps: false, teams: false, challenges: false },
       series: [
-        {
-          login: "alice",
+        { playerId: "id-alice", name: "alice", image: null,
           points: [
             { t: "2026-08-01T00:00:00.000Z", score: 10 },
             { t: "2026-08-01T04:00:00.000Z", score: 100 },
           ],
         },
-        {
-          login: "bob",
+        { playerId: "id-bob", name: "bob", image: null,
           points: [
             { t: "2026-08-01T01:00:00.000Z", score: 20 },
             { t: "2026-08-01T05:00:00.000Z", score: 80 },
@@ -172,7 +203,7 @@ describe("Leaderboard", () => {
         },
       ],
     });
-    const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
+    const html = renderToStaticMarkup(<Leaderboard data={board} viewerId={null} modules={MODULES} enabledApps={apps} />);
     // No teams => no toggle at all, individual view stands alone.
     expect(html).not.toMatch(/aria-pressed/);
     expect(html).toContain("alice");
@@ -190,8 +221,7 @@ describe("Leaderboard", () => {
   it("says nothing about the chart when no hint penalty is on the board", () => {
     const board = data({
       series: [
-        {
-          login: "alice",
+        { playerId: "id-alice", name: "alice", image: null,
           points: [
             { t: "2026-08-01T00:00:00.000Z", score: 10 },
             { t: "2026-08-01T04:00:00.000Z", score: 100 },
@@ -199,7 +229,7 @@ describe("Leaderboard", () => {
         },
       ],
     });
-    const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
+    const html = renderToStaticMarkup(<Leaderboard data={board} viewerId={null} modules={MODULES} enabledApps={apps} />);
     // The claim that retired with #415 — it named modules as uncharted.
     expect(html).not.toContain("are not charted.");
     expect(html).not.toContain("scoring only");
@@ -210,8 +240,7 @@ describe("Leaderboard", () => {
     const board = data({
       entries: [{ ...base.entries[0], hintPenalty: 15 }, ...base.entries.slice(1)],
       series: [
-        {
-          login: "alice",
+        { playerId: "id-alice", name: "alice", image: null,
           points: [
             { t: "2026-08-01T00:00:00.000Z", score: 10 },
             { t: "2026-08-01T04:00:00.000Z", score: 100 },
@@ -219,17 +248,39 @@ describe("Leaderboard", () => {
         },
       ],
     });
-    const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
+    const html = renderToStaticMarkup(<Leaderboard data={board} viewerId={null} modules={MODULES} enabledApps={apps} />);
     expect(html).toContain("Hint costs are not charted");
+  });
+
+  it("renders each row's name and profile image, never the player id", () => {
+    const board = data({
+      entries: [
+        entry({ playerId: "1a2b3c4d-0000-4000-8000-000000000000", name: "Ada L", image: "https://img.example/ada.png" }),
+        entry({ rank: 2, playerId: "9f8e7d6c-0000-4000-8000-000000000000", name: "player 9f8e7d6c", image: null, points: 80 }),
+      ],
+    });
+    const html = renderToStaticMarkup(<Leaderboard data={board} viewerId={null} modules={MODULES} enabledApps={apps} />);
+    expect(html).toContain("Ada L");
+    expect(html).toContain('src="https://img.example/ada.png"');
+    expect(html).toContain("player 9f8e7d6c");
+    expect(html).not.toContain("1a2b3c4d-0000-4000-8000-000000000000");
+    expect(html).not.toContain("avatars.githubusercontent.com");
+  });
+
+  it("marks the viewer's own row by player id", () => {
+    const board = data({ entries: [entry({ playerId: "id-alice", name: "alice" }), entry({ rank: 2, playerId: "id-bob", name: "bob", points: 80 })] });
+    const html = renderToStaticMarkup(<Leaderboard data={board} viewerId="id-bob" modules={MODULES} enabledApps={apps} />);
+    expect(html.match(/>you</g)).toHaveLength(1);
+    expect(html.indexOf(">you<")).toBeGreaterThan(html.indexOf(">bob<"));
   });
 
   // The tiebreaks are not visible in the numbers, so the rule is stated
   // where the ranking is (issue #200, 2.1; points first since #522).
   it("states the points-first rank order and its tiebreaks under the sort chips", () => {
     const board = data({
-      entries: [entry({ login: "alice" }), entry({ rank: 2, login: "bob", points: 80 })],
+      entries: [entry({ playerId: "id-alice", name: "alice" }), entry({ rank: 2, playerId: "id-bob", name: "bob", points: 80 })],
     });
-    const html = renderToStaticMarkup(<Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />);
+    const html = renderToStaticMarkup(<Leaderboard data={board} viewerId={null} modules={MODULES} enabledApps={apps} />);
     // Default sort is "points", so the rule is visible on first paint.
     expect(html).toContain("Ranked by points; ties go to more items completed, then to whoever earned their last points first.");
     expect(html).not.toContain("Rank rewards breadth");
@@ -454,7 +505,7 @@ describe("leaderboard edge cases (#481)", () => {
       capabilities: { apps: false, teams: false, challenges: false },
     });
     const html = renderToStaticMarkup(
-      <Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
+      <Leaderboard data={board} viewerId={null} modules={MODULES} enabledApps={apps} />,
     );
     expect(html).toContain("The board is wide open");
   });
@@ -519,12 +570,12 @@ describe("leaderboard edge cases (#481)", () => {
     // What the fallback looks like once it fires: the individual board,
     // not an empty teams filter.
     const board = data({
-      entries: [entry({ login: "alice" }), entry({ rank: 2, login: "bob", points: 80 })],
+      entries: [entry({ playerId: "id-alice", name: "alice" }), entry({ rank: 2, playerId: "id-bob", name: "bob", points: 80 })],
       teams: [],
       capabilities: { apps: false, teams: true, challenges: false },
     });
     const html = renderToStaticMarkup(
-      <Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
+      <Leaderboard data={board} viewerId={null} modules={MODULES} enabledApps={apps} />,
     );
     expect(html).toContain("alice");
     expect(html).toMatch(/Sort:/);
@@ -556,7 +607,7 @@ describe("Leaderboard score-cadence note (#552)", () => {
   it("shows a cadence note on an event that runs Secure Development", () => {
     const board = data({ entries: [entry()] });
     const html = renderToStaticMarkup(
-      <Leaderboard data={board} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
+      <Leaderboard data={board} viewerId={null} modules={MODULES} enabledApps={apps} />,
     );
     expect(html).toMatch(/points and team totals can take up to about 10 seconds to show here after a scoring sweep, so a solve or team change you just made may take a moment to appear/i);
   });
@@ -565,7 +616,7 @@ describe("Leaderboard score-cadence note (#552)", () => {
     const renamed: readonly ResolvedModule[] = [{ id: "secure-development", title: "Patch Track", blurb: "" }];
     const board = data({ entries: [entry()] });
     const html = renderToStaticMarkup(
-      <Leaderboard data={board} viewerLogin={null} modules={renamed} enabledApps={apps} />,
+      <Leaderboard data={board} viewerId={null} modules={renamed} enabledApps={apps} />,
     );
     expect(html).toMatch(/points and team totals can take up to about 10 seconds to show here after a scoring sweep, so a solve or team change you just made may take a moment to appear/i);
     expect(html).toContain("Patch Track points and team totals");
@@ -576,14 +627,14 @@ describe("Leaderboard score-cadence note (#552)", () => {
     const quizOnly: readonly ResolvedModule[] = [{ id: "quiz", title: "Quiz", blurb: "" }];
     const board = data({ entries: [entry()] });
     const html = renderToStaticMarkup(
-      <Leaderboard data={board} viewerLogin={null} modules={quizOnly} enabledApps={apps} />,
+      <Leaderboard data={board} viewerId={null} modules={quizOnly} enabledApps={apps} />,
     );
     expect(html).not.toMatch(/about once a minute/i);
   });
 
   it("omits the note on an empty board", () => {
     const html = renderToStaticMarkup(
-      <Leaderboard data={data({ entries: [], teams: [] })} viewerLogin={null} modules={MODULES} enabledApps={apps} />,
+      <Leaderboard data={data({ entries: [], teams: [] })} viewerId={null} modules={MODULES} enabledApps={apps} />,
     );
     expect(html).not.toMatch(/about once a minute/i);
   });
@@ -607,7 +658,7 @@ describe("the story-lock disclaimer (#570)", () => {
   });
 
   const render = (d: LeaderboardData) =>
-    renderToStaticMarkup(<Leaderboard data={d} viewerLogin={null} modules={CLASSIC} enabledApps={apps} />);
+    renderToStaticMarkup(<Leaderboard data={d} viewerId={null} modules={CLASSIC} enabledApps={apps} />);
 
   it("says nothing when nothing is locked — a defined denominator is not a lock", () => {
     const html = render(

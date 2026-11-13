@@ -24,7 +24,7 @@ import { MODULE_LABEL } from "./vocabulary";
 import { LIVE_POLL_MS, useLivePoll } from "./use-live-poll";
 import { activityZone, UtcToggle, useShowUtc } from "./activity-time-zone";
 
-export type ActivityEntry = { at: string; type: string; login: string; detail?: string };
+export type ActivityEntry = { at: string; type: string; userId: string | null; name: string; detail?: string };
 
 const PAGE_SIZE = 200;
 const FIELD_CLASS =
@@ -40,7 +40,7 @@ export function refreshLimit(loaded: number): number {
   return Math.min(LIMIT_MAX, Math.max(PAGE_SIZE, loaded));
 }
 
-const entryKey = (e: ActivityEntry) => `${e.at}\u0000${e.type}\u0000${e.login}\u0000${e.detail ?? ""}`;
+const entryKey = (e: ActivityEntry) => `${e.at}\u0000${e.type}\u0000${e.userId}\u0000${e.detail ?? ""}`;
 
 /** What a refresh from the top leaves on screen. The fresh page replaces
  *  everything it covers; rows the organizer had loaded that it did NOT reach
@@ -94,18 +94,23 @@ export type ActivityQuery = {
   until?: number | null;
 };
 
-type Field = "any" | "login" | "type" | "detail" | "team";
-const FIELDS: readonly Field[] = ["login", "type", "detail", "team"];
+type Field = "any" | "player" | "type" | "detail" | "team";
+const FIELDS: readonly Field[] = ["player", "type", "detail", "team"];
 
-/** The search box's words, lowercased. `login:`, `type:`, `detail:` and
- *  `team:` restrict a word to that field; a prefix with nothing after it is
- *  dropped rather than matching everything or nothing. */
+/** Prefixes that mean another field: `login:` is what organizers typed
+ *  before the field was named for the player, so it keeps working. */
+const FIELD_ALIASES: Readonly<Record<string, Field>> = { login: "player" };
+
+/** The search box's words, lowercased. `player:` (alias `login:`), `type:`,
+ *  `detail:` and `team:` restrict a word to that field; a prefix with nothing
+ *  after it is dropped rather than matching everything or nothing. */
 function parseSearch(text: string): { field: Field; needle: string }[] {
   const terms: { field: Field; needle: string }[] = [];
   for (const word of text.toLowerCase().split(/\s+/)) {
     if (!word) continue;
     const colon = word.indexOf(":");
-    const prefix = colon > 0 ? (word.slice(0, colon) as Field) : null;
+    const raw = colon > 0 ? word.slice(0, colon) : null;
+    const prefix = raw === null ? null : ((FIELD_ALIASES[raw] ?? raw) as Field);
     if (prefix && FIELDS.includes(prefix)) {
       const needle = word.slice(colon + 1);
       if (needle) terms.push({ field: prefix, needle });
@@ -120,8 +125,8 @@ function matchesTerm(e: ActivityEntry, field: Field, needle: string, zone: strin
   const has = (value: string | undefined) => !!value && value.toLowerCase().includes(needle);
   const typeText = `${e.type} ${TYPE_LABELS[e.type] ?? ""}`;
   switch (field) {
-    case "login":
-      return has(e.login);
+    case "player":
+      return has(e.name);
     case "type":
       return has(typeText);
     case "detail":
@@ -129,7 +134,7 @@ function matchesTerm(e: ActivityEntry, field: Field, needle: string, zone: strin
     case "team":
       return e.type.startsWith("team-") && has(e.detail);
     default:
-      return has(e.login) || has(typeText) || has(e.detail) || has(formatWhen(e.at, zone));
+      return has(e.name) || has(typeText) || has(e.detail) || has(formatWhen(e.at, zone));
   }
 }
 
@@ -142,7 +147,7 @@ function inRange(e: ActivityEntry, since?: number | null, until?: number | null)
 
 /** The client-side filter the panel applies to the log. Exported for direct
  *  testing — filter logic behind a useState toggle is invisible to a static
- *  render. Every word in the box must match somewhere in the row (login, the
+ *  render. Every word in the box must match somewhere in the row (player name, the
  *  type's id or label, the detail, or the time as displayed on the panel's
  *  clock), case-insensitively and as a substring: an organizer chasing
  *  "did dcote… solve crypto" types fragments, not exact values. */
@@ -411,7 +416,7 @@ export default function AdminActivityTab({
                 setSearch(e.target.value);
                 searchAll();
               }}
-              placeholder="search login, event, detail, time · login: type: detail: team:"
+              placeholder="search player, event, detail, time · player: type: detail: team:"
               className={`min-w-0 flex-1 basis-64 ${FIELD_CLASS}`}
             />
             <select
@@ -479,12 +484,12 @@ export default function AdminActivityTab({
                 </thead>
                 <tbody className="text-zinc-300">
                   {shown.map((e, i) => (
-                    <tr key={`${e.at}-${e.type}-${e.login}-${i}`} className="border-b border-white/[0.03]">
+                    <tr key={`${e.at}-${e.type}-${e.userId}-${i}`} className="border-b border-white/[0.03]">
                       <td className="py-1 pr-3 font-mono tabular-nums text-muted" title={e.at}>
                         {formatWhen(e.at, rowZone)}
                       </td>
                       <td className="py-1 pr-3">{TYPE_LABELS[e.type] ?? e.type}</td>
-                      <td className="py-1 pr-3 font-mono text-white">{e.login}</td>
+                      <td className="py-1 pr-3 font-mono text-white">{e.name}</td>
                       <td className="py-1 font-mono text-muted">{e.detail ?? ""}</td>
                     </tr>
                   ))}

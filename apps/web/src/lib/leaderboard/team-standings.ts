@@ -1,4 +1,5 @@
 import "server-only";
+import { unnamed } from "@/lib/display-name";
 import { errorLabel } from "@/lib/error-label";
 import { listTeams } from "@/lib/team-store";
 import {
@@ -86,7 +87,7 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   // team's items — and a player's story-lock reachability folding over a
   // different membership than the team row's would unlock a different set of
   // steps for the same contest.
-  const { sourceTeams, teamByLogin } = mergeTeamRosters(data, teams);
+  const { sourceTeams, teamByPlayer } = mergeTeamRosters(data, teams);
   const sourceSlugs = new Set(sourceTeams.map((team) => team.slug));
 
   const membershipOnly: TeamStanding[] = teams
@@ -124,30 +125,32 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   const standings = await withAppModulePoints([...sourceTeams, ...membershipOnly]);
 
   const entries = data.entries.map((entry) => {
-    const slug = teamByLogin.get(entry.login.toLowerCase());
+    const slug = teamByPlayer.get(entry.playerId.toLowerCase());
     return slug ? { ...entry, team: slug } : entry;
   });
   // Every team member gets an Individual row, a 0 one if they have not
   // scored: the Teams view lists every team, so a player who could find their
   // team there could not find themselves here. Every roster counts, the team
   // store's first (its spelling and placement win) and then the source's;
-  // logins match case-insensitively against the rows that exist. Signing in
-  // without a team creates no row. Named in order so the ties at 0 read
-  // alphabetically after everyone who scored.
-  const listed = new Set(entries.map((entry) => entry.login.toLowerCase()));
-  const unlisted: { login: string; slug: string }[] = [];
+  // player keys match case-insensitively against the rows that exist. Signing in
+  // without a team creates no row. Sorted by player id so the ties at 0 keep
+  // one stable order after everyone who scored.
+  const listed = new Set(entries.map((entry) => entry.playerId.toLowerCase()));
+  const unlisted: { playerId: string; slug: string }[] = [];
   for (const team of [...teams, ...sourceTeams]) {
-    for (const login of team.members) {
-      if (listed.has(login.toLowerCase())) continue;
-      listed.add(login.toLowerCase());
-      unlisted.push({ login, slug: team.slug });
+    for (const playerId of team.members) {
+      if (listed.has(playerId.toLowerCase())) continue;
+      listed.add(playerId.toLowerCase());
+      unlisted.push({ playerId, slug: team.slug });
     }
   }
   const zeroRows: LeaderboardEntry[] = unlisted
-    .sort((a, b) => a.login.toLowerCase().localeCompare(b.login.toLowerCase()))
-    .map(({ login, slug }) => ({
+    .sort((a, b) => a.playerId.toLowerCase().localeCompare(b.playerId.toLowerCase()))
+    .map(({ playerId, slug }) => ({
       rank: 0,
-      login,
+      playerId,
+      // Named by the fold's last stage (names.ts).
+      ...unnamed(playerId),
       team: slug,
       points: 0,
       patched: 0,

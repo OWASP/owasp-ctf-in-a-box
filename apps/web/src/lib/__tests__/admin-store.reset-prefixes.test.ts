@@ -30,6 +30,13 @@ describe("RESET_PREFIXES", () => {
     }
   });
 
+  it("keeps every GitHub link key through a master reset", () => {
+    for (const [, pattern] of RESET_PREFIXES) {
+      expect(globToRegExp(pattern).test("ctf:link:github:x")).toBe(false);
+      expect(globToRegExp(pattern).test("ctf:link:user:x")).toBe(false);
+    }
+  });
+
   it("the matcher does match what a pattern names", () => {
     expect(globToRegExp("ctf:team:*").test("ctf:team:abc")).toBe(true);
   });

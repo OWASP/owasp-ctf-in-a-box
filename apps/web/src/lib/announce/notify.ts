@@ -38,6 +38,7 @@ import { errorLabel } from "@/lib/error-label";
 // ran. The team store's own membership list is also the right source — the
 // announcement describes the solving TEAM, server-side, not a browser's
 // current view of it.
+import { getPlayerProfiles } from "@/lib/player";
 import { listTeams } from "@/lib/team-store";
 import { listStories, readChallengeRecords } from "@/lib/classic-store";
 import { visibleNow } from "@/lib/classic-release";
@@ -53,9 +54,9 @@ import { challengeField } from "./detect";
 export type FirstBloodInput = {
   module: "classic" | "quiz" | "ai";
   challengeId: string;
-  /** The solving login — the session's, never the body's. Displayed as the
-   *  TEAM name when the solver has one, else the bare login. */
-  login: string;
+  /** The solving player's id — the session's, never the body's. Displayed as
+   *  the TEAM name when the solver has one, else the player's display name. */
+  playerId: string;
 };
 
 /** Public prompt + points for one quiz/ai item, from the module's PUBLIC
@@ -97,7 +98,7 @@ export function challengeEmbedUrl(
 }
 
 /** Announces first blood for one fresh solve, if the announcer is armed for
- *  it. Never throws; never logs the login or any challenge content beyond
+ *  it. Never throws; never logs the player id or any challenge content beyond
  *  the public title the message itself carries. */
 export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
   try {
@@ -110,21 +111,18 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     if (!config.webhookConfigured || !config.firstBlood) return;
 
     // The award script names the true first solver atomically with the
-    // solve. Only that login may announce, so a later solver's notification
+    // solve. Only that player may announce, so a later solver's notification
     // can never race ahead and steal the first-blood post.
     const field = challengeField(input.module, input.challengeId);
     const recorded = await readLedgerField(ANNOUNCE_FIRST_KEY, field);
     if (!recorded) return;
-    let firstSolver: { login?: unknown } | null = null;
+    let firstSolver: { playerId?: unknown } | null = null;
     try {
-      firstSolver = JSON.parse(recorded) as { login?: unknown } | null;
+      firstSolver = JSON.parse(recorded) as { playerId?: unknown } | null;
     } catch {
       return;
     }
-    if (
-      typeof firstSolver?.login !== "string" ||
-      firstSolver.login.toLowerCase() !== input.login.toLowerCase()
-    ) {
+    if (typeof firstSolver?.playerId !== "string" || firstSolver.playerId !== input.playerId) {
       return;
     }
 
@@ -169,13 +167,11 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
       item = await lookupItem(input.module, input.challengeId).catch(() => null);
     }
 
-    // Case-insensitive join, like every other login join in this codebase:
-    // the scorer records the PR author's spelling, the team store the
-    // session's, and GitHub logins are unique only case-insensitively.
-    const lower = input.login.toLowerCase();
+    // Team membership and display names are keyed by player id, never login.
     const teams = await listTeams().catch(() => []);
-    const team = teams.find((t) => t.members.some((m) => m.toLowerCase() === lower));
-    const who = team?.name || input.login;
+    const team = teams.find((t) => t.members.includes(input.playerId));
+    const profiles = await getPlayerProfiles([input.playerId]).catch(() => new Map());
+    const who = team?.name || profiles.get(input.playerId)?.name || input.playerId;
     const url = challengeEmbedUrl(input.module, input.challengeId);
 
     await enqueueLedgerAnnouncement(

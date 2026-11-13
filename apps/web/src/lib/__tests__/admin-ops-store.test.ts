@@ -37,6 +37,14 @@ vi.mock("@/lib/leaderboard/fold-cache", () => foldCache);
 const teamDeps = vi.hoisted(() => ({ resolveTeamMaxMembers: vi.fn(async () => 4), logActivity: vi.fn(async () => {}) }));
 vi.mock("@/lib/team-store", () => ({ resolveTeamMaxMembers: teamDeps.resolveTeamMaxMembers }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: teamDeps.logActivity }));
+// Profiles name the subject on the card and prove an add targets a real
+// account. The id regex is the real one.
+const playerDeps = vi.hoisted(() => ({ getPlayerProfiles: vi.fn() }));
+vi.mock("@/lib/player", () => ({
+  PLAYER_ID_RE: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  displayNameOf: (r: { id: string; login?: string }) => r.login || `player ${r.id.slice(0, 8)}`,
+  getPlayerProfiles: playerDeps.getPlayerProfiles,
+}));
 
 import {
   OpsValidationError,
@@ -46,8 +54,15 @@ import {
   forceRemoveFromTeam,
   forceTransferCaptain,
   lookupUser,
+  requirePlayerId,
   resetUserProgress,
 } from "@/lib/admin-ops-store";
+
+const OCTO = "0c7aca70-0000-4000-8000-00000000000a";
+const BOB = "b0b00000-0000-4000-8000-00000000000d";
+const ADMIN = { id: "ad000000-0000-4000-8000-000000000001", name: "admin" };
+const ALICE_ACTOR = { id: "a11ce000-0000-4000-8000-00000000000c", name: "alice" };
+const profile = (id: string, login: string) => ({ id, name: login, image: null, githubLogin: login });
 
 /** Reply for a pipeline of N commands, all zero/empty unless overridden. */
 const replies = (...results: unknown[]) => results.map((result) => ({ result }));
@@ -102,6 +117,7 @@ function mockQuizAndHintsPipeline() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  playerDeps.getPlayerProfiles.mockImplementation(async (ids: string[]) => new Map(ids.map((id) => [id, profile(id, "octocat")])));
 });
 
 describe("resetUserProgress brackets its writes as score-lowering (#553)", () => {
@@ -109,7 +125,7 @@ describe("resetUserProgress brackets its writes as score-lowering (#553)", () =>
     mockNoSecureDevKeys();
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
-    await resetUserProgress("octocat", "admin");
+    await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
     expect(foldCache.beginScoreLowering).toHaveBeenCalledTimes(1);
     expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
     const writes = [...mocks.upstashPipeline.mock.invocationCallOrder, ...mocks.upstashEval.mock.invocationCallOrder];
@@ -122,13 +138,13 @@ describe("resetUserProgress brackets its writes as score-lowering (#553)", () =>
     // solves are gone, so the bracket closes before the error propagates.
     mockNoSecureDevKeys();
     mocks.upstashEval.mockRejectedValueOnce(new Error("eval down"));
-    await expect(resetUserProgress("octocat", "admin")).rejects.toThrow("eval down");
+    await expect(resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN)).rejects.toThrow("eval down");
     expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
   });
 
   it("ABORTS before any write when the bracket cannot be opened — fail closed", async () => {
     foldCache.beginScoreLowering.mockRejectedValueOnce(new Error("upstash down"));
-    await expect(resetUserProgress("octocat", "admin")).rejects.toThrow("upstash down");
+    await expect(resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN)).rejects.toThrow("upstash down");
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
     expect(mocks.upstashEval).not.toHaveBeenCalled();
     expect(foldCache.endScoreLowering).not.toHaveBeenCalled();
@@ -136,16 +152,32 @@ describe("resetUserProgress brackets its writes as score-lowering (#553)", () =>
 });
 
 describe("input validation", () => {
-  it("refuses a login that is not a GitHub login", async () => {
-    await expect(lookupUser("not a login!")).rejects.toBeInstanceOf(OpsValidationError);
+  it("requirePlayerId accepts a player id and refuses a GitHub login, without lowercasing", () => {
+    expect(requirePlayerId(OCTO)).toBe(OCTO);
+    expect(() => requirePlayerId("OctoCat")).toThrow("invalid player id");
+    expect(() => requirePlayerId("octocat")).toThrow(OpsValidationError);
+    expect(() => requirePlayerId(OCTO.toUpperCase())).toThrow("invalid player id");
+    expect(() => requirePlayerId(`${OCTO}:x`)).toThrow("invalid player id");
+    expect(() => requirePlayerId(42)).toThrow("invalid player id");
+  });
+
+  it("refuses a GitHub login on every per-player operation before any key is built", async () => {
+    await expect(lookupUser("OctoCat")).rejects.toBeInstanceOf(OpsValidationError);
+    await expect(resetUserProgress("OctoCat", ADMIN)).rejects.toThrow("invalid player id");
+    await expect(deleteUser("OctoCat", ADMIN)).rejects.toThrow("invalid player id");
+    await expect(forceAddToTeam("red-team", "OctoCat", ADMIN)).rejects.toThrow("invalid player id");
+    await expect(forceRemoveFromTeam("red-team", "OctoCat", ADMIN)).rejects.toThrow("invalid player id");
+    await expect(forceTransferCaptain("red-team", "OctoCat", ADMIN)).rejects.toThrow("invalid player id");
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(foldCache.beginScoreLowering).not.toHaveBeenCalled();
   });
 
   it("refuses a slug carrying a glob, before it can reach a key", async () => {
     // These keys are built by interpolation. An unvalidated slug is how a `*`
     // reaches a pattern or a `:` invents a key namespace.
-    await expect(forceDisbandTeam("*", "admin")).rejects.toBeInstanceOf(OpsValidationError);
-    await expect(forceDisbandTeam("a:b", "admin")).rejects.toBeInstanceOf(OpsValidationError);
+    await expect(forceDisbandTeam("*", ADMIN)).rejects.toBeInstanceOf(OpsValidationError);
+    await expect(forceDisbandTeam("a:b", ADMIN)).rejects.toBeInstanceOf(OpsValidationError);
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 });
@@ -156,7 +188,7 @@ describe("lookupUser", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
-    const detail = await lookupUser("octocat");
+    const detail = await lookupUser("0c7aca70-0000-4000-8000-00000000000a");
     expect(detail.known).toBe(false);
     expect(detail.team).toBeNull();
   });
@@ -168,20 +200,39 @@ describe("lookupUser", () => {
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
-    mockSecureDevKeys("ctf:solves:dvwa", ["octocat:c1", "octocat:c2", "mallory:c1"]);
-    const detail = await lookupUser("octocat");
+    mockSecureDevKeys("ctf:solves:dvwa", ["0c7aca70-0000-4000-8000-00000000000a:c1", "0c7aca70-0000-4000-8000-00000000000a:c2", "3a110000-0000-4000-8000-00000000000b:c1"]);
+    const detail = await lookupUser("0c7aca70-0000-4000-8000-00000000000a");
     expect(detail.secureDev.solves).toBe(2);
     expect(detail.known).toBe(true);
   });
 
-  it("does not mistake a login PREFIX for the login", async () => {
-    // "octo" must not match "octocat:c1". The `:` separator is what makes the
-    // prefix exact, and LOGIN_RE guarantees a login cannot contain one.
+  it("counts a field only on the exact `<playerId>:` prefix", async () => {
+    // A player id holds no ":" (PLAYER_ID_RE), so `${id}:` cannot match a
+    // longer id, and a field keyed by the login is someone else's row.
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
-    mockSecureDevKeys("ctf:solves:dvwa", ["octocat:c1", "octo:c9"]);
-    expect((await lookupUser("octo")).secureDev.solves).toBe(1);
+    mockSecureDevKeys("ctf:solves:dvwa", [`${OCTO}:c1`, `${OCTO}0:c2`, "octocat:c3", `${OCTO.toUpperCase()}:c4`]);
+    expect((await lookupUser(OCTO)).secureDev.solves).toBe(1);
+  });
+
+  it("names the player from their profile, and falls back when they have none", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    const detail = await lookupUser(OCTO);
+    expect(detail.id).toBe(OCTO);
+    expect(detail.name).toBe("octocat");
+    expect(playerDeps.getPlayerProfiles).toHaveBeenCalledWith([OCTO]);
+    expect(detail).not.toHaveProperty("login");
+
+    playerDeps.getPlayerProfiles.mockResolvedValueOnce(new Map());
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    expect((await lookupUser(OCTO)).name).toBe("player 0c7aca70");
   });
 
   it("sums attempts out of the JSON rows, not by coercing them to numbers", async () => {
@@ -207,7 +258,7 @@ describe("lookupUser", () => {
       replies(userHmget(null), [], quizAttempts, null, null, [], classicAttempts, null, null, 0, null),
     );
     mockNoSecureDevKeys();
-    const detail = await lookupUser("octocat");
+    const detail = await lookupUser("0c7aca70-0000-4000-8000-00000000000a");
     expect(detail.quiz.attempts).toBe(5);
     expect(detail.classic.attempts).toBe(4);
   });
@@ -220,22 +271,20 @@ describe("lookupUser", () => {
       replies(userHmget(null), [], rows, null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
-    expect((await lookupUser("octocat")).quiz.attempts).toBe(2);
+    expect((await lookupUser("0c7aca70-0000-4000-8000-00000000000a")).quiz.attempts).toBe(2);
   });
 
   it("marks the captain of their team", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget("red-team", "2026-08-22T10:00:00Z", "2026-08-20T09:00:00Z"), [], [], "10", "1", [], [], null, null, 0, null),
     );
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "Octocat"));
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", OCTO));
     mockNoSecureDevKeys();
-    const detail = await lookupUser("octocat");
-    // Captain comparison is case-insensitive: GitHub logins round-trip with
-    // their original case, and the store lowercases.
+    const detail = await lookupUser(OCTO);
     expect(detail.team).toEqual({
       slug: "red-team",
       name: "Red Team",
-      captain: "Octocat",
+      captain: OCTO,
       isCaptain: true,
       joinedAt: "2026-08-22T10:00:00Z",
     });
@@ -254,10 +303,10 @@ describe("resetUserProgress: a failed secure-dev delete is not a clear", () => {
   it("rejects when the HDEL fails, rather than counting those fields as removed", async () => {
     mocks.upstashPipeline
       .mockResolvedValueOnce(replies(["0", ["ctf:solves:juice-shop"]])) // SCAN page
-      .mockResolvedValueOnce(replies(["octocat:sqli-1"])) // HKEYS
+      .mockResolvedValueOnce(replies(["0c7aca70-0000-4000-8000-00000000000a:sqli-1"])) // HKEYS
       .mockResolvedValueOnce([{ error: "READONLY You can't write against a read only replica." }]); // HDEL
 
-    await expect(resetUserProgress("octocat", "admin")).rejects.toThrow(
+    await expect(resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN)).rejects.toThrow(
       /command failed \(clear secure-dev solves\)/,
     );
   });
@@ -267,7 +316,7 @@ describe("resetUserProgress: a failed secure-dev delete is not a clear", () => {
       .mockResolvedValueOnce(replies(["0", ["ctf:solves:juice-shop"]])) // SCAN page
       .mockResolvedValueOnce([{ error: "WRONGTYPE Operation against a key holding the wrong kind of value" }]);
 
-    await expect(resetUserProgress("octocat", "admin")).rejects.toThrow(
+    await expect(resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN)).rejects.toThrow(
       /command failed \(clear secure-dev solves\)/,
     );
   });
@@ -286,14 +335,14 @@ describe("resetUserProgress", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
 
-    const result = await resetUserProgress("octocat", "admin");
+    const result = await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
 
     expect(result.cleared.classicSolveCountsDecremented).toBe(2);
     const [script, keys, argv] = mocks.upstashEval.mock.calls[0];
     expect(script).toMatch(/HINCRBY/);
     expect(keys).toEqual([
-      "ctf:classic:solves:octocat",
-      "ctf:classic:attempts:octocat",
+      "ctf:classic:solves:0c7aca70-0000-4000-8000-00000000000a",
+      "ctf:classic:attempts:0c7aca70-0000-4000-8000-00000000000a",
       "ctf:classic:points",
       "ctf:classic:solved",
       "ctf:classic:solvecount",
@@ -302,7 +351,7 @@ describe("resetUserProgress", () => {
     // Login only — never a solved id, and never a raw HDEL/DEL of the
     // solvecount key from JS. The script is the only thing that ever
     // touches it.
-    expect(argv).toEqual(["octocat"]);
+    expect(argv).toEqual(["0c7aca70-0000-4000-8000-00000000000a"]);
   });
 
   it("DECREMENTS the ai per-challenge solve counter instead of deleting by login", async () => {
@@ -314,20 +363,20 @@ describe("resetUserProgress", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
 
-    const result = await resetUserProgress("octocat", "admin");
+    const result = await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
 
     expect(result.cleared.aiSolveCountsDecremented).toBe(2);
     const [script, keys, argv] = mocks.upstashEval.mock.calls[1];
     expect(script).toMatch(/HINCRBY/);
     expect(keys).toEqual([
-      "ctf:ai:solves:octocat",
-      "ctf:ai:attempts:octocat",
+      "ctf:ai:solves:0c7aca70-0000-4000-8000-00000000000a",
+      "ctf:ai:attempts:0c7aca70-0000-4000-8000-00000000000a",
       "ctf:ai:points",
       "ctf:ai:solved",
       "ctf:ai:solvecount",
       "ctf:ai:lastAt",
     ]);
-    expect(argv).toEqual(["octocat"]);
+    expect(argv).toEqual(["0c7aca70-0000-4000-8000-00000000000a"]);
   });
 
   it("decides its decrements from the script's OWN runtime read, never a pre-read snapshot (regression)", async () => {
@@ -347,7 +396,7 @@ describe("resetUserProgress", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
 
-    const result = await resetUserProgress("octocat", "admin");
+    const result = await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
 
     // These numbers can only have come from the mocked script's return value
     // — there is no JS-side count for them to have come from instead.
@@ -356,7 +405,7 @@ describe("resetUserProgress", () => {
 
     expect(mocks.upstashEval).toHaveBeenCalledTimes(2);
     for (const [, , argv] of mocks.upstashEval.mock.calls) {
-      expect(argv).toEqual(["octocat"]);
+      expect(argv).toEqual(["0c7aca70-0000-4000-8000-00000000000a"]);
     }
   });
 
@@ -366,40 +415,40 @@ describe("resetUserProgress", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
-    await resetUserProgress("octocat", "admin");
+    await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
 
     const touched = allCommands()
       .filter((c) => c[0] === "DEL" || c[0] === "HDEL")
       .map((c) => String(c[1]) + (c[0] === "HDEL" ? `#${c[2]}` : ""));
     expect(touched).toEqual([
-      "ctf:quiz:answers:octocat",
-      "ctf:quiz:attempts:octocat",
-      "ctf:quiz:points#octocat",
-      "ctf:quiz:answered#octocat",
-      "ctf:user:octocat:hints",
-      "ctf:hints:at:octocat",
-      "ctf:hints:spent#octocat",
+      "ctf:quiz:answers:0c7aca70-0000-4000-8000-00000000000a",
+      "ctf:quiz:attempts:0c7aca70-0000-4000-8000-00000000000a",
+      "ctf:quiz:points#0c7aca70-0000-4000-8000-00000000000a",
+      "ctf:quiz:answered#0c7aca70-0000-4000-8000-00000000000a",
+      "ctf:user:0c7aca70-0000-4000-8000-00000000000a:hints",
+      "ctf:hints:at:0c7aca70-0000-4000-8000-00000000000a",
+      "ctf:hints:spent#0c7aca70-0000-4000-8000-00000000000a",
       // #522: the award time goes with the totals it orders.
-      "ctf:quiz:lastAt#octocat",
+      "ctf:quiz:lastAt#0c7aca70-0000-4000-8000-00000000000a",
       // #616: the first-open times, which only time this login's solves.
-      "ctf:classic:opened:octocat",
-      "ctf:ai:opened:octocat",
+      "ctf:classic:opened:0c7aca70-0000-4000-8000-00000000000a",
+      "ctf:ai:opened:0c7aca70-0000-4000-8000-00000000000a",
     ]);
     // Classic's and ai's per-login keys are cleared through the atomic
     // scripts instead — assert those calls named exactly this login's keys.
     const evalKeys = mocks.upstashEval.mock.calls.map((c) => c[1]);
     expect(evalKeys).toEqual([
       [
-        "ctf:classic:solves:octocat",
-        "ctf:classic:attempts:octocat",
+        "ctf:classic:solves:0c7aca70-0000-4000-8000-00000000000a",
+        "ctf:classic:attempts:0c7aca70-0000-4000-8000-00000000000a",
         "ctf:classic:points",
         "ctf:classic:solved",
         "ctf:classic:solvecount",
         "ctf:classic:lastAt",
       ],
       [
-        "ctf:ai:solves:octocat",
-        "ctf:ai:attempts:octocat",
+        "ctf:ai:solves:0c7aca70-0000-4000-8000-00000000000a",
+        "ctf:ai:attempts:0c7aca70-0000-4000-8000-00000000000a",
         "ctf:ai:points",
         "ctf:ai:solved",
         "ctf:ai:solvecount",
@@ -419,7 +468,7 @@ describe("resetUserProgress", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
-    const result = await resetUserProgress("octocat", "admin");
+    const result = await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
 
     expect(result.cleared.aiSolves).toBe(3);
     expect(result.cleared.aiAttempts).toBe(2);
@@ -428,14 +477,14 @@ describe("resetUserProgress", () => {
 
     const [, aiKeys, aiArgv] = mocks.upstashEval.mock.calls[1];
     expect(aiKeys).toEqual([
-      "ctf:ai:solves:octocat",
-      "ctf:ai:attempts:octocat",
+      "ctf:ai:solves:0c7aca70-0000-4000-8000-00000000000a",
+      "ctf:ai:attempts:0c7aca70-0000-4000-8000-00000000000a",
       "ctf:ai:points",
       "ctf:ai:solved",
       "ctf:ai:solvecount",
       "ctf:ai:lastAt",
     ]);
-    expect(aiArgv).toEqual(["octocat"]);
+    expect(aiArgv).toEqual(["0c7aca70-0000-4000-8000-00000000000a"]);
   });
 
   it("does not touch another login's ai progress", async () => {
@@ -444,11 +493,11 @@ describe("resetUserProgress", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
-    await resetUserProgress("octocat", "admin");
+    await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
 
     const [, aiKeys, aiArgv] = mocks.upstashEval.mock.calls[1];
-    expect(aiKeys).not.toContain("ctf:ai:solves:mallory");
-    expect(aiArgv).not.toContain("mallory");
+    expect(aiKeys).not.toContain("ctf:ai:solves:3a110000-0000-4000-8000-00000000000b");
+    expect(aiArgv).not.toContain("3a110000-0000-4000-8000-00000000000b");
   });
 
   it("never touches the module-wide launch keypair, nonces, or the ai catalogue", async () => {
@@ -457,7 +506,7 @@ describe("resetUserProgress", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
-    await resetUserProgress("octocat", "admin");
+    await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
 
     const cmds = allCommands();
     expect(cmds.some((c) => String(c[1]).startsWith("ctf:ai:launchkey"))).toBe(false);
@@ -477,10 +526,10 @@ describe("resetUserProgress", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
-    await resetUserProgress("octocat", "admin");
+    await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
 
     const cmds = allCommands();
-    expect(cmds).not.toContainEqual(["DEL", "ctf:user:octocat"]);
+    expect(cmds).not.toContainEqual(["DEL", "ctf:user:0c7aca70-0000-4000-8000-00000000000a"]);
     expect(cmds.some((c) => c[0] === "SREM")).toBe(false);
   });
 
@@ -488,13 +537,13 @@ describe("resetUserProgress", () => {
     // The scorer writes them with HSETNX so replays no-op, and the poller
     // re-submits from PR comments — so these return on the next re-score.
     // Silence here would be a lie the organizer only discovers later.
-    mockSecureDevKeys("ctf:solves:dvwa", ["octocat:c1"]);
+    mockSecureDevKeys("ctf:solves:dvwa", ["0c7aca70-0000-4000-8000-00000000000a:c1"]);
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // HDEL of those fields
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
-    const result = await resetUserProgress("octocat", "admin");
+    const result = await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
     expect(result.cleared.secureDevSolves).toBe(1);
     expect(result.warnings.join(" ")).toMatch(/HSETNX|re-ingest/i);
   });
@@ -504,7 +553,7 @@ describe("resetUserProgress", () => {
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
-    expect((await resetUserProgress("octocat", "admin")).warnings).toEqual([]);
+    expect((await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN)).warnings).toEqual([]);
   });
 
   it("writes an audit line naming the actor AND the target", async () => {
@@ -513,13 +562,53 @@ describe("resetUserProgress", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
-    await resetUserProgress("octocat", "alice");
+    await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ALICE_ACTOR);
 
     const push = allCommands().find((c) => c[0] === "LPUSH" && c[1] === "ctf:admin:audit");
     const line = JSON.parse(String(push?.[2])) as Record<string, unknown>;
-    expect(line.by).toBe("alice");
-    expect(line.login).toBe("octocat");
+    expect(line.by).toBe(ALICE_ACTOR.id);
+    expect(line.name).toBe("alice");
+    expect(line.player).toBe(OCTO);
+    expect(line).not.toHaveProperty("login");
     expect(line.action).toBe("ops:user-reset");
+  });
+});
+
+// upstashPipeline reports a per-command failure in `error` and never throws
+// for it. Read past, a WRONGTYPE becomes a missing `.result`, which these
+// stores read as zero: a card of empty figures, or a reset that claims to
+// have cleared progress still stored.
+describe("a per-command pipeline error is a failure, not zero", () => {
+  const WRONGTYPE = "WRONGTYPE Operation against a key holding the wrong kind of value";
+
+  it("lookupUser rejects when a read in its main pipeline fails", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      ...replies(userHmget(null), [], []),
+      { error: WRONGTYPE },
+      ...replies(null, [], [], null, null, 0, null),
+    ]);
+    await expect(lookupUser(OCTO)).rejects.toThrow(/command failed \(lookup user\)/);
+  });
+
+  it("lookupUser rejects when its team read fails", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget("red-team", "2026-08-22T10:00:00Z"), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "Red Team" }, { error: WRONGTYPE }]);
+    await expect(lookupUser(OCTO)).rejects.toThrow(/command failed \(lookup user team\)/);
+  });
+
+  it("resetUserProgress rejects when a quiz or hint cleanup fails, and audits no success", async () => {
+    mockNoSecureDevKeys();
+    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      ...replies(1, 1, 1),
+      { error: WRONGTYPE },
+      ...replies(1, 1, 1, 1, 1, 1),
+    ]);
+
+    await expect(resetUserProgress(OCTO, ADMIN)).rejects.toThrow(/command failed \(reset progress\)/);
+    expect(allCommands().some((c) => c[0] === "LPUSH" && c[1] === "ctf:admin:audit")).toBe(false);
   });
 });
 
@@ -530,10 +619,10 @@ describe("deleteUser", () => {
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget("red-team"), [], [], null, null, [], [], null, null, 0, null),
     );
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "octocat"));
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "0c7aca70-0000-4000-8000-00000000000a"));
     mockNoSecureDevKeys();
 
-    await expect(deleteUser("octocat", "admin")).rejects.toThrow(/captain/i);
+    await expect(deleteUser("0c7aca70-0000-4000-8000-00000000000a", ADMIN)).rejects.toThrow(/captain/i);
     // and nothing was cleared on the way to that refusal
     expect(allCommands().some((c) => c[0] === "DEL")).toBe(false);
   });
@@ -542,7 +631,7 @@ describe("deleteUser", () => {
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget("red-team"), [], [], null, null, [], [], null, null, 0, null),
     );
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "alice"));
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "a11ce000-0000-4000-8000-00000000000c"));
     mockNoSecureDevKeys();
     mockNoSecureDevKeys(); // the reset's own sweep
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
@@ -551,11 +640,18 @@ describe("deleteUser", () => {
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // SREM + DEL
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
 
-    const result = await deleteUser("octocat", "admin");
+    const result = await deleteUser("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
     expect(result.leftTeam).toBe("red-team");
     const cmds = allCommands();
-    expect(cmds).toContainEqual(["SREM", "ctf:team:red-team:members", "octocat"]);
-    expect(cmds).toContainEqual(["DEL", "ctf:user:octocat"]);
+    expect(cmds).toContainEqual(["SREM", "ctf:team:red-team:members", "0c7aca70-0000-4000-8000-00000000000a"]);
+    expect(cmds).toContainEqual(["DEL", "ctf:user:0c7aca70-0000-4000-8000-00000000000a"]);
+    // Every rate-limit bucket's counter for this player goes with them.
+    for (const bucket of ["team-join", "hint-reveal", "ai-submit", "ai-event", "ai-state", "ai-admin-test"]) {
+      expect(cmds).toContainEqual(["DEL", `ctf:rl:${bucket}:${OCTO}`]);
+    }
+    // The account and its GitHub link are the account store's, not this
+    // tool's: nothing here names a ctf:auth:* or ctf:link:* key.
+    expect(cmds.some((c) => c.slice(1).some((a) => /^ctf:(auth|link):/.test(String(a))))).toBe(false);
     // #553: the delete brackets the WHOLE thing (the inner reset nests its
     // own bracket — the marker is a counter), so the in-progress flag stays
     // up through the tail writes (membership, account record) and the last
@@ -575,15 +671,31 @@ describe("deleteUser", () => {
   });
 });
 
+describe("deleteUser: a failed tail write is not a delete", () => {
+  it("rejects when the membership/account pipeline reports an error", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mockNoSecureDevKeys();
+    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockQuizAndHintsPipeline();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("team overrides", () => {
   it("refuses to remove the captain", async () => {
     mocks.upstashEval.mockResolvedValueOnce("is-captain");
-    await expect(forceRemoveFromTeam("red-team", "octocat", "admin")).rejects.toThrow(/captain/i);
+    await expect(forceRemoveFromTeam("red-team", "0c7aca70-0000-4000-8000-00000000000a", ADMIN)).rejects.toThrow(/captain/i);
   });
 
   it("refuses to remove someone who is not on the team", async () => {
     mocks.upstashEval.mockResolvedValueOnce("not-member");
-    await expect(forceRemoveFromTeam("red-team", "octocat", "admin")).rejects.toThrow(/not on/i);
+    await expect(forceRemoveFromTeam("red-team", "0c7aca70-0000-4000-8000-00000000000a", ADMIN)).rejects.toThrow(/not on/i);
   });
 
   it("clears the user's team pointer in the SAME script as the SREM", async () => {
@@ -592,7 +704,7 @@ describe("team overrides", () => {
     // team-store's own captain actions follow.
     mocks.upstashEval.mockResolvedValueOnce("ok");
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
-    await forceRemoveFromTeam("red-team", "octocat", "admin");
+    await forceRemoveFromTeam("red-team", "0c7aca70-0000-4000-8000-00000000000a", ADMIN);
     const [script] = mocks.upstashEval.mock.calls[0];
     expect(script).toContain("SREM");
     expect(script).toContain("HDEL");
@@ -600,13 +712,13 @@ describe("team overrides", () => {
 
   it("will not hand a team to someone who is not a member", async () => {
     mocks.upstashEval.mockResolvedValueOnce("not-member");
-    await expect(forceTransferCaptain("red-team", "outsider", "admin")).rejects.toThrow(/not on/i);
+    await expect(forceTransferCaptain("red-team", "00751de0-0000-4000-8000-00000000000e", ADMIN)).rejects.toThrow(/not on/i);
   });
 
   it("checks membership INSIDE the transfer script, not before it", async () => {
     mocks.upstashEval.mockResolvedValueOnce("ok");
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
-    await forceTransferCaptain("red-team", "bob", "admin");
+    await forceTransferCaptain("red-team", "b0b00000-0000-4000-8000-00000000000d", ADMIN);
     const [script, keys] = mocks.upstashEval.mock.calls[0];
     expect(script).toContain("SISMEMBER");
     expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members"]);
@@ -615,15 +727,15 @@ describe("team overrides", () => {
   it("disband releases every member and kills the join code", async () => {
     // A surviving reverse index keeps resolving to a team that no longer
     // exists, and /join/<code> would render a card for a ghost.
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, ["alice", "bob"], "ABC123"));
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, ["a11ce000-0000-4000-8000-00000000000c", "b0b00000-0000-4000-8000-00000000000d"], "ABC123"));
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1));
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
-    const result = await forceDisbandTeam("red-team", "admin");
+    const result = await forceDisbandTeam("red-team", ADMIN);
     expect(result.members).toBe(2);
     const cmds = allCommands();
-    expect(cmds).toContainEqual(["HDEL", "ctf:user:alice", "team", "joinedAt"]);
-    expect(cmds).toContainEqual(["HDEL", "ctf:user:bob", "team", "joinedAt"]);
+    expect(cmds).toContainEqual(["HDEL", "ctf:user:a11ce000-0000-4000-8000-00000000000c", "team", "joinedAt"]);
+    expect(cmds).toContainEqual(["HDEL", "ctf:user:b0b00000-0000-4000-8000-00000000000d", "team", "joinedAt"]);
     expect(cmds).toContainEqual(["DEL", "ctf:joincode:abc123"]);
   });
 
@@ -631,11 +743,11 @@ describe("team overrides", () => {
     // Solves are per login, so a disbanded team's players keep what they
     // earned and can regroup. Deleting their work because the team was wrong
     // would turn an admin convenience into a scoring incident.
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, ["alice"], "ABC123"));
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, ["a11ce000-0000-4000-8000-00000000000c"], "ABC123"));
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1));
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
-    await forceDisbandTeam("red-team", "admin");
+    await forceDisbandTeam("red-team", ADMIN);
     const cmds = allCommands();
     expect(cmds.some((c) => String(c[1]).startsWith("ctf:classic:solves:"))).toBe(false);
     expect(cmds.some((c) => String(c[1]).startsWith("ctf:quiz:answers:"))).toBe(false);
@@ -643,7 +755,7 @@ describe("team overrides", () => {
 
   it("refuses to disband a team that does not exist", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce(replies(0, [], null));
-    await expect(forceDisbandTeam("ghost", "admin")).rejects.toThrow(/No team/);
+    await expect(forceDisbandTeam("ghost", ADMIN)).rejects.toThrow(/No team/);
   });
 });
 
@@ -664,14 +776,14 @@ describe("lookupUser — ai", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null, aiSolves, aiAttempts, "550", "1"),
     );
     mockNoSecureDevKeys();
-    const detail = await lookupUser("octocat");
+    const detail = await lookupUser("0c7aca70-0000-4000-8000-00000000000a");
     expect(detail.ai).toEqual({ solved: 1, points: 550, attempts: 4 });
     expect(detail.known).toBe(true);
     const cmds = allCommands();
-    expect(cmds).toContainEqual(["HGETALL", "ctf:ai:solves:octocat"]);
-    expect(cmds).toContainEqual(["HGETALL", "ctf:ai:attempts:octocat"]);
-    expect(cmds).toContainEqual(["HGET", "ctf:ai:points", "octocat"]);
-    expect(cmds).toContainEqual(["HGET", "ctf:ai:solved", "octocat"]);
+    expect(cmds).toContainEqual(["HGETALL", "ctf:ai:solves:0c7aca70-0000-4000-8000-00000000000a"]);
+    expect(cmds).toContainEqual(["HGETALL", "ctf:ai:attempts:0c7aca70-0000-4000-8000-00000000000a"]);
+    expect(cmds).toContainEqual(["HGET", "ctf:ai:points", "0c7aca70-0000-4000-8000-00000000000a"]);
+    expect(cmds).toContainEqual(["HGET", "ctf:ai:solved", "0c7aca70-0000-4000-8000-00000000000a"]);
   });
 });
 
@@ -685,7 +797,7 @@ describe("lookupUser — known", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null, [], aiAttempts, null, null),
     );
     mockNoSecureDevKeys();
-    const detail = await lookupUser("octocat");
+    const detail = await lookupUser("0c7aca70-0000-4000-8000-00000000000a");
     expect(detail.ai.attempts).toBe(2);
     expect(detail.known).toBe(true);
 
@@ -694,29 +806,27 @@ describe("lookupUser — known", () => {
       replies(userHmget(null), [], quizAttempts, null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
-    expect((await lookupUser("octocat")).known).toBe(true);
+    expect((await lookupUser("0c7aca70-0000-4000-8000-00000000000a")).known).toBe(true);
   });
 });
 
 // #597: after registration closes a player who left can't rejoin on their
 // own; an organizer puts them on a team (or moves them) from Support. The
-// write is one atomic script; the player's record is found by the spelling
-// they signed in with, because that is the key their session reads.
+// write is one atomic script, keyed by the player id the search handed over.
 describe("forceAddToTeam (#597)", () => {
-  const scanReply = (...keys: string[]) => [{ result: ["0", keys] }];
-
-  it("finds the player's stored spelling and adds them under it, with the cap", async () => {
-    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:ChrisZoc", "ctf:user:ChrisZoc:hints"));
+  it("adds the player by id, with the cap, and names them in the answer", async () => {
     mocks.upstashEval.mockResolvedValueOnce(["ok", ""]);
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
-    const result = await forceAddToTeam("Red-Team", "chriszoc", "admin");
-    expect(result).toEqual({ ok: true, login: "ChrisZoc", from: null });
+    const result = await forceAddToTeam("Red-Team", OCTO, ADMIN);
+    expect(result).toEqual({ ok: true, id: OCTO, name: "octocat", from: null });
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(script).toContain("SADD");
-    expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members", "ctf:user:ChrisZoc"]);
-    expect(args.slice(0, 3)).toEqual(["ChrisZoc", "red-team", "4"]);
-    expect(teamDeps.logActivity).toHaveBeenCalledWith("team-join", "ChrisZoc", "red-team");
-    expect(allCommands().some((c) => c[0] === "LPUSH" && String(c[2]).includes("ops:team-add-member"))).toBe(true);
+    expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members", `ctf:user:${OCTO}`]);
+    expect(args.slice(0, 3)).toEqual([OCTO, "red-team", "4"]);
+    expect(teamDeps.logActivity).toHaveBeenCalledWith("team-join", { id: OCTO, name: "octocat" }, "red-team");
+    const push = allCommands().find((c) => c[0] === "LPUSH");
+    const line = JSON.parse(String(push?.[2])) as Record<string, unknown>;
+    expect(line).toMatchObject({ by: ADMIN.id, name: "admin", action: "ops:team-add-member", player: OCTO, slug: "red-team" });
   });
 
   // The script has already moved the player when the audit line is written,
@@ -724,12 +834,11 @@ describe("forceAddToTeam (#597)", () => {
   // 503 would send the organizer to retry a move that already happened.
   it("still succeeds, and logs the join, when the audit write fails", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:bob"));
     mocks.upstashEval.mockResolvedValueOnce(["ok", "blue"]);
     mocks.upstashPipeline.mockRejectedValueOnce(new Error("upstash down"));
-    const result = await forceAddToTeam("red-team", "bob", "admin");
-    expect(result).toEqual({ ok: true, login: "bob", from: "blue" });
-    expect(teamDeps.logActivity).toHaveBeenCalledWith("team-join", "bob", "red-team");
+    const result = await forceAddToTeam("red-team", BOB, ADMIN);
+    expect(result).toEqual({ ok: true, id: BOB, name: "octocat", from: "blue" });
+    expect(teamDeps.logActivity).toHaveBeenCalledWith("team-join", { id: BOB, name: "octocat" }, "red-team");
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("ops:team-add-member"), expect.anything());
     spy.mockRestore();
   });
@@ -738,33 +847,23 @@ describe("forceAddToTeam (#597)", () => {
   // the reply to be logged at all.
   it("logs an audit write refused per command, and still succeeds", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:bob"));
     mocks.upstashEval.mockResolvedValueOnce(["ok", ""]);
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "WRONGTYPE Operation against a key holding the wrong kind of value" }, { result: "OK" }]);
-    expect(await forceAddToTeam("red-team", "bob", "admin")).toEqual({ ok: true, login: "bob", from: null });
+    expect(await forceAddToTeam("red-team", BOB, ADMIN)).toMatchObject({ ok: true, id: BOB, from: null });
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("ops:team-add-member"), expect.stringContaining("WRONGTYPE"));
     spy.mockRestore();
   });
 
-  it("scans with a case-insensitive pattern rather than the whole keyspace", async () => {
-    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:ab-1"));
-    mocks.upstashEval.mockResolvedValueOnce(["ok", ""]);
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
-    await forceAddToTeam("red-team", "AB-1", "admin");
-    expect(mocks.upstashPipeline.mock.calls[0][0][0]).toEqual(["SCAN", "0", "MATCH", "ctf:user:[aA][bB]-1", "COUNT", 1000]);
-  });
-
-  it("refuses a login that has never signed in, writing nothing", async () => {
-    mocks.upstashPipeline.mockResolvedValueOnce(scanReply());
-    await expect(forceAddToTeam("red-team", "ghost", "admin")).rejects.toThrow(/has not signed in/);
+  it("refuses an id with no account, writing nothing", async () => {
+    playerDeps.getPlayerProfiles.mockResolvedValueOnce(new Map());
+    await expect(forceAddToTeam("red-team", BOB, ADMIN)).rejects.toThrow(/no player/i);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 
   it("hands the script no cap when the admin overrides it", async () => {
-    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:bob"));
     mocks.upstashEval.mockResolvedValueOnce(["ok", "blue"]);
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
-    expect(await forceAddToTeam("red-team", "bob", "admin", { overrideCap: true })).toEqual({ ok: true, login: "bob", from: "blue" });
+    expect(await forceAddToTeam("red-team", BOB, ADMIN, { overrideCap: true })).toMatchObject({ ok: true, id: BOB, from: "blue" });
     expect(mocks.upstashEval.mock.calls[0][2][2]).toBe("");
   });
 
@@ -774,9 +873,8 @@ describe("forceAddToTeam (#597)", () => {
     [["full"], /full \(4 players\).*override/],
     [["is-captain", "blue"], /captains "blue"/],
   ])("maps %j to a validation error and logs nothing", async (verdict, message) => {
-    mocks.upstashPipeline.mockResolvedValueOnce(scanReply("ctf:user:bob"));
     mocks.upstashEval.mockResolvedValueOnce(verdict);
-    await expect(forceAddToTeam("red-team", "bob", "admin")).rejects.toThrow(message);
+    await expect(forceAddToTeam("red-team", BOB, ADMIN)).rejects.toThrow(message);
     expect(teamDeps.logActivity).not.toHaveBeenCalled();
   });
 });

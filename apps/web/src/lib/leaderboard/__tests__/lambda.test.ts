@@ -13,7 +13,7 @@ const RESPONSE = {
   leaderboard: [
     {
       rank: 1,
-      author: "dcotelo",
+      player: "dcotelo",
       points: 672,
       lastSolveAt: "2026-07-08T19:25:23.830Z",
       apps: {
@@ -25,14 +25,14 @@ const RESPONSE = {
     // must flip them (earlier last solve wins the tie).
     {
       rank: 2,
-      author: "later-solver",
+      player: "later-solver",
       points: 145,
       lastSolveAt: "2026-07-14T20:16:12.661Z",
       apps: { "juice-shop": { solved: 38, total: 38 } },
     },
     {
       rank: 3,
-      author: "earlier-solver",
+      player: "earlier-solver",
       points: 145,
       lastSolveAt: "2026-07-14T19:42:27.026Z",
       apps: { "juice-shop": { solved: 38, total: 38 } },
@@ -66,7 +66,7 @@ describe("lambdaSource.getLeaderboard", () => {
     stubFetch(RESPONSE);
     const data = await lambdaSource.getLeaderboard();
     const top = data.entries[0];
-    expect(top.login).toBe("dcotelo");
+    expect(top.playerId).toBe("dcotelo");
     expect(top.lastSolveAt).toBe("2026-07-08T19:25:23.830Z");
     // Solves are the only updates in this source, so last solve = last update.
     expect(top.updatedAt).toBe("2026-07-08T19:25:23.830Z");
@@ -76,7 +76,7 @@ describe("lambdaSource.getLeaderboard", () => {
     vi.stubEnv("LEADERBOARD_API_URL", "https://scorer.example");
     stubFetch(RESPONSE);
     const data = await lambdaSource.getLeaderboard();
-    expect(data.entries.map((e) => [e.login, e.rank])).toEqual([
+    expect(data.entries.map((e) => [e.playerId, e.rank])).toEqual([
       ["dcotelo", 1],
       ["earlier-solver", 2],
       ["later-solver", 3],
@@ -86,10 +86,10 @@ describe("lambdaSource.getLeaderboard", () => {
   it("tolerates entries without lastSolveAt (older Lambda payloads)", async () => {
     vi.stubEnv("LEADERBOARD_API_URL", "https://scorer.example");
     stubFetch({
-      leaderboard: [{ rank: 1, author: "old", points: 10, apps: { dvwa: { solved: 1, total: 55 } } }],
+      leaderboard: [{ rank: 1, player: "old", points: 10, apps: { dvwa: { solved: 1, total: 55 } } }],
     });
     const data = await lambdaSource.getLeaderboard();
-    expect(data.entries[0]).toMatchObject({ login: "old", lastSolveAt: null, updatedAt: null, rank: 1 });
+    expect(data.entries[0]).toMatchObject({ playerId: "old", name: "player old", image: null, lastSolveAt: null, updatedAt: null, rank: 1 });
   });
 });
 
@@ -100,7 +100,7 @@ describe("lambdaSource.getLeaderboard series", () => {
       ...RESPONSE,
       series: [
         {
-          login: "dcotelo",
+          player: "dcotelo",
           points: [
             { t: "2026-07-08T10:00:00.000Z", score: 100 },
             { t: "2026-07-08T19:25:23.830Z", score: 672 },
@@ -111,7 +111,8 @@ describe("lambdaSource.getLeaderboard series", () => {
     const data = await lambdaSource.getLeaderboard();
     expect(data.series).toEqual([
       {
-        login: "dcotelo",
+        // The scorer's key becomes the player id; the fold names it later.
+        playerId: "dcotelo", name: "player dcotelo", image: null,
         points: [
           { t: "2026-07-08T10:00:00.000Z", score: 100 },
           { t: "2026-07-08T19:25:23.830Z", score: 672 },
@@ -139,14 +140,14 @@ describe("lambdaSource.getLeaderboard series", () => {
     stubFetch({
       ...RESPONSE,
       series: [
-        { login: "ok", points: [{ t: "2026-07-08T10:00:00.000Z", score: 5 }, { t: 123, score: "nope" }] },
-        { login: 42, points: [{ t: "2026-07-08T10:00:00.000Z", score: 5 }] },
-        { login: "empty-after-filter", points: [{ t: 1, score: 2 }] },
+        { player: "ok", points: [{ t: "2026-07-08T10:00:00.000Z", score: 5 }, { t: 123, score: "nope" }] },
+        { player: 42, points: [{ t: "2026-07-08T10:00:00.000Z", score: 5 }] },
+        { player: "empty-after-filter", points: [{ t: 1, score: 2 }] },
         "not an object",
       ],
     });
     const data = await lambdaSource.getLeaderboard();
-    expect(data.series).toEqual([{ login: "ok", points: [{ t: "2026-07-08T10:00:00.000Z", score: 5 }] }]);
+    expect(data.series).toEqual([{ playerId: "ok", name: "player ok", image: null, points: [{ t: "2026-07-08T10:00:00.000Z", score: 5 }] }]);
   });
 });
 
@@ -254,7 +255,7 @@ describe("lambdaSource.getLeaderboard catalog (per-challenge)", () => {
     leaderboard: [
       {
         rank: 1,
-        author: "neo",
+        player: "neo",
         points: 15,
         lastSolveAt: "2026-08-14T11:00:00.000Z",
         apps: { "juice-shop": { solved: 1, total: 2, solvedIds: ["xss"] } },
@@ -313,7 +314,7 @@ describe("lambdaSource.getLeaderboard catalog (per-challenge)", () => {
       ...WITH_CATALOG,
       leaderboard: Array.from({ length: 25 }, (_, i) => ({
         rank: i + 1,
-        author: `p${i}`,
+        player: `p${i}`,
         points: 15,
         lastSolveAt: "2026-08-14T11:00:00.000Z",
         apps: { "juice-shop": { solved: 2, total: 2, solvedIds: ["xss", "sqli"] } },
@@ -344,7 +345,7 @@ describe("lambdaSource.getLeaderboard catalog (per-challenge)", () => {
     vi.stubEnv("LEADERBOARD_API_URL", "https://scorer.example");
     stubFetch(WITH_CATALOG);
     const profile = await lambdaSource.getUser("neo");
-    expect(profile).toMatchObject({ login: "neo", points: 15, maxPoints: 15 });
+    expect(profile).toMatchObject({ playerId: "neo", points: 15, maxPoints: 15 });
     expect(profile!.apps.reduce((n, a) => n + a.maxPoints, 0)).toBe(profile!.maxPoints);
     // /profile renders the same breakdown as the board, so it needs the same
     // catalogue to join solvedIds against.

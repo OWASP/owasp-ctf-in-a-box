@@ -23,6 +23,7 @@ vi.mock("@/lib/event-store", () => ({
 
 import { EVENT_IMPORT_MAX_BYTES, GET, POST } from "@/app/api/admin/event/route";
 import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const post = (body: unknown) =>
   new Request("http://box.test/api/admin/event", { method: "POST", body: JSON.stringify(body) });
@@ -34,7 +35,7 @@ const validRaw = JSON.stringify({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  h.requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
   h.upstashPipeline.mockResolvedValue([]);
   h.exportEventBundle.mockResolvedValue({ bundle: { version: 1 }, warnings: [] });
   h.importEventBundle.mockResolvedValue({ summary: {}, skipped: [] });
@@ -107,7 +108,7 @@ describe("POST /api/admin/event — bodies past the proxy's 10 MB", () => {
     expect(body.length).toBeLessThan(EVENT_IMPORT_MAX_BYTES);
     const res = await POST(new Request("http://box.test/api/admin/event", { method: "POST", body }));
     expect(res.status).toBe(200);
-    expect(h.importEventBundle).toHaveBeenCalledWith(expect.objectContaining({ kind: "archive" }), "alice");
+    expect(h.importEventBundle).toHaveBeenCalledWith(expect.objectContaining({ kind: "archive" }), actor("alice"));
   });
 
   it("413s a streamed body over the cap, naming the cap, without importing", async () => {
@@ -173,7 +174,7 @@ describe("POST /api/admin/event", () => {
   it("imports a valid bundle and writes an audit entry", async () => {
     const res = await POST(post({ import: validRaw }));
     expect(res.status).toBe(200);
-    expect(h.importEventBundle).toHaveBeenCalledWith(expect.objectContaining({ kind: "archive" }), "alice");
+    expect(h.importEventBundle).toHaveBeenCalledWith(expect.objectContaining({ kind: "archive" }), actor("alice"));
     // upstashPipeline is called with ONE argument — the two-command array
     // `[["LPUSH", key, audit], ["LTRIM", key, 0, cap - 1]]` (see
     // `writeAudit`) — so `mock.calls` nests four levels deep (calls -> args

@@ -40,7 +40,9 @@ async function viewerIsAdmin(login: string | undefined): Promise<boolean> {
 }
 
 /** Who may see module content right now. `preview` marks an admin who is
- *  only through because they are an admin (the event is not launched). */
+ *  only through because they are an admin (the event is not launched).
+ *  `login` is the viewer's GitHub login, not their player id: it only feeds
+ *  the admin check, and ADMIN_LOGINS names logins. */
 export async function getLaunchAccess(login: string | undefined, nowMs: number = Date.now()): Promise<LaunchAccess> {
   let launched = false;
   try {

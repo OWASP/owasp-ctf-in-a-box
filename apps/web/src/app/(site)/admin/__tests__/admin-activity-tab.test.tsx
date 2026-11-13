@@ -65,7 +65,7 @@ describe("mergeRefresh", () => {
   const row = (i: number): ActivityEntry => ({
     at: `2026-08-24T18:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z`,
     type: "login",
-    login: `u${i}`,
+    userId: `u${i}`, name: `u${i}`,
   });
   const rows = (from: number, to: number) => Array.from({ length: to - from }, (_, k) => row(from + k));
 
@@ -80,17 +80,17 @@ describe("mergeRefresh", () => {
   it("does not duplicate a row the fresh page already holds after new events shift everything down", () => {
     const prev = rows(0, 600);
     // One new event at the top: the fresh 500 are new + the old 0..498.
-    const fresh = [{ at: "2026-08-24T19:00:00.000Z", type: "login", login: "new" }, ...rows(0, 499)];
+    const fresh = [{ at: "2026-08-24T19:00:00.000Z", type: "login", userId: "new", name: "new" }, ...rows(0, 499)];
     const merged = mergeRefresh(fresh, prev, 601);
     expect(merged).toHaveLength(601);
-    expect(new Set(merged.map((e) => e.login)).size).toBe(601);
+    expect(new Set(merged.map((e) => e.name)).size).toBe(601);
   });
 
   it("keeps the row a new event pushed out of a same-sized page — same length is not 'nothing to keep'", () => {
     // Exactly the cap loaded, one new event since: the fresh 500 are new +
     // old 0..498, and old 499 would otherwise vanish from the screen.
     const prev = rows(0, 500);
-    const fresh = [{ at: "2026-08-24T19:00:00.000Z", type: "login", login: "new" }, ...rows(0, 499)];
+    const fresh = [{ at: "2026-08-24T19:00:00.000Z", type: "login", userId: "new", name: "new" }, ...rows(0, 499)];
     const merged = mergeRefresh(fresh, prev, 501);
     expect(merged).toHaveLength(501);
     expect(merged[500]).toEqual(row(499));
@@ -118,10 +118,10 @@ describe("formatWhen", () => {
 // team-join" or "what happened at 16:5x" could not be asked; you scrolled.
 describe("filterEntries", () => {
   const entries: ActivityEntry[] = [
-    { at: "2026-08-24T18:00:00.000Z", type: "login", login: "octocat" },
-    { at: "2026-08-24T18:01:00.000Z", type: "classic-solve", login: "OctoCat", detail: "crypto-1" },
-    { at: "2026-08-24T18:02:00.000Z", type: "login", login: "hubot" },
-    { at: "2026-08-24T18:40:00.000Z", type: "team-join", login: "hubot", detail: "octo-team" },
+    { at: "2026-08-24T18:00:00.000Z", type: "login", userId: "octocat", name: "octocat" },
+    { at: "2026-08-24T18:01:00.000Z", type: "classic-solve", userId: "OctoCat", name: "OctoCat", detail: "crypto-1" },
+    { at: "2026-08-24T18:02:00.000Z", type: "login", userId: "hubot", name: "hubot" },
+    { at: "2026-08-24T18:40:00.000Z", type: "team-join", userId: "hubot", name: "hubot", detail: "octo-team" },
   ];
   const q = (text: string, extra: Partial<Parameters<typeof filterEntries>[1]> = {}) =>
     filterEntries(entries, { type: null, text, zone: "UTC", ...extra });
@@ -131,10 +131,10 @@ describe("filterEntries", () => {
   });
 
   it("filters by type", () => {
-    expect(q("", { type: "login" }).map((e) => e.login)).toEqual(["octocat", "hubot"]);
+    expect(q("", { type: "login" }).map((e) => e.name)).toEqual(["octocat", "hubot"]);
   });
 
-  it("matches login as a case-insensitive substring", () => {
+  it("matches the player name as a case-insensitive substring", () => {
     expect(q("  hubot ").map((e) => e.type)).toEqual(["login", "team-join"]);
   });
 
@@ -160,11 +160,17 @@ describe("filterEntries", () => {
   });
 
   it("restricts a prefixed word to that field", () => {
-    // "octo" is in octocat's login AND in hubot's team slug.
-    expect(q("octo").map((e) => e.login)).toEqual(["octocat", "OctoCat", "hubot"]);
-    expect(q("login:octo").map((e) => e.login)).toEqual(["octocat", "OctoCat"]);
+    // "octo" is in octocat's name AND in hubot's team slug.
+    expect(q("octo").map((e) => e.name)).toEqual(["octocat", "OctoCat", "hubot"]);
+    expect(q("player:octo").map((e) => e.name)).toEqual(["octocat", "OctoCat"]);
     expect(q("detail:octo")).toEqual([entries[3]]);
     expect(q("type:solve")).toEqual([entries[1]]);
+  });
+
+  it("reads login: as player:", () => {
+    expect(q("login:octo")).toEqual(q("player:octo"));
+    expect(q("login:octo").map((e) => e.name)).toEqual(["octocat", "OctoCat"]);
+    expect(q("login:")).toEqual(entries);
   });
 
   it("matches team: on team events only", () => {
@@ -173,7 +179,7 @@ describe("filterEntries", () => {
   });
 
   it("ignores a prefix with nothing after it", () => {
-    expect(q("login:")).toEqual(entries);
+    expect(q("player:")).toEqual(entries);
   });
 
   it("keeps only rows inside the time range", () => {
@@ -190,9 +196,9 @@ describe("filterEntries", () => {
 describe("typeCounts", () => {
   it("counts each type within the current search, ignoring the type chip", () => {
     const entries: ActivityEntry[] = [
-      { at: "2026-08-24T18:00:00.000Z", type: "login", login: "octocat" },
-      { at: "2026-08-24T18:01:00.000Z", type: "classic-solve", login: "octocat", detail: "crypto-1" },
-      { at: "2026-08-24T18:02:00.000Z", type: "login", login: "hubot" },
+      { at: "2026-08-24T18:00:00.000Z", type: "login", userId: "octocat", name: "octocat" },
+      { at: "2026-08-24T18:01:00.000Z", type: "classic-solve", userId: "octocat", name: "octocat", detail: "crypto-1" },
+      { at: "2026-08-24T18:02:00.000Z", type: "login", userId: "hubot", name: "hubot" },
     ];
     expect(typeCounts(entries, { type: "login", text: "octocat", zone: "UTC" })).toEqual({ login: 1, "classic-solve": 1 });
   });
@@ -217,7 +223,7 @@ describe("the search in the URL", () => {
   });
 
   it("writes ?q= beside the tab, and drops it when the box is cleared", () => {
-    expect(urlWithSearch("/admin?tab=activity", "login:octo")).toBe("/admin?tab=activity&q=login%3Aocto");
+    expect(urlWithSearch("/admin?tab=activity", "player:octo")).toBe("/admin?tab=activity&q=player%3Aocto");
     expect(urlWithSearch("/admin?tab=activity&q=old", "  ")).toBe("/admin?tab=activity");
   });
 });

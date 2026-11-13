@@ -1,4 +1,5 @@
 import "server-only";
+import { unnamed } from "@/lib/display-name";
 import { errorLabel } from "@/lib/error-label";
 import { getAiTotals, getTeamAiTotalsBatch, listAiChallenges, type AiTotal } from "@/lib/ai-store";
 import { atLeast, unionTotal, classicReachableDenominator, type Story } from "@/lib/leaderboard/denominators";
@@ -46,7 +47,7 @@ import type { ModuleId } from "@/lib/modules";
  * of board size, mirroring `getHintPenalties`). Teams CANNOT: a team's total
  * is the UNION of the questions its members answered correctly (spec D6) /
  * the challenges they solved, and the aggregates have no memory of WHICH
- * items contributed to a login's total, so summing them would double count
+ * items contributed to a player id's total, so summing them would double count
  * anything two teammates both hold. Teams are handled by
  * `getTeamQuizTotalsBatch` / `getTeamClassicTotalsBatch` /
  * `getTeamAiTotalsBatch`, which read every member's item hash directly — all
@@ -57,7 +58,7 @@ import type { ModuleId } from "@/lib/modules";
  * this function itself stamps only the secure-development chip on a team, so
  * that each module reaches each team's total exactly once.
  *
- * The board's login set is the UNION of the source's logins and the logins
+ * The board's player id set is the UNION of the source's player ids and the player ids
  * holding module points, so a contestant with quiz, classic or ai points but
  * no scored submission — every contestant on a quiz-only, classic-only or
  * ai-only event, where the source is `emptySource` and carries no rows at
@@ -67,7 +68,7 @@ import type { ModuleId } from "@/lib/modules";
  * disagreement must not split one contestant into two rows), and a created
  * row is the only kind with no scoring entry behind it — so there is nothing
  * on it to double count, and every scorer-supplied field
- * (`patched`/`failed`/`total`/`apps`) stays zero-valued on it. A login
+ * (`patched`/`failed`/`total`/`apps`) stays zero-valued on it. A player id
  * holding points in more than one app-side module gets ONE created row
  * carrying every block, never one row per module.
  *
@@ -82,7 +83,7 @@ import type { ModuleId } from "@/lib/modules";
  * read still degrades to absence) and its catalogue is non-empty — never
  * "0 / 0". It adds no points, no completed items and no activity time, so
  * totals, ranks and order are exactly what they were without it. It never
- * creates a row: a login with nothing anywhere still has none here.
+ * creates a row: a player id with nothing anywhere still has none here.
  *
  * Hint penalties are applied by `withHintPenalties`, which runs AFTER this
  * (the pipeline's last stage), so created rows and synthesised team rows are
@@ -189,7 +190,13 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   // than inventing a locked step.
   const classicReachableRead =
     classicStories.length > 0 && classicChallenges.length > 0
-      ? reachableByLogin(data, classicTotals, classicChallenges, classicStories)
+      ? reachableByPlayer(
+          data,
+          classicTotals,
+          createdRowCandidates(quizTotals, aiReads),
+          classicChallenges,
+          classicStories,
+        )
       : Promise.resolve(undefined);
 
   let aiTotals = new Map<string, AiTotal>();
@@ -216,16 +223,16 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   }
 
   // Logins are matched case-insensitively throughout (see the doc comment).
-  // Two keys in a totals map colliding on case cannot happen — a login is
+  // Two keys in a totals map colliding on case cannot happen — a player id is
   // unique case-insensitively on GitHub and every writer stores the one the
   // session reports — but the folds below are what make the lookup and the
   // union agree on a single rule either way.
-  const quizByLogin = new Map<string, QuizTotal>();
-  for (const [login, total] of quizTotals) quizByLogin.set(login.toLowerCase(), total);
-  const classicByLogin = new Map<string, ClassicTotal>();
-  for (const [login, total] of classicTotals) classicByLogin.set(login.toLowerCase(), total);
-  const aiByLogin = new Map<string, AiTotal>();
-  for (const [login, total] of aiTotals) aiByLogin.set(login.toLowerCase(), total);
+  const quizByPlayer = new Map<string, QuizTotal>();
+  for (const [playerId, total] of quizTotals) quizByPlayer.set(playerId.toLowerCase(), total);
+  const classicByPlayer = new Map<string, ClassicTotal>();
+  for (const [playerId, total] of classicTotals) classicByPlayer.set(playerId.toLowerCase(), total);
+  const aiByPlayer = new Map<string, AiTotal>();
+  for (const [playerId, total] of aiTotals) aiByPlayer.set(playerId.toLowerCase(), total);
 
   const classicReachable = await classicReachableRead;
 
@@ -249,13 +256,13 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
   if (aiZero) zeros.ai = aiZero;
 
   const overlay: Overlay = {
-    quizByLogin,
+    quizByPlayer,
     quizTotalQuestions,
-    classicByLogin,
+    classicByPlayer,
     classicTotalChallenges,
     classicLiveIds,
     classicReachable,
-    aiByLogin,
+    aiByPlayer,
     aiTotalChallenges,
     zeros,
   };
@@ -336,23 +343,23 @@ export async function withModuleContributions(data: LeaderboardData): Promise<Le
 }
 
 /** The app-side module totals for one render, threaded through the per-entry
- *  helpers below. Every `*ByLogin` map is keyed by LOWERCASED login — see the
+ *  helpers below. Every `*ByPlayer` map is keyed by LOWERCASED player id — see the
  *  union rule in the doc comment. Each `*TotalX` count is that module's raw
  *  item total; the clamp against a row's own numerator happens per row, in
  *  `quizModule`/`classicModule`/`aiModule`. */
 type Overlay = {
-  quizByLogin: Map<string, QuizTotal>;
+  quizByPlayer: Map<string, QuizTotal>;
   quizTotalQuestions: number;
-  classicByLogin: Map<string, ClassicTotal>;
+  classicByPlayer: Map<string, ClassicTotal>;
   classicTotalChallenges: number;
   /** Live classic ids, undefined when that read failed — the union input
    *  `classicModule` shares with the team path. */
   classicLiveIds?: ReadonlySet<string>;
-  /** Story-lock reachability per contestant row, keyed by LOWERCASED login
+  /** Story-lock reachability per contestant row, keyed by LOWERCASED player id
    *  and undefined when the event has no stories or the batched solves read
    *  failed — `classicModule` then clamps like it always did. */
   classicReachable?: ReadonlyMap<string, Reachable>;
-  aiByLogin: Map<string, AiTotal>;
+  aiByPlayer: Map<string, AiTotal>;
   aiTotalChallenges: number;
   /** The zero block each app-side module stamps on a row that has completed
    *  nothing in it; a module without one (off, unread, empty) is absent. */
@@ -363,7 +370,7 @@ type Overlay = {
  *  it — the story-lock answer for one row's solve set. */
 type Reachable = { total: number; max: number; locked: number };
 
-/** Every team's COMPLETE roster on this board, plus the login index those
+/** Every team's COMPLETE roster on this board, plus the player id index those
  *  rosters imply.
  *
  *  The source's own teams and the team store's are two different records: the
@@ -375,7 +382,7 @@ type Reachable = { total: number; max: number; locked: number };
  *  roster for the whole team and leave a teammate's prerequisite solve out of
  *  the fold, re-locking a step the team has already earned.
  *
- *  `teamByLogin` is lowercased like every other login join in this codebase,
+ *  `teamByPlayer` is lowercased like every other player id join in this codebase,
  *  with the TEAM STORE's attribution winning — the precedence
  *  `withTeamStandings` applies — so a row's team chip and its fold can never
  *  disagree. Pure over the already-fetched `storeTeams`: it reads nothing. */
@@ -385,7 +392,7 @@ export function mergeTeamRosters(
 ): {
   sourceTeams: TeamStanding[];
   rosterBySlug: Map<string, string[]>;
-  teamByLogin: Map<string, string>;
+  teamByPlayer: Map<string, string>;
 } {
   const storeBySlug = new Map(storeTeams.map((team) => [team.slug, team]));
   const rosterBySlug = new Map<string, string[]>();
@@ -406,18 +413,36 @@ export function mergeTeamRosters(
     if (!rosterBySlug.has(team.slug)) rosterBySlug.set(team.slug, team.members);
   }
 
-  const teamByLogin = new Map<string, string>();
+  const teamByPlayer = new Map<string, string>();
   for (const team of storeTeams) {
-    for (const member of team.members) teamByLogin.set(member.toLowerCase(), team.slug);
+    for (const member of team.members) teamByPlayer.set(member.toLowerCase(), team.slug);
   }
   for (const [slug, members] of rosterBySlug) {
     for (const member of members) {
-      const login = member.toLowerCase();
-      if (!teamByLogin.has(login)) teamByLogin.set(login, slug);
+      const playerId = member.toLowerCase();
+      if (!teamByPlayer.has(playerId)) teamByPlayer.set(playerId, slug);
     }
   }
 
-  return { sourceTeams, rosterBySlug, teamByLogin };
+  return { sourceTeams, rosterBySlug, teamByPlayer };
+}
+
+/** The ids `createdEntries` turns into rows from quiz or ai progress: the
+ *  same `answered`/`solved` > 0 gate. Awaits the ai totals read the caller
+ *  already started; a failed one contributes nothing, as it does there. */
+async function createdRowCandidates(
+  quizTotals: ReadonlyMap<string, QuizTotal>,
+  aiReads: Promise<[PromiseSettledResult<Map<string, AiTotal>>, PromiseSettledResult<unknown>]> | null,
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (const [playerId, total] of quizTotals) if (total.answered > 0) ids.push(playerId);
+  if (aiReads) {
+    const [totalsResult] = await aiReads;
+    if (totalsResult.status === "fulfilled") {
+      for (const [playerId, total] of totalsResult.value) if (total.solved > 0) ids.push(playerId);
+    }
+  }
+  return ids;
 }
 
 /** Story-lock reachability for every contestant row that will carry a classic
@@ -428,10 +453,10 @@ export function mergeTeamRosters(
  *  nothing there. No team is named to that second read: a board roster means
  *  each member's solves count for the team they are on now.
  *
- *  A row's team is looked up by LOGIN through `mergeTeamRosters`, so it sees
+ *  A row's team is looked up by player id through `mergeTeamRosters`, so it sees
  *  the same complete membership `withTeamStandings` ranks a stage later and a
  *  teammate's solve unlocks the same step for the player row and the team row.
- *  Looking the team up by login rather than by `entry.team` matters because
+ *  Looking the team up by player id rather than by `entry.team` matters because
  *  the rows this is for are mostly CREATED here (`team: null` until that later
  *  stage overlays membership), so on a classic-only event the entry field
  *  alone would call every contestant teamless. A row no roster places is a
@@ -441,42 +466,49 @@ export function mergeTeamRosters(
  *  Returns `undefined` rather than a partial answer: a failed roster, fold or
  *  eligibility read leaves every row on the clamp it used before, which can
  *  overstate a denominator but never locks a step or exposes its title. */
-async function reachableByLogin(
+async function reachableByPlayer(
   data: LeaderboardData,
   classicTotals: ReadonlyMap<string, ClassicTotal>,
+  createdCandidates: Promise<readonly string[]>,
   challenges: readonly Challenge[],
   stories: readonly Story[],
 ): Promise<Map<string, Reachable> | undefined> {
   try {
-    const { rosterBySlug, teamByLogin } = mergeTeamRosters(data, await listTeams());
+    const [{ rosterBySlug, teamByPlayer }, candidates] = await Promise.all([
+      listTeams().then((teams) => mergeTeamRosters(data, teams)),
+      createdCandidates,
+    ]);
 
-    const rows: { login: string; roster: string[] }[] = [];
+    const rows: { playerId: string; roster: string[] }[] = [];
 
-    // Preserve the classic totals' login spelling for existing solvers.
-    // Add existing leaderboard contestants who have no personal Classic solves.
-    const logins = new Map<string, string>();
+    // Classic solvers keep the id as their totals hold it. A contestant with
+    // no Classic solve of their own gets a row only when a team places them:
+    // a source entry, or a row `createdEntries` adds for quiz or ai points.
+    // Without one a teammate's unlock would not reach them and their block
+    // would read the no-solves zero.
+    const playerIds = new Map<string, string>();
 
-    for (const login of classicTotals.keys()) {
-      logins.set(login.toLowerCase(), login);
+    for (const playerId of classicTotals.keys()) {
+      playerIds.set(playerId.toLowerCase(), playerId);
     }
 
-    for (const entry of data.entries) {
-      const key = entry.login.toLowerCase();
+    for (const playerId of [...data.entries.map((entry) => entry.playerId), ...candidates]) {
+      const key = playerId.toLowerCase();
 
-      if (teamByLogin.has(key) && !logins.has(key)) {
-        logins.set(key, entry.login);
+      if (teamByPlayer.has(key) && !playerIds.has(key)) {
+        playerIds.set(key, playerId);
       }
     }
 
-    for (const login of logins.values()) {
-      const members = rosterBySlug.get(teamByLogin.get(login.toLowerCase()) ?? "");
+    for (const playerId of playerIds.values()) {
+      const members = rosterBySlug.get(teamByPlayer.get(playerId.toLowerCase()) ?? "");
 
-      // The login's own spelling leads: the solves hash is keyed on whatever
+      // The player id's own spelling leads: the solves hash is keyed on whatever
       // spelling wrote it, so a roster stored in another case must add to it,
       // never replace it.
       rows.push({
-        login,
-        roster: members ? [...new Set([login, ...members])] : [login],
+        playerId,
+        roster: members ? [...new Set([playerId, ...members])] : [playerId],
       });
     }
     if (rows.length === 0) return undefined;
@@ -490,7 +522,7 @@ async function reachableByLogin(
       const total: ClassicTotal | undefined = folded[i];
       const records: Record<string, { points?: number }> = {};
       for (const [id, points] of Object.entries(total?.itemPoints ?? {})) records[id] = { points };
-      reachable.set(row.login.toLowerCase(), classicReachableDenominator(challenges, stories, unlocked[i], records));
+      reachable.set(row.playerId.toLowerCase(), classicReachableDenominator(challenges, stories, unlocked[i], records));
     });
     return reachable;
   } catch (err) {
@@ -503,7 +535,7 @@ async function reachableByLogin(
  *  scorer's row and never comes from here. */
 type ZeroBlocks = Partial<Record<"quiz" | "classic" | "ai", ModuleProgress>>;
 
-/** The totals of a login or team that has completed nothing, fed through the
+/** The totals of a player id or team that has completed nothing, fed through the
  *  same block builders (and so the same `denominator`) as a scoring row. */
 const NO_ANSWERS: QuizTotal = { points: 0, answered: 0, lastAt: null };
 const NO_SOLVES: ClassicTotal & AiTotal = { points: 0, solved: 0, lastAt: null };
@@ -621,7 +653,7 @@ export async function withTeamClassicPoints(teams: TeamStanding[]): Promise<Team
   // What OPENS a step for each team (ADR 60): solve-time membership over the
   // same rosters the fold below unions, in ONE batched read, and only when a
   // story exists to lock anything behind. A failure degrades to the same
-  // clamp a contestant row takes (see `reachableByLogin`) — an overstated
+  // clamp a contestant row takes (see `reachableByPlayer`) — an overstated
   // count costs precision, while an invented lock would hide earned steps.
   let unlocked: Set<string>[] | undefined;
   if (stories.length > 0) {
@@ -785,7 +817,7 @@ function quizModule(total: QuizTotal, totalQuestions: number, liveIds?: Readonly
 /** classic's counterpart to `quizModule`, clamped for exactly the same two
  *  reasons: (1) `deleteChallenge` retires a challenge but deliberately leaves
  *  banked points and the aggregate `solved` counter alone, so the challenge
- *  list can be SHORTER than a login's solve count and would render "1 / 0
+ *  list can be SHORTER than a player id's solve count and would render "1 / 0
  *  flags"; (2) a failed `listChallenges` degrades the denominator to 0 while
  *  the points and solve counts survive intact. Clamping shows "1 / 1" —
  *  imprecise, but never nonsense.
@@ -822,7 +854,7 @@ function classicModule(
 
 /** ai's counterpart to `classicModule` (same `AiTotal` shape, same clamp
  *  discipline): a deleted ai challenge can leave the catalogue shorter than
- *  a login's solve count, and a failed `listAiChallenges` degrades the
+ *  a player id's solve count, and a failed `listAiChallenges` degrades the
  *  denominator to 0 while points and solves survive intact. Clamping shows
  *  "1 / 1" — imprecise, but never nonsense. */
 function aiModule(total: AiTotal, totalChallenges: number, liveIds?: ReadonlySet<string>): ModuleProgress {
@@ -839,16 +871,16 @@ function aiModule(total: AiTotal, totalChallenges: number, liveIds?: ReadonlySet
   };
 }
 
-/** The rows the board is MISSING: one per login that holds app-side module
+/** The rows the board is MISSING: one per player id that holds app-side module
  *  points (quiz, classic, ai, or any combination) and has no entry from the
  *  scoring source. Scored rows come first in the ranked list, so a created
  *  row never displaces one it is fully tied with.
  *
  *  The totals maps are iterated in their ORIGINAL casing (that spelling is all
  *  a created row has to display), while membership is decided on the
- *  lowercased form — a login already on the board keeps its scored row, which
+ *  lowercased form — a player id already on the board keeps its scored row, which
  *  `attributeEntry` has already added the same module points to. Several
- *  modules reporting the same login (in whatever casing) therefore produce
+ *  modules reporting the same player id (in whatever casing) therefore produce
  *  exactly ONE row carrying every reported block and every reported module's
  *  points, never one row each.
  *
@@ -867,38 +899,44 @@ function createdEntries(
   classicLiveIds?: ReadonlySet<string>,
   classicReachable?: ReadonlyMap<string, Reachable>,
 ): LeaderboardEntry[] {
-  const seen = new Set(scored.map((entry) => entry.login.toLowerCase()));
-  // Keyed by lowercased login so the three modules union onto one row;
-  // `login` keeps the spelling of whichever module reported it first.
-  const pending = new Map<string, { login: string; quiz?: QuizTotal; classic?: ClassicTotal; ai?: AiTotal }>();
+  const seen = new Set(scored.map((entry) => entry.playerId.toLowerCase()));
+  // Keyed by lowercased player id so the three modules union onto one row;
+  // `player id` keeps the spelling of whichever module reported it first.
+  const pending = new Map<string, { playerId: string; quiz?: QuizTotal; classic?: ClassicTotal; ai?: AiTotal }>();
 
   // `answered`/`solved` > 0 is the same gate `attributeEntry` uses to stamp a
-  // scoring block: a login with no completed item has no module progress of
+  // scoring block: a player id with no completed item has no module progress of
   // its own and must not become a row (zero blocks never create one).
-  for (const [login, total] of quizTotals) {
-    const key = login.toLowerCase();
+  for (const [playerId, total] of quizTotals) {
+    const key = playerId.toLowerCase();
     if (seen.has(key) || total.answered <= 0) continue;
-    pending.set(key, { ...(pending.get(key) ?? { login }), quiz: total });
+    pending.set(key, { ...(pending.get(key) ?? { playerId }), quiz: total });
   }
-  for (const [login, total] of classicTotals) {
-    const key = login.toLowerCase();
+  for (const [playerId, total] of classicTotals) {
+    const key = playerId.toLowerCase();
     if (seen.has(key) || total.solved <= 0) continue;
-    pending.set(key, { ...(pending.get(key) ?? { login }), classic: total });
+    pending.set(key, { ...(pending.get(key) ?? { playerId }), classic: total });
   }
-  for (const [login, total] of aiTotals) {
-    const key = login.toLowerCase();
+  for (const [playerId, total] of aiTotals) {
+    const key = playerId.toLowerCase();
     if (seen.has(key) || total.solved <= 0) continue;
-    pending.set(key, { ...(pending.get(key) ?? { login }), ai: total });
+    pending.set(key, { ...(pending.get(key) ?? { playerId }), ai: total });
   }
 
   const created: LeaderboardEntry[] = [];
-  for (const [key, { login, quiz, classic, ai }] of pending) {
-    // The modules this login has not played yet sit on the row at zero. No
+  for (const [key, { playerId, quiz, classic, ai }] of pending) {
+    // The modules this player id has not played yet sit on the row at zero. No
     // secure-development block: a created row has no scorer entry and so no
     // targets to show.
     const modules: Partial<Record<ModuleId, ModuleProgress>> = { ...zeros };
     if (quiz) modules["quiz"] = quizModule(quiz, quizTotalQuestions);
-    if (classic) modules["classic"] = classicModule(classic, classicTotalChallenges, classicLiveIds, classicReachable?.get(key));
+    if (classic) {
+      modules["classic"] = classicModule(classic, classicTotalChallenges, classicLiveIds, classicReachable?.get(key));
+    } else if (modules.classic && classicReachable?.has(key)) {
+      // No Classic solve of their own, but a team: the zero block reaches
+      // what the team has unlocked, like a source row's (`attributeEntry`).
+      modules["classic"] = classicModule(NO_SOLVES, classicTotalChallenges, classicLiveIds, classicReachable.get(key));
+    }
     if (ai) modules["ai"] = aiModule(ai, aiTotalChallenges);
     // The modules' own activity time is the only honest value for all three
     // (neither aggregate read has one to give today, so it is null in
@@ -906,7 +944,9 @@ function createdEntries(
     const lastAt = laterOf(laterOf(quiz?.lastAt ?? null, classic?.lastAt ?? null), ai?.lastAt ?? null);
     created.push({
       rank: 0, // stamped by rankByStanding below
-      login,
+      playerId,
+      // Named by the fold's last stage (names.ts).
+      ...unnamed(playerId),
       // Membership is withTeamStandings' to overlay, one step later.
       team: null,
       points: (quiz?.points ?? 0) + (classic?.points ?? 0) + (ai?.points ?? 0),
@@ -932,7 +972,7 @@ function laterOf(a: string | null, b: string | null): string | null {
   return Date.parse(b) > Date.parse(a) ? b : a;
 }
 
-/** The `*ByLogin` maps on `overlay` are keyed by LOWERCASED login — see the
+/** The `*ByPlayer` maps on `overlay` are keyed by LOWERCASED player id — see the
  *  folds in `withModuleContributions`.
  *
  *  secure-development is ATTRIBUTED (its points are already inside
@@ -940,7 +980,7 @@ function laterOf(a: string | null, b: string | null): string | null {
  *  is silent: attributing an app-side module shows zero, adding the scorer's
  *  doubles it. */
 function attributeEntry(entry: LeaderboardEntry, secureDev: boolean, overlay: Overlay): LeaderboardEntry {
-  // Every live app-side module starts at zero; a module the login has
+  // Every live app-side module starts at zero; a module the player id has
   // completed something in replaces its zero block below.
   const modules: Partial<Record<ModuleId, ModuleProgress>> = { ...overlay.zeros };
   let points = entry.points;
@@ -954,15 +994,15 @@ function attributeEntry(entry: LeaderboardEntry, secureDev: boolean, overlay: Ov
     );
   }
 
-  const key = entry.login.toLowerCase();
+  const key = entry.playerId.toLowerCase();
 
-  const quizTotal = overlay.quizByLogin.get(key);
+  const quizTotal = overlay.quizByPlayer.get(key);
   if (quizTotal && quizTotal.answered > 0) {
     modules["quiz"] = quizModule(quizTotal, overlay.quizTotalQuestions);
     points += quizTotal.points;
   }
 
-  const classicTotal = overlay.classicByLogin.get(key);
+  const classicTotal = overlay.classicByPlayer.get(key);
 
   if (classicTotal && classicTotal.solved > 0) {
     modules["classic"] = classicModule(
@@ -981,7 +1021,7 @@ function attributeEntry(entry: LeaderboardEntry, secureDev: boolean, overlay: Ov
     );
   }
 
-  const aiTotal = overlay.aiByLogin.get(key);
+  const aiTotal = overlay.aiByPlayer.get(key);
   if (aiTotal && aiTotal.solved > 0) {
     modules["ai"] = aiModule(aiTotal, overlay.aiTotalChallenges);
     points += aiTotal.points;

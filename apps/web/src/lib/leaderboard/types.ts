@@ -76,8 +76,13 @@ export type ModuleProgress = {
 
 export type LeaderboardEntry = {
   rank: number;
-  /** GitHub login — the row key (the scorer records the PR author's login). */
-  login: string;
+  /** Kit player id — the row key. */
+  playerId: string;
+  /** Display name, resolved from the player's profile by the fold's naming
+   *  stage (names.ts); the id fallback when the player has no profile. */
+  name: string;
+  /** Profile image URL, or null when the player has none. */
+  image: string | null;
   /** Team slug, or null for solo contestants. */
   team: string | null;
   points: number;
@@ -108,9 +113,11 @@ export type TeamStanding = {
   rank: number;
   slug: string;
   name: string;
-  /** GitHub login of the team's captain. */
+  /** Player id of the team's captain. */
   captain: string;
   points: number;
+  /** Player ids. Names come from the board's entries, which carry one row per
+   *  member (team-standings.ts). */
   members: string[];
   /** ISO time of the team's most recent Secure Development solve, from the
    *  scorer: half of the team's points tie-break once the app-side modules'
@@ -161,7 +168,7 @@ export type SeriesPoint = { t: string; score: number };
 
 /** A single player's cumulative-score history, ascending by time — the last
  *  point's score equals that player's current leaderboard score. */
-export type PlayerSeries = { login: string; points: SeriesPoint[] };
+export type PlayerSeries = { playerId: string; name: string; image: string | null; points: SeriesPoint[] };
 
 export type LeaderboardData = {
   entries: LeaderboardEntry[];
@@ -194,7 +201,7 @@ export type LeaderboardData = {
 };
 
 export type UserProfile = {
-  login: string;
+  playerId: string;
   team: string | null;
   teamName: string | null;
   points: number;

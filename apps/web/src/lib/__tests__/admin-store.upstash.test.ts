@@ -12,6 +12,7 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { freshId, liveConfigured, liveKey } from "./live-redis";
+import { actor } from "./audit-actor";
 
 vi.mock("server-only", () => ({}));
 
@@ -44,31 +45,31 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     ((await upstashPipeline([["LRANGE", "ctf:admin:pauses", 0, -1]]))[0].result as string[]).map((e) => JSON.parse(e));
 
   it("pausing records when the freeze began, and pausing again keeps that start", async () => {
-    const first = await updateAdminSettings({ paused: true }, "alice");
+    const first = await updateAdminSettings({ paused: true }, actor("alice"));
     expect(await settingsField("pausedSince")).toBe(first.updatedAt);
     await new Promise((r) => setTimeout(r, 5));
-    const again = await updateAdminSettings({ paused: true }, "bob");
+    const again = await updateAdminSettings({ paused: true }, actor("bob"));
     expect(again.updatedAt).not.toBe(first.updatedAt);
     expect(await settingsField("pausedSince")).toBe(first.updatedAt);
     expect(await pauseLog()).toEqual([]);
   });
 
   it("unpausing closes the interval into the log and clears the open start", async () => {
-    const paused = await updateAdminSettings({ paused: true }, "alice");
-    await updateAdminSettings({ hintCost: 5 }, "alice"); // an unrelated save leaves the pause open
+    const paused = await updateAdminSettings({ paused: true }, actor("alice"));
+    await updateAdminSettings({ hintCost: 5 }, actor("alice")); // an unrelated save leaves the pause open
     expect(await settingsField("pausedSince")).toBe(paused.updatedAt);
-    const resumed = await updateAdminSettings({ paused: false }, "alice");
+    const resumed = await updateAdminSettings({ paused: false }, actor("alice"));
     expect(await settingsField("pausedSince")).toBeNull();
     expect(await pauseLog()).toEqual([{ from: paused.updatedAt, to: resumed.updatedAt }]);
   });
 
   it("logs each freeze once, newest first; unpausing an unpaused event logs nothing", async () => {
-    await updateAdminSettings({ paused: false }, "alice");
-    const p1 = await updateAdminSettings({ paused: true }, "alice");
-    const r1 = await updateAdminSettings({ paused: false }, "alice");
-    await updateAdminSettings({ paused: false }, "alice");
-    const p2 = await updateAdminSettings({ paused: true }, "alice");
-    const r2 = await updateAdminSettings({ paused: false }, "alice");
+    await updateAdminSettings({ paused: false }, actor("alice"));
+    const p1 = await updateAdminSettings({ paused: true }, actor("alice"));
+    const r1 = await updateAdminSettings({ paused: false }, actor("alice"));
+    await updateAdminSettings({ paused: false }, actor("alice"));
+    const p2 = await updateAdminSettings({ paused: true }, actor("alice"));
+    const r2 = await updateAdminSettings({ paused: false }, actor("alice"));
     expect(await pauseLog()).toEqual([
       { from: p2.updatedAt, to: r2.updatedAt },
       { from: p1.updatedAt, to: r1.updatedAt },
@@ -77,9 +78,9 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
 
   it("a freeze with no recorded start lifts without logging an interval it cannot bound", async () => {
     await upstashPipeline([["HSET", "ctf:admin:settings", "paused", "1"]]);
-    await updateAdminSettings({ paused: true }, "alice"); // already frozen: the unknown start stays unknown
+    await updateAdminSettings({ paused: true }, actor("alice")); // already frozen: the unknown start stays unknown
     expect(await settingsField("pausedSince")).toBeNull();
-    await updateAdminSettings({ paused: false }, "alice");
+    await updateAdminSettings({ paused: false }, actor("alice"));
     expect(await settingsField("paused")).toBeNull();
     expect(await pauseLog()).toEqual([]);
   });
@@ -87,8 +88,8 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   it("caps the pause log at PAUSE_LOG_CAP, dropping the oldest", async () => {
     let last: { updatedAt: string | null } | null = null;
     for (let i = 0; i < PAUSE_LOG_CAP + 2; i++) {
-      await updateAdminSettings({ paused: true }, "bot");
-      last = await updateAdminSettings({ paused: false }, "bot");
+      await updateAdminSettings({ paused: true }, actor("bot"));
+      last = await updateAdminSettings({ paused: false }, actor("bot"));
     }
     const [len] = await upstashPipeline([["LLEN", "ctf:admin:pauses"]]);
     expect(Number(len.result)).toBe(PAUSE_LOG_CAP);
@@ -96,7 +97,7 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   });
 
   it("writes settings and an audit line atomically", async () => {
-    await updateAdminSettings({ paused: true, hintCost: 25 }, "alice");
+    await updateAdminSettings({ paused: true, hintCost: 25 }, actor("alice"));
     const s = await getAdminSettings();
     expect(s.paused).toBe(true);
     expect(s.hintCost).toBe(25);
@@ -106,17 +107,17 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   });
 
   it("caps the audit list at AUDIT_CAP", async () => {
-    for (let i = 0; i < AUDIT_CAP + 5; i++) await updateAdminSettings({ paused: i % 2 === 0 }, "bot");
+    for (let i = 0; i < AUDIT_CAP + 5; i++) await updateAdminSettings({ paused: i % 2 === 0 }, actor("bot"));
     const [len] = await upstashPipeline([["LLEN", "ctf:admin:audit"]]);
     expect(Number(len.result)).toBe(AUDIT_CAP);
   });
 
   it("clears the paused field to absent (not \"0\") when unpausing", async () => {
-    await updateAdminSettings({ paused: true }, "alice");
+    await updateAdminSettings({ paused: true }, actor("alice"));
     const [setGet] = await upstashPipeline([["HGET", "ctf:admin:settings", "paused"]]);
     expect(setGet.result).toBe("1");
 
-    await updateAdminSettings({ paused: false }, "alice");
+    await updateAdminSettings({ paused: false }, actor("alice"));
     const [clearedExists, clearedUpdatedAt] = await upstashPipeline([
       ["HEXISTS", "ctf:admin:settings", "paused"],
       ["HGET", "ctf:admin:settings", "updatedAt"],
@@ -132,8 +133,8 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   // #600: a numeric knob clears back to "follow the default" — the field is
   // gone from the hash, not stored as a value equal to the default.
   it("clears a numeric knob to absent when sent null", async () => {
-    await updateAdminSettings({ hintsMinSolves: 1, teamMaxMembers: 6 }, "alice");
-    await updateAdminSettings({ hintsMinSolves: null }, "alice");
+    await updateAdminSettings({ hintsMinSolves: 1, teamMaxMembers: 6 }, actor("alice"));
+    await updateAdminSettings({ hintsMinSolves: null }, actor("alice"));
     const [res] = await upstashPipeline([["HMGET", "ctf:admin:settings", "hintsMinSolves", "teamMaxMembers"]]);
     expect(res.result).toEqual([null, "6"]);
     const s = await getAdminSettings();
@@ -142,7 +143,7 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   });
 
   it("round-trips an explicitly empty module set", async () => {
-    const s = await updateAdminSettings({ enabledModules: [] }, "alice");
+    const s = await updateAdminSettings({ enabledModules: [] }, actor("alice"));
     expect(s.enabledModuleIds).toEqual([]);
     expect((await getAdminSettings()).enabledModuleIds).toEqual([]);
   });
@@ -150,13 +151,13 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   it("round-trips the event identity fields and clears them on empty (issue #386)", async () => {
     await updateAdminSettings(
       { eventName: "Live CTF", eventLocation: "Montevideo", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live" },
-      "alice",
+      actor("alice"),
     );
     let s = await getAdminSettings();
     expect(s.eventIdentity).toEqual({
       eventName: "Live CTF", eventLocation: "Montevideo", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live",
     });
-    await updateAdminSettings({ eventLocation: "", eventDiscord: "" }, "alice");
+    await updateAdminSettings({ eventLocation: "", eventDiscord: "" }, actor("alice"));
     s = await getAdminSettings();
     expect(s.eventIdentity).toEqual({ eventName: "Live CTF", eventContact: "org@example.org" });
     const [fields] = await upstashPipeline([["HKEYS", "ctf:admin:settings"]]);
@@ -169,11 +170,11 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   // normalizeSecureDevTargets) must decode it back exactly, whole-set
   // replace each time (not merged with what was there before).
   it("round-trips the secureDevTargets set through a real write and read", async () => {
-    await updateAdminSettings({ secureDevTargets: ["vampi", "dvwa"] }, "alice");
+    await updateAdminSettings({ secureDevTargets: ["vampi", "dvwa"] }, actor("alice"));
     let s = await getAdminSettings();
     expect(s.secureDevTargets).toEqual(["dvwa", "vampi"]);
 
-    await updateAdminSettings({ secureDevTargets: ["webgoat"] }, "alice");
+    await updateAdminSettings({ secureDevTargets: ["webgoat"] }, actor("alice"));
     s = await getAdminSettings();
     expect(s.secureDevTargets).toEqual(["webgoat"]);
   });
@@ -182,8 +183,8 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   // so it sees the other bound as it is at commit time — no read-then-write
   // race between two organizers saving opposite bounds.
   it("refuses a start at or after the stored Scoring closes, writing nothing", async () => {
-    await updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, "alice");
-    await expect(updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, "bob")).rejects.toThrow(/Scoring closes/);
+    await updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, actor("alice"));
+    await expect(updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, actor("bob"))).rejects.toThrow(/Scoring closes/);
     const s = await getAdminSettings();
     expect(s.scoringStartsAt ?? null).toBeNull();
     expect(s.updatedBy).toBe("alice");
@@ -191,8 +192,8 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
 
   it("two opposite saves racing: at most one lands, and the stored window can open", async () => {
     const results = await Promise.allSettled([
-      updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, "alice"),
-      updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, "bob"),
+      updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, actor("alice")),
+      updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, actor("bob")),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const s = await getAdminSettings();
@@ -204,7 +205,7 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     await upstashPipeline([
       ["HSET", "ctf:admin:settings", "scoringStartsAt", "2030-06-01T00:00:00.000Z", "scoringEndsAt", "2030-01-01T00:00:00.000Z"],
     ]);
-    await updateAdminSettings({ hintCost: 5 }, "alice");
+    await updateAdminSettings({ hintCost: 5 }, actor("alice"));
     expect((await getAdminSettings()).hintCost).toBe(5);
   });
 

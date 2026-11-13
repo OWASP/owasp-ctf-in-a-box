@@ -8,6 +8,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
+  the linked-account write failed after the user row was written, that row
+  stayed behind and every later sign-in answered `account not linked`. The
+  auth store now deletes the rows a failed sign-up created, so the next
+  sign-in starts clean.
 - **Changed: `/api/classic/submit` and `/api/quiz/answer` now return HTTP
   `429` with `Retry-After` on cooldown refusals (#753).** Both endpoints
   previously returned `403` without `Retry-After`, unlike `/api/ai/submit`,
@@ -15,6 +20,28 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   `Retry-After` header in whole seconds until `retryAt` while preserving
   `{ error: "cooldown", retryAt }` in the body; every other refusal on these
   routes still answers `403`.
+- **Changed: every player record is keyed by the player's account id, not
+  their GitHub login (#742).** Solves, teams, hints, quiz, Jeopardy and AI
+  progress, the activity log and Insights all follow the id, and boards, the
+  admin panel and the audit log show names resolved from the account store (a
+  player with no name shows as `player` plus the first 8 characters of the
+  id). What this changes for you: the Support tab finds a contestant by name,
+  and its actions and the delete confirmation work on the player (deleting
+  removes their event record, never their sign-in account or GitHub link).
+  Secure Development scores reach a player through the GitHub login linked at
+  their sign-in, so a PR author who has never signed in to the box is dropped
+  (counted as `unlinked`, the login is not logged) until #741 holds those
+  instead. `sync` now refuses to start without Redis, and the file-state
+  poller for Redis-less runs is gone. The scorer's `POST /score` takes
+  `{player, target, solved, pr, sha, at}` and `GET /leaderboard` returns
+  `player` rather than `author`; the judge's score-comment marker is
+  unchanged. A master reset keeps accounts and GitHub links, and the event
+  archive never contains them, so demo and load-test accounts survive a reset
+  until **Clear demo data** or `scripts/load-seed.mjs --clean` removes them.
+  The AI launch token's `sub` is now the player id. `GET /api/hints` is
+  behind the pre-launch lock like the other module routes (403
+  `not-launched` before launch, admins pass as a preview). Data written by an
+  earlier version is not migrated: v2 refuses it (#743).
 - **AWS deploys now check credentials before reading Terraform outputs (#750).**
   An expired SSO session fails with a credential message before image work
   starts, while dry runs still make no AWS calls.

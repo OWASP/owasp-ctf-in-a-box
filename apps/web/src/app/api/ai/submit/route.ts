@@ -153,7 +153,7 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
     await logActivity("ai-solve", claims.sub, `${aud} via flag`);
     // First blood (#590): non-blocking, fresh solves only — same contract
     // as classic/submit's hook.
-    void notifyFirstBlood({ module: "ai", challengeId: aud, login: claims.sub });
+    void notifyFirstBlood({ module: "ai", challengeId: aud, playerId: claims.sub });
   }
   return aiAwardResponse(result);
 });

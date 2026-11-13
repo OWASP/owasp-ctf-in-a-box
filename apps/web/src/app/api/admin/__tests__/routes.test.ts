@@ -49,6 +49,7 @@ import { POST as resetPOST } from "@/app/api/admin/reset/route";
 import { POST as seedPOST, DELETE as seedDELETE } from "@/app/api/admin/seed/route";
 import { adminErrorLabel } from "@/lib/admin-store";
 import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const req = (body?: unknown) =>
   new Request("http://x/api/admin/settings", { method: "POST", body: JSON.stringify(body ?? {}) });
@@ -74,7 +75,7 @@ beforeEach(() => {
   resetEvent.mockReset();
   seedDemoData.mockReset();
   clearDemoData.mockReset();
-  requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
   getAdminSettings.mockResolvedValue(SETTINGS);
   getSyncStatus.mockResolvedValue(null);
   getLeaderboardSource.mockResolvedValue({
@@ -111,8 +112,8 @@ describe("GET /api/admin/status", () => {
     getLeaderboardSource.mockResolvedValue({
       getLeaderboard: vi.fn().mockResolvedValue({
         entries: [
-          { rank: 1, login: "a", team: null, points: 10, patched: 1, failed: 0, total: 1, apps: {}, updatedAt: "2026-08-14T10:00:00.000Z" },
-          { rank: 2, login: "b", team: null, points: 5, patched: 1, failed: 0, total: 1, apps: {}, updatedAt: "2026-08-14T12:00:00.000Z" },
+          { rank: 1, playerId: "a", name: "a", image: null, team: null, points: 10, patched: 1, failed: 0, total: 1, apps: {}, updatedAt: "2026-08-14T10:00:00.000Z" },
+          { rank: 2, playerId: "b", name: "b", image: null, team: null, points: 5, patched: 1, failed: 0, total: 1, apps: {}, updatedAt: "2026-08-14T12:00:00.000Z" },
         ],
         teams: [],
         generatedAt: "t",
@@ -154,7 +155,7 @@ describe("POST /api/admin/settings", () => {
     updateAdminSettings.mockResolvedValue(SETTINGS);
     const res = await POST(req({ paused: true }));
     expect(res.status).toBe(200);
-    expect(updateAdminSettings).toHaveBeenCalledWith({ paused: true }, "alice");
+    expect(updateAdminSettings).toHaveBeenCalledWith({ paused: true }, actor("alice"));
     expect(await res.json()).toMatchObject({ settings: { paused: true } });
   });
 
@@ -226,7 +227,7 @@ describe("POST /api/admin/reset", () => {
     resetEvent.mockResolvedValue({ cleared: { solves: 3, teams: 1 }, resetAt: "123" });
     const res = await resetPOST(rreq({ confirm: "Runtime CTF" }));
     expect(res.status).toBe(200);
-    expect(resetEvent).toHaveBeenCalledWith("alice");
+    expect(resetEvent).toHaveBeenCalledWith(actor("alice"));
     expect(await res.json()).toMatchObject({ cleared: { solves: 3 }, resetAt: "123" });
   });
 
@@ -252,7 +253,7 @@ describe("POST /api/admin/reset", () => {
   });
 
   it("rejects a stale confirm name once the organizer renamed the event", async () => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
     const res = await resetPOST(rreq({ confirm: "Test Event" }));
     expect(res.status).toBe(400);
     expect(resetEvent).not.toHaveBeenCalled();
@@ -340,7 +341,7 @@ describe("POST /api/admin/seed", () => {
     seedDemoData.mockResolvedValue({ contestants: 6, teams: 3, solves: 128 });
     const res = await seedPOST(sreq("SEED"));
     expect(res.status).toBe(200);
-    expect(seedDemoData).toHaveBeenCalledWith("alice");
+    expect(seedDemoData).toHaveBeenCalledWith(actor("alice"));
     expect(await res.json()).toMatchObject({ contestants: 6, solves: 128 });
   });
 
@@ -376,7 +377,7 @@ describe("DELETE /api/admin/seed", () => {
     clearDemoData.mockResolvedValue({ contestants: 6, teams: 3, sponsors: 3 });
     const res = await seedDELETE(dreq("CLEAR DEMO DATA"));
     expect(res.status).toBe(200);
-    expect(clearDemoData).toHaveBeenCalledWith("alice");
+    expect(clearDemoData).toHaveBeenCalledWith(actor("alice"));
     expect(await res.json()).toMatchObject({ contestants: 6, sponsors: 3 });
   });
 

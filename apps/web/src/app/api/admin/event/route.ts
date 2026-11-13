@@ -7,6 +7,7 @@ import { ADMIN_AUDIT_KEY, AUDIT_CAP, AdminValidationError } from "@/lib/admin-st
 import { parseEventBundle } from "@/lib/event-io";
 import { EventLiveError, exportEventBundle, importEventBundle } from "@/lib/event-store";
 import { upstashPipeline } from "@/lib/upstash";
+import { auditActor, type AuditActor } from "@/lib/admin-audit-keys";
 
 /**
  * Organizer surface for whole-event archive export (GET) and import (POST).
@@ -48,8 +49,11 @@ function hasOnlyKeys(obj: Record<string, unknown>, allowed: Set<string>): boolea
  *  route's LPUSH+LTRIM pattern. Best-effort: an audit-write failure is
  *  logged but never fails a request whose actual data write already
  *  succeeded. */
-async function writeAudit(actor: string, action: string, detail: Record<string, unknown>): Promise<void> {
-  const audit = JSON.stringify({ at: new Date().toISOString(), by: actor, action, ...detail });
+async function writeAudit(actor: AuditActor, action: string, detail: Record<string, unknown>): Promise<void> {
+  // The line's own fields win over a detail key of the same name (see
+  // writeAdminAudit in admin-store.ts).
+  const entry = { at: new Date().toISOString(), by: actor.id, name: actor.name, action };
+  const audit = JSON.stringify({ ...entry, ...detail, ...entry });
   try {
     await upstashPipeline([
       ["LPUSH", ADMIN_AUDIT_KEY, audit],
@@ -104,8 +108,8 @@ export async function POST(request: Request) {
   if (!parsed.ok) return Response.json({ errors: parsed.errors }, { status: 400 });
 
   try {
-    const { summary, skipped } = await importEventBundle(parsed.bundle, gate.login);
-    await writeAudit(gate.login, "event-import", { summary });
+    const { summary, skipped } = await importEventBundle(parsed.bundle, auditActor(gate.player));
+    await writeAudit(auditActor(gate.player), "event-import", { summary });
     return Response.json({ summary, skipped });
   } catch (e) {
     if (e instanceof EventLiveError) return Response.json({ error: e.message }, { status: 409 });

@@ -13,6 +13,7 @@ import {
   type AdminAiChallenge,
   type AiChallenge,
 } from "@/lib/ai-store";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
  * Organizer authoring surface for the ai (externally hosted AI/LLM) module:
@@ -210,7 +211,7 @@ export async function POST(request: Request) {
     } catch (err) {
       return errorResponse(err);
     }
-    await writeAdminAudit(gate.login, "ai-categories", { count: categories.length });
+    await writeAdminAudit(auditActor(gate.player), "ai-categories", { count: categories.length });
     return NextResponse.json({ categories });
   }
 
@@ -222,7 +223,7 @@ export async function POST(request: Request) {
     } catch (err) {
       return errorResponse(err);
     }
-    await writeAdminAudit(gate.login, "ai-category-rename", {
+    await writeAdminAudit(auditActor(gate.player), "ai-category-rename", {
       from: renamePayload.from,
       to: renamePayload.to,
       moved: result.moved,
@@ -240,7 +241,7 @@ export async function POST(request: Request) {
     }
     // Detail carries the id only — never the new key. See the header
     // comment and `writeAudit`'s own doc comment.
-    await writeAdminAudit(gate.login, "ai-rotate-key", { id: rotateId });
+    await writeAdminAudit(auditActor(gate.player), "ai-rotate-key", { id: rotateId });
     return NextResponse.json({ signingKey });
   }
 
@@ -256,7 +257,7 @@ export async function POST(request: Request) {
     return errorResponse(err);
   }
 
-  await writeAdminAudit(gate.login, "ai-upsert", { id: c.id });
+  await writeAdminAudit(auditActor(gate.player), "ai-upsert", { id: c.id });
   // Echoes the STORED record (the store may normalize the url template, and
   // guarantees a signing key), not the raw payload, so the authoring
   // client's state matches what a subsequent GET would return.
@@ -277,6 +278,6 @@ export async function DELETE(request: Request) {
     return errorResponse(err);
   }
 
-  await writeAdminAudit(gate.login, "ai-delete", { id });
+  await writeAdminAudit(auditActor(gate.player), "ai-delete", { id });
   return NextResponse.json({ ok: true });
 }

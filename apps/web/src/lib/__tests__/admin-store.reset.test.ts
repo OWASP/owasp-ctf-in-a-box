@@ -28,6 +28,7 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
 
 import { RESET_PREFIXES, resetEvent } from "@/lib/admin-store";
 import { ANNOUNCE_WEBHOOK_GENERATION_KEY } from "@/lib/announce/keys";
+import { ALICE, actor } from "./audit-actor";
 
 beforeEach(() => {
   mocks.upstashEval.mockReset();
@@ -69,7 +70,7 @@ describe("resetEvent", () => {
   // outdates it too. One bump at either end alone leaves a window.
   it("opens the score-lowering bracket before the first delete and closes it after the audit eval", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     expect(mocks.beginScoreLowering).toHaveBeenCalledTimes(1);
     expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
     const writes = [...mocks.upstashPipeline.mock.invocationCallOrder, ...mocks.upstashEval.mock.invocationCallOrder];
@@ -80,7 +81,7 @@ describe("resetEvent", () => {
   it("still closes the bracket when the freeze/audit eval throws — the prefix deletes already stand", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
     mocks.upstashEval.mockRejectedValue(new Error("down"));
-    await expect(resetEvent("alice")).rejects.toThrow("down");
+    await expect(resetEvent(actor("alice"))).rejects.toThrow("down");
     expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
   });
 
@@ -92,7 +93,7 @@ describe("resetEvent", () => {
       if (String(cmd[0]) === "INCR") return [{ error: "NOAUTH" }];
       return [{ result: [] }];
     });
-    await expect(resetEvent("alice")).rejects.toThrow(/reset webhook generation/);
+    await expect(resetEvent(actor("alice"))).rejects.toThrow(/reset webhook generation/);
     const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
     expect(commands.some((cmd) => cmd[0] === "SCAN" || cmd[0] === "DEL")).toBe(false);
     for (const [, pattern] of RESET_PREFIXES) {
@@ -107,7 +108,7 @@ describe("resetEvent", () => {
     // wipe is about to remove. Nothing may be deleted in that state.
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
     mocks.beginScoreLowering.mockRejectedValue(new Error("upstash down"));
-    await expect(resetEvent("alice")).rejects.toThrow("upstash down");
+    await expect(resetEvent(actor("alice"))).rejects.toThrow("upstash down");
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
     expect(mocks.upstashEval).not.toHaveBeenCalled();
     expect(mocks.endScoreLowering).not.toHaveBeenCalled();
@@ -117,7 +118,7 @@ describe("resetEvent", () => {
     // two keys for every prefix, single SCAN page each
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1", "k2"]]));
 
-    const out = await resetEvent("alice");
+    const out = await resetEvent(actor("alice"));
 
     expect(out.cleared).toEqual({
       solves: 2,
@@ -201,16 +202,16 @@ describe("resetEvent", () => {
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(script).toContain("'paused', '1'");
     expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit", "ctf:admin:pauses"]);
-    expect(args[0]).toBe("alice"); // actor
+    expect(args[0]).toBe("alice"); // updatedBy: the actor's name
     const auditLine = JSON.parse(String(args[3]));
-    expect(auditLine).toMatchObject({ by: "alice", action: "reset", cleared: { solves: 2, teams: 2 } });
+    expect(auditLine).toMatchObject({ by: ALICE.id, name: "alice", action: "reset", cleared: { solves: 2, teams: 2 } });
   });
 
   // #464: a master reset returns the event to NOT LAUNCHED — the scoring
   // start is cleared in the same atomic script that freezes and audits.
   it("relocks the event: clears scoringStartsAt in the same eval", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [[]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     const [script] = mocks.upstashEval.mock.calls[0];
     expect(script).toMatch(/redis\.call\('HDEL', KEYS\[1\], 'scoringStartsAt'\)/);
   });
@@ -219,7 +220,7 @@ describe("resetEvent", () => {
   // freeze the reset sets is open from the reset instant.
   it("clears the pause log and opens the reset's own freeze in the same eval", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [[]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(keys[2]).toBe("ctf:admin:pauses");
     expect(script).toMatch(/redis\.call\('DEL', KEYS\[3\]\)/);
@@ -229,7 +230,7 @@ describe("resetEvent", () => {
 
   it("wipes quiz answers and attempts", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -244,7 +245,7 @@ describe("resetEvent", () => {
   // reset would silently disconnect an event the organizer already wired up.
   it("KEEPS the Discord webhook configuration across a reset, while wiping announcement state", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -259,7 +260,7 @@ describe("resetEvent", () => {
 
   it("KEEPS the question bank and the answer key across a reset", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -269,7 +270,7 @@ describe("resetEvent", () => {
 
   it("also clears the quiz aggregate totals", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    const out = await resetEvent("alice");
+    const out = await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -281,7 +282,7 @@ describe("resetEvent", () => {
 
   it("wipes classic solves and attempts", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -291,7 +292,7 @@ describe("resetEvent", () => {
 
   it("KEEPS the classic challenge bank, flag key, and categories across a reset", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -303,7 +304,7 @@ describe("resetEvent", () => {
 
   it("also clears the classic aggregate totals", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    const out = await resetEvent("alice");
+    const out = await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -317,7 +318,7 @@ describe("resetEvent", () => {
 
   it("wipes ai solves, attempts and nonces", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -328,7 +329,7 @@ describe("resetEvent", () => {
 
   it("also clears the ai aggregate totals and the per-challenge solvecount", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    const out = await resetEvent("alice");
+    const out = await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -349,7 +350,7 @@ describe("resetEvent", () => {
   // not a reset. Not re-asserted here, just cited.
   it("DOES clear the launch keypair — a master reset must rotate it", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    const out = await resetEvent("alice");
+    const out = await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -364,7 +365,7 @@ describe("resetEvent", () => {
   // (the master reset above) is unchanged.
   it("KEEPS the launch keypair when keepLaunchKey is set — an archive import must not rotate it", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    const out = await resetEvent("alice", { keepLaunchKey: true });
+    const out = await resetEvent(actor("alice"), { keepLaunchKey: true });
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -382,7 +383,7 @@ describe("resetEvent", () => {
 
   it("KEEPS the ai challenge bank, flag/flagnorm, hints, signing keys and categories across a reset", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);
@@ -417,7 +418,7 @@ describe("resetEvent", () => {
       return [{ result: null }];
     });
 
-    await expect(resetEvent("alice")).rejects.toThrow(/SCAN failed \(reset /);
+    await expect(resetEvent(actor("alice"))).rejects.toThrow(/SCAN failed \(reset /);
   });
 
   // The other half of #358, and the one CodeRabbit's review caught: making the
@@ -433,7 +434,7 @@ describe("resetEvent", () => {
       return [{ result: null }];
     });
 
-    await expect(resetEvent("alice")).rejects.toThrow(/command failed \(reset /);
+    await expect(resetEvent(actor("alice"))).rejects.toThrow(/command failed \(reset /);
   });
 
   it("skips DEL for an empty prefix and paginates a multi-page prefix", async () => {
@@ -443,7 +444,7 @@ describe("resetEvent", () => {
       ),
     );
 
-    const out = await resetEvent("bob");
+    const out = await resetEvent(actor("bob"));
 
     expect(out.cleared.solves).toBe(3); // 1 + 2 across two SCAN pages
     expect(out.cleared.teams).toBe(0); // empty -> no DEL

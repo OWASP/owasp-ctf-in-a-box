@@ -860,7 +860,7 @@ if not prevAt or not string.match(prevAt, '^%d%d%d%d%-%d%d%-%d%dT') or prevAt < 
 end
 -- Name the first SOLVER in the same atomic award that banks the answer, so
 -- the announcer never has to race its own claim for the first-blood post.
-redis.call('HSETNX', KEYS[#KEYS], ARGV[#ARGV], cjson.encode({login = ARGV[4], at = ARGV[3]}))
+redis.call('HSETNX', KEYS[#KEYS], ARGV[#ARGV], cjson.encode({playerId = ARGV[4], at = ARGV[3]}))
 return {'correct', tostring(points)}`;
 
 export type AnswerResult =

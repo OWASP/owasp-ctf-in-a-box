@@ -97,16 +97,21 @@ routes would refuse.
 > **Secure Development still has no route to refuse.** Its points arrive
 > from GitHub through the sync poller rather than through an app route, so a
 > contestant who patches a fork while on no team has their score ingested
-> against a login that belongs to no team, and it contributes to no team
+> against a player that belongs to no team, and it contributes to no team
 > total **until they join one** — team totals fold from current membership
-> at read time, so already-banked solves count from the moment the login is
+> at read time, so already-banked solves count from the moment the player is
 > on a team. That deferred-credit behavior is deliberate: refusing the score
 > at ingestion would lose it permanently (the poller marks the comment seen),
-> whereas banking the score against the login only delays credit. The
+> whereas banking the score against the player only delays credit. The
 > sign-in steering
 > above is what closes the gap in practice — it is the only enforcement
 > point this module's scoring path passes through — so it matters most for
 > events running Secure Development.
+>
+> Deferred credit needs the PR author to be a linked player when sync reads
+> the score: a contestant links their GitHub login by signing in with GitHub.
+> A score whose author nobody has linked is dropped, not banked, and is not
+> retried (holding those scores until the author links is #741).
 
 Captains
 manage the roster from the app: rename the team, remove a member, transfer the
@@ -689,7 +694,7 @@ The panel offers:
   | Figure | Counts | Does not count |
   |---|---|---|
   | **On a team** | Distinct logins on a team **right now** | Anyone who has since left |
-  | **Ever on a team** | Distinct logins that have **ever** joined one — survives leaving and switching, including a player who left without scoring (found through their user record) | Signing in; that leaves no record at all |
+  | **Ever on a team** | Distinct players that have **ever** joined one — survives leaving and switching, including a player who left without scoring (found through their user record) | Signing in; that leaves no record at all |
   | **Submitted** | Made at least one submission in any module | — |
   | **Scored** | Earned at least one point-bearing item in any module, Secure Development included | Submissions that never landed a point |
   | **Stuck** | Submitted **and never scored** | Anyone who has not submitted yet |
@@ -727,11 +732,13 @@ The panel offers:
   destructive control was the master reset below, so an organizer facing a
   single stuck contestant chose between doing nothing and wiping the event.
 
-  Look a contestant up by GitHub login and the tab shows their team, their
-  points and solves per module, their attempt count and their hint spend. Every
-  action stays disabled until a lookup returns — seeing the score you are about
-  to delete is the guard against resetting the wrong person from a
-  half-remembered username while a room waits.
+  Search for a contestant by name (their display name or GitHub login, any
+  part of it, any case), pick them from the matches, and the tab shows their
+  team, their points and solves per module, their attempt count and their hint
+  spend. Every action stays disabled until that lookup returns, and every
+  action is sent with the picked player's id, never a typed name — seeing the
+  score you are about to delete is the guard against resetting the wrong
+  person while a room waits.
 
   ![The Support tab after a contestant lookup: their team and captain status, when they first joined a team, points and solves per module, attempt count and hint spend, with the reset and delete controls beneath](assets/admin-support.jpg)
 
@@ -739,21 +746,23 @@ The panel offers:
   From there: **reset progress** (clears their Secure Development solves on
   every target, their quiz answers, classic and AI solves, attempts and hints;
   keeps the account and the team), **delete contestant** (all of that
-  plus the team membership and the account record), **remove from team**, or
+  plus the team membership, their event record and their rate-limit counters;
+  the sign-in account and its GitHub link stay), **remove from team**, or
   **add to team** / **move to team**: type a team slug and the player goes
   onto it, leaving their current team if they have one, whatever the
   registration state. This is how a player who left after registration
   closed gets back. The team-size cap applies unless you tick **over the
   team-size cap**; a captain of a team with other members must hand it over
   first, as with leaving; a team their move empties is deleted with its join
-  code, as when its last member leaves. The player is found by the spelling
-  they signed in with, so a login that has never signed in is refused. Their
+  code, as when its last member leaves. Only a player with an account can be
+  added; an id with none is refused. Their
   points count for the new team on the next board read, and their `joinedAt`
   is the move, so earlier solves do not open the new team's story steps. The
   move is in the admin audit log (`ops:team-add-member`) and the activity log
   (as a team join).
   Team-side, there is **transfer captaincy** and **disband** — the captain-only
-  controls, available to an organizer for when the captain is unreachable. That
+  controls, available to an organizer for when the captain is unreachable. To
+  transfer, pick the new captain in the search first; the button names them. That
   is the common live ticket: a captainless team cannot rename, remove a member,
   regenerate its code, or disband on its own, and nothing else can rescue it.
 
@@ -806,7 +815,9 @@ The panel offers:
   hints and categories — along with your admin settings, and appends the
   reset to the audit log. Sign-in state survives it too: contestant accounts,
   admin sign-ins and sessions (the `ctf:auth:` keys) are untouched, so players
-  stay signed in across a reset. It does rotate the AI
+  stay signed in across a reset, and so do the GitHub links
+  (`ctf:link:*`) that tie a player to the GitHub login their PRs score
+  under. It does rotate the AI
   module's launch keypair (see [below](#ai)), so an external challenge site
   re-fetches the public key on its next verification. It is server-side and
   admin-gated, and requires **typing the event name** — the current runtime
@@ -890,7 +901,8 @@ The panel offers:
   danger zone**, above the master reset: Seed writes fake rows into the live
   event and Clear deletes rows again, which is the same class of action as a
   wipe, not ordinary setup. Clear removes exactly the run-state rows
-  Seed added — the fake contestants, teams, solves, and sponsors — but
+  Seed added — the fake contestants (their account rows too, which a master
+  reset would keep), teams, solves, and sponsors — but
   deliberately leaves the demo quiz/classic/ai questions, challenges, flags,
   and categories in place: once written they're authored content, the same
   way a master reset already treats real challenges, so remove those by
@@ -2295,27 +2307,28 @@ Before content authoring, not after — the harness seeds synthetic contestants
 and a master reset is already on the plan between the two. It runs
 `scripts/load-seed.mjs` **inside the Fly machine's `app` container** (srh is on
 the private network; the container already holds the URL and token the app
-writes through) to create N `load-XXXX` contestants (N at least 2) on teams
-of 2–4 with a
+writes through) to create N `load-XXXX` contestants (N at least 2), each a real account
+row under a fresh player id (display name `load-XXXX`, no GitHub link), on
+teams of 2–4 with a
 realistic spread of Secure Development, quiz and flag solves attached to the
 catalogue the box already has; then drives `/leaderboard` at 10 req/s and
 `?display=1` at 2 req/s with autocannon while sampling machine memory, and
 writes one Markdown report. Ownership is a **manifest, not a name**:
-`load-0001` is a legal GitHub login and nothing reserves it, so the seed
-records every key and every shared-hash field it writes in a manifest
+a display name reserves nothing, so the seed
+records every key and every shared-hash field it writes, the account rows
+included, in a manifest
 (`ctf:load-seed:manifest` plus two sets of keys and fields, each batch adding
 only its own delta, so a large seed stays linear), and refuses to run if any
 of them already exists
-and is not in its previous manifest (a real contestant may own that login).
+and is not in its previous manifest (a real contestant may own that row).
 The check and the write are one Redis-side script per batch, so a
-contestant registering such a login *between* the two cannot be written
+contestant registering *between* the two cannot be written
 over — there is no between. A collision aborts *that batch* before it writes
 anything; batches before it are already committed and recorded in the
 manifest (marked incomplete), so the seed can be partial and the next seed
 refuses to run until `--clean` has removed it. Still, run the harness before
-registration opens (or with it closed): a contestant who registers
-`load-0042` *after* the seed would be sharing rows the next `--clean`
-removes.
+registration opens (or with it closed): rows a real contestant adds
+to a seeded key *after* the seed are rows the next `--clean` removes.
 The manifest is written incrementally — each batch of writes ends by
 recording what has landed so far — so a seed that dies half-way leaves a
 manifest naming exactly the rows it wrote, marked incomplete, and the next
@@ -2324,8 +2337,10 @@ seed refuses to run until `--clean` has removed them. `--clean` needs no
 challenge removed or a module switched off after seeding cannot strand a
 row, and nothing absent from the manifest is ever targeted. What *is*
 listed is deleted whole, later writes included: that is the
-`load-0042`-registers-after-the-seed case above, and the reason to run the
-harness before registration opens. One seed or clean runs at a time — both
+case above, and the reason to run the harness before registration opens.
+**A master reset does not remove the seeded accounts**, because accounts
+survive it; `--clean` is what takes the whole seed away, before or after a
+reset. One seed or clean runs at a time — both
 hold a Redis lock (`ctf:load-seed:lock`) for the whole operation, so a clean
 cannot race a seed and orphan its rows; a run that finds the lock held
 refuses and prints who has held it since when. The lock never expires by
@@ -2414,7 +2429,7 @@ A read-only differential audit of the scores the board shows. It runs
 `scripts/score-audit.mjs` **inside the Fly machine's `app` container** (the
 same upload-and-run as the load test), reads every key the leaderboard is
 folded from — the scorer's `ctf:solves:<target>` hashes and its rubric
-catalogue, the quiz, Jeopardy and AI aggregates and per-login rows, hint
+catalogue, the quiz, Jeopardy and AI aggregates and per-player rows, hint
 spend, team rosters, the module switches — and recomputes every
 contestant's and every team's total, per module and overall, with ranks.
 That recompute is a second implementation of the rules on this page and in
@@ -2431,9 +2446,10 @@ scripts/score-audit.sh --app <fly-app> [--report <path>]
 What it checks, beyond the totals: each module block's points and item
 count, the hint penalty, each contestant's team chip, each team's roster,
 and ranks (a full tie may come in either order); and three store
-invariants — each quiz/Jeopardy/AI aggregate equals the per-login rows it
-sums, a login is on at most one team, and its `ctf:user:<login>` record
-names that team.
+invariants — each quiz/Jeopardy/AI aggregate equals the per-player rows it
+sums, a player is on at most one team, and its `ctf:user:<id>` record
+names that team. Findings name the player by id with the display name
+beside it.
 
 Exit codes:
 
@@ -2641,13 +2657,19 @@ setting.
 Watch a new score land live, without a real PR:
 
 ```sh
-./scripts/dev-stack score <login> <juice-shop|dvwa> <n>   # marks the first <n> catalogue challenges solved
+./scripts/dev-stack score <player> <juice-shop|dvwa> <n>   # <player> is a player id or a linked login; marks the first <n> catalogue challenges solved
 ./scripts/dev-stack score alice-dev juice-shop 3
 ./scripts/dev-stack score carol-dev dvwa 2
 ```
 
 Those are the only two targets the script knows — it seeds a curated slice
 of each one's rubric catalogue, and refuses any other target name.
+
+The four demo players (`alice-dev`, `bob-dev`, `carol-dev`, `mallory-dev`) are real accounts with fixed ids (`up` writes their
+auth rows and GitHub link keys), so `score` takes a login or a player id; a
+login with no link key is refused by name rather than sent to the scorer.
+`up` never overwrites an existing link key, so a real developer whose login
+matches a demo one keeps their own link.
 
 Tear down with `./scripts/dev-stack down` (keeps seeded data in the Redis
 volume for next time) or `./scripts/dev-stack down --wipe` (also drops it).

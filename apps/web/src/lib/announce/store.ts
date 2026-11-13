@@ -39,6 +39,7 @@ import {
   type DiscordFullConfig,
   type DiscordPublicConfig,
 } from "@/lib/discord-config";
+import type { AuditActor } from "@/lib/admin-audit-keys";
 import {
   ANNOUNCE_COOLDOWN_KEY,
   ANNOUNCE_LEASE_MS,
@@ -206,7 +207,7 @@ return 1
  *  is FIXED — it names the field position and the rule, never the submitted
  *  value or key, so a secret-like marker in a request cannot be echoed back
  *  through an admin-visible error. */
-export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPatch): Promise<DiscordPublicConfig> {
+export async function updateAnnounceConfig(actor: AuditActor, patch: DiscordConfigPatch): Promise<DiscordPublicConfig> {
   const boolKeys = ["firstBlood", "launch", "pause", "milestones"] as const;
   const known = new Set<string>([...boolKeys, "marks"]);
   for (const key of Object.keys(patch)) {
@@ -295,7 +296,7 @@ return generation
 
 /** Stores or clears the webhook URL. `null` clears. The audit trail records
  *  ONLY "set"/"cleared" — never the URL, which is a live credential. */
-export async function setAnnounceWebhook(actor: string, raw: unknown): Promise<{ webhookConfigured: boolean }> {
+export async function setAnnounceWebhook(actor: AuditActor, raw: unknown): Promise<{ webhookConfigured: boolean }> {
   if (raw === null) {
     // Clearing the URL must cancel everything already retained, for the same
     // reason a switch-off does: a later set would deliver it to the new URL.

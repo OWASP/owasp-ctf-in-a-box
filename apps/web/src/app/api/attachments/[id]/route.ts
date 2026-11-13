@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ATTACHMENT_ID_RE, contentDisposition } from "@/lib/attachments-keys";
 import { readUploadBytes, resolveAttachment } from "@/lib/attachments-store";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { classicVisibility } from "@/lib/classic-visibility";
 import { errorLabel } from "@/lib/error-label";
 import { requireLaunchedApi } from "@/lib/launch";
@@ -38,16 +38,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!ATTACHMENT_ID_RE.test(id)) return notFound();
 
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
-    const login = (session?.user as { login?: string } | undefined)?.login;
+    const player = await getPlayer(request.headers);
     // The module-API launch contract first (#464): before launch, 403
     // not-launched to anyone but an admin — decided before the attachment is
     // even looked up, so nothing about it can differ.
-    const locked = await requireLaunchedApi(login);
+    const locked = await requireLaunchedApi(player?.githubLogin ?? undefined);
     if (locked) return locked;
     const found = await resolveAttachment(id);
     if (!found) return notFound();
-    if ((await classicVisibility(login, found.itemId)).state !== "visible") return notFound();
+    if ((await classicVisibility(player, found.itemId)).state !== "visible") return notFound();
 
     const att = found.attachment;
     if (att.kind !== "upload" || att.missing || !att.sha256) return notFound();

@@ -10,7 +10,7 @@ import { getLeaderboardSource } from "@/lib/leaderboard/source";
 // No hint imports: Secure Development has no hint text and no producer for
 // it, so this page shows no hint banner and no bulbs (issue #334). Classic and
 // ai keep theirs on their own boards.
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { headers } from "next/headers";
 import { getGithubOrg } from "@/lib/bootstrap-env";
 import { isModuleLive } from "@/lib/enabled-modules";
@@ -57,8 +57,8 @@ export default async function ChallengesPage() {
   // The session first, on its own: the #464 pre-launch lock must run before
   // any content load (a refused viewer goes to the landing page). It also
   // feeds the viewer's own solved marks below.
-  const session = await auth.api.getSession({ headers: await headers() });
-  const launch = await redirectIfNotLaunched((session?.user as { login?: string } | undefined)?.login);
+  const player = await getPlayer(await headers());
+  const launch = await redirectIfNotLaunched(player?.githubLogin ?? undefined);
 
   const [catalog, title, enabledApps, enabledTotals] = await Promise.all([
     getChallengeCatalog(),
@@ -71,12 +71,11 @@ export default async function ChallengesPage() {
   // same per-challenge results their profile shows, keyed for the grid. Only
   // when signed in and only when the source carries per-challenge data; any
   // failure degrades to "no solved marks", never to an error.
-  const login = (session?.user as { login?: string } | undefined)?.login;
   let solved: Partial<Record<string, string[]>> = {};
-  if (login) {
+  if (player) {
     try {
       const source = await getLeaderboardSource();
-      const profile = await source.getUser(login);
+      const profile = await source.getUser(player.id);
       for (const app of profile?.apps ?? []) {
         // `solvedIds` is exactly the patched set, already narrowed to ids the
         // catalogue still holds (issue #434 — rows no longer carry the

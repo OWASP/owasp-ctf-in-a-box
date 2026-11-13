@@ -13,7 +13,7 @@
 // honest zero beats a list that silently omits teammates.
 
 import { adjustmentLabel } from "@/lib/leaderboard/adjustment-label";
-import Image from "next/image";
+import { Avatar } from "@/components/leaderboard-chrome";
 import type { LeaderboardEntry, TeamStanding } from "@/lib/leaderboard/types";
 import { moduleVerb } from "@/components/progress/progress-row";
 
@@ -32,13 +32,14 @@ function memberSummary(entry: LeaderboardEntry | null): string | null {
 export default function TeamProgress({
   standing,
   memberEntries,
-  viewerLogin,
+  viewerId,
 }: {
   standing: TeamStanding;
   /** One entry per roster member, in roster order; null when that member has
    *  no scored activity yet. */
-  memberEntries: { login: string; entry: LeaderboardEntry | null }[];
-  viewerLogin: string;
+  memberEntries: { playerId: string; name: string; image: string | null; entry: LeaderboardEntry | null }[];
+  /** The signed-in player's id, for the "you" marker. */
+  viewerId: string;
 }) {
   const rows = [...memberEntries].sort((a, b) => (b.entry?.points ?? 0) - (a.entry?.points ?? 0));
   const memberSum = rows.reduce((n, r) => n + (r.entry?.points ?? 0), 0);
@@ -68,26 +69,19 @@ export default function TeamProgress({
       </div>
 
       <ul className="mt-4 flex flex-col">
-        {rows.map(({ login, entry }) => (
+        {rows.map(({ playerId, name, image, entry }) => (
           <li
-            key={login}
+            key={playerId}
             className="flex items-center gap-3 border-b border-white/[0.04] py-2 last:border-b-0"
           >
-            <Image
-              src={`https://avatars.githubusercontent.com/${login}`}
-              alt=""
-              width={28}
-              height={28}
-              className="flex-none rounded-full border border-white/10"
-              unoptimized
-            />
+            <Avatar name={name} image={image} size={28} />
             <div className="min-w-0 flex-1">
               <p className="truncate font-mono text-sm text-white">
-                {login}
-                {login === viewerLogin && (
+                <bdi>{name}</bdi>
+                {playerId === viewerId && (
                   <span className="ml-2 text-[10px] uppercase tracking-wide text-[#2563eb]">you</span>
                 )}
-                {login === standing.captain && (
+                {playerId === standing.captain && (
                   <span className="ml-2 text-[10px] uppercase tracking-wide text-[#d4a017]">captain</span>
                 )}
               </p>

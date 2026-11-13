@@ -70,6 +70,7 @@ vi.mock("@/lib/admin-store", () => ({
 }));
 
 import { GET, POST, DELETE, CHALLENGE_KEYS, CATEGORIES_KEYS, ROTATE_KEYS } from "@/app/api/admin/ai/route";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const adminReq = (method: "GET" | "POST" | "DELETE", body?: unknown) =>
   new Request("http://x/api/admin/ai", {
@@ -93,7 +94,7 @@ const validPayload = { ...CHALLENGE, flag: "CTF{flag}" };
 const ADMIN_ROW = { challenge: CHALLENGE, flag: "CTF{flag}", hint: null, signingKey: "signkey-abc" };
 
 function allowAdmin() {
-  requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
 }
 
 function denyAdmin() {
@@ -214,7 +215,7 @@ describe("POST /api/admin/ai — categories", () => {
     expect(res.status).toBe(200);
     expect(setAiCategories).toHaveBeenCalledWith(["AI", "Prompt"]);
     expect(await res.json()).toEqual({ categories: ["AI", "Prompt"] });
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "ai-categories", { count: 2 });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "ai-categories", { count: 2 });
   });
 
   it("maps a validation error to 400 and a store failure to 503", async () => {
@@ -241,7 +242,7 @@ describe("POST /api/admin/ai — rotate", () => {
     expect(rotateAiSigningKey).toHaveBeenCalledWith("c-1");
     expect(await res.json()).toEqual({ signingKey: "new-key-xyz" });
 
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "ai-rotate-key", { id: "c-1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "ai-rotate-key", { id: "c-1" });
     // The new key itself is NEVER in the audit detail — only the id.
     expect(JSON.stringify(writeAdminAudit.mock.calls[0])).not.toContain("new-key-xyz");
   });
@@ -278,7 +279,7 @@ describe("POST /api/admin/ai — challenge upsert", () => {
     expect(upsertAiChallenge).toHaveBeenCalledWith(CHALLENGE, { flag: "CTF{flag}", hint: "try harder" });
     expect(await res.json()).toEqual(ADMIN_ROW);
 
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "ai-upsert", { id: "c-1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "ai-upsert", { id: "c-1" });
   });
 
   it("400s with the message for an AiValidationError from the store", async () => {
@@ -321,7 +322,7 @@ describe("DELETE /api/admin/ai", () => {
     const res = await DELETE(adminReq("DELETE", { id: "c-1" }));
     expect(res.status).toBe(200);
     expect(deleteAiChallenge).toHaveBeenCalledWith("c-1");
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "ai-delete", { id: "c-1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "ai-delete", { id: "c-1" });
   });
 
   it("400s with the message for an AiValidationError from the store", async () => {

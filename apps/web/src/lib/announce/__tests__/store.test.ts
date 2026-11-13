@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
   upstashPipeline: vi.fn<(commands: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
-  writeAdminAudit: vi.fn<(actor: string, action: string, detail: Record<string, unknown>) => Promise<void>>(),
+  writeAdminAudit: vi.fn<(actor: { id: string; name: string }, action: string, detail: Record<string, unknown>) => Promise<void>>(),
   getAdminSettings: vi.fn(),
 }));
 
@@ -62,6 +62,8 @@ import {
   WEBHOOK_CLEAR_SCRIPT,
   WEBHOOK_TARGET_SCRIPT,
 } from "@/lib/announce/store";
+
+const ADMIN = { id: "admin-id", name: "admin" };
 import {
   ANNOUNCE_COOLDOWN_KEY,
   ANNOUNCE_FIRST_KEY,
@@ -169,22 +171,22 @@ describe("getAnnounceConfig", () => {
 
 describe("updateAnnounceConfig", () => {
   it("refuses unknown keys and writes nothing", async () => {
-    await expect(updateAnnounceConfig("admin", { bogus: true } as never)).rejects.toBeInstanceOf(AnnounceValidationError);
+    await expect(updateAnnounceConfig(ADMIN, { bogus: true } as never)).rejects.toBeInstanceOf(AnnounceValidationError);
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
   // The key is request-controlled text — the refusal message must carry the
   // rule, never the submitted key, or a marker smuggled in one echoes back.
   it("the unknown-key refusal is a FIXED message that never echoes the key", async () => {
-    await expect(updateAnnounceConfig("admin", { "FLAG{canary-in-a-key}": true } as never)).rejects.toThrow("unknown announcement setting");
-    await expect(updateAnnounceConfig("admin", { "FLAG{canary-in-a-key}": true } as never)).rejects.not.toThrow(/canary/);
+    await expect(updateAnnounceConfig(ADMIN, { "FLAG{canary-in-a-key}": true } as never)).rejects.toThrow("unknown announcement setting");
+    await expect(updateAnnounceConfig(ADMIN, { "FLAG{canary-in-a-key}": true } as never)).rejects.not.toThrow(/canary/);
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
   it("refuses a bad marks value, and any field outside the patch set, writing nothing", async () => {
-    await expect(updateAnnounceConfig("admin", { marks: "soon" })).rejects.toBeInstanceOf(AnnounceValidationError);
+    await expect(updateAnnounceConfig(ADMIN, { marks: "soon" })).rejects.toBeInstanceOf(AnnounceValidationError);
     for (const patch of [{ releases: true }, { leaderScope: "top3" }, { dailyAt: "09:00" }, { dailyTopN: 10 }] as never[]) {
-      await expect(updateAnnounceConfig("admin", patch)).rejects.toBeInstanceOf(AnnounceValidationError);
+      await expect(updateAnnounceConfig(ADMIN, patch)).rejects.toBeInstanceOf(AnnounceValidationError);
     }
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
@@ -193,13 +195,13 @@ describe("updateAnnounceConfig", () => {
     mocks.upstashPipeline.mockImplementation(async (commands) =>
       commands.map((cmd) => ({ result: cmd[0] === "GET" ? null : ([] as unknown[]) })),
     );
-    const config = await updateAnnounceConfig("admin", { firstBlood: true, marks: "15m, 5m" });
+    const config = await updateAnnounceConfig(ADMIN, { firstBlood: true, marks: "15m, 5m" });
     expect(config.firstBlood).toBe(true);
     expect(config.marks).toBe("15m, 5m");
     const hset = mocks.upstashPipeline.mock.calls[0][0][0];
     expect(hset[0]).toBe("HSET");
     expect(hset).toContain(DISCORD_CONFIG_KEY);
-    expect(mocks.writeAdminAudit).toHaveBeenCalledWith("admin", "announce-config", { firstBlood: true, marks: "15m, 5m" });
+    expect(mocks.writeAdminAudit).toHaveBeenCalledWith(ADMIN, "announce-config", { firstBlood: true, marks: "15m, 5m" });
   });
 
   it("cancels retained entries for every stream a patch turns off, before the config write", async () => {
@@ -221,7 +223,7 @@ describe("updateAnnounceConfig", () => {
         return { result: cmd[0] === "GET" ? null : [] };
       }),
     );
-    await updateAnnounceConfig("admin", { pause: false, milestones: false });
+    await updateAnnounceConfig(ADMIN, { pause: false, milestones: false });
     const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
     const skipped = commands
       .filter((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT)
@@ -254,7 +256,7 @@ describe("updateAnnounceConfig", () => {
     mocks.upstashPipeline.mockImplementation(async (commands) =>
       commands.map((cmd) => (cmd[0] === "HGETALL" && cmd[1] === ANNOUNCE_OUTBOX_KEY ? { error: "NOAUTH" } : { result: [] })),
     );
-    await expect(updateAnnounceConfig("admin", { launch: false })).rejects.toThrow(/outbox read failed/);
+    await expect(updateAnnounceConfig(ADMIN, { launch: false })).rejects.toThrow(/outbox read failed/);
     const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
     expect(commands.some((cmd) => cmd[0] === "HSET" && cmd.includes(DISCORD_CONFIG_KEY))).toBe(false);
     expect(mocks.upstashEval.mock.calls.some((call) => call[0] === SWITCH_DISABLE_SCRIPT)).toBe(false);
@@ -266,13 +268,13 @@ describe("setAnnounceWebhook", () => {
     mocks.upstashPipeline.mockImplementation(async (commands) =>
       commands.map((cmd) => (cmd[0] === "GET" ? { result: null } : { result: "OK" })),
     );
-    const result = await setAnnounceWebhook("admin", VALID_URL);
+    const result = await setAnnounceWebhook(ADMIN, VALID_URL);
     expect(result).toEqual({ webhookConfigured: true });
     const set = mocks.upstashPipeline.mock.calls
       .flatMap((call) => call[0])
       .find((cmd) => cmd[0] === "SET" && cmd[1] === DISCORD_WEBHOOK_KEY);
     expect(set).toBeDefined();
-    expect(mocks.writeAdminAudit).toHaveBeenCalledWith("admin", "announce-webhook", { state: "set" });
+    expect(mocks.writeAdminAudit).toHaveBeenCalledWith(ADMIN, "announce-webhook", { state: "set" });
     expect(JSON.stringify(mocks.writeAdminAudit.mock.calls)).not.toContain(VALID_URL);
   });
 
@@ -293,7 +295,7 @@ describe("setAnnounceWebhook", () => {
       }),
     );
     mocks.upstashEval.mockResolvedValue([1, 5, "v2|L0P0C0A0"]);
-    await setAnnounceWebhook("admin", VALID_URL);
+    await setAnnounceWebhook(ADMIN, VALID_URL);
     expect(mocks.upstashEval).toHaveBeenCalledWith(expect.any(String), ["ctf:announce:lifecycle", "ctf:announce:seq"], [
       "v2|L0P0C0A0",
       "v2|L1P0C1A0",
@@ -316,7 +318,7 @@ describe("setAnnounceWebhook", () => {
         return { result: "OK" };
       }),
     );
-    await setAnnounceWebhook("admin", VALID_URL);
+    await setAnnounceWebhook(ADMIN, VALID_URL);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
     expect(mocks.getAdminSettings).not.toHaveBeenCalled();
     const reads = mocks.upstashPipeline.mock.calls
@@ -340,7 +342,7 @@ describe("setAnnounceWebhook", () => {
       }),
     );
     mocks.upstashEval.mockResolvedValue([1, 6, "v2|L1P1C0A1"]);
-    await setAnnounceWebhook("admin", VALID_URL);
+    await setAnnounceWebhook(ADMIN, VALID_URL);
     expect(mocks.upstashEval).toHaveBeenCalledWith(expect.any(String), ["ctf:announce:lifecycle", "ctf:announce:seq"], [
       "v2|L1P1C0A1",
       "v2|L1P0C1A1",
@@ -349,17 +351,17 @@ describe("setAnnounceWebhook", () => {
   });
 
   it("refuses a non-Discord URL with a validation error and writes nothing", async () => {
-    await expect(setAnnounceWebhook("admin", "https://evil.example/api/webhooks/1/2")).rejects.toBeInstanceOf(AnnounceValidationError);
+    await expect(setAnnounceWebhook(ADMIN, "https://evil.example/api/webhooks/1/2")).rejects.toBeInstanceOf(AnnounceValidationError);
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
   it("clears atomically, advancing the webhook generation, and audits only 'cleared'", async () => {
     mocks.upstashPipeline.mockImplementation(async (commands) => commands.map(() => ({ result: 1 })));
     mocks.upstashEval.mockResolvedValue(1);
-    const result = await setAnnounceWebhook("admin", null);
+    const result = await setAnnounceWebhook(ADMIN, null);
     expect(result).toEqual({ webhookConfigured: false });
     expect(mocks.upstashEval).toHaveBeenCalledWith(WEBHOOK_CLEAR_SCRIPT, [DISCORD_WEBHOOK_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY], []);
-    expect(mocks.writeAdminAudit).toHaveBeenCalledWith("admin", "announce-webhook", { state: "cleared" });
+    expect(mocks.writeAdminAudit).toHaveBeenCalledWith(ADMIN, "announce-webhook", { state: "cleared" });
   });
 
   it("cancels every retained entry before clearing the webhook", async () => {
@@ -381,7 +383,7 @@ describe("setAnnounceWebhook", () => {
       if (script === WEBHOOK_CLEAR_SCRIPT) order.push("clear");
       return 1;
     });
-    await setAnnounceWebhook("admin", null);
+    await setAnnounceWebhook(ADMIN, null);
     expect(order).toEqual(["skip:p1", "skip:l1", "clear"]);
   });
 
@@ -390,7 +392,7 @@ describe("setAnnounceWebhook", () => {
     mocks.upstashPipeline
       .mockResolvedValueOnce([{ result: ["l1", entry] }])
       .mockResolvedValueOnce([{ error: "OOM" }]);
-    await expect(setAnnounceWebhook("admin", null)).rejects.toThrow(/outbox cancel failed/);
+    await expect(setAnnounceWebhook(ADMIN, null)).rejects.toThrow(/outbox cancel failed/);
     expect(mocks.upstashEval.mock.calls.some(([script]) => script === WEBHOOK_CLEAR_SCRIPT)).toBe(false);
   });
 
@@ -402,7 +404,7 @@ describe("setAnnounceWebhook", () => {
         return { result: "OK" };
       }),
     );
-    await expect(setAnnounceWebhook("admin", VALID_URL)).rejects.toThrow(/state read failed/);
+    await expect(setAnnounceWebhook(ADMIN, VALID_URL)).rejects.toThrow(/state read failed/);
     const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
     expect(commands.some((cmd) => cmd[0] === "SET" && cmd[1] === DISCORD_WEBHOOK_KEY)).toBe(false);
   });
@@ -421,7 +423,7 @@ describe("setAnnounceWebhook", () => {
       }),
     );
     mocks.upstashEval.mockResolvedValue([0, 1, "v2|L0P0C0A0"]);
-    await expect(setAnnounceWebhook("admin", VALID_URL)).rejects.toThrow(/did not converge/);
+    await expect(setAnnounceWebhook(ADMIN, VALID_URL)).rejects.toThrow(/did not converge/);
     expect(mocks.upstashEval).toHaveBeenCalledTimes(3);
     const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
     expect(commands.some((cmd) => cmd[0] === "SET" && cmd[1] === DISCORD_WEBHOOK_KEY)).toBe(false);

@@ -63,7 +63,7 @@ const req = (method: string, body?: unknown, path = "/api/admin/announcements") 
 
 beforeEach(() => {
   for (const m of Object.values(mocks)) if (typeof m === "function" && "mockReset" in m) (m as ReturnType<typeof vi.fn>).mockReset();
-  mocks.requireAdmin.mockResolvedValue({ ok: true, login: "organizer" });
+  mocks.requireAdmin.mockResolvedValue({ ok: true, login: "organizer", player: { id: "organizer-id", name: "organizer" } });
   mocks.getAnnounceConfig.mockResolvedValue(fullConfig);
   mocks.publicConfig.mockImplementation((c: Record<string, unknown>) => {
     const rest = { ...c };
@@ -213,7 +213,7 @@ describe("webhook POST", () => {
   it("stores the URL, never returns it, and nudges an immediate observation", async () => {
     const res = await WEBHOOK(req("POST", { webhookUrl: URL }, "/api/admin/announcements/webhook"));
     expect(res.status).toBe(200);
-    expect(mocks.setAnnounceWebhook).toHaveBeenCalledWith("organizer", URL);
+    expect(mocks.setAnnounceWebhook).toHaveBeenCalledWith({ id: "organizer-id", name: "organizer" }, URL);
     expect(mocks.nudgeAnnounceTicker).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(await res.json())).not.toContain(URL);
   });

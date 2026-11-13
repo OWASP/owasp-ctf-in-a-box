@@ -126,7 +126,7 @@ describe("reset and the webhook generation", () => {
     expect(before.webhookGeneration).toBe(0);
 
     const callsBeforeReset = mocks.upstashPipeline.mock.calls.length;
-    await resetEvent("admin");
+    await resetEvent({ id: "admin-id", name: "admin" });
     expect(state.generation).toBe(1);
     const resetCalls = mocks.upstashPipeline.mock.calls.map((call) => call[0][0]).slice(callsBeforeReset);
     expect(resetCalls.slice(0, 1)).toEqual([["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]]);

@@ -1,5 +1,6 @@
 import "server-only";
 import type { AppId } from "@/lib/apps";
+import { unnamed } from "@/lib/display-name";
 import { rankByStanding } from "./rank";
 import type { LeaderboardSource } from "./source";
 import type {
@@ -14,11 +15,13 @@ import type {
 } from "./types";
 
 // Shape returned by the deployed Lambda's real scoring endpoint:
-// { leaderboard: [{ rank, author, points, lastSolveAt,
+// { leaderboard: [{ rank, player, points, lastSolveAt,
 //                   apps: { "juice-shop": { solved, total }, ... } }],
-//   series: [{ login, points: [{ t, score }, ...] }, ...],
+//   series: [{ player, points: [{ t, score }, ...] }, ...],
 //   teams: [{ rank, slug, name, captain, members, points, lastSolveAt, apps }, ...],
 //   teamSeries: [{ slug, name, points: [{ t, score }, ...] }, ...] }
+// `player` (on a row and on a series line) is the kit user id; each
+// becomes the row's `playerId`, and names are attached by the fold.
 // There is no per-app point/max breakdown in this source. `series`/`teams`/
 // `teamSeries` are all additive — read defensively since an older scorer
 // deployment may not send any of them at all.
@@ -31,7 +34,7 @@ type LambdaAppProgress = {
 };
 type LambdaEntry = {
   rank: number;
-  author: string;
+  player: string;
   points: number;
   /** ISO time of the most recent solve — added for tie-breaking. */
   lastSolveAt?: string | null;
@@ -43,7 +46,7 @@ type LambdaCatalog = Partial<Record<AppId, LambdaCatalogEntry[]>>;
 // Loosely typed on purpose — this is unvalidated network input, tolerated
 // (not assumed) to match the documented `series`/`teams`/`teamSeries` shapes.
 type RawSeriesPoint = { t?: unknown; score?: unknown };
-type RawPlayerSeries = { login?: unknown; points?: unknown };
+type RawPlayerSeries = { player?: unknown; points?: unknown };
 type RawTeam = {
   rank?: unknown;
   slug?: unknown;
@@ -72,13 +75,13 @@ function toSeries(raw: unknown): PlayerSeries[] | undefined {
   const series: PlayerSeries[] = [];
   for (const item of raw as RawPlayerSeries[]) {
     if (!item || typeof item !== "object") continue;
-    const { login, points } = item;
-    if (typeof login !== "string" || !Array.isArray(points)) continue;
+    const { player, points } = item;
+    if (typeof player !== "string" || !Array.isArray(points)) continue;
     const validPoints = (points as RawSeriesPoint[]).filter(
       (p): p is { t: string; score: number } =>
         !!p && typeof p === "object" && typeof p.t === "string" && typeof p.score === "number" && Number.isFinite(p.score),
     );
-    if (validPoints.length > 0) series.push({ login, points: validPoints });
+    if (validPoints.length > 0) series.push({ playerId: player, ...unnamed(player), points: validPoints });
   }
   return series.length > 0 ? series : undefined;
 }
@@ -244,7 +247,8 @@ function toEntry(raw: LambdaEntry, catalog: LambdaCatalog): LeaderboardEntry {
   }
   return {
     rank: raw.rank,
-    login: raw.author,
+    playerId: raw.player,
+    ...unnamed(raw.player),
     team: null,
     points: raw.points,
     patched,
@@ -286,12 +290,12 @@ export const lambdaSource: LeaderboardSource = {
     };
   },
 
-  async getUser(login: string): Promise<UserProfile | null> {
+  async getUser(playerId: string): Promise<UserProfile | null> {
     const data = await this.getLeaderboard();
-    const entry = data.entries.find((e) => e.login === login);
+    const entry = data.entries.find((e) => e.playerId === playerId);
     if (!entry) return null;
     return {
-      login: entry.login,
+      playerId: entry.playerId,
       team: null,
       teamName: null,
       points: entry.points,

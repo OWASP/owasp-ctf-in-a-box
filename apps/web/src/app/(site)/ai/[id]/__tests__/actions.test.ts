@@ -32,11 +32,13 @@ vi.mock("@/lib/announce/notify", () => ({ notifyFirstBlood }));
 
 import { submitAiFlagAction } from "@/app/(site)/ai/[id]/actions";
 
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+
 beforeEach(() => {
   vi.clearAllMocks();
   isModuleLive.mockResolvedValue(true);
   getLaunchAccess.mockResolvedValue({ allowed: true, preview: false });
-  getSession.mockResolvedValue({ user: { login: "alice" } });
+  getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
   hasTeam.mockResolvedValue(true);
   submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40 });
 });
@@ -70,8 +72,8 @@ describe("submitAiFlagAction gates", () => {
     expect(submitAiFlag).not.toHaveBeenCalled();
   });
 
-  it("refuses a session with no GitHub login the same way", async () => {
-    getSession.mockResolvedValue({ user: {} });
+  it("refuses a session whose user id is not a player id the same way", async () => {
+    getSession.mockResolvedValue({ user: { id: "alice", login: "alice" } });
     await expect(submitAiFlagAction("a1", "CTF{x}")).resolves.toEqual({ error: "unauthorized" });
     expect(submitAiFlag).not.toHaveBeenCalled();
   });
@@ -102,7 +104,7 @@ describe("submitAiFlagAction gates", () => {
       points: 40,
       already: false,
     });
-    expect(submitAiFlag).toHaveBeenCalledWith("alice", "a1", "CTF{x}", { dryRun: false });
+    expect(submitAiFlag).toHaveBeenCalledWith(ALICE_ID, "a1", "CTF{x}", { dryRun: false });
   });
 
   it("refuses an id that does not match AI_ID_RE before the store sees it", async () => {
@@ -126,14 +128,14 @@ describe("submitAiFlagAction gates", () => {
 });
 
 describe("submitAiFlagAction results", () => {
-  it("grades through the store as the session's login, and reports a correct solve", async () => {
+  it("grades through the store as the session's player, and reports a correct solve", async () => {
     submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40 });
     await expect(submitAiFlagAction("a1", "CTF{x}")).resolves.toEqual({
       correct: true,
       points: 40,
       already: false,
     });
-    expect(submitAiFlag).toHaveBeenCalledWith("alice", "a1", "CTF{x}", { dryRun: false });
+    expect(submitAiFlag).toHaveBeenCalledWith(ALICE_ID, "a1", "CTF{x}", { dryRun: false });
   });
 
   it("keeps an already-banked solve distinguishable from a fresh one", async () => {
@@ -181,7 +183,7 @@ describe("submitAiFlagAction activity log", () => {
     submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40 });
     const response = await submitAiFlagAction("a1", "CTF{super-secret}");
     expect(logActivity).toHaveBeenCalledTimes(1);
-    expect(logActivity).toHaveBeenCalledWith("ai-solve", "alice", "a1 via flag");
+    expect(logActivity).toHaveBeenCalledWith("ai-solve", expect.objectContaining({ id: ALICE_ID, name: "alice" }), "a1 via flag");
     const detail = JSON.stringify(logActivity.mock.calls);
     expect(detail).not.toContain("CTF{super-secret}");
     expect(JSON.stringify(response)).not.toContain("CTF{super-secret}");
@@ -214,7 +216,7 @@ describe("submitAiFlagAction admin preview (#464)", () => {
     getLaunchAccess.mockResolvedValue({ allowed: true, preview: true });
     submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40, dryRun: true });
     expect(await submitAiFlagAction("a1", "CTF{x}")).toEqual({ correct: true, points: 40, already: false, dryRun: true });
-    expect(submitAiFlag).toHaveBeenCalledWith("alice", "a1", "CTF{x}", { dryRun: true });
+    expect(submitAiFlag).toHaveBeenCalledWith(ALICE_ID, "a1", "CTF{x}", { dryRun: true });
   });
 });
 
@@ -233,11 +235,11 @@ describe("a teamless admin preview in the AI form (#464)", () => {
 // one-shot never-settling mock below cannot outlive this block (clearAllMocks
 // clears calls, not implementations).
 describe("submitAiFlagAction first-blood hook (#590)", () => {
-  it("announces a fresh solve exactly once, with the session's login and the id", async () => {
+  it("announces a fresh solve exactly once, with the session's player id", async () => {
     submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 40 });
     await submitAiFlagAction("a1", "CTF{x}");
     expect(notifyFirstBlood).toHaveBeenCalledTimes(1);
-    expect(notifyFirstBlood).toHaveBeenCalledWith({ module: "ai", challengeId: "a1", login: "alice" });
+    expect(notifyFirstBlood).toHaveBeenCalledWith({ module: "ai", challengeId: "a1", playerId: ALICE_ID });
   });
 
   it("does NOT announce an already-banked solve, a wrong flag, a refusal or a dry run", async () => {

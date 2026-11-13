@@ -336,7 +336,7 @@ describe("the first-blood hook (#590)", () => {
     mocks.submitAiFlag.mockResolvedValue({ ok: true, correct: true, points: 300 });
     await POST(post({ token: "t", flag: "CTF{x}" }));
     expect(mocks.notifyFirstBlood).toHaveBeenCalledTimes(1);
-    expect(mocks.notifyFirstBlood).toHaveBeenCalledWith({ module: "ai", challengeId: CHAL, login: "alice" });
+    expect(mocks.notifyFirstBlood).toHaveBeenCalledWith({ module: "ai", challengeId: CHAL, playerId: "alice" });
   });
 
   it("does NOT announce an already-banked resubmission, a wrong flag or a dry run", async () => {

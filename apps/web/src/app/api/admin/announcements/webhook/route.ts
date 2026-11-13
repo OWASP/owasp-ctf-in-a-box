@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { readBoundedBody } from "@/lib/bounded-body";
 import { requireAdmin } from "@/lib/admin-auth";
+import { auditActor } from "@/lib/admin-audit-keys";
 import { adminErrorLabel } from "@/lib/admin-store";
 import { nudgeAnnounceTicker } from "@/lib/announce/ticker";
 import { AnnounceValidationError, getAnnounceConfig, publicConfig, setAnnounceWebhook } from "@/lib/announce/store";
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await setAnnounceWebhook(gate.login, url);
+    const result = await setAnnounceWebhook(auditActor(gate.player), url);
     // The write landed: observe it now rather than waiting out an idle
     // backoff, so a webhook set just before launch still sees the pre-launch
     // baseline.

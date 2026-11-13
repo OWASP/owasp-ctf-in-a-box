@@ -80,7 +80,7 @@ export async function hintBalance(login: string): Promise<HintBalance> {
   // the PR author's spelling, the session its own, the spend hash whatever
   // the session had at each purchase.
   const key = login.toLowerCase();
-  const row = board.entries.find((e) => e.login.toLowerCase() === key);
+  const row = board.entries.find((e) => e.playerId.toLowerCase() === key);
   const gross = row ? row.points + (row.hintPenalty ?? 0) : 0;
   const flat = Array.isArray(spentRes.result) ? (spentRes.result as string[]) : [];
   let spent = 0;

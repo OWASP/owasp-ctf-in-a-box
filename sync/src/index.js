@@ -51,6 +51,17 @@ async function writeStatusSafely(redis, log, status) {
  *     (#551): a score the organizer wiped on purpose. Skipped once (it is
  *     marked seen), and reported once, so the first poll after a reset says
  *     how much of the past it declined to re-bank.
+ *
+ * Held scores are released before the repos are polled, so they have their
+ * own line (`release: …`) rather than a per-repo bucket:
+ *
+ *   - `released` is a held score the scorer has judged and that is gone from
+ *     the hold: `accepted` (scored, counted in `ingested`), `refused` (the
+ *     scorer's final verdict on its comment time) or `rejected` (counted as
+ *     dropped, like a rejected comment).
+ *   - `kept` stays held for a later tick: its author is unlinked, linked at
+ *     or after the scoring close, behind a transient failure (`retried`), or
+ *     the entry itself does not parse (`unreadable`, which no tick releases).
  */
 const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, held: 0, retried: 0, preReset: 0, refused: 0 });
 
@@ -78,6 +89,90 @@ function summarize(repo, tally) {
   return `poll ${repo}: ${parts.join(", ")}`;
 }
 
+const freshRelease = () => ({ released: 0, accepted: 0, refused: 0, rejected: 0, kept: 0, retried: 0, unreadable: 0 });
+
+/**
+ * Posts the scores held for PR authors who have since linked a kit account,
+ * each with its comment's own time, so the scorer judges the window and the
+ * freeze exactly as it would have when the comment was read.
+ *
+ * A link counts only if it was made before the scoring close: a link made at
+ * or after `scoringEndsAt`, or with no recorded time (which cannot prove it
+ * beat the close), leaves the author's scores held. With no parseable end the
+ * event never closes, so any link releases.
+ *
+ * Per author, entries go oldest first (the scorer keeps a solve's first-posted
+ * time). A scorer verdict of any kind (accepted, refused, rejected) is final,
+ * so the entry is deleted; a throw from the scorer or from Redis stops that
+ * author and keeps the rest for the next tick. Throws only when the author
+ * index or the window cannot be read; the caller logs that and polls anyway.
+ * Logs carry counts and reasons, never a login, player id or PR.
+ */
+export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = console.error }) {
+  const counts = freshRelease();
+  const authors = await redis.heldAuthors();
+  if (authors.length === 0) return counts;
+  const { endsAt } = await redis.readScoringWindow();
+  const endMs = endsAt !== "" ? Date.parse(endsAt) : NaN;
+
+  for (const login of authors) {
+    let entries = null;
+    try {
+      entries = await redis.heldFor(login);
+      const link = await redis.resolveGithubLink(login);
+      if (!link) {
+        counts.kept += entries.length;
+        continue;
+      }
+      const closed = endsAt !== "" && Number.isFinite(endMs) && (link.linkedAt ?? Infinity) >= endMs;
+      if (closed) {
+        counts.kept += entries.length;
+        continue;
+      }
+      const ready = [];
+      for (const { field, entry } of entries) {
+        const atMs = entry && typeof entry.at === "string" ? Date.parse(entry.at) : NaN;
+        if (!Number.isFinite(atMs)) {
+          counts.unreadable++;
+          counts.kept++;
+          continue;
+        }
+        ready.push({ field, entry, atMs });
+      }
+      ready.sort((a, b) => a.atMs - b.atMs || (a.field < b.field ? -1 : a.field > b.field ? 1 : 0));
+      for (let i = 0; i < ready.length; i++) {
+        const { field, entry } = ready[i];
+        // Exactly the scorer's contract: `repo` is a display name for the
+        // admin list and is not sent.
+        const { target, solved, pr, sha, at } = entry;
+        try {
+          const verdict = await submitScore(cfg, { player: link.player, target, solved, pr, sha, at }, fetchImpl);
+          await redis.releaseHeld(login, field);
+          counts.released++;
+          counts[verdict.outcome]++;
+        } catch (err) {
+          counts.retried++;
+          counts.kept += ready.length - i;
+          log(`release: retrying next tick (${err.message})`);
+          break;
+        }
+      }
+    } catch (err) {
+      counts.retried++;
+      counts.kept += entries?.length ?? 0;
+      log(`release: retrying next tick (${err.message})`);
+    }
+  }
+
+  if (counts.released + counts.retried + counts.unreadable > 0) {
+    const parts = Object.entries(counts)
+      .filter(([, n]) => n > 0)
+      .map(([name, n]) => `${n} ${name}`);
+    log(`release: ${parts.join(", ")}`);
+  }
+  return counts;
+}
+
 export async function tick(cfg, state, deps = {}) {
   const { fetchImpl = fetch, log = console.error, redis = null } = deps;
   // Every read below (freeze, targets, reset epoch, PR author links) is a
@@ -90,8 +185,8 @@ export async function tick(cfg, state, deps = {}) {
 
   // A drop is worth a counter AND a description: "3 dropped" tells an
   // organizer something is wrong, `lastDrop` tells them where to look.
-  const drop = (why) => {
-    state.dropped++;
+  const drop = (why, n = 1) => {
+    state.dropped += n;
     state.lastDrop = why;
     state.lastDropAt = nowIso();
     log(why);
@@ -146,6 +241,20 @@ export async function tick(cfg, state, deps = {}) {
   // itself one poll later (#551). The epoch is the watermark the loop below
   // applies: a comment last edited before it is the past the organizer wiped.
   const resetMs = resetEpochMs(state.resetAt);
+
+  // Before the comment pass: a held score is older than any comment this tick
+  // reads, and the scorer keeps a solve's first-posted time, so it must reach
+  // the scorer first. A failure of the step itself leaves every held score in
+  // place for the next tick and must not stop the poll.
+  try {
+    const released = await releaseHeldScores({ cfg, redis, fetchImpl, log });
+    state.ingested += released.accepted;
+    if (released.rejected > 0) {
+      drop(`release: ${released.rejected} held score${released.rejected === 1 ? "" : "s"} rejected (4xx), dropped`, released.rejected);
+    }
+  } catch (err) {
+    log(`release: skipped this tick (${err.message})`);
+  }
 
   let reposPolled = 0;
   let lastError = null;

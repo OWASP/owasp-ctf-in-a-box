@@ -16,7 +16,7 @@ const CFG = {
 // before, instead of every call now looping the full six-target catalogue.
 const LINKS = { octocat: "11111111-1111-4111-8111-111111111111", mona: "33333333-3333-4333-8333-333333333333" };
 const resolveGithubLogin = async (login) => LINKS[login.toLowerCase()] ?? null;
-const redisStub = { resolveGithubLogin, getSecureDevTargets: async () => ["dvwa"], isPaused: async () => false, writeStatus: async () => {} };
+const redisStub = { resolveGithubLogin, getSecureDevTargets: async () => ["dvwa"], heldAuthors: async () => [], isPaused: async () => false, writeStatus: async () => {} };
 const tick = (cfg, state, deps = {}) => rawTick(cfg, state, { redis: redisStub, ...deps });
 
 const scoreBody = `<!-- ctf-score: {"author":"octocat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc"} -->`;

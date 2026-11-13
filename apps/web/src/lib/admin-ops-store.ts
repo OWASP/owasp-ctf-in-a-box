@@ -189,6 +189,7 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
   // The ai reads are appended AFTER hints rather than beside classic's, so
   // every reply position the existing callers and fixtures rely on is
   // unchanged; a short reply reads as "no ai data", never as a shifted count.
+  // A per-command error throws instead: read past, it is a zero on the card.
   const [
     teamRes,
     quizAnswers,
@@ -205,23 +206,26 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
     aiAttempts,
     aiPoints,
     aiSolved,
-  ] = await upstashPipeline([
-    ["HMGET", userKey(player), "team", "joinedAt", "firstTeamAt"],
-    ["HGETALL", quizAnswersKey(player)],
-    ["HGETALL", quizAttemptsKey(player)],
-    ["HGET", QUIZ_POINTS_KEY, player],
-    ["HGET", QUIZ_ANSWERED_KEY, player],
-    ["HGETALL", classicSolvesKey(player)],
-    ["HGETALL", classicAttemptsKey(player)],
-    ["HGET", CLASSIC_POINTS_KEY, player],
-    ["HGET", CLASSIC_SOLVED_KEY, player],
-    ["SCARD", userHintsKey(player)],
-    ["HGET", HINTS_SPENT_KEY, player],
-    ["HGETALL", aiSolvesKey(player)],
-    ["HGETALL", aiAttemptsKey(player)],
-    ["HGET", AI_POINTS_KEY, player],
-    ["HGET", AI_SOLVED_KEY, player],
-  ]);
+  ] = assertPipelineOk(
+    await upstashPipeline([
+      ["HMGET", userKey(player), "team", "joinedAt", "firstTeamAt"],
+      ["HGETALL", quizAnswersKey(player)],
+      ["HGETALL", quizAttemptsKey(player)],
+      ["HGET", QUIZ_POINTS_KEY, player],
+      ["HGET", QUIZ_ANSWERED_KEY, player],
+      ["HGETALL", classicSolvesKey(player)],
+      ["HGETALL", classicAttemptsKey(player)],
+      ["HGET", CLASSIC_POINTS_KEY, player],
+      ["HGET", CLASSIC_SOLVED_KEY, player],
+      ["SCARD", userHintsKey(player)],
+      ["HGET", HINTS_SPENT_KEY, player],
+      ["HGETALL", aiSolvesKey(player)],
+      ["HGETALL", aiAttemptsKey(player)],
+      ["HGET", AI_POINTS_KEY, player],
+      ["HGET", AI_SOLVED_KEY, player],
+    ]),
+    "lookup user",
+  );
 
   const [rawSlug, rawJoinedAt, rawFirstTeamAt] = Array.isArray(teamRes.result)
     ? (teamRes.result as (string | null)[])
@@ -231,10 +235,13 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
   const firstTeamAt = str(rawFirstTeamAt);
   let team: UserDetail["team"] = null;
   if (slug) {
-    const [nameRes, captainRes] = await upstashPipeline([
-      ["HGET", teamKey(slug), "name"],
-      ["HGET", teamKey(slug), "captain"],
-    ]);
+    const [nameRes, captainRes] = assertPipelineOk(
+      await upstashPipeline([
+        ["HGET", teamKey(slug), "name"],
+        ["HGET", teamKey(slug), "captain"],
+      ]),
+      "lookup user team",
+    );
     const captain = typeof captainRes.result === "string" ? captainRes.result : null;
     team = {
       slug,
@@ -493,21 +500,26 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
     lastAt: AI_LAST_AT_KEY,
   });
 
-  const replies = await upstashPipeline([
-    ["DEL", quizAnswersKey(player)],
-    ["DEL", quizAttemptsKey(player)],
-    ["HDEL", QUIZ_POINTS_KEY, player],
-    ["HDEL", QUIZ_ANSWERED_KEY, player],
-    ["DEL", userHintsKey(player)],
-    ["DEL", userHintTimesKey(player)],
-    ["HDEL", HINTS_SPENT_KEY, player],
-    // Last, so the counts below keep their positions.
-    ["HDEL", QUIZ_LAST_AT_KEY, player],
-    // When this player first opened each challenge: it only times
-    // their solves, so it goes with them. After the counted replies.
-    ["DEL", classicOpenedKey(player)],
-    ["DEL", aiOpenedKey(player)],
-  ]);
+  // Checked before anything is counted or audited: a failed DEL/HDEL left
+  // that progress in place, so the reset must not report it cleared.
+  const replies = assertPipelineOk(
+    await upstashPipeline([
+      ["DEL", quizAnswersKey(player)],
+      ["DEL", quizAttemptsKey(player)],
+      ["HDEL", QUIZ_POINTS_KEY, player],
+      ["HDEL", QUIZ_ANSWERED_KEY, player],
+      ["DEL", userHintsKey(player)],
+      ["DEL", userHintTimesKey(player)],
+      ["HDEL", HINTS_SPENT_KEY, player],
+      // Last, so the counts below keep their positions.
+      ["HDEL", QUIZ_LAST_AT_KEY, player],
+      // When this player first opened each challenge: it only times
+      // their solves, so it goes with them. After the counted replies.
+      ["DEL", classicOpenedKey(player)],
+      ["DEL", aiOpenedKey(player)],
+    ]),
+    "reset progress",
+  );
   const n = (i: number) => Number(replies[i]?.result) || 0;
 
   const cleared = {

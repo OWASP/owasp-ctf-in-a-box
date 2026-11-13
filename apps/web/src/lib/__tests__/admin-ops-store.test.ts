@@ -574,6 +574,44 @@ describe("resetUserProgress", () => {
   });
 });
 
+// upstashPipeline reports a per-command failure in `error` and never throws
+// for it. Read past, a WRONGTYPE becomes a missing `.result`, which these
+// stores read as zero: a card of empty figures, or a reset that claims to
+// have cleared progress still stored.
+describe("a per-command pipeline error is a failure, not zero", () => {
+  const WRONGTYPE = "WRONGTYPE Operation against a key holding the wrong kind of value";
+
+  it("lookupUser rejects when a read in its main pipeline fails", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      ...replies(userHmget(null), [], []),
+      { error: WRONGTYPE },
+      ...replies(null, [], [], null, null, 0, null),
+    ]);
+    await expect(lookupUser(OCTO)).rejects.toThrow(/command failed \(lookup user\)/);
+  });
+
+  it("lookupUser rejects when its team read fails", async () => {
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget("red-team", "2026-08-22T10:00:00Z"), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "Red Team" }, { error: WRONGTYPE }]);
+    await expect(lookupUser(OCTO)).rejects.toThrow(/command failed \(lookup user team\)/);
+  });
+
+  it("resetUserProgress rejects when a quiz or hint cleanup fails, and audits no success", async () => {
+    mockNoSecureDevKeys();
+    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      ...replies(1, 1, 1),
+      { error: WRONGTYPE },
+      ...replies(1, 1, 1, 1, 1, 1),
+    ]);
+
+    await expect(resetUserProgress(OCTO, ADMIN)).rejects.toThrow(/command failed \(reset progress\)/);
+    expect(allCommands().some((c) => c[0] === "LPUSH" && c[1] === "ctf:admin:audit")).toBe(false);
+  });
+});
+
 describe("deleteUser", () => {
   it("refuses to delete a captain, naming the way out", async () => {
     // Deleting the captain would leave a team nobody can administer: rename,

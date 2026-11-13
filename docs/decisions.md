@@ -4310,16 +4310,18 @@ the `422` is `refused`.
 - **ADR 38's `rejected` is a `4xx` other than `422`.** A `422` is `refused`,
   as ADR 67 has it; organizers must not read a routine window or freeze
   refusal as a lost score.
-- **A deleted player is refused.** `deleteUser` marks
-  `ctf:deleted:<player id>` `pending` before it clears anything and
-  `deleted` once the player's `ctf:user:<id>` record is gone, even if other
-  cleanup failed, for ten minutes. A delete that fails with the record still
-  there removes the mark; one whose cleanup pipeline failed outright (it may
-  have run) leaves it pending. The scorer reads it in the same Lua script as its `HSETNX`
-  write. `pending` answers `503`, which sync retries, because the delete may
-  still fail and the player stay; `deleted` is a final `422` with the code
+- **A deleted player's earlier scores are refused.** `deleteUser` writes
+  `ctf:deleted:<player id>`, the instant the delete began in epoch
+  milliseconds, before it clears anything, with no expiry: sync retries a
+  score for as long as it fails, so any expiry would turn into permission to
+  write. The scorer reads it in the same Lua script as its `HSETNX` write
+  and refuses a score timed before it with a final `422`, code
   `player-deleted`, which ADR 38 counts as `refused`, like ADR 67's time
-  refusals.
+  refusals. A score timed after it is the same account playing again (the
+  account survives a delete) and counts. A delete that fails with the
+  player's `ctf:user:<id>` record still in place removes the cutoff, so the
+  player who stays loses nothing; once the record is gone, or when the
+  cleanup's outcome is unknown, the cutoff stays.
 
 This was chosen over dropping unlinked scores (a late link loses points),
 over attributing an unclaimed score by hand (no path may give a score to an
@@ -4327,7 +4329,7 @@ account that did not link in time), and over a global reset-epoch bump on
 delete (it would refuse every player's in-flight scores).
 
 **Consequences.** The admin Secure Development tab lists held and unclaimed
-scores. A master reset clears `ctf:sd:held:*` and keeps links. A player
-deleted and back within ten minutes has their Secure Development scores
-refused until the marker expires. The scorer's solve write is now one
+scores. A master reset clears `ctf:sd:held:*` and keeps links. The
+`ctf:deleted:*` cutoffs are never cleared; a master reset leaves them, and
+its own epoch already refuses everything older. The scorer's solve write is now one
 `EVAL` instead of a pipeline of `HSETNX`s.

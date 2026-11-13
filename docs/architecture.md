@@ -203,15 +203,15 @@ state; everything else that touches scores goes through it.
    over `pausedSince` and the `ctf:admin:pauses` interval log the app writes
    with the flag) is refused with a final `422`. A freeze with no recorded
    start answers `503`, which the poller retries. A payload with no `at` (an
-   older sync) keeps the arrival-time rule. A player an organizer is
-   deleting is held off too: the delete marks `ctf:deleted:<player id>`
-   `pending` before it clears their solves and `deleted` once their
-   `ctf:user:<id>` record is gone (a delete that fails with the record still
-   there removes the mark; one whose outcome is unknown leaves it pending; it
-   expires after ten minutes), and the scorer reads that mark in the same script as its write.
-   `pending` answers `503`, which sync retries, since the delete may still
-   fail; `deleted` is a final `422` (`player-deleted`). A score read before
-   the delete therefore cannot restore a cleared solve. The scorer then writes the score
+   older sync) keeps the arrival-time rule. A score timed before the
+   player's deletion is refused too, a final `422` (`player-deleted`): the
+   delete writes `ctf:deleted:<player id>`, the instant it began in epoch
+   milliseconds and with no expiry, before it clears their solves, and the
+   scorer reads it in the same script as its write. A score read before the
+   delete therefore cannot restore a cleared solve, while a later comment
+   from the same account (which survives a delete) scores as usual. A
+   delete that fails with the player's `ctf:user:<id>` record still in place
+   removes the cutoff again. The scorer then writes the score
    to Redis (via `srh`), timed `at`, as a monotonic, idempotent-on-replay
    update — the write model is described in
    [docs/decisions.md #5](decisions.md#adr-5-single-score-writer-monotonic-writes-at-least-once-delivery).

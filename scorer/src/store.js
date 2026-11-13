@@ -5,21 +5,25 @@
 
 export const solvesKey = (target) => `ctf:solves:${target}`;
 const solveField = (player, id) => `${player}:${id}`;
-// Written by apps/web admin-ops-store.ts deleteUser, with a short expiry:
-// `pending` BEFORE it clears the player's solves, `deleted` once the delete
-// has succeeded (a failed delete removes it). A score sync read before the
-// delete can reach the scorer after the clear; checking this key in the same
-// script as the write stops it bringing a solve back. While the delete is
-// pending the answer is a retry, since the delete may still fail and the
-// player stay; only a finished delete is a final refusal. Keep the key and
-// values in step with DELETED_PREFIX there.
+// The player's deletion cutoff, epoch milliseconds, written by apps/web
+// admin-ops-store.ts deleteUser BEFORE it clears the player's solves (and
+// removed again if the delete fails with the player still there). A score
+// timed before it belongs to the deleted player: sync may have read it before
+// the delete and reach the scorer after the clear, so it is refused for good.
+// A score timed after it is the same account playing again and counts. Read
+// in the same script as the write, so the delete cannot slip between the two.
+// A value that is not a number refuses every score: it cannot say where the
+// cut is. Keep the key in step with DELETED_PREFIX there.
 export const deletedKey = (player) => `ctf:deleted:${player}`;
-// KEYS[1]=solves hash KEYS[2]=deletion marker  ARGV[1]=at ARGV[2..]=fields.
-// 'deleted' / 'pending' = nothing written; 'written' = HSETNX (replays no-op).
-const RECORD_SOLVES_SCRIPT = `local m = redis.call('GET', KEYS[2])
-if m == 'deleted' then return 'deleted' end
-if m then return 'pending' end
-for i = 2, #ARGV do redis.call('HSETNX', KEYS[1], ARGV[i], ARGV[1]) end
+// KEYS[1]=solves hash KEYS[2]=deletion cutoff
+// ARGV[1]=at (ISO) ARGV[2]=at (epoch ms) ARGV[3..]=fields.
+// 'deleted' = nothing written; 'written' = HSETNX (replays no-op).
+const RECORD_SOLVES_SCRIPT = `local c = redis.call('GET', KEYS[2])
+if c then
+  local cut = tonumber(c)
+  if not cut or tonumber(ARGV[2]) < cut then return 'deleted' end
+end
+for i = 3, #ARGV do redis.call('HSETNX', KEYS[1], ARGV[i], ARGV[1]) end
 return 'written'`;
 // Same key/field the app (admin-store.ts) writes and the sync poller
 // (sync/src/redis.js) reads — "1" means paused, anything else does not.
@@ -85,11 +89,11 @@ export function createMemoryStore({ teams = [] } = {}) {
   // No event settings to judge a score's time against until a test sets
   // some — the same answer the Redis store gives when it cannot read them.
   let policy = null;
-  const deleted = new Map(); // test seam mirroring ctf:deleted:<player>
+  const deleted = new Map(); // test seam mirroring ctf:deleted:<player> (cutoff ms)
   return {
     async recordSolves(target, player, ids, at) {
-      const marker = deleted.get(player);
-      if (marker !== undefined) return marker === "deleted" ? "deleted" : "pending";
+      const cut = deleted.get(player);
+      if (cut !== undefined && Date.parse(at) < cut) return "deleted";
       let hash = hashes.get(solvesKey(target));
       if (!hash) hashes.set(solvesKey(target), (hash = new Map()));
       for (const id of ids) {
@@ -98,8 +102,8 @@ export function createMemoryStore({ teams = [] } = {}) {
       }
       return "written";
     },
-    __markDeleted(player, state = "deleted") {
-      deleted.set(player, state);
+    __markDeleted(player, cutoffMs) {
+      deleted.set(player, cutoffMs);
     },
     async getSolves(target) {
       return Object.fromEntries(hashes.get(solvesKey(target)) ?? []);
@@ -175,15 +179,17 @@ export function createRedisStore({
   }
 
   return {
-    // "written", or "pending"/"deleted" while the player is being or has
-    // been deleted (nothing written). One script, so the marker check and the
+    // "written", or "deleted" for a score timed before the player's deletion
+    // cutoff (nothing written). One script, so the cutoff check and the
     // writes cannot be split by the delete.
     async recordSolves(target, player, ids, at) {
       if (ids.length === 0) return "written";
+      const atMs = Date.parse(at);
+      if (!Number.isFinite(atMs)) throw new Error("recordSolves: at is not a time");
       const keys = [solvesKey(target), deletedKey(player)];
       const fields = ids.map((id) => solveField(player, id));
-      const [outcome] = await pipeline([["EVAL", RECORD_SOLVES_SCRIPT, keys.length, ...keys, at, ...fields]]);
-      if (outcome !== "written" && outcome !== "pending" && outcome !== "deleted") {
+      const [outcome] = await pipeline([["EVAL", RECORD_SOLVES_SCRIPT, keys.length, ...keys, at, String(atMs), ...fields]]);
+      if (outcome !== "written" && outcome !== "deleted") {
         throw new Error(`recordSolves: unexpected script reply ${JSON.stringify(outcome).slice(0, 40)}`);
       }
       return outcome;

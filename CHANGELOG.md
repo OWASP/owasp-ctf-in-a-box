@@ -33,13 +33,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 - **Fixed: a deleted player's Secure Development solve could come back.** A
   score sync read before an organizer deleted the player could reach the
   scorer after the delete cleared their solves, and the scorer wrote it
-  back. The delete now marks `ctf:deleted:<player id>` `pending` before it
-  clears anything and `deleted` once it succeeds (for ten minutes), and the
-  scorer reads that mark in the same script that writes a solve: `pending`
-  answers `503`, which sync retries, and `deleted` a final `422`
-  (`player-deleted`). A delete that fails with the player's record still
-  there removes the mark, so it loses no score. A player deleted and back within those ten minutes has their
-  Secure Development scores refused until it expires.
+  back. The delete now writes
+  `ctf:deleted:<player id>`, the instant it began, before it clears
+  anything, and the scorer reads it in the same script that writes a solve:
+  a score timed before it is refused for good (`422`, `player-deleted`),
+  while a later comment from the same account scores as usual. A delete
+  that fails with the player's record still in place removes it again.
 - **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
   the linked-account write failed after the user row was written, that row
   stayed behind and every later sign-in answered `account not linked`. The

@@ -556,18 +556,14 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
 
 // --- delete -----------------------------------------------------------------
 
-/** `ctf:deleted:<id>`: `pending` while a delete clears a player, `deleted`
- *  once it has succeeded, removed if it fails. The scorer reads it in the same
- *  script that writes a solve (scorer/src/store.js deletedKey): `pending`
- *  answers a retry and `deleted` a final refusal, so a score sync read before
- *  the delete cannot land after the progress reset and bring a solve back,
- *  and a delete that fails loses no score. Expires: the account survives a
- *  delete, and the same player may play again. Ten minutes outlasts any score
- *  already on its way. */
+/** `ctf:deleted:<id>`: the instant (epoch ms) a delete began. The scorer
+ *  reads it in the same script that writes a solve (scorer/src/store.js
+ *  deletedKey) and refuses for good any score timed before it, so a score
+ *  sync read before the delete cannot land after the progress reset and bring
+ *  a solve back. A score timed after it is the same account playing again
+ *  (the account survives a delete) and counts. No expiry: a retried score
+ *  can arrive any time later and must still be refused. */
 export const DELETED_PREFIX = "ctf:deleted:";
-export const DELETED_TTL_SECONDS = 600;
-export const DELETE_PENDING = "pending";
-export const DELETE_DONE = "deleted";
 
 /**
  * Removes a contestant's event state entirely: their progress, their hints,
@@ -580,10 +576,10 @@ export const DELETE_DONE = "deleted";
  * blocking a re-link) is a separate decision. Scores sync is holding for the
  * linked login (`ctf:sd:held:*`) are event state and are cleared.
  *
- * The deletion marker (`DELETED_PREFIX`) goes up before the progress reset, so
- * a score already on its way is either cleared by the reset or held off by
- * the scorer. A player deleted and back within `DELETED_TTL_SECONDS` has their
- * Secure Development scores refused until it expires.
+ * The deletion cutoff (`DELETED_PREFIX`) is written before the progress reset,
+ * so a score already on its way is either cleared by the reset or refused by
+ * the scorer. It is removed again only when the delete fails with the
+ * player's record still in place.
  *
  * A captain is a deliberate refusal here — see `forceTransferCaptain`.
  */
@@ -610,31 +606,19 @@ export async function deleteUser(
   // last close comes after the last write, on the failure path too.
   await beginScoreLowering();
   try {
-    const marker = `${DELETED_PREFIX}${player}`;
-    // Before the reset, and checked: without the marker, a score in flight
+    const cutoff = `${DELETED_PREFIX}${player}`;
+    // Before the reset, and checked: without the cutoff, a score in flight
     // can rewrite a solve the reset just cleared.
-    assertPipelineOk(
-      await upstashPipeline([["SET", marker, DELETE_PENDING, "EX", DELETED_TTL_SECONDS]]),
-      "deletion marker",
-    );
+    assertPipelineOk(await upstashPipeline([["SET", cutoff, String(Date.now())]]), "deletion cutoff");
     const leftTeam = detail.team?.slug ?? null;
-    // Whether the `ctf:user:<id>` record is gone decides what the mark ends
-    // as when something fails: "kept" (the player stays, so their scores must
-    // score again: remove it), "gone" (the player is deleted even if other
-    // cleanup failed: finish it), or "unknown" (the cleanup pipeline itself
-    // failed, so it may have run: leave it pending, a retry, until it
-    // expires).
+    // Whether the `ctf:user:<id>` record is gone decides the cutoff's fate
+    // when something fails: "kept" means the player stays, so their unscored
+    // comments must still score (remove it); "gone" means the player is
+    // deleted even if other cleanup failed, and "unknown" (the cleanup
+    // pipeline itself failed, so it may have run) is treated the same way:
+    // the cutoff stays, and refusing an old score beats restoring a cleared
+    // solve.
     let record: "kept" | "gone" | "unknown" = "kept";
-    const finishMarker = async () => {
-      try {
-        assertPipelineOk(
-          await upstashPipeline([["SET", marker, DELETE_DONE, "EX", DELETED_TTL_SECONDS]]),
-          "finish deletion marker",
-        );
-      } catch (doneErr) {
-        console.error("[admin-ops] deletion marker left pending after the record was deleted", errorLabel(doneErr));
-      }
-    };
     let reset: ResetScope;
     try {
       reset = await resetUserProgress(player, actor);
@@ -652,21 +636,15 @@ export async function deleteUser(
       // team with their record in place.
       assertPipelineOk(results, "delete user");
     } catch (err) {
-      if (record === "gone") {
-        await finishMarker();
-      } else if (record === "kept") {
+      if (record === "kept") {
         try {
-          assertPipelineOk(await upstashPipeline([["DEL", marker]]), "clear deletion marker");
+          assertPipelineOk(await upstashPipeline([["DEL", cutoff]]), "clear deletion cutoff");
         } catch (clearErr) {
-          console.error("[admin-ops] deletion marker left pending after a failed delete", errorLabel(clearErr));
+          console.error("[admin-ops] deletion cutoff left after a failed delete", errorLabel(clearErr));
         }
       }
       throw err;
     }
-    // Only after the cleanup is checked: from here a score for this player is
-    // refused for good, not retried. The delete has already happened, so a
-    // failure here is logged, not thrown.
-    await finishMarker();
 
     await audit("ops:user-delete", actor, { player, leftTeam });
     return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };

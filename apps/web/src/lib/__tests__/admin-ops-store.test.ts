@@ -639,13 +639,12 @@ describe("deleteUser", () => {
     );
     mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "a11ce000-0000-4000-8000-00000000000c"));
     mockNoSecureDevKeys();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
     mockNoSecureDevKeys(); // the reset's own sweep
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // SREM + DEL
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finish marker
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
 
     const result = await deleteUser("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
@@ -686,13 +685,12 @@ describe("deleteUser: held Secure Development scores", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
     mockNoSecureDevKeys();
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finish marker
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
   }
 
@@ -725,134 +723,44 @@ describe("deleteUser: held Secure Development scores", () => {
   });
 });
 
-describe("deleteUser: the deletion marker", () => {
-  const marker = ["SET", `ctf:deleted:${OCTO}`, "pending", "EX", 600];
+describe("deleteUser: the deletion cutoff", () => {
+  const isCutoffSet = (c: (string | number)[]) => c[0] === "SET" && c[1] === `ctf:deleted:${OCTO}`;
+  const clear = ["DEL", `ctf:deleted:${OCTO}`];
 
-  it("goes up as pending, with an expiry, before the progress reset writes anything, and ends as deleted", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce(null);
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
-    );
-    mockNoSecureDevKeys();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
-    mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
-    mockQuizAndHintsPipeline();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finish marker
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
-    await deleteUser(OCTO, ADMIN);
-    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
-    const at = calls.findIndex((cmds) => cmds.some((c) => c[0] === "SET" && c[1] === `ctf:deleted:${OCTO}`));
-    expect(calls[at]).toEqual([marker]);
-    const firstWrite = calls.findIndex((cmds) => cmds.some((c) => ["DEL", "HDEL", "SREM", "HSET", "EVAL"].includes(String(c[0]))));
-    expect(at).toBeGreaterThan(-1);
-    expect(at).toBeLessThan(firstWrite);
-    // Promoted on its own, after the cleanup pipeline: a failed cleanup
-    // command can never leave it at `deleted`.
-    const tailAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
-    expect(calls[tailAt].some((c) => c[0] === "SET")).toBe(false);
-    expect(calls[tailAt + 1]).toEqual([["SET", `ctf:deleted:${OCTO}`, "deleted", "EX", 600]]);
-    expect(allCommands()).not.toContainEqual(["DEL", `ctf:deleted:${OCTO}`]);
-  });
-
-  it("a finish write that fails leaves the delete done and the mark pending, logged by label", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce(null);
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
-    );
-    mockNoSecureDevKeys();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
-    mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
-    mockQuizAndHintsPipeline();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
-    mocks.upstashPipeline.mockRejectedValueOnce(decoratedError("upstash down")); // finish marker
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: null });
-    expectLabelOnly(err);
-    err.mockRestore();
-    expect(allCommands()).not.toContainEqual(["DEL", `ctf:deleted:${OCTO}`]);
-  });
-
-  /** Queues a no-team delete up to (not including) the tail pipeline. */
+  /** Queues a delete up to (not including) the tail pipeline. */
   function queueUpToTail() {
     linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
     mockNoSecureDevKeys();
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
   }
-  const finish = ["SET", `ctf:deleted:${OCTO}`, "deleted", "EX", 600];
-  const clear = ["DEL", `ctf:deleted:${OCTO}`];
 
-  it("record deleted but a later cleanup command failed: the mark is finished, never cleared", async () => {
-    queueUpToTail();
-    // [DEL user, 6 rate-limit DELs, DEL held, SREM held] — the held DEL fails.
-    mocks.upstashPipeline.mockResolvedValueOnce([...Array(7).fill({ result: 1 }), { error: "READONLY" }, { result: 1 }]);
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finish marker
-    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
-    expect(allCommands()).toContainEqual(finish);
-    expect(allCommands()).not.toContainEqual(clear);
-  });
-
-  it("the record's own DEL failed: the player stays, so the mark is cleared", async () => {
-    queueUpToTail();
-    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }, ...Array(8).fill({ result: 1 })]);
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // marker DEL
-    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
-    expect(allCommands()).toContainEqual(clear);
-    expect(allCommands()).not.toContainEqual(finish);
-  });
-
-  it("the cleanup pipeline itself failed (it may have run): the mark is left pending", async () => {
-    queueUpToTail();
-    mocks.upstashPipeline.mockRejectedValueOnce(new Error("fetch failed"));
-    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/fetch failed/);
-    expect(allCommands()).not.toContainEqual(clear);
-    expect(allCommands()).not.toContainEqual(finish);
-  });
-
-  it("a failed delete removes the marker, so the player's scores score again", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce(null);
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
-    );
-    mockNoSecureDevKeys();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
-    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // the reset's first SCAN
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // marker DEL
-    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+  it("is the delete's start time, with no expiry, written before the progress reset writes anything, and kept", async () => {
+    vi.useFakeTimers({ now: new Date("2026-11-13T21:00:00.000Z"), toFake: ["Date"] });
+    try {
+      queueUpToTail();
+      mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+      mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
+      await deleteUser(OCTO, ADMIN);
+    } finally {
+      vi.useRealTimers();
+    }
     const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
-    expect(calls.at(-1)).toEqual([["DEL", `ctf:deleted:${OCTO}`]]);
-    expect(allCommands()).not.toContainEqual(["SET", `ctf:deleted:${OCTO}`, "deleted", "EX", 600]);
-    expect(foldCache.endScoreLowering).toHaveBeenCalled();
+    const at = calls.findIndex((cmds) => cmds.some(isCutoffSet));
+    expect(calls[at]).toEqual([["SET", `ctf:deleted:${OCTO}`, String(Date.parse("2026-11-13T21:00:00.000Z"))]]);
+    const firstWrite = calls.findIndex((cmds) => cmds.some((c) => ["DEL", "HDEL", "SREM", "HSET", "EVAL"].includes(String(c[0]))));
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(firstWrite);
+    expect(allCommands()).not.toContainEqual(clear);
   });
 
-  it("a marker that cannot be cleared is logged by label and the delete's own error still surfaces", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce(null);
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
-    );
-    mockNoSecureDevKeys();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
-    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // the reset's first SCAN
-    mocks.upstashPipeline.mockRejectedValueOnce(decoratedError("upstash down")); // marker DEL
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
-    expectLabelOnly(err);
-    err.mockRestore();
-  });
-
-  it("a refused marker aborts the delete before the reset", async () => {
+  it("a refused cutoff aborts the delete before the reset", async () => {
     linkDeps.getGithubLink.mockResolvedValueOnce(null);
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
@@ -864,6 +772,58 @@ describe("deleteUser: the deletion marker", () => {
     expect(mocks.upstashEval).not.toHaveBeenCalled();
     expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
   });
+
+  it("a reset that fails (record still there) removes the cutoff, so the player's scores still score", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce(null);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // the reset's first SCAN
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // cutoff DEL
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(mocks.upstashPipeline.mock.calls.at(-1)?.[0]).toEqual([clear]);
+    expect(foldCache.endScoreLowering).toHaveBeenCalled();
+  });
+
+  it("a cutoff that cannot be cleared is logged by label and the delete's own error still surfaces", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce(null);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // the reset's first SCAN
+    mocks.upstashPipeline.mockRejectedValueOnce(decoratedError("upstash down")); // cutoff DEL
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expectLabelOnly(err);
+    err.mockRestore();
+  });
+
+  it("record deleted but a later cleanup command failed: the cutoff stays", async () => {
+    queueUpToTail();
+    // [DEL user, 6 rate-limit DELs, DEL held, SREM held] — the held DEL fails.
+    mocks.upstashPipeline.mockResolvedValueOnce([...Array(7).fill({ result: 1 }), { error: "READONLY" }, { result: 1 }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(allCommands()).not.toContainEqual(clear);
+  });
+
+  it("the record's own DEL failed: the player stays, so the cutoff is removed", async () => {
+    queueUpToTail();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }, ...Array(8).fill({ result: 1 })]);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // cutoff DEL
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(allCommands()).toContainEqual(clear);
+  });
+
+  it("the cleanup pipeline itself failed (it may have run): the cutoff stays", async () => {
+    queueUpToTail();
+    mocks.upstashPipeline.mockRejectedValueOnce(new Error("fetch failed"));
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/fetch failed/);
+    expect(allCommands()).not.toContainEqual(clear);
+  });
 });
 
 describe("deleteUser: a failed tail write is not a delete", () => {
@@ -872,13 +832,13 @@ describe("deleteUser: a failed tail write is not a delete", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
     mockNoSecureDevKeys();
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // marker DEL
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // cutoff DEL
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
     expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(2);
   });

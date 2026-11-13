@@ -153,12 +153,10 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     );
     const solvedAt = await solveTime(at);
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
-    // A finished delete is a final refusal like the time verdicts: recording
-    // the score would bring a cleared solve back. A delete still running may
-    // fail and leave the player, so that answer is a 503, which sync retries.
+    // A score timed before the player's deletion is a final refusal like the
+    // time verdicts: recording it would bring a cleared solve back.
     const recorded = await store.recordSolves(target, player, ids, solvedAt.iso);
     if (recorded === "deleted") return json(res, 422, { error: "the player was deleted", refused: "player-deleted" });
-    if (recorded === "pending") return json(res, 503, { error: "the player is being deleted" });
     if (!rubric) seenTargets.add(target);
     res.writeHead(202).end();
   }

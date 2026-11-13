@@ -107,6 +107,11 @@ routes would refuse.
 > above is what closes the gap in practice — it is the only enforcement
 > point this module's scoring path passes through — so it matters most for
 > events running Secure Development.
+>
+> Deferred credit needs the PR author to be a linked player when sync reads
+> the score: a contestant links their GitHub login by signing in with GitHub.
+> A score whose author nobody has linked is dropped, not banked, and is not
+> retried (holding those scores until the author links is #741).
 
 Captains
 manage the roster from the app: rename the team, remove a member, transfer the

@@ -332,23 +332,39 @@ export async function getWebhookGeneration(): Promise<number> {
   return parseWebhookGeneration(res.result);
 }
 
-/** The webhook URL and its generation, read in ONE pipeline so a delivery
- *  sweep cannot pair a retired URL with a generation advanced by a clear
- *  after it. The URL is read first, then the generation: a clear racing the
- *  pair still moves the generation past any entry staged against the old URL,
- *  and the next sweep re-reads both. Per-command errors and malformed
- *  counters THROW rather than being read as "no webhook" or "generation 0" —
- *  a sweep must not act on a partial view. */
+/** Reads the webhook URL and its generation in one atomic snapshot. A Lua
+ *  EVAL is required, not two GETs in a pipeline: another client can execute
+ *  a clear between separate commands (and even between pipelined ones), which
+ *  would pair a retired URL with the newer generation. `false` from a missing
+ *  key is normalised to an empty string here so absence is unambiguous; a
+ *  malformed stored counter still THROWS through parseWebhookGeneration. */
+export const WEBHOOK_TARGET_SCRIPT = `
+local url = redis.call('GET', KEYS[1])
+local generation = redis.call('GET', KEYS[2])
+return {url or '', generation or ''}
+`;
+
+/** The webhook URL and the generation it belongs to, read atomically so a
+ *  delivery sweep can never pair a retired URL with a generation advanced by
+ *  a clear after it. A failed EVAL THROWS, a missing key is a genuine
+ *  "no webhook", and a malformed generation is rejected rather than read as
+ *  0 — a sweep must not act on a partial or corrupt view. */
 export async function getWebhookDeliveryTarget(): Promise<{ url: string | null; generation: number }> {
-  const [urlRes, genRes] = await upstashPipeline([
-    ["GET", DISCORD_WEBHOOK_KEY],
-    ["GET", ANNOUNCE_WEBHOOK_GENERATION_KEY],
-  ]);
-  if (urlRes.error || genRes.error) {
-    throw new Error(`webhook target read failed: ${urlRes.error ?? genRes.error}`);
+  let raw: unknown;
+  try {
+    raw = await upstashEval(WEBHOOK_TARGET_SCRIPT, [DISCORD_WEBHOOK_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY], []);
+  } catch (err) {
+    throw new Error(`webhook target read failed: ${adminErrorLabel(err)}`);
   }
-  const url = typeof urlRes.result === "string" && urlRes.result !== "" ? urlRes.result : null;
-  return { url, generation: parseWebhookGeneration(genRes.result) };
+  if (!Array.isArray(raw) || raw.length < 2) {
+    throw new Error("webhook target read failed: malformed reply");
+  }
+  const rawUrl = raw[0];
+  if (rawUrl !== null && rawUrl !== undefined && typeof rawUrl !== "string") {
+    throw new Error("webhook target read failed: malformed reply");
+  }
+  const url = typeof rawUrl === "string" && rawUrl !== "" ? rawUrl : null;
+  return { url, generation: parseWebhookGeneration(raw[1]) };
 }
 
 // --- dedup ledgers -----------------------------------------------------------

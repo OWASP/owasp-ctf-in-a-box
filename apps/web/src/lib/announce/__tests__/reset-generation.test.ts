@@ -36,7 +36,13 @@ import {
   DISCORD_CONFIG_KEY,
   DISCORD_WEBHOOK_KEY,
 } from "@/lib/announce/keys";
-import { getAnnounceConfig, outboxEnqueue, OUTBOX_SKIP_SCRIPT, type OutboxEntry } from "@/lib/announce/store";
+import {
+  getAnnounceConfig,
+  outboxEnqueue,
+  OUTBOX_SKIP_SCRIPT,
+  WEBHOOK_TARGET_SCRIPT,
+  type OutboxEntry,
+} from "@/lib/announce/store";
 
 const URL = "https://discord.com/api/webhooks/1/aaaaaaaaaaaaaaaaaaaaaa";
 const fetchMock = vi.fn();
@@ -89,7 +95,9 @@ beforeEach(() => {
   mocks.upstashPipeline.mockReset();
   mocks.beginScoreLowering.mockReset();
   mocks.endScoreLowering.mockReset();
-  mocks.upstashEval.mockResolvedValue(1);
+  mocks.upstashEval.mockImplementation(async (script) =>
+    script === WEBHOOK_TARGET_SCRIPT ? [URL, String(state.generation)] : 1,
+  );
   mocks.upstashPipeline.mockImplementation(pipelineFor(state));
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);

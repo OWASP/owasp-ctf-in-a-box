@@ -37,6 +37,7 @@ import {
   OUTBOX_SKIP_SCRIPT,
   SWITCH_DISABLE_SCRIPT,
   WEBHOOK_CLEAR_SCRIPT,
+  WEBHOOK_TARGET_SCRIPT,
   outboxClaim,
   outboxComplete,
   outboxEnqueue,
@@ -457,42 +458,42 @@ describe("getWebhookGeneration", () => {
 });
 
 describe("getWebhookDeliveryTarget", () => {
-  it("reads the URL and generation in one pipeline, so a replacement cannot pair a retired URL with a new generation", async () => {
+  it("reads the URL and generation in one atomic EVAL, so a replacement cannot pair a retired URL with a new generation", async () => {
     let calls = 0;
-    mocks.upstashPipeline.mockImplementation(async (commands) => {
+    mocks.upstashEval.mockImplementation(async () => {
       calls += 1;
       // A replacement between two separate reads would let the second read
-      // observe the new URL and the newer generation; the paired read must
-      // return only the snapshot from its single call.
-      return commands.map((cmd) =>
-        cmd[1] === DISCORD_WEBHOOK_KEY
-          ? { result: "https://discord.com/api/webhooks/1/retired" }
-          : { result: calls === 1 ? "0" : "1" },
-      );
+      // observe the newer generation; the atomic read must return only the
+      // snapshot from its single call.
+      return calls === 1
+        ? ["https://discord.com/api/webhooks/1/retired", "0"]
+        : ["https://discord.com/api/webhooks/2/current", "1"];
     });
     await expect(getWebhookDeliveryTarget()).resolves.toEqual({
       url: "https://discord.com/api/webhooks/1/retired",
       generation: 0,
     });
     expect(calls).toBe(1);
-    expect(mocks.upstashPipeline.mock.calls[0][0]).toEqual([
-      ["GET", DISCORD_WEBHOOK_KEY],
-      ["GET", ANNOUNCE_WEBHOOK_GENERATION_KEY],
-    ]);
+    expect(mocks.upstashEval).toHaveBeenCalledWith(
+      WEBHOOK_TARGET_SCRIPT,
+      [DISCORD_WEBHOOK_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY],
+      [],
+    );
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 
   it("an absent URL is null but its generation still comes back; a malformed counter THROWS", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: null }, { result: "3" }]);
+    mocks.upstashEval.mockResolvedValue(["", "3"]);
     await expect(getWebhookDeliveryTarget()).resolves.toEqual({ url: null, generation: 3 });
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: null }, { result: "not-a-counter" }]);
+    mocks.upstashEval.mockResolvedValue(["", "not-a-counter"]);
     await expect(getWebhookDeliveryTarget()).rejects.toThrow(/invalid webhook generation/);
   });
 
-  it("THROWS on either command error instead of returning a partial target", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ error: "NOAUTH" }, { result: "0" }]);
+  it("THROWS on an EVAL error or a malformed reply instead of returning a partial target", async () => {
+    mocks.upstashEval.mockRejectedValue(new Error("Upstash EVAL failed: NOAUTH"));
     await expect(getWebhookDeliveryTarget()).rejects.toThrow(/webhook target read failed/);
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: VALID_URL }, { error: "WRONGTYPE" }]);
-    await expect(getWebhookDeliveryTarget()).rejects.toThrow(/webhook target read failed/);
+    mocks.upstashEval.mockResolvedValue(["only-one-field"]);
+    await expect(getWebhookDeliveryTarget()).rejects.toThrow(/malformed reply/);
   });
 });
 

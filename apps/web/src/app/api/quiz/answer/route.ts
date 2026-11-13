@@ -5,6 +5,7 @@ import { notifyFirstBlood } from "@/lib/announce/notify";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { answerQuestion, QUIZ_ID_RE } from "@/lib/quiz-store";
+import { cooldownResponse } from "@/lib/cooldown-response";
 import { hasTeam } from "@/lib/team-store";
 
 /** Validating against `quiz-store`'s own exported `QUIZ_ID_RE` (rather than
@@ -35,7 +36,8 @@ function isChoiceList(v: unknown): v is string[] {
  *   - event not launched (and not an admin) -> 403 { error: "not-launched" }
  *   - malformed questionId/choices -> 400
  *   - unknown/missing question -> 404
- *   - gate refusal (paused/answered/exhausted/cooldown/unavailable) -> 403
+ *   - cooldown refusal -> 429 { error: "cooldown", retryAt } + Retry-After
+ *   - gate refusal (paused/ended/answered/exhausted/unavailable) -> 403
  *   - grading script failure -> 503
  *   - success -> 200
  *
@@ -129,7 +131,9 @@ export async function POST(request: Request) {
   if (result.reason === "error") {
     return NextResponse.json({ error: "quiz grading failed" }, { status: 503 });
   }
-  // paused | answered | exhausted | cooldown | unavailable
-  const retryAt = "retryAt" in result ? result.retryAt : undefined;
-  return NextResponse.json(retryAt ? { error: result.reason, retryAt } : { error: result.reason }, { status: 403 });
+  if (result.reason === "cooldown") {
+    return cooldownResponse(result.retryAt);
+  }
+  // paused | ended | answered | exhausted | unavailable
+  return NextResponse.json({ error: result.reason }, { status: 403 });
 }

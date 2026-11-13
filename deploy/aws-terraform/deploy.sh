@@ -110,7 +110,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Every external call goes through `run`, so --dry-run cannot leak a real one.
+# External calls go through `run` or stay in the non-dry-run branch below.
 # Anything that looks like a secret is redacted in the printed form: a dry run
 # exists to be pasted into a terminal or a review. The rules live in
 # scripts/lib/redact.sh, shared with deploy/fly/deploy.sh so the two deploy
@@ -248,6 +248,12 @@ if [ -n "$DRY_RUN" ]; then
   SCORER_REPO_URL="${PLACEHOLDER_REGISTRY}-scorer"
   echo "   (dry run: the real registry comes from terraform output; Secure Development assumed on)"
 else
+  # Fail closed: an unavailable credential check stops deployment before reading Terraform state.
+  if ! aws sts get-caller-identity >/dev/null; then
+    echo "FAIL: AWS credential check failed." >&2
+    echo "      If your SSO session expired, run aws sso login --profile <profile>." >&2
+    exit 1
+  fi
   if ! REPO_URL="$(terraform -chdir="$HERE" output -raw ecr_app_repository_url 2>/dev/null)" ||
     [ -z "$REPO_URL" ]; then
     # Emptiness is checked separately from the exit status. `terraform output`

@@ -72,7 +72,7 @@ export async function withHintPenalties(data: LeaderboardData): Promise<Leaderbo
 
   const entries = data.entries
     .map((entry, i) => {
-      const penalty = byLogin.get(entry.login.toLowerCase()) ?? 0;
+      const penalty = byLogin.get(entry.playerId.toLowerCase()) ?? 0;
       return {
         // Original position breaks any tie compareStanding can't (equal
         // points and no lastSolveAt), keeping the source order.

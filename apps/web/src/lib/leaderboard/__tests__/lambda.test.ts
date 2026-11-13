@@ -66,7 +66,7 @@ describe("lambdaSource.getLeaderboard", () => {
     stubFetch(RESPONSE);
     const data = await lambdaSource.getLeaderboard();
     const top = data.entries[0];
-    expect(top.login).toBe("dcotelo");
+    expect(top.playerId).toBe("dcotelo");
     expect(top.lastSolveAt).toBe("2026-07-08T19:25:23.830Z");
     // Solves are the only updates in this source, so last solve = last update.
     expect(top.updatedAt).toBe("2026-07-08T19:25:23.830Z");
@@ -76,7 +76,7 @@ describe("lambdaSource.getLeaderboard", () => {
     vi.stubEnv("LEADERBOARD_API_URL", "https://scorer.example");
     stubFetch(RESPONSE);
     const data = await lambdaSource.getLeaderboard();
-    expect(data.entries.map((e) => [e.login, e.rank])).toEqual([
+    expect(data.entries.map((e) => [e.playerId, e.rank])).toEqual([
       ["dcotelo", 1],
       ["earlier-solver", 2],
       ["later-solver", 3],
@@ -89,7 +89,7 @@ describe("lambdaSource.getLeaderboard", () => {
       leaderboard: [{ rank: 1, author: "old", points: 10, apps: { dvwa: { solved: 1, total: 55 } } }],
     });
     const data = await lambdaSource.getLeaderboard();
-    expect(data.entries[0]).toMatchObject({ login: "old", lastSolveAt: null, updatedAt: null, rank: 1 });
+    expect(data.entries[0]).toMatchObject({ playerId: "old", name: "player old", image: null, lastSolveAt: null, updatedAt: null, rank: 1 });
   });
 });
 
@@ -111,7 +111,8 @@ describe("lambdaSource.getLeaderboard series", () => {
     const data = await lambdaSource.getLeaderboard();
     expect(data.series).toEqual([
       {
-        login: "dcotelo",
+        // The scorer's key becomes the player id; the fold names it later.
+        playerId: "dcotelo", name: "player dcotelo", image: null,
         points: [
           { t: "2026-07-08T10:00:00.000Z", score: 100 },
           { t: "2026-07-08T19:25:23.830Z", score: 672 },
@@ -146,7 +147,7 @@ describe("lambdaSource.getLeaderboard series", () => {
       ],
     });
     const data = await lambdaSource.getLeaderboard();
-    expect(data.series).toEqual([{ login: "ok", points: [{ t: "2026-07-08T10:00:00.000Z", score: 5 }] }]);
+    expect(data.series).toEqual([{ playerId: "ok", name: "player ok", image: null, points: [{ t: "2026-07-08T10:00:00.000Z", score: 5 }] }]);
   });
 });
 
@@ -344,7 +345,7 @@ describe("lambdaSource.getLeaderboard catalog (per-challenge)", () => {
     vi.stubEnv("LEADERBOARD_API_URL", "https://scorer.example");
     stubFetch(WITH_CATALOG);
     const profile = await lambdaSource.getUser("neo");
-    expect(profile).toMatchObject({ login: "neo", points: 15, maxPoints: 15 });
+    expect(profile).toMatchObject({ playerId: "neo", points: 15, maxPoints: 15 });
     expect(profile!.apps.reduce((n, a) => n + a.maxPoints, 0)).toBe(profile!.maxPoints);
     // /profile renders the same breakdown as the board, so it needs the same
     // catalogue to join solvedIds against.

@@ -18,7 +18,7 @@ vi.mock("next/image", () => ({
 }));
 
 vi.mock("@/components/board-item-lists", () => ({
-  default: ({ logins }: { logins: string[] }) => <div data-testid="board-item-lists">{logins.join(",")}</div>,
+  default: ({ players }: { players: string[] }) => <div data-testid="board-item-lists">{players.join(",")}</div>,
 }));
 
 import { EntryRow, TeamRow } from "@/components/leaderboard";
@@ -52,7 +52,7 @@ function team(modules: TeamStanding["modules"]): TeamStanding {
 
 function entry(overrides: Partial<LeaderboardEntry>): LeaderboardEntry {
   return {
-    rank: 1, login: "ada", team: null, points: 0, patched: 0, failed: 0, total: 0, apps: {}, updatedAt: null,
+    rank: 1, playerId: "ada", name: "ada", image: null, team: null, points: 0, patched: 0, failed: 0, total: 0, apps: {}, updatedAt: null,
     ...overrides,
   };
 }

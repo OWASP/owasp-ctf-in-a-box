@@ -234,7 +234,7 @@ export default async function Home({
       topRowsAreTeams = data.teams.length > 0;
       topRows = topRowsAreTeams
         ? data.teams.slice(0, 3).map((t) => ({ key: t.slug, name: t.name, points: t.points }))
-        : data.entries.slice(0, 3).map((e) => ({ key: e.login, name: e.login, points: e.points }));
+        : data.entries.slice(0, 3).map((e) => ({ key: e.playerId, name: e.name, points: e.points }));
     } catch {
       topRows = [];
     }

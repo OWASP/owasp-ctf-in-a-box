@@ -86,15 +86,18 @@ vi.mock("@/lib/ai-store", () => ({
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: vi.fn() }));
 
 import ProfilePage from "@/app/(site)/profile/page";
+import { upstashPipeline } from "@/lib/upstash";
 import { withHintPenalties } from "@/lib/leaderboard/hint-penalties";
 import { withModuleContributions } from "@/lib/leaderboard/module-contributions";
 import type { LeaderboardData, LeaderboardEntry } from "@/lib/leaderboard/types";
 import { MIN_FILL_PX } from "@/components/progress/progress-bar";
 
 const ADA_ID = "2d1a6b5e-3f4c-4e7d-a081-9cadbe1f2041";
+const BOB_ID = "7b0b5e1c-2a3d-4e5f-8a6b-7c8d9e0f1a2b";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(upstashPipeline).mockReset();
   getViewerTeam.mockResolvedValue(null);
   listQuestions.mockResolvedValue([]);
   listAiChallenges.mockResolvedValue([]);
@@ -102,7 +105,7 @@ beforeEach(() => {
 });
 
 const baseProfile = {
-  login: "ada",
+  playerId: ADA_ID,
   team: null,
   teamName: null,
   points: 40,
@@ -129,7 +132,9 @@ describe("profile page points vs. the leaderboard row", () => {
     // through the real overlay pipeline (not a hand-rolled formula).
     const entry: LeaderboardEntry = {
       rank: 1,
-      login: ADA_ID,
+      playerId: ADA_ID,
+      name: "ada",
+      image: null,
       team: null,
       points: baseProfile.points,
       patched: baseProfile.patched,
@@ -178,7 +183,9 @@ describe("profile page points vs. the leaderboard row", () => {
 
     const entry: LeaderboardEntry = {
       rank: 1,
-      login: ADA_ID,
+      playerId: ADA_ID,
+      name: "ada",
+      image: null,
       team: null,
       points: 5,
       patched: baseProfile.patched,
@@ -219,7 +226,9 @@ describe("profile page points vs. the leaderboard row", () => {
 
     const entry: LeaderboardEntry = {
       rank: 1,
-      login: ADA_ID,
+      playerId: ADA_ID,
+      name: "ada",
+      image: null,
       team: null,
       points: baseProfile.points,
       patched: baseProfile.patched,
@@ -256,43 +265,51 @@ describe("profile page points vs. the leaderboard row", () => {
 });
 
 describe("profile team panel member rows", () => {
-  it("matches a roster member to their board row case-insensitively", async () => {
-    // The roster stores the spelling the team join recorded ("ada"); the
-    // board row carries the scorer's — the PR author's — spelling ("Ada").
-    // The join must not render a scoring teammate as 0 pts over casing,
-    // matching every other login join in the codebase.
+  it("matches a roster member to their board row by player id and shows their profile name", async () => {
+    // The roster and the board row both carry the player id; the name comes
+    // from the profile, read once for the roster.
     moduleLive.mockReturnValue(false);
     getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getHintPenalties.mockResolvedValue(new Map());
-    getViewerTeam.mockResolvedValue({ slug: "red", name: "Red Team", members: ["ada"] });
-    const boardEntry: LeaderboardEntry = {
+    getViewerTeam.mockResolvedValue({ slug: "red", name: "Red Team", members: [ADA_ID, BOB_ID] });
+    vi.mocked(upstashPipeline).mockImplementation(async (commands: unknown[][]) =>
+      commands.map((cmd) =>
+        cmd[0] === "HMGET"
+          ? { result: cmd.slice(2).map((id) => (id === BOB_ID ? JSON.stringify({ id: BOB_ID, name: "Bob B", login: "bobby" }) : null)) }
+          : { result: null },
+      ),
+    );
+    const boardEntry = (playerId: string, points: number): LeaderboardEntry => ({
       rank: 1,
-      login: "Ada",
+      playerId,
+      name: `player ${playerId.slice(0, 8)}`,
+      image: null,
       team: "red",
-      points: 77,
+      points,
       patched: 1,
       failed: 0,
       total: 6,
       apps: {},
       updatedAt: null,
-    };
+    });
     // capabilities.teams: true makes withTeamStandings a no-op, so the panel
     // reads exactly this standing — the test is about the member join alone.
     getLeaderboard.mockResolvedValue({
-      entries: [boardEntry],
-      teams: [{ rank: 1, slug: "red", name: "Red Team", captain: "ada", points: 200, members: ["ada"] }],
+      entries: [boardEntry(ADA_ID, 77), boardEntry(BOB_ID, 5)],
+      teams: [{ rank: 1, slug: "red", name: "Red Team", captain: ADA_ID, points: 200, members: [ADA_ID, BOB_ID] }],
       generatedAt: new Date().toISOString(),
       capabilities: { apps: false, teams: true, challenges: false },
     } satisfies LeaderboardData);
 
     const html = renderToStaticMarkup(await ProfilePage());
 
-    // The member row shows Ada's 77 board points, not the 0 a case-sensitive
-    // find would fall back to.
     expect(html).toContain("Team progress");
     expect(html).toContain(">77<");
+    // Bob's profile login is his display name, on the panel and the roster.
+    expect(html.match(/>bobby</g)?.length).toBeGreaterThanOrEqual(2);
+    expect(html).not.toContain(BOB_ID);
   });
 });
 

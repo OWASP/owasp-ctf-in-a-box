@@ -4,8 +4,12 @@
 // stored, so a team change cannot leave it stale.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ upstashPipeline: vi.fn(), listTeams: vi.fn() }));
+const m = vi.hoisted(() => ({ upstashPipeline: vi.fn(), listTeams: vi.fn(), getPlayerProfiles: vi.fn() }));
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/player", async () => ({
+  getPlayerProfiles: m.getPlayerProfiles,
+  displayNameOf: (await import("@/lib/display-name")).displayNameOf,
+}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: m.upstashPipeline }));
 vi.mock("@/lib/team-store", () => ({ listTeams: m.listTeams }));
 
@@ -13,6 +17,7 @@ import { teamSolveBoard, teamSolveCounts } from "@/lib/team-solve-counts";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  m.getPlayerProfiles.mockResolvedValue(new Map());
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -94,16 +99,27 @@ describe("teamSolveBoard", () => {
       ["HGETALL", "ctf:classic:solves:carol"],
     ]);
     expect(board?.counts).toEqual(new Map([["recon", 2], ["web", 1]]));
-    // The display login: the spelling the member set holds, not lowercased.
+    // The member set's spelling, not lowercased; no profile, so the id name.
     expect(board?.firstBlood).toEqual(
       new Map([
-        ["recon", { login: "carol", at: T1 }],
-        ["web", { login: "Alice", at: T3 }],
+        ["recon", { playerId: "carol", name: "player carol", at: T1 }],
+        ["web", { playerId: "Alice", name: "player Alice", at: T3 }],
       ]),
     );
   });
 
-  it("breaks a same-instant tie by login, whichever team is listed first", async () => {
+  it("names each first solver from their profile, in one read for the board", async () => {
+    m.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["alice", "bob"] }]);
+    m.upstashPipeline.mockResolvedValue([{ result: solves(["recon", T1], ["web", T2]) }, { result: solves(["crypto", T1]) }]);
+    m.getPlayerProfiles.mockResolvedValue(new Map([["alice", { id: "alice", name: "Alice A", image: null, githubLogin: null }]]));
+    const board = await teamSolveBoard("classic");
+    expect(m.getPlayerProfiles).toHaveBeenCalledTimes(1);
+    expect(m.getPlayerProfiles.mock.calls[0][0]).toEqual(["alice", "bob"]);
+    expect(board?.firstBlood.get("recon")).toEqual({ playerId: "alice", name: "Alice A", at: T1 });
+    expect(board?.firstBlood.get("crypto")?.name).toBe("player bob");
+  });
+
+  it("breaks a same-instant tie by player id, whichever team is listed first", async () => {
     const teams = [
       { slug: "red", name: "Red", members: ["zed"] },
       { slug: "blue", name: "Blue", members: ["amy"] },
@@ -111,7 +127,7 @@ describe("teamSolveBoard", () => {
     for (const order of [teams, [...teams].reverse()]) {
       m.listTeams.mockResolvedValue(order);
       m.upstashPipeline.mockResolvedValue(order.map(() => ({ result: solves(["recon", T1]) })));
-      expect((await teamSolveBoard("classic"))?.firstBlood.get("recon")?.login).toBe("amy");
+      expect((await teamSolveBoard("classic"))?.firstBlood.get("recon")?.playerId).toBe("amy");
     }
   });
 
@@ -120,7 +136,7 @@ describe("teamSolveBoard", () => {
     m.upstashPipeline.mockResolvedValue([{ result: ["recon", "not json"] }, { result: solves(["recon", T3]) }]);
     const board = await teamSolveBoard("classic");
     expect(board?.counts.get("recon")).toBe(1);
-    expect(board?.firstBlood.get("recon")).toEqual({ login: "zed", at: T3 });
+    expect(board?.firstBlood.get("recon")).toEqual({ playerId: "zed", name: "player zed", at: T3 });
   });
 
   // The acceptance pin: the Support tab's reset and delete both clear the
@@ -130,16 +146,16 @@ describe("teamSolveBoard", () => {
   it("passes a removed contestant's first blood to the next solver", async () => {
     m.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["alice", "bob"] }]);
     m.upstashPipeline.mockResolvedValue([{ result: solves(["recon", T1]) }, { result: solves(["recon", T2]) }]);
-    expect((await teamSolveBoard("classic"))?.firstBlood.get("recon")?.login).toBe("alice");
+    expect((await teamSolveBoard("classic"))?.firstBlood.get("recon")?.playerId).toBe("alice");
 
     // Progress reset: alice is still a member, her solves hash is gone.
     m.upstashPipeline.mockResolvedValue([{ result: [] }, { result: solves(["recon", T2]) }]);
-    expect((await teamSolveBoard("classic"))?.firstBlood.get("recon")).toEqual({ login: "bob", at: T2 });
+    expect((await teamSolveBoard("classic"))?.firstBlood.get("recon")).toEqual({ playerId: "bob", name: "player bob", at: T2 });
 
     // Deleted (or removed from the team): no longer a member at all.
     m.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["bob"] }]);
     m.upstashPipeline.mockResolvedValue([{ result: solves(["recon", T2]) }]);
-    expect((await teamSolveBoard("classic"))?.firstBlood.get("recon")).toEqual({ login: "bob", at: T2 });
+    expect((await teamSolveBoard("classic"))?.firstBlood.get("recon")).toEqual({ playerId: "bob", name: "player bob", at: T2 });
 
     // The only solver gone: no first blood at all, not a stale one.
     m.upstashPipeline.mockResolvedValue([{ result: [] }]);

@@ -6,6 +6,7 @@
 // force every static marketing page to become dynamic).
 
 import Image from "next/image";
+import { displayNameOf } from "@/lib/display-name";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -167,7 +168,9 @@ export default function AuthNav() {
     );
   }
 
-  const displayName = session.user.name;
+  // The kit's display rule (username, then GitHub login, then profile name),
+  // the same one every board row uses.
+  const displayName = displayNameOf(session.user);
   const showAdmin = showAdminLink(userId, granted);
 
   return (

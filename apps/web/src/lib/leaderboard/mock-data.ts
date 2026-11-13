@@ -236,7 +236,11 @@ export function buildMockEntries(): LeaderboardEntry[] {
       const { points, patched, failed, total, apps } = summarize(sample);
       return {
         rank: 0, // assigned by rankByStanding
-        login: sample.login,
+        // The fixture's names stand in for player ids, and carry their own
+        // display name: these players have no profile to resolve one from.
+        playerId: sample.login,
+        name: sample.login,
+        image: null,
         team: sample.team,
         points,
         patched,
@@ -263,8 +267,8 @@ export function buildMockTeams(entries: LeaderboardEntry[]): TeamStanding[] {
     .map(([slug, members]) => ({
       slug,
       name: TEAM_NAMES[slug] ?? slug,
-      captain: TEAM_CAPTAINS[slug] ?? members[0].login,
-      members: members.map((m) => m.login),
+      captain: TEAM_CAPTAINS[slug] ?? members[0].playerId,
+      members: members.map((m) => m.playerId),
       points: teamPoints(members),
       rank: 0,
     }))

@@ -1,5 +1,6 @@
 import "server-only";
 import type { AppId } from "@/lib/apps";
+import { unnamed } from "@/lib/display-name";
 import { rankByStanding } from "./rank";
 import type { LeaderboardSource } from "./source";
 import type {
@@ -17,6 +18,8 @@ import type {
 // { leaderboard: [{ rank, author, points, lastSolveAt,
 //                   apps: { "juice-shop": { solved, total }, ... } }],
 //   series: [{ login, points: [{ t, score }, ...] }, ...],
+// `author` and a series line's `login` are the scorer's player keys; each
+// becomes the row's `playerId`, and names are attached by the fold.
 //   teams: [{ rank, slug, name, captain, members, points, lastSolveAt, apps }, ...],
 //   teamSeries: [{ slug, name, points: [{ t, score }, ...] }, ...] }
 // There is no per-app point/max breakdown in this source. `series`/`teams`/
@@ -78,7 +81,7 @@ function toSeries(raw: unknown): PlayerSeries[] | undefined {
       (p): p is { t: string; score: number } =>
         !!p && typeof p === "object" && typeof p.t === "string" && typeof p.score === "number" && Number.isFinite(p.score),
     );
-    if (validPoints.length > 0) series.push({ login, points: validPoints });
+    if (validPoints.length > 0) series.push({ playerId: login, ...unnamed(login), points: validPoints });
   }
   return series.length > 0 ? series : undefined;
 }
@@ -244,7 +247,8 @@ function toEntry(raw: LambdaEntry, catalog: LambdaCatalog): LeaderboardEntry {
   }
   return {
     rank: raw.rank,
-    login: raw.author,
+    playerId: raw.author,
+    ...unnamed(raw.author),
     team: null,
     points: raw.points,
     patched,
@@ -286,12 +290,12 @@ export const lambdaSource: LeaderboardSource = {
     };
   },
 
-  async getUser(login: string): Promise<UserProfile | null> {
+  async getUser(playerId: string): Promise<UserProfile | null> {
     const data = await this.getLeaderboard();
-    const entry = data.entries.find((e) => e.login === login);
+    const entry = data.entries.find((e) => e.playerId === playerId);
     if (!entry) return null;
     return {
-      login: entry.login,
+      playerId: entry.playerId,
       team: null,
       teamName: null,
       points: entry.points,

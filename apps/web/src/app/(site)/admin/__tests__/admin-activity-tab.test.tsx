@@ -134,7 +134,7 @@ describe("filterEntries", () => {
     expect(q("", { type: "login" }).map((e) => e.name)).toEqual(["octocat", "hubot"]);
   });
 
-  it("matches login as a case-insensitive substring", () => {
+  it("matches the player name as a case-insensitive substring", () => {
     expect(q("  hubot ").map((e) => e.type)).toEqual(["login", "team-join"]);
   });
 
@@ -160,9 +160,9 @@ describe("filterEntries", () => {
   });
 
   it("restricts a prefixed word to that field", () => {
-    // "octo" is in octocat's login AND in hubot's team slug.
+    // "octo" is in octocat's name AND in hubot's team slug.
     expect(q("octo").map((e) => e.name)).toEqual(["octocat", "OctoCat", "hubot"]);
-    expect(q("login:octo").map((e) => e.name)).toEqual(["octocat", "OctoCat"]);
+    expect(q("player:octo").map((e) => e.name)).toEqual(["octocat", "OctoCat"]);
     expect(q("detail:octo")).toEqual([entries[3]]);
     expect(q("type:solve")).toEqual([entries[1]]);
   });
@@ -173,7 +173,7 @@ describe("filterEntries", () => {
   });
 
   it("ignores a prefix with nothing after it", () => {
-    expect(q("login:")).toEqual(entries);
+    expect(q("player:")).toEqual(entries);
   });
 
   it("keeps only rows inside the time range", () => {
@@ -217,7 +217,7 @@ describe("the search in the URL", () => {
   });
 
   it("writes ?q= beside the tab, and drops it when the box is cleared", () => {
-    expect(urlWithSearch("/admin?tab=activity", "login:octo")).toBe("/admin?tab=activity&q=login%3Aocto");
+    expect(urlWithSearch("/admin?tab=activity", "player:octo")).toBe("/admin?tab=activity&q=player%3Aocto");
     expect(urlWithSearch("/admin?tab=activity&q=old", "  ")).toBe("/admin?tab=activity");
   });
 });

@@ -7,6 +7,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { displayNameOf } from "@/lib/display-name";
 import type { TeamInfo } from "@/lib/team-store";
 
 type TeamActionResponse = { error?: string; code?: string; needsConfirm?: boolean };
@@ -120,6 +121,7 @@ export default function TeamCard({
   maxMembers,
   isCaptain,
   captain,
+  memberNames = {},
   joinCode,
   registrationOpen = true,
   secureDevEnabled = false,
@@ -130,9 +132,12 @@ export default function TeamCard({
   /** True when the signed-in viewer is this team's captain. Always false
    *  outside live mode — there's no captain concept for the mock cookie. */
   isCaptain: boolean;
-  /** The team's captain login, when known (live mode only). Used to keep the
-   *  captain out of "remove"/"transfer to" target lists. */
+  /** The team's captain player id, when known (live mode only). Used to keep
+   *  the captain out of "remove"/"transfer to" target lists. */
   captain: string | null;
+  /** Display name per member player id. A member missing from it shows the
+   *  id fallback; the ids themselves are what the team routes take. */
+  memberNames?: Record<string, string>;
   /** The team's current join code, when known (live mode only). Shown so any
    *  member — captain included — can share it to recruit teammates. */
   joinCode: string | null;
@@ -190,6 +195,7 @@ export default function TeamCard({
   const displayCode = latestCode ?? joinCode;
   const [copied, setCopied] = useState(false);
   const otherMembers = (team?.members ?? []).filter((member) => member !== captain);
+  const nameOf = (member: string) => memberNames[member] ?? displayNameOf({ id: member });
 
   return (
     <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] p-5">
@@ -256,15 +262,15 @@ export default function TeamCard({
                     key={member}
                     className="flex items-center gap-1.5 rounded-full border border-white/10 bg-[#12121e] px-2.5 py-1 font-mono text-xs text-zinc-300"
                   >
-                    {member}
+                    <bdi>{nameOf(member)}</bdi>
                     {member === captain && <span className="text-[10px] uppercase text-[#d4a017]">captain</span>}
                     {isCaptain && member !== captain && (
                       <button
                         type="button"
                         disabled={pending}
-                        onClick={() => exit("/remove", { slug: team.slug, member }, `Remove ${member} anyway`)}
+                        onClick={() => exit("/remove", { slug: team.slug, member }, `Remove ${nameOf(member)} anyway`)}
                         className="text-[#e53e3e] hover:text-white disabled:opacity-50"
-                        aria-label={`Remove ${member}`}
+                        aria-label={`Remove ${nameOf(member)}`}
                       >
                         ×
                       </button>
@@ -309,7 +315,7 @@ export default function TeamCard({
                     <option value="">Transfer captain to…</option>
                     {otherMembers.map((member) => (
                       <option key={member} value={member}>
-                        {member}
+                        {nameOf(member)}
                       </option>
                     ))}
                   </select>

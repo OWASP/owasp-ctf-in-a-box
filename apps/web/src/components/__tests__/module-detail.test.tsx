@@ -8,7 +8,7 @@ import ModuleDetail from "@/components/module-detail";
 import type { LeaderboardEntry, ModuleProgress } from "@/lib/leaderboard/types";
 
 const entry = (): LeaderboardEntry => ({
-  rank: 1, login: "ada", team: null, points: 30, patched: 3, failed: 0, total: 3,
+  rank: 1, playerId: "ada", name: "ada", image: null, team: null, points: 30, patched: 3, failed: 0, total: 3,
   apps: {}, updatedAt: null,
 });
 

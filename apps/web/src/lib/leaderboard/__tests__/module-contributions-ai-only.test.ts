@@ -52,7 +52,7 @@ describe("withModuleContributions on an ai-only event", () => {
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => e.login)).toEqual(["ada"]);
+    expect(out.entries.map((e) => e.playerId)).toEqual(["ada"]);
     expect(out.entries[0].points).toBe(30);
     expect(out.entries[0].rank).toBe(1);
     expect(out.entries[0]).toMatchObject({ patched: 0, failed: 0, total: 0, apps: {}, team: null });
@@ -100,7 +100,7 @@ describe("withModuleContributions on an ai-only event", () => {
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([
+    expect(out.entries.map((e) => [e.playerId, e.rank])).toEqual([
       ["scorer", 1],
       ["grinder", 2],
     ]);
@@ -116,7 +116,7 @@ describe("withModuleContributions on an ai-only event", () => {
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => e.login)).toEqual(["more", "fewer"]);
+    expect(out.entries.map((e) => e.playerId)).toEqual(["more", "fewer"]);
   });
 
   it("stamps sequential ranks across the created field", async () => {
@@ -130,7 +130,7 @@ describe("withModuleContributions on an ai-only event", () => {
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([
+    expect(out.entries.map((e) => [e.playerId, e.rank])).toEqual([
       ["a", 1],
       ["b", 2],
       ["c", 3],
@@ -193,7 +193,7 @@ describe("withModuleContributions on an ai-only event", () => {
   it("overlays onto an existing row rather than creating a second one", async () => {
     mocks.getAiTotals.mockResolvedValue(new Map([["ada", totals(30, 3)]]));
     const existing: LeaderboardEntry = {
-      rank: 1, login: "ada", team: null, points: 0, patched: 0, failed: 0, total: 0,
+      rank: 1, playerId: "ada", name: "ada", image: null, team: null, points: 0, patched: 0, failed: 0, total: 0,
       apps: {}, updatedAt: null, lastSolveAt: null,
     };
 

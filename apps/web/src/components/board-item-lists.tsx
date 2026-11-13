@@ -16,12 +16,12 @@ type ItemsResponse = {
   quiz: ModuleItem[] | null;
   classic: ModuleItem[] | null;
   ai: ModuleItem[] | null;
-  /** How many story steps hidden from the viewer the queried logins solved —
+  /** How many story steps hidden from the viewer the queried players solved —
    *  one count, nothing per position (ADR 60). */
   classicHiddenSolved?: number;
 };
 
-/** The route unions at most 8 logins per request (its anti-scrape cap), but
+/** The route unions at most 8 players per request (its anti-scrape cap), but
  *  an organizer can raise the team size well past that — chunk the roster
  *  and union the responses client-side so a big team's lists don't silently
  *  400 away. */
@@ -41,7 +41,7 @@ function mergeItems(parts: (ModuleItem[] | null)[]): ModuleItem[] | null {
   return [...merged.values()];
 }
 
-/** A roster over the route's 8-login cap arrives in chunks, each counting the
+/** A roster over the route's 8-player cap arrives in chunks, each counting the
  *  hidden steps its own members hold. A step held in two chunks would count
  *  twice if summed, so the largest chunk count is used: a floor that never
  *  over-claims. */
@@ -73,15 +73,16 @@ export function hiddenSummary(
 }
 
 export default function BoardItemLists({
-  logins,
+  players,
   classicPoints,
 }: {
-  logins: string[];
+  /** Player ids: one for a contestant row, the roster for a team row. */
+  players: string[];
   /** The row's gross Jeopardy points, for the hidden-steps total. */
   classicPoints?: number;
 }) {
   const [data, setData] = useState<ItemsResponse | null>(null);
-  const key = logins.join(",");
+  const key = players.join(",");
 
   useEffect(() => {
     if (!key) return;
@@ -91,7 +92,7 @@ export default function BoardItemLists({
     for (let i = 0; i < all.length; i += CHUNK) chunks.push(all.slice(i, i + CHUNK));
     Promise.all(
       chunks.map((chunk) =>
-        fetch(`/api/board/items?logins=${encodeURIComponent(chunk.join(","))}`)
+        fetch(`/api/board/items?players=${encodeURIComponent(chunk.join(","))}`)
           .then((res) => (res.ok ? res.json() : null))
           .catch(() => null),
       ),

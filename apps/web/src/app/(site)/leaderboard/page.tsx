@@ -70,7 +70,7 @@ export default async function LeaderboardPage({
   // module series → hint penalties — is identical for every viewer, so it is
   // memoized across requests for 10 s in folded.ts (issue #444), which also
   // owns the stage-order commentary. The one per-viewer input on this page
-  // is the "you" highlight, and <Leaderboard> applies that from viewerLogin.
+  // is the "you" highlight, and <Leaderboard> applies that from viewerId.
   // `data` is shared with every concurrent request: read it, never mutate it
   // — the spreads below build new objects.
   // #464 pre-launch lock, before the board is read: standings (and the
@@ -117,9 +117,9 @@ export default async function LeaderboardPage({
             points: t.points,
           }))
         : data.entries.slice(0, 10).map((e) => ({
-            key: e.login,
+            key: e.playerId,
             rank: e.rank,
-            name: e.login,
+            name: e.name,
             points: e.points,
             solved: completedCount(e),
           }));
@@ -198,7 +198,7 @@ export default async function LeaderboardPage({
           between them as the individual/teams view toggle flips. */}
       <Leaderboard
         data={{ ...data, entries }}
-        viewerLogin={player?.id ?? null}
+        viewerId={player?.id ?? null}
         modules={modules}
         enabledApps={enabledApps}
         timeZone={event.timeZone}

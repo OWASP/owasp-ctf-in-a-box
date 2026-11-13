@@ -46,7 +46,8 @@ function series(overrides: Partial<Record<string, PlayerSeries["points"]>> = {})
     ],
     ...overrides,
   };
-  return Object.entries(base).map(([login, points]) => ({ login, points }));
+  // Ids that differ from the names, so a label drawn from the id shows up.
+  return Object.entries(base).map(([name, points]) => ({ playerId: `id-${name}`, name, image: null, points }));
 }
 
 function countOccurrences(html: string, substring: string): number {
@@ -84,7 +85,7 @@ describe("ScoreTimeChart", () => {
   });
 
   it("renders nothing when every player has zero points", () => {
-    const html = renderToStaticMarkup(<ScoreTimeChart series={[{ login: "alice", points: [] }]} />);
+    const html = renderToStaticMarkup(<ScoreTimeChart series={[{ playerId: "alice", name: "alice", image: null, points: [] }]} />);
     expect(html).toBe("");
   });
 
@@ -105,8 +106,8 @@ describe("ScoreTimeChart", () => {
     const html = renderToStaticMarkup(
       <ScoreTimeChart
         series={[
-          { login: "alice", points: [{ t: "2026-08-01T00:00:00.000Z", score: 10 }] },
-          { login: "bob", points: [{ t: "2026-08-01T00:00:00.000Z", score: 20 }] },
+          { playerId: "alice", name: "alice", image: null, points: [{ t: "2026-08-01T00:00:00.000Z", score: 10 }] },
+          { playerId: "bob", name: "bob", image: null, points: [{ t: "2026-08-01T00:00:00.000Z", score: 20 }] },
         ]}
       />,
     );
@@ -116,7 +117,7 @@ describe("ScoreTimeChart", () => {
 
   it("folds players past the 8-color ceiling into a shared 'Other' legend entry, never a generated hue", () => {
     const many: PlayerSeries[] = Array.from({ length: 10 }, (_, i) => ({
-      login: `player${i}`,
+      playerId: `player${i}`, name: `player${i}`, image: null,
       points: [
         { t: "2026-08-01T00:00:00.000Z", score: 10 + i },
         { t: "2026-08-01T04:00:00.000Z", score: 100 - i },

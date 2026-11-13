@@ -1,5 +1,5 @@
 // /api/board/items — the expanded leaderboard rows' per-item quiz/classic/ai
-// completion. The pins that matter: login validation (this is a public
+// completion. The pins that matter: player-id validation (this is a public
 // route), the members' UNION for team rosters, module gating, and that
 // nothing grading-shaped can reach the payload.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,7 +36,14 @@ vi.mock("@/lib/ai-store", () => ({ listAiChallenges: mocks.listAiChallenges, get
 
 import { GET } from "@/app/api/board/items/route";
 
-const req = (logins: string) => new Request(`http://box/api/board/items?logins=${encodeURIComponent(logins)}`);
+// Rows carry player ids; the tests name them for readability.
+const P: Record<string, string> = {
+  alice: "a11ce000-0000-4000-8000-000000000001",
+  bob: "b0b00000-0000-4000-8000-000000000002",
+  leader: "1eade500-0000-4000-8000-000000000003",
+};
+const ids = (names: string) => names.split(",").map((n) => P[n] ?? n).join(",");
+const req = (names: string) => new Request(`http://box/api/board/items?players=${encodeURIComponent(ids(names))}`);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -52,19 +59,28 @@ beforeEach(() => {
 });
 
 describe("GET /api/board/items", () => {
-  it("refuses malformed, empty, and oversized login lists", async () => {
+  it("refuses malformed, empty, and oversized player lists", async () => {
     expect((await GET(req(""))).status).toBe(400);
-    expect((await GET(req("not a login!"))).status).toBe(400);
-    expect((await GET(req(Array.from({ length: 9 }, (_, i) => `user-${i}`).join(",")))).status).toBe(400);
+    expect((await GET(req("not a player!"))).status).toBe(400);
+    const nine = Array.from({ length: 9 }, (_, i) => `0000000${i}-0000-4000-8000-000000000000`);
+    expect((await GET(req(nine.slice(0, 8).join(",")))).status).toBe(200);
+    expect((await GET(req(nine.join(",")))).status).toBe(400);
+  });
+
+  it("takes player ids, not GitHub logins, under `players`", async () => {
+    expect((await GET(req("octocat"))).status).toBe(400);
+    const legacy = new Request(`http://box/api/board/items?logins=${P.alice}`);
+    expect((await GET(legacy)).status).toBe(400);
+    expect((await GET(req("alice"))).status).toBe(200);
   });
 
   it("unions a roster: an item any member completed is done, with the banked points", async () => {
     mocks.getViewerQuiz.mockImplementation(async (login: string) => ({
-      answered: login === "bob" ? { q1: { points: 50, at: "2026-08-24T00:00:00.000Z" } } : {},
+      answered: login === P.bob ? { q1: { points: 50, at: "2026-08-24T00:00:00.000Z" } } : {},
       attempts: {},
     }));
     mocks.getViewerAi.mockImplementation(async (login: string) => ({
-      solved: login === "bob" ? { a1: { points: 50, at: "2026-08-24T00:00:00.000Z", source: "flag" } } : {},
+      solved: login === P.bob ? { a1: { points: 50, at: "2026-08-24T00:00:00.000Z", source: "flag" } } : {},
       attempts: {},
     }));
     const res = await GET(req("alice,bob"));
@@ -147,14 +163,14 @@ describe("GET /api/board/items and a locked story step (#463)", () => {
     expect(body).toContain("??? — step 2 of 2");
   });
 
-  it("shows the step once any of the given logins (the team) has solved the one before it", async () => {
+  it("shows the step once any of the given players (the team) has solved the one before it", async () => {
     mocks.listChallenges.mockResolvedValue([
       { id: "recon-ab12cd", title: "Recon", points: 10 },
       { id: "secret-sqli-cd34ef", title: "Secret SQLi", points: 50 },
     ]);
     mocks.listStories.mockResolvedValue([{ id: "op", title: "Op", intro: "", steps: ["recon-ab12cd", "secret-sqli-cd34ef"] }]);
     mocks.getViewerClassic.mockImplementation(async (l: string) =>
-      l === "bob" ? { solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} } : { solved: {}, attempts: {} },
+      l === P.bob ? { solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} } : { solved: {}, attempts: {} },
     );
     // The viewer is on that team (their own team has it open too — review C2).
     mocks.getSession.mockResolvedValue({ user: { id: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f", login: "alice" } });
@@ -163,7 +179,7 @@ describe("GET /api/board/items and a locked story step (#463)", () => {
     const body = JSON.stringify(await (await GET(req("alice,bob"))).json());
     expect(body).toContain("Secret SQLi");
     expect(mocks.getTeamClassicSolvedIds).toHaveBeenCalledWith("0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f");
-    expect(mocks.unlockingSolvedIds).toHaveBeenCalledWith(["alice", "bob"]);
+    expect(mocks.unlockingSolvedIds).toHaveBeenCalledWith([P.alice, P.bob]);
   });
 
   // #602: bob solved step 1 on another team and then joined this one. The
@@ -176,7 +192,7 @@ describe("GET /api/board/items and a locked story step (#463)", () => {
     ]);
     mocks.listStories.mockResolvedValue([{ id: "op", title: "Op", intro: "", steps: ["recon-ab12cd", "secret-sqli-cd34ef"] }]);
     mocks.getViewerClassic.mockImplementation(async (l: string) =>
-      l === "bob" ? { solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} } : { solved: {}, attempts: {} },
+      l === P.bob ? { solved: { "recon-ab12cd": { points: 10, at: "x" } }, attempts: {} } : { solved: {}, attempts: {} },
     );
     // The viewer's OWN team has step 2 open, so only the queried team's
     // carried solve is in question.
@@ -243,7 +259,7 @@ describe("GET /api/board/items reports hidden solved steps as one count (#584)",
     mocks.getSession.mockResolvedValue(null);
   };
   type Body = { classic: Record<string, unknown>[]; classicHiddenSolved?: number };
-  const bodyOf = async (logins: string) => (await (await GET(req(logins))).json()) as Body;
+  const bodyOf = async (names: string) => (await (await GET(req(names))).json()) as Body;
 
   it("counts the hidden steps the queried team solved, without saying which", async () => {
     setup();

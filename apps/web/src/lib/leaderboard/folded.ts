@@ -3,6 +3,7 @@ import { getLeaderboardSource } from "./source";
 import { withModuleContributions } from "./module-contributions";
 import { withTeamStandings } from "./team-standings";
 import { withModuleSeries } from "./module-series";
+import { withPlayerNames } from "./names";
 import { withHintPenalties } from "./hint-penalties";
 import { withScoreAdjustments } from "./score-adjustments";
 import { foldGeneration } from "./fold-cache";
@@ -14,10 +15,10 @@ import type { LeaderboardData } from "./types";
  * WHY. The fold — source → module contributions → team standings → module
  * series → hint penalties — costs roughly 500 Redis commands and a scorer
  * round-trip at 200 contestants (`readModuleEvents` alone is one HGETALL per
- * login per live module), then the page renders 200 rows. It used to run on
+ * player per live module), then the page renders 200 rows. It used to run on
  * EVERY page view, per viewer, although its result is identical for every
  * viewer: the only per-session input is the "you" highlight, which the client
- * applies from `viewerLogin`. The load test (#439) measured 2.7 req/s served
+ * applies from `viewerId`. The load test (#439) measured 2.7 req/s served
  * against 10 demanded after the payload fix (#443), with ~370 ms of CPU per
  * request. Six folds a minute instead of six hundred is the difference.
  *
@@ -87,7 +88,10 @@ const defaultFold: Fold = async () => {
     .then(withScoreAdjustments)
     // Chart only the final ranked rows; both overlays above can move a row
     // across the top-ten boundary.
-    .then(withModuleSeries);
+    .then(withModuleSeries)
+    // Names last, once every stage that adds an entry or a line has run: one
+    // profile read for the whole board.
+    .then(withPlayerNames);
   console.info(
     `leaderboard fold: ${Date.now() - started}ms ` +
       `(entries=${data.entries.length} teams=${data.teams.length} ` +

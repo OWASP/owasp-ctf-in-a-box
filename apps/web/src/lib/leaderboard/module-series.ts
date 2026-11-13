@@ -205,7 +205,7 @@ export async function withModuleSeries(data: LeaderboardData): Promise<Leaderboa
   const chartedEntries = data.entries.filter((e) => e.rank <= SERIES_TOP_N);
   const chartedTeams = data.teams.filter((t) => t.rank <= SERIES_TOP_N);
   const spellings = new Set<string>();
-  for (const entry of chartedEntries) spellings.add(entry.login);
+  for (const entry of chartedEntries) spellings.add(entry.playerId);
   for (const team of chartedTeams) for (const member of team.members) spellings.add(member);
   if (spellings.size === 0) return data;
 
@@ -223,12 +223,14 @@ export async function withModuleSeries(data: LeaderboardData): Promise<Leaderboa
   // earlier time — the rule a team's union applies across its members.
   const byLogin = new Map([...gathered].map(([login, events]) => [login, earliestPerItem(events)]));
 
-  const seriesByLogin = new Map((data.series ?? []).map((s) => [s.login.toLowerCase(), s]));
+  const seriesByLogin = new Map((data.series ?? []).map((s) => [s.playerId.toLowerCase(), s]));
   const series: PlayerSeries[] = chartedEntries.map((entry) => {
-    const login = entry.login.toLowerCase();
+    const login = entry.playerId.toLowerCase();
     const existing = seriesByLogin.get(login);
     return {
-      login: existing?.login ?? display.get(login) ?? login,
+      playerId: existing?.playerId ?? display.get(login) ?? login,
+      name: entry.name,
+      image: entry.image,
       points: mergeCumulative(existing?.points ?? [], byLogin.get(login) ?? []),
     };
   });

@@ -134,7 +134,7 @@ afterEach(() => {
 });
 
 describe("switch epochs", () => {
-  it("rejects an enqueue attempted after a disable's cancellation scan even once the switch is re-enabled", async () => {
+  it("rejects a stale enqueue after the switch is re-enabled, and accepts one with the current epoch", async () => {
     const before = await getAnnounceConfig();
     expect(before.firstBlood).toBe(true);
     expect(before.kindEpochs["first-blood"]).toBe(0);
@@ -143,20 +143,23 @@ describe("switch epochs", () => {
     expect(state.config.get("firstBlood")).toBe("0");
     expect(state.config.get("epoch:first-blood")).toBe("1");
 
-    // The producer resumes after the cancellation scan with the epoch it
-    // read before the disable. The atomic enqueue check sees the switch off
-    // and the epoch advanced, so the entry is never written at all.
-    const accepted = await outboxEnqueue("race", "first-blood", { embeds: [] }, before.webhookGeneration, before.kindEpochs["first-blood"]);
-    expect(accepted).toBe(false);
-    expect(state.outbox.has("race")).toBe(false);
-
     await updateAnnounceConfig("admin", { firstBlood: true });
     const after = await getAnnounceConfig();
     expect(after.firstBlood).toBe(true);
     expect(after.kindEpochs["first-blood"]).toBe(1);
 
+    // A producer that read its config before the disable resumes now: the
+    // switch is ON again, so only the epoch check can reject it.
+    const staleAccepted = await outboxEnqueue("race", "first-blood", { embeds: [] }, after.webhookGeneration, before.kindEpochs["first-blood"]);
+    expect(staleAccepted).toBe(false);
+    expect(state.outbox.has("race")).toBe(false);
+
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(state.outbox.has("race")).toBe(false);
+
+    // The same enqueue carrying the CURRENT epoch is accepted.
+    const freshAccepted = await outboxEnqueue("race-current", "first-blood", { embeds: [] }, after.webhookGeneration, after.kindEpochs["first-blood"]);
+    expect(freshAccepted).toBe(true);
+    expect(state.outbox.get("race-current")?.kindEpoch).toBe(1);
   });
 });

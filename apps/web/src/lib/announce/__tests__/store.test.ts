@@ -53,6 +53,7 @@ import {
   readLedgerField,
   readStatePack,
   readStatus,
+  SET_ANNOUNCE_COOLDOWN_SCRIPT,
   setAnnounceCooldown,
   setAnnounceWebhook,
   STATE_CAS_ENQUEUE_SCRIPT,
@@ -801,23 +802,33 @@ describe("outbox", () => {
 });
 
 describe("Discord cooldown", () => {
-  it("stores the retry instant as a PX expiry and reads the remaining time", async () => {
+  it("parks the retry instant through the max() script and reads the remaining time", async () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-      mocks.upstashPipeline.mockResolvedValue([{ result: "OK" }]);
+      mocks.upstashEval.mockResolvedValue("1767225605000");
       await setAnnounceCooldown(5_000);
-      const set = mocks.upstashPipeline.mock.calls[0][0][0];
-      expect(set[0]).toBe("SET");
-      expect(set[1]).toBe(ANNOUNCE_COOLDOWN_KEY);
-      expect(set[3]).toBe("PX");
-      expect(Number(set[4])).toBeGreaterThanOrEqual(5_000);
+      const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+      // The max() lives in the script: a shorter deadline arriving last
+      // must not shorten a longer one another replica already parked.
+      expect(script).toBe(SET_ANNOUNCE_COOLDOWN_SCRIPT);
+      expect(script).toContain("math.max(cur, proposed)");
+      expect(keys).toEqual([ANNOUNCE_COOLDOWN_KEY]);
+      expect(args[0]).toBe(String(Date.parse("2026-01-01T00:00:05Z")));
+      expect(args[1]).toBe(String(Date.parse("2026-01-01T00:00:00Z")));
 
       mocks.upstashPipeline.mockResolvedValue([{ result: String(Date.parse("2026-01-01T00:00:03Z")) }]);
       expect(await announceCooldownMs()).toBe(3_000);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("fails OPEN when the cooldown write fails — the 429 itself must not throw", async () => {
+    mocks.upstashEval.mockRejectedValue(new Error("NOAUTH"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(setAnnounceCooldown(5_000)).resolves.toBeUndefined();
+    errorSpy.mockRestore();
   });
 
   it("fails open to 0 on a missing or unreadable cooldown", async () => {

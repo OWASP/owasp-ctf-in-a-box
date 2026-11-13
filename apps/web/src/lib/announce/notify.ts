@@ -21,10 +21,13 @@
 //
 // Title and points are looked up HERE from the module's public list (never
 // from the admin surface, never from the request body), so the solve routes
-// need pass nothing but the ids — and a challenge deleted in the seconds
-// between solve and lookup still announces under its id rather than being
-// silently dropped. The one exception is a story step the board redacts
-// (see the gate in the classic branch): there, id included, nothing posts.
+// need pass nothing but the ids — and a quiz/ai challenge deleted in the
+// seconds between solve and lookup still announces under its id rather than
+// being silently dropped. A CLASSIC challenge that is not on the VISIBLE
+// board at lookup time (hidden, not yet released, or deleted after the
+// solve) posts NOTHING: a deleted story step has no record left for
+// `storyPositions` to place, so the board's lock gate below could never run
+// and its bare id would publish a step the board redacts.
 //
 // Every failure is logged (label only) and swallowed — a Discord hiccup must
 // never surface on a contestant's submit response.
@@ -126,22 +129,17 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
       return;
     }
 
-    let classicVisible: Awaited<ReturnType<typeof readChallengeRecords>> | null = null;
-    let classicChallenge: Awaited<ReturnType<typeof readChallengeRecords>>[number] | null = null;
-    if (input.module === "classic") {
-      const all = await readChallengeRecords();
-      const existing = all.find((x) => x.id === input.challengeId);
-      const visible = visibleNow(all);
-      const c = visible.find((x) => x.id === input.challengeId);
-      // Hidden challenge: if it exists in the kit but is currently hidden,
-      // return immediately without claiming or enqueueing an announcement.
-      if (existing && !c) return;
-      classicVisible = visible;
-      classicChallenge = c ?? null;
-    }
-
     let item: { title: string; points: number } | null;
     if (input.module === "classic") {
+      const all = await readChallengeRecords();
+      const visible = visibleNow(all);
+      const c = visible.find((x) => x.id === input.challengeId);
+      // Not on the VISIBLE board — hidden, unreleased, or deleted between
+      // the solve and this lookup. No post, and no fallback to the bare id:
+      // a deleted story step leaves no record for `storyPositions` (below)
+      // to place, so the lock gate could not run and the id itself is what
+      // the board redacts.
+      if (!c) return;
       // Secrecy gate (ADR 60): the board redacts a story step to any reader
       // whose team has not unlocked it — title, points AND id — and an
       // announcement's audience is everyone in the channel, so a step locked
@@ -153,17 +151,18 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
       // the whole announcement — not even the bare id, which the board also
       // redacts because ids are derived from titles. A read that throws lands
       // in the outer catch: unreadable means NO post, never a guess.
-      const positions = storyPositions(await listStories(), new Set((classicVisible ?? []).map((c) => c.id)));
+      const positions = storyPositions(await listStories(), new Set(visible.map((x) => x.id)));
       const pos = positions.get(input.challengeId);
       if (pos && isLocked(pos, new Set())) return;
-      item = classicChallenge ? { title: classicChallenge.title, points: classicChallenge.points } : null;
+      item = { title: c.title, points: c.points };
     } else {
       // A failed lookup fails OPEN to the bare challenge id with 0 points.
       // That leaks nothing: these lists are the public boards (never admin
       // data or a flag), so a title/points can only come from an item that
       // is actually public, and the fallback is only the id the submit
       // route already knows. The claim above is already spent, so not
-      // posting would silently consume the first blood instead.
+      // posting would silently consume the first blood instead. (Classic
+      // never lands here: an invisible record returned above.)
       item = await lookupItem(input.module, input.challengeId).catch(() => null);
     }
 
@@ -177,8 +176,8 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     await enqueueLedgerAnnouncement(
       "first-blood",
       buildFirstBloodMessage({
-        // A challenge deleted between solve and lookup still announces —
-        // under its id, with zero points — rather than vanishing.
+        // A quiz/ai challenge deleted between solve and lookup still
+        // announces — under its id, with zero points — rather than vanishing.
         challengeTitle: item?.title ?? input.challengeId,
         points: item?.points ?? 0,
         who,

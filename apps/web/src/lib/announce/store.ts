@@ -584,11 +584,36 @@ export type StateCasEntry = {
 /** The CAS plus optional outbox writes, one atomic script. Without this, a
  *  replica can win the CAS and crash before enqueueing, consuming the
  *  transition forever; the combined script makes "state advanced" and "the
- *  edge is retained for delivery" one decision. Entries still re-check the
- *  switch, kind epoch and webhook generation inside the same script, so a
- *  concurrent disable/clear cannot be bypassed. */
+ *  edge is retained for delivery" one decision. Captured switch, kind epoch
+ *  and webhook generation are validated BEFORE the swap, so an observation
+ *  that a concurrent disable/clear/re-enable has invalidated neither
+ *  advances the pack (which would consume the edge the checks would then
+ *  drop) nor writes its entries; the per-entry re-check below is the second
+ *  line of the same fence. */
 export const STATE_CAS_ENQUEUE_SCRIPT = `
 local cur = redis.call('GET', KEYS[1])
+local n = tonumber(ARGV[4])
+-- A stale observation must not advance the pack. The per-entry checks in
+-- the enqueue below would drop the entry AFTER the swap, consuming the
+-- edge forever (the next tick sees no change, so the notice is lost while
+-- a later resume still fires). Validate the captured switch, epoch and
+-- generation BEFORE any write and refuse the whole observation instead:
+-- the next tick re-reads fresh counters and wins cleanly.
+if n > 0 then
+  local i = 5
+  for _ = 1, n do
+    local switchField = ARGV[i + 2]
+    local epochField = ARGV[i + 3]
+    local kindEpoch = ARGV[i + 4]
+    local generation = ARGV[i + 5]
+    i = i + 6
+    if redis.call('HGET', KEYS[4], switchField) ~= '1'
+      or tonumber(redis.call('HGET', KEYS[4], epochField) or 0) ~= tonumber(kindEpoch)
+      or tonumber(redis.call('GET', KEYS[5]) or 0) ~= tonumber(generation) then
+      return {0, 0, cur == false and '' or cur, 0}
+    end
+  end
+end
 local code
 local seq
 local prev
@@ -611,7 +636,6 @@ elseif cur == ARGV[1] then
 else
   return {0, 0, cur, 0}
 end
-local n = tonumber(ARGV[4])
 local enqueued = 0
 if code == 1 and n > 0 then
   local i = 5
@@ -1012,14 +1036,27 @@ export async function announceCooldownMs(): Promise<number> {
   }
 }
 
+/** Keeps max(stored, proposed): replicas race their own 429s, and a shorter
+ *  deadline arriving last must not shorten a longer one already parked —
+ *  delivery would resume before the stricter restriction ends. */
+export const SET_ANNOUNCE_COOLDOWN_SCRIPT = `
+local now = tonumber(ARGV[2])
+local proposed = tonumber(ARGV[1])
+local cur = tonumber(redis.call('GET', KEYS[1]) or '0')
+local untilMs = math.max(cur, proposed)
+redis.call('SET', KEYS[1], tostring(untilMs), 'PX', math.max(1, untilMs - now))
+return untilMs
+`;
+
 /** Starts a Discord cooldown. A 429 is the one refusal that must not burn an
  *  entry's retry budget: the sweeps check this before claiming anything, so
- *  the batch stays pending and the attempt count is unchanged. */
+ *  the batch stays pending and the attempt count is unchanged. The write is
+ *  max() semantics in Lua, so concurrent 429s keep the latest deadline. */
 export async function setAnnounceCooldown(ms: number): Promise<void> {
-  const until = Date.now() + Math.max(1_000, Math.ceil(ms));
+  const now = Date.now();
+  const until = now + Math.max(1_000, Math.ceil(ms));
   try {
-    const [res] = await upstashPipeline([["SET", ANNOUNCE_COOLDOWN_KEY, String(until), "PX", String(until - Date.now())]]);
-    if (res.error) throw new Error(res.error);
+    await upstashEval(SET_ANNOUNCE_COOLDOWN_SCRIPT, [ANNOUNCE_COOLDOWN_KEY], [String(until), String(now)]);
   } catch (err) {
     console.error("[announce] cooldown write failed:", adminErrorLabel(err));
   }

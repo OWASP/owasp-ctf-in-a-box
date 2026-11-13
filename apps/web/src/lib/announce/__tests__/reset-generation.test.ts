@@ -127,9 +127,14 @@ describe("reset and the webhook generation", () => {
 
     const callsBeforeReset = mocks.upstashPipeline.mock.calls.length;
     await resetEvent({ id: "admin-id", name: "admin" });
-    expect(state.generation).toBe(1);
+    // Twice: the first increment outruns producers that read the generation
+    // BEFORE the reset, the second (post-wipe) outruns a tick that read the
+    // new generation but the previous event's settings before RESET_SCRIPT
+    // cleared them.
+    expect(state.generation).toBe(2);
     const resetCalls = mocks.upstashPipeline.mock.calls.map((call) => call[0][0]).slice(callsBeforeReset);
-    expect(resetCalls.slice(0, 1)).toEqual([["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]]);
+    expect(resetCalls[0]).toEqual(["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]);
+    expect(resetCalls[resetCalls.length - 1]).toEqual(["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]);
     expect(resetCalls.findIndex((cmd) => cmd[0] === "SCAN")).toBeGreaterThan(0);
 
     // The producer's outbox write lands after the reset advanced the
@@ -138,6 +143,12 @@ describe("reset and the webhook generation", () => {
     const accepted = await outboxEnqueue("race", "launch", { embeds: [] }, before.webhookGeneration, before.kindEpochs.launch);
     expect(accepted).toBe(false);
     expect(state.outbox.has("race")).toBe(false);
+
+    // So does the mid-reset observation: generation 1 with the OLD
+    // event's settings read, which the post-wipe increment exists to fence.
+    const midReset = await outboxEnqueue("mid-race", "launch", { embeds: [] }, 1, before.kindEpochs.launch);
+    expect(midReset).toBe(false);
+    expect(state.outbox.has("mid-race")).toBe(false);
 
     await flushRetries();
     expect(fetchMock).not.toHaveBeenCalled();

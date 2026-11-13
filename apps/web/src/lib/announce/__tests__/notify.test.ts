@@ -102,14 +102,27 @@ describe("notifyFirstBlood", () => {
     expect(msg.embeds[0].description).toContain("Team One");
   });
 
-  it("falls back to the display name and to the id when the challenge vanished", async () => {
-    mocks.listTeams.mockResolvedValue([]);
+  it("withholds a classic challenge that vanished after the solve — a deleted step must not leak its id", async () => {
+    // The award named alice first; between that award and this lookup the
+    // organizer deleted the record. With no record there is nothing for
+    // `storyPositions` to place, so the lock gate could never run — the
+    // bare id and its /flags/ URL are exactly what the board redacts.
     mocks.readChallengeRecords.mockResolvedValue([]);
     await notifyFirstBlood({ module: "classic", challengeId: "gone-1", playerId: "alice" });
+    expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the display name and to the (escaped) id for a vanished quiz/ai item", async () => {
+    mocks.listTeams.mockResolvedValue([]);
+    mocks.getPlayerProfiles.mockResolvedValue(
+      new Map([["alice", { id: "alice", name: "Alice Display", image: null, githubLogin: "alice" }]]),
+    );
+    mocks.listQuestions.mockResolvedValue([]);
+    await notifyFirstBlood({ module: "quiz", challengeId: "q-missing", playerId: "alice" });
     const msg = mocks.enqueueLedgerAnnouncement.mock.calls[0][1] as { embeds: { description?: string }[] };
-    expect(msg.embeds[0].description).toContain("alice");
+    expect(msg.embeds[0].description).toContain("Alice Display");
     // The id is escaped like any other untrusted text — `-` is Markdown.
-    expect(msg.embeds[0].description).toContain("gone\\-1");
+    expect(msg.embeds[0].description).toContain("q\\-missing");
   });
 
   it("fails open to the bare id and 0 points when the quiz/ai list read rejects", async () => {
@@ -207,10 +220,21 @@ describe("story-lock secrecy gate (ADR 60)", () => {
 
   it("withholds the WHOLE post for a later step — title, points AND id", async () => {
     await notifyFirstBlood({ module: "classic", challengeId: "web-2", playerId: "alice" });
-    // The claim is still spent first: nobody else may post it later either,
+    // The first-solver record was read (never a claim this caller spends),
     // and nothing — not even the bare id the board also redacts — reaches
     // the sender.
     expect(mocks.readLedgerField).toHaveBeenCalledWith("ctf:announce:first", "classic:web-2");
+    expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("withholds a story step DELETED between the award and the lookup — its id must not leak", async () => {
+    // The record is gone but the story line still names the step. With no
+    // record, `visibleNow` cannot show it and `storyPositions` (which only
+    // places ids in the visible set) never yields a position — so the lock
+    // gate below cannot run and the bare id would otherwise post to every
+    // team, including those that never unlocked the step.
+    mocks.readChallengeRecords.mockResolvedValue([both[0]]);
+    await notifyFirstBlood({ module: "classic", challengeId: "web-2", playerId: "alice" });
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 

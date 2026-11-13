@@ -931,6 +931,18 @@ export async function resetEvent(
       [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
       [actor.name, at, resetAt, audit, String(AUDIT_CAP - 1)],
     );
+    // Advance AGAIN after the wipe. The first increment only outruns
+    // producers that read the generation BEFORE the reset; a ticker pass can
+    // read the NEW generation and still read the previous event's settings
+    // before RESET_SCRIPT clears them, then enqueue a milestone whose
+    // generation matches the first increment — delivery would post it into
+    // the fresh event. This increment makes every such entry stale. Fail
+    // closed like the first: a reset that cannot fence its own announcements
+    // reports the failure instead of returning a half-fenced wipe.
+    assertPipelineOk(
+      await upstashPipeline([["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]]),
+      "reset webhook generation (post-wipe)",
+    );
     return { cleared, resetAt };
   } finally {
     await endScoreLowering();

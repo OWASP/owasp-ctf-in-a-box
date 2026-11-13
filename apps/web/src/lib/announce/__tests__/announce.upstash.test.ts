@@ -24,6 +24,8 @@ import {
   OUTBOX_COMPLETE_SCRIPT,
   OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
+  SET_ANNOUNCE_COOLDOWN_SCRIPT,
+  STATE_CAS_ENQUEUE_SCRIPT,
   STATE_CAS_SCRIPT,
   SWITCH_DISABLE_SCRIPT,
   WEBHOOK_CLEAR_SCRIPT,
@@ -39,6 +41,8 @@ const LEASE_ID = `${RUN}-lease`;
 const LEASE_KEY = `ctf:announce:lease:${LEASE_ID}`;
 const CLAIM_ID = `${RUN}-claim`;
 const CLAIM_LEASE_KEY = `ctf:announce:lease:${CLAIM_ID}`;
+const CLAIM_GEN_KEY = liveKey("announce-claim", "generation");
+const CLAIM_GEN = "7";
 const OUTBOX_KEY = liveKey("announce-outbox", "box");
 const SWITCH_KEY = liveKey("announce-switch", "config");
 const TARGET_URL_KEY = liveKey("announce-target", "url");
@@ -46,11 +50,11 @@ const TARGET_GEN_KEY = liveKey("announce-target", "generation");
 
 describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
   beforeAll(async () => {
-    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, OUTBOX_KEY, SWITCH_KEY, TARGET_URL_KEY, TARGET_GEN_KEY]]);
+    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, CLAIM_GEN_KEY, OUTBOX_KEY, SWITCH_KEY, TARGET_URL_KEY, TARGET_GEN_KEY]]);
   });
 
   afterAll(async () => {
-    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, OUTBOX_KEY, SWITCH_KEY, TARGET_URL_KEY, TARGET_GEN_KEY]]);
+    await upstashPipeline([["DEL", STATE_KEY, SEQ_KEY, LEDGER_KEY, LEASE_KEY, CLAIM_LEASE_KEY, CLAIM_GEN_KEY, OUTBOX_KEY, SWITCH_KEY, TARGET_URL_KEY, TARGET_GEN_KEY]]);
   });
 
   it("first observation with expected='' seeds silently (code 2) and bumps the seq", async () => {
@@ -97,21 +101,22 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
   });
 
   it("OUTBOX_CLAIM_SCRIPT claims an unchanged entry with an owner token, but rejects once marked sent", async () => {
-    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", kindEpoch: 2 };
+    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", webhookGeneration: Number(CLAIM_GEN), kindEpoch: 2 };
     const token = `${RUN}-owner-a`;
 
     await upstashPipeline([
       ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY],
+      ["SET", CLAIM_GEN_KEY, CLAIM_GEN],
       ["HSET", OUTBOX_KEY, CLAIM_ID, JSON.stringify(entry)],
       ["HSET", SWITCH_KEY, "firstBlood", "1", "epoch:first-blood", "2"],
     ]);
 
-    const win = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY], [CLAIM_ID, "pending", 0, 90_000, token, "firstBlood", "epoch:first-blood"]);
+    const win = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY, CLAIM_GEN_KEY], [CLAIM_ID, "pending", 0, 90_000, token, "firstBlood", "epoch:first-blood"]);
     expect(win).toBe(1);
     const [lease] = await upstashPipeline([["GET", CLAIM_LEASE_KEY]]);
     expect(lease.result).toBe(token);
 
-    const held = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-owner-b`, "firstBlood", "epoch:first-blood"]);
+    const held = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY, CLAIM_GEN_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-owner-b`, "firstBlood", "epoch:first-blood"]);
     expect(held).toBe(0);
 
     const completed = { ...entry, status: "sent" };
@@ -120,42 +125,44 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
       ["DEL", CLAIM_LEASE_KEY],
     ]);
 
-    const stale = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY], [CLAIM_ID, "pending", 0, 90_000, token, "firstBlood", "epoch:first-blood"]);
+    const stale = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY, CLAIM_GEN_KEY], [CLAIM_ID, "pending", 0, 90_000, token, "firstBlood", "epoch:first-blood"]);
     expect(stale).toBe(0);
 
-    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY]]);
+    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, CLAIM_GEN_KEY, SWITCH_KEY]]);
   });
 
   it("OUTBOX_CLAIM_SCRIPT refuses a lease while the switch is disabled", async () => {
-    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", kindEpoch: 0 };
+    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", webhookGeneration: Number(CLAIM_GEN), kindEpoch: 0 };
     await upstashPipeline([
       ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY],
+      ["SET", CLAIM_GEN_KEY, CLAIM_GEN],
       ["HSET", OUTBOX_KEY, CLAIM_ID, JSON.stringify(entry)],
       ["HSET", SWITCH_KEY, "firstBlood", "0", "epoch:first-blood", "0"],
     ]);
 
-    const res = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-disabled`, "firstBlood", "epoch:first-blood"]);
+    const res = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY, CLAIM_GEN_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-disabled`, "firstBlood", "epoch:first-blood"]);
     expect(res).toBe(0);
     const [lease] = await upstashPipeline([["GET", CLAIM_LEASE_KEY]]);
     expect(lease.result).toBeNull();
 
-    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY]]);
+    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, CLAIM_GEN_KEY, SWITCH_KEY]]);
   });
 
   it("OUTBOX_CLAIM_SCRIPT refuses a lease when the entry's kind epoch is stale", async () => {
-    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", kindEpoch: 1 };
+    const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", webhookGeneration: Number(CLAIM_GEN), kindEpoch: 1 };
     await upstashPipeline([
       ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY],
+      ["SET", CLAIM_GEN_KEY, CLAIM_GEN],
       ["HSET", OUTBOX_KEY, CLAIM_ID, JSON.stringify(entry)],
       ["HSET", SWITCH_KEY, "firstBlood", "1", "epoch:first-blood", "2"],
     ]);
 
-    const res = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-stale-epoch`, "firstBlood", "epoch:first-blood"]);
+    const res = await upstashEval(OUTBOX_CLAIM_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY, CLAIM_GEN_KEY], [CLAIM_ID, "pending", 0, 90_000, `${RUN}-stale-epoch`, "firstBlood", "epoch:first-blood"]);
     expect(res).toBe(0);
     const [lease] = await upstashPipeline([["GET", CLAIM_LEASE_KEY]]);
     expect(lease.result).toBeNull();
 
-    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY]]);
+    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, CLAIM_GEN_KEY, SWITCH_KEY]]);
   });
 
   it("OUTBOX_ENQUEUE_SCRIPT writes only when the switch is on and the captured epoch and generation are current", async () => {
@@ -317,5 +324,102 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
         expect(Number(generation)).toBeGreaterThan(0);
       }
     }
+  });
+
+  it("STATE_CAS_ENQUEUE_SCRIPT refuses a stale observation BEFORE advancing the pack", async () => {
+    const stateKey = liveKey("announce-cas-enq", "state");
+    const seqKey = liveKey("announce-cas-enq", "seq");
+    const boxKey = liveKey("announce-cas-enq", "box");
+    const cfgKey = liveKey("announce-cas-enq", "config");
+    const genKey = liveKey("announce-cas-enq", "generation");
+    const keys = [stateKey, seqKey, boxKey, cfgKey, genKey];
+    const entry = JSON.stringify({
+      kind: "launch",
+      payload: { embeds: [] },
+      at: new Date().toISOString(),
+      n: 0,
+      status: "pending",
+      webhookGeneration: 5,
+      kindEpoch: 4,
+    });
+    const fresh = ["v1|L0P0", "v1|L1P0", new Date().toISOString(), "1", `${RUN}-enq-launch`, entry, "launch", "epoch:launch", "4", "5"];
+
+    await upstashPipeline([
+      ["DEL", stateKey, seqKey, boxKey, cfgKey, genKey],
+      ["SET", stateKey, "v1|L0P0"],
+      ["SET", genKey, "5"],
+      ["HSET", cfgKey, "launch", "1", "epoch:launch", "4"],
+    ]);
+
+    // Stale kind epoch: the switch was disabled and re-enabled after this
+    // observation's config read. Validation must refuse BEFORE the swap —
+    // otherwise the swap consumes the edge and the enqueue check then drops
+    // the entry, so the notice is lost while a later resume still fires.
+    const staleEpoch = await upstashEval(STATE_CAS_ENQUEUE_SCRIPT, keys, [
+      "v1|L0P0", "v1|L1P0", new Date().toISOString(), "1",
+      `${RUN}-enq-epoch`, entry, "launch", "epoch:launch", "3", "5",
+    ]);
+    expect((staleEpoch as number[])[0]).toBe(0);
+
+    // Stale webhook generation: the webhook rotated after this observation.
+    const staleGeneration = await upstashEval(STATE_CAS_ENQUEUE_SCRIPT, keys, [
+      "v1|L0P0", "v1|L1P0", new Date().toISOString(), "1",
+      `${RUN}-enq-gen`, entry, "launch", "epoch:launch", "4", "4",
+    ]);
+    expect((staleGeneration as number[])[0]).toBe(0);
+
+    // Switch turned off after the observation.
+    await upstashPipeline([["HSET", cfgKey, "launch", "0"]]);
+    const disabled = await upstashEval(STATE_CAS_ENQUEUE_SCRIPT, keys, fresh);
+    expect((disabled as number[])[0]).toBe(0);
+    await upstashPipeline([["HSET", cfgKey, "launch", "1"]]);
+
+    // Nothing moved: the pack still holds the observed value, the seq was
+    // not bumped, and no half-written entry landed.
+    const [pack, seq, box] = await upstashPipeline([
+      ["GET", stateKey],
+      ["GET", seqKey],
+      ["HGETALL", boxKey],
+    ]);
+    expect(pack.result).toBe("v1|L0P0");
+    expect(seq.result).toBeNull();
+    expect(box.result).toEqual([]);
+
+    // A current observation wins the swap AND writes the entry atomically.
+    const accepted = await upstashEval(STATE_CAS_ENQUEUE_SCRIPT, keys, fresh);
+    const arr = accepted as [number, number, string, number];
+    expect(arr[0]).toBe(1);
+    expect(arr[3]).toBe(1);
+    const [pack2, box2] = await upstashPipeline([["GET", stateKey], ["HGET", boxKey, `${RUN}-enq-launch`]]);
+    expect(pack2.result).toBe("v1|L1P0");
+    expect(box2.result).toBe(entry);
+
+    await upstashPipeline([["DEL", stateKey, seqKey, boxKey, cfgKey, genKey]]);
+  });
+
+  it("SET_ANNOUNCE_COOLDOWN_SCRIPT keeps the LATEST deadline when a shorter one arrives last", async () => {
+    const key = liveKey("announce-cooldown", "deadline");
+    await upstashPipeline([["DEL", key]]);
+    const now = Date.now();
+    const longUntil = now + 60_000;
+    const shortUntil = now + 5_000;
+
+    await upstashEval(SET_ANNOUNCE_COOLDOWN_SCRIPT, [key], [String(longUntil), String(now)]);
+    // Another replica's 429 carries a shorter restriction and writes after:
+    // it must not shorten the deadline already parked, or delivery would
+    // resume before the stricter restriction ends.
+    await upstashEval(SET_ANNOUNCE_COOLDOWN_SCRIPT, [key], [String(shortUntil), String(now)]);
+
+    const [deadline, ttl] = await upstashPipeline([["GET", key], ["PTTL", key]]);
+    expect(deadline.result).toBe(String(longUntil));
+    expect(Number(ttl.result)).toBeGreaterThan(40_000);
+
+    // The other order still extends: a longer deadline arriving last wins.
+    const longerUntil = now + 90_000;
+    await upstashEval(SET_ANNOUNCE_COOLDOWN_SCRIPT, [key], [String(longerUntil), String(now)]);
+    const [extended] = await upstashPipeline([["GET", key]]);
+    expect(extended.result).toBe(String(longerUntil));
+
+    await upstashPipeline([["DEL", key]]);
   });
 });

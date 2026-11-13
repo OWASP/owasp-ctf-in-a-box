@@ -5,7 +5,8 @@
 // stored verbatim, so nothing depends on cjson key ordering.
 //
 // Index keys are `<prefix>:<model>:by:<field>:<value>` and must stay
-// byte-identical to `indexKey` in ./keys.ts. Only string, number and boolean
+// byte-identical to `indexKey` in ./keys.ts; owner keys are
+// `<prefix>:<model>:owner:<id>`, byte-identical to `ownerKey`. Only string, number and boolean
 // fields are indexed; null, absent and nested values are left out. A field
 // name joining parts with "+" indexes the parts joined with ":", and only when
 // every part is indexable.
@@ -16,6 +17,10 @@
 const INDEX_HELPERS = `
 local function index_key(prefix, model, field, value)
   return prefix .. ":" .. model .. ":by:" .. field .. ":" .. value
+end
+
+local function owner_key(prefix, model, id)
+  return prefix .. ":" .. model .. ":owner:" .. id
 end
 
 local function indexable(v)
@@ -60,13 +65,17 @@ end
 
 // KEYS[1] rows hash
 // ARGV: prefix, model, id, expectedJson ("" = must not exist), newJson,
-//       indexedFieldsCsv, uniqueFieldsCsv (each also in indexedFieldsCsv)
+//       indexedFieldsCsv, uniqueFieldsCsv (each also in indexedFieldsCsv),
+//       [ownerToken, ownerTtlMs]
 // Returns 1 written, 0 snapshot mismatch, 2 a unique field's value is held by
-// another row that still exists. On 0 and 2 nothing is written.
+// another row that still exists. On 0 and 2 nothing is written. A create that
+// writes sets the row's owner key to ownerToken for ownerTtlMs, or clears it
+// when no token is given; an update leaves the owner key alone.
 export const PUT_ROW_SCRIPT = `${INDEX_HELPERS}
 local prefix, model, id = ARGV[1], ARGV[2], ARGV[3]
 local expected, newJson, csv = ARGV[4], ARGV[5], ARGV[6]
 local unique = ARGV[7] or ""
+local token, ttl = ARGV[8] or "", tonumber(ARGV[9] or "")
 
 local row, rowErr = decode_object(newJson, "newJson")
 if not row then return redis.error_reply(rowErr) end
@@ -98,12 +107,20 @@ for field in each_field(csv) do
   local v = field_value(row, field)
   if v then redis.call("SADD", index_key(prefix, model, field, v), id) end
 end
+if expected == "" then
+  if token ~= "" and ttl and ttl > 0 then
+    redis.call("SET", owner_key(prefix, model, id), token, "PX", ttl)
+  else
+    redis.call("DEL", owner_key(prefix, model, id))
+  end
+end
 return 1
 `;
 
 // KEYS[1] rows hash
 // ARGV: prefix, model, id, expectedJson, indexedFieldsCsv
-// Returns 1 deleted, 0 snapshot mismatch (including a missing row).
+// Returns 1 deleted (with its index entries and owner key), 0 snapshot
+// mismatch (including a missing row).
 export const DEL_ROW_SCRIPT = `${INDEX_HELPERS}
 local prefix, model, id = ARGV[1], ARGV[2], ARGV[3]
 local expected, csv = ARGV[4], ARGV[5]
@@ -115,5 +132,32 @@ local old, oldErr = decode_object(current, "stored row")
 if not old then return redis.error_reply(oldErr) end
 unindex(prefix, model, id, old, csv)
 redis.call("HDEL", KEYS[1], id)
+redis.call("DEL", owner_key(prefix, model, id))
+return 1
+`;
+
+// KEYS[1] rows hash
+// ARGV: prefix, model, id, ownerToken, indexedFieldsCsv
+// Returns 1 deleted, 0 when the row's owner key does not hold ownerToken (the
+// create never wrote, the row was deleted since, or another create owns the
+// id now) or the row is gone. The owner key, not the row's JSON, is the proof:
+// identical JSON from another writer is not this transaction's row, and an
+// update this transaction made to its own row does not change the owner.
+export const UNDO_CREATE_SCRIPT = `${INDEX_HELPERS}
+local prefix, model, id = ARGV[1], ARGV[2], ARGV[3]
+local token, csv = ARGV[4], ARGV[5]
+local okey = owner_key(prefix, model, id)
+
+if token == "" or redis.call("GET", okey) ~= token then return 0 end
+local current = redis.call("HGET", KEYS[1], id)
+if not current then
+  redis.call("DEL", okey)
+  return 0
+end
+local old, oldErr = decode_object(current, "stored row")
+if not old then return redis.error_reply(oldErr) end
+unindex(prefix, model, id, old, csv)
+redis.call("HDEL", KEYS[1], id)
+redis.call("DEL", okey)
 return 1
 `;

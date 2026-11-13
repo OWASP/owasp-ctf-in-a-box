@@ -17,6 +17,19 @@ import { freshId, liveConfigured, liveKey } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
 
+// Every pipeline goes to the real SRH; a test can set `relay.hook` to sit in
+// front of it, e.g. to run a command and then drop its reply.
+type Pipeline = typeof import("@/lib/upstash").upstashPipeline;
+const relay = vi.hoisted(() => ({
+  hook: null as null | ((cmds: (string | number)[][], real: (cmds: (string | number)[][]) => Promise<unknown>) => Promise<unknown>),
+}));
+vi.mock("@/lib/upstash", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/upstash")>();
+  const upstashPipeline: Pipeline = (cmds, opts) =>
+    (relay.hook ? relay.hook(cmds, (c) => real.upstashPipeline(c, opts)) : real.upstashPipeline(cmds, opts)) as ReturnType<Pipeline>;
+  return { ...real, upstashPipeline };
+});
+
 // auth.ts builds its own instance at import; vi.hoisted runs before imports.
 vi.hoisted(() => {
   process.env.BETTER_AUTH_URL ??= "http://localhost:3000";
@@ -177,6 +190,47 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
     ).rejects.toThrow(/row s-dup already exists/);
     expect((await ctx.adapter.findMany<{ id: string }>({ model: "session" })).map((r) => r.id)).toEqual(["s-dup"]);
     expect(await redis(["SMEMBERS", keys.indexKey(prefix, "session", "token", "dup")])).toEqual(["s-dup"]);
+  });
+
+  it("undoes a row the failed transaction created and then updated", async () => {
+    const { prefix, ctx } = await build();
+    const email = profile("updater").email;
+    await expect(
+      ctx.adapter.transaction(async (trx) => {
+        const u = await trx.create<{ id: string }>({ model: "user", data: { name: "Up", email, emailVerified: true } });
+        await trx.update({ model: "user", where: [{ field: "id", value: u.id }], update: { name: "Updated" } });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(await ctx.adapter.count({ model: "user" })).toBe(0);
+    expect(await redis(["SMEMBERS", keys.indexKey(prefix, "user", "email", email)])).toEqual([]);
+  });
+
+  it("keeps an identical row that was already there when a refused create's reply is lost", async () => {
+    const { prefix, ctx } = await build();
+    const at = new Date();
+    const row = { id: "s-lost", token: "lost", userId: "u-live", expiresAt: new Date(at.getTime() + 600_000), createdAt: at, updatedAt: at };
+    await ctx.adapter.create({ model: "session", data: { ...row }, forceAllowId: true });
+    relay.hook = async (cmds, real) => {
+      const replies = await real(cmds);
+      const c = cmds[0];
+      if (c[0] === "EVAL" && c[5] === "session" && c[6] === "s-lost" && c[7] === "") {
+        relay.hook = null;
+        throw new Error("fetch failed");
+      }
+      return replies;
+    };
+    try {
+      await expect(
+        ctx.adapter.transaction(async (trx) => {
+          await trx.create({ model: "session", data: { ...row }, forceAllowId: true });
+        }),
+      ).rejects.toThrow(/create session failed: fetch failed/);
+    } finally {
+      relay.hook = null;
+    }
+    expect((await ctx.adapter.findMany<{ id: string }>({ model: "session" })).map((r) => r.id)).toEqual(["s-lost"]);
+    expect(await redis(["SMEMBERS", keys.indexKey(prefix, "session", "token", "lost")])).toEqual(["s-lost"]);
   });
 
   it("leaves no orphan user when the account write fails, so the next sign-in succeeds", async () => {

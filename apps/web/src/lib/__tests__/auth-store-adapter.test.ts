@@ -15,7 +15,7 @@ const pipeline = vi.fn();
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: (cmds: unknown) => pipeline(cmds) }));
 
 const { redisAdapter } = await import("@/lib/auth-store/redis-adapter");
-const { PUT_ROW_SCRIPT } = await import("@/lib/auth-store/scripts");
+const { DEL_ROW_SCRIPT, PUT_ROW_SCRIPT } = await import("@/lib/auth-store/scripts");
 
 type Cmd = (string | number)[];
 
@@ -307,11 +307,17 @@ describe("redisAdapter (mocked pipeline)", () => {
 // the way PUT_ROW_SCRIPT refuses it, and `failCreate` turning the next create
 // of a model into a per-command error. `loseReply` makes the next create of a
 // model land and then throw instead of replying, the way a dropped connection
-// after Redis applied the write looks to the caller.
+// after Redis applied the write looks to the caller; `loseRefusal` does the
+// same for a create the script refuses because the id is taken. Owner tokens
+// follow the scripts: a create that writes sets its token (or clears it), a
+// delete clears it, and any other EVAL is the undo, which deletes only while
+// the owner token matches.
 function statefulRedis() {
   const hashes = new Map<string, Map<string, string>>();
+  const owners = new Map<string, string>();
   const failCreate = new Set<string>();
   const loseReply = new Set<string>();
+  const loseRefusal = new Set<string>();
   const hash = (key: string) => {
     let h = hashes.get(key);
     if (!h) hashes.set(key, (h = new Map()));
@@ -333,12 +339,25 @@ function statefulRedis() {
         case "HGETALL":
           return { result: [...hash(String(c[1])).entries()].flat() };
         case "EVAL": {
-          const [key, , model, id, old] = c.slice(3).map(String);
+          const [key, , model, id, arg] = c.slice(3).map(String);
           const h = hash(key);
-          if ((h.get(id) ?? "") !== old) return { result: 0 };
-          if (c[1] !== PUT_ROW_SCRIPT) {
+          const owner = `${model}:${id}`;
+          if (c[1] === DEL_ROW_SCRIPT) {
+            if ((h.get(id) ?? "") !== arg) return { result: 0 };
             h.delete(id);
+            owners.delete(owner);
             return { result: 1 };
+          }
+          if (c[1] !== PUT_ROW_SCRIPT) {
+            if (owners.get(owner) !== arg) return { result: 0 };
+            h.delete(id);
+            owners.delete(owner);
+            return { result: 1 };
+          }
+          const old = arg;
+          if ((h.get(id) ?? "") !== old) {
+            if (!old && loseRefusal.delete(model)) throw new Error("fetch failed");
+            return { result: 0 };
           }
           if (!old && failCreate.delete(model)) return { error: "ERR simulated write failure" };
           const next = JSON.parse(String(c[8]));
@@ -350,6 +369,10 @@ function statefulRedis() {
           );
           if (clash) return { result: 2 };
           h.set(id, String(c[8]));
+          if (!old) {
+            if (c[11]) owners.set(owner, String(c[11]));
+            else owners.delete(owner);
+          }
           if (!old && loseReply.delete(model)) throw new Error("fetch failed");
           return { result: 1 };
         }
@@ -358,7 +381,7 @@ function statefulRedis() {
       }
     }),
   );
-  return { failCreate, loseReply, rowsOf, hash };
+  return { failCreate, loseReply, loseRefusal, rowsOf, hash, owners };
 }
 
 describe("redisAdapter transaction (mocked pipeline)", () => {
@@ -502,6 +525,30 @@ describe("redisAdapter transaction (mocked pipeline)", () => {
         await trx.create({ model: "session", data: ownSession(), forceAllowId: true });
       }),
     ).rejects.toThrow(/row s1 already exists/);
+    expect(redis.rowsOf("session").map(([id]) => id)).toEqual(["s1"]);
+  });
+
+  it("undoes a row the transaction created and then updated", async () => {
+    const redis = statefulRedis();
+    await expect(
+      adapter.transaction(async (trx) => {
+        const u = await trx.create<{ id: string }>({ model: "user", data: user });
+        await trx.update({ model: "user", where: [w("id", u.id)], update: { name: "Renamed" } });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(redis.rowsOf("user")).toEqual([]);
+  });
+
+  it("leaves an identical row that was already there when the refused create's reply was lost", async () => {
+    const redis = statefulRedis();
+    await adapter.create({ model: "session", data: ownSession(), forceAllowId: true });
+    await expect(
+      adapter.transaction(async (trx) => {
+        redis.loseRefusal.add("session");
+        await trx.create({ model: "session", data: ownSession(), forceAllowId: true });
+      }),
+    ).rejects.toThrow(/create session failed: fetch failed/);
     expect(redis.rowsOf("session").map(([id]) => id)).toEqual(["s1"]);
   });
 

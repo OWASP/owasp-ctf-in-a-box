@@ -21,11 +21,16 @@ import "server-only";
 // Redis has no multi-command rollback here, so `transaction` compensates
 // instead: the callback runs against an adapter that records every row it
 // creates, and if the callback throws those rows are deleted again before the
-// error is rethrown. Each record is the exact JSON the create writes, taken
-// before the write is sent, and the undo is DEL_ROW_SCRIPT's compare-and-delete
-// against it: a create whose reply was lost after Redis applied it is still
-// undone, a row that is already gone needs nothing, and a row someone else has
-// since written under the same id is left alone. createOAuthUser writes the
+// error is rethrown. Ownership is proved by a random token, not by the row's
+// contents: each create in a transaction sends one, PUT_ROW_SCRIPT stores it
+// in the row's owner key (`ownerKey`, with a TTL) in the same step that writes
+// the row, and the undo (UNDO_CREATE_SCRIPT) deletes the row only while that
+// key still holds the token. The record is taken before the write is sent, so
+// a create whose reply was lost after Redis applied it is still undone; a
+// create Redis refused never set the key, so an identical row someone else
+// wrote is left alone, as is a row that replaced ours under the same id (every
+// delete clears the owner key). The transaction's own updates to a row it
+// created keep the key, so that row is still undone. createOAuthUser writes the
 // user and then the account inside one transaction; without this, a failed
 // account write would leave a user row that owns the email but no account,
 // and every later sign-in would find it by email and answer "account not
@@ -37,15 +42,15 @@ import type { BetterAuthOptions } from "better-auth";
 import { createAdapterFactory, type CleanedWhere } from "better-auth/adapters";
 import { upstashPipeline } from "@/lib/upstash";
 import { AUTH_PREFIX, INDEXED_FIELDS, UNIQUE_FIELDS, indexKey, rowsKey } from "./keys";
-import { DEL_ROW_SCRIPT, PUT_ROW_SCRIPT } from "./scripts";
+import { DEL_ROW_SCRIPT, PUT_ROW_SCRIPT, UNDO_CREATE_SCRIPT } from "./scripts";
 import { idLookup, indexLookup, matchesWhere, sortAndPage } from "./where";
 
 type Row = Record<string, unknown>;
 type Snapshot = { id: string; json: string; row: Row };
 // A row a transaction created or tried to create: the stored model name, the
-// row id and the exact JSON sent to PUT_ROW_SCRIPT.
-type Created = { model: string; id: string; json: string };
-// One transaction's record: its creates, and the creates and nested
+// row id and the owner token sent with the create.
+type Created = { model: string; id: string; token: string };
+// One transaction's record: its creates, and the writes and nested
 // transactions still in flight, which a failure waits for before undoing.
 type Journal = { created: Created[]; pending: Set<Promise<unknown>> };
 
@@ -56,6 +61,13 @@ const MAX_RETRIES = 3;
 // The app never calls a provider API with the user's token, so the store
 // never holds one: a leaked Redis dump must not hand out GitHub tokens.
 const PROVIDER_TOKEN_FIELDS = ["accessToken", "refreshToken", "idToken"] as const;
+
+// How long a create's owner key lives. It only has to outlast the transaction
+// that made the row (a sign-in takes milliseconds), so a committed
+// transaction leaves its keys to expire instead of spending a round trip on
+// every sign-up deleting them: the token is random and only the transaction
+// holding it can act on it, so a stale key grants nothing.
+const OWNER_TTL_MS = 15 * 60 * 1000;
 
 /**
  * Builds the better-auth database adapter over the app's Redis, with every key under `opts.prefix` (default `AUTH_PREFIX`).
@@ -95,18 +107,6 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
    * The model's indexed fields as the CSV the scripts take.
    */
   const csv = (model: string) => (INDEXED_FIELDS[model] ?? []).join(",");
-
-  // Errors for a create PUT_ROW_SCRIPT refused before writing anything.
-  const refusals = new WeakSet<Error>();
-
-  /**
-   * Drops `entry` from the journal: Redis refused that create, so the row at
-   * its id, even one with identical JSON, is not this transaction's.
-   */
-  function forget(journal: Journal | null, entry: Created): void {
-    const i = journal?.created.indexOf(entry) ?? -1;
-    if (i !== -1) journal!.created.splice(i, 1);
-  }
 
   /**
    * Adds `work` to the journal's in-flight set until it settles.
@@ -354,7 +354,7 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
        * sign-in that would copy it onto a second user row fails until the first row
        * stops holding it.
        */
-      async function cas(op: string, model: string, snap: Snapshot | null, id: string, next: Row | null): Promise<boolean> {
+      async function cas(op: string, model: string, snap: Snapshot | null, id: string, next: Row | null, owner?: string): Promise<boolean> {
         const command =
           next === null
             ? ["EVAL", DEL_ROW_SCRIPT, 1, rowsKey(prefix, model), prefix, model, id, snap?.json ?? "", csv(model)]
@@ -370,15 +370,12 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
                 JSON.stringify(next),
                 csv(model),
                 uniques(model).join(","),
+                ...(owner ? [owner, OWNER_TTL_MS] : []),
               ];
         const [result] = await run(op, model, [command]);
         if (result === 1) return true;
         if (result === 0) return false;
-        if (result === 2 && next !== null) {
-          const err = fail(op, model, `unique ${uniques(model).join(", ")} taken`);
-          refusals.add(err);
-          throw err;
-        }
+        if (result === 2 && next !== null) throw fail(op, model, `unique ${uniques(model).join(", ")} taken`);
         throw fail(op, model, `unexpected script reply ${JSON.stringify(result)}`);
       }
 
@@ -416,6 +413,15 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       }
 
       /**
+       * Returns `work` after adding it to this transaction's in-flight set, so a
+       * failure waits for it before undoing.
+       */
+      function tracked<T>(work: Promise<T>): Promise<T> {
+        track(journal, work);
+        return work;
+      }
+
+      /**
        * Builds a row change that merges `update` over the row, keeping its id and scrubbing tokens.
        */
       const patch = (model: string, update: Row) => (row: Row) => scrub(model, { ...row, ...update, id: row.id });
@@ -426,21 +432,11 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
           const id = row.id;
           if (typeof id !== "string" && typeof id !== "number") throw fail("create", model, "row has no id");
           // Recorded before the write is sent: a lost reply can hide a write
-          // Redis applied. Only a refusal (reply 0 or 2, both given before the
-          // script writes) proves nothing landed; any other error keeps it.
-          const entry: Created = { model, id: String(id), json: JSON.stringify(row) };
-          journal?.created.push(entry);
-          const write = cas("create", model, null, String(id), row);
-          track(journal, write);
-          let written: boolean;
-          try {
-            written = await write;
-          } catch (err) {
-            if (err instanceof Error && refusals.has(err)) forget(journal, entry);
-            throw err;
-          }
-          if (!written) {
-            forget(journal, entry);
+          // Redis applied. A create that did not write leaves the token unset,
+          // so its undo deletes nothing.
+          const token = journal ? crypto.randomUUID() : undefined;
+          if (journal && token) journal.created.push({ model, id: String(id), token });
+          if (!(await tracked(cas("create", model, null, String(id), row, token)))) {
             throw fail("create", model, `row ${String(id)} already exists`);
           }
           return trim(row, select) as typeof data;
@@ -462,41 +458,42 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
 
         async update({ model, where, update }) {
           const snaps = await read("update", model, where);
-          const [first] = await writeEach("update", model, where, snaps, patch(model, update as Row));
+          const [first] = await tracked(writeEach("update", model, where, snaps, patch(model, update as Row)));
           return (first ?? null) as never;
         },
 
         async updateMany({ model, where, update }) {
           const snaps = await read("updateMany", model, where);
-          return (await writeEach("updateMany", model, where, snaps, patch(model, update))).length;
+          return (await tracked(writeEach("updateMany", model, where, snaps, patch(model, update)))).length;
         },
 
         async delete({ model, where }) {
           const snaps = await read("delete", model, where);
-          await writeEach("delete", model, where, snaps, () => null);
+          await tracked(writeEach("delete", model, where, snaps, () => null));
         },
 
         async deleteMany({ model, where }) {
           const snaps = await read("deleteMany", model, where);
-          return (await writeEach("deleteMany", model, where, snaps, () => null)).length;
+          return (await tracked(writeEach("deleteMany", model, where, snaps, () => null))).length;
         },
       };
     },
   });
 
   /**
-   * Deletes a failed transaction's rows, newest first, each only while it still
-   * holds exactly the JSON the transaction wrote (DEL_ROW_SCRIPT drops its index
-   * entries in the same step). Reply 0 means the row is absent or no longer the
-   * transaction's, and both are left as they are. Best effort: a row that cannot
-   * be deleted is logged by model only (never its id or contents) and the rest
-   * are still tried, so the caller sees the transaction's own error.
+   * Deletes a failed transaction's rows, newest first, each only while its owner
+   * key still holds the transaction's token (UNDO_CREATE_SCRIPT drops the index
+   * entries and the owner key in the same step). Reply 0 means the create never
+   * wrote, the row is gone, or another create owns the id now, and all three are
+   * left as they are. Best effort: a row that cannot be deleted is logged by
+   * model only (never its id or contents) and the rest are still tried, so the
+   * caller sees the transaction's own error.
    */
   async function undo(created: Created[]): Promise<void> {
-    for (const { model, id, json } of [...created].reverse()) {
+    for (const { model, id, token } of [...created].reverse()) {
       try {
         const [result] = await run("undo", model, [
-          ["EVAL", DEL_ROW_SCRIPT, 1, rowsKey(prefix, model), prefix, model, id, json, csv(model)],
+          ["EVAL", UNDO_CREATE_SCRIPT, 1, rowsKey(prefix, model), prefix, model, id, token, csv(model)],
         ]);
         if (result !== 0 && result !== 1) throw new Error("unexpected script reply");
       } catch (err) {

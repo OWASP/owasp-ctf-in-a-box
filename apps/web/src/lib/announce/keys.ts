@@ -31,10 +31,17 @@ export const ANNOUNCE_WEBHOOK_GENERATION_KEY = "ctf:admin:discord:webhook-genera
 
 // --- announcement state (all wiped by the master reset) ---------------------
 
-/** Per-challenge first-blood claims: field `<module>:<challengeId>` → JSON
- *  `{login, at}`. HSETNX makes "the first solve" a single atomic decision
- *  across replicas and retries. */
+/** Per-challenge first SOLVER records: field `<module>:<challengeId>` → JSON
+ *  `{login, at}`. The awarding Lua script writes this with HSETNX in the same
+ *  script that banks the solve, so the record names the true first solver
+ *  rather than whichever notification happened to run first. */
 export const ANNOUNCE_FIRST_KEY = "ctf:announce:first";
+
+/** Per-challenge first-blood ANNOUNCEMENT claims: field
+ *  `<module>:<challengeId>` → ISO instant. Kept separate from
+ *  ANNOUNCE_FIRST_KEY: the solver record is fact, the announcement claim is
+ *  delivery dedup, and a second solver must not be able to claim the post. */
+export const ANNOUNCE_FIRST_ANNOUNCED_KEY = "ctf:announce:first-announced";
 
 /** Remaining-time-mark claims: field `<endsAtMs>:<markMs>` → ISO instant.
  *  Keyed by the scoring-close instant, so moving Scoring closes re-arms the
@@ -68,6 +75,11 @@ export const ANNOUNCE_OUTBOX_KEY = "ctf:announce:outbox";
 export const ANNOUNCE_LEASE_PREFIX = "ctf:announce:lease:";
 /** The per-id lease key under that prefix. */
 export const announceLeaseKey = (id: string) => `${ANNOUNCE_LEASE_PREFIX}${id}`;
+
+/** Discord rate-limit cooldown. While this key is set, both delivery sweeps
+ *  leave every entry untouched — no attempts spent, no status changed — until
+ *  the instant the 429 response asked us to retry at. */
+export const ANNOUNCE_COOLDOWN_KEY = "ctf:announce:cooldown";
 
 /** Delivery lease / retry backoff: long enough to cover the coalesce window
  *  plus a full send with timeout, short enough that a crashed owner's item

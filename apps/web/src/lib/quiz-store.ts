@@ -10,6 +10,7 @@ import { QUIZ_BUNDLE_VERSION, type QuizBundle, type QuizBundleQuestion } from "@
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { readLastAt } from "@/lib/last-at";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { ANNOUNCE_FIRST_KEY } from "@/lib/announce/keys";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   QUIZ_QUESTIONS_KEY as QUESTIONS_KEY,
@@ -857,6 +858,9 @@ local prevAt = redis.call('HGET', KEYS[7], ARGV[4])
 if not prevAt or not string.match(prevAt, '^%d%d%d%d%-%d%d%-%d%dT') or prevAt < ARGV[3] then
   redis.call('HSET', KEYS[7], ARGV[4], ARGV[3])
 end
+-- Name the first SOLVER in the same atomic award that banks the answer, so
+-- the announcer never has to race its own claim for the first-blood post.
+redis.call('HSETNX', KEYS[#KEYS], ARGV[#ARGV], cjson.encode({login = ARGV[4], at = ARGV[3]}))
 return {'correct', tostring(points)}`;
 
 export type AnswerResult =
@@ -935,9 +939,9 @@ export async function answerQuestion(
   try {
     verdict = await upstashEval(
       GRADE_SCRIPT,
-      [attemptsKey(login), answersKey(login), KEY_KEY, QUESTIONS_KEY, POINTS_KEY, ANSWERED_KEY, LAST_AT_KEY],
+      [attemptsKey(login), answersKey(login), KEY_KEY, QUESTIONS_KEY, POINTS_KEY, ANSWERED_KEY, LAST_AT_KEY, ANNOUNCE_FIRST_KEY],
       // ARGV[8]: dry run — grade, write nothing (admin preview).
-      [questionId, submitted, nowIso, login, maxAttempts, cooldownMs, now.getTime(), dryRun ? "1" : "0"],
+      [questionId, submitted, nowIso, login, maxAttempts, cooldownMs, now.getTime(), dryRun ? "1" : "0", `quiz:${questionId}`],
     );
   } catch (err) {
     console.error("Quiz grading failed:", errorLabel(err));

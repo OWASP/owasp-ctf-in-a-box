@@ -45,9 +45,9 @@ import { listQuestions } from "@/lib/quiz-store";
 import { listAiChallenges } from "@/lib/ai-store";
 import { isLocked, storyPositions } from "@/lib/story-lock";
 import { buildFirstBloodMessage } from "./messages";
-import { enqueueAnnouncement } from "./sender";
-import { claimLedgerField, getAnnounceConfig } from "./store";
-import { ANNOUNCE_FIRST_KEY } from "./keys";
+import { enqueueLedgerAnnouncement } from "./sender";
+import { getAnnounceConfig, readLedgerField } from "./store";
+import { ANNOUNCE_FIRST_ANNOUNCED_KEY, ANNOUNCE_FIRST_KEY } from "./keys";
 import { challengeField } from "./detect";
 
 export type FirstBloodInput = {
@@ -109,6 +109,25 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     // off the hot path for the default (unconfigured) box.
     if (!config.webhookConfigured || !config.firstBlood) return;
 
+    // The award script names the true first solver atomically with the
+    // solve. Only that login may announce, so a later solver's notification
+    // can never race ahead and steal the first-blood post.
+    const field = challengeField(input.module, input.challengeId);
+    const recorded = await readLedgerField(ANNOUNCE_FIRST_KEY, field);
+    if (!recorded) return;
+    let firstSolver: { login?: unknown } | null = null;
+    try {
+      firstSolver = JSON.parse(recorded) as { login?: unknown } | null;
+    } catch {
+      return;
+    }
+    if (
+      typeof firstSolver?.login !== "string" ||
+      firstSolver.login.toLowerCase() !== input.login.toLowerCase()
+    ) {
+      return;
+    }
+
     let classicVisible: Awaited<ReturnType<typeof readChallengeRecords>> | null = null;
     let classicChallenge: Awaited<ReturnType<typeof readChallengeRecords>>[number] | null = null;
     if (input.module === "classic") {
@@ -122,10 +141,6 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
       classicVisible = visible;
       classicChallenge = c ?? null;
     }
-
-    const field = challengeField(input.module, input.challengeId);
-    const claimed = await claimLedgerField(ANNOUNCE_FIRST_KEY, field);
-    if (!claimed) return;
 
     let item: { title: string; points: number } | null;
     if (input.module === "classic") {
@@ -163,7 +178,7 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     const who = team?.name || input.login;
     const url = challengeEmbedUrl(input.module, input.challengeId);
 
-    await enqueueAnnouncement(
+    await enqueueLedgerAnnouncement(
       "first-blood",
       buildFirstBloodMessage({
         // A challenge deleted between solve and lookup still announces —
@@ -173,10 +188,11 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
         who,
         ...(url ? { url } : {}),
       }),
-      // The counters read BEFORE the asynchronous lookups above: the store
-      // rejects this write atomically if the stream or webhook changed while
-      // the lookup ran, instead of stamping an older first blood with the
-      // new state (and replaying it after the organizer disabled it).
+      ANNOUNCE_FIRST_ANNOUNCED_KEY,
+      [field],
+      // The counters read BEFORE the asynchronous lookups above: the claim
+      // and enqueue happen in one script that rejects both if the stream or
+      // webhook changed while the lookup ran.
       { webhookGeneration: config.webhookGeneration, kindEpoch: config.kindEpochs["first-blood"] },
     );
   } catch (err) {

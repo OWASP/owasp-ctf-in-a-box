@@ -33,8 +33,8 @@ export async function POST(request: Request) {
       // fall back to the default event name.
     }
 
-    const ok = await postToDiscord(url, buildTestMessage(eventName));
-    return ok
+    const result = await postToDiscord(url, buildTestMessage(eventName));
+    return result.ok
       ? NextResponse.json({ ok: true })
       : NextResponse.json({ ok: false, error: "Discord rejected the test message (see the server log for the status)" }, { status: 502 });
   } catch (err) {

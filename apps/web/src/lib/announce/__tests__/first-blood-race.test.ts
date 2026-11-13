@@ -30,10 +30,18 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/error-label", () => ({ errorLabel: () => "label" }));
 vi.mock("@/lib/announce/store", () => ({
   getAnnounceConfig: async () => structuredClone(mocks.state.config),
-  claimLedgerField: async () => true,
-  // The atomic enqueue contract: write only while the captured counters still
-  // match the live config and the switch is on.
-  outboxEnqueue: async (id: string, kind: string, _payload: unknown, webhookGeneration: number, kindEpoch: number) => {
+  readLedgerField: async () => JSON.stringify({ login: "alice", at: "2026-10-14T12:00:00Z" }),
+  newOutboxId: (kind: string) => `id-${kind}`,
+  // The atomic claim+enqueue contract: write only while the captured
+  // counters still match the live config and the switch is on.
+  claimLedgerFieldsAndEnqueue: async (
+    _ledger: string,
+    _fields: string[],
+    webhookGeneration: number,
+    kind: string,
+    kindEpoch: number,
+    id: string,
+  ) => {
     const config = mocks.state.config;
     if (!config.firstBlood || config.webhookGeneration !== webhookGeneration || config.kindEpochs["first-blood"] !== kindEpoch) {
       return false;

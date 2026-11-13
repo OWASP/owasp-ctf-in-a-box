@@ -57,9 +57,17 @@ import {
   markKey,
 } from "./detect";
 import { buildLifecycleMessage } from "./messages";
-import { enqueueAnnouncement, flushRetries } from "./sender";
+import { enqueueLedgerAnnouncement, flushRetries } from "./sender";
 import { ANNOUNCE_LIFECYCLE_KEY, ANNOUNCE_MILESTONE_KEY } from "./keys";
-import { claimLedgerFields, deleteLifecycleState, getAnnounceConfig, outboxPrune, readStatePack, stateCompareSet } from "./store";
+import {
+  deleteLifecycleState,
+  getAnnounceConfig,
+  newOutboxId,
+  outboxPrune,
+  readStatePack,
+  stateCompareSet,
+  type StateCasEntry,
+} from "./store";
 
 export { deleteLifecycleState };
 
@@ -296,20 +304,27 @@ async function tickLifecycle(
     const snap = { ...derived, announced };
     const next = encodeLifecycleState(snap);
     if (expected === next) return;
-    const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next);
-    if (cas.code !== 1) return; // 0 = someone else won or state moved on; 2 = silent init
-    const prev = decodeLifecycleState(cas.prev);
-    // An unknown stored shape decodes to null: seed the new state silently
-    // rather than announcing a launch from a baseline we cannot read.
-    if (prev === null) return;
+    // Build the edge entries BEFORE the CAS and let the script write them in
+    // the same atomic step as the state swap. An unknown stored shape
+    // (`prevSnap === null`) seeds silently: there is no trustworthy baseline
+    // to announce from, so no entries are passed.
     const name = eventName(settings);
-    for (const edge of lifecycleEdges(prev, snap)) {
-      if (!kindEnabled(config, edge.kind)) continue;
-      await enqueueAnnouncement(edge.kind, buildLifecycleMessage({ kind: edge.kind, eventName: name }), {
-        webhookGeneration: config.webhookGeneration,
-        kindEpoch: config.kindEpochs[edge.kind],
-      });
-    }
+    const entries: StateCasEntry[] =
+      prevSnap === null
+        ? []
+        : lifecycleEdges(prevSnap, snap)
+            .filter((edge) => kindEnabled(config, edge.kind))
+            .map((edge) => ({
+              id: newOutboxId(edge.kind),
+              kind: edge.kind,
+              payload: buildLifecycleMessage({ kind: edge.kind, eventName: name }),
+              webhookGeneration: config.webhookGeneration,
+              kindEpoch: config.kindEpochs[edge.kind],
+            }));
+    const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next, entries);
+    // 0 = someone else won or the state moved on; 2 = silent init. Either
+    // way the script wrote no entries for this caller.
+    if (cas.code !== 1) return;
   } catch (err) {
     console.error("[announce] lifecycle tick failed:", errorLabel(err));
   }
@@ -349,15 +364,18 @@ async function tickMilestones(config: DiscordFullConfig, settings: AdminSettings
     if (!parsed.ok) return;
     const crossed = parsed.marks.filter((m) => markCrossed(nowMs, endsAtMs, m));
     if (crossed.length === 0) return;
-    const won = await claimLedgerFields(ANNOUNCE_MILESTONE_KEY, crossed.map((m) => markKey(endsAtMs, m)));
-    if (won.size === 0 || !config.webhookConfigured || !config.milestones) return;
-    await enqueueAnnouncement(
+    if (!config.webhookConfigured || !config.milestones) return;
+    // Claim every crossed mark AND enqueue the single time check in one
+    // script: no replica can win the claims and then lose the announcement.
+    await enqueueLedgerAnnouncement(
       "milestone",
       buildLifecycleMessage({
         kind: "milestone",
         eventName: eventName(settings),
         timeLeft: formatTimeLeft(nowMs, endsAtMs) ?? undefined,
       }),
+      ANNOUNCE_MILESTONE_KEY,
+      crossed.map((m) => markKey(endsAtMs, m)),
       { webhookGeneration: config.webhookGeneration, kindEpoch: config.kindEpochs.milestone },
     );
   } catch (err) {

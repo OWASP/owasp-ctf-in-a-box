@@ -6,35 +6,44 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  announceCooldownMs: vi.fn(),
+  claimLedgerFieldsAndEnqueue: vi.fn(),
   getAnnounceConfig: vi.fn(),
   getWebhookDeliveryTarget: vi.fn(),
+  newOutboxId: vi.fn(),
   outboxEnqueue: vi.fn(),
   outboxPending: vi.fn(),
   outboxRetryable: vi.fn(),
   outboxClaim: vi.fn(),
   outboxComplete: vi.fn(),
+  outboxRelease: vi.fn(),
   outboxSkip: vi.fn(),
   outboxPrune: vi.fn(),
+  setAnnounceCooldown: vi.fn(),
   bumpStatus: vi.fn(),
-  postToDiscord: undefined as unknown as ReturnType<typeof vi.fn>,
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/error-label", () => ({ errorLabel: () => "label" }));
 vi.mock("@/lib/announce/store", () => ({
+  announceCooldownMs: mocks.announceCooldownMs,
+  claimLedgerFieldsAndEnqueue: mocks.claimLedgerFieldsAndEnqueue,
   getAnnounceConfig: mocks.getAnnounceConfig,
   getWebhookDeliveryTarget: mocks.getWebhookDeliveryTarget,
+  newOutboxId: mocks.newOutboxId,
   outboxEnqueue: mocks.outboxEnqueue,
   outboxPending: mocks.outboxPending,
   outboxRetryable: mocks.outboxRetryable,
   outboxClaim: mocks.outboxClaim,
   outboxComplete: mocks.outboxComplete,
+  outboxRelease: mocks.outboxRelease,
   outboxSkip: mocks.outboxSkip,
   outboxPrune: mocks.outboxPrune,
+  setAnnounceCooldown: mocks.setAnnounceCooldown,
   bumpStatus: mocks.bumpStatus,
 }));
 
-import { enqueueAnnouncement, flush, flushRetries } from "@/lib/announce/sender";
+import { enqueueAnnouncement, enqueueLedgerAnnouncement, flush, flushRetries, postToDiscord } from "@/lib/announce/sender";
 import type { DiscordMessage } from "@/lib/announce/messages";
 
 const URL = "https://discord.com/api/webhooks/1/aaaaaaaaaaaaaaaaaaaaaa";
@@ -66,12 +75,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getAnnounceConfig.mockResolvedValue(configured());
   mocks.getWebhookDeliveryTarget.mockResolvedValue({ url: URL, generation: 0 });
+  mocks.announceCooldownMs.mockResolvedValue(0);
+  mocks.claimLedgerFieldsAndEnqueue.mockResolvedValue(true);
+  mocks.newOutboxId.mockImplementation((kind: string) => `123-1-abcdef12-${kind}`);
   mocks.outboxEnqueue.mockResolvedValue(true);
   mocks.outboxPending.mockResolvedValue([]);
   mocks.outboxRetryable.mockResolvedValue([]);
   mocks.outboxClaim.mockResolvedValue("lease-token");
   mocks.outboxComplete.mockResolvedValue(undefined);
+  mocks.outboxRelease.mockResolvedValue(undefined);
   mocks.outboxSkip.mockResolvedValue(undefined);
+  mocks.setAnnounceCooldown.mockResolvedValue(undefined);
   mocks.outboxPrune.mockResolvedValue(undefined);
   mocks.bumpStatus.mockResolvedValue(undefined);
   fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
@@ -116,6 +130,36 @@ describe("enqueueAnnouncement", () => {
     // A stale write never enters the local queue, so no flush is armed for it.
     expect(mocks.outboxPending).not.toHaveBeenCalled();
     expect(mocks.getAnnounceConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe("enqueueLedgerAnnouncement", () => {
+  it("claims the ledger and writes the entry in one store call, then arms the flush", async () => {
+    const ok = await enqueueLedgerAnnouncement("milestone", message, "ctf:announce:milestone", ["a", "b"], {
+      webhookGeneration: 3,
+      kindEpoch: 2,
+    });
+    expect(ok).toBe(true);
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledWith(
+      "ctf:announce:milestone",
+      ["a", "b"],
+      3,
+      "milestone",
+      2,
+      expect.any(String),
+      message,
+    );
+    expect(mocks.outboxEnqueue).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(mocks.outboxPending).toHaveBeenCalled();
+  });
+
+  it("arms no flush when the atomic claim/enqueue was refused", async () => {
+    mocks.claimLedgerFieldsAndEnqueue.mockResolvedValue(false);
+    expect(
+      await enqueueLedgerAnnouncement("milestone", message, "led", ["a"], { webhookGeneration: 0, kindEpoch: 0 }),
+    ).toBe(false);
+    expect(mocks.outboxPending).not.toHaveBeenCalled();
   });
 });
 
@@ -291,6 +335,34 @@ describe("flush", () => {
     expect(callOrder.indexOf("claim:id-12")).toBeGreaterThan(firstFetchIndex);
     expect(callOrder.indexOf("claim:id-12")).toBeLessThan(secondFetchIndex);
   });
+
+  it("honours a 429 by releasing the batch without spending an attempt and parking the sweeps", async () => {
+    mocks.outboxPending.mockResolvedValue([
+      { id: "1", entry: entry("first-blood") },
+      { id: "2", entry: entry("launch") },
+    ]);
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: { get: () => "2" },
+    });
+    await flush();
+    expect(mocks.setAnnounceCooldown).toHaveBeenCalledWith(2_000);
+    expect(mocks.outboxRelease).toHaveBeenCalledWith("1", "lease-token");
+    expect(mocks.outboxRelease).toHaveBeenCalledWith("2", "lease-token");
+    expect(mocks.outboxComplete).not.toHaveBeenCalled();
+    expect(mocks.bumpStatus).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not claim or post anything while a cooldown is still active", async () => {
+    mocks.announceCooldownMs.mockResolvedValue(5_000);
+    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
+    await flush();
+    await flushRetries();
+    expect(mocks.outboxClaim).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("flushRetries", () => {
@@ -390,5 +462,20 @@ describe("flushRetries", () => {
     expect(mocks.outboxClaim).not.toHaveBeenCalled();
     expect(mocks.outboxSkip).not.toHaveBeenCalled();
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("postToDiscord", () => {
+  it("parses Retry-After seconds from a 429 header", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 429, headers: { get: () => "1.5" } })));
+    expect(await postToDiscord(URL, { embeds: [] })).toEqual({ ok: false, retryAfterMs: 1_500 });
+  });
+
+  it("falls back to the JSON retry_after and then to a conservative default", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 429, headers: { get: () => null }, json: async () => ({ retry_after: 3 }) })));
+    expect(await postToDiscord(URL, { embeds: [] })).toEqual({ ok: false, retryAfterMs: 3_000 });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 429 })));
+    expect(await postToDiscord(URL, { embeds: [] })).toEqual({ ok: false, retryAfterMs: 1_000 });
   });
 });

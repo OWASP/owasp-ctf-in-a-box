@@ -40,6 +40,7 @@ import {
   type DiscordPublicConfig,
 } from "@/lib/discord-config";
 import {
+  ANNOUNCE_COOLDOWN_KEY,
   ANNOUNCE_LEASE_MS,
   ANNOUNCE_LEASE_PREFIX,
   ANNOUNCE_LIFECYCLE_KEY,
@@ -379,38 +380,149 @@ export async function getWebhookDeliveryTarget(): Promise<{ url: string | null; 
 
 // --- dedup ledgers -----------------------------------------------------------
 
-/** Claims a field in one of the dedup ledgers (HSETNX). `true` = this
- *  caller won the claim and should announce; `false` = already claimed (by
- *  an earlier tick or another replica). The key is a parameter (not a
- *  closed union) so the live-Redis suite can claim against run-unique
- *  ledgers without ever touching the box's real ones. */
-export async function claimLedgerField(ledgerKey: string, field: string): Promise<boolean> {
-  const [res] = await upstashPipeline([["HSETNX", ledgerKey, field, new Date().toISOString()]]);
-  if (res.error) {
-    console.error("[announce] ledger claim failed:", adminErrorLabel(new Error(res.error)));
-    return false; // a claim we cannot record must not double-post
-  }
-  return res.result === 1;
+/** Claims fields in a dedup ledger with the webhook generation captured by
+ *  the producer, in one atomic script: a claim is refused outright when the
+ *  generation has moved since the producer read its config, so a claim
+ *  cannot survive a webhook clear or master reset and then authorize a post
+ *  against the new URL. The ledger key is a parameter (not a closed union)
+ *  so the live-Redis suite can claim against run-unique keys. */
+export const CLAIM_LEDGER_SCRIPT = `
+local captured = ARGV[2]
+if captured ~= '' then
+  local current = redis.call('GET', KEYS[2]) or '0'
+  if current ~= captured then return {} end
+end
+local n = tonumber(ARGV[1])
+local at = ARGV[3]
+local won = {}
+for i = 1, n do
+  local field = ARGV[3 + i]
+  if redis.call('HSETNX', KEYS[1], field, at) == 1 then won[#won + 1] = field end
+end
+return won
+`;
+
+/** Claims one ledger field. `true` = this caller won the claim and should
+ *  announce; `false` = already claimed, the webhook generation moved, or the
+ *  claim could not be recorded (fail closed, never double-post). */
+export async function claimLedgerField(
+  ledgerKey: string,
+  field: string,
+  webhookGeneration?: number,
+): Promise<boolean> {
+  return (await claimLedgerFields(ledgerKey, [field], webhookGeneration)).size > 0;
 }
 
-/** Bulk-claims many fields in one pipeline, returning which ones this caller
- *  won. Used by the remaining-time mark sweep. */
+/** Bulk-claims many fields atomically, returning which ones this caller
+ *  won. Used by the remaining-time mark sweep and first-blood delivery. */
 export async function claimLedgerFields(
   ledgerKey: string,
   fields: readonly string[],
+  webhookGeneration?: number,
 ): Promise<Set<string>> {
   if (fields.length === 0) return new Set();
-  const now = new Date().toISOString();
-  const results = await upstashPipeline(fields.map((f) => ["HSETNX", ledgerKey, f, now]));
-  const won = new Set<string>();
-  results.forEach((res, i) => {
-    if (res.error) {
-      console.error("[announce] ledger claim failed:", adminErrorLabel(new Error(res.error)));
-    } else if (res.result === 1) {
-      won.add(fields[i]);
+  try {
+    const raw = await upstashEval(
+      CLAIM_LEDGER_SCRIPT,
+      [ledgerKey, ANNOUNCE_WEBHOOK_GENERATION_KEY],
+      [
+        String(fields.length),
+        webhookGeneration === undefined ? "" : String(webhookGeneration),
+        new Date().toISOString(),
+        ...fields,
+      ],
+    );
+    const won = new Set<string>();
+    if (Array.isArray(raw)) {
+      for (const field of raw) if (typeof field === "string") won.add(field);
     }
-  });
-  return won;
+    return won;
+  } catch (err) {
+    console.error("[announce] ledger claim failed:", adminErrorLabel(err));
+    return new Set(); // a claim we cannot record must not double-post
+  }
+}
+
+/** Reads one ledger field's stored value, or null when absent/unreadable.
+ *  Used by the announcer to find the first solver the award script recorded;
+ *  a failed read posts nothing rather than guessing a winner. */
+export async function readLedgerField(ledgerKey: string, field: string): Promise<string | null> {
+  try {
+    const [res] = await upstashPipeline([["HGET", ledgerKey, field]]);
+    if (res.error) throw new Error(res.error);
+    return typeof res.result === "string" && res.result !== "" ? res.result : null;
+  } catch (err) {
+    console.error("[announce] ledger read failed:", adminErrorLabel(err));
+    return null;
+  }
+}
+
+/** Claims a set of ledger fields AND writes their outbox entry in one
+ *  atomic script. The switch, kind epoch and webhook generation are checked
+ *  before any field is claimed, so a disabled/stale producer writes neither
+ *  a claim nor an entry; if another replica already owns every field, no
+ *  entry is written either. This is what makes "exactly one announcement
+ *  per claimable event" survive a crash between claim and enqueue. */
+export const CLAIM_LEDGER_AND_ENQUEUE_SCRIPT = `
+local n = tonumber(ARGV[1])
+local captured = ARGV[2]
+if redis.call('HGET', KEYS[3], ARGV[6 + n]) ~= '1' then return 0 end
+local currentEpoch = tonumber(redis.call('HGET', KEYS[3], ARGV[7 + n])) or 0
+if currentEpoch ~= tonumber(ARGV[8 + n]) then return 0 end
+if captured ~= '' then
+  local current = redis.call('GET', KEYS[4]) or '0'
+  if current ~= captured then return 0 end
+end
+local at = ARGV[3]
+local won = 0
+for i = 1, n do
+  if redis.call('HSETNX', KEYS[1], ARGV[3 + i], at) == 1 then won = won + 1 end
+end
+if won == 0 then return 0 end
+redis.call('HSET', KEYS[2], ARGV[4 + n], ARGV[5 + n])
+return 1
+`;
+
+export async function claimLedgerFieldsAndEnqueue(
+  ledgerKey: string,
+  fields: readonly string[],
+  webhookGeneration: number,
+  kind: AnnouncementKind,
+  kindEpoch: number,
+  id: string,
+  payload: unknown,
+): Promise<boolean> {
+  if (fields.length === 0) return false;
+  const entry: OutboxEntry = {
+    kind,
+    payload,
+    at: new Date().toISOString(),
+    n: 0,
+    status: "pending",
+    webhookGeneration,
+    kindEpoch,
+  };
+  try {
+    const res = await upstashEval(
+      CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+      [ledgerKey, ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY],
+      [
+        String(fields.length),
+        String(webhookGeneration),
+        entry.at,
+        ...fields,
+        id,
+        JSON.stringify(entry),
+        KIND_SWITCH_FIELDS[kind],
+        KIND_EPOCH_FIELDS[kind],
+        String(kindEpoch),
+      ],
+    );
+    return res === 1;
+  } catch (err) {
+    console.error("[announce] ledger claim/enqueue failed:", adminErrorLabel(err));
+    return false;
+  }
 }
 
 /** The currently-claimed fields of a ledger, as a set. */
@@ -457,19 +569,118 @@ end
 return {0, 0, cur}
 `;
 
+/** An outbox entry to write in the SAME atomic step as a winning lifecycle
+ *  CAS. Building it before the CAS is safe: the script only stores entries
+ *  when this caller actually won the transition, so a loser leaves no trace. */
+export type StateCasEntry = {
+  id: string;
+  kind: AnnouncementKind;
+  payload: unknown;
+  webhookGeneration: number;
+  kindEpoch: number;
+};
+
+/** The CAS plus optional outbox writes, one atomic script. Without this, a
+ *  replica can win the CAS and crash before enqueueing, consuming the
+ *  transition forever; the combined script makes "state advanced" and "the
+ *  edge is retained for delivery" one decision. Entries still re-check the
+ *  switch, kind epoch and webhook generation inside the same script, so a
+ *  concurrent disable/clear cannot be bypassed. */
+export const STATE_CAS_ENQUEUE_SCRIPT = `
+local cur = redis.call('GET', KEYS[1])
+local code
+local seq
+local prev
+if cur == false then
+  if ARGV[1] == '' then
+    seq = redis.call('INCR', KEYS[2])
+    redis.call('SET', KEYS[1], ARGV[2])
+    code = 2
+    prev = ''
+  else
+    return {0, 0, '', 0}
+  end
+elseif cur == ARGV[2] then
+  return {0, 0, cur, 0}
+elseif cur == ARGV[1] then
+  seq = redis.call('INCR', KEYS[2])
+  redis.call('SET', KEYS[1], ARGV[2])
+  code = 1
+  prev = cur
+else
+  return {0, 0, cur, 0}
+end
+local n = tonumber(ARGV[4])
+local enqueued = 0
+if code == 1 and n > 0 then
+  local i = 5
+  for _ = 1, n do
+    local id = ARGV[i]
+    local entry = ARGV[i + 1]
+    local switchField = ARGV[i + 2]
+    local epochField = ARGV[i + 3]
+    local kindEpoch = ARGV[i + 4]
+    local generation = ARGV[i + 5]
+    i = i + 6
+    local enabled = redis.call('HGET', KEYS[4], switchField)
+    local currentEpoch = tonumber(redis.call('HGET', KEYS[4], epochField)) or 0
+    local currentGeneration = tonumber(redis.call('GET', KEYS[5])) or 0
+    if enabled == '1' and currentEpoch == tonumber(kindEpoch) and currentGeneration == tonumber(generation) then
+      redis.call('HSET', KEYS[3], id, entry)
+      enqueued = enqueued + 1
+    end
+  end
+end
+return {code, seq, prev, enqueued}
+`;
+
 /** Runs the CAS against the observed lifecycle state. `expected` is the pack
  *  this caller last read ('' when the key is absent); `next` is the pack
  *  derived from the CURRENT observation. Exactly one replica's `next` write
  *  can win per distinct transition, because the swap is atomic and the
- *  loser's `expected` no longer matches. The script itself is exported as
- *  STATE_CAS_SCRIPT so the live-Redis suite runs the same copy against
- *  run-unique keys. */
+ *  loser's `expected` no longer matches. When `entries` is non-empty, the
+ *  winning CAS also writes those outbox entries inside the same script, so a
+ *  crash cannot advance the state while losing the announcement. The plain
+ *  CAS script stays exported as STATE_CAS_SCRIPT for the live-Redis suite. */
 export async function stateCompareSet(
   stateKey: typeof ANNOUNCE_LIFECYCLE_KEY,
   expected: string,
   next: string,
+  entries: readonly StateCasEntry[] = [],
 ): Promise<StateCasResult> {
-  const raw = await upstashEval(STATE_CAS_SCRIPT, [stateKey, ANNOUNCE_SEQ_KEY], [expected, next, new Date().toISOString()]);
+  if (entries.length === 0) {
+    const raw = await upstashEval(STATE_CAS_SCRIPT, [stateKey, ANNOUNCE_SEQ_KEY], [expected, next, new Date().toISOString()]);
+    return parseCasReply(raw);
+  }
+  const at = new Date().toISOString();
+  const entryArgs = entries.flatMap((entry) => {
+    const value: OutboxEntry = {
+      kind: entry.kind,
+      payload: entry.payload,
+      at,
+      n: 0,
+      status: "pending",
+      webhookGeneration: entry.webhookGeneration,
+      kindEpoch: entry.kindEpoch,
+    };
+    return [
+      entry.id,
+      JSON.stringify(value),
+      KIND_SWITCH_FIELDS[entry.kind],
+      KIND_EPOCH_FIELDS[entry.kind],
+      String(entry.kindEpoch),
+      String(entry.webhookGeneration),
+    ];
+  });
+  const raw = await upstashEval(
+    STATE_CAS_ENQUEUE_SCRIPT,
+    [stateKey, ANNOUNCE_SEQ_KEY, ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY],
+    [expected, next, at, String(entries.length), ...entryArgs],
+  );
+  return parseCasReply(raw);
+}
+
+function parseCasReply(raw: unknown): StateCasResult {
   const arr = Array.isArray(raw) ? (raw as unknown[]) : [];
   const code = Number(arr[0]);
   const seq = Number(arr[1]);
@@ -519,19 +730,23 @@ export async function deleteLifecycleState(): Promise<void> {
  *  bit is carried forward: that hold WAS posted, so the resume it owes must
  *  still announce later. The CAS keeps a racing observer from clobbering a
  *  newer pack: a lost swap re-reads and reconciles against what won. */
-async function reconcileLifecycleState(nowMs: number = Date.now()): Promise<void> {
-  const settings = await getAdminSettings();
-  const derived = lifecycleSnapshotFrom(
-    {
-      scoringStartsAt: settings.scoringStartsAt,
-      scoringEndsAt: settings.scoringEndsAt,
-      paused: settings.paused,
-    },
-    nowMs,
-  );
+async function reconcileLifecycleState(): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    // Read the stored pack BEFORE the settings it will be compared with, and
+    // sample the clock per attempt: a slow settings read must not let this
+    // pass write a pre-change derivation over a pack a concurrent observer
+    // already advanced with newer settings.
     const expected = (await readStatePackStrict(ANNOUNCE_LIFECYCLE_KEY)) ?? "";
     const prev = decodeLifecycleState(expected);
+    const settings = await getAdminSettings();
+    const derived = lifecycleSnapshotFrom(
+      {
+        scoringStartsAt: settings.scoringStartsAt,
+        scoringEndsAt: settings.scoringEndsAt,
+        paused: settings.paused,
+      },
+      Date.now(),
+    );
     const next = encodeLifecycleState({ ...derived, announced: Boolean(prev?.announced) });
     if (expected === next) return;
     const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next);
@@ -567,6 +782,17 @@ export type OutboxEntry = {
  *  yields three distinct ids rather than one key overwriting the last. */
 export function outboxId(seq: number, kind: string): string {
   return `${Date.now()}-${seq}-${kind}`;
+}
+
+let outboxCounter = 0;
+
+/** A collision-resistant outbox id for producers that must build the entry
+ *  BEFORE the atomic write (the lifecycle CAS, whose seq is only known after
+ *  the script runs). Time + in-process counter + random entropy + kind keeps
+ *  replicas and same-millisecond bursts from overwriting each other. */
+export function newOutboxId(kind: string): string {
+  outboxCounter += 1;
+  return `${Date.now()}-${outboxCounter}-${randomUUID().slice(0, 8)}-${kind}`;
 }
 
 /** Appends an entry to the outbox with the webhook generation and switch
@@ -618,10 +844,11 @@ export async function outboxEnqueue(
 
 /** Atomically claims the delivery lease for an outbox entry iff its status
  *  and retry count still match what the caller observed, its switch is still
- *  on, and its kind epoch still matches the stored one. Prevents duplicate
- *  delivery when another replica completed the entry and deleted its lease
- *  between our candidate read and our lease attempt, and prevents an entry
- *  from a disabled or since-re-enabled stream from acquiring a lease at all. */
+ *  on, its kind epoch still matches the stored one, AND its webhook
+ *  generation is still current. Prevents duplicate delivery when another
+ *  replica completed the entry and deleted its lease between our candidate
+ *  read and our lease attempt, and prevents an entry from a disabled,
+ *  since-re-enabled, or pre-clear stream from acquiring a lease at all. */
 export const OUTBOX_CLAIM_SCRIPT = `
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 if not raw then return 0 end
@@ -631,6 +858,8 @@ if e.status ~= ARGV[2] or tonumber(e.n) ~= tonumber(ARGV[3]) then return 0 end
 if redis.call('HGET', KEYS[3], ARGV[6]) ~= '1' then return 0 end
 local currentEpoch = tonumber(redis.call('HGET', KEYS[3], ARGV[7])) or 0
 if tonumber(e.kindEpoch) ~= currentEpoch then return 0 end
+local currentGeneration = tonumber(redis.call('GET', KEYS[4])) or 0
+if tonumber(e.webhookGeneration) ~= currentGeneration then return 0 end
 if redis.call('SET', KEYS[2], ARGV[5], 'PX', ARGV[4], 'NX') then return 1 end
 return 0
 `;
@@ -655,10 +884,11 @@ export async function outboxClaim(
       [
         "EVAL",
         OUTBOX_CLAIM_SCRIPT,
-        3,
+        4,
         ANNOUNCE_OUTBOX_KEY,
         `${ANNOUNCE_LEASE_PREFIX}${id}`,
         DISCORD_CONFIG_KEY,
+        ANNOUNCE_WEBHOOK_GENERATION_KEY,
         id,
         seen.status,
         seen.n,
@@ -741,6 +971,56 @@ export async function outboxComplete(id: string, status: OutboxStatus, token: st
     if (res.error) console.error("[announce] outbox complete failed:", adminErrorLabel(new Error(res.error)));
   } catch (err) {
     console.error("[announce] outbox complete failed:", adminErrorLabel(err));
+  }
+}
+
+/** Releases a lease without changing the entry's status or attempt count.
+ *  Used for a 429: the batch was never attempted for retry-budget purposes,
+ *  so the entries must stay claimable when Discord says to resume. The
+ *  token check keeps a stale owner from deleting a newer owner's lease. */
+export const OUTBOX_RELEASE_SCRIPT = `
+local lease = redis.call('GET', KEYS[2])
+if not lease or lease ~= ARGV[1] then return 0 end
+redis.call('DEL', KEYS[2])
+return 1
+`;
+
+export async function outboxRelease(id: string, token: string): Promise<void> {
+  try {
+    const [res] = await upstashPipeline([
+      ["EVAL", OUTBOX_RELEASE_SCRIPT, 2, ANNOUNCE_OUTBOX_KEY, `${ANNOUNCE_LEASE_PREFIX}${id}`, token],
+    ]);
+    if (res.error) console.error("[announce] outbox release failed:", adminErrorLabel(new Error(res.error)));
+  } catch (err) {
+    console.error("[announce] outbox release failed:", adminErrorLabel(err));
+  }
+}
+
+/** The remaining Discord cooldown in ms. 0 means "post now"; a failed read
+ *  also returns 0 (fail open — a Redis blip must not silently pause posts). */
+export async function announceCooldownMs(): Promise<number> {
+  try {
+    const [res] = await upstashPipeline([["GET", ANNOUNCE_COOLDOWN_KEY]]);
+    if (res.error) throw new Error(res.error);
+    const at = Number(res.result);
+    if (!Number.isFinite(at)) return 0;
+    return Math.max(0, at - Date.now());
+  } catch (err) {
+    console.error("[announce] cooldown read failed:", adminErrorLabel(err));
+    return 0;
+  }
+}
+
+/** Starts a Discord cooldown. A 429 is the one refusal that must not burn an
+ *  entry's retry budget: the sweeps check this before claiming anything, so
+ *  the batch stays pending and the attempt count is unchanged. */
+export async function setAnnounceCooldown(ms: number): Promise<void> {
+  const until = Date.now() + Math.max(1_000, Math.ceil(ms));
+  try {
+    const [res] = await upstashPipeline([["SET", ANNOUNCE_COOLDOWN_KEY, String(until), "PX", String(until - Date.now())]]);
+    if (res.error) throw new Error(res.error);
+  } catch (err) {
+    console.error("[announce] cooldown write failed:", adminErrorLabel(err));
   }
 }
 

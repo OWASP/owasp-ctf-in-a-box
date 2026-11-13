@@ -4279,32 +4279,45 @@ outright.
 player signs in with any provider and links GitHub only to play Secure
 Development. A PR whose author has not linked yet used to be dropped
 (`unlinked`), which loses the points of a player who links an hour into the
-event. Two further gaps showed up in review. A score sync read before an
+event. Further gaps showed up in review. A score sync read before an
 organizer deleted the player could reach the scorer after the delete cleared
 their solves, and the scorer's `HSETNX` wrote it back. And the scorer keeps a
 solve's first time, so the order in which sync posts two scores for the same
-solve decides which comment time sticks.
+solve decides which comment time sticks. ADR 38's `rejected` row reads
+"Scorer returned `4xx`", which since ADR 67 means a `4xx` other than `422`:
+the `422` is `refused`.
 
 **Decision.**
 - **An unattributed score is held, not dropped.** It is stored under
   `ctf:sd:held:*` and counted in ADR 38's taxonomy as a new bucket, `held`:
   waiting on the player, not lost. Each tick, before the comment pass, sync
   releases the held scores of authors who linked before `scoringEndsAt` (or
-  of any author when the event has no end), oldest first, at their original
-  comment time, so ADR 67's rules judge them as they would have judged the
-  comment. A link made at or after the close never releases: the admin list
-  shows the score as `unclaimed`.
+  of any linked author when the event has no end), oldest first, at their
+  original comment time, so ADR 67's rules judge them as they would have
+  judged the comment. A link made at or after the close does not release:
+  the admin list shows the score as `unclaimed`. The close is the current
+  `scoringEndsAt`, so an organizer who moves the end past the link lets the
+  score release; that is the organizer's call, and no other path attributes
+  an unclaimed score.
 - **A held score waits for its target.** One whose target the organizer has
   turned off stays held until the target is back, as an unread comment on
   that repo would.
 - **Order is kept per author and target.** While an older score for the same
   author and target is still held, the comment pass holds a newer one behind
-  it instead of posting it.
-- **A deleted player is refused.** `deleteUser` sets
-  `ctf:deleted:<player id>` for ten minutes before it clears anything, and
-  the scorer checks that key in the same Lua script as its `HSETNX` write. A
-  score for that player is a final `422` with the code `player-deleted`,
-  which ADR 38 counts as `refused`, like ADR 67's time refusals.
+  it instead of posting it. A comment that fails within a tick holds back
+  the same author's later comments in that repo, unread, until it has gone
+  through.
+- **ADR 38's `rejected` is a `4xx` other than `422`.** A `422` is `refused`,
+  as ADR 67 has it; organizers must not read a routine window or freeze
+  refusal as a lost score.
+- **A deleted player is refused.** `deleteUser` marks
+  `ctf:deleted:<player id>` `pending` before it clears anything and
+  `deleted` once it has succeeded, for ten minutes; a failed delete removes
+  the mark. The scorer reads it in the same Lua script as its `HSETNX`
+  write. `pending` answers `503`, which sync retries, because the delete may
+  still fail and the player stay; `deleted` is a final `422` with the code
+  `player-deleted`, which ADR 38 counts as `refused`, like ADR 67's time
+  refusals.
 
 This was chosen over dropping unlinked scores (a late link loses points),
 over attributing an unclaimed score by hand (no path may give a score to an

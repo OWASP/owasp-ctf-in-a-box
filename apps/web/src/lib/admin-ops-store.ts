@@ -556,6 +556,19 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
 
 // --- delete -----------------------------------------------------------------
 
+/** `ctf:deleted:<id>`: `pending` while a delete clears a player, `deleted`
+ *  once it has succeeded, removed if it fails. The scorer reads it in the same
+ *  script that writes a solve (scorer/src/store.js deletedKey): `pending`
+ *  answers a retry and `deleted` a final refusal, so a score sync read before
+ *  the delete cannot land after the progress reset and bring a solve back,
+ *  and a delete that fails loses no score. Expires: the account survives a
+ *  delete, and the same player may play again. Ten minutes outlasts any score
+ *  already on its way. */
+export const DELETED_PREFIX = "ctf:deleted:";
+export const DELETED_TTL_SECONDS = 600;
+export const DELETE_PENDING = "pending";
+export const DELETE_DONE = "deleted";
+
 /**
  * Removes a contestant's event state entirely: their progress, their hints,
  * their team membership, their `ctf:user:<id>` record and their rate-limit
@@ -568,21 +581,12 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
  * linked login (`ctf:sd:held:*`) are event state and are cleared.
  *
  * The deletion marker (`DELETED_PREFIX`) goes up before the progress reset, so
- * a score already on its way is either cleared by the reset or refused by the
- * scorer. A player deleted and back within `DELETED_TTL_SECONDS` has their
+ * a score already on its way is either cleared by the reset or held off by
+ * the scorer. A player deleted and back within `DELETED_TTL_SECONDS` has their
  * Secure Development scores refused until it expires.
  *
  * A captain is a deliberate refusal here — see `forceTransferCaptain`.
  */
-/** `ctf:deleted:<id>`: up while a delete clears a player, and for a while
- *  after. The scorer refuses a score for a player with this key in the same
- *  script that writes the solve (scorer/src/store.js deletedKey), so a score
- *  sync read before the delete cannot land after the progress reset and bring
- *  a solve back. Expires: the account survives a delete, and the same player
- *  may play again. Ten minutes outlasts any score already on its way. */
-export const DELETED_PREFIX = "ctf:deleted:";
-export const DELETED_TTL_SECONDS = 600;
-
 export async function deleteUser(
   rawId: unknown,
   actor: AuditActor,
@@ -606,25 +610,41 @@ export async function deleteUser(
   // last close comes after the last write, on the failure path too.
   await beginScoreLowering();
   try {
+    const marker = `${DELETED_PREFIX}${player}`;
     // Before the reset, and checked: without the marker, a score in flight
     // can rewrite a solve the reset just cleared.
     assertPipelineOk(
-      await upstashPipeline([["SET", `${DELETED_PREFIX}${player}`, "1", "EX", DELETED_TTL_SECONDS]]),
+      await upstashPipeline([["SET", marker, DELETE_PENDING, "EX", DELETED_TTL_SECONDS]]),
       "deletion marker",
     );
-    const reset = await resetUserProgress(player, actor);
-
+    let reset: ResetScope;
     const leftTeam = detail.team?.slug ?? null;
-    const cmds: (string | number)[][] = [];
-    if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
-    cmds.push(["DEL", userKey(player)]);
-    for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
-    if (heldLogin) {
-      cmds.push(["DEL", `ctf:sd:held:by:${heldLogin}`], ["SREM", "ctf:sd:held:authors", heldLogin]);
+    try {
+      reset = await resetUserProgress(player, actor);
+      const cmds: (string | number)[][] = [];
+      if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
+      cmds.push(["DEL", userKey(player)]);
+      for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
+      if (heldLogin) {
+        cmds.push(["DEL", `ctf:sd:held:by:${heldLogin}`], ["SREM", "ctf:sd:held:authors", heldLogin]);
+      }
+      // The delete is done: from here a score for this player is refused
+      // for good, not retried.
+      cmds.push(["SET", marker, DELETE_DONE, "EX", DELETED_TTL_SECONDS]);
+      // Checked: a refused DEL reported as a delete leaves the player on the
+      // team with their record in place.
+      assertPipelineOk(await upstashPipeline(cmds), "delete user");
+    } catch (err) {
+      // The player stays, so their scores must score again. If this DEL
+      // fails too, the pending marker only delays them (the scorer answers a
+      // retry) until it expires.
+      try {
+        assertPipelineOk(await upstashPipeline([["DEL", marker]]), "clear deletion marker");
+      } catch (clearErr) {
+        console.error("[admin-ops] deletion marker left pending after a failed delete", errorLabel(clearErr));
+      }
+      throw err;
     }
-    // Checked: a refused DEL reported as a delete leaves the player on the
-    // team with their record in place.
-    assertPipelineOk(await upstashPipeline(cmds), "delete user");
 
     await audit("ops:user-delete", actor, { player, leftTeam });
     return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };

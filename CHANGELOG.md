@@ -18,23 +18,28 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   has linked. A score whose PR author has not linked is now
   held (`ctf:sd:held:*`, tally bucket `held`) instead of dropped. Each sync
   tick releases the held scores of authors who linked before Scoring closes
-  (or of any author when the event has no end), oldest comment first, at the
-  original comment time, so the scorer still judges the window, freeze and
-  reset against that time. A link made at or after the close never releases;
+  (or of any linked author when the event has no end), oldest comment
+  first, at the original comment time, so the scorer still judges the
+  window, freeze and reset against that time. A link made at or after the
+  close does not release while that close stands (an organizer who moves
+  the end later lets it release);
   the Secure Development admin tab lists held and `unclaimed` scores
   (read-only). A master reset wipes held scores and keeps links; deleting a
   player clears their held scores. A held score for a target the organizer
   has turned off stays held until the target is back, and a newer score
-  waits behind an older one still held for the same target, so a solve keeps
-  its first comment time.
+  waits behind an older one still held for the same target, or behind an
+  older comment of the same author that failed and will be retried, so a
+  solve keeps its first comment time.
 - **Fixed: a deleted player's Secure Development solve could come back.** A
   score sync read before an organizer deleted the player could reach the
   scorer after the delete cleared their solves, and the scorer wrote it
-  back. The delete now sets `ctf:deleted:<player id>` for ten minutes before
-  it clears anything, and the scorer refuses that player's scores (`422`,
-  `player-deleted`) in the same script that writes a solve. A player deleted
-  and back within those ten minutes has their Secure Development scores
-  refused until it expires.
+  back. The delete now marks `ctf:deleted:<player id>` `pending` before it
+  clears anything and `deleted` once it succeeds (for ten minutes), and the
+  scorer reads that mark in the same script that writes a solve: `pending`
+  answers `503`, which sync retries, and `deleted` a final `422`
+  (`player-deleted`). A failed delete removes the mark, so it loses no
+  score. A player deleted and back within those ten minutes has their
+  Secure Development scores refused until it expires.
 - **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
   the linked-account write failed after the user row was written, that row
   stayed behind and every later sign-in answered `account not linked`. The

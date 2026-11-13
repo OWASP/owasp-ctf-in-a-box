@@ -165,13 +165,19 @@ state; everything else that touches scores goes through it.
    pass, sync releases held scores whose author linked before `scoringEndsAt`
    (or the event has no end), oldest comment first, POSTing each at its
    ORIGINAL comment time, so the scorer still judges the window, freeze and
-   reset against that time (ADR 67). A link made at or after the close never
-   releases: the admin list shows it as `unclaimed`. A held score for a
+   reset against that time (ADR 67). A link made at or after the close does
+   not release: the admin list shows it as `unclaimed`. The close is the
+   current `scoringEndsAt`, read every tick, so an organizer who moves the
+   end later than the link lets that score release; an unclaimed score is
+   never attributed any other way. A held score for a
    target the organizer has since turned off stays held until the target is
    back on. While an older score for the same author and target is still
    held (its release failed, or the link landed mid-tick), the comment pass
    holds a newer one behind it instead of posting it: the scorer keeps a
-   solve's first time, so the newer one would take its place for good. Sync needs Redis for this
+   solve's first time, so the newer one would take its place for good. For
+   the same reason, once a comment fails within a tick (a Redis or scorer
+   error, retried next tick), that author's later comments in the repo stay
+   unread until it has gone through. Sync needs Redis for this
    lookup and for the freeze and reset reads, so it refuses to start without
    it (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
 6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload with
@@ -198,10 +204,13 @@ state; everything else that touches scores goes through it.
    with the flag) is refused with a final `422`. A freeze with no recorded
    start answers `503`, which the poller retries. A payload with no `at` (an
    older sync) keeps the arrival-time rule. A player an organizer is
-   deleting is refused too (`422`, `player-deleted`): the delete sets
-   `ctf:deleted:<player id>` for ten minutes before it clears their solves,
-   and the scorer checks that key in the same script as its write, so a
-   score read before the delete cannot restore a cleared solve. The scorer then writes the score
+   deleting is held off too: the delete marks `ctf:deleted:<player id>`
+   `pending` before it clears their solves and `deleted` once it has
+   succeeded (a failed delete removes the mark; it expires after ten
+   minutes), and the scorer reads that mark in the same script as its write.
+   `pending` answers `503`, which sync retries, since the delete may still
+   fail; `deleted` is a final `422` (`player-deleted`). A score read before
+   the delete therefore cannot restore a cleared solve. The scorer then writes the score
    to Redis (via `srh`), timed `at`, as a monotonic, idempotent-on-replay
    update — the write model is described in
    [docs/decisions.md #5](decisions.md#adr-5-single-score-writer-monotonic-writes-at-least-once-delivery).

@@ -301,6 +301,12 @@ export async function tick(cfg, state, deps = {}) {
     }
     let stopAt;
     const tally = freshTally();
+    // Authors with a comment that failed this tick (lowercased). Their later
+    // comments wait for it: the scorer keeps a solve's first time, so a newer
+    // one posted, or held and released, before the older retry would keep the
+    // newer comment's time for good. They stay unseen, and the cursor stops at
+    // the first failure, so next tick reads them again in order.
+    const failedAuthors = new Set();
     for (const c of result.comments) {
       // Keyed on the comment REVISION, not its id — the workflow upserts one
       // comment per target, so the id alone made a re-scored PR unreachable.
@@ -328,6 +334,13 @@ export async function tick(cfg, state, deps = {}) {
         } else {
           tally.noMarker++;
         }
+        continue;
+      }
+      const authorKey = String(payload.author).toLowerCase();
+      if (failedAuthors.has(authorKey)) {
+        rs.seen = rs.seen.filter((k) => k !== seenKey(c.id, c.updated_at));
+        stopAt ??= c.updated_at;
+        tally.retried++;
         continue;
       }
       try {
@@ -382,6 +395,7 @@ export async function tick(cfg, state, deps = {}) {
         // Retry next tick: drop THIS revision's key, not every key sharing
         // the comment's id.
         rs.seen = rs.seen.filter((k) => k !== seenKey(c.id, c.updated_at));
+        failedAuthors.add(authorKey);
         stopAt ??= c.updated_at; // record first failure's timestamp
         lastError = err.message;
         tally.retried++;

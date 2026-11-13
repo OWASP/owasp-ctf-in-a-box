@@ -164,6 +164,34 @@ test("2-comment batch: first fails 5xx, second succeeds 202; cursor stops at fir
 // reset reassigns `state.repos` mid-tick), and this is the boundary that has
 // to hold regardless of how the object got here.
 
+test("after an author's comment fails, their later comments wait for it, unseen, and go in order next tick", async () => {
+  const older = ghComment(1, `<!-- ctf-score: {"author":"Stranger","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"old"} -->`);
+  const newer = { ...ghComment(2, `<!-- ctf-score: {"author":"stranger","target":"dvwa","solved":["sqli-low"],"pr":8,"sha":"new"} -->`), updated_at: "2026-08-13T11:05:00Z" };
+  const other = { ...ghComment(3), updated_at: "2026-08-13T11:06:00Z" }; // octocat, linked
+  let failOnce = true;
+  const held = [];
+  const redis = {
+    ...redisStub,
+    // The older comment's lookup fails once; the author is unlinked, so the
+    // newer one would otherwise be held now and released before the retry.
+    resolveGithubLink: async (login) => {
+      if (login === "Stranger" && failOnce) { failOnce = false; throw new Error("upstash: NOAUTH"); }
+      return resolveGithubLink(login);
+    },
+    holdScore: async (_l, field) => { held.push(field); },
+  };
+  const posts = [];
+  const f = routes(() => new Response(JSON.stringify([older, newer, other]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.deepEqual(held, [], "nothing held while the older comment is unresolved");
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(2, "2026-08-13T11:05:00Z")), false, "the newer one stays unseen");
+  assert.deepEqual(posts.map((p) => p.sha), ["abc"], "another author is not held back");
+  assert.equal(state.repos.DVWA.since, "2026-08-13T11:00:00Z");
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.deepEqual(held, [seenKey(1, "2026-08-13T11:00:00Z"), seenKey(2, "2026-08-13T11:05:00Z")], "both held, oldest first");
+});
+
 test("a bare {} state polls normally instead of throwing", async () => {
   const posts = [];
   const f = routes(() => new Response(JSON.stringify([ghComment(11)]), { status: 200 }), 202, posts);

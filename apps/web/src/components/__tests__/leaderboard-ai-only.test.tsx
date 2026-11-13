@@ -21,7 +21,7 @@ vi.mock("next/image", () => ({
 }));
 
 vi.mock("@/components/board-item-lists", () => ({
-  default: ({ logins }: { logins: string[] }) => <div data-testid="board-item-lists">{logins.join(",")}</div>,
+  default: ({ players }: { players: string[] }) => <div data-testid="board-item-lists">{players.join(",")}</div>,
 }));
 
 import { EntryRow, TeamRow } from "@/components/leaderboard";
@@ -36,7 +36,7 @@ const SD_MODULE: ResolvedModule = { id: "secure-development", title: "Secure Dev
 function aiOnlyEntry(): LeaderboardEntry {
   return {
     rank: 1,
-    login: "alice",
+    playerId: "alice", name: "alice", image: null,
     team: null,
     points: 20,
     patched: 0,

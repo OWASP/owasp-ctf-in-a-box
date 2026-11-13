@@ -418,8 +418,24 @@ acc_assert_sync_refuses_no_org() {
   fi
 }
 
-# acc_assert_leaderboard_contrib <base-url> <module> <login> <points-formatted>
-# — /leaderboard must render a row for <login>, and that row must carry the
+# acc_seed_player <redis-container> <player-id> <display-name>
+# — creates the account row a signed-in player has (`ctf:auth:user` plus the
+# email index set better-auth keeps beside it), so the board resolves the
+# player id to <display-name> instead of the `player <id prefix>` fallback.
+# No `ctf:link:github:` key is written: the player is not claiming a login.
+# The row shape and index key are apps/web/src/lib/auth-store's.
+acc_seed_player() {
+  sp_redis="$1"; sp_id="$2"; sp_name="$3"
+  sp_email="${sp_name}@acceptance.invalid"
+  docker exec "$sp_redis" redis-cli -e HSET ctf:auth:user "$sp_id" \
+    '{"id":"'"$sp_id"'","name":"'"$sp_name"'","email":"'"$sp_email"'","emailVerified":true,"image":null,"createdAt":"2026-08-19T00:00:00.000Z","updatedAt":"2026-08-19T00:00:00.000Z"}' \
+    >/dev/null || { echo "FAIL: could not seed the account row for $sp_name" >&2; return 1; }
+  docker exec "$sp_redis" redis-cli -e SADD "ctf:auth:user:by:email:$sp_email" "$sp_id" >/dev/null \
+    || { echo "FAIL: could not seed the email index for $sp_name" >&2; return 1; }
+}
+
+# acc_assert_leaderboard_contrib <base-url> <module> <display-name> <points-formatted>
+# — /leaderboard must render a row for the player named <display-name>, and that row must carry the
 # module-contributed total <points-formatted>. A module-only event always
 # resolves the leaderboard source to "empty" (lib/leaderboard/source.ts —
 # secure-development disabled means no scorer/lambda/upstash backend is even
@@ -436,16 +452,16 @@ acc_assert_sync_refuses_no_org() {
 # avoid bounded-repetition constructs here: some machines' `grep` is ugrep,
 # which errors on some of them that GNU grep accepts.
 acc_assert_leaderboard_contrib() {
-  lb_base="$1"; lb_module="$2"; lb_login="$3"; lb_points_fmt="$4"
-  echo "--- /leaderboard shows the seeded contestant by login, with their $lb_module points"
+  lb_base="$1"; lb_module="$2"; lb_name="$3"; lb_points_fmt="$4"
+  echo "--- /leaderboard shows the seeded contestant by name, with their $lb_module points"
   lb_html="$(curl -sf "$lb_base/leaderboard")"
-  if ! grep -qF "$lb_login" <<< "$lb_html"; then
-    echo "FAIL: /leaderboard has no row for $lb_login — a contestant whose" >&2
+  if ! grep -qF "$lb_name" <<< "$lb_html"; then
+    echo "FAIL: /leaderboard has no row for $lb_name — a contestant whose" >&2
     echo "      only points are $lb_module points did not get a row created at all." >&2
     return 1
   fi
   if ! grep -qF "$lb_points_fmt" <<< "$lb_html"; then
-    echo "FAIL: /leaderboard shows $lb_login but not their $lb_module total" >&2
+    echo "FAIL: /leaderboard shows $lb_name but not their $lb_module total" >&2
     echo "      ($lb_points_fmt) — the row exists, so the module" >&2
     echo "      overlay ran, but the points did not reach it." >&2
     return 1

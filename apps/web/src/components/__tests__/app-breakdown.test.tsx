@@ -22,7 +22,7 @@ const catalog: ChallengeCatalog = {
 function entry(overrides: Partial<LeaderboardEntry>): LeaderboardEntry {
   return {
     rank: 1,
-    login: "ada",
+    playerId: "ada", name: "ada", image: null,
     team: null,
     points: 100,
     patched: 3,

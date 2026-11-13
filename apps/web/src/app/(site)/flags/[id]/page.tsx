@@ -25,7 +25,7 @@ import ChallengeDetail, { type ClassicChallengeView } from "@/components/challen
 import HintRevealButton from "@/components/hint-reveal-button";
 import { deriveStatus } from "@/lib/derive-status";
 import { isAdminLogin } from "@/lib/admin-auth";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { getAdminSettings } from "@/lib/admin-store";
 import {
   CLASSIC_COOLDOWN_SEC,
@@ -50,11 +50,10 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   // it next to the page's redirect), so it asks the same visibility question
   // as the page — a refused viewer gets no title, category or points, and not
   // even whether the id exists.
-  const session = await auth.api.getSession({ headers: await headers() });
-  const login = (session?.user as { login?: string } | undefined)?.login;
+  const player = await getPlayer(await headers());
   const { id } = await params;
   const challengeId = decodeURIComponent(id);
-  if ((await classicVisibility(login, challengeId)).state !== "visible") return {};
+  if ((await classicVisibility(player, challengeId)).state !== "visible") return {};
   const challenge = (await listChallenges()).find((c) => c.id === challengeId);
   if (!challenge) return {};
   return {
@@ -70,31 +69,32 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   const { id } = await params;
   const challengeId = decodeURIComponent(id);
 
-  const session = await auth.api.getSession({ headers: await headers() });
-  const login = (session?.user as { login?: string } | undefined)?.login;
+  const player = await getPlayer(await headers());
+  const playerId = player?.id;
+  const adminLogin = player?.githubLogin ?? undefined;
   // #464 pre-launch lock: before ANY content load below. A refused viewer
   // (not launched, not an admin) goes to the landing page.
-  const launch = await redirectIfNotLaunched(login);
-  const viewerIsAdmin = await isAdminLogin(login);
+  const launch = await redirectIfNotLaunched(adminLogin);
+  const viewerIsAdmin = await isAdminLogin(adminLogin);
 
   // Same order as /flags: the team redirect fires before the loads below, so
   // a teamless contestant is never bounced after work that gets thrown away.
   // `true` only for an admin let through without a team (issue #357):
   // the notice below is the half of that exemption that was missing.
-  const viewerIsTeamless = await redirectIfTeamless(login, { isAdmin: viewerIsAdmin });
+  const viewerIsTeamless = await redirectIfTeamless(playerId, { isAdmin: viewerIsAdmin });
 
   const [challenges, solveCounts, viewerClassic, settings, modules, hintIds, hintNotice, viewerHints] =
     await Promise.all([
       listChallenges(),
       teamSolveCounts("classic"),
-      login ? getViewerClassic(login) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
+      playerId ? getViewerClassic(playerId) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
       getAdminSettings(),
       getResolvedModules(),
       getClassicHintIds(),
       getHintNotice(),
       // The viewer's owned hint text, read server-side (never for an
       // unowned viewer) and handed to the reveal control as `ownedText`.
-      login ? getViewerHints(login) : Promise.resolve(null),
+      playerId ? getViewerHints(playerId) : Promise.resolve(null),
     ]);
 
   const challenge = challenges.find((c) => c.id === challengeId);
@@ -105,12 +105,12 @@ export default async function ClassicChallengePage({ params }: { params: Promise
   // preview (#464) may open it, to test the whole story before launch. An
   // admin may also open a challenge contestants cannot see (disabled, or
   // not yet released), marked as such; to a contestant it is a 404.
-  const visibility = await classicVisibility(login, challengeId);
+  const visibility = await classicVisibility(player, challengeId);
   if (visibility.state !== "visible") notFound();
   // When this contestant first opened it: the start of Insights'
   // open-to-solve time. Never for a visitor, an admin preview, or an admin
   // looking at a hidden challenge; a failed write is logged, not thrown.
-  if (login && !launch.preview && !visibility.hidden) await recordFirstOpen("classic", login, challenge.id);
+  if (playerId && !launch.preview && !visibility.hidden) await recordFirstOpen("classic", playerId, challenge.id);
 
   // Read only once the challenge is known visible (#186). Field by field for
   // the same reason as the view below: the sha256 and chunk bookkeeping stay
@@ -179,7 +179,7 @@ export default async function ClassicChallengePage({ params }: { params: Promise
           that would 401. */}
       {hintNotice.active && hintIds.includes(challenge.id) && (
         <div className="max-w-xl">
-          {login ? (
+          {playerId ? (
             <HintRevealButton
               app="classic"
               id={challenge.id}
@@ -201,7 +201,7 @@ export default async function ClassicChallengePage({ params }: { params: Promise
           the same component the tests pin (#126 ordering, cooldown copy), and
           on a long description the recap beside the form is what keeps the
           submit affordance self-describing after the h1 scrolls away. */}
-      <ChallengeDetail challenge={view} authenticated={Boolean(login)} submitPath="/api/classic/submit" />
+      <ChallengeDetail challenge={view} authenticated={Boolean(playerId)} submitPath="/api/classic/submit" />
     </div>
   );
 }

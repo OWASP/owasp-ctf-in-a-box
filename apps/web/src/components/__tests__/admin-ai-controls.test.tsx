@@ -39,6 +39,7 @@ import AdminAiControls, {
   payloadFromAiEditor,
   type AiChallengeDraft,
 } from "@/components/admin-ai-controls";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const noop = () => {};
 
@@ -603,7 +604,7 @@ const { POST: wirePOST, DELETE: wireDELETE } = await import("@/app/api/admin/ai/
 
 describe("challenge-upsert POST wire contract, proven against the real route", () => {
   beforeEach(() => {
-    wireRequireAdmin.mockReset().mockResolvedValue({ ok: true, login: "alice" });
+    wireRequireAdmin.mockReset().mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
     wireUpsertAiChallenge.mockReset().mockImplementation(async (c: AiChallenge, secrets: { flag?: string; hint?: string }) => ({
       challenge: c,
       flag: secrets.flag ?? "",
@@ -656,7 +657,7 @@ describe("challenge-upsert POST wire contract, proven against the real route", (
 // accepts it and calls the real store function with the right id.
 describe("rotate and delete wire contract, proven against the real route", () => {
   beforeEach(() => {
-    wireRequireAdmin.mockReset().mockResolvedValue({ ok: true, login: "alice" });
+    wireRequireAdmin.mockReset().mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
     wireRotateAiSigningKey.mockReset().mockResolvedValue("signkey-new");
     wireDeleteAiChallenge.mockReset().mockResolvedValue(undefined);
     wireWriteAdminAudit.mockReset().mockResolvedValue(undefined);
@@ -669,7 +670,7 @@ describe("rotate and delete wire contract, proven against the real route", () =>
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ signingKey: "signkey-new" });
     expect(wireRotateAiSigningKey).toHaveBeenCalledWith(c1.id);
-    expect(wireWriteAdminAudit).toHaveBeenCalledWith("alice", "ai-rotate-key", { id: c1.id });
+    expect(wireWriteAdminAudit).toHaveBeenCalledWith(actor("alice"), "ai-rotate-key", { id: c1.id });
   });
 
   it("the delete flow's exact body, {id}, is accepted and deletes that challenge", async () => {
@@ -679,7 +680,7 @@ describe("rotate and delete wire contract, proven against the real route", () =>
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(wireDeleteAiChallenge).toHaveBeenCalledWith(c1.id);
-    expect(wireWriteAdminAudit).toHaveBeenCalledWith("alice", "ai-delete", { id: c1.id });
+    expect(wireWriteAdminAudit).toHaveBeenCalledWith(actor("alice"), "ai-delete", { id: c1.id });
   });
 });
 

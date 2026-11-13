@@ -25,9 +25,11 @@ import {
   outsideWindow,
   updateAdminSettings,
   type AdminSettings,
+  writeAdminAudit,
 } from "@/lib/admin-store";
 import { TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
 import { SECURE_DEV_TARGETS_MESSAGE } from "@/lib/secure-dev-targets";
+import { ALICE, actor } from "./audit-actor";
 
 beforeEach(() => {
   mocks.upstashEval.mockReset();
@@ -43,7 +45,7 @@ beforeEach(() => {
 describe("updateAdminSettings brackets the write as score-lowering (#553)", () => {
   it("opens the bracket before the write and closes it after it lands", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    await updateAdminSettings({ enabledModules: ["quiz"] }, "alice");
+    await updateAdminSettings({ enabledModules: ["quiz"] }, actor("alice"));
     expect(mocks.beginScoreLowering).toHaveBeenCalledTimes(1);
     expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
     const write = mocks.upstashEval.mock.invocationCallOrder[0];
@@ -52,7 +54,7 @@ describe("updateAdminSettings brackets the write as score-lowering (#553)", () =
   });
 
   it("opens nothing on a patch refused before Redis", async () => {
-    await expect(updateAdminSettings({ hintCost: -1 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    await expect(updateAdminSettings({ hintCost: -1 }, actor("alice"))).rejects.toBeInstanceOf(AdminValidationError);
     expect(mocks.beginScoreLowering).not.toHaveBeenCalled();
     expect(mocks.endScoreLowering).not.toHaveBeenCalled();
   });
@@ -62,16 +64,16 @@ describe("updateAdminSettings brackets the write as score-lowering (#553)", () =
     // nothing" from "wrote, then the reply was lost"; an extra fold is
     // harmless, a missed one is a hint bought on points that no longer count.
     mocks.upstashEval.mockResolvedValueOnce(["__window_refused__", "2026-08-14T10:00:00Z", "2026-08-14T09:00:00Z"]);
-    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, actor("alice"))).rejects.toBeInstanceOf(AdminValidationError);
     expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
     mocks.upstashEval.mockRejectedValueOnce(new Error("down"));
-    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toThrow("down");
+    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, actor("alice"))).rejects.toThrow("down");
     expect(mocks.endScoreLowering).toHaveBeenCalledTimes(2);
   });
 
   it("ABORTS before the write when the bracket cannot be opened — fail closed", async () => {
     mocks.beginScoreLowering.mockRejectedValue(new Error("upstash down"));
-    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).rejects.toThrow("upstash down");
+    await expect(updateAdminSettings({ enabledModules: ["quiz"] }, actor("alice"))).rejects.toThrow("upstash down");
     expect(mocks.upstashEval).not.toHaveBeenCalled();
     expect(mocks.endScoreLowering).not.toHaveBeenCalled();
   });
@@ -197,12 +199,12 @@ describe("getAdminSettings", () => {
 
 describe("updateAdminSettings validation", () => {
   it("rejects a negative hint cost before touching Redis", async () => {
-    await expect(updateAdminSettings({ hintCost: -1 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    await expect(updateAdminSettings({ hintCost: -1 }, actor("alice"))).rejects.toBeInstanceOf(AdminValidationError);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 
   it("rejects an out-of-bound hint cost", async () => {
-    await expect(updateAdminSettings({ hintCost: 999999 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    await expect(updateAdminSettings({ hintCost: 999999 }, actor("alice"))).rejects.toBeInstanceOf(AdminValidationError);
   });
 
   // Runtime module enablement (issue #386). Every module but
@@ -217,14 +219,14 @@ describe("updateAdminSettings validation", () => {
     it("accepts adding a module the baked config never mentioned", async () => {
       process.env.SCORE_IMAGE = "ghcr.io/x/score:latest";
       mocks.upstashEval.mockResolvedValue([]);
-      await updateAdminSettings({ enabledModules: ["secure-development", "quiz"] }, "alice");
+      await updateAdminSettings({ enabledModules: ["secure-development", "quiz"] }, actor("alice"));
       const args = mocks.upstashEval.mock.calls[0][2];
       expect(args).toContain("secure-development,quiz");
     });
 
     it("accepts an empty set — an organizer may switch every board off", async () => {
       mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z", "enabledModules", ""]);
-      const s = await updateAdminSettings({ enabledModules: [] }, "alice");
+      const s = await updateAdminSettings({ enabledModules: [] }, actor("alice"));
       const [, , args] = mocks.upstashEval.mock.calls[0];
       const strArgs = args.map(String);
       const idx = strArgs.indexOf("enabledModules");
@@ -234,14 +236,14 @@ describe("updateAdminSettings validation", () => {
 
     it("accepts disabling secure-development", async () => {
       mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-      await expect(updateAdminSettings({ enabledModules: ["quiz"] }, "alice")).resolves.toBeDefined();
+      await expect(updateAdminSettings({ enabledModules: ["quiz"] }, actor("alice"))).resolves.toBeDefined();
     });
 
     it("accepts enabling secure-development when a scorer image exists", async () => {
       process.env.SCORE_IMAGE = "ghcr.io/x/score:latest";
       mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
       await expect(
-        updateAdminSettings({ enabledModules: ["secure-development", "quiz"] }, "alice"),
+        updateAdminSettings({ enabledModules: ["secure-development", "quiz"] }, actor("alice")),
       ).resolves.toBeDefined();
     });
 
@@ -249,7 +251,7 @@ describe("updateAdminSettings validation", () => {
       delete process.env.SCORE_IMAGE;
       mocks.upstashPipeline.mockResolvedValue([{ result: ["enabledModules", "quiz"] }]);
       await expect(
-        updateAdminSettings({ enabledModules: ["secure-development"] }, "alice"),
+        updateAdminSettings({ enabledModules: ["secure-development"] }, actor("alice")),
       ).rejects.toBeInstanceOf(AdminValidationError);
       expect(mocks.upstashEval).not.toHaveBeenCalled();
     });
@@ -258,7 +260,7 @@ describe("updateAdminSettings validation", () => {
       delete process.env.SCORE_IMAGE;
       mocks.upstashPipeline.mockResolvedValue([{ error: "NOAUTH Authentication required." }]);
       await expect(
-        updateAdminSettings({ enabledModules: ["secure-development"] }, "alice"),
+        updateAdminSettings({ enabledModules: ["secure-development"] }, actor("alice")),
       ).rejects.toBeInstanceOf(AdminValidationError);
       expect(mocks.upstashEval).not.toHaveBeenCalled();
     });
@@ -281,7 +283,7 @@ describe("updateAdminSettings validation", () => {
         "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z", "enabledModules", "quiz",
       ]);
       await expect(
-        updateAdminSettings({ enabledModules: ["secure-development", "quiz"] }, "alice"),
+        updateAdminSettings({ enabledModules: ["secure-development", "quiz"] }, actor("alice")),
       ).resolves.toBeDefined();
       const [, , args] = mocks.upstashEval.mock.calls[0];
       const strArgs = args.map(String);
@@ -292,21 +294,21 @@ describe("updateAdminSettings validation", () => {
 
     it("refuses an unknown module id rather than storing it", async () => {
       await expect(
-        updateAdminSettings({ enabledModules: ["secure-development", "not-a-module"] as never }, "alice"),
+        updateAdminSettings({ enabledModules: ["secure-development", "not-a-module"] as never }, actor("alice")),
       ).rejects.toBeInstanceOf(AdminValidationError);
       expect(mocks.upstashEval).not.toHaveBeenCalled();
     });
 
     it("refuses a non-array", async () => {
       await expect(
-        updateAdminSettings({ enabledModules: "quiz" as never }, "alice"),
+        updateAdminSettings({ enabledModules: "quiz" as never }, actor("alice")),
       ).rejects.toBeInstanceOf(AdminValidationError);
     });
 
     it("dedupes before storing", async () => {
       process.env.SCORE_IMAGE = "ghcr.io/x/score:latest";
       mocks.upstashEval.mockResolvedValue([]);
-      await updateAdminSettings({ enabledModules: ["secure-development", "quiz", "quiz"] }, "alice");
+      await updateAdminSettings({ enabledModules: ["secure-development", "quiz", "quiz"] }, actor("alice"));
       expect(mocks.upstashEval.mock.calls[0][2]).toContain("secure-development,quiz");
     });
 
@@ -315,7 +317,7 @@ describe("updateAdminSettings validation", () => {
       // same board. Nothing in this path may touch ctf:quiz:* or ctf:classic:*.
       process.env.SCORE_IMAGE = "ghcr.io/x/score:latest";
       mocks.upstashEval.mockResolvedValue([]);
-      await updateAdminSettings({ enabledModules: ["secure-development"] }, "alice");
+      await updateAdminSettings({ enabledModules: ["secure-development"] }, actor("alice"));
       const [script, keys] = mocks.upstashEval.mock.calls[0];
       expect(keys.every((k) => k.startsWith("ctf:admin:"))).toBe(true);
       expect(script).not.toMatch(/quiz|classic/i);
@@ -323,23 +325,26 @@ describe("updateAdminSettings validation", () => {
   });
 
   it("rejects an unknown patch key", async () => {
-    await expect(updateAdminSettings({ bogus: true } as never, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    await expect(updateAdminSettings({ bogus: true } as never, actor("alice"))).rejects.toBeInstanceOf(AdminValidationError);
   });
 
   it("rejects an empty patch", async () => {
-    await expect(updateAdminSettings({}, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    await expect(updateAdminSettings({}, actor("alice"))).rejects.toBeInstanceOf(AdminValidationError);
   });
 });
 
 describe("updateAdminSettings write", () => {
   it("passes only the changed fields, the actor, and a timestamp into one eval", async () => {
     mocks.upstashEval.mockResolvedValue(["paused", "1", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    const out = await updateAdminSettings({ paused: true }, "alice");
+    const out = await updateAdminSettings({ paused: true }, actor("alice"));
     expect(mocks.upstashEval).toHaveBeenCalledOnce();
     const [, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit", "ctf:admin:pauses"]);
-    // args carry the actor, the cap, an audit JSON line, and the paused field
+    // args carry the actor's name (updatedBy), the cap, an audit JSON line,
+    // and the paused field
     expect(args).toContain("alice");
+    const line = JSON.parse(String(args.find((a) => String(a).includes('"changed"')))) as Record<string, unknown>;
+    expect(line).toMatchObject({ by: ALICE.id, name: "alice" });
     expect(args.some((a) => String(a).includes('"paused":true'))).toBe(true);
     expect(out.paused).toBe(true);
   });
@@ -350,7 +355,7 @@ describe("updateAdminSettings write", () => {
   // this pins that the write path hands it the log's key and logic.
   it("keeps the pause log in the same eval as the flag", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    await updateAdminSettings({ paused: false }, "alice");
+    await updateAdminSettings({ paused: false }, actor("alice"));
     const [script, keys] = mocks.upstashEval.mock.calls[0];
     expect(keys[2]).toBe("ctf:admin:pauses");
     expect(String(script)).toContain("'pausedSince'");
@@ -363,7 +368,7 @@ describe("updateAdminSettings write", () => {
     // not the string "0", so the sync poller and scorer's presence checks
     // don't misread an un-pause as still-paused.
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    const out = await updateAdminSettings({ paused: false }, "alice");
+    const out = await updateAdminSettings({ paused: false }, actor("alice"));
     expect(mocks.upstashEval).toHaveBeenCalledOnce();
     const [script, , args] = mocks.upstashEval.mock.calls[0];
 
@@ -390,7 +395,7 @@ describe("updateAdminSettings write", () => {
     mocks.upstashEval.mockResolvedValue([
       "teamRegistrationOpen", "0", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z",
     ]);
-    const out = await updateAdminSettings({ teamRegistrationOpen: false }, "alice");
+    const out = await updateAdminSettings({ teamRegistrationOpen: false }, actor("alice"));
     const [, , args] = mocks.upstashEval.mock.calls[0];
     const strArgs = args.map(String);
     const idx = strArgs.indexOf("teamRegistrationOpen");
@@ -403,26 +408,26 @@ describe("updateAdminSettings write", () => {
 
   it("turning displayQr off writes \"0\", and on HDELs it (#592)", async () => {
     mocks.upstashEval.mockResolvedValue(["displayQr", "0", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    expect((await updateAdminSettings({ displayQr: false }, "alice")).displayQr).toBe(false);
+    expect((await updateAdminSettings({ displayQr: false }, actor("alice"))).displayQr).toBe(false);
     let args = mocks.upstashEval.mock.calls[0][2].map(String);
     expect(args[args.indexOf("displayQr") + 1]).toBe("0");
     expect(args[4]).toBe("0");
 
     mocks.upstashEval.mockClear();
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    expect((await updateAdminSettings({ displayQr: true }, "alice")).displayQr).toBe(true);
+    expect((await updateAdminSettings({ displayQr: true }, actor("alice"))).displayQr).toBe(true);
     args = mocks.upstashEval.mock.calls[0][2].map(String);
     expect(args[4]).toBe("1");
     expect(args[5]).toBe("displayQr");
   });
 
   it("rejects a non-boolean displayQr", async () => {
-    await expect(updateAdminSettings({ displayQr: "yes" } as never, "alice")).rejects.toThrow(/displayQr must be a boolean/);
+    await expect(updateAdminSettings({ displayQr: "yes" } as never, actor("alice"))).rejects.toThrow(/displayQr must be a boolean/);
   });
 
   it("opening teamRegistrationOpen HDELs the field instead of writing \"1\"", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    const out = await updateAdminSettings({ teamRegistrationOpen: true }, "alice");
+    const out = await updateAdminSettings({ teamRegistrationOpen: true }, actor("alice"));
     const [, , args] = mocks.upstashEval.mock.calls[0];
     const strArgs = args.map(String);
     // numDels is 1 and the sole del target is teamRegistrationOpen.
@@ -437,7 +442,7 @@ describe("updateAdminSettings write", () => {
 
   it("rejects a non-boolean teamRegistrationOpen", async () => {
     await expect(
-      updateAdminSettings({ teamRegistrationOpen: "nope" as never }, "alice"),
+      updateAdminSettings({ teamRegistrationOpen: "nope" as never }, actor("alice")),
     ).rejects.toBeInstanceOf(AdminValidationError);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
@@ -448,7 +453,7 @@ describe("classicCooldownSec", () => {
     mocks.upstashEval.mockResolvedValue([
       "classicCooldownSec", "15", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z",
     ]);
-    await updateAdminSettings({ classicCooldownSec: 15 }, "alice");
+    await updateAdminSettings({ classicCooldownSec: 15 }, actor("alice"));
     const [, , args] = mocks.upstashEval.mock.calls[0];
     const strArgs = args.map(String);
     // Positional ARGV layout: the field name must be immediately followed by
@@ -458,13 +463,13 @@ describe("classicCooldownSec", () => {
     expect(idx).toBeGreaterThan(-1);
     expect(strArgs[idx + 1]).toBe("15");
 
-    await expect(updateAdminSettings({ classicCooldownSec: 4000 }, "alice")).rejects.toThrow(
+    await expect(updateAdminSettings({ classicCooldownSec: 4000 }, actor("alice"))).rejects.toThrow(
       /classicCooldownSec must be an integer in \[0, 3600\]/,
     );
-    await expect(updateAdminSettings({ classicCooldownSec: 1.5 }, "alice")).rejects.toThrow(
+    await expect(updateAdminSettings({ classicCooldownSec: 1.5 }, actor("alice"))).rejects.toThrow(
       AdminValidationError,
     );
-    await expect(updateAdminSettings({ classicCooldownSec: "nope" as never }, "alice")).rejects.toThrow(
+    await expect(updateAdminSettings({ classicCooldownSec: "nope" as never }, actor("alice"))).rejects.toThrow(
       AdminValidationError,
     );
   });
@@ -485,7 +490,7 @@ describe("aiCooldownSec", () => {
     mocks.upstashEval.mockResolvedValue([
       "aiCooldownSec", "12", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z",
     ]);
-    await updateAdminSettings({ aiCooldownSec: 12 }, "alice");
+    await updateAdminSettings({ aiCooldownSec: 12 }, actor("alice"));
     const [, , args] = mocks.upstashEval.mock.calls[0];
     const strArgs = args.map(String);
     // Positional ARGV layout: the field name must be immediately followed by
@@ -495,16 +500,16 @@ describe("aiCooldownSec", () => {
     expect(idx).toBeGreaterThan(-1);
     expect(strArgs[idx + 1]).toBe("12");
 
-    await expect(updateAdminSettings({ aiCooldownSec: -1 }, "alice")).rejects.toThrow(
+    await expect(updateAdminSettings({ aiCooldownSec: -1 }, actor("alice"))).rejects.toThrow(
       /aiCooldownSec must be an integer in \[0, 3600\]/,
     );
-    await expect(updateAdminSettings({ aiCooldownSec: 3601 }, "alice")).rejects.toThrow(
+    await expect(updateAdminSettings({ aiCooldownSec: 3601 }, actor("alice"))).rejects.toThrow(
       /aiCooldownSec must be an integer in \[0, 3600\]/,
     );
-    await expect(updateAdminSettings({ aiCooldownSec: 1.5 }, "alice")).rejects.toThrow(
+    await expect(updateAdminSettings({ aiCooldownSec: 1.5 }, actor("alice"))).rejects.toThrow(
       AdminValidationError,
     );
-    await expect(updateAdminSettings({ aiCooldownSec: "x" as never }, "alice")).rejects.toThrow(
+    await expect(updateAdminSettings({ aiCooldownSec: "x" as never }, actor("alice"))).rejects.toThrow(
       AdminValidationError,
     );
     // null is not a rejection: it clears the knob back to its default (see
@@ -610,7 +615,7 @@ describe("scheduled windows", () => {
     mocks.upstashEval.mockResolvedValue(["scoringStartsAt", "2026-01-01T00:00:00.000Z", "updatedBy", "a", "updatedAt", "x"]);
     // A start alone reads the stored end, to check the window can open (#464).
     mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
-    await updateAdminSettings({ scoringStartsAt: "2026-01-01T00:00:00Z" }, "a");
+    await updateAdminSettings({ scoringStartsAt: "2026-01-01T00:00:00Z" }, actor("a"));
     let [, , args] = mocks.upstashEval.mock.calls[0];
     let strArgs = args.map(String);
     const idx = strArgs.indexOf("scoringStartsAt");
@@ -619,7 +624,7 @@ describe("scheduled windows", () => {
 
     mocks.upstashEval.mockClear();
     mocks.upstashEval.mockResolvedValue(["updatedBy", "a", "updatedAt", "x"]);
-    await updateAdminSettings({ scoringEndsAt: null }, "a");
+    await updateAdminSettings({ scoringEndsAt: null }, actor("a"));
     [, , args] = mocks.upstashEval.mock.calls[0];
     strArgs = args.map(String);
     expect(strArgs[4]).toBe("1"); // numDels = 1
@@ -632,7 +637,7 @@ describe("scheduled windows", () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "a", "updatedAt", "x"]);
     mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
     const before = Date.now();
-    await updateAdminSettings({ scoringStartsAt: "now" }, "a");
+    await updateAdminSettings({ scoringStartsAt: "now" }, actor("a"));
     const after = Date.now();
     const strArgs = mocks.upstashEval.mock.calls[0][2].map(String);
     const stored = Date.parse(strArgs[strArgs.indexOf("scoringStartsAt") + 1]);
@@ -646,7 +651,7 @@ describe("scheduled windows", () => {
   // behaviour is in admin-store.upstash.test.ts). Here: how a refusal reads.
   it("updateAdminSettings: maps the script's window refusal to a validation error naming both bounds", async () => {
     mocks.upstashEval.mockResolvedValue(["__window_refused__", "2030-06-01T00:00:00.000Z", "2000-01-01T00:00:00.000Z"]);
-    const err = await updateAdminSettings({ scoringStartsAt: "now" }, "a").catch((e: unknown) => e);
+    const err = await updateAdminSettings({ scoringStartsAt: "now" }, actor("a")).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AdminValidationError);
     expect(String((err as Error).message)).toMatch(/Scoring closes \(2000-01-01T00:00:00.000Z\) is at or before Scoring opens/);
   });
@@ -654,18 +659,18 @@ describe("scheduled windows", () => {
   // Both bounds in one patch need no stored value: refused before the script.
   it("updateAdminSettings: refuses a patch whose own Scoring closes is at or before its start", async () => {
     await expect(
-      updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z", scoringEndsAt: "2030-01-01T00:00:00.000Z" }, "a"),
+      updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z", scoringEndsAt: "2030-01-01T00:00:00.000Z" }, actor("a")),
     ).rejects.toThrow(/Scoring closes/);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 
   it("updateAdminSettings: \"now\" is a scoringStartsAt sentinel only", async () => {
-    await expect(updateAdminSettings({ scoringEndsAt: "now" }, "a")).rejects.toThrow();
-    await expect(updateAdminSettings({ scoringStartsAt: "later" }, "a")).rejects.toThrow();
+    await expect(updateAdminSettings({ scoringEndsAt: "now" }, actor("a"))).rejects.toThrow();
+    await expect(updateAdminSettings({ scoringStartsAt: "later" }, actor("a"))).rejects.toThrow();
   });
 
   it("updateAdminSettings: rejects an unparseable date", async () => {
-    await expect(updateAdminSettings({ scoringStartsAt: "not-a-date" }, "a")).rejects.toThrow(AdminValidationError);
+    await expect(updateAdminSettings({ scoringStartsAt: "not-a-date" }, actor("a"))).rejects.toThrow(AdminValidationError);
   });
 });
 
@@ -708,7 +713,7 @@ describe("module identity overrides", () => {
 
   it("accepts a title for an enabled module", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    await updateAdminSettings({ "moduleTitle:secure-development": "Round 1" }, "alice");
+    await updateAdminSettings({ "moduleTitle:secure-development": "Round 1" }, actor("alice"));
     const [, , args] = mocks.upstashEval.mock.calls[0];
     const strArgs = args.map(String);
     const idx = strArgs.indexOf("moduleTitle:secure-development");
@@ -717,7 +722,7 @@ describe("module identity overrides", () => {
   });
 
   it("rejects a title for a module that is not enabled", async () => {
-    await expect(updateAdminSettings({ "moduleTitle:forensics": "Nope" }, "alice")).rejects.toThrow(
+    await expect(updateAdminSettings({ "moduleTitle:forensics": "Nope" }, actor("alice"))).rejects.toThrow(
       AdminValidationError,
     );
     expect(mocks.upstashEval).not.toHaveBeenCalled();
@@ -725,19 +730,19 @@ describe("module identity overrides", () => {
 
   it("rejects an over-length title", async () => {
     await expect(
-      updateAdminSettings({ "moduleTitle:secure-development": "x".repeat(61) }, "alice"),
+      updateAdminSettings({ "moduleTitle:secure-development": "x".repeat(61) }, actor("alice")),
     ).rejects.toThrow(AdminValidationError);
   });
 
   it("rejects an over-length blurb", async () => {
     await expect(
-      updateAdminSettings({ "moduleBlurb:secure-development": "x".repeat(201) }, "alice"),
+      updateAdminSettings({ "moduleBlurb:secure-development": "x".repeat(201) }, actor("alice")),
     ).rejects.toThrow(AdminValidationError);
   });
 
   it("rejects control characters", async () => {
     await expect(
-      updateAdminSettings({ "moduleTitle:secure-development": "bad\x07title" }, "alice"),
+      updateAdminSettings({ "moduleTitle:secure-development": "bad\x07title" }, actor("alice")),
     ).rejects.toThrow(AdminValidationError);
   });
 
@@ -746,19 +751,19 @@ describe("module identity overrides", () => {
     // injecting anything — it could still visually scramble a heading every
     // contestant loads, so it's rejected alongside C0 control characters.
     await expect(
-      updateAdminSettings({ "moduleTitle:secure-development": "bad\u202Etitle" }, "alice"),
+      updateAdminSettings({ "moduleTitle:secure-development": "bad\u202Etitle" }, actor("alice")),
     ).rejects.toThrow(AdminValidationError);
   });
 
   it("rejects a non-string value", async () => {
     await expect(
-      updateAdminSettings({ "moduleTitle:secure-development": 7 as never }, "alice"),
+      updateAdminSettings({ "moduleTitle:secure-development": 7 as never }, actor("alice")),
     ).rejects.toThrow(AdminValidationError);
   });
 
   it("clears the field on an empty string (HDEL), not by storing it (HSET)", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    await updateAdminSettings({ "moduleTitle:secure-development": "" }, "alice");
+    await updateAdminSettings({ "moduleTitle:secure-development": "" }, actor("alice"));
     // Assert the positional ARGV layout, same as the schedule-field clearing
     // case above: numDels at index 4, then the del target(s) in the slots
     // immediately after. A plain `toContain` on the field name would pass
@@ -782,7 +787,7 @@ describe("event identity fields (issue #386)", () => {
   });
   it("writes a trimmed name as an HSET pair", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-09-10T00:00:00Z"]);
-    await updateAdminSettings({ eventName: "  Demo CTF " }, "alice");
+    await updateAdminSettings({ eventName: "  Demo CTF " }, actor("alice"));
     const strArgs = mocks.upstashEval.mock.calls[0][2].map(String);
     const idx = strArgs.indexOf("eventName");
     expect(idx).toBeGreaterThan(-1);
@@ -790,7 +795,7 @@ describe("event identity fields (issue #386)", () => {
   });
   it("clears a field on an empty string (HDEL), never storing it", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-09-10T00:00:00Z"]);
-    await updateAdminSettings({ eventLocation: "   " }, "alice");
+    await updateAdminSettings({ eventLocation: "   " }, actor("alice"));
     const strArgs = mocks.upstashEval.mock.calls[0][2].map(String);
     expect(strArgs[4]).toBe("1"); // numDels
     expect(strArgs[5]).toBe("eventLocation");
@@ -804,18 +809,18 @@ describe("event identity fields (issue #386)", () => {
     ["eventDiscord", "discord.gg/x"],
     ["eventLocation", 7],
   ] as const)("rejects an invalid %s (%s) before any write", async (key, value) => {
-    await expect(updateAdminSettings({ [key]: value } as never, "alice")).rejects.toThrow(AdminValidationError);
+    await expect(updateAdminSettings({ [key]: value } as never, actor("alice"))).rejects.toThrow(AdminValidationError);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
   // The tagline rendered nowhere, so it is not a setting at all: a write
   // naming it is refused like any other unknown key.
   it("refuses eventTheme as an unknown setting, before any write", async () => {
-    await expect(updateAdminSettings({ eventTheme: "Ship" } as never, "alice")).rejects.toThrow(/unknown setting: eventTheme/);
+    await expect(updateAdminSettings({ eventTheme: "Ship" } as never, actor("alice"))).rejects.toThrow(/unknown setting: eventTheme/);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
   it("accepts an e-mail and an https URL", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-09-10T00:00:00Z"]);
-    await updateAdminSettings({ eventContact: "org@example.org", eventDiscord: "https://discord.gg/x" }, "alice");
+    await updateAdminSettings({ eventContact: "org@example.org", eventDiscord: "https://discord.gg/x" }, actor("alice"));
     const strArgs = mocks.upstashEval.mock.calls[0][2].map(String);
     expect(strArgs).toContain("org@example.org");
     expect(strArgs).toContain("https://discord.gg/x");
@@ -827,7 +832,7 @@ describe("event identity fields (issue #386)", () => {
   // the audit JSON must be redacted.
   it("never puts the eventDiscord value (or its token) into the audit record, and marks it set", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-09-10T00:00:00Z"]);
-    await updateAdminSettings({ eventDiscord: "https://discord.gg/SECRETTOKEN" }, "alice");
+    await updateAdminSettings({ eventDiscord: "https://discord.gg/SECRETTOKEN" }, actor("alice"));
     const args = mocks.upstashEval.mock.calls[0][2];
     // ARGV[3] is the audit JSON line (see UPDATE_SCRIPT's own ARGV layout
     // comment): [1]=updatedBy [2]=updatedAt [3]=auditLine ...
@@ -845,7 +850,7 @@ describe("event identity fields (issue #386)", () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-09-10T00:00:00Z"]);
     await updateAdminSettings(
       { eventName: "", eventLocation: "", eventTimeZone: "", eventContact: "", eventDiscord: "", eventLogoUrl: "" },
-      "alice",
+      actor("alice"),
     );
     const auditLine = String(mocks.upstashEval.mock.calls[0][2][2]);
     const audit = JSON.parse(auditLine);
@@ -863,7 +868,7 @@ describe("event identity fields (issue #386)", () => {
 describe("secureDevTargets (issue #386, PR 2)", () => {
   it("writes a deduplicated, catalogue-ordered JSON array as an HSET pair", async () => {
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-09-11T00:00:00Z"]);
-    await updateAdminSettings({ secureDevTargets: ["vampi", "dvwa", "dvwa"] }, "alice");
+    await updateAdminSettings({ secureDevTargets: ["vampi", "dvwa", "dvwa"] }, actor("alice"));
     const strArgs = mocks.upstashEval.mock.calls[0][2].map(String);
     const idx = strArgs.indexOf("secureDevTargets");
     expect(idx).toBeGreaterThan(-1);
@@ -873,7 +878,7 @@ describe("secureDevTargets (issue #386, PR 2)", () => {
   it.each([[[]], [["nope"]], ["dvwa"]] as const)(
     "rejects %j with the shared message and never reaches upstashEval",
     async (value) => {
-      await expect(updateAdminSettings({ secureDevTargets: value as never }, "alice")).rejects.toMatchObject({
+      await expect(updateAdminSettings({ secureDevTargets: value as never }, actor("alice"))).rejects.toMatchObject({
         message: SECURE_DEV_TARGETS_MESSAGE,
       });
       expect(mocks.upstashEval).not.toHaveBeenCalled();
@@ -881,7 +886,7 @@ describe("secureDevTargets (issue #386, PR 2)", () => {
   );
 
   it("rejects a non-array, non-string value the same way", async () => {
-    await expect(updateAdminSettings({ secureDevTargets: 7 as never }, "alice")).rejects.toBeInstanceOf(
+    await expect(updateAdminSettings({ secureDevTargets: 7 as never }, actor("alice"))).rejects.toBeInstanceOf(
       AdminValidationError,
     );
     expect(mocks.upstashEval).not.toHaveBeenCalled();
@@ -895,16 +900,16 @@ describe("teamMaxMembers", () => {
     // Not a pedantic bound. A stored 0 refuses every join including the
     // captain's own team, while the panel cheerfully advertises "0 players
     // max" — an event nobody can form a team in, from one typo.
-    await expect(updateAdminSettings({ teamMaxMembers: 0 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    await expect(updateAdminSettings({ teamMaxMembers: 0 }, actor("alice"))).rejects.toBeInstanceOf(AdminValidationError);
   });
 
   it.each([[-1], [1.5], [TEAM_MAX_MEMBERS_MAX + 1]])("rejects %p", async (v) => {
-    await expect(updateAdminSettings({ teamMaxMembers: v }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    await expect(updateAdminSettings({ teamMaxMembers: v }, actor("alice"))).rejects.toBeInstanceOf(AdminValidationError);
   });
 
   it("accepts the bounds themselves", async () => {
-    await expect(updateAdminSettings({ teamMaxMembers: 1 }, "alice")).resolves.toBeDefined();
-    await expect(updateAdminSettings({ teamMaxMembers: TEAM_MAX_MEMBERS_MAX }, "alice")).resolves.toBeDefined();
+    await expect(updateAdminSettings({ teamMaxMembers: 1 }, actor("alice"))).resolves.toBeDefined();
+    await expect(updateAdminSettings({ teamMaxMembers: TEAM_MAX_MEMBERS_MAX }, actor("alice"))).resolves.toBeDefined();
   });
 
   it("decodes a stored value as a number, not the string Redis returns", async () => {
@@ -922,7 +927,7 @@ describe("teamMaxMembers", () => {
 describe("sponsorLogoSize", () => {
   it("accepts each known size", async () => {
     for (const v of ["sm", "md", "lg"] as const) {
-      await expect(updateAdminSettings({ sponsorLogoSize: v }, "alice")).resolves.toBeDefined();
+      await expect(updateAdminSettings({ sponsorLogoSize: v }, actor("alice"))).resolves.toBeDefined();
     }
   });
 
@@ -934,8 +939,8 @@ describe("sponsorLogoSize", () => {
   });
 
   it("null and empty string both clear back to the default", async () => {
-    await expect(updateAdminSettings({ sponsorLogoSize: null }, "alice")).resolves.toBeDefined();
-    await expect(updateAdminSettings({ sponsorLogoSize: "" }, "alice")).resolves.toBeDefined();
+    await expect(updateAdminSettings({ sponsorLogoSize: null }, actor("alice"))).resolves.toBeDefined();
+    await expect(updateAdminSettings({ sponsorLogoSize: "" }, actor("alice"))).resolves.toBeDefined();
   });
 
   it("decodes a stored value, and ignores a stale/unknown one as absent", async () => {
@@ -967,7 +972,7 @@ describe("numeric knobs accept null as clear", () => {
 
   it.each(KNOBS)("%s: null deletes the field instead of being refused", async (knob) => {
     mocks.upstashEval.mockClear();
-    await expect(updateAdminSettings({ [knob]: null } as unknown as Parameters<typeof updateAdminSettings>[0], "alice")).resolves.toBeDefined();
+    await expect(updateAdminSettings({ [knob]: null } as unknown as Parameters<typeof updateAdminSettings>[0], actor("alice"))).resolves.toBeDefined();
     const args = mocks.upstashEval.mock.calls[0][2] as string[];
     const numDels = Number(args[4]);
     expect(args.slice(5, 5 + numDels)).toContain(knob);
@@ -976,12 +981,40 @@ describe("numeric knobs accept null as clear", () => {
 
   it("treats an empty string the same as null", async () => {
     mocks.upstashEval.mockClear();
-    await updateAdminSettings({ hintsMinSolves: "" }, "alice");
+    await updateAdminSettings({ hintsMinSolves: "" }, actor("alice"));
     const args = mocks.upstashEval.mock.calls[0][2] as string[];
     expect(args.slice(5, 5 + Number(args[4]))).toContain("hintsMinSolves");
   });
 
   it("still refuses an out-of-range number", async () => {
-    await expect(updateAdminSettings({ teamMaxMembers: 0 }, "alice")).rejects.toBeInstanceOf(AdminValidationError);
+    await expect(updateAdminSettings({ teamMaxMembers: 0 }, actor("alice"))).rejects.toBeInstanceOf(AdminValidationError);
+  });
+});
+
+// #742: an audit line names its actor by player id, with their display name at
+// the time beside it, and nothing else about them — no GitHub login.
+describe("writeAdminAudit", () => {
+  it("records the actor's id and name, and only those", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ result: 1 }, { result: "OK" }]);
+    await writeAdminAudit({ ...ALICE, githubLogin: "AliceGH", image: "http://i" } as typeof ALICE, "quiz-upsert", { questionId: "q1" });
+    const [[push]] = mocks.upstashPipeline.mock.calls[0];
+    const line = JSON.parse(String(push[2])) as Record<string, unknown>;
+    expect(line).toEqual({ at: expect.any(String), by: ALICE.id, name: "alice", action: "quiz-upsert", questionId: "q1" });
+  });
+
+  // `by`, `name`, `action` and `at` belong to the line itself. A detail that
+  // happens to carry one of those keys must not rewrite who acted, what they
+  // did, or when.
+  it("keeps the actor and action when a detail carries the same keys", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ result: 1 }, { result: "OK" }]);
+    await writeAdminAudit(ALICE, "attachment-add", { name: "cap.pcap", by: "someone", action: "other", at: "then", item: "web-one" });
+    const [[push]] = mocks.upstashPipeline.mock.calls[0];
+    const line = JSON.parse(String(push[2])) as Record<string, unknown>;
+    expect(line.name).toBe("alice");
+    expect(line.by).toBe(ALICE.id);
+    expect(line.action).toBe("attachment-add");
+    expect(line.at).not.toBe("then");
+    expect(Object.keys(line).slice(0, 4)).toEqual(["at", "by", "name", "action"]);
+    expect(line.item).toBe("web-one");
   });
 });

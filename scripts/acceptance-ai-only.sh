@@ -24,7 +24,7 @@
 #   - /challenges, /flags and /quiz all 404 (module contract §5.4 — those
 #     routes must not exist, not just disappear from the nav; an ai-only
 #     event never enables classic, quiz or secure-development)
-#   - /leaderboard shows a seeded contestant's ai points BY LOGIN. An ai-only
+#   - /leaderboard shows a seeded contestant's ai points BY NAME. An ai-only
 #     event always resolves the leaderboard source to "empty"
 #     (lib/leaderboard/source.ts — secure-development disabled means no
 #     scorer/lambda/upstash backend is even consulted), so a row landing here
@@ -60,7 +60,7 @@
 # ai-store.ts documents NINE `ctf:ai:*` keys this script seeds — four of them
 # (challenges, categories, points, solved) are read along the requests this
 # script's assertions make, plus five more it seeds for realism only (flag,
-# flagnorm, signkey, solvecount, solves:<login> — each marked below, since
+# flagnorm, signkey, solvecount, solves:<player> — each marked below, since
 # this script never submits a flag, signs an event, or reads a solvecount):
 #   - ctf:ai:challenges        hash, id -> JSON AiChallenge (read by /ai)
 #   - ctf:ai:categories        string, JSON array of category names
@@ -77,13 +77,13 @@
 #   - ctf:ai:signkey           hash, id -> the challenge's event-signing key
 #                               (realism only — this script never signs an
 #                               event)
-#   - ctf:ai:points            hash, login -> running points total (read by
+#   - ctf:ai:points            hash, player -> running points total (read by
 #                               the leaderboard overlay's getAiTotals)
-#   - ctf:ai:solved            hash, login -> running solve count (ditto)
+#   - ctf:ai:solved            hash, player -> running solve count (ditto)
 #   - ctf:ai:solvecount        hash, id -> distinct-solver count (seeded for
 #                               realism only — /ai renders it per challenge
 #                               but this script does not assert on it)
-#   - ctf:ai:solves:<login>    hash, id -> JSON {points, at, source} (seeded
+#   - ctf:ai:solves:<player>    hash, id -> JSON {points, at, source} (seeded
 #                               for realism — a real award always writes this
 #                               alongside the two aggregate hashes — but not
 #                               independently asserted here)
@@ -176,7 +176,7 @@ acc_boot_redis_srh "$NET" ao "$SRH_TOKEN"
 # also coincidentally match a chunk id/hash elsewhere on the page.
 #
 # `ctf:ai:flag`, `ctf:ai:flagnorm`, `ctf:ai:signkey`, `ctf:ai:solvecount` and
-# `ctf:ai:solves:<login>` are seeded here for realism (a real award always
+# `ctf:ai:solves:<player>` are seeded here for realism (a real award always
 # writes all of these together) but NOT independently asserted below — this
 # script never exercises flag submission or event grading, so their shapes
 # are not verified by anything here.
@@ -192,11 +192,13 @@ CHALLENGE_URL_TEMPLATE="https://ai-demo.example.org/launch?token={token}"
 CHALLENGE_FLAG="ctfbox{acceptance-gate}"
 CHALLENGE_SIGNKEY="aik_demo00000000000000000000000000000000000000acc1"
 BAD_CHALLENGE_ID="acceptance-does-not-exist"
-CONTESTANT_LOGIN="ai-acceptance-bot"
+CONTESTANT_NAME="ai-acceptance-bot"
+CONTESTANT_ID=33333333-3333-4333-8333-333333333333
 CONTESTANT_POINTS=4321
 CONTESTANT_POINTS_FORMATTED="4,321"
 
 echo "--- seeding one ai challenge + one contestant's solve"
+acc_seed_player ao-redis "$CONTESTANT_ID" "$CONTESTANT_NAME"
 docker exec ao-redis redis-cli HSET ctf:ai:challenges "$CHALLENGE_ID" \
   '{"id":"'"$CHALLENGE_ID"'","title":"'"$CHALLENGE_TITLE"'","category":"'"$CHALLENGE_CATEGORY"'","description":"'"$CHALLENGE_DESCRIPTION"'","points":'"$CHALLENGE_POINTS"',"order":'"$CHALLENGE_ORDER"',"mode":"'"$CHALLENGE_MODE"'","urlTemplate":"'"$CHALLENGE_URL_TEMPLATE"'"}' \
   >/dev/null
@@ -204,10 +206,10 @@ docker exec ao-redis redis-cli SET ctf:ai:categories '["AI"]' >/dev/null
 docker exec ao-redis redis-cli HSET ctf:ai:flag "$CHALLENGE_ID" "$CHALLENGE_FLAG" >/dev/null
 docker exec ao-redis redis-cli HSET ctf:ai:flagnorm "$CHALLENGE_ID" "$CHALLENGE_FLAG" >/dev/null
 docker exec ao-redis redis-cli HSET ctf:ai:signkey "$CHALLENGE_ID" "$CHALLENGE_SIGNKEY" >/dev/null
-docker exec ao-redis redis-cli HSET ctf:ai:points "$CONTESTANT_LOGIN" "$CONTESTANT_POINTS" >/dev/null
-docker exec ao-redis redis-cli HSET ctf:ai:solved "$CONTESTANT_LOGIN" 1 >/dev/null
+docker exec ao-redis redis-cli HSET ctf:ai:points "$CONTESTANT_ID" "$CONTESTANT_POINTS" >/dev/null
+docker exec ao-redis redis-cli HSET ctf:ai:solved "$CONTESTANT_ID" 1 >/dev/null
 docker exec ao-redis redis-cli HSET ctf:ai:solvecount "$CHALLENGE_ID" 1 >/dev/null
-docker exec ao-redis redis-cli HSET "ctf:ai:solves:$CONTESTANT_LOGIN" "$CHALLENGE_ID" \
+docker exec ao-redis redis-cli HSET "ctf:ai:solves:$CONTESTANT_ID" "$CHALLENGE_ID" \
   '{"points":'"$CHALLENGE_POINTS"',"at":"2026-08-19T00:00:00.000Z","source":"flag"}' >/dev/null
 
 # Modules are switched on in ctf:admin:settings (config v2), and that
@@ -284,10 +286,10 @@ for route in /challenges /flags /quiz; do
   [ "$code" = "404" ] || { echo "FAIL: $route returned $code, want 404"; exit 1; }
 done
 
-# The row-by-login + formatted-total assertion (the anti-vacuous overlay check
+# The row-by-name + formatted-total assertion (the anti-vacuous overlay check
 # the header describes) is shared with the quiz/classic gates — its
 # whole-page match rationale lives with acc_assert_leaderboard_contrib.
-acc_assert_leaderboard_contrib "$APP_URL" ai "$CONTESTANT_LOGIN" "$CONTESTANT_POINTS_FORMATTED"
+acc_assert_leaderboard_contrib "$APP_URL" ai "$CONTESTANT_NAME" "$CONTESTANT_POINTS_FORMATTED"
 
 # ---------------------------------------------------------------------------
 # The ai-specific check no sibling module has: the public launch-key

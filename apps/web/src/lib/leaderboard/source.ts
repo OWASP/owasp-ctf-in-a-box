@@ -7,7 +7,7 @@ import { emptySource } from "./empty";
 
 export interface LeaderboardSource {
   getLeaderboard(): Promise<LeaderboardData>;
-  getUser(login: string): Promise<UserProfile | null>;
+  getUser(playerId: string): Promise<UserProfile | null>;
 }
 
 /**

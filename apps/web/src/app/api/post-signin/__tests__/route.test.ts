@@ -3,6 +3,8 @@
 // matrix itself is pinned in lib/__tests__/post-signin.test.ts.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+
 const { getSession, hasTeam, isAdminLogin } = vi.hoisted(() => ({
   getSession: vi.fn(),
   hasTeam: vi.fn(),
@@ -37,7 +39,7 @@ beforeEach(() => {
   getSession.mockReset();
   hasTeam.mockReset();
   isAdminLogin.mockReset();
-  getSession.mockResolvedValue({ user: { login: "alice" } });
+  getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
   isAdminLogin.mockResolvedValue(false);
   hasTeam.mockResolvedValue(true);
 });
@@ -53,6 +55,21 @@ describe("GET /api/post-signin", () => {
   it("sends a teamed contestant to their original destination", async () => {
     const url = location(await GET(req("/quiz")));
     expect(url.pathname).toBe("/quiz");
+  });
+
+  // The team lookup is keyed by the player id; admin-ness is still decided on
+  // the GitHub login (ADMIN_LOGINS).
+  it("asks the team store about the player id and the admin check about the login", async () => {
+    await GET(req("/quiz"));
+    expect(hasTeam).toHaveBeenCalledWith(ALICE_ID);
+    expect(isAdminLogin).toHaveBeenCalledWith("alice");
+  });
+
+  it("lands a session whose user id is not a player id at home", async () => {
+    getSession.mockResolvedValue({ user: { id: "alice", login: "alice" } });
+    const url = location(await GET(req("/quiz")));
+    expect(url.pathname).toBe("/");
+    expect(hasTeam).not.toHaveBeenCalled();
   });
 
   it("lets a teamless admin through — checking content is not playing", async () => {

@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { getViewerHints, resolveHintConfig } from "@/lib/hint-store";
 import { listChallenges } from "@/lib/classic-store";
 import { visibleNow } from "@/lib/classic-release";
 import { errorLabel } from "@/lib/error-label";
+import { requireLaunchedApi } from "@/lib/launch";
 
 /** The viewer's bought Jeopardy hint texts, minus any for a challenge that is
  *  hidden now: on the contestant side it does not exist, for its buyers too.
@@ -23,13 +24,16 @@ async function visibleClassicHints(texts: Record<string, string>): Promise<Recor
 /** The signed-in viewer's full hint state (all apps) — lets the challenges
  *  page pre-reveal everything already bought with a single fetch. */
 export async function GET(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const player = await getPlayer(request.headers);
+  if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const playerId = player.id;
+  // The pre-launch lock comes before any store read: an admin passes as a
+  // preview, everyone else gets the same 403 `not-launched` the other module
+  // routes give.
+  const refused = await requireLaunchedApi(player.githubLogin ?? undefined);
+  if (refused) return refused;
 
-  const login = (session.user as { login?: string }).login;
-  if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
-
-  const hints = await getViewerHints(login);
+  const hints = await getViewerHints(playerId);
   const { enabled, cost } = await resolveHintConfig();
   return NextResponse.json({
     enabled,

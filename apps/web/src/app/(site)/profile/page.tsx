@@ -32,7 +32,7 @@ import TeamCard from "@/components/team-card";
 import TeamProgress from "@/components/team-progress";
 import type { AppId } from "@/lib/apps";
 import { getEnabledApps, getEnabledAppsById, getEnabledTotals } from "@/lib/enabled-apps";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import {
   getAiTotals,
   getViewerAi,
@@ -63,7 +63,7 @@ import { getAdminSettings, effectiveRegistrationOpen } from "@/lib/admin-store";
 import { upstashPipeline } from "@/lib/upstash";
 import { getSite } from "@/lib/site";
 
-// TeamCard needs the captain login (to gate captain-only controls) and the
+// TeamCard needs the captain id (to gate captain-only controls) and the
 // current join code (to display it), neither of which `TeamInfo` carries, so
 // the two fields are read here from the team hash — one pipeline, both HGETs.
 // The key comes from the shared `teamKey` builder (team-keys.ts, ADR 48), never
@@ -102,11 +102,10 @@ export async function generateMetadata(): Promise<Metadata> {
  *  records and their team's story locks — which set the classic reachable
  *  denominator and keep locked steps' titles and points off the page. */
 export default async function ProfilePage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/");
-
-  const login = (session.user as { login?: string }).login;
-  if (!login) redirect("/");
+  const player = await getPlayer(await headers());
+  if (!player) redirect("/");
+  const playerId = player.id;
+  const avatar = player.image ?? (player.githubLogin ? `https://avatars.githubusercontent.com/${player.githubLogin}` : null);
 
   const liveModules = await getEnabledModuleIds();
   const quizEnabled = liveModules.has("quiz");
@@ -143,9 +142,9 @@ export default async function ProfilePage() {
     enabledApps,
   ] =
     await Promise.all([
-      getLeaderboardSource().then((source) => source.getUser(login)),
-      getViewerTeam(login),
-      getViewerHints(login),
+      getLeaderboardSource().then((source) => source.getUser(playerId)),
+      getViewerTeam(playerId),
+      getViewerHints(playerId),
       quizEnabled ? getQuizTotals() : Promise.resolve(new Map<string, QuizTotal>()),
       quizEnabled ? listQuestions() : Promise.resolve([] as Question[]),
       classicEnabled ? getClassicTotals() : Promise.resolve(new Map<string, ClassicTotal>()),
@@ -157,9 +156,9 @@ export default async function ProfilePage() {
       aiEnabled ? listAiChallenges() : Promise.resolve([] as AiChallenge[]),
       // The viewer's OWN per-item progress, for the blocks' Show-N lists —
       // the same reads the boards themselves make, module-gated identically.
-      quizEnabled ? getViewerQuiz(login) : Promise.resolve<ViewerQuiz>({ answered: {}, attempts: {} }),
-      classicEnabled ? getViewerClassic(login) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
-      aiEnabled ? getViewerAi(login) : Promise.resolve<ViewerAi>({ solved: {}, attempts: {} }),
+      quizEnabled ? getViewerQuiz(playerId) : Promise.resolve<ViewerQuiz>({ answered: {}, attempts: {} }),
+      classicEnabled ? getViewerClassic(playerId) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
+      aiEnabled ? getViewerAi(playerId) : Promise.resolve<ViewerAi>({ solved: {}, attempts: {} }),
       getResolvedModules(),
       // The SAME resolver joinTeam uses. Reading TEAM_MAX_MEMBERS here instead
       // would advertise a limit the join path does not enforce — the split
@@ -190,7 +189,7 @@ export default async function ProfilePage() {
   // disagree about the team's total. A failed read drops the panel, never the
   // page — this is a progress display, not a gate.
   const { standing: teamStanding, memberEntries: teamMemberEntries } = await loadTeamStanding(team);
-  const isCaptain = teamMeta.captain !== null && teamMeta.captain === login;
+  const isCaptain = teamMeta.captain !== null && teamMeta.captain === playerId;
   // Both derived through the SAME helper the public leaderboard row uses, so
   // a contestant's own dossier and their board row can't disagree about what
   // "non-patched" counts. This page used to compute it off `profile.total` —
@@ -204,11 +203,11 @@ export default async function ProfilePage() {
   // withHintPenalties (subtract, floor at 0) followed by
   // withModuleContributions (add quiz and classic points on top) — so the
   // profile matches the contestant's public row.
-  const quizTotal = quizTotals.get(login);
+  const quizTotal = quizTotals.get(playerId);
   const quizPoints = quizTotal?.points ?? 0;
-  const classicTotal = classicTotals.get(login);
+  const classicTotal = classicTotals.get(playerId);
   const classicPoints = classicTotal?.points ?? 0;
-  const aiTotal = aiTotals.get(login);
+  const aiTotal = aiTotals.get(playerId);
   const aiPoints = aiTotal?.points ?? 0;
   // Net-of-hints TOTAL: the penalty subtracts from the all-module sum,
   // floored at 0 — the same math (and the same single application) as the
@@ -265,7 +264,7 @@ export default async function ProfilePage() {
     // teammate's solve of a since-deleted challenge in the count with no
     // points behind it (issue #570). A solo contestant (no team) is a team of
     // one: their own solves unlock the next step the same way a team's do.
-    const roster = [...new Set([login, ...(storeTeam?.members ?? [])])];
+    const roster = [...new Set([playerId, ...(storeTeam?.members ?? [])])];
     const scope = TEAM_WRITES_ENABLED && storeTeam?.slug ? storeTeam.slug : null;
     const solvedRecords: Record<string, { points?: number }> = {};
     const [teamClassic, teamSolved] = await Promise.all([
@@ -347,7 +346,9 @@ export default async function ProfilePage() {
   // adding a second breakdown renderer for one page.
   const moduleEntry: LeaderboardEntry = {
     rank: 0,
-    login,
+    playerId,
+    name: player.name,
+    image: player.image,
     team: effectiveTeam,
     points: netPoints,
     patched: profile?.patched ?? 0,
@@ -392,20 +393,22 @@ export default async function ProfilePage() {
       {/* "target" is secure-development's own noun (and trips the shared
           secure-dev vocabulary guard on a quiz-only event) — kept generic so
           this reads the same regardless of which modules are enabled. */}
-      <PageHeader eyebrow="Agent dossier" title={login} description="Your personal progress this event." />
+      <PageHeader eyebrow="Agent dossier" title={player.name} description="Your personal progress this event." />
 
       <div className="ds-card flex flex-col gap-4 rounded-lg border border-white/[0.06] bg-[#16162a] p-5 sm:flex-row sm:items-center">
-        <Image
-          src={session.user.image ?? `https://avatars.githubusercontent.com/${login}`}
-          alt=""
-          width={64}
-          height={64}
-          className="flex-none rounded-full border border-white/10"
-          unoptimized
-        />
+        {avatar && (
+          <Image
+            src={avatar}
+            alt=""
+            width={64}
+            height={64}
+            className="flex-none rounded-full border border-white/10"
+            unoptimized
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-2">
-            <p className="font-mono text-lg text-white">{login}</p>
+            <p className="font-mono text-lg text-white">{player.name}</p>
             {effectiveTeam && (
               <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400">
                 {effectiveTeam}
@@ -446,6 +449,7 @@ export default async function ProfilePage() {
           maxMembers={maxMembers}
           isCaptain={isCaptain}
           captain={teamMeta.captain}
+          memberNames={Object.fromEntries(teamMemberEntries.map((m) => [m.playerId, m.name]))}
           joinCode={teamMeta.joinCode}
           registrationOpen={adminSettings === null ? true : effectiveRegistrationOpen(adminSettings)}
           secureDevEnabled={secureDevEnabled}
@@ -454,7 +458,7 @@ export default async function ProfilePage() {
           <TeamProgress
             standing={teamStanding}
             memberEntries={teamMemberEntries}
-            viewerLogin={login}
+            viewerId={playerId}
           />
         )}
       </div>

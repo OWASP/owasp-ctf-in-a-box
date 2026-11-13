@@ -88,6 +88,7 @@ _need() {
     'acc_write_sync_override()' \
     'acc_sync_compose()' \
     'acc_assert_sync_refuses_no_org()' \
+    'acc_seed_player()' \
     'acc_assert_leaderboard_contrib()'
   do
     if ! grep -qF -- "$tok" "$LIB"; then
@@ -117,6 +118,9 @@ _need() {
   _need "$QUIZ" 'acc_assert_sync_refuses_no_org "$SYNC_PROJECT" "$SYNC_OVERRIDE"'
   _need "$CLASSIC" 'acc_assert_sync_refuses_no_org "$SYNC_PROJECT" "$SYNC_OVERRIDE"'
   _need "$AI" 'acc_assert_sync_refuses_no_org "$SYNC_PROJECT" "$SYNC_OVERRIDE"'
+  _need "$QUIZ" 'acc_seed_player qo-redis "$CONTESTANT_ID" "$CONTESTANT_NAME"'
+  _need "$CLASSIC" 'acc_seed_player co-redis "$CONTESTANT_ID" "$CONTESTANT_NAME"'
+  _need "$AI" 'acc_seed_player ao-redis "$CONTESTANT_ID" "$CONTESTANT_NAME"'
   _need "$QUIZ" 'acc_assert_leaderboard_contrib "$APP_URL" quiz'
   _need "$CLASSIC" 'acc_assert_leaderboard_contrib "$APP_URL" classic'
   _need "$AI" 'acc_assert_leaderboard_contrib "$APP_URL" ai'
@@ -186,4 +190,23 @@ gate_scripts() {
     echo "$piped"
   fi
   [ -z "$piped" ]
+}
+
+# Per-player rows are keyed by the kit player id. A gate that seeds the totals
+# under a GitHub login would still render a row (the board shows any key it is
+# given), so only the account row and the id keys prove the real shape.
+@test "each *-only gate seeds its contestant by player id and never by login" {
+  bad=""
+  for pair in "$QUIZ:quiz:answered:answers" "$CLASSIC:classic:solved:solves" "$AI:ai:solved:solves"; do
+    f="${pair%%:*}"; rest="${pair#*:}"; m="${rest%%:*}"; rest="${rest#*:}"; counter="${rest%%:*}"; rows="${rest#*:}"
+    if grep -qF 'CONTESTANT_LOGIN' "$f"; then bad="$bad $f(CONTESTANT_LOGIN)"; fi
+    if ! grep -qE '^CONTESTANT_ID=[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' "$f"; then bad="$bad $f(no v4 CONTESTANT_ID)"; fi
+    for pin in "HSET ctf:$m:points \"\$CONTESTANT_ID\"" "HSET ctf:$m:$counter \"\$CONTESTANT_ID\"" "HSET \"ctf:$m:$rows:\$CONTESTANT_ID\""; do
+      if ! grep -qF -- "$pin" "$f"; then bad="$bad $f(missing: $pin)"; fi
+    done
+  done
+  if [ -n "$bad" ]; then
+    echo "gates still seed by login:$bad"
+  fi
+  [ -z "$bad" ]
 }

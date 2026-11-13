@@ -47,6 +47,9 @@ vi.mock("@/lib/quiz-store", () => ({
 
 import QuizPage from "@/app/(site)/quiz/page";
 
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+const BOB_ID = "1c0f5a4d-2e3b-4d6c-9f70-8b9cad0e1f30";
+
 const baseQuestions = [
   {
     id: "q1",
@@ -101,7 +104,7 @@ describe("quiz page gate", () => {
 describe("quiz page view model", () => {
   it("derives answered/exhausted/cooldown/unanswered per question from viewer progress and settings", async () => {
     moduleLive.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listQuestions.mockResolvedValue(baseQuestions);
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: 2, quizRetryAfterMin: 5 });
     getViewerQuiz.mockResolvedValue({
@@ -151,7 +154,7 @@ describe("quiz page view model", () => {
   it("routes an organizer to the authoring tab from the empty state", async () => {
     moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listQuestions.mockResolvedValue([]);
     getViewerQuiz.mockResolvedValue({ answered: {}, attempts: {} });
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: null, quizRetryAfterMin: null });
@@ -166,7 +169,7 @@ describe("quiz page view model", () => {
   it("shows a signed-in contestant the plain empty state, with no admin link", async () => {
     moduleLive.mockReturnValue(true);
     isAdminLogin.mockReturnValue(false);
-    getSession.mockResolvedValue({ user: { login: "bob" } });
+    getSession.mockResolvedValue({ user: { id: BOB_ID, login: "bob" } });
     listQuestions.mockResolvedValue([]);
     getViewerQuiz.mockResolvedValue({ answered: {}, attempts: {} });
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: null, quizRetryAfterMin: null });
@@ -206,7 +209,7 @@ describe("quiz page blurb and progress line", () => {
   });
 
   it("renders the organizer's blurb as the page header's description", async () => {
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
 
     const html = renderToStaticMarkup(await QuizPage());
 
@@ -219,7 +222,7 @@ describe("quiz page blurb and progress line", () => {
   });
 
   it("carries the viewer's progress in the board strip, once — the old sentence is gone", async () => {
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
 
     const html = renderToStaticMarkup(await QuizPage());
 

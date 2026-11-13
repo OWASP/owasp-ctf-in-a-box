@@ -257,7 +257,7 @@ are yours: the wizard prints the callback URL, it cannot register it.
    secret go in `.env.fly` (leaving `.env`'s pair for the box).
 2. **Check `/admin` loads** for a login listed in `ADMIN_LOGINS` in
    `.env.fly`. A 403 there almost always means that login is missing (or
-   misspelled — logins join case-insensitively, but the list itself must
+   misspelled — the match ignores case, but the list itself must
    still contain it): fix `.env.fly` and redeploy.
 
 ## What actually runs

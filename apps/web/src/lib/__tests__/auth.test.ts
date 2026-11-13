@@ -20,6 +20,9 @@ import { describe, expect, it, vi } from "vitest";
 // Component, so it is stubbed like every other suite does.
 vi.mock("server-only", () => ({}));
 
+const linkOnUserWrite = vi.hoisted(() => vi.fn<(user: unknown) => Promise<void>>(async () => {}));
+vi.mock("@/lib/github-link", () => ({ linkOnUserWrite }));
+
 vi.hoisted(() => {
   // betterAuth() runs at import time and warns on a weak secret. Only fills
   // gaps, so a real .env.local still wins locally.
@@ -146,5 +149,26 @@ describe("sign-in activity hook (issue #212)", () => {
     // pins only that the wiring exists — remove the hook and sign-ins
     // silently stop being recorded.
     expect(typeof auth.options.hooks?.after).toBe("function");
+  });
+});
+
+describe("player ids", () => {
+  it("generates lowercase v4 uuids", async () => {
+    const { PLAYER_ID_RE } = await import("@/lib/player");
+    const gen = authOptions.advanced.database.generateId;
+    expect(gen()).toMatch(PLAYER_ID_RE);
+  });
+});
+
+describe("github link hooks", () => {
+  // better-auth writes the user row on create (a new player) and on update
+  // (a returning one, overrideUserInfoOnSignIn), so both must record the link
+  // or a renamed GitHub account keeps resolving to nobody.
+  it.each(["create", "update"] as const)("user.%s.after hands the written row to linkOnUserWrite", async (op) => {
+    linkOnUserWrite.mockClear();
+    const row = { id: "5f0c2a1e-7b3d-4c9e-8a21-0d6f4b9e3c71", login: "octocat", name: "Mona" };
+    const after = authOptions.databaseHooks.user[op].after as unknown as (user: typeof row, ctx: unknown) => Promise<void>;
+    await after(row, null);
+    expect(linkOnUserWrite).toHaveBeenCalledExactlyOnceWith(row);
   });
 });

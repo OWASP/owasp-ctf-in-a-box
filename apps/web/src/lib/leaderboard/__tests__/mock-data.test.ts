@@ -13,8 +13,8 @@ describe("buildMockTeams", () => {
     // redirectCryptoCurrencyChallenge (1pt) and loginAdminChallenge (2pt),
     // and dvwa's brute-low (1pt), and webgoat's auth-bypass-verify-account
     // (2pt) — 6 points of overlap that a naive sum would double-count.
-    const octocat = entries.find((e) => e.login === "octocat")!;
-    const mona = entries.find((e) => e.login === "mona")!;
+    const octocat = entries.find((e) => e.name === "octocat")!;
+    const mona = entries.find((e) => e.name === "mona")!;
     expect(octocat.points).toBeGreaterThan(0);
     expect(mona.points).toBeGreaterThan(0);
 

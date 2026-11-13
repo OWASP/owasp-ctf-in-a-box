@@ -105,7 +105,7 @@ export default function ChallengeBoard({
                         {challenge.title}
                         {solved && <span className="sr-only"> (solved)</span>}
                       </span>
-                      {challenge.firstBlood && <FirstBloodLine login={challenge.firstBlood} />}
+                      {challenge.firstBlood && <FirstBloodLine name={challenge.firstBlood} />}
                       <span className="flex items-baseline justify-between">
                         <span className={`font-mono text-xs tabular-nums ${solved ? "text-[#22c55e]/80" : "text-muted"}`}>
                           {challenge.points} pts

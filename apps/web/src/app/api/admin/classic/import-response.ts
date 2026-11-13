@@ -4,6 +4,7 @@ import { AttachmentFilesError, importClassicBundle, type ClassicImportSummary } 
 import { AttachmentError } from "@/lib/attachments-store";
 import { parseBundle } from "@/lib/classic-io";
 import { ClassicValidationError } from "@/lib/classic-store";
+import type { AuditActor } from "@/lib/admin-audit-keys";
 
 /**
  * The classic bundle import both doors share: the `{ import }` shape on
@@ -19,7 +20,7 @@ import { ClassicValidationError } from "@/lib/classic-store";
  * took the space in between) answers 409 and says the challenges are in.
  * Anything else is infrastructure: 503.
  */
-export async function importBundleResponse(text: string, login: string): Promise<Response> {
+export async function importBundleResponse(text: string, actor: AuditActor): Promise<Response> {
   const parsed = parseBundle(text);
   if (!parsed.ok) return NextResponse.json({ errors: parsed.errors }, { status: 400 });
 
@@ -43,7 +44,7 @@ export async function importBundleResponse(text: string, login: string): Promise
     return NextResponse.json({ error: "classic store write failed" }, { status: 503 });
   }
 
-  await writeAdminAudit(login, "classic-import", {
+  await writeAdminAudit(actor, "classic-import", {
     created: summary.created,
     updated: summary.updated,
     categories: summary.categories,

@@ -1,11 +1,9 @@
 import { createServer } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { PLAYER_ID_RE } from "./player-id.js";
 import { loadRubric } from "./rubric.js";
 import { createMemoryStore, createRedisStore, outsideScoringWindow, pausedAt } from "./store.js";
 
-// Mirrors sync/src/parse.js — same grammar, because the author becomes a
-// Redis field segment (`<author>:<challengeId>`) in the solves hash.
-const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/;
 // Targets and challenge ids share the rubric charset (Redis key/field segments).
 const SEGMENT = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -140,8 +138,9 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     } catch {
       return json(res, 400, { error: "body must be JSON" });
     }
-    const { author, target, solved, at } = data ?? {};
-    if (typeof author !== "string" || !GITHUB_LOGIN.test(author)) return json(res, 400, { error: "invalid author" });
+    // The player id becomes a Redis field segment (`<player>:<challengeId>`).
+    const { player, target, solved, at } = data ?? {};
+    if (typeof player !== "string" || !PLAYER_ID_RE.test(player)) return json(res, 400, { error: "invalid player" });
     if (typeof target !== "string" || !SEGMENT.test(target)) return json(res, 400, { error: "invalid target" });
     if (rubric && !rubric.targets.has(target)) return json(res, 400, { error: `unknown target: ${target}` });
     if (!Array.isArray(solved) || solved.some((s) => typeof s !== "string")) {
@@ -154,7 +153,7 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     );
     const solvedAt = await solveTime(at);
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
-    await store.recordSolves(target, author, ids, solvedAt.iso);
+    await store.recordSolves(target, player, ids, solvedAt.iso);
     if (!rubric) seenTargets.add(target);
     res.writeHead(202).end();
   }
@@ -215,7 +214,7 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
   };
 }
 
-// Earlier solve wins ties; an author with no counted solves sorts last.
+// Earlier solve wins ties; a player with no counted solves sorts last.
 function compareLastSolve(a, b) {
   if (a === b) return 0;
   if (a === null) return 1;
@@ -239,7 +238,7 @@ const SERIES_TOP_N = 10;
 
 // Aggregates the solves hashes into the exact GET /leaderboard shape the app's
 // lambda source parses (apps/web/src/lib/leaderboard/lambda.ts):
-// { leaderboard: [{ rank, author, points, lastSolveAt, apps: { <target>:
+// { leaderboard: [{ rank, player, points, lastSolveAt, apps: { <target>:
 //   { solved, total, solvedIds } } }], catalog: { <target>: [{ id, name,
 //   points, owasp }] } }. `solvedIds` (per entry and per team) and the
 //   top-level `catalog` let the app show WHICH flags are solved, not just
@@ -248,14 +247,14 @@ const SERIES_TOP_N = 10;
 //   With a rubric, points and totals come from it and
 // foreign ids (not in the rubric) are skipped so solved never exceeds total;
 // without one, every solve is 1 point and a target's total is the count of
-// distinct solved ids seen for it across all authors.
+// distinct solved ids seen for it across all players.
 //
 // Also returns `series`: the cumulative-score-over-time history for the top
 // SERIES_TOP_N players by final score (same ranking as `entries`), for the
 // app's leaderboard line chart. Points require a rubric — without one there is
 // no per-challenge score to accumulate, so `series` is empty.
 export async function buildLeaderboard({ store, rubric, targets }) {
-  const authors = new Map(); // author -> { points, lastSolveAt, perTarget: Map, solves: [] }
+  const players = new Map(); // player -> { points, lastSolveAt, perTarget: Map, solves: [] }
   const totals = new Map(); // target -> total challenge count
   for (const target of targets) {
     const solves = await store.getSolves(target);
@@ -264,13 +263,13 @@ export async function buildLeaderboard({ store, rubric, targets }) {
     for (const [field, at] of Object.entries(solves)) {
       const i = field.indexOf(":");
       if (i < 1) continue;
-      const author = field.slice(0, i);
+      const player = field.slice(0, i);
       const id = field.slice(i + 1);
       const points = known ? known.points.get(id) : 1;
       if (points === undefined) continue;
       distinct.add(id);
-      let a = authors.get(author);
-      if (!a) authors.set(author, (a = { points: 0, lastSolveAt: null, perTarget: new Map(), solves: [] }));
+      let a = players.get(player);
+      if (!a) players.set(player, (a = { points: 0, lastSolveAt: null, perTarget: new Map(), solves: [] }));
       a.points += points;
       if (a.lastSolveAt === null || at > a.lastSolveAt) a.lastSolveAt = at;
       a.perTarget.set(target, (a.perTarget.get(target) ?? 0) + 1);
@@ -279,8 +278,8 @@ export async function buildLeaderboard({ store, rubric, targets }) {
     totals.set(target, known ? known.challenges.length : distinct.size);
   }
 
-  const entries = [...authors.entries()].map(([author, a]) => ({
-    author,
+  const entries = [...players.entries()].map(([player, a]) => ({
+    player,
     points: a.points,
     lastSolveAt: a.lastSolveAt,
     apps: Object.fromEntries(
@@ -298,16 +297,16 @@ export async function buildLeaderboard({ store, rubric, targets }) {
     (x, y) =>
       y.points - x.points ||
       compareLastSolve(x.lastSolveAt, y.lastSolveAt) ||
-      (x.author < y.author ? -1 : x.author > y.author ? 1 : 0),
+      (x.player < y.player ? -1 : x.player > y.player ? 1 : 0),
   );
   const ranked = entries.map((e, i) => ({ rank: i + 1, ...e }));
 
   const series = rubric
-    ? ranked.slice(0, SERIES_TOP_N).map(({ author }) => {
-        const sorted = [...authors.get(author).solves].sort(compareSolve);
+    ? ranked.slice(0, SERIES_TOP_N).map(({ player }) => {
+        const sorted = [...players.get(player).solves].sort(compareSolve);
         let cumulative = 0;
         return {
-          login: author,
+          player,
           points: sorted.map((s) => ({ t: s.at, score: (cumulative += s.points) })),
         };
       })
@@ -316,14 +315,14 @@ export async function buildLeaderboard({ store, rubric, targets }) {
   // Team rollup (additive — the individual `entries`/`series` above are
   // untouched). A team scores the UNION of its members' solves: a flag solved
   // by two members counts once, at the earliest `at` seen for it. Membership is
-  // read fresh from the store, so a solve recorded before a login joined a team
+  // read fresh from the store, so a solve recorded before a player joined a team
   // still rolls in retroactively. Foreign ids were already dropped upstream (an
-  // author only carries solves the rubric — or degenerate charset — accepted).
+  // player only carries solves the rubric — or degenerate charset — accepted).
   const teamsData = await store.getTeams();
   const teamEntries = teamsData.map((team) => {
     const union = new Map(); // `${target}:${id}` -> { at (min), id, target, points }
-    for (const login of team.members) {
-      const a = authors.get(login);
+    for (const member of team.members) {
+      const a = players.get(member);
       if (!a) continue;
       for (const s of a.solves) {
         const key = `${s.target}:${s.id}`;

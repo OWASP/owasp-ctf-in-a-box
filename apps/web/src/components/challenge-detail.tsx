@@ -44,7 +44,7 @@ export type ChallengeView = {
   /** Teams that solved it (#595): the board's figure, since scoring is per
    *  team. Null when it could not be read; nothing is shown then. */
   teamsSolved: number | null;
-  /** The login that solved it first (#188), on the classic board only.
+  /** The display name of whoever solved it first (#188), on the classic board only.
    *  Optional so every other caller is unchanged; null or absent shows
    *  nothing (nobody has solved it, or the solves could not be read). */
   firstBlood?: string | null;

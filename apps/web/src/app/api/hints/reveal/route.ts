@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { launchApiAccess } from "@/lib/launch";
 import { revealHint } from "@/lib/hint-store";
 import { adminSeesHidden } from "@/lib/classic-visibility";
@@ -15,23 +15,22 @@ import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
  * TEXT, so an unlocked call would leak challenge content before the event
  * launches, not just score early. */
 export async function POST(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const login = (session.user as { login?: string }).login;
-  if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
+  const player = await getPlayer(request.headers);
+  if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const playerId = player.id;
+  const adminLogin = player.githubLogin ?? undefined;
 
   // #464 pre-launch lock. Its own refusal — 403 `not-launched` — never a
   // wrong-answer shape. An admin before launch passes as a PREVIEW: they see
   // the hint text and are charged nothing (the same script, writing nothing).
-  const { refused, preview } = await launchApiAccess(login);
+  const { refused, preview } = await launchApiAccess(adminLogin);
   if (refused) return refused;
 
   // After the lock, before any store write — a refusal here can never follow
   // a charge that already happened.
   const limit = await consumeRateLimit(
     RATE_LIMITS.hintReveal.bucket,
-    login,
+    playerId,
     RATE_LIMITS.hintReveal.limit,
     RATE_LIMITS.hintReveal.windowSeconds,
   );
@@ -56,8 +55,8 @@ export async function POST(request: Request) {
   const id = typeof body.id === "string" ? body.id : "";
   // An admin on a Jeopardy challenge contestants cannot see reads its hint
   // as a dry run, like a preview: shown, never charged.
-  const dryRun = preview || (app === "classic" && id !== "" && (await adminSeesHidden(login, id)));
-  const result = await revealHint(login, app, id, typeof quotedCost === "number" ? { dryRun, quotedCost } : { dryRun });
+  const dryRun = preview || (app === "classic" && id !== "" && (await adminSeesHidden(adminLogin, id)));
+  const result = await revealHint(playerId, app, id, typeof quotedCost === "number" ? { dryRun, quotedCost } : { dryRun });
   if (!result.ok && "repriced" in result) {
     // 409: the confirmed price is stale. Only the new price goes back, so
     // the control can ask again; nothing was charged.

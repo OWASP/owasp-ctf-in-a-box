@@ -12,7 +12,7 @@ import { showAdminLink, signOutDestination } from "@/components/auth-nav";
 
 // Config v2: there is no client-side admin allowlist any more (ADMIN_LOGINS
 // is server-only), so the Admin menu item exists only once the /api/me/admin
-// round-trip resolves for the CURRENT login. Proven as a pure function for
+// round-trip resolves for the CURRENT user. Proven as a pure function for
 // the same reason signOutDestination is: no @testing-library/jsdom-act in
 // this repo to observe a live re-render.
 describe("showAdminLink", () => {
@@ -20,21 +20,21 @@ describe("showAdminLink", () => {
     expect(showAdminLink("alice", null)).toBe(false);
   });
 
-  it("is true once the round-trip grants the current login", () => {
-    expect(showAdminLink("alice", { login: "alice", admin: true })).toBe(true);
+  it("is true once the round-trip grants the current user", () => {
+    expect(showAdminLink("alice", { userId: "alice", admin: true })).toBe(true);
   });
 
-  it("is false when the round-trip refused the current login", () => {
-    expect(showAdminLink("alice", { login: "alice", admin: false })).toBe(false);
+  it("is false when the round-trip refused the current user", () => {
+    expect(showAdminLink("alice", { userId: "alice", admin: false })).toBe(false);
   });
 
-  it("is false when the resolved answer is for a stale/different login", () => {
+  it("is false when the resolved answer is for a stale/different user", () => {
     // Switching accounts must not carry the previous viewer's answer over.
-    expect(showAdminLink("bob", { login: "alice", admin: true })).toBe(false);
+    expect(showAdminLink("bob", { userId: "alice", admin: true })).toBe(false);
   });
 
-  it("is false with no signed-in login at all", () => {
-    expect(showAdminLink(undefined, { login: "alice", admin: true })).toBe(false);
+  it("is false with no signed-in user at all", () => {
+    expect(showAdminLink(undefined, { userId: "alice", admin: true })).toBe(false);
   });
 });
 

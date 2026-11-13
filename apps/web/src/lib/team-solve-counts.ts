@@ -22,6 +22,7 @@ import { aiSolvesKey } from "@/lib/ai-keys";
 import { classicSolvesKey } from "@/lib/classic-keys";
 import { errorLabel } from "@/lib/error-label";
 import { earlierFirstBlood, type FirstBlood } from "@/lib/first-blood";
+import { attachNames } from "@/lib/leaderboard/names";
 import { parseJsonValue } from "@/lib/redis-decode";
 import { listTeams } from "@/lib/team-store";
 import { upstashPipeline } from "@/lib/upstash";
@@ -34,10 +35,10 @@ const SOLVES_KEY = { classic: classicSolvesKey, ai: aiSolvesKey } as const;
 export async function teamSolveCounts(module: "classic" | "ai"): Promise<Map<string, number> | null> {
   try {
     const teams = await listTeams();
-    const members = teams.flatMap((t) => t.members.map((login) => ({ team: t.slug, login })));
+    const members = teams.flatMap((t) => t.members.map((playerId) => ({ team: t.slug, playerId })));
     const counts = new Map<string, number>();
     if (members.length === 0) return counts;
-    const replies = await upstashPipeline(members.map(({ login }) => ["HKEYS", SOLVES_KEY[module](login)]));
+    const replies = await upstashPipeline(members.map(({ playerId }) => ["HKEYS", SOLVES_KEY[module](playerId)]));
     const solvedBy = new Map<string, Set<string>>();
     members.forEach(({ team }, i) => {
       const reply = replies[i];
@@ -63,7 +64,7 @@ export async function teamSolveCounts(module: "classic" | "ai"): Promise<Map<str
 
 /** The board's per-challenge facts from one read: how many teams solved each
  *  challenge, and who solved it first. */
-export type TeamSolveBoard = { counts: Map<string, number>; firstBlood: Map<string, FirstBlood> };
+export type TeamSolveBoard = { counts: Map<string, number>; firstBlood: Map<string, FirstBlood & { name: string }> };
 
 /** `teamSolveCounts` plus first blood (#188), from one HGETALL per current
  *  team member. Null when any read failed, for the same reason as the count:
@@ -72,12 +73,13 @@ export type TeamSolveBoard = { counts: Map<string, number>; firstBlood: Map<stri
 export async function teamSolveBoard(module: "classic" | "ai"): Promise<TeamSolveBoard | null> {
   try {
     const teams = await listTeams();
-    const members = teams.flatMap((t) => t.members.map((login) => ({ team: t.slug, login })));
+    const members = teams.flatMap((t) => t.members.map((playerId) => ({ team: t.slug, playerId })));
     const board: TeamSolveBoard = { counts: new Map(), firstBlood: new Map() };
     if (members.length === 0) return board;
-    const replies = await upstashPipeline(members.map(({ login }) => ["HGETALL", SOLVES_KEY[module](login)]));
+    const replies = await upstashPipeline(members.map(({ playerId }) => ["HGETALL", SOLVES_KEY[module](playerId)]));
     const solvedBy = new Map<string, Set<string>>();
-    members.forEach(({ team, login }, i) => {
+    const firstBlood = new Map<string, FirstBlood>();
+    members.forEach(({ team, playerId }, i) => {
       const reply = replies[i];
       if (reply?.error) throw new Error(reply.error);
       // HGETALL of a missing hash is [], so anything else is a read that did
@@ -93,10 +95,14 @@ export async function teamSolveBoard(module: "classic" | "ai"): Promise<TeamSolv
         // A row whose time cannot be read is still a solve (it counts), and
         // ranks after every timed one (first-blood.ts).
         const at = parseJsonValue(flat[j + 1], (row) => (typeof row.at === "string" ? row.at : null));
-        board.firstBlood.set(id, earlierFirstBlood(board.firstBlood.get(id), { login, at }));
+        firstBlood.set(id, earlierFirstBlood(firstBlood.get(id), { playerId, at }));
       }
     });
     for (const [id, set] of solvedBy) board.counts.set(id, set.size);
+    // The winners' display names, in one profile read for the whole board.
+    const winners = [...firstBlood];
+    const named = await attachNames(winners.map(([, blood]) => blood));
+    winners.forEach(([id], i) => board.firstBlood.set(id, { playerId: named[i].playerId, name: named[i].name, at: named[i].at }));
     return board;
   } catch (err) {
     console.error(`team solve board (${module}) unavailable:`, errorLabel(err));

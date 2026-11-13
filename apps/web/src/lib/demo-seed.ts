@@ -20,11 +20,13 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import { upstashPipeline } from "@/lib/upstash";
+import { AUTH_PREFIX, INDEXED_FIELDS, UNIQUE_FIELDS, rowsKey } from "@/lib/auth-store/keys";
+import { DEL_ROW_SCRIPT, PUT_ROW_SCRIPT } from "@/lib/auth-store/scripts";
 import { addUpload, fillMissingUpload, listAttachments } from "@/lib/attachments-store";
 import { errorLabel } from "@/lib/error-label";
 import { beginScoreLowering, endScoreLowering } from "@/lib/leaderboard/fold-cache";
 import { defaultEnabledModules } from "@/lib/module-defaults";
-import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-audit-keys";
+import { ADMIN_AUDIT_KEY, AUDIT_CAP, type AuditActor } from "@/lib/admin-audit-keys";
 import type { AdminSettings } from "@/lib/admin-store";
 import {
   DEMO_CONTESTANTS,
@@ -85,6 +87,48 @@ import { SPONSORS_KEY, SPONSORS_LOGO_KEY } from "@/lib/sponsors-keys";
 // --- demo seed / clear (admin-gated dangerous settings) ---------------------
 
 /**
+ * The player id of a demo contestant: a v4-shaped UUID derived from the
+ * fixture login, so a re-seed and a clear address the same rows without a
+ * lookup, and the id passes PLAYER_ID_RE like every real one.
+ */
+export function demoPlayerId(login: string): string {
+  const h = createHash("sha256").update(`owasp-ctf-demo:${login}`).digest("hex");
+  const variant = "89ab"[Number.parseInt(h[16], 16) % 4];
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+const DEMO_USER_AT = "2026-01-01T00:00:00.000Z";
+
+// Byte-stable on purpose: the clear deletes a demo account only while its row
+// is still exactly this, so an account an organizer edited is left alone. The
+// `login` is display only; no `ctf:link:github:` key is written, so a demo
+// name never claims a real GitHub identity.
+function demoUserJson(login: string): string {
+  return JSON.stringify({
+    id: demoPlayerId(login),
+    name: login,
+    email: `${login}@demo.invalid`,
+    emailVerified: true,
+    image: null,
+    createdAt: DEMO_USER_AT,
+    updatedAt: DEMO_USER_AT,
+    login,
+  });
+}
+
+const USER_INDEXED = (INDEXED_FIELDS.user ?? []).join(",");
+const USER_UNIQUE = (UNIQUE_FIELDS.user ?? []).join(",");
+
+/** Creates the demo account row and its index entries through the auth store's own compare-and-set; an existing row stays as it is. */
+function demoUserCommand(login: string): (string | number)[] {
+  return ["EVAL", PUT_ROW_SCRIPT, 1, rowsKey(AUTH_PREFIX, "user"), AUTH_PREFIX, "user", demoPlayerId(login), "", demoUserJson(login), USER_INDEXED, USER_UNIQUE];
+}
+
+function demoUserDeleteCommand(login: string): (string | number)[] {
+  return ["EVAL", DEL_ROW_SCRIPT, 1, rowsKey(AUTH_PREFIX, "user"), AUTH_PREFIX, "user", demoPlayerId(login), demoUserJson(login), USER_INDEXED];
+}
+
+/**
  * One attempt row in the shape quiz-store's and classic-store's live attempt
  * scripts write: `{attempts, firstAt, lastAt, lastAtMs}`.
  *
@@ -125,13 +169,13 @@ function demoAttemptRow(tries: number, earnedAt: string, gapMinutes: number, flo
 
 // Per-challenge solver counts are RAISED, never set.
 //
-// Every other figure the seed writes is keyed by LOGIN, and the fixture owns
-// those logins outright — an absolute HSET is what keeps a re-seed idempotent
+// Every other figure the seed writes is keyed by a demo player id, and the
+// fixture owns those ids outright — an absolute HSET is what keeps a re-seed idempotent
 // instead of doubling totals. `solvecount` is the exception: it is keyed by
 // CHALLENGE and counts distinct solvers across everyone, so the fixture's
 // number is a floor, not the truth. Writing it absolutely rewrote a real
 // contestant's solve out of the public count on every re-seed — silently, since
-// their own per-login row survived and still said "Solved".
+// their own per-player row survived and still said "Solved".
 //
 // One EVAL rather than read-then-write so the raise is atomic: a solve landing
 // mid-seed is counted, not lost to a stale read.
@@ -294,7 +338,7 @@ async function seedDemoAttachments(): Promise<void> {
 
 export async function runDemoSeed(
   settings: AdminSettings,
-  actor: string,
+  actor: AuditActor,
 ): Promise<{ contestants: number; teams: number; solves: number; sponsors: number }> {
   const now = Date.now();
   const windowMs = 6 * 60 * 60 * 1000;
@@ -349,16 +393,18 @@ export async function runDemoSeed(
         for (const id of ids) {
           const frac = kc > 0 ? (j + (ci + 0.5) / n) / kc : 0.5;
           const ts = new Date(base + Math.min(0.999, frac) * spanMs).toISOString();
-          cmds.push(["HSET", `ctf:solves:${target}`, `${c.login}:${id}`, ts]);
+          cmds.push(["HSET", `ctf:solves:${target}`, `${demoPlayerId(c.login)}:${id}`, ts]);
           j++;
         }
       }
     });
   }
+  // The demo players as real account rows, so the board shows their names.
+  for (const c of DEMO_CONTESTANTS) cmds.push(demoUserCommand(c.login));
   const createdAt = new Date(base).toISOString();
   for (const t of DEMO_TEAMS) {
-    cmds.push(["HSET", `ctf:team:${t.slug}`, "name", t.name, "captain", t.captain, "createdAt", createdAt, "joinCode", t.slug.slice(0, 6)]);
-    if (t.members.length > 0) cmds.push(["SADD", `ctf:team:${t.slug}:members`, ...t.members]);
+    cmds.push(["HSET", `ctf:team:${t.slug}`, "name", t.name, "captain", demoPlayerId(t.captain), "createdAt", createdAt, "joinCode", t.slug.slice(0, 6)]);
+    if (t.members.length > 0) cmds.push(["SADD", `ctf:team:${t.slug}:members`, ...t.members.map(demoPlayerId)]);
     // The membership timestamps too, not just the pointer. Seeding writes the
     // user hash directly rather than going through createTeam/joinTeam, so it
     // is the one path that can produce a member with no `joinedAt` and no
@@ -368,7 +414,7 @@ export async function runDemoSeed(
     for (const m of t.members) {
       cmds.push([
         "HSET",
-        `ctf:user:${m}`,
+        `ctf:user:${demoPlayerId(m)}`,
         "team",
         t.slug,
         "joinedAt",
@@ -398,7 +444,8 @@ export async function runDemoSeed(
     const questionsById = new Map(DEMO_QUESTIONS.map((q) => [q.id, q]));
     const aggregates = new Map<string, { points: number; answered: number; lastAt: string }>();
     const nAnswers = DEMO_QUIZ_ANSWERS.length;
-    DEMO_QUIZ_ANSWERS.forEach(({ login, questionId }, i) => {
+    DEMO_QUIZ_ANSWERS.forEach(({ login: demoLogin, questionId }, i) => {
+      const player = demoPlayerId(demoLogin);
       const q = questionsById.get(questionId);
       if (!q) return; // fixture-consistency guard; should never trigger
       const frac = nAnswers > 0 ? (i + 0.5) / nAnswers : 0.5;
@@ -407,23 +454,23 @@ export async function runDemoSeed(
       // `choices` is always the question's full correct set (it's recorded
       // as correct), stored the same way GRADE_SCRIPT stores a live one.
       const choices = canonicalizeChoices(q.correct);
-      cmds.push(["HSET", quizAnswersKey(login), questionId, JSON.stringify({ choices, points: q.points, at })]);
+      cmds.push(["HSET", quizAnswersKey(player), questionId, JSON.stringify({ choices, points: q.points, at })]);
       // The tries it took, so "avg tries" and "median time" have something to
       // average. Counts and gaps cycle off the index rather than being random:
       // a seed that produced different numbers on each run would make the
       // Insights tab impossible to screenshot or assert against.
       cmds.push([
         "HSET",
-        quizAttemptsKey(login),
+        quizAttemptsKey(player),
         questionId,
         demoAttemptRow(1 + (i % 3), at, 3 + (i % 7), base),
       ]);
 
-      const agg = aggregates.get(login) ?? { points: 0, answered: 0, lastAt: at };
+      const agg = aggregates.get(player) ?? { points: 0, answered: 0, lastAt: at };
       agg.points += q.points;
       agg.answered += 1;
       if (Date.parse(at) > Date.parse(agg.lastAt)) agg.lastAt = at;
-      aggregates.set(login, agg);
+      aggregates.set(player, agg);
       quizAnswersSeeded++;
     });
     // Attempts that never became answers. Without them every question sits at
@@ -431,28 +478,29 @@ export async function runDemoSeed(
     // actually means is "nobody who failed was ever recorded". One missed
     // question per contestant who has one, chosen deterministically.
     const answeredBy = new Map<string, Set<string>>();
-    for (const { login, questionId } of DEMO_QUIZ_ANSWERS) {
-      const set = answeredBy.get(login) ?? new Set<string>();
+    for (const { login: demoLogin, questionId } of DEMO_QUIZ_ANSWERS) {
+      const player = demoPlayerId(demoLogin);
+      const set = answeredBy.get(player) ?? new Set<string>();
       set.add(questionId);
-      answeredBy.set(login, set);
+      answeredBy.set(player, set);
     }
     DEMO_CONTESTANTS.forEach((c, ci) => {
-      const answered = answeredBy.get(c.login) ?? new Set<string>();
+      const answered = answeredBy.get(demoPlayerId(c.login)) ?? new Set<string>();
       const missed = DEMO_QUESTIONS.find((q) => !answered.has(q.id));
       if (!missed) return;
       const at = new Date(base + Math.min(0.999, (ci + 0.5) / n) * spanMs).toISOString();
-      cmds.push(["HSET", quizAttemptsKey(c.login), missed.id, demoAttemptRow(1 + (ci % 2), at, 5 + (ci % 4), base)]);
+      cmds.push(["HSET", quizAttemptsKey(demoPlayerId(c.login)), missed.id, demoAttemptRow(1 + (ci % 2), at, 5 + (ci % 4), base)]);
     });
 
     // Aggregates are written as the final absolute total (not HINCRBY'd),
     // unlike GRADE_SCRIPT's live increments — the fixture already knows each
     // login's final total, and an absolute HSET keeps re-running the seed
     // idempotent instead of doubling the totals on a second seed.
-    for (const [login, agg] of aggregates) {
-      cmds.push(["HSET", QUIZ_POINTS_KEY, login, agg.points]);
-      cmds.push(["HSET", QUIZ_ANSWERED_KEY, login, agg.answered]);
+    for (const [player, agg] of aggregates) {
+      cmds.push(["HSET", QUIZ_POINTS_KEY, player, agg.points]);
+      cmds.push(["HSET", QUIZ_ANSWERED_KEY, player, agg.answered]);
       // The latest row's time: what GRADE_SCRIPT would have left.
-      cmds.push(["HSET", QUIZ_LAST_AT_KEY, login, agg.lastAt]);
+      cmds.push(["HSET", QUIZ_LAST_AT_KEY, player, agg.lastAt]);
     }
   }
 
@@ -500,50 +548,52 @@ export async function runDemoSeed(
     const classicAggregates = new Map<string, { points: number; solved: number; lastAt: string }>();
     const solveCounts = new Map<string, number>();
     const nSolves = DEMO_CLASSIC_SOLVES.length;
-    DEMO_CLASSIC_SOLVES.forEach(({ login, challengeId }, i) => {
+    DEMO_CLASSIC_SOLVES.forEach(({ login: demoLogin, challengeId }, i) => {
+      const player = demoPlayerId(demoLogin);
       const challenge = challengesById.get(challengeId);
       if (!challenge) return; // fixture-consistency guard; should never trigger
       const frac = nSolves > 0 ? (i + 0.5) / nSolves : 0.5;
       const at = new Date(base + Math.min(0.999, frac) * spanMs).toISOString();
-      cmds.push(["HSET", classicSolvesKey(login), challengeId, JSON.stringify({ points: challenge.points, at })]);
+      cmds.push(["HSET", classicSolvesKey(player), challengeId, JSON.stringify({ points: challenge.points, at })]);
       // Same reasoning as the quiz attempt row above: index-derived, not random.
       cmds.push([
         "HSET",
-        classicAttemptsKey(login),
+        classicAttemptsKey(player),
         challengeId,
         demoAttemptRow(1 + ((i + 1) % 3), at, 2 + (i % 9), base),
       ]);
 
-      const agg = classicAggregates.get(login) ?? { points: 0, solved: 0, lastAt: at };
+      const agg = classicAggregates.get(player) ?? { points: 0, solved: 0, lastAt: at };
       agg.points += challenge.points;
       agg.solved += 1;
       if (Date.parse(at) > Date.parse(agg.lastAt)) agg.lastAt = at;
-      classicAggregates.set(login, agg);
+      classicAggregates.set(player, agg);
 
       solveCounts.set(challengeId, (solveCounts.get(challengeId) ?? 0) + 1);
       classicSolvesSeeded++;
     });
     // Unsolved attempts, same reasoning as the quiz block above.
     const solvedBy = new Map<string, Set<string>>();
-    for (const { login, challengeId } of DEMO_CLASSIC_SOLVES) {
-      const set = solvedBy.get(login) ?? new Set<string>();
+    for (const { login: demoLogin, challengeId } of DEMO_CLASSIC_SOLVES) {
+      const player = demoPlayerId(demoLogin);
+      const set = solvedBy.get(player) ?? new Set<string>();
       set.add(challengeId);
-      solvedBy.set(login, set);
+      solvedBy.set(player, set);
     }
     DEMO_CONTESTANTS.forEach((c, ci) => {
-      const solved = solvedBy.get(c.login) ?? new Set<string>();
+      const solved = solvedBy.get(demoPlayerId(c.login)) ?? new Set<string>();
       const missed = DEMO_CHALLENGES.find((ch) => !solved.has(ch.id));
       if (!missed) return;
       const at = new Date(base + Math.min(0.999, (ci + 0.5) / n) * spanMs).toISOString();
-      cmds.push(["HSET", classicAttemptsKey(c.login), missed.id, demoAttemptRow(2 + (ci % 3), at, 4 + (ci % 5), base)]);
+      cmds.push(["HSET", classicAttemptsKey(demoPlayerId(c.login)), missed.id, demoAttemptRow(2 + (ci % 3), at, 4 + (ci % 5), base)]);
     });
 
     // Aggregates written as the final absolute total (not HINCRBY'd), mirroring
     // the quiz aggregates above — idempotent on a second seed run.
-    for (const [login, agg] of classicAggregates) {
-      cmds.push(["HSET", CLASSIC_POINTS_KEY, login, agg.points]);
-      cmds.push(["HSET", CLASSIC_SOLVED_KEY, login, agg.solved]);
-      cmds.push(["HSET", CLASSIC_LAST_AT_KEY, login, agg.lastAt]);
+    for (const [player, agg] of classicAggregates) {
+      cmds.push(["HSET", CLASSIC_POINTS_KEY, player, agg.points]);
+      cmds.push(["HSET", CLASSIC_SOLVED_KEY, player, agg.solved]);
+      cmds.push(["HSET", CLASSIC_LAST_AT_KEY, player, agg.lastAt]);
     }
     raiseSolveCounts(cmds, CLASSIC_SOLVECOUNT_KEY, solveCounts);
   }
@@ -601,48 +651,50 @@ export async function runDemoSeed(
     const aiAggregates = new Map<string, { points: number; solved: number; lastAt: string }>();
     const aiSolveCounts = new Map<string, number>();
     const nAiSolves = DEMO_AI_SOLVES.length;
-    DEMO_AI_SOLVES.forEach(({ login, challengeId }, i) => {
+    DEMO_AI_SOLVES.forEach(({ login: demoLogin, challengeId }, i) => {
+      const player = demoPlayerId(demoLogin);
       const challenge = aiChallengesById.get(challengeId);
       if (!challenge) return; // fixture-consistency guard; should never trigger
       const frac = nAiSolves > 0 ? (i + 0.5) / nAiSolves : 0.5;
       const at = new Date(base + Math.min(0.999, frac) * spanMs).toISOString();
-      cmds.push(["HSET", aiSolvesKey(login), challengeId, JSON.stringify({ points: challenge.points, at })]);
+      cmds.push(["HSET", aiSolvesKey(player), challengeId, JSON.stringify({ points: challenge.points, at })]);
       // Same reasoning as the quiz/classic attempt rows above: index-derived,
       // not random, so the seed is reproducible.
-      cmds.push(["HSET", aiAttemptsKey(login), challengeId, demoAttemptRow(1 + ((i + 2) % 3), at, 3 + (i % 6), base)]);
+      cmds.push(["HSET", aiAttemptsKey(player), challengeId, demoAttemptRow(1 + ((i + 2) % 3), at, 3 + (i % 6), base)]);
 
-      const agg = aiAggregates.get(login) ?? { points: 0, solved: 0, lastAt: at };
+      const agg = aiAggregates.get(player) ?? { points: 0, solved: 0, lastAt: at };
       agg.points += challenge.points;
       agg.solved += 1;
       if (Date.parse(at) > Date.parse(agg.lastAt)) agg.lastAt = at;
-      aiAggregates.set(login, agg);
+      aiAggregates.set(player, agg);
 
       aiSolveCounts.set(challengeId, (aiSolveCounts.get(challengeId) ?? 0) + 1);
       aiSolvesSeeded++;
     });
     // Unsolved attempts, same reasoning as the quiz/classic blocks above.
     const aiSolvedBy = new Map<string, Set<string>>();
-    for (const { login, challengeId } of DEMO_AI_SOLVES) {
-      const set = aiSolvedBy.get(login) ?? new Set<string>();
+    for (const { login: demoLogin, challengeId } of DEMO_AI_SOLVES) {
+      const player = demoPlayerId(demoLogin);
+      const set = aiSolvedBy.get(player) ?? new Set<string>();
       set.add(challengeId);
-      aiSolvedBy.set(login, set);
+      aiSolvedBy.set(player, set);
     }
     DEMO_CONTESTANTS.forEach((c, ci) => {
-      const solved = aiSolvedBy.get(c.login) ?? new Set<string>();
+      const solved = aiSolvedBy.get(demoPlayerId(c.login)) ?? new Set<string>();
       const missed = DEMO_AI_CHALLENGES.find((ch) => !solved.has(ch.id));
       if (!missed) return;
       const at = new Date(base + Math.min(0.999, (ci + 0.5) / n) * spanMs).toISOString();
-      cmds.push(["HSET", aiAttemptsKey(c.login), missed.id, demoAttemptRow(2 + (ci % 2), at, 5 + (ci % 3), base)]);
+      cmds.push(["HSET", aiAttemptsKey(demoPlayerId(c.login)), missed.id, demoAttemptRow(2 + (ci % 2), at, 5 + (ci % 3), base)]);
     });
 
     // Aggregates written as the final absolute total (not HINCRBY'd), mirroring
     // the quiz/classic aggregates above — idempotent on a second seed run, and
-    // CONSISTENT with the per-login solve rows and solvecount by construction
+    // CONSISTENT with the per-player solve rows and solvecount by construction
     // (both folded from the same DEMO_AI_SOLVES list in this same pass).
-    for (const [login, agg] of aiAggregates) {
-      cmds.push(["HSET", AI_POINTS_KEY, login, agg.points]);
-      cmds.push(["HSET", AI_SOLVED_KEY, login, agg.solved]);
-      cmds.push(["HSET", AI_LAST_AT_KEY, login, agg.lastAt]);
+    for (const [player, agg] of aiAggregates) {
+      cmds.push(["HSET", AI_POINTS_KEY, player, agg.points]);
+      cmds.push(["HSET", AI_SOLVED_KEY, player, agg.solved]);
+      cmds.push(["HSET", AI_LAST_AT_KEY, player, agg.lastAt]);
     }
     raiseSolveCounts(cmds, AI_SOLVECOUNT_KEY, aiSolveCounts);
   }
@@ -674,7 +726,8 @@ export async function runDemoSeed(
 
   const audit = JSON.stringify({
     at: new Date(now).toISOString(),
-    by: actor,
+    by: actor.id,
+    name: actor.name,
     action: "seed",
     contestants: DEMO_CONTESTANTS.length,
     teams: DEMO_TEAMS.length,
@@ -741,12 +794,11 @@ export async function runDemoSeed(
  * Removal is by EXACT fixture id/login match (`HDEL`/`DEL` on the specific
  * keys and fields `seedDemoData` writes) — not a scan, not a full wipe. If
  * an organizer has since created real content that happens to reuse one of
- * the fixture's ids or its fake logins (e.g. a real login literally spelled
- * "neo-anderson"), this removes that too. Accepted collision risk, same
- * class seeding already carries going the other direction — not new, just
- * the inverse.
+ * the fixture's ids, this removes that too. Accepted collision risk, same
+ * class seeding already carries going the other direction. Demo players are
+ * addressed by `demoPlayerId`, which no real account can collide with.
  */
-export async function clearDemoData(actor: string): Promise<{ contestants: number; teams: number; sponsors: number }> {
+export async function clearDemoData(actor: AuditActor): Promise<{ contestants: number; teams: number; sponsors: number }> {
   const now = Date.now();
   const cmds: (string | number)[][] = [];
 
@@ -755,7 +807,7 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
   // module set, and an HDEL on a field that was never there is a no-op.
   for (const c of DEMO_CONTESTANTS) {
     for (const [target, ids] of Object.entries(c.solves)) {
-      for (const id of ids) cmds.push(["HDEL", `ctf:solves:${target}`, `${c.login}:${id}`]);
+      for (const id of ids) cmds.push(["HDEL", `ctf:solves:${target}`, `${demoPlayerId(c.login)}:${id}`]);
     }
   }
 
@@ -765,31 +817,34 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
   for (const t of DEMO_TEAMS) {
     cmds.push(["DEL", `ctf:team:${t.slug}`]);
     cmds.push(["DEL", `ctf:team:${t.slug}:members`]);
-    for (const m of t.members) cmds.push(["HDEL", `ctf:user:${m}`, "team", "joinedAt", "firstTeamAt"]);
+    for (const m of t.members) cmds.push(["HDEL", `ctf:user:${demoPlayerId(m)}`, "team", "joinedAt", "firstTeamAt"]);
   }
 
   // Per-login solve/attempt/aggregate rows for all three content modules,
   // same "attempt regardless of what's live now" reasoning as the
   // secure-development block above.
   for (const c of DEMO_CONTESTANTS) {
-    cmds.push(["DEL", quizAnswersKey(c.login)]);
-    cmds.push(["DEL", quizAttemptsKey(c.login)]);
-    cmds.push(["HDEL", QUIZ_POINTS_KEY, c.login]);
-    cmds.push(["HDEL", QUIZ_ANSWERED_KEY, c.login]);
-    cmds.push(["HDEL", QUIZ_LAST_AT_KEY, c.login]);
+    cmds.push(["DEL", quizAnswersKey(demoPlayerId(c.login))]);
+    cmds.push(["DEL", quizAttemptsKey(demoPlayerId(c.login))]);
+    cmds.push(["HDEL", QUIZ_POINTS_KEY, demoPlayerId(c.login)]);
+    cmds.push(["HDEL", QUIZ_ANSWERED_KEY, demoPlayerId(c.login)]);
+    cmds.push(["HDEL", QUIZ_LAST_AT_KEY, demoPlayerId(c.login)]);
 
-    cmds.push(["DEL", classicSolvesKey(c.login)]);
-    cmds.push(["DEL", classicAttemptsKey(c.login)]);
-    cmds.push(["HDEL", CLASSIC_POINTS_KEY, c.login]);
-    cmds.push(["HDEL", CLASSIC_SOLVED_KEY, c.login]);
-    cmds.push(["HDEL", CLASSIC_LAST_AT_KEY, c.login]);
+    cmds.push(["DEL", classicSolvesKey(demoPlayerId(c.login))]);
+    cmds.push(["DEL", classicAttemptsKey(demoPlayerId(c.login))]);
+    cmds.push(["HDEL", CLASSIC_POINTS_KEY, demoPlayerId(c.login)]);
+    cmds.push(["HDEL", CLASSIC_SOLVED_KEY, demoPlayerId(c.login)]);
+    cmds.push(["HDEL", CLASSIC_LAST_AT_KEY, demoPlayerId(c.login)]);
 
-    cmds.push(["DEL", aiSolvesKey(c.login)]);
-    cmds.push(["DEL", aiAttemptsKey(c.login)]);
-    cmds.push(["HDEL", AI_POINTS_KEY, c.login]);
-    cmds.push(["HDEL", AI_SOLVED_KEY, c.login]);
-    cmds.push(["HDEL", AI_LAST_AT_KEY, c.login]);
+    cmds.push(["DEL", aiSolvesKey(demoPlayerId(c.login))]);
+    cmds.push(["DEL", aiAttemptsKey(demoPlayerId(c.login))]);
+    cmds.push(["HDEL", AI_POINTS_KEY, demoPlayerId(c.login)]);
+    cmds.push(["HDEL", AI_SOLVED_KEY, demoPlayerId(c.login)]);
+    cmds.push(["HDEL", AI_LAST_AT_KEY, demoPlayerId(c.login)]);
   }
+
+  // The demo accounts, after the rows that are keyed by their ids.
+  for (const c of DEMO_CONTESTANTS) cmds.push(demoUserDeleteCommand(c.login));
 
   // Sponsors — same platform-wide, never-module-gated reasoning seeding uses.
   for (const s of DEMO_SPONSORS) {
@@ -799,7 +854,8 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
 
   const audit = JSON.stringify({
     at: new Date(now).toISOString(),
-    by: actor,
+    by: actor.id,
+    name: actor.name,
     action: "clear-demo",
     contestants: DEMO_CONTESTANTS.length,
     teams: DEMO_TEAMS.length,

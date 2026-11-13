@@ -22,7 +22,9 @@ const CFG = {
 // config-v2: targets come from redis.getSecureDevTargets(), not cfg. These
 // drop-visibility tests are about DVWA's comment disposition counters; a
 // fixed single-target stub keeps them scoped to one repo as before.
-const redisStub = { getSecureDevTargets: async () => ["dvwa"], isPaused: async () => false, writeStatus: async () => {} };
+const LINKS = { octocat: "11111111-1111-4111-8111-111111111111", mona: "33333333-3333-4333-8333-333333333333" };
+const resolveGithubLogin = async (login) => LINKS[login.toLowerCase()] ?? null;
+const redisStub = { resolveGithubLogin, getSecureDevTargets: async () => ["dvwa"], isPaused: async () => false, writeStatus: async () => {} };
 const tick = (cfg, state, deps = {}) => rawTick(cfg, state, { redis: redisStub, ...deps });
 
 const scoreBody = `<!-- ctf-score: {"author":"octocat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc"} -->`;

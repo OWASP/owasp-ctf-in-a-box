@@ -26,7 +26,7 @@ import { signLaunchToken, type AiTokenClaims, type AiTokenProgress } from "@/lib
  */
 type LaunchClaimInputs = {
   origin: string;
-  login: string;
+  playerId: string;
   challenge: AiChallenge;
   challenges: readonly AiChallenge[];
   viewer: ViewerAi;
@@ -58,7 +58,7 @@ export function buildLaunchClaims(inputs: LaunchClaimInputs): AiTokenClaims {
 
   return {
     iss: inputs.origin,
-    sub: inputs.login,
+    sub: inputs.playerId,
     aud: inputs.challenge.id,
     iat: nowSec,
     exp: nowSec + AI_TOKEN_TTL_SEC,

@@ -6,6 +6,7 @@ import { ATTACHMENTS_EVENT_MAX_BYTES } from "@/lib/attachments-keys";
 import { readBoundedBody } from "@/lib/bounded-body";
 import { originAllowed } from "@/lib/origin";
 import { importBundleResponse } from "@/app/api/admin/classic/import-response";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
  * The classic bundle with its files. GET hands the panel's Export the bytes
@@ -71,5 +72,5 @@ export async function POST(request: Request) {
   if (!isPlainObject(body) || !Object.keys(body).every((k) => IMPORT_KEYS.has(k)) || typeof body.import !== "string") {
     return NextResponse.json({ error: "invalid request payload" }, { status: 400 });
   }
-  return importBundleResponse(body.import, gate.login);
+  return importBundleResponse(body.import, auditActor(gate.player));
 }

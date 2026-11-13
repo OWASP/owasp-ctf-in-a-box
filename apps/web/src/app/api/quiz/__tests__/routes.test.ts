@@ -101,6 +101,7 @@ import {
   QUESTION_KEYS,
   IMPORT_KEYS,
 } from "@/app/api/admin/quiz/route";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const answerReq = (body?: unknown) =>
   new Request("http://x/api/quiz/answer", { method: "POST", body: JSON.stringify(body ?? {}) });
@@ -111,7 +112,8 @@ const adminReq = (method: "GET" | "POST" | "DELETE", body?: unknown) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-const SESSION = { user: { login: "alice" } };
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+const SESSION = { user: { id: ALICE_ID, login: "alice" } };
 
 const QUESTION = {
   id: "q1",
@@ -143,7 +145,7 @@ beforeEach(() => {
   deleteQuestion.mockReset();
   writeAdminAudit.mockReset();
   getSession.mockResolvedValue(SESSION);
-  requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
   requireLaunchedApi.mockResolvedValue(null);
   launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
   hasTeam.mockResolvedValue(true);
@@ -195,10 +197,10 @@ describe("POST /api/quiz/answer", () => {
     expect(answerQuestion).not.toHaveBeenCalled();
   });
 
-  it("400 for a session with no GitHub login", async () => {
-    getSession.mockResolvedValue({ user: {} });
+  it("401 for a session whose user id is not a player id", async () => {
+    getSession.mockResolvedValue({ user: { id: "alice", login: "alice" } });
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
     expect(answerQuestion).not.toHaveBeenCalled();
   });
 
@@ -218,7 +220,7 @@ describe("POST /api/quiz/answer", () => {
     answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(res.status).toBe(200);
-    expect(answerQuestion).toHaveBeenCalledWith("alice", "q1", ["b"], { dryRun: false });
+    expect(answerQuestion).toHaveBeenCalledWith(ALICE_ID, "q1", ["b"], { dryRun: false });
   });
 
   // --- the team requirement (issue #153) ------------------------------------
@@ -239,7 +241,7 @@ describe("POST /api/quiz/answer", () => {
     // a body-supplied login would let anyone borrow a team's membership.
     hasTeam.mockResolvedValue(false);
     await answerPOST(answerReq({ questionId: "q1", choices: ["b"], login: "mallory" }));
-    expect(hasTeam).toHaveBeenCalledWith("alice");
+    expect(hasTeam).toHaveBeenCalledWith(ALICE_ID);
   });
 
   it("checks the launch lock BEFORE the team, so a pre-launch caller is told that first", async () => {
@@ -267,7 +269,7 @@ describe("POST /api/quiz/answer", () => {
   it("derives login from the session, never the request body", async () => {
     answerQuestion.mockResolvedValue({ ok: true, correct: false });
     await answerPOST(answerReq({ questionId: "q1", choices: ["b"], login: "mallory" }));
-    expect(answerQuestion).toHaveBeenCalledWith("alice", "q1", ["b"], { dryRun: false });
+    expect(answerQuestion).toHaveBeenCalledWith(ALICE_ID, "q1", ["b"], { dryRun: false });
   });
 
   it("404 for an unknown/missing question", async () => {
@@ -501,7 +503,7 @@ describe("POST /api/admin/quiz", () => {
     expect(upsertQuestion).toHaveBeenCalledWith(QUESTION, ["opt-right"]);
     expect(await res.json()).toEqual({ question: QUESTION, correct: ["opt-right"] });
 
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "quiz-upsert", { questionId: "q1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "quiz-upsert", { questionId: "q1" });
   });
 
   it("echoes the STORED correct set, not the caller's raw array", async () => {
@@ -544,7 +546,7 @@ describe("DELETE /api/admin/quiz", () => {
     const res = await adminDELETE(adminReq("DELETE", { id: "q1" }));
     expect(res.status).toBe(200);
     expect(deleteQuestion).toHaveBeenCalledWith("q1");
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "quiz-delete", { questionId: "q1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "quiz-delete", { questionId: "q1" });
   });
 
   it("400 with the message for a QuizValidationError from the store", async () => {
@@ -600,7 +602,7 @@ describe("POST /api/admin/quiz (bulk import)", () => {
   };
 
   beforeEach(() => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
     importBundle.mockClear();
     importBundle.mockResolvedValue({ created: 1, updated: 0 });
   });
@@ -656,7 +658,7 @@ describe("POST /api/admin/quiz (bulk import)", () => {
   it("audits the import with its counts", async () => {
     importBundle.mockResolvedValue({ created: 3, updated: 2 });
     await adminPOST(adminReq("POST", { import: JSON.stringify(VALID_BUNDLE) }));
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "quiz-import", { created: 3, updated: 2 });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "quiz-import", { created: 3, updated: 2 });
   });
 
   it("503s a store failure rather than blaming the organizer's file", async () => {
@@ -682,7 +684,7 @@ describe("POST /api/quiz/answer admin preview (#464)", () => {
     answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10, dryRun: true });
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(res.status).toBe(200);
-    expect(answerQuestion).toHaveBeenCalledWith("alice", "q1", ["b"], { dryRun: true });
+    expect(answerQuestion).toHaveBeenCalledWith(ALICE_ID, "q1", ["b"], { dryRun: true });
   });
 });
 

@@ -26,15 +26,40 @@ import { ACTIVITY_LOG_KEY, ACTIVITY_LOG_MAX, type ActivityType } from "@/lib/act
 export type ActivityEntry = {
   at: string;
   type: string;
-  login: string;
+  /** Null on a row that names its player by GitHub login only (`login`, no
+   *  `userId`): the list outlives deploys, so it can hold rows in that shape,
+   *  and they render under that login rather than vanishing while `total`
+   *  still counts them. */
+  userId: string | null;
+  name: string;
   detail?: string;
 };
+
+/** Who an entry is about: the player id, and their display name at the time
+ *  of writing, so the log renders without a profile lookup per row. */
+export type ActivityActor = { id: string; name: string };
 
 /** How long a caller waits on the log write before moving on. Fail-open has
  *  to cover HANGS as well as errors: upstashPipeline's fetch carries no
  *  timeout of its own, and this writer sits inside sign-in callbacks and
  *  submit routes — a stalled Upstash request must not keep those pending. */
 const LOG_WRITE_TIMEOUT_MS = 1500;
+
+/** The display name for a bare player id, from the account store. A lookup
+ *  failure or a missing profile falls back to the short-id name rather than
+ *  losing the line. Imported lazily: player.ts reaches auth.ts, which imports
+ *  this module for its sign-in hook. */
+async function resolveActor(actor: string | ActivityActor): Promise<ActivityActor> {
+  if (typeof actor !== "string") return actor;
+  const { displayNameOf, getPlayerProfiles } = await import("@/lib/player");
+  try {
+    const profile = (await getPlayerProfiles([actor])).get(actor);
+    return { id: actor, name: profile?.name ?? displayNameOf({ id: actor }) };
+  } catch (err) {
+    console.warn("[activity] name lookup failed", errorLabel(err));
+    return { id: actor, name: displayNameOf({ id: actor }) };
+  }
+}
 
 /**
  * Appends one entry and trims the list, in one pipeline — a caller can never
@@ -47,26 +72,27 @@ const LOG_WRITE_TIMEOUT_MS = 1500;
  * rejection handled, only the caller stops waiting. Callers may `await` it
  * for ordering or drop the promise; neither can fail them.
  */
-export async function logActivity(type: ActivityType, login: string, detail?: string): Promise<void> {
+export async function logActivity(type: ActivityType, actor: string | ActivityActor, detail?: string): Promise<void> {
   try {
-    const entry = JSON.stringify({
-      at: new Date().toISOString(),
-      type,
-      login,
-      ...(detail ? { detail } : {}),
-    });
+    const at = new Date().toISOString();
     // The catch is attached to the write BEFORE the race: if the timeout wins
     // and the write rejects later, that rejection is already handled rather
-    // than surfacing as an unhandled rejection.
-    const write = upstashPipeline([
-      ["LPUSH", ACTIVITY_LOG_KEY, entry],
-      ["LTRIM", ACTIVITY_LOG_KEY, 0, ACTIVITY_LOG_MAX - 1],
-    ]).then(
-      () => undefined,
-      // The one place a lost log line surfaces at all. Deliberately not
-      // rethrown — see rule 1 in the header.
-      (err) => console.warn("[activity] log write failed", errorLabel(err)),
-    );
+    // than surfacing as an unhandled rejection. A bare id has its name looked
+    // up inside the same raced work, so a slow lookup is bounded too.
+    const write = resolveActor(actor)
+      .then((who) => {
+        const entry = JSON.stringify({ at, type, userId: who.id, name: who.name, ...(detail ? { detail } : {}) });
+        return upstashPipeline([
+          ["LPUSH", ACTIVITY_LOG_KEY, entry],
+          ["LTRIM", ACTIVITY_LOG_KEY, 0, ACTIVITY_LOG_MAX - 1],
+        ]);
+      })
+      .then(
+        () => undefined,
+        // The one place a lost log line surfaces at all. Deliberately not
+        // rethrown — see rule 1 in the header.
+        (err) => console.warn("[activity] log write failed", errorLabel(err)),
+      );
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<void>((resolve) => {
       timer = setTimeout(resolve, LOG_WRITE_TIMEOUT_MS);
@@ -90,7 +116,7 @@ export async function logActivity(type: ActivityType, login: string, detail?: st
  * is not a sign-in and must not be logged as one.
  *
  * Split out of the hook closure in auth.ts so the path filter and the
- * login extraction are directly testable without standing up a better-auth
+ * player extraction are directly testable without standing up a better-auth
  * middleware context.
  */
 export async function recordCallbackLogin(path: string, newSession: unknown): Promise<void> {
@@ -98,9 +124,20 @@ export async function recordCallbackLogin(path: string, newSession: unknown): Pr
   // request path ("/callback/github") — which of the two the hook sees is a
   // better-auth internal this deliberately doesn't depend on.
   if (!path.startsWith("/callback")) return;
-  const login = (newSession as { user?: { login?: unknown } } | null)?.user?.login;
-  if (typeof login !== "string" || !login) return;
-  await logActivity("login", login);
+  // Fail-open like the writer: this runs inside the sign-in hook.
+  let actor: ActivityActor;
+  try {
+    const { displayNameOf, PLAYER_ID_RE } = await import("@/lib/player");
+    const row = (newSession as { user?: Record<string, unknown> } | null)?.user;
+    const id = row?.id;
+    if (typeof id !== "string" || !PLAYER_ID_RE.test(id)) return;
+    const text = (v: unknown) => (typeof v === "string" ? v : null);
+    actor = { id, name: displayNameOf({ id, username: text(row?.username), login: text(row?.login), name: text(row?.name) }) };
+  } catch (err) {
+    console.warn("[activity] sign-in entry skipped", errorLabel(err));
+    return;
+  }
+  await logActivity("login", actor);
 }
 
 /**
@@ -129,12 +166,17 @@ export async function listActivity(offset: number, limit: number): Promise<{ ent
   for (const row of rows) {
     if (typeof row !== "string") continue;
     try {
-      const parsed = JSON.parse(row) as Partial<ActivityEntry>;
-      if (typeof parsed.at !== "string" || typeof parsed.type !== "string" || typeof parsed.login !== "string") continue;
+      const parsed = JSON.parse(row) as Partial<ActivityEntry> & { login?: unknown };
+      if (typeof parsed.at !== "string" || typeof parsed.type !== "string") continue;
+      const userId = typeof parsed.userId === "string" && parsed.userId ? parsed.userId : null;
+      const login = typeof parsed.login === "string" && parsed.login ? parsed.login : null;
+      const fallback = userId ?? login;
+      if (!fallback) continue;
       entries.push({
         at: parsed.at,
         type: parsed.type,
-        login: parsed.login,
+        userId,
+        name: typeof parsed.name === "string" && parsed.name ? parsed.name : fallback,
         ...(typeof parsed.detail === "string" ? { detail: parsed.detail } : {}),
       });
     } catch {

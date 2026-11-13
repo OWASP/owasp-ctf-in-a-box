@@ -29,6 +29,7 @@ vi.mock("@/lib/admin-store", async (orig) => ({
 
 import { DELETE, GET, POST } from "@/app/api/admin/admins/route";
 import { AdminValidationError, adminErrorLabel } from "@/lib/admin-store";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const req = (body?: unknown) =>
   new Request("http://x/api/admin/admins", {
@@ -39,7 +40,7 @@ const req = (body?: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
   isEnvAdmin.mockReturnValue(false);
   listEnvAdmins.mockReturnValue(["alice"]);
   listStoredAdmins.mockResolvedValue(["carol"]);
@@ -123,7 +124,7 @@ describe("POST", () => {
   it("grants and records the acting admin", async () => {
     const res = await POST(req({ login: "dave" }));
     expect(res.status).toBe(200);
-    expect(addStoredAdmin).toHaveBeenCalledWith("dave", "alice");
+    expect(addStoredAdmin).toHaveBeenCalledWith("dave", actor("alice"));
   });
 
   it("400s a non-string login without touching the store", async () => {
@@ -170,7 +171,7 @@ describe("DELETE", () => {
   it("revokes a runtime grant", async () => {
     const res = await DELETE(req({ login: "carol" }));
     expect(res.status).toBe(200);
-    expect(removeStoredAdmin).toHaveBeenCalledWith("carol", "alice");
+    expect(removeStoredAdmin).toHaveBeenCalledWith("carol", actor("alice"));
   });
 
   // THE LOCKOUT GUARD. A baked admin is the recovery path when a runtime grant
@@ -186,10 +187,10 @@ describe("DELETE", () => {
   });
 
   it("allows removing yourself, since a baked admin always remains", async () => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "carol" });
+    requireAdmin.mockResolvedValue({ ok: true, login: "carol", player: { ...actor("carol"), image: null, githubLogin: "carol" } });
     const res = await DELETE(req({ login: "carol" }));
     expect(res.status).toBe(200);
-    expect(removeStoredAdmin).toHaveBeenCalledWith("carol", "carol");
+    expect(removeStoredAdmin).toHaveBeenCalledWith("carol", actor("carol"));
   });
 
   it("400s a non-string login without touching the store", async () => {

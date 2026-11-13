@@ -1,10 +1,10 @@
-// Solve store: one Redis hash per target, one field per (author, challenge).
+// Solve store: one Redis hash per target, one field per (player, challenge).
 // Writes are monotonic — HSETNX semantics keep the FIRST solve timestamp and
 // make replays no-ops. Reads are one HGETALL per known target. The memory
 // store mirrors the same contract for tests/dev.
 
 export const solvesKey = (target) => `ctf:solves:${target}`;
-const solveField = (author, id) => `${author}:${id}`;
+const solveField = (player, id) => `${player}:${id}`;
 // Same key/field the app (admin-store.ts) writes and the sync poller
 // (sync/src/redis.js) reads — "1" means paused, anything else does not.
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
@@ -70,11 +70,11 @@ export function createMemoryStore({ teams = [] } = {}) {
   // some — the same answer the Redis store gives when it cannot read them.
   let policy = null;
   return {
-    async recordSolves(target, author, ids, at) {
+    async recordSolves(target, player, ids, at) {
       let hash = hashes.get(solvesKey(target));
       if (!hash) hashes.set(solvesKey(target), (hash = new Map()));
       for (const id of ids) {
-        const field = solveField(author, id);
+        const field = solveField(player, id);
         if (!hash.has(field)) hash.set(field, at); // HSETNX: replays no-op
       }
     },
@@ -151,9 +151,9 @@ export function createRedisStore({
   }
 
   return {
-    async recordSolves(target, author, ids, at) {
+    async recordSolves(target, player, ids, at) {
       if (ids.length === 0) return;
-      await pipeline(ids.map((id) => ["HSETNX", solvesKey(target), solveField(author, id), at]));
+      await pipeline(ids.map((id) => ["HSETNX", solvesKey(target), solveField(player, id), at]));
     },
     async getSolves(target) {
       const [raw] = await pipeline([["HGETALL", solvesKey(target)]]);

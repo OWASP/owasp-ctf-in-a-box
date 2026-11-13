@@ -80,8 +80,8 @@ const dvwa = (points: number, patched: number) => ({
 // app-only is a team contestants created that the scorer has never heard of.
 const scorerBoard = (): LeaderboardData => ({
   entries: [
-    { rank: 1, login: "carol", team: "sd-heavy", points: 2500, patched: 3, failed: 0, total: 3, apps: dvwa(2500, 3), updatedAt: null },
-    { rank: 2, login: "alice", team: "byte-me", points: 58, patched: 1, failed: 0, total: 3, apps: dvwa(58, 1), updatedAt: null },
+    { rank: 1, playerId: "carol", name: "carol", image: null, team: "sd-heavy", points: 2500, patched: 3, failed: 0, total: 3, apps: dvwa(2500, 3), updatedAt: null },
+    { rank: 2, playerId: "alice", name: "alice", image: null, team: "byte-me", points: 58, patched: 1, failed: 0, total: 3, apps: dvwa(58, 1), updatedAt: null },
   ],
   teams: [
     { rank: 1, slug: "sd-heavy", name: "SD Heavy", captain: "carol", points: 2500, members: ["carol"], apps: dvwa(2500, 3) },
@@ -193,7 +193,7 @@ describe("the production fold's team totals (issue #520)", () => {
 
   it("leaves contestant rows as they were", async () => {
     const out = await getFoldedLeaderboard();
-    const points = Object.fromEntries(out.entries.map((e) => [e.login, e.points]));
+    const points = Object.fromEntries(out.entries.map((e) => [e.playerId, e.points]));
     expect(points).toEqual({ carol: 2500, alice: 58 + 275 + 1125, bob: 650, dave: 100 });
   });
 
@@ -246,7 +246,7 @@ describe("the production fold's team totals (issue #520)", () => {
     mocks.board = () => ({
       entries: ranked.map((n) => ({
         rank: n,
-        login: `player${n}`,
+        playerId: `player${n}`, name: `player${n}`, image: null,
         team: `team${n}`,
         points: points(n),
         patched: 0,
@@ -292,7 +292,7 @@ describe("the production fold's team totals (issue #520)", () => {
     );
 
     const out = await getFoldedLeaderboard();
-    expect(out.series?.map((s) => s.login)).toEqual(ranked.slice(1, 11).map((n) => `player${n}`));
+    expect(out.series?.map((s) => s.playerId)).toEqual(ranked.slice(1, 11).map((n) => `player${n}`));
     expect(out.teamSeries?.map((t) => t.slug)).toEqual([
       "team12",
       ...ranked.slice(1, 10).map((n) => `team${n}`),

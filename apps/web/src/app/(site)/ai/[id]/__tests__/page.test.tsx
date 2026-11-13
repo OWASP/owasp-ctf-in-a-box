@@ -110,6 +110,8 @@ vi.mock("@/components/challenge-detail", () => ({
 
 import AiChallengePage, { generateMetadata } from "@/app/(site)/ai/[id]/page";
 
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+
 // The store record's public shape carries `urlTemplate` and `mode`, which the
 // page reads directly off `challenge` — never through the view model handed
 // to <ChallengeDetail>. `urlTemplate` still has the raw `{token}` placeholder
@@ -147,7 +149,7 @@ beforeEach(() => {
   headersRef.current = new Headers();
   moduleLive.mockReturnValue(true);
   isAdminLogin.mockReturnValue(false);
-  getSession.mockResolvedValue({ user: { login: "alice" } });
+  getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
   listAiChallenges.mockResolvedValue([flagChallenge, eventChallenge]);
   teamSolveCounts.mockResolvedValue(new Map([["a1", 3]]));
   getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });
@@ -168,8 +170,8 @@ describe("first-open record (#616)", () => {
   it("records a signed-in contestant opening a challenge, event-only ones too", async () => {
     renderToStaticMarkup(await AiChallengePage(params("a1")));
     renderToStaticMarkup(await AiChallengePage(params("a2")));
-    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("ai", "alice", "a1");
-    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("ai", "alice", "a2");
+    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("ai", ALICE_ID, "a1");
+    expect(firstOpen.recordFirstOpen).toHaveBeenCalledWith("ai", ALICE_ID, "a2");
   });
 
   it("records nothing for a signed-out visitor or an admin preview", async () => {
@@ -256,7 +258,7 @@ describe("ai challenge page launcher", () => {
     expect(mintLaunchUrl).toHaveBeenCalledTimes(1);
     expect(mintLaunchUrl).toHaveBeenCalledWith({
       origin: expect.any(String),
-      login: "alice",
+      playerId: ALICE_ID,
       challenge: flagChallenge,
       challenges: [flagChallenge, eventChallenge],
       viewer: { solved: {}, attempts: {} },

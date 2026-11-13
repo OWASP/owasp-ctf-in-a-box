@@ -10,7 +10,7 @@
 // nothing to lose.
 
 import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import JoinTeamInvite from "@/components/join-team-invite";
 import PageHeader from "@/components/page-header";
 import { getViewerTeam, lookupJoinCode, TEAM_WRITES_ENABLED } from "@/lib/team-store";
@@ -18,8 +18,8 @@ import { getAdminSettings, effectiveRegistrationOpen } from "@/lib/admin-store";
 
 export default async function JoinPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params;
-  const session = await auth.api.getSession({ headers: await headers() });
-  const login = (session?.user as { login?: string } | undefined)?.login;
+  const player = await getPlayer(await headers());
+  const playerId = player?.id;
 
   const [team, settings] = await Promise.all([
     // A failed lookup is "unreadable", not "expired" (#499): the code may be
@@ -71,7 +71,7 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
     );
   }
 
-  const viewerTeam = login ? await getViewerTeam(login).catch(() => null) : null;
+  const viewerTeam = playerId ? await getViewerTeam(playerId).catch(() => null) : null;
 
   return (
     <Shell title={`Join ${team.name}`}>
@@ -88,7 +88,7 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
       <JoinTeamInvite
         code={code}
         teamName={team.name}
-        signedIn={Boolean(login)}
+        signedIn={Boolean(playerId)}
         alreadyOnTeam={viewerTeam !== null}
       />
     </Shell>

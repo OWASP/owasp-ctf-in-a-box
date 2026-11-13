@@ -305,7 +305,10 @@ async function tickLifecycle(
     const name = eventName(settings);
     for (const edge of lifecycleEdges(prev, snap)) {
       if (!kindEnabled(config, edge.kind)) continue;
-      await enqueueAnnouncement(edge.kind, buildLifecycleMessage({ kind: edge.kind, eventName: name }));
+      await enqueueAnnouncement(edge.kind, buildLifecycleMessage({ kind: edge.kind, eventName: name }), {
+        webhookGeneration: config.webhookGeneration,
+        kindEpoch: config.kindEpochs[edge.kind],
+      });
     }
   } catch (err) {
     console.error("[announce] lifecycle tick failed:", errorLabel(err));
@@ -355,6 +358,7 @@ async function tickMilestones(config: DiscordFullConfig, settings: AdminSettings
         eventName: eventName(settings),
         timeLeft: formatTimeLeft(nowMs, endsAtMs) ?? undefined,
       }),
+      { webhookGeneration: config.webhookGeneration, kindEpoch: config.kindEpochs.milestone },
     );
   } catch (err) {
     console.error("[announce] milestone tick failed:", errorLabel(err));

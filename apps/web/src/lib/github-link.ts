@@ -9,14 +9,19 @@ import { upstashEval, upstashPipeline } from "@/lib/upstash";
 // master-reset prefix (RESET_PREFIXES): links are account data, like `ctf:auth:`.
 export const LINK_GITHUB_PREFIX = "ctf:link:github:";
 export const LINK_USER_PREFIX = "ctf:link:user:";
+// Hash: field = player id, value = epoch ms of the last write to that player's
+// link. Sync reads it (HGET) to tell whether an author linked before scoring closed.
+export const LINK_AT_KEY = "ctf:link:at";
 
 export function linkKey(login: string): string {
   return `${LINK_GITHUB_PREFIX}${login.toLowerCase()}`;
 }
 
 /**
- * KEYS[1] login key, KEYS[2] reverse pointer; ARGV[1] user id, ARGV[2]
- * lowercased login, ARGV[3] login-key prefix. A login held by another player
+ * KEYS[1] login key, KEYS[2] reverse pointer, KEYS[3] link-time hash; ARGV[1]
+ * user id, ARGV[2] lowercased login, ARGV[3] login-key prefix, ARGV[4] epoch ms.
+ * The link time is written only with a link, so `unchanged` keeps the first
+ * time and `taken` writes none. A login held by another player
  * is refused with nothing written; a renamed player's old login key is
  * deleted only while it still names them. Never deletes a link otherwise.
  */
@@ -31,6 +36,7 @@ if prev and prev ~= ARGV[2] then
 end
 redis.call('SET', KEYS[1], ARGV[1])
 redis.call('SET', KEYS[2], ARGV[2])
+redis.call('HSET', KEYS[3], ARGV[1], ARGV[4])
 return 'linked'
 `;
 
@@ -42,12 +48,13 @@ export async function recordGithubSignIn(
   login: string,
   prefix: string = LINK_GITHUB_PREFIX,
   userPrefix: string = LINK_USER_PREFIX,
+  atKey: string = LINK_AT_KEY,
 ): Promise<LinkOutcome> {
   const lower = login.toLowerCase();
   const res = await upstashEval(
     LINK_SCRIPT,
-    [`${prefix}${lower}`, `${userPrefix}${userId}`],
-    [userId, lower, prefix],
+    [`${prefix}${lower}`, `${userPrefix}${userId}`, atKey],
+    [userId, lower, prefix, String(Date.now())],
   );
   if (res !== "linked" && res !== "unchanged" && res !== "taken") throw new Error("github link: unexpected script reply");
   return res;
@@ -58,6 +65,23 @@ export async function resolveGithubLogin(login: string, prefix: string = LINK_GI
   const [reply] = await upstashPipeline([["GET", `${prefix}${login.toLowerCase()}`]]);
   if (!reply || reply.error) throw new Error(`github link: GET failed: ${reply?.error ?? "no reply"}`);
   return typeof reply.result === "string" ? reply.result : null;
+}
+
+/** The login a player is linked to and when it was linked, or null. Throws on a command error. */
+export async function getGithubLink(
+  playerId: string,
+  userPrefix: string = LINK_USER_PREFIX,
+  atKey: string = LINK_AT_KEY,
+): Promise<{ login: string; linkedAt: number | null } | null> {
+  const [user, at] = await upstashPipeline([
+    ["GET", `${userPrefix}${playerId}`],
+    ["HGET", atKey, playerId],
+  ]);
+  if (!user || user.error) throw new Error(`github link: GET failed: ${user?.error ?? "no reply"}`);
+  if (!at || at.error) throw new Error(`github link: HGET failed: ${at?.error ?? "no reply"}`);
+  if (typeof user.result !== "string") return null;
+  const ms = typeof at.result === "string" ? Number(at.result) : NaN;
+  return { login: user.result, linkedAt: Number.isFinite(ms) ? ms : null };
 }
 
 /**

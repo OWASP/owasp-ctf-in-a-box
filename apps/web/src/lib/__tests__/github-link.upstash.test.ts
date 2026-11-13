@@ -3,16 +3,23 @@ import { freshId, liveConfigured, liveKey } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
 
-import { recordGithubSignIn, resolveGithubLogin } from "@/lib/github-link";
+import { getGithubLink, recordGithubSignIn, resolveGithubLogin } from "@/lib/github-link";
+import { upstashPipeline } from "@/lib/upstash";
 
 describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", () => {
   function fresh() {
     const base = liveKey("link", freshId("l"));
     const gh = `${base}:github:`;
     const us = `${base}:user:`;
+    const at = `${base}:at`;
     return {
-      record: (id: string, login: string) => recordGithubSignIn(id, login, gh, us),
+      record: (id: string, login: string) => recordGithubSignIn(id, login, gh, us, at),
       resolve: (login: string) => resolveGithubLogin(login, gh),
+      linkedAt: async (id: string) => {
+        const [r] = await upstashPipeline([["HGET", at, id]]);
+        return r?.result ?? null;
+      },
+      read: (id: string) => getGithubLink(id, us, at),
     };
   }
 
@@ -54,5 +61,31 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
     await t.record("u2", "old");
     expect(await t.record("u1", "newer")).toBe("linked");
     expect(await t.resolve("old")).toBe("u2");
+  });
+
+  it("stamps the link time on first link, keeps it on unchanged, and refreshes it on a rename", async () => {
+    const t = fresh();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(1731500000000));
+      expect(await t.record("u1", "octocat")).toBe("linked");
+      expect(await t.linkedAt("u1")).toBe("1731500000000");
+      vi.setSystemTime(new Date(1731500999000));
+      expect(await t.record("u1", "octocat")).toBe("unchanged");
+      expect(await t.linkedAt("u1")).toBe("1731500000000");
+      expect(await t.record("u1", "octo-renamed")).toBe("linked");
+      expect(await t.linkedAt("u1")).toBe("1731500999000");
+      expect(await t.read("u1")).toEqual({ login: "octo-renamed", linkedAt: 1731500999000 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("writes no time for a taken loser", async () => {
+    const t = fresh();
+    await t.record("u1", "contested");
+    expect(await t.record("u2", "contested")).toBe("taken");
+    expect(await t.linkedAt("u2")).toBeNull();
+    expect(await t.read("u2")).toBeNull();
   });
 });

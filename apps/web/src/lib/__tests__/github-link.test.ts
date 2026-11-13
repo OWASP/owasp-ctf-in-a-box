@@ -4,7 +4,7 @@ const upstash = vi.hoisted(() => ({ upstashPipeline: vi.fn(), upstashEval: vi.fn
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => upstash);
 
-import { linkKey, linkOnUserWrite, recordGithubSignIn, resolveGithubLogin } from "@/lib/github-link";
+import { getGithubLink, linkKey, linkOnUserWrite, recordGithubSignIn, resolveGithubLogin } from "@/lib/github-link";
 
 beforeEach(() => {
   upstash.upstashPipeline.mockReset();
@@ -30,8 +30,49 @@ describe("github link", () => {
     upstash.upstashEval.mockResolvedValue("linked");
     await recordGithubSignIn("id-1", "OctoCat");
     const [, keys, args] = upstash.upstashEval.mock.calls[0];
-    expect(keys).toEqual(["ctf:link:github:octocat", "ctf:link:user:id-1"]);
-    expect(args).toEqual(["id-1", "octocat", "ctf:link:github:"]);
+    expect(keys).toEqual(["ctf:link:github:octocat", "ctf:link:user:id-1", "ctf:link:at"]);
+    expect(args.slice(0, 3)).toEqual(["id-1", "octocat", "ctf:link:github:"]);
+  });
+
+  it("passes the current epoch ms to the script", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(1731500000000));
+      upstash.upstashEval.mockResolvedValue("linked");
+      await recordGithubSignIn("id-1", "octo");
+      const [, , args] = upstash.upstashEval.mock.calls[0];
+      expect(args[3]).toBe("1731500000000");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe("getGithubLink", () => {
+    it("reads the reverse pointer and the link time in one pipeline", async () => {
+      upstash.upstashPipeline.mockResolvedValue([{ result: "octocat" }, { result: "1731500000000" }]);
+      expect(await getGithubLink("id-1")).toEqual({ login: "octocat", linkedAt: 1731500000000 });
+      expect(upstash.upstashPipeline).toHaveBeenCalledWith([
+        ["GET", "ctf:link:user:id-1"],
+        ["HGET", "ctf:link:at", "id-1"],
+      ]);
+    });
+
+    it("returns null when the player has no link", async () => {
+      upstash.upstashPipeline.mockResolvedValue([{ result: null }, { result: null }]);
+      expect(await getGithubLink("id-1")).toBeNull();
+    });
+
+    it("returns a null time when only the login is set", async () => {
+      upstash.upstashPipeline.mockResolvedValue([{ result: "octocat" }, { result: null }]);
+      expect(await getGithubLink("id-1")).toEqual({ login: "octocat", linkedAt: null });
+    });
+
+    it("throws when either reply carries an error", async () => {
+      upstash.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }, { result: null }]);
+      await expect(getGithubLink("id-1")).rejects.toThrow(/NOAUTH/);
+      upstash.upstashPipeline.mockResolvedValue([{ result: "octocat" }, { error: "WRONGTYPE" }]);
+      await expect(getGithubLink("id-1")).rejects.toThrow(/WRONGTYPE/);
+    });
   });
 
   it("rejects an unexpected script reply", async () => {

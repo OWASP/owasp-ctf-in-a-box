@@ -633,15 +633,22 @@ export async function deleteUser(
       if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
       const recordAt = cmds.push(["DEL", userKey(player)]) - 1;
       for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
-      if (heldLogin) {
-        cmds.push(["DEL", `ctf:sd:held:by:${heldLogin}`], ["SREM", "ctf:sd:held:authors", heldLogin]);
-      }
       record = "unknown";
       const results = await upstashPipeline(cmds);
       record = results[recordAt] && !results[recordAt].error ? "gone" : "kept";
       // Checked: a refused DEL reported as a delete leaves the player on the
       // team with their record in place.
       assertPipelineOk(results, "delete user");
+      // Held scores go only once the record is gone: sync has moved its
+      // cursor past those comments, so for a player who stays they are the
+      // only copy. If this fails the delete still stands, and sync's release
+      // posts them to the scorer, which refuses them by the cutoff.
+      if (heldLogin) {
+        assertPipelineOk(
+          await upstashPipeline([["DEL", `ctf:sd:held:by:${heldLogin}`], ["SREM", "ctf:sd:held:authors", heldLogin]]),
+          "clear held scores",
+        );
+      }
     } catch (err) {
       if (record === "kept") {
         try {

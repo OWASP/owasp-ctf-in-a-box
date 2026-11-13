@@ -681,7 +681,7 @@ describe("deleteUser", () => {
 
 describe("deleteUser: held Secure Development scores", () => {
   /** Queues the pipelines a no-team, no-SD-keys delete walks through. */
-  function queueDelete() {
+  function queueDelete({ held = false }: { held?: boolean } = {}) {
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
@@ -693,16 +693,18 @@ describe("deleteUser: held Secure Development scores", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    if (held) mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // held scores
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
   }
 
-  it("clears the linked login's held scores in the tail pipeline, link untouched", async () => {
+  it("clears the linked login's held scores in their own step after the record is gone, link untouched", async () => {
     linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
-    queueDelete();
+    queueDelete({ held: true });
     await deleteUser(OCTO, ADMIN);
-    const tail = mocks.upstashPipeline.mock.calls.map((c) => c[0]).find((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
-    expect(tail).toContainEqual(["DEL", "ctf:sd:held:by:octocat"]);
-    expect(tail).toContainEqual(["SREM", "ctf:sd:held:authors", "octocat"]);
+    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
+    const tailAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
+    expect(calls[tailAt].some((c) => String(c[1]).startsWith("ctf:sd:held"))).toBe(false);
+    expect(calls[tailAt + 1]).toEqual([["DEL", "ctf:sd:held:by:octocat"], ["SREM", "ctf:sd:held:authors", "octocat"]]);
     expect(allCommands().some((c) => c.slice(1).some((a) => /^ctf:link:/.test(String(a))))).toBe(false);
   });
 
@@ -749,6 +751,7 @@ describe("deleteUser: the deletion cutoff", () => {
     try {
       queueUpToTail();
       mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+      mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // held scores
       mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
       await deleteUser(OCTO, ADMIN);
     } finally {
@@ -849,20 +852,30 @@ describe("deleteUser: the deletion cutoff", () => {
     err.mockRestore();
   });
 
-  it("record deleted but a later cleanup command failed: the cutoff stays", async () => {
+  it("record deleted but a later cleanup command failed: the cutoff stays, held scores untouched", async () => {
     queueUpToTail();
-    // [DEL user, 6 rate-limit DELs, DEL held, SREM held] — the held DEL fails.
-    mocks.upstashPipeline.mockResolvedValueOnce([...Array(7).fill({ result: 1 }), { error: "READONLY" }, { result: 1 }]);
+    // [DEL user, 6 rate-limit DELs] — a rate-limit DEL fails.
+    mocks.upstashPipeline.mockResolvedValueOnce([...Array(6).fill({ result: 1 }), { error: "READONLY" }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(allCommands()).not.toContainEqual(clear);
+    expect(allCommands()).not.toContainEqual(["DEL", "ctf:sd:held:by:octocat"]);
+  });
+
+  it("record deleted but the held-score step failed: the delete stands with its cutoff", async () => {
+    queueUpToTail();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1, 1, 1, 1)); // tail
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }, { result: 1 }]); // held scores
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
     expect(allCommands()).not.toContainEqual(clear);
   });
 
-  it("the record's own DEL failed: the player stays, so the cutoff is removed", async () => {
+  it("the record's own DEL failed: the player stays, so the cutoff is removed and held scores are kept", async () => {
     queueUpToTail();
-    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }, ...Array(8).fill({ result: 1 })]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }, ...Array(6).fill({ result: 1 })]);
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // cutoff DEL
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
     expect(allCommands()).toContainEqual(clear);
+    expect(allCommands()).not.toContainEqual(["DEL", "ctf:sd:held:by:octocat"]);
   });
 
   it("the cleanup pipeline itself failed (it may have run): the cutoff stays", async () => {

@@ -3,6 +3,7 @@ import { createAuthMiddleware } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import type { BetterAuthOptions } from "better-auth";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
+import { linkOnUserWrite } from "@/lib/github-link";
 import { recordCallbackLogin } from "@/lib/activity-log";
 
 /**
@@ -29,6 +30,14 @@ export const authOptions = {
   database: redisAdapter(),
   baseURL: process.env.BETTER_AUTH_URL,
   secret: process.env.BETTER_AUTH_SECRET,
+  advanced: {
+    database: {
+      // Lowercase v4 UUIDs: a `.toLowerCase()` join is then the identity on a
+      // player id, and no id contains ":" (the solves hash splits
+      // `<player>:<challenge>` at the first one). See PLAYER_ID_RE.
+      generateId: () => crypto.randomUUID(),
+    },
+  },
   session: {
     expiresIn: 7 * 24 * 60 * 60,
     updateAge: 24 * 60 * 60,
@@ -126,11 +135,21 @@ export const authOptions = {
     "/get-access-token",
     "/refresh-token",
   ],
+  databaseHooks: {
+    // The GitHub login a player signs in with is recorded as their link
+    // (github-link.ts). better-auth writes the user row on every GitHub
+    // sign-in: create for a new player, update (overrideUserInfoOnSignIn
+    // below) for a returning one, so a renamed account re-links here.
+    user: {
+      create: { after: async (user) => linkOnUserWrite(user) },
+      update: { after: async (user) => linkOnUserWrite(user) },
+    },
+  },
   hooks: {
     // Sign-in timestamps for the admin activity log (issue #212). The after
     // hook runs on EVERY auth endpoint; recordCallbackLogin filters to the
     // OAuth callback (the one path where a fresh session means "signed in")
-    // and extracts the login. It is fail-open all the way down — a Redis
+    // and extracts the player. It is fail-open all the way down — a Redis
     // blip can lose the log line but can never fail the sign-in.
     after: createAuthMiddleware(async (ctx) => {
       await recordCallbackLogin(ctx.path, ctx.context.newSession);

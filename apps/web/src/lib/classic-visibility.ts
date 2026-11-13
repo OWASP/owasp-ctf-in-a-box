@@ -18,6 +18,7 @@ import { isModuleLive } from "@/lib/enabled-modules";
 import { getLaunchAccess } from "@/lib/launch";
 import { isLocked, storyPositions } from "@/lib/story-lock";
 import { hasTeam } from "@/lib/team-store";
+import type { Player } from "@/lib/player";
 
 type ClassicVisibilityState = "visible" | "module-off" | "not-launched" | "teamless" | "missing" | "locked";
 
@@ -31,15 +32,20 @@ type ClassicVisibility = {
   hidden?: Exclude<ChallengeStatus, { kind: "live" }>;
 };
 
-export async function classicVisibility(login: string | undefined, id: string): Promise<ClassicVisibility> {
+/** Who is looking: the player id keys their team and solves, the GitHub login
+ *  decides admin preview (ADMIN_LOGINS names logins). */
+export type ClassicViewer = Pick<Player, "id" | "githubLogin">;
+
+export async function classicVisibility(viewer: ClassicViewer | null, id: string): Promise<ClassicVisibility> {
   if (!(await isModuleLive("classic"))) return { state: "module-off", preview: false };
-  const access = await getLaunchAccess(login);
+  const adminLogin = viewer?.githubLogin ?? undefined;
+  const access = await getLaunchAccess(adminLogin);
   if (!access.allowed) return { state: "not-launched", preview: false };
   const { preview } = access;
   // A signed-in contestant with no team is sent to form one before any board
   // content; an admin is only told. Signed-out visitors read the board.
-  const admin = Boolean(login) && (await isAdminLogin(login));
-  if (login && !admin && !(await hasTeam(login))) return { state: "teamless", preview };
+  const admin = Boolean(adminLogin) && (await isAdminLogin(adminLogin));
+  if (viewer && !admin && !(await hasTeam(viewer.id))) return { state: "teamless", preview };
   const all = await listChallenges();
   const nowMs = Date.now();
   // A hidden challenge is `missing`, the answer an unknown id gets: on the
@@ -59,7 +65,7 @@ export async function classicVisibility(login: string | undefined, id: string): 
   if (!preview) {
     const visibleIds = new Set(all.filter((c) => isChallengeVisible(c, nowMs)).map((c) => c.id));
     const pos = storyPositions(await listStories(), visibleIds).get(id);
-    if (pos?.prereq && isLocked(pos, login ? await getTeamClassicSolvedIds(login) : new Set())) {
+    if (pos?.prereq && isLocked(pos, viewer ? await getTeamClassicSolvedIds(viewer.id) : new Set())) {
       return { state: "locked", preview };
     }
   }
@@ -71,7 +77,7 @@ export async function classicVisibility(login: string | undefined, id: string): 
  *  records nothing for them. Any read failure answers false, which takes the
  *  normal path, where the grading and hint scripts refuse a hidden challenge
  *  themselves: never a write for it either way. */
-export async function adminSeesHidden(login: string, id: string): Promise<boolean> {
+export async function adminSeesHidden(login: string | undefined, id: string): Promise<boolean> {
   try {
     if (!(await isAdminLogin(login))) return false;
     const record = (await listChallenges()).find((c) => c.id === id);

@@ -81,6 +81,8 @@ vi.mock("@/lib/admin-store", () => ({
 import { generateLaunchKeyPair } from "@/lib/ai-token";
 import { POST } from "@/app/api/admin/ai/test/route";
 
+const ORGANIZER_ID = "4f3c8d7a-5b6e-4a9f-8203-becfd0314263";
+
 const CHAL = "guardrail-cd34ef";
 const CHALLENGE = {
   id: CHAL,
@@ -99,7 +101,11 @@ const adminReq = (body: unknown = { challengeId: CHAL }) =>
   new Request("http://x/api/admin/ai/test", { method: "POST", body: JSON.stringify(body) });
 
 function allGatesOpen() {
-  mocks.requireAdmin.mockResolvedValue({ ok: true, login: "organizer" });
+  mocks.requireAdmin.mockResolvedValue({
+    ok: true,
+    login: "organizer",
+    player: { id: ORGANIZER_ID, name: "organizer", image: null, githubLogin: "organizer" },
+  });
   mocks.listAiChallenges.mockResolvedValue([CHALLENGE]);
   mocks.getAiSigningKey.mockResolvedValue(SIGNING_KEY);
   mocks.getAiLaunchKeys.mockResolvedValue(KEYS);
@@ -199,7 +205,7 @@ describe("POST /api/admin/ai/test", () => {
     const res = await POST(adminReq());
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ error: "rate-limited" });
-    expect(mocks.consumeRateLimit).toHaveBeenCalledWith("ai-admin-test", "organizer", 10, 60);
+    expect(mocks.consumeRateLimit).toHaveBeenCalledWith("ai-admin-test", ORGANIZER_ID, 10, 60);
     expect(mocks.getAiLaunchKeys).not.toHaveBeenCalled();
     expect(mocks.awardAiEvent).not.toHaveBeenCalled();
   });
@@ -213,7 +219,7 @@ describe("POST /api/admin/ai/test", () => {
     expect(json.body).toMatchObject({ dryRun: true, wouldAward: true });
     // The dry run never claims a nonce and never awards for real.
     expect(mocks.claimAiNonce).not.toHaveBeenCalled();
-    expect(mocks.awardAiEvent).toHaveBeenCalledWith("organizer", CHAL, { dryRun: true, preview: false });
+    expect(mocks.awardAiEvent).toHaveBeenCalledWith(ORGANIZER_ID, CHAL, { dryRun: true, preview: false });
     // The private key must never leak into the response.
     const serialized = JSON.stringify(json);
     expect(serialized).not.toContain("aik_");
@@ -237,7 +243,7 @@ describe("POST /api/admin/ai/test", () => {
     expect(mocks.signLaunchToken).toHaveBeenCalledTimes(1);
     const claims = mocks.signLaunchToken.mock.calls[0][0] as AiTokenClaims;
     expect(claims.exp - claims.iat).toBe(900);
-    expect(claims.sub).toBe("organizer");
+    expect(claims.sub).toBe(ORGANIZER_ID);
     expect(claims.aud).toBe(CHAL);
     expect(claims.ctf).toEqual({
       module: "ai",
@@ -249,7 +255,7 @@ describe("POST /api/admin/ai/test", () => {
 
   it("ignores every caller-supplied body field but challengeId — dryRun and sub cannot be overridden", async () => {
     // The route's whole safety story is that dryRun is hard-coded true and
-    // the minted token's `sub` is always the calling admin's own login. A
+    // the minted token's `sub` is always the calling admin's own player id. A
     // caller who could flip either would turn this into a self-award
     // endpoint: a real nonce claim and a real award for an arbitrary victim.
     allGatesOpen();
@@ -268,11 +274,11 @@ describe("POST /api/admin/ai/test", () => {
     // A real award never runs: no nonce claimed, and the event handler was
     // called with dryRun:true regardless of the caller's dryRun:false.
     expect(mocks.claimAiNonce).not.toHaveBeenCalled();
-    expect(mocks.awardAiEvent).toHaveBeenCalledWith("organizer", CHAL, { dryRun: true, preview: false });
+    expect(mocks.awardAiEvent).toHaveBeenCalledWith(ORGANIZER_ID, CHAL, { dryRun: true, preview: false });
     // The minted token names the ADMIN, never the caller-supplied "victim".
     expect(mocks.signLaunchToken).toHaveBeenCalledTimes(1);
     const claims = mocks.signLaunchToken.mock.calls[0][0] as AiTokenClaims;
-    expect(claims.sub).toBe("organizer");
+    expect(claims.sub).toBe(ORGANIZER_ID);
     expect(claims.sub).not.toBe("victim");
   });
 
@@ -305,6 +311,6 @@ describe("POST /api/admin/ai/test", () => {
     launchLock.getLaunchAccess.mockResolvedValueOnce({ allowed: true, preview: true });
     const res = await POST(adminReq());
     expect(res.status).toBe(200);
-    expect(mocks.awardAiEvent).toHaveBeenCalledWith("organizer", CHAL, { dryRun: true, preview: true });
+    expect(mocks.awardAiEvent).toHaveBeenCalledWith(ORGANIZER_ID, CHAL, { dryRun: true, preview: true });
   });
 });

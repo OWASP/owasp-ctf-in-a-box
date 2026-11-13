@@ -100,7 +100,7 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   if (!verified.ok) {
     return aiJson({ error: verified.error === "expired" ? "expired" : "invalid-token" }, 401);
   }
-  const login = verified.claims.sub;
+  const playerId = verified.claims.sub;
   // A token minted for an admin preview (#464) is always a dry run — even when
   // the body asks for a real award — and is graded while scoring is closed.
   // It is honoured only while the event is not launched: after launch it is
@@ -111,7 +111,7 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
 
   // 6. Budget, charged before any write.
   const { bucket, limit, windowSeconds } = RATE_LIMITS.aiEvent;
-  const budget = await consumeRateLimit(bucket, login, limit, windowSeconds);
+  const budget = await consumeRateLimit(bucket, playerId, limit, windowSeconds);
   if (!budget.allowed) {
     return aiJson({ error: "rate-limited" }, 429, { "Retry-After": String(budget.retryAfterSeconds) });
   }
@@ -121,7 +121,7 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   //    solver who joins a team and retries the SAME launch token would
   //    otherwise get `409 replay` for the token's whole TTL.
   // A preview skips it: a dry run banks nothing to fold into a team.
-  if (!preview && !(await hasTeam(login))) return aiJson({ error: "no-team" }, 403);
+  if (!preview && !(await hasTeam(playerId))) return aiJson({ error: "no-team" }, 403);
 
   // 8. Replay. Claimed immediately before the award — any earlier (e.g. above
   //    the team check) would spend the jti on a refusal that never awarded;
@@ -133,7 +133,7 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   }
 
   // 9. The award itself, atomic in the store.
-  const result = await awardAiEvent(login, challengeId, { dryRun, preview });
+  const result = await awardAiEvent(playerId, challengeId, { dryRun, preview });
 
   if (dry) {
     const wouldAward = result.ok && result.correct === true;
@@ -154,7 +154,7 @@ export const POST = aiRoute(async (request: Request): Promise<Response> => {
   // and the path, never the flag; logActivity is fail-open, so it cannot
   // fail an award that already landed. Mirrors classic/submit's guard.
   if (result.ok && result.correct && !result.already) {
-    await logActivity("ai-solve", login, `${challengeId} via event`);
+    await logActivity("ai-solve", playerId, `${challengeId} via event`);
   }
 
   // 10. The nonce guards the replay of an award that HAPPENED. If the award did

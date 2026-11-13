@@ -43,10 +43,12 @@ import { POST } from "@/app/api/classic/submit/route";
 const req = (body?: unknown) =>
   new Request("http://x/api/classic/submit", { method: "POST", body: JSON.stringify(body ?? {}) });
 
-const SESSION = { user: { login: "alice" } };
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+const IDS: Record<string, string> = { alice: ALICE_ID, boss: "3e2b7c6f-4a5d-4f8e-b192-adbecf203152" };
+const SESSION = { user: { id: ALICE_ID, login: "alice" } };
 
 function session(login: string) {
-  getSession.mockResolvedValue({ user: { login } });
+  getSession.mockResolvedValue({ user: { id: IDS[login], login } });
 }
 
 function noSession() {
@@ -117,10 +119,10 @@ describe("POST /api/classic/submit", () => {
     expect(submitFlag).not.toHaveBeenCalled();
   });
 
-  it("400s a session with no GitHub login, without touching the store", async () => {
-    getSession.mockResolvedValue({ user: {} });
+  it("401s a session whose user id is not a player id, without touching the store", async () => {
+    getSession.mockResolvedValue({ user: { id: "alice", login: "alice" } });
     const res = await POST(req({ challengeId: "c-1", flag: "x" }));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
     expect(submitFlag).not.toHaveBeenCalled();
   });
 
@@ -142,9 +144,16 @@ describe("POST /api/classic/submit", () => {
     storeReturns({ ok: true, correct: true, points: 50 });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
-    // The lock is asked about THIS session's login (an admin passes as preview).
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: false });
+    // The lock is asked about THIS session's GitHub login: admin preview is
+    // decided on it (an admin passes as preview).
     expect(requireLaunchedApi).toHaveBeenCalledWith("alice");
+    // The activity line names the player by id, with their name at the time.
+    expect(activityLog.logActivity).toHaveBeenCalledWith(
+      "classic-solve",
+      expect.objectContaining({ id: ALICE_ID, name: "alice" }),
+      "c-1",
+    );
   });
 
   // --- the team requirement (issue #153) ------------------------------------
@@ -175,7 +184,7 @@ describe("POST /api/classic/submit", () => {
     hasTeam.mockResolvedValue(false);
     session("alice");
     await POST(req({ challengeId: "c-1", flag: "x", login: "mallory" }));
-    expect(hasTeam).toHaveBeenCalledWith("alice");
+    expect(hasTeam).toHaveBeenCalledWith(ALICE_ID);
   });
 
   it("checks the launch lock BEFORE the team, so a pre-launch caller is told that first", async () => {
@@ -190,7 +199,7 @@ describe("POST /api/classic/submit", () => {
     session("alice");
     storeReturns({ ok: true, correct: false });
     await POST(req({ challengeId: "c-1", flag: "x", login: "mallory" }));
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "x", { dryRun: false });
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "x", { dryRun: false });
   });
 
   it("400s a malformed challenge id and 404s an unknown one", async () => {
@@ -274,7 +283,7 @@ describe("POST /api/classic/submit admin preview (#464)", () => {
     storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: true });
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: true });
   });
 
   it("never asks for a dry run once launched", async () => {
@@ -282,7 +291,7 @@ describe("POST /api/classic/submit admin preview (#464)", () => {
     launchApiAccess.mockResolvedValueOnce({ refused: null, preview: false });
     storeReturns({ ok: true, correct: true, points: 50 });
     await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: false });
   });
 });
 
@@ -306,7 +315,7 @@ describe("a teamless admin preview (#464)", () => {
     storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: true });
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: true });
   });
 });
 
@@ -344,7 +353,7 @@ describe("an admin on a hidden challenge after launch", () => {
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
     expect(adminView.adminSeesHidden).toHaveBeenLastCalledWith("boss", "c-1");
-    expect(submitFlag).toHaveBeenCalledWith("boss", "c-1", "CTF{x}", { dryRun: true });
+    expect(submitFlag).toHaveBeenCalledWith(IDS.boss, "c-1", "CTF{x}", { dryRun: true });
     expect((await res.json()).dryRun).toBe(true);
   });
 
@@ -353,7 +362,7 @@ describe("an admin on a hidden challenge after launch", () => {
     adminView.adminSeesHidden.mockResolvedValueOnce(false);
     storeReturns({ ok: false, reason: "invalid" });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: false });
     expect(res.status).toBe(404);
   });
 });

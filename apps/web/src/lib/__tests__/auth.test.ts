@@ -148,3 +148,11 @@ describe("sign-in activity hook (issue #212)", () => {
     expect(typeof auth.options.hooks?.after).toBe("function");
   });
 });
+
+describe("player ids", () => {
+  it("generates lowercase v4 uuids", async () => {
+    const { PLAYER_ID_RE } = await import("@/lib/player");
+    const gen = authOptions.advanced.database.generateId;
+    expect(gen()).toMatch(PLAYER_ID_RE);
+  });
+});

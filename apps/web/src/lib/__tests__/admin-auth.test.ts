@@ -12,6 +12,8 @@ vi.mock("@/lib/admin-admins", () => ({ listStoredAdmins: mocks.listStoredAdmins 
 
 const { getSession, listStoredAdmins, envAdmins } = mocks;
 
+const ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+
 // admin-auth.ts reads envAdmins() ONCE at module load (same shape as the
 // baked set it replaced — ADMIN_LOGINS is process config, not something that
 // changes without a restart), so each describe block below sets the mock's
@@ -88,29 +90,37 @@ describe("requireAdmin", () => {
     expect(await requireAdmin(new Headers())).toEqual({ ok: false, status: 401 });
   });
 
+  // Stores are keyed by a kit player id; a session without one is not a
+  // player to act as, admin or not.
+  it("401 when the session user id is not a player id", async () => {
+    const { requireAdmin } = await loadAdminAuth(["Alice"]);
+    getSession.mockResolvedValue({ user: { id: "alice", login: "alice" } });
+    expect(await requireAdmin(new Headers())).toEqual({ ok: false, status: 401 });
+  });
+
   it("403 when the login is neither an env admin nor granted", async () => {
     const { requireAdmin } = await loadAdminAuth(["Alice"]);
-    getSession.mockResolvedValue({ user: { login: "carol" } });
+    getSession.mockResolvedValue({ user: { id: ID, login: "carol" } });
     expect(await requireAdmin(new Headers())).toEqual({ ok: false, status: 403 });
   });
 
-  it("403 when the session has no user.login at all", async () => {
+  it("403 when the session has no GitHub login at all", async () => {
     const { requireAdmin } = await loadAdminAuth(["Alice"]);
-    getSession.mockResolvedValue({ user: {} });
+    getSession.mockResolvedValue({ user: { id: ID } });
     expect(await requireAdmin(new Headers())).toEqual({ ok: false, status: 403 });
   });
 
   it("passes an env-admin login (case-insensitive)", async () => {
     const { requireAdmin } = await loadAdminAuth(["Alice"]);
-    getSession.mockResolvedValue({ user: { login: "ALICE" } });
-    expect(await requireAdmin(new Headers())).toEqual({ ok: true, login: "ALICE" });
+    getSession.mockResolvedValue({ user: { id: ID, login: "ALICE" } });
+    expect(await requireAdmin(new Headers())).toEqual({ ok: true, login: "ALICE", player: expect.objectContaining({ id: ID, githubLogin: "ALICE" }) });
   });
 
   it("passes a runtime-granted login", async () => {
     const { requireAdmin } = await loadAdminAuth(["Alice"]);
     listStoredAdmins.mockResolvedValue(["carol"]);
-    getSession.mockResolvedValue({ user: { login: "Carol" } });
-    expect(await requireAdmin(new Headers())).toEqual({ ok: true, login: "Carol" });
+    getSession.mockResolvedValue({ user: { id: ID, login: "Carol" } });
+    expect(await requireAdmin(new Headers())).toEqual({ ok: true, login: "Carol", player: expect.objectContaining({ id: ID, githubLogin: "Carol" }) });
   });
 
   // THE ONE THAT MATTERS. admin-auth gates access, so an unreachable datastore
@@ -120,7 +130,7 @@ describe("requireAdmin", () => {
   it("403 — not 200 — when the store is unreachable", async () => {
     const { requireAdmin } = await loadAdminAuth(["Alice"]);
     listStoredAdmins.mockRejectedValue(new Error("redis down"));
-    getSession.mockResolvedValue({ user: { login: "carol" } });
+    getSession.mockResolvedValue({ user: { id: ID, login: "carol" } });
     expect(await requireAdmin(new Headers())).toEqual({ ok: false, status: 403 });
   });
 
@@ -129,8 +139,8 @@ describe("requireAdmin", () => {
     // when Redis is broken, which is when they most need to.
     const { requireAdmin } = await loadAdminAuth(["Alice"]);
     listStoredAdmins.mockRejectedValue(new Error("redis down"));
-    getSession.mockResolvedValue({ user: { login: "alice" } });
-    expect(await requireAdmin(new Headers())).toEqual({ ok: true, login: "alice" });
+    getSession.mockResolvedValue({ user: { id: ID, login: "alice" } });
+    expect(await requireAdmin(new Headers())).toEqual({ ok: true, login: "alice", player: expect.objectContaining({ id: ID, githubLogin: "alice" }) });
   });
 
   // Config v2: an empty ADMIN_LOGINS refuses even a runtime-granted admin,
@@ -138,7 +148,7 @@ describe("requireAdmin", () => {
   it("403s a runtime grant when ADMIN_LOGINS is empty, without touching the store", async () => {
     const { requireAdmin } = await loadAdminAuth([]);
     listStoredAdmins.mockResolvedValue(["alice"]);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ID, login: "alice" } });
     expect(await requireAdmin(new Headers())).toEqual({ ok: false, status: 403 });
     expect(listStoredAdmins).not.toHaveBeenCalled();
   });

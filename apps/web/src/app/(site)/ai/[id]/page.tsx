@@ -34,7 +34,7 @@ import ChallengeDetail, { type ChallengeView } from "@/components/challenge-deta
 import HintRevealButton from "@/components/hint-reveal-button";
 import { deriveStatus } from "@/lib/derive-status";
 import { isAdminLogin } from "@/lib/admin-auth";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { mintLaunchUrl } from "@/lib/ai-launch";
 import { resolveOrigin } from "@/lib/app-origin";
 import {
@@ -58,8 +58,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   // #464: metadata renders on its own path (a flight response can carry it
   // next to the page's redirect), so it is locked too — a refused viewer gets
   // no title, category or points, and not even whether the id exists.
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!(await getLaunchAccess((session?.user as { login?: string } | undefined)?.login)).allowed) return {};
+  const player = await getPlayer(await headers());
+  if (!(await getLaunchAccess(player?.githubLogin ?? undefined)).allowed) return {};
   const { id } = await params;
   const challenge = (await listAiChallenges()).find((c) => c.id === decodeURIComponent(id));
   if (!challenge) return {};
@@ -77,32 +77,33 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
   const { id } = await params;
   const challengeId = decodeURIComponent(id);
 
-  const session = await auth.api.getSession({ headers: await headers() });
-  const login = (session?.user as { login?: string } | undefined)?.login;
+  const player = await getPlayer(await headers());
+  const playerId = player?.id;
+  const adminLogin = player?.githubLogin ?? undefined;
   // #464 pre-launch lock, before every load below — including the launch
   // token mint, which is only safe to hand out once this check has passed
   // (the AI API routes trust a token in hand). ./actions.ts checks again: it
   // is the other way in.
-  const launch = await redirectIfNotLaunched(login);
-  const viewerIsAdmin = await isAdminLogin(login);
+  const launch = await redirectIfNotLaunched(adminLogin);
+  const viewerIsAdmin = await isAdminLogin(adminLogin);
 
   // Same order as /ai and /flags/[id]: the team redirect fires before the
   // loads below, so a teamless contestant is never bounced after work that
   // gets thrown away.
   // `true` only for an admin let through without a team (issue #357):
   // the notice below is the half of that exemption that was missing.
-  const viewerIsTeamless = await redirectIfTeamless(login, { isAdmin: viewerIsAdmin });
+  const viewerIsTeamless = await redirectIfTeamless(playerId, { isAdmin: viewerIsAdmin });
 
   const [challenges, solveCounts, viewerAi, modules, hintIds, hintNotice, viewerHints] = await Promise.all([
     listAiChallenges(),
     teamSolveCounts("ai"),
-    login ? getViewerAi(login) : Promise.resolve<ViewerAi>({ solved: {}, attempts: {} }),
+    playerId ? getViewerAi(playerId) : Promise.resolve<ViewerAi>({ solved: {}, attempts: {} }),
     getResolvedModules(),
     getAiHintIds(),
     getHintNotice(),
     // The viewer's owned hint text, read server-side (never for an unowned
     // viewer) and handed to the reveal control as `ownedText`. Mirrors flags/[id].
-    login ? getViewerHints(login) : Promise.resolve(null),
+    playerId ? getViewerHints(playerId) : Promise.resolve(null),
   ]);
 
   const challenge = challenges.find((c) => c.id === challengeId);
@@ -110,7 +111,7 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
   // When this contestant first opened it: the start of Insights'
   // open-to-solve time. Never for a visitor or an admin preview; a failed
   // write is logged, not thrown.
-  if (login && !launch.preview) await recordFirstOpen("ai", login, challenge.id);
+  if (playerId && !launch.preview) await recordFirstOpen("ai", playerId, challenge.id);
 
   const moduleTitle = modules.find((m) => m.id === "ai")?.title ?? DEFAULT_TITLE;
   const cooldownMs = AI_COOLDOWN_SEC * 1000;
@@ -137,8 +138,8 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
   // board (the token's progress array draws from every challenge, not just
   // this one); `challenge` and `viewerAi` are exactly what was just built
   // above, nothing re-fetched or reshaped for the mint.
-  const launchUrl = login
-    ? await mintLaunchUrl({ origin: resolveOrigin(), login, challenge, challenges, viewer: viewerAi, preview: launch.preview })
+  const launchUrl = playerId
+    ? await mintLaunchUrl({ origin: resolveOrigin(), playerId, challenge, challenges, viewer: viewerAi, preview: launch.preview })
     : null;
 
   return (
@@ -192,7 +193,7 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
           hint, and the launcher-only layout keeps the same slot for it. */}
       {hintNotice.active && hintIds.includes(challenge.id) && (
         <div className="max-w-xl">
-          {login ? (
+          {playerId ? (
             <HintRevealButton
               app="ai"
               id={challenge.id}
@@ -222,7 +223,7 @@ export default async function AiChallengePage({ params }: { params: Promise<{ id
       {challenge.mode !== "event" && (
         <ChallengeDetail
           challenge={view}
-          authenticated={Boolean(login)}
+          authenticated={Boolean(playerId)}
           submitAction={submitAiFlagAction.bind(null, challenge.id)}
         />
       )}

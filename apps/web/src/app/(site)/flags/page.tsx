@@ -21,7 +21,7 @@ import PageHeader from "@/components/page-header";
 import ChallengeBoard, { type ClassicChallengeView } from "@/components/challenge-board";
 import { deriveStatus } from "@/lib/derive-status";
 import { isAdminLogin } from "@/lib/admin-auth";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { getAdminSettings } from "@/lib/admin-store";
 import { listStories,
   CLASSIC_COOLDOWN_SEC,
@@ -57,21 +57,22 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function FlagsPage() {
   if (!(await isModuleLive("classic"))) notFound();
 
-  const session = await auth.api.getSession({ headers: await headers() });
-  const login = (session?.user as { login?: string } | undefined)?.login;
+  const player = await getPlayer(await headers());
+  const playerId = player?.id;
+  const adminLogin = player?.githubLogin ?? undefined;
   // #464 pre-launch lock: before ANY content load below. A refused viewer
   // (not launched, not an admin) goes to the landing page.
-  const launch = await redirectIfNotLaunched(login);
+  const launch = await redirectIfNotLaunched(adminLogin);
   // Drives the empty state's authoring route only — same check `/admin` and
   // every `/api/admin/*` route gate on, so a link is never offered to someone
   // the admin page would then 403 at. Mirrors quiz/page.tsx.
-  const viewerIsAdmin = await isAdminLogin(login);
+  const viewerIsAdmin = await isAdminLogin(adminLogin);
 
   // Solves only count for a team (issue #153), and the submit route refuses a
   // teamless login. Sending them to set a team up first means nobody learns
   // that by submitting a flag and watching it not count. Before the loads
   // below, so a redirect never follows work that was thrown away.
-  await redirectIfTeamless(login, { isAdmin: viewerIsAdmin });
+  await redirectIfTeamless(playerId, { isAdmin: viewerIsAdmin });
 
   const [storedChallenges, categories, solveBoard, viewerClassic, settings, modules, storedHintIds, stories] = await Promise.all([
     listChallenges(),
@@ -79,7 +80,7 @@ export default async function FlagsPage() {
     // Team counts (#595) and first blood (#188), from one read of the
     // members' solve rows. Null when that read failed: neither is shown.
     teamSolveBoard("classic"),
-    login ? getViewerClassic(login) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
+    playerId ? getViewerClassic(playerId) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
     // Fails OPEN, same doctrine as ai-store.ts's resolveSettings for this
     // exact read (see ai/page.tsx's identical fix): a Redis blip here must
     // not take the whole public board down over a cooldown override, so a
@@ -101,7 +102,7 @@ export default async function FlagsPage() {
   const hintIds = storedHintIds.filter((id) => visibleIds.has(id));
   // The team's solves decide which story steps are open; only read when a
   // story exists, and "nothing solved" for a signed-out visitor.
-  const teamSolved = stories.length > 0 && login ? await getTeamClassicSolvedIds(login) : new Set<string>();
+  const teamSolved = stories.length > 0 && playerId ? await getTeamClassicSolvedIds(playerId) : new Set<string>();
 
   const mod = modules.find((m) => m.id === "classic");
   const moduleTitle = mod?.title ?? DEFAULT_TITLE;
@@ -173,7 +174,7 @@ export default async function FlagsPage() {
   // totals — a sentence restating the same numbers directly above it was the
   // same fact twice (the duplication quiz/page.tsx also removed). Only the
   // signed-out prompt has no rail to defer to.
-  const progress = login ? null : "Sign in with GitHub to submit flags.";
+  const progress = playerId ? null : "Sign in with GitHub to submit flags.";
 
   return (
     <div className="flex flex-col gap-8">
@@ -209,7 +210,7 @@ export default async function FlagsPage() {
             categories={categories}
             challenges={boardChallenges}
             runExtras={viewChallenges.filter((c) => positions.has(c.id) && storyLanes.some((l) => l.steps.some((st) => !st.locked && st.id === c.id)))}
-            authenticated={Boolean(login)}
+            authenticated={Boolean(playerId)}
             hintIds={hintIds}
             basePath="/flags"
           />

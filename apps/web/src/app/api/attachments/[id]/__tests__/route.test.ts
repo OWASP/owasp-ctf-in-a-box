@@ -12,17 +12,22 @@ const m = vi.hoisted(() => ({
   bytes: new Uint8Array([60, 104, 49, 62]),
   fail: false,
   failWith: undefined as unknown,
-  visibilityCalls: [] as [string | undefined, string][],
+  visibilityCalls: [] as [{ id: string; githubLogin: string | null } | null, string][],
   launched: true,
   resolveCalls: 0,
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({
-  auth: { api: { getSession: async () => (m.login ? { user: { login: m.login } } : null) } },
+  auth: {
+    api: {
+      getSession: async () =>
+        m.login ? { user: { id: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f", login: m.login } } : null,
+    },
+  },
 }));
 vi.mock("@/lib/classic-visibility", () => ({
-  classicVisibility: async (login: string | undefined, id: string) => {
-    m.visibilityCalls.push([login, id]);
+  classicVisibility: async (viewer: { id: string; githubLogin: string | null } | null, id: string) => {
+    m.visibilityCalls.push([viewer, id]);
     if (m.fail) throw m.failWith ?? new Error("redis down");
     return { state: m.state, preview: false };
   },
@@ -81,7 +86,9 @@ describe("GET /api/attachments/[id]", () => {
 
   it("asks the challenge's own visibility, for this viewer and this item", async () => {
     await get();
-    expect(m.visibilityCalls).toEqual([["alice", "web-one"]]);
+    expect(m.visibilityCalls).toEqual([
+      [expect.objectContaining({ id: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f", githubLogin: "alice" }), "web-one"],
+    ]);
   });
 
   it.each(["module-off", "not-launched", "teamless", "missing", "locked"])(

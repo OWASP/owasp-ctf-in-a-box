@@ -22,7 +22,7 @@ import PageHeader from "@/components/page-header";
 import ChallengeBoard, { type ChallengeView } from "@/components/challenge-board";
 import { deriveStatus } from "@/lib/derive-status";
 import { isAdminLogin } from "@/lib/admin-auth";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { getAdminSettings } from "@/lib/admin-store";
 import {
   AI_COOLDOWN_SEC,
@@ -54,29 +54,30 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function AiPage() {
   if (!(await isModuleLive("ai"))) notFound();
 
-  const session = await auth.api.getSession({ headers: await headers() });
-  const login = (session?.user as { login?: string } | undefined)?.login;
+  const player = await getPlayer(await headers());
+  const playerId = player?.id;
+  const adminLogin = player?.githubLogin ?? undefined;
   // #464 pre-launch lock: before ANY content load below. A refused viewer
   // (not launched, not an admin) goes to the landing page.
-  const launch = await redirectIfNotLaunched(login);
+  const launch = await redirectIfNotLaunched(adminLogin);
   // Drives the empty state's authoring route and the team-redirect exemption
   // below — same check `/admin` and every `/api/admin/*` route gate on, so a
   // link is never offered to someone the admin page would then 403 at.
   // Mirrors flags/page.tsx.
-  const viewerIsAdmin = await isAdminLogin(login);
+  const viewerIsAdmin = await isAdminLogin(adminLogin);
 
   // Solves only count for a team (issue #153), and the submit/mint paths
   // refuse a teamless login. Sending them to set a team up first means
   // nobody learns that by opening a challenge and finding it doesn't count.
   // Before the loads below, so a redirect never follows work that was
   // thrown away.
-  await redirectIfTeamless(login, { isAdmin: viewerIsAdmin });
+  await redirectIfTeamless(playerId, { isAdmin: viewerIsAdmin });
 
   const [challenges, categories, solveCounts, viewerAi, settings, modules, hintIds] = await Promise.all([
     listAiChallenges(),
     listAiCategories(),
     teamSolveCounts("ai"),
-    login ? getViewerAi(login) : Promise.resolve<ViewerAi>({ solved: {}, attempts: {} }),
+    playerId ? getViewerAi(playerId) : Promise.resolve<ViewerAi>({ solved: {}, attempts: {} }),
     // Fails OPEN, same doctrine as ai-store.ts's own resolveSettings for this
     // exact read: a Redis blip here must not take the whole public board
     // down over a cooldown override, so a rejected settings read falls back
@@ -120,7 +121,7 @@ export default async function AiPage() {
   // totals — a sentence restating the same numbers directly above it was the
   // same fact twice (the duplication flags/page.tsx also avoids). Only the
   // signed-out prompt has no rail to defer to.
-  const progress = login ? null : "Sign in with GitHub to play the challenges.";
+  const progress = playerId ? null : "Sign in with GitHub to play the challenges.";
 
   return (
     <div className="flex flex-col gap-8">
@@ -150,7 +151,7 @@ export default async function AiPage() {
           <ChallengeBoard
             categories={categories}
             challenges={viewChallenges}
-            authenticated={Boolean(login)}
+            authenticated={Boolean(playerId)}
             hintIds={hintIds}
             basePath="/ai"
           />

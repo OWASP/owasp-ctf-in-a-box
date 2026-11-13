@@ -13,7 +13,7 @@ import { getLeaderboardSourceMode } from "@/lib/leaderboard/source";
 import { redirectIfNotLaunched } from "@/lib/launch";
 import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { formatRelativeTime } from "@/lib/relative-time";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import DisplayBoard from "@/components/display-board";
 import { resolvePhase } from "@/components/phase-line";
 import { completedCount } from "@/lib/leaderboard/rank";
@@ -75,8 +75,8 @@ export default async function LeaderboardPage({
   // — the spreads below build new objects.
   // #464 pre-launch lock, before the board is read: standings (and the
   // projector surface) are module content. Admins get through as a preview.
-  const session = await auth.api.getSession({ headers: await headers() });
-  const launch = await redirectIfNotLaunched((session?.user as { login?: string } | undefined)?.login);
+  const player = await getPlayer(await headers());
+  const launch = await redirectIfNotLaunched(player?.githubLogin ?? undefined);
 
   const [data, modules, enabledApps] = await Promise.all([
     getFoldedLeaderboard(),
@@ -168,7 +168,7 @@ export default async function LeaderboardPage({
       <PageHeader
         eyebrow="Standings"
         title="Leaderboard"
-        description={session ? BASE_DESCRIPTION : BASE_DESCRIPTION + SIGNED_OUT_CLAUSE}
+        description={player ? BASE_DESCRIPTION : BASE_DESCRIPTION + SIGNED_OUT_CLAUSE}
         logo={
           images.logo ? (
             <HeaderLogo
@@ -198,7 +198,7 @@ export default async function LeaderboardPage({
           between them as the individual/teams view toggle flips. */}
       <Leaderboard
         data={{ ...data, entries }}
-        viewerLogin={session?.user?.login ?? null}
+        viewerLogin={player?.id ?? null}
         modules={modules}
         enabledApps={enabledApps}
         timeZone={event.timeZone}

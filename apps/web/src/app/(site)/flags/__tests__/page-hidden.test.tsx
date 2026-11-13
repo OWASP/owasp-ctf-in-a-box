@@ -23,7 +23,7 @@ vi.mock("@/lib/admin-auth", () => ({ isAdminLogin: async () => false }));
 vi.mock("@/lib/require-team", () => ({ redirectIfTeamless: async () => false }));
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules: async () => [{ id: "classic", title: "Jeopardy", blurb: "b" }] }));
-vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => ({ user: { login: "alice" } }) } } }));
+vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => ({ user: { id: ALICE_ID, login: "alice" } }) } } }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings: async () => ({ classicCooldownSec: 5 }) }));
 vi.mock("@/lib/hint-store", () => ({ getClassicHintIds: async () => m.hintIds }));
 vi.mock("@/lib/team-solve-counts", () => ({
@@ -54,6 +54,8 @@ vi.mock("@/components/story-lanes", () => ({
 }));
 
 import FlagsPage from "@/app/(site)/flags/page";
+
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
 
 const SECRET_TITLE = "Unreleased-title-zz41";
 const c = (id: string, over: Record<string, unknown> = {}) => ({

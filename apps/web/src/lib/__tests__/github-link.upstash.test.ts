@@ -15,6 +15,10 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
     return {
       record: (id: string, login: string) => recordGithubSignIn(id, login, gh, us, at),
       resolve: (login: string) => resolveGithubLogin(login, gh),
+      dropTime: async (id: string) => {
+        const [r] = await upstashPipeline([["HDEL", at, id]]);
+        if (r?.error) throw new Error(r.error);
+      },
       linkedAt: async (id: string) => {
         const [r] = await upstashPipeline([["HGET", at, id]]);
         return r?.result ?? null;
@@ -76,6 +80,27 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
       expect(await t.record("u1", "octo-renamed")).toBe("linked");
       expect(await t.linkedAt("u1")).toBe("1731500999000");
       expect(await t.read("u1")).toEqual({ login: "octo-renamed", linkedAt: 1731500999000 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stamps a time-less link on the repeat sign-in and never moves an existing time", async () => {
+    // A time-less link counts as made after the close; `unchanged` may only
+    // fill the gap, which can make a link look later, never earlier.
+    const t = fresh();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(1731500000000));
+      await t.record("u1", "octocat");
+      await t.dropTime("u1");
+      expect(await t.linkedAt("u1")).toBeNull();
+      vi.setSystemTime(new Date(1731500999000));
+      expect(await t.record("u1", "octocat")).toBe("unchanged");
+      expect(await t.linkedAt("u1")).toBe("1731500999000");
+      vi.setSystemTime(new Date(1731509999000));
+      expect(await t.record("u1", "octocat")).toBe("unchanged");
+      expect(await t.linkedAt("u1")).toBe("1731500999000");
     } finally {
       vi.useRealTimers();
     }

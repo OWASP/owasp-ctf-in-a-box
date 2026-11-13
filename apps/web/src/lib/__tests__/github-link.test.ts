@@ -67,6 +67,13 @@ describe("github link", () => {
       expect(await getGithubLink("id-1")).toEqual({ login: "octocat", linkedAt: null });
     });
 
+    // Sync's resolveGithubLink accepts only a safe decimal integer; anything
+    // else is no time, which counts as after the close in both places.
+    it.each(["", " ", "-5", "1e3", "12.5", "0x10", "99999999999999999999"])("reads link time %j as no time", async (raw) => {
+      upstash.upstashPipeline.mockResolvedValue([{ result: "octocat" }, { result: raw }]);
+      expect(await getGithubLink("id-1")).toEqual({ login: "octocat", linkedAt: null });
+    });
+
     it("throws when either reply carries an error", async () => {
       upstash.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }, { result: null }]);
       await expect(getGithubLink("id-1")).rejects.toThrow(/NOAUTH/);

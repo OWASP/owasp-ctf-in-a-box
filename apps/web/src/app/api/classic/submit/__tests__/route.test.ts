@@ -260,12 +260,20 @@ describe("POST /api/classic/submit", () => {
     },
   );
 
-  it("403s a gate refusal and carries retryAt through", async () => {
-    session("alice");
-    storeReturns({ ok: false, reason: "cooldown", retryAt: "2026-08-19T10:00:00.000Z" });
-    const res = await POST(req({ challengeId: "c-1", flag: "x" }));
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "cooldown", retryAt: "2026-08-19T10:00:00.000Z" });
+  it("429s a cooldown refusal with Retry-After header and carries retryAt through", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T09:59:18.800Z"));
+    try {
+      session("alice");
+      const retryAt = "2026-08-19T10:00:00.000Z";
+      storeReturns({ ok: false, reason: "cooldown", retryAt });
+      const res = await POST(req({ challengeId: "c-1", flag: "x" }));
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("42");
+      expect(await res.json()).toEqual({ error: "cooldown", retryAt });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("503s when the grading script itself fails", async () => {

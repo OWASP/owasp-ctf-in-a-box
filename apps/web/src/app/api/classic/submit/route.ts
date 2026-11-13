@@ -6,6 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { CLASSIC_ID_RE, submitFlag } from "@/lib/classic-store";
+import { cooldownResponse } from "@/lib/cooldown-response";
 import { hasTeam } from "@/lib/team-store";
 
 /** Hard cap on a submitted flag's length, checked BEFORE the store ever sees
@@ -27,7 +28,8 @@ const FLAG_MAX_LEN = 512;
  *   - event not launched (and not an admin) -> 403 { error: "not-launched" }
  *   - malformed challengeId/flag -> 400
  *   - unknown/deleted challenge -> 404
- *   - gate refusal (paused/solved/cooldown/unavailable) -> 403
+ *   - cooldown refusal -> 429 { error: "cooldown", retryAt } + Retry-After
+ *   - gate refusal (paused/ended/solved/locked/unavailable) -> 403
  *   - grading script failure -> 503
  *   - success -> 200
  *
@@ -138,7 +140,9 @@ export async function POST(request: Request) {
   if (result.reason === "error") {
     return NextResponse.json({ error: "classic grading failed" }, { status: 503 });
   }
-  // paused | solved | cooldown | unavailable
-  const retryAt = "retryAt" in result ? result.retryAt : undefined;
-  return NextResponse.json(retryAt ? { error: result.reason, retryAt } : { error: result.reason }, { status: 403 });
+  if (result.reason === "cooldown") {
+    return cooldownResponse(result.retryAt);
+  }
+  // paused | ended | solved | locked | unavailable
+  return NextResponse.json({ error: result.reason }, { status: 403 });
 }

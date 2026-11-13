@@ -8,6 +8,13 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Changed: `/api/classic/submit` and `/api/quiz/answer` now return HTTP
+  `429` with `Retry-After` on cooldown refusals (#753).** Both endpoints
+  previously returned `403` without `Retry-After`, unlike `/api/ai/submit`,
+  `/api/hints/reveal`, and `/api/team/join`. Both routes now include a
+  `Retry-After` header in whole seconds until `retryAt` while preserving
+  `{ error: "cooldown", retryAt }` in the body; every other refusal on these
+  routes still answers `403`.
 - **Changed: every player record is keyed by the player's account id, not
   their GitHub login (#742).** Solves, teams, hints, quiz, Jeopardy and AI
   progress, the activity log and Insights all follow the id, and boards, the

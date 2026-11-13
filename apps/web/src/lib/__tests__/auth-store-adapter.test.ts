@@ -528,6 +528,86 @@ describe("redisAdapter transaction (mocked pipeline)", () => {
     expect(redis.rowsOf("session").map(([id]) => id)).toEqual(["s1"]);
   });
 
+  it("waits for an update whose read is still pending when a parallel create fails, so nothing writes after the rollback", async () => {
+    const redis = statefulRedis();
+    const kept = await adapter.create<{ id: string }>({ model: "user", data: { ...user, email: "kept@x.test" } });
+    const inner = pipeline.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    pipeline.mockImplementation(async (cmds: Cmd[]) => {
+      const c = cmds[0];
+      if (c[0] === "HGET" && c[1] === `${P}:user`) await gate;
+      if (c[0] === "EVAL" && c[1] === PUT_ROW_SCRIPT && c[5] === "account") {
+        setTimeout(release, 10);
+        return [{ error: "ERR simulated write failure" }];
+      }
+      return inner(cmds);
+    });
+    const events: string[] = [];
+    await expect(
+      adapter.transaction(async (trx) => {
+        await Promise.all([
+          trx
+            .update({ model: "user", where: [w("id", kept.id)], update: { name: "Late" } })
+            .finally(() => events.push("update settled")),
+          trx.create({ model: "account", data: { ...account, userId: kept.id } }),
+        ]);
+      }),
+    ).rejects.toThrow(/create account failed/);
+    events.push("transaction rejected");
+    const callsAtRejection = pipeline.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 30));
+    expect(events).toEqual(["update settled", "transaction rejected"]);
+    expect(pipeline.mock.calls.length).toBe(callsAtRejection);
+    expect(redis.rowsOf("user").map(([, r]) => r.name)).toEqual(["Late"]);
+  });
+
+  it("undoes a create still in better-auth's async input transformation when a parallel create fails", async () => {
+    const redis = statefulRedis();
+    const inner = pipeline.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    pipeline.mockImplementation(async (cmds: Cmd[]) => {
+      const c = cmds[0];
+      if (c[0] === "EVAL" && c[1] === PUT_ROW_SCRIPT && c[5] === "account") {
+        setTimeout(release, 10);
+        return [{ error: "ERR simulated write failure" }];
+      }
+      return inner(cmds);
+    });
+    const { betterAuth } = await import("better-auth");
+    const instance = betterAuth({
+      baseURL: "http://localhost:3000",
+      secret: "0123456789abcdef0123456789abcdef",
+      database: redisAdapter({ prefix: P }),
+      user: {
+        additionalFields: {
+          slow: {
+            type: "string",
+            required: false,
+            transform: {
+              input: async (v) => {
+                await gate;
+                return v;
+              },
+            },
+          },
+        },
+      },
+    });
+    const ctx = await instance.$context;
+    await expect(
+      ctx.adapter.transaction(async (trx) => {
+        await Promise.all([
+          trx.create({ model: "user", data: { ...user, slow: "x" } }),
+          trx.create({ model: "account", data: { ...account, userId: "u" } }),
+        ]);
+      }),
+    ).rejects.toThrow(/create account failed/);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(redis.rowsOf("user")).toEqual([]);
+  });
+
   it("undoes a row the transaction created and then updated", async () => {
     const redis = statefulRedis();
     await expect(

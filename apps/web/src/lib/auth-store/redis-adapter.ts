@@ -50,8 +50,8 @@ type Snapshot = { id: string; json: string; row: Row };
 // A row a transaction created or tried to create: the stored model name, the
 // row id and the owner token sent with the create.
 type Created = { model: string; id: string; token: string };
-// One transaction's record: its creates, and the writes and nested
-// transactions still in flight, which a failure waits for before undoing.
+// One transaction's record: its creates, and every call on its adapter still
+// in flight (see `trackAll`), which a failure waits for before undoing.
 type Journal = { created: Created[]; pending: Set<Promise<unknown>> };
 
 // Retries after a lost compare-and-set, per row. A row that keeps changing
@@ -111,11 +111,32 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
   /**
    * Adds `work` to the journal's in-flight set until it settles.
    */
-  function track(journal: Journal | null, work: Promise<unknown>): void {
-    if (!journal) return;
+  function track(journal: Journal, work: Promise<unknown>): void {
     journal.pending.add(work);
     const done = () => journal.pending.delete(work);
     work.then(done, done);
+  }
+
+  /**
+   * The transaction's adapter as the callback sees it: every method's returned
+   * promise is in `journal.pending` from the moment of the call. better-auth
+   * transforms input asynchronously before it reaches the methods below, and
+   * `update`/`delete` read before they write, so tracking any later would let a
+   * failure undo and rethrow while that work is still on its way to Redis.
+   * Every function is wrapped, reads included, so a method better-auth adds
+   * later is covered too.
+   */
+  function trackAll<A extends object>(adapter: A, journal: Journal): A {
+    const out = { ...adapter } as Record<string, unknown>;
+    for (const [name, value] of Object.entries(adapter)) {
+      if (typeof value !== "function") continue;
+      out[name] = (...args: unknown[]) => {
+        const result: unknown = value.apply(adapter, args);
+        if (result instanceof Promise) track(journal, result);
+        return result;
+      };
+    }
+    return out as A;
   }
 
   /**
@@ -132,17 +153,17 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       supportsDates: false,
       supportsBooleans: true,
       supportsArrays: false,
-      transaction: (callback) => {
-        const work = (async () => {
+      transaction: (callback) =>
+        (async () => {
           if (!authOptions) throw new Error("auth store: transaction before the adapter was initialised");
           const own: Journal = { created: [], pending: new Set() };
-          const trx = build(own)(authOptions);
+          const trx = trackAll(build(own)(authOptions), own);
           let result;
           try {
             result = await callback(trx);
           } catch (err) {
-            // A create the callback started in parallel may still land after
-            // the rejection; undoing before it settles would miss its row.
+            // Work the callback started in parallel may still land after the
+            // rejection; undoing before it settles would miss its row.
             while (own.pending.size) await Promise.allSettled([...own.pending]);
             await undo(own.created);
             throw err;
@@ -154,10 +175,7 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
           while (own.pending.size) await Promise.allSettled([...own.pending]);
           journal?.created.push(...own.created);
           return result;
-        })();
-        track(journal, work);
-        return work;
-      },
+        })(),
     },
     adapter: ({ options, getFieldAttributes, getFieldName, getDefaultModelName }) => {
       authOptions = options;
@@ -413,15 +431,6 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       }
 
       /**
-       * Returns `work` after adding it to this transaction's in-flight set, so a
-       * failure waits for it before undoing.
-       */
-      function tracked<T>(work: Promise<T>): Promise<T> {
-        track(journal, work);
-        return work;
-      }
-
-      /**
        * Builds a row change that merges `update` over the row, keeping its id and scrubbing tokens.
        */
       const patch = (model: string, update: Row) => (row: Row) => scrub(model, { ...row, ...update, id: row.id });
@@ -436,7 +445,7 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
           // so its undo deletes nothing.
           const token = journal ? crypto.randomUUID() : undefined;
           if (journal && token) journal.created.push({ model, id: String(id), token });
-          if (!(await tracked(cas("create", model, null, String(id), row, token)))) {
+          if (!(await cas("create", model, null, String(id), row, token))) {
             throw fail("create", model, `row ${String(id)} already exists`);
           }
           return trim(row, select) as typeof data;
@@ -458,23 +467,23 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
 
         async update({ model, where, update }) {
           const snaps = await read("update", model, where);
-          const [first] = await tracked(writeEach("update", model, where, snaps, patch(model, update as Row)));
+          const [first] = await writeEach("update", model, where, snaps, patch(model, update as Row));
           return (first ?? null) as never;
         },
 
         async updateMany({ model, where, update }) {
           const snaps = await read("updateMany", model, where);
-          return (await tracked(writeEach("updateMany", model, where, snaps, patch(model, update)))).length;
+          return (await writeEach("updateMany", model, where, snaps, patch(model, update))).length;
         },
 
         async delete({ model, where }) {
           const snaps = await read("delete", model, where);
-          await tracked(writeEach("delete", model, where, snaps, () => null));
+          await writeEach("delete", model, where, snaps, () => null);
         },
 
         async deleteMany({ model, where }) {
           const snaps = await read("deleteMany", model, where);
-          return (await tracked(writeEach("deleteMany", model, where, snaps, () => null))).length;
+          return (await writeEach("deleteMany", model, where, snaps, () => null)).length;
         },
       };
     },

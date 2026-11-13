@@ -158,9 +158,10 @@ state; everything else that touches scores goes through it.
    monotonic and idempotent on replay (step 7).
    Sync then resolves `author` to a player id through the link key
    `ctf:link:github:<lowercased login>`, which the app writes when a player
-   links GitHub. An author no player has linked is **held**, not dropped: the score
-   is stored under `ctf:sd:held:*` (counted in the `held` tally bucket, never
-   in `dropped`) and the login is never logged. Each tick, before the comment
+   signs in with GitHub or links GitHub from their profile. An author no
+   player has linked is **held**, not dropped: the score is stored under
+   `ctf:sd:held:*` (counted in the `held` tally bucket, never in `dropped`)
+   and the login is never logged. Each tick, before the comment
    pass, sync releases held scores whose author linked before `scoringEndsAt`
    (or the event has no end), oldest comment first, POSTing each at its
    ORIGINAL comment time, so the scorer still judges the window, freeze and
@@ -831,7 +832,9 @@ for the integrator-facing statement of the same rotation contract.
   **`ctf:link:at`** records when each link was made. They are written when a
   player signs in with GitHub or, with Secure Development on, links GitHub
   from their profile: one GitHub account links to one kit account, a login
-  already linked to another player is not taken over, and there is no unlink.
+  already linked to another player is not taken over, a player already linked
+  cannot start a second link (`/link-social` answers `403`), and there is no
+  unlink.
   Email is not identity (`allowDifferentEmails`), and a GitHub sign-in does
   not refresh the name or avatar. They exist only so sync can map a PR author
   to a player and decide whether a held score may release, sit outside the
@@ -841,9 +844,10 @@ for the integrator-facing statement of the same rotation contract.
   of lowercased logins, and `ctf:sd:held:by:<login>`, a hash per author); the
   master reset wipes them, and deleting a player clears theirs.
   `GET /api/admin/sd/held` lists them read-only on the Secure Development
-  admin tab, marking those whose author linked at or after the close as
-  `unclaimed`. The Secure Development page hides fork links until the player
-  has linked. Admin access is still decided by the
+  admin tab, marking as `unclaimed` those no tick can release any more: the
+  author linked at or after the close, or is still unlinked once it has
+  passed. The Secure Development page hides fork links until the player has
+  linked. Admin access is still decided by the
   GitHub login against `ADMIN_LOGINS` (#738).
 - **`ctf:user:<id>`** — the contestant's own record: `team` (their current
   slug), `joinedAt` (when they joined **that** team), and `firstTeamAt` (the
@@ -1110,11 +1114,12 @@ floor that keeps the rate inside 0..1.
   `ingested` and `dropped` are a **pair**, and /admin shows them side by side:
   points that reached the leaderboard, and points that reached a PR and
   stopped there. A held score is waiting, not stopped. A drop is a comment
-  the poller consumed and could not turn into a score — a scorer `4xx`, or a `ctf-score:` marker present but
-  unreadable. Both are cumulative and neither is self-clearing, unlike
-  `lastError`, which describes only the tick that wrote it: a dropped score is
-  still missing after the poller recovers, so the next quiet tick must not
-  erase the pointer to the PR that needs looking at.
+  the poller consumed and could not turn into a score — a scorer `4xx`, or
+  a `ctf-score:` marker present but unreadable. Both are cumulative and
+  neither is self-clearing, unlike `lastError`, which describes only the
+  tick that wrote it: a dropped score is still missing after the poller
+  recovers, so the next quiet tick must not erase the pointer to the PR that
+  needs looking at.
 
   What is deliberately **not** counted is as load-bearing as what is. A
   duplicate (the `since` cursor is inclusive, so the boundary comment is

@@ -168,8 +168,8 @@ Work down this list — each item is a different subsystem:
    Development admin tab) and released on a later tick once the author links
    before Scoring closes; one linked at or after the close shows as
    `unclaimed` and never scores. The poller never logs the login. Sync also
-   refuses to start without Redis (`ctf-sync: Secure Development needs Redis to attribute PRs to
-   players`).
+   refuses to start without Redis
+   (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
 4. **Is the score comment authored by `github-actions[bot]`?** Only that
    author is trusted — a comment posted any other way (including by you) is
    dropped by design.

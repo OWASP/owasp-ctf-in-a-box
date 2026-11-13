@@ -10,11 +10,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 - **Added: GitHub linking, and held Secure Development scores (#741).** With
   Secure Development on, a player links a GitHub account from their profile
-  or by signing in with GitHub; one GitHub account links to one kit account
-  and there is no unlink. Email is not identity, so the GitHub account may
-  carry a different email, and a GitHub sign-in no longer refreshes the
-  player's name or avatar. The Secure Development page hides the fork links
-  until the player has linked. A score whose PR author has not linked is now
+  or by signing in with GitHub; one GitHub account links to one kit account,
+  a player already linked cannot start a second link, and there is no
+  unlink. Email is not identity, so the GitHub account may carry a different
+  email, and a GitHub sign-in no longer refreshes the player's name or
+  avatar. The Secure Development page hides the fork links until the player
+  has linked. A score whose PR author has not linked is now
   held (`ctf:sd:held:*`, tally bucket `held`) instead of dropped. Each sync
   tick releases the held scores of authors who linked before Scoring closes
   (or of any author when the event has no end), oldest comment first, at the

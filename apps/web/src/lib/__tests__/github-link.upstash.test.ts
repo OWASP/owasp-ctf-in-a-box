@@ -21,6 +21,8 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
       },
       linkedAt: async (id: string) => {
         const [r] = await upstashPipeline([["HGET", at, id]]);
+        // A failed read must not pass for "no time recorded".
+        if (r?.error) throw new Error(r.error);
         return r?.result ?? null;
       },
       read: (id: string) => getGithubLink(id, us, at),

@@ -628,9 +628,6 @@ export async function deleteUser(
       if (heldLogin) {
         cmds.push(["DEL", `ctf:sd:held:by:${heldLogin}`], ["SREM", "ctf:sd:held:authors", heldLogin]);
       }
-      // The delete is done: from here a score for this player is refused
-      // for good, not retried.
-      cmds.push(["SET", marker, DELETE_DONE, "EX", DELETED_TTL_SECONDS]);
       // Checked: a refused DEL reported as a delete leaves the player on the
       // team with their record in place.
       assertPipelineOk(await upstashPipeline(cmds), "delete user");
@@ -644,6 +641,18 @@ export async function deleteUser(
         console.error("[admin-ops] deletion marker left pending after a failed delete", errorLabel(clearErr));
       }
       throw err;
+    }
+    // Only after the cleanup is checked: from here a score for this player is
+    // refused for good, not retried. The delete has already happened, so a
+    // failure here is logged, not thrown; the pending mark stays and keeps
+    // answering a retry until it expires.
+    try {
+      assertPipelineOk(
+        await upstashPipeline([["SET", marker, DELETE_DONE, "EX", DELETED_TTL_SECONDS]]),
+        "finish deletion marker",
+      );
+    } catch (doneErr) {
+      console.error("[admin-ops] deletion marker left pending after a completed delete", errorLabel(doneErr));
     }
 
     await audit("ops:user-delete", actor, { player, leftTeam });

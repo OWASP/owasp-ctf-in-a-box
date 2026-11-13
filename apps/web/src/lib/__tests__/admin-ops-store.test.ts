@@ -645,6 +645,7 @@ describe("deleteUser", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // SREM + DEL
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finish marker
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
 
     const result = await deleteUser("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
@@ -691,6 +692,7 @@ describe("deleteUser: held Secure Development scores", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finish marker
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
   }
 
@@ -738,6 +740,7 @@ describe("deleteUser: the deletion marker", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finish marker
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
     await deleteUser(OCTO, ADMIN);
     const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
@@ -746,10 +749,32 @@ describe("deleteUser: the deletion marker", () => {
     const firstWrite = calls.findIndex((cmds) => cmds.some((c) => ["DEL", "HDEL", "SREM", "HSET", "EVAL"].includes(String(c[0]))));
     expect(at).toBeGreaterThan(-1);
     expect(at).toBeLessThan(firstWrite);
-    // Promoted in the same pipeline as the record's DEL: from then on a score
-    // is refused for good.
-    const tail = calls.find((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
-    expect(tail).toContainEqual(["SET", `ctf:deleted:${OCTO}`, "deleted", "EX", 600]);
+    // Promoted on its own, after the cleanup pipeline: a failed cleanup
+    // command can never leave it at `deleted`.
+    const tailAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
+    expect(calls[tailAt].some((c) => c[0] === "SET")).toBe(false);
+    expect(calls[tailAt + 1]).toEqual([["SET", `ctf:deleted:${OCTO}`, "deleted", "EX", 600]]);
+    expect(allCommands()).not.toContainEqual(["DEL", `ctf:deleted:${OCTO}`]);
+  });
+
+  it("a finish write that fails leaves the delete done and the mark pending, logged by label", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce(null);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion marker
+    mockNoSecureDevKeys();
+    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockQuizAndHintsPipeline();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    mocks.upstashPipeline.mockRejectedValueOnce(decoratedError("upstash down")); // finish marker
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: null });
+    expectLabelOnly(err);
+    err.mockRestore();
     expect(allCommands()).not.toContainEqual(["DEL", `ctf:deleted:${OCTO}`]);
   });
 

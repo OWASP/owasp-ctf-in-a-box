@@ -38,7 +38,9 @@ import { auth, authOptions } from "@/lib/auth";
  * The only endpoints this app actually exercises over HTTP.
  *
  *   /sign-in/social  authClient.signIn.social({ provider: "github" })
- *   /callback/:id    GitHub's OAuth redirect back
+ *   /link-social     authClient.linkSocial({ provider: "github" }), the
+ *                    signed-in player's Link GitHub button
+ *   /callback/:id    GitHub's OAuth redirect back, for sign-in and for a link
  *   /get-session     authClient.useSession()
  *   /sign-out        authClient.signOut()
  *   /ok, /error      better-auth's own health and error surfaces
@@ -46,7 +48,7 @@ import { auth, authOptions } from "@/lib/auth";
  * Server-side auth.api.getSession() is a direct function call and never
  * touches the router, so it does not belong here.
  */
-const IN_USE = ["/sign-in/social", "/callback/:id", "/get-session", "/sign-out", "/ok", "/error"];
+const IN_USE = ["/sign-in/social", "/link-social", "/callback/:id", "/get-session", "/sign-out", "/ok", "/error"];
 
 /**
  * Mounted, unused, and NOT closeable by disabledPaths.
@@ -90,6 +92,14 @@ describe("better-auth exposed surface", () => {
     expect(disabledPaths).toContain("/update-user");
   });
 
+  it("keeps unlinking and the linked-account disclosures closed", () => {
+    // One GitHub account links to one kit account and a player cannot undo
+    // it; nothing lists or describes linked accounts to the client.
+    for (const path of ["/unlink-account", "/list-accounts", "/account-info", "/update-user"]) {
+      expect(disabledPaths).toContain(path);
+    }
+  });
+
   it("closes the provider-token endpoints", () => {
     expect(disabledPaths).toContain("/get-access-token");
     expect(disabledPaths).toContain("/refresh-token");
@@ -120,6 +130,15 @@ describe("Redis-backed sign-in state (#736)", () => {
   it("never links a GitHub identity to an existing user by email", () => {
     expect(authOptions.account.accountLinking.disableImplicitLinking).toBe(true);
     expect(authOptions.account.storeAccountCookie).toBe(false);
+  });
+
+  it("lets a signed-in player link a GitHub account whose email differs from theirs", () => {
+    expect(authOptions.account.accountLinking.allowDifferentEmails).toBe(true);
+    expect(authOptions.account.accountLinking.updateUserInfoOnLink).toBe(true);
+  });
+
+  it("requests no OAuth scopes beyond the provider defaults", () => {
+    expect((authOptions.socialProviders.github as { scope?: unknown }).scope).toBeUndefined();
   });
 
   it("refreshes the GitHub login on every sign-in", () => {
@@ -170,5 +189,27 @@ describe("github link hooks", () => {
     const after = authOptions.databaseHooks.user[op].after as unknown as (user: typeof row, ctx: unknown) => Promise<void>;
     await after(row, null);
     expect(linkOnUserWrite).toHaveBeenCalledExactlyOnceWith(row);
+  });
+});
+
+describe("user.update.before", () => {
+  // better-auth merges the hook's `data` over what it was handed
+  // (db/with-hooks.mjs), and its adapter skips an `undefined` field on update,
+  // so the row write is this merge minus the undefined keys.
+  type Before = (data: Record<string, unknown>, ctx: { path?: string } | null) => Promise<{ data: Record<string, unknown> } | void>;
+  const before = authOptions.databaseHooks.user.update.before as unknown as Before;
+  const written = async (data: Record<string, unknown>, ctx: { path?: string } | null) => {
+    const result = await before(data, ctx);
+    const merged = { ...data, ...(result ? result.data : {}) };
+    return Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined));
+  };
+  const profile = { login: "octocat", name: "Octo", image: "u" };
+
+  it("keeps the login but not the GitHub name or avatar on the OAuth callback", async () => {
+    expect(await written(profile, { path: "/callback/:id" })).toEqual({ login: "octocat" });
+  });
+
+  it.each([undefined, "/update-user", "/sign-in/social", "/callback/github"])("leaves an update on path %s alone", async (path) => {
+    expect(await written(profile, path === undefined ? null : { path })).toEqual(profile);
   });
 });

@@ -6,11 +6,13 @@
 // The instance is the app's real config with only `database` swapped for a
 // suite-scoped prefix.
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { betterAuth } from "better-auth";
-import { handleOAuthUserInfo } from "better-auth/oauth2";
+import { createAuthEndpoint } from "better-auth/api";
+import { handleOAuthUserInfo, linkOAuthAccount } from "better-auth/oauth2";
 import { authOptions } from "@/lib/auth";
 import * as keys from "@/lib/auth-store/keys";
+import { LINK_AT_KEY, LINK_USER_PREFIX, linkKey } from "@/lib/github-link";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { upstashPipeline as pipeline } from "@/lib/upstash";
 import { freshId, liveConfigured, liveKey } from "./live-redis";
@@ -40,10 +42,43 @@ vi.hoisted(() => {
 
 type User = { id: string; email: string; login?: string };
 
+type LinkInput = { userId: string; kitEmail: string; accountId: string; login: string; ghEmail: string };
+type LinkResult = { linked: boolean; error?: { code: string } };
+
+// The link half of GitHub's callback, mounted at the callback's own route so
+// the user-update hooks see the endpoint context a real link runs under.
+// Test-only: the token exchange in front of it needs GitHub.
+const linkProbe = {
+  id: "link-probe",
+  endpoints: {
+    linkProbe: createAuthEndpoint("/callback/:id", { method: "POST" }, async (c) => {
+      const b = c.body as LinkInput;
+      return c.json(
+        await linkOAuthAccount(c, {
+          link: { userId: b.userId, email: b.kitEmail },
+          userInfo: {
+            id: b.accountId,
+            email: b.ghEmail,
+            emailVerified: true,
+            name: "GitHub Name",
+            image: "https://avatars.example.test/gh.png",
+            login: b.login,
+          } as Parameters<typeof linkOAuthAccount>[1]["userInfo"],
+          account: { providerId: "github", accountId: b.accountId },
+          profile: {},
+        }),
+      );
+    }),
+  },
+};
+
 async function build() {
   const prefix = liveKey("auth-better-auth", freshId("p"));
-  const instance = betterAuth({ ...authOptions, database: redisAdapter({ prefix }) });
-  return { prefix, ctx: await instance.$context };
+  const instance = betterAuth({ ...authOptions, database: redisAdapter({ prefix }), plugins: [linkProbe] });
+  // The probe declares no body schema, so its typed input is `undefined`.
+  const probe = instance.api.linkProbe as unknown as (input: { body: LinkInput }) => Promise<LinkResult>;
+  const link = (body: LinkInput) => probe({ body });
+  return { prefix, ctx: await instance.$context, link };
 }
 
 describe.skipIf(!liveConfigured)("better-auth over the Redis store against a live SRH proxy", () => {
@@ -257,5 +292,87 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
     expect(retry.error).toBeNull();
     expect(retry.data?.user.email).toBe(email);
     expect((await ia.findAccountByKey({ providerId: "github", accountId: "2001" }))?.userId).toBe(retry.data?.user.id);
+  });
+
+  describe("linking GitHub to a signed-in player", () => {
+    // linkOnUserWrite writes the real ctf:link:* keys, so every login here is
+    // fresh and every key is removed afterwards.
+    const written: string[][] = [];
+    const freshLogin = () => `octo-${freshId("l").toLowerCase().replace(/[^a-z0-9-]/g, "")}`;
+    async function kitUser(ia: Awaited<ReturnType<typeof build>>["ctx"]["internalAdapter"], tag: string) {
+      const email = `${tag}-${freshId("u")}@demo.invalid`.toLowerCase();
+      const user = await ia.createUser({ name: `Kit ${tag}`, email, emailVerified: true, image: "https://kit.example.test/me.png" }, { method: "admin" });
+      return { ...user, email };
+    }
+    async function linkKeys(userId: string, login: string) {
+      written.push(["DEL", linkKey(login), `${LINK_USER_PREFIX}${userId}`], ["HDEL", LINK_AT_KEY, userId]);
+      return {
+        owner: await redis(["GET", linkKey(login)]),
+        at: await redis(["HGET", LINK_AT_KEY, userId]),
+      };
+    }
+    afterAll(async () => {
+      for (const cmd of written) await redis(cmd);
+    });
+
+    it("links an account whose email differs, records the link, and keeps the kit name and avatar", async () => {
+      const { ctx, link } = await build();
+      const ia = ctx.internalAdapter;
+      const u1 = await kitUser(ia, "u1");
+      const login = freshLogin();
+
+      const res = await link({ userId: u1.id, kitEmail: u1.email, accountId: "gh-1", login, ghEmail: "octo@github.example.test" });
+
+      expect(res).toEqual({ linked: true });
+      expect((await ia.findAccountByKey({ providerId: "github", accountId: "gh-1" }))?.userId).toBe(u1.id);
+      const k = await linkKeys(u1.id, login);
+      expect(k.owner).toBe(u1.id);
+      expect(Number(k.at)).toBeGreaterThan(0);
+      const after = (await ia.findUserById(u1.id)) as (User & { name: string; image: string }) | null;
+      expect(after).toMatchObject({ name: "Kit u1", image: "https://kit.example.test/me.png", email: u1.email, login });
+    });
+
+    it("refuses a GitHub account another player has linked and moves no link key", async () => {
+      const { ctx, link } = await build();
+      const ia = ctx.internalAdapter;
+      const u1 = await kitUser(ia, "first");
+      const u2 = await kitUser(ia, "second");
+      const login = freshLogin();
+      expect((await link({ userId: u1.id, kitEmail: u1.email, accountId: "gh-2", login, ghEmail: "a@github.example.test" })).linked).toBe(true);
+      const before = await linkKeys(u1.id, login);
+
+      const res = await link({ userId: u2.id, kitEmail: u2.email, accountId: "gh-2", login, ghEmail: "a@github.example.test" });
+
+      expect(res).toEqual({ linked: false, error: { code: "account_already_linked_to_different_user" } });
+      expect(await linkKeys(u1.id, login)).toEqual(before);
+      expect(await linkKeys(u2.id, login)).toEqual({ owner: u1.id, at: null });
+      expect(await redis(["GET", `${LINK_USER_PREFIX}${u2.id}`])).toBeNull();
+      expect((await ia.findAccountByKey({ providerId: "github", accountId: "gh-2" }))?.userId).toBe(u1.id);
+    });
+
+    it("re-runs the link write when the same player links the same GitHub account again", async () => {
+      // A first link whose login key another player held: better-auth keeps
+      // the account row, the link write is refused. Once the key is free, the
+      // same link again re-runs the user update and records it.
+      const { ctx, link } = await build();
+      const ia = ctx.internalAdapter;
+      const u1 = await kitUser(ia, "retry");
+      const login = freshLogin();
+      const squatter = "00000000-0000-4000-8000-000000000000";
+      written.push(["DEL", linkKey(login)]);
+      await redis(["SET", linkKey(login), squatter]);
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const input = { userId: u1.id, kitEmail: u1.email, accountId: "gh-3", login, ghEmail: "r@github.example.test" };
+
+      expect(await link(input)).toEqual({ linked: true });
+      expect(await linkKeys(u1.id, login)).toEqual({ owner: squatter, at: null });
+      expect(errors.mock.calls.map((c) => String(c[0]))).toEqual(["[auth] github login already linked to another player"]);
+      errors.mockRestore();
+
+      await redis(["DEL", linkKey(login)]);
+      expect(await link(input)).toEqual({ linked: true });
+      expect((await linkKeys(u1.id, login)).owner).toBe(u1.id);
+      expect((await ia.findAccounts(u1.id)).map((a) => a.accountId)).toEqual(["gh-3"]);
+    });
   });
 });

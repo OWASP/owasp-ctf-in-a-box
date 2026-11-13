@@ -92,8 +92,10 @@ export function createMemoryStore({ teams = [] } = {}) {
   const deleted = new Map(); // test seam mirroring ctf:deleted:<player> (cutoff ms)
   return {
     async recordSolves(target, player, ids, at) {
-      const cut = deleted.get(player);
-      if (cut !== undefined && Date.parse(at) < cut) return "deleted";
+      // As the script: a cutoff that is not a number refuses every score.
+      const raw = deleted.get(player);
+      const cut = raw === undefined ? undefined : Number(raw);
+      if (cut !== undefined && (!Number.isFinite(cut) || Date.parse(at) < cut)) return "deleted";
       let hash = hashes.get(solvesKey(target));
       if (!hash) hashes.set(solvesKey(target), (hash = new Map()));
       for (const id of ids) {

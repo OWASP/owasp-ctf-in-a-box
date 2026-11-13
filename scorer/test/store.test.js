@@ -75,6 +75,13 @@ test("memory store: a score timed before the player's deletion cutoff records no
   assert.deepEqual(await store.getSolves("dvwa"), { "octocat:xss-dom": T1, "hubot:sqli-low": T0 });
 });
 
+test("memory store: a cutoff that is not a number refuses every score, as the Redis script does", async () => {
+  const store = createMemoryStore();
+  store.__markDeleted("octocat", "garbage");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], "2099-01-01T00:00:00.000Z"), "deleted");
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
 test("redis store: HGETALL parses the flat field/value array", async (t) => {
   const bodies = [];
   const realFetch = globalThis.fetch;

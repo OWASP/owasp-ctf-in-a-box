@@ -282,3 +282,25 @@ test("resolveGithubLogin throws on a per-command error", async () => {
   const r = makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, fetchImpl, () => {});
   await assert.rejects(r.resolveGithubLogin("octocat"), /NOAUTH/);
 });
+
+test("holdScore stores the entry under the lowercased login and indexes the author", async () => {
+  const sent = [];
+  const fetchImpl = async (_u, init) => {
+    const cmds = JSON.parse(init.body);
+    sent.push(...cmds);
+    return new Response(JSON.stringify(cmds.map(() => ({ result: 1 }))), { status: 200 });
+  };
+  const r = makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, fetchImpl, () => {});
+  const entry = { target: "dvwa", solved: ["sqli-low"], pr: 7, sha: "abc", at: "2026-08-13T11:00:00Z", repo: "DVWA" };
+  await r.holdScore("OctoCat", "1@2026-08-13T11:00:00Z", entry);
+  assert.deepEqual(sent, [
+    ["HSET", "ctf:sd:held:by:octocat", "1@2026-08-13T11:00:00Z", JSON.stringify(entry)],
+    ["SADD", "ctf:sd:held:authors", "octocat"],
+  ]);
+});
+
+test("holdScore throws on a per-command error", async () => {
+  const fetchImpl = async () => new Response(JSON.stringify([{ error: "NOAUTH nope" }, { result: 1 }]), { status: 200 });
+  const r = makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, fetchImpl, () => {});
+  await assert.rejects(r.holdScore("octocat", "f", {}), /NOAUTH/);
+});

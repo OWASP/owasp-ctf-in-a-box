@@ -15,6 +15,8 @@ const SYNC_STATUS_KEY = "ctf:sync:status";
 // `resetAt` epoch instead.
 export const SYNC_STATE_KEY = "ctf:sync:state";
 const LINK_GITHUB_PREFIX = "ctf:link:github:";
+const HELD_BY_PREFIX = "ctf:sd:held:by:";
+const HELD_AUTHORS_KEY = "ctf:sd:held:authors";
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 
 // Generic scheduled window: true when `now` is before start / after end.
@@ -202,6 +204,19 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
     async resolveGithubLogin(login) {
       const [id] = await pipeline([["GET", `${LINK_GITHUB_PREFIX}${String(login).toLowerCase()}`]]);
       return typeof id === "string" && id !== "" ? id : null;
+    },
+    // Parks a score whose PR author has no linked kit account, so linking later
+    // can release it. `field` is the comment revision key, which makes a retried
+    // hold idempotent. One pipeline: the entry and the author index never
+    // diverge. Throws on any error, so the caller retries the comment.
+    // Key layout mirrors apps/web: ctf:sd:held:by:<lowercased login> (hash),
+    // ctf:sd:held:authors (set of lowercased logins).
+    async holdScore(login, field, entry) {
+      const l = String(login).toLowerCase();
+      await pipeline([
+        ["HSET", `${HELD_BY_PREFIX}${l}`, field, JSON.stringify(entry)],
+        ["SADD", HELD_AUTHORS_KEY, l],
+      ]);
     },
     async writeStatus(s) {
       try {

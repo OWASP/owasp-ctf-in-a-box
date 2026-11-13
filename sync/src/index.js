@@ -33,12 +33,13 @@ async function writeStatusSafely(redis, log, status) {
  *     distinguishing them is what would make a "dropped" figure permanently
  *     nonzero — and a counter that is always nonzero is a counter nobody
  *     reads.
- *   - `invalid` / `rejected` / `unlinked` are NOT routine. Each one is a score
- *     that existed on a PR and will never reach the leaderboard without a
- *     human. These are what `state.dropped` counts and what /admin shows.
- *     `unlinked` is a PR author whose GitHub login no player has claimed
- *     (`ctf:link:github:<login>`); the drop names the repo and PR, never the
- *     login.
+ *   - `invalid` / `rejected` are NOT routine. Each one is a score that
+ *     existed on a PR and will never reach the leaderboard without a human.
+ *     These are what `state.dropped` counts and what /admin shows.
+ *   - `held` is a score whose PR author's GitHub login no player has claimed
+ *     (`ctf:link:github:<login>`). It is parked in Redis for release when the
+ *     author links, so it is not lost and not counted as dropped. The log
+ *     names the repo and PR, never the login or comment id.
  *   - `retried` is a submission that failed transiently and was deliberately
  *     un-marked; the next tick re-presents it. Worth logging, not worth
  *     counting as lost.
@@ -51,7 +52,7 @@ async function writeStatusSafely(redis, log, status) {
  *     marked seen), and reported once, so the first poll after a reset says
  *     how much of the past it declined to re-bank.
  */
-const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, unlinked: 0, retried: 0, preReset: 0, refused: 0 });
+const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, held: 0, retried: 0, preReset: 0, refused: 0 });
 
 /** The master-reset epoch as milliseconds, or null when there is none. The
  *  admin panel writes it as epoch milliseconds (`resetEvent`); a state file
@@ -70,7 +71,7 @@ function resetEpochMs(resetAt) {
  *  re-read), so a quiet poller stays quiet and any line it does print means
  *  something. */
 function summarize(repo, tally) {
-  if (tally.noMarker + tally.invalid + tally.rejected + tally.unlinked + tally.retried + tally.preReset + tally.refused === 0) return null;
+  if (tally.noMarker + tally.invalid + tally.rejected + tally.held + tally.retried + tally.preReset + tally.refused === 0) return null;
   const parts = Object.entries(tally)
     .filter(([, n]) => n > 0)
     .map(([name, n]) => `${n} ${name}`);
@@ -199,8 +200,11 @@ export async function tick(cfg, state, deps = {}) {
         // a transient submit failure: the next poll retries it.
         const player = await redis.resolveGithubLogin(payload.author);
         if (!player) {
-          tally.unlinked++;
-          drop(`submit ${repo}#${payload.pr}: unlinked (no player claimed the PR author), dropped`);
+          await redis.holdScore(payload.author, seenKey(c.id, c.updated_at), {
+            target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at: c.updated_at, repo,
+          });
+          tally.held++;
+          log(`submit ${repo}#${payload.pr}: held (PR author not linked yet)`);
           continue;
         }
         const { author: _login, ...rest } = payload;

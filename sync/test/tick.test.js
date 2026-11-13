@@ -383,19 +383,52 @@ test("a mixed-case author resolves through the lowercased link key", async () =>
   assert.equal("author" in posts[0], false, "the login is not sent to the scorer");
 });
 
-test("an unlinked author is dropped as `unlinked` without naming the login", async () => {
+test("an unlinked author's score is held, not dropped, without naming the login or comment id", async () => {
   const posts = [];
   const logs = [];
-  const body = `<!-- ctf-score: {"author":"stranger","target":"dvwa","solved":["sqli-low"],"pr":9,"sha":"abc"} -->`;
-  const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, posts);
+  const held = [];
+  const redis = { ...redisStub, holdScore: async (...a) => { held.push(a); } };
+  const body = `<!-- ctf-score: {"author":"Stranger","target":"dvwa","solved":["sqli-low"],"pr":9,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(4242, body)]), { status: 200, headers: {} }), 202, posts);
   const state = { repos: {} };
-  await tick(CFG, state, { fetchImpl: f, log: (m) => logs.push(m) });
+  await tick(CFG, state, { fetchImpl: f, log: (m) => logs.push(m), redis });
   assert.equal(posts.length, 0);
-  assert.equal(state.dropped, 1);
-  assert.match(state.lastDrop, /DVWA#9/);
-  assert.match(state.lastDrop, /unlinked/);
-  assert.equal(logs.join("\n").includes("stranger"), false);
-  assert.equal(JSON.stringify(state).includes("stranger"), false);
+  assert.deepEqual(held, [["Stranger", "4242@2026-08-13T11:00:00Z", { target: "dvwa", solved: ["sqli-low"], pr: 9, sha: "abc", at: "2026-08-13T11:00:00Z", repo: "DVWA" }]]);
+  assert.equal(state.dropped ?? 0, 0);
+  assert.equal(state.lastDrop ?? null, null);
+  const text = logs.join("\n");
+  assert.match(text, /1 held/);
+  assert.equal(/stranger/i.test(text), false);
+  assert.equal(text.includes("4242"), false);
+});
+
+test("a held score stays seen: the next tick does not hold it again", async () => {
+  const held = [];
+  const redis = { ...redisStub, holdScore: async (...a) => { held.push(a); } };
+  const body = `<!-- ctf-score: {"author":"stranger","target":"dvwa","solved":["sqli-low"],"pr":9,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, []);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(held.length, 1);
+});
+
+test("holdScore throwing un-marks the revision, stops the cursor and logs retried", async () => {
+  let fail = true;
+  const held = [];
+  const redis = { ...redisStub, holdScore: async (...a) => { if (fail) throw new Error("upstash: NOAUTH"); held.push(a); } };
+  const logs = [];
+  const body = `<!-- ctf-score: {"author":"stranger","target":"dvwa","solved":["sqli-low"],"pr":9,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, []);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: (m) => logs.push(m), redis });
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), false);
+  assert.equal(state.repos.DVWA.since, "2026-08-13T11:00:00Z");
+  assert.equal(state.repos.DVWA.etag, null);
+  assert.match(logs.join("\n"), /1 retried/);
+  fail = false;
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(held.length, 1);
 });
 
 test("a resolver error leaves the comment unseen so the next poll retries it", async () => {
@@ -411,17 +444,6 @@ test("a resolver error leaves the comment unseen so the next poll retries it", a
   await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
   assert.equal(posts.length, 1);
   assert.equal(posts[0].player, LINKS.octocat);
-});
-
-test("an unlinked author's comment stays seen: the next tick does not retry or re-count it", async () => {
-  const posts = [];
-  const body = `<!-- ctf-score: {"author":"stranger","target":"dvwa","solved":["sqli-low"],"pr":9,"sha":"abc"} -->`;
-  const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, posts);
-  const state = { repos: {} };
-  await tick(CFG, state, { fetchImpl: f, log: () => {} });
-  await tick(CFG, state, { fetchImpl: f, log: () => {} });
-  assert.equal(posts.length, 0);
-  assert.equal(state.dropped, 1);
 });
 
 test("a tick with no Redis client refuses rather than treating authors as unlinked", async () => {

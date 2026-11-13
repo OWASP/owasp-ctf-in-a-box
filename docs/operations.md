@@ -348,9 +348,10 @@ The panel offers:
   together; contact and Discord never travel in one.
 - **Sync** (Overview tab, shown only while Secure Development is present) —
   the sync poller's heartbeat as one line (last poll time, comments ingested,
-  comments **dropped**, running or paused; a score held for an unlinked PR author is not a drop) that expands to the full
+  comments **dropped**, running or paused) that expands to the full
   breakdown: repos polled, whether sync is paused, the last drop and the
-  last error.
+  last error. A score held for an unlinked PR author is not a drop and does
+  not count here.
 
   **Read Ingested and Dropped together.** Ingested is points that reached the
   leaderboard; Dropped is points that reached a contestant's PR and stopped

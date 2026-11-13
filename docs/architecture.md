@@ -1109,8 +1109,8 @@ floor that keeps the rate inside 0..1.
 
   `ingested` and `dropped` are a **pair**, and /admin shows them side by side:
   points that reached the leaderboard, and points that reached a PR and
-  stopped there (a held score is waiting, not stopped). A drop is a comment the poller consumed and could not turn
-  into a score — a scorer `4xx`, or a `ctf-score:` marker present but
+  stopped there. A held score is waiting, not stopped. A drop is a comment
+  the poller consumed and could not turn into a score — a scorer `4xx`, or a `ctf-score:` marker present but
   unreadable. Both are cumulative and neither is self-clearing, unlike
   `lastError`, which describes only the tick that wrote it: a dropped score is
   still missing after the poller recovers, so the next quiet tick must not

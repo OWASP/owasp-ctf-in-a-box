@@ -377,10 +377,13 @@ suggestions.
   it, and names are resolved from the auth store at display time. The GitHub
   login exists only to link a PR to a player: the app writes
   `ctf:link:github:<lowercased login>` (player id) and
-  `ctf:link:user:<id>` (login) at every GitHub sign-in, sync resolves the
-  score marker's `author` through the first, and an unlinked author's
-  score is held (`ctf:sd:held:*`) until they link. GitHub logins are unique only case-insensitively, so the link key
-  and the `ADMIN_LOGINS` check lowercase both sides. Never key a record on a
+  `ctf:link:user:<id>` (login) when a player signs in with GitHub or, with
+  Secure Development on, links GitHub from their profile (one GitHub account
+  per kit account, no unlink), sync resolves the score marker's `author`
+  through the first, and an unlinked author's score is held
+  (`ctf:sd:held:*`) until they link. GitHub logins are unique only
+  case-insensitively, so the link key and the `ADMIN_LOGINS` check lowercase
+  both sides. Never key a record on a
   login, and never join across the two keyings (#216 was a verbatim login
   join that made hints free; #742 removed the class). Sync needs Redis for
   the link lookup and refuses to start without it.

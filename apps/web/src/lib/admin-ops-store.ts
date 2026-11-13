@@ -578,8 +578,8 @@ export const DELETED_PREFIX = "ctf:deleted:";
  *
  * The deletion cutoff (`DELETED_PREFIX`) is written before the progress reset,
  * so a score already on its way is either cleared by the reset or refused by
- * the scorer. It is removed again only when the delete fails with the
- * player's record still in place.
+ * the scorer. It goes back to what it was (none, or an earlier delete's) only
+ * when the delete fails with the player's record still in place.
  *
  * A captain is a deliberate refusal here — see `forceTransferCaptain`.
  */
@@ -607,20 +607,27 @@ export async function deleteUser(
   await beginScoreLowering();
   try {
     const cutoff = `${DELETED_PREFIX}${player}`;
-    // Before the reset, and checked: without the cutoff, a score in flight
-    // can rewrite a solve the reset just cleared.
-    assertPipelineOk(await upstashPipeline([["SET", cutoff, String(Date.now())]]), "deletion cutoff");
+    // A player deleted before, back and deleted again, already has a cutoff;
+    // a failed delete puts that one back rather than removing it, or the
+    // first delete's stale scores could land.
+    const [prevReply] = await upstashPipeline([["GET", cutoff]]);
+    if (prevReply?.error) throw new Error(`upstash: command failed (read deletion cutoff): ${prevReply.error}`);
+    const prev = typeof prevReply?.result === "string" ? prevReply.result : null;
     const leftTeam = detail.team?.slug ?? null;
     // Whether the `ctf:user:<id>` record is gone decides the cutoff's fate
     // when something fails: "kept" means the player stays, so their unscored
-    // comments must still score (remove it); "gone" means the player is
+    // comments must still score (the cutoff goes back to what it was, which
+    // covers a cutoff write whose reply was lost); "gone" means the player is
     // deleted even if other cleanup failed, and "unknown" (the cleanup
     // pipeline itself failed, so it may have run) is treated the same way:
-    // the cutoff stays, and refusing an old score beats restoring a cleared
-    // solve.
+    // the new cutoff stays, and refusing an old score beats restoring a
+    // cleared solve.
     let record: "kept" | "gone" | "unknown" = "kept";
     let reset: ResetScope;
     try {
+      // Before the reset, and checked: without the cutoff, a score in flight
+      // can rewrite a solve the reset just cleared.
+      assertPipelineOk(await upstashPipeline([["SET", cutoff, String(Date.now())]]), "deletion cutoff");
       reset = await resetUserProgress(player, actor);
       const cmds: (string | number)[][] = [];
       if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
@@ -638,7 +645,8 @@ export async function deleteUser(
     } catch (err) {
       if (record === "kept") {
         try {
-          assertPipelineOk(await upstashPipeline([["DEL", cutoff]]), "clear deletion cutoff");
+          const restore = prev === null ? ["DEL", cutoff] : ["SET", cutoff, prev];
+          assertPipelineOk(await upstashPipeline([restore]), "restore deletion cutoff");
         } catch (clearErr) {
           console.error("[admin-ops] deletion cutoff left after a failed delete", errorLabel(clearErr));
         }

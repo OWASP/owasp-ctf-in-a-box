@@ -211,7 +211,8 @@ state; everything else that touches scores goes through it.
    delete therefore cannot restore a cleared solve, while a later comment
    from the same account (which survives a delete) scores as usual. A
    delete that fails with the player's `ctf:user:<id>` record still in place
-   removes the cutoff again. The scorer then writes the score
+   puts the cutoff back to what it was (none, or an earlier delete's). The
+   scorer then writes the score
    to Redis (via `srh`), timed `at`, as a monotonic, idempotent-on-replay
    update — the write model is described in
    [docs/decisions.md #5](decisions.md#adr-5-single-score-writer-monotonic-writes-at-least-once-delivery).

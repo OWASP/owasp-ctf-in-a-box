@@ -38,7 +38,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   anything, and the scorer reads it in the same script that writes a solve:
   a score timed before it is refused for good (`422`, `player-deleted`),
   while a later comment from the same account scores as usual. A delete
-  that fails with the player's record still in place removes it again.
+  that fails with the player's record still in place puts it back to what it
+  was (none, or an earlier delete's).
 - **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
   the linked-account write failed after the user row was written, that row
   stayed behind and every later sign-in answered `account not linked`. The

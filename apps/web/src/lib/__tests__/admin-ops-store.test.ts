@@ -639,6 +639,7 @@ describe("deleteUser", () => {
     );
     mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "a11ce000-0000-4000-8000-00000000000c"));
     mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(null)); // previous cutoff
     mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
     mockNoSecureDevKeys(); // the reset's own sweep
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
@@ -685,6 +686,7 @@ describe("deleteUser: held Secure Development scores", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(null)); // previous cutoff
     mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
     mockNoSecureDevKeys();
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
@@ -734,6 +736,7 @@ describe("deleteUser: the deletion cutoff", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(null)); // previous cutoff
     mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
     mockNoSecureDevKeys();
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
@@ -760,17 +763,59 @@ describe("deleteUser: the deletion cutoff", () => {
     expect(allCommands()).not.toContainEqual(clear);
   });
 
-  it("a refused cutoff aborts the delete before the reset", async () => {
+  it("a refused cutoff write aborts the delete before the reset, and is undone", async () => {
     linkDeps.getGithubLink.mockResolvedValueOnce(null);
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(null)); // previous cutoff
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // cutoff DEL
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
-    expect(allCommands().some((c) => c[0] === "DEL" || c[0] === "HDEL")).toBe(false);
+    expect(mocks.upstashPipeline.mock.calls.at(-1)?.[0]).toEqual([clear]);
+    expect(allCommands().some((c) => c[0] === "HDEL" || (c[0] === "DEL" && c[1] !== `ctf:deleted:${OCTO}`))).toBe(false);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
     expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+
+  it("a cutoff write whose reply was lost (it may have applied) is undone too", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce(null);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(null)); // previous cutoff
+    mocks.upstashPipeline.mockRejectedValueOnce(new Error("fetch failed"));
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // cutoff DEL
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/fetch failed/);
+    expect(mocks.upstashPipeline.mock.calls.at(-1)?.[0]).toEqual([clear]);
+  });
+
+  it("a failed repeat delete puts the earlier delete's cutoff back instead of removing it", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce(null);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("1794000000000")); // previous cutoff
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // the reset's first SCAN
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // restore
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(mocks.upstashPipeline.mock.calls.at(-1)?.[0]).toEqual([["SET", `ctf:deleted:${OCTO}`, "1794000000000"]]);
+    expect(allCommands()).not.toContainEqual(clear);
+  });
+
+  it("an unreadable previous cutoff aborts before anything is written", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce(null);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]); // previous cutoff
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/NOAUTH/);
+    expect(allCommands().some((c) => ["SET", "DEL", "HDEL", "SREM"].includes(String(c[0])))).toBe(false);
   });
 
   it("a reset that fails (record still there) removes the cutoff, so the player's scores still score", async () => {
@@ -779,6 +824,7 @@ describe("deleteUser: the deletion cutoff", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(null)); // previous cutoff
     mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // the reset's first SCAN
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // cutoff DEL
@@ -793,6 +839,7 @@ describe("deleteUser: the deletion cutoff", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(null)); // previous cutoff
     mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // the reset's first SCAN
     mocks.upstashPipeline.mockRejectedValueOnce(decoratedError("upstash down")); // cutoff DEL
@@ -832,6 +879,7 @@ describe("deleteUser: a failed tail write is not a delete", () => {
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
     mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(null)); // previous cutoff
     mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // deletion cutoff
     mockNoSecureDevKeys();
     mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);

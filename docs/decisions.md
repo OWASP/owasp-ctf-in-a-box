@@ -4319,7 +4319,9 @@ the `422` is `refused`.
   `player-deleted`, which ADR 38 counts as `refused`, like ADR 67's time
   refusals. A score timed after it is the same account playing again (the
   account survives a delete) and counts. A delete that fails with the
-  player's `ctf:user:<id>` record still in place removes the cutoff, so the
+  player's `ctf:user:<id>` record still in place (including a cutoff write
+  whose reply was lost) puts the cutoff back to what it was, none or an
+  earlier delete's, so the
   player who stays loses nothing; once the record is gone, or when the
   cleanup's outcome is unknown, the cutoff stays.
 

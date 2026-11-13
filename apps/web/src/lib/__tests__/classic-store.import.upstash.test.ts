@@ -51,6 +51,7 @@ import { ClassicValidationError, exportBundle, importBundle, listCategories, lis
 import { exportAttachmentFiles, importClassicBundle } from "@/lib/attachment-files-store";
 import { importBundleResponse } from "@/app/api/admin/classic/import-response";
 import { assertPipelineOk, upstashPipeline } from "@/lib/upstash";
+import { actor } from "./audit-actor";
 
 const keys = [CLASSIC_CATEGORIES_KEY, CLASSIC_CHALLENGES_KEY, CLASSIC_FLAG_KEY, CLASSIC_FLAGNORM_KEY,
   CLASSIC_HINTS_KEY, CLASSIC_STORIES_KEY, ATTACHMENTS_META_KEY, ATTACHMENTS_INDEX_KEY,
@@ -173,7 +174,7 @@ describe.skipIf(!liveConfigured)("Classic bundle category union against real Red
     const exported = await roundTrip();
     const files = await exportAttachmentFiles();
     expect(files).toEqual([{ item: "existing-challenge", sha256: sha, bytes: bytes.toString("base64") }]);
-    const response = await importBundleResponse(serializeBundle(incoming), "organizer");
+    const response = await importBundleResponse(serializeBundle(incoming), actor("organizer"));
     expect(await snapshot()).toEqual(before);
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ field: "categories", error: expect.stringMatching(/categories/) });

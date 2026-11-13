@@ -109,6 +109,7 @@ import {
   RENAME_CATEGORY_KEYS,
   STORIES_KEYS,
 } from "@/app/api/admin/classic/route";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const adminReq = (method: "GET" | "POST" | "DELETE", body?: unknown) =>
   new Request("http://x/api/admin/classic", {
@@ -130,7 +131,7 @@ const validPayload = { ...CHALLENGE, flag: "CTF{flag}" };
 const ADMIN_ROW = { challenge: CHALLENGE, flag: "CTF{flag}", hint: null };
 
 function allowAdmin() {
-  requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
 }
 
 function denyAdmin() {
@@ -372,7 +373,7 @@ describe("POST /api/admin/classic — challenge upsert", () => {
     expect(upsertChallenge).toHaveBeenCalledWith(CHALLENGE, "CTF{flag}", undefined);
     expect(await res.json()).toEqual({ challenge: CHALLENGE, flag: "CTF{flag}", hint: null });
 
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-upsert", { challengeId: "c-1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "classic-upsert", { challengeId: "c-1" });
   });
 });
 
@@ -404,7 +405,7 @@ describe("POST /api/admin/classic — categories", () => {
     expect(res.status).toBe(200);
     expect(setCategories).toHaveBeenCalledWith(["Web", "Crypto"]);
     expect(await res.json()).toEqual({ categories: ["Web", "Crypto"] });
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-categories", { count: 2 });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "classic-categories", { count: 2 });
   });
 });
 
@@ -492,7 +493,7 @@ describe("POST /api/admin/classic — import", () => {
   it("imports and writes an audit line recording the counts", async () => {
     importBundle.mockResolvedValue({ created: 2, updated: 0, categories: 2 });
     await POST(adminReq("POST", { import: JSON.stringify(validBundle) }));
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-import", { created: 2, updated: 0, categories: 2 });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "classic-import", { created: 2, updated: 0, categories: 2 });
   });
 
   // A v3 bundle's files are checked server-side, through this door too:
@@ -531,7 +532,7 @@ describe("POST /api/admin/classic — stories", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ stories: [STORY] });
     expect(setStories).toHaveBeenCalledWith([STORY]);
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-stories", { count: 1 });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "classic-stories", { count: 1 });
   });
 
   it("400s a step naming a challenge that does not exist, without writing", async () => {
@@ -582,7 +583,7 @@ describe("DELETE /api/admin/classic", () => {
     const res = await DELETE(adminReq("DELETE", { id: "c-1" }));
     expect(res.status).toBe(200);
     expect(deleteChallenge).toHaveBeenCalledWith("c-1");
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-delete", { challengeId: "c-1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "classic-delete", { challengeId: "c-1" });
   });
 
   it("400s with the message for a ClassicValidationError from the store", async () => {
@@ -619,7 +620,7 @@ describe("POST /api/admin/classic — rename a category", () => {
   it("audits the rename with both names and the count carried across", async () => {
     renameCategory.mockResolvedValue({ categories: ["Web"], moved: 2 });
     await POST(adminReq("POST", { renameCategory: { from: "Webb", to: "Web" } }));
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "classic-category-rename", {
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "classic-category-rename", {
       from: "Webb",
       to: "Web",
       moved: 2,

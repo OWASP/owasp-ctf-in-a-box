@@ -11,6 +11,7 @@ import { getLaunchAccess } from "@/lib/launch";
 // than re-implementing any of its verification.
 import { POST as eventPost } from "@/app/api/ai/event/route";
 import { RATE_LIMITS, consumeRateLimit } from "@/lib/rate-limit-store";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
  * The organizer's "Send test" button for one ai-module challenge (spec §8.2).
@@ -140,7 +141,7 @@ export async function POST(request: Request) {
   const eventResponse = await eventPost(eventRequest);
   const eventJson = await eventResponse.json().catch(() => null);
 
-  await writeAdminAudit(gate.login, "ai-send-test", { id: challengeId });
+  await writeAdminAudit(auditActor(gate.player), "ai-send-test", { id: challengeId });
 
   return NextResponse.json({ status: eventResponse.status, body: eventJson });
 }

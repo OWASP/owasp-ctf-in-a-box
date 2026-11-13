@@ -951,6 +951,9 @@ readable and writable while the stack is running, without a restart:
   of every settings change, written atomically with the change itself (one
   Lua script, so a change can never land without its audit line). Support
   actions (below) append here too, naming both the actor and the target.
+  Every entry names its actor by player id (`by`) with their display name at
+  the time (`name`) beside it, never a GitHub login; a support action names
+  its target player by id (`player`).
 
 - **`ctf:activity:log`** (issue #212) — a capped list (`ACTIVITY_LOG_MAX` =
   5000, `LPUSH`+`LTRIM` in one pipeline, so every write carries its own trim)

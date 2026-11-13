@@ -6,10 +6,14 @@ const { upstash, getSession } = vi.hoisted(() => ({
   upstash: { upstashPipeline: vi.fn() },
   getSession: vi.fn(),
 }));
-vi.mock("@/lib/upstash", () => upstash);
+// The real SCAN-page parser: findPlayers' HSCAN replies go through it.
+vi.mock("@/lib/upstash", async (importOriginal) => ({
+  parseScanPage: (await importOriginal<typeof import("@/lib/upstash")>()).parseScanPage,
+  upstashPipeline: upstash.upstashPipeline,
+}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 
-import { PLAYER_ID_RE, displayNameOf, getPlayer, getPlayerProfiles } from "@/lib/player";
+import { PLAYER_ID_RE, displayNameOf, findPlayers, getPlayer, getPlayerProfiles } from "@/lib/player";
 
 const ID = "3f2b8c1e-9a4d-4e6f-8b7a-0c1d2e3f4a5b";
 
@@ -72,5 +76,49 @@ describe("getPlayerProfiles", () => {
   it("throws when the command carries an error", async () => {
     upstash.upstashPipeline.mockResolvedValue([{ error: "WRONGTYPE" }]);
     await expect(getPlayerProfiles(["a"])).rejects.toThrow(/WRONGTYPE/);
+  });
+});
+
+describe("findPlayers", () => {
+  const row = (id: string, parts: Record<string, unknown>) => [id, JSON.stringify({ id, image: null, ...parts })];
+  const A = "3f2b8c1e-9a4d-4e6f-8b7a-0c1d2e3f4a51";
+  const B = "3f2b8c1e-9a4d-4e6f-8b7a-0c1d2e3f4a52";
+  const C = "3f2b8c1e-9a4d-4e6f-8b7a-0c1d2e3f4a53";
+
+  it("matches the GitHub login case-insensitively, and the display name", async () => {
+    upstash.upstashPipeline.mockResolvedValueOnce([
+      { result: ["0", [...row(A, { login: "OctoCat" }), ...row(B, { login: "hubot", username: "Octavia" }), ...row(C, { login: "mona" })]] },
+    ]);
+    const found = await findPlayers("oct");
+    expect(found.map((p) => p.id)).toEqual([A, B]);
+    expect(found[0]).toEqual({ id: A, name: "OctoCat", image: null, githubLogin: "OctoCat" });
+    expect(upstash.upstashPipeline).toHaveBeenCalledWith([["HSCAN", "ctf:auth:user", "0", "COUNT", 200]]);
+  });
+
+  it("caps at limit and stops scanning once it has enough", async () => {
+    upstash.upstashPipeline.mockResolvedValueOnce([
+      { result: ["17", [...row(A, { login: "octo-a" }), ...row(B, { login: "octo-b" })]] },
+    ]);
+    const found = await findPlayers("OCTO", 1);
+    expect(found.map((p) => p.id)).toEqual([A]);
+    expect(upstash.upstashPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows the cursor until the hash is walked", async () => {
+    upstash.upstashPipeline
+      .mockResolvedValueOnce([{ result: ["9", row(A, { login: "mona" })] }])
+      .mockResolvedValueOnce([{ result: ["0", row(B, { login: "octo" })] }]);
+    expect((await findPlayers("octo")).map((p) => p.id)).toEqual([B]);
+    expect(upstash.upstashPipeline).toHaveBeenLastCalledWith([["HSCAN", "ctf:auth:user", "9", "COUNT", 200]]);
+  });
+
+  it("matches nothing for a blank query, without a Redis call", async () => {
+    expect(await findPlayers("   ")).toEqual([]);
+    expect(upstash.upstashPipeline).not.toHaveBeenCalled();
+  });
+
+  it("throws when the HSCAN carries an error", async () => {
+    upstash.upstashPipeline.mockResolvedValueOnce([{ error: "WRONGTYPE" }]);
+    await expect(findPlayers("octo")).rejects.toThrow(/WRONGTYPE/);
   });
 });

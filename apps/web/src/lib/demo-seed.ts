@@ -24,7 +24,7 @@ import { addUpload, fillMissingUpload, listAttachments } from "@/lib/attachments
 import { errorLabel } from "@/lib/error-label";
 import { beginScoreLowering, endScoreLowering } from "@/lib/leaderboard/fold-cache";
 import { defaultEnabledModules } from "@/lib/module-defaults";
-import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-audit-keys";
+import { ADMIN_AUDIT_KEY, AUDIT_CAP, type AuditActor } from "@/lib/admin-audit-keys";
 import type { AdminSettings } from "@/lib/admin-store";
 import {
   DEMO_CONTESTANTS,
@@ -294,7 +294,7 @@ async function seedDemoAttachments(): Promise<void> {
 
 export async function runDemoSeed(
   settings: AdminSettings,
-  actor: string,
+  actor: AuditActor,
 ): Promise<{ contestants: number; teams: number; solves: number; sponsors: number }> {
   const now = Date.now();
   const windowMs = 6 * 60 * 60 * 1000;
@@ -674,7 +674,8 @@ export async function runDemoSeed(
 
   const audit = JSON.stringify({
     at: new Date(now).toISOString(),
-    by: actor,
+    by: actor.id,
+    name: actor.name,
     action: "seed",
     contestants: DEMO_CONTESTANTS.length,
     teams: DEMO_TEAMS.length,
@@ -746,7 +747,7 @@ export async function runDemoSeed(
  * class seeding already carries going the other direction — not new, just
  * the inverse.
  */
-export async function clearDemoData(actor: string): Promise<{ contestants: number; teams: number; sponsors: number }> {
+export async function clearDemoData(actor: AuditActor): Promise<{ contestants: number; teams: number; sponsors: number }> {
   const now = Date.now();
   const cmds: (string | number)[][] = [];
 
@@ -799,7 +800,8 @@ export async function clearDemoData(actor: string): Promise<{ contestants: numbe
 
   const audit = JSON.stringify({
     at: new Date(now).toISOString(),
-    by: actor,
+    by: actor.id,
+    name: actor.name,
     action: "clear-demo",
     contestants: DEMO_CONTESTANTS.length,
     teams: DEMO_TEAMS.length,

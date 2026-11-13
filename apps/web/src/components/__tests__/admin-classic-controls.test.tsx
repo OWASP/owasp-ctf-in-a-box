@@ -41,6 +41,7 @@ import AdminClassicControls, {
   reorderChallenges,
   type ChallengeDraft,
 } from "@/components/admin-classic-controls";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const noop = () => {};
 
@@ -764,7 +765,7 @@ const { POST: wirePOST } = await import("@/app/api/admin/classic/route");
 
 describe("categories POST wire contract, proven against the real route", () => {
   beforeEach(() => {
-    wireRequireAdmin.mockReset().mockResolvedValue({ ok: true, login: "alice" });
+    wireRequireAdmin.mockReset().mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
     wireSetCategories.mockReset().mockImplementation(async (names: string[]) => names);
     wireWriteAdminAudit.mockReset().mockResolvedValue(undefined);
   });

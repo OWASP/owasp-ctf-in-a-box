@@ -12,6 +12,7 @@ import {
   type Sponsor,
   type SponsorInput,
 } from "@/lib/sponsors-store";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
  * Organizer authoring surface for sponsors: list (GET), create-or-update or
@@ -129,7 +130,7 @@ export async function POST(request: Request) {
     } catch (err) {
       return errorResponse(err);
     }
-    await writeAdminAudit(gate.login, "sponsors-reorder", { count: sponsors.length });
+    await writeAdminAudit(auditActor(gate.player), "sponsors-reorder", { count: sponsors.length });
     return NextResponse.json({ sponsors });
   }
 
@@ -146,7 +147,7 @@ export async function POST(request: Request) {
     return errorResponse(err);
   }
 
-  await writeAdminAudit(gate.login, "sponsors-upsert", { sponsorId: saved.id });
+  await writeAdminAudit(auditActor(gate.player), "sponsors-upsert", { sponsorId: saved.id });
   return NextResponse.json({ sponsor: saved });
 }
 
@@ -167,6 +168,6 @@ export async function DELETE(request: Request) {
     return errorResponse(err);
   }
 
-  await writeAdminAudit(gate.login, "sponsors-delete", { sponsorId: id });
+  await writeAdminAudit(auditActor(gate.player), "sponsors-delete", { sponsorId: id });
   return NextResponse.json({ ok: true });
 }

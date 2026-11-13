@@ -57,13 +57,18 @@ import { GET as userGET, POST as userPOST, DELETE as userDELETE } from "@/app/ap
 import { POST as teamPOST, DELETE as teamDELETE } from "@/app/api/admin/ops/team/route";
 import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
-const userReq = (login: string) =>
-  new Request(`http://x/api/admin/ops/user?login=${encodeURIComponent(login)}`);
+const OCTO = "0c7aca70-0000-4000-8000-00000000000a";
+const BOB = "b0b00000-0000-4000-8000-00000000000d";
+const ALICE = { id: "a11ce000-0000-4000-8000-00000000000c", name: "Alice A.", image: null, githubLogin: "alice" };
+/** The audit actor the routes hand the store: the admin's id and name, no login. */
+const ACTOR = { id: ALICE.id, name: "Alice A." };
+const userReq = (id: string) =>
+  new Request(`http://x/api/admin/ops/user?id=${encodeURIComponent(id)}`);
 const jsonReq = (url: string, method: string, body?: unknown) =>
   new Request(url, { method, body: body === undefined ? undefined : JSON.stringify(body) });
 
 const DETAIL = {
-  login: "octocat",
+  id: OCTO,
   team: null,
   quiz: { answered: 0, points: 0, attempts: 0 },
   classic: { solved: 0, points: 0, attempts: 0 },
@@ -75,36 +80,36 @@ const DETAIL = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: ALICE });
   lookupUser.mockResolvedValue(DETAIL);
   resetUserProgress.mockResolvedValue({ cleared: {}, warnings: [] });
   deleteUser.mockResolvedValue({ cleared: {}, warnings: [], leftTeam: null });
   forceRemoveFromTeam.mockResolvedValue({ ok: true });
   forceTransferCaptain.mockResolvedValue({ ok: true });
   forceDisbandTeam.mockResolvedValue({ ok: true, members: 2 });
-  forceAddToTeam.mockResolvedValue({ ok: true, login: "bob", from: null });
+  forceAddToTeam.mockResolvedValue({ ok: true, id: BOB, from: null });
 });
 
 // #597: an organizer puts a player on a team, or moves them, whatever the
 // registration state. The cap override is opt-in and only a literal true.
 describe("add-member (#597)", () => {
   it("adds through the store, with the admin as actor and the cap enforced by default", async () => {
-    const res = await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "add-member" }));
+    const res = await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "add-member" }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, login: "bob", from: null });
-    expect(forceAddToTeam).toHaveBeenCalledWith("red", "bob", "alice", { overrideCap: false });
+    expect(await res.json()).toEqual({ ok: true, id: BOB, from: null });
+    expect(forceAddToTeam).toHaveBeenCalledWith("red", BOB, ACTOR, { overrideCap: false });
   });
 
   it("passes the override only when it is literally true", async () => {
-    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "add-member", overrideCap: true }));
-    expect(forceAddToTeam).toHaveBeenLastCalledWith("red", "bob", "alice", { overrideCap: true });
-    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "add-member", overrideCap: "yes" }));
-    expect(forceAddToTeam).toHaveBeenLastCalledWith("red", "bob", "alice", { overrideCap: false });
+    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "add-member", overrideCap: true }));
+    expect(forceAddToTeam).toHaveBeenLastCalledWith("red", BOB, ACTOR, { overrideCap: true });
+    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "add-member", overrideCap: "yes" }));
+    expect(forceAddToTeam).toHaveBeenLastCalledWith("red", BOB, ACTOR, { overrideCap: false });
   });
 
   it("400s a validation error with its field", async () => {
     forceAddToTeam.mockRejectedValueOnce(new OpsValidationError("slug", '"red" is full (4 players). Tick override to add them anyway'));
-    const res = await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "add-member" }));
+    const res = await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "add-member" }));
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ field: "slug" });
   });
@@ -116,10 +121,10 @@ describe("authorization", () => {
   it("403s a non-admin on EVERY method, without touching the store", async () => {
     requireAdmin.mockResolvedValue(forbidden);
     const calls = [
-      userGET(userReq("octocat")),
-      userPOST(jsonReq("http://x/u", "POST", { login: "octocat", action: "reset" })),
-      userDELETE(jsonReq("http://x/u", "DELETE", { login: "octocat" })),
-      teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "remove-member" })),
+      userGET(userReq(OCTO)),
+      userPOST(jsonReq("http://x/u", "POST", { id: OCTO, action: "reset" })),
+      userDELETE(jsonReq("http://x/u", "DELETE", { id: OCTO })),
+      teamPOST(jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "remove-member" })),
       teamDELETE(jsonReq("http://x/t", "DELETE", { slug: "red" })),
     ];
     for (const res of await Promise.all(calls)) expect(res.status).toBe(403);
@@ -133,32 +138,32 @@ describe("authorization", () => {
 
   it("gates the READ too — a lookup is not public data", async () => {
     requireAdmin.mockResolvedValue(forbidden);
-    const res = await userGET(userReq("octocat"));
+    const res = await userGET(userReq(OCTO));
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "forbidden" });
   });
 
   it("attributes the action to the SESSION's admin, not anything in the body", async () => {
-    await userPOST(jsonReq("http://x/u", "POST", { login: "octocat", action: "reset", by: "mallory" }));
-    expect(resetUserProgress).toHaveBeenCalledWith("octocat", "alice");
+    await userPOST(jsonReq("http://x/u", "POST", { id: OCTO, action: "reset", by: "mallory" }));
+    expect(resetUserProgress).toHaveBeenCalledWith(OCTO, ACTOR);
   });
 });
 
 describe("POST /api/admin/ops/user", () => {
   it("requires an explicit action, so a bare POST cannot reset anyone", async () => {
-    const res = await userPOST(jsonReq("http://x/u", "POST", { login: "octocat" }));
+    const res = await userPOST(jsonReq("http://x/u", "POST", { id: OCTO }));
     expect(res.status).toBe(400);
     expect(resetUserProgress).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown action rather than guessing", async () => {
-    const res = await userPOST(jsonReq("http://x/u", "POST", { login: "octocat", action: "nuke" }));
+    const res = await userPOST(jsonReq("http://x/u", "POST", { id: OCTO, action: "nuke" }));
     expect(res.status).toBe(400);
     expect(resetUserProgress).not.toHaveBeenCalled();
   });
 
-  it("400s a non-string login", async () => {
-    const res = await userPOST(jsonReq("http://x/u", "POST", { login: 42, action: "reset" }));
+  it("400s a non-string id", async () => {
+    const res = await userPOST(jsonReq("http://x/u", "POST", { id: 42, action: "reset" }));
     expect(res.status).toBe(400);
     expect(resetUserProgress).not.toHaveBeenCalled();
   });
@@ -172,22 +177,22 @@ describe("POST /api/admin/ops/user", () => {
   it("passes the store's warnings through to the caller", async () => {
     // The secure-dev re-ingest caveat is the part the organizer must act on.
     resetUserProgress.mockResolvedValue({ cleared: { secureDevSolves: 3 }, warnings: ["they come back"] });
-    const res = await userPOST(jsonReq("http://x/u", "POST", { login: "octocat", action: "reset" }));
+    const res = await userPOST(jsonReq("http://x/u", "POST", { id: OCTO, action: "reset" }));
     expect(await res.json()).toMatchObject({ warnings: ["they come back"] });
   });
 });
 
 describe("DELETE /api/admin/ops/user", () => {
   it("surfaces a validation refusal as 400 with its message", async () => {
-    deleteUser.mockRejectedValue(new OpsValidationError("login", "octocat is captain of \"Red\""));
-    const res = await userDELETE(jsonReq("http://x/u", "DELETE", { login: "octocat" }));
+    deleteUser.mockRejectedValue(new OpsValidationError("id", "octocat is captain of \"Red\""));
+    const res = await userDELETE(jsonReq("http://x/u", "DELETE", { id: OCTO }));
     expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: expect.stringContaining("captain"), field: "login" });
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("captain"), field: "id" });
   });
 
   it("503s an unexpected store failure without leaking it", async () => {
     deleteUser.mockRejectedValue(new Error("redis exploded"));
-    const res = await userDELETE(jsonReq("http://x/u", "DELETE", { login: "octocat" }));
+    const res = await userDELETE(jsonReq("http://x/u", "DELETE", { id: OCTO }));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: "unavailable" });
   });
@@ -195,11 +200,11 @@ describe("DELETE /api/admin/ops/user", () => {
 
 describe("/api/admin/ops/team", () => {
   it("routes remove-member and transfer-captain to their own store calls", async () => {
-    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "remove-member" }));
-    expect(forceRemoveFromTeam).toHaveBeenCalledWith("red", "bob", "alice");
+    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "remove-member" }));
+    expect(forceRemoveFromTeam).toHaveBeenCalledWith("red", BOB, ACTOR);
 
-    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "transfer-captain" }));
-    expect(forceTransferCaptain).toHaveBeenCalledWith("red", "bob", "alice");
+    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "transfer-captain" }));
+    expect(forceTransferCaptain).toHaveBeenCalledWith("red", BOB, ACTOR);
   });
 
   it("never lets a caller-supplied action reach a log format string", async () => {
@@ -211,7 +216,7 @@ describe("/api/admin/ops/team", () => {
     // refused, and no store call or error log happens.
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await teamPOST(
-      jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "%s%s%s%d" }),
+      jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "%s%s%s%d" }),
     );
     expect(res.status).toBe(400);
     expect(spy).not.toHaveBeenCalled();
@@ -223,24 +228,24 @@ describe("/api/admin/ops/team", () => {
   it("logs a real failure with a LITERAL format string, label as an argument", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     forceRemoveFromTeam.mockRejectedValue(new Error("redis exploded"));
-    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "remove-member" }));
+    await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "remove-member" }));
     const [format, ...args] = spy.mock.calls[0];
     expect(format).toBe("[admin/ops/team] %s failed");
     expect(args[0]).toBe("remove-member");
     spy.mockRestore();
   });
 
-  // Label only, never the raw caught value: the ops writes carry the login
+  // Label only, never the raw caught value: the ops writes carry the player id
   // and slug as ARGV, and a decorated error would put them in the log (#500).
   it("logs the error's label, never the raw err, on the team and user routes", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       forceRemoveFromTeam.mockRejectedValue(decoratedError("redis exploded"));
-      expect((await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "remove-member" }))).status).toBe(503);
+      expect((await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "remove-member" }))).status).toBe(503);
       expectLabelOnly(spy, { label: "redis exploded" });
       spy.mockClear();
       lookupUser.mockRejectedValue(decoratedError("redis exploded"));
-      expect((await userGET(userReq("bob"))).status).toBe(503);
+      expect((await userGET(userReq(BOB))).status).toBe(503);
       expectLabelOnly(spy, { label: "redis exploded" });
     } finally {
       spy.mockRestore();
@@ -248,13 +253,13 @@ describe("/api/admin/ops/team", () => {
   });
 
   it("rejects an unknown team action", async () => {
-    const res = await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "x" }));
+    const res = await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", id: BOB, action: "x" }));
     expect(res.status).toBe(400);
     expect(forceRemoveFromTeam).not.toHaveBeenCalled();
     expect(forceTransferCaptain).not.toHaveBeenCalled();
   });
 
-  it("400s when slug or login is not a string", async () => {
+  it("400s when slug or id is not a string", async () => {
     const res = await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", action: "remove-member" }));
     expect(res.status).toBe(400);
     expect(forceRemoveFromTeam).not.toHaveBeenCalled();
@@ -264,6 +269,31 @@ describe("/api/admin/ops/team", () => {
     const res = await teamDELETE(jsonReq("http://x/t", "DELETE", { slug: "red" }));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ members: 2 });
-    expect(forceDisbandTeam).toHaveBeenCalledWith("red", "alice");
+    expect(forceDisbandTeam).toHaveBeenCalledWith("red", ACTOR);
+  });
+});
+
+// #742: the per-player routes take the player id, and a request still
+// carrying the old `login` field is refused rather than read.
+describe("player id, not login (#742)", () => {
+  it("looks a player up by ?id=", async () => {
+    await userGET(userReq(OCTO));
+    expect(lookupUser).toHaveBeenCalledWith(OCTO);
+  });
+
+  it("400s a body that names a login instead of an id, without reaching the store", async () => {
+    const reset = await userPOST(jsonReq("http://x/u", "POST", { login: "octocat", action: "reset" }));
+    const del = await userDELETE(jsonReq("http://x/u", "DELETE", { login: "octocat" }));
+    const team = await teamPOST(jsonReq("http://x/t", "POST", { slug: "red", login: "bob", action: "add-member" }));
+    expect([reset.status, del.status, team.status]).toEqual([400, 400, 400]);
+    expect(resetUserProgress).not.toHaveBeenCalled();
+    expect(deleteUser).not.toHaveBeenCalled();
+    expect(forceAddToTeam).not.toHaveBeenCalled();
+  });
+
+  it("audits as the admin's id and name, never their login", async () => {
+    await userDELETE(jsonReq("http://x/u", "DELETE", { id: OCTO }));
+    const actor = deleteUser.mock.calls[0][1] as Record<string, unknown>;
+    expect(actor).toEqual(ACTOR);
   });
 });

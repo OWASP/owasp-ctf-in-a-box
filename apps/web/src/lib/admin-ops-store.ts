@@ -556,14 +556,25 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
 
 // --- delete -----------------------------------------------------------------
 
-/** `ctf:deleted:<id>`: the instant (epoch ms) a delete began. The scorer
- *  reads it in the same script that writes a solve (scorer/src/store.js
- *  deletedKey) and refuses for good any score timed before it, so a score
- *  sync read before the delete cannot land after the progress reset and bring
- *  a solve back. A score timed after it is the same account playing again
+/** `ctf:deleted:<id>`: the instant (epoch ms) a delete began, as
+ *  `pending:<ms>` while it runs and `<ms>` once the player's record is gone.
+ *  The scorer reads it in the same script that writes a solve
+ *  (scorer/src/store.js deletedKey) and answers a score timed before it with
+ *  a retry while pending and a refusal for good once final, so a score sync
+ *  read before the delete cannot land after the progress reset and bring a
+ *  solve back, and a delete that fails loses no score. A score timed after it is the same account playing again
  *  (the account survives a delete) and counts. No expiry: a retried score
  *  can arrive any time later and must still be refused. */
 export const DELETED_PREFIX = "ctf:deleted:";
+/** The cutoff's value while the delete is still running: `pending:<ms>`. */
+export const DELETE_PENDING_PREFIX = "pending:";
+
+// KEYS: [1]=ctf:sd:held:by:<login> [2]=ctf:sd:held:authors  ARGV: [1]=login.
+// The hash first: a DEL that errors stops the script, so the author stays
+// indexed and sync can still find the entries.
+export const CLEAR_HELD_SCRIPT = `redis.call('DEL', KEYS[1])
+redis.call('SREM', KEYS[2], ARGV[1])
+return 1`;
 
 /**
  * Removes a contestant's event state entirely: their progress, their hints,
@@ -614,20 +625,33 @@ export async function deleteUser(
     if (prevReply?.error) throw new Error(`upstash: command failed (read deletion cutoff): ${prevReply.error}`);
     const prev = typeof prevReply?.result === "string" ? prevReply.result : null;
     const leftTeam = detail.team?.slug ?? null;
-    // Whether the `ctf:user:<id>` record is gone decides the cutoff's fate
-    // when something fails: "kept" means the player stays, so their unscored
-    // comments must still score (the cutoff goes back to what it was, which
-    // covers a cutoff write whose reply was lost); "gone" means the player is
-    // deleted even if other cleanup failed, and "unknown" (the cleanup
-    // pipeline itself failed, so it may have run) is treated the same way:
-    // the new cutoff stays, and refusing an old score beats restoring a
-    // cleared solve.
+    const startedAt = String(Date.now());
+    // While the delete runs the cutoff is `pending:<ms>`: the scorer answers a
+    // score timed before it with a retry, since the delete may still fail and
+    // the player stay. It becomes the final `<ms>` (a refusal for good) only
+    // once the `ctf:user:<id>` record is confirmed gone.
+    //
+    // Whether the record is gone decides the cutoff's fate when something
+    // fails: "kept" means the player stays, so the cutoff goes back to what it
+    // was (which also undoes a cutoff write whose reply was lost); "gone"
+    // means the player is deleted even if other cleanup failed, so it is
+    // finalized; "unknown" (the cleanup pipeline itself failed, so it may
+    // have run) leaves it pending, a retry, which loses nothing either way.
     let record: "kept" | "gone" | "unknown" = "kept";
+    const finalize = async () => {
+      try {
+        assertPipelineOk(await upstashPipeline([["SET", cutoff, startedAt]]), "finalize deletion cutoff");
+      } catch (finErr) {
+        // Pending still holds every stale score back (as a retry), so this
+        // loses nothing; it is logged for the organizer.
+        console.error("[admin-ops] deletion cutoff left pending after the record was deleted", errorLabel(finErr));
+      }
+    };
     let reset: ResetScope;
     try {
       // Before the reset, and checked: without the cutoff, a score in flight
       // can rewrite a solve the reset just cleared.
-      assertPipelineOk(await upstashPipeline([["SET", cutoff, String(Date.now())]]), "deletion cutoff");
+      assertPipelineOk(await upstashPipeline([["SET", cutoff, `${DELETE_PENDING_PREFIX}${startedAt}`]]), "deletion cutoff");
       reset = await resetUserProgress(player, actor);
       const cmds: (string | number)[][] = [];
       if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
@@ -639,15 +663,15 @@ export async function deleteUser(
       // Checked: a refused DEL reported as a delete leaves the player on the
       // team with their record in place.
       assertPipelineOk(results, "delete user");
+      await finalize();
       // Held scores go only once the record is gone: sync has moved its
       // cursor past those comments, so for a player who stays they are the
-      // only copy. If this fails the delete still stands, and sync's release
-      // posts them to the scorer, which refuses them by the cutoff.
+      // only copy. One script, hash before index, so a failed DEL can never
+      // leave a hash sync no longer finds. If this fails the delete still
+      // stands, and sync's release posts the entries to the scorer, which
+      // refuses them by the cutoff.
       if (heldLogin) {
-        assertPipelineOk(
-          await upstashPipeline([["DEL", `ctf:sd:held:by:${heldLogin}`], ["SREM", "ctf:sd:held:authors", heldLogin]]),
-          "clear held scores",
-        );
+        await upstashEval(CLEAR_HELD_SCRIPT, [`ctf:sd:held:by:${heldLogin}`, "ctf:sd:held:authors"], [heldLogin]);
       }
     } catch (err) {
       if (record === "kept") {
@@ -655,8 +679,12 @@ export async function deleteUser(
           const restore = prev === null ? ["DEL", cutoff] : ["SET", cutoff, prev];
           assertPipelineOk(await upstashPipeline([restore]), "restore deletion cutoff");
         } catch (clearErr) {
-          console.error("[admin-ops] deletion cutoff left after a failed delete", errorLabel(clearErr));
+          // Left pending: the player's older scores are answered with a retry
+          // until an organizer clears it, never refused.
+          console.error("[admin-ops] deletion cutoff left pending after a failed delete", errorLabel(clearErr));
         }
+      } else if (record === "gone") {
+        await finalize();
       }
       throw err;
     }

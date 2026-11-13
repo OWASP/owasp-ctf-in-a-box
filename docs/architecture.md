@@ -203,15 +203,19 @@ state; everything else that touches scores goes through it.
    over `pausedSince` and the `ctf:admin:pauses` interval log the app writes
    with the flag) is refused with a final `422`. A freeze with no recorded
    start answers `503`, which the poller retries. A payload with no `at` (an
-   older sync) keeps the arrival-time rule. A score timed before the
-   player's deletion is refused too, a final `422` (`player-deleted`): the
-   delete writes `ctf:deleted:<player id>`, the instant it began in epoch
-   milliseconds and with no expiry, before it clears their solves, and the
-   scorer reads it in the same script as its write. A score read before the
-   delete therefore cannot restore a cleared solve, while a later comment
-   from the same account (which survives a delete) scores as usual. A
-   delete that fails with the player's `ctf:user:<id>` record still in place
-   puts the cutoff back to what it was (none, or an earlier delete's). The
+   older sync) keeps the arrival-time rule. A score timed before a
+   player's deletion is held off too: the delete writes
+   `ctf:deleted:<player id>`, the instant it began in epoch milliseconds and
+   with no expiry, before it clears their solves, as `pending:<ms>` while it
+   runs and `<ms>` once the player's `ctf:user:<id>` record is gone. The
+   scorer reads it in the same script as its write: while pending, a score
+   timed before it gets a `503`, which sync retries (the delete may still
+   fail); once final, a `422` (`player-deleted`) for good. A score read
+   before the delete therefore cannot restore a cleared solve, while a later
+   comment from the same account (which survives a delete) scores as usual.
+   A delete that fails with the record still in place puts the cutoff back
+   to what it was (none, or an earlier delete's); one whose cleanup outcome
+   is unknown leaves it pending. The
    scorer then writes the score
    to Redis (via `srh`), timed `at`, as a monotonic, idempotent-on-replay
    update — the write model is described in

@@ -52,6 +52,7 @@ vi.mock("@/lib/github-link", () => ({ getGithubLink: linkDeps.getGithubLink }));
 
 import { decoratedError, expectLabelOnly } from "./log-redaction";
 import {
+  CLEAR_HELD_SCRIPT,
   OpsValidationError,
   deleteUser,
   forceAddToTeam,
@@ -646,6 +647,7 @@ describe("deleteUser", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // SREM + DEL
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finalize cutoff
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
 
     const result = await deleteUser("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
@@ -693,7 +695,8 @@ describe("deleteUser: held Secure Development scores", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
-    if (held) mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // held scores
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finalize cutoff
+    if (held) mocks.upstashEval.mockResolvedValueOnce(1); // held scores
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
   }
 
@@ -704,7 +707,13 @@ describe("deleteUser: held Secure Development scores", () => {
     const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
     const tailAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
     expect(calls[tailAt].some((c) => String(c[1]).startsWith("ctf:sd:held"))).toBe(false);
-    expect(calls[tailAt + 1]).toEqual([["DEL", "ctf:sd:held:by:octocat"], ["SREM", "ctf:sd:held:authors", "octocat"]]);
+    // One script, hash before index, after the record's DEL.
+    expect(mocks.upstashEval).toHaveBeenCalledWith(CLEAR_HELD_SCRIPT, ["ctf:sd:held:by:octocat", "ctf:sd:held:authors"], ["octocat"]);
+    expect(CLEAR_HELD_SCRIPT.indexOf("DEL")).toBeLessThan(CLEAR_HELD_SCRIPT.indexOf("SREM"));
+    const clearAt = mocks.upstashEval.mock.calls.findIndex((c) => c[0] === CLEAR_HELD_SCRIPT);
+    expect(mocks.upstashEval.mock.invocationCallOrder[clearAt]).toBeGreaterThan(
+      mocks.upstashPipeline.mock.invocationCallOrder[tailAt],
+    );
     expect(allCommands().some((c) => c.slice(1).some((a) => /^ctf:link:/.test(String(a))))).toBe(false);
   });
 
@@ -746,12 +755,13 @@ describe("deleteUser: the deletion cutoff", () => {
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
   }
 
-  it("is the delete's start time, with no expiry, written before the progress reset writes anything, and kept", async () => {
+  it("is the delete's start time, pending before the progress reset writes anything, final once the record is gone, no expiry", async () => {
     vi.useFakeTimers({ now: new Date("2026-11-13T21:00:00.000Z"), toFake: ["Date"] });
     try {
       queueUpToTail();
       mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
-      mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // held scores
+      mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finalize cutoff
+      mocks.upstashEval.mockResolvedValueOnce(1); // held scores
       mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
       await deleteUser(OCTO, ADMIN);
     } finally {
@@ -759,7 +769,10 @@ describe("deleteUser: the deletion cutoff", () => {
     }
     const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
     const at = calls.findIndex((cmds) => cmds.some(isCutoffSet));
-    expect(calls[at]).toEqual([["SET", `ctf:deleted:${OCTO}`, String(Date.parse("2026-11-13T21:00:00.000Z"))]]);
+    const ms = String(Date.parse("2026-11-13T21:00:00.000Z"));
+    expect(calls[at]).toEqual([["SET", `ctf:deleted:${OCTO}`, `pending:${ms}`]]);
+    const tailAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
+    expect(calls[tailAt + 1]).toEqual([["SET", `ctf:deleted:${OCTO}`, ms]]);
     const firstWrite = calls.findIndex((cmds) => cmds.some((c) => ["DEL", "HDEL", "SREM", "HSET", "EVAL"].includes(String(c[0]))));
     expect(at).toBeGreaterThan(-1);
     expect(at).toBeLessThan(firstWrite);
@@ -861,11 +874,32 @@ describe("deleteUser: the deletion cutoff", () => {
     expect(allCommands()).not.toContainEqual(["DEL", "ctf:sd:held:by:octocat"]);
   });
 
-  it("record deleted but the held-score step failed: the delete stands with its cutoff", async () => {
+  it("record deleted but the held-score script failed: the delete stands with its final cutoff", async () => {
     queueUpToTail();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1, 1, 1, 1)); // tail
-    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }, { result: 1 }]); // held scores
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finalize cutoff
+    mocks.upstashEval.mockRejectedValueOnce(new Error("upstash: READONLY")); // held scores
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finalize again on the way out
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(allCommands()).not.toContainEqual(clear);
+    expect(allCommands().filter((c) => isCutoffSet(c)).at(-1)?.[2]).toMatch(/^\d+$/);
+  });
+
+  it("record deleted but other cleanup failed: the cutoff is finalized, not left pending", async () => {
+    queueUpToTail();
+    mocks.upstashPipeline.mockResolvedValueOnce([...Array(6).fill({ result: 1 }), { error: "READONLY" }]);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("OK")); // finalize cutoff
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(allCommands().filter((c) => isCutoffSet(c)).at(-1)?.[2]).toMatch(/^\d+$/);
+  });
+
+  it("the cleanup pipeline's outcome unknown: the cutoff stays pending (a retry), neither final nor removed", async () => {
+    queueUpToTail();
+    mocks.upstashPipeline.mockRejectedValueOnce(new Error("fetch failed"));
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/fetch failed/);
+    const sets = allCommands().filter((c) => isCutoffSet(c));
+    expect(sets).toHaveLength(1);
+    expect(sets[0][2]).toMatch(/^pending:\d+$/);
     expect(allCommands()).not.toContainEqual(clear);
   });
 

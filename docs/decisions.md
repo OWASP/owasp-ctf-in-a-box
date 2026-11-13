@@ -4314,16 +4314,20 @@ the `422` is `refused`.
   `ctf:deleted:<player id>`, the instant the delete began in epoch
   milliseconds, before it clears anything, with no expiry: sync retries a
   score for as long as it fails, so any expiry would turn into permission to
-  write. The scorer reads it in the same Lua script as its `HSETNX` write
-  and refuses a score timed before it with a final `422`, code
+  write. It is `pending:<ms>` while the delete runs and `<ms>` once the
+  player's `ctf:user:<id>` record is confirmed gone. The scorer reads it in
+  the same Lua script as its `HSETNX` write. A score timed before a pending
+  cutoff gets a `503`, which sync retries, because the delete may still fail
+  and the player stay; before a final cutoff, a final `422` with the code
   `player-deleted`, which ADR 38 counts as `refused`, like ADR 67's time
   refusals. A score timed after it is the same account playing again (the
   account survives a delete) and counts. A delete that fails with the
-  player's `ctf:user:<id>` record still in place (including a cutoff write
-  whose reply was lost) puts the cutoff back to what it was, none or an
-  earlier delete's, so the
-  player who stays loses nothing; once the record is gone, or when the
-  cleanup's outcome is unknown, the cutoff stays.
+  record still in place (including a cutoff write whose reply was lost)
+  puts the cutoff back to what it was, none or an earlier delete's, so the
+  player who stays loses nothing; once the record is gone it is finalized
+  even if other cleanup failed, and when the cleanup's outcome is unknown it
+  stays pending. The player's held scores are cleared only after the record
+  is gone, by one script that deletes the hash before the author index.
 
 This was chosen over dropping unlinked scores (a late link loses points),
 over attributing an unclaimed score by hand (no path may give a score to an

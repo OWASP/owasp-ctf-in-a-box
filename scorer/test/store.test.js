@@ -41,7 +41,9 @@ test("redis store: the solve write is one EVAL via the SRH pipeline, bearer toke
   const [cmd] = JSON.parse(calls[0].opts.body);
   assert.equal(cmd[0], "EVAL");
   assert.match(cmd[1], /GET', KEYS\[2\]\)/);
-  assert.match(cmd[1], /if not cut or tonumber\(ARGV\[2\]\) < cut then return 'deleted' end/);
+  assert.match(cmd[1], /local pend = string.match\(c, '\^pending:\(%d\+\)\$'\)/);
+  assert.match(cmd[1], /if not cut then return 'deleted' end/);
+  assert.match(cmd[1], /if pend then return 'pending' end\n    return 'deleted'/);
   assert.match(cmd[1], /HSETNX', KEYS\[1\], ARGV\[i\], ARGV\[1\]/);
   assert.doesNotMatch(cmd[1], /HSET'|HDEL|DEL'/);
   assert.deepEqual(cmd.slice(2), [2, "ctf:solves:dvwa", "ctf:deleted:octocat", T0, String(Date.parse(T0)), "octocat:sqli-low", "octocat:xss-dom"]);
@@ -58,11 +60,11 @@ test("redis store: recordSolves reports the script's outcome, and throws on any 
     globalThis.fetch = realFetch;
   });
   const store = createRedisStore({ url: "http://srh:80/", token: "redis-token" });
-  for (const r of ["deleted", "written"]) {
+  for (const r of ["deleted", "pending", "written"]) {
     reply = r;
     assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), r);
   }
-  reply = "pending";
+  reply = "maybe";
   await assert.rejects(store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), /unexpected script reply/);
 });
 
@@ -73,6 +75,14 @@ test("memory store: a score timed before the player's deletion cutoff records no
   assert.equal(await store.recordSolves("dvwa", "octocat", ["xss-dom"], T1), "written", "the same account playing again");
   assert.equal(await store.recordSolves("dvwa", "hubot", ["sqli-low"], T0), "written");
   assert.deepEqual(await store.getSolves("dvwa"), { "octocat:xss-dom": T1, "hubot:sqli-low": T0 });
+});
+
+test("memory store: a pending cutoff answers a retry for an earlier score and lets a later one through", async () => {
+  const store = createMemoryStore();
+  store.__markDeleted("octocat", `pending:${Date.parse(T1)}`);
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), "pending");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["xss-dom"], T1), "written");
+  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:xss-dom": T1 });
 });
 
 test("memory store: a cutoff that is not a number refuses every score, as the Redis script does", async () => {

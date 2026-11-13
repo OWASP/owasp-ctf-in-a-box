@@ -165,6 +165,20 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
     expect(await redis(["SMEMBERS", keys.indexKey(prefix, "session", "token", "second")])).toEqual(["s-taken"]);
   });
 
+  it("keeps an identical row that was already there when a transaction's create is refused", async () => {
+    const { prefix, ctx } = await build();
+    const at = new Date();
+    const row = { id: "s-dup", token: "dup", userId: "u-live", expiresAt: new Date(at.getTime() + 600_000), createdAt: at, updatedAt: at };
+    await ctx.adapter.create({ model: "session", data: { ...row }, forceAllowId: true });
+    await expect(
+      ctx.adapter.transaction(async (trx) => {
+        await trx.create({ model: "session", data: { ...row }, forceAllowId: true });
+      }),
+    ).rejects.toThrow(/row s-dup already exists/);
+    expect((await ctx.adapter.findMany<{ id: string }>({ model: "session" })).map((r) => r.id)).toEqual(["s-dup"]);
+    expect(await redis(["SMEMBERS", keys.indexKey(prefix, "session", "token", "dup")])).toEqual(["s-dup"]);
+  });
+
   it("leaves no orphan user when the account write fails, so the next sign-in succeeds", async () => {
     const { prefix, ctx } = await build();
     const ia = ctx.internalAdapter;

@@ -96,6 +96,18 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
    */
   const csv = (model: string) => (INDEXED_FIELDS[model] ?? []).join(",");
 
+  // Errors for a create PUT_ROW_SCRIPT refused before writing anything.
+  const refusals = new WeakSet<Error>();
+
+  /**
+   * Drops `entry` from the journal: Redis refused that create, so the row at
+   * its id, even one with identical JSON, is not this transaction's.
+   */
+  function forget(journal: Journal | null, entry: Created): void {
+    const i = journal?.created.indexOf(entry) ?? -1;
+    if (i !== -1) journal!.created.splice(i, 1);
+  }
+
   /**
    * Adds `work` to the journal's in-flight set until it settles.
    */
@@ -135,8 +147,11 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
             await undo(own.created);
             throw err;
           }
-          // A nested transaction's rows belong to the enclosing one from here on,
-          // so a later failure there undoes them too.
+          // A transaction the callback started without awaiting may still add
+          // rows here; hand them over only once it has settled. From then on
+          // they belong to the enclosing transaction, so a later failure there
+          // undoes them too.
+          while (own.pending.size) await Promise.allSettled([...own.pending]);
           journal?.created.push(...own.created);
           return result;
         })();
@@ -359,7 +374,11 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
         const [result] = await run(op, model, [command]);
         if (result === 1) return true;
         if (result === 0) return false;
-        if (result === 2 && next !== null) throw fail(op, model, `unique ${uniques(model).join(", ")} taken`);
+        if (result === 2 && next !== null) {
+          const err = fail(op, model, `unique ${uniques(model).join(", ")} taken`);
+          refusals.add(err);
+          throw err;
+        }
         throw fail(op, model, `unexpected script reply ${JSON.stringify(result)}`);
       }
 
@@ -406,11 +425,24 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
           const row = scrub(model, data as Row);
           const id = row.id;
           if (typeof id !== "string" && typeof id !== "number") throw fail("create", model, "row has no id");
-          // Recorded before the write is sent: a lost reply can hide a write Redis applied.
-          journal?.created.push({ model, id: String(id), json: JSON.stringify(row) });
+          // Recorded before the write is sent: a lost reply can hide a write
+          // Redis applied. Only a refusal (reply 0 or 2, both given before the
+          // script writes) proves nothing landed; any other error keeps it.
+          const entry: Created = { model, id: String(id), json: JSON.stringify(row) };
+          journal?.created.push(entry);
           const write = cas("create", model, null, String(id), row);
           track(journal, write);
-          if (!(await write)) throw fail("create", model, `row ${String(id)} already exists`);
+          let written: boolean;
+          try {
+            written = await write;
+          } catch (err) {
+            if (err instanceof Error && refusals.has(err)) forget(journal, entry);
+            throw err;
+          }
+          if (!written) {
+            forget(journal, entry);
+            throw fail("create", model, `row ${String(id)} already exists`);
+          }
           return trim(row, select) as typeof data;
         },
 

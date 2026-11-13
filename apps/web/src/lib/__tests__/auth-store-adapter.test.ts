@@ -473,6 +473,38 @@ describe("redisAdapter transaction (mocked pipeline)", () => {
     expect(redis.rowsOf("session").map(([, r]) => r.token)).toEqual(["theirs"]);
   });
 
+  it("undoes a row a nested transaction's unawaited descendant creates after the nested one returned", async () => {
+    const redis = statefulRedis();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let descendant!: Promise<unknown>;
+    await expect(
+      adapter.transaction(async (trx) => {
+        await (trx as typeof adapter).transaction(async (nested) => {
+          descendant = (nested as typeof adapter).transaction(async (d) => {
+            await gate;
+            await d.create({ model: "user", data: user });
+          });
+          setTimeout(release, 10);
+        });
+        await descendant;
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(redis.rowsOf("user")).toEqual([]);
+  });
+
+  it("leaves an identical row that was already there when the create is refused", async () => {
+    const redis = statefulRedis();
+    await adapter.create({ model: "session", data: ownSession(), forceAllowId: true });
+    await expect(
+      adapter.transaction(async (trx) => {
+        await trx.create({ model: "session", data: ownSession(), forceAllowId: true });
+      }),
+    ).rejects.toThrow(/row s1 already exists/);
+    expect(redis.rowsOf("session").map(([id]) => id)).toEqual(["s1"]);
+  });
+
   it("undoes a create whose write landed but whose reply was lost", async () => {
     const redis = statefulRedis();
     await expect(

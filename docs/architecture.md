@@ -208,9 +208,10 @@ state; everything else that touches scores goes through it.
    `ctf:deleted:<player id>`, the instant it began in epoch milliseconds and
    with no expiry, before it clears their solves, as `pending:<ms>` while it
    runs and `<ms>` once the player's `ctf:user:<id>` record is gone. The
-   scorer reads it in the same script as its write: while pending, a score
-   timed before it gets a `503`, which sync retries (the delete may still
-   fail); once final, a `422` (`player-deleted`) for good. A score read
+   scorer reads it in the same script as its write: while pending, every
+   score for the player gets a `503`, which sync retries (the delete may
+   still fail); once final, a score timed before it gets a `422`
+   (`player-deleted`) for good. A score read
    before the delete therefore cannot restore a cleared solve, while a later
    comment from the same account (which survives a delete) scores as usual.
    A delete that fails with the record still in place puts the cutoff back

@@ -689,11 +689,12 @@ test("a score timed before the player's deletion is refused with a final 422 and
   assert.equal((await store.getSolves("dvwa"))[pid("octocat") + ":sqli-low"], "2026-08-14T11:00:00.000Z");
 });
 
-test("a score timed before a deletion still running gets a 503 to retry, and writes nothing", async (t) => {
+test("any score for a player whose deletion is still running gets a 503 to retry, and writes nothing", async (t) => {
   const { store, post } = await bootWith(t);
   store.__markDeleted(pid("octocat"), `pending:${Date.parse("2026-08-14T10:30:00Z")}`);
-  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
-  assert.equal(res.status, 503);
+  for (const at of ["2026-08-14T10:00:00Z", "2026-08-14T11:00:00Z"]) {
+    assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], at))).status, 503, at);
+  }
   assert.deepEqual(await store.getSolves("dvwa"), {});
 });
 

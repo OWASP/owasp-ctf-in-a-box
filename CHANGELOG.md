@@ -36,9 +36,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   back. The delete now writes
   `ctf:deleted:<player id>`, the instant it began, before it clears
   anything: `pending:<ms>` while it runs, `<ms>` once the player's record is
-  gone. The scorer reads it in the same script that writes a solve: a score
-  timed before a pending cutoff gets a `503` (sync retries it), and before a
-  final one a `422` for good (`player-deleted`), while a later comment from
+  gone. The scorer reads it in the same script that writes a solve: while it is
+  pending every score for the player gets a `503` (sync retries it), and once
+  final a score timed before it gets a `422` for good (`player-deleted`), while a later comment from
   the same account scores as usual. A delete that fails with the player's
   record still in place puts the cutoff back to what it was (none, or an
   earlier delete's), so it loses no score.

@@ -11,9 +11,11 @@ const solveField = (player, id) => `${player}:${id}`;
 // gone, and put back to its earlier value if the delete fails with the player
 // still there. A score timed before it belongs to the deleted player: sync
 // may have read it before the delete and reach the scorer after the clear.
-// While pending it gets a retry (the delete may still fail and the player
-// stay); once final it is refused for good. A score timed after it is the
-// same account playing again and counts. Read in the same script as the
+// While the delete is pending EVERY score for the player gets a retry: the
+// delete may still fail and the player stay, and one written mid-delete might
+// or might not be cleared by its reset. Once final, a score timed before the
+// cutoff is refused for good, and one timed after it is the same account
+// playing again and counts. Read in the same script as the
 // write, so the delete cannot slip between the two. A value that is not a
 // cutoff refuses every score: it cannot say where the cut is. Keep the key
 // and values in step with DELETED_PREFIX and DELETE_PENDING_PREFIX there.
@@ -23,13 +25,9 @@ export const deletedKey = (player) => `ctf:deleted:${player}`;
 // 'deleted' / 'pending' = nothing written; 'written' = HSETNX (replays no-op).
 const RECORD_SOLVES_SCRIPT = `local c = redis.call('GET', KEYS[2])
 if c then
-  local pend = string.match(c, '^pending:(%d+)$')
-  local cut = tonumber(pend or c)
-  if not cut then return 'deleted' end
-  if tonumber(ARGV[2]) < cut then
-    if pend then return 'pending' end
-    return 'deleted'
-  end
+  if string.match(c, '^pending:%d+$') then return 'pending' end
+  local cut = tonumber(c)
+  if not cut or tonumber(ARGV[2]) < cut then return 'deleted' end
 end
 for i = 3, #ARGV do redis.call('HSETNX', KEYS[1], ARGV[i], ARGV[1]) end
 return 'written'`;
@@ -100,14 +98,13 @@ export function createMemoryStore({ teams = [] } = {}) {
   const deleted = new Map(); // test seam mirroring ctf:deleted:<player> (cutoff ms)
   return {
     async recordSolves(target, player, ids, at) {
-      // As the script: `pending:<ms>` answers a retry, `<ms>` a refusal, and
-      // a value that is neither refuses every score.
+      // As the script: `pending:<ms>` answers every score with a retry,
+      // `<ms>` refuses one timed before it, and any other value refuses all.
       const raw = deleted.get(player);
       if (raw !== undefined) {
-        const m = /^pending:(\d+)$/.exec(String(raw));
-        const cut = Number(m ? m[1] : raw);
-        if (!Number.isFinite(cut)) return "deleted";
-        if (Date.parse(at) < cut) return m ? "pending" : "deleted";
+        if (/^pending:\d+$/.test(String(raw))) return "pending";
+        const cut = Number(raw);
+        if (!Number.isFinite(cut) || Date.parse(at) < cut) return "deleted";
       }
       let hash = hashes.get(solvesKey(target));
       if (!hash) hashes.set(solvesKey(target), (hash = new Map()));

@@ -559,11 +559,12 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
 /** `ctf:deleted:<id>`: the instant (epoch ms) a delete began, as
  *  `pending:<ms>` while it runs and `<ms>` once the player's record is gone.
  *  The scorer reads it in the same script that writes a solve
- *  (scorer/src/store.js deletedKey) and answers a score timed before it with
- *  a retry while pending and a refusal for good once final, so a score sync
- *  read before the delete cannot land after the progress reset and bring a
- *  solve back, and a delete that fails loses no score. A score timed after it is the same account playing again
- *  (the account survives a delete) and counts. No expiry: a retried score
+ *  (scorer/src/store.js deletedKey): while pending it answers every score
+ *  for the player with a retry; once final it refuses for good a score timed
+ *  before it. So a score sync read before the delete cannot land after the
+ *  progress reset and bring a solve back, and a delete that fails loses no
+ *  score. A score timed after a final cutoff is the same account playing
+ *  again (the account survives a delete) and counts. No expiry: a retried score
  *  can arrive any time later and must still be refused. */
 export const DELETED_PREFIX = "ctf:deleted:";
 /** The cutoff's value while the delete is still running: `pending:<ms>`. */
@@ -626,9 +627,9 @@ export async function deleteUser(
     const prev = typeof prevReply?.result === "string" ? prevReply.result : null;
     const leftTeam = detail.team?.slug ?? null;
     const startedAt = String(Date.now());
-    // While the delete runs the cutoff is `pending:<ms>`: the scorer answers a
-    // score timed before it with a retry, since the delete may still fail and
-    // the player stay. It becomes the final `<ms>` (a refusal for good) only
+    // While the delete runs the cutoff is `pending:<ms>`: the scorer answers
+    // every score for the player with a retry, since the delete may still
+    // fail and the player stay. It becomes the final `<ms>` (a refusal for good) only
     // once the `ctf:user:<id>` record is confirmed gone.
     //
     // Whether the record is gone decides the cutoff's fate when something

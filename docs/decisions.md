@@ -4316,9 +4316,10 @@ the `422` is `refused`.
   score for as long as it fails, so any expiry would turn into permission to
   write. It is `pending:<ms>` while the delete runs and `<ms>` once the
   player's `ctf:user:<id>` record is confirmed gone. The scorer reads it in
-  the same Lua script as its `HSETNX` write. A score timed before a pending
-  cutoff gets a `503`, which sync retries, because the delete may still fail
-  and the player stay; before a final cutoff, a final `422` with the code
+  the same Lua script as its `HSETNX` write. While the cutoff is pending,
+  every score for the player gets a `503`, which sync retries, because the
+  delete may still fail and the player stay; a score timed before a final
+  cutoff gets a final `422` with the code
   `player-deleted`, which ADR 38 counts as `refused`, like ADR 67's time
   refusals. A score timed after it is the same account playing again (the
   account survives a delete) and counts. A delete that fails with the

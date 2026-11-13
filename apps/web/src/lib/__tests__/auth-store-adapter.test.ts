@@ -2,7 +2,8 @@
 // read issues, that a per-command error throws instead of reading as "no
 // row", that a reply of the wrong shape throws instead of reading as "no
 // rows", that provider tokens are never written, how a taken unique value
-// fails a write, and how a lost compare-and-set is retried. What the scripts do to Redis is pinned by the
+// fails a write, how a lost compare-and-set is retried, and how a failed
+// transaction deletes the rows it created. What the scripts do to Redis is pinned by the
 // live suites.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -298,5 +299,186 @@ describe("redisAdapter (mocked pipeline)", () => {
       select: ["id", "userId"],
     });
     expect(Object.keys(found ?? {}).sort()).toEqual(["id", "userId"]);
+  });
+});
+
+// A stateful Redis for the transaction tests: rows per hash, index lookups
+// answered by scanning the model's rows, a unique email/account key refused
+// the way PUT_ROW_SCRIPT refuses it, and `failCreate` turning the next create
+// of a model into a per-command error.
+function statefulRedis() {
+  const hashes = new Map<string, Map<string, string>>();
+  const failCreate = new Set<string>();
+  const hash = (key: string) => {
+    let h = hashes.get(key);
+    if (!h) hashes.set(key, (h = new Map()));
+    return h;
+  };
+  const rowsOf = (model: string) => [...hash(`${P}:${model}`).entries()].map(([id, json]) => [id, JSON.parse(json)] as const);
+  pipeline.mockImplementation(async (cmds: Cmd[]) =>
+    cmds.map((c) => {
+      switch (c[0]) {
+        case "SMEMBERS": {
+          const [model, , field, ...rest] = String(c[1]).slice(P.length + 1).split(":");
+          const value = rest.join(":");
+          return { result: rowsOf(model).filter(([, r]) => String(r[field]) === value).map(([id]) => id) };
+        }
+        case "HMGET":
+          return { result: c.slice(2).map((id) => hash(String(c[1])).get(String(id)) ?? null) };
+        case "HGET":
+          return { result: hash(String(c[1])).get(String(c[2])) ?? null };
+        case "HGETALL":
+          return { result: [...hash(String(c[1])).entries()].flat() };
+        case "EVAL": {
+          const [key, , model, id, old] = c.slice(3).map(String);
+          const h = hash(key);
+          if ((h.get(id) ?? "") !== old) return { result: 0 };
+          if (c[1] !== PUT_ROW_SCRIPT) {
+            h.delete(id);
+            return { result: 1 };
+          }
+          if (!old && failCreate.delete(model)) return { error: "ERR simulated write failure" };
+          const next = JSON.parse(String(c[8]));
+          const clash = rowsOf(model).some(
+            ([other, r]) =>
+              other !== id &&
+              ((model === "user" && r.email === next.email) ||
+                (model === "account" && r.providerId === next.providerId && r.accountId === next.accountId)),
+          );
+          if (clash) return { result: 2 };
+          h.set(id, String(c[8]));
+          return { result: 1 };
+        }
+        default:
+          return { error: `unexpected ${String(c[0])}` };
+      }
+    }),
+  );
+  return { failCreate, rowsOf };
+}
+
+describe("redisAdapter transaction (mocked pipeline)", () => {
+  const user = { name: "A", email: "a@x.test", emailVerified: false };
+  const account = { providerId: "github", accountId: "42" };
+
+  it("deletes the rows the callback created when it throws, and rethrows its error", async () => {
+    const redis = statefulRedis();
+    const boom = new Error("boom");
+    await expect(
+      adapter.transaction(async (trx) => {
+        await trx.create({ model: "user", data: user });
+        await trx.create({ model: "session", data: session, forceAllowId: true });
+        throw boom;
+      }),
+    ).rejects.toBe(boom);
+    expect(redis.rowsOf("user")).toEqual([]);
+    expect(redis.rowsOf("session")).toEqual([]);
+  });
+
+  it("deletes nothing when the callback succeeds", async () => {
+    const redis = statefulRedis();
+    const out = await adapter.transaction(async (trx) => {
+      const u = await trx.create<{ id: string }>({ model: "user", data: user });
+      await trx.create({ model: "account", data: { ...account, userId: u.id } });
+      return u.id;
+    });
+    expect(redis.rowsOf("user").map(([id]) => id)).toEqual([out]);
+    expect(redis.rowsOf("account")).toHaveLength(1);
+    expect(sent().filter((c) => c[0] === "EVAL" && c[1] !== PUT_ROW_SCRIPT)).toEqual([]);
+  });
+
+  it("keeps rows that existed before the transaction", async () => {
+    const redis = statefulRedis();
+    await adapter.create({ model: "user", data: { ...user, email: "kept@x.test" } });
+    await expect(
+      adapter.transaction(async (trx) => {
+        await trx.create({ model: "user", data: user });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(redis.rowsOf("user").map(([, r]) => r.email)).toEqual(["kept@x.test"]);
+  });
+
+  it("still rethrows the callback's error when a compensating delete fails, logging only the model", async () => {
+    statefulRedis();
+    const inner = pipeline.getMockImplementation()!;
+    pipeline.mockImplementation(async (cmds: Cmd[]) =>
+      cmds[0][0] === "HGET" ? [{ error: "ERR down" }] : inner(cmds),
+    );
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(
+        adapter.transaction(async (trx) => {
+          await trx.create({ model: "user", data: user });
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(log).toHaveBeenCalledTimes(1);
+      const logged = JSON.stringify(log.mock.calls);
+      expect(logged).toMatch(/user/);
+      expect(logged).not.toMatch(/a@x\.test/);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("keeps one transaction's rollback from touching a concurrent one's rows", async () => {
+    const redis = statefulRedis();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const ok = adapter.transaction(async (trx) => {
+      await trx.create({ model: "user", data: { ...user, email: "ok@x.test" } });
+      await gate;
+    });
+    await expect(
+      adapter.transaction(async (trx) => {
+        await trx.create({ model: "user", data: user });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    release();
+    await ok;
+    expect(redis.rowsOf("user").map(([, r]) => r.email)).toEqual(["ok@x.test"]);
+  });
+
+  it("rolls back a nested transaction's rows when the outer one fails", async () => {
+    const redis = statefulRedis();
+    await expect(
+      adapter.transaction(async (trx) => {
+        await (trx as typeof adapter).transaction(async (inner) => {
+          await inner.create({ model: "user", data: user });
+        });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(redis.rowsOf("user")).toEqual([]);
+  });
+
+  describe("createOAuthUser", () => {
+    async function internalAdapter() {
+      const { betterAuth } = await import("better-auth");
+      const instance = betterAuth({
+        baseURL: "http://localhost:3000",
+        secret: "0123456789abcdef0123456789abcdef",
+        database: redisAdapter({ prefix: P }),
+        account: { accountLinking: { disableImplicitLinking: true } },
+      });
+      return (await instance.$context).internalAdapter;
+    }
+
+    it("leaves no user row when the account write fails, so a retried sign-in succeeds", async () => {
+      const redis = statefulRedis();
+      const ia = await internalAdapter();
+      redis.failCreate.add("account");
+      await expect(ia.createOAuthUser(user, account)).rejects.toThrow(/auth store: create account failed: ERR simulated write failure/);
+      expect(redis.rowsOf("user")).toEqual([]);
+      expect(redis.rowsOf("account")).toEqual([]);
+      expect(await ia.findUserByEmail(user.email)).toBeNull();
+
+      const { user: created, account: linked } = await ia.createOAuthUser(user, account);
+      expect(linked?.userId).toBe(created.id);
+      expect(redis.rowsOf("user").map(([id]) => id)).toEqual([created.id]);
+      expect((await ia.findAccountByKey(account))?.userId).toBe(created.id);
+    });
   });
 });

@@ -17,7 +17,18 @@ import "server-only";
 // clauses on date fields into ISO strings, and parses rows back on the way
 // out. Matching and sorting still compare date fields as instants (see
 // `view`), so nothing depends on two ISO strings being formatted alike.
+//
+// Redis has no multi-command rollback here, so `transaction` compensates
+// instead: the callback runs against an adapter that records every row it
+// creates, and if the callback throws those rows are deleted again before the
+// error is rethrown. createOAuthUser writes the user and then the account
+// inside one transaction; without this, a failed account write would leave a
+// user row that owns the email but no account, and every later sign-in would
+// find it by email and answer "account not linked" (implicit linking is off).
+// Only creates are undone: an update or delete inside a failed transaction
+// stays applied.
 
+import type { BetterAuthOptions } from "better-auth";
 import { createAdapterFactory, type CleanedWhere } from "better-auth/adapters";
 import { upstashPipeline } from "@/lib/upstash";
 import { AUTH_PREFIX, INDEXED_FIELDS, UNIQUE_FIELDS, indexKey, rowsKey } from "./keys";
@@ -26,6 +37,8 @@ import { idLookup, indexLookup, matchesWhere, sortAndPage } from "./where";
 
 type Row = Record<string, unknown>;
 type Snapshot = { id: string; json: string; row: Row };
+// A row a transaction created, by better-auth's default model name.
+type Created = { model: string; id: string };
 
 // Retries after a lost compare-and-set, per row. A row that keeps changing
 // under us this often is contention the caller should see, not absorb.
@@ -40,8 +53,15 @@ const PROVIDER_TOKEN_FIELDS = ["accessToken", "refreshToken", "idToken"] as cons
  */
 export function redisAdapter(opts: { prefix?: string } = {}) {
   const prefix = opts.prefix ?? AUTH_PREFIX;
+  // The options better-auth built the adapter with, reused for each transaction's adapter.
+  let authOptions: BetterAuthOptions | null = null;
 
-  return createAdapterFactory({
+  /**
+   * Builds the adapter factory. `journal` is null outside a transaction; inside
+   * one it is that transaction's own list, so concurrent transactions never
+   * see or undo each other's rows.
+   */
+  const build = (journal: Created[] | null) => createAdapterFactory({
     config: {
       adapterId: "ctf-redis",
       adapterName: "CTF Redis",
@@ -50,9 +70,25 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       supportsDates: false,
       supportsBooleans: true,
       supportsArrays: false,
-      transaction: false,
+      transaction: async (callback) => {
+        if (!authOptions) throw new Error("auth store: transaction before the adapter was initialised");
+        const created: Created[] = [];
+        const trx = build(created)(authOptions);
+        let result;
+        try {
+          result = await callback(trx);
+        } catch (err) {
+          await undo(trx, created);
+          throw err;
+        }
+        // A nested transaction's rows belong to the enclosing one from here on,
+        // so a later failure there undoes them too.
+        journal?.push(...created);
+        return result;
+      },
     },
-    adapter: ({ getFieldAttributes, getFieldName, getDefaultModelName }) => {
+    adapter: ({ options, getFieldAttributes, getFieldName, getDefaultModelName }) => {
+      authOptions = options;
       /**
        * Builds the error thrown for a failed store operation.
        */
@@ -344,6 +380,7 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
           const id = row.id;
           if (typeof id !== "string" && typeof id !== "number") throw fail("create", model, "row has no id");
           if (!(await cas("create", model, null, String(id), row))) throw fail("create", model, `row ${String(id)} already exists`);
+          journal?.push({ model: getDefaultModelName(model), id: String(id) });
           return trim(row, select) as typeof data;
         },
 
@@ -384,4 +421,22 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       };
     },
   });
+
+  /**
+   * Deletes a failed transaction's rows, newest first, through the adapter's own
+   * delete so each row's index entries go with it. Best effort: a row that cannot
+   * be deleted is logged by model only (never its id or contents) and the rest
+   * are still tried, so the caller sees the transaction's own error.
+   */
+  async function undo(trx: { delete: (args: { model: string; where: { field: string; value: string }[] }) => Promise<void> }, created: Created[]) {
+    for (const { model, id } of [...created].reverse()) {
+      try {
+        await trx.delete({ model, where: [{ field: "id", value: id }] });
+      } catch (err) {
+        console.error(`auth store: could not undo a ${model} row a failed transaction created`, err instanceof Error ? err.name : "non-Error throw");
+      }
+    }
+  }
+
+  return build(null);
 }

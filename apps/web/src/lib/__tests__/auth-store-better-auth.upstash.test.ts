@@ -138,4 +138,30 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
     expect(await ctx.adapter.count({ model: "user" })).toBe(1);
     expect((await ia.findAccounts(first.user.id)).map((a) => a.accountId)).toEqual(["1001"]);
   });
+
+  it("leaves no orphan user when the account write fails, so the next sign-in succeeds", async () => {
+    const { prefix, ctx } = await build();
+    const ia = ctx.internalAdapter;
+    // An account already holding github:2001 makes the new sign-in's account
+    // write fail on its unique key, after its user row is written.
+    const blocker = await ia.createOAuthUser(profile("holder"), githubAccount("2001"));
+    const email = profile("newcomer").email;
+
+    await expect(ia.createOAuthUser(profile("newcomer"), githubAccount("2001"))).rejects.toThrow(
+      /unique providerId\+accountId taken/,
+    );
+    expect(await ia.findUserByEmail(email)).toBeNull();
+    expect(await ctx.adapter.count({ model: "user" })).toBe(1);
+    expect(await redis(["SMEMBERS", keys.indexKey(prefix, "user", "email", email)])).toEqual([]);
+
+    await ctx.adapter.delete({ model: "account", where: [{ field: "id", value: blocker.account!.id }] });
+    const c = { context: ctx } as unknown as Parameters<typeof handleOAuthUserInfo>[0];
+    const retry = await handleOAuthUserInfo(c, {
+      userInfo: { ...profile("newcomer"), id: "2001" },
+      account: { ...githubAccount("2001"), scope: "" },
+    });
+    expect(retry.error).toBeNull();
+    expect(retry.data?.user.email).toBe(email);
+    expect((await ia.findAccountByKey({ providerId: "github", accountId: "2001" }))?.userId).toBe(retry.data?.user.id);
+  });
 });

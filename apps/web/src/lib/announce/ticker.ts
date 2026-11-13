@@ -120,8 +120,12 @@ function tickerState(): TickerState {
 }
 
 /** One observation pass. Exported for tests, which pass a fixed `nowMs`.
- *  Returns the cadence the next interval should follow. */
-export async function runAnnounceTick(nowMs: number = Date.now()): Promise<TickCadence> {
+ *  Returns the cadence the next interval should follow. When `nowMs` is
+ *  omitted the observation time is sampled AFTER the state and settings
+ *  reads: a slow read must not derive a snapshot from an earlier instant
+ *  than the baseline it captured, or a replica that stalled across launch
+ *  could write the pre-launch pack back over one already advanced past it. */
+export async function runAnnounceTick(nowMs?: number): Promise<TickCadence> {
   const state = tickerState();
   if (state.ticking) return "unknown";
   state.ticking = true;
@@ -147,17 +151,18 @@ export async function runAnnounceTick(nowMs: number = Date.now()): Promise<TickC
     cadence = armed ? "active" : "idle";
     if (!armed) return cadence;
 
+    let observedNowMs: number | undefined = nowMs;
+    let expectedLifecycle = "";
+    let settings: AdminSettings | null = null;
     if (config.launch || config.pause || config.milestones) {
       // The lifecycle pack is captured BEFORE the settings read. `next` is
       // derived from those settings, so reading the pack after them could
       // capture a state a concurrent observer already advanced from newer
       // settings — our stale CAS would then match and overwrite it. With the
       // pack from before the read, any concurrent update makes the CAS lose.
-      let expectedLifecycle = "";
       if (config.launch || config.pause) {
         expectedLifecycle = (await readStatePack(ANNOUNCE_LIFECYCLE_KEY)) ?? "";
       }
-      let settings: AdminSettings | null = null;
       try {
         settings = await getAdminSettings();
       } catch (err) {
@@ -165,13 +170,16 @@ export async function runAnnounceTick(nowMs: number = Date.now()): Promise<TickC
         // the outbox sweeps below do not need them and still run.
         console.error("[announce] settings read failed, skipping lifecycle/milestones:", errorLabel(err));
       }
-      if (settings) {
-        if (config.launch || config.pause) await tickLifecycle(config, settings, nowMs, expectedLifecycle);
-        if (config.milestones) await tickMilestones(config, settings, nowMs);
-      }
+      // Sample the default observation time only once both reads are done.
+      observedNowMs ??= Date.now();
+    }
+    observedNowMs ??= Date.now();
+    if (settings) {
+      if (config.launch || config.pause) await tickLifecycle(config, settings, observedNowMs, expectedLifecycle);
+      if (config.milestones) await tickMilestones(config, settings, observedNowMs);
     }
 
-    await outboxPrune(undefined, nowMs).catch(() => {});
+    await outboxPrune(undefined, observedNowMs).catch(() => {});
     await flushRetries();
     return cadence;
   } catch (err) {

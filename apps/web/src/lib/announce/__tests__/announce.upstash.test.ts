@@ -22,6 +22,7 @@ import { upstashEval, upstashPipeline } from "@/lib/upstash";
 import {
   OUTBOX_CLAIM_SCRIPT,
   OUTBOX_COMPLETE_SCRIPT,
+  OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
   STATE_CAS_SCRIPT,
   SWITCH_DISABLE_SCRIPT,
@@ -155,6 +156,41 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     expect(lease.result).toBeNull();
 
     await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, SWITCH_KEY]]);
+  });
+
+  it("OUTBOX_ENQUEUE_SCRIPT writes only when the switch is on and the captured epoch and generation are current", async () => {
+    const generationKey = liveKey("announce-enqueue", "generation");
+    const id = `${RUN}-enqueue`;
+    const entry = JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", kindEpoch: 2 });
+
+    await upstashPipeline([
+      ["DEL", OUTBOX_KEY, SWITCH_KEY, generationKey],
+      ["SET", generationKey, "3"],
+      ["HSET", SWITCH_KEY, "firstBlood", "1", "epoch:first-blood", "2"],
+    ]);
+
+    // Stale epoch: the switch was disabled and re-enabled after this
+    // producer's config read.
+    const staleEpoch = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, [OUTBOX_KEY, SWITCH_KEY, generationKey], [`${id}-stale-epoch`, entry, 3, 1, "firstBlood", "epoch:first-blood"]);
+    expect(staleEpoch).toBe(0);
+
+    // Stale generation: the webhook rotated after this producer's read.
+    const staleGeneration = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, [OUTBOX_KEY, SWITCH_KEY, generationKey], [`${id}-stale-gen`, entry, 2, 2, "firstBlood", "epoch:first-blood"]);
+    expect(staleGeneration).toBe(0);
+
+    // Disabled switch: the captured epoch alone is not enough.
+    await upstashPipeline([["HSET", SWITCH_KEY, "firstBlood", "0"]]);
+    const disabled = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, [OUTBOX_KEY, SWITCH_KEY, generationKey], [`${id}-disabled`, entry, 3, 2, "firstBlood", "epoch:first-blood"]);
+    expect(disabled).toBe(0);
+
+    // Current switch, epoch and generation: the write lands.
+    await upstashPipeline([["HSET", SWITCH_KEY, "firstBlood", "1"]]);
+    const accepted = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, [OUTBOX_KEY, SWITCH_KEY, generationKey], [id, entry, 3, 2, "firstBlood", "epoch:first-blood"]);
+    expect(accepted).toBe(1);
+    const [raw] = await upstashPipeline([["HGET", OUTBOX_KEY, id]]);
+    expect(raw.result).toBe(entry);
+
+    await upstashPipeline([["DEL", OUTBOX_KEY, SWITCH_KEY, generationKey]]);
   });
 
   it("OUTBOX_COMPLETE_SCRIPT writes only for the current lease owner", async () => {

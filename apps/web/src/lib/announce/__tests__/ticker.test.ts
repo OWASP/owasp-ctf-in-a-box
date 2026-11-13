@@ -208,6 +208,37 @@ describe("lifecycle tick", () => {
     expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
   });
 
+  it("samples the observation time after its reads so a stalled pre-launch replica cannot overwrite a newer launch", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(T0 - 60_000));
+      let releaseConfig: (() => void) | undefined;
+      mocks.getAnnounceConfig.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            releaseConfig = () => resolve(config({ launch: true }));
+          }),
+      );
+      // Replica B already announced the launch while this tick was stalled in
+      // its config read.
+      mocks.readStatePack.mockResolvedValue("v2|L1P0C0A0");
+      mocks.getAdminSettings.mockResolvedValue(settings());
+
+      const tick = runAnnounceTick();
+      expect(mocks.getAnnounceConfig).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(new Date(T0 + 30_000));
+      releaseConfig?.();
+      await tick;
+
+      // The default time is sampled after the reads, so the derivation matches
+      // the captured L1 pack: no stale L0 write, no replayed launch.
+      expect(mocks.stateCompareSet).not.toHaveBeenCalled();
+      expect(mocks.enqueueAnnouncement).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("announces the launch edge when this replica wins it", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
     mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");

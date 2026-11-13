@@ -157,10 +157,15 @@ state; everything else that touches scores goes through it.
    past it. Re-presenting a revision is safe because the scorer's write is
    monotonic and idempotent on replay (step 7).
    Sync then resolves `author` to a player id through the link key
-   `ctf:link:github:<lowercased login>`, which the app writes at every GitHub
-   sign-in. An author no player has linked is dropped: counted in `dropped`,
-   `lastDrop` reason `unlinked`, and the login is never logged
-   (#741 will hold these instead of dropping them). Sync needs Redis for this
+   `ctf:link:github:<lowercased login>`, which the app writes when a player
+   links GitHub. An author no player has linked is **held**, not dropped: the score
+   is stored under `ctf:sd:held:*` (counted in the `held` tally bucket, never
+   in `dropped`) and the login is never logged. Each tick, before the comment
+   pass, sync releases held scores whose author linked before `scoringEndsAt`
+   (or the event has no end), oldest comment first, POSTing each at its
+   ORIGINAL comment time, so the scorer still judges the window, freeze and
+   reset against that time (ADR 67). A link made at or after the close never
+   releases: the admin list shows it as `unclaimed`. Sync needs Redis for this
    lookup and for the freeze and reset reads, so it refuses to start without
    it (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
 6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload with
@@ -822,12 +827,23 @@ for the integrator-facing statement of the same rotation contract.
   (`ctf:auth:`, #736), never the GitHub login. Names are resolved at display
   time from the auth store (`username ?? login ?? name`, falling back to
   `player <first 8 of the id>`). **`ctf:link:github:<lowercased login>`**
-  holds the player id and **`ctf:link:user:<id>`** the lowercased login; both
-  are written at every GitHub sign-in (a rename moves the link, and a login
-  already linked to another player is not taken over). They exist only so
-  sync can map a PR author to a player, sit outside the master reset's
-  prefixes (a reset keeps accounts and links), and the event archive never
-  contains `ctf:auth:*` or `ctf:link:*`. Admin access is still decided by the
+  holds the player id and **`ctf:link:user:<id>`** the lowercased login;
+  **`ctf:link:at`** records when each link was made. They are written when a
+  player signs in with GitHub or, with Secure Development on, links GitHub
+  from their profile: one GitHub account links to one kit account, a login
+  already linked to another player is not taken over, and there is no unlink.
+  Email is not identity (`allowDifferentEmails`), and a GitHub sign-in does
+  not refresh the name or avatar. They exist only so sync can map a PR author
+  to a player and decide whether a held score may release, sit outside the
+  master reset's prefixes (a reset keeps accounts and links), and the event
+  archive never contains `ctf:auth:*` or `ctf:link:*`. **`ctf:sd:held:*`**
+  holds the scores sync could not attribute yet (`ctf:sd:held:authors`, a set
+  of lowercased logins, and `ctf:sd:held:by:<login>`, a hash per author); the
+  master reset wipes them, and deleting a player clears theirs.
+  `GET /api/admin/sd/held` lists them read-only on the Secure Development
+  admin tab, marking those whose author linked at or after the close as
+  `unclaimed`. The Secure Development page hides fork links until the player
+  has linked. Admin access is still decided by the
   GitHub login against `ADMIN_LOGINS` (#738).
 - **`ctf:user:<id>`** — the contestant's own record: `team` (their current
   slug), `joinedAt` (when they joined **that** team), and `firstTeamAt` (the
@@ -1093,7 +1109,7 @@ floor that keeps the rate inside 0..1.
 
   `ingested` and `dropped` are a **pair**, and /admin shows them side by side:
   points that reached the leaderboard, and points that reached a PR and
-  stopped there. A drop is a comment the poller consumed and could not turn
+  stopped there (a held score is waiting, not stopped). A drop is a comment the poller consumed and could not turn
   into a score — a scorer `4xx`, or a `ctf-score:` marker present but
   unreadable. Both are cumulative and neither is self-clearing, unlike
   `lastError`, which describes only the tick that wrote it: a dropped score is

@@ -27,9 +27,9 @@ trap cleanup EXIT
 
 # Sync attributes a PR author to the player who claimed their GitHub login
 # (`ctf:link:github:<lowercased login>`), so the links are in Redis BEFORE
-# sync's first poll: an unlinked author's comment is consumed and dropped.
+# sync's first poll: an unlinked author's comment is held, not scored.
 # mallory is linked too, so the bot-author trust filter is the ONLY thing
-# keeping her forged comment off the board (unlinked would drop it anyway).
+# keeping her forged comment off the board (an unlinked author would be held).
 OCTOCAT_ID=11111111-1111-4111-8111-111111111111
 MONA_ID=33333333-3333-4333-8333-333333333333
 TRINITY_ID=44444444-4444-4444-8444-444444444444

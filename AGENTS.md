@@ -378,8 +378,8 @@ suggestions.
   login exists only to link a PR to a player: the app writes
   `ctf:link:github:<lowercased login>` (player id) and
   `ctf:link:user:<id>` (login) at every GitHub sign-in, sync resolves the
-  score marker's `author` through the first, and an unlinked author is
-  dropped. GitHub logins are unique only case-insensitively, so the link key
+  score marker's `author` through the first, and an unlinked author's
+  score is held (`ctf:sd:held:*`) until they link. GitHub logins are unique only case-insensitively, so the link key
   and the `ADMIN_LOGINS` check lowercase both sides. Never key a record on a
   login, and never join across the two keyings (#216 was a verbatim login
   join that made hints free; #742 removed the class). Sync needs Redis for

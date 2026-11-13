@@ -1845,6 +1845,7 @@ The taxonomy is the whole decision:
 | `invalid` | Marker **present** and unusable — schema drift, truncation, forgery | **Yes** |
 | `rejected` | Scorer returned `4xx`; the comment stays marked seen, so it is never retried | **Yes** |
 | `retried` | Submission failed transiently and was un-marked; next tick re-presents it | No — logged, not lost |
+| `held` | PR author has not linked a kit account (or linked at or after the close): stored under `ctf:sd:held:*`, released by a later tick if the author links before the end, else shown to admins as `unclaimed` | No — waiting on the player, not lost |
 | `refused` | Scorer returned `422`: posted before the launch, during a freeze, after the end or before a reset ([ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)); stays marked seen | No — the rule working, logged per PR |
 
 **Splitting `invalid` from `noMarker` required a parser change.**

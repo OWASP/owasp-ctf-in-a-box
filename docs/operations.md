@@ -110,8 +110,10 @@ routes would refuse.
 >
 > Deferred credit needs the PR author to be a linked player when sync reads
 > the score: a contestant links their GitHub login by signing in with GitHub.
-> A score whose author nobody has linked is dropped, not banked, and is not
-> retried (holding those scores until the author links is #741).
+> A score whose author nobody has linked is held, not dropped: sync releases
+> it on a later tick once the author links before Scoring closes. A link made
+> at or after the close never releases it; the Secure Development admin tab
+> lists it as `unclaimed`.
 
 Captains
 manage the roster from the app: rename the team, remove a member, transfer the
@@ -346,7 +348,7 @@ The panel offers:
   together; contact and Discord never travel in one.
 - **Sync** (Overview tab, shown only while Secure Development is present) —
   the sync poller's heartbeat as one line (last poll time, comments ingested,
-  comments **dropped**, running or paused) that expands to the full
+  comments **dropped**, running or paused; a score held for an unlinked PR author is not a drop) that expands to the full
   breakdown: repos polled, whether sync is paused, the last drop and the
   last error.
 
@@ -816,8 +818,9 @@ The panel offers:
   reset to the audit log. Sign-in state survives it too: contestant accounts,
   admin sign-ins and sessions (the `ctf:auth:` keys) are untouched, so players
   stay signed in across a reset, and so do the GitHub links
-  (`ctf:link:*`) that tie a player to the GitHub login their PRs score
-  under. It does rotate the AI
+  (`ctf:link:*`, including when each was made) that tie a player to the GitHub
+  login their PRs score under. Held Secure Development scores
+  (`ctf:sd:held:*`) are wiped, and deleting a player clears theirs. It does rotate the AI
   module's launch keypair (see [below](#ai)), so an external challenge site
   re-fetches the public key on its next verification. It is server-side and
   admin-gated, and requires **typing the event name** — the current runtime

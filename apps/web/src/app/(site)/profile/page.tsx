@@ -33,6 +33,10 @@ import TeamProgress from "@/components/team-progress";
 import type { AppId } from "@/lib/apps";
 import { getEnabledApps, getEnabledAppsById, getEnabledTotals } from "@/lib/enabled-apps";
 import { getPlayer } from "@/lib/player";
+import { getGithubLink } from "@/lib/github-link";
+import { errorLabel } from "@/lib/error-label";
+import LinkGithubButton from "@/components/link-github-button";
+import { linkNotice } from "@/app/(site)/profile/link-notice";
 import {
   getAiTotals,
   getViewerAi,
@@ -97,11 +101,22 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
+/** A repeated `?error=a&error=b` arrives as an array; the first value wins. */
+function firstParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 /** The viewer's own progress page: the shared leaderboard pipeline for the
  *  totals, plus the per-item reads no list row carries — the viewer's solve
  *  records and their team's story locks — which set the classic reachable
  *  denominator and keep locked steps' titles and points off the page. */
-export default async function ProfilePage() {
+export default async function ProfilePage({
+  searchParams,
+}: {
+  /** The GitHub link round-trip returns here: `error` is better-auth's code,
+   *  `linked=github` marks a return from a link the player started. */
+  searchParams?: Promise<{ error?: string | string[]; linked?: string | string[] }>;
+} = {}) {
   const player = await getPlayer(await headers());
   if (!player) redirect("/");
   const playerId = player.id;
@@ -112,6 +127,19 @@ export default async function ProfilePage() {
   const classicEnabled = liveModules.has("classic");
   const aiEnabled = liveModules.has("ai");
   const secureDevEnabled = liveModules.has("secure-development");
+
+  // A failed read omits the GitHub block rather than 500ing the whole page.
+  const params = await searchParams;
+  let githubLink: Awaited<ReturnType<typeof getGithubLink>> | undefined;
+  if (secureDevEnabled) {
+    try {
+      githubLink = await getGithubLink(playerId);
+    } catch (err) {
+      console.error(`profile: github link read failed: ${errorLabel(err)}`);
+    }
+  }
+  const linkMessage =
+    githubLink === undefined ? null : linkNotice(firstParam(params?.error), firstParam(params?.linked), githubLink !== null);
 
   // Quiz/classic/ai totals and item lists are per-login and cheap to fetch
   // here regardless of board size (two HGETALLs each — see getQuizTotals /
@@ -394,6 +422,24 @@ export default async function ProfilePage() {
           secure-dev vocabulary guard on a quiz-only event) — kept generic so
           this reads the same regardless of which modules are enabled. */}
       <PageHeader eyebrow="Agent dossier" title={player.name} description="Your personal progress this event." />
+
+      {githubLink === undefined ? null : githubLink ? (
+        <p className="text-sm text-zinc-300">
+          GitHub: <bdi>@{githubLink.login}</bdi>
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {linkMessage && (
+            <p role="alert" className="rounded-md border border-[#d4a017]/40 bg-[#d4a017]/10 px-4 py-2 text-sm text-white">
+              {linkMessage}
+            </p>
+          )}
+          <p role="status" className="rounded-md border border-[#d4a017]/40 bg-[#d4a017]/10 px-4 py-2 text-sm text-white">
+            Secure Development is on. Your PRs won&apos;t score until you link your GitHub account.
+          </p>
+          <LinkGithubButton />
+        </div>
+      )}
 
       <div className="ds-card flex flex-col gap-4 rounded-lg border border-white/[0.06] bg-[#16162a] p-5 sm:flex-row sm:items-center">
         {avatar && (

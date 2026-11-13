@@ -906,7 +906,9 @@ export async function resetEvent(
     // 0 before the reset can still write its outbox entry after the reset
     // deletes the outbox. That entry keeps 0; the generation it must match
     // is already 1, so the delivery sweeps skip it instead of posting it to
-    // the webhook the reset retained.
+    // the webhook the reset retained. Fail closed: if this INCR fails, abort
+    // before any prefix is swept, or the old generation would remain active
+    // against a wiped outbox.
     assertPipelineOk(
       await upstashPipeline([["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]]),
       "reset webhook generation",

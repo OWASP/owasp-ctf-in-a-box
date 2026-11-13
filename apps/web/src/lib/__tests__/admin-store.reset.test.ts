@@ -26,7 +26,7 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
   };
 });
 
-import { resetEvent } from "@/lib/admin-store";
+import { RESET_PREFIXES, resetEvent } from "@/lib/admin-store";
 import { ANNOUNCE_WEBHOOK_GENERATION_KEY } from "@/lib/announce/keys";
 
 beforeEach(() => {
@@ -81,6 +81,23 @@ describe("resetEvent", () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
     mocks.upstashEval.mockRejectedValue(new Error("down"));
     await expect(resetEvent("alice")).rejects.toThrow("down");
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+
+  it("ABORTS before any prefix sweep when the webhook generation bump fails — fail closed", async () => {
+    // The old generation must not stay active against a wiped outbox, so a
+    // failed INCR stops the reset before the first SCAN/DEL.
+    mocks.upstashPipeline.mockImplementation(async (cmds) => {
+      const cmd = cmds[0];
+      if (String(cmd[0]) === "INCR") return [{ error: "NOAUTH" }];
+      return [{ result: [] }];
+    });
+    await expect(resetEvent("alice")).rejects.toThrow(/reset webhook generation/);
+    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
+    expect(commands.some((cmd) => cmd[0] === "SCAN" || cmd[0] === "DEL")).toBe(false);
+    for (const [, pattern] of RESET_PREFIXES) {
+      expect(commands.some((cmd) => cmd[0] === "SCAN" && cmd[3] === pattern)).toBe(false);
+    }
     expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
   });
 

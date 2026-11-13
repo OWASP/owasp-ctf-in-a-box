@@ -36,7 +36,7 @@ import { getPlayer } from "@/lib/player";
 import { getGithubLink } from "@/lib/github-link";
 import { errorLabel } from "@/lib/error-label";
 import LinkGithubButton from "@/components/link-github-button";
-import { linkNotice } from "@/app/(site)/profile/link-notice";
+import { firstParam, linkNotice } from "@/app/(site)/profile/link-notice";
 import {
   getAiTotals,
   getViewerAi,
@@ -99,11 +99,6 @@ export async function generateMetadata(): Promise<Metadata> {
     // leaderboard/page.tsx's equally module-agnostic description.
     description: `Your personal progress in ${event.name}.`,
   };
-}
-
-/** A repeated `?error=a&error=b` arrives as an array; the first value wins. */
-function firstParam(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
 }
 
 /** The viewer's own progress page: the shared leaderboard pipeline for the

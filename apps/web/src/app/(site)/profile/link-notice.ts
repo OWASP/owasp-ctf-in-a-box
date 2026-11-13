@@ -18,3 +18,8 @@ export function linkNotice(error: string | undefined, linked: string | undefined
   if (linked === "github" && !isLinked) return UNFINISHED_LINK;
   return null;
 }
+
+/** A repeated `?error=a&error=b` arrives as an array; the first value wins. */
+export function firstParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}

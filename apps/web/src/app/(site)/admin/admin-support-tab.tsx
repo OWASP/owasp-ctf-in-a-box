@@ -47,6 +47,36 @@ export function playerSearchUrl(query: string): string {
   return `/api/admin/players?q=${encodeURIComponent(query.trim())}`;
 }
 
+/** Numbers requests so only the newest one's answer is applied. */
+export type RequestSequence = { next: () => number; isLatest: (n: number) => boolean };
+
+export function requestSequence(): RequestSequence {
+  let latest = 0;
+  return { next: () => ++latest, isLatest: (n) => n === latest };
+}
+
+/** Runs `request` as the newest in `seq`. A request started after it makes
+ *  this one stale, so its answer (or its failure) comes back as
+ *  `{ current: false }` and the caller leaves the screen to the newer one. */
+export async function latestOnly<T>(
+  seq: RequestSequence,
+  request: () => Promise<T>,
+): Promise<{ current: false } | { current: true; ok: true; value: T } | { current: true; ok: false }> {
+  const n = seq.next();
+  try {
+    const value = await request();
+    return seq.isLatest(n) ? { current: true, ok: true, value } : { current: false };
+  } catch {
+    return seq.isLatest(n) ? { current: true, ok: false } : { current: false };
+  }
+}
+
+/** A search goes out only with something to search for and no request in
+ *  flight; the Enter key and the button share this rule. */
+export function canSearch(query: string, pending: boolean): boolean {
+  return !pending && query.trim() !== "";
+}
+
 /** The lookup request for a chosen player. */
 export function lookupUrl(id: string): string {
   return `/api/admin/ops/user?id=${encodeURIComponent(id)}`;
@@ -96,12 +126,38 @@ export function resetProgressConfirm(detail: UserDetail): {
     title: `Reset ${detail.name}'s progress?`,
     requireType: detail.name,
     confirmLabel: "Reset progress",
-    body: `Clears their quiz answers, classic and AI solves, attempts and hints — ${total} points in total. Their account and team stay.`,
+    body: `${playerIdLine(detail.id)} Clears their quiz answers, classic and AI solves, attempts and hints — ${total} points in total. Their account and team stay.`,
     warning:
       detail.secureDev.solves > 0
         ? `Their ${detail.secureDev.solves} Secure Development solves are re-ingested from PR comments and will come back if that PR is scored again.`
         : null,
   };
+}
+
+/** Display names are not unique, so every destructive confirmation names the
+ *  player's id too: it is what the action is sent with, and the only thing
+ *  that tells two same-named accounts apart. */
+export function playerIdLine(id: string): string {
+  return `Player id ${id}.`;
+}
+
+/** The delete-contestant confirmation's title, typed name and id line.
+ *  Exported for direct testing. */
+export function deleteContestantConfirm(detail: Pick<UserDetail, "id" | "name">): {
+  title: string;
+  requireType: string;
+  idLine: string;
+} {
+  return { title: `Delete ${detail.name}?`, requireType: detail.name, idLine: playerIdLine(detail.id) };
+}
+
+/** The remove-from-team confirmation's title and id line. Exported for
+ *  direct testing. */
+export function removeFromTeamConfirm(detail: Pick<UserDetail, "id" | "name" | "team">): {
+  title: string;
+  idLine: string;
+} {
+  return { title: `Remove ${detail.name} from ${detail.team?.name}?`, idLine: playerIdLine(detail.id) };
 }
 
 /** The two things the contestant card says about their team, built purely so
@@ -160,6 +216,40 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+/** The player's full id as secondary text. The whole UUID, not a prefix: a
+ *  shortened id is not guaranteed to tell two accounts apart. */
+function PlayerId({ id }: { id: string }) {
+  return <bdi className="break-all font-mono text-xs text-muted">{id}</bdi>;
+}
+
+/** One search result's label: avatar, name, and the id that tells two
+ *  same-named players apart. Exported for direct testing. */
+export function PlayerResultLabel({ player }: { player: PlayerRow }) {
+  return (
+    <>
+      {player.image && (
+        // eslint-disable-next-line @next/next/no-img-element -- a GitHub avatar URL, not a local asset to optimize
+        <img src={player.image} alt="" width={20} height={20} className="h-5 w-5 rounded-full" />
+      )}
+      <span className="flex min-w-0 flex-col">
+        <bdi className="font-mono">{player.name}</bdi>
+        <PlayerId id={player.id} />
+      </span>
+    </>
+  );
+}
+
+/** The card's heading: the chosen player's name with their full id beneath.
+ *  Exported for direct testing. */
+export function PlayerIdentity({ detail }: { detail: Pick<UserDetail, "id" | "name"> }) {
+  return (
+    <span className="flex min-w-0 flex-col">
+      <bdi className="font-mono text-white">{detail.name}</bdi>
+      <PlayerId id={detail.id} />
+    </span>
+  );
+}
+
 export default function AdminSupportTab({
   setConfirm,
 }: {
@@ -171,6 +261,7 @@ export default function AdminSupportTab({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [lookupSeq] = useState(requestSequence);
 
   const [teamSlug, setTeamSlug] = useState("");
   /** The team-actions slug field, so the contestant card can hand it the
@@ -207,7 +298,7 @@ export default function AdminSupportTab({
   }
 
   async function search() {
-    if (!query.trim()) return;
+    if (!canSearch(query, pending)) return;
     setPending(true);
     setError(null);
     setNotice(null);
@@ -232,21 +323,20 @@ export default function AdminSupportTab({
     setPending(true);
     setError(null);
     setNotice(null);
-    try {
+    const out = await latestOnly(lookupSeq, async () => {
       const res = await fetch(lookupUrl(id));
       const data = (await res.json().catch(() => ({}))) as UserDetail & { error?: string };
-      if (!res.ok) {
-        setError(data.error ?? "Lookup failed");
-        setDetail(null);
-        return;
-      }
-      setDetail(data);
-    } catch {
-      setError("Lookup failed");
+      return { ok: res.ok, data };
+    });
+    // A newer lookup owns the card, the error line and the pending flag.
+    if (!out.current) return;
+    if (!out.ok || !out.value.ok) {
+      setError((out.ok && out.value.data.error) || "Lookup failed");
       setDetail(null);
-    } finally {
-      setPending(false);
+    } else {
+      setDetail(out.value.data);
     }
+    setPending(false);
   }
 
   const refresh = async () => {
@@ -282,7 +372,7 @@ export default function AdminSupportTab({
             aria-label="Name or GitHub login"
             className={FIELD}
           />
-          <button type="button" disabled={pending || !query.trim()} onClick={() => void search()} className={BTN}>
+          <button type="button" disabled={!canSearch(query, pending)} onClick={() => void search()} className={BTN}>
             Search
           </button>
         </div>
@@ -298,11 +388,7 @@ export default function AdminSupportTab({
                   onClick={() => void lookup(p.id)}
                   className="flex w-full items-center gap-2 rounded-md border border-white/10 px-2.5 py-1.5 text-left text-sm text-zinc-300 transition-colors hover:border-[#2563eb]/60 hover:text-white aria-pressed:border-[#2563eb]/60 aria-pressed:text-white disabled:opacity-40"
                 >
-                  {p.image && (
-                    // eslint-disable-next-line @next/next/no-img-element -- a GitHub avatar URL, not a local asset to optimize
-                    <img src={p.image} alt="" width={20} height={20} className="h-5 w-5 rounded-full" />
-                  )}
-                  <bdi className="font-mono">{p.name}</bdi>
+                  <PlayerResultLabel player={p} />
                 </button>
               </li>
             ))}
@@ -313,7 +399,7 @@ export default function AdminSupportTab({
       {detail && (
         <section className="flex flex-col gap-3 rounded-md border border-white/[0.06] bg-white/[0.02] p-4">
           <div className="flex items-center justify-between gap-2">
-            <bdi className="font-mono text-white">{detail.name}</bdi>
+            <PlayerIdentity detail={detail} />
             {!detail.known && (
               <span className="rounded border border-[#d4a017]/40 bg-[#d4a017]/10 px-1.5 py-0.5 text-xs uppercase tracking-wide text-[#d4a017]">
                 no data yet
@@ -418,15 +504,16 @@ export default function AdminSupportTab({
               type="button"
               disabled={pending}
               className={DANGER}
-              onClick={() =>
+              onClick={() => {
+                const c = deleteContestantConfirm(detail);
                 setConfirm({
-                  title: `Delete ${detail.name}?`,
+                  title: c.title,
                   danger: true,
-                  requireType: detail.name,
+                  requireType: c.requireType,
                   confirmLabel: "Delete contestant",
                   body: (
                     <>
-                      Removes their progress, hints, team membership and account record. This cannot be undone.
+                      {c.idLine} Removes their progress, hints, team membership and account record. This cannot be undone.
                       {detail.team?.isCaptain && (
                         <>
                           {" "}
@@ -451,8 +538,8 @@ export default function AdminSupportTab({
                         setResults(null);
                       },
                     ),
-                })
-              }
+                });
+              }}
             >
               Delete contestant
             </button>
@@ -462,12 +549,13 @@ export default function AdminSupportTab({
                 type="button"
                 disabled={pending}
                 className={DANGER}
-                onClick={() =>
+                onClick={() => {
+                  const c = removeFromTeamConfirm(detail);
                   setConfirm({
-                    title: `Remove ${detail.name} from ${detail.team?.name}?`,
+                    title: c.title,
                     danger: true,
                     confirmLabel: "Remove from team",
-                    body: <>Their progress is kept — only the membership goes.</>,
+                    body: <>{c.idLine} Their progress is kept — only the membership goes.</>,
                     onConfirm: () =>
                       run(
                         () =>
@@ -479,8 +567,8 @@ export default function AdminSupportTab({
                         () => `Removed ${detail.name} from ${detail.team?.slug}.`,
                         refresh,
                       ),
-                  })
-                }
+                  });
+                }}
               >
                 Remove from team
               </button>
@@ -570,7 +658,7 @@ export default function AdminSupportTab({
               setConfirm({
                 title: `Make ${detail.name} captain of ${teamSlug.trim()}?`,
                 confirmLabel: "Transfer captaincy",
-                body: <>They must already be a member of that team.</>,
+                body: <>{playerIdLine(detail.id)} They must already be a member of that team.</>,
                 onConfirm: () =>
                   run(
                     () =>

@@ -139,6 +139,32 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
     expect((await ia.findAccounts(first.user.id)).map((a) => a.accountId)).toEqual(["1001"]);
   });
 
+  it("undoes only rows that still hold what the failed transaction wrote", async () => {
+    const { prefix, ctx } = await build();
+    const row = (id: string, token: string) => ({
+      id,
+      token,
+      userId: "u-live",
+      expiresAt: new Date(Date.now() + 600_000),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await expect(
+      ctx.adapter.transaction(async (trx) => {
+        await trx.create({ model: "session", data: row("s-own", "own"), forceAllowId: true });
+        await trx.create({ model: "session", data: row("s-taken", "first"), forceAllowId: true });
+        // Another writer replaces s-taken under the same id before the failure.
+        await ctx.adapter.delete({ model: "session", where: [{ field: "id", value: "s-taken" }] });
+        await ctx.adapter.create({ model: "session", data: row("s-taken", "second"), forceAllowId: true });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    const left = await ctx.adapter.findMany<{ id: string; token: string }>({ model: "session" });
+    expect(left.map((r) => [r.id, r.token])).toEqual([["s-taken", "second"]]);
+    expect(await redis(["SMEMBERS", keys.indexKey(prefix, "session", "token", "own")])).toEqual([]);
+    expect(await redis(["SMEMBERS", keys.indexKey(prefix, "session", "token", "second")])).toEqual(["s-taken"]);
+  });
+
   it("leaves no orphan user when the account write fails, so the next sign-in succeeds", async () => {
     const { prefix, ctx } = await build();
     const ia = ctx.internalAdapter;

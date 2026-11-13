@@ -305,10 +305,13 @@ describe("redisAdapter (mocked pipeline)", () => {
 // A stateful Redis for the transaction tests: rows per hash, index lookups
 // answered by scanning the model's rows, a unique email/account key refused
 // the way PUT_ROW_SCRIPT refuses it, and `failCreate` turning the next create
-// of a model into a per-command error.
+// of a model into a per-command error. `loseReply` makes the next create of a
+// model land and then throw instead of replying, the way a dropped connection
+// after Redis applied the write looks to the caller.
 function statefulRedis() {
   const hashes = new Map<string, Map<string, string>>();
   const failCreate = new Set<string>();
+  const loseReply = new Set<string>();
   const hash = (key: string) => {
     let h = hashes.get(key);
     if (!h) hashes.set(key, (h = new Map()));
@@ -347,6 +350,7 @@ function statefulRedis() {
           );
           if (clash) return { result: 2 };
           h.set(id, String(c[8]));
+          if (!old && loseReply.delete(model)) throw new Error("fetch failed");
           return { result: 1 };
         }
         default:
@@ -354,12 +358,15 @@ function statefulRedis() {
       }
     }),
   );
-  return { failCreate, rowsOf };
+  return { failCreate, loseReply, rowsOf, hash };
 }
 
 describe("redisAdapter transaction (mocked pipeline)", () => {
   const user = { name: "A", email: "a@x.test", emailVerified: false };
   const account = { providerId: "github", accountId: "42" };
+  // A fresh row each time: the factory clears `id` on the object it is handed
+  // unless forceAllowId is set, so a shared fixture would lose its id.
+  const ownSession = (token = "t") => ({ ...session, id: "s1", token });
 
   it("deletes the rows the callback created when it throws, and rethrows its error", async () => {
     const redis = statefulRedis();
@@ -367,7 +374,7 @@ describe("redisAdapter transaction (mocked pipeline)", () => {
     await expect(
       adapter.transaction(async (trx) => {
         await trx.create({ model: "user", data: user });
-        await trx.create({ model: "session", data: session, forceAllowId: true });
+        await trx.create({ model: "session", data: ownSession(), forceAllowId: true });
         throw boom;
       }),
     ).rejects.toBe(boom);
@@ -399,27 +406,82 @@ describe("redisAdapter transaction (mocked pipeline)", () => {
     expect(redis.rowsOf("user").map(([, r]) => r.email)).toEqual(["kept@x.test"]);
   });
 
-  it("still rethrows the callback's error when a compensating delete fails, logging only the model", async () => {
-    statefulRedis();
+  it("still undoes the other rows and rethrows the callback's error when one compensating delete fails, logging only the model", async () => {
+    const redis = statefulRedis();
     const inner = pipeline.getMockImplementation()!;
-    pipeline.mockImplementation(async (cmds: Cmd[]) =>
-      cmds[0][0] === "HGET" ? [{ error: "ERR down" }] : inner(cmds),
-    );
+    const isUserUndo = (c: Cmd) =>
+      (c[0] === "HGET" && c[1] === `${P}:user`) || (c[0] === "EVAL" && c[1] !== PUT_ROW_SCRIPT && c[5] === "user");
+    pipeline.mockImplementation(async (cmds: Cmd[]) => (isUserUndo(cmds[0]) ? [{ error: "ERR down" }] : inner(cmds)));
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       await expect(
         adapter.transaction(async (trx) => {
           await trx.create({ model: "user", data: user });
+          await trx.create({ model: "session", data: ownSession(), forceAllowId: true });
           throw new Error("boom");
         }),
       ).rejects.toThrow("boom");
+      expect(redis.rowsOf("session")).toEqual([]);
+      expect(redis.rowsOf("user")).toHaveLength(1);
       expect(log).toHaveBeenCalledTimes(1);
       const logged = JSON.stringify(log.mock.calls);
       expect(logged).toMatch(/user/);
       expect(logged).not.toMatch(/a@x\.test/);
+      expect(logged).not.toContain(redis.rowsOf("user")[0][0]);
     } finally {
       log.mockRestore();
     }
+  });
+
+  it("waits for a create still in flight when a parallel one fails, and undoes it", async () => {
+    const redis = statefulRedis();
+    const inner = pipeline.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    pipeline.mockImplementation(async (cmds: Cmd[]) => {
+      const c = cmds[0];
+      if (c[0] === "EVAL" && c[1] === PUT_ROW_SCRIPT && c[5] === "user") await gate;
+      if (c[0] === "EVAL" && c[1] === PUT_ROW_SCRIPT && c[5] === "account") {
+        setTimeout(release, 10);
+        return [{ error: "ERR simulated write failure" }];
+      }
+      return inner(cmds);
+    });
+    await expect(
+      adapter.transaction(async (trx) => {
+        await Promise.all([
+          trx.create({ model: "user", data: user }),
+          trx.create({ model: "account", data: { ...account, userId: "u" } }),
+        ]);
+      }),
+    ).rejects.toThrow(/create account failed/);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(redis.rowsOf("user")).toEqual([]);
+  });
+
+  it("leaves a same-id row someone else wrote after the transaction's own row was deleted", async () => {
+    const redis = statefulRedis();
+    const theirs = ownSession("theirs");
+    await expect(
+      adapter.transaction(async (trx) => {
+        await trx.create({ model: "session", data: ownSession(), forceAllowId: true });
+        await adapter.delete({ model: "session", where: [w("id", "s1")] });
+        await adapter.create({ model: "session", data: theirs, forceAllowId: true });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(redis.rowsOf("session").map(([, r]) => r.token)).toEqual(["theirs"]);
+  });
+
+  it("undoes a create whose write landed but whose reply was lost", async () => {
+    const redis = statefulRedis();
+    await expect(
+      adapter.transaction(async (trx) => {
+        redis.loseReply.add("session");
+        await trx.create({ model: "session", data: ownSession(), forceAllowId: true });
+      }),
+    ).rejects.toThrow(/create session failed: fetch failed/);
+    expect(redis.rowsOf("session")).toEqual([]);
   });
 
   it("keeps one transaction's rollback from touching a concurrent one's rows", async () => {
@@ -479,6 +541,19 @@ describe("redisAdapter transaction (mocked pipeline)", () => {
       expect(linked?.userId).toBe(created.id);
       expect(redis.rowsOf("user").map(([id]) => id)).toEqual([created.id]);
       expect((await ia.findAccountByKey(account))?.userId).toBe(created.id);
+    });
+
+    it("leaves no account behind when the account write landed but its reply was lost", async () => {
+      const redis = statefulRedis();
+      const ia = await internalAdapter();
+      redis.loseReply.add("account");
+      await expect(ia.createOAuthUser(user, account)).rejects.toThrow(/auth store: create account failed: fetch failed/);
+      expect(redis.rowsOf("user")).toEqual([]);
+      expect(redis.rowsOf("account")).toEqual([]);
+
+      const { user: created, account: linked } = await ia.createOAuthUser(user, account);
+      expect(linked?.userId).toBe(created.id);
+      expect(redis.rowsOf("account").map(([, r]) => r.userId)).toEqual([created.id]);
     });
   });
 });

@@ -149,6 +149,9 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       ["HDEL", "ctf:classic:solvecount", challenge],
       ["HDEL", "ctf:ai:solvecount", challenge],
       ["HDEL", "ctf:solves:" + target, `${mate}:${challenge}`],
+      // Independent of deleteUser, so a failed assertion still leaves no
+      // contestant state behind.
+      ...perPlayer.map(([k, f]) => (f ? ["HDEL", k, f] : ["DEL", k])),
     ]);
   });
 

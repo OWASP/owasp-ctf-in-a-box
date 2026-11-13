@@ -50,7 +50,10 @@ function hasOnlyKeys(obj: Record<string, unknown>, allowed: Set<string>): boolea
  *  logged but never fails a request whose actual data write already
  *  succeeded. */
 async function writeAudit(actor: AuditActor, action: string, detail: Record<string, unknown>): Promise<void> {
-  const audit = JSON.stringify({ at: new Date().toISOString(), by: actor.id, name: actor.name, action, ...detail });
+  // The line's own fields win over a detail key of the same name (see
+  // writeAdminAudit in admin-store.ts).
+  const entry = { at: new Date().toISOString(), by: actor.id, name: actor.name, action };
+  const audit = JSON.stringify({ ...entry, ...detail, ...entry });
   try {
     await upstashPipeline([
       ["LPUSH", ADMIN_AUDIT_KEY, audit],

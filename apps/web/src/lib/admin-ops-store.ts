@@ -99,7 +99,10 @@ function requireSlug(slug: string): string {
  *  audit line is logged and the operation still reports what it did. A 503
  *  there would send the organizer to retry something that already happened. */
 async function audit(action: string, actor: AuditActor, detail: Record<string, unknown>): Promise<void> {
-  const line = JSON.stringify({ at: new Date().toISOString(), by: actor.id, name: actor.name, action, ...detail });
+  // The line's own fields win over a detail key of the same name (see
+  // writeAdminAudit in admin-store.ts).
+  const entry = { at: new Date().toISOString(), by: actor.id, name: actor.name, action };
+  const line = JSON.stringify({ ...entry, ...detail, ...entry });
   try {
     assertPipelineOk(
       await upstashPipeline([

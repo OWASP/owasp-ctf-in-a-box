@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   updateAnnounceConfig: vi.fn(),
   setAnnounceWebhook: vi.fn(),
   getWebhookUrl: vi.fn(),
+  announceCooldownMs: vi.fn(),
+  setAnnounceCooldown: vi.fn(),
   readStatus: vi.fn(),
   postToDiscord: vi.fn(),
   getAdminSettings: vi.fn(),
@@ -42,6 +44,8 @@ vi.mock("@/lib/announce/store", () => ({
   updateAnnounceConfig: mocks.updateAnnounceConfig,
   setAnnounceWebhook: mocks.setAnnounceWebhook,
   getWebhookUrl: mocks.getWebhookUrl,
+  announceCooldownMs: mocks.announceCooldownMs,
+  setAnnounceCooldown: mocks.setAnnounceCooldown,
   readStatus: mocks.readStatus,
 }));
 vi.mock("@/lib/announce/sender", () => ({ postToDiscord: mocks.postToDiscord }));
@@ -74,6 +78,8 @@ beforeEach(() => {
   mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, firstBlood: true });
   mocks.setAnnounceWebhook.mockResolvedValue({ webhookConfigured: true });
   mocks.getWebhookUrl.mockResolvedValue(URL);
+  mocks.announceCooldownMs.mockResolvedValue(0);
+  mocks.setAnnounceCooldown.mockResolvedValue(undefined);
   mocks.postToDiscord.mockResolvedValue({ ok: true });
   mocks.getAdminSettings.mockRejectedValue(new Error("no settings"));
   mocks.deleteLifecycleState.mockResolvedValue(undefined);
@@ -270,6 +276,26 @@ describe("test POST", () => {
     expect(res.status).toBe(503);
     expect(JSON.stringify(await res.json())).not.toContain(URL);
     expect(mocks.postToDiscord).not.toHaveBeenCalled();
+  });
+
+  it("refuses to send while the shared Discord cooldown is active — no POST, 429 with Retry-After", async () => {
+    mocks.announceCooldownMs.mockResolvedValue(3_500);
+    const res = await TEST(req("POST", undefined, "/api/admin/announcements/test"));
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("4");
+    expect(mocks.postToDiscord).not.toHaveBeenCalled();
+    expect(((await res.json()) as { error: string }).error).toContain("rate limit");
+  });
+
+  it("persists a 429's retry instant as the shared cooldown and answers 429, not 502", async () => {
+    mocks.postToDiscord.mockResolvedValue({ ok: false, retryAfterMs: 2_000 });
+    const res = await TEST(req("POST", undefined, "/api/admin/announcements/test"));
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("2");
+    // The scheduled sweeps must see this too, or they post before Discord's
+    // retry instant and burn the outbox's attempts.
+    expect(mocks.setAnnounceCooldown).toHaveBeenCalledWith(2_000);
+    expect(mocks.nudgeAnnounceTicker).not.toHaveBeenCalled();
   });
 });
 

@@ -188,9 +188,8 @@ state; everything else that touches scores goes through it.
    scorer compares the token in constant time: both sides are SHA-256'd and
    passed to `timingSafeEqual`, so neither the token's bytes nor its length
    are recoverable from how long a rejection takes. A `2xx` is success; a
-   `422` is the scorer's final verdict on *when* the score was posted, or on
-   a player deleted while the score was on its way (logged as `refused`,
-   never retried, not counted as dropped); any other
+   `422` is the scorer's final verdict on *when* the score was posted
+   (logged as `refused`, never retried, not counted as dropped); any other
    `4xx` is treated as a permanent rejection (dropped, logged); anything
    else throws and the poller un-marks the comment as seen so it retries
    next tick. The poller does not hold its cursor while scoring is frozen or
@@ -203,20 +202,7 @@ state; everything else that touches scores goes through it.
    over `pausedSince` and the `ctf:admin:pauses` interval log the app writes
    with the flag) is refused with a final `422`. A freeze with no recorded
    start answers `503`, which the poller retries. A payload with no `at` (an
-   older sync) keeps the arrival-time rule. A score timed before a
-   player's deletion is held off too: the delete writes
-   `ctf:deleted:<player id>`, the instant it began in epoch milliseconds and
-   with no expiry, before it clears their solves, as `pending:<ms>` while it
-   runs and `<ms>` once the player's `ctf:user:<id>` record is gone. The
-   scorer reads it in the same script as its write: while pending, every
-   score for the player gets a `503`, which sync retries (the delete may
-   still fail); once final, a score timed before it gets a `422`
-   (`player-deleted`) for good. A score read
-   before the delete therefore cannot restore a cleared solve, while a later
-   comment from the same account (which survives a delete) scores as usual.
-   A delete that fails with the record still in place puts the cutoff back
-   to what it was (none, or an earlier delete's); one whose cleanup outcome
-   is unknown leaves it pending. The
+   older sync) keeps the arrival-time rule. The
    scorer then writes the score
    to Redis (via `srh`), timed `at`, as a monotonic, idempotent-on-replay
    update — the write model is described in
@@ -1142,7 +1128,7 @@ floor that keeps the rate inside 0..1.
   stopped there. A held score is waiting, not stopped. A drop is a comment
   the poller consumed and could not turn into a score — a scorer `4xx`
   other than `422`, or a `ctf-score:` marker present but unreadable. A `422`
-  is the scorer refusing a score on its time (or a deleted player) and is
+  is the scorer refusing a score on its time and is
   counted as refused, not dropped. Both are cumulative and
   neither is self-clearing, unlike `lastError`, which describes only the
   tick that wrote it: a dropped score is still missing after the poller

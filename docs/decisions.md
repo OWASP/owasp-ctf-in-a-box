@@ -85,7 +85,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 67 — A Secure Development solve is timed, and judged, by its score comment](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
 - [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
 - [ADR 69 — The AI module is retired; AI security challenges run as Jeopardy challenges with flags](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)
-- [ADR 70 — Unattributed Secure Development scores are held, and a deleted player is refused](#adr-70-unattributed-secure-development-scores-are-held-and-a-deleted-player-is-refused)
+- [ADR 70 — Unattributed Secure Development scores are held, not dropped](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -1811,7 +1811,7 @@ current advice.
 
 ## ADR 38. Counting the poller's silent drops, and refusing to count the routine ones
 
-**Status.** Accepted. Amended 2026-11-13 by [ADR 70](#adr-70-unattributed-secure-development-scores-are-held-and-a-deleted-player-is-refused), which adds the `held` bucket and a `422` for a deleted player.
+**Status.** Accepted. Amended 2026-11-13 by [ADR 70](#adr-70-unattributed-secure-development-scores-are-held-not-dropped), which adds the `held` bucket and reads `rejected` as a `4xx` other than `422`.
 
 **Context.** Two scoring bugs were found in one evening by running a single
 real PR end to end — the upserted-comment dedupe collision (ADR-adjacent, see
@@ -4127,7 +4127,7 @@ event stream in the audit log.* The audit list is capped by entry count
 across every admin action and is not structured for an instant lookup; the
 pause log is one short list with one shape.
 
-**Status.** Accepted (#596). Amends [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers). Amended 2026-11-13 by [ADR 70](#adr-70-unattributed-secure-development-scores-are-held-and-a-deleted-player-is-refused), which adds the `player-deleted` refusal.
+**Status.** Accepted (#596). Amends [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers).
 
 ## ADR 68. A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock
 
@@ -4271,18 +4271,16 @@ module removes its routes, admin panel, award script, upstash suite,
 `acceptance-ai-only.sh` and its CI job, and this ADR then supersedes ADR 53
 outright.
 
-## ADR 70. Unattributed Secure Development scores are held, and a deleted player is refused
+## ADR 70. Unattributed Secure Development scores are held, not dropped
 
-**Status.** Accepted (#741). Amends [ADR 38](#adr-38-counting-the-pollers-silent-drops-and-refusing-to-count-the-routine-ones) and [ADR 67](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment).
+**Status.** Accepted (#741). Amends [ADR 38](#adr-38-counting-the-pollers-silent-drops-and-refusing-to-count-the-routine-ones).
 
 **Context.** Kit-owned accounts (#731) make a GitHub link optional: a
 player signs in with any provider and links GitHub only to play Secure
 Development. A PR whose author has not linked yet used to be dropped
 (`unlinked`), which loses the points of a player who links an hour into the
-event. Further gaps showed up in review. A score sync read before an
-organizer deleted the player could reach the scorer after the delete cleared
-their solves, and the scorer's `HSETNX` wrote it back. And the scorer keeps a
-solve's first time, so the order in which sync posts two scores for the same
+event. Two further gaps showed up in review. The scorer keeps a solve's
+first time, so the order in which sync posts two scores for the same
 solve decides which comment time sticks. ADR 38's `rejected` row reads
 "Scorer returned `4xx`", which since ADR 67 means a `4xx` other than `422`:
 the `422` is `refused`.
@@ -4310,33 +4308,17 @@ the `422` is `refused`.
 - **ADR 38's `rejected` is a `4xx` other than `422`.** A `422` is `refused`,
   as ADR 67 has it; organizers must not read a routine window or freeze
   refusal as a lost score.
-- **A deleted player's earlier scores are refused.** `deleteUser` writes
-  `ctf:deleted:<player id>`, the instant the delete began in epoch
-  milliseconds, before it clears anything, with no expiry: sync retries a
-  score for as long as it fails, so any expiry would turn into permission to
-  write. It is `pending:<ms>` while the delete runs and `<ms>` once the
-  player's `ctf:user:<id>` record is confirmed gone. The scorer reads it in
-  the same Lua script as its `HSETNX` write. While the cutoff is pending,
-  every score for the player gets a `503`, which sync retries, because the
-  delete may still fail and the player stay; a score timed before a final
-  cutoff gets a final `422` with the code
-  `player-deleted`, which ADR 38 counts as `refused`, like ADR 67's time
-  refusals. A score timed after it is the same account playing again (the
-  account survives a delete) and counts. A delete that fails with the
-  record still in place (including a cutoff write whose reply was lost)
-  puts the cutoff back to what it was, none or an earlier delete's, so the
-  player who stays loses nothing; once the record is gone it is finalized
-  even if other cleanup failed, and when the cleanup's outcome is unknown it
-  stays pending. The player's held scores are cleared only after the record
-  is gone, by one script that deletes the hash before the author index.
+- **Held scores outlive a failed delete.** `deleteUser` clears the player's
+  held scores only after their `ctf:user:<id>` record is gone, by one script
+  that deletes the hash before the author index: sync's cursor is past
+  those comments, so for a player who stays they are the only copy.
 
 This was chosen over dropping unlinked scores (a late link loses points),
-over attributing an unclaimed score by hand (no path may give a score to an
-account that did not link in time), and over a global reset-epoch bump on
-delete (it would refuse every player's in-flight scores).
+and over attributing an unclaimed score by hand (no path may give a score to
+an account that did not link in time).
 
 **Consequences.** The admin Secure Development tab lists held and unclaimed
-scores. A master reset clears `ctf:sd:held:*` and keeps links. The
-`ctf:deleted:*` cutoffs are never cleared; a master reset leaves them, and
-its own epoch already refuses everything older. The scorer's solve write is now one
-`EVAL` instead of a pipeline of `HSETNX`s.
+scores. A master reset clears `ctf:sd:held:*` and keeps links. A score sync
+read before an organizer deletes the player can still reach the scorer after
+the delete and restore a cleared solve, through the comment pass (as before
+this ADR) or a held release; that race is #775.

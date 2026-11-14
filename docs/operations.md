@@ -751,10 +751,7 @@ The panel offers:
   keeps the account and the team), **delete contestant** (all of that
   plus the team membership, their event record, their rate-limit counters and
   any Secure Development scores held for their GitHub login; the sign-in
-  account and its GitHub link stay. The scorer then refuses any of
-  that player's Secure Development scores timed before the delete, so one
-  already on its way cannot bring a solve back; their later PRs score as
-  usual), **remove from team**, or
+  account and its GitHub link stay), **remove from team**, or
   **add to team** / **move to team**: type a team slug and the player goes
   onto it, leaving their current team if they have one, whatever the
   registration state. This is how a player who left after registration

@@ -668,7 +668,7 @@ export async function deleteUser(
       // Held scores go only once the record is gone: sync has moved its
       // cursor past those comments, so for a player who stays they are the
       // only copy. One script, hash before index, so a failed DEL can never
-      // leave a hash sync no longer finds. If this fails the delete still
+      // leave a hash that sync cannot find. If this fails the delete still
       // stands, and sync's release posts the entries to the scorer, which
       // refuses them by the cutoff.
       if (heldLogin) {

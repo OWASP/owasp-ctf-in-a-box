@@ -157,10 +157,27 @@ state; everything else that touches scores goes through it.
    past it. Re-presenting a revision is safe because the scorer's write is
    monotonic and idempotent on replay (step 7).
    Sync then resolves `author` to a player id through the link key
-   `ctf:link:github:<lowercased login>`, which the app writes at every GitHub
-   sign-in. An author no player has linked is dropped: counted in `dropped`,
-   `lastDrop` reason `unlinked`, and the login is never logged
-   (#741 will hold these instead of dropping them). Sync needs Redis for this
+   `ctf:link:github:<lowercased login>`, which the app writes when a player
+   signs in with GitHub or links GitHub from their profile. An author no
+   player has linked is **held**, not dropped: the score is stored under
+   `ctf:sd:held:*` (counted in the `held` tally bucket, never in `dropped`)
+   and the login is never logged. Each tick, before the comment
+   pass, sync releases held scores whose author linked before `scoringEndsAt`
+   (or the event has no end), oldest comment first, POSTing each at its
+   ORIGINAL comment time, so the scorer still judges the window, freeze and
+   reset against that time (ADR 67). A link made at or after the close does
+   not release: the admin list shows it as `unclaimed`. The close is the
+   current `scoringEndsAt`, read every tick, so an organizer who moves the
+   end later than the link lets that score release; an unclaimed score is
+   never attributed any other way. A held score for a
+   target the organizer has since turned off stays held until the target is
+   back on. While an older score for the same author and target is still
+   held (its release failed, or the link landed mid-tick), the comment pass
+   holds a newer one behind it instead of posting it: the scorer keeps a
+   solve's first time, so the newer one would take its place for good. For
+   the same reason, once a comment fails within a tick (a Redis or scorer
+   error, retried next tick), that author's later comments in the repo stay
+   unread until it has gone through. Sync needs Redis for this
    lookup and for the freeze and reset reads, so it refuses to start without
    it (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
 6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload with
@@ -171,8 +188,9 @@ state; everything else that touches scores goes through it.
    scorer compares the token in constant time: both sides are SHA-256'd and
    passed to `timingSafeEqual`, so neither the token's bytes nor its length
    are recoverable from how long a rejection takes. A `2xx` is success; a
-   `422` is the scorer's final verdict on *when* the score was posted
-   (logged as `refused`, never retried, not counted as dropped); any other
+   `422` is the scorer's final verdict on *when* the score was posted, or on
+   a player deleted while the score was on its way (logged as `refused`,
+   never retried, not counted as dropped); any other
    `4xx` is treated as a permanent rejection (dropped, logged); anything
    else throws and the poller un-marks the comment as seen so it retries
    next tick. The poller does not hold its cursor while scoring is frozen or
@@ -185,7 +203,21 @@ state; everything else that touches scores goes through it.
    over `pausedSince` and the `ctf:admin:pauses` interval log the app writes
    with the flag) is refused with a final `422`. A freeze with no recorded
    start answers `503`, which the poller retries. A payload with no `at` (an
-   older sync) keeps the arrival-time rule. The scorer then writes the score
+   older sync) keeps the arrival-time rule. A score timed before a
+   player's deletion is held off too: the delete writes
+   `ctf:deleted:<player id>`, the instant it began in epoch milliseconds and
+   with no expiry, before it clears their solves, as `pending:<ms>` while it
+   runs and `<ms>` once the player's `ctf:user:<id>` record is gone. The
+   scorer reads it in the same script as its write: while pending, every
+   score for the player gets a `503`, which sync retries (the delete may
+   still fail); once final, a score timed before it gets a `422`
+   (`player-deleted`) for good. A score read
+   before the delete therefore cannot restore a cleared solve, while a later
+   comment from the same account (which survives a delete) scores as usual.
+   A delete that fails with the record still in place puts the cutoff back
+   to what it was (none, or an earlier delete's); one whose cleanup outcome
+   is unknown leaves it pending. The
+   scorer then writes the score
    to Redis (via `srh`), timed `at`, as a monotonic, idempotent-on-replay
    update — the write model is described in
    [docs/decisions.md #5](decisions.md#adr-5-single-score-writer-monotonic-writes-at-least-once-delivery).
@@ -822,12 +854,26 @@ for the integrator-facing statement of the same rotation contract.
   (`ctf:auth:`, #736), never the GitHub login. Names are resolved at display
   time from the auth store (`username ?? login ?? name`, falling back to
   `player <first 8 of the id>`). **`ctf:link:github:<lowercased login>`**
-  holds the player id and **`ctf:link:user:<id>`** the lowercased login; both
-  are written at every GitHub sign-in (a rename moves the link, and a login
-  already linked to another player is not taken over). They exist only so
-  sync can map a PR author to a player, sit outside the master reset's
-  prefixes (a reset keeps accounts and links), and the event archive never
-  contains `ctf:auth:*` or `ctf:link:*`. Admin access is still decided by the
+  holds the player id and **`ctf:link:user:<id>`** the lowercased login;
+  **`ctf:link:at`** records when each link was made. They are written when a
+  player signs in with GitHub or, with Secure Development on, links GitHub
+  from their profile: one GitHub account links to one kit account, a login
+  already linked to another player is not taken over, a player already linked
+  cannot start a second link (`/link-social` answers `403`), and there is no
+  unlink.
+  Email is not identity (`allowDifferentEmails`), and a GitHub sign-in does
+  not refresh the name or avatar. They exist only so sync can map a PR author
+  to a player and decide whether a held score may release, sit outside the
+  master reset's prefixes (a reset keeps accounts and links), and the event
+  archive never contains `ctf:auth:*` or `ctf:link:*`. **`ctf:sd:held:*`**
+  holds the scores sync could not attribute yet (`ctf:sd:held:authors`, a set
+  of lowercased logins, and `ctf:sd:held:by:<login>`, a hash per author); the
+  master reset wipes them, and deleting a player clears theirs.
+  `GET /api/admin/sd/held` lists them read-only on the Secure Development
+  admin tab, marking as `unclaimed` those no tick can release any more: the
+  author linked at or after the close, or is still unlinked once it has
+  passed. The Secure Development page hides fork links until the player has
+  linked. Admin access is still decided by the
   GitHub login against `ADMIN_LOGINS` (#738).
 - **`ctf:user:<id>`** — the contestant's own record: `team` (their current
   slug), `joinedAt` (when they joined **that** team), and `firstTeamAt` (the
@@ -1093,12 +1139,15 @@ floor that keeps the rate inside 0..1.
 
   `ingested` and `dropped` are a **pair**, and /admin shows them side by side:
   points that reached the leaderboard, and points that reached a PR and
-  stopped there. A drop is a comment the poller consumed and could not turn
-  into a score — a scorer `4xx`, or a `ctf-score:` marker present but
-  unreadable. Both are cumulative and neither is self-clearing, unlike
-  `lastError`, which describes only the tick that wrote it: a dropped score is
-  still missing after the poller recovers, so the next quiet tick must not
-  erase the pointer to the PR that needs looking at.
+  stopped there. A held score is waiting, not stopped. A drop is a comment
+  the poller consumed and could not turn into a score — a scorer `4xx`
+  other than `422`, or a `ctf-score:` marker present but unreadable. A `422`
+  is the scorer refusing a score on its time (or a deleted player) and is
+  counted as refused, not dropped. Both are cumulative and
+  neither is self-clearing, unlike `lastError`, which describes only the
+  tick that wrote it: a dropped score is still missing after the poller
+  recovers, so the next quiet tick must not erase the pointer to the PR that
+  needs looking at.
 
   What is deliberately **not** counted is as load-bearing as what is. A
   duplicate (the `since` cursor is inclusive, so the boundary comment is

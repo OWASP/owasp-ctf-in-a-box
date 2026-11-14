@@ -33,12 +33,14 @@ async function writeStatusSafely(redis, log, status) {
  *     distinguishing them is what would make a "dropped" figure permanently
  *     nonzero — and a counter that is always nonzero is a counter nobody
  *     reads.
- *   - `invalid` / `rejected` / `unlinked` are NOT routine. Each one is a score
- *     that existed on a PR and will never reach the leaderboard without a
- *     human. These are what `state.dropped` counts and what /admin shows.
- *     `unlinked` is a PR author whose GitHub login no player has claimed
- *     (`ctf:link:github:<login>`); the drop names the repo and PR, never the
- *     login.
+ *   - `invalid` / `rejected` are NOT routine. Each one is a score that
+ *     existed on a PR and will never reach the leaderboard without a human.
+ *     These are what `state.dropped` counts and what /admin shows.
+ *   - `held` is a score whose PR author's GitHub login no player has claimed
+ *     (`ctf:link:github:<login>`), or claimed only at or after the scoring
+ *     close (`linkAfterClose`). It is parked in Redis for release when the
+ *     author links in time, so it is not lost and not counted as dropped. The log
+ *     names the repo and PR, never the login or comment id.
  *   - `retried` is a submission that failed transiently and was deliberately
  *     un-marked; the next tick re-presents it. Worth logging, not worth
  *     counting as lost.
@@ -50,8 +52,19 @@ async function writeStatusSafely(redis, log, status) {
  *     (#551): a score the organizer wiped on purpose. Skipped once (it is
  *     marked seen), and reported once, so the first poll after a reset says
  *     how much of the past it declined to re-bank.
+ *
+ * Held scores are released before the repos are polled, so they have their
+ * own line (`release: …`) rather than a per-repo bucket:
+ *
+ *   - `released` is a held score the scorer has judged and that is gone from
+ *     the hold: `accepted` (scored, counted in `ingested`), `refused` (the
+ *     scorer's final verdict on its comment time) or `rejected` (counted as
+ *     dropped, like a rejected comment).
+ *   - `kept` stays held for a later tick: its author is unlinked, linked at
+ *     or after the scoring close, behind a transient failure (`retried`), or
+ *     the entry itself does not parse (`unreadable`, which no tick releases).
  */
-const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, unlinked: 0, retried: 0, preReset: 0, refused: 0 });
+const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, rejected: 0, held: 0, retried: 0, preReset: 0, refused: 0 });
 
 /** The master-reset epoch as milliseconds, or null when there is none. The
  *  admin panel writes it as epoch milliseconds (`resetEvent`); a state file
@@ -70,11 +83,117 @@ function resetEpochMs(resetAt) {
  *  re-read), so a quiet poller stays quiet and any line it does print means
  *  something. */
 function summarize(repo, tally) {
-  if (tally.noMarker + tally.invalid + tally.rejected + tally.unlinked + tally.retried + tally.preReset + tally.refused === 0) return null;
+  if (tally.noMarker + tally.invalid + tally.rejected + tally.held + tally.retried + tally.preReset + tally.refused === 0) return null;
   const parts = Object.entries(tally)
     .filter(([, n]) => n > 0)
     .map(([name, n]) => `${n} ${name}`);
   return `poll ${repo}: ${parts.join(", ")}`;
+}
+
+/**
+ * The one close rule for a GitHub link, shared by the release step and the
+ * comment pass: true when the link does not count because it was made at or
+ * after `scoringEndsAt`, or carries no time (which cannot prove it beat the
+ * close). With no parseable end the event never closes and every link counts.
+ */
+export function linkAfterClose(link, endsAt) {
+  const endMs = typeof endsAt === "string" && endsAt !== "" ? Date.parse(endsAt) : NaN;
+  // `>=`, unlike outsideWindow's inclusive end for a comment: a comment at the
+  // close instant is still in the window, but a link made at that instant was
+  // not in place while scoring was open.
+  return Number.isFinite(endMs) && (link.linkedAt ?? Infinity) >= endMs;
+}
+
+const freshRelease = () => ({ released: 0, accepted: 0, refused: 0, rejected: 0, kept: 0, retried: 0, unreadable: 0 });
+
+/**
+ * Posts the scores held for PR authors who have since linked a kit account,
+ * each with its comment's own time, so the scorer judges the window and the
+ * freeze exactly as it would have when the comment was read.
+ *
+ * A link counts only if it was made before the scoring close: a link made at
+ * or after `scoringEndsAt`, or with no recorded time (which cannot prove it
+ * beat the close), leaves the author's scores held. With no parseable end the
+ * event never closes, so any link releases.
+ *
+ * An entry whose target is not in this tick's `targets` (the organizer turned
+ * it off after the hold) stays held: the comment pass does not score that
+ * target either, and turning it back on releases the entry. With no `targets`
+ * every target counts.
+ *
+ * Per author, entries go oldest first (the scorer keeps a solve's first-posted
+ * time). A scorer verdict of any kind (accepted, refused, rejected) is final,
+ * so the entry is deleted; a throw from the scorer or from Redis stops that
+ * author and keeps the rest for the next tick. Throws only when the author
+ * index or the window cannot be read; the caller logs that and polls anyway.
+ * Logs carry counts and reasons, never a login, player id or PR.
+ */
+export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = console.error, readWindow = () => redis.readScoringWindow(), targets = null }) {
+  const counts = freshRelease();
+  const enabled = targets ? new Set(targets) : null;
+  const authors = await redis.heldAuthors();
+  if (authors.length === 0) return counts;
+  const { endsAt } = await readWindow();
+
+  for (const login of authors) {
+    let entries = null;
+    try {
+      entries = await redis.heldFor(login);
+      const link = await redis.resolveGithubLink(login);
+      if (!link) {
+        counts.kept += entries.length;
+        continue;
+      }
+      if (linkAfterClose(link, endsAt)) {
+        counts.kept += entries.length;
+        continue;
+      }
+      const ready = [];
+      for (const { field, entry } of entries) {
+        const atMs = entry && typeof entry.at === "string" ? Date.parse(entry.at) : NaN;
+        if (!Number.isFinite(atMs)) {
+          counts.unreadable++;
+          counts.kept++;
+          continue;
+        }
+        if (enabled && !enabled.has(entry.target)) {
+          counts.kept++;
+          continue;
+        }
+        ready.push({ field, entry, atMs });
+      }
+      ready.sort((a, b) => a.atMs - b.atMs || (a.field < b.field ? -1 : a.field > b.field ? 1 : 0));
+      for (let i = 0; i < ready.length; i++) {
+        const { field, entry } = ready[i];
+        // Exactly the scorer's contract: `repo` is a display name for the
+        // admin list and is not sent.
+        const { target, solved, pr, sha, at } = entry;
+        try {
+          const verdict = await submitScore(cfg, { player: link.player, target, solved, pr, sha, at }, fetchImpl);
+          await redis.releaseHeld(login, field);
+          counts.released++;
+          counts[verdict.outcome]++;
+        } catch (err) {
+          counts.retried++;
+          counts.kept += ready.length - i;
+          log(`release: retrying next tick (${err.message})`);
+          break;
+        }
+      }
+    } catch (err) {
+      counts.retried++;
+      counts.kept += entries?.length ?? 0;
+      log(`release: retrying next tick (${err.message})`);
+    }
+  }
+
+  if (counts.released + counts.retried + counts.unreadable > 0) {
+    const parts = Object.entries(counts)
+      .filter(([, n]) => n > 0)
+      .map(([name, n]) => `${n} ${name}`);
+    log(`release: ${parts.join(", ")}`);
+  }
+  return counts;
 }
 
 export async function tick(cfg, state, deps = {}) {
@@ -89,8 +208,8 @@ export async function tick(cfg, state, deps = {}) {
 
   // A drop is worth a counter AND a description: "3 dropped" tells an
   // organizer something is wrong, `lastDrop` tells them where to look.
-  const drop = (why) => {
-    state.dropped++;
+  const drop = (why, n = 1) => {
+    state.dropped += n;
     state.lastDrop = why;
     state.lastDropAt = nowIso();
     log(why);
@@ -146,6 +265,26 @@ export async function tick(cfg, state, deps = {}) {
   // applies: a comment last edited before it is the past the organizer wiped.
   const resetMs = resetEpochMs(state.resetAt);
 
+  // The scoring window, read at most once per tick and only when a link has to
+  // be judged against the close. A failed read is memoized too: every caller
+  // this tick treats it as "cannot judge" and retries next tick.
+  let windowRead = null;
+  const readWindow = () => (windowRead ??= redis.readScoringWindow());
+
+  // Before the comment pass: a held score is older than any comment this tick
+  // reads, and the scorer keeps a solve's first-posted time, so it must reach
+  // the scorer first. A failure of the step itself leaves every held score in
+  // place for the next tick and must not stop the poll.
+  try {
+    const released = await releaseHeldScores({ cfg, redis, fetchImpl, log, readWindow, targets });
+    state.ingested += released.accepted;
+    if (released.rejected > 0) {
+      drop(`release: ${released.rejected} held score${released.rejected === 1 ? "" : "s"} rejected (4xx), dropped`, released.rejected);
+    }
+  } catch (err) {
+    log(`release: skipped this tick (${err.message})`);
+  }
+
   let reposPolled = 0;
   let lastError = null;
   for (const target of targets) {
@@ -162,6 +301,12 @@ export async function tick(cfg, state, deps = {}) {
     }
     let stopAt;
     const tally = freshTally();
+    // Authors with a comment that failed this tick (lowercased). Their later
+    // comments wait for it: the scorer keeps a solve's first time, so a newer
+    // one posted, or held and released, before the older retry would keep the
+    // newer comment's time for good. They stay unseen, and the cursor stops at
+    // the first failure, so next tick reads them again in order.
+    const failedAuthors = new Set();
     for (const c of result.comments) {
       // Keyed on the comment REVISION, not its id — the workflow upserts one
       // comment per target, so the id alone made a re-scored PR unreachable.
@@ -191,18 +336,49 @@ export async function tick(cfg, state, deps = {}) {
         }
         continue;
       }
+      const authorKey = String(payload.author).toLowerCase();
+      if (failedAuthors.has(authorKey)) {
+        rs.seen = rs.seen.filter((k) => k !== seenKey(c.id, c.updated_at));
+        stopAt ??= c.updated_at;
+        tally.retried++;
+        continue;
+      }
       try {
         // The comment's own GitHub time, never a field of the marker: the
         // scorer times the solve by it and judges the window and the freeze
         // at it.
         // Resolved inside the try so a Redis error un-marks the comment like
         // a transient submit failure: the next poll retries it.
-        const player = await redis.resolveGithubLogin(payload.author);
-        if (!player) {
-          tally.unlinked++;
-          drop(`submit ${repo}#${payload.pr}: unlinked (no player claimed the PR author), dropped`);
+        // A link made at or after the close is no link: the score is held
+        // (unclaimed), the same verdict the release step gives it.
+        const link = await redis.resolveGithubLink(payload.author);
+        if (!link || linkAfterClose(link, (await readWindow()).endsAt)) {
+          await redis.holdScore(payload.author, seenKey(c.id, c.updated_at), {
+            target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at: c.updated_at, repo,
+          });
+          tally.held++;
+          log(`submit ${repo}#${payload.pr}: held (PR author not linked yet)`);
           continue;
         }
+        // An older score for the same author and target still held (its
+        // release failed this tick, the step was skipped, or the link landed
+        // after the release step ran) goes first: the scorer keeps a solve's
+        // first-posted time, so posting this one now would replace the older
+        // comment's time for good. Hold it behind the older one; the release
+        // step posts both, oldest first. An entry with no readable time never
+        // releases, so it does not hold anything back.
+        const waiting = (await redis.heldFor(payload.author)).some(
+          ({ entry }) => entry?.target === payload.target && typeof entry.at === "string" && Number.isFinite(Date.parse(entry.at)),
+        );
+        if (waiting) {
+          await redis.holdScore(payload.author, seenKey(c.id, c.updated_at), {
+            target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at: c.updated_at, repo,
+          });
+          tally.held++;
+          log(`submit ${repo}#${payload.pr}: held (an older held score for this target goes first)`);
+          continue;
+        }
+        const player = link.player;
         const { author: _login, ...rest } = payload;
         const verdict = await submitScore(cfg, { player, ...rest, at: c.updated_at }, fetchImpl);
         if (verdict.outcome === "accepted") {
@@ -219,6 +395,7 @@ export async function tick(cfg, state, deps = {}) {
         // Retry next tick: drop THIS revision's key, not every key sharing
         // the comment's id.
         rs.seen = rs.seen.filter((k) => k !== seenKey(c.id, c.updated_at));
+        failedAuthors.add(authorKey);
         stopAt ??= c.updated_at; // record first failure's timestamp
         lastError = err.message;
         tally.retried++;

@@ -46,6 +46,8 @@ function fakeSrh({ settings = { scoringStartsAt: LAUNCHED, secureDevTargets: '["
         return hashes.get(key)?.get(args[0]) ?? null;
       case "HMGET":
         return args.map((f) => hashes.get(key)?.get(f) ?? null);
+      case "HGETALL":
+        return [...(hashes.get(key) ?? new Map())].flat();
       case "HSET":
         for (let i = 0; i < args.length; i += 2) hash(key).set(args[i], args[i + 1]);
         return args.length / 2;

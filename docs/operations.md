@@ -110,8 +110,10 @@ routes would refuse.
 >
 > Deferred credit needs the PR author to be a linked player when sync reads
 > the score: a contestant links their GitHub login by signing in with GitHub.
-> A score whose author nobody has linked is dropped, not banked, and is not
-> retried (holding those scores until the author links is #741).
+> A score whose author nobody has linked is held, not dropped: sync releases
+> it on a later tick once the author links before Scoring closes. A link made
+> at or after the close never releases it; the Secure Development admin tab
+> lists it as `unclaimed`.
 
 Captains
 manage the roster from the app: rename the team, remove a member, transfer the
@@ -348,7 +350,8 @@ The panel offers:
   the sync poller's heartbeat as one line (last poll time, comments ingested,
   comments **dropped**, running or paused) that expands to the full
   breakdown: repos polled, whether sync is paused, the last drop and the
-  last error.
+  last error. A score held for an unlinked PR author is not a drop and does
+  not count here.
 
   **Read Ingested and Dropped together.** Ingested is points that reached the
   leaderboard; Dropped is points that reached a contestant's PR and stopped
@@ -746,8 +749,12 @@ The panel offers:
   From there: **reset progress** (clears their Secure Development solves on
   every target, their quiz answers, classic and AI solves, attempts and hints;
   keeps the account and the team), **delete contestant** (all of that
-  plus the team membership, their event record and their rate-limit counters;
-  the sign-in account and its GitHub link stay), **remove from team**, or
+  plus the team membership, their event record, their rate-limit counters and
+  any Secure Development scores held for their GitHub login; the sign-in
+  account and its GitHub link stay. The scorer then refuses any of
+  that player's Secure Development scores timed before the delete, so one
+  already on its way cannot bring a solve back; their later PRs score as
+  usual), **remove from team**, or
   **add to team** / **move to team**: type a team slug and the player goes
   onto it, leaving their current team if they have one, whatever the
   registration state. This is how a player who left after registration
@@ -816,8 +823,9 @@ The panel offers:
   reset to the audit log. Sign-in state survives it too: contestant accounts,
   admin sign-ins and sessions (the `ctf:auth:` keys) are untouched, so players
   stay signed in across a reset, and so do the GitHub links
-  (`ctf:link:*`) that tie a player to the GitHub login their PRs score
-  under. It does rotate the AI
+  (`ctf:link:*`, including when each was made) that tie a player to the GitHub
+  login their PRs score under. Held Secure Development scores
+  (`ctf:sd:held:*`) are wiped, and deleting a player clears theirs. It does rotate the AI
   module's launch keypair (see [below](#ai)), so an external challenge site
   re-fetches the public key on its next verification. It is server-side and
   admin-gated, and requires **typing the event name** — the current runtime

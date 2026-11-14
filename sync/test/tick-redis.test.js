@@ -17,7 +17,7 @@ const pollableCfg = { ...cfg, apiUrl: "https://api.example", getToken: async () 
 // scorer for good. The heartbeat still reports the freeze for /admin.
 test("a paused flag does not hold the cursor; the heartbeat still says paused", async () => {
   let status = null;
-  const redis = { getSecureDevTargets: async () => ["vampi"], isPaused: async () => true, writeStatus: async (s) => { status = s; } };
+  const redis = { getSecureDevTargets: async () => ["vampi"], heldAuthors: async () => [], isPaused: async () => true, writeStatus: async (s) => { status = s; } };
   const state = baseState();
   state.repos["VAmPI"] = { since: "T0", etag: "E0", seen: ["x"] };
   const polled = [];
@@ -34,7 +34,7 @@ test("a paused flag does not hold the cursor; the heartbeat still says paused", 
 
 test("an unpaused tick writes a heartbeat with paused false", async () => {
   let status = null;
-  const redis = { getSecureDevTargets: async () => ["vampi"], isPaused: async () => false, writeStatus: async (s) => { status = s; } };
+  const redis = { getSecureDevTargets: async () => ["vampi"], heldAuthors: async () => [], isPaused: async () => false, writeStatus: async (s) => { status = s; } };
   const fetchImpl = async () => ({
     status: 200, headers: { get: () => null }, json: async () => [],
   });
@@ -44,7 +44,7 @@ test("an unpaused tick writes a heartbeat with paused false", async () => {
 });
 
 test("a redis status-write failure does not throw out of the tick", async () => {
-  const redis = { getSecureDevTargets: async () => ["vampi"], isPaused: async () => false, writeStatus: async () => { throw new Error("down"); } };
+  const redis = { getSecureDevTargets: async () => ["vampi"], heldAuthors: async () => [], isPaused: async () => false, writeStatus: async () => { throw new Error("down"); } };
   const fetchImpl = async () => ({ status: 200, headers: { get: () => null }, json: async () => [] });
   await assert.doesNotReject(tick(cfg, baseState(), { redis, fetchImpl, log: () => {} }));
 });
@@ -53,6 +53,7 @@ test("a bumped reset epoch drops the cursor, paused or not (poll-mode wipe)", as
   const redis = {
     getSecureDevTargets: async () => ["vampi"],
     getResetAt: async () => "1001",
+    heldAuthors: async () => [],
     isPaused: async () => true, // a reset also freezes scoring
     writeStatus: async () => {},
   };
@@ -70,7 +71,7 @@ test("a bumped reset epoch drops the cursor, paused or not (poll-mode wipe)", as
 });
 
 test("an unchanged reset epoch leaves the cursor intact", async () => {
-  const redis = { getSecureDevTargets: async () => ["vampi"], getResetAt: async () => "1001", isPaused: async () => true, writeStatus: async () => {} };
+  const redis = { getSecureDevTargets: async () => ["vampi"], getResetAt: async () => "1001", heldAuthors: async () => [], isPaused: async () => true, writeStatus: async () => {} };
   const state = baseState();
   state.resetAt = "1001";
   state.repos["VAmPI"] = { since: "T0", etag: "E0", seen: ["x"] };
@@ -90,7 +91,7 @@ test("unreadable targets → reposPolled 0, lastError set, state and cursors unc
   let status = null;
   const redis = {
     getSecureDevTargets: async () => { throw new Error("boom"); },
-    isPaused: async () => false,
+    heldAuthors: async () => [], isPaused: async () => false,
     writeStatus: async (s) => { status = s; },
   };
   const state = baseState();
@@ -113,7 +114,7 @@ test("unreadable targets while paused still reports the real paused value", asyn
   let status = null;
   const redis = {
     getSecureDevTargets: async () => { throw new Error("boom"); },
-    isPaused: async () => true,
+    heldAuthors: async () => [], isPaused: async () => true,
     writeStatus: async (s) => { status = s; },
   };
   const fetchImpl = () => { throw new Error("must not poll when targets are unreadable"); };
@@ -126,7 +127,7 @@ test("unreadable targets while paused still reports the real paused value", asyn
 test("absent field → all six polled", async () => {
   let status = null;
   const polled = [];
-  const redis = { getSecureDevTargets: async () => TARGETS, isPaused: async () => false, writeStatus: async (s) => { status = s; } };
+  const redis = { getSecureDevTargets: async () => TARGETS, heldAuthors: async () => [], isPaused: async () => false, writeStatus: async (s) => { status = s; } };
   const fetchImpl = async (url) => {
     polled.push(new URL(String(url)).pathname.split("/")[3]);
     return { status: 200, headers: { get: () => null }, json: async () => [] };
@@ -142,7 +143,7 @@ test('stored ["vampi"] → only VAmPI polled', async () => {
   // cfg carries no targets at all any more (config-v2 removed it) — this uses
   // a bare pollableCfg so a build that still read cfg.targets would have
   // nothing to iterate, making the divergence from redis-driven scoping obvious.
-  const redis = { getSecureDevTargets: async () => ["vampi"], isPaused: async () => false, writeStatus: async (s) => { status = s; } };
+  const redis = { getSecureDevTargets: async () => ["vampi"], heldAuthors: async () => [], isPaused: async () => false, writeStatus: async (s) => { status = s; } };
   const fetchImpl = async (url) => {
     polled.push(new URL(String(url)).pathname.split("/")[3]);
     return { status: 200, headers: { get: () => null }, json: async () => [] };

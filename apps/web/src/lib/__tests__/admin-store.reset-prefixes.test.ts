@@ -34,6 +34,13 @@ describe("RESET_PREFIXES", () => {
     for (const [, pattern] of RESET_PREFIXES) {
       expect(globToRegExp(pattern).test("ctf:link:github:x")).toBe(false);
       expect(globToRegExp(pattern).test("ctf:link:user:x")).toBe(false);
+      expect(globToRegExp(pattern).test("ctf:link:at")).toBe(false);
+    }
+  });
+
+  it("wipes held Secure Development scores", () => {
+    for (const key of ["ctf:sd:held:by:octocat", "ctf:sd:held:authors"]) {
+      expect(RESET_PREFIXES.some(([, pattern]) => globToRegExp(pattern).test(key))).toBe(true);
     }
   });
 

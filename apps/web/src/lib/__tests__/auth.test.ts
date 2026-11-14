@@ -21,7 +21,14 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 const linkOnUserWrite = vi.hoisted(() => vi.fn<(user: unknown) => Promise<void>>(async () => {}));
-vi.mock("@/lib/github-link", () => ({ linkOnUserWrite }));
+const getGithubLink = vi.hoisted(() => vi.fn<(id: string) => Promise<{ login: string; linkedAt: number | null } | null>>());
+vi.mock("@/lib/github-link", () => ({ linkOnUserWrite, getGithubLink }));
+
+const getSessionFromCtx = vi.hoisted(() => vi.fn<(ctx: unknown) => Promise<unknown>>());
+vi.mock("better-auth/api", async (orig) => ({
+  ...(await orig<typeof import("better-auth/api")>()),
+  getSessionFromCtx,
+}));
 
 vi.hoisted(() => {
   // betterAuth() runs at import time and warns on a weak secret. Only fills
@@ -32,13 +39,16 @@ vi.hoisted(() => {
   process.env.GITHUB_CLIENT_SECRET ??= "test-client-secret";
 });
 
-import { auth, authOptions } from "@/lib/auth";
+import { auth, authOptions, refuseSecondGithubLink } from "@/lib/auth";
+import { APIError } from "better-auth/api";
 
 /**
  * The only endpoints this app actually exercises over HTTP.
  *
  *   /sign-in/social  authClient.signIn.social({ provider: "github" })
- *   /callback/:id    GitHub's OAuth redirect back
+ *   /link-social     authClient.linkSocial({ provider: "github" }), the
+ *                    signed-in player's Link GitHub button
+ *   /callback/:id    GitHub's OAuth redirect back, for sign-in and for a link
  *   /get-session     authClient.useSession()
  *   /sign-out        authClient.signOut()
  *   /ok, /error      better-auth's own health and error surfaces
@@ -46,7 +56,7 @@ import { auth, authOptions } from "@/lib/auth";
  * Server-side auth.api.getSession() is a direct function call and never
  * touches the router, so it does not belong here.
  */
-const IN_USE = ["/sign-in/social", "/callback/:id", "/get-session", "/sign-out", "/ok", "/error"];
+const IN_USE = ["/sign-in/social", "/link-social", "/callback/:id", "/get-session", "/sign-out", "/ok", "/error"];
 
 /**
  * Mounted, unused, and NOT closeable by disabledPaths.
@@ -90,6 +100,14 @@ describe("better-auth exposed surface", () => {
     expect(disabledPaths).toContain("/update-user");
   });
 
+  it("keeps unlinking and the linked-account disclosures closed", () => {
+    // One GitHub account links to one kit account and a player cannot undo
+    // it; nothing lists or describes linked accounts to the client.
+    for (const path of ["/unlink-account", "/list-accounts", "/account-info", "/update-user"]) {
+      expect(disabledPaths).toContain(path);
+    }
+  });
+
   it("closes the provider-token endpoints", () => {
     expect(disabledPaths).toContain("/get-access-token");
     expect(disabledPaths).toContain("/refresh-token");
@@ -120,6 +138,15 @@ describe("Redis-backed sign-in state (#736)", () => {
   it("never links a GitHub identity to an existing user by email", () => {
     expect(authOptions.account.accountLinking.disableImplicitLinking).toBe(true);
     expect(authOptions.account.storeAccountCookie).toBe(false);
+  });
+
+  it("lets a signed-in player link a GitHub account whose email differs from theirs", () => {
+    expect(authOptions.account.accountLinking.allowDifferentEmails).toBe(true);
+    expect(authOptions.account.accountLinking.updateUserInfoOnLink).toBe(true);
+  });
+
+  it("requests no OAuth scopes beyond the provider defaults", () => {
+    expect((authOptions.socialProviders.github as { scope?: unknown }).scope).toBeUndefined();
   });
 
   it("refreshes the GitHub login on every sign-in", () => {
@@ -170,5 +197,83 @@ describe("github link hooks", () => {
     const after = authOptions.databaseHooks.user[op].after as unknown as (user: typeof row, ctx: unknown) => Promise<void>;
     await after(row, null);
     expect(linkOnUserWrite).toHaveBeenCalledExactlyOnceWith(row);
+  });
+});
+
+describe("user.update.before", () => {
+  // better-auth merges the hook's `data` over what it was handed
+  // (db/with-hooks.mjs), and its adapter skips an `undefined` field on update,
+  // so the row write is this merge minus the undefined keys.
+  type Before = (data: Record<string, unknown>, ctx: { path?: string } | null) => Promise<{ data: Record<string, unknown> } | void>;
+  const before = authOptions.databaseHooks.user.update.before as unknown as Before;
+  const written = async (data: Record<string, unknown>, ctx: { path?: string } | null) => {
+    const result = await before(data, ctx);
+    const merged = { ...data, ...(result ? result.data : {}) };
+    return Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined));
+  };
+  const profile = { login: "octocat", name: "Octo", image: "u" };
+
+  it("keeps the login but not the GitHub name or avatar on the OAuth callback", async () => {
+    expect(await written(profile, { path: "/callback/:id" })).toEqual({ login: "octocat" });
+  });
+
+  it.each([undefined, "/update-user", "/sign-in/social", "/callback/github"])("leaves an update on path %s alone", async (path) => {
+    expect(await written(profile, path === undefined ? null : { path })).toEqual(profile);
+  });
+});
+
+describe("refuseSecondGithubLink (/link-social before hook)", () => {
+  // One GitHub account per kit account, and no unlink: a player who already
+  // has a link cannot start a second one, which would move their link and
+  // release the old login.
+  const ID = "5f0c2a1e-7b3d-4c9e-8a21-0d6f4b9e3c71";
+  const ctx = (path: string) => ({ path }) as unknown as Parameters<typeof refuseSecondGithubLink>[0];
+  const status = async (p: Promise<unknown>) => {
+    const err = await p.then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    return (err as APIError).status;
+  };
+
+  it("is wired as the before hook", () => {
+    expect(typeof auth.options.hooks?.before).toBe("function");
+  });
+
+  it("refuses a player who already has a GitHub link", async () => {
+    getSessionFromCtx.mockResolvedValue({ user: { id: ID } });
+    getGithubLink.mockResolvedValue({ login: "octocat", linkedAt: 1 });
+    expect(await status(refuseSecondGithubLink(ctx("/link-social")))).toBe("FORBIDDEN");
+    expect(getGithubLink).toHaveBeenCalledWith(ID);
+  });
+
+  it("lets an unlinked player start the link", async () => {
+    getSessionFromCtx.mockResolvedValue({ user: { id: ID } });
+    getGithubLink.mockResolvedValue(null);
+    await expect(refuseSecondGithubLink(ctx("/link-social"))).resolves.toBeUndefined();
+  });
+
+  it("fails closed when the link cannot be read, logging only the label", async () => {
+    getSessionFromCtx.mockResolvedValue({ user: { id: ID } });
+    getGithubLink.mockRejectedValue(new Error("github link: GET failed: NOAUTH"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await status(refuseSecondGithubLink(ctx("/link-social")))).toBe("SERVICE_UNAVAILABLE");
+    const logged = errors.mock.calls.map((c) => c.map(String).join(" ")).join("\n");
+    errors.mockRestore();
+    expect(logged).toContain("NOAUTH");
+    expect(logged).not.toContain(ID);
+  });
+
+  it("leaves a request with no session to the endpoint's own 401", async () => {
+    getSessionFromCtx.mockResolvedValue(null);
+    getGithubLink.mockClear();
+    await expect(refuseSecondGithubLink(ctx("/link-social"))).resolves.toBeUndefined();
+    expect(getGithubLink).not.toHaveBeenCalled();
+  });
+
+  it.each(["/sign-in/social", "/callback/:id", "/get-session"])("ignores %s", async (path) => {
+    getSessionFromCtx.mockClear();
+    getGithubLink.mockClear();
+    await expect(refuseSecondGithubLink(ctx(path))).resolves.toBeUndefined();
+    expect(getSessionFromCtx).not.toHaveBeenCalled();
+    expect(getGithubLink).not.toHaveBeenCalled();
   });
 });

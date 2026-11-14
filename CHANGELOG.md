@@ -8,6 +8,40 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Added: GitHub linking, and held Secure Development scores (#741).** With
+  Secure Development on, a player links a GitHub account from their profile
+  or by signing in with GitHub; one GitHub account links to one kit account,
+  a player already linked cannot start a second link, and there is no
+  unlink. Email is not identity, so the GitHub account may carry a different
+  email, and a GitHub sign-in no longer refreshes the player's name or
+  avatar. The Secure Development page hides the fork links until the player
+  has linked. A score whose PR author has not linked is now
+  held (`ctf:sd:held:*`, tally bucket `held`) instead of dropped. Each sync
+  tick releases the held scores of authors who linked before Scoring closes
+  (or of any linked author when the event has no end), oldest comment
+  first, at the original comment time, so the scorer still judges the
+  window, freeze and reset against that time. A link made at or after the
+  close does not release while that close stands (an organizer who moves
+  the end later lets it release);
+  the Secure Development admin tab lists held and `unclaimed` scores
+  (read-only). A master reset wipes held scores and keeps links; deleting a
+  player clears their held scores. A held score for a target the organizer
+  has turned off stays held until the target is back, and a newer score
+  waits behind an older one still held for the same target, or behind an
+  older comment of the same author that failed and will be retried, so a
+  solve keeps its first comment time.
+- **Fixed: a deleted player's Secure Development solve could come back.** A
+  score sync read before an organizer deleted the player could reach the
+  scorer after the delete cleared their solves, and the scorer wrote it
+  back. The delete now writes
+  `ctf:deleted:<player id>`, the instant it began, before it clears
+  anything: `pending:<ms>` while it runs, `<ms>` once the player's record is
+  gone. The scorer reads it in the same script that writes a solve: while it is
+  pending every score for the player gets a `503` (sync retries it), and once
+  final a score timed before it gets a `422` for good (`player-deleted`), while a later comment from
+  the same account scores as usual. A delete that fails with the player's
+  record still in place puts the cutoff back to what it was (none, or an
+  earlier delete's), so it loses no score.
 - **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
   the linked-account write failed after the user row was written, that row
   stayed behind and every later sign-in answered `account not linked`. The
@@ -29,9 +63,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   and its actions and the delete confirmation work on the player (deleting
   removes their event record, never their sign-in account or GitHub link).
   Secure Development scores reach a player through the GitHub login linked at
-  their sign-in, so a PR author who has never signed in to the box is dropped
-  (counted as `unlinked`, the login is not logged) until #741 holds those
-  instead. `sync` now refuses to start without Redis, and the file-state
+  their sign-in, so a PR author who has not linked an account yet is held,
+  not dropped (see the #741 entry). `sync` now refuses to start without Redis, and the file-state
   poller for Redis-less runs is gone. The scorer's `POST /score` takes
   `{player, target, solved, pr, sha, at}` and `GET /leaderboard` returns
   `player` rather than `author`; the judge's score-comment marker is

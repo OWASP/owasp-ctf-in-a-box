@@ -677,6 +677,27 @@ test("an `at` outside the scoring window is refused with a final 422, judged on 
   assert.deepEqual(Object.keys(await store.getSolves("dvwa")), [pid("hubot") + ":sqli-low"]);
 });
 
+test("a score timed before the player's deletion is refused with a final 422 and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  store.__markDeleted(pid("octocat"), Date.parse("2026-08-14T10:30:00Z"));
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 422);
+  assert.equal((await res.json()).refused, "player-deleted");
+  assert.equal((await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202, "only that player");
+  assert.deepEqual(Object.keys(await store.getSolves("dvwa")), [pid("hubot") + ":sqli-low"]);
+  assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T11:00:00Z"))).status, 202, "a later comment is the account playing again");
+  assert.equal((await store.getSolves("dvwa"))[pid("octocat") + ":sqli-low"], "2026-08-14T11:00:00.000Z");
+});
+
+test("any score for a player whose deletion is still running gets a 503 to retry, and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  store.__markDeleted(pid("octocat"), `pending:${Date.parse("2026-08-14T10:30:00Z")}`);
+  for (const at of ["2026-08-14T10:00:00Z", "2026-08-14T11:00:00Z"]) {
+    assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], at))).status, 503, at);
+  }
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
 test("an `at` on an event that was never launched is refused with a final 422", async (t) => {
   const { post } = await bootWith(t, { policy: { ...LAUNCHED, startsAt: null } });
   const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));

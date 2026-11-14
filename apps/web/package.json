@@ -14,7 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "better-auth": "1.7.16",
+    "better-auth": "1.7.20",
     "next": "16.4.5",
     "qrcode-generator": "2.0.4",
     "react": "19.3.1",

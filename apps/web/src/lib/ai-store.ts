@@ -11,6 +11,7 @@ import { generateLaunchKeyPair, generateSigningKey, type AiLaunchKeyPair } from 
 import { AI_BUNDLE_VERSION, type AiBundle, type AiBundleChallenge } from "@/lib/ai-io";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { ANNOUNCE_FIRST_KEY } from "@/lib/announce/keys";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   AI_CATEGORIES_KEY as CATEGORIES_KEY,
@@ -940,6 +941,9 @@ local prevAt = redis.call('HGET', KEYS[8], ARGV[4])
 if not prevAt or not string.match(prevAt, '^%d%d%d%d%-%d%d%-%d%dT') or prevAt < ARGV[3] then
   redis.call('HSET', KEYS[8], ARGV[4], ARGV[3])
 end
+-- Name the first SOLVER in the same atomic award that banks the solve, so
+-- the announcer never has to race its own claim for the first-blood post.
+redis.call('HSETNX', KEYS[#KEYS], ARGV[#ARGV], cjson.encode({playerId = ARGV[4], at = ARGV[3]}))
 return {'correct', tostring(points)}`;
 
 export type AiSubmitResult =
@@ -1019,6 +1023,7 @@ async function runAward(
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
         LAST_AT_KEY, // KEYS[8] — login -> latest award time
+        ANNOUNCE_FIRST_KEY, // last KEYS — first-solver record for the announcer
       ],
       [
         challengeId, // ARGV[1]
@@ -1031,6 +1036,7 @@ async function runAward(
         grade ? "1" : "0", // ARGV[8]
         source, // ARGV[9] — literal, never caller input
         dryRun ? "1" : "0", // ARGV[10] — dry run: grade, write nothing
+        `ai:${challengeId}`, // last ARGV — first-solver ledger field
       ],
     );
     return readVerdict(verdict);

@@ -19,6 +19,7 @@ vi.mock("@/lib/admin-store", async (importOriginal) => ({
   getAdminSettings: mocks.getAdminSettings,
 }));
 
+import { ANNOUNCE_FIRST_KEY } from "@/lib/announce/keys";
 import { AI_COOLDOWN_SEC, awardAiEvent, submitAiFlag } from "@/lib/ai-store";
 
 /** The settings object `effectivePaused` (real, not mocked) reads, plus
@@ -80,6 +81,21 @@ describe("submitAiFlag", () => {
     expect(argv[6]).toBe("CTF{Leak}");   // case-preserved form
     expect(argv[7]).toBe("1");           // grade = yes
     expect(argv[8]).toBe("flag");        // solve source
+  });
+
+  it("names the first solver in the SAME award — last KEYS and last ARGV are the ledger field", async () => {
+    cleanGateReply();
+    mocks.upstashEval.mockResolvedValueOnce(["correct", "300"]);
+
+    await submitAiFlag("alice", "prompt-leak-ab12cd", " CTF{leak} ");
+
+    // The announcer's first-solver record rides the atomic award: HSETNX on
+    // the LAST KEYS with the LAST ARGV, so the post can never race its own
+    // claim for the field. Without those two trailing arguments the record
+    // is never written and AI first bloods go unannounced.
+    const { keys, argv } = lastEval();
+    expect(keys[keys.length - 1]).toBe(ANNOUNCE_FIRST_KEY);
+    expect(argv[argv.length - 1]).toBe("ai:prompt-leak-ab12cd");
   });
 
   it("reports a wrong flag without awarding", async () => {

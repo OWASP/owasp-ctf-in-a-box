@@ -45,6 +45,7 @@ import {
   AI_LAUNCHKEY_KEY,
 } from "@/lib/ai-keys";
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
+import { ANNOUNCE_WEBHOOK_GENERATION_KEY } from "@/lib/announce/keys";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP, type AuditActor } from "@/lib/admin-audit-keys";
 import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSize } from "@/lib/sponsors-keys";
 
@@ -801,6 +802,19 @@ export const RESET_PREFIXES: readonly [string, string][] = [
   // solves — a record of what people did during the event — so a reset wipes
   // it. Leaving it would let a "fresh" event open with last event's sign-ins.
   ["activity", ACTIVITY_LOG_KEY],
+  // Discord-announcement STATE: the dedup ledgers, the delivery
+  // outbox, the lifecycle observations and the status counters are
+  // PROGRESS — a record of what this run announced — so a reset wipes them
+  // and a fresh run starts SILENT: the lifecycle pack re-seeds on the first
+  // tick without replaying old transitions, and a fresh first blood is
+  // claimable again. The organizer's CONFIGURATION (`ctf:admin:discord`,
+  // `ctf:admin:discord:webhook`, `ctf:admin:discord:webhook-generation`)
+  // deliberately does NOT live under this prefix: like the event images and
+  // the settings hash, a webhook the organizer set up is something they set,
+  // not event data, and survives the reset. `resetEvent` increments that
+  // generation before this sweep so an entry enqueued from a pre-reset config
+  // snapshot cannot match the post-reset value.
+  ["announcements", "ctf:announce:*"],
   // Sponsors are the one exception to the CONTENT/PROGRESS split every other
   // entry above follows: unlike a challenge's flag/description, a sponsor
   // configuration is scoped to ONE event run (sponsors funded last year's
@@ -894,6 +908,17 @@ export async function resetEvent(
   // (`scanDelByPrefix` does not undo).
   await beginScoreLowering();
   try {
+    // Advance BEFORE the announcement wipe: a producer that read generation
+    // 0 before the reset can still write its outbox entry after the reset
+    // deletes the outbox. That entry keeps 0; the generation it must match
+    // is already 1, so the delivery sweeps skip it instead of posting it to
+    // the webhook the reset retained. Fail closed: if this INCR fails, abort
+    // before any prefix is swept, or the old generation would remain active
+    // against a wiped outbox.
+    assertPipelineOk(
+      await upstashPipeline([["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]]),
+      "reset webhook generation",
+    );
     for (const [label, pattern] of RESET_PREFIXES) {
       if (opts.keepLaunchKey && pattern === AI_LAUNCHKEY_KEY) continue;
       cleared[label] = await scanDelByPrefix(pattern);
@@ -905,6 +930,18 @@ export async function resetEvent(
       RESET_SCRIPT,
       [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
       [actor.name, at, resetAt, audit, String(AUDIT_CAP - 1)],
+    );
+    // Advance AGAIN after the wipe. The first increment only outruns
+    // producers that read the generation BEFORE the reset; a ticker pass can
+    // read the NEW generation and still read the previous event's settings
+    // before RESET_SCRIPT clears them, then enqueue a milestone whose
+    // generation matches the first increment — delivery would post it into
+    // the fresh event. This increment makes every such entry stale. Fail
+    // closed like the first: a reset that cannot fence its own announcements
+    // reports the failure instead of returning a half-fenced wipe.
+    assertPipelineOk(
+      await upstashPipeline([["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]]),
+      "reset webhook generation (post-wipe)",
     );
     return { cleared, resetAt };
   } finally {

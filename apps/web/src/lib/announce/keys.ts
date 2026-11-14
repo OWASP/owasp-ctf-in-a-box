@@ -1,0 +1,94 @@
+// Redis keys for the Discord announcements (#590). Two families, split by
+// lifetime:
+//
+//   - `ctf:admin:discord*` — organizer CONFIGURATION (the webhook URL and
+//     the per-type switches/options). Kept by the master reset, exactly like
+//     `ctf:admin:settings`, because it is something the organizer SET, not
+//     event data. The webhook URL lives in its OWN key (`:webhook`) so the
+//     config hash can be read into an API response without the secret ever
+//     being in the same object.
+//
+//   - `ctf:announce:*` — runtime announcement STATE (dedup ledgers, the
+//     delivery outbox, the lifecycle observation, status counters).
+//     Wiped by the master reset (`RESET_PREFIXES` in admin-store.ts) so a
+//     fresh run re-announces its own launches and first bloods, while the
+//     organizer's webhook setup survives.
+
+/** The non-secret config hash: one field per switch/option (see
+ *  announce/store.ts for the field names). Absent field = default = off. */
+export const DISCORD_CONFIG_KEY = "ctf:admin:discord";
+
+/** The webhook URL, alone. NEVER returned to a client, never logged, never
+ *  audited by value — writeAdminAudit records only "set"/"cleared". */
+export const DISCORD_WEBHOOK_KEY = "ctf:admin:discord:webhook";
+
+/** Bumped atomically when the webhook is cleared and at the start of a master
+ *  reset. An entry whose `webhookGeneration` predates the current value is
+ *  stale: its producer read the old config before the change and enqueued
+ *  after the cancellation scan. It lives OUTSIDE `ctf:announce:*` so a reset
+ *  cannot delete it back to a value a pre-reset entry still carries. */
+export const ANNOUNCE_WEBHOOK_GENERATION_KEY = "ctf:admin:discord:webhook-generation";
+
+// --- announcement state (all wiped by the master reset) ---------------------
+
+/** Per-challenge first SOLVER records: field `<module>:<challengeId>` → JSON
+ *  `{login, at}`. The awarding Lua script writes this with HSETNX in the same
+ *  script that banks the solve, so the record names the true first solver
+ *  rather than whichever notification happened to run first. */
+export const ANNOUNCE_FIRST_KEY = "ctf:announce:first";
+
+/** Per-challenge first-blood ANNOUNCEMENT claims: field
+ *  `<module>:<challengeId>` → ISO instant. Kept separate from
+ *  ANNOUNCE_FIRST_KEY: the solver record is fact, the announcement claim is
+ *  delivery dedup, and a second solver must not be able to claim the post. */
+export const ANNOUNCE_FIRST_ANNOUNCED_KEY = "ctf:announce:first-announced";
+
+/** Remaining-time-mark claims: field `<endsAtMs>:<markMs>` → ISO instant.
+ *  Keyed by the scoring-close instant, so moving Scoring closes re-arms the
+ *  marks for the new window rather than inheriting the old one's claims. */
+export const ANNOUNCE_MILESTONE_KEY = "ctf:announce:milestone";
+
+/** The observed lifecycle state (`v2|L<0|1>P<0|1>C<0|1>A<0|1>`), advanced
+ *  atomically by ANNOUNCE_STATE_SCRIPT so exactly one replica announces
+ *  each transition. */
+export const ANNOUNCE_LIFECYCLE_KEY = "ctf:announce:lifecycle";
+
+/** Monotonic id source bumped inside ANNOUNCE_STATE_SCRIPT, so every
+ *  announced transition/outbox entry gets a unique id even when the same
+ *  edge repeats (pause → resume → pause). */
+export const ANNOUNCE_SEQ_KEY = "ctf:announce:seq";
+
+/** The delivery outbox: field = announcement id, value = JSON
+ *  `{kind, payload, at, n, status, webhookGeneration, kindEpoch}`. `status`
+ *  is `pending` (queued here or on another replica, guarded by its lease
+ *  key), `sent`, or `failed` (retryable until `n` reaches
+ *  ANNOUNCE_MAX_ATTEMPTS). `webhookGeneration` is the generation the enqueue
+ *  observed, so an entry produced from a snapshot taken before a clear is
+ *  rejected instead of delivered to a later URL. `kindEpoch` is the switch
+ *  epoch it observed, so an entry produced from a snapshot taken before a
+ *  switch disable is rejected after the switch is turned back on. */
+export const ANNOUNCE_OUTBOX_KEY = "ctf:announce:outbox";
+
+/** Per-id delivery lease: `ctf:announce:lease:<id>` SET NX PX, the single
+ *  cross-replica guard on "who delivers this". A crashed owner's lease
+ *  expires and the next retry sweep may re-claim. */
+export const ANNOUNCE_LEASE_PREFIX = "ctf:announce:lease:";
+/** The per-id lease key under that prefix. */
+export const announceLeaseKey = (id: string) => `${ANNOUNCE_LEASE_PREFIX}${id}`;
+
+/** Discord rate-limit cooldown. While this key is set, both delivery sweeps
+ *  leave every entry untouched — no attempts spent, no status changed — until
+ *  the instant the 429 response asked us to retry at. */
+export const ANNOUNCE_COOLDOWN_KEY = "ctf:announce:cooldown";
+
+/** Delivery lease / retry backoff: long enough to cover the coalesce window
+ *  plus a full send with timeout, short enough that a crashed owner's item
+ *  is retried within a tick or two. */
+export const ANNOUNCE_LEASE_MS = 90_000;
+
+/** Attempt cap per announcement; beyond it the outbox entry stays `failed`
+ *  and the sweeps stop touching it. */
+export const ANNOUNCE_MAX_ATTEMPTS = 3;
+
+/** Status counters + last post/failure, for the /admin section. */
+export const ANNOUNCE_STATUS_KEY = "ctf:announce:status";

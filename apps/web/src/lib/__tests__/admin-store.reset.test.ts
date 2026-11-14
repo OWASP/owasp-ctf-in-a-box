@@ -26,7 +26,8 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
   };
 });
 
-import { resetEvent } from "@/lib/admin-store";
+import { RESET_PREFIXES, resetEvent } from "@/lib/admin-store";
+import { ANNOUNCE_WEBHOOK_GENERATION_KEY } from "@/lib/announce/keys";
 import { ALICE, actor } from "./audit-actor";
 
 beforeEach(() => {
@@ -84,6 +85,23 @@ describe("resetEvent", () => {
     expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
   });
 
+  it("ABORTS before any prefix sweep when the webhook generation bump fails — fail closed", async () => {
+    // The old generation must not stay active against a wiped outbox, so a
+    // failed INCR stops the reset before the first SCAN/DEL.
+    mocks.upstashPipeline.mockImplementation(async (cmds) => {
+      const cmd = cmds[0];
+      if (String(cmd[0]) === "INCR") return [{ error: "NOAUTH" }];
+      return [{ result: [] }];
+    });
+    await expect(resetEvent(actor("alice"))).rejects.toThrow(/reset webhook generation/);
+    const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
+    expect(commands.some((cmd) => cmd[0] === "SCAN" || cmd[0] === "DEL")).toBe(false);
+    for (const [, pattern] of RESET_PREFIXES) {
+      expect(commands.some((cmd) => cmd[0] === "SCAN" && cmd[3] === pattern)).toBe(false);
+    }
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+
   it("ABORTS before any delete when the bracket cannot be opened — fail closed", async () => {
     // Without the marker another app task still sees the old revision and
     // no in-progress flag, and could charge a hint against a gross this
@@ -130,16 +148,17 @@ describe("resetEvent", () => {
       aiNonces: 2,
       aiLaunchKey: 2,
       activity: 2,
+      announcements: 2,
       sponsors: 2,
       sponsorsLogo: 2,
       adjustments: 2,
     });
     expect(out.resetAt).toMatch(/^\d+$/);
 
-    // one SCAN + one DEL per prefix (30 prefixes) = 60 pipeline calls
+    // one SCAN + one DEL per prefix (31 prefixes) = 62 pipeline calls
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(30);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(30);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(31);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(31);
     // every wiped prefix, and NOT settings/audit/sync
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
@@ -172,6 +191,7 @@ describe("resetEvent", () => {
       "ctf:ai:nonce:*",
       "ctf:ai:launchkey",
       "ctf:activity:log",
+      "ctf:announce:*",
       "ctf:sponsors",
       "ctf:sponsors:logo",
       "ctf:adjustments",
@@ -216,6 +236,26 @@ describe("resetEvent", () => {
       .map((c) => c[0][0][3]);
     expect(patterns).toContain("ctf:quiz:answers:*");
     expect(patterns).toContain("ctf:quiz:attempts:*");
+  });
+
+  // #590: the webhook + switches are ORGANIZER CONFIGURATION (their own
+  // `ctf:admin:discord*` keys, outside every reset prefix and absent from
+  // the freeze/audit eval); only the announcement PROGRESS under
+  // `ctf:announce:*` is event data a reset wipes. Losing the webhook on a
+  // reset would silently disconnect an event the organizer already wired up.
+  it("KEEPS the Discord webhook configuration across a reset, while wiping announcement state", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    await resetEvent(actor("alice"));
+    const patterns = mocks.upstashPipeline.mock.calls
+      .filter((c) => c[0][0][0] === "SCAN")
+      .map((c) => c[0][0][3]);
+    expect(patterns).toContain("ctf:announce:*");
+    expect(patterns).not.toContain("ctf:admin:discord");
+    expect(patterns).not.toContain("ctf:admin:discord:webhook");
+    expect(patterns).not.toContain(ANNOUNCE_WEBHOOK_GENERATION_KEY);
+    const [, evalKeys] = mocks.upstashEval.mock.calls[0];
+    expect(evalKeys).not.toContain("ctf:admin:discord");
+    expect(evalKeys).not.toContain("ctf:admin:discord:webhook");
   });
 
   it("KEEPS the question bank and the answer key across a reset", async () => {
@@ -331,12 +371,14 @@ describe("resetEvent", () => {
       .map((c) => c[0][0][3]);
     expect(patterns).not.toContain("ctf:ai:launchkey");
     expect(out.cleared.aiLaunchKey).toBeUndefined();
-    // Nothing else is affected: the other 29 prefixes are still swept.
+    // Nothing else is affected: the other 30 prefixes are still swept,
+    // including the announcement state this branch adds.
     expect(patterns).toContain("ctf:ai:nonce:*");
     expect(patterns).toContain("ctf:ai:solves:*");
+    expect(patterns).toContain("ctf:announce:*");
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(29);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(29);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(30);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(30);
   });
 
   it("KEEPS the ai challenge bank, flag/flagnorm, hints, signing keys and categories across a reset", async () => {

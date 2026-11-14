@@ -24,6 +24,7 @@ import { isChallengeVisible, isReleaseInstant } from "@/lib/classic-release";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { ANNOUNCE_FIRST_KEY } from "@/lib/announce/keys";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   CLASSIC_CHALLENGES_KEY as CHALLENGES_KEY,
@@ -1287,6 +1288,10 @@ local prevAt = redis.call('HGET', KEYS[8], ARGV[4])
 if not prevAt or not string.match(prevAt, '^%d%d%d%d%-%d%d%-%d%dT') or prevAt < ARGV[3] then
   redis.call('HSET', KEYS[8], ARGV[4], ARGV[3])
 end
+-- Name the first SOLVER in the same atomic award that banks the solve. The
+-- announcer reads this record instead of racing its own claim, so a later
+-- notification can never hand first blood to a slower solver.
+redis.call('HSETNX', KEYS[#KEYS], ARGV[#ARGV], cjson.encode({playerId = ARGV[4], at = ARGV[3]}))
 return {'correct', tostring(points)}`;
 
 export type SubmitResult =
@@ -1423,6 +1428,7 @@ export async function submitFlag(
         SOLVED_KEY, // KEYS[7]
         LAST_AT_KEY, // KEYS[8] — login -> latest award time
         ...lockKeys, // KEYS[9..] — (solves hash, user record) per teammate, for the story lock
+        ANNOUNCE_FIRST_KEY, // last KEYS — first-solver record for the announcer
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the
@@ -1440,6 +1446,7 @@ export async function submitFlag(
         dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing
         prereq, // ARGV[9] — story prerequisite, "" when none
         lockTeam, // ARGV[10] — the viewer's team slug, "" for a team of one
+        `classic:${challengeId}`, // last ARGV — first-solver ledger field
       ],
     );
   } catch (err) {

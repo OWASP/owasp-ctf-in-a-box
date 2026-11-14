@@ -841,7 +841,11 @@ for the integrator-facing statement of the same rotation contract.
   time from the auth store (`username ?? login ?? name`, falling back to
   `player <first 8 of the id>`). **`ctf:link:github:<lowercased login>`**
   holds the player id and **`ctf:link:user:<id>`** the lowercased login;
-  **`ctf:link:at`** records when each link was made. They are written when a
+  **`ctf:link:at`** records when each link was made (epoch ms, by player id;
+  a sign-in on an existing link fills a missing time and never moves one). A
+  link with no time counts as made after the close whenever `scoringEndsAt`
+  is set, so its author's held scores stay `unclaimed` until a sign-in stamps
+  it. They are written when a
   player signs in with GitHub or, with Secure Development on, links GitHub
   from their profile: one GitHub account links to one kit account, a login
   already linked to another player is not taken over, a player already linked

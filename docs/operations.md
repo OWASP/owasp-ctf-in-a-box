@@ -351,7 +351,10 @@ The panel offers:
   comments **dropped**, running or paused) that expands to the full
   breakdown: repos polled, whether sync is paused, the last drop and the
   last error. A score held for an unlinked PR author is not a drop and does
-  not count here.
+  not count here (earlier builds counted it as `unlinked`). A held score
+  releases only if its author's link was made before Scoring closes; a link
+  with no recorded time counts as made after the close whenever an end is
+  set, and a sign-in by that player before the close stamps it.
 
   **Read Ingested and Dropped together.** Ingested is points that reached the
   leaderboard; Dropped is points that reached a contestant's PR and stopped

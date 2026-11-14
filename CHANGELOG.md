@@ -30,6 +30,19 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   waits behind an older one still held for the same target, or behind an
   older comment of the same author that failed and will be retried, so a
   solve keeps its first comment time.
+  **Breaking:** sync's `unlinked` tally and its `dropped` log line are gone;
+  that score is now counted as `held`, so update any log parser that matched
+  `unlinked`. Every link now carries its time in `ctf:link:at`, and a link
+  with no time counts as made after the close whenever `scoringEndsAt` is
+  set. **Upgrade note:** only a box running unreleased `main` between #742
+  and this change has links without a time; a v1.x box has no links at all,
+  and v2 refuses v1 data. On such a box, each linked player signing in again
+  before the close stamps their link; one who signs in again only after the
+  close leaves their held scores `unclaimed`. Or stamp every existing link
+  before the close: `docker compose exec redis sh -c 'redis-cli --no-auth-warning -a "$REDIS_PASSWORD" --scan --pattern "ctf:link:user:*" | while read k; do redis-cli --no-auth-warning -a "$REDIS_PASSWORD" HSETNX ctf:link:at "${k#ctf:link:user:}" "$(date +%s)000"; done'`,
+  which records "now" as each link's time (`HSETNX`, so a link that already
+  has one keeps it): run before the close, those links release their held
+  scores; run after it, they stay `unclaimed`.
 - **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
   the linked-account write failed after the user row was written, that row
   stayed behind and every later sign-in answered `account not linked`. The

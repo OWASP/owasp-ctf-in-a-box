@@ -250,4 +250,35 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     expect(Number(log.result)).toBe(0);
     await upstashPipeline([["DEL", settingsKey, auditKey, pausesKey]]);
   });
+
+  it("resetEvent wipes held SD scores and keeps the GitHub link records", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const login = `held${crypto.randomUUID().replace(/-/g, "")}`.slice(0, 30);
+    const player = crypto.randomUUID();
+    const seeded = await upstashPipeline([
+      ["HSET", `ctf:sd:held:by:${login}`, "owasp/x#1", "{}"],
+      ["SADD", "ctf:sd:held:authors", login],
+      ["SET", `ctf:link:github:${login}`, player],
+      ["SET", `ctf:link:user:${player}`, login],
+      ["HSET", "ctf:link:at", player, "1"],
+    ]);
+    expect(seeded.filter((r) => r.error)).toEqual([]);
+    try {
+      const { cleared } = await resetEvent(actor("alice"));
+      expect(cleared.sdHeld).toBeGreaterThanOrEqual(1);
+      const after = await upstashPipeline([
+        ["EXISTS", `ctf:sd:held:by:${login}`],
+        ["SISMEMBER", "ctf:sd:held:authors", login],
+        ["GET", `ctf:link:github:${login}`],
+        ["GET", `ctf:link:user:${player}`],
+        ["HGET", "ctf:link:at", player],
+      ]);
+      expect(after.map((r) => r.result)).toEqual([0, 0, player, login, "1"]);
+    } finally {
+      await upstashPipeline([
+        ["DEL", `ctf:link:github:${login}`, `ctf:link:user:${player}`],
+        ["HDEL", "ctf:link:at", player],
+      ]);
+    }
+  });
 });

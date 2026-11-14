@@ -162,11 +162,19 @@ Work down this list — each item is a different subsystem:
    could not read the Secure Development target list from
    `ctf:admin:settings` — it waits rather than guessing, so fix Redis and the
    next tick catches up. A tick log with `dropped` counts names why a comment
-   was refused (forged author, unknown target, malformed marker, or `unlinked`: the PR
-   author's GitHub login has not signed in to the box, so no player owns it;
-   the poller never logs the login). Sync also refuses to start without
-   Redis (`ctf-sync: Secure Development needs Redis to attribute PRs to
-   players`).
+   was refused (forged author, unknown target, malformed marker, or a
+   rejected release of a held score). A PR author who has not linked GitHub is
+   not a drop: the score is **held** (`held` count, listed on the Secure
+   Development admin tab) and released on a later tick once the author links
+   before Scoring closes; one linked at or after the close shows as
+   `unclaimed` and never scores. A link with no recorded time
+   (`ctf:link:at`) counts as made after the close whenever `scoringEndsAt`
+   is set: if an author you expect to score shows `unclaimed`, have them sign
+   in again before the close, which stamps the time (CHANGELOG #741 has the
+   one-off command that stamps every link). The `unlinked` tally of earlier
+   builds is this `held` count. The poller never logs the login. Sync also
+   refuses to start without Redis
+   (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
 4. **Is the score comment authored by `github-actions[bot]`?** Only that
    author is trusted — a comment posted any other way (including by you) is
    dropped by design.

@@ -185,7 +185,7 @@ the sections below are the enforceable contract behind it.
 3. The score comment's `author` (the GitHub login the judge saw) MUST match
    the GitHub-login grammar before sync looks it up, and sync then resolves it
    to a player id through the link key `ctf:link:github:<lowercased login>`.
-   An author no player has linked is dropped, never sent. The scorer accepts
+   An author no player has linked is held, never sent, until they link. The scorer accepts
    only a lowercase-UUID `player` (anything else is a `400 invalid player`),
    because it becomes a datastore key on the scorer side. The login grammar:
 

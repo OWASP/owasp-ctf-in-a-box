@@ -85,6 +85,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 67 — A Secure Development solve is timed, and judged, by its score comment](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
 - [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
 - [ADR 69 — The AI module is retired; AI security challenges run as Jeopardy challenges with flags](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)
+- [ADR 70 — Unattributed Secure Development scores are held, not dropped](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -1810,7 +1811,7 @@ current advice.
 
 ## ADR 38. Counting the poller's silent drops, and refusing to count the routine ones
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-13 by [ADR 70](#adr-70-unattributed-secure-development-scores-are-held-not-dropped), which adds the `held` bucket and reads `rejected` as a `4xx` other than `422`.
 
 **Context.** Two scoring bugs were found in one evening by running a single
 real PR end to end — the upserted-comment dedupe collision (ADR-adjacent, see
@@ -4269,3 +4270,55 @@ v1.x box nothing changes until the organizer moves to v2.0.0. Deleting the
 module removes its routes, admin panel, award script, upstash suite,
 `acceptance-ai-only.sh` and its CI job, and this ADR then supersedes ADR 53
 outright.
+
+## ADR 70. Unattributed Secure Development scores are held, not dropped
+
+**Status.** Accepted (#741). Amends [ADR 38](#adr-38-counting-the-pollers-silent-drops-and-refusing-to-count-the-routine-ones).
+
+**Context.** Kit-owned accounts (#731) make a GitHub link optional: a
+player signs in with any provider and links GitHub only to play Secure
+Development. A PR whose author has not linked yet used to be dropped
+(`unlinked`), which loses the points of a player who links an hour into the
+event. Two further gaps showed up in review. The scorer keeps a solve's
+first time, so the order in which sync posts two scores for the same
+solve decides which comment time sticks. ADR 38's `rejected` row reads
+"Scorer returned `4xx`", which since ADR 67 means a `4xx` other than `422`:
+the `422` is `refused`.
+
+**Decision.**
+- **An unattributed score is held, not dropped.** It is stored under
+  `ctf:sd:held:*` and counted in ADR 38's taxonomy as a new bucket, `held`:
+  waiting on the player, not lost. Each tick, before the comment pass, sync
+  releases the held scores of authors who linked before `scoringEndsAt` (or
+  of any linked author when the event has no end), oldest first, at their
+  original comment time, so ADR 67's rules judge them as they would have
+  judged the comment. A link made at or after the close does not release:
+  the admin list shows the score as `unclaimed`. The close is the current
+  `scoringEndsAt`, so an organizer who moves the end past the link lets the
+  score release; that is the organizer's call, and no other path attributes
+  an unclaimed score.
+- **A held score waits for its target.** One whose target the organizer has
+  turned off stays held until the target is back, as an unread comment on
+  that repo would.
+- **Order is kept per author and target.** While an older score for the same
+  author and target is still held, the comment pass holds a newer one behind
+  it instead of posting it. A comment that fails within a tick holds back
+  the same author's later comments in that repo, unread, until it has gone
+  through.
+- **ADR 38's `rejected` is a `4xx` other than `422`.** A `422` is `refused`,
+  as ADR 67 has it; organizers must not read a routine window or freeze
+  refusal as a lost score.
+- **Held scores outlive a failed delete.** `deleteUser` clears the player's
+  held scores only after their `ctf:user:<id>` record is gone, by one script
+  that deletes the hash before the author index: sync's cursor is past
+  those comments, so for a player who stays they are the only copy.
+
+This was chosen over dropping unlinked scores (a late link loses points),
+and over attributing an unclaimed score by hand (no path may give a score to
+an account that did not link in time).
+
+**Consequences.** The admin Secure Development tab lists held and unclaimed
+scores. A master reset clears `ctf:sd:held:*` and keeps links. A score sync
+read before an organizer deletes the player can still reach the scorer after
+the delete and restore a cleared solve, through the comment pass (as before
+this ADR) or a held release; that race is #775.

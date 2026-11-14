@@ -8,6 +8,7 @@ import { beginScoreLowering, endScoreLowering } from "@/lib/leaderboard/fold-cac
 import { sumAttempts } from "@/lib/attempt-row";
 import { logActivity } from "@/lib/activity-log";
 import { errorLabel } from "@/lib/error-label";
+import { getGithubLink } from "@/lib/github-link";
 import { resolveTeamMaxMembers } from "@/lib/team-store";
 import {
   HINTS_SPENT_KEY,
@@ -555,6 +556,13 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
 
 // --- delete -----------------------------------------------------------------
 
+// KEYS: [1]=ctf:sd:held:by:<login> [2]=ctf:sd:held:authors  ARGV: [1]=login.
+// The hash first: a DEL that errors stops the script, so the author stays
+// indexed and sync can still find the entries.
+export const CLEAR_HELD_SCRIPT = `redis.call('DEL', KEYS[1])
+redis.call('SREM', KEYS[2], ARGV[1])
+return 1`;
+
 /**
  * Removes a contestant's event state entirely: their progress, their hints,
  * their team membership, their `ctf:user:<id>` record and their rate-limit
@@ -562,7 +570,9 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
  *
  * The account itself (`ctf:auth:*`) and its GitHub link (`ctf:link:*`) are
  * NOT touched: they belong to the account store, and this clears what the
- * event holds about a player, not who they are.
+ * event holds about a player, not who they are. Releasing the link (and
+ * blocking a re-link) is a separate decision. Scores sync is holding for the
+ * linked login (`ctf:sd:held:*`) are event state and are cleared.
  *
  * A captain is a deliberate refusal here — see `forceTransferCaptain`.
  */
@@ -580,15 +590,17 @@ export async function deleteUser(
     );
   }
 
+  // Read before the bracket: a failed read aborts with nothing written.
+  const heldLogin = (await getGithubLink(player))?.login.toLowerCase() ?? null;
+
   // One score-lowering bracket around the WHOLE delete: the inner
   // reset nests its own — the marker is a counter — so the in-progress flag
   // stays up through the tail writes (membership, account record), and the
   // last close comes after the last write, on the failure path too.
   await beginScoreLowering();
   try {
-    const reset = await resetUserProgress(player, actor);
-
     const leftTeam = detail.team?.slug ?? null;
+    const reset = await resetUserProgress(player, actor);
     const cmds: (string | number)[][] = [];
     if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
     cmds.push(["DEL", userKey(player)]);
@@ -596,6 +608,13 @@ export async function deleteUser(
     // Checked: a refused DEL reported as a delete leaves the player on the
     // team with their record in place.
     assertPipelineOk(await upstashPipeline(cmds), "delete user");
+    // Held scores go only once the record is gone (the check above): sync has
+    // moved its cursor past those comments, so for a player who stays they
+    // are the only copy. One script, hash before index, so a failed DEL can
+    // never leave a hash that sync cannot find.
+    if (heldLogin) {
+      await upstashEval(CLEAR_HELD_SCRIPT, [`ctf:sd:held:by:${heldLogin}`, "ctf:sd:held:authors"], [heldLogin]);
+    }
 
     await audit("ops:user-delete", actor, { player, leftTeam });
     return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };

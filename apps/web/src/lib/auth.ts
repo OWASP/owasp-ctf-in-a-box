@@ -1,10 +1,36 @@
 import { betterAuth } from "better-auth";
-import { createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import type { BetterAuthOptions } from "better-auth";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
-import { linkOnUserWrite } from "@/lib/github-link";
+import { errorLabel } from "@/lib/error-label";
+import { getGithubLink, linkOnUserWrite } from "@/lib/github-link";
 import { recordCallbackLogin } from "@/lib/activity-log";
+
+/**
+ * The `/link-social` before hook. One GitHub account links to one kit
+ * account and a player cannot unlink, so a player whose link is recorded
+ * cannot start a second one: better-auth would add a second account row and
+ * the link write would move the player's link off the old login. A link the
+ * kit refused or never recorded (no `ctf:link:user:<id>`) can still be
+ * retried. An unreadable link fails closed. A request with no session is left
+ * to the endpoint, which answers 401.
+ */
+export async function refuseSecondGithubLink(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]): Promise<void> {
+  if (ctx.path !== "/link-social") return;
+  const session = await getSessionFromCtx(ctx);
+  if (!session) return;
+  let link: Awaited<ReturnType<typeof getGithubLink>>;
+  try {
+    link = await getGithubLink(session.user.id);
+  } catch (err) {
+    console.error(`[auth] could not read github link before linking: ${errorLabel(err)}`);
+    throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your GitHub link. Try again.", code: "GITHUB_LINK_UNREADABLE" });
+  }
+  if (link) {
+    throw new APIError("FORBIDDEN", { message: "A GitHub account is already linked.", code: "GITHUB_ALREADY_LINKED" });
+  }
+}
 
 /**
  * better-auth instance backed by the app's Redis (`redisAdapter`): users,
@@ -65,11 +91,21 @@ export const authOptions = {
     // address can move between accounts), so a sign-in from a GitHub identity
     // that has no account row never attaches to a user found by email: each
     // GitHub identity is its own user. Explicit linking stays available.
-    accountLinking: { disableImplicitLinking: true },
+    //
+    // allowDifferentEmails: a kit account's email is not an identity (kit-owned
+    // accounts carry a placeholder), so it never matches the GitHub one. What
+    // proves the link is completing GitHub OAuth from a live kit session, which
+    // better-auth checks on the callback.
+    //
+    // updateUserInfoOnLink copies the GitHub profile onto the user at link
+    // time, which is how `login` reaches the row and the user.update.after hook
+    // records the link. The update.before hook below keeps the kit name and
+    // avatar out of it.
+    accountLinking: { disableImplicitLinking: true, allowDifferentEmails: true, updateUserInfoOnLink: true },
   },
   // better-auth mounts its full default endpoint set behind the catch-all at
-  // app/api/auth/[...all]. This app only ever calls four of them: /sign-in/social,
-  // /callback/:id, /get-session and /sign-out. Everything below is a default
+  // app/api/auth/[...all]. This app only ever calls five of them: /sign-in/social,
+  // /link-social, /callback/:id, /get-session and /sign-out. Everything below is a default
   // endpoint that this app never calls and that either mutates the signed-in
   // identity or hands back provider data, so it is closed at the network edge.
   //
@@ -122,8 +158,10 @@ export const authOptions = {
     "/revoke-session",
     "/revoke-sessions",
     "/revoke-other-sessions",
-    // Account linking, and the linked-provider disclosure endpoints.
-    "/link-social",
+    // Unlinking, and the linked-provider disclosure endpoints. /link-social is
+    // open: it starts GitHub OAuth for the signed-in player and links only
+    // after the callback proves the GitHub account. A player cannot unlink,
+    // and one already linked cannot start a second link (refuseSecondGithubLink).
     "/unlink-account",
     "/list-accounts",
     "/account-info",
@@ -139,13 +177,24 @@ export const authOptions = {
     // The GitHub login a player signs in with is recorded as their link
     // (github-link.ts). better-auth writes the user row on every GitHub
     // sign-in: create for a new player, update (overrideUserInfoOnSignIn
-    // below) for a returning one, so a renamed account re-links here.
+    // below) for a returning one, so a renamed account re-links here. A link
+    // from /link-social writes it through updateUserInfoOnLink.
+    //
+    // On the OAuth callback (a sign-in or a link) the GitHub profile carries
+    // only `login` onto the row: the player's name and avatar are their own.
+    // better-auth merges the returned data over its own, so the fields are
+    // set to undefined, which its adapter skips on update, rather than left out.
     user: {
       create: { after: async (user) => linkOnUserWrite(user) },
-      update: { after: async (user) => linkOnUserWrite(user) },
+      update: {
+        before: async (data, ctx) =>
+          ctx?.path === "/callback/:id" ? { data: { ...data, name: undefined, image: undefined } } : undefined,
+        after: async (user) => linkOnUserWrite(user),
+      },
     },
   },
   hooks: {
+    before: createAuthMiddleware(refuseSecondGithubLink),
     // Sign-in timestamps for the admin activity log (issue #212). The after
     // hook runs on EVERY auth endpoint; recordCallbackLogin filters to the
     // OAuth callback (the one path where a fresh session means "signed in")

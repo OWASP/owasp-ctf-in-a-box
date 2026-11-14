@@ -264,21 +264,101 @@ test("getSecureDevTargets: a per-command error reply throws, unlike isPaused/get
   await assert.rejects(() => redis.getSecureDevTargets(), /WRONGTYPE/);
 });
 
-test("resolveGithubLogin reads the lowercased link key and returns null when unclaimed", async () => {
+test("holdScore stores the entry under the lowercased login and indexes the author", async () => {
   const sent = [];
   const fetchImpl = async (_u, init) => {
     const cmds = JSON.parse(init.body);
     sent.push(...cmds);
-    return new Response(JSON.stringify([{ result: cmds[0][1] === "ctf:link:github:octocat" ? "11111111-1111-4111-8111-111111111111" : null }]), { status: 200 });
+    return new Response(JSON.stringify(cmds.map(() => ({ result: 1 }))), { status: 200 });
   };
   const r = makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, fetchImpl, () => {});
-  assert.equal(await r.resolveGithubLogin("OctoCat"), "11111111-1111-4111-8111-111111111111");
-  assert.equal(await r.resolveGithubLogin("nobody"), null);
-  assert.deepEqual(sent[0], ["GET", "ctf:link:github:octocat"]);
+  const entry = { target: "dvwa", solved: ["sqli-low"], pr: 7, sha: "abc", at: "2026-08-13T11:00:00Z", repo: "DVWA" };
+  await r.holdScore("OctoCat", "1@2026-08-13T11:00:00Z", entry);
+  assert.deepEqual(sent, [
+    ["HSET", "ctf:sd:held:by:octocat", "1@2026-08-13T11:00:00Z", JSON.stringify(entry)],
+    ["SADD", "ctf:sd:held:authors", "octocat"],
+  ]);
 });
 
-test("resolveGithubLogin throws on a per-command error", async () => {
-  const fetchImpl = async () => new Response(JSON.stringify([{ error: "NOAUTH nope" }]), { status: 200 });
+test("holdScore throws on a per-command error", async () => {
+  const fetchImpl = async () => new Response(JSON.stringify([{ error: "NOAUTH nope" }, { result: 1 }]), { status: 200 });
   const r = makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, fetchImpl, () => {});
-  await assert.rejects(r.resolveGithubLogin("octocat"), /NOAUTH/);
+  await assert.rejects(r.holdScore("octocat", "f", {}), /NOAUTH/);
+});
+
+// ── releasing held scores (#741) ─────────────────────────────────────────────
+
+/** A recording /pipeline mock answering each command with `reply(cmd)`. */
+function recorder(reply) {
+  const sent = [];
+  const fetchImpl = async (_u, init) => {
+    const cmds = JSON.parse(init.body);
+    sent.push(...cmds);
+    return new Response(JSON.stringify(cmds.map((c) => ({ result: reply(c) }))), { status: 200 });
+  };
+  return { sent, r: makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, fetchImpl, () => {}) };
+}
+const errorFetch = async () => new Response(JSON.stringify([{ error: "NOAUTH nope" }]), { status: 200 });
+const erroring = () => makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, errorFetch, () => {});
+
+test("readScoringWindow reads both bounds in one HMGET, absent ones as empty strings", async () => {
+  const { sent, r } = recorder(() => [null, "2026-11-13T18:00:00.000Z"]);
+  assert.deepEqual(await r.readScoringWindow(), { startsAt: "", endsAt: "2026-11-13T18:00:00.000Z" });
+  assert.deepEqual(sent, [["HMGET", "ctf:admin:settings", "scoringStartsAt", "scoringEndsAt"]]);
+});
+
+test("readScoringWindow throws on a read error instead of guessing the event never closes", async () => {
+  await assert.rejects(erroring().readScoringWindow(), /NOAUTH/);
+});
+
+test("heldAuthors is the author index", async () => {
+  const { sent, r } = recorder(() => ["octocat", "mona"]);
+  assert.deepEqual(await r.heldAuthors(), ["octocat", "mona"]);
+  assert.deepEqual(sent, [["SMEMBERS", "ctf:sd:held:authors"]]);
+  await assert.rejects(erroring().heldAuthors(), /NOAUTH/);
+});
+
+test("heldFor reads the lowercased author's hash; an entry that is not a JSON object comes back null", async () => {
+  const entry = { target: "dvwa", solved: ["sqli-low"], pr: 7, sha: "abc", at: "2026-08-13T11:00:00Z", repo: "DVWA" };
+  const { sent, r } = recorder(() => ["1@a", JSON.stringify(entry), "2@b", "{bad", "3@c", "[1]", "4@d", "null"]);
+  assert.deepEqual(await r.heldFor("OctoCat"), [
+    { field: "1@a", entry },
+    { field: "2@b", entry: null },
+    { field: "3@c", entry: null },
+    { field: "4@d", entry: null },
+  ]);
+  assert.deepEqual(sent, [["HGETALL", "ctf:sd:held:by:octocat"]]);
+  await assert.rejects(erroring().heldFor("octocat"), /NOAUTH/);
+});
+
+test("resolveGithubLink reads the link, then its time from ctf:link:at by player id", async () => {
+  const P = "11111111-1111-4111-8111-111111111111";
+  const { sent, r } = recorder((c) => (c[0] === "GET" ? P : "1763056800000"));
+  assert.deepEqual(await r.resolveGithubLink("OctoCat"), { player: P, linkedAt: 1763056800000 });
+  assert.deepEqual(sent, [["GET", "ctf:link:github:octocat"], ["HGET", "ctf:link:at", P]]);
+});
+
+test("resolveGithubLink: unlinked is null, and a link with no usable time has linkedAt null", async () => {
+  const P = "11111111-1111-4111-8111-111111111111";
+  assert.equal(await recorder(() => null).r.resolveGithubLink("nobody"), null);
+  for (const at of [null, "", "soon", "12.5", "-1"]) {
+    const { r } = recorder((c) => (c[0] === "GET" ? P : at));
+    assert.deepEqual(await r.resolveGithubLink("octocat"), { player: P, linkedAt: null }, `ctf:link:at = ${JSON.stringify(at)}`);
+  }
+  await assert.rejects(erroring().resolveGithubLink("octocat"), /NOAUTH/);
+});
+
+test("releaseHeld is one EVAL: HDEL the field, SREM the author once the hash is empty", async () => {
+  const { sent, r } = recorder(() => 1);
+  await r.releaseHeld("OctoCat", "1@2026-08-13T11:00:00Z");
+  assert.equal(sent.length, 1);
+  const [cmd, script, numkeys, ...rest] = sent[0];
+  assert.equal(cmd, "EVAL");
+  assert.equal(numkeys, 2);
+  assert.deepEqual(rest, ["ctf:sd:held:by:octocat", "ctf:sd:held:authors", "1@2026-08-13T11:00:00Z", "octocat"]);
+  assert.match(script, /redis\.call\('HDEL', KEYS\[1\], ARGV\[1\]\)/);
+  assert.match(script, /redis\.call\('HLEN', KEYS\[1\]\) == 0/);
+  assert.match(script, /redis\.call\('SREM', KEYS\[2\], ARGV\[2\]\)/);
+  assert.ok(script.indexOf("HDEL") < script.indexOf("HLEN"), "the emptiness check must follow the delete");
+  await assert.rejects(erroring().releaseHeld("octocat", "f"), /NOAUTH/);
 });

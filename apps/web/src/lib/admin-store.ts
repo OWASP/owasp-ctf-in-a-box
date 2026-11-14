@@ -753,6 +753,9 @@ export const RESET_PREFIXES: readonly [string, string][] = [
   ["teams", "ctf:team:*"],
   ["users", "ctf:user:*"],
   ["joinCodes", "ctf:joincode:*"],
+  // Scores sync is holding for authors who have not linked yet belong to the
+  // event being wiped. The link itself (`ctf:link:*`) is account data and stays.
+  ["sdHeld", "ctf:sd:held:*"],
   ["hints", "ctf:hints:*"],
   ["quizAnswers", `${QUIZ_ANSWERS_PREFIX}*`],
   ["quizAttempts", `${QUIZ_ATTEMPTS_PREFIX}*`],

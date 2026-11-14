@@ -120,6 +120,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
   /** Every key and hash field that holds this player's state, as [key, field?]. */
   const perPlayer: [string, string?][] = [
     [`ctf:user:${id}`],
+    [`ctf:sd:held:by:${login}`],
     [`ctf:user:${id}:hints`],
     [`ctf:hints:at:${id}`],
     ["ctf:hints:spent", id],
@@ -153,6 +154,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       ...fields.map(([k, f]) => ["HDEL", k, f]),
       ["DEL", `ctf:team:${slug}`, `ctf:team:${slug}:members`, `ctf:solves:${target}`, `ctf:user:${mate}`],
       ["DEL", `ctf:link:github:${login}`, `ctf:link:user:${id}`],
+      ["SREM", "ctf:sd:held:authors", login],
       ["HDEL", "ctf:auth:user", id],
       ["HDEL", "ctf:classic:solvecount", challenge],
       ["HDEL", "ctf:ai:solvecount", challenge],
@@ -173,6 +175,8 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       ["HSET", "ctf:auth:user", id, JSON.stringify({ id, login, name: login, email: `${login}@example.test`, image: null })],
       ["SET", `ctf:link:github:${login}`, id],
       ["SET", `ctf:link:user:${id}`, login],
+      ["HSET", `ctf:sd:held:by:${login}`, "owasp/x#1", "{}"],
+      ["SADD", "ctf:sd:held:authors", login],
       ["HSET", `ctf:team:${slug}`, "name", "VT", "captain", mate],
       ["SADD", `ctf:team:${slug}:members`, mate, id],
       ["HSET", `ctf:user:${mate}`, "team", slug],
@@ -226,6 +230,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       ["GET", `ctf:link:user:${id}`],
     ]);
     expect(member.result).toBe(0);
+    expect((await pipeline([["SISMEMBER", "ctf:sd:held:authors", login]]))[0].result).toBe(0);
     expect(mateMember.result).toBe(1);
     expect(mateSolve.result).toBe(1);
     expect([classicCount.result, aiCount.result]).toEqual(["1", "1"]);

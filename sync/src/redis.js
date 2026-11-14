@@ -15,7 +15,17 @@ const SYNC_STATUS_KEY = "ctf:sync:status";
 // `resetAt` epoch instead.
 export const SYNC_STATE_KEY = "ctf:sync:state";
 const LINK_GITHUB_PREFIX = "ctf:link:github:";
+const HELD_BY_PREFIX = "ctf:sd:held:by:";
+const HELD_AUTHORS_KEY = "ctf:sd:held:authors";
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
+// player id -> epoch ms the GitHub link was made (apps/web github-link.ts).
+const LINK_AT_KEY = "ctf:link:at";
+
+// KEYS[1] = ctf:sd:held:by:<login>, KEYS[2] = ctf:sd:held:authors,
+// ARGV[1] = the held field, ARGV[2] = the lowercased login.
+const RELEASE_HELD_SCRIPT = `redis.call('HDEL', KEYS[1], ARGV[1])
+if redis.call('HLEN', KEYS[1]) == 0 then redis.call('SREM', KEYS[2], ARGV[2]) end
+return 1`;
 
 // Generic scheduled window: true when `now` is before start / after end.
 // Absent/unparseable bounds are ignored — the registration window's rule;
@@ -115,6 +125,13 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
     return results.map((r) => r.result);
   }
 
+  /** One EVAL through the pipeline, in the wire shape apps/web upstashEval
+   *  sends; throws like `pipeline` on any error. */
+  async function evalScript(script, keys, args) {
+    const [result] = await pipeline([["EVAL", script, keys.length, ...keys, ...args]]);
+    return result;
+  }
+
   return {
     async isPaused() {
       try {
@@ -195,13 +212,73 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
     async writePollState(state) {
       await pipeline([["SET", SYNC_STATE_KEY, JSON.stringify(state)]]);
     },
-    // The player a GitHub login has claimed, or null when none has. Throws on
-    // any read error (the pipeline does): an unreadable link is not an
-    // unlinked author, and the caller retries the comment on the next poll.
-    // Mirrors apps/web github-link.ts linkKey: the login lowercased.
-    async resolveGithubLogin(login) {
-      const [id] = await pipeline([["GET", `${LINK_GITHUB_PREFIX}${String(login).toLowerCase()}`]]);
-      return typeof id === "string" && id !== "" ? id : null;
+    // Parks a score whose PR author has no linked kit account, so linking later
+    // can release it. `field` is the comment revision key, which makes a retried
+    // hold idempotent. One pipeline: the entry and the author index never
+    // diverge. Throws on any error, so the caller retries the comment.
+    // Key layout mirrors apps/web: ctf:sd:held:by:<lowercased login> (hash),
+    // ctf:sd:held:authors (set of lowercased logins).
+    async holdScore(login, field, entry) {
+      const l = String(login).toLowerCase();
+      await pipeline([
+        ["HSET", `${HELD_BY_PREFIX}${l}`, field, JSON.stringify(entry)],
+        ["SADD", HELD_AUTHORS_KEY, l],
+      ]);
+    },
+    // The scoring window's raw bounds, absent ones as "". Throws on any read
+    // error: the release step cannot tell whether a link beat the close
+    // without the close, so it keeps every held score for the next tick.
+    async readScoringWindow() {
+      const [row] = await pipeline([["HMGET", ADMIN_SETTINGS_KEY, "scoringStartsAt", "scoringEndsAt"]]);
+      const [startsAt, endsAt] = Array.isArray(row) ? row : [];
+      return { startsAt: startsAt ?? "", endsAt: endsAt ?? "" };
+    },
+    // Lowercased logins with at least one held score. Throws on error.
+    async heldAuthors() {
+      const [members] = await pipeline([["SMEMBERS", HELD_AUTHORS_KEY]]);
+      return Array.isArray(members) ? members : [];
+    },
+    // One author's held scores, keyed by comment revision. An entry that is
+    // not a JSON object comes back as `entry: null` rather than throwing, so
+    // one damaged entry cannot block the author's others. Throws on a read
+    // error.
+    async heldFor(login) {
+      const [flat] = await pipeline([["HGETALL", `${HELD_BY_PREFIX}${String(login).toLowerCase()}`]]);
+      const out = [];
+      const pairs = Array.isArray(flat) ? flat : [];
+      for (let i = 0; i + 1 < pairs.length; i += 2) {
+        let entry = null;
+        try {
+          const v = JSON.parse(pairs[i + 1]);
+          if (v && typeof v === "object" && !Array.isArray(v)) entry = v;
+        } catch {
+          entry = null;
+        }
+        out.push({ field: pairs[i], entry });
+      }
+      return out;
+    },
+    // The player a login has claimed and when the link was made (epoch ms),
+    // or null when the login is unclaimed. `linkedAt` is null when the link
+    // carries no usable time in `ctf:link:at` (apps/web github-link.ts writes
+    // it as a decimal string when the link is made); the release rule reads
+    // that as "cannot prove it beat the close". Throws on any read error: an
+    // unreadable link is not an unlinked author, and the caller retries. The
+    // key mirrors apps/web github-link.ts linkKey: the login lowercased.
+    async resolveGithubLink(login) {
+      const [player] = await pipeline([["GET", `${LINK_GITHUB_PREFIX}${String(login).toLowerCase()}`]]);
+      if (typeof player !== "string" || player === "") return null;
+      const [raw] = await pipeline([["HGET", LINK_AT_KEY, player]]);
+      const linkedAt = typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : null;
+      return { player, linkedAt: Number.isSafeInteger(linkedAt) ? linkedAt : null };
+    },
+    // Deletes one held score the scorer has judged, and drops the author from
+    // the index once nothing of theirs is left. One script so the hash and the
+    // index never disagree: an author indexed with no hash would be re-read
+    // every tick, one with a hash and no index would never be released.
+    async releaseHeld(login, field) {
+      const l = String(login).toLowerCase();
+      await evalScript(RELEASE_HELD_SCRIPT, [`${HELD_BY_PREFIX}${l}`, HELD_AUTHORS_KEY], [field, l]);
     },
     async writeStatus(s) {
       try {

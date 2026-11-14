@@ -16,6 +16,9 @@ import { getGithubOrg } from "@/lib/bootstrap-env";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { redirectIfNotLaunched } from "@/lib/launch";
 import { getResolvedModules } from "@/lib/resolved-modules";
+import { getGithubLink } from "@/lib/github-link";
+import LinkGithubButton from "@/components/link-github-button";
+import { firstParam, linkNotice } from "@/app/(site)/profile/link-notice";
 
 /** This page's own name, with an organizer rename applied.
  *
@@ -42,7 +45,13 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export default async function ChallengesPage() {
+export default async function ChallengesPage({
+  searchParams,
+}: {
+  /** A failed GitHub link lands back here: `error` is better-auth's code,
+   *  `linked=github` marks a return from a link the player started. */
+  searchParams?: Promise<{ error?: string | string[]; linked?: string | string[] }>;
+} = {}) {
   // Gated on the module registry rather than on auth: this route only exists
   // at all when the secure-development module is enabled (module contract
   // §5.4), so an event without it 404s here exactly like any other unknown
@@ -93,8 +102,24 @@ export default async function ChallengesPage() {
   // `event.yaml` bake — `null` per target when it is unset, which
   // `ChallengeGrid` renders as plain text rather than a broken link.
   const org = getGithubOrg();
+  // A signed-in player sees them only once a GitHub account is linked, since
+  // a PR from an unlinked author never scores. A failed link read fails
+  // CLOSED: no links, and no "link your account" claim we cannot back.
+  let showLinks = true;
+  let needsLink = false;
+  if (player) {
+    try {
+      needsLink = (await getGithubLink(player.id)) === null;
+      showLinks = !needsLink;
+    } catch {
+      showLinks = false;
+      console.error("challenges: github link read failed");
+    }
+  }
+  const params = await searchParams;
+  const linkMessage = needsLink ? linkNotice(firstParam(params?.error), firstParam(params?.linked), false) : null;
   const forkUrls: Partial<Record<AppId, string | null>> = {};
-  for (const app of sortedApps) forkUrls[app.id] = forkUrl(org, app.id);
+  if (showLinks) for (const app of sortedApps) forkUrls[app.id] = forkUrl(org, app.id);
 
   // The count always follows the runtime enabled-target subset, never the
   // scorer's catalogue total (CodeRabbit round 1): the scorer's /challenges
@@ -124,6 +149,19 @@ export default async function ChallengesPage() {
           to see which test, fix, and push again. Your best result always stands.
         </span>
       </p>
+      {needsLink && (
+        <div className="flex flex-col gap-3">
+          {linkMessage && (
+            <p role="alert" className="rounded-md border border-[#d4a017]/40 bg-[#d4a017]/10 px-4 py-2 text-sm text-white">
+              {linkMessage}
+            </p>
+          )}
+          <p role="status" className="rounded-md border border-[#d4a017]/40 bg-[#d4a017]/10 px-4 py-2 text-sm text-white">
+            Link your GitHub account to start.
+          </p>
+          <LinkGithubButton callbackURL="/challenges?linked=github" />
+        </div>
+      )}
       <ChallengeGrid
         apps={sortedApps}
         catalog={catalog?.byApp ?? null}

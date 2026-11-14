@@ -8,6 +8,41 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Added: GitHub linking, and held Secure Development scores (#741).** With
+  Secure Development on, a player links a GitHub account from their profile
+  or by signing in with GitHub; one GitHub account links to one kit account,
+  a player already linked cannot start a second link, and there is no
+  unlink. Email is not identity, so the GitHub account may carry a different
+  email, and a GitHub sign-in no longer refreshes the player's name or
+  avatar. The Secure Development page hides the fork links until the player
+  has linked. A score whose PR author has not linked is now
+  held (`ctf:sd:held:*`, tally bucket `held`) instead of dropped. Each sync
+  tick releases the held scores of authors who linked before Scoring closes
+  (or of any linked author when the event has no end), oldest comment
+  first, at the original comment time, so the scorer still judges the
+  window, freeze and reset against that time. A link made at or after the
+  close does not release while that close stands (an organizer who moves
+  the end later lets it release);
+  the Secure Development admin tab lists held and `unclaimed` scores
+  (read-only). A master reset wipes held scores and keeps links; deleting a
+  player clears their held scores. A held score for a target the organizer
+  has turned off stays held until the target is back, and a newer score
+  waits behind an older one still held for the same target, or behind an
+  older comment of the same author that failed and will be retried, so a
+  solve keeps its first comment time.
+  **Breaking:** sync's `unlinked` tally and its `dropped` log line are gone;
+  that score is now counted as `held`, so update any log parser that matched
+  `unlinked`. Every link now carries its time in `ctf:link:at`, and a link
+  with no time counts as made after the close whenever `scoringEndsAt` is
+  set. **Upgrade note:** only a box running unreleased `main` between #742
+  and this change has links without a time; a v1.x box has no links at all,
+  and v2 refuses v1 data. On such a box, each linked player signing in again
+  before the close stamps their link; one who signs in again only after the
+  close leaves their held scores `unclaimed`. Or stamp every existing link
+  before the close: `docker compose exec redis sh -c 'redis-cli --no-auth-warning -a "$REDIS_PASSWORD" --scan --pattern "ctf:link:user:*" | while read k; do redis-cli --no-auth-warning -a "$REDIS_PASSWORD" HSETNX ctf:link:at "${k#ctf:link:user:}" "$(date +%s)000"; done'`,
+  which records "now" as each link's time (`HSETNX`, so a link that already
+  has one keeps it): run before the close, those links release their held
+  scores; run after it, they stay `unclaimed`.
 - **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
   the linked-account write failed after the user row was written, that row
   stayed behind and every later sign-in answered `account not linked`. The
@@ -29,9 +64,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   and its actions and the delete confirmation work on the player (deleting
   removes their event record, never their sign-in account or GitHub link).
   Secure Development scores reach a player through the GitHub login linked at
-  their sign-in, so a PR author who has never signed in to the box is dropped
-  (counted as `unlinked`, the login is not logged) until #741 holds those
-  instead. `sync` now refuses to start without Redis, and the file-state
+  their sign-in, so a PR author who has not linked an account yet is held,
+  not dropped (see the #741 entry). `sync` now refuses to start without Redis, and the file-state
   poller for Redis-less runs is gone. The scorer's `POST /score` takes
   `{player, target, solved, pr, sha, at}` and `GET /leaderboard` returns
   `player` rather than `author`; the judge's score-comment marker is

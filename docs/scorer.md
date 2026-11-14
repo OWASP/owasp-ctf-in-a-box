@@ -62,7 +62,7 @@ and no upstream service anywhere:
    `github-actions[bot]` comments, parses the marker, resolves its `author`
    (the GitHub login) to a player id through the link key the app wrote at
    that player's GitHub sign-in, and POSTs the score to `score serve` on your
-   box. A PR author nobody has linked is dropped.
+   box. A PR author nobody has linked is held until they link.
 5. The app reads `GET /leaderboard` from that same serve process. The
    response pairs the ranked standings with a rubric-derived `catalog`
    (per target, each challenge's `id`/`name`/`points`/`owasp` — `owasp` is

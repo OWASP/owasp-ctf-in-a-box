@@ -45,7 +45,6 @@ import ConfirmModal from "@/components/confirm-modal";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import AdminQuizControls from "@/components/admin-quiz-controls";
 import AdminClassicControls from "@/components/admin-classic-controls";
-import AdminAiControls from "@/components/admin-ai-controls";
 import type { SyncStatus } from "@/lib/admin-store";
 import AdminSidebar from "./admin-sidebar";
 import AdminOverviewTab from "./admin-overview-tab";
@@ -188,8 +187,6 @@ export default function AdminControls({
     setQuizRetryAfterInput,
     classicCooldownSecInput,
     setClassicCooldownSecInput,
-    aiCooldownSecInput,
-    setAiCooldownSecInput,
     cooldownInput,
     setCooldownInput,
     teamMaxMembersInput,
@@ -373,16 +370,6 @@ export default function AdminControls({
                         timeZone={eventZone}
                         classicCooldownSecInput={classicCooldownSecInput}
                         setClassicCooldownSecInput={setClassicCooldownSecInput}
-                        commitNumber={commitNumber}
-                        statusOf={statusOf}
-                        onInventory={inventoryReporters[tab.id]}
-                        moduleSettings={moduleSettings}
-                      />
-                    ) : tab.id === "ai" ? (
-                      <AdminAiControls
-                        pending={pending}
-                        aiCooldownSecInput={aiCooldownSecInput}
-                        setAiCooldownSecInput={setAiCooldownSecInput}
                         commitNumber={commitNumber}
                         statusOf={statusOf}
                         onInventory={inventoryReporters[tab.id]}

@@ -81,8 +81,7 @@ export default async function FlagsPage() {
     // members' solve rows. Null when that read failed: neither is shown.
     teamSolveBoard("classic"),
     playerId ? getViewerClassic(playerId) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
-    // Fails OPEN, same doctrine as ai-store.ts's resolveSettings for this
-    // exact read (see ai/page.tsx's identical fix): a Redis blip here must
+    // Fails OPEN: a Redis blip here must
     // not take the whole public board down over a cooldown override, so a
     // rejected settings read falls back to `null` (-> the module default
     // below) rather than failing the page.

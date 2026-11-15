@@ -16,8 +16,8 @@
 //      counts, one posted during it never does, not even after the unfreeze.
 //      The contestant pushes again once scoring resumes. This is the fact an
 //      organizer most needs to relay: freezing does not hold PR scores.
-//   2. Direct submissions are refused outright — quiz answers, classic flags,
-//      AI solves.
+//   2. Direct submissions are refused outright — quiz answers and classic
+//      flags.
 //   3. A contestant who tries reads "Scoring is paused right now. Try again
 //      later." (`quiz-board.tsx`, `challenge-detail.tsx`). Quoted here
 //      verbatim so an organizer recognises the sentence being read back to
@@ -29,7 +29,7 @@ export const PAUSED_CONTESTANT_MESSAGE = "Scoring is paused right now. Try again
 
 /** The line under the switch, on both screens. */
 export const FREEZE_HELP =
-  "Holds scoring for everyone. Quiz, classic and AI submissions are refused. Fork Actions keep judging PRs, but a PR scored while frozen never counts, even after you unfreeze — its contestant pushes again once scoring resumes.";
+  "Holds scoring for everyone. Quiz and classic submissions are refused. Fork Actions keep judging PRs, but a PR scored while frozen never counts, even after you unfreeze — its contestant pushes again once scoring resumes.";
 
 /** The confirmation for flipping `paused`. `next` is the value being written,
  *  so `true` is the freeze direction. */
@@ -38,7 +38,7 @@ export function freezeConfirm(next: boolean): { title: string; body: string; con
     ? {
         title: "Freeze scoring?",
         body:
-          `Contestants get "${PAUSED_CONTESTANT_MESSAGE}" on every quiz answer, flag and AI solve. ` +
+          `Contestants get "${PAUSED_CONTESTANT_MESSAGE}" on every quiz answer and flag. ` +
           "Fork Actions keep judging pull requests: PRs scored before you freeze still count, " +
           "but a PR scored while frozen never counts, not even after you unfreeze — " +
           "its contestant has to push again once scoring resumes.",

@@ -3,7 +3,7 @@
 // One module's Content screen (admin-redesign.md § Content screens): the
 // sticky header — the module's own title and its enabled switch — the setup
 // status line that opens into the checklist, and then the module's own
-// controls (`children`: the quiz, classic, ai or secure-development panel),
+// controls (`children`: the quiz, classic or secure-development panel),
 // which open with the compact settings card (components/admin/settings-
 // card.tsx). The identity editor is built HERE — it is driven by the modules
 // list, not by any module's code — and handed to the controls through the

@@ -16,8 +16,6 @@ const {
   moduleLive,
   getQuizTotals,
   listQuestions,
-  getAiTotals,
-  listAiChallenges,
   getResolvedModules,
 } = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -29,8 +27,6 @@ const {
   moduleLive: vi.fn(),
   getQuizTotals: vi.fn(),
   listQuestions: vi.fn(),
-  getAiTotals: vi.fn(),
-  listAiChallenges: vi.fn(),
   getResolvedModules: vi.fn(),
 }));
 
@@ -70,12 +66,6 @@ vi.mock("@/lib/quiz-store", () => ({
   // The blocks' Show-N item list reads the viewer's own per-question map.
   getViewerQuiz: async () => ({ answered: {}, attempts: {} }),
 }));
-vi.mock("@/lib/ai-store", () => ({
-  getAiTotals,
-  listAiChallenges,
-  // The blocks' Show-N item list reads the viewer's own per-challenge map.
-  getViewerAi: async () => ({ solved: {}, attempts: {} }),
-}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: vi.fn() }));
 
 const classic = vi.hoisted(() => ({
@@ -102,7 +92,6 @@ beforeEach(() => {
   moduleLive.mockImplementation((id: string) => id === "classic");
   getViewerTeam.mockResolvedValue(null);
   listQuestions.mockResolvedValue([]);
-  listAiChallenges.mockResolvedValue([]);
   getResolvedModules.mockResolvedValue([{ id: "classic", nav: { href: "/flags", label: "Jeopardy" }, targets: [], title: "Jeopardy", blurb: "" }]);
   getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
   getUser.mockResolvedValue(null);

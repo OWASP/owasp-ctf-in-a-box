@@ -22,7 +22,6 @@ const settings: AdminSettings = {
   quizMaxAttempts: null,
   quizRetryAfterMin: null,
   classicCooldownSec: null,
-  aiCooldownSec: null,
   teamMaxMembers: null,
   scoreCooldownMin: null,
   // A LAUNCHED event (#464: no scoring start = not launched = registration

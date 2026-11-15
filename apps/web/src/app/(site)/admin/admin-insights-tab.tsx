@@ -21,7 +21,7 @@ import { adminTime } from "@/lib/event-time";
 import { SLOW_POLL_MS, useLivePoll } from "./use-live-poll";
 
 type ChallengeStat = {
-  module: "quiz" | "classic" | "ai";
+  module: "quiz" | "classic";
   id: string;
   /** The organizer's own name for it. Null when the catalogue no longer holds
    *  it — a challenge deleted after it was solved keeps its metrics — so every
@@ -43,7 +43,7 @@ type EventMetrics = {
   timeline: { at: string; solves: number }[];
   bucketMinutes: number;
   teams: { slug: string; name: string; size: number; points: number }[];
-  modules: { quiz: number; classic: number; ai: number; secureDevelopment: number };
+  modules: { quiz: number; classic: number; secureDevelopment: number };
   hints: { buyers: number; totalSpend: number; boughtBeforeSolving: number; boughtAfterSolving: number };
   caveats: string[];
 };
@@ -166,7 +166,7 @@ export function SolvesChart({
         </div>
       )}
       <p className="text-sm text-muted">
-        {bucketWidthLabel(bucketMinutes)} buckets, quiz, Jeopardy and AI; the tallest bar is{" "}
+        {bucketWidthLabel(bucketMinutes)} buckets, quiz and Jeopardy; the tallest bar is{" "}
         {peak} solve{peak === 1 ? "" : "s"}. Attempt rows carry a first and a last time but not one per
         try, so this is solves, not submissions.
       </p>
@@ -356,7 +356,6 @@ export default function AdminInsightsTab({
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               <Figure label="Quiz scorers" value={metrics.modules.quiz} />
               <Figure label="Jeopardy scorers" value={metrics.modules.classic} />
-              <Figure label="AI scorers" value={metrics.modules.ai} />
               <Figure label="Secure Development scorers" value={metrics.modules.secureDevelopment} />
               <Figure label="Hint buyers" value={metrics.hints.buyers} />
               <Figure label="Points spent on hints" value={metrics.hints.totalSpend} />

@@ -40,7 +40,6 @@ export async function GET(request: Request) {
     cost,
     purchased: hints.purchased,
     classic: await visibleClassicHints(hints.classic),
-    ai: hints.ai,
     spent: hints.spent,
     count: hints.count,
   });

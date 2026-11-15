@@ -33,7 +33,6 @@ export type UserDetail = {
   firstTeamAt: string | null;
   quiz: { answered: number; points: number; attempts: number };
   classic: { solved: number; points: number; attempts: number };
-  ai: { solved: number; points: number; attempts: number };
   secureDev: { solves: number };
   hints: { bought: number; spent: number };
   known: boolean;
@@ -90,27 +89,24 @@ export function playerActionBody(detail: Pick<UserDetail, "id">, extra: Record<s
 }
 
 /** The figures the contestant card shows, in reading order — every module
- *  the reset below touches (quiz, classic, ai) plus Secure Development and
- *  hints. Pure, so a test can prove the AI figures are present without a
- *  lookup having returned (UX audit F4: the card had none). Exported for
- *  direct testing. */
+ *  the reset below touches (quiz, classic) plus Secure Development and
+ *  hints. Pure, so a test can pin the figures without a lookup having
+ *  returned. Exported for direct testing. */
 export function contestantStats(detail: UserDetail): { label: string; value: number }[] {
   return [
     { label: "Quiz pts", value: detail.quiz.points },
     { label: "Jeopardy pts", value: detail.classic.points },
-    { label: "AI pts", value: detail.ai.points },
     { label: "Quiz answered", value: detail.quiz.answered },
     { label: "Jeopardy solved", value: detail.classic.solved },
-    { label: "AI solved", value: detail.ai.solved },
     { label: "Secure Development solves", value: detail.secureDev.solves },
-    { label: "Attempts", value: detail.quiz.attempts + detail.classic.attempts + detail.ai.attempts },
+    { label: "Attempts", value: detail.quiz.attempts + detail.classic.attempts },
     { label: "Hints bought", value: detail.hints.bought },
     { label: "Hints spend", value: detail.hints.spent },
   ];
 }
 
 /** The reset-progress confirmation, with the total the reset will actually
- *  remove: quiz, classic AND ai points — `resetUserProgress` clears all three
+ *  remove: quiz AND classic points — `resetUserProgress` clears both
  *  (admin-ops-store.ts). The Secure Development warning is separate because
  *  it is the part the organizer has to act on, and it only applies when there
  *  are such solves. Exported for direct testing. */
@@ -121,12 +117,12 @@ export function resetProgressConfirm(detail: UserDetail): {
   body: string;
   warning: string | null;
 } {
-  const total = detail.quiz.points + detail.classic.points + detail.ai.points;
+  const total = detail.quiz.points + detail.classic.points;
   return {
     title: `Reset ${detail.name}'s progress?`,
     requireType: detail.name,
     confirmLabel: "Reset progress",
-    body: `${playerIdLine(detail.id)} Clears their quiz answers, classic and AI solves, attempts and hints — ${total} points in total. Their account and team stay.`,
+    body: `${playerIdLine(detail.id)} Clears their quiz answers, classic solves, attempts and hints — ${total} points in total. Their account and team stay.`,
     warning:
       detail.secureDev.solves > 0
         ? `Their ${detail.secureDev.solves} Secure Development solves are re-ingested from PR comments and will come back if that PR is scored again.`

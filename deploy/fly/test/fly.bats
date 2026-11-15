@@ -704,6 +704,7 @@ ENV
   [ -n "$code" ]
   [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
   echo "$output" | grep -qF -- '--skip-build --new-admin-code'
+  echo "$output" | grep -qF 'live once this deploy finishes'
   new="$(sed -n 's/^ADMIN_CLAIM_CODE_HASH=//p' "$BATS_TEST_TMPDIR/env.rot")"
   [ "$(grep -c '^ADMIN_CLAIM_CODE_HASH=' "$BATS_TEST_TMPDIR/env.rot")" -eq 1 ]
   [ "$new" != "3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9" ]
@@ -712,6 +713,23 @@ ENV
   app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$BATS_TEST_TMPDIR/rot.yml")"
   [ -z "$(echo "$app_env" | grep -F 3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9)" ]
   echo "$app_env" | grep -qF "ADMIN_CLAIM_CODE_HASH: $new"
+}
+
+# A deploy the preflight refuses must not rotate: the box would keep the old
+# code while the operator saves a new one it does not know.
+@test "deploy --new-admin-code refused by the preflight rotates nothing and prints no code" {
+  cd "$REPO"
+  mkdir -p "$BATS_TEST_TMPDIR/flybin"
+  printf '#!/bin/sh\nexit 1\n' > "$BATS_TEST_TMPDIR/flybin/fly"
+  chmod +x "$BATS_TEST_TMPDIR/flybin/fly"
+  grep -v '^REDIS_PASSWORD=' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.noredis"
+  before="$(cksum < "$BATS_TEST_TMPDIR/env.noredis")"
+  run env PATH="$BATS_TEST_TMPDIR/flybin:$PATH" ./deploy/fly/deploy.sh --skip-build --new-admin-code \
+    --env-file "$BATS_TEST_TMPDIR/env.noredis" --from "$BATS_TEST_TMPDIR/no-such-.env"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'REDIS_PASSWORD'
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
+  [ "$(cksum < "$BATS_TEST_TMPDIR/env.noredis")" = "$before" ]
 }
 
 @test "--new-admin-code is refused with init" {

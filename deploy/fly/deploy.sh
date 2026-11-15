@@ -675,17 +675,11 @@ for name in BETTER_AUTH_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET SCORER_TOKE
   require "$name" "$(env_value "$name")"
 done
 
-# The admin claim code (ADR 72). Rotated here, before the first Fly step, so
-# the rendered compose file carries the new hash. Under --dry-run nothing is
-# written, and the check below still reads the file as it is.
-if [ -n "$NEW_ADMIN_CODE" ]; then
-  if [ -n "$DRY_RUN" ]; then
-    echo "DRY-RUN: would write a new ADMIN_CLAIM_CODE_HASH to $ENV_FILE and print its code once"
-  else
-    write_claim_code
-  fi
-fi
-if [ -z "$NEW_ADMIN_CODE" ] || [ -z "$DRY_RUN" ]; then
+# The admin claim code (ADR 72). Without --new-admin-code the hash in the file
+# must already be usable. With it, the rotation itself waits until every
+# preflight refusal below has passed (see the block after SCORE_IMAGE), so a
+# refused deploy never leaves a new code the box does not know.
+if [ -z "$NEW_ADMIN_CODE" ]; then
   require_claim_hash "$(env_value ADMIN_CLAIM_CODE_HASH)"
 fi
 if [ "$(count_key_lines "$ENV_FILE" ADMIN_LOGINS)" -gt 0 ]; then
@@ -775,6 +769,19 @@ REGION="$(env_value FLY_REGION)"
 # The image the FORKS already pull to judge PRs — same one, not a rebuild.
 SCORE_IMAGE="$(env_value SCORE_IMAGE)"
 require SCORE_IMAGE "$SCORE_IMAGE"
+
+# --new-admin-code: rotate now, after the last preflight refusal and before
+# the first Fly step, so the rendered compose file carries the new hash.
+if [ -n "$NEW_ADMIN_CODE" ]; then
+  if [ -n "$DRY_RUN" ]; then
+    echo "DRY-RUN: would write a new ADMIN_CLAIM_CODE_HASH to $ENV_FILE and print its code once"
+  else
+    write_claim_code
+    echo "   The new code is live once this deploy finishes. If the deploy fails, the"
+    echo "   box keeps the old one until $ENV_FILE is deployed: re-run without --new-admin-code."
+    require_claim_hash "$(env_value ADMIN_CLAIM_CODE_HASH)"
+  fi
+fi
 
 # Everything lives in one machine, so every address is loopback. srh's Redis
 # client is IPv4-only, which is precisely why 127.0.0.1 — and not a Fly

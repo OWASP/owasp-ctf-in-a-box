@@ -13,7 +13,7 @@
 #     contains both
 #   - the app builds and comes up with NO build-time config at all (config v2,
 #     issue #386: the image takes no config build-arg; which modules run is an
-#     /admin setting in Redis, and GITHUB_ORG/ADMIN_LOGINS are runtime env)
+#     /admin setting in Redis, and GITHUB_ORG/ADMIN_CLAIM_CODE_HASH are runtime env)
 #   - /quiz serves and shows a seeded question BY NAME
 #   - /challenges 404s (module contract §5.4 — the route must not exist, not
 #     just disappear from the nav; apps/web already pins this at the unit
@@ -68,7 +68,8 @@ APP_PORT=3110
 # Runtime env for the app container (config v2, #386) — there is no config
 # file to put these in any more.
 APP_GITHUB_ORG=acceptance-quiz-org
-APP_ADMIN_LOGINS=acceptance-quiz-admin
+# The test-vector hash (claim code 0123-4567-89ab-cdef-0123-4567-89ab-cdef).
+APP_ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9
 
 SYNC_OVERRIDE="$TMP/docker-compose.sync-override.yml"
 acc_write_sync_override "$SYNC_OVERRIDE"
@@ -163,14 +164,14 @@ docker exec qo-redis redis-cli HSET ctf:admin:settings enabledModules quiz >/dev
 # ---------------------------------------------------------------------------
 # Build + boot the app. NO build-args: config v2 (#386) removed the config
 # bake, so which modules run comes from the Redis hash seeded above and
-# GITHUB_ORG/ADMIN_LOGINS are passed as runtime env below — the same shape
+# GITHUB_ORG/ADMIN_CLAIM_CODE_HASH are passed as runtime env below — the same shape
 # scripts/acceptance-app.sh uses.
 # ---------------------------------------------------------------------------
 echo "--- building app (no build-time config at all)"
 docker build -f apps/web/Dockerfile -t ctf-web:quiz-only-acceptance .
 
 acc_boot_app qo-app "$APP_PORT" ctf-web:quiz-only-acceptance "$NET" \
-  http://srh:80 "$SRH_TOKEN" "$APP_GITHUB_ORG" "$APP_ADMIN_LOGINS" \
+  http://srh:80 "$SRH_TOKEN" "$APP_GITHUB_ORG" "$APP_ADMIN_CLAIM_CODE_HASH" \
   quiz-only-acceptance-secret-32-characters-min
 
 APP_URL="http://localhost:$APP_PORT"

@@ -430,9 +430,9 @@ git push -u origin fix/<short-description>`,
         ],
       },
       {
-        title: "Set ADMIN_LOGINS in .env",
+        title: "Claim the first admin at /admin/claim",
         where: "outside",
-        body: "Without it nobody is an admin, even the deployer. It's a runtime env var, not baked into the image, so a change needs a restart, not a rebuild.",
+        body: "Sign in, open /admin/claim and enter the admin claim code setup printed. Without a claimed seat nobody is an admin, even the deployer. Issue codes from the Admins tab to add more organizers.",
       },
       {
         title: "Set the re-run cooldown",

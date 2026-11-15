@@ -316,16 +316,16 @@ acc_boot_redis_srh() {
 }
 
 # acc_boot_app <name> <port> <image> <network> <srh-url> <srh-token>
-# <github-org> <admin-logins> <auth-secret> — boot a *-only gate's app
+# <github-org> <admin-claim-hash> <auth-secret> — boot a *-only gate's app
 # container: remove any leftover of the same name, then `docker run -d` the
 # image on the gate's private network with <port> published on localhost.
 # Every value that differs between gates is an argument (config v2, #386: the
 # image takes NO build-time config — which modules run is an /admin setting in
-# Redis, and GITHUB_ORG/ADMIN_LOGINS arrive as runtime env here). Only
+# Redis, and GITHUB_ORG/ADMIN_CLAIM_CODE_HASH arrive as runtime env here). Only
 # BETTER_AUTH_URL is derived — from <port>, the way all three gates spell it.
 acc_boot_app() {
   name="$1"; port="$2"; img="$3"; net="$4"; srh_url="$5"; token="$6"
-  org="$7"; logins="$8"; secret="$9"
+  org="$7"; claim_hash="$8"; secret="$9"
   echo "--- booting the app"
   docker rm -f "$name" >/dev/null 2>&1 || true
   # pins: the caller passes the app image it built
@@ -335,7 +335,7 @@ acc_boot_app() {
     -e UPSTASH_REDIS_REST_URL="$srh_url" \
     -e UPSTASH_REDIS_REST_TOKEN="$token" \
     -e GITHUB_ORG="$org" \
-    -e ADMIN_LOGINS="$logins" \
+    -e ADMIN_CLAIM_CODE_HASH="$claim_hash" \
     "$img" >/dev/null
 }
 

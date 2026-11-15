@@ -48,6 +48,7 @@ GITHUB_APP_PRIVATE_KEY=RklYVFVSRVBSSVZBVEVLRVl1dXV1dQ==
 GITHUB_APP_INSTALLATION_ID=1
 GITHUB_ORG=fixture-org
 ADMIN_LOGINS=fixture-admin
+ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9
 ENV
 
   RENDERED="$BATS_TEST_TMPDIR/compose.fly.yml"
@@ -346,20 +347,20 @@ ENV
   [ -z "$(echo "$redis_env" | grep -F 'GITHUB_CLIENT_SECRET')" ]
 }
 
-@test "render: GITHUB_ORG and ADMIN_LOGINS reach the machine, with no build-time bake" {
+@test "render: GITHUB_ORG and ADMIN_CLAIM_CODE_HASH reach the machine, with no build-time bake" {
   need_docker
   render
-  # Config v2 (#386) reads both at runtime — the same channel as every other
-  # non-secret value here, docker-compose.yml's own `environment:` entries
-  # interpolated by `docker compose config` from ENV_FILE. Neither is a
-  # build arg (there is none any more) and neither needs a `fly secrets set`
-  # entry, exactly like GITHUB_CLIENT_ID already does not.
+  # Both are read at runtime — the same channel as every other value here,
+  # docker-compose.yml's own `environment:` entries interpolated by
+  # `docker compose config` from ENV_FILE. Neither is a build arg, and
+  # ADMIN_LOGINS is not passed to any container: nothing reads it.
   app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$RENDERED")"
   sync_env="$(awk '/^  sync:/{f=1;next} /^  [a-z]+:/{f=0} f' "$RENDERED")"
   [ -n "$app_env" ] && [ -n "$sync_env" ]
   echo "$app_env" | grep -qF 'GITHUB_ORG: fixture-org'
-  echo "$app_env" | grep -qF 'ADMIN_LOGINS: fixture-admin'
   echo "$sync_env" | grep -qF 'GITHUB_ORG: fixture-org'
+  [ -z "$(grep -F 'ADMIN_LOGINS' "$RENDERED")" ]
+  echo "$app_env" | grep -qF 'ADMIN_CLAIM_CODE_HASH: 3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9'
 }
 
 @test "render: the output is mode 600" {

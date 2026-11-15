@@ -1531,7 +1531,7 @@ redact_shapes() {
     REDIS_PASSWORD=LEAKpass03 GITHUB_APP_PRIVATE_KEY=LEAKpkey04 \
     SRH_CONNECTION_STRING=redis://:LEAKconn05@localhost:6379 \
     BASIC_AUTH=LEAKauth06 OPENAI_API_KEY=LEAKkey07 AWS_SECRET_ACCESS_KEY=LEAKkey08 \
-    db_password=LEAKlower09 \
+    db_password=LEAKlower09 ADMIN_CLAIM_CODE_HASH=LEAKhash12 \
     EVENT_URL=https://admin:LEAKurl10@ctf.example.org/path \
     https://x-access-token:LEAKbare11@github.com/org/repo.git \
     BETTER_AUTH_URL=https://ctf.example.org GITHUB_APP_ID=4242 \
@@ -1551,6 +1551,7 @@ redact_shapes() {
   echo "$output" | grep -qF 'SRH_CONNECTION_STRING=<redacted>'
   echo "$output" | grep -qF 'BASIC_AUTH=<redacted>'
   echo "$output" | grep -qF 'db_password=<redacted>'
+  echo "$output" | grep -qF 'ADMIN_CLAIM_CODE_HASH=<redacted>'
   echo "$output" | grep -qF 'EVENT_URL=https://***@ctf.example.org/path'
   echo "$output" | grep -qF 'https://***@github.com/org/repo.git'
 }

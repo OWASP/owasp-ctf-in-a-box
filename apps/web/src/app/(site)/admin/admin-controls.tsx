@@ -303,7 +303,7 @@ export default function AdminControls({
                   setUnlockAfterInput={setUnlockAfterInput}
                 />
               ) : tab.id === ADMINS_TAB ? (
-                <AdminAdminsTab viewerId={viewerId} />
+                <AdminAdminsTab viewerId={viewerId} visible={active === ADMINS_TAB} />
               ) : tab.id === SPONSORS_TAB ? (
                 <AdminSponsorsTab
                   settings={settings}

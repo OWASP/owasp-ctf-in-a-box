@@ -156,7 +156,7 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     await pipeline([["SADD", k.grants, id(1), id(2)]]);
     expect(await runIssue(k, h, id(1))).toBe(1);
     const revokeLine = JSON.stringify({ action: "admin:revoke", player: id(1) });
-    expect(await upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit], [id(1), revokeLine, "499"])).toEqual(["ok", id(2)]);
+    expect(await upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit], [id(1), id(2), revokeLine, "499"])).toEqual(["ok", id(2)]);
     const [before] = await pipeline([["LLEN", k.audit]]);
     expect(await runClaim(k, id(1), h, "")).toEqual(["invalid"]);
     const [exists, member, after] = await pipeline([["EXISTS", k.code(h)], ["SISMEMBER", k.grants, id(1)], ["LLEN", k.audit]]);
@@ -192,7 +192,11 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const { claim, upstashEval, pipeline } = await load();
     const k = keys();
     const revoke = (target: string) =>
-      upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit], [target, JSON.stringify({ action: "admin:revoke", player: target, playerName: "t" }), "499"]);
+      upstashEval(
+        claim.REVOKE_SCRIPT,
+        [k.grants, k.audit],
+        [target, id(1), JSON.stringify({ action: "admin:revoke", player: target, playerName: "t" }), "499"],
+      );
     await pipeline([["SADD", k.grants, id(1)]]);
     expect(await revoke(id(1))).toEqual(["last-admin"]);
     const [still] = await pipeline([["SMEMBERS", k.grants]]);
@@ -207,8 +211,21 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const { claim, upstashEval, pipeline } = await load();
     const k = keys();
     await pipeline([["SADD", k.grants, id(1), id(2)]]);
-    expect(await upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit], [id(3), "{}", "499"])).toEqual(["not-admin"]);
+    expect(await upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit], [id(3), id(1), "{}", "499"])).toEqual(["not-admin"]);
     const [lines] = await pipeline([["LLEN", k.audit]]);
     expect(lines.result).toBe(0);
+  });
+
+  it("a revoked admin cannot revoke anyone, even after passing the route's gate", async () => {
+    const { claim, upstashEval, pipeline } = await load();
+    const k = keys();
+    const revoke = (target: string, actor: string) =>
+      upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit], [target, actor, JSON.stringify({ action: "admin:revoke" }), "499"]);
+    await pipeline([["SADD", k.grants, id(1), id(2), id(3)]]);
+    expect(await revoke(id(1), id(2))).toEqual(expect.arrayContaining(["ok"]));
+    const [before] = await pipeline([["LLEN", k.audit]]);
+    expect(await revoke(id(2), id(1))).toEqual(["not-admin-actor"]);
+    const [member, after] = await pipeline([["SISMEMBER", k.grants, id(2)], ["LLEN", k.audit]]);
+    expect([member.result, after.result]).toEqual([1, before.result]);
   });
 });

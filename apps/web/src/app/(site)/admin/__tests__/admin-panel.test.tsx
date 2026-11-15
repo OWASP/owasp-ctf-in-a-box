@@ -8,7 +8,7 @@ const VECTOR_HASH = "3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b506
 const NO_ADMINS =
   "No organizer has claimed this box yet. Open /admin/claim and enter the admin claim code from setup.";
 const NO_HASH =
-  "ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256 — run ./setup/ctf-setup.sh admin-code (or redeploy with --new-admin-code) and restart the app.";
+  "ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256 — run ./setup/ctf-setup.sh admin-code (or redeploy with --new-admin-code) and recreate the app container.";
 
 const { requireAdmin, countAdminGrants } = vi.hoisted(() => ({
   requireAdmin: vi.fn(),

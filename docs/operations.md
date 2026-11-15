@@ -1081,7 +1081,9 @@ the same audit log as the rest of the panel's changes, naming the account and
 a short code id, never the code. A master reset keeps the admins.
 
 **Locked out?** If no admin can sign in, rotate the bootstrap code: a new
-`ADMIN_CLAIM_CODE_HASH` in `.env` and an app restart, then claim with the new
+`ADMIN_CLAIM_CODE_HASH` in `.env` and a recreated app container
+(`docker compose up -d --no-deps --force-recreate app`; a plain
+`docker compose restart` keeps the old environment), then claim with the new
 code at `/admin/claim`. The bootstrap code works whether or not admins
 already exist, and the old one stops working once the hash changes.
 

@@ -85,7 +85,9 @@ describe("claimAdmin", () => {
     const [, keys, args] = upstashEval.mock.calls[0];
     expect(keys).toEqual([ADMIN_GRANTS_KEY, ADMIN_CLAIM_SPENT_KEY, `${ADMIN_CODE_PREFIX}${VECTOR_HASH}`, ADMIN_AUDIT_KEY]);
     expect(args.slice(0, 4)).toEqual([ALICE.id, ALICE.name, VECTOR_HASH, VECTOR_HASH]);
-    expect(JSON.stringify(upstashEval.mock.calls)).not.toContain("0123456789abcdef0123456789abcdef");
+    const sent = JSON.stringify(upstashEval.mock.calls);
+    expect(sent).not.toContain("0123456789abcdef0123456789abcdef");
+    expect(sent).not.toContain(VECTOR_CODE);
   });
 
   it("passes an empty bootstrap hash when the configured one is not a SHA-256", async () => {
@@ -120,6 +122,7 @@ describe("issueAdminCode", () => {
     const audit = JSON.parse(args[3] as string);
     expect(audit).toMatchObject({ by: ALICE.id, name: ALICE.name, action: "admin:code-issue", codeId: hash.slice(0, 8), expiresAt });
     expect(JSON.stringify(args)).not.toContain(normalizeClaimCode(code)!);
+    expect(JSON.stringify(args)).not.toContain(code);
     expect(JSON.stringify(args)).not.toContain(hash.slice(8));
     expect(Date.parse(expiresAt) - Date.now()).toBeGreaterThan(890_000);
   });
@@ -150,7 +153,8 @@ describe("revokeAdmin", () => {
     const [, keys, args] = upstashEval.mock.calls[0];
     expect(keys).toEqual([ADMIN_GRANTS_KEY, ADMIN_AUDIT_KEY]);
     expect(args[0]).toBe(bob.id);
-    expect(JSON.parse(args[1] as string)).toMatchObject({ by: ALICE.id, action: "admin:revoke", player: bob.id, playerName: "bob" });
+    expect(args[1]).toBe(ALICE.id);
+    expect(JSON.parse(args[2] as string)).toMatchObject({ by: ALICE.id, action: "admin:revoke", player: bob.id, playerName: "bob" });
   });
 
   it("maps the refusals", async () => {
@@ -158,6 +162,11 @@ describe("revokeAdmin", () => {
     await expect(revokeAdmin(bob, ALICE)).resolves.toEqual({ ok: false, reason: "last-admin" });
     upstashEval.mockResolvedValue(["not-admin"]);
     await expect(revokeAdmin(bob, ALICE)).resolves.toEqual({ ok: false, reason: "not-admin" });
+  });
+
+  it("throws NotAdminError when the acting admin no longer holds a grant", async () => {
+    upstashEval.mockResolvedValue(["not-admin-actor"]);
+    await expect(revokeAdmin(bob, ALICE)).rejects.toBeInstanceOf(NotAdminError);
   });
 });
 

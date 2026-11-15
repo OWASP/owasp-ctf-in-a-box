@@ -100,22 +100,26 @@ redis.call('LPUSH', KEYS[3], ARGV[4])
 redis.call('LTRIM', KEYS[3], 0, tonumber(ARGV[5]))
 return 1`;
 
-/** The issuer lost their grant before the code was stored. */
+/** The acting admin lost their grant before the script ran (an issue or a
+ *  revoke). Routes answer it with 403, the same as their own gate. */
 export class NotAdminError extends Error {
   constructor() {
-    super("admin code: the issuer holds no grant");
+    super("admin: the acting admin holds no grant");
     this.name = "NotAdminError";
   }
 }
 
-/** KEYS [grants, audit]; ARGV [targetId, auditLine, cap-1]. Refuses the last
- *  grant: with none left, nobody can open /admin to issue a code. */
+/** KEYS [grants, audit]; ARGV [targetId, actorId, auditLine, cap-1]. The actor
+ *  must still hold a grant when the script runs, so an admin revoked after the
+ *  route's gate cannot remove anyone. Refuses the last grant: with none left,
+ *  nobody can open /admin to issue a code. */
 export const REVOKE_SCRIPT = `
+if redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 0 then return {'not-admin-actor'} end
 if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then return {'not-admin'} end
 if redis.call('SCARD', KEYS[1]) <= 1 then return {'last-admin'} end
 redis.call('SREM', KEYS[1], ARGV[1])
-redis.call('LPUSH', KEYS[2], ARGV[2])
-redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[3]))
+redis.call('LPUSH', KEYS[2], ARGV[3])
+redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]))
 local members = redis.call('SMEMBERS', KEYS[1])
 table.insert(members, 1, 'ok')
 return members`;
@@ -166,7 +170,8 @@ export async function issueAdminCode(actor: AuditActor): Promise<{ code: string;
 
 export type RevokeResult = { ok: true; grants: string[] } | { ok: false; reason: "not-admin" | "last-admin" };
 
-/** Remove `target`'s grant. Self-removal is allowed; the last grant is not. */
+/** Remove `target`'s grant. Self-removal is allowed; the last grant is not.
+ *  Throws `NotAdminError` when `actor` no longer holds a grant. */
 export async function revokeAdmin(target: { id: string; name: string }, actor: AuditActor): Promise<RevokeResult> {
   const line = JSON.stringify({
     at: new Date().toISOString(),
@@ -176,9 +181,14 @@ export async function revokeAdmin(target: { id: string; name: string }, actor: A
     player: target.id,
     playerName: target.name,
   });
-  const res = await upstashEval(REVOKE_SCRIPT, [ADMIN_GRANTS_KEY, ADMIN_AUDIT_KEY], [target.id, line, String(AUDIT_CAP - 1)]);
+  const res = await upstashEval(
+    REVOKE_SCRIPT,
+    [ADMIN_GRANTS_KEY, ADMIN_AUDIT_KEY],
+    [target.id, actor.id, line, String(AUDIT_CAP - 1)],
+  );
   const arr = Array.isArray(res) ? (res as unknown[]) : [];
   if (arr[0] === "ok") return { ok: true, grants: arr.slice(1).map(String).sort() };
+  if (arr[0] === "not-admin-actor") throw new NotAdminError();
   if (arr[0] === "not-admin" || arr[0] === "last-admin") return { ok: false, reason: arr[0] };
   throw new Error("admin revoke: unexpected script reply");
 }

@@ -42,16 +42,25 @@ export function adminRemoveConfirm(
   };
 }
 
-export default function AdminAdminsTab({ viewerId }: { viewerId: string }) {
+export default function AdminAdminsTab({ viewerId, visible = true }: { viewerId: string; visible?: boolean }) {
   const [rows, setRows] = useState<AdminRow[] | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /** The admin awaiting a removal confirmation, or null. */
   const [removeTarget, setRemoveTarget] = useState<AdminRow | null>(null);
-  /** The code just issued. Component state only, so leaving the tab drops it. */
+  /** The code just issued, shown once. Hidden tabs stay mounted, so leaving
+   *  the tab clears it below rather than relying on an unmount. */
   const [issued, setIssued] = useState<{ code: string; expiresAt: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
+    if (!visible) {
+      setIssued(null);
+      setCopied(false);
+    }
+  }
 
   // The one legitimate effect here: fetch the current list once, on mount.
   // Every setState is inside a promise callback, never in the effect body.

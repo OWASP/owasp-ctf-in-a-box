@@ -64,7 +64,8 @@ The Forbidden page names which case you are in:
   open `/admin/claim` and enter the code setup printed.
 - **"ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256"** as well. The app
   has no usable hash, so no code can work: the key is missing from `.env`, the
-  app was not restarted after it was set, or the value is the code itself
+  app container was not recreated after it was set (`docker compose restart`
+  keeps the old environment), or the value is the code itself
   pasted where its hash belongs (64 lowercase hex is a hash; eight groups of
   four is a code). Compose must also pass `ADMIN_CLAIM_CODE_HASH` through to
   the app service's environment — `docker-compose.yml` does, but a customized
@@ -75,20 +76,20 @@ The Forbidden page names which case you are in:
 
 `ADMIN_LOGINS` is not read by anything; a line left in `.env` grants nothing.
 
-**Fix.** Write a new code's hash to `.env` and restart the app container — no
-rebuild, since this is a runtime read:
+**Fix.** Write a new code's hash to `.env` and recreate the app container — no
+rebuild, since this is a runtime read, but not a plain `docker compose restart`
+either, which keeps the old environment:
 
 ```sh
 c=$(openssl rand -hex 16); echo "$c"; printf %s "$c" | openssl dgst -sha256
 # put the 64-hex digest in .env as ADMIN_CLAIM_CODE_HASH=…, then:
-docker compose --profile secdev --profile app up -d
+docker compose up -d --no-deps --force-recreate app
 ```
 
-(Events without Secure Development: `--profile app` alone.) Then claim at
-`/admin/claim` with the 32-hex code the first line printed; hyphens and case
-do not matter. A code wrongly entered five times locks that account's claims
-for 15 minutes. On a cloud deploy, set the hash wherever that deploy keeps the
-app's environment.
+Then claim at `/admin/claim` with the 32-hex code the first line printed;
+hyphens and case do not matter. A code wrongly entered five times locks that
+account's claims for 15 minutes. On a cloud deploy, set the hash wherever that
+deploy keeps the app's environment.
 
 ## Only the landing page loads (module pages redirect to `/`)
 

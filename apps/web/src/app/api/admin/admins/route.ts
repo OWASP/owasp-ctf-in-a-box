@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { listAdminGrants } from "@/lib/admin-grants";
-import { revokeAdmin } from "@/lib/admin-claim";
+import { NotAdminError, revokeAdmin } from "@/lib/admin-claim";
 import { LAST_ADMIN } from "@/lib/admin-claim-copy";
 import { adminErrorLabel } from "@/lib/admin-store";
 import { auditActor } from "@/lib/admin-audit-keys";
@@ -60,6 +60,8 @@ export async function DELETE(request: Request) {
     }
     return NextResponse.json({ admins: await rows(result.grants, gate.player.id) });
   } catch (err) {
+    // Revoked between the gate above and the script: the same answer the gate gives.
+    if (err instanceof NotAdminError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
     console.error("[admin/admins] remove failed", adminErrorLabel(err));
     return NextResponse.json({ error: "unavailable" }, { status: 503 });
   }

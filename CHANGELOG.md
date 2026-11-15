@@ -37,7 +37,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   `POST /api/admin/admins` are gone. **Upgrade note:** until setup, Fly and
   AWS generate the code themselves, set the hash by hand: run
   `c=$(openssl rand -hex 16); echo "$c"; printf %s "$c" | openssl dgst -sha256`,
-  put the digest in `.env` as `ADMIN_CLAIM_CODE_HASH`, restart the app, and
+  put the digest in `.env` as `ADMIN_CLAIM_CODE_HASH`, recreate the app
+  container (`docker compose up -d --no-deps --force-recreate app`; a plain restart does not reload `.env`), and
   claim with the printed code.
 - **Added: GitHub linking, and held Secure Development scores (#741).** With
   Secure Development on, a player links a GitHub account from their profile

@@ -96,9 +96,17 @@ describe("POST /api/me/admin/claim", () => {
   it("503s when the claim script throws, and logs neither code nor hash", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      m.claimAdmin.mockRejectedValue(new Error("redis down"));
+      // A driver that decorates its error with the failed command: logged raw,
+      // it would carry the code and the hash into the server log.
+      const decorated = Object.assign(new Error("redis down"), {
+        command: ["EVAL", "script", VECTOR_CODE, VECTOR_HASH],
+        cause: { code: VECTOR_CODE, hash: VECTOR_HASH },
+      });
+      m.claimAdmin.mockRejectedValue(decorated);
       const res = await POST(req({ code: VECTOR_CODE }));
       expect(res.status).toBe(503);
+      expect(err).toHaveBeenCalled();
+      for (const arg of err.mock.calls.flat()) expect(arg instanceof Error).toBe(false);
       const logged = JSON.stringify(err.mock.calls);
       expect(logged).not.toContain(VECTOR_CODE);
       expect(logged).not.toContain("0123456789abcdef");

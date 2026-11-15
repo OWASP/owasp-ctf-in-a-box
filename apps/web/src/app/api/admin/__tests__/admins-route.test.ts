@@ -17,7 +17,10 @@ const m = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/admin-auth", () => ({ requireAdmin: m.requireAdmin }));
 vi.mock("@/lib/admin-grants", () => ({ listAdminGrants: m.listAdminGrants }));
-vi.mock("@/lib/admin-claim", () => ({ revokeAdmin: m.revokeAdmin }));
+vi.mock("@/lib/admin-claim", async (orig) => ({
+  ...(await orig<typeof import("@/lib/admin-claim")>()),
+  revokeAdmin: m.revokeAdmin,
+}));
 // The real label: the redaction tests below compare against it.
 vi.mock("@/lib/admin-store", async () => ({ adminErrorLabel: (await import("@/lib/error-label")).errorLabel }));
 vi.mock("@/lib/player", async (orig) => ({
@@ -27,6 +30,7 @@ vi.mock("@/lib/player", async (orig) => ({
 
 import * as route from "@/app/api/admin/admins/route";
 import { LAST_ADMIN } from "@/lib/admin-claim-copy";
+import { NotAdminError } from "@/lib/admin-claim";
 import { errorLabel } from "@/lib/error-label";
 import { actor } from "@/lib/__tests__/audit-actor";
 
@@ -102,6 +106,17 @@ describe("DELETE", () => {
     const res = await DELETE(req("DELETE", { id: alice.id }));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: LAST_ADMIN });
+  });
+
+  it("403s, logging nothing, when the acting admin lost their grant before the script ran", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      m.revokeAdmin.mockRejectedValue(new NotAdminError());
+      expect((await DELETE(req("DELETE", { id: bob.id }))).status).toBe(403);
+      expect(err).not.toHaveBeenCalled();
+    } finally {
+      err.mockRestore();
+    }
   });
 
   it("404s an id that holds no grant", async () => {

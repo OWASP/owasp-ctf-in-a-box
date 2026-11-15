@@ -210,6 +210,23 @@ run "secure_development_with_a_github_org_is_accepted" {
   }
 }
 
+// The bootstrap apply docs/aws.md starts with: registries and the secrets key
+// only. deploy.sh runs between it and the full apply, so it must not need the
+// claim-hash parameter, the cluster or any output beyond the registries' and
+// the key's — which is why the parameter is created by the full apply alone.
+run "the_bootstrap_apply_creates_only_the_registries_and_the_key" {
+  command = plan
+
+  plan_options {
+    target = [aws_ecr_repository.main, aws_kms_alias.secrets]
+  }
+
+  assert {
+    condition     = length(aws_ecr_repository.main) >= 1 && aws_kms_alias.secrets.name == "alias/${var.name}-secrets"
+    error_message = "the bootstrap apply must create the registries and the secrets key."
+  }
+}
+
 run "an_event_with_no_certificate_source_is_refused" {
   command = plan
 
@@ -285,6 +302,28 @@ run "secure_development_event_runs_scorer_and_sync" {
   assert {
     condition     = output.ssm_prefix == var.ssm_prefix
     error_message = "deploy.sh reads ssm_prefix from outputs to write the claim hash."
+  }
+
+  // Terraform owns the parameter the secret reference names, so the app task
+  // never starts against a missing parameter; deploy.sh writes its value.
+  assert {
+    condition = anytrue([
+      for sec in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets :
+      sec.name == "ADMIN_CLAIM_CODE_HASH" && endswith(sec.valueFrom, aws_ssm_parameter.admin_claim_code_hash.name)
+    ])
+    error_message = "the app's ADMIN_CLAIM_CODE_HASH secret must name the parameter this stack creates."
+  }
+
+  assert {
+    condition     = aws_ssm_parameter.admin_claim_code_hash.name == "${var.ssm_prefix}/ADMIN_CLAIM_CODE_HASH"
+    error_message = "the claim-hash parameter must live where deploy.sh writes it: <ssm_prefix>/ADMIN_CLAIM_CODE_HASH."
+  }
+
+  // Fail closed until deploy.sh writes a real hash: the app treats anything
+  // that is not 64 lowercase hex as unset (bootstrap-env.ts).
+  assert {
+    condition     = !can(regex("^[0-9a-f]{64}$", local.admin_claim_placeholder)) && aws_ssm_parameter.admin_claim_code_hash.value == local.admin_claim_placeholder
+    error_message = "the claim-hash placeholder must never look like a SHA-256, or the app would accept it."
   }
 
   assert {
@@ -525,6 +564,11 @@ run "no_secret_is_baked_into_a_task_definition" {
     // kms:Decrypt grant cannot read them and the tasks fail to start.
     condition     = aws_ssm_parameter.cache_auth.key_id == aws_kms_key.secrets.arn && aws_ssm_parameter.redis_url.key_id == aws_kms_key.secrets.arn
     error_message = "Both generated SecureStrings must be encrypted with this event's KMS key."
+  }
+
+  assert {
+    condition     = aws_ssm_parameter.admin_claim_code_hash.type == "SecureString" && aws_ssm_parameter.admin_claim_code_hash.key_id == aws_kms_key.secrets.arn
+    error_message = "the claim-hash parameter must be a SecureString under this event's KMS key, or the task cannot decrypt it."
   }
 }
 

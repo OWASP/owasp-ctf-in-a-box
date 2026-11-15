@@ -100,7 +100,21 @@ terraform apply \
 docker login ghcr.io                            # Secure Development: the scorer package is private
 ./deploy.sh --scorer-source ghcr.io/<your-event-org>/score:latest   # build, mirror, push
 terraform apply                                 # the rest of the stack
+./deploy.sh --skip-build --new-admin-code       # set the admin claim code; prints it once
 ```
+
+The admin claim code comes last because it needs the stack. The full apply
+creates the SSM parameter `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` holding a
+placeholder the app reads as unset, so `/admin` stays closed (fail closed)
+until `deploy.sh` writes a real hash into it. The first `deploy.sh` above, run
+before the full apply, publishes the images and says the code is not set yet.
+
+**Upgrading an existing stack** to a version with claim codes: `terraform
+apply` first (it creates the placeholder parameter and points the app task at
+it; nobody can open `/admin` until the next step), then
+`./deploy.sh --skip-build --new-admin-code`, which writes the hash, prints the
+code once and rolls the app so it reads it. Remove `admin_logins` from
+`terraform.tfvars` before the apply.
 
 The image variables in `terraform.tfvars.example` are placeholders for that
 bootstrap apply only. A full `terraform apply` while one is still the
@@ -148,12 +162,13 @@ build-time configuration at all (config v2, #386): `github_org` is a
 Terraform variable, set in `terraform.tfvars` — this path's equivalent of the
 wizard's `.env` — and mirrored into the app's task-definition environment the
 same way `scorer_image` is. Change it and `terraform apply` rolls it out;
-nothing has to be rebuilt or repushed. Admins are not a variable at all: the
-first `deploy.sh` run writes the admin claim code's hash to SSM as
-`<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` and prints the code once; sign in and
-enter it at `/admin/claim`. Lost it, or locked out?
-`./deploy.sh --skip-build --new-admin-code` writes a new one and restarts the
-app so it reads it. `github_client_id` must be the
+nothing has to be rebuilt or repushed. Admins are not a variable at all:
+once the stack is applied, `deploy.sh` writes the admin claim code's hash into
+the Terraform-created parameter `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` (while it
+still holds the placeholder) and prints the code once; sign in and enter it at
+`/admin/claim`. Lost it, or locked out?
+`./deploy.sh --skip-build --new-admin-code` writes a new one and rolls the app
+so it reads it. `github_client_id` must be the
 OAuth app's client id (without it no one can sign in). `github_org` and
 `github_app_id` are required whenever `enable_secure_development` is true:
 `sync` authenticates as a GitHub App and exits at startup without either. All

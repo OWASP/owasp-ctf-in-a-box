@@ -122,9 +122,10 @@ that can replace a task without dropping the event.
    ```
 
    One more parameter is **not** on this list: `$P/ADMIN_CLAIM_CODE_HASH`,
-   the SHA-256 of the one-time admin claim code. `deploy.sh` creates it, under
-   the same key, the first time it runs against the stack, and prints the code
-   once (see Locked out of /admin below).
+   the SHA-256 of the one-time admin claim code. The full apply creates it
+   under the same key, holding a placeholder the app reads as unset, and
+   `deploy.sh` writes the real hash once the stack exists (see Locked out of
+   /admin below).
 
    **`--key-id` is not optional.** The stack creates one customer-managed KMS
    key per event (`kms.tf`) and the execution role's `kms:Decrypt` names *only*
@@ -271,17 +272,22 @@ needs rebuilding.
 Admins are kit accounts that claimed a one-time **admin claim code** at
 `/admin/claim` ([ADR 72](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/docs/decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)). The app reads the code's SHA-256 from the
 SecureString `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` as a task secret.
-`deploy.sh` checks for that parameter by metadata only (`describe-parameters`,
-never a decrypting read), creates it when absent, and prints the code once.
-To get a new one:
+Terraform creates that parameter with a placeholder and `ignore_changes` on its
+value, so the real hash is never in a plan or in state. `deploy.sh` reads the
+parameter's version by metadata only (`describe-parameters`, never a
+decrypting read): version 1 is the placeholder, so it writes a code and prints
+it once; a higher version is left alone. Before the stack is fully applied it
+publishes the images and says the code is not set yet. To get a new one:
 
 ```sh
 ./deploy.sh --skip-build --new-admin-code
 ```
 
-It overwrites the parameter, prints the new code once, and forces a new
-deployment of the `app` service (after the apply, with `--apply`), because
-ECS resolves secrets only at task start. The code itself never reaches AWS,
+It overwrites the parameter (after the apply, with `--apply`), forces a new
+deployment of the `app` service when it exists — ECS resolves secrets only at
+task start — and then prints the new code once; it is live when that
+deployment finishes. If the roll fails, the code is in SSM but not live yet,
+and the script prints the `update-service` command that finishes it. The code itself never reaches AWS,
 Terraform state or a tfvars file. `--dry-run --new-admin-code` calls nothing
 and prints the `put-parameter` with its value redacted.
 

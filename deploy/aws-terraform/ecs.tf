@@ -113,8 +113,8 @@ locals {
     { name = "BETTER_AUTH_SECRET", valueFrom = "${local.secret_arn_prefix}/BETTER_AUTH_SECRET" },
     { name = "GITHUB_CLIENT_SECRET", valueFrom = "${local.secret_arn_prefix}/GITHUB_CLIENT_SECRET" },
     { name = "UPSTASH_REDIS_REST_TOKEN", valueFrom = "${local.secret_arn_prefix}/SRH_TOKEN" },
-    // The SHA-256 of the one-time admin claim code (ADR 72). deploy.sh writes
-    // it; the code itself never reaches AWS.
+    // The SHA-256 of the one-time admin claim code (ADR 72): the parameter
+    // below, whose real value deploy.sh writes. The code never reaches AWS.
     { name = "ADMIN_CLAIM_CODE_HASH", valueFrom = "${local.secret_arn_prefix}/ADMIN_CLAIM_CODE_HASH" },
   ]
 
@@ -296,6 +296,30 @@ resource "aws_ecs_service" "srh" {
 }
 
 // --- app -------------------------------------------------------------------
+
+// The admin claim-code hash (ADR 72). Terraform owns the parameter's
+// EXISTENCE, so the app task's secret reference always resolves and a fresh
+// stack and an upgraded one come up the same way; deploy.sh owns the VALUE.
+// The placeholder is not 64 hex, so the app reads it as unset and nobody can
+// claim until deploy.sh writes a real hash (fail closed). `ignore_changes`
+// keeps that hash out of every plan and out of state: Terraform never reads it
+// back as drift and never writes the placeholder over it. deploy.sh tells the
+// two apart by the parameter's version (1 = this placeholder).
+resource "aws_ssm_parameter" "admin_claim_code_hash" {
+  name        = "${var.ssm_prefix}/ADMIN_CLAIM_CODE_HASH"
+  description = "SHA-256 of the one-time admin claim code for ${var.name}. Written by deploy.sh; this placeholder means not set."
+  type        = "SecureString"
+  value       = local.admin_claim_placeholder
+  key_id      = aws_kms_key.secrets.arn
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+locals {
+  admin_claim_placeholder = "unset: run deploy.sh --new-admin-code"
+}
 
 resource "aws_ecs_task_definition" "app" {
   family                   = "${var.name}-app"

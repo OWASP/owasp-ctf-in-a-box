@@ -18,9 +18,11 @@
 # runtime (ecs.tf's app container definition), so this script has nothing
 # left to bake and no file to require.
 #
-# It also owns the admin claim code (ADR 72): the hash is an SSM SecureString
-# at <ssm_prefix>/ADMIN_CLAIM_CODE_HASH, created here when absent and replaced
-# under --new-admin-code. The code is printed once and never sent to AWS.
+# It also sets the admin claim code (ADR 72). Terraform owns the parameter
+# <ssm_prefix>/ADMIN_CLAIM_CODE_HASH (an SSM SecureString holding a
+# placeholder the app reads as unset); this script writes the real hash into
+# it once the stack exists — when it still holds the placeholder, or under
+# --new-admin-code. The code is printed once and never sent to AWS.
 #
 # Every tag is CONTENT-ADDRESSED: the app and sync to the revision that built
 # them, the scorer to its source's registry digest. ECR here is `IMMUTABLE`
@@ -341,73 +343,6 @@ if [ -n "$SECDEV" ]; then
   echo "=> scorer     mirrored from $SCORER_SOURCE"
 fi
 
-# --- the admin claim code (ADR 72) -------------------------------------------
-#
-# The app reads ADMIN_CLAIM_CODE_HASH as a task secret from
-# <ssm_prefix>/ADMIN_CLAIM_CODE_HASH (ecs.tf). The presence check reads
-# METADATA only (describe-parameters), never the value. A failed check stops
-# the deploy: read as "absent" it would replace a live code nobody asked to
-# rotate. A dry run reads nothing and previews the write.
-CLAIM_ROTATED=""
-if [ -n "$DRY_RUN" ]; then
-  SSM_PREFIX="<ssm_prefix>"
-  KMS_KEY="<secrets_kms_key_arn>"
-  CLUSTER="<cluster_name>"
-  CLAIM_URL="<event_url>"
-else
-  if ! SSM_PREFIX="$(terraform -chdir="$HERE" output -raw ssm_prefix 2>/dev/null)" || [ -z "$SSM_PREFIX" ] ||
-    ! KMS_KEY="$(terraform -chdir="$HERE" output -raw secrets_kms_key_arn 2>/dev/null)" || [ -z "$KMS_KEY" ] ||
-    ! CLUSTER="$(terraform -chdir="$HERE" output -raw cluster_name 2>/dev/null)" || [ -z "$CLUSTER" ]; then
-    echo "FAIL: could not read ssm_prefix, secrets_kms_key_arn and cluster_name from" >&2
-    echo "      terraform output, which the admin claim code (ADMIN_CLAIM_CODE_HASH)" >&2
-    echo "      needs. Re-run the bootstrap apply (docs/aws.md)." >&2
-    exit 1
-  fi
-  CLAIM_URL="$(terraform -chdir="$HERE" output -raw event_url 2>/dev/null)" || CLAIM_URL=""
-fi
-CLAIM_PARAM="$SSM_PREFIX/ADMIN_CLAIM_CODE_HASH"
-
-write_claim=""
-if [ -n "$NEW_ADMIN_CODE" ]; then
-  write_claim=1
-elif [ -n "$DRY_RUN" ]; then
-  echo "   DRY-RUN: would check whether $CLAIM_PARAM exists (metadata only) and create it if not"
-else
-  if ! claim_count="$(aws ssm describe-parameters --region "$REGION" \
-    --parameter-filters "Key=Name,Values=$CLAIM_PARAM" \
-    --query 'length(Parameters)' --output text)"; then
-    claim_count=""
-  fi
-  case "$claim_count" in
-  0) write_claim=1 ;;
-  1) echo "=> admin claim code: $CLAIM_PARAM already in SSM" ;;
-  *)
-    echo "FAIL: could not tell whether $CLAIM_PARAM (ADMIN_CLAIM_CODE_HASH) exists in SSM;" >&2
-    echo "      refusing to guess. Check the region and your credentials, then re-run." >&2
-    exit 1
-    ;;
-  esac
-fi
-
-if [ -n "$write_claim" ]; then
-  overwrite=""
-  if [ -n "$NEW_ADMIN_CODE" ]; then overwrite="--overwrite"; fi
-  echo "=> admin claim code"
-  if [ -n "$DRY_RUN" ]; then
-    # shellcheck disable=SC2086 # $overwrite is one flag or nothing
-    run aws ssm put-parameter --region "$REGION" --type SecureString --key-id "$KMS_KEY" \
-      --name "$CLAIM_PARAM" --value "<new hash>" $overwrite
-  else
-    claim_code="$(claim_code_new)" || exit 1
-    claim_hash="$(claim_code_hash "$claim_code")" || exit 1
-    # shellcheck disable=SC2086 # $overwrite is one flag or nothing
-    aws ssm put-parameter --region "$REGION" --type SecureString --key-id "$KMS_KEY" \
-      --name "$CLAIM_PARAM" --value "$claim_hash" $overwrite >/dev/null
-    claim_code_announce "$claim_code" "${CLAIM_URL:-https://<domain>}" "./deploy/aws-terraform/deploy.sh --skip-build --new-admin-code"
-  fi
-  CLAIM_ROTATED=1
-fi
-
 # --- helpers -----------------------------------------------------------------
 
 # `--query`/`--output text` rather than jq: AGENTS.md keeps jq off the
@@ -625,14 +560,116 @@ else
   echo "   terraform -chdir=deploy/aws-terraform apply"
 fi
 
-# ECS resolves a task's secrets only when the task starts, so a new hash
-# reaches the app only through a new deployment. After the apply, so it rolls
-# the task definition the apply just wrote.
-if [ -n "$CLAIM_ROTATED" ]; then
-  echo "=> restarting the app so it reads the new ADMIN_CLAIM_CODE_HASH"
-  if [ -n "$DRY_RUN" ]; then
+# --- the admin claim code (ADR 72) -------------------------------------------
+#
+# Last, after the images and any apply, because it needs the stack: the
+# parameter and the app service are both Terraform's. Terraform creates the
+# parameter holding a placeholder, so its VERSION says what is in it without a
+# decrypting read: 1 is the placeholder (write the code), anything higher is a
+# hash already written (leave it, unless --new-admin-code). A failed check
+# stops here rather than being read as "placeholder", which would replace a
+# live code nobody asked to rotate.
+CLAIM_NEXT_STEP="./deploy/aws-terraform/deploy.sh --skip-build --new-admin-code"
+claim_not_ready() {
+  if [ -n "$NEW_ADMIN_CODE" ]; then
+    echo "FAIL: $1, so there is nowhere to write the admin claim code yet." >&2
+    echo "      Run terraform -chdir=deploy/aws-terraform apply, then: $CLAIM_NEXT_STEP" >&2
+    exit 1
+  fi
+  echo
+  echo "Admin claim code: not set yet — $1. After terraform apply, run:"
+  echo "   $CLAIM_NEXT_STEP"
+  echo "   It prints the code once; then sign in and enter it at /admin/claim."
+}
+
+if [ -n "$DRY_RUN" ]; then
+  SSM_PREFIX="<ssm_prefix>"
+  KMS_KEY="<secrets_kms_key_arn>"
+  CLUSTER="<cluster_name>"
+  CLAIM_URL="<event_url>"
+  CLAIM_PARAM="$SSM_PREFIX/ADMIN_CLAIM_CODE_HASH"
+  echo "=> admin claim code"
+  if [ -n "$NEW_ADMIN_CODE" ]; then
+    run aws ssm put-parameter --region "$REGION" --type SecureString --key-id "$KMS_KEY" \
+      --name "$CLAIM_PARAM" --value "<new hash>" --overwrite
+    run aws ecs describe-services --region "$REGION" --cluster "$CLUSTER" --services app
     run aws ecs update-service --region "$REGION" --cluster "$CLUSTER" --service app --force-new-deployment
   else
-    aws ecs update-service --region "$REGION" --cluster "$CLUSTER" --service app --force-new-deployment >/dev/null
+    echo "   DRY-RUN: would read the version of $CLAIM_PARAM (metadata only) and write the code if it still holds Terraform's placeholder"
+  fi
+elif ! SSM_PREFIX="$(terraform -chdir="$HERE" output -raw ssm_prefix 2>/dev/null)" || [ -z "$SSM_PREFIX" ] ||
+  ! KMS_KEY="$(terraform -chdir="$HERE" output -raw secrets_kms_key_arn 2>/dev/null)" || [ -z "$KMS_KEY" ] ||
+  ! CLUSTER="$(terraform -chdir="$HERE" output -raw cluster_name 2>/dev/null)" || [ -z "$CLUSTER" ]; then
+  claim_not_ready "the stack has not been fully applied (no ssm_prefix, secrets_kms_key_arn or cluster_name output)"
+else
+  CLAIM_URL="$(terraform -chdir="$HERE" output -raw event_url 2>/dev/null)" || CLAIM_URL=""
+  CLAIM_PARAM="$SSM_PREFIX/ADMIN_CLAIM_CODE_HASH"
+  if ! claim_version="$(aws ssm describe-parameters --region "$REGION" \
+    --parameter-filters "Key=Name,Values=$CLAIM_PARAM" \
+    --query 'Parameters[0].Version' --output text)"; then
+    claim_version="unreadable"
+  fi
+  write_claim=""
+  case "$claim_version" in
+  None | "") claim_not_ready "$CLAIM_PARAM does not exist (this stack was applied before it was added)" ;;
+  1) write_claim=1 ;;
+  *[!0-9]*)
+    echo "FAIL: could not read the version of $CLAIM_PARAM (ADMIN_CLAIM_CODE_HASH);" >&2
+    echo "      refusing to guess whether it holds a code. Check the region and your" >&2
+    echo "      credentials, then re-run." >&2
+    exit 1
+    ;;
+  *)
+    if [ -n "$NEW_ADMIN_CODE" ]; then
+      write_claim=1
+    else
+      echo "=> admin claim code: already set in $CLAIM_PARAM"
+    fi
+    ;;
+  esac
+
+  if [ -n "$write_claim" ]; then
+    echo "=> admin claim code"
+    claim_code="$(claim_code_new)" || exit 1
+    claim_hash="$(claim_code_hash "$claim_code")" || exit 1
+    if ! aws ssm put-parameter --region "$REGION" --type SecureString --key-id "$KMS_KEY" \
+      --name "$CLAIM_PARAM" --value "$claim_hash" --overwrite >/dev/null; then
+      echo "FAIL: could not write $CLAIM_PARAM. Nothing changed; the current code still works." >&2
+      exit 1
+    fi
+    # ECS resolves a task's secrets only when the task starts, so the new hash
+    # reaches a RUNNING app only through a new deployment. A service that does
+    # not exist yet needs none: its first deployment reads the value. A failed
+    # check is not "absent".
+    roll_cmd="aws ecs update-service --region $REGION --cluster $CLUSTER --service app --force-new-deployment"
+    # shellcheck disable=SC2016 # the backticks are a JMESPath literal, not a shell expansion
+    if ! app_active="$(aws ecs describe-services --region "$REGION" --cluster "$CLUSTER" --services app \
+      --query 'length(services[?status==`ACTIVE`])' --output text)"; then
+      app_active="unreadable"
+    fi
+    case "$app_active" in
+    0)
+      claim_code_announce "$claim_code" "${CLAIM_URL:-https://<domain>}" "$CLAIM_NEXT_STEP"
+      echo "   The app service does not exist yet; its first deployment reads this code."
+      ;;
+    *[!0-9]* | "")
+      echo "FAIL: the new code is in $CLAIM_PARAM but not live yet: could not check" >&2
+      echo "      the app service. Finish it with:" >&2
+      echo "        $roll_cmd" >&2
+      echo "      or re-run $CLAIM_NEXT_STEP for a fresh code." >&2
+      exit 1
+      ;;
+    *)
+      if ! aws ecs update-service --region "$REGION" --cluster "$CLUSTER" --service app --force-new-deployment >/dev/null; then
+        echo "FAIL: the new code is in $CLAIM_PARAM but not live yet: the app could" >&2
+        echo "      not be redeployed. Finish it with:" >&2
+        echo "        $roll_cmd" >&2
+        echo "      or re-run $CLAIM_NEXT_STEP for a fresh code." >&2
+        exit 1
+      fi
+      claim_code_announce "$claim_code" "${CLAIM_URL:-https://<domain>}" "$CLAIM_NEXT_STEP"
+      echo "   It is live once the new app deployment finishes (a minute or two)."
+      ;;
+    esac
   fi
 fi

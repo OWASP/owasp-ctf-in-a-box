@@ -1087,12 +1087,17 @@ Only an admin can issue a code. Every claim, issue and removal is written to
 the same audit log as the rest of the panel's changes, naming the account and
 a short code id, never the code. A master reset keeps the admins.
 
-**Locked out?** If no admin can sign in, rotate the bootstrap code: a new
-`ADMIN_CLAIM_CODE_HASH` in `.env` and a recreated app container
-(`docker compose up -d --no-deps --force-recreate app`; a plain
-`docker compose restart` keeps the old environment), then claim with the new
-code at `/admin/claim`. The bootstrap code works whether or not admins
-already exist, and the old one stops working once the hash changes.
+**Locked out?** If no admin can sign in, rotate the bootstrap code and claim
+with the new one at `/admin/claim`:
+
+- **Compose box:** `./setup/ctf-setup.sh admin-code`, then recreate the app
+  container (`docker compose up -d --no-deps --force-recreate app`; a plain
+  `docker compose restart` keeps the old environment).
+- **Fly:** `./deploy/fly/deploy.sh --skip-build --new-admin-code`.
+- **AWS:** `./deploy/aws-terraform/deploy.sh --skip-build --new-admin-code`.
+
+The bootstrap code works whether or not admins already exist, and the old one
+stops working once the hash changes.
 
 **If Redis is unavailable**, the grant read fails and `/admin` answers 403 —
 the access check fails **closed**, deliberately unlike the freeze read, which

@@ -45,9 +45,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   `.env` has none and otherwise offers a default-No rotation, and `doctor`
   checks the hash without printing it. `deploy/fly/deploy.sh init` gives
   `.env.fly` its own code, and `deploy.sh --new-admin-code` rotates it on a
-  deploy. `deploy/aws-terraform/deploy.sh` creates the hash as the SSM
-  SecureString `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` when absent, and
-  `--new-admin-code` replaces it and forces a new app deployment. `dev-stack`
+  deploy. On AWS, Terraform creates the SSM SecureString
+  `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` holding a placeholder the app reads as
+  unset (its value is ignored by later plans), and
+  `deploy/aws-terraform/deploy.sh` writes the hash into it once the stack
+  exists; `--new-admin-code` replaces it and rolls the app. `dev-stack`
   writes a code into its throwaway env. The dry-run redactor hides `*_HASH`
   values and the argument after `--value`.
   **Breaking:** setup no longer asks for or writes `ADMIN_LOGINS`; `doctor`
@@ -55,7 +57,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   `admin_logins` is removed — delete it from `terraform.tfvars` (Terraform
   warns about an undeclared variable there, and `-var admin_logins=…`
   fails). Fly `init` no longer copies `.env`'s claim hash, and `--refresh`
-  and the drift check leave it alone.
+  and the drift check leave it alone. **Upgrade note (AWS):** remove
+  `admin_logins`, `terraform apply` (nobody can open `/admin` from here until
+  the next step), then `deploy.sh --skip-build --new-admin-code`.
 - **Added: GitHub linking, and held Secure Development scores (#741).** With
   Secure Development on, a player links a GitHub account from their profile
   or by signing in with GitHub; one GitHub account links to one kit account,

@@ -43,7 +43,6 @@ jobs:
       smoke: ${{ steps.f.outputs.smoke }}
       quiz: ${{ steps.f.outputs.quiz }}
       classic: ${{ steps.f.outputs.classic }}
-      ai: ${{ steps.f.outputs.ai }}
       docs: ${{ steps.f.outputs.docs }}
       registries: ${{ steps.f.outputs.registries }}
     steps:
@@ -226,10 +225,10 @@ jobs:
         working-directory: apps/web
       - run: corepack pnpm test
         working-directory: apps/web
-      # The grading Lua (classic SUBMIT_SCRIPT, quiz GRADE_SCRIPT, ai
-      # AWARD_SCRIPT) is the scoring authority; the mocked suites pin what the
-      # stores HAND it, not what it does. Every live suite runs here — the
-      # three `*.lua.upstash.test.ts` grading suites and the admin-store,
+      # The grading Lua (classic SUBMIT_SCRIPT, quiz GRADE_SCRIPT) is the
+      # scoring authority; the mocked suites pin what the stores HAND it, not
+      # what it does. Every live suite runs here — the two
+      # `*.lua.upstash.test.ts` grading suites and the admin-store,
       # hint-store and team-store `.upstash` suites — against
       # a real Redis behind the same SRH image the box ships, digest-pinned
       # like docker-compose.yml. Throwaway containers on the runner's loopback,
@@ -237,7 +236,7 @@ jobs:
       # the fixed ctf:admin:settings / ctf:admin:audit keys the store reads,
       # and hint-store seeds its policy into that same hash, so those two
       # cannot share one Redis concurrently; every other suite is on
-      # run-unique keys. All six gate through live-redis.ts, so
+      # run-unique keys. Every one gates through live-redis.ts, so
       # CTF_LUA_SUITES_REQUIRED turns "no env, so skip" into a failure for
       # each of them — a gate that quietly skips is not a gate.
       - name: Grading Lua against a real Redis (via SRH)
@@ -322,16 +321,6 @@ jobs:
         with:
           persist-credentials: false
       - run: ./scripts/acceptance-classic-only.sh
-
-  ai-only:
-    needs: changes
-    if: needs.changes.outputs.ai == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: ./scripts/acceptance-ai-only.sh
 
   # KNOWN_MODULES/target lists are deliberately duplicated across sync, setup,
   # the app and the scorer (ADR 10) — this compares them and fails if any two

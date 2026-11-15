@@ -32,8 +32,8 @@ live-GitHub scoring. For standing the kit up in the first place, see
 - **How fresh the board is.** The folded standings — every module's points,
   team totals, the chart, hint penalties — are computed once and shared by
   every viewer for **10 seconds**, then recomputed on the next request
-  (`apps/web/src/lib/leaderboard/folded.ts`). A quiz answer, a flag or an AI
-  solve therefore reaches `/leaderboard` and the landing strip within about
+  (`apps/web/src/lib/leaderboard/folded.ts`). A quiz answer or a flag
+  therefore reaches `/leaderboard` and the landing strip within about
   10 seconds; the projector board refreshes itself every 30. A Secure
   Development score has one more hop: the `sync` poller reads the score
   comment on its next poll (about every 30 seconds), and the app reads the
@@ -77,7 +77,7 @@ no team straight to the team card — team setup is the first thing a new
 contestant completes, not something discovered later (a `/join/<code>` invite
 passes through untouched, since the invite *is* the team step). **At the
 module pages**: a signed-in contestant with no team who opens `/quiz`,
-`/flags` or `/ai` is sent to the team card too, so nobody who slipped past the first
+or `/flags` is sent to the team card too, so nobody who slipped past the first
 step discovers the rule by answering a question and watching it not count.
 **At the routes**: the quiz and flag submission routes refuse a teamless
 login outright — the boundary that actually holds. Organizers are exempt
@@ -218,7 +218,7 @@ screen shows "Saved" on both. The numeric fields do the same and no longer
 show a browser spinner: type the value, tab out, read the line under it.
 
 The hint policy has its own **Hints** destination because it is event-wide:
-Secure Development, Jeopardy and AI all sell their hints through the same
+Secure Development and Jeopardy both sell their hints through the same
 four settings (`hintsEnabled`, `hintCost`, `hintsMinSolves`,
 `hintsUnlockAfterMin`).
 
@@ -256,7 +256,7 @@ live on the next request; there is no rebuild and no cache to wait out.
 name in three places on every event: **the tab's own label**, **the nav link**
 (header and footer alike), and **the module's own page header and browser tab
 title** (`/challenges` for Secure Development, `/quiz` for Quiz, `/flags` for
-Jeopardy, `/ai` for AI). It also reaches two more surfaces on every event:
+Jeopardy). It also reaches two more surfaces on every event:
 
 - the **landing page's module card** — each card under "The game" (or "The
   games", with more than one module) is headed by the module's title, override
@@ -277,16 +277,16 @@ places:
 
 - the **meta description** of the module's own page (what a search result or a
   chat link preview shows);
-- **`/quiz`'s, `/flags`'s and `/ai`'s page header**, as the lede under
+- **`/quiz`'s and `/flags`'s page header**, as the lede under
   the title. This is the module describing itself; a contestant's own progress lives on the
   board itself (Quiz's progress strip, Jeopardy's "Your run" rail), and a
   signed-out visitor sees a "Sign in with GitHub to …" line above the
   questions/challenges;
 - the **landing page section lede**, but only for a module that ships no
-  registry `home` block. All four modules that exist today have one, so
+  registry `home` block. All three modules that exist today have one, so
   today this
   is a fallback for a future module rather than something you can see —
-  Secure Development's, Quiz's, Jeopardy's, and AI's landing copy all come
+  Secure Development's, Quiz's and Jeopardy's landing copy all come
   from the
   registry and are
   not organizer-editable.
@@ -381,7 +381,7 @@ The panel offers:
   any tick where something non-routine happened.
 - **Freeze** — a pause switch. Pausing **freezes scoring, not fork
   Actions**: contestants' PRs keep getting judged and commented on exactly
-  as before. Quiz, Jeopardy and AI answers are refused while it is on.
+  as before. Quiz and Jeopardy answers are refused while it is on.
   A **Secure Development** score is judged by **when its score comment was
   posted on the PR**, not when the box reads it (ADR 67): a PR scored
   *before* you froze still counts, even if the poller reads it during the
@@ -429,18 +429,10 @@ The panel offers:
   the toggle is a switch, not a delete. Use it to pull a broken board out of an
   event without losing what contestants have already done.
 
-  Switching Quiz, Jeopardy or AI off also **stops their grading** on the next
-  request, and nothing is recorded while the board is off (#495):
-
-  - **Quiz and Jeopardy:** an answer or flag submitted from a tab that was
-    already open (or straight to the API) is refused, and the board shows
-    "Couldn't verify that right now".
-  - **AI, in the box:** the flag form on an already-open challenge page gets
-    the same refusal from its server action.
-  - **AI, from the external challenge site:** `POST /api/ai/submit` and
-    `POST /api/ai/event` answer `403 {"error": "unavailable"}` before the
-    token or signature is even checked (see the
-    [AI module contract](ai-module.md#section-7-the-full-error-table)).
+  Switching Quiz or Jeopardy off also **stops their grading** on the next
+  request, and nothing is recorded while the board is off (#495): an answer
+  or flag submitted from a tab that was already open (or straight to the
+  API) is refused, and the board shows "Couldn't verify that right now".
 
   For Secure Development specifically: switching it off does not stop the
   poller or the scorer — ingestion keeps running underneath, and any points
@@ -463,7 +455,7 @@ The panel offers:
 
   **What is on before you touch anything:** Secure Development, and only
   when the deployment has a scorer image (`SCORE_IMAGE` in `.env`); otherwise
-  nothing. Quiz, Jeopardy and AI always start off. Nothing else influences
+  nothing. Quiz and Jeopardy always start off. Nothing else influences
   enablement — there is no config file and no baked default (#386) — and
   which Secure Development targets run is a separate setting on that module's
   own tab; if the settings read fails the app falls back to that same "all
@@ -501,7 +493,7 @@ The panel offers:
   the scorer and the poller only compare instants, so the zone never changes
   what scores — and a blank field
   means no bound on that side — **except Scoring opens**: an event with no
-  scoring start is **not launched**, and nothing scores (flags, quiz, AI,
+  scoring start is **not launched**, and nothing scores (flags, quiz,
   and Secure Development PRs in the scorer and the poller) until one is
   set. Every event needs that official launch (#464) — until then module
   pages redirect to `/` (see [Before launch](#before-launch)). They stack **on top of** the manual toggles
@@ -515,7 +507,7 @@ The panel offers:
   start)", and the matching states for registration —
   computed from the very fields it edits. The scoring window is honoured by
   every reader of scoring state (the app, the scorer, the sync poller — see
-  [architecture](architecture.md)). Flags, quiz answers and AI solves are
+  [architecture](architecture.md)). Flags and quiz answers are
   judged when they arrive; a Secure Development PR is judged at the time its
   score comment was posted, so a PR scored before **Scoring closes** counts
   even if the poller reads it after (see Freeze above). A refusal is final:
@@ -598,14 +590,13 @@ The panel offers:
   server could not complete answers "Couldn't check your score right now.
   Try again" instead of inventing a balance. The module check is **per target**: a hint on a
   secure-development target requires that module enabled, a classic hint
-  requires `classic`, an ai hint requires `ai`, and each refuses outright
+  requires `classic`, and each refuses outright
   when its module is off (`hint-store.ts`'s `hintGate`). In practice only
-  classic and ai ever reach it: **Secure Development has no hints**, because
+  classic ever reaches it: **Secure Development has no hints**, because
   nothing in the kit authors hint text for a target, so no challenge on
-  `/challenges` offers one and that page shows no hint banner (issue #334). Jeopardy and AI
-  count "solves required" across the whole board rather than per app, the
-  same way secure-development counts per target — see [the AI
-  section](#ai) for its own hint text/knobs. The quiz has no hints by
+  `/challenges` offers one and that page shows no hint banner (issue #334). Jeopardy
+  counts "solves required" across the whole board rather than per app, the
+  way secure-development counts per target. The quiz has no hints by
   design — a question's hint is its choices.
 - **Hint penalties apply to teams too.** A team's displayed points are its
   scorer total minus the **sum** of its members' hint spend, floored at 0,
@@ -615,9 +606,8 @@ The panel offers:
   teammates is charged **twice** — hints are individually purchased, so
   redundant buying is the team's own coordination cost.
 
-- **Activity** (its own tab) — the live event log: sign-ins, quiz, classic
-  and ai solves (an ai solve's entry also notes whether it came in via flag
-  or via event), and team create/join/leave/rename, newest first. Type
+- **Activity** (its own tab) — the live event log: sign-ins, quiz and classic
+  solves, and team create/join/leave/rename, newest first. Type
   chips (each with its count) and one search box narrow it: every word must
   match somewhere in a row — login, event, detail (challenge, question or
   team id) or the time as shown — and `login:`, `type:`, `detail:` and
@@ -671,7 +661,7 @@ The panel offers:
     list under the chart, for keyboard and screen-reader use.
   - **Hardest first** — every challenge by solves, attempts, solve rate,
     *average tries taken by the people who did solve it*, and the *median time
-    to solve*: from a player first opening a Jeopardy or AI challenge's page
+    to solve*: from a player first opening a Jeopardy challenge's page
     to their solve (the box records the first open, once per player and
     challenge). Where no open was recorded (quiz, and solves from before the
     record existed) it falls back to their first submission and the cell is
@@ -751,7 +741,7 @@ The panel offers:
 
 
   From there: **reset progress** (clears their Secure Development solves on
-  every target, their quiz answers, classic and AI solves, attempts and hints;
+  every target, their quiz answers, classic solves, attempts and hints;
   keeps the account and the team), **delete contestant** (all of that
   plus the team membership, their event record, their rate-limit counters and
   any Secure Development scores held for their GitHub login; the sign-in
@@ -806,7 +796,7 @@ The panel offers:
   > comments it reads — so a per-contestant reset clears them, and the next
   > time that contestant's PR is scored they are written again. The tab warns
   > when this applies. To make it stick, close the contestant's PR or freeze
-  > scoring first. Quiz, classic and ai have no such problem: those writes
+  > scoring first. Quiz and classic have no such problem: those writes
   > originate in the app, so a delete is final.
 
   Every action is admin-gated and writes an audit line naming **both** the
@@ -819,16 +809,14 @@ The panel offers:
   solve, attempt, team, per-player record, join code and hint purchase, the
   organizer's score adjustments, the activity log, and every sponsor (see
   [Sponsors](#sponsors)); it **keeps** everything you authored — quiz
-  questions and their answer key, classic and AI challenges with their flags,
+  questions and their answer key, classic challenges with their flags,
   hints and categories — along with your admin settings, and appends the
   reset to the audit log. Sign-in state survives it too: contestant accounts,
   admin sign-ins and sessions (the `ctf:auth:` keys) are untouched, so players
   stay signed in across a reset, and so do the GitHub links
   (`ctf:link:*`, including when each was made) that tie a player to the GitHub
   login their PRs score under. Held Secure Development scores
-  (`ctf:sd:held:*`) are wiped, and deleting a player clears theirs. It does rotate the AI
-  module's launch keypair (see [below](#ai)), so an external challenge site
-  re-fetches the public key on its next verification. It is server-side and
+  (`ctf:sd:held:*`) are wiped, and deleting a player clears theirs. It is server-side and
   admin-gated, and requires **typing the event name** — the current runtime
   name from the Identity section above, not a fixed default — to proceed (a
   single click can't fire it).
@@ -855,12 +843,12 @@ The panel offers:
   of seconds.
 
   **Starting over with new content.** A master reset keeps everything you
-  authored, and a module's own import (Jeopardy, Quiz or AI) only adds and
+  authored, and a module's own import (Jeopardy or Quiz) only adds and
   updates — it never deletes. To replace the content outright, import an
   event archive ([Archiving and replaying an event](#archiving-and-replaying-an-event)):
   it runs the same reset first, wiping teams, solves and the rest of the
   run state, freezing scoring and clearing the scoring start, then replaces
-  the Jeopardy board, Quiz bank and AI catalogue with what the file holds.
+  the Jeopardy board and Quiz bank with what the file holds.
 
 - **Quiz controls** (Quiz tab, present only when the `quiz` module is enabled) — the two
   retry-gate knobs (max attempts, accepted from 0 to **100**; retry cooldown,
@@ -883,17 +871,7 @@ The panel offers:
   one module. When the `classic` module is enabled, it seeds a demo flag board
   the same way — categories, challenges (flags included), and a spread of
   solves — so a multi-module event previews as one combined board. See
-  [Jeopardy](#jeopardy) below. When the `ai` module is enabled, it seeds two
-  demo challenges and a spread of solves for them, plus the `AI` category to
-  hold them. Their **launch URL templates deliberately point at a placeholder
-  host that does not resolve**, because a demo dataset cannot ship an
-  externally hosted challenge site — so **Open challenge** dead-ends on both,
-  and both are gradable by flag in the box instead, which keeps the demo board
-  clearable end to end. Neither is seeded as `event`-mode on purpose: that mode
-  can *only* be solved by an external arena reporting the solve, so seeding one
-  put a challenge on the board that nobody could clear
-  ([#355](https://github.com/OWASP/owasp-ctf-in-a-box/issues/355)). See
-  [AI](#ai) below for what the modes mean. Sponsors are seeded too, always —
+  [Jeopardy](#jeopardy) below. Sponsors are seeded too, always —
   three placeholder ones, one per tier, so the landing-page strip, the
   footer, and `/sponsors` all preview populated instead of empty. Each
   carries a plain solid-color placeholder logo (nothing resembling a real
@@ -912,7 +890,7 @@ The panel offers:
   wipe, not ordinary setup. Clear removes exactly the run-state rows
   Seed added — the fake contestants (their account rows too, which a master
   reset would keep), teams, solves, and sponsors — but
-  deliberately leaves the demo quiz/classic/ai questions, challenges, flags,
+  deliberately leaves the demo quiz/classic questions, challenges, flags,
   and categories in place: once written they're authored content, the same
   way a master reset already treats real challenges, so remove those by
   hand from their own admin tab if you don't want them.
@@ -920,7 +898,7 @@ The panel offers:
 **Every destination has its own URL.** `/admin/overview`, `/admin/activity`,
 `/admin/insights`, `/admin/support`, `/admin/event`, `/admin/hints`,
 `/admin/admins`, `/admin/sponsors`, and one per enabled module — `/admin/quiz`,
-`/admin/classic`, `/admin/ai`, `/admin/secure-development`. That is what the
+`/admin/classic`, `/admin/secure-development`. That is what the
 sidebar links to, so a link is safe to bookmark, paste into a runbook, or
 read out over a call. Switching tabs updates the address bar without a page
 load, and Back walks the destinations you visited, so the URL always names
@@ -928,7 +906,7 @@ the screen in front of you.
 
 The older `/admin?tab=<id>` form still works and still means the same thing —
 docs, bookmarks and cross-links written before this keep resolving. This is
-what `/quiz`, `/flags` and `/ai` link an organizer to when the module has no
+what `/quiz` and `/flags` link an organizer to when the module has no
 content yet — an empty board shows them **Author questions** / **Author
 challenges** instead of the contestant's "check back soon". An unknown or
 not-enabled tab name, in either form, falls back to **Overview** rather than
@@ -1213,16 +1191,14 @@ previously exported one — publishing a finished event's content, or
 stamping out a repeat run of the same CTF, without re-authoring anything by
 hand.
 
-**What a bundle carries.** Jeopardy, Quiz and AI **content** — challenges,
-flags, hints and categories, quiz questions with their answer keys, and each
-AI challenge's mode, launch URL template and **per-challenge signing key**
-(so an external site configured against it keeps working after a restore) —
+**What a bundle carries.** Jeopardy and Quiz **content** — challenges,
+flags, hints and categories, and quiz questions with their answer keys —
 plus **policy** settings: the hint controls (enabled, cost, and its two
-gating knobs), the quiz retry-gate knobs, Jeopardy's and AI's submission
-cooldowns, the re-run cooldown, the team-size cap and registration switch,
+gating knobs), the quiz retry-gate knobs, Jeopardy's submission
+cooldown, the re-run cooldown, the team-size cap and registration switch,
 module title/blurb overrides, which modules are enabled, and which Secure
 Development targets the event runs (`secureDevTargets`). The content of
-all three modules is in every bundle, switched on or off, so a module that is
+both app-side modules is in every bundle, switched on or off, so a module that is
 off comes back from an import with its content intact and still off. It carries no
 scoring data: no solves, attempts, team rosters or score adjustments. It also carries an informational **event
 identity** block — `name`, `dates`, `location` and `ctfStartsAt`, plus
@@ -1241,11 +1217,7 @@ module's import box, not this one.
 **What it does not carry: contestant run state.** No teams, no users, no
 solves, no attempts, no hint purchases, no admin audit log. That is the
 whole security property that makes a bundle safe to hand out at all — it is
-authored content and policy, never who played or how they did. It also never
-carries the AI module's **launch keypair**: that is module identity, not
-content, and an import leaves the box's own keypair in place so every
-deployed external verifier and every token already in a contestant's browser
-keeps working (ADR 53).
+authored content and policy, never who played or how they did.
 
 **Export** warns you of two things on the panel itself, before you do
 anything with the downloaded file:
@@ -1269,8 +1241,8 @@ validates and applies the file's policy settings, then runs the same reset
 the master reset button does — wiping every team, solve, attempt and hint
 purchase, the score adjustments, the activity log and every sponsor, and
 leaving scoring frozen with a fresh pause log, a new reset epoch and the
-event not launched — and replaces the entire Jeopardy board, Quiz bank and
-AI catalogue with exactly what the file contains (a section absent from the
+event not launched — and replaces the entire Jeopardy board and Quiz bank
+with exactly what the file contains (a section absent from the
 file leaves that module empty, not as it was — replace-all, not merge).
 Settings go first and fail-fast: a bad or cross-box-incompatible settings block is rejected before anything is wiped,
 never after. It is **refused outright (`409`)** while scoring is
@@ -2004,279 +1976,6 @@ names the limit. A file too large to edit is loaded but not shown in the
 import box, the same way the event archive's import handles it. The file
 holds every flag and every attachment, so treat it like the archive.
 
-## AI
-
-> **Deprecated.** The AI module keeps working in v1.x and is removed in
-> v2.0.0 ([ADR 69](decisions.md#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)). For a new event, run AI security
-> challenges as Jeopardy challenges with flags: host the target anywhere,
-> reveal the flag on a solve, and add it under its own category.
-
-Switch AI on from `/admin` → Event → Modules and contestants get a third way
-to earn points: prompt-injection and guardrail challenges hosted on an
-**external** site, graded **inside** the box. Like the quiz and classic, it
-doesn't touch GitHub, the scorer, or `sync` at all — see
-[docs/architecture.md](architecture.md#ai-data-flow) for how it scores
-entirely inside the app, and how a solve can arrive back three different
-ways.
-
-![The AI challenge board: category-grouped tiles with point values and paid-hint markers; each tile opens the challenge page with its personal launch link](assets/ai-board.jpg)
-
-<sup>The board as a contestant sees it: every tile carries its category,
-point value, and a 💡 marker where a paid hint is on offer, the same board
-component classic's flag list uses.</sup>
-
-### What the external site has to be configured to do
-
-The box hosts none of the challenge itself. Somebody stands up a site, and
-that site has to do four things — the admin panel's **Wiring the external
-site** drawer says the same next to the values you paste, and
-[docs/ai-module.md](ai-module.md) is the full contract:
-
-1. **Accept the launch token.** A challenge's launch URL must contain the
-   literal `{token}` placeholder; the box substitutes a freshly minted token
-   there and sends the contestant to the result. No cookie crosses the
-   boundary — that token is the whole identity.
-2. **Verify it against the published public key.** `GET /api/ai/launch-key`,
-   verify with **hard-coded** Ed25519, and pin `aud` to the challenge id you
-   expect. Never let the token's own `alg` or `kid` choose the algorithm or
-   the key. Cache the key for about five minutes (it is served
-   `Cache-Control: public, max-age=300`), but **re-fetch on any verification
-   failure and after an event reset** — a master reset rotates the keypair,
-   and a site caching the old key indefinitely rejects every launch token
-   issued afterwards.
-3. **Report the solve, signed.** For an `event` or `both` challenge, POST
-   `/api/ai/event` with `X-CTF-Signature: sha256=<hex>` over the exact bytes
-   `"<unix-timestamp>.<raw request body>"`, using **that challenge's own**
-   signing key, plus a matching `X-CTF-Timestamp` within ±300 seconds of the
-   box's clock. Re-serializing the body before signing is the most expensive
-   mistake available here — it fails exactly like a wrong key would.
-4. **Expect one award per token.** The token's `jti` is a one-shot nonce; a
-   replay answers `409`, not a second award.
-
-<img src="assets/diagrams/ai-launch-token-flow.svg" alt="Animated diagram. The handshake between the box and an external AI challenge site, and which key does what. The box mints an Ed25519 JWT scoped to one challenge (sub is the player's login, aud is the challenge id, 24-hour expiry, jti as the replay nonce) and substitutes it into the challenge's launch URL wherever the operator wrote the {token} placeholder. The contestant opens that link on the external site, which fetches the module-wide public key from /api/ai/launch-key and caches it for about five minutes, re-fetching on any verification failure, then verifies with hard-coded Ed25519, never trusting the token's own alg or kid, pinning aud to the challenge it expects. The site re-reads GET /api/ai/state rather than trusting the token's mint-time progress snapshot. On a solve it POSTs /api/ai/event with the token and challenge id, signed with that challenge's own secret HMAC key over the exact string timestamp-dot-raw-body. The box checks the signature within 300 seconds, then the token, then claims the jti exactly once, so a replay gets 409, and the shared atomic award script banks the points. The launch key is public, one per event, and fetched; the signing key is secret, one per challenge, and pasted in from the admin panel.">
-
-<sup>The two keys are not interchangeable, and conflating them is the usual
-wiring failure. The <strong>launch key</strong> is public, one per event, and
-you fetch it to <em>verify</em>. The <strong>signing key</strong> is secret,
-one per challenge, and you paste it in to <em>sign</em>. A leaked launch key
-costs nothing — it is public by design; a leaked signing key lets anyone
-assert solves for that one challenge, so rotate it.</sup>
-
-**Nothing is live until you have proved it.** The panel's **Send test**
-signs a demo event with the challenge's real key and runs the whole pipeline
-with `dryRun: true` — writing no solve and claiming no nonce — then relays
-the box's own verdict. **Would award** is the answer you want; every other
-verdict is read in the Send test list further down this section. Before
-the event is launched, the Send test mints its demo token as an admin
-preview, so the dry run is graded while scoring is closed and can reach
-**Would award**.
-
-**Authoring** happens in `/admin`, under the AI module's tab. Before adding
-a challenge you need at least one **category** — same chip row as classic's
-(add, move left or right, rename, and remove only while no challenge still
-files under it, the panel naming exactly how many are blocking a removal),
-capped at
-**50 categories** with names of at most **64
-characters** each (`AI_CATEGORIES_MAX`/`AI_CATEGORY_MAX_LEN`, enforced in
-`setAiCategories`).
-
-
-**Renaming behaves exactly as it does on Jeopardy**, and for the same reasons:
-the rename rewrites every AI challenge filed under that category in the same
-operation, so a typo ten challenges share is one edit rather than eleven.
-Renaming onto a name another category already holds is **refused, not merged**
-— including when the two differ only in capitalisation, since two casings would
-split one category across two headings on the board. Changing only the
-capitalisation of the category being renamed ("jailbreak" to "Jailbreak") is a
-rename and is allowed. If a rename is interrupted part-way, **run the same
-rename again**: the challenges move before the list is rewritten, so a repeat
-finishes from wherever it stopped, and no challenge disappears from the panel
-in the meantime.
-
-A challenge itself has a title, a category, a Markdown description (live
-preview alongside the box, same as classic's), a point value, and one more
-thing neither sibling module has: a **solve mode**, a tri-state that decides
-what a contestant sees and where a solve can come from:
-
-- **`flag`** — graded by a typed flag, exactly like classic: the shared
-  flag-submission form renders on `/ai/[id]` and nothing outside the box
-  can assert a solve.
-- **`event`** — launcher-only. No in-box form renders at all; the
-  challenge stores no flag (an event-mode upsert deletes both flag hashes
-  regardless of what the form last held), and the external site reports the
-  solve itself, signed, to the module's own event endpoint. **This mode has
-  no in-box fallback**: a signed event is the *only* way it can ever be
-  awarded, `/api/ai/submit` answers `409 wrong-mode` for it, and a
-  contestant has nothing to type. So an event-mode challenge whose external
-  backend is missing, unreachable, or not yet posting events is unsolvable
-  by anyone — which is the intended design (the arena is what judges a
-  "make the model misbehave" objective, and a copyable flag would defeat it
-  the first time one contestant shared the string), but it does mean the
-  external half has to actually exist before the board goes live. Note that
-  the per-challenge **Send test** button does not establish that: it signs
-  the demo event *in-process with the box's own copy of the signing key*, so
-  it proves this side is configured (mode, schedule, key present) and proves
-  nothing about whether the external backend is reachable or holds the same
-  key. The only check that covers the external half is a real signed POST
-  from that backend — have the integrator send one with `dryRun: true`,
-  which returns a verdict without claiming the token's nonce or awarding
-  points.
-- **`both`** — either path works: the in-box form for a typed flag, or the
-  external site's signed report.
-
-Every graded challenge also needs a **launch URL template** — the address of
-the externally hosted challenge, which the launcher substitutes a freshly
-minted token into. It must be an absolute `https://` URL (`http://` is
-accepted only for `localhost`/`127.0.0.1`), and it must contain the literal
-`{token}` placeholder somewhere in it — checked against the raw string, not
-a parsed URL, so a template that puts the placeholder inside a path segment
-isn't punished for looking like invalid syntax. `validateUrlTemplate`
-(`ai-keys.ts`) is the **one** implementation of that check, run identically
-on the admin form (as-you-type feedback) and again inside the store on
-submit (`upsertAiChallenge`) — the client-side check is a convenience only,
-never a substitute for the server's own.
-
-**Flag and case sensitivity** work exactly like classic's, because they
-share the same code: `ai-keys.ts` re-exports `normalizeFlag` and
-`caseSensitiveFlagForm` from `classic-keys.ts` directly rather than
-reimplementing them, so a flag is trimmed and Unicode-NFC-normalized on both
-the authoring and submission sides, and case-folded unless the challenge's
-own **case-sensitive** toggle is on. Both the flag field and the
-case-sensitivity toggle are hidden by the form entirely in `event` mode —
-there's no flag left to apply either one to. The flag input masks by
-default (a Reveal toggle uncovers it), the same screen-share consideration
-as classic's.
-
-**Hint text** is optional and works like classic's paid hints — sold
-through the same gate and knobs (cost, minimum solves, unlock delay, penalty
-fold; see the hints section under [Organizer admin
-panel](#organizer-admin-panel)) — with one save-time rule worth calling
-out: saving the field **empty is a deliberate clear**, not "leave
-unchanged" — the store deletes the hint row on an empty string, exactly
-like classic.
-
-**Position ordering is a plain editable number**, not drag-and-drop. Unlike
-quiz's and classic's question/challenge lists, this panel has no
-reorder-by-dragging UI — organizers curate a long-running board there,
-so `order` is the **Position** number field the form edits directly.
-
-**The integration panel** is what an external challenge actually wires up
-against. It comes in two parts. The **Endpoints** block sits once, above the
-challenge list — **three endpoint URLs**, Submit (`/api/ai/submit`), Event
-(`/api/ai/event`), and State (`/api/ai/state`), each with its own copy
-button so an integrator never has to hand-assemble the full origin, and each
-with a collapsed **demo** under it answering send / receive / expect: a
-runnable request (the Event one computes its own signature at run time, for
-the same reason the per-challenge curl does), the 200 it returns, and the
-handful of refusals worth designing for — a wrong flag, a cooldown, a
-`replay`, an `invalid-signature`. State is marked **read-only**, because it
-is the one route of the three that writes nothing and can be tried against a
-live event with no consequence. Every value in those demos is a placeholder
-(`aik_…`, `eyJ…`); the real signing key and the one-click dry run stay on
-the per-challenge row below. The full contract, including the complete error
-table, is [docs/ai-module.md](ai-module.md). The three URLs are
-the same for every challenge, which is why they are not repeated per row. The
-rest is **per challenge**, collapsed under each row's summary line (open it
-with the "Integration — signing key, test curl, Send test" disclosure; a
-flag-only row's disclosure says the panel is not needed for it), and
-carries:
-
-- **The per-challenge signing key**, masked by default (`aik_…`) with a
-  Reveal toggle and its own Copy button — the raw key is never referenced in
-  the rendered markup while masked, not merely styled to look hidden.
-- **Rotate**, behind a confirm dialog, because it takes effect immediately
-  with no grace window. Its consequence sentence, verbatim: "The external
-  system stops posting until you redeploy it with the new key." It is amber,
-  not red — rotating is recoverable by pasting the new key into the external
-  site; red in the panel is reserved for what cannot be undone (deletes, the
-  master reset). A Send test that comes back **solved** or **would-award** is
-  shown in green; only a refusal or a failure is red.
-- **A ready-to-run test curl** that computes its own HMAC signature at the
-  moment you run it (`TS=$(date +%s)` and an `openssl dgst -hmac` call
-  inline) rather than shipping a pre-signed one — a signature is only valid
-  for a few minutes either side of its timestamp, so a static, pre-signed
-  snippet would already be expired by the time anyone pasted it.
-- **A Send test button.** This does not hit the network from the browser to
-  the external side and back — it POSTs to `/api/admin/ai/test`, which
-  mints a short-lived demo launch token for the *organizer's own login*,
-  signs a demo solve event with the challenge's real signing key, and calls
-  the real `/api/ai/event` handler in-process with `dryRun: true` —
-  hard-coded server-side, never taken from the request — so nothing is
-  written: no nonce is claimed, no points are awarded. It is safe to click
-  against a live event, and it relays that handler's real verdict verbatim
-  rather than inventing one. The panel renders exactly one line
-  under the button: a green **Would award — the dry run verified end to
-  end.** for the good case, or **Test result: `<name>`** for anything
-  else — green for `solved` or `would-award`, red for a refusal or failure — where `<name>` is the verdict or error string the route handed back
-  (or `unavailable` when it handed back nothing readable — a 503, or the
-  request itself failing). The panel now prints a one-sentence explanation
-  under that name for every verdict listed below, so the table here is a
-  reference rather than something to look up mid-event. Reading the result:
-  - **`would-award`** (shown as the green line) — good: the dry run
-    verified the whole pipeline end to end. After launch that is signature,
-    token, rate limit, team and schedule. Before launch the test runs as an
-    admin preview, which skips the team and schedule gates, so the verdict
-    vouches for signature, token and rate limit only.
-  - **`paused`**, **`ended`**, **`solved`**, **`no-team`** — the signature
-    and token were fine and a gate refused the award, relayed as-is.
-    `solved`: the organizer's own login already holds this challenge. After
-    launch only: `paused` means scoring is frozen or before its scheduled
-    start, `ended` that the scheduled scoring end has passed (#567), and
-    `no-team` means the organizer is on no team (the event route refuses a
-    teamless login before the award, organizers included). Before launch a
-    preview skips both of those gates. None of these is a fault on the
-    external side.
-  - **`unavailable`** — Redis could not be read, or the request itself
-    failed; try again. Also the answer while the AI module is switched off
-    on the Event tab (a stale tab can still click Send test): the real
-    event route refuses first (#495), so switch the module back on.
-  - **`wrong-mode`** — this challenge is `flag`-only. The panel doesn't
-    even render the signing key, curl, or Send test for a flag-only
-    challenge in the first place (only the three endpoint URLs stay,
-    since an external site embedding one still needs them); seeing
-    `wrong-mode` at all means the challenge's mode changed after the panel
-    loaded — refresh and re-check.
-  - **`no-signing-key`** — a legacy row with no signing key ever minted.
-    Unlike the two above, this one never reaches the event handler: the test
-    route itself answers `400 {"error":"no-signing-key"}` before any dry run,
-    and the panel shows it as **Test result: no-signing-key**. Click Rotate
-    once to mint one.
-
-**The cooldown knob** — `aiCooldownSec`, on the AI tab — throttles only the
-**graded flag path**: a signed event has no wrong answer to rate-limit, so
-it is never subject to this cooldown. `null` (the field left blank) means
-the **5-second default**; set a value in `[0, 3600]` seconds to override it,
-the same bounds classic's own cooldown enforces. Like classic's, it is
-**per contestant, while a solve counts for the team**: each teammate has
-their own cooldown on each challenge, so a team of N can submit N flags per
-period on the same challenge. That is by design (one player's guessing never
-locks out the team); size the cooldown with the team cap in mind.
-
-**What contestants see:** the board (`/ai`) lists every challenge with its
-category, points, and a 💡 marker where a hint is on offer. Opening one
-(`/ai/[id]`) mints that contestant a **personal, one-click launch link** —
-the page says so plainly: "This link is yours — it signs you in on the
-challenge site." That is worth repeating to contestants directly: the link
-carries a token naming *them* as the player, so sharing it hands away the
-ability to submit as them on that challenge, exactly like sharing a
-password would. A `flag`/`both` challenge also renders the same in-box
-flag-submission form classic uses, right below the launcher.
-
-**Gaps**, stated honestly:
-
-- **No per-tab bulk import/export.** Unlike quiz and classic, the AI tab has
-  no Export/Import bundle button of its own — every challenge is authored one
-  at a time through the add/edit/delete form. The whole-event archive on the
-  Event tab does carry the AI catalogue (challenges, flags, hints, categories
-  and per-challenge signing keys; never the launch keypair), so moving an AI
-  board between boxes or restoring one after a wipe goes through the archive.
-- **A master reset rotates the module-wide launch keypair**, not any
-  individual challenge's signing key. Every previously issued launch token
-  stops verifying, and any external integration that cached the public key
-  from `GET /api/ai/launch-key` needs to re-fetch it — see
-  [docs/ai-module.md](ai-module.md)'s "Keys and rotation" section (§9) for
-  what an integrator should watch for.
-
 ## Verifying it works
 
 ### The box, from outside: `/health` and `/health/deep`
@@ -2438,7 +2137,7 @@ A read-only differential audit of the scores the board shows. It runs
 `scripts/score-audit.mjs` **inside the Fly machine's `app` container** (the
 same upload-and-run as the load test), reads every key the leaderboard is
 folded from — the scorer's `ctf:solves:<target>` hashes and its rubric
-catalogue, the quiz, Jeopardy and AI aggregates and per-player rows, hint
+catalogue, the quiz and Jeopardy aggregates and per-player rows, hint
 spend, team rosters, the module switches — and recomputes every
 contestant's and every team's total, per module and overall, with ranks.
 That recompute is a second implementation of the rules on this page and in
@@ -2455,7 +2154,7 @@ scripts/score-audit.sh --app <fly-app> [--report <path>]
 What it checks, beyond the totals: each module block's points and item
 count, the hint penalty, each contestant's team chip, each team's roster,
 and ranks (a full tie may come in either order); and three store
-invariants — each quiz/Jeopardy/AI aggregate equals the per-player rows it
+invariants — each quiz/Jeopardy aggregate equals the per-player rows it
 sums, a player is on at most one team, and its `ctf:user:<id>` record
 names that team. Findings name the player by id with the display name
 beside it.
@@ -2701,7 +2400,7 @@ event is locked (#464, ADR 59). After **Scoring closes** the event stays
 launched — scoring stops, but the boards and results stay browsable.
 
 **What a contestant sees.** Before launch, every module page — `/challenges`,
-`/flags` and `/flags/[id]`, `/quiz`, `/ai` and `/ai/[id]`, and
+`/flags` and `/flags/[id]`, `/quiz`, and
 `/leaderboard` — redirects to the landing page (`/`), and the redirect runs
 before the page loads any module content, so no challenge text, question or
 standing is rendered for a refused visitor. The landing page shows a
@@ -2718,26 +2417,20 @@ the registration window, which is its own setting).
 call directly — `POST /api/classic/submit`, `POST /api/quiz/answer`,
 `POST /api/hints/reveal` and `GET /api/board/items` — refuse with **HTTP 403
 `{ "error": "not-launched" }`**, and the classic, quiz and hint UIs name that
-refusal rather than showing it as a wrong answer. The ai module's launch
-token is only minted from `/ai/[id]`, which is locked, and that page's
-in-box flag form (its server action) answers `not-launched` too, so no
-contestant can open or solve an AI challenge early — only an admin
-previewing the event can open one, as described next.
+refusal rather than showing it as a wrong answer.
 
 **Admins preview.** A signed-in admin (`ADMIN_LOGINS`, or an admin added in
 the panel) passes the lock and browses every module page as a preview, to
 check the board before contestants see it. Every module page shows a
 **Preview — event not launched** banner, with a **View as contestant** link
 (the landing page, which is all a contestant sees) and a link to `/admin`.
-An admin's submissions are graded as **dry runs**: a flag, a quiz answer,
-an AI flag or event, or a hint reveal goes through the same grading script
+An admin's submissions are graded as **dry runs**: a flag, a quiz answer
+or a hint reveal goes through the same grading script
 as a real one, and that script writes nothing. There's no solve, no points,
 no attempt or cooldown, no solve count, no hint charge and no activity-log
 line. Rate-limit counters still count, as they do for any caller. The answer
 says so ("preview only, nothing was recorded"). A preview needs no team.
-Once the event launches, admins score like anyone else. An AI launch token
-minted during the preview is refused after launch, so re-open the challenge
-for a normal one.
+Once the event launches, admins score like anyone else.
 
 **Fail direction: closed.** The lock is a secrecy boundary (challenge text
 before kickoff), so if the settings read fails, a non-admin is treated as

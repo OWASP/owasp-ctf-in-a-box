@@ -226,7 +226,7 @@ reviews:
         regexes and by sync's MARKER. A shape change needs both pinned tests
         updated in the same PR.
 
-    - path: "apps/web/src/lib/{quiz,classic,ai}-{store,keys}.ts"
+    - path: "apps/web/src/lib/{quiz,classic}-{store,keys}.ts"
       instructions: |
         These hold the answer keys and flags. Flag
         ⚠️ WARNING: <description> — <fix> for:
@@ -397,9 +397,8 @@ reviews:
         attempts, hint spend, team membership, answer keys, flags, metrics)
         without requireAdmin. Carve-out: a route reading ONLY the
         authenticated caller's OWN row, where that identity is
-        cryptographically bound — a verified launch token's `sub`, or a
-        session login — is self-service, not an admin surface; GET
-        /api/ai/state is the example. Reading ANY OTHER contestant's data
+        bound to the session login — is self-service, not an admin surface;
+        GET /api/hints is the example. Reading ANY OTHER contestant's data
         still requires requireAdmin.
 
         Oracle ordering — running the team check or launch lock AFTER
@@ -415,19 +414,17 @@ reviews:
         trees, so a new module's API root must be added there too.
 
         Public surface growth — GET /api/public/scoring, GET
-        /api/ai/launch-key, GET /api/board/items, GET
+        /api/board/items, GET
         /api/sponsors/logo/[id], GET /api/attachments/[id], GET
         /api/event/logo and GET /api/event/icon are the ONLY
         sanctioned unauthenticated GET routes, and POST /api/stats/visit (the
         no-PII per-country reach counter, always 204) the ONLY sanctioned
-        unauthenticated POST — the same eight docs/reviewing.md invariant 11
+        unauthenticated POST — the same seven docs/reviewing.md invariant 11
         names (the pre-event password
         check, POST /api/gate, was removed in #464; do not restore it). The
         GETs must stay read-only, policy or public-by-design content out and
         never facts in, with
-        nothing secret in the payload: launch-key publishes the launch
-        PUBLIC key, its `kid` and the algorithm, with the private half
-        import-forbidden by the ai contract test; board/items serves the
+        nothing secret in the payload: board/items serves the
         public leaderboard's expansion (who solved what — already on the
         board as counts) built only from the contestant-safe listers, ids and
         banked points, capped at a team roster's worth of logins per request;
@@ -696,8 +693,7 @@ reviews:
           contestant-reachable path.
 
           Trigger condition — the PR touches apps/web/src/lib/quiz-store.ts,
-          classic-store.ts, ai-store.ts, quiz-keys.ts, classic-keys.ts,
-          ai-keys.ts, ai-io.ts, hint-store.ts, any
+          classic-store.ts, quiz-keys.ts, classic-keys.ts, hint-store.ts, any
           route under apps/web/src/app/api/, any page or component rendering
           questions, challenges, or the leaderboard, or the leaderboard overlay
           pipeline. If it touches none of these, report Passed with the reason
@@ -706,10 +702,8 @@ reviews:
           Flag ⚠️ WARNING: <description> — <fix> for:
 
           A contestant-reachable function issuing a Redis command against
-          ctf:quiz:key, ctf:classic:flag, ctf:classic:flagnorm, ctf:ai:flag,
-          ctf:ai:flagnorm, ctf:ai:signkey, the private half of
-          ctf:ai:launchkey, or ctf:classic:hints / ctf:ai:hints for an
-          unpurchased hint.
+          ctf:quiz:key, ctf:classic:flag, ctf:classic:flagnorm, or
+          ctf:classic:hints for an unpurchased hint.
 
           A type reachable from a contestant-facing component gaining a field
           that could carry a correct answer, a flag, or hint text.

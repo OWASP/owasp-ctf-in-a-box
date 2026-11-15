@@ -2,7 +2,7 @@
 
 .PHONY: help registries test-sync test-scorer lint-app test-app lint-shell \
 	test-shell smoke acceptance-scorer acceptance-quiz-only \
-	acceptance-classic-only acceptance-ai-only dev-up dev-down
+	acceptance-classic-only dev-up dev-down
 
 # Thin wrappers around the commands in AGENTS.md — that file is the
 # authority on what CI runs; this just saves retyping the `cd`s. Pick the
@@ -22,7 +22,6 @@ help:
 	@echo "  acceptance-scorer     scorer's offline acceptance loop"
 	@echo "  acceptance-quiz-only  quiz-only compose bring-up"
 	@echo "  acceptance-classic-only  classic-only compose bring-up"
-	@echo "  acceptance-ai-only    ai-only compose bring-up"
 	@echo "  dev-up                local dev-stack up (throwaway secrets, seeded demo board)"
 	@echo "  dev-down              local dev-stack down"
 	@echo ""
@@ -66,8 +65,6 @@ acceptance-quiz-only:
 acceptance-classic-only:
 	./scripts/acceptance-classic-only.sh
 
-acceptance-ai-only:
-	./scripts/acceptance-ai-only.sh
 
 dev-up:
 	./scripts/dev-stack up

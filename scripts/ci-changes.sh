@@ -21,7 +21,7 @@
 # bash 3.2 compatible; no jq, no python.
 set -euo pipefail
 
-AREAS="app scorer sync shell smoke quiz classic ai docs registries"
+AREAS="app scorer sync shell smoke quiz classic docs registries"
 
 if [ "$#" -ne 1 ]; then
   echo "ci-changes: usage: $0 <changed-files> | --all" >&2
@@ -99,7 +99,7 @@ emit sync '^sync/|^setup/targets\.tsv|^test/fixtures/(scoring-)?window-corpus\.j
 #   check-docs-drift suite pins the ADR index and the local copies of the
 #   shell job's commands. .nvmrc and every workflow: its node-version rule.
 # - The audited apps/web/ files: check-comment-policy.bats asserts on them.
-emit shell '^scripts/|^setup/|^deploy/fly/|^deploy/aws-terraform/deploy\.sh$|^deploy/aws-terraform/test/|^sync/Dockerfile$|^sync/docker-entrypoint\.sh$|^docker-compose\.yml$|^docker-compose\.smoke\.yml$|^scorer/consumer-workflow\.example\.yml$|^scorer/entrypoint|^docs/decisions\.md$|^Makefile$|^AGENTS\.md$|^CONTRIBUTING\.md$|^\.nvmrc$|^\.github/workflows/|^apps/web/src/lib/classic-store\.ts$|^apps/web/src/lib/admin-store\.ts$|^apps/web/src/lib/modules\.ts$|^apps/web/src/lib/quiz-store\.ts$|^apps/web/src/lib/ai-store\.ts$|^apps/web/src/lib/leaderboard/module-contributions\.ts$|^apps/web/src/app/\(site\)/admin/admin-controls\.tsx$|^apps/web/src/lib/event-store\.ts$|^apps/web/src/lib/metrics-store\.ts$|^apps/web/src/lib/__tests__/admin-store\.seed\.test\.ts$|^apps/web/src/lib/leaderboard/__tests__/module-contributions\.test\.ts$|^apps/web/src/lib/team-store\.ts$|^apps/web/src/app/\(site\)/admin/__tests__/admin-controls\.test\.tsx$|^apps/web/src/lib/admin-ops-store\.ts$|^apps/web/src/lib/demo-seed\.ts$|^apps/web/src/app/\(site\)/admin/use-admin-settings\.ts$|^apps/web/src/app/\(site\)/admin/use-admin-nav\.ts$|^apps/web/src/app/\(site\)/admin/admin-danger-actions\.ts$|^apps/web/src/lib/module-defs/secure-development\.ts$|^apps/web/src/lib/module-defs/quiz\.ts$|^apps/web/src/lib/module-defs/classic\.ts$|^apps/web/src/lib/module-defs/ai\.ts$|^apps/web/src/lib/admin-audit-keys\.ts$|^apps/web/src/lib/module-urls\.ts$|^apps/web/src/lib/redis-decode\.ts$|^apps/web/src/app/\(site\)/admin/use-admin-restamp\.ts$|^apps/web/src/app/\(site\)/admin/admin-changed-at\.tsx$|^scripts/lib/acceptance-lib\.sh$'"$CI"
+emit shell '^scripts/|^setup/|^deploy/fly/|^deploy/aws-terraform/deploy\.sh$|^deploy/aws-terraform/test/|^sync/Dockerfile$|^sync/docker-entrypoint\.sh$|^docker-compose\.yml$|^docker-compose\.smoke\.yml$|^scorer/consumer-workflow\.example\.yml$|^scorer/entrypoint|^docs/decisions\.md$|^Makefile$|^AGENTS\.md$|^CONTRIBUTING\.md$|^\.nvmrc$|^\.github/workflows/|^apps/web/src/lib/classic-store\.ts$|^apps/web/src/lib/admin-store\.ts$|^apps/web/src/lib/modules\.ts$|^apps/web/src/lib/quiz-store\.ts$|^apps/web/src/lib/leaderboard/module-contributions\.ts$|^apps/web/src/app/\(site\)/admin/admin-controls\.tsx$|^apps/web/src/lib/event-store\.ts$|^apps/web/src/lib/metrics-store\.ts$|^apps/web/src/lib/__tests__/admin-store\.seed\.test\.ts$|^apps/web/src/lib/leaderboard/__tests__/module-contributions\.test\.ts$|^apps/web/src/lib/team-store\.ts$|^apps/web/src/app/\(site\)/admin/__tests__/admin-controls\.test\.tsx$|^apps/web/src/lib/admin-ops-store\.ts$|^apps/web/src/lib/demo-seed\.ts$|^apps/web/src/app/\(site\)/admin/use-admin-settings\.ts$|^apps/web/src/app/\(site\)/admin/use-admin-nav\.ts$|^apps/web/src/app/\(site\)/admin/admin-danger-actions\.ts$|^apps/web/src/lib/module-defs/secure-development\.ts$|^apps/web/src/lib/module-defs/quiz\.ts$|^apps/web/src/lib/module-defs/classic\.ts$|^apps/web/src/lib/admin-audit-keys\.ts$|^apps/web/src/lib/module-urls\.ts$|^apps/web/src/lib/redis-decode\.ts$|^apps/web/src/app/\(site\)/admin/use-admin-restamp\.ts$|^apps/web/src/app/\(site\)/admin/admin-changed-at\.tsx$|^scripts/lib/acceptance-lib\.sh$'"$CI"
 
 # smoke
 # - sync/: smoke runs the REAL sync service (docker-compose.smoke.yml
@@ -112,12 +112,11 @@ emit shell '^scripts/|^setup/|^deploy/fly/|^deploy/aws-terraform/deploy\.sh$|^de
 # - test/fixtures/: docker-compose.smoke.yml builds both mock services from it.
 emit smoke '^docker-compose|^scripts/smoke\.sh|^setup/|^sync/|^\.env|^scorer/consumer-workflow|^test/fixtures/'"$CI"
 
-# quiz / classic / ai — each proves compose end to end across the app
+# quiz / classic — each proves compose end to end across the app
 # (module gating, its pages, the leaderboard) and sync (the
 # refuses-without-GITHUB_ORG contract), plus docker-compose.yml itself.
 emit quiz '^apps/web/|^sync/|^docker-compose\.yml$|^scripts/acceptance-quiz-only\.sh$|^scripts/lib/acceptance-lib\.sh$'"$CI"
 emit classic '^apps/web/|^sync/|^docker-compose\.yml$|^scripts/acceptance-classic-only\.sh$|^scripts/lib/acceptance-lib\.sh$'"$CI"
-emit ai '^apps/web/|^sync/|^docker-compose\.yml$|^scripts/acceptance-ai-only\.sh$|^scripts/lib/acceptance-lib\.sh$'"$CI"
 
 # docs — the Pages site is built from docs/ ALONE (pages.yml sets
 # `source: docs`). README.md is in pages.yml's trigger paths but is not part

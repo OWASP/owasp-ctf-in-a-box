@@ -90,7 +90,7 @@ _append() {
 }
 
 @test "directive comments are exempt" {
-  _append "scripts/acceptance-ai-only.sh" "# shellcheck disable=SC2016"
+  _append "scripts/lib/acceptance-lib.sh" "# shellcheck disable=SC2016"
   _append "apps/web/src/lib/metrics-store.ts" "// eslint-disable-next-line @typescript-eslint/no-explicit-any"
   _append "apps/web/src/lib/metrics-store.ts" "// @ts-expect-error testing the unchecked path"
   run node "$SCRIPT" "$ROOT"
@@ -156,7 +156,6 @@ OUTER
   _has "apps/web/src/lib/module-defs/secure-development.ts"
   _has "apps/web/src/lib/module-defs/quiz.ts"
   _has "apps/web/src/lib/module-defs/classic.ts"
-  _has "apps/web/src/lib/module-defs/ai.ts"
   # the audit keys, module URLs, shared Redis decoders, restamp and changed-at
   # hooks, and the acceptance-gate helpers.
   _has "apps/web/src/lib/admin-audit-keys.ts"

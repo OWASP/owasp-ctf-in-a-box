@@ -1,7 +1,7 @@
 title: OWASP CTF in a Box
 description: >-
-  Self-hosted control plane for security-learning events. Four modules:
-  patch-to-score, quiz, classic flags, ai challenges — one box, one free
+  Self-hosted control plane for security-learning events. Three modules:
+  patch-to-score, quiz, classic flags — one box, one free
   GitHub org, no cloud.
 theme: jekyll-theme-cayman
 

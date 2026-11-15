@@ -3,7 +3,7 @@
 # M15 (#504): the acceptance gates share scripts/lib/acceptance-lib.sh instead
 # of hand-rolling it — acceptance-target.sh for the scoring path (source the
 # lib, drop its own URL table/scorer build/staging/event/judge/score-parse),
-# and the quiz/classic/ai *-only gates for their shared compose line-up,
+# and the quiz/classic *-only gates for their shared compose line-up,
 # redis/srh + app bring-up, sync-refusal and leaderboard half.
 #
 # Content assertions on the scripts themselves (the check-changelog.bats
@@ -17,7 +17,6 @@ setup() {
   TARGET="$ROOT/scripts/acceptance-target.sh"
   QUIZ="$ROOT/scripts/acceptance-quiz-only.sh"
   CLASSIC="$ROOT/scripts/acceptance-classic-only.sh"
-  AI="$ROOT/scripts/acceptance-ai-only.sh"
 }
 
 # Every test below: print exactly what is missing (or still present), then end
@@ -105,28 +104,20 @@ _need() {
   missing=""
   _need "$QUIZ" 'acc_assert_module_lineups quiz'
   _need "$CLASSIC" 'acc_assert_module_lineups classic'
-  _need "$AI" 'acc_assert_module_lineups ai'
   _need "$QUIZ" 'acc_boot_redis_srh "$NET" qo'
   _need "$CLASSIC" 'acc_boot_redis_srh "$NET" co'
-  _need "$AI" 'acc_boot_redis_srh "$NET" ao'
   _need "$QUIZ" 'acc_boot_app qo-app'
   _need "$CLASSIC" 'acc_boot_app co-app'
-  _need "$AI" 'acc_boot_app ao-app'
   _need "$QUIZ" 'acc_write_sync_override "$SYNC_OVERRIDE"'
   _need "$CLASSIC" 'acc_write_sync_override "$SYNC_OVERRIDE"'
-  _need "$AI" 'acc_write_sync_override "$SYNC_OVERRIDE"'
   _need "$QUIZ" 'acc_assert_sync_refuses_no_org "$SYNC_PROJECT" "$SYNC_OVERRIDE"'
   _need "$CLASSIC" 'acc_assert_sync_refuses_no_org "$SYNC_PROJECT" "$SYNC_OVERRIDE"'
-  _need "$AI" 'acc_assert_sync_refuses_no_org "$SYNC_PROJECT" "$SYNC_OVERRIDE"'
   _need "$QUIZ" 'acc_seed_player qo-redis "$CONTESTANT_ID" "$CONTESTANT_NAME"'
   _need "$CLASSIC" 'acc_seed_player co-redis "$CONTESTANT_ID" "$CONTESTANT_NAME"'
-  _need "$AI" 'acc_seed_player ao-redis "$CONTESTANT_ID" "$CONTESTANT_NAME"'
   _need "$QUIZ" 'acc_assert_leaderboard_contrib "$APP_URL" quiz'
   _need "$CLASSIC" 'acc_assert_leaderboard_contrib "$APP_URL" classic'
-  _need "$AI" 'acc_assert_leaderboard_contrib "$APP_URL" ai'
   _need "$QUIZ" 'acc_sync_compose "$SYNC_PROJECT" "$SYNC_OVERRIDE" down'
   _need "$CLASSIC" 'acc_sync_compose "$SYNC_PROJECT" "$SYNC_OVERRIDE" down'
-  _need "$AI" 'acc_sync_compose "$SYNC_PROJECT" "$SYNC_OVERRIDE" down'
   if [ -n "$missing" ]; then
     echo "MISSING from a *-only gate:$missing"
   fi
@@ -135,7 +126,7 @@ _need() {
 
 @test "no *-only gate still defines the machinery the lib now provides" {
   stale=""
-  for f in "$QUIZ" "$CLASSIC" "$AI"; do
+  for f in "$QUIZ" "$CLASSIC"; do
     for name in compose_services sync_compose; do
       # Anchored at column 1: `acc_sync_compose()` must not match `sync_compose()`.
       if grep -q "^$name()" "$f"; then
@@ -197,7 +188,7 @@ gate_scripts() {
 # given), so only the account row and the id keys prove the real shape.
 @test "each *-only gate seeds its contestant by player id and never by login" {
   bad=""
-  for pair in "$QUIZ:quiz:answered:answers" "$CLASSIC:classic:solved:solves" "$AI:ai:solved:solves"; do
+  for pair in "$QUIZ:quiz:answered:answers" "$CLASSIC:classic:solved:solves"; do
     f="${pair%%:*}"; rest="${pair#*:}"; m="${rest%%:*}"; rest="${rest#*:}"; counter="${rest%%:*}"; rows="${rest#*:}"
     if grep -qF 'CONTESTANT_LOGIN' "$f"; then bad="$bad $f(CONTESTANT_LOGIN)"; fi
     if ! grep -qE '^CONTESTANT_ID=[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' "$f"; then bad="$bad $f(no v4 CONTESTANT_ID)"; fi

@@ -71,12 +71,11 @@ Between the two, CI asserts `apps/web/.next/server/app/index.html` does
 (resolved through a build-time-unreachable Redis read) freezes at build time.
 Check it after any build you run here.
 
-**quiz-only / classic-only / ai-only** (single-module compose bring-ups):
+**quiz-only / classic-only** (single-module compose bring-ups):
 
 ```sh
 ./scripts/acceptance-quiz-only.sh
 ./scripts/acceptance-classic-only.sh
-./scripts/acceptance-ai-only.sh
 ```
 
 **shell / setup** (provisioning and automation scripts):
@@ -465,8 +464,6 @@ suggestions.
 - [`docs/operations.md`](docs/operations.md) — running the event once it is
   up: admin panel and runtime overrides, teams, the event archive, per-module
   runbooks, pre-event verification, dev-stack, the pre-launch lock.
-- [`docs/ai-module.md`](docs/ai-module.md) — the `ai` module's contract with
-  the external challenge site: launch tokens, solve reporting, errors, keys.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — symptom-ordered
   runbook for a misbehaving stack: the `REDIS_PASSWORD` refusal, `/admin`
   403s from a config-less build, `fetch failed` between services.

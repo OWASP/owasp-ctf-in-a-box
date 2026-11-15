@@ -35,10 +35,6 @@ together on one leaderboard:
 - **Jeopardy** — a board of flag challenges in categories, with optional
   paid hints.
 
-A fourth module, **AI**, is deprecated: it keeps working in v1.x and is
-removed in v2.0.0. Run AI security challenges as Jeopardy challenges with
-flags instead.
-
 It runs from Docker Compose on a laptop, a spare desktop or a small VPS, plus
 one free GitHub org if you run Secure Development. The scoring rubrics for
 all six vulnerable apps ship in the box, so there is no private image to
@@ -126,13 +122,7 @@ challenge is marked case-sensitive, with a submission cooldown and optional
 paid hints. Challenges can be hidden or scheduled for later release. Needs no
 GitHub.
 
-**AI (deprecated, removed in v2.0.0)** — each contestant gets a personal
-launch link to the external challenge site; a solve reports back through that
-site's callback or a flag typed into the app. Needs no GitHub. The site's side
-of the contract is in [docs/ai-module.md](docs/ai-module.md). For a new event,
-run AI security challenges as Jeopardy challenges with flags.
-
-Quiz, Jeopardy and AI content is written in `/admin` or imported as one JSON
+Quiz and Jeopardy content is written in `/admin` or imported as one JSON
 bundle. Around whichever modules you enable, the platform provides:
 
 - **Teams** — self-registration with captains, join codes and `/join/<code>`
@@ -177,7 +167,7 @@ to write new ones, see [docs/scorer.md](docs/scorer.md).
 
 One Docker Compose stack. Caddy terminates TLS in front of the Next.js app,
 and the app reaches Redis only through a REST proxy on a split network, so
-nothing internet-facing can reach Redis directly. Quiz, Jeopardy and AI are
+nothing internet-facing can reach Redis directly. Quiz and Jeopardy are
 graded inside the app.
 
 Secure Development is graded *outside* the box: the contestant's fork runs a

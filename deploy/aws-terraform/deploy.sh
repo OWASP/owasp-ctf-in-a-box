@@ -14,9 +14,13 @@
 # Terraform cannot build an image, so a deploy is always two steps: this
 # script builds and pushes; `terraform apply` (or `--apply` below) rolls it
 # out. Config v2 (#386) removed the app's build-time config entirely — it
-# reads GITHUB_ORG and ADMIN_LOGINS from its environment at runtime now
-# (ecs.tf's app container definition), so this script has nothing left to
-# bake and no file to require.
+# reads GITHUB_ORG from its environment and ADMIN_CLAIM_CODE_HASH from SSM at
+# runtime (ecs.tf's app container definition), so this script has nothing
+# left to bake and no file to require.
+#
+# It also owns the admin claim code (ADR 72): the hash is an SSM SecureString
+# at <ssm_prefix>/ADMIN_CLAIM_CODE_HASH, created here when absent and replaced
+# under --new-admin-code. The code is printed once and never sent to AWS.
 #
 # Every tag is CONTENT-ADDRESSED: the app and sync to the revision that built
 # them, the scorer to its source's registry digest. ECR here is `IMMUTABLE`
@@ -41,6 +45,7 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 DRY_RUN=""
 SKIP_BUILD=""
 APPLY=""
+NEW_ADMIN_CODE=""
 # SCORE_IMAGE is the one name this kit has for "the scorer image".
 # --scorer-source overrides the shell; an unset or empty shell value falls back to
 # the repo-root .env only when the stack needs a scorer.
@@ -49,7 +54,7 @@ SCORER_SOURCE="${SCORE_IMAGE:-}"
 usage() {
   cat <<'EOT'
 usage: deploy/aws-terraform/deploy.sh [--dry-run] [--skip-build] [--apply]
-                                      [--scorer-source <image>]
+                                      [--scorer-source <image>] [--new-admin-code]
 
 Builds the app (and, on a Secure Development stack, sync) for linux/amd64,
 mirrors the scorer, pushes all of them to the ECR repositories this module
@@ -68,6 +73,11 @@ created, and writes the resulting refs to image.auto.tfvars.
                  revision. Refused when a tag is not there yet — there would be
                  nothing to deploy. The scorer is still pulled: its tag comes
                  from the source's digest.
+--new-admin-code writes a new admin claim code's hash to SSM
+                 (<ssm_prefix>/ADMIN_CLAIM_CODE_HASH), prints the code once,
+                 and forces a new app deployment so the running task reads it.
+                 The lock-out recovery path; combine with --skip-build. Without
+                 it the hash is created only when the parameter is absent.
 --dry-run        prints every command and makes none of them. Secrets redacted.
 
 Requires the bootstrap apply (docs/aws.md): the ECR URLs and region come from
@@ -88,6 +98,10 @@ while [ $# -gt 0 ]; do
     ;;
   --apply)
     APPLY=1
+    shift
+    ;;
+  --new-admin-code)
+    NEW_ADMIN_CODE=1
     shift
     ;;
   --scorer-source)
@@ -119,6 +133,8 @@ done
 . "$ROOT/scripts/lib/redact.sh"
 # shellcheck source=scripts/lib/dotenv.sh
 . "$ROOT/scripts/lib/dotenv.sh"
+# shellcheck source=scripts/lib/claim-code.sh
+. "$ROOT/scripts/lib/claim-code.sh"
 
 run() {
   if [ -n "$DRY_RUN" ]; then
@@ -323,6 +339,73 @@ echo "   revision   $REV"
 if [ -n "$SECDEV" ]; then
   echo "=> sync image $SYNC_IMAGE"
   echo "=> scorer     mirrored from $SCORER_SOURCE"
+fi
+
+# --- the admin claim code (ADR 72) -------------------------------------------
+#
+# The app reads ADMIN_CLAIM_CODE_HASH as a task secret from
+# <ssm_prefix>/ADMIN_CLAIM_CODE_HASH (ecs.tf). The presence check reads
+# METADATA only (describe-parameters), never the value. A failed check stops
+# the deploy: read as "absent" it would replace a live code nobody asked to
+# rotate. A dry run reads nothing and previews the write.
+CLAIM_ROTATED=""
+if [ -n "$DRY_RUN" ]; then
+  SSM_PREFIX="<ssm_prefix>"
+  KMS_KEY="<secrets_kms_key_arn>"
+  CLUSTER="<cluster_name>"
+  CLAIM_URL="<event_url>"
+else
+  if ! SSM_PREFIX="$(terraform -chdir="$HERE" output -raw ssm_prefix 2>/dev/null)" || [ -z "$SSM_PREFIX" ] ||
+    ! KMS_KEY="$(terraform -chdir="$HERE" output -raw secrets_kms_key_arn 2>/dev/null)" || [ -z "$KMS_KEY" ] ||
+    ! CLUSTER="$(terraform -chdir="$HERE" output -raw cluster_name 2>/dev/null)" || [ -z "$CLUSTER" ]; then
+    echo "FAIL: could not read ssm_prefix, secrets_kms_key_arn and cluster_name from" >&2
+    echo "      terraform output, which the admin claim code (ADMIN_CLAIM_CODE_HASH)" >&2
+    echo "      needs. Re-run the bootstrap apply (docs/aws.md)." >&2
+    exit 1
+  fi
+  CLAIM_URL="$(terraform -chdir="$HERE" output -raw event_url 2>/dev/null)" || CLAIM_URL=""
+fi
+CLAIM_PARAM="$SSM_PREFIX/ADMIN_CLAIM_CODE_HASH"
+
+write_claim=""
+if [ -n "$NEW_ADMIN_CODE" ]; then
+  write_claim=1
+elif [ -n "$DRY_RUN" ]; then
+  echo "   DRY-RUN: would check whether $CLAIM_PARAM exists (metadata only) and create it if not"
+else
+  if ! claim_count="$(aws ssm describe-parameters --region "$REGION" \
+    --parameter-filters "Key=Name,Values=$CLAIM_PARAM" \
+    --query 'length(Parameters)' --output text)"; then
+    claim_count=""
+  fi
+  case "$claim_count" in
+  0) write_claim=1 ;;
+  1) echo "=> admin claim code: $CLAIM_PARAM already in SSM" ;;
+  *)
+    echo "FAIL: could not tell whether $CLAIM_PARAM (ADMIN_CLAIM_CODE_HASH) exists in SSM;" >&2
+    echo "      refusing to guess. Check the region and your credentials, then re-run." >&2
+    exit 1
+    ;;
+  esac
+fi
+
+if [ -n "$write_claim" ]; then
+  overwrite=""
+  if [ -n "$NEW_ADMIN_CODE" ]; then overwrite="--overwrite"; fi
+  echo "=> admin claim code"
+  if [ -n "$DRY_RUN" ]; then
+    # shellcheck disable=SC2086 # $overwrite is one flag or nothing
+    run aws ssm put-parameter --region "$REGION" --type SecureString --key-id "$KMS_KEY" \
+      --name "$CLAIM_PARAM" --value "<new hash>" $overwrite
+  else
+    claim_code="$(claim_code_new)" || exit 1
+    claim_hash="$(claim_code_hash "$claim_code")" || exit 1
+    # shellcheck disable=SC2086 # $overwrite is one flag or nothing
+    aws ssm put-parameter --region "$REGION" --type SecureString --key-id "$KMS_KEY" \
+      --name "$CLAIM_PARAM" --value "$claim_hash" $overwrite >/dev/null
+    claim_code_announce "$claim_code" "${CLAIM_URL:-https://<domain>}" "./deploy/aws-terraform/deploy.sh --skip-build --new-admin-code"
+  fi
+  CLAIM_ROTATED=1
 fi
 
 # --- helpers -----------------------------------------------------------------
@@ -540,4 +623,16 @@ else
   echo
   echo "Images are in ECR and image.auto.tfvars names them. To roll them out:"
   echo "   terraform -chdir=deploy/aws-terraform apply"
+fi
+
+# ECS resolves a task's secrets only when the task starts, so a new hash
+# reaches the app only through a new deployment. After the apply, so it rolls
+# the task definition the apply just wrote.
+if [ -n "$CLAIM_ROTATED" ]; then
+  echo "=> restarting the app so it reads the new ADMIN_CLAIM_CODE_HASH"
+  if [ -n "$DRY_RUN" ]; then
+    run aws ecs update-service --region "$REGION" --cluster "$CLUSTER" --service app --force-new-deployment
+  else
+    aws ecs update-service --region "$REGION" --cluster "$CLUSTER" --service app --force-new-deployment >/dev/null
+  fi
 fi

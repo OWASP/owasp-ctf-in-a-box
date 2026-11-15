@@ -121,6 +121,11 @@ that can replace a task without dropping the event.
    aws ssm put-parameter --type SecureString --key-id $K --name $P/SCORER_TOKEN           --value "$(openssl rand -hex 24)"
    ```
 
+   One more parameter is **not** on this list: `$P/ADMIN_CLAIM_CODE_HASH`,
+   the SHA-256 of the one-time admin claim code. `deploy.sh` creates it, under
+   the same key, the first time it runs against the stack, and prints the code
+   once (see Locked out of /admin below).
+
    **`--key-id` is not optional.** The stack creates one customer-managed KMS
    key per event (`kms.tf`) and the execution role's `kms:Decrypt` names *only*
    that key — a grant on `"*"` would let this role decrypt every SecureString
@@ -176,7 +181,7 @@ it. One targeted apply creates both:
 
 ```sh
 cd deploy/aws-terraform
-cp terraform.tfvars.example terraform.tfvars    # then edit: domain, github_org, admin_logins, github_client_id, github_app_id
+cp terraform.tfvars.example terraform.tfvars    # then edit: domain, github_org, github_client_id, github_app_id
 cp backend.tf.example backend.tf                # then edit (see Remote state)
 terraform init
 terraform apply \
@@ -255,11 +260,30 @@ build an image, which is why this is a script and not an `apply` (#476):
   --repository-name <name>-app` lists them) and `terraform apply`.
 
 The app takes no build-time
-configuration at all (config v2, #386): `github_org` and `admin_logins` are
-plain Terraform variables, mirrored into the app's task-definition environment
-the same way `scorer_image` is — `terraform.tfvars` is this path's equivalent
-of the wizard's `.env`. Change either and roll it out with `terraform apply`;
-nothing needs rebuilding.
+configuration at all (config v2, #386): `github_org` is a plain Terraform
+variable, mirrored into the app's task-definition environment the same way
+`scorer_image` is — `terraform.tfvars` is this path's equivalent of the
+wizard's `.env`. Change it and roll it out with `terraform apply`; nothing
+needs rebuilding.
+
+### Locked out of /admin
+
+Admins are kit accounts that claimed a one-time **admin claim code** at
+`/admin/claim` ([ADR 72](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/docs/decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)). The app reads the code's SHA-256 from the
+SecureString `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` as a task secret.
+`deploy.sh` checks for that parameter by metadata only (`describe-parameters`,
+never a decrypting read), creates it when absent, and prints the code once.
+To get a new one:
+
+```sh
+./deploy.sh --skip-build --new-admin-code
+```
+
+It overwrites the parameter, prints the new code once, and forces a new
+deployment of the `app` service (after the apply, with `--apply`), because
+ECS resolves secrets only at task start. The code itself never reaches AWS,
+Terraform state or a tfvars file. `--dry-run --new-admin-code` calls nothing
+and prints the `put-parameter` with its value redacted.
 
 The app and sync tags are content-addressed to the git revision, and every ECR
 repository is `IMMUTABLE`. Same code gives the same tag, so a re-run reports
@@ -285,10 +309,8 @@ Every input is in `variables.tf` with its own description;
 | `app_image` | What ECS runs. `deploy.sh` writes it into `image.auto.tfvars`; the example carries a placeholder for the bootstrap apply. |
 | `scorer_image`, `sync_image` | Secure Development only. `deploy.sh` writes both into `image.auto.tfvars` (see The images). Each must be this stack's ECR repository in this account and region, or digest-pinned. |
 | `github_client_id` | The GitHub OAuth app's client id (public; the secret is `GITHUB_CLIENT_SECRET` in SSM). Without it no one can sign in. |
-| `admin_logins` | The `/admin` allowlist. Its `validation` block refuses a roster with no login at plan time — empty, or nothing but separators like `" , "` — because that would forbid everyone, you included, and the only fix is another apply. |
 
-`github_org` and `admin_logins` are read at runtime, not baked into the image.
-`github_org` defaults to `""` and is legal empty only for an event that does
+`github_org` is read at runtime, not baked into the image. It defaults to `""` and is legal empty only for an event that does
 not run Secure Development — the app then falls back to bare repo names. With
 `enable_secure_development = true` its own `validation` block requires it: sync
 exits at startup without one, and the app would have no org to build fork links

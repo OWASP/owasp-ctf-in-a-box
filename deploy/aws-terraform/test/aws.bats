@@ -8,7 +8,8 @@
 # deploy.sh.
 #
 # Config v2 (#386) removed the app's build-time config entirely: GITHUB_ORG
-# and ADMIN_LOGINS are runtime environment reads now (ecs.tf), so deploy.sh
+# is a runtime environment read and ADMIN_CLAIM_CODE_HASH a runtime secret now
+# (ecs.tf), so deploy.sh
 # has no file to require and no config to bake into the image. What used to be
 # the config-bake tests below now assert the ABSENCE of that machinery —
 # no --config flag, no EVENT_CONFIG_B64 build arg — with a named failure, so a
@@ -98,6 +99,7 @@ fake_repo() {
   cp "$SCRIPT" "$repo/deploy/aws-terraform/deploy.sh"
   cp "$ROOT/scripts/lib/redact.sh" "$repo/scripts/lib/redact.sh"
   cp "$ROOT/scripts/lib/dotenv.sh" "$repo/scripts/lib/dotenv.sh"
+  cp "$ROOT/scripts/lib/claim-code.sh" "$repo/scripts/lib/claim-code.sh"
   printf 'FROM scratch\n' > "$repo/apps/web/Dockerfile"
   git -C "$repo" init -q
   git -C "$repo" config user.email bats@example.invalid
@@ -281,6 +283,10 @@ case "\$*" in
   if [ "$secdev" = "1" ]; then printf '%s' "$ACCT_REGISTRY/owasp-ctf-sync"; fi ;;
 *ecr_scorer_repository_url*)
   if [ "$secdev" = "1" ]; then printf '%s' "$ACCT_REGISTRY/owasp-ctf-scorer"; fi ;;
+*ssm_prefix*) printf '%s' /owasp-ctf ;;
+*secrets_kms_key_arn*) printf '%s' arn:aws:kms:us-east-1:123456789012:key/fixture ;;
+*cluster_name*) printf '%s' owasp-ctf ;;
+*event_url*) printf '%s' https://ctf.example.org ;;
 esac
 exit 0
 EOF
@@ -299,6 +305,7 @@ case "\$*" in
   fi
   exit 254 ;;
 *get-login-password*) echo stub-password ;;
+*describe-parameters*) printf '%s\n' "\${CLAIM_PARAM_COUNT:-1}" ;;
 esac
 exit 0
 EOF
@@ -588,6 +595,7 @@ redact_shapes() {
     EVENT_URL=https://admin:LEAKurl10@ctf.example.org/path \
     https://x-access-token:LEAKbare11@github.com/org/repo.git \
     BETTER_AUTH_URL=https://ctf.example.org GITHUB_APP_ID=4242 \
+    --name /ctf/ADMIN_CLAIM_CODE_HASH --value LEAKssm13 \
     --platform linux/amd64 ghcr.io/org/score@sha256:abc123' _ "$REDACT_LIB"
 }
 
@@ -606,6 +614,7 @@ redact_shapes() {
   echo "$output" | grep -qF 'db_password=<redacted>'
   echo "$output" | grep -qF 'EVENT_URL=https://***@ctf.example.org/path'
   echo "$output" | grep -qF 'https://***@github.com/org/repo.git'
+  echo "$output" | grep -qF -- '--name /ctf/ADMIN_CLAIM_CODE_HASH --value <redacted>'
 }
 
 @test "redactor: harmless keys and arguments pass through untouched" {
@@ -620,4 +629,98 @@ redact_shapes() {
   grep -qF '. "$ROOT/scripts/lib/redact.sh"' "$SCRIPT"
   grep -qF 'DRY-RUN: $(redact_args "$@")' "$SCRIPT"
   [ -z "$(grep -nE '^[[:space:]]*redacted\(\)' "$SCRIPT")" ]
+}
+
+# --- the admin claim code (ADR 72) -------------------------------------------
+#
+# The hash is an SSM SecureString under ssm_prefix, encrypted with the
+# module's key and read by the app task as a secret. deploy.sh creates it when
+# absent (a metadata check: describe-parameters, never a decrypting read),
+# replaces it under --new-admin-code, and forces a new app deployment after a
+# rotation, because ECS resolves secrets only at task start. The code is
+# printed once and never reaches AWS; only its hash does.
+
+claim_code_of() { printf '%s\n' "$1" | grep -oE '([0-9a-f]{4}-){7}[0-9a-f]{4}' | head -1; }
+
+@test "first deploy creates the hash parameter and prints the code once" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_COUNT=0 run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  code="$(claim_code_of "$output")"
+  [ -n "$code" ]
+  [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
+  echo "$output" | grep -qF 'https://ctf.example.org/admin/claim'
+  want="$(bash -c '. "$1"; claim_code_hash "$2"' _ "$ROOT/scripts/lib/claim-code.sh" "$code")"
+  put="$(grep '^aws ssm put-parameter' "$CALLS")"
+  echo "$put" | grep -qF -- '--type SecureString'
+  echo "$put" | grep -qF -- '--key-id arn:aws:kms:us-east-1:123456789012:key/fixture'
+  echo "$put" | grep -qF -- '--name /owasp-ctf/ADMIN_CLAIM_CODE_HASH'
+  [ -z "$(grep -F "$code" "$CALLS")" ]
+  echo "$put" | grep -qF -- "--value $want"
+}
+
+@test "a deploy with the parameter present writes nothing and prints no code" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_COUNT=1 run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  [ -z "$(claim_code_of "$output")" ]
+  [ -z "$(grep -E '^aws (ssm put-parameter|ecs update-service)' "$CALLS")" ]
+}
+
+@test "--new-admin-code overwrites the parameter, then forces a new app deployment" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_COUNT=1 run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -n "$(claim_code_of "$output")" ]
+  echo "$output" | grep -qF -- './deploy/aws-terraform/deploy.sh --skip-build --new-admin-code'
+  put_at="$(grep -n '^aws ssm put-parameter' "$CALLS" | head -1 | cut -d: -f1)"
+  roll_at="$(grep -n '^aws ecs update-service' "$CALLS" | head -1 | cut -d: -f1)"
+  [ -n "$put_at" ]
+  [ -n "$roll_at" ]
+  grep '^aws ssm put-parameter' "$CALLS" | grep -qF -- '--overwrite'
+  grep '^aws ecs update-service' "$CALLS" | grep -qF -- '--cluster owasp-ctf --service app --force-new-deployment'
+  [ "$put_at" -lt "$roll_at" ]
+}
+
+@test "--new-admin-code with --apply rolls the app after the apply" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_COUNT=1 run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code --apply
+  [ "$status" -eq 0 ]
+  apply_at="$(grep -n '^terraform .*apply' "$CALLS" | head -1 | cut -d: -f1)"
+  roll_at="$(grep -n '^aws ecs update-service' "$CALLS" | head -1 | cut -d: -f1)"
+  [ -n "$apply_at" ]
+  [ -n "$roll_at" ]
+  [ "$apply_at" -lt "$roll_at" ]
+}
+
+@test "--dry-run --new-admin-code calls nothing and prints no code" {
+  run "$SCRIPT" --dry-run --new-admin-code
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF -- '--name <ssm_prefix>/ADMIN_CLAIM_CODE_HASH --value <redacted>'
+  echo "$output" | grep -qF -- '--force-new-deployment'
+  [ -z "$(claim_code_of "$output")" ]
+  [ ! -s "$CALLS" ]
+}
+
+@test "the presence check never decrypts" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_COUNT=1 run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  grep -q '^aws ssm describe-parameters' "$CALLS"
+  [ -z "$(grep -E 'get-parameter|--with-decryption' "$CALLS")" ]
+}
+
+@test "a failed presence check stops the deploy instead of reading it as absent" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_COUNT=oops run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'ADMIN_CLAIM_CODE_HASH'
+  [ -z "$(grep '^aws ssm put-parameter' "$CALLS")" ]
 }

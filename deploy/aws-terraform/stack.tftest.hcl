@@ -122,7 +122,6 @@ variables {
   scorer_image     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/owasp-ctf-scorer:mirror-0123456789ab"
   sync_image       = "123456789012.dkr.ecr.us-east-1.amazonaws.com/owasp-ctf-sync:0123456789ab"
   github_org       = "owasp-ctf-test"
-  admin_logins     = "octocat,defunkt"
 }
 
 // --- the input contracts, each one refused at PLAN time --------------------
@@ -183,8 +182,7 @@ run "secure_development_without_a_github_org_is_refused" {
 }
 
 // Not empty is not the same as set: `" "` reaches both task definitions
-// verbatim and names a fork path nothing resolves. Same shape as the
-// admin_logins blank-roster run.
+// verbatim and names a fork path nothing resolves.
 run "a_whitespace_only_github_org_is_refused" {
   command = plan
 
@@ -210,32 +208,6 @@ run "secure_development_with_a_github_org_is_accepted" {
     condition     = length(aws_ecs_service.scorer) == 1
     error_message = "A secure-development event with an org must run the scorer."
   }
-}
-
-// admin_logins' rule is UNCONDITIONAL, which is what separates it from the
-// two above: no event shape wants an empty admin roster. The string is the
-// /admin allowlist itself, so an empty one is a stack nobody can administer —
-// a 403 discovered after a clean apply, fixable only by another apply.
-run "an_event_with_no_admin_logins_is_refused" {
-  command = plan
-
-  variables {
-    admin_logins = ""
-  }
-
-  expect_failures = [var.admin_logins]
-}
-
-// The same lockout, spelled so that a `!= ""` rule would wave it through: a
-// roster of separators splits into nothing but blanks.
-run "an_admin_roster_of_blanks_is_refused" {
-  command = plan
-
-  variables {
-    admin_logins = " , "
-  }
-
-  expect_failures = [var.admin_logins]
 }
 
 run "an_event_with_no_certificate_source_is_refused" {
@@ -279,10 +251,10 @@ run "secure_development_event_runs_scorer_and_sync" {
     error_message = "app container must receive SCORE_IMAGE so the default module set matches the deployment"
   }
 
-  // Config v2 (#386): no build-time bake. GITHUB_ORG and ADMIN_LOGINS are
-  // runtime environment reads, mirrored into the task definitions like
-  // SCORE_IMAGE above — this is the assertion `terraform validate` cannot
-  // make on its own, since it never inspects the rendered container JSON.
+  // Config v2 (#386): no build-time bake. GITHUB_ORG is a runtime
+  // environment read, mirrored into the task definitions like SCORE_IMAGE
+  // above — this is the assertion `terraform validate` cannot make on its
+  // own, since it never inspects the rendered container JSON.
   assert {
     condition = anytrue([
       for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
@@ -291,12 +263,28 @@ run "secure_development_event_runs_scorer_and_sync" {
     error_message = "app container must receive GITHUB_ORG, or forks resolve to bare repo names."
   }
 
+  // ADR 72: the admin claim-code hash is a SECRET, by reference from SSM
+  // under this stack's prefix, and never an environment value; ADMIN_LOGINS
+  // is read by nothing and must not come back.
   assert {
     condition = anytrue([
-      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
-      e.name == "ADMIN_LOGINS" && e.value == var.admin_logins
+      for sec in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets :
+      sec.name == "ADMIN_CLAIM_CODE_HASH" && endswith(sec.valueFrom, "${var.ssm_prefix}/ADMIN_CLAIM_CODE_HASH")
     ])
-    error_message = "app container must receive ADMIN_LOGINS, or /admin 403s for everyone."
+    error_message = "app must receive ADMIN_CLAIM_CODE_HASH by reference, or nobody can claim /admin."
+  }
+
+  assert {
+    condition = !anytrue([
+      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
+      contains(["ADMIN_LOGINS", "ADMIN_CLAIM_CODE_HASH"], e.name)
+    ])
+    error_message = "the claim hash is a secret (never environment), and ADMIN_LOGINS is gone."
+  }
+
+  assert {
+    condition     = output.ssm_prefix == var.ssm_prefix
+    error_message = "deploy.sh reads ssm_prefix from outputs to write the claim hash."
   }
 
   assert {

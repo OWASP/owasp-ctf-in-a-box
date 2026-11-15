@@ -56,6 +56,11 @@ output "secrets_kms_key_arn" {
   value       = aws_kms_key.secrets.arn
 }
 
+output "ssm_prefix" {
+  description = "Where this stack's SecureStrings live. deploy.sh writes the admin claim-code hash at <ssm_prefix>/ADMIN_CLAIM_CODE_HASH."
+  value       = var.ssm_prefix
+}
+
 output "next_steps" {
   description = "What to do after apply."
   value       = <<-EOT
@@ -77,9 +82,13 @@ output "next_steps" {
          aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/SCORER_TOKEN           --value "$(openssl rand -hex 24)"
 
        (REDIS_AUTH_TOKEN and SRH_CONNECTION_STRING are written there by
-       Terraform, already under that key.)
+       Terraform, already under that key. ADMIN_CLAIM_CODE_HASH is written
+       there by deploy.sh in step 2.)
     2. Build, mirror and push the images (app; sync and scorer on a Secure
        Development event):  ./deploy.sh --scorer-source <SCORE_IMAGE>
+       The first run also creates the admin claim code and prints it ONCE:
+       open ${local.event_url}/admin/claim, sign in and enter it. Lost it, or
+       locked out?  ./deploy.sh --skip-build --new-admin-code
     3. If you did not set route53_zone_id, point ${var.domain} at ${aws_lb.main.dns_name}
     4. Set the OAuth app callback to ${local.event_url}/api/auth/callback/github
     5. Tear the event down when it ends:  terraform destroy

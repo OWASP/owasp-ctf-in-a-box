@@ -90,7 +90,7 @@ the `scorer` and `sync` repositories on a Secure Development event.
 
 ```sh
 cd deploy/aws-terraform
-cp terraform.tfvars.example terraform.tfvars    # edit: domain, github_org, admin_logins, github_client_id, github_app_id
+cp terraform.tfvars.example terraform.tfvars    # edit: domain, github_org, github_client_id, github_app_id
 cp backend.tf.example backend.tf                # edit: your state bucket (step 4)
 terraform init
 terraform apply \
@@ -144,12 +144,16 @@ Fargate services for whichever modules this event runs — a quiz-only event
 brings up no scorer and no poller, the same rule as the compose profiles.
 
 **Terraform cannot build an image; `deploy.sh` does.** The app takes no
-build-time configuration at all (config v2, #386): `github_org` and
-`admin_logins` are two Terraform variables, set in `terraform.tfvars` — this
-path's equivalent of the wizard's `.env` — and mirrored into the app's
-task-definition environment the same way `scorer_image` is. Change either and
-`terraform apply` rolls it out; nothing has to be rebuilt or repushed.
-`admin_logins` must name at least one login and `github_client_id` must be the
+build-time configuration at all (config v2, #386): `github_org` is a
+Terraform variable, set in `terraform.tfvars` — this path's equivalent of the
+wizard's `.env` — and mirrored into the app's task-definition environment the
+same way `scorer_image` is. Change it and `terraform apply` rolls it out;
+nothing has to be rebuilt or repushed. Admins are not a variable at all: the
+first `deploy.sh` run writes the admin claim code's hash to SSM as
+`<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` and prints the code once; sign in and
+enter it at `/admin/claim`. Lost it, or locked out?
+`./deploy.sh --skip-build --new-admin-code` writes a new one and restarts the
+app so it reads it. `github_client_id` must be the
 OAuth app's client id (without it no one can sign in). `github_org` and
 `github_app_id` are required whenever `enable_secure_development` is true:
 `sync` authenticates as a GitHub App and exits at startup without either. All
@@ -456,7 +460,7 @@ than waiting out its timeout.
 4. `terraform apply`. The previous task definition rolls out the same way
    the bad one did.
 
-A change to `admin_logins`, `github_org` or any other variable rolls back
+A change to `github_org` or any other variable rolls back
 the same way: set the old value and `terraform apply`.
 
 ### Load testing on AWS

@@ -113,6 +113,9 @@ locals {
     { name = "BETTER_AUTH_SECRET", valueFrom = "${local.secret_arn_prefix}/BETTER_AUTH_SECRET" },
     { name = "GITHUB_CLIENT_SECRET", valueFrom = "${local.secret_arn_prefix}/GITHUB_CLIENT_SECRET" },
     { name = "UPSTASH_REDIS_REST_TOKEN", valueFrom = "${local.secret_arn_prefix}/SRH_TOKEN" },
+    // The SHA-256 of the one-time admin claim code (ADR 72). deploy.sh writes
+    // it; the code itself never reaches AWS.
+    { name = "ADMIN_CLAIM_CODE_HASH", valueFrom = "${local.secret_arn_prefix}/ADMIN_CLAIM_CODE_HASH" },
   ]
 
   // One SCORER_TOKEN, two readers: the scorer checks it on every POST /score
@@ -340,11 +343,10 @@ resource "aws_ecs_task_definition" "app" {
       // and that is the ONLY module enabled before an organizer switches
       // others on in /admin (issue #386).
       { name = "SCORE_IMAGE", value = var.enable_secure_development ? var.scorer_image : "" },
-      // Config v2 (#386): no build-time bake. The app reads these from its
-      // own environment now, plain (non-secret) values, the same way
+      // Config v2 (#386): no build-time bake. The app reads this from its
+      // own environment, a plain (non-secret) value, the same way
       // SCORE_IMAGE travels above.
       { name = "GITHUB_ORG", value = var.github_org },
-      { name = "ADMIN_LOGINS", value = var.admin_logins },
       // The OAuth client id is public; its secret is in app_secrets.
       { name = "GITHUB_CLIENT_ID", value = var.github_client_id },
       // Unset, the board serves the mock fixture (leaderboard/source.ts);

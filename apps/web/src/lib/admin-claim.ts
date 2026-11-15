@@ -5,7 +5,7 @@ import { ADMIN_GRANTS_KEY } from "@/lib/admin-grants";
 import { upstashEval } from "@/lib/upstash";
 
 /**
- * Admin claim codes: the only way a kit account becomes an admin (ADR 73).
+ * Admin claim codes: the only way a kit account becomes an admin (ADR 72).
  *
  * A code is 128 random bits shown as 32 lowercase hex in eight groups of four.
  * Only its SHA-256 is ever stored or compared: the bootstrap hash comes from

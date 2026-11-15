@@ -9,7 +9,7 @@ import { getPlayer } from "@/lib/player";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 
 /**
- * Claim an admin seat with a one-time code (ADR 73).
+ * Claim an admin seat with a one-time code (ADR 72).
  *
  * Under /api/me, not /api/admin: every /api/admin route is behind
  * `requireAdmin`, and this one is how a non-admin becomes one.

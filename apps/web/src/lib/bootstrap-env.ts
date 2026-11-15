@@ -23,7 +23,7 @@ let warnedBadHash = false;
 
 /**
  * `ADMIN_CLAIM_CODE_HASH`, the SHA-256 of the bootstrap admin claim code
- * (ADR 73), trimmed and lowercased. Anything that is not 64 hex — most likely
+ * (ADR 72), trimmed and lowercased. Anything that is not 64 hex — most likely
  * the code itself pasted where its hash belongs — counts as unset, so nobody
  * can claim with it. That case logs one warning per process naming the key,
  * never the value: a pasted code IS the secret.

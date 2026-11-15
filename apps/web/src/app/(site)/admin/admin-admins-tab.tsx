@@ -1,6 +1,6 @@
 "use client";
 
-// The admin roster (ADR 73): who holds a grant, removing one, and issuing a
+// The admin roster (ADR 72): who holds a grant, removing one, and issuing a
 // one-time code that makes another kit account an admin at /admin/claim.
 // There is no "add by name" here on purpose: a code is the only way in.
 //

@@ -57,7 +57,7 @@ the Forbidden page.
 
 **Diagnosis.** An admin is a kit account that claimed an admin claim code at
 `/admin/claim`
-([ADR 73](decisions.md#adr-73-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
+([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
 The Forbidden page names which case you are in:
 
 - **"No organizer has claimed this box yet."** Nobody has claimed. Sign in,

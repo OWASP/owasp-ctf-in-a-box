@@ -1,5 +1,5 @@
 // `/admin/claim` — where a signed-in kit account enters an admin claim code
-// (ADR 73). A static segment, so it wins over `/admin/[tab]`. Not behind
+// (ADR 72). A static segment, so it wins over `/admin/[tab]`. Not behind
 // requireAdmin: this is how a non-admin becomes one. The grant itself happens
 // in POST /api/me/admin/claim; this page only decides which state to show.
 

@@ -301,7 +301,7 @@ suggestions.
   nothing falls back to a baked default: `ADMIN_CLAIM_CODE_HASH` (the SHA-256
   of the one-time admin claim code, never the code; empty or malformed means
   nobody can claim the first seat at `/admin/claim` — fail-closed,
-  `bootstrap-env.ts`, ADR 73; an admin is a player id in `ctf:admin:grants`,
+  `bootstrap-env.ts`, ADR 72; an admin is a player id in `ctf:admin:grants`,
   and `ADMIN_LOGINS` is read by nothing), `GITHUB_ORG` (empty means no fork links
   on `/challenges`, and `sync` refuses to start at all, logging
   `ctf-sync: GITHUB_ORG is not set`), and **`SCORE_IMAGE`, which is how a box

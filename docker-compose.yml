@@ -38,7 +38,7 @@ services:
       # issue #386): a runtime read, not a build arg, so it must be passed
       # through here or setting it in .env does nothing.
       GITHUB_ORG: ${GITHUB_ORG:-}
-      # The SHA-256 of the one-time admin claim code (ADR 73), never the code
+      # The SHA-256 of the one-time admin claim code (ADR 72), never the code
       # itself. Empty means nobody can claim the first admin seat at
       # /admin/claim — see apps/web/src/lib/bootstrap-env.ts.
       ADMIN_CLAIM_CODE_HASH: ${ADMIN_CLAIM_CODE_HASH:-}

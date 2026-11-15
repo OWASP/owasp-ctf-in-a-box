@@ -137,7 +137,7 @@ runtime `/admin` setting in the `ctf:admin:settings` hash. A review should
 verify: no `process.env` read reaches a client component (a client bundle
 must never see the claim-code hash, and `process.env` there is empty or
 misleading anyway); admin-ness is decided by the player id in
-`ctf:admin:grants` (`admin-auth.ts`/`isAdminPlayer`, ADR 73), never by a
+`ctf:admin:grants` (`admin-auth.ts`/`isAdminPlayer`, ADR 72), never by a
 GitHub login, and a grant read that errors denies; an empty or malformed
 `ADMIN_CLAIM_CODE_HASH` means nobody can claim, never "anyone may"; a claim
 code or its full hash is never logged, audited or rendered; an empty `GITHUB_ORG` degrades

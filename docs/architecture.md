@@ -742,7 +742,7 @@ keys without open-coding the strings.
 ## Organizer admin panel (runtime overrides)
 
 An admin grant (`ctf:admin:grants`, below; checked by player id in
-`apps/web/src/lib/admin-auth.ts`'s `requireAdmin`, [ADR 73](decisions.md#adr-73-admins-are-claimed-with-a-one-time-code-not-named-in-env))
+`apps/web/src/lib/admin-auth.ts`'s `requireAdmin`, [ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env))
 gates the runtime-override layer described above — the plane that *is*
 readable and writable while the stack is running, without a restart:
 
@@ -817,7 +817,7 @@ readable and writable while the stack is running, without a restart:
   and the outage fallback (`apps/web/src/lib/enabled-modules.ts`'s
   `getEnabledModuleIds()`), and the title/blurb validation above is checked
   against the *live* set.
-- **`ctf:admin:grants`** (Redis SET, ADR 73) — the player ids that hold an
+- **`ctf:admin:grants`** (Redis SET, ADR 72) — the player ids that hold an
   admin grant: the only roster. A set rather than a settings field because
   membership *is* the whole value. Grants are made only by claiming a code at
   `/admin/claim` and removed from the Admins tab; the revoke script refuses
@@ -1232,7 +1232,7 @@ Two fail directions, deliberately opposite and worth knowing apart:
   the claim answers 503 rather than granting. An empty or malformed
   `ADMIN_CLAIM_CODE_HASH` means nobody can claim the first seat; it never
   means "anyone may". Rotating the hash is the lock-out recovery path
-  ([ADR 73](decisions.md#adr-73-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
+  ([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
 - **A failed settings read fails OPEN**, to the defaults: not paused, the
   `SCORE_IMAGE`-derived module set, all six targets, the neutral identity. A
   Redis blip must never drop live submissions or lock a board. `sync` is the

@@ -8,7 +8,7 @@ import { auditActor } from "@/lib/admin-audit-keys";
 import { getPlayerProfiles, PLAYER_ID_RE } from "@/lib/player";
 
 /**
- * The admin roster (ADR 73). GET lists it, DELETE revokes one grant. Every
+ * The admin roster (ADR 72). GET lists it, DELETE revokes one grant. Every
  * method is behind `requireAdmin`. There is no grant here: the only way in is
  * a claim code (POST /api/admin/codes issues one, /admin/claim spends it).
  *

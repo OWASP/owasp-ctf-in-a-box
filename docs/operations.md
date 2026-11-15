@@ -160,7 +160,7 @@ to share, the captain's controls, and a header stat per enabled module.</sup>
 
 ## Organizer admin panel
 
-An admin is a kit account that claimed an **admin claim code** ([ADR 73](decisions.md#adr-73-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
+An admin is a kit account that claimed an **admin claim code** ([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
 Everyone else gets a 403 on `/admin` and its API routes; the Forbidden page
 links to `/admin/claim`.
 

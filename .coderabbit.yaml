@@ -306,7 +306,7 @@ reviews:
 
         requireAdmin direction — must fail CLOSED; an unreachable store denies
         rather than resolving to "no grant". Admin-ness is the player id in
-        `ctf:admin:grants` (ADR 73), never a GitHub login and never an env
+        `ctf:admin:grants` (ADR 72), never a GitHub login and never an env
         list. The claim route's rate limit is charged FAIL CLOSED
         (`failClosed: true`) and a claim error answers 503, never a grant. An
         empty or malformed `ADMIN_CLAIM_CODE_HASH` disables the bootstrap
@@ -831,7 +831,7 @@ reviews:
           changing enum membership (module ids, target ids), making an
           optional key required, or re-introducing a key a release removed
           (`SCORE_INGEST` — push ingest, removed in v0.6 by #377;
-          `ADMIN_LOGINS` — replaced by claim codes, ADR 73).
+          `ADMIN_LOGINS` — replaced by claim codes, ADR 72).
           `.env.example`, `ctf-setup.sh`'s wizard, and the docs must change
           too.
 

@@ -3,7 +3,7 @@ import { isAdminGrantee } from "@/lib/admin-grants";
 import { getPlayer, PLAYER_ID_RE, type Player } from "@/lib/player";
 
 /**
- * True when `playerId` holds an admin grant (ADR 73). Admin-ness is decided
+ * True when `playerId` holds an admin grant (ADR 72). Admin-ness is decided
  * by the kit player id alone; a GitHub login, linked or not, grants nothing.
  *
  * False for anything that is not a player id, without a Redis read. A Redis

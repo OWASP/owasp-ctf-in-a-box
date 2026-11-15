@@ -5,7 +5,7 @@ import { adminErrorLabel } from "@/lib/admin-store";
 import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
- * Issue a single-use admin claim code that expires in 15 minutes (ADR 73).
+ * Issue a single-use admin claim code that expires in 15 minutes (ADR 72).
  * The response is the ONE place the code exists outside the issuing admin's
  * screen: only its hash is stored, it is never logged, and the answer is
  * `no-store` so no cache keeps it.

@@ -273,11 +273,14 @@ Admins are kit accounts that claimed a one-time **admin claim code** at
 `/admin/claim` ([ADR 72](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/docs/decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)). The app reads the code's SHA-256 from the
 SecureString `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` as a task secret.
 Terraform creates that parameter with a placeholder and `ignore_changes` on its
-value, so the real hash is never in a plan or in state. `deploy.sh` reads the
+value, so a plan never shows the real hash as drift and never writes the
+placeholder back over it. The plaintext code never reaches Terraform; the hash
+may still sit in state, as a sensitive value, once a refresh reads the
+parameter back, like the module's other SSM secrets. `deploy.sh` reads the
 parameter's version by metadata only (`describe-parameters`, never a
 decrypting read): version 1 is the placeholder, so it writes a code and prints
-it once; a higher version is left alone. Before the stack is fully applied it
-publishes the images and says the code is not set yet. To get a new one:
+it once; a higher version is left alone. Until the stack has been applied
+with the parameter, it publishes the images and says the code is not set yet. To get a new one:
 
 ```sh
 ./deploy.sh --skip-build --new-admin-code
@@ -288,7 +291,7 @@ deployment of the `app` service when it exists — ECS resolves secrets only at
 task start — and then prints the new code once; it is live when that
 deployment finishes. If the roll fails, the code is in SSM but not live yet,
 and the script prints the `update-service` command that finishes it. The code itself never reaches AWS,
-Terraform state or a tfvars file. `--dry-run --new-admin-code` calls nothing
+Terraform or a tfvars file; only its hash does. `--dry-run --new-admin-code` calls nothing
 and prints the `put-parameter` with its value redacted.
 
 The app and sync tags are content-addressed to the git revision, and every ECR

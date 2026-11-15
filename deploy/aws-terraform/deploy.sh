@@ -600,7 +600,7 @@ if [ -n "$DRY_RUN" ]; then
 elif ! SSM_PREFIX="$(terraform -chdir="$HERE" output -raw ssm_prefix 2>/dev/null)" || [ -z "$SSM_PREFIX" ] ||
   ! KMS_KEY="$(terraform -chdir="$HERE" output -raw secrets_kms_key_arn 2>/dev/null)" || [ -z "$KMS_KEY" ] ||
   ! CLUSTER="$(terraform -chdir="$HERE" output -raw cluster_name 2>/dev/null)" || [ -z "$CLUSTER" ]; then
-  claim_not_ready "the stack has not been fully applied (no ssm_prefix, secrets_kms_key_arn or cluster_name output)"
+  claim_not_ready "the stack has not been applied since the claim-code parameter was added (no ssm_prefix, secrets_kms_key_arn or cluster_name output)"
 else
   CLAIM_URL="$(terraform -chdir="$HERE" output -raw event_url 2>/dev/null)" || CLAIM_URL=""
   CLAIM_PARAM="$SSM_PREFIX/ADMIN_CLAIM_CODE_HASH"

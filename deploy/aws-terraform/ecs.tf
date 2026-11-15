@@ -302,9 +302,11 @@ resource "aws_ecs_service" "srh" {
 // stack and an upgraded one come up the same way; deploy.sh owns the VALUE.
 // The placeholder is not 64 hex, so the app reads it as unset and nobody can
 // claim until deploy.sh writes a real hash (fail closed). `ignore_changes`
-// keeps that hash out of every plan and out of state: Terraform never reads it
-// back as drift and never writes the placeholder over it. deploy.sh tells the
-// two apart by the parameter's version (1 = this placeholder).
+// stops a plan from showing that hash as drift or writing the placeholder over
+// it; a refresh still reads the hash back into state as a sensitive value,
+// like this module's other SSM secrets. The plaintext code never reaches
+// Terraform. deploy.sh tells the two apart by the parameter's version (1 =
+// this placeholder).
 resource "aws_ssm_parameter" "admin_claim_code_hash" {
   name        = "${var.ssm_prefix}/ADMIN_CLAIM_CODE_HASH"
   description = "SHA-256 of the one-time admin claim code for ${var.name}. Written by deploy.sh; this placeholder means not set."
@@ -322,6 +324,11 @@ locals {
 }
 
 resource "aws_ecs_task_definition" "app" {
+  // The claim-hash secret is referenced by a built ARN string, which gives
+  // Terraform no edge to the parameter; without this a first apply could
+  // register (and start) the task before the parameter exists.
+  depends_on = [aws_ssm_parameter.admin_claim_code_hash]
+
   family                   = "${var.name}-app"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"

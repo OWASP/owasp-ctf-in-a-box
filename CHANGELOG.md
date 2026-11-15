@@ -47,7 +47,8 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   `.env.fly` its own code, and `deploy.sh --new-admin-code` rotates it on a
   deploy. On AWS, Terraform creates the SSM SecureString
   `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` holding a placeholder the app reads as
-  unset (its value is ignored by later plans), and
+  unset (later plans ignore its value; the hash, never the code, may sit in
+  state as a sensitive value), and
   `deploy/aws-terraform/deploy.sh` writes the hash into it once the stack
   exists; `--new-admin-code` replaces it and rolls the app. `dev-stack`
   writes a code into its throwaway env. The dry-run redactor hides `*_HASH`

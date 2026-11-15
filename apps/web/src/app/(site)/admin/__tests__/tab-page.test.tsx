@@ -27,10 +27,9 @@ vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 // is left real so it falls through to the `getAdminSettings` mock below,
 // same as page.test.tsx's copy of this comment.
 vi.mock("next/server", () => ({ connection: async () => {} }));
-// `listEnvAdmins` is read alongside `requireAdmin` (the forbidden-wall's
-// ADMIN_LOGINS-empty-or-unparseable notice, admin-panel.tsx) — same reason
-// as page.test.tsx's copy of this comment.
-vi.mock("@/lib/admin-auth", () => ({ requireAdmin, listEnvAdmins: () => [] }));
+// Same grant count as page.test.tsx, for the same reason.
+vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
+vi.mock("@/lib/admin-grants", () => ({ countAdminGrants: async () => 1 }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings, getSyncStatus }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules, getModuleSetup }));
 // Same reason as page.test.tsx: admin-panel.tsx now reads getSite() too, and
@@ -43,6 +42,8 @@ vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules, getModuleSetup })
 vi.mock("@/lib/site", () => ({ getSite: async () => ({ name: "Plumbed CTF" }) }));
 
 import AdminTabPage from "@/app/(site)/admin/[tab]/page";
+
+const ADMIN_PLAYER = { id: "00000000-0000-4000-8000-0000000000a1", name: "alice", image: null, githubLogin: null };
 
 // The same minimal settings shape page.test.tsx uses — `moduleOverrides` is
 // not optional in practice: the module panels index into it.
@@ -68,7 +69,7 @@ function selectedTab(html: string): string | null {
 }
 
 function asAdmin(): void {
-  requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  requireAdmin.mockResolvedValue({ ok: true, player: ADMIN_PLAYER });
   getAdminSettings.mockResolvedValue(SETTINGS);
   getSyncStatus.mockResolvedValue(null);
 }

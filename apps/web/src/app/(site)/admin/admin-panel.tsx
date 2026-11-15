@@ -5,14 +5,16 @@
 // courteous dead end.
 
 import { headers } from "next/headers";
+import Link from "next/link";
 import PageHeader from "@/components/page-header";
 import { phaseFromSettings } from "@/components/phase";
-import { listEnvAdmins, requireAdmin } from "@/lib/admin-auth";
+import { requireAdmin } from "@/lib/admin-auth";
+import { countAdminGrants } from "@/lib/admin-grants";
 import { getAdminSettings, getSyncStatus } from "@/lib/admin-store";
 import { joinAppNames } from "@/lib/apps";
 import { getEnabledApps } from "@/lib/enabled-apps";
 import { defaultModuleIds } from "@/lib/enabled-modules";
-import { getGithubOrg } from "@/lib/bootstrap-env";
+import { adminClaimCodeHash, getGithubOrg } from "@/lib/bootstrap-env";
 import type { ModuleSetupContent, OrgContext } from "@/lib/modules";
 import { secureDevAvailable } from "@/lib/module-defaults";
 import { getModuleSetup, getResolvedModules } from "@/lib/resolved-modules";
@@ -20,29 +22,43 @@ import { getSite } from "@/lib/site";
 import AdminControls from "@/app/(site)/admin/admin-controls";
 import AdminHeader from "@/app/(site)/admin/admin-header";
 
+const WALL_NO_ADMINS =
+  "No organizer has claimed this box yet. Open /admin/claim and enter the admin claim code from setup.";
+const WALL_NO_HASH =
+  "ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256 — run ./setup/ctf-setup.sh admin-code (or redeploy with --new-admin-code) and restart the app.";
+
 export default async function AdminPanel({ tab }: { tab?: string }) {
   const gate = await requireAdmin(await headers());
 
   if (!gate.ok) {
-    // A boolean only — never the list itself. When ADMIN_LOGINS is empty,
-    // requireAdmin refuses EVERY login (admin-auth.ts's fail-closed check,
-    // runtime grants included), so this wall is the one surface an organizer
-    // stuck in that state actually sees; the Admins tab is unreachable to
-    // say it instead. `listEnvAdmins()` reads the same module-load snapshot
-    // `requireAdmin` above already checked, so the gate and the wall can
-    // never disagree (#386 review).
-    const envEmpty = listEnvAdmins().length === 0;
+    // Booleans only cross into the markup — never the hash, never the roster.
+    // With nobody claimed, this wall is the one surface the organizer sees,
+    // so it says how to get in. The count is best-effort: a read error shows
+    // no notice rather than a wrong one.
+    const noAdmins = await countAdminGrants().then(
+      (n) => n === 0,
+      () => false,
+    );
+    const noHash = adminClaimCodeHash() === "";
     return (
       <div className="flex flex-col gap-8">
         <PageHeader eyebrow="Admin" title="Forbidden" description="Organizer access only." />
         <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] px-5 py-10 text-center">
           <p className="text-sm text-zinc-400">
-            You need to be an organizer to view this page.
+            You need to be an organizer to view this page. Have an admin claim code?{" "}
+            <Link href="/admin/claim" className="text-white hover:underline">
+              Enter it at /admin/claim
+            </Link>
+            .
           </p>
-          {envEmpty && (
+          {noAdmins && (
             <p role="alert" className="mt-3 text-sm text-[#e53e3e]">
-              ADMIN_LOGINS is empty or holds no valid GitHub login — nobody can use /admin until it
-              is set and the app restarts.
+              {WALL_NO_ADMINS}
+            </p>
+          )}
+          {noAdmins && noHash && (
+            <p role="alert" className="mt-3 text-sm text-[#e53e3e]">
+              {WALL_NO_HASH}
             </p>
           )}
         </div>
@@ -106,7 +122,7 @@ export default async function AdminPanel({ tab }: { tab?: string }) {
           modules={modules}
           setups={setups}
           initialTab={tab}
-          viewerLogin={gate.login}
+          viewerId={gate.player.id}
           sync={sync}
           eventName={site.name}
         />

@@ -1,7 +1,6 @@
 import "server-only";
 import { ADJUSTMENTS_KEY } from "@/lib/adjustment-keys";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
-import { ADMIN_ADMINS_KEY, LOGIN_RE } from "@/lib/admin-admins";
 import { TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
 import { SCORE_COOLDOWN_MIN_MAX } from "@/lib/scoring-defaults";
 import {
@@ -864,52 +863,4 @@ export async function seedDemoData(
   actor: AuditActor,
 ): Promise<{ contestants: number; teams: number; solves: number; sponsors: number }> {
   return runDemoSeed(await getAdminSettings(), actor);
-}
-
-
-// --- runtime admins ----------------------------------------------------------
-
-// The key, the login pattern and the READ live in admin-admins.ts so the
-// authorization path can import them without pulling in this module and the
-// module registry behind it. Re-exported here so callers that already talk to
-// the admin store keep one import.
-export { ADMIN_ADMINS_KEY, listStoredAdmins } from "@/lib/admin-admins";
-
-// SADD/SREM plus one audit line, in a single script, so a grant can never
-// land without its record — the same guarantee updateAdminSettings gives.
-// Exported for the live suite only.
-export const ADMINS_SCRIPT = `
-if ARGV[1] == 'add' then redis.call('SADD', KEYS[1], ARGV[2])
-else redis.call('SREM', KEYS[1], ARGV[2]) end
-redis.call('LPUSH', KEYS[2], ARGV[3])
-redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]))
-return redis.call('SMEMBERS', KEYS[1])`;
-
-async function mutateAdmins(action: "add" | "remove", login: string, actor: AuditActor): Promise<string[]> {
-  const normalized = login.trim().toLowerCase();
-  if (!normalized) throw new AdminValidationError("login", "login is required");
-  if (!LOGIN_RE.test(normalized)) {
-    throw new AdminValidationError("login", `'${login}' is not a GitHub login`);
-  }
-  const at = new Date().toISOString();
-  const audit = JSON.stringify({ at, by: actor.id, name: actor.name, action: `admin:${action}`, login: normalized });
-  const res = await upstashEval(
-    ADMINS_SCRIPT,
-    [ADMIN_ADMINS_KEY, ADMIN_AUDIT_KEY],
-    [action, normalized, audit, String(AUDIT_CAP - 1)],
-  );
-  const arr = Array.isArray(res) ? (res as string[]) : [];
-  return arr.map((a) => String(a).toLowerCase()).sort();
-}
-
-/** Grant admin to `login` at runtime. Idempotent (SADD). */
-export async function addStoredAdmin(login: string, actor: AuditActor): Promise<string[]> {
-  return mutateAdmins("add", login, actor);
-}
-
-/** Revoke a RUNTIME grant. Cannot touch a baked admin — the route refuses
- *  that before calling here, because a baked login is the lockout recovery
- *  path and must survive any mistake made through the panel. */
-export async function removeStoredAdmin(login: string, actor: AuditActor): Promise<string[]> {
-  return mutateAdmins("remove", login, actor);
 }

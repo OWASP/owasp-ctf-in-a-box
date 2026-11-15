@@ -1,20 +1,31 @@
-// Config v2: `ADMIN_LOGINS` replaces the baked `event.yaml` `admins:` array
-// (issue #386). The badge/hint copy is behind `useState` (`rows` starts
-// `null` until the mount effect's fetch resolves), and this repo has no
-// @testing-library/act to observe a live re-render — see
-// admin-support-tab.test.tsx's header comment for the pattern this follows:
-// pin the exported pure values instead of the markup.
-//
-// The "ADMIN_LOGINS is empty" notice does NOT live on this tab — see the
-// comment in admin-admins-tab.tsx for why (this tab is unreachable while the
-// env set is empty) — it lives on the Forbidden wall instead; see
-// admin-panel.test.tsx.
+// The Admins tab's copy and first render. The rows and an issued code are
+// behind `useState` and this repo has no @testing-library/act to observe a
+// live re-render (see admin-support-tab.test.tsx), so the stateful copy is
+// pinned through the exported pure values instead of markup.
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ENV_ADMIN_BADGE, ENV_ADMIN_CHANGE_HINT } from "@/app/(site)/admin/admin-admins-tab";
+import AdminAdminsTab, { ISSUE_HELP, codeNotice } from "@/app/(site)/admin/admin-admins-tab";
 
-describe("env-admin badge copy", () => {
-  it("points at .env / restart, not the dead event.yaml / rebuild bake", () => {
-    expect(ENV_ADMIN_BADGE).toBe(".env");
-    expect(ENV_ADMIN_CHANGE_HINT).toBe("restart to change");
+describe("issued-code copy", () => {
+  it("tells the issuer where the code goes and that it is single-use and short-lived", () => {
+    expect(ISSUE_HELP).toContain("/admin/claim");
+    expect(ISSUE_HELP).toContain("works once");
+    expect(ISSUE_HELP).toContain("15 minutes");
+  });
+
+  it("says the code works once and when it expires", () => {
+    const text = codeNotice("2026-11-15T12:34:00.000Z");
+    expect(text).toContain("works once");
+    expect(text).toContain("expires at");
+  });
+});
+
+describe("first render", () => {
+  it("offers to issue a code and has no field for a GitHub login", () => {
+    const html = renderToStaticMarkup(createElement(AdminAdminsTab, { viewerId: "x" }));
+    expect(html).toContain("Issue admin code");
+    expect(html).not.toContain("github-login");
+    expect(html).not.toContain('id="admin-login"');
   });
 });

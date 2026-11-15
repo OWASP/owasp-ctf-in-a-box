@@ -57,8 +57,7 @@ describe("GET /api/post-signin", () => {
     expect(url.pathname).toBe("/quiz");
   });
 
-  // The team lookup is keyed by the player id; admin-ness is still decided on
-  // the GitHub login (ADMIN_LOGINS).
+  // The team lookup and the admin check are both keyed by the player id.
   it("asks the team store about the player id and the admin check about the same id", async () => {
     await GET(req("/quiz"));
     expect(hasTeam).toHaveBeenCalledWith(ALICE_ID);

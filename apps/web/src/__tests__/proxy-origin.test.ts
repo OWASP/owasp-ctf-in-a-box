@@ -69,21 +69,3 @@ describe("the proxy's cross-origin refusal", () => {
     expect(res.headers.get("content-type")).toContain("application/json");
   });
 });
-
-describe("the ai module's cross-origin routes", () => {
-  it("lets a cross-origin POST through to /api/ai/*, unlike every other api route", () => {
-    // The whole ai module is an EXTERNAL challenge posting back to the box.
-    // A same-origin assertion here would refuse every legitimate call.
-    const aiRes = proxy(request("/api/ai/event", "POST", "https://game.example.com"));
-    expect(aiRes.status).not.toBe(403);
-
-    // The exemption must be scoped to the ai prefix and nothing else.
-    const classicRes = proxy(request("/api/classic/submit", "POST", "https://game.example.com"));
-    expect(classicRes.status).toBe(403);
-  });
-
-  it("does not exempt a path that merely starts with the same letters", () => {
-    const res = proxy(request("/api/airline", "POST", "https://evil.example.com"));
-    expect(res.status).toBe(403);
-  });
-});

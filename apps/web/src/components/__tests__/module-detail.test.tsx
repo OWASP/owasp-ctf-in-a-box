@@ -48,18 +48,6 @@ describe("ModuleDetail", () => {
     expect(html).not.toContain("answered");
   });
 
-  it("renders the ai shape from a discriminated detail", () => {
-    const progress: ModuleProgress = {
-      points: 20, completed: 2, lastActivityAt: null,
-      detail: { kind: "ai", solved: 2, total: 3, points: 20 },
-    };
-    const html = renderToStaticMarkup(<ModuleDetail moduleId="ai" progress={progress} entry={entry()} enabledApps={[]} />);
-    expect(html).toMatch(/2\s*\/\s*3/);
-    expect(html).toContain("challenges");
-    expect(html).not.toContain("answered");
-    expect(html).not.toContain("flags");
-  });
-
   it("renders the secure-development shape from a discriminated detail", () => {
     const progress: ModuleProgress = {
       points: 30, completed: 3, lastActivityAt: null,

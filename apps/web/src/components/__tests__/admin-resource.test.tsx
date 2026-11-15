@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// The list-plus-editor state the quiz, classic and ai admin panels share.
+// The list-plus-editor state the quiz and classic admin panels share.
 // This suite runs under happy-dom so `renderHook` can mount the hook with
 // effects and asynchronous state updates. The transport functions
 // (`loadResource`, `postRow`, `writeBackReorder`) are proven directly against

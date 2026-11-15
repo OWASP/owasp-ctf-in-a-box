@@ -1,6 +1,6 @@
 // The phrase a delete confirmation makes an organizer retype — shared by the
-// quiz (a question's prompt), classic and ai (a challenge's title) admin
-// panels, which used to carry three copies of the same algorithm.
+// quiz (a question's prompt) and classic (a challenge's title) admin
+// panels.
 //
 // The phrase is the item's own human-readable text, never its id: reading an
 // id back proves only that someone can copy a string, not that they know
@@ -34,7 +34,7 @@ export const DELETE_CONFIRM_PHRASE_MAX = 48;
  *
  *  A blank/whitespace-only `text` yields `fallback`. `ConfirmModal` treats an
  *  empty `requireType` as "no confirmation required", so a challenge with a
- *  blank title would otherwise delete on one click; classic and ai pass the
+ *  blank title would otherwise delete on one click; classic passes the
  *  item's id (always non-empty by its id regex) for exactly that case. The
  *  quiz passes nothing — a question's prompt is required non-empty — and gets
  *  the empty string it always did. */

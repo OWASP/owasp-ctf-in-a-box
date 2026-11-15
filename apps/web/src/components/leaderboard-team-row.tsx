@@ -33,7 +33,6 @@ function teamModuleRow(id: ModuleId, progress: ModuleProgress, team: TeamStandin
     case "quiz":
       return { ...base, done: detail.answered, total: detail.total, max: 0 };
     case "classic":
-    case "ai":
       return { ...base, done: detail.solved, total: detail.total, max: 0 };
     case "secure-development": {
       const apps = Object.values(team.apps ?? detail.apps);

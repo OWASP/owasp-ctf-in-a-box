@@ -1,7 +1,6 @@
 // HintRevealButton (hint-reveal-button.tsx) is the single challenge page's paid-hint
-// control, shared by classic (flags/[id]) and ai (ai/[id]) — generalized from
-// the classic-only `ClassicHint` by replacing its hardcoded `app: "classic"`
-// reveal-request field with the caller's `app` prop (Task 2, issue #211).
+// control on flags/[id]: its reveal-request `app` field is the caller's `app`
+// prop, never a hardcoded target.
 //
 // SOURCE-level assertions, same reasoning as focus-management.test.ts: the
 // component is a "use client" control whose click handler fires a `fetch` —
@@ -21,7 +20,7 @@ describe("HintRevealButton posts the target app in its reveal request", () => {
     expect(src).toMatch(/body:\s*JSON\.stringify\(\{\s*app,\s*id,\s*quotedCost:\s*price\s*\}\)/);
   });
 
-  it.each(["classic", "ai"] as const)('never hardcodes app: "%s"', (app) => {
+  it.each(["classic"] as const)('never hardcodes app: "%s"', (app) => {
     expect(src).not.toMatch(new RegExp(`app:\\s*"${app}"`));
   });
 });

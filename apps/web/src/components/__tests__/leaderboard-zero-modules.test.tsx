@@ -4,9 +4,9 @@
 //     falls back to it only when there are no module rows at all, so the
 //     data layer stamps Secure Development at zero beside the others);
 //   - start the per-item list fetch on a row that has completed nothing
-//     outside Secure Development (BoardItemLists is mocked to a marker for
-//     the same reason as in leaderboard-ai-only.test.tsx: its real markup is
-//     always empty under a static render, so the GATE is what is pinned).
+//     outside Secure Development (BoardItemLists is mocked to a marker: its
+//     real markup is always empty under a static render, so the GATE is what
+//     is pinned).
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 

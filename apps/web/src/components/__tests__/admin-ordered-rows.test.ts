@@ -1,4 +1,4 @@
-// The ordered-list arithmetic the quiz, classic and ai admin panels share:
+// The ordered-list arithmetic the quiz and classic admin panels share:
 // sorting by `order`, upserting one row, the next free position, and the
 // drag/keyboard reorder that renumbers from list position. The quiz and
 // classic panels used to carry copies differing only in whether a row's

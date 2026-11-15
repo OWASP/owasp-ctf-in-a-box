@@ -113,12 +113,6 @@ describe("SortableList", () => {
     expect(html.match(/>Delete</g)?.length).toBe(2);
   });
 
-  it("renders rowExtra under each row", () => {
-    const html = render({ rowExtra: (r) => <span>extra for {r.item.id}</span> });
-    expect(html).toContain("extra for a");
-    expect(html).toContain("extra for b");
-  });
-
   describe("grouped", () => {
     const grouped: Row[] = [
       { item: { id: "c1", title: "Crypto one", order: 1, group: "Crypto" } },

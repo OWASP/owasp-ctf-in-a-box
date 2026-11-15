@@ -18,9 +18,7 @@ import type { LeaderboardEntry, TeamStanding } from "@/lib/leaderboard/types";
 import { moduleVerb } from "@/components/progress/progress-row";
 
 /** Each module's own noun for a completed item, from the shared vocabulary
- *  every progress surface now reads. This map used to be local, name only
- *  three modules, and fall through to "solved" for anything else — so a
- *  member who had played classic AND ai read "3 solved · 3 solved". */
+ *  every progress surface reads, so two modules never both read "solved". */
 function memberSummary(entry: LeaderboardEntry | null): string | null {
   if (!entry?.modules) return null;
   const parts = Object.entries(entry.modules)

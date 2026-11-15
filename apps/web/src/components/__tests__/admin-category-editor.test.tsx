@@ -1,5 +1,4 @@
-// The category manager the classic and ai admin panels share — byte-identical
-// JSX and identical add/remove/move logic before extraction. The decisions
+// The category manager the classic admin panel renders. The decisions
 // (duplicate name, still-in-use refusal, move bounds) are pure and exported
 // because this repo's tests render with `renderToStaticMarkup` in vitest's
 // node environment and cannot click; the list markup is proven statically.

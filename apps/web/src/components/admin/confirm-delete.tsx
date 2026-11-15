@@ -1,6 +1,6 @@
 "use client";
 
-// The delete confirmation the module admin panels (quiz, classic, ai) share:
+// The delete confirmation the module admin panels (quiz, classic) share:
 // `ConfirmModal` in its destructive, type-to-confirm shape — Confirm stays
 // disabled until the organizer types the item's own phrase (see
 // components/admin/confirm-phrase.ts) — with the line a failed DELETE lands on

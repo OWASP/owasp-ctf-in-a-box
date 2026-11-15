@@ -48,6 +48,13 @@ describe("parseEventBundle", () => {
     expect(res.errors[0].message).not.toContain(String(EVENT_BUNDLE_VERSION + 1));
   });
 
+  it("refuses an archive that carries an ai section, even beside a valid classic section", () => {
+    const res = parseEventBundle(JSON.stringify({ ...valid, ai: { categories: [], items: [] } }));
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("unreachable");
+    expect(res.errors.some((e) => e.where === "ai")).toBe(true);
+  });
+
   it("refuses a version older than EVENT_BUNDLE_MIN_VERSION", () => {
     const res = parseEventBundle(JSON.stringify({ ...valid, version: EVENT_BUNDLE_MIN_VERSION - 1 }));
     expect(res.ok).toBe(false);

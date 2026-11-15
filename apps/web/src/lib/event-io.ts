@@ -225,6 +225,14 @@ export function parseEventBundle(raw: string): EventParseResult {
     }
   }
 
+  // This box has no `ai` module. An archive that carries one is refused
+  // outright rather than imported without it: the version stamp does not
+  // distinguish such an export, and a partial import would reset the event
+  // and drop that content without saying so.
+  if (parsed.ai !== undefined) {
+    errors.push({ where: "ai", message: 'Bundle "ai" section is not supported by this box' });
+  }
+
   if (
     parsed.classic === undefined &&
     parsed.quiz === undefined &&

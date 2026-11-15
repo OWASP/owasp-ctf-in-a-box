@@ -34,14 +34,28 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   **Breaking:** `ADMIN_LOGINS` is ignored; a GitHub login no longer makes
   anyone an admin, and grants made from the v1 panel (`ctf:admin:admins`)
   are not read. The Admins tab's add-by-login form and
-  `POST /api/admin/admins` are gone. **Upgrade note:** on a Docker Compose
-  box, set the hash by hand, since setup does not write it yet: run
-  `c=$(openssl rand -hex 16); echo "$c"; printf %s "$c" | openssl dgst -sha256`,
-  put the digest in `.env` as `ADMIN_CLAIM_CODE_HASH`, recreate the app
-  container (`docker compose up -d --no-deps --force-recreate app`; a plain restart does not reload `.env`), and
-  claim with the printed code. The Fly and AWS deploys do not pass
-  `ADMIN_CLAIM_CODE_HASH` to the app yet (#738), so a box deployed there
-  cannot claim its first admin until they do.
+  `POST /api/admin/admins` are gone. **Upgrade note:** run
+  `./setup/ctf-setup.sh admin-code` (or the Fly/AWS `--new-admin-code` flag
+  below), recreate the app container
+  (`docker compose up -d --no-deps --force-recreate app`; a plain restart does
+  not reload `.env`), and claim at `/admin/claim` with the printed code.
+- **Added: provisioning writes the admin claim code (#738).**
+  `ctf-setup.sh secrets` writes `ADMIN_CLAIM_CODE_HASH` and prints its code
+  once; `ctf-setup.sh admin-code` rotates it; the wizard generates one when
+  `.env` has none and otherwise offers a default-No rotation, and `doctor`
+  checks the hash without printing it. `deploy/fly/deploy.sh init` gives
+  `.env.fly` its own code, and `deploy.sh --new-admin-code` rotates it on a
+  deploy. `deploy/aws-terraform/deploy.sh` creates the hash as the SSM
+  SecureString `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` when absent, and
+  `--new-admin-code` replaces it and forces a new app deployment. `dev-stack`
+  writes a code into its throwaway env. The dry-run redactor hides `*_HASH`
+  values and the argument after `--value`.
+  **Breaking:** setup no longer asks for or writes `ADMIN_LOGINS`; `doctor`
+  and the Fly deploy warn on a leftover line. The Terraform variable
+  `admin_logins` is removed — delete it from `terraform.tfvars` (Terraform
+  warns about an undeclared variable there, and `-var admin_logins=…`
+  fails). Fly `init` no longer copies `.env`'s claim hash, and `--refresh`
+  and the drift check leave it alone.
 - **Added: GitHub linking, and held Secure Development scores (#741).** With
   Secure Development on, a player links a GitHub account from their profile
   or by signing in with GitHub; one GitHub account links to one kit account,

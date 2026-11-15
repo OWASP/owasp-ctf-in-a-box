@@ -2,7 +2,7 @@
 # Proves what the app reads at BUILD time versus at RUNTIME now that config
 # v2 has deleted the event.yaml bake (issue #386 part 4). The app image no
 # longer takes an EVENT_CONFIG_B64 build arg at all — everything that used to
-# be baked (the admin allowlist, the GitHub fork org, the event's name, which
+# be baked (the admin claim-code hash, the GitHub fork org, the event's name, which
 # Secure Development targets run) is now read at request time, from `.env`
 # (ADMIN_CLAIM_CODE_HASH, GITHUB_ORG) or from /admin settings in Redis (name, targets).
 # So a single image is built ONCE, and every scenario below is a different

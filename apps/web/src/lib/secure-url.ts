@@ -4,9 +4,8 @@
 //
 // WHY THIS EXISTS. better-auth derives the session cookie's `Secure` flag from
 // the scheme of its baseURL. Ship an event on `http://ctf.example.org` and
-// every session cookie — including an organizer's, whose login is in
-// `.env`'s `ADMIN_LOGINS` — travels in cleartext on whatever conference wifi
-// the contestants are sharing. A captured session cookie is the account until
+// every session cookie — including an organizer's — travels in cleartext on
+// whatever conference wifi the contestants are sharing. A captured session cookie is the account until
 // it expires or is revoked, so sniffing one is a full admin takeover, not a
 // nuisance. The default in .env.example is `http://localhost`, which is
 // correct for a local trial and catastrophic if an organizer edits the host

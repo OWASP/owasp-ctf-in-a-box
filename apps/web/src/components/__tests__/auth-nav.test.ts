@@ -10,9 +10,8 @@
 import { describe, expect, it } from "vitest";
 import { showAdminLink, signOutDestination } from "@/components/auth-nav";
 
-// Config v2: there is no client-side admin allowlist any more (ADMIN_LOGINS
-// is server-only), so the Admin menu item exists only once the /api/me/admin
-// round-trip resolves for the CURRENT user. Proven as a pure function for
+// The admin roster lives in Redis, which the client cannot read, so the Admin
+// menu item exists only once the /api/me/admin round-trip resolves for the CURRENT user. Proven as a pure function for
 // the same reason signOutDestination is: no @testing-library/jsdom-act in
 // this repo to observe a live re-render.
 describe("showAdminLink", () => {

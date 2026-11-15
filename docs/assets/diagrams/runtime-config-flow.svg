@@ -1,6 +1,6 @@
 <svg viewBox="0 0 880 420" xmlns="http://www.w3.org/2000/svg" width="100%" role="img" aria-labelledby="ttl desc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
   <title id="ttl">Runtime config flow</title>
-  <desc id="desc">Animated diagram of the two configuration planes an event is built from, with no config file between them. Bootstrap plane: the wizard or the organizer writes GITHUB_ORG, ADMIN_LOGINS, SCORE_IMAGE and EVENT_URL into .env; docker compose up reads them, adding the secdev profile only when SCORE_IMAGE is non-empty; the app, sync and scorer containers read those keys from their process environment once, at start, so changing one is a restart and never a rebuild. Runtime plane: the organizer changes everything else live in /admin — which modules run, which Secure Development targets run, the event's identity, the scoring schedule, hints and team caps — and each change is written to the single ctf:admin:settings hash in Redis, which the app re-reads on every request and the sync poller re-reads on every tick. The app image itself takes no configuration build-arg at all, so the same image runs every event and a build can no longer ship an empty admins list.</desc>
+  <desc id="desc">Animated diagram of the two configuration planes an event is built from, with no config file between them. Bootstrap plane: the wizard or the organizer writes GITHUB_ORG, ADMIN_CLAIM_CODE_HASH (the hash of a one-time admin claim code), SCORE_IMAGE and EVENT_URL into .env; docker compose up reads them, adding the secdev profile only when SCORE_IMAGE is non-empty; the app, sync and scorer containers read those keys from their process environment once, at start, so changing one is a container recreate and never a rebuild. Runtime plane: the organizer changes everything else live in /admin — which modules run, which Secure Development targets run, the event's identity, the scoring schedule, hints and team caps — and each change is written to the single ctf:admin:settings hash in Redis, which the app re-reads on every request and the sync poller re-reads on every tick. The app image itself takes no configuration build-arg at all, so the same image runs every event and no admin is ever baked into a build.</desc>
   <style>
     :root {
       --bg: #ffffff; --surface: #f6f8fa; --surface-2: #eaeef2; --border: #d0d7de;
@@ -51,7 +51,7 @@
 
   <rect x="40" y="48" width="230" height="66" rx="8" fill="var(--surface)" stroke="var(--border)"/>
   <text x="155" y="74" text-anchor="middle" font-size="13" fill="var(--text-bright)">.env</text>
-  <text x="155" y="92" text-anchor="middle" font-size="10" fill="var(--text-muted)">GITHUB_ORG &#183; ADMIN_LOGINS</text>
+  <text x="155" y="92" text-anchor="middle" font-size="10" fill="var(--text-muted)">GITHUB_ORG &#183; ADMIN_CLAIM_CODE_HASH</text>
   <text x="155" y="106" text-anchor="middle" font-size="10" fill="var(--text-muted)">SCORE_IMAGE &#183; EVENT_URL</text>
 
   <line class="dgm-flow" x1="274" y1="81" x2="306" y2="81" stroke="var(--text-muted)" marker-end="url(#ar)"/>
@@ -96,5 +96,5 @@
   <text x="440" y="337" text-anchor="middle" font-size="10" fill="var(--text-muted)">the same image runs every event &#8212; a build cannot ship an empty admins list any more</text>
 
   <text x="40" y="382" font-size="10" fill="var(--text-muted)">there is no config file: nothing sits between these two planes, so nothing can disagree with either.</text>
-  <text x="40" y="398" font-size="10" fill="var(--text-muted)">an empty ADMIN_LOGINS fails closed (nobody is an admin); an unreadable settings hash falls back to defaults.</text>
+  <text x="40" y="398" font-size="10" fill="var(--text-muted)">an empty ADMIN_CLAIM_CODE_HASH fails closed (nobody can claim /admin); an unreadable settings hash falls back to defaults.</text>
 </svg>

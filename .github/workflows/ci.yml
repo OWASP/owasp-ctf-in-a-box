@@ -176,7 +176,7 @@ jobs:
       # This covers the one part Terraform cannot see: deploy.sh, which builds
       # and pushes the app image and hands Terraform the tag to apply. There
       # is no build-time config bake (config v2): the app reads
-      # GITHUB_ORG/ADMIN_LOGINS from the container's runtime environment, so
+      # GITHUB_ORG/ADMIN_CLAIM_CODE_HASH from the container's runtime environment, so
       # the script has nothing to bake. Stubs stand in for docker/aws/
       # terraform, so --dry-run's "makes no real call" is asserted rather than
       # assumed, and no AWS account is used here either.
@@ -263,7 +263,7 @@ jobs:
           # `upstash` filter matches every `*.upstash.test.ts` suite plus the
           # two mocked `upstash.test.ts` files, which need no Redis and are
           # harmless here. The app needs no generated config for any of this —
-          # config v2 reads GITHUB_ORG/ADMIN_LOGINS from the environment
+          # config v2 reads GITHUB_ORG/ADMIN_CLAIM_CODE_HASH from the environment
           # at runtime, so there is nothing here for an earlier step to have
           # generated.
           corepack pnpm exec vitest run upstash --no-file-parallelism

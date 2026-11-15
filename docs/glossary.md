@@ -92,11 +92,19 @@ front of Redis. It exists so the vendored app's `@upstash/redis` client works
 unchanged against local Redis, and it is the only service on both compose
 networks — the app tier has no route to `redis:6379` at all.
 
+**Admin claim code** — the one-time code that makes a signed-in kit account
+an admin at `/admin/claim`: 32 hex in eight groups of four, printed once by
+`ctf-setup.sh secrets` or `admin-code` (or the Fly and AWS deploy scripts),
+with only its SHA-256 stored as `ADMIN_CLAIM_CODE_HASH`. Admins issue further
+codes from the Admins tab, each single-use and valid for 15 minutes. Rotating
+the hash is the lock-out recovery path. See
+[ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env).
+
 **The two config planes** — there is no config file (#386,
 [ADR 55](decisions.md#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml)).
 `.env` is the **bootstrap** plane: the box's secrets plus four keys read once
-at container start — `GITHUB_ORG` (the fork org), `ADMIN_LOGINS` (the
-bootstrap admins allowlist), `SCORE_IMAGE` (the scorer image, and by its
+at container start — `GITHUB_ORG` (the fork org), `ADMIN_CLAIM_CODE_HASH`
+(the hash of the one-time admin claim code), `SCORE_IMAGE` (the scorer image, and by its
 non-emptiness whether Secure Development is *available* — it adds the compose
 profile and seeds the default module set, while `/admin` still decides what is
 live), and

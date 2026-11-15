@@ -2230,8 +2230,10 @@ looks wrong. Alongside the per-fork provisioning matrix (see
 [docs/hosting.md](hosting.md#fork-setup-and-the-contest-flow)) it checks
 three facts that have no other alarm:
 
-- **`ADMIN_LOGINS` is non-empty.** Empty means `/admin` forbids every login,
-  which is silent until an organizer tries to open the panel mid-event.
+- **`ADMIN_CLAIM_CODE_HASH` is a SHA-256.** Absent or malformed (or the code
+  itself pasted where its hash belongs) means nobody can claim `/admin`, which
+  is silent until an organizer tries to open the panel. The value is never
+  printed. A leftover `ADMIN_LOGINS` line gets a ⚠️: nothing reads it.
 - **`GITHUB_ORG` is set.** `doctor` takes no separate org argument —
   `GITHUB_ORG` *is* the org it inspects, so there is no second value for it
   to disagree with; what it catches is the key being absent. With Secure
@@ -2363,11 +2365,11 @@ endpoint a scored PR hits, so it exercises the real validation and Redis-write
 path rather than poking Redis keys directly. It prints the URL to open when
 it's done.
 
-It needs no config file — there is no such thing any more (#386). The two
-identities it has to know, `ADMIN_LOGINS` and `GITHUB_ORG`, come from your
-environment if you exported them, else from `.env`, and `ADMIN_LOGINS` falls
-back to whatever login `gh` is authenticated as; each is read at start-up, so
-changing one means a restart, not a rebuild. Everything else — the event's
+It needs no config file — there is no such thing any more (#386).
+`GITHUB_ORG` comes from your environment if you exported it, else from `.env`.
+With no `.env`, `up` writes a throwaway `.env.dev-stack` that carries a fresh
+admin claim code's hash and prints the code once; both are read at start-up,
+so changing one means recreating the containers, not a rebuild. Everything else — the event's
 name, which modules run, which Secure Development targets — is an `/admin`
 setting.
 
@@ -2391,14 +2393,14 @@ matches a demo one keeps their own link.
 Tear down with `./scripts/dev-stack down` (keeps seeded data in the Redis
 volume for next time) or `./scripts/dev-stack down --wipe` (also drops it).
 
-**What this does not do:** sign you in. `/admin` needs a real session whose
-GitHub login is in `ADMIN_LOGINS`, which needs a real GitHub OAuth app —
-there is no local bypass for that boundary, and the script does not add one.
-`dev-stack up` tells you exactly what to add: an OAuth app's client
-id/secret and your login in `ADMIN_LOGINS`, written to `.env` when you have
-one or to the generated `.env.dev-stack` otherwise. Edit that file, then run
-`./scripts/dev-stack down && ./scripts/dev-stack up` to apply it — a restart,
-not a rebuild, since `ADMIN_LOGINS` and the OAuth settings are read at start.
+**What this does not do:** sign you in. `/admin` needs a signed-in kit
+account that claimed the admin claim code at `/admin/claim` — there is no
+local bypass for that boundary, and the script does not add one. Signing in
+with GitHub needs a real OAuth app: put its client id/secret in `.env` (or
+the generated `.env.dev-stack`), then run
+`./scripts/dev-stack down && ./scripts/dev-stack up` to apply it. Lost the
+code? `./setup/ctf-setup.sh admin-code --out <that file>` prints a new one,
+followed by the same down/up.
 
 ## Before launch
 

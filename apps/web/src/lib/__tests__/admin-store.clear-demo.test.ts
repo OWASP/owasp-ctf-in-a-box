@@ -90,7 +90,7 @@ describe("clearDemoData", () => {
     }
   });
 
-  it("removes each demo contestant's per-player quiz/classic/ai rows, regardless of which modules are live", async () => {
+  it("removes each demo contestant's per-player quiz/classic rows, regardless of which modules are live", async () => {
     await clearDemoData(actor("alice"));
     const c = cmds();
     for (const contestant of DEMO_CONTESTANTS) {
@@ -105,12 +105,6 @@ describe("clearDemoData", () => {
       expect(c).toContainEqual(["HDEL", "ctf:classic:points", demoPlayerId(contestant.login)]);
       expect(c).toContainEqual(["HDEL", "ctf:classic:solved", demoPlayerId(contestant.login)]);
       expect(c).toContainEqual(["HDEL", "ctf:classic:lastAt", demoPlayerId(contestant.login)]);
-
-      expect(c).toContainEqual(["DEL", `ctf:ai:solves:${demoPlayerId(contestant.login)}`]);
-      expect(c).toContainEqual(["DEL", `ctf:ai:attempts:${demoPlayerId(contestant.login)}`]);
-      expect(c).toContainEqual(["HDEL", "ctf:ai:points", demoPlayerId(contestant.login)]);
-      expect(c).toContainEqual(["HDEL", "ctf:ai:solved", demoPlayerId(contestant.login)]);
-      expect(c).toContainEqual(["HDEL", "ctf:ai:lastAt", demoPlayerId(contestant.login)]);
     }
   });
 
@@ -140,7 +134,7 @@ describe("clearDemoData", () => {
     const touchesAuthoredContent = c.some(
       (cmd) =>
         typeof cmd[1] === "string" &&
-        /^ctf:(quiz:(questions|key)|classic:(challenges|flag|flagnorm|categories)|ai:(challenges|flag|flagnorm|categories|signkey|hints))$/.test(
+        /^ctf:(quiz:(questions|key)|classic:(challenges|flag|flagnorm|categories))$/.test(
           cmd[1],
         ),
     );

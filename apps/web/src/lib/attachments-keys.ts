@@ -2,7 +2,7 @@
 // store, the download route and the admin UI share. Dependency-free ON
 // PURPOSE (like classic-keys.ts), so client code can read the caps.
 //
-// The store is keyed by `(module, itemId)` so quiz or ai can adopt it later
+// The store is keyed by `(module, itemId)` so quiz can adopt it later
 // without new storage work; classic is the only adopter today.
 //
 // Layout:

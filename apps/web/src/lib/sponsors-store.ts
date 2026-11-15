@@ -19,8 +19,8 @@ import { SPONSORS_BUNDLE_VERSION, type SponsorsBundle } from "@/lib/sponsors-io"
 
 /**
  * The sponsors platform feature. This file is the only place that touches
- * `ctf:sponsors*` during normal activity (documented exception, as in classic
- * and ai: the master reset in admin-store.ts reuses the key names directly).
+ * `ctf:sponsors*` during normal activity (documented exception, as in classic:
+ * the master reset in admin-store.ts reuses the key names directly).
  *
  * Key layout:
  *   ctf:sponsors        hash  id -> JSON Sponsor (metadata only, no bytes)
@@ -33,7 +33,7 @@ import { SPONSORS_BUNDLE_VERSION, type SponsorsBundle } from "@/lib/sponsors-io"
  *
  * THERE IS NO SECRECY BOUNDARY HERE. Every field — name, url, blurb, tier,
  * order, the logo itself — is public by design; a sponsor's whole purpose is
- * to be seen. Do not copy ai-store.ts's four-secret-hash ceremony into this
+ * to be seen. Do not copy classic-store.ts's secret-hash ceremony into this
  * file: nothing here is a contestant secret, and pretending otherwise would
  * only add readers this feature does not need.
  *

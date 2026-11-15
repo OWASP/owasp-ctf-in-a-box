@@ -100,21 +100,16 @@ function allCommands(): (string | number)[][] {
   return mocks.upstashPipeline.mock.calls.flatMap((c) => c[0]);
 }
 
-/** `resetUserProgress` evaluates `RESET_MODULE_SOLVES_SCRIPT` twice, classic
- *  first then ai, before it touches quiz/hints. Queues the two results in
- *  that order. Each tuple is
+/** `resetUserProgress` evaluates `RESET_MODULE_SOLVES_SCRIPT` once, for
+ *  classic, before it touches quiz/hints. Queues that result. The tuple is
  *  `[solvesRemoved, attemptsRemoved, pointsRemoved, solvedRemoved, decremented]`
  *  — the shape the script returns. */
-function mockModuleResets(
-  classic: [number, number, number, number, number],
-  ai: [number, number, number, number, number],
-) {
+function mockModuleResets(classic: [number, number, number, number, number]) {
   mocks.upstashEval.mockResolvedValueOnce(classic);
-  mocks.upstashEval.mockResolvedValueOnce(ai);
 }
 
-/** The plain quiz+hints pipeline `resetUserProgress` still issues after both
- *  module scripts: 2 DEL + 2 HDEL for quiz, 2 DEL + 1 HDEL for hints, then
+/** The plain quiz+hints pipeline `resetUserProgress` issues after the
+ *  module script: 2 DEL + 2 HDEL for quiz, 2 DEL + 1 HDEL for hints, then
  *  the HDEL of quiz's award time (#522). */
 function mockQuizAndHintsPipeline() {
   mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1, 1, 1, 1, 1));
@@ -129,7 +124,7 @@ beforeEach(() => {
 describe("resetUserProgress brackets its writes as score-lowering (#553)", () => {
   it("opens the bracket before the first destructive write and closes it after the last", async () => {
     mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockModuleResets([0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
     expect(foldCache.beginScoreLowering).toHaveBeenCalledTimes(1);
@@ -337,7 +332,7 @@ describe("resetUserProgress", () => {
     // once per reset. The count comes back through the script's own return
     // value now, not a JS-side HKEYS.
     mockNoSecureDevKeys();
-    mockModuleResets([1, 1, 1, 1, 2], [0, 0, 0, 0, 0]);
+    mockModuleResets([1, 1, 1, 1, 2]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
 
@@ -360,31 +355,6 @@ describe("resetUserProgress", () => {
     expect(argv).toEqual(["0c7aca70-0000-4000-8000-00000000000a"]);
   });
 
-  it("DECREMENTS the ai per-challenge solve counter instead of deleting by login", async () => {
-    // ctf:ai:solvecount has the exact same per-CHALLENGE shape as classic's
-    // ctf:classic:solvecount above — HDELing it by login would leave every ai
-    // challenge still counting a contestant whose solves are gone.
-    mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [1, 1, 1, 1, 2]);
-    mockQuizAndHintsPipeline();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
-
-    const result = await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
-
-    expect(result.cleared.aiSolveCountsDecremented).toBe(2);
-    const [script, keys, argv] = mocks.upstashEval.mock.calls[1];
-    expect(script).toMatch(/HINCRBY/);
-    expect(keys).toEqual([
-      "ctf:ai:solves:0c7aca70-0000-4000-8000-00000000000a",
-      "ctf:ai:attempts:0c7aca70-0000-4000-8000-00000000000a",
-      "ctf:ai:points",
-      "ctf:ai:solved",
-      "ctf:ai:solvecount",
-      "ctf:ai:lastAt",
-    ]);
-    expect(argv).toEqual(["0c7aca70-0000-4000-8000-00000000000a"]);
-  });
-
   it("decides its decrements from the script's OWN runtime read, never a pre-read snapshot (regression)", async () => {
     // CodeRabbit round-2: reading solved ids in one request, then deleting
     // rows and decrementing solvecount by that SNAPSHOT in a later request,
@@ -394,11 +364,11 @@ describe("resetUserProgress", () => {
     // script only the login, and the script's own HKEYS (at execution time,
     // inside the same atomic EVAL as the decrements) is what decides how
     // many challenges to decrement. Pin that shape directly: ARGV is ALWAYS
-    // exactly [login] for both modules — a solved id must never appear in an
+    // exactly [login] — a solved id must never appear in an
     // EVAL call, pre-read or otherwise, because there is no such read left
     // to produce one.
     mockNoSecureDevKeys();
-    mockModuleResets([1, 1, 1, 1, 5], [1, 1, 1, 1, 3]);
+    mockModuleResets([1, 1, 1, 1, 5]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
 
@@ -407,9 +377,8 @@ describe("resetUserProgress", () => {
     // These numbers can only have come from the mocked script's return value
     // — there is no JS-side count for them to have come from instead.
     expect(result.cleared.classicSolveCountsDecremented).toBe(5);
-    expect(result.cleared.aiSolveCountsDecremented).toBe(3);
 
-    expect(mocks.upstashEval).toHaveBeenCalledTimes(2);
+    expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
     for (const [, , argv] of mocks.upstashEval.mock.calls) {
       expect(argv).toEqual(["0c7aca70-0000-4000-8000-00000000000a"]);
     }
@@ -417,7 +386,7 @@ describe("resetUserProgress", () => {
 
   it("clears every per-login key and nobody else's", async () => {
     mockNoSecureDevKeys();
-    mockModuleResets([1, 1, 1, 1, 0], [1, 1, 1, 1, 0]);
+    mockModuleResets([1, 1, 1, 1, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
@@ -438,10 +407,9 @@ describe("resetUserProgress", () => {
       "ctf:quiz:lastAt#0c7aca70-0000-4000-8000-00000000000a",
       // #616: the first-open times, which only time this login's solves.
       "ctf:classic:opened:0c7aca70-0000-4000-8000-00000000000a",
-      "ctf:ai:opened:0c7aca70-0000-4000-8000-00000000000a",
     ]);
-    // Classic's and ai's per-login keys are cleared through the atomic
-    // scripts instead — assert those calls named exactly this login's keys.
+    // Classic's per-login keys are cleared through the atomic
+    // script instead — assert those calls named exactly this login's keys.
     const evalKeys = mocks.upstashEval.mock.calls.map((c) => c[1]);
     expect(evalKeys).toEqual([
       [
@@ -452,83 +420,12 @@ describe("resetUserProgress", () => {
         "ctf:classic:solvecount",
         "ctf:classic:lastAt",
       ],
-      [
-        "ctf:ai:solves:0c7aca70-0000-4000-8000-00000000000a",
-        "ctf:ai:attempts:0c7aca70-0000-4000-8000-00000000000a",
-        "ctf:ai:points",
-        "ctf:ai:solved",
-        "ctf:ai:solvecount",
-        "ctf:ai:lastAt",
-      ],
     ]);
-  });
-
-  it("clears the ai module's per-login progress — the gap this reset used to leave open", async () => {
-    // Before the earlier fix, resetUserProgress cleared quiz+classic+
-    // secure-dev+hints but touched zero ctf:ai:* keys, so an ai solve
-    // silently survived the "put them back to zero" lever. Assert the counts
-    // round-trip through `cleared`, field-swapped from the classic
-    // assertions above.
-    mockNoSecureDevKeys();
-    mockModuleResets([1, 1, 1, 1, 0], [3, 2, 40, 1, 1]);
-    mockQuizAndHintsPipeline();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
-
-    const result = await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
-
-    expect(result.cleared.aiSolves).toBe(3);
-    expect(result.cleared.aiAttempts).toBe(2);
-    expect(result.cleared.aiAggregates).toBe(41);
-    expect(result.cleared.aiSolveCountsDecremented).toBe(1);
-
-    const [, aiKeys, aiArgv] = mocks.upstashEval.mock.calls[1];
-    expect(aiKeys).toEqual([
-      "ctf:ai:solves:0c7aca70-0000-4000-8000-00000000000a",
-      "ctf:ai:attempts:0c7aca70-0000-4000-8000-00000000000a",
-      "ctf:ai:points",
-      "ctf:ai:solved",
-      "ctf:ai:solvecount",
-      "ctf:ai:lastAt",
-    ]);
-    expect(aiArgv).toEqual(["0c7aca70-0000-4000-8000-00000000000a"]);
-  });
-
-  it("does not touch another login's ai progress", async () => {
-    mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
-    mockQuizAndHintsPipeline();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
-
-    await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
-
-    const [, aiKeys, aiArgv] = mocks.upstashEval.mock.calls[1];
-    expect(aiKeys).not.toContain("ctf:ai:solves:3a110000-0000-4000-8000-00000000000b");
-    expect(aiArgv).not.toContain("3a110000-0000-4000-8000-00000000000b");
-  });
-
-  it("never touches the module-wide launch keypair, nonces, or the ai catalogue", async () => {
-    mockNoSecureDevKeys();
-    mockModuleResets([1, 1, 1, 1, 0], [1, 1, 1, 1, 1]);
-    mockQuizAndHintsPipeline();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
-
-    await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
-
-    const cmds = allCommands();
-    expect(cmds.some((c) => String(c[1]).startsWith("ctf:ai:launchkey"))).toBe(false);
-    expect(cmds.some((c) => String(c[1]).startsWith("ctf:ai:nonce:"))).toBe(false);
-    expect(cmds.some((c) => String(c[1]) === "ctf:ai:challenges")).toBe(false);
-    const aiKeys = mocks.upstashEval.mock.calls[1][1] as string[];
-    expect(
-      aiKeys.some(
-        (k) => k.startsWith("ctf:ai:launchkey") || k.startsWith("ctf:ai:nonce:") || k === "ctf:ai:challenges",
-      ),
-    ).toBe(false);
   });
 
   it("leaves the account and team membership alone", async () => {
     mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockModuleResets([0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
@@ -545,7 +442,7 @@ describe("resetUserProgress", () => {
     // Silence here would be a lie the organizer only discovers later.
     mockSecureDevKeys("ctf:solves:dvwa", ["0c7aca70-0000-4000-8000-00000000000a:c1"]);
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // HDEL of those fields
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockModuleResets([0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
@@ -556,7 +453,7 @@ describe("resetUserProgress", () => {
 
   it("says nothing about secure-dev when there was none to clear", async () => {
     mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockModuleResets([0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
     expect((await resetUserProgress("0c7aca70-0000-4000-8000-00000000000a", ADMIN)).warnings).toEqual([]);
@@ -564,7 +461,7 @@ describe("resetUserProgress", () => {
 
   it("writes an audit line naming the actor AND the target", async () => {
     mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockModuleResets([0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
 
@@ -606,7 +503,7 @@ describe("a per-command pipeline error is a failure, not zero", () => {
 
   it("resetUserProgress rejects when a quiz or hint cleanup fails, and audits no success", async () => {
     mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockModuleResets([0, 0, 0, 0, 0]);
     mocks.upstashPipeline.mockResolvedValueOnce([
       ...replies(1, 1, 1),
       { error: WRONGTYPE },
@@ -640,7 +537,7 @@ describe("deleteUser", () => {
     mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "a11ce000-0000-4000-8000-00000000000c"));
     mockNoSecureDevKeys();
     mockNoSecureDevKeys(); // the reset's own sweep
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockModuleResets([0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // SREM + DEL
@@ -652,7 +549,7 @@ describe("deleteUser", () => {
     expect(cmds).toContainEqual(["SREM", "ctf:team:red-team:members", "0c7aca70-0000-4000-8000-00000000000a"]);
     expect(cmds).toContainEqual(["DEL", "ctf:user:0c7aca70-0000-4000-8000-00000000000a"]);
     // Every rate-limit bucket's counter for this player goes with them.
-    for (const bucket of ["team-join", "hint-reveal", "ai-submit", "ai-event", "ai-state", "ai-admin-test"]) {
+    for (const bucket of ["team-join", "hint-reveal"]) {
       expect(cmds).toContainEqual(["DEL", `ctf:rl:${bucket}:${OCTO}`]);
     }
     // The account and its GitHub link are the account store's, not this
@@ -685,7 +582,7 @@ describe("deleteUser: held Secure Development scores", () => {
     );
     mockNoSecureDevKeys();
     mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockModuleResets([0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
@@ -737,7 +634,7 @@ describe("deleteUser: held scores outlive a failed record delete", () => {
     );
     mockNoSecureDevKeys();
     mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockModuleResets([0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // tail
@@ -754,7 +651,7 @@ describe("deleteUser: a failed tail write is not a delete", () => {
     );
     mockNoSecureDevKeys();
     mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0], [0, 0, 0, 0, 0]);
+    mockModuleResets([0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
@@ -835,46 +732,18 @@ describe("team overrides", () => {
   });
 });
 
-// UX audit F4: `lookupUser` read quiz, classic and secure-dev and nothing for
-// ai, so the Support card showed no AI figures for a contestant with AI
-// solves, and the reset confirm summed a total the reset then exceeded. The
-// ai reads are appended AFTER the existing eleven replies, so every fixture
-// above stays valid: a missing tail reads as "no ai data", never as a shifted
-// hint count.
-describe("lookupUser — ai", () => {
-  it("reports ai solves, points and attempts, and counts them toward known", async () => {
-    const aiSolves = ["prompt-smuggling-qzl4ws", JSON.stringify({ at: "2026-09-03T01:49:00Z" })];
-    const aiAttempts = [
-      "prompt-smuggling-qzl4ws",
-      JSON.stringify({ attempts: 4, firstAt: "2026-09-03T01:40:00Z", lastAt: "2026-09-03T01:49:00Z" }),
-    ];
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null, aiSolves, aiAttempts, "550", "1"),
-    );
-    mockNoSecureDevKeys();
-    const detail = await lookupUser("0c7aca70-0000-4000-8000-00000000000a");
-    expect(detail.ai).toEqual({ solved: 1, points: 550, attempts: 4 });
-    expect(detail.known).toBe(true);
-    const cmds = allCommands();
-    expect(cmds).toContainEqual(["HGETALL", "ctf:ai:solves:0c7aca70-0000-4000-8000-00000000000a"]);
-    expect(cmds).toContainEqual(["HGETALL", "ctf:ai:attempts:0c7aca70-0000-4000-8000-00000000000a"]);
-    expect(cmds).toContainEqual(["HGET", "ctf:ai:points", "0c7aca70-0000-4000-8000-00000000000a"]);
-    expect(cmds).toContainEqual(["HGET", "ctf:ai:solved", "0c7aca70-0000-4000-8000-00000000000a"]);
-  });
-});
-
 // CodeRabbit on #274: `known` counted solves and hints but never attempts, so
 // a contestant who had tried and never solved read as "no data — check the
-// spelling". Applies to every module's attempts, not only ai's.
+// spelling". Applies to every module's attempts.
 describe("lookupUser — known", () => {
   it("counts a contestant with attempts but no solves as known", async () => {
-    const aiAttempts = ["guardrail-bypass", JSON.stringify({ attempts: 2, firstAt: "2026-09-03T01:40:00Z", lastAt: "2026-09-03T01:41:00Z" })];
+    const classicAttempts = ["guardrail-bypass", JSON.stringify({ attempts: 2, firstAt: "2026-09-03T01:40:00Z", lastAt: "2026-09-03T01:41:00Z" })];
     mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null, [], aiAttempts, null, null),
+      replies(userHmget(null), [], [], null, null, [], classicAttempts, null, null, 0, null),
     );
     mockNoSecureDevKeys();
     const detail = await lookupUser("0c7aca70-0000-4000-8000-00000000000a");
-    expect(detail.ai.attempts).toBe(2);
+    expect(detail.classic.attempts).toBe(2);
     expect(detail.known).toBe(true);
 
     const quizAttempts = ["xss-basics", JSON.stringify({ attempts: 1, firstAt: "2026-09-03T01:40:00Z", lastAt: "2026-09-03T01:40:00Z" })];

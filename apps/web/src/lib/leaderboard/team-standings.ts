@@ -2,12 +2,7 @@ import "server-only";
 import { unnamed } from "@/lib/display-name";
 import { errorLabel } from "@/lib/error-label";
 import { listTeams } from "@/lib/team-store";
-import {
-  mergeTeamRosters,
-  withTeamAiPoints,
-  withTeamClassicPoints,
-  withTeamQuizPoints,
-} from "./module-contributions";
+import { mergeTeamRosters, withTeamClassicPoints, withTeamQuizPoints } from "./module-contributions";
 import { rankByStanding } from "./rank";
 import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "./types";
 
@@ -25,18 +20,18 @@ import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "./types";
  *
  * Module points ARE added — to the rows synthesised here AND to the source's
  * own teams, in this one place and nowhere else (issue #520) — via
- * `withTeamQuizPoints`, `withTeamClassicPoints` and `withTeamAiPoints` — the
- * quiz stores which QUESTION each member answered, classic which CHALLENGE
- * each member solved, and ai which CHALLENGE each member solved, so a team's
+ * `withTeamQuizPoints` and `withTeamClassicPoints` — the
+ * quiz stores which QUESTION each member answered and classic which CHALLENGE
+ * each member solved, so a team's
  * total can be deduped by item (an item three teammates hold counts once)
  * with no per-flag scorer data involved. Leaving them at zero meant a
- * quiz-only (or classic-only, or ai-only) event opened on its DEFAULT view —
+ * quiz-only (or classic-only) event opened on its DEFAULT view —
  * the teams board, whenever teams exist — with every team tied at nothing
  * while the individual view showed real points. The attribution deliberately
  * lives in `module-contributions.ts` and is merely CALLED from here, so the
  * union rule has exactly one implementation; the pipeline order is unchanged.
  *
- * The three are applied in sequence, each adding only its own module's
+ * The two are applied in sequence, each adding only its own module's
  * points and re-ranking on the running total, and each no-ops when its
  * module is disabled — so a single-module event pays for exactly one of
  * them.
@@ -111,7 +106,7 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
     .map((team, i) => ({ ...team, rank: i + 1 }));
 
   // The overlays run over the UNION, not just the rows synthesised here. They
-  // attribute quiz, classic and ai points by ITEM — deduped across members with
+  // attribute quiz and classic points by ITEM — deduped across members with
   // no per-flag scorer data involved — so they are as correct for a source's
   // team as for an app-only one, and running them only on part of the board
   // would rank teams on different point sets. On a scorer-sourced board this
@@ -120,8 +115,8 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   //
   // This is the ONLY place the app-side modules reach a team's points.
   // `withModuleContributions` stamps a source team's secure-development chip
-  // and nothing else; it used to add quiz, classic and ai too, and with this
-  // call on top every scorer team counted them twice (issue #520).
+  // and nothing else: adding quiz and classic there as well, with this call
+  // on top, would count them twice on every scorer team.
   const standings = await withAppModulePoints([...sourceTeams, ...membershipOnly]);
 
   const entries = data.entries.map((entry) => {
@@ -170,11 +165,11 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   };
 }
 
-/** The three app-side module overlays, applied in sequence (each adds only its
+/** The two app-side module overlays, applied in sequence (each adds only its
  *  own module and re-ranks on the running total; each no-ops when its module
  *  is off). The one call site for all of them — see the #520 note above. */
 async function withAppModulePoints(teams: TeamStanding[]): Promise<TeamStanding[]> {
-  return withTeamAiPoints(await withTeamClassicPoints(await withTeamQuizPoints(teams)));
+  return withTeamClassicPoints(await withTeamQuizPoints(teams));
 }
 
 /** The no-team-store path: the source's own teams, if it has any, still get

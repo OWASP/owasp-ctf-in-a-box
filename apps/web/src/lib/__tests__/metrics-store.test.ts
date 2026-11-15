@@ -47,13 +47,13 @@ const attempt = (attempts: number, lastAt = "2026-08-22T10:00:00Z") =>
 
 /**
  * Drives the store's fixed read order:
- *   1. one pipeline: quiz points, classic points, ai points, hints spent
+ *   1. one pipeline: quiz points, classic points, hints spent
  *   2. SCAN ctf:solves:*        (secure-dev sweep; repeats until cursor 0)
  *   3. HGETALL of each solves key found
  *   3b. SCAN ctf:user:*        (user-record sweep; empty in these tests)
- *   4. EIGHT commands per contestant, batched (answers, solves, ai solves,
- *      quiz attempts, classic attempts, ai attempts, firstTeamAt, hint
- *      purchase times)
+ *   4. SEVEN commands per contestant, batched (answers, solves, quiz
+ *      attempts, classic attempts, firstTeamAt, hint purchase times, classic
+ *      first-open times)
  *
  * Written as a queue rather than per-call mocks because `vi.clearAllMocks()`
  * does NOT clear queued one-shot implementations — leftovers from one test
@@ -63,23 +63,19 @@ function mockStore(opts: {
   sdKeys?: Record<string, Record<string, string>>;
   quizPoints?: Record<string, number>;
   classicPoints?: Record<string, number>;
-  aiPoints?: Record<string, number>;
   hintsSpent?: Record<string, number>;
   perLogin?: Record<
     string,
     {
       quizAnswers?: Record<string, string>;
       classicSolves?: Record<string, string>;
-      aiSolves?: Record<string, string>;
       quizAttempts?: Record<string, string>;
       classicAttempts?: Record<string, string>;
-      aiAttempts?: Record<string, string>;
       firstTeamAt?: string | null;
       /** `<app>/<challengeId>` -> ISO bought-at. */
       hintTimes?: Record<string, string>;
       /** challengeId -> ISO first opened (#616). */
       classicOpened?: Record<string, string>;
-      aiOpened?: Record<string, string>;
     }
   >;
   logins?: string[];
@@ -97,14 +93,13 @@ function mockStore(opts: {
   sourceMode?: "mock" | "lambda" | "upstash" | "empty";
   /** The source read rejects — a scorer that is down. */
   sourceFails?: boolean;
-  /** The three catalogue hashes the title join reads, LAST in the read order.
+  /** The two catalogue hashes the title join reads, LAST in the read order.
    *  Omitted, the default mock answers empty and every row keeps its id —
    *  which is the fallback under test in "a challenge deleted since it was
    *  solved". */
   titles?: {
     quiz?: Record<string, string>;
     classic?: Record<string, string>;
-    ai?: Record<string, string>;
   };
 }) {
   const sdKeys = opts.sdKeys ?? {};
@@ -129,7 +124,6 @@ function mockStore(opts: {
   mocks.upstashPipeline.mockResolvedValueOnce([
     { result: hash(opts.quizPoints ?? {}) },
     { result: hash(opts.classicPoints ?? {}) },
-    { result: hash(opts.aiPoints ?? {}) },
     { result: hash(opts.hintsSpent ?? {}) },
   ]);
   mocks.upstashPipeline.mockResolvedValueOnce([{ result: ["0", keys] }]);
@@ -148,28 +142,24 @@ function mockStore(opts: {
         return [
           { result: hash(p.quizAnswers ?? {}) },
           { result: hash(p.classicSolves ?? {}) },
-          { result: hash(p.aiSolves ?? {}) },
           { result: hash(p.quizAttempts ?? {}) },
           { result: hash(p.classicAttempts ?? {}) },
-          { result: hash(p.aiAttempts ?? {}) },
           { result: [p.firstTeamAt ?? null] },
           { result: hash(p.hintTimes ?? {}) },
           { result: hash(p.classicOpened ?? {}) },
-          { result: hash(p.aiOpened ?? {}) },
         ];
       });
     if (opts.perLoginError) replies[0] = { error: opts.perLoginError };
     mocks.upstashPipeline.mockResolvedValueOnce(replies);
   }
 
-  // The title join: HGETALL of the quiz, classic and ai catalogues, in that
-  // order. Values are the stored rows, so quiz carries `prompt` and the other
-  // two carry `title` — the join has to read both.
+  // The title join: HGETALL of the quiz and classic catalogues, in that
+  // order. Values are the stored rows, so quiz carries `prompt` and classic
+  // carries `title` — the join has to read both.
   if (opts.titles) {
     mocks.upstashPipeline.mockResolvedValueOnce([
       { result: hash(opts.titles.quiz ?? {}) },
       { result: hash(opts.titles.classic ?? {}) },
-      { result: hash(opts.titles.ai ?? {}) },
     ]);
   }
 }
@@ -418,13 +408,14 @@ describe("honesty", () => {
 describe("naming the challenges", () => {
   const solvedOne = {
     logins: ["alice"],
-    classicPoints: { alice: 10 },
-    aiPoints: { alice: 5 },
+    classicPoints: { alice: 15 },
     quizPoints: { alice: 7 },
     perLogin: {
       alice: {
-        classicSolves: { "cookie-jar-x1": earned(10, "2026-08-22T10:00:00Z") },
-        aiSolves: { "guardrail-bypass-0l": earned(5, "2026-08-22T10:01:00Z") },
+        classicSolves: {
+          "cookie-jar-x1": earned(10, "2026-08-22T10:00:00Z"),
+          "sql-maze-0l": earned(5, "2026-08-22T10:01:00Z"),
+        },
         quizAnswers: { "which-header-k3": earned(7, "2026-08-22T10:02:00Z") },
       },
     },
@@ -435,17 +426,19 @@ describe("naming the challenges", () => {
       ...solvedOne,
       titles: {
         quiz: { "which-header-k3": JSON.stringify({ prompt: "Which header mitigates clickjacking?" }) },
-        classic: { "cookie-jar-x1": JSON.stringify({ title: "Cookie jar" }) },
-        ai: { "guardrail-bypass-0l": JSON.stringify({ title: "Guardrail bypass" }) },
+        classic: {
+          "cookie-jar-x1": JSON.stringify({ title: "Cookie jar" }),
+          "sql-maze-0l": JSON.stringify({ title: "SQL maze" }),
+        },
       },
     });
     const byId = new Map((await computeEventMetrics()).challenges.map((c) => [c.id, c]));
 
-    // A quiz question's name is its PROMPT; classic and ai carry a title. The
+    // A quiz question's name is its PROMPT; classic carries a title. The
     // join reads both so no caller has to know which.
     expect(byId.get("which-header-k3")?.title).toBe("Which header mitigates clickjacking?");
     expect(byId.get("cookie-jar-x1")?.title).toBe("Cookie jar");
-    expect(byId.get("guardrail-bypass-0l")?.title).toBe("Guardrail bypass");
+    expect(byId.get("sql-maze-0l")?.title).toBe("SQL maze");
   });
 
   it("keeps the id on every row, so nothing is renamed out of reach", async () => {
@@ -485,13 +478,12 @@ describe("naming the challenges", () => {
     mockStore({
       ...solvedOne,
       titles: {
-        classic: { "cookie-jar-x1": "{not json" },
-        ai: { "guardrail-bypass-0l": JSON.stringify({ title: "Guardrail bypass" }) },
+        classic: { "cookie-jar-x1": "{not json", "sql-maze-0l": JSON.stringify({ title: "SQL maze" }) },
       },
     });
     const byId = new Map((await computeEventMetrics()).challenges.map((c) => [c.id, c]));
     expect(byId.get("cookie-jar-x1")?.title).toBeNull();
-    expect(byId.get("guardrail-bypass-0l")?.title).toBe("Guardrail bypass");
+    expect(byId.get("sql-maze-0l")?.title).toBe("SQL maze");
   });
 });
 
@@ -639,22 +631,6 @@ describe("time to solve", () => {
     });
     const c = (await computeEventMetrics()).challenges[0];
     expect(c?.medianSecondsToSolve).toBe(600);
-    expect(c?.timeMeasure).toBe("open");
-  });
-
-  it("reads the AI module's first-open records too", async () => {
-    mockStore({
-      perLogin: {
-        alice: {
-          aiSolves: { a1: earned(10, "2026-08-22T10:03:00Z") },
-          aiAttempts: { a1: attemptFrom(1, "2026-08-22T10:03:00Z") },
-          aiOpened: { a1: "2026-08-22T10:00:00Z" },
-        },
-      },
-      aiPoints: { alice: 10 },
-    });
-    const c = (await computeEventMetrics()).challenges.find((x) => x.id === "a1");
-    expect(c?.medianSecondsToSolve).toBe(180);
     expect(c?.timeMeasure).toBe("open");
   });
 
@@ -812,54 +788,6 @@ describe("hint ordering", () => {
     expect(stat?.solvedAfterHint).toBe(1);
   });
 
-  // Ai hints exist now (Tasks 1-2): the ai target must get the same
-  // own-solve-row comparison classic gets, not fall through to the
-  // secure-dev branch (which would never match an ai solve row and would
-  // silently drop every ai hint purchase from both counts).
-  it("orders an AI hint against the login's own solve time, per challenge", async () => {
-    mockStore({
-      logins: ["alice", "bob"],
-      perLogin: {
-        alice: {
-          aiSolves: { "prompt-injection-1": JSON.stringify({ points: 50, at: "2026-08-22T10:10:00Z" }) },
-          hintTimes: { "ai/prompt-injection-1": "2026-08-22T10:00:00Z" }, // before
-        },
-        bob: {
-          aiSolves: { "prompt-injection-1": JSON.stringify({ points: 50, at: "2026-08-22T10:10:00Z" }) },
-          hintTimes: { "ai/prompt-injection-1": "2026-08-22T10:20:00Z" }, // after
-        },
-      },
-    });
-    const m = await computeEventMetrics();
-    expect(m.hints.boughtBeforeSolving).toBe(1);
-    expect(m.hints.boughtAfterSolving).toBe(1);
-    const stat = m.challenges.find((c) => c.module === "ai" && c.id === "prompt-injection-1");
-    expect(stat?.solvedAfterHint).toBe(1);
-  });
-
-  it("counts a classic AND an ai hint correctly in the same fold — no cross-module regression", async () => {
-    mockStore({
-      logins: ["alice", "bob"],
-      perLogin: {
-        alice: {
-          classicSolves: { "web-robots-only": JSON.stringify({ points: 50, at: "2026-08-22T10:10:00Z" }) },
-          hintTimes: { "classic/web-robots-only": "2026-08-22T10:00:00Z" }, // before
-        },
-        bob: {
-          aiSolves: { "prompt-injection-1": JSON.stringify({ points: 50, at: "2026-08-22T10:10:00Z" }) },
-          hintTimes: { "ai/prompt-injection-1": "2026-08-22T10:00:00Z" }, // before
-        },
-      },
-    });
-    const m = await computeEventMetrics();
-    expect(m.hints.boughtBeforeSolving).toBe(2);
-    expect(m.hints.boughtAfterSolving).toBe(0);
-    const classicStat = m.challenges.find((c) => c.module === "classic" && c.id === "web-robots-only");
-    const aiStat = m.challenges.find((c) => c.module === "ai" && c.id === "prompt-injection-1");
-    expect(classicStat?.solvedAfterHint).toBe(1);
-    expect(aiStat?.solvedAfterHint).toBe(1);
-  });
-
   it("counts a hint bought and never solved as NEITHER", async () => {
     mockStore({
       logins: ["alice"],
@@ -944,113 +872,34 @@ describe("solveRate denominator", () => {
   });
 });
 
-// --- the ai module folds exactly like classic --------------------------------
+// --- a poisoned solve row never reaches the payload --------------------------
 
-describe("the ai module", () => {
-  it("counts DISTINCT ai solvers and total attempts, same as classic's fold", async () => {
-    // Field-swap of "counts DISTINCT solvers, not submissions" above.
-    mockStore({
-      perLogin: {
-        alice: { aiSolves: { c1: earned(10, "2026-08-22T10:00:00Z") }, aiAttempts: { c1: attempt(3) } },
-        bob: { aiSolves: { c1: earned(10, "2026-08-22T10:01:00Z") }, aiAttempts: { c1: attempt(1) } },
-      },
-      aiPoints: { alice: 10, bob: 10 },
-    });
-    const m = await computeEventMetrics();
-    const c1 = m.challenges.find((c) => c.module === "ai" && c.id === "c1");
-    expect(c1?.solves).toBe(2);
-    expect(c1?.attempts).toBe(4); // 3 + 1 submissions
-    expect(m.modules.ai).toBe(2);
-  });
-
-  it("credits ai solves into the funnel and the timeline, same as quiz/classic", async () => {
-    mockStore({
-      perLogin: {
-        alice: { aiSolves: { c1: earned(10, "2026-08-22T10:00:00Z") } },
-      },
-      aiPoints: { alice: 10 },
-    });
-    const m = await computeEventMetrics();
-    expect(m.funnel.scored).toBe(1);
-    expect(m.timeline).toEqual([{ at: "2026-08-22T10:00:00.000Z", solves: 1 }]);
-  });
-
-  it("modules.ai stays 0 and no ai rows appear when nobody has touched the module — the same unconditional-but-empty read quiz/classic get when disabled", async () => {
-    // metrics-store never gates a read on module enablement for quiz or
-    // classic: a disabled module simply never had anything written to its
-    // keys, so the fold reads an empty hash and reports 0. Ai is folded the
-    // same unconditional way — there is no enablement check to mirror,
-    // only the empty-hash-reads-as-zero behaviour.
-    mockStore({
-      perLogin: { alice: { quizAnswers: { q1: earned(5, "2026-08-22T10:00:00Z") } } },
-      quizPoints: { alice: 5 },
-    });
-    const m = await computeEventMetrics();
-    expect(m.modules.ai).toBe(0);
-    expect(m.challenges.some((c) => c.module === "ai")).toBe(false);
-  });
-
-  it("never lets a poisoned ai record's extra flag/key fields reach the metrics payload", async () => {
+describe("solve-row parsing", () => {
+  it("never lets a poisoned record's extra flag/key fields reach the metrics payload", async () => {
     // parseEarned/parseAttemptRow are strict by construction: they read only
     // `points`/`at` (or `attempts`/`firstAt`) off the parsed object and ignore
     // everything else. This pins that a corrupted row — one carrying a flag,
-    // a signing key, or a PEM block past the JSON.parse — still cannot make
-    // those bytes appear anywhere in the serialized metrics payload.
+    // a key, or a PEM block past the JSON.parse — still cannot make those
+    // bytes appear anywhere in the serialized metrics payload.
     const poisoned = JSON.stringify({
       points: 10,
       at: "2026-08-22T10:00:00Z",
       flag: "CTF{leaked}",
-      signkey: "aik_should_not_leak",
+      signkey: "key_should_not_leak",
       privateKey: "-----BEGIN PRIVATE KEY-----poison-----END PRIVATE KEY-----",
     });
     mockStore({
       perLogin: {
-        alice: { aiSolves: { c1: poisoned }, aiAttempts: { c1: attempt(1) } },
+        alice: { classicSolves: { c1: poisoned }, classicAttempts: { c1: attempt(1) } },
       },
-      aiPoints: { alice: 10 },
+      classicPoints: { alice: 10 },
     });
     const m = await computeEventMetrics();
     const serialized = JSON.stringify(m);
-    expect(serialized).not.toMatch(/flag|signkey|aik_|PRIVATE KEY/i);
-    const c1 = m.challenges.find((c) => c.module === "ai" && c.id === "c1");
-    expect(c1?.solves).toBe(1);
-  });
-
-  it("counts a clean ai record the same way — the poisoned test's positive twin", async () => {
-    const clean = JSON.stringify({ points: 10, at: "2026-08-22T10:00:00Z" });
-    mockStore({
-      perLogin: {
-        alice: { aiSolves: { c1: clean }, aiAttempts: { c1: attempt(1) } },
-      },
-      aiPoints: { alice: 10 },
-    });
-    const m = await computeEventMetrics();
-    const c1 = m.challenges.find((c) => c.module === "ai" && c.id === "c1");
+    expect(serialized).not.toMatch(/flag|signkey|key_should|PRIVATE KEY/i);
+    const c1 = m.challenges.find((c) => c.module === "classic" && c.id === "c1");
     expect(c1?.solves).toBe(1);
     expect(c1?.attempts).toBe(1);
-  });
-});
-
-describe("challengesToCsv carries the ai module column", () => {
-  it("emits an ai row with its module value", () => {
-    const metrics = {
-      challenges: [
-        {
-          module: "ai",
-          id: "a1",
-          title: "Guardrail bypass",
-          solves: 1,
-          attempts: 2,
-          solveRate: 0.5,
-          avgAttemptsToSolve: 2,
-          medianSecondsToSolve: 30,
-          timeMeasure: "first-miss",
-          solvedAfterHint: 0,
-        },
-      ],
-    } as EventMetrics;
-    const lines = challengesToCsv(metrics).trim().split("\n");
-    expect(lines[1]).toBe("ai,a1,Guardrail bypass,1,2,0.5000,2.00,30,first-miss");
   });
 });
 
@@ -1059,7 +908,7 @@ describe("challengesToCsv carries the ai module column", () => {
 // Found on the live box: every team's points on the Insights tab read lower
 // than its members added up to on the leaderboard, and the shortfall was
 // exactly each team's Secure Development points — the fold summed quiz +
-// classic + ai and nothing else, while three lines earlier the funnel counted
+// classic and nothing else, while three lines earlier the funnel counted
 // an SD-only contestant as having scored, and the caveat under the table said
 // SD "contributes to participation and points". A team's row has to agree
 // with the sentence printed beneath it.
@@ -1078,8 +927,7 @@ describe("team points include Secure Development (issue #432)", () => {
   it("adds Secure Development to the module points, per member", async () => {
     mockStore({
       quizPoints: { alice: 100, bob: 50 },
-      classicPoints: { alice: 200 },
-      aiPoints: { bob: 75 },
+      classicPoints: { alice: 200, bob: 75 },
       sdPoints: { alice: 36, bob: 22 },
       logins: ["alice", "bob"],
       perLogin: { alice: {}, bob: {} },

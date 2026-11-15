@@ -2,13 +2,12 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as classicStore from "@/lib/classic-store";
 import * as quizStore from "@/lib/quiz-store";
-import * as aiStore from "@/lib/ai-store";
 import * as adminStore from "@/lib/admin-store";
 import * as enabledModules from "@/lib/enabled-modules";
 import { DEFAULT_SECURE_DEV_TARGETS } from "@/lib/secure-dev-targets";
 
 const m = vi.hoisted(() => ({
-  exportClassic: vi.fn(), exportQuiz: vi.fn(), exportAi: vi.fn(), exportSponsors: vi.fn(), importSponsors: vi.fn(),
+  exportClassic: vi.fn(), exportQuiz: vi.fn(), exportSponsors: vi.fn(), importSponsors: vi.fn(),
   validateBundleLogos: vi.fn(),
   exportEventImages: vi.fn(), importEventImages: vi.fn(), validateEventImagesBundle: vi.fn(),
   getAdminSettings: vi.fn(), effectivePaused: vi.fn(),
@@ -24,7 +23,6 @@ const files = vi.hoisted(() => ({
 vi.mock("@/lib/attachments-store", () => files);
 vi.mock("@/lib/classic-store", () => ({ exportBundle: m.exportClassic, clearChallenges: vi.fn(), importBundle: vi.fn() }));
 vi.mock("@/lib/quiz-store", () => ({ exportBundle: m.exportQuiz, clearQuestions: vi.fn(), importBundle: vi.fn() }));
-vi.mock("@/lib/ai-store", () => ({ exportBundle: m.exportAi, clearAiChallenges: vi.fn(), importBundle: vi.fn() }));
 // Sponsors is a PLATFORM feature, not a content module — it has no
 // clear*() here because admin-store's resetEvent (mocked below) already
 // covers wiping ctf:sponsors* before an import (see event-store.ts's own
@@ -56,7 +54,7 @@ vi.mock("@/lib/admin-store", () => ({
 // pure `@/lib/module-defaults`, driven by `process.env.SCORE_IMAGE`), not by
 // any baked/build-time set.
 vi.mock("@/lib/modules", () => ({
-  isModuleId: (v: unknown) => typeof v === "string" && ["classic", "quiz", "ai", "secure-development"].includes(v),
+  isModuleId: (v: unknown) => typeof v === "string" && ["classic", "quiz", "secure-development"].includes(v),
   // resolveSite() (real now — see the `@/lib/site` mock below) re-exports this
   // verbatim onto `Site`; the mock needs to supply it or resolveSite throws.
   SECURE_AGENT_PLAYBOOK_URL: "https://github.com/OWASP/secure-agent-playbook",
@@ -95,7 +93,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   m.exportClassic.mockResolvedValue({ version: 1, categories: ["Web"], challenges: [{ id: "web-one-ab12cd", title: "One", category: "Web", description: "hi", points: 50, order: 0, flag: "ctfbox{One}" }] });
   m.exportQuiz.mockResolvedValue({ version: 1, questions: [] });
-  m.exportAi.mockResolvedValue({ version: 1, categories: ["Prompt Injection"], challenges: [] });
   m.exportSponsors.mockResolvedValue(null);
   m.exportEventImages.mockResolvedValue(null);
   m.getAdminSettings.mockResolvedValue({
@@ -139,14 +136,13 @@ describe("exportEventBundle", () => {
     expect(s).not.toContain('"admins"');
   });
 
-  // Import clears all three content stores, so the export must carry
-  // all three whatever the module toggle says — a switched-off module's
+  // Import clears both content stores, so the export must carry
+  // both whatever the module toggle says — a switched-off module's
   // content would otherwise be deleted by its own round trip. Which modules
   // are on travels separately, in settings.enabledModuleIds.
   it("carries every module's content when its module is switched off, with the toggle in settings", async () => {
     m.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["quiz"], paused: true });
     const { bundle } = await exportEventBundle(new Date());
-    expect(bundle.ai).toEqual({ version: 1, categories: ["Prompt Injection"], challenges: [] });
     expect(bundle.classic?.challenges.map((c) => c.id)).toEqual(["web-one-ab12cd"]);
     expect(bundle.quiz).toEqual({ version: 1, questions: [] });
     expect(bundle.settings.enabledModuleIds).toEqual(["quiz"]);
@@ -217,25 +213,23 @@ describe("exportEventBundle", () => {
     expect(bundle.settings.enabledModuleIds).toEqual(["secure-development"]);
   });
 
-  // aiCooldownSec rides EVENT_POLICY_FIELDS beside classicCooldownSec (see
-  // event-io.ts) — pinned by name here since neither cooldown field was
-  // previously asserted anywhere in this suite.
-  it("carries both modules' cooldown overrides — classicCooldownSec and aiCooldownSec — through export", async () => {
+  // classicCooldownSec rides EVENT_POLICY_FIELDS (see event-io.ts) — pinned
+  // by name here.
+  it("carries the classicCooldownSec override through export", async () => {
     m.getAdminSettings.mockResolvedValue({
       hintCost: 50, teamMaxMembers: 4, enabledModuleIds: ["classic", "quiz"],
-      classicCooldownSec: 45, aiCooldownSec: 12,
+      classicCooldownSec: 45,
       scoringStartsAt: "2026-01-01T00:00:00Z", paused: true, updatedBy: "alice", updatedAt: "x",
     });
     const { bundle } = await exportEventBundle(new Date("2026-06-01T00:00:00Z"));
     expect(bundle.settings.classicCooldownSec).toBe(45);
-    expect(bundle.settings.aiCooldownSec).toBe(12);
   });
 
   // Finding C: a field ResolvedAdminSettings reports as unset — `null`, its
   // real "no override" value (see admin-store.ts), never `undefined` — must
   // be OMITTED from the exported bundle rather than written out as
   // `null`. Otherwise a fresh export of a box that never touched a newer
-  // policy field (aiCooldownSec, added after v1 shipped) carries that key
+  // policy field (classicCooldownSec, say) carries that key
   // anyway, and event-io.ts's parser rejects any settings key outside an
   // older box's own EVENT_POLICY_FIELDS allowlist — so every export from
   // this build would fail to import into a pre-this-build box even when
@@ -247,24 +241,19 @@ describe("exportEventBundle", () => {
       hintCost: 50,
       teamMaxMembers: 4,
       enabledModuleIds: ["classic", "quiz"],
-      // Both null, mirroring ResolvedAdminSettings' real shape for a field
+      // Null, mirroring ResolvedAdminSettings' real shape for a field
       // the organizer never overrode (see admin-store.ts ~line 296-302) —
       // not simply absent from the mock, which would already pass thanks to
       // JSON.stringify dropping `undefined` and prove nothing about the
       // actual (real-world) null case.
       classicCooldownSec: null,
-      aiCooldownSec: null,
       paused: true,
     });
     const { bundle } = await exportEventBundle(new Date());
-    expect("aiCooldownSec" in bundle.settings).toBe(false);
-    // General rule, not an aiCooldownSec special case: any null scalar
-    // policy field is dropped the same way.
     expect("classicCooldownSec" in bundle.settings).toBe(false);
     // A field that IS set still carries through — this isn't "always omit".
     expect(bundle.settings.hintCost).toBe(50);
     const s = JSON.stringify(bundle);
-    expect(s).not.toContain("aiCooldownSec");
     expect(s).not.toContain("classicCooldownSec");
   });
 
@@ -368,7 +357,6 @@ describe("importEventBundle", () => {
   });
 
   it("round-trips a switched-off module: its content is re-imported and it stays off", async () => {
-    vi.mocked(aiStore.importBundle).mockResolvedValue({ created: 0, updated: 0, categories: 1 });
     m.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["quiz"], paused: true });
     const { bundle } = await exportEventBundle(new Date());
 
@@ -376,7 +364,6 @@ describe("importEventBundle", () => {
     await importEventBundle(JSON.parse(JSON.stringify(bundle)), actor("alice"));
 
     expect(classicStore.importBundle).toHaveBeenCalledWith(bundle.classic);
-    expect(aiStore.importBundle).toHaveBeenCalledWith(bundle.ai);
     expect(quizStore.importBundle).toHaveBeenCalledWith(bundle.quiz);
     const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
     expect(patch.enabledModules).toEqual(["quiz"]);
@@ -391,7 +378,7 @@ describe("importEventBundle", () => {
 
   it("clears content before importing (true replace), then sweeps run state", async () => {
     await importEventBundle(bundleFixture(), actor("alice"));
-    expect(adminStore.resetEvent).toHaveBeenCalledWith(actor("alice"), { keepLaunchKey: true });
+    expect(adminStore.resetEvent).toHaveBeenCalledWith(actor("alice"));
     expect(classicStore.clearChallenges).toHaveBeenCalled();
     expect(classicStore.importBundle).toHaveBeenCalled();
     // clear must precede import
@@ -400,18 +387,7 @@ describe("importEventBundle", () => {
     expect(clearOrder).toBeLessThan(importOrder);
   });
 
-  // #653: an archive import replaces the catalogue but must NOT rotate the
-  // module's launch keypair — it is module identity, not catalogue content
-  // (ADR 53). The import opts `resetEvent` out of the launch-key wipe;
-  // admin-store.reset.test.ts pins that the option actually skips it and that
-  // the default (an ordinary reset) still clears it.
-  it("preserves the ai launch keypair by opting resetEvent out of the launch-key wipe", async () => {
-    await importEventBundle(bundleFixture(), actor("alice"));
-    expect(adminStore.resetEvent).toHaveBeenCalledWith(actor("alice"), { keepLaunchKey: true });
-    expect(aiStore.clearAiChallenges).toHaveBeenCalled();
-  });
-
-  it("clears ALL THREE content stores on replace, even when the bundle carries only one module (a quiz-only archive must still wipe stale classic and ai content already on the target)", async () => {
+  it("clears BOTH content stores on replace, even when the bundle carries only one module (a quiz-only archive must still wipe stale classic content already on the target)", async () => {
     const quizOnly = bundleFixture();
     delete (quizOnly as { classic?: unknown }).classic;
     await importEventBundle(quizOnly, actor("alice"));
@@ -419,43 +395,9 @@ describe("importEventBundle", () => {
     expect(classicStore.importBundle).not.toHaveBeenCalled();
     expect(quizStore.clearQuestions).toHaveBeenCalled();
     expect(quizStore.importBundle).toHaveBeenCalled();
-    expect(aiStore.clearAiChallenges).toHaveBeenCalled();
-    expect(aiStore.importBundle).not.toHaveBeenCalled();
   });
 
-  // #250: the ai section, when present, is cleared-then-imported like the
-  // other two and reported in the summary under its own key.
-  it("imports the ai section after clearing it, and reports it in the summary", async () => {
-    vi.mocked(aiStore.importBundle).mockResolvedValue({ created: 2, updated: 0, categories: 1 });
-    const withAi = {
-      ...bundleFixture(),
-      ai: {
-        version: 1 as const,
-        categories: ["Prompt Injection"],
-        challenges: [
-          {
-            id: "pi-one-ab12cd",
-            title: "One",
-            category: "Prompt Injection",
-            description: "hi",
-            points: 50,
-            order: 0,
-            mode: "both" as const,
-            urlTemplate: "https://ai.example/one?t={token}",
-            flag: "ctfbox{One}",
-          },
-        ],
-      },
-    };
-    const { summary } = await importEventBundle(withAi, actor("alice"));
-    expect(aiStore.importBundle).toHaveBeenCalledWith(withAi.ai);
-    const clearOrder = vi.mocked(aiStore.clearAiChallenges).mock.invocationCallOrder[0];
-    const importOrder = vi.mocked(aiStore.importBundle).mock.invocationCallOrder[0];
-    expect(clearOrder).toBeLessThan(importOrder);
-    expect(summary.ai).toEqual({ created: 2, updated: 0 });
-  });
-
-  // #405: sponsors ride the bundle like classic/quiz/ai, but with no
+  // #405: sponsors ride the bundle like classic/quiz, but with no
   // clear*() call of their own — `resetEvent` (already asserted above to run
   // before any import) covers wiping ctf:sponsors* for every import, not
   // only a sponsor-carrying one.
@@ -516,16 +458,14 @@ describe("importEventBundle", () => {
     expect("paused" in patch).toBe(false);
   });
 
-  // Mirrors the export-side coverage above, for the same reason: neither
-  // cooldown field was previously pinned by name on the import path either.
-  it("applies both cooldown overrides — classicCooldownSec and aiCooldownSec — to the settings patch", async () => {
+  // Mirrors the export-side coverage above, on the import path.
+  it("applies the classicCooldownSec override to the settings patch", async () => {
     await importEventBundle(
-      { ...bundleFixture(), settings: { ...bundleFixture().settings, classicCooldownSec: 45, aiCooldownSec: 12 } },
+      { ...bundleFixture(), settings: { ...bundleFixture().settings, classicCooldownSec: 45 } },
       actor("alice"),
     );
     const patch = vi.mocked(adminStore.updateAdminSettings).mock.calls[0][0];
     expect(patch.classicCooldownSec).toBe(45);
-    expect(patch.aiCooldownSec).toBe(12);
   });
 
   // Fail-fast ordering, the point of Finding 1: the settings patch is

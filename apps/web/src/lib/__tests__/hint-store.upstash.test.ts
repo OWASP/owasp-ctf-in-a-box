@@ -28,7 +28,7 @@ vi.mock("server-only", () => ({}));
 // The real `isModuleLive` calls `connection()` to stay out of Next's
 // build-time prerender, which throws outside a request scope — there is none
 // here, this is a direct function call from a test. Stood in for with a
-// secure-development-only set: secure-development live, quiz/classic/ai not — see the note by the availability test below for
+// secure-development-only set: secure-development live, quiz/classic not — see the note by the availability test below for
 // why their gates are out of scope here.
 vi.mock("@/lib/enabled-modules", () => ({
   isModuleLive: async (id: string) => id === "secure-development",
@@ -182,11 +182,11 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     expect(Number(spent.result)).toBe(COST);
   });
 
-  // Not asserted here: that classic and ai hint reads still work. Both gate on
+  // Not asserted here: that classic hint reads still work. They gate on
   // `isModuleLive`, and this suite runs against a secure-development-only set
-  // where neither module is on, so a live assertion would only ever exercise
+  // where classic is off, so a live assertion would only ever exercise
   // the module gate — a skip dressed as a check. Their reads are covered by the
-  // mocked suite and by the classic/ai store suites that do enable them.
+  // mocked suite and by the classic store suites that do enable it.
 
   // #463: a locked story step's hint is refused INSIDE the reveal script —
   // before any charge — unless a teammate (a solves hash handed in as

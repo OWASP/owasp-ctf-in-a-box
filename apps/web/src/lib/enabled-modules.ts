@@ -7,7 +7,7 @@ import type { ModuleId } from "@/lib/modules";
 
 /** The module set this deployment starts with, and falls back to: computed
  *  once from the server's env (issue #386). Secure Development when a scorer
- *  image exists, otherwise nothing — quiz, classic and ai are switched on from
+ *  image exists, otherwise nothing — quiz and classic are switched on from
  *  /admin. Server-only on purpose: SCORE_IMAGE is not in the client bundle. */
 export const defaultModuleIds: readonly ModuleId[] = defaultEnabledModules(process.env);
 

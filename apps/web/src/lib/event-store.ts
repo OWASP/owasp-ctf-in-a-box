@@ -2,7 +2,6 @@ import "server-only";
 import type { AuditActor } from "@/lib/admin-audit-keys";
 import { exportBundle as exportClassic, clearChallenges, importBundle as importClassic } from "@/lib/classic-store";
 import { exportBundle as exportQuiz, clearQuestions, importBundle as importQuiz } from "@/lib/quiz-store";
-import { exportBundle as exportAi, clearAiChallenges, importBundle as importAi } from "@/lib/ai-store";
 import {
   exportBundle as exportSponsors,
   importBundle as importSponsors,
@@ -103,7 +102,7 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
     const value = (settings as unknown as Record<string, unknown>)[field];
     // Omit a field that is unset (`null` — every scalar policy field's "no
     // override" value on ResolvedAdminSettings — or `undefined`) rather than
-    // writing it out as `null`. A newer field (e.g. `aiCooldownSec`) that the
+    // writing it out as `null`. A newer field (e.g. `classicCooldownSec`) that the
     // organizer never touched must not appear as a key at all, or this
     // export fails to import into a box built before that field existed:
     // event-io.ts's parser rejects any settings key outside its own
@@ -149,16 +148,12 @@ export async function exportEventBundle(now: Date = new Date()): Promise<{ bundl
       ...(settings.eventIdentity?.eventTimeZone ? { timeZone: site.timeZone } : {}),
     },
     settings: policySettings,
-    // All three content stores, whatever the module toggles say:
-    // importEventBundle clears all three, so a section left out here would
+    // Both content stores, whatever the module toggles say:
+    // importEventBundle clears both, so a section left out here would
     // delete a switched-off module's content on the way back in. Which
     // modules are on rides in settings.enabledModuleIds above.
     classic: await exportClassic(),
     quiz: await exportQuiz(),
-    // The ai catalogue's own `exportBundle` reads challenges, flags, hints,
-    // signing keys and categories — never `ctf:ai:launchkey`, which is
-    // module identity.
-    ai: await exportAi(),
   };
 
   // Sponsors are a PLATFORM feature, not a module — there is no
@@ -214,7 +209,6 @@ export class EventLiveError extends Error {}
 export type EventImportSummary = {
   classic?: { created: number; updated: number };
   quiz?: { created: number; updated: number };
-  ai?: { created: number; updated: number };
   /** No `updated` — sponsors import is a full replace into an
    *  already-cleared store (see `importEventBundle`'s sponsors branch), so
    *  every row is a create. */
@@ -224,15 +218,12 @@ export type EventImportSummary = {
 };
 
 /** Replace-all import of a whole-EVENT archive bundle. Destructive: it wipes
- *  run state (`resetEvent`) and then REPLACES the box's content. All three
- *  archivable content stores (classic, quiz, ai) are cleared unconditionally
+ *  run state (`resetEvent`) and then REPLACES the box's content. Both
+ *  archivable content stores (classic, quiz) are cleared unconditionally
  *  — not only the ones present in the bundle — and only then is each section
  *  actually present in the bundle imported (clear-all, then import-present
  *  — never the reverse, or a stale challenge the bundle doesn't carry would
- *  survive the "replace"). The ai clear (`clearAiChallenges`) deliberately
- *  leaves `ctf:ai:launchkey` alone: rotating the module's published launch
- *  key on an import would break every deployed external verifier (#250,
- *  ADR 53). This is "replace-all into a box to replay THIS
+ *  survive the "replace"). This is "replace-all into a box to replay THIS
  *  event": a quiz-only archive must leave the box with NO classic content,
  *  not the target's pre-existing classic content still sitting there ready
  *  to resurface if classic is later re-enabled. A module absent from the
@@ -316,21 +307,17 @@ export async function importEventBundle(
 
   // Sweep run-state before touching content, so a mid-import failure never
   // leaves stale team/solve/hint state pointing at content that does not
-  // exists. `keepLaunchKey` keeps this sweep from rotating the module's
-  // published launch keypair: it is module identity, not catalogue content,
-  // and rotating it would break every deployed external verifier (#250, ADR
-  // 53) — the same reason `clearAiChallenges` leaves it alone.
-  await resetEvent(actor, { keepLaunchKey: true });
+  // exists.
+  await resetEvent(actor);
 
   // Replace-ALL: every archivable content store is cleared regardless of
   // which module sections this bundle carries. A quiz-only archive must wipe
-  // any classic or ai content already on the target (and vice-versa) — this
+  // any classic content already on the target (and vice-versa) — this
   // is a replace of the box's whole content state to match the archive, not
   // a merge, so stale content from a module absent in the bundle must not
   // resurface later if that module gets re-enabled.
   await clearChallenges();
   await clearQuestions();
-  await clearAiChallenges();
 
   const summary: EventImportSummary = {};
   if (importedImages) summary.eventImages = { slots: importedImages };
@@ -348,14 +335,9 @@ export async function importEventBundle(
     summary.quiz = { created: q.created, updated: q.updated };
   }
 
-  if (bundle.ai) {
-    const a = await importAi(bundle.ai);
-    summary.ai = { created: a.created, updated: a.updated };
-  }
-
   // No separate clear call needed before this: `resetEvent` above already
   // wiped both sponsor hashes (admin-store.ts's RESET_PREFIXES), unlike
-  // classic/quiz/ai's clear*() calls, which exist because their CONTENT
+  // classic/quiz's clear*() calls, which exist because their CONTENT
   // survives a plain reset and only an archive import should wipe it.
   if (bundle.sponsors) {
     const s = await importSponsors(bundle.sponsors);

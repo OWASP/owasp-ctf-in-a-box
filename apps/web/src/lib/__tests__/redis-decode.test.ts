@@ -1,8 +1,8 @@
 // The store-side decode helpers and the Lua attempt-row read (#504 M13).
 //
-// quiz, classic and ai each carried their own byte-identical copy of
+// quiz and classic each carried their own byte-identical copy of
 // `parseJsonValue` / `parseHashEntries` / `parseCounterHash`, and each grading
-// script carried its own copy of the attempt-row read. Three copies is three
+// script carried its own copy of the attempt-row read. Two copies is two
 // places for the next change to land in one and silently desync the others:
 // the parsers decide what a corrupt row reads as (a whole module's points can
 // go missing), and the Lua read decides what the attempt budget and the
@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), "..");
-const STORES = ["quiz-store.ts", "classic-store.ts", "ai-store.ts"].map((f) => join(LIB, f));
+const STORES = ["quiz-store.ts", "classic-store.ts"].map((f) => join(LIB, f));
 const read = (path: string): string => readFileSync(path, "utf8");
 
 describe("the store parse helpers have one implementation", () => {
@@ -89,9 +89,7 @@ describe("the attempt-row Lua read has one implementation", () => {
 
     it(`${name}'s grading script interpolates ATTEMPT_ROW_LUA`, () => {
       const src = read(path);
-      // ai indents it one level (`ATTEMPT_ROW_LUA_INDENTED`) because it pastes
-      // it inside a nested branch; the snippet itself is still the shared one.
-      expect(src).toMatch(/\$\{ATTEMPT_ROW_LUA(_INDENTED)?\}/);
+      expect(src).toContain("${ATTEMPT_ROW_LUA}");
       // The regexes the shared snippet owns must not be re-spelled in a
       // store's own script body — that is the second copy.
       expect(src).not.toContain('"attempts":(%d+)');

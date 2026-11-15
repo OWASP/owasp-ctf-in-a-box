@@ -87,6 +87,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 69 — The AI module is retired; AI security challenges run as Jeopardy challenges with flags](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)
 - [ADR 70 — Unattributed Secure Development scores are held, not dropped](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)
 - [ADR 71 — The AI module is retired in v2.0.0](#adr-71-the-ai-module-is-retired-in-v200)
+- [ADR 73 — Admins are claimed with a one-time code, not named in `.env`](#adr-73-admins-are-claimed-with-a-one-time-code-not-named-in-env)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -2332,7 +2333,7 @@ one module, no per-module settings, targets as a comma-separated string.
 
 ## ADR 44. Runtime admin grants, with the baked list as the recovery path
 
-**Status.** Superseded 2026-09-11 by [ADR 55](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml) — there is no baked list any more: the bootstrap set is `ADMIN_LOGINS` in `.env`, read at process start. The decision's substance is unchanged and deliberately preserved: runtime grants stack on top of the bootstrap set, a bootstrap admin can never be revoked from the panel, and `requireAdmin` checks the bootstrap list first without touching Redis and fails closed. Only the cost of changing that set moved, from a rebuild to a restart. Previously: accepted, implementing issue #147.
+**Status.** Superseded 2026-09-11 by [ADR 55](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml) — there is no baked list any more: the bootstrap set is `ADMIN_LOGINS` in `.env`, read at process start. The decision's substance is unchanged and deliberately preserved: runtime grants stack on top of the bootstrap set, a bootstrap admin can never be revoked from the panel, and `requireAdmin` checks the bootstrap list first without touching Redis and fails closed. Only the cost of changing that set moved, from a rebuild to a restart. Previously: accepted, implementing issue #147. Its `ADMIN_LOGINS` bootstrap set is replaced by claim codes: see [ADR 73](#adr-73-admins-are-claimed-with-a-one-time-code-not-named-in-env).
 
 *Everything below is the decision as it stood, kept for its rationale, and
 every mention of `event.yaml`, of a baked list, and of a rebuild is
@@ -3192,7 +3193,7 @@ and mounting a CA into the container does nothing.
 
 ## ADR 55. Configuration v2: `.env` bootstrap, `/admin` runtime, no event.yaml
 
-**Status.** Accepted. Supersedes [ADR 10](#adr-10-eventyamls-module-namespace-deliberate-not-dynamic-registration), [ADR 12](#adr-12-build-time-config-generation-over-runtime-config), [ADR 26](#adr-26-compose-profiles-follow-the-enabled-modules), [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 52](#adr-52-modules-are-switched-at-runtime-secure-development-is-configured-at-setup); amends [ADR 13](#adr-13-closed-appid-union-config-selects-a-subset-unknown-values-fail-the-build). Implements issue [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386); [ADR 43](#adr-43-one-url-and-it-lives-in-env-not-eventyaml) is the precedent.
+**Status.** Accepted. Supersedes [ADR 10](#adr-10-eventyamls-module-namespace-deliberate-not-dynamic-registration), [ADR 12](#adr-12-build-time-config-generation-over-runtime-config), [ADR 26](#adr-26-compose-profiles-follow-the-enabled-modules), [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 52](#adr-52-modules-are-switched-at-runtime-secure-development-is-configured-at-setup); amends [ADR 13](#adr-13-closed-appid-union-config-selects-a-subset-unknown-values-fail-the-build). Implements issue [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386); [ADR 43](#adr-43-one-url-and-it-lives-in-env-not-eventyaml) is the precedent. Its `ADMIN_LOGINS` bootstrap set is replaced by claim codes: see [ADR 73](#adr-73-admins-are-claimed-with-a-one-time-code-not-named-in-env).
 
 **Context.** Event configuration lived in three places at once: a committed
 `event.yaml` baked into the `app` image through the `EVENT_CONFIG_B64`
@@ -4376,3 +4377,67 @@ tokens or posted signed solve events has nothing to call on a v2 box. An
 event that wants its AI results keeps or records its v1.x box before
 upgrading. The registry's `deprecated` field and its admin rendering stay as
 the mechanism for retiring a module; no module sets it today.
+
+## ADR 73. Admins are claimed with a one-time code, not named in `.env`
+
+**Status.** Accepted (#738). Replaces the `ADMIN_LOGINS` bootstrap set of [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 55](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml).
+
+**Context.** `ADMIN_LOGINS` named GitHub logins. v2 accounts are kit
+accounts keyed by a player id (#731), GitHub is optional unless Secure
+Development is on, and usernames are chosen by whoever signs up first on an
+open sign-up page. None of those can name an organizer in `.env` before the
+event exists.
+
+**Decision.**
+- **An admin is a kit player id in `ctf:admin:grants`**, a Redis set and the
+  only roster. A GitHub login, linked or not, grants nothing, and
+  `ADMIN_LOGINS` is not read anywhere.
+- **The first grant comes from a one-time claim code.** Provisioning
+  generates 128 random bits, shows them once as 32 hex in eight groups of
+  four, and writes only the lowercase hex SHA-256 of the normalized code as
+  `ADMIN_CLAIM_CODE_HASH`. A signed-in player enters the code at
+  `/admin/claim`. Input is normalized (lowercase, hyphens and whitespace
+  dropped) and must be exactly 32 hex. The hash is unsalted: the code has 128
+  bits of entropy, which a slow KDF would not add to.
+- **Admins issue more codes.** An issued code is stored as
+  `ctf:admin:code:<sha256>` for 15 minutes and works once.
+- **Claim, issue and revoke are atomic Lua scripts**, each writing one audit
+  line. The claim refuses an existing admin without consuming anything. The
+  bootstrap path matches only the current env hash and records it in
+  `ctf:admin:claim:spent`; the issued path reads and deletes the code key in
+  the same script, so two racing claims grant once.
+- **Brute force is bounded per player.** `/api/me/admin/claim` needs a
+  signed-in kit player and charges five attempts per 15 minutes per player,
+  failing closed. There is no global bucket, because anyone could spend it
+  and lock the organizer out of the recovery claim. Every refusal returns the
+  same body.
+- **Revoke stays, by player id, and refuses the last grant.** There is no
+  grant-by-name path: a code is the only way in.
+- **Audit lines carry a code id, never a code.** `admin:grant` names the
+  grantee, the path (`bootstrap` or `code`), the first eight hex of the hash
+  and, for an issued code, its issuer; `admin:code-issue` and `admin:revoke`
+  follow the same rule. No line carries a GitHub login, a code or a full
+  hash.
+- **Fail directions.** The admin check denies on a Redis error, as before.
+  The claim answers 503 on one and never grants. The Forbidden wall's
+  "nobody has claimed this box" notice reads the grant count best-effort and
+  shows nothing when the read fails.
+
+**Recovery.** Rotating the hash (re-running setup, or a deploy with a
+new-code flag) makes a new bootstrap code, and the old one stops working at
+once because only the current env hash is compared. The bootstrap code works
+whether or not admins exist: the lock-out case includes an admin who still
+holds a grant but cannot sign in, and v2.0 has no email recovery. Rotating
+needs `.env` or deploy access, which already means full control of the box.
+
+**Consequences.** `/admin` now needs Redis to decide who is an admin; every
+admin path already needed it for its data. No admin is beyond revocation,
+so the last-admin guard is what keeps the panel reachable. Master reset keeps
+`ctf:admin:*`, so a reset never locks the organizers out, and the event
+archive carries none of it. Grants written by v1 under `ctf:admin:admins` are
+not read. Deleting an account must also remove its grant (#740).
+
+**Alternatives rejected.** The first account to sign in becomes admin: a
+race on a public URL. Admins named by username in `.env`: usernames are
+self-chosen at open sign-up, so the name can be taken first. A slow password
+hash for the code: there is no low entropy for it to protect.

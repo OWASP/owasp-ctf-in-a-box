@@ -298,8 +298,11 @@ suggestions.
   no image takes a config build-arg, so bring the box up as `docker compose
   --profile secdev --profile app up -d --build` (drop `--profile secdev` on an
   event with no `SCORE_IMAGE`). Three `.env` keys are read at RUNTIME and
-  nothing falls back to a baked default: `ADMIN_LOGINS` (empty 403s everyone at `/admin` —
-  fail-closed, `bootstrap-env.ts`), `GITHUB_ORG` (empty means no fork links
+  nothing falls back to a baked default: `ADMIN_CLAIM_CODE_HASH` (the SHA-256
+  of the one-time admin claim code, never the code; empty or malformed means
+  nobody can claim the first seat at `/admin/claim` — fail-closed,
+  `bootstrap-env.ts`, ADR 73; an admin is a player id in `ctf:admin:grants`,
+  and `ADMIN_LOGINS` is read by nothing), `GITHUB_ORG` (empty means no fork links
   on `/challenges`, and `sync` refuses to start at all, logging
   `ctf-sync: GITHUB_ORG is not set`), and **`SCORE_IMAGE`, which is how a box
   says whether it runs Secure Development** — non-empty means the scorer and
@@ -381,8 +384,8 @@ suggestions.
   per kit account, no unlink), sync resolves the score marker's `author`
   through the first, and an unlinked author's score is held
   (`ctf:sd:held:*`) until they link. GitHub logins are unique only
-  case-insensitively, so the link key and the `ADMIN_LOGINS` check lowercase
-  both sides. Never key a record on a
+  case-insensitively, so the link key lowercases both sides. Admin-ness is
+  the player id too, never a login. Never key a record on a
   login, and never join across the two keyings (#216 was a verbatim login
   join that made hints free; #742 removed the class). Sync needs Redis for
   the link lookup and refuses to start without it.

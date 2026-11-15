@@ -130,15 +130,17 @@ features past green tests three times.
 
 **10. The app reads no build-time config.** Config v2 (#386) deleted
 `event.yaml` and its `EVENT_CONFIG_B64` bake: the app now reads its two
-bootstrap identities, `GITHUB_ORG` and `ADMIN_LOGINS`, from the process
+bootstrap values, `GITHUB_ORG` and `ADMIN_CLAIM_CODE_HASH`, from the process
 environment at runtime (`bootstrap-env.ts`), and everything else — the
 event's name and branding, which Secure Development targets run — is a
 runtime `/admin` setting in the `ctf:admin:settings` hash. A review should
 verify: no `process.env` read reaches a client component (a client bundle
-must never see who the admins are, and `process.env` there is empty or
-misleading anyway); an empty `ADMIN_LOGINS` fails CLOSED in
-`admin-auth.ts`/`isAdminLogin` — nobody is an admin, not "no allowlist
-configured, let runtime grants decide"; an empty `GITHUB_ORG` degrades
+must never see the claim-code hash, and `process.env` there is empty or
+misleading anyway); admin-ness is decided by the player id in
+`ctf:admin:grants` (`admin-auth.ts`/`isAdminPlayer`, ADR 73), never by a
+GitHub login, and a grant read that errors denies; an empty or malformed
+`ADMIN_CLAIM_CODE_HASH` means nobody can claim, never "anyone may"; a claim
+code or its full hash is never logged, audited or rendered; an empty `GITHUB_ORG` degrades
 gracefully in the app (`apps.ts` renders a bare repo name instead of a fork
 link) but sync's `loadConfig(env)` throws on it instead, because for sync a
 missing org is a genuine misconfiguration, not "nothing to poll" — the two

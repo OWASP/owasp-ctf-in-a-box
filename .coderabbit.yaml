@@ -58,14 +58,14 @@ reviews:
   labeling_instructions:
     - label: "security"
       instructions: >
-        Apply when the PR touches the admins allowlist, the scorer's token
+        Apply when the PR touches the admin roster or claim codes, the scorer's token
         compare, the sync trust filter or login grammar, the flag/answer-key
         secrecy boundary, the Markdown renderer, the origin assertion, rate
         limits, or a workflow running on pull_request_target.
     - label: "breaking-change"
       instructions: >
         Apply when the PR removes or renames a `.env` key (`GITHUB_ORG`,
-        `ADMIN_LOGINS`, `SCORE_IMAGE`, `EVENT_URL`, or another key
+        `ADMIN_CLAIM_CODE_HASH`, `SCORE_IMAGE`, `EVENT_URL`, or another key
         `.env.example` lists) or a `ctf:admin:settings` field, a registered
         module id, a ctf:* Redis key name or value shape, the scorer's POST
         /score or GET /leaderboard payloads, GET /api/public/scoring, or a
@@ -299,17 +299,24 @@ reviews:
         rather than emptySource. Placeholder rows would be indistinguishable
         from real standings on a board carrying real quiz or classic points.
 
-    - path: "apps/web/src/lib/{admin-store,admin-auth,resolved-modules,hint-store,rate-limit-store,launch}.ts"
+    - path: "apps/web/src/lib/{admin-store,admin-auth,admin-grants,admin-claim,resolved-modules,hint-store,rate-limit-store,launch}.ts"
       instructions: |
         Runtime-override and access-control layer. Flag
         ⚠️ WARNING: <description> — <fix> for:
 
         requireAdmin direction — must fail CLOSED; an unreachable store denies
-        rather than resolving to an empty list. `ADMIN_LOGINS` env admins are
-        checked first without touching Redis and stay non-revocable at
-        runtime — they are the lockout recovery path. An EMPTY `ADMIN_LOGINS`
-        must refuse every login, never fall open to "no allowlist configured,
-        let runtime grants decide".
+        rather than resolving to "no grant". Admin-ness is the player id in
+        `ctf:admin:grants` (ADR 73), never a GitHub login and never an env
+        list. The claim route's rate limit is charged FAIL CLOSED
+        (`failClosed: true`) and a claim error answers 503, never a grant. An
+        empty or malformed `ADMIN_CLAIM_CODE_HASH` disables the bootstrap
+        claim; it must never fall open. The revoke script must keep refusing
+        the last grant.
+
+        Claim-code secrecy — a claim code or its full SHA-256 must never be
+        logged, audited, rendered or returned, except the one response that
+        hands a freshly issued code to the admin who issued it. Audit rows
+        carry `codeId` (eight hex), nothing longer.
 
         Override precedence — every reader is override-else-default
         (`settings.x ?? DEFAULT_X`), never the reverse.
@@ -363,7 +370,7 @@ reviews:
         Two independent reads in one request can disagree on an unlucky Redis
         blip; the memoized snapshot is what makes it once per request.
 
-        Baked bootstrap value — a `GITHUB_ORG`/`ADMIN_LOGINS`/`SCORE_IMAGE`
+        Baked bootstrap value — a `GITHUB_ORG`/`ADMIN_CLAIM_CODE_HASH`/`SCORE_IMAGE`
         default reintroduced as a build-time constant or a generated module.
         These are runtime environment reads; no image takes a config build-arg.
 
@@ -371,11 +378,11 @@ reviews:
       instructions: |
         Flag ⚠️ WARNING: <description> — <fix> for:
 
-        Client-side bootstrap read — `process.env.ADMIN_LOGINS`,
+        Client-side bootstrap read — `process.env.ADMIN_CLAIM_CODE_HASH`,
         `process.env.GITHUB_ORG`, `process.env.SCORE_IMAGE`, or any
         `bootstrap-env.ts` export, reached from a module carrying
-        `"use client"` or from anything such a module imports. The admins list
-        must never reach a client bundle (config v2, #386; docs/reviewing.md
+        `"use client"` or from anything such a module imports. The claim-code
+        hash must never reach a client bundle (config v2, #386; docs/reviewing.md
         section 10).
 
         Statically prerendered `/` — a `force-static`, a `generateStaticParams`,
@@ -744,8 +751,8 @@ reviews:
           attempt/answer lookup; the classic cooldown lookup; the launch lock
           in launch.ts (a settings or admin-check error is "not launched" /
           "not admin"); ctf-setup.sh's `.env` parsing
-          (`env_val`); an empty `ADMIN_LOGINS` in `parseAdminLogins`/
-          `admin-auth.ts`; sync's `loadConfig(env)` refusing on a missing
+          (`env_val`); the admin claim's rate limit and its script errors
+          (`/api/me/admin/claim`); sync's `loadConfig(env)` refusing on a missing
           `GITHUB_ORG`.
 
           Flag ⚠️ WARNING: <description> — <fix> when a change inverts one of
@@ -819,11 +826,12 @@ reviews:
           contract without documentation:
 
           Runtime config schema — removing or renaming a `.env` key
-          (`GITHUB_ORG`, `ADMIN_LOGINS`, `SCORE_IMAGE`, `EVENT_URL`, or
-          another key `.env.example` lists) or a `ctf:admin:settings` field,
+          (`GITHUB_ORG`, `ADMIN_CLAIM_CODE_HASH`, `SCORE_IMAGE`, `EVENT_URL`,
+          or another key `.env.example` lists) or a `ctf:admin:settings` field,
           changing enum membership (module ids, target ids), making an
           optional key required, or re-introducing a key a release removed
-          (`SCORE_INGEST` — push ingest, removed in v0.6 by #377).
+          (`SCORE_INGEST` — push ingest, removed in v0.6 by #377;
+          `ADMIN_LOGINS` — replaced by claim codes, ADR 73).
           `.env.example`, `ctf-setup.sh`'s wizard, and the docs must change
           too.
 
@@ -844,7 +852,7 @@ reviews:
           ctf-setup.sh — removing or renaming a subcommand, flag, or prompt.
 
           Environment variables — removing or renaming GITHUB_ORG,
-          ADMIN_LOGINS, EVENT_URL, SCORE_IMAGE, LEADERBOARD_API_URL,
+          ADMIN_CLAIM_CODE_HASH, EVENT_URL, SCORE_IMAGE, LEADERBOARD_API_URL,
           LEADERBOARD_SOURCE, UPSTASH_REDIS_REST_URL, or similar.
           Re-introducing SCORE_INGEST, or the judge's SCORE_API/SCORE_TOKEN,
           counts too: push ingest was removed in v0.6 (#377) and a diff that

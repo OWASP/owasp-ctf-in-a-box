@@ -38,6 +38,12 @@ describe("RESET_PREFIXES", () => {
     }
   });
 
+  it("never matches the admin roster, issued codes or spent bootstrap hashes", () => {
+    for (const key of ["ctf:admin:grants", "ctf:admin:claim:spent", `ctf:admin:code:${"a".repeat(64)}`]) {
+      expect(RESET_PREFIXES.some(([, pattern]) => globToRegExp(pattern).test(key))).toBe(false);
+    }
+  });
+
   it("wipes held Secure Development scores", () => {
     for (const key of ["ctf:sd:held:by:octocat", "ctf:sd:held:authors"]) {
       expect(RESET_PREFIXES.some(([, pattern]) => globToRegExp(pattern).test(key))).toBe(true);

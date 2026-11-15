@@ -214,7 +214,7 @@ export default async function Home({
   // cards below link to a board only for whoever the board would let in: a
   // launched event, or an organizer previewing the locked one. Same answer
   // the board pages' own guard gives (fails closed).
-  const boardsOpen = (await getLaunchAccess(player?.githubLogin ?? undefined)).allowed;
+  const boardsOpen = (await getLaunchAccess(player?.id)).allowed;
   const firstBoard = sections.find((s) => s.cta)?.cta ?? null;
   const action = primaryAction(phaseInfo?.phase ?? null, player !== null, team, firstBoard, registrationOpen);
 

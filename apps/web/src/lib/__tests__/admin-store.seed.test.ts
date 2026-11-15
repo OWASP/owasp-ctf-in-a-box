@@ -82,6 +82,18 @@ function seededRecords(cmds: Cmd[], challengesKey: string): Record<string, unkno
 }
 
 describe("seedDemoData", () => {
+  // Demo rows keep their fixture GitHub login as an attribute, and no fixture
+  // can be an admin: the seed never writes the roster.
+  it("never writes the admin roster, and keeps the fixture login attribute", async () => {
+    await seedDemoData(actor("alice"));
+    const written = JSON.stringify([...mocks.upstashPipeline.mock.calls, ...mocks.upstashEval.mock.calls]);
+    expect(written).not.toContain("ctf:admin:grants");
+    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
+    const neo = cmds.find((c) => c[0] === "EVAL" && c[6] === demoPlayerId("neo-anderson"));
+    expect(neo, "no demo user row for neo-anderson").toBeTruthy();
+    expect(JSON.parse(String(neo![8])).login).toBe("neo-anderson");
+  });
+
   it("writes solves, teams, membership + a seed audit line in one pipeline", async () => {
     const out = await seedDemoData(actor("alice"));
 

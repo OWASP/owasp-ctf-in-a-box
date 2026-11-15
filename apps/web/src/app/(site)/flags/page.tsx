@@ -20,7 +20,7 @@ import ModuleEmptyState from "@/components/module-empty-state";
 import PageHeader from "@/components/page-header";
 import ChallengeBoard, { type ClassicChallengeView } from "@/components/challenge-board";
 import { deriveStatus } from "@/lib/derive-status";
-import { isAdminLogin } from "@/lib/admin-auth";
+import { isAdminPlayer } from "@/lib/admin-auth";
 import { getPlayer } from "@/lib/player";
 import { getAdminSettings } from "@/lib/admin-store";
 import { listStories,
@@ -59,14 +59,13 @@ export default async function FlagsPage() {
 
   const player = await getPlayer(await headers());
   const playerId = player?.id;
-  const adminLogin = player?.githubLogin ?? undefined;
   // #464 pre-launch lock: before ANY content load below. A refused viewer
   // (not launched, not an admin) goes to the landing page.
-  const launch = await redirectIfNotLaunched(adminLogin);
+  const launch = await redirectIfNotLaunched(playerId);
   // Drives the empty state's authoring route only — same check `/admin` and
   // every `/api/admin/*` route gate on, so a link is never offered to someone
   // the admin page would then 403 at. Mirrors quiz/page.tsx.
-  const viewerIsAdmin = await isAdminLogin(adminLogin);
+  const viewerIsAdmin = await isAdminPlayer(playerId);
 
   // Solves only count for a team (issue #153), and the submit route refuses a
   // teamless login. Sending them to set a team up first means nobody learns

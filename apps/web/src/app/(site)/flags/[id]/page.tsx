@@ -24,7 +24,7 @@ import { notFound } from "next/navigation";
 import ChallengeDetail, { type ClassicChallengeView } from "@/components/challenge-detail";
 import HintRevealButton from "@/components/hint-reveal-button";
 import { deriveStatus } from "@/lib/derive-status";
-import { isAdminLogin } from "@/lib/admin-auth";
+import { isAdminPlayer } from "@/lib/admin-auth";
 import { getPlayer } from "@/lib/player";
 import { getAdminSettings } from "@/lib/admin-store";
 import {
@@ -71,11 +71,10 @@ export default async function ClassicChallengePage({ params }: { params: Promise
 
   const player = await getPlayer(await headers());
   const playerId = player?.id;
-  const adminLogin = player?.githubLogin ?? undefined;
   // #464 pre-launch lock: before ANY content load below. A refused viewer
   // (not launched, not an admin) goes to the landing page.
-  const launch = await redirectIfNotLaunched(adminLogin);
-  const viewerIsAdmin = await isAdminLogin(adminLogin);
+  const launch = await redirectIfNotLaunched(playerId);
+  const viewerIsAdmin = await isAdminPlayer(playerId);
 
   // Same order as /flags: the team redirect fires before the loads below, so
   // a teamless contestant is never bounced after work that gets thrown away.

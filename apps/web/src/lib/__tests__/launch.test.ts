@@ -4,14 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const m = vi.hoisted(() => ({
   getAdminSettings: vi.fn(),
-  isAdminLogin: vi.fn(),
+  isAdminPlayer: vi.fn(),
   redirect: vi.fn((to: string) => {
     throw new Error(`NEXT_REDIRECT:${to}`);
   }),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings: m.getAdminSettings }));
-vi.mock("@/lib/admin-auth", () => ({ isAdminLogin: m.isAdminLogin }));
+vi.mock("@/lib/admin-auth", () => ({ isAdminPlayer: m.isAdminPlayer }));
 vi.mock("next/navigation", () => ({ redirect: m.redirect }));
 
 import { getLaunchAccess, launchApiAccess, redirectIfNotLaunched, requireLaunchedApi } from "@/lib/launch";
@@ -24,7 +24,7 @@ const FUTURE = "2026-10-02T00:00:00Z";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  m.isAdminLogin.mockResolvedValue(false);
+  m.isAdminPlayer.mockResolvedValue(false);
 });
 
 describe("isLaunched", () => {
@@ -50,9 +50,17 @@ describe("getLaunchAccess", () => {
     expect(await getLaunchAccess("bob", NOW)).toEqual({ allowed: true, preview: false });
     expect(await getLaunchAccess(undefined, NOW)).toEqual({ allowed: true, preview: false });
   });
+  it("asks the roster about the viewer player id, and nothing for a signed-out viewer", async () => {
+    m.getAdminSettings.mockResolvedValue({ scoringStartsAt: FUTURE, scoringEndsAt: null });
+    const id = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+    m.isAdminPlayer.mockImplementation(async (who: string | undefined) => who === id);
+    expect(await getLaunchAccess(id, NOW)).toEqual({ allowed: true, preview: true });
+    expect(m.isAdminPlayer).toHaveBeenCalledWith(id);
+    expect(await getLaunchAccess(undefined, NOW)).toEqual({ allowed: false, preview: false });
+  });
   it("lets an admin in before launch, as a preview", async () => {
     m.getAdminSettings.mockResolvedValue({ scoringStartsAt: FUTURE, scoringEndsAt: null });
-    m.isAdminLogin.mockResolvedValue(true);
+    m.isAdminPlayer.mockResolvedValue(true);
     expect(await getLaunchAccess("alice", NOW)).toEqual({ allowed: true, preview: true });
   });
   it("fails CLOSED for a non-admin when the settings read throws, and logs only the message", async () => {
@@ -80,13 +88,13 @@ describe("getLaunchAccess", () => {
   });
   it("still lets an admin in when the settings read throws", async () => {
     m.getAdminSettings.mockRejectedValue(new Error("redis down"));
-    m.isAdminLogin.mockResolvedValue(true);
+    m.isAdminPlayer.mockResolvedValue(true);
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await getLaunchAccess("alice", NOW)).toEqual({ allowed: true, preview: true });
   });
   it("treats an admin check that throws as not-admin (fail closed)", async () => {
     m.getAdminSettings.mockResolvedValue({ scoringStartsAt: null, scoringEndsAt: null });
-    m.isAdminLogin.mockRejectedValue(new Error("redis down"));
+    m.isAdminPlayer.mockRejectedValue(new Error("redis down"));
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await getLaunchAccess("alice", NOW)).toEqual({ allowed: false, preview: false });
   });
@@ -113,7 +121,7 @@ describe("redirectIfNotLaunched", () => {
   });
   it("returns the access when allowed (so a page can show the preview banner)", async () => {
     m.getAdminSettings.mockResolvedValue({ scoringStartsAt: null, scoringEndsAt: null });
-    m.isAdminLogin.mockResolvedValue(true);
+    m.isAdminPlayer.mockResolvedValue(true);
     expect(await redirectIfNotLaunched("alice")).toEqual({ allowed: true, preview: true });
     expect(m.redirect).not.toHaveBeenCalled();
   });
@@ -133,7 +141,7 @@ describe("launchApiAccess", () => {
   });
   it("lets an admin through before launch AS a preview (the route grades dry)", async () => {
     m.getAdminSettings.mockResolvedValue({ scoringStartsAt: null, scoringEndsAt: null });
-    m.isAdminLogin.mockResolvedValue(true);
+    m.isAdminPlayer.mockResolvedValue(true);
     expect(await launchApiAccess("alice")).toEqual({ refused: null, preview: true });
   });
 });

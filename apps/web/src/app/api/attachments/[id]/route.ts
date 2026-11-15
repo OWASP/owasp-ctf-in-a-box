@@ -42,7 +42,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     // The module-API launch contract first (#464): before launch, 403
     // not-launched to anyone but an admin — decided before the attachment is
     // even looked up, so nothing about it can differ.
-    const locked = await requireLaunchedApi(player?.githubLogin ?? undefined);
+    const locked = await requireLaunchedApi(player?.id);
     if (locked) return locked;
     const found = await resolveAttachment(id);
     if (!found) return notFound();

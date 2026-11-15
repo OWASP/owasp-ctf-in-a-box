@@ -1,6 +1,6 @@
-// Stores are keyed by the kit user id. The GitHub login is an attribute, read
-// only where it is the subject: the identity helper, auth wiring, the admin
-// check (ADMIN_LOGINS) and the GitHub link. Anywhere else, a read of
+// Stores, the admin check and the launch lock are keyed by the kit user id. The
+// GitHub login is an attribute, read only where it is the subject: the identity
+// helper, auth wiring and the GitHub link. Anywhere else, a read of
 // `session.user.login` is a store key built from the wrong identity.
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-const ALLOWED = new Set(["lib/player.ts", "lib/auth.ts", "lib/admin-auth.ts", "lib/github-link.ts"]);
+const ALLOWED = new Set(["lib/player.ts", "lib/auth.ts", "lib/github-link.ts"]);
 
 const PATTERNS = [/user as \{[^}]*login/, /\.user\.login/, /user\?\.login/];
 
@@ -41,6 +41,16 @@ describe("identity boundary", () => {
         const text = readFileSync(join(SRC, rel), "utf8");
         return PATTERNS.some((re) => re.test(text));
       })
+      .sort();
+    expect(offenders).toEqual([]);
+  });
+
+  it("no admin or launch check is fed a GitHub login", () => {
+    const re =
+      /(getLaunchAccess|redirectIfNotLaunched|requireLaunchedApi|launchApiAccess|adminSeesHidden|isAdminPlayer)\([^)]*githubLogin/;
+    const offenders = sources(SRC)
+      .map((path) => relative(SRC, path))
+      .filter((rel) => re.test(readFileSync(join(SRC, rel), "utf8")))
       .sort();
     expect(offenders).toEqual([]);
   });

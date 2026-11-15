@@ -76,7 +76,7 @@ export default async function LeaderboardPage({
   // #464 pre-launch lock, before the board is read: standings (and the
   // projector surface) are module content. Admins get through as a preview.
   const player = await getPlayer(await headers());
-  const launch = await redirectIfNotLaunched(player?.githubLogin ?? undefined);
+  const launch = await redirectIfNotLaunched(player?.id);
 
   const [data, modules, enabledApps] = await Promise.all([
     getFoldedLeaderboard(),

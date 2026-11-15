@@ -38,7 +38,7 @@ const board = vi.hoisted(() => ({ data: null as unknown }));
 // "boss" is an organizer: the pre-launch preview tests below sign them in.
 vi.mock("@/lib/admin-auth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/admin-auth")>()),
-  isAdminLogin: async (login: string | undefined) => login === "boss",
+  isAdminPlayer: async (id: string | undefined) => id === "3e2b7c6f-4a5d-4f8e-b192-adbecf203152",
 }));
 vi.mock("@/lib/leaderboard/source", () => ({
   getLeaderboardSource: async () => ({

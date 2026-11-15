@@ -32,10 +32,10 @@ vi.mock("@/lib/enabled-modules", () => ({ isModuleLive }));
 // Whether this viewer is an admin looking at a hidden challenge: its own
 // suite (classic-visibility.test.ts) pins the answer; here, what the route
 // does with it.
-const adminView = vi.hoisted(() => ({ adminSeesHidden: vi.fn<(login: string, id: string) => Promise<boolean>>(async () => false) }));
+const adminView = vi.hoisted(() => ({ adminSeesHidden: vi.fn<(playerId: string, id: string) => Promise<boolean>>(async () => false) }));
 vi.mock("@/lib/classic-visibility", () => adminView);
 // Admins are the only callers whose body is read before the team check.
-const adminAuth = vi.hoisted(() => ({ isAdminLogin: vi.fn<(login: string | undefined) => Promise<boolean>>(async () => false) }));
+const adminAuth = vi.hoisted(() => ({ isAdminPlayer: vi.fn<(playerId: string | undefined) => Promise<boolean>>(async () => false) }));
 vi.mock("@/lib/admin-auth", () => adminAuth);
 
 import { POST } from "@/app/api/classic/submit/route";
@@ -66,12 +66,12 @@ beforeEach(() => {
   hasTeam.mockReset();
   getSession.mockResolvedValue(SESSION);
   requireLaunchedApi.mockResolvedValue(null);
-  launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
+  launchApiAccess.mockImplementation(async (playerId: string) => ({ refused: await requireLaunchedApi(playerId), preview: false }));
   hasTeam.mockResolvedValue(true);
   isModuleLive.mockReset();
   isModuleLive.mockResolvedValue(true);
-  adminAuth.isAdminLogin.mockReset();
-  adminAuth.isAdminLogin.mockResolvedValue(false);
+  adminAuth.isAdminPlayer.mockReset();
+  adminAuth.isAdminPlayer.mockResolvedValue(false);
   adminView.adminSeesHidden.mockClear();
   activityLog.logActivity.mockClear();
 });
@@ -147,7 +147,7 @@ describe("POST /api/classic/submit", () => {
     expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: false });
     // The lock is asked about THIS session's GitHub login: admin preview is
     // decided on it (an admin passes as preview).
-    expect(requireLaunchedApi).toHaveBeenCalledWith("alice");
+    expect(requireLaunchedApi).toHaveBeenCalledWith(ALICE_ID);
     // The activity line names the player by id, with their name at the time.
     expect(activityLog.logActivity).toHaveBeenCalledWith(
       "classic-solve",
@@ -354,13 +354,13 @@ describe("an admin on a hidden challenge after launch", () => {
 
   it("is graded as a dry run, even without a team", async () => {
     session("boss");
-    adminAuth.isAdminLogin.mockResolvedValue(true);
+    adminAuth.isAdminPlayer.mockResolvedValue(true);
     hasTeam.mockResolvedValue(false);
     adminView.adminSeesHidden.mockResolvedValueOnce(true);
     storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
-    expect(adminView.adminSeesHidden).toHaveBeenLastCalledWith("boss", "c-1");
+    expect(adminView.adminSeesHidden).toHaveBeenLastCalledWith(IDS.boss, "c-1");
     expect(submitFlag).toHaveBeenCalledWith(IDS.boss, "c-1", "CTF{x}", { dryRun: true });
     expect((await res.json()).dryRun).toBe(true);
   });

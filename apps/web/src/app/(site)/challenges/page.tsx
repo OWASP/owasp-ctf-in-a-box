@@ -67,7 +67,7 @@ export default async function ChallengesPage({
   // any content load (a refused viewer goes to the landing page). It also
   // feeds the viewer's own solved marks below.
   const player = await getPlayer(await headers());
-  const launch = await redirectIfNotLaunched(player?.githubLogin ?? undefined);
+  const launch = await redirectIfNotLaunched(player?.id);
 
   const [catalog, title, enabledApps, enabledTotals] = await Promise.all([
     getChallengeCatalog(),

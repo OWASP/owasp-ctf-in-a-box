@@ -18,7 +18,8 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/admin-auth", () => ({ requireAdmin: m.requireAdmin }));
 vi.mock("@/lib/admin-grants", () => ({ listAdminGrants: m.listAdminGrants }));
 vi.mock("@/lib/admin-claim", () => ({ revokeAdmin: m.revokeAdmin }));
-vi.mock("@/lib/admin-store", () => ({ adminErrorLabel: (e: unknown) => (e instanceof Error ? e.message : "x") }));
+// The real label: the redaction tests below compare against it.
+vi.mock("@/lib/admin-store", async () => ({ adminErrorLabel: (await import("@/lib/error-label")).errorLabel }));
 vi.mock("@/lib/player", async (orig) => ({
   ...(await orig<typeof import("@/lib/player")>()),
   getPlayerProfiles: m.getPlayerProfiles,
@@ -26,6 +27,7 @@ vi.mock("@/lib/player", async (orig) => ({
 
 import * as route from "@/app/api/admin/admins/route";
 import { LAST_ADMIN } from "@/lib/admin-claim-copy";
+import { errorLabel } from "@/lib/error-label";
 import { actor } from "@/lib/__tests__/audit-actor";
 
 const { DELETE, GET } = route;
@@ -119,5 +121,50 @@ describe("DELETE", () => {
     m.revokeAdmin.mockRejectedValue(new Error("redis down"));
     expect((await DELETE(req("DELETE", { id: bob.id }))).status).toBe(503);
     err.mockRestore();
+  });
+});
+
+// A decorated error (a wrapped Redis/HTTP error carrying a token or a URL with
+// credentials) must reach the log only as errorLabel's "<name>: <message>".
+// Every argument after the fixed prefix must itself be a string: the raw error
+// is an Error instance, so passing it straight to console.error fails here
+// however it would later stringify.
+describe("error logs are redacted", () => {
+  const decorated = () =>
+    Object.assign(new Error("upstash down"), { token: "SECRET-TOKEN", url: "https://leaky.example/creds" });
+
+  async function expectRedacted(run: () => Promise<Response>, prefix: string, err: Error) {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await run()).status).toBe(503);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [first, ...rest] = spy.mock.calls[0];
+      expect(first).toBe(prefix);
+      for (const arg of rest) expect(typeof arg).toBe("string");
+      expect(rest).toEqual([errorLabel(err)]);
+      const logged = JSON.stringify(spy.mock.calls);
+      expect(logged).not.toContain("SECRET-TOKEN");
+      expect(logged).not.toContain("leaky.example");
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("redacts a decorated roster-read failure on GET", async () => {
+    const err = decorated();
+    m.listAdminGrants.mockRejectedValue(err);
+    await expectRedacted(() => GET(req("GET")), "[admin/admins] list failed", err);
+  });
+
+  it("redacts a decorated profile-read failure on GET", async () => {
+    const err = decorated();
+    m.getPlayerProfiles.mockRejectedValue(err);
+    await expectRedacted(() => GET(req("GET")), "[admin/admins] list failed", err);
+  });
+
+  it("redacts a decorated revoke failure on DELETE", async () => {
+    const err = decorated();
+    m.revokeAdmin.mockRejectedValue(err);
+    await expectRedacted(() => DELETE(req("DELETE", { id: bob.id })), "[admin/admins] remove failed", err);
   });
 });

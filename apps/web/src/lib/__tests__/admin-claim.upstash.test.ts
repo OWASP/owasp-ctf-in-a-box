@@ -49,7 +49,11 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
   async function runIssue(k: ReturnType<typeof keys>, hash: string, by: string) {
     const { claim, upstashEval } = await load();
     const line = JSON.stringify({ at: "x", by, name: "issuer", action: "admin:code-issue", codeId: hash.slice(0, 8) });
-    return upstashEval(claim.ISSUE_SCRIPT, [k.code(hash), k.audit], [JSON.stringify({ by, name: "issuer" }), "900", line, "499"]);
+    return upstashEval(
+      claim.ISSUE_SCRIPT,
+      [k.grants, k.code(hash), k.audit],
+      [by, JSON.stringify({ by, name: "issuer" }), "900", line, "499"],
+    );
   }
 
   it("bootstrap claim grants once", async () => {
@@ -113,6 +117,7 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const { pipeline } = await load();
     const k = keys();
     const h = sha("issued-ttl");
+    await pipeline([["SADD", k.grants, id(1)]]);
     expect(await runIssue(k, h, id(1))).toBe(1);
     expect(await runIssue(k, h, id(1))).toBe(0);
     const [ttl, lines] = await pipeline([["TTL", k.code(h)], ["LLEN", k.audit]]);
@@ -125,6 +130,7 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const { pipeline } = await load();
     const k = keys();
     const h = sha("issued-audit");
+    await pipeline([["SADD", k.grants, id(1)]]);
     await runIssue(k, h, id(1));
     expect(await runClaim(k, id(2), h, "")).toEqual(["ok", "code"]);
     const [head] = await pipeline([["LINDEX", k.audit, 0]]);
@@ -141,6 +147,45 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     });
     expect("login" in line).toBe(false);
     expect(Object.values(line).some((v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v))).toBe(false);
+  });
+
+  it("revoking an admin voids the codes they issued, and the code is consumed", async () => {
+    const { claim, upstashEval, pipeline } = await load();
+    const k = keys();
+    const h = sha("issued-revoked");
+    await pipeline([["SADD", k.grants, id(1), id(2)]]);
+    expect(await runIssue(k, h, id(1))).toBe(1);
+    const revokeLine = JSON.stringify({ action: "admin:revoke", player: id(1) });
+    expect(await upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit], [id(1), revokeLine, "499"])).toEqual(["ok", id(2)]);
+    const [before] = await pipeline([["LLEN", k.audit]]);
+    expect(await runClaim(k, id(1), h, "")).toEqual(["invalid"]);
+    const [exists, member, after] = await pipeline([["EXISTS", k.code(h)], ["SISMEMBER", k.grants, id(1)], ["LLEN", k.audit]]);
+    expect([exists.result, member.result, after.result]).toEqual([0, 0, before.result]);
+  });
+
+  it("refuses a code entry with no readable issuer, and consumes it", async () => {
+    const { pipeline } = await load();
+    const k = keys();
+    const [noBy, notJson] = [sha("issued-noby"), sha("issued-notjson")];
+    await pipeline([
+      ["SADD", k.grants, id(1)],
+      ["SET", k.code(noBy), JSON.stringify({ name: "x" }), "EX", 900],
+      ["SET", k.code(notJson), "not json", "EX", 900],
+    ]);
+    expect(await runClaim(k, id(2), noBy, "")).toEqual(["invalid"]);
+    expect(await runClaim(k, id(2), notJson, "")).toEqual(["invalid"]);
+    const [a, b, member] = await pipeline([["EXISTS", k.code(noBy)], ["EXISTS", k.code(notJson)], ["SISMEMBER", k.grants, id(2)]]);
+    expect([a.result, b.result, member.result]).toEqual([0, 0, 0]);
+  });
+
+  it("issue is refused for a non-member: no code, no audit line", async () => {
+    const { pipeline } = await load();
+    const k = keys();
+    const h = sha("issued-nonmember");
+    await pipeline([["SADD", k.grants, id(1)]]);
+    expect(await runIssue(k, h, id(2))).toBe(-1);
+    const [exists, lines] = await pipeline([["EXISTS", k.code(h)], ["LLEN", k.audit]]);
+    expect([exists.result, lines.result]).toEqual([0, 0]);
   });
 
   it("revoke refuses the last admin, then removes one of two with an audit line", async () => {

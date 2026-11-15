@@ -1072,7 +1072,9 @@ hash is ever stored.
 **To remove one**, press *Remove* and confirm. You can remove yourself while
 another admin remains. **The last admin cannot be removed**: the panel
 refuses, so no sequence of clicks leaves the box with nobody who can open
-`/admin`. Issue a code and have someone claim it first.
+`/admin`. Issue a code and have someone claim it first. Removing an admin
+also voids every code they issued that nobody has claimed yet, so a removed
+admin cannot claim their way back in.
 
 Only an admin can issue a code. Every claim, issue and removal is written to
 the same audit log as the rest of the panel's changes, naming the account and

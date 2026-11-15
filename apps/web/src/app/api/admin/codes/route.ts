@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
-import { issueAdminCode } from "@/lib/admin-claim";
+import { issueAdminCode, NotAdminError } from "@/lib/admin-claim";
 import { adminErrorLabel } from "@/lib/admin-store";
 import { auditActor } from "@/lib/admin-audit-keys";
 
@@ -17,6 +17,8 @@ export async function POST(request: Request) {
     const issued = await issueAdminCode(auditActor(gate.player));
     return NextResponse.json(issued, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
+    // Revoked between the gate above and the script: the same answer the gate gives.
+    if (err instanceof NotAdminError) return NextResponse.json({ error: "forbidden" }, { status: 403 });
     console.error("[admin/codes] issue failed", adminErrorLabel(err));
     return NextResponse.json({ error: "unavailable" }, { status: 503 });
   }

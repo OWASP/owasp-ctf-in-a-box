@@ -4405,7 +4405,10 @@ event exists.
   line. The claim refuses an existing admin without consuming anything. The
   bootstrap path matches only the current env hash and records it in
   `ctf:admin:claim:spent`; the issued path reads and deletes the code key in
-  the same script, so two racing claims grant once.
+  the same script, so two racing claims grant once. An issued code counts
+  only while its issuer still holds a grant, and issuing needs a grant at
+  the moment the script runs: revoking an admin voids every code they
+  issued, so a removal sticks.
 - **Brute force is bounded per player.** `/api/me/admin/claim` needs a
   signed-in kit player and charges five attempts per 15 minutes per player,
   failing closed. There is no global bucket, because anyone could spend it

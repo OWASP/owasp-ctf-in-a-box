@@ -20,6 +20,7 @@ import {
   hashClaimCode,
   issueAdminCode,
   normalizeClaimCode,
+  NotAdminError,
   revokeAdmin,
 } from "@/lib/admin-claim";
 import { ADMIN_GRANTS_KEY, countAdminGrants, isAdminGrantee, listAdminGrants } from "@/lib/admin-grants";
@@ -112,10 +113,11 @@ describe("issueAdminCode", () => {
     expect(code).toMatch(/^([0-9a-f]{4}-){7}[0-9a-f]{4}$/);
     const [, keys, args] = upstashEval.mock.calls[0];
     const hash = hashClaimCode(normalizeClaimCode(code)!);
-    expect(keys).toEqual([`${ADMIN_CODE_PREFIX}${hash}`, ADMIN_AUDIT_KEY]);
-    expect(args[1]).toBe("900");
-    expect(JSON.parse(args[0] as string)).toEqual({ by: ALICE.id, name: ALICE.name });
-    const audit = JSON.parse(args[2] as string);
+    expect(keys).toEqual([ADMIN_GRANTS_KEY, `${ADMIN_CODE_PREFIX}${hash}`, ADMIN_AUDIT_KEY]);
+    expect(args[0]).toBe(ALICE.id);
+    expect(args[2]).toBe("900");
+    expect(JSON.parse(args[1] as string)).toEqual({ by: ALICE.id, name: ALICE.name });
+    const audit = JSON.parse(args[3] as string);
     expect(audit).toMatchObject({ by: ALICE.id, name: ALICE.name, action: "admin:code-issue", codeId: hash.slice(0, 8), expiresAt });
     expect(JSON.stringify(args)).not.toContain(normalizeClaimCode(code)!);
     expect(JSON.stringify(args)).not.toContain(hash.slice(8));
@@ -130,6 +132,12 @@ describe("issueAdminCode", () => {
     upstashEval.mockResolvedValue(0);
     await expect(issueAdminCode(ALICE)).rejects.toThrow();
     expect(upstashEval).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws NotAdminError, without retrying, when the issuer holds no grant", async () => {
+    upstashEval.mockResolvedValue(-1);
+    await expect(issueAdminCode(ALICE)).rejects.toBeInstanceOf(NotAdminError);
+    expect(upstashEval).toHaveBeenCalledTimes(1);
   });
 });
 

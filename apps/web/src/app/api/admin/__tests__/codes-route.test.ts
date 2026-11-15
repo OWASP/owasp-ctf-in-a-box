@@ -36,6 +36,13 @@ describe("POST /api/admin/codes", () => {
     expect(Number.isFinite(Date.parse(body.expiresAt))).toBe(true);
   });
 
+  it("403s when the admin was revoked before the code was stored", async () => {
+    m.upstashEval.mockResolvedValue(-1);
+    const res = await POST(req());
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(await res.json())).not.toMatch(/[0-9a-f]{4}-[0-9a-f]{4}/);
+  });
+
   it("503s when the store throws, logging no code", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     try {

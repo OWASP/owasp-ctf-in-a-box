@@ -47,7 +47,6 @@ GITHUB_APP_ID=1
 GITHUB_APP_PRIVATE_KEY=RklYVFVSRVBSSVZBVEVLRVl1dXV1dQ==
 GITHUB_APP_INSTALLATION_ID=1
 GITHUB_ORG=fixture-org
-ADMIN_LOGINS=fixture-admin
 ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9
 ENV
 
@@ -631,72 +630,135 @@ ENV
   [ -z "$(echo "$output" | grep -E '^fly ')" ]
 }
 
-@test "deploy refuses an ADMIN_LOGINS that parses to no admin" {
-  need_docker
+# The admin claim-code hash (ADR 72). A missing or unusable value deploys an
+# event nobody can claim, so the deploy refuses it — and never prints it: a
+# value pasted where the hash belongs is usually the code itself.
+@test "deploy refuses a missing claim-code hash, naming init and --new-admin-code" {
   cd "$REPO"
-  # `require` only ever checked for an empty string, but the app parses this
-  # value with parseAdminLogins (apps/web/src/lib/admin-logins.ts): split,
-  # trim, drop anything not shaped like a GitHub login. Each of these is
-  # non-empty and parses to NOBODY, so it would deploy an event whose /admin
-  # 403s everyone — the operator included, with another deploy the only fix.
-  #
-  # Two groups, because "did the message leak the value?" is only a question
-  # you can ask of a distinctive value: a bare "," appears in any English
-  # sentence, so grepping the output for it proves nothing either way.
-  for bad in "," " , " "bad login!" "alice@example.com" "-alice" "a--b"; do
-    sed "s|^ADMIN_LOGINS=.*|ADMIN_LOGINS=$bad|" "$BATS_TEST_TMPDIR/env" \
-      > "$BATS_TEST_TMPDIR/env.admins"
-    run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.admins"
-    if [ "$status" -eq 0 ]; then
-      echo "ACCEPTED an unusable ADMIN_LOGINS: [$bad]"
-      return 1
-    fi
-    if ! echo "$output" | grep -qF 'ADMIN_LOGINS'; then
-      echo "refused [$bad] without naming ADMIN_LOGINS: $output"
-      return 1
-    fi
-  done
-
-  # The redaction half, checked INSIDE the loop: $output is overwritten by the
-  # next `run`, so a leak in an early iteration is gone by the time the test
-  # ends. A typo'd roster can hold an email address or a pasted secret, so the
-  # refusal names the shape and the count and never the value.
-  for bad in "bad login!" "alice@example.com" "-alice" "a--b"; do
-    sed "s|^ADMIN_LOGINS=.*|ADMIN_LOGINS=$bad|" "$BATS_TEST_TMPDIR/env" \
-      > "$BATS_TEST_TMPDIR/env.admins"
-    run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.admins"
-    if [ "$status" -eq 0 ]; then
-      echo "ACCEPTED an unusable ADMIN_LOGINS: [$bad]"
-      return 1
-    fi
-    if echo "$output" | grep -qF -- "$bad"; then
-      echo "refusal leaked the ADMIN_LOGINS value: [$bad]"
-      return 1
-    fi
-  done
-
-  # Decisive and last, per AGENTS.md: a bracket test that gates on the final
-  # iteration's output rather than ending the test on a bare loop.
-  [ -z "$(echo "$output" | grep -F -- 'a--b')" ]
+  grep -v '^ADMIN_CLAIM_CODE_HASH=' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.nohash"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.nohash"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'ADMIN_CLAIM_CODE_HASH is empty'
+  echo "$output" | grep -qF 'init'
+  echo "$output" | grep -qF -- '--new-admin-code'
 }
 
-@test "deploy accepts a real ADMIN_LOGINS roster" {
+@test "deploy refuses a pasted code in ADMIN_CLAIM_CODE_HASH without printing it" {
+  cd "$REPO"
+  sed 's|^ADMIN_CLAIM_CODE_HASH=.*|ADMIN_CLAIM_CODE_HASH=0123-4567-89ab-cdef-0123-4567-89ab-cdef|' \
+    "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.pasted"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.pasted"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'looks like the code itself, not its hash'
+  [ -z "$(echo "$output" | grep -F '0123-4567')" ]
+}
+
+@test "deploy refuses a hash that is not 64 hex, without printing it" {
+  cd "$REPO"
+  sed 's|^ADMIN_CLAIM_CODE_HASH=.*|ADMIN_CLAIM_CODE_HASH=NOTAHASHzzzz|' \
+    "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.badhash"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.badhash"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'not a 64-hex SHA-256'
+  [ -z "$(echo "$output" | grep -F 'NOTAHASHzzzz')" ]
+}
+
+@test "deploy warns once on a leftover ADMIN_LOGINS line, naming the key and not the value" {
   need_docker
   cd "$REPO"
-  # The complement, so the refusal above cannot be satisfied by refusing
-  # everything: a plain roster, one padded with spaces and a stray comma, a
-  # login with a legal internal hyphen, and an empty entry between two good
-  # ones all have to pass.
-  for good in "alice,bob" " alice , bob ," "octo-cat" "alice,,bob"; do
-    sed "s|^ADMIN_LOGINS=.*|ADMIN_LOGINS=$good|" "$BATS_TEST_TMPDIR/env" \
-      > "$BATS_TEST_TMPDIR/env.admins"
-    run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.admins"
-    if [ "$status" -ne 0 ]; then
-      echo "REFUSED a usable ADMIN_LOGINS: [$good] -> $output"
-      return 1
-    fi
-  done
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.legacy"
+  printf 'ADMIN_LOGINS=LEFTOVERadminZZ\n' >> "$BATS_TEST_TMPDIR/env.legacy"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.legacy"
   [ "$status" -eq 0 ]
+  [ "$(echo "$output" | grep -cF 'ADMIN_LOGINS is ignored')" -eq 1 ]
+  [ -z "$(echo "$output" | grep -F 'LEFTOVERadminZZ')" ]
+}
+
+@test "deploy --dry-run --new-admin-code writes nothing and prints no code" {
+  need_docker
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.dryrot"
+  before="$(cksum < "$BATS_TEST_TMPDIR/env.dryrot")"
+  run ./deploy/fly/deploy.sh --dry-run --new-admin-code --env-file "$BATS_TEST_TMPDIR/env.dryrot"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'DRY-RUN: would write a new ADMIN_CLAIM_CODE_HASH'
+  [ -z "$(echo "$output" | grep -E '^fly ')" ]
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
+  [ "$(cksum < "$BATS_TEST_TMPDIR/env.dryrot")" = "$before" ]
+}
+
+# Non-dry-run, with a `fly` that fails every call: the rotation runs before
+# the first Fly step, so the file is rotated and the deploy then stops at
+# `1/5 app exists` without touching Fly. The render then shows the new hash
+# is what reaches the app.
+@test "deploy --new-admin-code rotates the hash, prints the code once, and the render carries it" {
+  need_docker
+  cd "$REPO"
+  mkdir -p "$BATS_TEST_TMPDIR/flybin"
+  printf '#!/bin/sh\nexit 1\n' > "$BATS_TEST_TMPDIR/flybin/fly"
+  chmod +x "$BATS_TEST_TMPDIR/flybin/fly"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.rot"
+  run env PATH="$BATS_TEST_TMPDIR/flybin:$PATH" ./deploy/fly/deploy.sh --skip-build --new-admin-code \
+    --env-file "$BATS_TEST_TMPDIR/env.rot" --from "$BATS_TEST_TMPDIR/no-such-.env"
+  code="$(printf '%s\n' "$output" | grep -oE '([0-9a-f]{4}-){7}[0-9a-f]{4}' | head -1)"
+  [ -n "$code" ]
+  [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
+  echo "$output" | grep -qF -- '--skip-build --new-admin-code'
+  new="$(sed -n 's/^ADMIN_CLAIM_CODE_HASH=//p' "$BATS_TEST_TMPDIR/env.rot")"
+  [ "$(grep -c '^ADMIN_CLAIM_CODE_HASH=' "$BATS_TEST_TMPDIR/env.rot")" -eq 1 ]
+  [ "$new" != "3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9" ]
+  "$FLY/render-compose.sh" --env-file "$BATS_TEST_TMPDIR/env.rot" --out "$BATS_TEST_TMPDIR/rot.yml" \
+    --app-image reg/app:t --sync-image reg/sync:t --scorer-image reg/scorer:t
+  app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$BATS_TEST_TMPDIR/rot.yml")"
+  [ -z "$(echo "$app_env" | grep -F 3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9)" ]
+  echo "$app_env" | grep -qF "ADMIN_CLAIM_CODE_HASH: $new"
+}
+
+@test "--new-admin-code is refused with init" {
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.initrot"
+  run ./deploy/fly/deploy.sh init --new-admin-code --env-file "$BATS_TEST_TMPDIR/env.initrot"
+  [ "$status" -eq 2 ]
+  echo "$output" | grep -qF -- '--new-admin-code'
+}
+
+# init gives .env.fly its OWN claim code: the Fly box is a separate
+# deployment, and copying the compose box's hash would make one code claim
+# both.
+@test "init generates its own hash, never copying the source's" {
+  cd "$REPO"
+  rm -f "$BATS_TEST_TMPDIR/env.fresh"
+  printf 'ADMIN_LOGINS=LEFTOVERadminZZ\n' >> "$BATS_TEST_TMPDIR/env"
+  run ./deploy/fly/deploy.sh init --region gru --from "$BATS_TEST_TMPDIR/env" --env-file "$BATS_TEST_TMPDIR/env.fresh"
+  [ "$status" -eq 0 ]
+  code="$(printf '%s\n' "$output" | grep -oE '([0-9a-f]{4}-){7}[0-9a-f]{4}' | head -1)"
+  [ -n "$code" ]
+  [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
+  [ -z "$(grep -F ADMIN_LOGINS "$BATS_TEST_TMPDIR/env.fresh")" ]
+  [ -z "$(grep -F 3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9 "$BATS_TEST_TMPDIR/env.fresh")" ]
+  [ "$(grep -c '^ADMIN_CLAIM_CODE_HASH=' "$BATS_TEST_TMPDIR/env.fresh")" -eq 1 ]
+  grep -qE '^ADMIN_CLAIM_CODE_HASH=[0-9a-f]{64}$' "$BATS_TEST_TMPDIR/env.fresh"
+}
+
+@test "init keeps an existing valid hash and prints no code" {
+  cd "$REPO"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.keep"
+  run ./deploy/fly/deploy.sh init --region gru --env-file "$BATS_TEST_TMPDIR/env.keep"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'ADMIN_CLAIM_CODE_HASH already set'
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
+  grep -qx 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9' "$BATS_TEST_TMPDIR/env.keep"
+}
+
+@test "init --dry-run generates no code and writes nothing" {
+  cd "$REPO"
+  grep -v '^ADMIN_CLAIM_CODE_HASH=' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.dryinit"
+  before="$(cksum < "$BATS_TEST_TMPDIR/env.dryinit")"
+  run ./deploy/fly/deploy.sh init --dry-run --region gru --env-file "$BATS_TEST_TMPDIR/env.dryinit"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'DRY-RUN: would generate ADMIN_CLAIM_CODE_HASH'
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
+  [ "$(cksum < "$BATS_TEST_TMPDIR/env.dryinit")" = "$before" ]
 }
 
 @test "deploy reads a spaced .env assignment, the way compose does" {
@@ -706,7 +768,7 @@ ENV
   # env_value, so a spaced assignment used to read as empty and `require`
   # refused a file compose would have deployed happily.
   sed -e 's|^SCORE_IMAGE=|SCORE_IMAGE = |' \
-      -e 's|^ADMIN_LOGINS=|ADMIN_LOGINS = |' \
+      -e 's|^ADMIN_CLAIM_CODE_HASH=|ADMIN_CLAIM_CODE_HASH = |' \
       -e 's|^GITHUB_ORG=|  GITHUB_ORG=|' \
     "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.spaced"
   run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.spaced"
@@ -844,7 +906,7 @@ ENV
 }
 
 @test "--skip-build never warns about a stale config — nothing is baked" {
-  # Config v2 (#386) removed the event.yaml bake: GITHUB_ORG, ADMIN_LOGINS and
+  # Config v2 (#386) removed the event.yaml bake: GITHUB_ORG, the claim hash and
   # everything else are runtime reads that flow through the rendered compose
   # file on every deploy, with or without --skip-build. A warning that used to
   # fire here (the app "bakes" config at build time) would now be simply
@@ -872,33 +934,34 @@ ENV
   echo "$output" | grep -qF 'not a Fly region code'
 }
 
-@test "init --refresh carries GITHUB_ORG and ADMIN_LOGINS (#381)" {
+@test "init --refresh carries GITHUB_ORG and leaves the claim hash alone (#381)" {
   cd "$REPO"
-  # An .env.fly holding an OLD org/admin pairing — the shape of a Fly
-  # deployment that predates a target-org rename or an admin roster change
-  # (exactly the incident in #381).
+  # An .env.fly holding an OLD org — the shape of a Fly deployment that
+  # predates a target-org rename (exactly the incident in #381). Its claim
+  # hash is this deployment's own (ADR 72), so a refresh never copies the
+  # source's over it, and never names it.
   sed -e 's/^GITHUB_ORG=.*/GITHUB_ORG=old-org/' \
-      -e 's/^ADMIN_LOGINS=.*/ADMIN_LOGINS=old-admin/' \
+      -e 's/^ADMIN_CLAIM_CODE_HASH=.*/ADMIN_CLAIM_CODE_HASH=1111111111111111111111111111111111111111111111111111111111111111/' \
       "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.fly.stale"
   run ./deploy/fly/deploy.sh init --refresh --region gru \
     --from "$BATS_TEST_TMPDIR/env" --env-file "$BATS_TEST_TMPDIR/env.fly.stale"
   [ "$status" -eq 0 ]
   [ "$(sed -n 's/^GITHUB_ORG=//p' "$BATS_TEST_TMPDIR/env.fly.stale" | tail -1)" = "fixture-org" ]
-  [ "$(sed -n 's/^ADMIN_LOGINS=//p' "$BATS_TEST_TMPDIR/env.fly.stale" | tail -1)" = "fixture-admin" ]
+  grep -qx 'ADMIN_CLAIM_CODE_HASH=1111111111111111111111111111111111111111111111111111111111111111' "$BATS_TEST_TMPDIR/env.fly.stale"
+  [ -z "$(echo "$output" | grep -E 'ADMIN_CLAIM_CODE_HASH (updated|unchanged|added|collapsed|blank|missing)')" ]
 }
 
 @test "init --refresh ADDS the config-v2 keys to an env file that lacks them" {
   cd "$REPO"
-  # A `.env.fly` written BEFORE config v2 (#386) has no GITHUB_ORG and no
-  # ADMIN_LOGINS line at all — which the awk rewrite could only ever replace,
-  # never add, while still reporting "updated". Asserts the FILE, not the exit
-  # status: the old behaviour exited 0 and left the file unchanged.
-  grep -vE '^(GITHUB_ORG|ADMIN_LOGINS)=' "$BATS_TEST_TMPDIR/env" \
+  # A `.env.fly` written BEFORE config v2 (#386) has no GITHUB_ORG line at
+  # all — which the awk rewrite could only ever replace, never add, while
+  # still reporting "updated". Asserts the FILE, not the exit status: the old
+  # behaviour exited 0 and left the file unchanged.
+  grep -vE '^GITHUB_ORG=' "$BATS_TEST_TMPDIR/env" \
     > "$BATS_TEST_TMPDIR/env.fly.prev2"
   run ./deploy/fly/deploy.sh init --refresh --region gru \
     --from "$BATS_TEST_TMPDIR/env" --env-file "$BATS_TEST_TMPDIR/env.fly.prev2"
   [ "$(sed -n 's/^GITHUB_ORG=//p' "$BATS_TEST_TMPDIR/env.fly.prev2" | tail -1)" = "fixture-org" ]
-  [ "$(sed -n 's/^ADMIN_LOGINS=//p' "$BATS_TEST_TMPDIR/env.fly.prev2" | tail -1)" = "fixture-admin" ]
 }
 
 @test "init --refresh CLEARS a pinned installation id when the source is explicitly blank (#381)" {
@@ -950,30 +1013,26 @@ ENV
     [ -z "$(echo "$output" | grep -F 'GITHUB_APP_INSTALLATION_ID cleared')" ]
 }
 
-@test "init --refresh does NOT clear ADMIN_LOGINS on a blank source, and warns (#381)" {
+@test "init --refresh does NOT clear GITHUB_ORG or SCORE_IMAGE on a blank source, and warns (#381)" {
   cd "$REPO"
-  # The asymmetry, deliberately. Obeying a blank here would lock every
-  # organizer out of /admin on a live box, and a blank in .env is far more
+  # The asymmetry, deliberately. Obeying a blank here would stop sync or turn
+  # Secure Development off on a live box, and a blank in .env is far more
   # likely to be "not filled in yet" than "deliberately unset" — so the
   # destination value is kept and the refusal to guess is printed.
-  sed -e 's/^ADMIN_LOGINS=.*/ADMIN_LOGINS=/' \
-      -e 's/^GITHUB_ORG=.*/GITHUB_ORG=/' \
+  sed -e 's/^GITHUB_ORG=.*/GITHUB_ORG=/' \
       -e 's|^SCORE_IMAGE=.*|SCORE_IMAGE=|' \
     "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/from.blankadmins"
-  sed 's/^ADMIN_LOGINS=.*/ADMIN_LOGINS=live-admin/' \
-    "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.fly.admins"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.fly.admins"
   run ./deploy/fly/deploy.sh init --refresh --region gru \
     --from "$BATS_TEST_TMPDIR/from.blankadmins" --env-file "$BATS_TEST_TMPDIR/env.fly.admins"
   # One chain: each key is NAMED (not a generic "some values were skipped"),
-  # and each live value is still there — an empty allowlist 403s everyone, an
-  # empty org stops sync, an empty SCORE_IMAGE disables Secure Development.
+  # and each live value is still there — an empty org stops sync, an empty
+  # SCORE_IMAGE disables Secure Development.
   [ "$status" -eq 0 ] &&
-    echo "$output" | grep -qF 'ADMIN_LOGINS blank in' &&
     echo "$output" | grep -qF 'GITHUB_ORG blank in' &&
     echo "$output" | grep -qF 'SCORE_IMAGE blank in' &&
     grep -qx 'GITHUB_ORG=fixture-org' "$BATS_TEST_TMPDIR/env.fly.admins" &&
-    grep -qx 'SCORE_IMAGE=ghcr.io/fixture-org/score:latest' "$BATS_TEST_TMPDIR/env.fly.admins" &&
-    grep -qx 'ADMIN_LOGINS=live-admin' "$BATS_TEST_TMPDIR/env.fly.admins"
+    grep -qx 'SCORE_IMAGE=ghcr.io/fixture-org/score:latest' "$BATS_TEST_TMPDIR/env.fly.admins"
 }
 
 @test "init --refresh reads spaced and colon-delimited source assignments (#381)" {
@@ -1115,6 +1174,18 @@ ENV
     [ -z "$(echo "$output" | grep -F 'no-such-.env')" ]
 }
 
+@test "the drift check never names the claim hash, which is this deployment's own" {
+  need_docker
+  cd "$REPO"
+  sed 's|^ADMIN_CLAIM_CODE_HASH=.*|ADMIN_CLAIM_CODE_HASH=2222222222222222222222222222222222222222222222222222222222222222|' \
+    "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.fly.ownhash"
+  run ./deploy/fly/deploy.sh --dry-run \
+    --env-file "$BATS_TEST_TMPDIR/env.fly.ownhash" --from "$BATS_TEST_TMPDIR/env"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'Custom domain instead of'
+  [ -z "$(echo "$output" | grep -F 'disagree on:')" ]
+}
+
 @test "the drift check runs with --skip-build too (#381)" {
   need_docker
   cd "$REPO"
@@ -1131,17 +1202,6 @@ ENV
   [ "$status" -eq 0 ] &&
     [ "$(echo "$output" | grep -cF 'disagree on: GITHUB_ORG')" = "2" ] &&
     [ -z "$(echo "$output" | grep -F 'previous-org')" ]
-}
-
-@test "deploy refuses an env file with no ADMIN_LOGINS, naming the key" {
-  cd "$REPO"
-  # An empty admin allowlist locks EVERYONE out of /admin, including the
-  # operator running the deploy, and nothing in a healthy-looking machine says
-  # so — the 403 arrives after the deploy, at sign-in.
-  grep -v '^ADMIN_LOGINS=' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.noadmins"
-  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.noadmins"
-  [ "$status" -ne 0 ]
-  echo "$output" | grep -qF 'ADMIN_LOGINS is empty'
 }
 
 @test "deploy refuses an env file with no GITHUB_ORG, naming the key" {
@@ -1512,7 +1572,7 @@ ENV
   # contains a colon (the image tag), so the delimiter match must stop at the
   # first one after the key and leave the rest intact.
   sed -e 's|^SCORE_IMAGE=|SCORE_IMAGE: |' \
-      -e 's|^ADMIN_LOGINS=|ADMIN_LOGINS : |' \
+      -e 's|^ADMIN_CLAIM_CODE_HASH=|ADMIN_CLAIM_CODE_HASH : |' \
     "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env.colon"
   run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env.colon"
   [ "$status" -eq 0 ]
@@ -1535,6 +1595,7 @@ redact_shapes() {
     EVENT_URL=https://admin:LEAKurl10@ctf.example.org/path \
     https://x-access-token:LEAKbare11@github.com/org/repo.git \
     BETTER_AUTH_URL=https://ctf.example.org GITHUB_APP_ID=4242 \
+    --name /ctf/ADMIN_CLAIM_CODE_HASH --value LEAKssm13 \
     --platform linux/amd64 ghcr.io/org/score@sha256:abc123' _ "$REDACT_LIB"
 }
 
@@ -1554,6 +1615,7 @@ redact_shapes() {
   echo "$output" | grep -qF 'ADMIN_CLAIM_CODE_HASH=<redacted>'
   echo "$output" | grep -qF 'EVENT_URL=https://***@ctf.example.org/path'
   echo "$output" | grep -qF 'https://***@github.com/org/repo.git'
+  echo "$output" | grep -qF -- '--name /ctf/ADMIN_CLAIM_CODE_HASH --value <redacted>'
 }
 
 @test "redactor: harmless keys and arguments pass through untouched" {

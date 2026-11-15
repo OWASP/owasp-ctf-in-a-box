@@ -33,6 +33,7 @@ const API_EXEMPT: Record<string, string> = {
   "api/auth/[...all]/route.ts": "sign-in itself",
   "api/post-signin/route.ts": "the OAuth return leg",
   "api/me/admin/route.ts": "is the viewer an admin — no module content",
+  "api/me/admin/claim/route.ts": "organizers claim the panel before launch — no module content",
   "api/team/route.ts": "teams form before launch",
   "api/team/disband/route.ts": "teams form before launch",
   "api/team/join/route.ts": "teams form before launch",

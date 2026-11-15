@@ -42,6 +42,11 @@ describe("checkDiscordWebhookUrl", () => {
   it("refuses a non-Discord host (the SSRF boundary)", () => {
     const r = checkDiscordWebhookUrl("https://evil.example/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz012345");
     expect(r.ok).toBe(false);
+    expect(checkDiscordWebhookUrl(valid.replace("discord.com", "discord.com.evil.example")).ok).toBe(false);
+  });
+
+  it("refuses a non-default port", () => {
+    expect(checkDiscordWebhookUrl(valid.replace("discord.com", "discord.com:8443")).ok).toBe(false);
   });
 
   it("refuses plain http", () => {

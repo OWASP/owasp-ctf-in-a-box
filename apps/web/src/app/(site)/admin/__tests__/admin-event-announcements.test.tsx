@@ -43,7 +43,7 @@ const status = (over: Partial<AnnounceStatus> = {}): AnnounceStatus => ({
 
 describe("AdminEventAnnouncements", () => {
   it("renders the section with its loading state (config arrives via GET)", () => {
-    const html = renderToStaticMarkup(<AdminEventAnnouncements setConfirm={() => {}} />);
+    const html = renderToStaticMarkup(<AdminEventAnnouncements setConfirm={() => {}} timeZone="UTC" />);
     expect(html).toContain("Discord announcements");
     expect(html).toContain("Loading…");
   });
@@ -120,6 +120,13 @@ describe("the blur-save contract, at source", () => {
     const code = source();
     expect(code).toContain("showPreview(row.kind)");
     expect(code).not.toMatch(/Boolean\(config\?\.\[row\.key\]\)\s*&&/);
+  });
+
+  it("formats delivery timestamps on the event's clock, not the browser's", () => {
+    const code = source();
+    expect(code).toContain('adminTime(status.lastPostedAt, timeZone)');
+    expect(code).toContain('adminTime(status.lastErrorAt, timeZone)');
+    expect(code).not.toContain("toLocaleString");
   });
 });
 

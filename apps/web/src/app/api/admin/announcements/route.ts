@@ -69,8 +69,18 @@ export async function POST(request: Request) {
   try {
     const patch = body as DiscordConfigPatch;
     const prev = await getAnnounceConfig();
-    const nextConfig = { ...prev, ...patch };
-    if (!isLifecyclePassEnabled(prev) && isLifecyclePassEnabled(nextConfig)) {
+    // Derive the will-be-enabled decision from the typed fields only: an
+    // untyped value (the store refuses it later) must not delete the state
+    // on its way to a 400.
+    const willEnable = isLifecyclePassEnabled({
+      launch: typeof patch.launch === "boolean" ? patch.launch : prev.launch,
+      pause: typeof patch.pause === "boolean" ? patch.pause : prev.pause,
+    });
+    // Delete BEFORE the write: while lifecycle is off the ticker does not
+    // read this state, so an early delete is safe; a failed delete then
+    // leaves the switch untouched, and a later validation failure only
+    // costs a silent re-seed on the next tick.
+    if (!isLifecyclePassEnabled(prev) && willEnable) {
       await deleteLifecycleState();
     }
     const config = await updateAnnounceConfig(gate.login, patch);

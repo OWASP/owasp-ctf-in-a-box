@@ -111,6 +111,7 @@ export function checkDiscordWebhookUrl(raw: unknown): { ok: true; value: string 
   }
   if (url.protocol !== "https:") return { ok: false, message: "webhook URL must use https://" };
   if (url.username || url.password) return { ok: false, message: "webhook URL must not carry credentials" };
+  if (url.port) return { ok: false, message: "webhook URL must not specify a port" };
   if (!DISCORD_WEBHOOK_HOSTS.has(url.hostname)) {
     return { ok: false, message: "webhook URL must be on discord.com (a Discord webhook URL, not an invite)" };
   }

@@ -4541,9 +4541,12 @@ work an event without the feature must never pay for.
 - **Dedup is claim-first, and the claims are atomic.** First blood is
   trigger-driven (the submit routes call a non-blocking `notifyFirstBlood`
   after a fresh solve) but still claim-first: `HSETNX` on
-  `ctf:announce:first` decides the single winner across replicas, retries
-  and races, and a box with the feature off never claims — so enabling later
-  cannot replay history. Lifecycle edges advance through one tiny Lua
+  `ctf:announce:first-announced` decides the single winner of the post
+  across replicas, retries and races, and a box with the feature off never
+  claims — so enabling later cannot replay history. `ctf:announce:first` is
+  a separate record of the true first solver, written by the awarding Lua
+  script whether or not the feature is on; the notifier reads it and only
+  that player's notification may claim the post. Lifecycle edges advance through one tiny Lua
   compare-and-swap (read pack, swap-if-expected, bump a seq id): exactly one
   replica announces each edge, the loser's stale read simply does not match.
   That pass runs only while launch or pause is switched on; with both off

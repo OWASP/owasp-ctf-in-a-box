@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import AdminSwitch from "@/components/admin-switch";
 import { FieldStatusLine, type FieldStatus } from "@/components/admin-number-field";
+import { adminTime } from "@/lib/event-time";
 import type { AnnouncementKind, DiscordPublicConfig } from "@/lib/discord-config";
 import type { AnnounceStatus } from "@/lib/announce/store";
 import type { DiscordMessage } from "@/lib/announce/messages";
@@ -101,7 +102,7 @@ export function clearWebhookConfirm(): { title: string; body: string; confirmLab
 /** The Event tab"s self-contained Discord announcements panel: webhook
  *  (write-only), per-type switches, previews, Send test and the delivery
  *  status line. */
-export default function AdminEventAnnouncements({ setConfirm }: { setConfirm: (c: ConfirmState) => void }) {
+export default function AdminEventAnnouncements({ setConfirm, timeZone }: { setConfirm: (c: ConfirmState) => void; timeZone: string }) {
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [fieldStatus, setFieldStatus] = useState<Partial<Record<string, FieldStatus>>>({});
   const [webhookInput, setWebhookInput] = useState("");
@@ -462,8 +463,8 @@ export default function AdminEventAnnouncements({ setConfirm }: { setConfirm: (c
 
       {status && (
         <p className="text-xs text-muted" data-testid="ann-status">
-          {status.lastPostedAt ? `Last post: ${new Date(status.lastPostedAt).toLocaleString()}` : "Nothing posted yet."}
-          {status.lastError ? ` — last failure: ${status.lastError}${status.lastErrorAt ? ` (${new Date(status.lastErrorAt).toLocaleString()})` : ""}` : ""}
+          {status.lastPostedAt ? `Last post: ${adminTime(status.lastPostedAt, timeZone)}` : "Nothing posted yet."}
+          {status.lastError ? ` — last failure: ${status.lastError}${status.lastErrorAt ? ` (${adminTime(status.lastErrorAt, timeZone)})` : ""}` : ""}
         </p>
       )}
     </div>

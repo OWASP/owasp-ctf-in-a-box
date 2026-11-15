@@ -220,6 +220,21 @@ describe("flush", () => {
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
   });
 
+  it("sends an older failed lifecycle edge before a newer pending entry", async () => {
+    // A failed pause must not be overtaken by a resume enqueued later, or the
+    // channel reports scoring paused after it has already resumed.
+    mocks.outboxRetryable.mockResolvedValue([
+      { id: "old", entry: { ...entry("pause", "failed", 1), at: new Date(Date.now() - 60_000).toISOString() } },
+    ]);
+    mocks.outboxPending.mockResolvedValue([{ id: "new", entry: entry("launch") }]);
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { embeds: unknown[] };
+    expect(body.embeds).toHaveLength(2);
+    expect(mocks.outboxClaim.mock.calls.map((c) => c[0])).toEqual(["old", "new"]);
+  });
+
   it("marks a failed POST failed and records the status", async () => {
     mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     fetchMock.mockResolvedValue({ ok: false, status: 404 });

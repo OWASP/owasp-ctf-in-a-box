@@ -152,7 +152,21 @@ function scheduleFlush(): void {
   flushTimer.unref?.();
 }
 
-/** One flush pass: lease everything currently `pending`, pack it, post it.
+/** Every entry a delivery pass may send, oldest first: pending entries plus
+ *  failed ones with attempts remaining, deduped by id. Both the fresh flush
+ *  and the retry sweep select through this one path, so a newer pending
+ *  entry cannot overtake an older failed lifecycle edge and post out of
+ *  order (a stale "paused" after its "resumed"). */
+async function deliveryCandidates(): Promise<{ id: string; entry: OutboxEntry }[]> {
+  const [pending, retryable] = await Promise.all([outboxPending(), outboxRetryable()]);
+  const byId = new Map<string, { id: string; entry: OutboxEntry }>();
+  for (const item of [...pending, ...retryable]) {
+    if (!byId.has(item.id)) byId.set(item.id, item);
+  }
+  return [...byId.values()].sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at));
+}
+
+/** One flush pass: lease every deliverable entry, pack it, post it.
  *  Re-entrant-safe (the timer and a direct call cannot interleave); a second
  *  call during a pass returns immediately — after re-arming the coalescing
  *  timer, so an entry enqueued mid-pass (or during the ticker's retry pass,
@@ -191,7 +205,7 @@ export async function flush(): Promise<void> {
       queue = [];
       return;
     }
-    const pending = await outboxPending();
+    const pending = await deliveryCandidates();
     const candidates: { id: string; entry: OutboxEntry }[] = [];
     // An entry is stale if the webhook changed after it was enqueued
     // (generation) or its switch was disabled and re-enabled (epoch). Both
@@ -282,16 +296,8 @@ export async function flushRetries(): Promise<void> {
       return;
     }
     if (!url) return;
-    const [pending, retryable] = await Promise.all([outboxPending(), outboxRetryable()]);
-    // One id can only have one status, but dedupe anyway so a store change
-    // (or a concurrent status flip) cannot put the same announcement in two
-    // batches of one pass.
-    const byId = new Map<string, { id: string; entry: OutboxEntry }>();
-    for (const item of [...pending, ...retryable]) {
-      if (!byId.has(item.id)) byId.set(item.id, item);
-    }
     const candidates: { id: string; entry: OutboxEntry }[] = [];
-    for (const item of [...byId.values()].sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at))) {
+    for (const item of await deliveryCandidates()) {
       // See flush(): a newer epoch or generation belongs to a later config
       // snapshot than this pass saw, so leave it pending rather than
       // terminally skipping it.

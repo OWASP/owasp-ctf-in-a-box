@@ -1213,7 +1213,10 @@ rotate_claim_code() {
   local out="$1" code hash url
   code="$(claim_code_new)" || return 1
   hash="$(claim_code_hash "$code")" || return 1
-  set_env_var "$out" ADMIN_CLAIM_CODE_HASH "$hash"
+  if ! set_env_var "$out" ADMIN_CLAIM_CODE_HASH "$hash"; then
+    echo "could not write ADMIN_CLAIM_CODE_HASH to $out — nothing changed, and the current code still works" >&2
+    return 1
+  fi
   url="$(env_url)"
   claim_code_announce "$code" "${url:-http://localhost}" "./setup/ctf-setup.sh admin-code"
 }
@@ -1230,7 +1233,12 @@ cmd_admin_code() {
   fi
   rotate_claim_code "$out" || exit 1
   echo "Recreate the app container to use it (a plain restart keeps the old environment):"
-  echo "  docker compose up -d --no-deps --force-recreate app"
+  if [ "$out" = ".env" ]; then
+    echo "  docker compose up -d --no-deps --force-recreate app"
+  else
+    # Compose interpolates the project .env unless told otherwise.
+    echo "  docker compose --env-file $out up -d --no-deps --force-recreate app"
+  fi
 }
 
 # `org`: provision every target's fork — fork, ctf branch, branch
@@ -1658,12 +1666,23 @@ open_url() {
 
 # Set (or replace) KEY=value in an env file. base64 values contain / + =, so
 # we drop-and-append rather than sed the value in place.
+#
+# Every step checks its own status and returns 1 on failure, removing the
+# temp copy: callers run this under `||` or `if !`, where `set -e` does not
+# apply, so an unchecked failed `mv` would read as success. The temp file is
+# made beside the env file, so a failure never leaves a copy of every secret
+# in $TMPDIR.
 set_env_var() {
-  local file="$1" key="$2" val="$3" tmp
-  tmp="$(mktemp)"
-  grep -v "^${key}=" "$file" > "$tmp" || true
-  printf '%s=%s\n' "$key" "$val" >> "$tmp"
-  mv "$tmp" "$file"
+  local file="$1" key="$2" val="$3" tmp rc
+  tmp="$(mktemp "${file}.tmp.XXXXXX" 2>/dev/null)" || return 1
+  # grep exits 1 when it selects no line (an empty file, or only this key),
+  # which is fine; 2 is a read error, which must not become an empty file.
+  if grep -v "^${key}=" "$file" > "$tmp"; then :; else
+    rc=$?
+    if [ "$rc" -ne 1 ]; then rm -f "$tmp"; return 1; fi
+  fi
+  printf '%s=%s\n' "$key" "$val" >> "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$file" || { rm -f "$tmp"; return 1; }
 }
 
 # app-manifest: render a self-submitting HTML form carrying app-manifest.json

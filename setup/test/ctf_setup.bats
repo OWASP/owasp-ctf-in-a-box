@@ -303,6 +303,54 @@ ENV
   [ "$(cksum < .env)" = "$before" ]
 }
 
+# The lock-out recovery path must never print a code it did not store: an
+# operator who saves it, recreates the app and is refused has no other clue.
+# A read-only directory makes the write fail; the run must fail, print no
+# code, leave the old hash, and leave no temp copy of the file behind.
+@test "admin-code fails, printing no code, when the env file cannot be rewritten" {
+  mkdir ro
+  cp .env ro/.env
+  chmod 555 ro
+  if [ -w ro ]; then chmod 755 ro; skip "running as a user who can write a read-only directory"; fi
+  tmp_before="$(ls "${TMPDIR:-/tmp}" | wc -l)"
+  run bash "$SCRIPT" admin-code --out ro/.env
+  chmod 755 ro
+  [ "$status" -ne 0 ]
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
+  echo "$output" | grep -qF "could not write"
+  [ "$(ls -A ro)" = ".env" ]
+  [ "$(ls "${TMPDIR:-/tmp}" | wc -l)" -le "$tmp_before" ]
+  grep -qx 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9' ro/.env
+}
+
+@test "the wizard's rotation fails the same way, printing no code" {
+  mkdir ro
+  cp .env ro/.env
+  chmod 555 ro
+  if [ -w ro ]; then chmod 755 ro; skip "running as a user who can write a read-only directory"; fi
+  run bash -c 'printf "y\n" | { CMD=__selftest source "$1"; DRY_RUN=0; OUT=ro/.env; wiz_claim_code ro/.env 0; }' _ "$SCRIPT"
+  chmod 755 ro
+  [ "$status" -ne 0 ]
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
+  [ "$(ls -A ro)" = ".env" ]
+  grep -qx 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9' ro/.env
+}
+
+# Compose interpolates the project .env, so a code written to another file
+# only reaches the app through --env-file.
+@test "admin-code --out names the file compose has to be told about" {
+  cp .env staging.env
+  run bash "$SCRIPT" admin-code --out staging.env
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF -- "docker compose --env-file staging.env up -d --no-deps --force-recreate app"
+}
+
+@test "admin-code on the project .env gives the plain recreate command" {
+  run bash "$SCRIPT" admin-code
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qxF -- "  docker compose up -d --no-deps --force-recreate app"
+}
+
 @test "admin-code refuses an absent env file" {
   rm -f .env
   run bash "$SCRIPT" admin-code

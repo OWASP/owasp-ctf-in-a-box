@@ -386,7 +386,7 @@ export async function importBundle(bundle: QuizBundle): Promise<QuizImportSummar
   const [idsRes] = await upstashPipeline([["HKEYS", QUESTIONS_KEY]]);
   // The membership read must have succeeded before anything is written: a
   // failed HKEYS would otherwise read as "no questions yet" and report every
-  // row `created`. Same guard as classic's and ai's.
+  // row `created`. Same guard as classic's.
   if (idsRes.error) throw new Error(`Upstash read failed before import: ${idsRes.error}`);
   const existingIds = new Set(Array.isArray(idsRes.result) ? (idsRes.result as string[]) : []);
 
@@ -818,7 +818,7 @@ local nowMs = tonumber(ARGV[7])
 local dry = ARGV[8] == '1'
 
 -- The shared attempt-row read (#504 M13) — attempts, lastAtMs and firstAt —
--- declared here as ATTEMPT_ROW_LUA, so classic's and ai's scripts read the
+-- declared here as ATTEMPT_ROW_LUA, so classic's script reads the
 -- same three fields out of the same row shape.
 ${ATTEMPT_ROW_LUA}
 

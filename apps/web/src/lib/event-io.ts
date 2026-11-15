@@ -1,13 +1,13 @@
 // Pure bundle parser, validator and serializer for a whole-EVENT archive:
-// event metadata + policy settings + the classic, quiz and/or ai content
+// event metadata + policy settings + the classic and/or quiz content
 // bundles, composed into one importable/exportable file. This file is
-// CLIENT-SAFE ON PURPOSE, mirroring classic-io.ts, quiz-io.ts and ai-io.ts:
+// CLIENT-SAFE ON PURPOSE, mirroring classic-io.ts and quiz-io.ts:
 // the admin panel's archive import/export UI is a Client Component that needs
 // to validate a pasted/uploaded archive in the browser before it ever reaches
 // the server, so this file must NEVER import a `server-only` module (e.g.
-// admin-store.ts, classic-store.ts, quiz-store.ts, ai-store.ts) or anything
-// that pulls in Upstash/Redis. It may only import from classic-io.ts,
-// quiz-io.ts and ai-io.ts, themselves client-safe for the same reason, and
+// admin-store.ts, classic-store.ts, quiz-store.ts) or anything
+// that pulls in Upstash/Redis. It may only import from classic-io.ts and
+// quiz-io.ts, themselves client-safe for the same reason, and
 // attachment-files.ts, the files validator it shares with classic-io.ts.
 //
 // `settings` is deliberately an ALLOWLIST of policy fields
@@ -21,18 +21,17 @@
 // than silently stripped, so the rejection is visible instead of a silent
 // no-op.
 //
-// Validation composes the three content parsers rather than re-implementing
-// their rules: `classic`/`quiz`/`ai`, when present, are delegated to
-// `parseClassicBundle`/`parseQuizBundle`/`parseAiBundle` verbatim (via a
+// Validation composes the content parsers rather than re-implementing
+// their rules: `classic`/`quiz`, when present, are delegated to
+// `parseClassicBundle`/`parseQuizBundle` verbatim (via a
 // JSON.stringify round-trip of the embedded sub-object, since those parsers
 // take a JSON string), and every error they report is folded back in with a
-// `"classic."`/`"quiz."`/`"ai."` prefix on `where`. This is the same
+// `"classic."`/`"quiz."` prefix on `where`. This is the same
 // reasoning classic-io.ts and quiz-io.ts share with each other (see
 // quiz-io.ts's header): one validator per format, never two independent
 // answers to the same question.
 
 import { type AttachmentFile, validateAttachmentFiles } from "@/lib/attachment-files";
-import { parseBundle as parseAiBundle, type AiBundle } from "@/lib/ai-io";
 import { parseBundle as parseClassicBundle, type ClassicBundle } from "@/lib/classic-io";
 import { parseBundle as parseQuizBundle, type QuizBundle } from "@/lib/quiz-io";
 import { parseBundle as parseSponsorsBundle, type SponsorsBundle } from "@/lib/sponsors-io";
@@ -70,7 +69,6 @@ export const EVENT_POLICY_FIELDS = [
   "quizMaxAttempts",
   "quizRetryAfterMin",
   "classicCooldownSec",
-  "aiCooldownSec",
   "scoreCooldownMin",
   "teamMaxMembers",
   "teamRegistrationOpen",
@@ -101,12 +99,8 @@ export type EventBundle = {
   settings: EventPolicySettings;
   classic?: ClassicBundle;
   quiz?: QuizBundle;
-  /** The ai catalogue (#250): challenges with their flags, hints and
-   *  per-challenge signing keys, plus categories. Never the launch keypair —
-   *  see ai-io.ts. */
-  ai?: AiBundle;
   /** Sponsors (#405), present iff the exporting box has at least one
-   *  configured — a platform feature, so unlike classic/quiz/ai this is never
+   *  configured — a platform feature, so unlike classic/quiz this is never
    *  gated on `enabledModuleIds`. */
   sponsors?: SponsorsBundle;
   /** Upload bytes (#186), base64, one entry per stored classic upload. The
@@ -234,7 +228,6 @@ export function parseEventBundle(raw: string): EventParseResult {
   if (
     parsed.classic === undefined &&
     parsed.quiz === undefined &&
-    parsed.ai === undefined &&
     parsed.sponsors === undefined
   ) {
     errors.push({ where: "(document)", message: "bundle carries no modules" });
@@ -264,16 +257,6 @@ export function parseEventBundle(raw: string): EventParseResult {
       for (const e of res.errors) errors.push({ where: "quiz." + e.where, message: e.message });
     } else {
       quiz = res.bundle;
-    }
-  }
-
-  let ai: AiBundle | undefined;
-  if (parsed.ai !== undefined) {
-    const res = parseAiBundle(JSON.stringify(parsed.ai));
-    if (!res.ok) {
-      for (const e of res.errors) errors.push({ where: "ai." + e.where, message: e.message });
-    } else {
-      ai = res.bundle;
     }
   }
 
@@ -317,7 +300,6 @@ export function parseEventBundle(raw: string): EventParseResult {
     settings: parsed.settings as EventPolicySettings,
     ...(classic !== undefined ? { classic } : {}),
     ...(quiz !== undefined ? { quiz } : {}),
-    ...(ai !== undefined ? { ai } : {}),
     ...(sponsors !== undefined ? { sponsors } : {}),
     ...(attachmentFiles ? { attachmentFiles } : {}),
     ...(eventImages ? { eventImages } : {}),

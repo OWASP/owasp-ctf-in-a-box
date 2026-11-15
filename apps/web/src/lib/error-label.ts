@@ -13,7 +13,7 @@
  * part most likely to carry interpolated arguments), no own properties, and no
  * `String(err)` on a non-`Error` — a thrown string could BE the flag.
  *
- * Shared by every store, `ai-http` and — as `adminErrorLabel` — the admin
+ * Shared by every store and — as `adminErrorLabel` — the admin
  * routes (#241, #244, #500), so they cannot drift: this is the ONE body, and
  * `error-label.test.ts` fails if a hand-rolled copy appears anywhere else in
  * `src/`. `docs/reviewing.md`'s secrets-in-logs invariant is the rule this

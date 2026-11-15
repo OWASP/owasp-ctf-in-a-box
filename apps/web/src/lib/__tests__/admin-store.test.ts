@@ -85,7 +85,7 @@ describe("getAdminSettings", () => {
     expect(await getAdminSettings()).toEqual({
       paused: false, hintsEnabled: null, hintCost: null, teamRegistrationOpen: true, displayQr: true,
       hintsMinSolves: null, hintsUnlockAfterMin: null,
-      quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
+      quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
       scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
       updatedBy: null, updatedAt: null, moduleOverrides: {},
   enabledModuleIds: null, eventIdentity: {}, secureDevTargets: null, sponsorLogoSize: null,
@@ -151,7 +151,7 @@ describe("getAdminSettings", () => {
     expect(await getAdminSettings()).toEqual({
       paused: true, hintsEnabled: false, hintCost: 25, teamRegistrationOpen: true, displayQr: true,
       hintsMinSolves: null, hintsUnlockAfterMin: null,
-      quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
+      quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
       scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
       updatedBy: "alice", updatedAt: "2026-08-14T00:00:00Z", moduleOverrides: {},
       // Absent from the hash => null => "no override, use the baked set".
@@ -475,53 +475,6 @@ describe("classicCooldownSec", () => {
   });
 });
 
-// Mirrors classicCooldownSec's own describe block exactly, field-swapped —
-// same [0, 3600] bound (AI_COOLDOWN_SEC_MAX), same decode/validate shape.
-describe("aiCooldownSec", () => {
-  it("decodes an absent field as null and a stored one as a number", async () => {
-    mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
-    expect((await getAdminSettings()).aiCooldownSec).toBeNull();
-
-    mocks.upstashPipeline.mockResolvedValue([{ result: ["aiCooldownSec", "7"] }]);
-    expect((await getAdminSettings()).aiCooldownSec).toBe(7);
-  });
-
-  it("stores a valid ai cooldown and rejects an out-of-range or non-integer one", async () => {
-    mocks.upstashEval.mockResolvedValue([
-      "aiCooldownSec", "12", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z",
-    ]);
-    await updateAdminSettings({ aiCooldownSec: 12 }, actor("alice"));
-    const [, , args] = mocks.upstashEval.mock.calls[0];
-    const strArgs = args.map(String);
-    // Positional ARGV layout: the field name must be immediately followed by
-    // its value in the HSET half of argv, not merely present somewhere (which
-    // would also be true if it landed in the HDEL half).
-    const idx = strArgs.indexOf("aiCooldownSec");
-    expect(idx).toBeGreaterThan(-1);
-    expect(strArgs[idx + 1]).toBe("12");
-
-    await expect(updateAdminSettings({ aiCooldownSec: -1 }, actor("alice"))).rejects.toThrow(
-      /aiCooldownSec must be an integer in \[0, 3600\]/,
-    );
-    await expect(updateAdminSettings({ aiCooldownSec: 3601 }, actor("alice"))).rejects.toThrow(
-      /aiCooldownSec must be an integer in \[0, 3600\]/,
-    );
-    await expect(updateAdminSettings({ aiCooldownSec: 1.5 }, actor("alice"))).rejects.toThrow(
-      AdminValidationError,
-    );
-    await expect(updateAdminSettings({ aiCooldownSec: "x" as never }, actor("alice"))).rejects.toThrow(
-      AdminValidationError,
-    );
-    // null is not a rejection: it clears the knob back to its default (see
-    // "numeric knobs accept null as clear" below).
-    // Every rejection above refused BEFORE the store: the only Lua call in
-    // this whole test is the one valid write at the top. A rejection that
-    // still reached upstashEval would validate after writing — the exact
-    // ordering bug this pin exists to catch.
-    expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe("getSyncStatus", () => {
   // #499: an error reply used to read as "the poller has never written",
   // which /admin and /health/deep show as no heartbeat at all.
@@ -566,7 +519,7 @@ describe("scheduled windows", () => {
   const base: AdminSettings = {
     paused: false, hintsEnabled: null, hintCost: null, teamRegistrationOpen: true, displayQr: true,
     hintsMinSolves: null, hintsUnlockAfterMin: null,
-    quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, aiCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
+    quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
     scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
     updatedBy: null, updatedAt: null, moduleOverrides: {}, enabledModuleIds: null,
     eventIdentity: {}, secureDevTargets: null, sponsorLogoSize: null,
@@ -965,7 +918,6 @@ describe("numeric knobs accept null as clear", () => {
     "quizMaxAttempts",
     "quizRetryAfterMin",
     "classicCooldownSec",
-    "aiCooldownSec",
     "scoreCooldownMin",
     "teamMaxMembers",
   ] as const;

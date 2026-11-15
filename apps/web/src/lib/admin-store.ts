@@ -33,17 +33,6 @@ import {
   CLASSIC_ATTEMPTS_PREFIX,
   CLASSIC_OPENED_PREFIX,
 } from "@/lib/classic-keys";
-import {
-  AI_POINTS_KEY,
-  AI_SOLVED_KEY,
-  AI_SOLVECOUNT_KEY,
-  AI_LAST_AT_KEY,
-  AI_SOLVES_PREFIX,
-  AI_ATTEMPTS_PREFIX,
-  AI_OPENED_PREFIX,
-  AI_NONCE_PREFIX,
-  AI_LAUNCHKEY_KEY,
-} from "@/lib/ai-keys";
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP, type AuditActor } from "@/lib/admin-audit-keys";
 import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSize } from "@/lib/sponsors-keys";
@@ -74,11 +63,6 @@ const QUIZ_MAX_ATTEMPTS_MAX = 100;
 const QUIZ_RETRY_AFTER_MAX = 100000; // minutes
 /** Cap for the classic-module submission cooldown (see below). */
 const CLASSIC_COOLDOWN_SEC_MAX = 3600;
-/** Cap for the ai-module submission cooldown (see below). Separate constant
- *  from CLASSIC_COOLDOWN_SEC_MAX rather than shared: the two modules' knobs
- *  happen to agree on [0, 3600] today, but nothing ties them together, and a
- *  shared constant would make that agreement look load-bearing when it isn't. */
-export const AI_COOLDOWN_SEC_MAX = 3600;
 
 /** The ONLY thing an admin-authoring route may hand `console.error`. Shared
  *  by every `admin/*` route that writes secrets (a flag, a signing key).
@@ -153,11 +137,6 @@ export type AdminSettings = {
    *  challenge. null = use the module default. Seconds, not minutes: its job
    *  is blocking scripted brute force, not rationing tries. */
   classicCooldownSec: number | null;
-  /** Seconds a login must wait between flag submissions on the SAME ai
-   *  challenge. null = use the module default. Mirrors `classicCooldownSec`
-   *  exactly, including the module's own script re-enforcing whatever value
-   *  this resolves to. */
-  aiCooldownSec: number | null;
   /** Minutes a contestant must wait between SCORED runs on the same PR.
    *  Null = no override; the fork workflow's baked default applies. 0 disables
    *  the cooldown. Enforced by the Action inside each fork, which reads it
@@ -267,7 +246,6 @@ const NUMERIC_KNOBS = {
   quizMaxAttempts: [0, QUIZ_MAX_ATTEMPTS_MAX],
   quizRetryAfterMin: [0, QUIZ_RETRY_AFTER_MAX],
   classicCooldownSec: [0, CLASSIC_COOLDOWN_SEC_MAX],
-  aiCooldownSec: [0, AI_COOLDOWN_SEC_MAX],
   scoreCooldownMin: [0, SCORE_COOLDOWN_MIN_MAX],
   teamMaxMembers: [1, TEAM_MAX_MEMBERS_MAX],
 } as const satisfies Record<string, readonly [number, number]>;
@@ -364,7 +342,6 @@ function decodeSettings(h: Record<string, string>): AdminSettings {
     quizMaxAttempts: h.quizMaxAttempts === undefined ? null : Number(h.quizMaxAttempts),
     quizRetryAfterMin: h.quizRetryAfterMin === undefined ? null : Number(h.quizRetryAfterMin),
     classicCooldownSec: h.classicCooldownSec === undefined ? null : Number(h.classicCooldownSec),
-    aiCooldownSec: h.aiCooldownSec === undefined ? null : Number(h.aiCooldownSec),
     teamMaxMembers: h.teamMaxMembers === undefined ? null : Number(h.teamMaxMembers),
     scoreCooldownMin: h.scoreCooldownMin === undefined ? null : Number(h.scoreCooldownMin),
     teamRegistrationOpen: h.teamRegistrationOpen !== "0",
@@ -773,33 +750,6 @@ export const RESET_PREFIXES: readonly [string, string][] = [
   // When each contestant first opened each challenge: it only times
   // this event's solves, so it goes with them.
   ["classicOpened", `${CLASSIC_OPENED_PREFIX}*`],
-  // ai scope mirrors classic's exactly, same PROGRESS/CONTENT split: solves,
-  // attempts, the two per-login aggregate hashes, the award-time hash and the
-  // per-challenge solvecount are wiped, while `ctf:ai:challenges` / `ctf:ai:flag` /
-  // `ctf:ai:flagnorm` / `ctf:ai:hints` / `ctf:ai:signkey` / `ctf:ai:categories`
-  // survive for the same reason classic's catalogue does: organizer CONTENT,
-  // not something a reset should ever destroy.
-  ["aiSolves", `${AI_SOLVES_PREFIX}*`],
-  ["aiAttempts", `${AI_ATTEMPTS_PREFIX}*`],
-  ["aiPoints", AI_POINTS_KEY],
-  ["aiSolved", AI_SOLVED_KEY],
-  ["aiSolveCount", AI_SOLVECOUNT_KEY],
-  ["aiLastAt", AI_LAST_AT_KEY],
-  ["aiOpened", `${AI_OPENED_PREFIX}*`],
-  // The replay-guard nonces are also contestant PROGRESS in the same sense —
-  // spent single-use markers from THIS event, not something a fresh one
-  // should start carrying.
-  ["aiNonces", `${AI_NONCE_PREFIX}*`],
-  // Deliberately DOES clear the launch keypair — unlike `clearAiChallenges`
-  // (ai-store.ts), which deliberately does NOT, and that contrast is the
-  // point. A master reset starts the event over: no live launch token should
-  // survive it, so the published public key must rotate and any deployed
-  // external verifier has to re-fetch /api/ai/launch-key on its next check.
-  // `clearAiChallenges` backs a replace-all archive IMPORT instead — it must
-  // NOT rotate the published key, or every deployed integration breaks and
-  // every already-issued token is invalidated for a wipe that was only ever
-  // meant to replace the challenge list.
-  ["aiLaunchKey", AI_LAUNCHKEY_KEY],
   // The activity log is contestant PROGRESS in the same sense as
   // solves — a record of what people did during the event — so a reset wipes
   // it. Leaving it would let a "fresh" event open with last event's sign-ins.
@@ -860,32 +810,16 @@ redis.call('DEL', KEYS[3])
 redis.call('LPUSH', KEYS[2], ARGV[4])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
 
-export type ResetEventOptions = {
-  /** Leave `ctf:ai:launchkey` in place — see `importEventBundle`, which
-   *  replaces the challenge catalogue but must not rotate the module's
-   *  published launch keypair (every deployed external verifier would break,
-   *  #250, ADR 53). Defaults to false: a master reset still rotates it. */
-  keepLaunchKey?: boolean;
-};
-
 /**
  * Master reset: wipe all event data (solves, teams, users, join codes, hints),
  * freeze scoring, bump the sync reset epoch, and audit it. Keeps admin
  * settings. Server-only — callers gate on requireAdmin.
  *
- * `opts.keepLaunchKey` skips the `ctf:ai:launchkey` wipe for callers that
- * replace the catalogue without rotating module identity (archive import);
- * every other prefix is cleared as usual. The default (false) is the master
- * reset's ordinary behavior — the launch keypair rotates.
- *
  * Poll-mode note: freezing + the `resetAt` epoch (honoured by sync, which drops
  * its cursor) is what makes the wipe stick; a later unfreeze re-ingests from
  * live PR comments, so a post-event wipe also needs those comments gone.
  */
-export async function resetEvent(
-  actor: AuditActor,
-  opts: ResetEventOptions = {},
-): Promise<{ cleared: Record<string, number>; resetAt: string }> {
+export async function resetEvent(actor: AuditActor): Promise<{ cleared: Record<string, number>; resetAt: string }> {
   const cleared: Record<string, number> = {};
   // Score-lowering bracket (#553, fold-cache.ts): BEFORE the first delete,
   // raise the shared in-progress marker and bump the revision — a hint
@@ -898,7 +832,6 @@ export async function resetEvent(
   await beginScoreLowering();
   try {
     for (const [label, pattern] of RESET_PREFIXES) {
-      if (opts.keepLaunchKey && pattern === AI_LAUNCHKEY_KEY) continue;
       cleared[label] = await scanDelByPrefix(pattern);
     }
     const at = new Date().toISOString();

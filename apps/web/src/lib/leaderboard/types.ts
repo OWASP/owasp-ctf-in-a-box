@@ -54,14 +54,10 @@ type QuizDetail = { kind: "quiz"; answered: number; total: number; points: numbe
  *  `locked` is the number of live story steps still locked for this team
  *  (zero when classic has no stories or all steps unlocked). */
 type ClassicDetail = { kind: "classic"; solved: number; total: number; points: number; locked: number };
-/** ai's detail block: prompt-injection challenges solved out of the
- *  challenges on offer. Same shape and same clamp discipline as
- *  `ClassicDetail` — see `aiModule` in module-contributions.ts. */
-type AiDetail = { kind: "ai"; solved: number; total: number; points: number };
 /** Discriminated on `kind` — narrow on it rather than casting; each module
  *  contributes its own detail shape and a new module means a new branch, not
  *  a wider inferred type. */
-export type ModuleDetail = SecureDevelopmentDetail | QuizDetail | ClassicDetail | AiDetail;
+export type ModuleDetail = SecureDevelopmentDetail | QuizDetail | ClassicDetail;
 
 export type ModuleProgress = {
   /** This module's contribution to the row's total points. */
@@ -144,7 +140,7 @@ export type TeamStanding = {
   /** Per-module breakdown, mirroring `LeaderboardEntry.modules`. The
    *  `secure-development` block is stamped by `withModuleContributions`, and
    *  only on sources that already provide deduped teams (scorer, mock or lambda); the
-   *  quiz, classic and ai blocks — and the points they add — come from
+   *  quiz and classic blocks — and the points they add — come from
    *  `withTeamStandings`, once, for every team row on the board, including
    *  the membership-only rows it synthesises (issue #520). */
   modules?: Partial<Record<ModuleId, ModuleProgress>>;

@@ -21,10 +21,10 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/enabled-modules", async () =>
   (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
 );
-// This suite is secure-development-only — quiz/classic/ai are disabled —
+// This suite is secure-development-only — quiz/classic are disabled —
 // stated explicitly in the enabled-modules mock above,
-// so `withTeamQuizPoints`/`withTeamClassicPoints`/`withTeamAiPoints` take the
-// quiz/classic/ai-disabled early return instead of reaching their real,
+// so `withTeamQuizPoints`/`withTeamClassicPoints` take the
+// quiz/classic-disabled early return instead of reaching their real,
 // unmocked stores (which would fail open against no Upstash credentials and
 // pass the `[0, 0]` assertions below for the wrong reason).
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
@@ -118,7 +118,7 @@ describe("withTeamStandings", () => {
   // Review finding on #414. The overlays fold by each row's `members`, so a
   // slug both records claim has to carry the union: keeping the source's
   // roster verbatim would drop a member the scorer never scored, and with them
-  // every quiz/classic/ai item they alone hold — an undercount with nothing on
+  // every quiz/classic item they alone hold — an undercount with nothing on
   // screen to suggest it. Asserted on the returned row because that is the
   // exact array the overlays were handed.
   it("unions the rosters when both records claim the same slug", async () => {

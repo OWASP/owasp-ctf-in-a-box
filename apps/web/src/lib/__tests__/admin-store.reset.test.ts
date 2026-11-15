@@ -121,15 +121,6 @@ describe("resetEvent", () => {
       classicSolveCount: 2,
       classicLastAt: 2,
       classicOpened: 2,
-      aiSolves: 2,
-      aiAttempts: 2,
-      aiPoints: 2,
-      aiSolved: 2,
-      aiSolveCount: 2,
-      aiLastAt: 2,
-      aiOpened: 2,
-      aiNonces: 2,
-      aiLaunchKey: 2,
       activity: 2,
       sponsors: 2,
       sponsorsLogo: 2,
@@ -137,10 +128,10 @@ describe("resetEvent", () => {
     });
     expect(out.resetAt).toMatch(/^\d+$/);
 
-    // one SCAN + one DEL per prefix (30 prefixes) = 60 pipeline calls
+    // one SCAN + one DEL per prefix (22 prefixes) = 44 pipeline calls
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(31);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(31);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(22);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(22);
     // every wiped prefix, and NOT settings/audit/sync
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
@@ -164,15 +155,6 @@ describe("resetEvent", () => {
       "ctf:classic:solvecount",
       "ctf:classic:lastAt",
       "ctf:classic:opened:*",
-      "ctf:ai:solves:*",
-      "ctf:ai:attempts:*",
-      "ctf:ai:points",
-      "ctf:ai:solved",
-      "ctf:ai:solvecount",
-      "ctf:ai:lastAt",
-      "ctf:ai:opened:*",
-      "ctf:ai:nonce:*",
-      "ctf:ai:launchkey",
       "ctf:activity:log",
       "ctf:sponsors",
       "ctf:sponsors:logo",
@@ -276,83 +258,6 @@ describe("resetEvent", () => {
     expect(out.cleared.classicPoints).toBe(1);
     expect(out.cleared.classicSolved).toBe(1);
     expect(out.cleared.classicSolveCount).toBe(1);
-  });
-
-  it("wipes ai solves, attempts and nonces", async () => {
-    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent(actor("alice"));
-    const patterns = mocks.upstashPipeline.mock.calls
-      .filter((c) => c[0][0][0] === "SCAN")
-      .map((c) => c[0][0][3]);
-    expect(patterns).toContain("ctf:ai:solves:*");
-    expect(patterns).toContain("ctf:ai:attempts:*");
-    expect(patterns).toContain("ctf:ai:nonce:*");
-  });
-
-  it("also clears the ai aggregate totals and the per-challenge solvecount", async () => {
-    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    const out = await resetEvent(actor("alice"));
-    const patterns = mocks.upstashPipeline.mock.calls
-      .filter((c) => c[0][0][0] === "SCAN")
-      .map((c) => c[0][0][3]);
-    expect(patterns).toContain("ctf:ai:points");
-    expect(patterns).toContain("ctf:ai:solved");
-    expect(patterns).toContain("ctf:ai:solvecount");
-    expect(out.cleared.aiPoints).toBe(1);
-    expect(out.cleared.aiSolved).toBe(1);
-    expect(out.cleared.aiSolveCount).toBe(1);
-  });
-
-  // The spec's explicit rule: a master reset MUST rotate the launch key — no
-  // live launch token should survive an event starting over. This is the
-  // opposite of `clearAiChallenges` (ai-store.ts), which is pinned NEVER to
-  // touch `ctf:ai:launchkey` by `ai-store.authoring.test.ts`'s
-  // "wipes every content key in one pipeline" test (its exact command list has
-  // no `DEL ctf:ai:launchkey`) — that one backs a replace-all archive import,
-  // not a reset. Not re-asserted here, just cited.
-  it("DOES clear the launch keypair — a master reset must rotate it", async () => {
-    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    const out = await resetEvent(actor("alice"));
-    const patterns = mocks.upstashPipeline.mock.calls
-      .filter((c) => c[0][0][0] === "SCAN")
-      .map((c) => c[0][0][3]);
-    expect(patterns).toContain("ctf:ai:launchkey");
-    expect(out.cleared.aiLaunchKey).toBe(1);
-  });
-
-  // #653: an archive import replaces the catalogue but must NOT rotate the
-  // module's published launch keypair — it is module identity, not catalogue
-  // content (ADR 53), and rotating it would break every deployed external
-  // verifier. The import opts the wipe out via `keepLaunchKey`; the default
-  // (the master reset above) is unchanged.
-  it("KEEPS the launch keypair when keepLaunchKey is set — an archive import must not rotate it", async () => {
-    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    const out = await resetEvent(actor("alice"), { keepLaunchKey: true });
-    const patterns = mocks.upstashPipeline.mock.calls
-      .filter((c) => c[0][0][0] === "SCAN")
-      .map((c) => c[0][0][3]);
-    expect(patterns).not.toContain("ctf:ai:launchkey");
-    expect(out.cleared.aiLaunchKey).toBeUndefined();
-    // Nothing else is affected: the other 30 prefixes are still swept.
-    expect(patterns).toContain("ctf:ai:nonce:*");
-    expect(patterns).toContain("ctf:ai:solves:*");
-    const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(30);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(30);
-  });
-
-  it("KEEPS the ai challenge bank, flag/flagnorm, hints, signing keys and categories across a reset", async () => {
-    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent(actor("alice"));
-    const patterns = mocks.upstashPipeline.mock.calls
-      .filter((c) => c[0][0][0] === "SCAN")
-      .map((c) => c[0][0][3]);
-    expect(patterns).not.toContain("ctf:ai:challenges");
-    expect(patterns).not.toContain("ctf:ai:flag");
-    expect(patterns).not.toContain("ctf:ai:flagnorm");
-    expect(patterns).not.toContain("ctf:ai:hints");
-    expect(patterns).not.toContain("ctf:ai:signkey");
-    expect(patterns).not.toContain("ctf:ai:categories");
   });
 
   // Issue #358, and the most dangerous of the five walks that shared the bug.

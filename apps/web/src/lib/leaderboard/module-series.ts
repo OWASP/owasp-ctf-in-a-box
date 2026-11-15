@@ -1,6 +1,5 @@
 import "server-only";
 import { errorLabel } from "@/lib/error-label";
-import { aiSolvesKey } from "@/lib/ai-keys";
 import { classicSolvesKey } from "@/lib/classic-keys";
 import { quizAnswersKey } from "@/lib/quiz-keys";
 import { getEnabledModuleIds } from "@/lib/enabled-modules";
@@ -11,15 +10,15 @@ import type { LeaderboardData, PlayerSeries, SeriesPoint, TeamSeries } from "./t
  * Puts the app-side modules onto the chart.
  *
  * The chart used to plot the SOURCE's history alone — secure-development
- * scoring events from the scorer — while quiz, classic and ai points were
+ * scoring events from the scorer — while quiz and classic points were
  * stamped on afterwards as aggregate totals with no timeline. On a
  * multi-module event that made the picture contradict the numbers under it: a
  * contestant with 202 points had a line sitting at 2, and the only thing
  * stopping it reading as a defect was a caption admitting what it left out
  * (issue #415).
  *
- * The timeline was always there to be read. All three modules record
- * `{points, at}` per item — quiz per question, classic and ai per challenge —
+ * The timeline was always there to be read. Both modules record
+ * `{points, at}` per item — quiz per question, classic per challenge —
  * so this reads those hashes and turns them into the events the chart wants.
  * The aggregate counters the totals come from (`ctf:quiz:points` and friends)
  * cannot serve here: they carry no `at`.
@@ -100,7 +99,6 @@ async function readModuleEvents(playerIds: readonly string[]): Promise<Map<strin
   const sources: { moduleId: string; keyFn: (playerId: string) => string }[] = [];
   if (live.has("quiz")) sources.push({ moduleId: "quiz", keyFn: quizAnswersKey });
   if (live.has("classic")) sources.push({ moduleId: "classic", keyFn: classicSolvesKey });
-  if (live.has("ai")) sources.push({ moduleId: "ai", keyFn: aiSolvesKey });
   if (sources.length === 0) return byPlayer;
 
   const commands = sources.flatMap(({ keyFn }) => playerIds.map((playerId) => ["HGETALL", keyFn(playerId)]));

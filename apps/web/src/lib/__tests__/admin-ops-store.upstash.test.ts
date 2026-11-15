@@ -1,4 +1,4 @@
-// Executes RESET_MODULE_SOLVES_SCRIPT — a contestant's classic/ai progress
+// Executes RESET_MODULE_SOLVES_SCRIPT — a contestant's classic progress
 // reset — against a real Redis via SRH, on run-unique keys. The mocked
 // admin-ops-store suite pins which keys `resetUserProgress` hands the script;
 // this one pins what the script does with them: this login's rows and totals
@@ -33,7 +33,7 @@ describe.skipIf(!liveConfigured)("RESET_MODULE_SOLVES_SCRIPT against a live Redi
     if (pipeline) await pipeline([["DEL", ...Object.values(K), ...perLogin]]);
   });
 
-  /** One login's classic/ai-shaped progress: a solves row per id, an attempts
+  /** One login's classic-shaped progress: a solves row per id, an attempts
    *  row, the two totals, the award time, and a solve count per id. */
   async function seedLogin(login: string, ids: string[]) {
     await load();
@@ -112,7 +112,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
   const slug = `vt-${tag}`.slice(0, 40);
   const target = `vt-${tag}`;
   const challenge = `vt-c-${tag}`;
-  const buckets = ["team-join", "hint-reveal", "ai-submit", "ai-event", "ai-state", "ai-admin-test"];
+  const buckets = ["team-join", "hint-reveal"];
   const at = "2026-10-01T12:00:00.000Z";
 
   let pipeline: (typeof import("@/lib/upstash"))["upstashPipeline"];
@@ -129,14 +129,12 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     ["ctf:quiz:points", id],
     ["ctf:quiz:answered", id],
     ["ctf:quiz:lastAt", id],
-    ...(["classic", "ai"] as const).flatMap((m): [string, string?][] => [
-      [`ctf:${m}:solves:${id}`],
-      [`ctf:${m}:attempts:${id}`],
-      [`ctf:${m}:opened:${id}`],
-      [`ctf:${m}:points`, id],
-      [`ctf:${m}:solved`, id],
-      [`ctf:${m}:lastAt`, id],
-    ]),
+    [`ctf:classic:solves:${id}`],
+    [`ctf:classic:attempts:${id}`],
+    [`ctf:classic:opened:${id}`],
+    ["ctf:classic:points", id],
+    ["ctf:classic:solved", id],
+    ["ctf:classic:lastAt", id],
     [`ctf:solves:${target}`, `${id}:${challenge}`],
     ...buckets.map((b): [string, string?] => [`ctf:rl:${b}:${id}`]),
   ];
@@ -157,7 +155,6 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       ["SREM", "ctf:sd:held:authors", login],
       ["HDEL", "ctf:auth:user", id],
       ["HDEL", "ctf:classic:solvecount", challenge],
-      ["HDEL", "ctf:ai:solvecount", challenge],
       ["HDEL", "ctf:solves:" + target, `${mate}:${challenge}`],
       // Independent of deleteUser, so a failed assertion still leaves no
       // contestant state behind.
@@ -192,17 +189,15 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       ["HSET", `ctf:solves:${target}`, `${id}:${challenge}`, at, `${mate}:${challenge}`, at],
       ...buckets.map((b) => ["SET", `ctf:rl:${b}:${id}`, 1, "EX", 600]),
     ];
-    for (const m of ["classic", "ai"]) {
-      seed.push(
-        ["HSET", `ctf:${m}:solves:${id}`, challenge, solveRow],
-        ["HSET", `ctf:${m}:attempts:${id}`, challenge, attemptRow],
-        ["HSET", `ctf:${m}:opened:${id}`, challenge, at],
-        ["HSET", `ctf:${m}:points`, id, 10],
-        ["HSET", `ctf:${m}:solved`, id, 1],
-        ["HSET", `ctf:${m}:lastAt`, id, at],
-        ["HINCRBY", `ctf:${m}:solvecount`, challenge, 2],
-      );
-    }
+    seed.push(
+      ["HSET", `ctf:classic:solves:${id}`, challenge, solveRow],
+      ["HSET", `ctf:classic:attempts:${id}`, challenge, attemptRow],
+      ["HSET", `ctf:classic:opened:${id}`, challenge, at],
+      ["HSET", "ctf:classic:points", id, 10],
+      ["HSET", "ctf:classic:solved", id, 1],
+      ["HSET", "ctf:classic:lastAt", id, at],
+      ["HINCRBY", "ctf:classic:solvecount", challenge, 2],
+    );
     const seeded = await pipeline(seed);
     expect(seeded.filter((r) => r.error)).toEqual([]);
 
@@ -219,12 +214,11 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       Object.fromEntries(perPlayer.map(([k, f]) => [f ? `${k}#${f}` : k, 0])),
     );
 
-    const [member, mateMember, mateSolve, classicCount, aiCount, authRow, linkGithub, linkUser] = await pipeline([
+    const [member, mateMember, mateSolve, classicCount, authRow, linkGithub, linkUser] = await pipeline([
       ["SISMEMBER", `ctf:team:${slug}:members`, id],
       ["SISMEMBER", `ctf:team:${slug}:members`, mate],
       ["HEXISTS", `ctf:solves:${target}`, `${mate}:${challenge}`],
       ["HGET", "ctf:classic:solvecount", challenge],
-      ["HGET", "ctf:ai:solvecount", challenge],
       ["HEXISTS", "ctf:auth:user", id],
       ["GET", `ctf:link:github:${login}`],
       ["GET", `ctf:link:user:${id}`],
@@ -233,7 +227,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     expect((await pipeline([["SISMEMBER", "ctf:sd:held:authors", login]]))[0].result).toBe(0);
     expect(mateMember.result).toBe(1);
     expect(mateSolve.result).toBe(1);
-    expect([classicCount.result, aiCount.result]).toEqual(["1", "1"]);
+    expect(classicCount.result).toBe("1");
     expect(authRow.result).toBe(1);
     expect([linkGithub.result, linkUser.result]).toEqual([id, login]);
   });

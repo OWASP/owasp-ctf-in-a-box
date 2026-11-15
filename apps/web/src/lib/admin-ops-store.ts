@@ -35,15 +35,6 @@ import {
   classicOpenedKey,
   classicSolvesKey,
 } from "@/lib/classic-keys";
-import {
-  AI_POINTS_KEY,
-  AI_SOLVECOUNT_KEY,
-  AI_LAST_AT_KEY,
-  AI_SOLVED_KEY,
-  aiAttemptsKey,
-  aiOpenedKey,
-  aiSolvesKey,
-} from "@/lib/ai-keys";
 
 /**
  * Per-contestant and per-team support operations for a LIVE event.
@@ -134,10 +125,6 @@ export type UserDetail = {
   firstTeamAt: string | null;
   quiz: { answered: number; points: number; attempts: number };
   classic: { solved: number; points: number; attempts: number };
-  /** Same shape as classic — the two modules' per-player stores are identical
-   *  (see the reset below). Without it the card shows no AI figures for a
-   *  contestant whose AI solves the reset cleared. */
-  ai: { solved: number; points: number; attempts: number };
   /** Secure Development solves, counted from `ctf:solves:<target>`. */
   secureDev: { solves: number };
   hints: { bought: number; spent: number };
@@ -191,10 +178,7 @@ async function countSecureDevSolves(player: string): Promise<number> {
 export async function lookupUser(rawId: unknown): Promise<UserDetail> {
   const player = requirePlayerId(rawId);
 
-  // The ai reads are appended AFTER hints rather than beside classic's, so
-  // every reply position the existing callers and fixtures rely on is
-  // unchanged; a short reply reads as "no ai data", never as a shifted count.
-  // A per-command error throws instead: read past, it is a zero on the card.
+  // A per-command error throws: read past, it is a zero on the card.
   const [
     teamRes,
     quizAnswers,
@@ -207,10 +191,6 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
     classicSolved,
     hintsBought,
     hintsSpent,
-    aiSolves,
-    aiAttempts,
-    aiPoints,
-    aiSolved,
   ] = assertPipelineOk(
     await upstashPipeline([
       ["HMGET", userKey(player), "team", "joinedAt", "firstTeamAt"],
@@ -224,10 +204,6 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
       ["HGET", CLASSIC_SOLVED_KEY, player],
       ["SCARD", userHintsKey(player)],
       ["HGET", HINTS_SPENT_KEY, player],
-      ["HGETALL", aiSolvesKey(player)],
-      ["HGETALL", aiAttemptsKey(player)],
-      ["HGET", AI_POINTS_KEY, player],
-      ["HGET", AI_SOLVED_KEY, player],
     ]),
     "lookup user",
   );
@@ -261,11 +237,9 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
   const profile = (await getPlayerProfiles([player])).get(player);
   const quizAnsweredCount = hashLen(quizAnswers.result);
   const classicSolvedCount = hashLen(classicSolves.result);
-  const aiSolvedCount = hashLen(aiSolves?.result);
   const hintsBoughtCount = Number(hintsBought.result) || 0;
   const quizAttemptCount = sumAttempts(quizAttempts.result);
   const classicAttemptCount = sumAttempts(classicAttempts.result);
-  const aiAttemptCount = sumAttempts(aiAttempts?.result);
 
   return {
     id: player,
@@ -282,11 +256,6 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
       points: Number(classicPoints.result) || 0,
       attempts: classicAttemptCount,
     },
-    ai: {
-      solved: Number(aiSolved?.result) || aiSolvedCount,
-      points: Number(aiPoints?.result) || 0,
-      attempts: aiAttemptCount,
-    },
     secureDev: { solves: secureDevSolves },
     hints: { bought: hintsBoughtCount, spent: Number(hintsSpent.result) || 0 },
     // "Known" means the box holds ANY record of this player — attempts
@@ -297,10 +266,8 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
       firstTeamAt !== null ||
       quizAnsweredCount > 0 ||
       classicSolvedCount > 0 ||
-      aiSolvedCount > 0 ||
       quizAttemptCount > 0 ||
       classicAttemptCount > 0 ||
-      aiAttemptCount > 0 ||
       secureDevSolves > 0 ||
       hintsBoughtCount > 0,
   };
@@ -360,10 +327,10 @@ async function clearSecureDevSolves(player: string): Promise<number> {
 // KEYS: [1]=solves(player) [2]=attempts(player) [3]=points [4]=solved
 //       [5]=solvecount   [6]=lastAt   ARGV: [1]=player
 //
-// Classic's and ai's per-player shape is IDENTICAL — a solves hash keyed by
-// challenge id, an attempts hash, a points aggregate and a solved aggregate
-// both keyed by player, and a solvecount aggregate keyed by challenge id — so
-// one script serves both modules; only the keys passed in differ. Quiz has
+// Classic's per-player shape — a solves hash keyed by challenge id, an
+// attempts hash, a points aggregate and a solved aggregate both keyed by
+// player, and a solvecount aggregate keyed by challenge id — is what this
+// script takes; the keys are passed in rather than named here. Quiz has
 // no per-challenge counter (its aggregates are QUIZ_POINTS_KEY/
 // QUIZ_ANSWERED_KEY, both keyed by player) so it stays a plain pipeline below,
 // not this script.
@@ -434,10 +401,9 @@ async function resetModuleSolves(player: string, keys: ModuleResetKeys): Promise
  * and bumping the `resetAt` epoch, which makes sync drop its cursor. There is
  * no per-player equivalent, so this returns a WARNING instead of pretending.
  * The organizer's move is to close the contestant's PR, or freeze scoring
- * first. Quiz, classic, and ai have no such issue: those writes originate in
- * the app (an ai solve lands the moment `/api/ai/submit` or `/api/ai/event`
- * handles the request, with no external re-ingestion path the way
- * Secure Development's scorer/sync pair has), so a delete is final.
+ * first. Quiz and classic have no such issue: those writes originate in
+ * the app, with no external re-ingestion path the way Secure Development's
+ * scorer/sync pair has, so a delete is final.
  */
 export async function resetUserProgress(rawId: unknown, actor: AuditActor): Promise<ResetScope> {
   const player = requirePlayerId(rawId);
@@ -468,26 +434,16 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
   //   ctf:classic:points   HINCRBY <player>      per PLAYER
   //   ctf:classic:solved   HINCRBY <player>      per PLAYER
   //   ctf:classic:solvecount HINCRBY <challengeId>  per CHALLENGE  <-- !
-  //   ctf:ai:points        HINCRBY <player>      per PLAYER
-  //   ctf:ai:solved        HINCRBY <player>      per PLAYER
-  //   ctf:ai:solvecount    HINCRBY <challengeId>  per CHALLENGE  <-- !
   //
   // `solvecount` answers "how many people solved challenge X", so there is no
-  // field for this player to delete, for EITHER module. HDELing it by player
+  // field for this player to delete. HDELing it by player
   // would remove nothing and leave every challenge still counting a
   // contestant whose solves are gone — the per-challenge stats would drift
   // up, permanently, once per reset. It has to be DECREMENTED, once per
   // challenge this player had solved — and the read of "which challenges" and
   // every decrement it drives happen inside `RESET_MODULE_SOLVES_SCRIPT`, one
-  // atomic EVAL per module, so a solve landing between "read" and "decrement"
+  // atomic EVAL, so a solve landing between "read" and "decrement"
   // is impossible: there is no gap for it to land in.
-  //
-  // NOT touched here: `ctf:ai:launchkey` (module-wide identity, not per-user
-  // state), any `ctf:ai:nonce:*` replay guard, and the challenge catalogue —
-  // a per-user reset is per-user. An outstanding launch token this contestant
-  // already holds stays valid; if they redeem it after this reset, that is a
-  // fresh legitimate solve, the same as a contestant replaying a quiz
-  // question after their answer was cleared.
   const classicReset = await resetModuleSolves(player, {
     solves: classicSolvesKey(player),
     attempts: classicAttemptsKey(player),
@@ -495,14 +451,6 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
     solved: CLASSIC_SOLVED_KEY,
     solvecount: CLASSIC_SOLVECOUNT_KEY,
     lastAt: CLASSIC_LAST_AT_KEY,
-  });
-  const aiReset = await resetModuleSolves(player, {
-    solves: aiSolvesKey(player),
-    attempts: aiAttemptsKey(player),
-    points: AI_POINTS_KEY,
-    solved: AI_SOLVED_KEY,
-    solvecount: AI_SOLVECOUNT_KEY,
-    lastAt: AI_LAST_AT_KEY,
   });
 
   // Checked before anything is counted or audited: a failed DEL/HDEL left
@@ -521,7 +469,6 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
       // When this player first opened each challenge: it only times
       // their solves, so it goes with them. After the counted replies.
       ["DEL", classicOpenedKey(player)],
-      ["DEL", aiOpenedKey(player)],
     ]),
     "reset progress",
   );
@@ -536,10 +483,6 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
     classicAggregates: classicReset.aggregatesRemoved,
     classicSolveCountsDecremented: classicReset.solveCountsDecremented,
     hints: n(4) + n(5) + n(6),
-    aiSolves: aiReset.solvesRemoved,
-    aiAttempts: aiReset.attemptsRemoved,
-    aiAggregates: aiReset.aggregatesRemoved,
-    aiSolveCountsDecremented: aiReset.solveCountsDecremented,
     secureDevSolves: secureDev,
   };
 

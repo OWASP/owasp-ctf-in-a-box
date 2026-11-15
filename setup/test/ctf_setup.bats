@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 
 # Config v2 (#386): there is no event.yaml. The bootstrap plane is `.env` —
-# GITHUB_ORG (the event org), ADMIN_LOGINS (who may open /admin) and
-# SCORE_IMAGE, whose NON-EMPTINESS is how the box says "this event runs
+# GITHUB_ORG (the event org), ADMIN_CLAIM_CODE_HASH (the hash of the one-time
+# code that claims the first admin seat, ADR 72) and SCORE_IMAGE, whose NON-EMPTINESS is how the box says "this event runs
 # Secure Development". Everything else an organizer changes — the module set,
 # the SD targets, identity, schedule — is a runtime /admin setting.
 setup() {
@@ -15,7 +15,7 @@ setup() {
 _env_fixture() {
   cat > .env <<'EOF'
 GITHUB_ORG=test-event-org
-ADMIN_LOGINS=organizer
+ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9
 SCORE_IMAGE=ghcr.io/fixture/score:latest
 EOF
 }
@@ -25,7 +25,7 @@ EOF
 _env_fixture_no_secdev() {
   cat > .env <<'EOF'
 GITHUB_ORG=test-event-org
-ADMIN_LOGINS=organizer
+ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9
 SCORE_IMAGE=
 EOF
 }
@@ -66,7 +66,7 @@ EOF
   # fork and mirror for an event whose box never starts a scorer.
   cat > .env <<'ENV'
 GITHUB_ORG="test-event-org"
-ADMIN_LOGINS=organizer
+ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9
 SCORE_IMAGE=""
 ENV
   run bash "$SCRIPT" org --dry-run
@@ -78,7 +78,7 @@ ENV
 @test "org: a quoted, exported GITHUB_ORG is read without its quotes" {
   cat > .env <<'ENV'
 export GITHUB_ORG="test-event-org"
-ADMIN_LOGINS=organizer
+ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9
 SCORE_IMAGE = ghcr.io/fixture/score:latest
 ENV
   run bash "$SCRIPT" org --dry-run
@@ -90,7 +90,7 @@ ENV
 # stops the command. Read as empty it would skip Secure Development; read as
 # the literal text it would provision it. Neither may happen silently.
 @test "org: an unterminated SCORE_IMAGE quote stops the command, SD neither on nor off" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE="ghcr.io/fixture/score:latest\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE="ghcr.io/fixture/score:latest\n' > .env
   run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run
   [ "$status" -ne 0 ]
   echo "$output" | grep -qF 'SCORE_IMAGE has an unterminated quote'
@@ -98,7 +98,7 @@ ENV
 }
 
 @test "org: an interpolated SCORE_IMAGE stops the command, SD neither on nor off" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=${SCORER_IMAGE:-}\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=${SCORER_IMAGE:-}\n' > .env
   run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run
   [ "$status" -ne 0 ]
   echo "$output" | grep -qF 'SCORE_IMAGE uses interpolation'
@@ -113,7 +113,7 @@ ENV
 }
 
 @test "org: an env file that exists but cannot be read stops the command" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > locked.env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > locked.env
   chmod 000 locked.env
   if [ -r locked.env ]; then
     # root reads through mode 000; a directory is unreadable as an env file
@@ -179,7 +179,7 @@ ENV
 # forked into as a repo owner of that name and printed as the org doctor
 # inspected.
 @test "env_val strips a trailing comment and surrounding whitespace" {
-  printf 'GITHUB_ORG=test-event-org   # the disposable one\nADMIN_LOGINS= organizer \nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
+  printf 'GITHUB_ORG=test-event-org   # the disposable one\nADMIN_CLAIM_CODE_HASH= 3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9 \nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
   run bash "$SCRIPT" org --dry-run
   [ "$status" -eq 0 ]
   [ -z "$(echo "$output" | grep -F 'disposable one')" ]
@@ -187,7 +187,7 @@ ENV
 }
 
 @test "org: a missing GITHUB_ORG fails with a clean message naming the key" {
-  printf 'ADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
+  printf 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
   run bash "$SCRIPT" org --dry-run
   [ "$status" -ne 0 ]
   [ -z "$(echo "$output" | grep -F -- "gh repo fork")" ]
@@ -221,7 +221,7 @@ ENV
 }
 
 @test "org --dry-run reads SCORE_IMAGE from .env when env var unset" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/other/score:pinned\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/other/score:pinned\n' > .env
   run env -u SCORE_IMAGE bash "$SCRIPT" org --dry-run
   [ "$status" -eq 0 ]
   echo "$output" | grep -qF -- "docker pull ghcr.io/other/score:pinned"
@@ -237,17 +237,78 @@ ENV
 }
 
 # Config v2 (#386): the generated env file is the WHOLE bootstrap plane now,
-# so the two keys that used to live in event.yaml have to be in the template
-# an organizer edits — an absent key is one nobody knows to fill in, and an
-# empty ADMIN_LOGINS locks /admin for everyone (fail closed, by design).
+# so the bootstrap keys have to be in the template an organizer edits — an
+# absent key is one nobody knows to fill in.
 @test "secrets emits the bootstrap keys event.yaml used to carry" {
   run bash "$SCRIPT" secrets --out .env.bootstrap.test
   [ "$status" -eq 0 ]
   grep -qx "GITHUB_ORG=" .env.bootstrap.test
   grep -qx "SCORE_IMAGE=" .env.bootstrap.test
-  # Says what empty MEANS, right where it is empty.
-  grep -qF "/admin" .env.bootstrap.test
-  grep -qx "ADMIN_LOGINS=" .env.bootstrap.test
+  grep -qF "/admin/claim" .env.bootstrap.test
+  [ -z "$(grep -F ADMIN_LOGINS .env.bootstrap.test)" ]
+}
+
+# The admin claim code (ADR 72): the file carries only its hash; the code is
+# printed once, here, and nowhere else.
+@test "secrets writes a valid claim-code hash and prints the code once" {
+  run bash "$SCRIPT" secrets --out .env.claim.test
+  [ "$status" -eq 0 ]
+  code="$(printf '%s\n' "$output" | grep -oE '([0-9a-f]{4}-){7}[0-9a-f]{4}' | head -1)"
+  [ -n "$code" ]
+  [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
+  [ -z "$(grep -F "$code" .env.claim.test)" ]
+  [ -z "$(grep -F "$(printf '%s' "$code" | tr -d -)" .env.claim.test)" ]
+  want="$(bash -c '. "$1"; claim_code_hash "$2"' _ "$BATS_TEST_DIRNAME/../../scripts/lib/claim-code.sh" "$code")"
+  [ "$(grep -c '^ADMIN_CLAIM_CODE_HASH=' .env.claim.test)" -eq 1 ]
+  grep -qx "ADMIN_CLAIM_CODE_HASH=$want" .env.claim.test
+}
+
+@test "secrets --dry-run writes nothing and prints no code" {
+  run bash "$SCRIPT" secrets --dry-run --out .env.dry.test
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF "DRY-RUN: would write .env.dry.test"
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
+  [ ! -e .env.dry.test ]
+}
+
+# --- admin-code: rotate the claim code (ADR 72) ------------------------------
+
+@test "admin-code rotates the hash, leaving exactly one line, and prints the code once" {
+  run bash "$SCRIPT" admin-code
+  [ "$status" -eq 0 ]
+  code="$(printf '%s\n' "$output" | grep -oE '([0-9a-f]{4}-){7}[0-9a-f]{4}' | head -1)"
+  [ -n "$code" ]
+  [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
+  echo "$output" | grep -qF -- "--force-recreate app"
+  echo "$output" | grep -qF "./setup/ctf-setup.sh admin-code"
+  new="$(sed -n 's/^ADMIN_CLAIM_CODE_HASH=//p' .env)"
+  [ "$new" != "$(printf '%s' "3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9")" ]
+  [ "$(grep -c '^ADMIN_CLAIM_CODE_HASH=' .env)" -eq 1 ]
+  want="$(bash -c '. "$1"; claim_code_hash "$2"' _ "$BATS_TEST_DIRNAME/../../scripts/lib/claim-code.sh" "$code")"
+  [ "$new" = "$want" ]
+}
+
+@test "admin-code --dry-run writes nothing and calls no gh or docker" {
+  mkdir -p "$BATS_TEST_TMPDIR/calls"
+  for c in gh docker; do
+    printf '#!/bin/sh\necho "%s $*" >> "%s/tool.calls"\nexit 0\n' "$c" "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/calls/$c"
+    chmod +x "$BATS_TEST_TMPDIR/calls/$c"
+  done
+  before="$(cksum < .env)"
+  run env PATH="$BATS_TEST_TMPDIR/calls:$PATH" bash "$SCRIPT" admin-code --dry-run
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF "DRY-RUN: would write a new ADMIN_CLAIM_CODE_HASH"
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
+  [ ! -s "$BATS_TEST_TMPDIR/tool.calls" ]
+  [ "$(cksum < .env)" = "$before" ]
+}
+
+@test "admin-code refuses an absent env file" {
+  rm -f .env
+  run bash "$SCRIPT" admin-code
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF "secrets"
+  [ ! -e .env ]
 }
 
 # Its own test, not just another entry in the loop above: docker-compose.yml
@@ -275,7 +336,7 @@ ENV
 }
 
 @test "teardown fails with missing org (MEDIUM fix #3)" {
-  printf 'ADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
+  printf 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
   run bash "$SCRIPT" teardown --dry-run
   [ "$status" -ne 0 ]
   [ -z "$(printf '%s' "$output" | grep -F 'gh repo archive')" ]
@@ -317,10 +378,10 @@ ENV
   # header-only matrix exiting 0). Run against a COPY of the script so
   # SCRIPT_DIR resolves to a directory with a broken targets.tsv, leaving the
   # real setup/targets.tsv untouched. The copy keeps the repo layout around
-  # it: the script sources ../scripts/lib/dotenv.sh.
+  # it: the script sources ../scripts/lib/dotenv.sh and claim-code.sh.
   mkdir -p brokentsv/setup brokentsv/scripts/lib
   cp "$SCRIPT" brokentsv/setup/ctf-setup.sh
-  cp "$BATS_TEST_DIRNAME/../../scripts/lib/dotenv.sh" brokentsv/scripts/lib/
+  cp "$BATS_TEST_DIRNAME/../../scripts/lib/dotenv.sh" "$BATS_TEST_DIRNAME/../../scripts/lib/claim-code.sh" brokentsv/scripts/lib/
   : > brokentsv/setup/targets.tsv
   run bash brokentsv/setup/ctf-setup.sh doctor --dry-run
   printf '%s' "$output" | grep -qF 'targets.tsv'
@@ -328,26 +389,62 @@ ENV
   [ "$status" -ne 0 ]
 }
 
-# --- doctor: check (a) ADMIN_LOGINS (issue #382) ----------------------------
+# --- doctor: check (a) the admin claim-code hash (ADR 72) -------------------
 
-@test "doctor check (a): fails and names the key when ADMIN_LOGINS is empty" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=\nSCORE_IMAGE=\n' > .env
+@test "doctor check (a): passes on a valid hash, never printing it" {
+  _env_fixture_no_secdev
   run bash "$SCRIPT" doctor --dry-run
-  printf '%s' "$output" | grep -qF -- "❌ ADMIN_LOGINS is empty"
-  printf '%s' "$output" | grep -qF -- "nobody can open /admin"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -qF -- "✅ ADMIN_CLAIM_CODE_HASH: set"
+  printf '%s' "$output" | grep -qF -- "/admin/claim"
+  [ -z "$(printf '%s' "$output" | grep -F 3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9)" ]
+}
+
+@test "doctor check (a): fails naming admin-code when the hash is absent" {
+  printf 'GITHUB_ORG=test-event-org\nSCORE_IMAGE=\n' > .env
+  run bash "$SCRIPT" doctor --dry-run
+  printf '%s' "$output" | grep -qF -- "❌ ADMIN_CLAIM_CODE_HASH is not set"
+  printf '%s' "$output" | grep -qF -- "ctf-setup.sh admin-code"
   [ "$status" -ne 0 ]
 }
 
-@test "doctor check (a): passes when ADMIN_LOGINS is set" {
-  _env_fixture_no_secdev
+@test "doctor check (a): a pasted code is named as the code, not its hash, and not printed" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=0123-4567-89ab-cdef-0123-4567-89ab-cdef\nSCORE_IMAGE=\n' > .env
   run bash "$SCRIPT" doctor --dry-run
-  printf '%s' "$output" | grep -qF -- "✅ ADMIN_LOGINS: organizer"
+  printf '%s' "$output" | grep -qF -- "looks like the code itself, not its hash"
+  [ -z "$(printf '%s' "$output" | grep -F 0123-4567)" ]
+  [ "$status" -ne 0 ]
+}
+
+@test "doctor check (a): a value that is neither a code nor a hash fails" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=nonsense\nSCORE_IMAGE=\n' > .env
+  run bash "$SCRIPT" doctor --dry-run
+  printf '%s' "$output" | grep -qF -- "not a 64-hex SHA-256"
+  [ -z "$(printf '%s' "$output" | grep -F nonsense)" ]
+  [ "$status" -ne 0 ]
+}
+
+@test "doctor check (a): a leftover ADMIN_LOGINS line warns, without failing or printing it" {
+  _env_fixture_no_secdev
+  printf 'ADMIN_LOGINS=old-organizer\n' >> .env
+  run bash "$SCRIPT" doctor --dry-run
+  printf '%s' "$output" | grep -qF -- "⚠️  ADMIN_LOGINS is ignored"
+  [ -z "$(printf '%s' "$output" | grep -F old-organizer)" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "a .env that still carries ADMIN_LOGINS passes the env-file check" {
+  _env_fixture
+  printf 'ADMIN_LOGINS=old-organizer\n' >> .env
+  run bash "$SCRIPT" org --dry-run
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF "gh repo fork digininja/DVWA"
 }
 
 # --- doctor: check (b) GITHUB_ORG (issue #382) -------------------------------
 
 @test "doctor check (b): fails when GITHUB_ORG is empty and Secure Development is on" {
-  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
+  printf 'GITHUB_ORG=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
   run bash "$SCRIPT" doctor --dry-run
   printf '%s' "$output" | grep -qF -- "❌ GITHUB_ORG is empty"
   printf '%s' "$output" | grep -qF -- "Secure Development is on"
@@ -355,7 +452,7 @@ ENV
 }
 
 @test "doctor check (b): only warns when GITHUB_ORG is empty and Secure Development is off" {
-  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\n' > .env
+  printf 'GITHUB_ORG=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\n' > .env
   run bash "$SCRIPT" doctor --dry-run
   [ "$status" -eq 0 ]
   printf '%s' "$output" | grep -qF -- "⚠️  GITHUB_ORG is empty"
@@ -394,14 +491,14 @@ EOF
 }
 
 @test "doctor check (c): passes when GITHUB_APP_ID is among the org's installations" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
   write_gh_installations_stub "$(printf '99 other-app\n42 ctf-sync')"
   run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
   printf '%s' "$output" | grep -qF -- "✅ sync App (GITHUB_APP_ID=42) installed on test-event-org"
 }
 
 @test "doctor check (c): fails and prints the generic install URL when the App is not installed" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
   write_gh_installations_stub "$(printf '99 other-app\n7 another-app')"
   run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
   printf '%s' "$output" | grep -qF -- "❌ sync App (GITHUB_APP_ID=42) not installed on test-event-org"
@@ -410,7 +507,7 @@ EOF
 }
 
 @test "doctor check (c): a gh error reports not verified, never installed" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
   mkdir -p stubs
   cat > stubs/gh <<'EOF'
 #!/usr/bin/env bash
@@ -432,7 +529,7 @@ EOF
   # A real empty org (zero installations of anything) is indistinguishable
   # here from a scope error that silently produced no output — R4 says treat
   # both as unverified rather than confidently asserting "not installed".
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
   write_gh_installations_stub ""
   run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
   printf '%s' "$output" | grep -qF -- "not verified"
@@ -441,7 +538,7 @@ EOF
 }
 
 @test "doctor check (c): fails closed on an empty GITHUB_APP_ID, naming the key, with no gh call" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=\n' > .env
   mkdir -p stubs
   # Any call at all is a failure of this test's premise.
   printf '#!/usr/bin/env bash\necho "gh $*" >> "%s/gh.calls"\nexit 1\n' "$BATS_TEST_TMPDIR" > stubs/gh
@@ -461,7 +558,7 @@ EOF
 }
 
 @test "doctor check (c) under --dry-run makes no installations call and narrates instead" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
   mkdir -p "$BATS_TEST_TMPDIR/stubbin"
   printf '#!/usr/bin/env bash\necho "gh $*" >> "%s/gh.calls"\nexit 1\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/stubbin/gh"
   chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
@@ -480,7 +577,7 @@ EOF
 # the org's Actions secrets.
 
 @test "doctor says nothing about leftover SCORE_INGEST or CHALLENGES_GATE_* keys (#503)" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nSCORE_INGEST=push\nCHALLENGES_GATE_ENABLED=true\nCHALLENGES_GATE_PASSWORD=open-sesame\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\nSCORE_INGEST=push\nCHALLENGES_GATE_ENABLED=true\nCHALLENGES_GATE_PASSWORD=open-sesame\n' > .env
   mkdir -p stubs
   printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
   chmod +x stubs/gh
@@ -493,7 +590,7 @@ EOF
 }
 
 @test "doctor no longer reads the org's Actions secrets (#503)" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
   mkdir -p stubs
   cat > stubs/gh <<EOF
 #!/usr/bin/env bash
@@ -520,7 +617,7 @@ EOF
 # #464: doctor reads the box's launch state from /health/deep (public). A
 # stubbed curl stands in for the box; gh fails so nothing org-scoped runs.
 doctor_with_box() {
-  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nEVENT_URL=https://box.example\n' > .env
+  printf 'GITHUB_ORG=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\nEVENT_URL=https://box.example\n' > .env
   mkdir -p stubs
   printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
   printf '#!/usr/bin/env bash\n%s\n' "$1" > stubs/curl
@@ -569,7 +666,7 @@ doctor_with_box() {
 }
 
 @test "doctor --dry-run narrates the launch-state read and makes no box call" {
-  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nEVENT_URL=https://box.example\n' > .env
+  printf 'GITHUB_ORG=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\nEVENT_URL=https://box.example\n' > .env
   mkdir -p stubs
   printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
   printf '#!/usr/bin/env bash\necho CURL-CALLED\n' > stubs/curl
@@ -580,7 +677,7 @@ doctor_with_box() {
 }
 
 @test "doctor makes no box call without an EVENT_URL" {
-  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\n' > .env
+  printf 'GITHUB_ORG=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\n' > .env
   mkdir -p stubs
   printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
   printf '#!/usr/bin/env bash\necho CURL-CALLED\n' > stubs/curl
@@ -911,14 +1008,14 @@ _stub_prereqs() {
   rm -f .env
   # Nothing to resume from -> the wizard must PROMPT inline (not tell the
   # operator to go edit a file and come back). Under --dry-run every answer
-  # is its default and `gh api user` is not called, so the run ends on the
-  # empty-admins refusal — what this pins is that the questions are ASKED,
-  # in this file, and that the event's identity/modules/schedule are not
-  # among them (config v2 #386: those are runtime /admin settings).
+  # is its default — what this pins is that the questions are ASKED, in this
+  # file, and that the event's identity/modules/schedule and admin names are
+  # not among them (config v2 #386: those are runtime /admin settings; admins
+  # claim a code, ADR 72).
   run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard --dry-run
   echo "$output" | grep -q "Answer a few questions to write"
   echo "$output" | grep -q "GitHub org (disposable per-event org)"
-  echo "$output" | grep -q "Admin GitHub login(s)"
+  [ -z "$(echo "$output" | grep -F 'Admin GitHub login')" ]
   [ -z "$(echo "$output" | grep -F 'Event name')" ]
   [ -z "$(echo "$output" | grep -F 'Event start')" ]
   echo "$output" | grep -qF "/admin"
@@ -929,11 +1026,12 @@ _stub_prereqs() {
 # and must not be re-asked the whole of step 3 on every single re-run.
 @test "wizard: an app-only .env with no org is complete, not re-asked" {
   _stub_prereqs
-  printf 'ADMIN_LOGINS=organizer\nSCORE_IMAGE=\n' > .env
+  printf 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\n' > .env
   run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard --dry-run
   [ "$status" -eq 0 ]
   [ -z "$(echo "$output" | grep -F 'Answer a few questions to write')" ]
-  echo "$output" | grep -qF "✅ .env (org: <none>, admins: organizer)"
+  echo "$output" | grep -qF "✅ .env (org: <none>)"
+  echo "$output" | grep -qF "✅ admin claim code: set"
   # …and it says where the off switch is, since a resumed run does not re-ask.
   echo "$output" | grep -qF "Secure Development: off — set SCORE_IMAGE in .env"
 }
@@ -944,7 +1042,7 @@ _stub_prereqs() {
 # from the wizard at all.
 @test "wizard: an .env with no SCORE_IMAGE line at all is re-asked, not resumed past" {
   _stub_prereqs
-  printf 'ADMIN_LOGINS=organizer\nGITHUB_ORG=test-event-org\n' > .env
+  printf 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nGITHUB_ORG=test-event-org\n' > .env
   run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard --dry-run
   echo "$output" | grep -qF 'Answer a few questions to write'
   echo "$output" | grep -qF 'Run Secure Development'
@@ -968,7 +1066,7 @@ _stub_prereqs() {
   # failure — the "org does not exist" shape that produced the dead-end.
   printf '#!/bin/sh\n[ "$1" = auth ] && exit 0\nexit 1\n' > "$BATS_TEST_TMPDIR/stubbin/gh"
   chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
-  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\n' > .env
+  printf 'GITHUB_ORG=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\n' > .env
   run env CTF_NO_BROWSER=1 PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard
   [ "$status" -eq 0 ]
   [ -z "$(echo "$output" | grep -F "Still can't see org")" ]
@@ -978,19 +1076,15 @@ _stub_prereqs() {
   echo "$output" | grep -qF "8/9  Bring the containers up"
 }
 
-# The one value the wizard cannot default on a fresh box: `gh api user` is a
-# gh call, and --dry-run makes none (AGENTS.md). An .env with an empty
-# ADMIN_LOGINS fails closed in the app — /admin forbids EVERY login
-# (admin-auth.ts) — which is silent until an organizer tries to open the
-# panel, so the wizard refuses to write one instead of shipping the lockout.
-@test "wizard refuses to write an .env with no admin logins" {
+# A fresh box has no claim code yet: the rehearsal names the write it would
+# make, and makes none.
+@test "wizard --dry-run on a fresh box narrates the claim code and writes nothing" {
   _stub_prereqs
   rm -f .env
   run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard --dry-run
+  echo "$output" | grep -qF "DRY-RUN: would write a new ADMIN_CLAIM_CODE_HASH"
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
   [ ! -f .env ]
-  echo "$output" | grep -qF "at least one admin login is required"
-  echo "$output" | grep -qF "/admin would forbid everyone"
-  [ "$status" -ne 0 ]
 }
 
 @test "wizard --dry-run walks every step to bring-up without blocking" {
@@ -1084,7 +1178,7 @@ _stub_prereqs() {
 @test "wizard asks whether to run Secure Development, not which modules" {
   _stub_prereqs
   rm -f .env
-  printf 'ADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
+  printf 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
   # The org is missing, so step 3 asks. Under --dry-run the Secure
   # Development question takes its DEFAULT — Y, because this .env carries a
   # SCORE_IMAGE — and the refusal that follows (Secure Development with no
@@ -1119,7 +1213,7 @@ _stub_prereqs() {
   # Nothing to ingest, so the prompt never appears and the template value in
   # .env is left alone — writing one would suggest a switch that does
   # nothing for this event.
-  printf 'ADMIN_LOGINS=organizer\nSCORE_IMAGE=\n' > .env
+  printf 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\n' > .env
   run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard --dry-run
   [ "$status" -eq 0 ]
   [ -z "$(echo "$output" | grep -F 'SCORE_INGEST=')" ]
@@ -1165,7 +1259,8 @@ _stub_prereqs() {
   [ -z "$(echo "$output" | grep -F 'Answer a few questions to write')" ]
   echo "$output" | grep -qF "✅ .env (org: test-event-org"
   echo "$output" | grep -qF "GITHUB_ORG"
-  echo "$output" | grep -qF "ADMIN_LOGINS"
+  echo "$output" | grep -qF "ADMIN_CLAIM_CODE_HASH"
+  [ -z "$(echo "$output" | grep -F ADMIN_LOGINS)" ]
 }
 
 # The closing screen names the KEYS the bootstrap file carries so an organizer
@@ -1199,16 +1294,13 @@ _stub_prereqs() {
 
 # --------------------------------------------------------------------------
 # Step 3 (`wiz_event_basics`) is the whole of what the wizard writes now:
-# GITHUB_ORG, ADMIN_LOGINS and SCORE_IMAGE. Driven directly with piped
+# GITHUB_ORG and SCORE_IMAGE (plus EVENT_URL). Driven directly with piped
 # answers — the alternative is walking the full nine steps through the
 # GitHub-App and OAuth prompts to reach one write.
 # --------------------------------------------------------------------------
 
-# Answers, in prompt order: org, admin logins, run-Secure-Development?,
-# score ingest (only when that was yes), URL.
-# `gh` is stubbed to FAIL so the admin default is empty unless .env carries
-# one: with a real, logged-in gh on PATH (a developer's laptop) the "who is
-# running this?" default would silently answer for the test.
+# Answers, in prompt order: org, run-Secure-Development?, URL.
+# `gh` is stubbed to FAIL, so a step that reached for it would show.
 _basics() {
   mkdir -p "$BATS_TEST_TMPDIR/nogh"
   printf '#!/bin/sh\nexit 1\n' > "$BATS_TEST_TMPDIR/nogh/gh"
@@ -1238,7 +1330,7 @@ _basics_dry() {
 # writes no such key, and does not touch a line an old `.env` still carries.
 @test "wiz_event_basics writes no SCORE_INGEST at all any more" {
   : > .env
-  run _basics my-event-org alice y ''
+  run _basics my-event-org y ''
   [ "$status" -eq 0 ]
   # The prompt went with #377 step 1; the KEY goes with step 2. This fails
   # against both the pre-#377 script (which asked) and the step-1 one (which
@@ -1253,7 +1345,7 @@ _basics_dry() {
   # effect on a file the organizer owns — and deleting a line the wizard did
   # not put there is not the wizard's call. `doctor` is where it is named.
   printf 'SCORE_INGEST=push\n' > .env
-  run _basics my-event-org alice y ''
+  run _basics my-event-org y ''
   [ "$status" -eq 0 ]
   grep -qx 'SCORE_INGEST=push' .env
   [ -z "$(grep -F 'SCORE_INGEST=poll' .env)" ]
@@ -1263,7 +1355,7 @@ _basics_dry() {
   # Nothing ingests scores, so a value here would suggest a switch that does
   # nothing.
   : > .env
-  run _basics my-event-org alice n ''
+  run _basics my-event-org n ''
   [ "$status" -eq 0 ]
   [ -z "$(grep -F 'SCORE_INGEST' .env)" ]
 }
@@ -1273,7 +1365,7 @@ _basics_dry() {
   printf 'EVENT_URL=https://ctf.example.org\n' >> .env
   run _basics_dry
   [ "$status" -eq 0 ]
-  echo "$output" | grep -qF 'DRY-RUN: would write GITHUB_ORG, ADMIN_LOGINS and SCORE_IMAGE to .env'
+  echo "$output" | grep -qF 'DRY-RUN: would write GITHUB_ORG and SCORE_IMAGE to .env'
   [ -z "$(echo "$output" | grep -F 'SCORE_INGEST')" ]
   # EVENT_URL is written by the same step when the answer is non-empty, so it
   # is narrated by it too — a rehearsal that lists two of three writes is a
@@ -1294,62 +1386,75 @@ _basics_dry() {
   chmod +x "$BATS_TEST_TMPDIR/nogh/gh"
   # $2=1 is what cmd_wizard passes after its own EVENT_URL prompt.
   run env PATH="$BATS_TEST_TMPDIR/nogh:$PATH" bash -c \
-    'printf "my-event-org\nalice\nn\n" | { CMD=__selftest source "$1"; DRY_RUN=0; OUT=.env; wiz_event_basics .env 1; }' _ "$SCRIPT"
+    'printf "my-event-org\nn\n" | { CMD=__selftest source "$1"; DRY_RUN=0; OUT=.env; wiz_event_basics .env 1; }' _ "$SCRIPT"
   [ "$status" -eq 0 ]
   [ -z "$(echo "$output" | grep -F 'Event URL contestants reach')" ]
-  grep -qx 'ADMIN_LOGINS=alice' .env
+  grep -qx 'GITHUB_ORG=my-event-org' .env
 }
 
-@test "wiz_event_basics defaults the admin list to the login running the wizard" {
-  # R3 / spec section 8: Enter accepts, so the empty-admins refusal never
-  # fires for the common case. `gh api user --jq .login` — gh's own JSON
-  # filtering, not a jq dependency (AGENTS.md).
-  mkdir -p "$BATS_TEST_TMPDIR/ghlogin"
-  printf '#!/bin/sh\n[ "$1" = api ] && echo wizard-runner\nexit 0\n' > "$BATS_TEST_TMPDIR/ghlogin/gh"
-  chmod +x "$BATS_TEST_TMPDIR/ghlogin/gh"
-  : > .env
-  run env PATH="$BATS_TEST_TMPDIR/ghlogin:$PATH" bash -c \
-    'printf "my-event-org\n\nn\n\n" | { CMD=__selftest source "$1"; DRY_RUN=0; OUT=.env; wiz_event_basics .env; }' _ "$SCRIPT"
+# Step 3's claim code (ADR 72): generated when the file has none, kept on
+# Enter when it has one, rotated only on an explicit yes.
+_claim() {
+  printf '%s\n' "$@" | bash -c 'CMD=__selftest source "$1"; DRY_RUN=0; OUT=.env; wiz_claim_code .env 0' _ "$SCRIPT"
+}
+
+@test "wiz_claim_code generates a code when the file has no hash" {
+  printf 'GITHUB_ORG=x\n' > .env
+  run _claim
   [ "$status" -eq 0 ]
-  grep -qx 'ADMIN_LOGINS=wizard-runner' .env
+  code="$(printf '%s\n' "$output" | grep -oE '([0-9a-f]{4}-){7}[0-9a-f]{4}' | head -1)"
+  [ -n "$code" ]
+  [ -z "$(grep -F "$code" .env)" ]
+  grep -qE '^ADMIN_CLAIM_CODE_HASH=[0-9a-f]{64}$' .env
+}
+
+@test "wiz_claim_code keeps an existing hash on Enter, printing no code" {
+  run _claim ''
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF "Issue a new admin claim code?"
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
+  grep -qx 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9' .env
+}
+
+@test "wiz_claim_code rotates on y" {
+  run _claim y
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qE '([0-9a-f]{4}-){7}[0-9a-f]{4}'
+  [ "$(grep -c '^ADMIN_CLAIM_CODE_HASH=' .env)" -eq 1 ]
+  [ -z "$(grep -F 3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9 .env)" ]
+}
+
+@test "wiz_claim_code replaces a pasted code with a real hash, without echoing it" {
+  printf 'ADMIN_CLAIM_CODE_HASH=0123-4567-89ab-cdef-0123-4567-89ab-cdef\n' > .env
+  run _claim
+  [ "$status" -eq 0 ]
+  [ -z "$(printf '%s\n' "$output" | grep -F 0123-4567-89ab-cdef)" ]
+  grep -qE '^ADMIN_CLAIM_CODE_HASH=[0-9a-f]{64}$' .env
+}
+
+@test "wiz_claim_code does not offer a rotation right after secrets made the code" {
+  run bash -c 'CMD=__selftest source "$1"; DRY_RUN=0; OUT=.env; wiz_claim_code .env 1 < /dev/null' _ "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | grep -F 'Issue a new admin claim code?')" ]
 }
 
 @test "wiz_event_basics writes the three bootstrap keys and nothing else new" {
   : > .env
-  run _basics my-event-org 'alice' y https://ctf.example.org
+  run _basics my-event-org y https://ctf.example.org
   [ "$status" -eq 0 ]
   grep -qx 'GITHUB_ORG=my-event-org' .env
-  grep -qx 'ADMIN_LOGINS=alice' .env
+  [ -z "$(grep -F ADMIN_LOGINS .env)" ]
   grep -qx 'EVENT_URL=https://ctf.example.org' .env
   # "Run Secure Development? y" with no value yet defaults to the image
   # reference the provisioner already mirrors into the event org.
   grep -qx 'SCORE_IMAGE=ghcr.io/my-event-org/score:latest' .env
 }
 
-@test "wiz_event_basics refuses an empty admin list and writes nothing" {
-  : > .env
-  run _basics my-event-org '' y https://ctf.example.org
-  [ -z "$(grep -F 'GITHUB_ORG' .env)" ]
-  echo "$output" | grep -qF "at least one admin login is required"
-  echo "$output" | grep -qF "/admin would forbid everyone"
-  [ "$status" -ne 0 ]
-}
-
-@test "wiz_event_basics accepts spaces or commas between logins, writing one list" {
-  # The app splits ADMIN_LOGINS on commas only (admin-logins.ts), so an
-  # organizer typing "alice bob" at a comma-separated prompt would otherwise
-  # get ONE junk login and a panel that forbids them both.
-  : > .env
-  run _basics my-event-org 'alice, Bob  carol' n ''
-  [ "$status" -eq 0 ]
-  grep -qx 'ADMIN_LOGINS=alice,Bob,carol' .env
-}
-
 @test "wiz_event_basics leaves SCORE_IMAGE empty when Secure Development is declined" {
   # Empty is the answer the rest of the kit reads as "this event runs no
   # Secure Development" — so declining must write the key, empty, not skip it.
   : > .env
-  run _basics my-event-org alice n ''
+  run _basics my-event-org n ''
   [ "$status" -eq 0 ]
   grep -qx 'SCORE_IMAGE=' .env
 }
@@ -1357,13 +1462,13 @@ _basics_dry() {
 @test "wiz_event_basics defaults to the values an existing .env already carries" {
   # Re-running the wizard is the documented recovery path, so every answer
   # must default to what is already there — an Enter-through must not switch
-  # the org, drop an admin or turn Secure Development off.
+  # the org, rotate the claim code or turn Secure Development off.
   _env_fixture
   printf 'EVENT_URL=https://ctf.example.org\n' >> .env
-  run _basics '' '' '' ''
+  run _basics '' '' ''
   [ "$status" -eq 0 ]
   grep -qx 'GITHUB_ORG=test-event-org' .env
-  grep -qx 'ADMIN_LOGINS=organizer' .env
+  grep -qx 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9' .env
   grep -qx 'EVENT_URL=https://ctf.example.org' .env
   grep -qx 'SCORE_IMAGE=ghcr.io/fixture/score:latest' .env
 }
@@ -1373,7 +1478,7 @@ _basics_dry() {
   # target is forked into GITHUB_ORG. Writing that pair with an empty org
   # would defer the failure to `org` (and, for sync, to a crash loop).
   : > .env
-  run _basics '' alice y ''
+  run _basics '' y ''
   echo "$output" | grep -qF "GITHUB_ORG"
   [ "$status" -ne 0 ]
 }
@@ -1831,10 +1936,7 @@ EOF
 }
 
 # The other half of the same boundary: an INCOMPLETE env file, so step 3 asks
-# its questions. That path reaches for `gh api user --jq .login` to default
-# the admin list — the one gh call the wizard makes outside the org steps —
-# and it must not run here either. (Its absence is why the run ends on the
-# empty-admins refusal, R3.)
+# its questions and would generate a claim code — narrated, never run.
 @test "wizard --dry-run issues no gh or docker calls with an incomplete env file either" {
   _stub_prereqs
   for c in gh docker; do
@@ -1843,8 +1945,7 @@ EOF
   done
   printf 'SCORE_INGEST=poll\n' > .env
   run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard --dry-run
-  echo "$output" | grep -q "Admin GitHub login(s)"
-  echo "$output" | grep -qF "at least one admin login is required"
+  echo "$output" | grep -qF "DRY-RUN: would write a new ADMIN_CLAIM_CODE_HASH"
   [ ! -s "$BATS_TEST_TMPDIR/tool.calls" ]
 }
 
@@ -2172,7 +2273,7 @@ _fly_step_no_flyctl() {
 # logged to state/gh.log. The box is a stubbed curl answering /health/deep
 # from state/launched (true|false; absent = unreachable).
 vis_env() {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nEVENT_URL=https://box.example\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nEVENT_URL=https://box.example\n' > .env
   mkdir -p stubs state
   cat > stubs/gh <<'GH'
 #!/usr/bin/env bash
@@ -2362,7 +2463,7 @@ patched() {
 
 @test "launch on an event without Secure Development points at the Launch button" {
   vis_env
-  printf 'GITHUB_ORG=\nADMIN_LOGINS=organizer\nSCORE_IMAGE=\nEVENT_URL=https://box.example\n' > .env
+  printf 'GITHUB_ORG=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\nEVENT_URL=https://box.example\n' > .env
   run_vis launch
   printf '%s' "$output" | grep -qF -- 'press Launch in /admin'
   [ ! -f state/gh.log ]
@@ -2555,7 +2656,7 @@ EOF2
 # M20: AGENTS.md — `--dry-run` makes zero gh calls. doctor's org, matrix,
 # visibility, package and grant reads all ran under it.
 @test "doctor --dry-run makes no gh call at all (#496 M20)" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\nEVENT_URL=https://box.example\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\nEVENT_URL=https://box.example\n' > .env
   mkdir -p "$BATS_TEST_TMPDIR/stubbin"
   printf '#!/usr/bin/env bash\necho "gh $*" >> "%s/gh.calls"\nexit 1\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/stubbin/gh"
   chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
@@ -2579,7 +2680,7 @@ EOF2
 # found before any call — dry-run or not.
 @test "doctor refuses a GITHUB_APP_ID that is not a positive number (#496)" {
   for bad in abc 0 -3 "4 2"; do
-    printf 'GITHUB_ORG=test-event-org\nADMIN_LOGINS=organizer\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=%s\n' "$bad" > .env
+    printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=%s\n' "$bad" > .env
     run env NO_COLOR=1 bash "$SCRIPT" doctor --dry-run
     printf '%s' "$output" | grep -qF -- "GITHUB_APP_ID must be a positive number" || { echo "not refused: '$bad'"; return 1; }
     [ "$status" -ne 0 ] || { echo "exit 0 for '$bad'"; return 1; }

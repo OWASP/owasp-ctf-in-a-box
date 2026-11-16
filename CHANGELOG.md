@@ -41,11 +41,15 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   not reload `.env`), and claim at `/admin/claim` with the printed code.
 - **Added: provisioning writes the admin claim code (#738).**
   `ctf-setup.sh secrets` writes `ADMIN_CLAIM_CODE_HASH` and prints its code
-  once; `ctf-setup.sh admin-code` rotates it; the wizard generates one when
+  once, and leaves `SCORE_IMAGE` as a comment so a wizard run stopped before
+  step 3 asks it again; `ctf-setup.sh admin-code` rotates it, names a
+  non-default `--out` file in its recovery command, and prints the app
+  recreate under `env -u ADMIN_CLAIM_CODE_HASH`; the wizard generates one when
   `.env` has none and otherwise offers a default-No rotation, and `doctor`
   checks the hash without printing it. `deploy/fly/deploy.sh init` gives
   `.env.fly` its own code, and `deploy.sh --new-admin-code` rotates it on a
-  deploy. On AWS, Terraform creates the SSM SecureString
+  deploy; the render always takes the env file's hash over one exported in
+  the shell. On AWS, Terraform creates the SSM SecureString
   `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` holding a placeholder the app reads as
   unset (later plans ignore its value; the hash, never the code, may sit in
   state as a sensitive value), and
@@ -62,8 +66,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   warns about an undeclared variable there, and `-var admin_logins=…`
   fails). Fly `init` no longer copies `.env`'s claim hash, and `--refresh`
   and the drift check leave it alone. **Upgrade note (AWS):** remove
-  `admin_logins`, `terraform apply` (nobody can open `/admin` from here until
-  the next step), then `deploy.sh --skip-build --new-admin-code`.
+  `admin_logins`, run `deploy.sh` (it builds and pushes this revision's
+  images; it does not apply), then `terraform apply` (bootstrap-code claims
+  are unavailable from here until the next step), then
+  `deploy.sh --skip-build --new-admin-code`, which prints the code. On a
+  Secure Development stack both `deploy.sh` runs need `--scorer-source` or
+  `SCORE_IMAGE`.
 - **Added: GitHub linking, and held Secure Development scores (#741).** With
   Secure Development on, a player links a GitHub account from their profile
   or by signing in with GitHub; one GitHub account links to one kit account,

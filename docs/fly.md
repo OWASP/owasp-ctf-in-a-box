@@ -147,7 +147,8 @@ it is ignored.
 writes a new `ADMIN_CLAIM_CODE_HASH` to `.env.fly`, prints its code once,
 and redeploys so the app reads it. Sign in and enter the code at
 `<EVENT_URL>/admin/claim`. The new code works whether or not admins exist,
-and the old one stops working. `--dry-run --new-admin-code` writes nothing
+and the old one stops working when that deploy completes; if it fails, the
+old code stays valid until a deploy succeeds. `--dry-run --new-admin-code` writes nothing
 and prints no code.
 
 Changed only a secret or a runtime setting, and want to skip the image

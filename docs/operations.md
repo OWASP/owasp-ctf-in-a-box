@@ -1096,8 +1096,11 @@ with the new one at `/admin/claim`:
 - **Fly:** `./deploy/fly/deploy.sh --skip-build --new-admin-code`.
 - **AWS:** `./deploy/aws-terraform/deploy.sh --skip-build --new-admin-code`.
 
-The bootstrap code works whether or not admins already exist, and the old one
-stops working once the hash changes.
+The bootstrap code works whether or not admins already exist. The old one
+stops working only once the running app has the new hash: after the container
+recreate on Compose, when the Fly deploy completes, or once the old AWS tasks
+have drained after the rollout. A failed deploy or rollout leaves the old code
+valid until it is recovered.
 
 **If Redis is unavailable**, the grant read fails and `/admin` answers 403 —
 the access check fails **closed**, deliberately unlike the freeze read, which

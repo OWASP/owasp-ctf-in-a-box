@@ -225,6 +225,7 @@ dev_stack_copy() {
   mkdir -p ds/scripts/lib stubs
   cp "$REPO/scripts/dev-stack" ds/scripts/dev-stack
   cp "$LIB" ds/scripts/lib/dotenv.sh
+  cp "$REPO/scripts/lib/claim-code.sh" ds/scripts/lib/claim-code.sh
   printf '#!/bin/sh\necho "docker $*" >> "%s/docker.log"\nexit 0\n' "$PWD" > stubs/docker
   chmod +x stubs/docker
   : > docker.log

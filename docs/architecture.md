@@ -1201,7 +1201,7 @@ which supersedes the v1 limitation recorded in
 
 ## Runtime config flow
 
-<img src="assets/diagrams/runtime-config-flow.svg" alt="Animated diagram of the two configuration planes an event is built from, with no config file between them. Bootstrap plane: the wizard or the organizer writes GITHUB_ORG, ADMIN_LOGINS, SCORE_IMAGE and EVENT_URL into .env; docker compose up reads them, adding the secdev profile only when SCORE_IMAGE is non-empty; the app, sync and scorer containers read those keys from their process environment once, at start, so changing one is a restart and never a rebuild. Runtime plane: the organizer changes everything else live in /admin — which modules run, which Secure Development targets run, the event's identity, the scoring schedule, hints and team caps — and each change is written to the single ctf:admin:settings hash in Redis, which the app re-reads on every request and the sync poller re-reads on every tick. The app image itself takes no configuration build-arg at all, so the same image runs every event and a build can no longer ship an empty admins list.">
+<img src="assets/diagrams/runtime-config-flow.svg" alt="Animated diagram of the two configuration planes an event is built from, with no config file between them. Bootstrap plane: the wizard or the organizer writes GITHUB_ORG, ADMIN_CLAIM_CODE_HASH (the hash of a one-time admin claim code), SCORE_IMAGE and EVENT_URL into .env; docker compose up reads them, adding the secdev profile only when SCORE_IMAGE is non-empty; the app, sync and scorer containers read those keys from their process environment once, at start, so changing one is a container recreate and never a rebuild. Runtime plane: the organizer changes everything else live in /admin — which modules run, which Secure Development targets run, the event's identity, the scoring schedule, hints and team caps — and each change is written to the single ctf:admin:settings hash in Redis, which the app re-reads on every request and the sync poller re-reads on every tick. The app image itself takes no configuration build-arg at all, so the same image runs every event and no admin is ever baked into a build.">
 
 **No image in this kit takes a configuration build-arg** (config v2, #386).
 Every fact about an event reaches the running system one of exactly two ways.
@@ -1238,8 +1238,8 @@ Two fail directions, deliberately opposite and worth knowing apart:
 
 - **The admin check fails CLOSED.** A grant read that errors denies, and
   the claim answers 503 rather than granting. An empty or malformed
-  `ADMIN_CLAIM_CODE_HASH` means nobody can claim the first seat; it never
-  means "anyone may". Rotating the hash is the lock-out recovery path
+  `ADMIN_CLAIM_CODE_HASH` means no bootstrap-code claim works (existing
+  grants and admin-issued codes are unaffected); it never means "anyone may". Rotating the hash is the lock-out recovery path
   ([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
 - **A failed settings read fails OPEN**, to the defaults: not paused, the
   `SCORE_IMAGE`-derived module set, all six targets, the neutral identity. A

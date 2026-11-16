@@ -121,6 +121,12 @@ that can replace a task without dropping the event.
    aws ssm put-parameter --type SecureString --key-id $K --name $P/SCORER_TOKEN           --value "$(openssl rand -hex 24)"
    ```
 
+   One more parameter is **not** on this list: `$P/ADMIN_CLAIM_CODE_HASH`,
+   the SHA-256 of the one-time admin claim code. The full apply creates it
+   under the same key, holding a placeholder the app reads as unset, and
+   `deploy.sh` writes the real hash once the stack exists (see Locked out of
+   /admin below).
+
    **`--key-id` is not optional.** The stack creates one customer-managed KMS
    key per event (`kms.tf`) and the execution role's `kms:Decrypt` names *only*
    that key — a grant on `"*"` would let this role decrypt every SecureString
@@ -176,7 +182,7 @@ it. One targeted apply creates both:
 
 ```sh
 cd deploy/aws-terraform
-cp terraform.tfvars.example terraform.tfvars    # then edit: domain, github_org, admin_logins, github_client_id, github_app_id
+cp terraform.tfvars.example terraform.tfvars    # then edit: domain, github_org, github_client_id, github_app_id
 cp backend.tf.example backend.tf                # then edit (see Remote state)
 terraform init
 terraform apply \
@@ -185,8 +191,16 @@ terraform apply \
 #   ... now run step 3's put-parameter commands, with --key-id ...
 docker login ghcr.io                            # Secure Development: the scorer package is private
 ./deploy.sh --scorer-source ghcr.io/<your-event-org>/score:latest   # build, mirror, push, write image.auto.tfvars
-terraform apply                                 # the rest of the stack
+terraform apply                                 # the rest of the stack, and the claim-code parameter
+./deploy.sh --skip-build --new-admin-code \
+  --scorer-source ghcr.io/<your-event-org>/score:latest   # writes the admin claim code and prints it ONCE
 ```
+
+The first `deploy.sh` runs before the full apply, so the claim-code parameter
+does not exist yet and it prints no code. The last line is the one that does:
+save the code it prints and claim `/admin` with it (see Locked out of /admin
+below). On an event without Secure Development, drop `--scorer-source` from
+both `deploy.sh` lines.
 
 Targeting the *alias* pulls in the key it points at, and targeting the
 repository resource creates every repository this event needs: `app` always,
@@ -255,11 +269,38 @@ build an image, which is why this is a script and not an `apply` (#476):
   --repository-name <name>-app` lists them) and `terraform apply`.
 
 The app takes no build-time
-configuration at all (config v2, #386): `github_org` and `admin_logins` are
-plain Terraform variables, mirrored into the app's task-definition environment
-the same way `scorer_image` is — `terraform.tfvars` is this path's equivalent
-of the wizard's `.env`. Change either and roll it out with `terraform apply`;
-nothing needs rebuilding.
+configuration at all (config v2, #386): `github_org` is a plain Terraform
+variable, mirrored into the app's task-definition environment the same way
+`scorer_image` is — `terraform.tfvars` is this path's equivalent of the
+wizard's `.env`. Change it and roll it out with `terraform apply`; nothing
+needs rebuilding.
+
+### Locked out of /admin
+
+Admins are kit accounts that claimed a one-time **admin claim code** at
+`/admin/claim` ([ADR 72](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/docs/decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)). The app reads the code's SHA-256 from the
+SecureString `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` as a task secret.
+Terraform creates that parameter with a placeholder and `ignore_changes` on its
+value, so a plan never shows the real hash as drift and never writes the
+placeholder back over it. The plaintext code never reaches Terraform; the hash
+may still sit in state, as a sensitive value, once a refresh reads the
+parameter back, like the module's other SSM secrets. `deploy.sh` reads the
+parameter's version by metadata only (`describe-parameters`, never a
+decrypting read): version 1 is the placeholder, so it writes a code and prints
+it once; a higher version is left alone. Until the stack has been applied
+with the parameter, it publishes the images and says the code is not set yet. To get a new one:
+
+```sh
+./deploy.sh --skip-build --new-admin-code
+```
+
+It overwrites the parameter (after the apply, with `--apply`), forces a new
+deployment of the `app` service when it exists — ECS resolves secrets only at
+task start — and then prints the new code once; it is live when that
+deployment finishes. If the roll fails, the code is in SSM but not live yet,
+and the script prints the `update-service` command that finishes it. The code itself never reaches AWS,
+Terraform or a tfvars file; only its hash does. `--dry-run --new-admin-code` calls nothing
+and prints the `put-parameter` with its value redacted.
 
 The app and sync tags are content-addressed to the git revision, and every ECR
 repository is `IMMUTABLE`. Same code gives the same tag, so a re-run reports
@@ -285,10 +326,8 @@ Every input is in `variables.tf` with its own description;
 | `app_image` | What ECS runs. `deploy.sh` writes it into `image.auto.tfvars`; the example carries a placeholder for the bootstrap apply. |
 | `scorer_image`, `sync_image` | Secure Development only. `deploy.sh` writes both into `image.auto.tfvars` (see The images). Each must be this stack's ECR repository in this account and region, or digest-pinned. |
 | `github_client_id` | The GitHub OAuth app's client id (public; the secret is `GITHUB_CLIENT_SECRET` in SSM). Without it no one can sign in. |
-| `admin_logins` | The `/admin` allowlist. Its `validation` block refuses a roster with no login at plan time — empty, or nothing but separators like `" , "` — because that would forbid everyone, you included, and the only fix is another apply. |
 
-`github_org` and `admin_logins` are read at runtime, not baked into the image.
-`github_org` defaults to `""` and is legal empty only for an event that does
+`github_org` is read at runtime, not baked into the image. It defaults to `""` and is legal empty only for an event that does
 not run Secure Development — the app then falls back to bare repo names. With
 `enable_secure_development = true` its own `validation` block requires it: sync
 exits at startup without one, and the app would have no org to build fork links

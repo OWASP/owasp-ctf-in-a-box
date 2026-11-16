@@ -2,10 +2,11 @@
 #
 # Only two inputs have no default: domain and app_image.
 #
-# admin_logins and github_client_id are required too, through its validation block rather than
+# github_client_id is required too, through its validation block rather than
 # through a missing default: it defaults to "" so the refusal is a sentence
 # naming the problem instead of an interactive prompt in a non-interactive
-# plan, and a plan with no login in it is refused either way. github_org,
+# plan. Admins are not named here: deploy.sh writes the admin claim code's
+# hash to SSM and prints the code once (ADR 72). github_org,
 # github_app_id, scorer_image and sync_image are required on the same terms
 # whenever enable_secure_development is true (deploy.sh fills in the images).
 # Everything else below is optional and shown at its default.
@@ -60,11 +61,6 @@ acm_certificate_arn = ""
 # with no org. Leave it empty only for an event that does not run Secure
 # Development — the app then falls back to bare repo names.
 # github_org = "your-event-org"
-
-# REQUIRED. Comma-separated GitHub logins allowed into /admin. Read by the app
-# at runtime — the `.env`-equivalent of ADMIN_LOGINS. An empty list is refused
-# at plan time: it would forbid everyone from /admin, including you.
-admin_logins = "octocat,defunkt"
 
 # REQUIRED. The GitHub OAuth app's client id (public — the `.env`'s
 # GITHUB_CLIENT_ID). Its secret goes in SSM as GITHUB_CLIENT_SECRET. Without it

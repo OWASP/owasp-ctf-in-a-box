@@ -164,12 +164,12 @@ An admin is a kit account that claimed an **admin claim code** ([ADR 72](decisio
 Everyone else gets a 403 on `/admin` and its API routes; the Forbidden page
 links to `/admin/claim`.
 
-The first code's SHA-256 goes in `.env` as `ADMIN_CLAIM_CODE_HASH`; the
-code itself is never stored. On a Docker Compose box, make it by hand as [the Forbidden runbook](troubleshooting.md#admin-says-forbidden-for-everyone-including-you) shows: `openssl rand -hex 16`,
-its SHA-256 into `.env`, then a recreated app container; setup does not
-write it yet. The Fly and AWS deploys do not pass `ADMIN_CLAIM_CODE_HASH` to
-the app yet (#738), so a box deployed there cannot claim its first admin
-until they do. Sign in, open
+The first code's SHA-256 is `ADMIN_CLAIM_CODE_HASH` (in `.env`, or SSM on AWS); the
+code itself is never stored. Provisioning prints the code once:
+`ctf-setup.sh secrets` on a Compose box, `deploy/fly/deploy.sh init` on
+Fly, and the first `deploy/aws-terraform/deploy.sh` after the stack is
+applied on AWS. Lost it? See
+**Locked out?** below. Sign in, open
 `/admin/claim` and enter the code: the account you are signed in with becomes an admin. Each code
 works once. Further organizers get a code from the **Admins** tab (see
 below). Until somebody claims, `/admin` refuses everyone and its Forbidden
@@ -1087,12 +1087,20 @@ Only an admin can issue a code. Every claim, issue and removal is written to
 the same audit log as the rest of the panel's changes, naming the account and
 a short code id, never the code. A master reset keeps the admins.
 
-**Locked out?** If no admin can sign in, rotate the bootstrap code: a new
-`ADMIN_CLAIM_CODE_HASH` in `.env` and a recreated app container
-(`docker compose up -d --no-deps --force-recreate app`; a plain
-`docker compose restart` keeps the old environment), then claim with the new
-code at `/admin/claim`. The bootstrap code works whether or not admins
-already exist, and the old one stops working once the hash changes.
+**Locked out?** If no admin can sign in, rotate the bootstrap code and claim
+with the new one at `/admin/claim`:
+
+- **Compose box:** `./setup/ctf-setup.sh admin-code`, then recreate the app
+  container (`docker compose up -d --no-deps --force-recreate app`; a plain
+  `docker compose restart` keeps the old environment).
+- **Fly:** `./deploy/fly/deploy.sh --skip-build --new-admin-code`.
+- **AWS:** `./deploy/aws-terraform/deploy.sh --skip-build --new-admin-code`.
+
+The bootstrap code works whether or not admins already exist. The old one
+stops working only once the running app has the new hash: after the container
+recreate on Compose, when the Fly deploy completes, or once the old AWS tasks
+have drained after the rollout. A failed deploy or rollout leaves the old code
+valid until it is recovered.
 
 **If Redis is unavailable**, the grant read fails and `/admin` answers 403 —
 the access check fails **closed**, deliberately unlike the freeze read, which
@@ -2230,8 +2238,12 @@ looks wrong. Alongside the per-fork provisioning matrix (see
 [docs/hosting.md](hosting.md#fork-setup-and-the-contest-flow)) it checks
 three facts that have no other alarm:
 
-- **`ADMIN_LOGINS` is non-empty.** Empty means `/admin` forbids every login,
-  which is silent until an organizer tries to open the panel mid-event.
+- **`ADMIN_CLAIM_CODE_HASH` is a SHA-256.** Absent or malformed (or the code
+  itself pasted where its hash belongs) means nobody can claim `/admin` with a
+  bootstrap code. Existing admins and the codes they issue still work, so on
+  a claimed box this only bites at the next lock-out; on an unclaimed one it
+  is silent until an organizer tries to open the panel. The value is never
+  printed. A leftover `ADMIN_LOGINS` line gets a ⚠️: nothing reads it.
 - **`GITHUB_ORG` is set.** `doctor` takes no separate org argument —
   `GITHUB_ORG` *is* the org it inspects, so there is no second value for it
   to disagree with; what it catches is the key being absent. With Secure
@@ -2363,11 +2375,11 @@ endpoint a scored PR hits, so it exercises the real validation and Redis-write
 path rather than poking Redis keys directly. It prints the URL to open when
 it's done.
 
-It needs no config file — there is no such thing any more (#386). The two
-identities it has to know, `ADMIN_LOGINS` and `GITHUB_ORG`, come from your
-environment if you exported them, else from `.env`, and `ADMIN_LOGINS` falls
-back to whatever login `gh` is authenticated as; each is read at start-up, so
-changing one means a restart, not a rebuild. Everything else — the event's
+It needs no config file — there is no such thing any more (#386).
+`GITHUB_ORG` comes from your environment if you exported it, else from `.env`.
+With no `.env`, `up` writes a throwaway `.env.dev-stack` that carries a fresh
+admin claim code's hash and prints the code once; both are read at start-up,
+so changing one means recreating the containers, not a rebuild. Everything else — the event's
 name, which modules run, which Secure Development targets — is an `/admin`
 setting.
 
@@ -2391,14 +2403,14 @@ matches a demo one keeps their own link.
 Tear down with `./scripts/dev-stack down` (keeps seeded data in the Redis
 volume for next time) or `./scripts/dev-stack down --wipe` (also drops it).
 
-**What this does not do:** sign you in. `/admin` needs a real session whose
-GitHub login is in `ADMIN_LOGINS`, which needs a real GitHub OAuth app —
-there is no local bypass for that boundary, and the script does not add one.
-`dev-stack up` tells you exactly what to add: an OAuth app's client
-id/secret and your login in `ADMIN_LOGINS`, written to `.env` when you have
-one or to the generated `.env.dev-stack` otherwise. Edit that file, then run
-`./scripts/dev-stack down && ./scripts/dev-stack up` to apply it — a restart,
-not a rebuild, since `ADMIN_LOGINS` and the OAuth settings are read at start.
+**What this does not do:** sign you in. `/admin` needs a signed-in kit
+account that claimed the admin claim code at `/admin/claim` — there is no
+local bypass for that boundary, and the script does not add one. Signing in
+with GitHub needs a real OAuth app: put its client id/secret in `.env` (or
+the generated `.env.dev-stack`), then run
+`./scripts/dev-stack down && ./scripts/dev-stack up` to apply it. Lost the
+code? `./setup/ctf-setup.sh admin-code --out <that file>` prints a new one,
+followed by the same down/up.
 
 ## Before launch
 

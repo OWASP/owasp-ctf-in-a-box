@@ -16,9 +16,10 @@ running the event once it is up see [docs/operations.md](operations.md).
 
 **The fastest path is the wizard** — run `ctf-setup.sh` with no subcommand and
 it walks the whole sequence below. It **asks for each value inline** — your box
-URL, the event org, the admin logins, whether you run **Secure Development**,
+URL, the event org, whether you run **Secure Development**,
 and the App/OAuth credentials — showing the instructions and GitHub URL for
-each, and writing `.env` for you as you answer. There is no config file to
+each, and writing `.env` for you as you answer. It prints a one-time admin
+claim code once, for `/admin/claim`. There is no config file to
 edit between steps: `.env` is the whole bootstrap plane, and everything else
 (the event's name and dates, **which modules run**, which Secure Development
 targets) is a runtime `/admin` setting. It does every automatable step,
@@ -29,7 +30,7 @@ guides + verifies each UI-only one, and resumes if you stop:
 ```
 
 Every discrete step is also its own subcommand — `wizard` (the guided run
-itself), `check`, `secrets`, `org`, `render`, `upgrade`, `teardown`, `doctor`,
+itself), `check`, `secrets`, `admin-code` (rotate the admin claim code), `org`, `render`, `upgrade`, `teardown`, `doctor`,
 `private`, `launch`, `app-manifest`, `app-config`, `oauth-app`,
 `oauth-config` — with the global flags `--dry-run` (print
 mutating commands instead of running them) and `--out <path>` (default
@@ -43,32 +44,24 @@ sequence below names each one where it's used; `teardown` is covered in
 skipped, and it continues from the first one still to do. On a first run each
 of those values is asked for inline, with the GitHub page it comes from.</sup>
 
-**Step 3, "Event basics", is the whole of what the wizard writes.** Three
-keys into `.env`, in this order:
+**Step 3, "Event basics", is the whole of what the wizard writes.** Two
+keys into `.env`, in this order, then the admin claim code:
 
 - **`GITHUB_ORG`** — the disposable per-event org. Blank is allowed for an
   event that runs no forked content.
-- **`ADMIN_LOGINS`** — comma-separated GitHub logins allowed into `/admin`.
-  It defaults to the login running the wizard (`gh api user`), so Enter
-  accepts. **An answer that names no usable login is refused**, not written.
-  The app parses this string and drops every entry that is not shaped like a
-  GitHub login, so `,`, `" , "` and `alice@example.com` all reach it as an
-  empty allowlist — indistinguishable from unset, and `/admin` then forbids
-  *everyone*. How loudly depends on what you got wrong: a non-empty entry that
-  fails the login format makes `envAdmins` log ONE warning naming the *count*
-  of dropped entries and nothing else (never the entries — one might be a
-  pasted secret), once per process, at `admin-auth.ts`'s module load;
-  separator-only or whitespace-only input drops nothing and logs nothing at
-  all. Either way the panel is fail-closed and you find out when somebody
-  tries to open it. Give it at least one real login; the wizard and
-  `deploy/fly/deploy.sh` both refuse the value outright rather than let it
-  deploy.
 - **`SCORE_IMAGE`**, from one question — *"Run Secure Development (fork the
   six targets and score patch PRs)?"*. Yes writes the scorer image reference
   (your existing one, else `ghcr.io/<org>/score:latest`); no writes it empty.
   **Non-empty is the switch**: it is what says this event runs Secure
   Development at all. Saying yes with no org is refused, since there would be
   nothing to fork into.
+- **`ADMIN_CLAIM_CODE_HASH`** — the SHA-256 of a one-time **admin claim
+  code** ([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)). `secrets` (step 2) generates it on a fresh box, prints the
+  code **once**, and writes only the hash; step 3 generates one when the file
+  has none, and otherwise asks *"Issue a new admin claim code?"*, default No.
+  Once the box is up, sign in, open `/admin/claim` and enter the code: the
+  account you are signed in with becomes an admin. Admins are not named in
+  `.env` at all, and nothing asks for a GitHub login.
 
 The wizard does **not** ask how scores reach the box: there is one transport
 and nothing selects it (see [how scores reach the box](#how-scores-reach-the-box)).
@@ -106,9 +99,10 @@ containers and forks to provision.
 A resumed run re-reads `.env` and ticks off what is answered rather than
 re-asking it, and says which way the Secure Development switch is set — plus,
 when it is off, that setting `SCORE_IMAGE` is how you turn it on. The one
-exception is a hand-rolled `.env` with no `SCORE_IMAGE` line at all: that
-question has never been put, so the wizard asks step 3 again rather than
-assuming an answer.
+exception is an `.env` with no `SCORE_IMAGE` line at all: that question has
+never been put, so the wizard asks step 3 again rather than assuming an
+answer. `secrets` writes the key only as a comment for exactly this reason,
+so a first run stopped before step 3 is asked step 3 on the next run.
 
 **The wizard closes by offering an optional fly.io deploy** (issue #371).
 After step 9 has verified the box, it asks *"Deploy to fly.io now?"* —
@@ -153,7 +147,8 @@ you'd rather drive it yourself or script it. Each step is either a
 git clone https://github.com/OWASP/owasp-ctf-in-a-box && cd owasp-ctf-in-a-box
 
 # 2. Generate .env — BETTER_AUTH_SECRET, SRH_TOKEN, SCORER_TOKEN, REDIS_PASSWORD,
-#    EVENT_URL, and empty App/OAuth/SCORE_IMAGE fields to fill later.
+#    EVENT_URL, and empty App/OAuth fields to fill later (SCORE_IMAGE is a
+#    comment until you add it).
 ./setup/ctf-setup.sh secrets
 
 # 3. Build + push the scorer image, then set SCORE_IMAGE in .env by hand.
@@ -162,14 +157,15 @@ git clone https://github.com/OWASP/owasp-ctf-in-a-box && cd owasp-ctf-in-a-box
 docker login ghcr.io   # token with write:packages
 docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
   -t ghcr.io/<your-org>/score:latest --push scorer/
-#    MANUAL: edit SCORE_IMAGE=ghcr.io/<your-org>/score:latest in .env
+#    MANUAL: add SCORE_IMAGE=ghcr.io/<your-org>/score:latest to .env
 #    (the wizard builds + pins amd64 for you at step 4)
 
-# 4. Fill in the two bootstrap identities in .env, by hand or with the wizard.
-#    MANUAL edit: GITHUB_ORG=<your event org>, ADMIN_LOGINS=<your login>.
-#    Both are read at RUNTIME with no baked default: an empty ADMIN_LOGINS
-#    403s everyone at /admin, and an empty GITHUB_ORG leaves the poller
-#    refusing to start. The event's name and dates, which modules run and
+# 4. Fill in GITHUB_ORG in .env, by hand or with the wizard.
+#    MANUAL edit: GITHUB_ORG=<your event org>. Read at RUNTIME with no baked
+#    default: an empty GITHUB_ORG leaves the poller refusing to start.
+#    `secrets` (step 2) already wrote ADMIN_CLAIM_CODE_HASH and printed the
+#    admin claim code once — keep it for /admin/claim. Lost it?
+#    ./setup/ctf-setup.sh admin-code prints a new one. The event's name and dates, which modules run and
 #    which Secure Development targets run are all /admin settings — see
 #    step 10 below.
 
@@ -220,7 +216,8 @@ docker compose --profile secdev --profile app up -d --build
 
 # 10. Verify: watch the poller heartbeat, open the app, sign in, hit /admin.
 docker compose logs -f sync
-#     Open $EVENT_URL, sign in with GitHub, confirm /admin loads for an admin login.
+#     Open $EVENT_URL/admin/claim, sign in, enter the admin claim code from
+#     step 2, then confirm /admin loads.
 ```
 
 ## Prerequisites
@@ -310,7 +307,11 @@ each fork's **scoring-workflow version** (see
 fork's **package Read grant**, the one step with no API in either direction.
 
 It also checks the three bootstrap facts that have no other alarm:
-**`ADMIN_LOGINS` is non-empty** (empty 403s everyone at `/admin`),
+**`ADMIN_CLAIM_CODE_HASH` is a SHA-256** (absent, malformed, or the code
+pasted where its hash belongs means nobody can claim `/admin` with a
+bootstrap code, though existing admins and codes they issue still work; the
+value is never printed, and a leftover `ADMIN_LOGINS` line gets a warning that it is
+ignored),
 **`GITHUB_ORG` is set and matches the org being inspected** (a warning
 instead of a failure when Secure Development is off, since an app-only event
 has no org), and **the `sync` GitHub App is installed on the org**, by App
@@ -549,7 +550,7 @@ keep them in sync yourself: never bring the `secdev` profile up without a
 `SCORE_IMAGE`, or the scorer container has nothing to score against.
 
 Nothing is baked into the images any more (#386): `--build` only rebuilds
-the code, and every value the containers need — `ADMIN_LOGINS`,
+the code, and every value the containers need — `ADMIN_CLAIM_CODE_HASH`,
 `GITHUB_ORG`, `SCORE_IMAGE` — is read from `.env` when they
 start. Pick the command by what that file says:
 
@@ -768,11 +769,12 @@ an organizer changes while the event runs lives in Redis behind `/admin`.
 
 | Plane | Where | Who writes it | What lives there |
 |---|---|---|---|
-| **Bootstrap** — facts the containers need at start | `.env` | the wizard, or you, once per deployment | `GITHUB_ORG`, `ADMIN_LOGINS`, `SCORE_IMAGE`, `EVENT_URL`, and the secrets |
+| **Bootstrap** — facts the containers need at start | `.env` | the wizard, or you, once per deployment | `GITHUB_ORG`, `ADMIN_CLAIM_CODE_HASH`, `SCORE_IMAGE`, `EVENT_URL`, and the secrets |
 | **Runtime** — everything an organizer tunes during the event | the `ctf:admin:settings` hash in Redis | `/admin`, live | which modules run, which Secure Development targets run, the event's identity, the scoring schedule, freeze, hint policy, team caps |
 
 Bootstrap keys are read at container **start**, not at build: changing one is
-an `.env` edit plus a restart, never a rebuild. Runtime settings are read on
+an `.env` edit plus a container recreate (a plain `docker compose restart`
+keeps the old environment), never a rebuild. Runtime settings are read on
 every request and take effect immediately, with no restart at all. See
 [ADR 55](decisions.md#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml)
 for why the old baked config file was retired.
@@ -785,7 +787,7 @@ four are the event's identity to the machine:
 
 | Key | Required | What it drives | Empty or unset means |
 |---|---|---|---|
-| `ADMIN_LOGINS` | **yes** | Comma-separated GitHub logins (matched case-insensitively) allowed into `/admin`. Read by `lib/bootstrap-env.ts` at start, and parsed by `parseAdminLogins`: entries are trimmed and any that is not shaped like a GitHub login is dropped. So a value of separators only (`,`), whitespace only, or nothing but invalid entries (an email address, say) parses to the SAME empty allowlist as unset. Set at least one valid login and check the parsed list is not empty. | **Nobody is an admin** — `/admin` 403s every login, including yours. This fails CLOSED on purpose; there is no "no allowlist, let everyone in" state. |
+| `ADMIN_CLAIM_CODE_HASH` | **yes** | The SHA-256 of the one-time admin claim code — never the code. `ctf-setup.sh secrets` (or `admin-code`, the rotation) writes it and prints the code once; a signed-in kit account enters the code at `/admin/claim` to become an admin, and admins issue further 15-minute codes from the Admins tab. Read by `lib/bootstrap-env.ts` at start; anything that is not 64 hex (the code itself, pasted here) counts as unset. | **No bootstrap-code claim works.** On a box nobody has claimed yet that means no first admin seat, so `/admin` refuses everyone and its Forbidden page says so; existing admins, and the codes they issue from the Admins tab, still work. Fails CLOSED; there is no "let everyone in" state. |
 | `GITHUB_ORG` | when running Secure Development | The event org contestants fork the target repos under. Drives every fork link the app renders, the policy-page prose, and the repos `sync` polls. | The app renders a plain repo name instead of a broken link, and `sync` refuses to start at all, logging `ctf-sync: GITHUB_ORG is not set`. |
 | `SCORE_IMAGE` | when running Secure Development | Your scorer image, built from `scorer/` and pushed somewhere the box and the forks can pull it. | The event does not run Secure Development — see below. |
 | `EVENT_URL` | **yes** | **The** event URL: Caddy's TLS host, the auth callback origin, the HTTPS start-up guard, the CSRF origin check, and the leaderboard link in every score comment ([ADR 43](decisions.md#adr-43-one-url-and-it-lives-in-env-not-eventyaml)). | Defaults to `http://localhost`, which is fine only for a local trial. |
@@ -959,7 +961,7 @@ provisioning — is documented in [docs/modules.md](modules.md).
 | What you changed | What it takes |
 |---|---|
 | Anything in `/admin` — modules, targets, identity, schedule, hints, teams, content | Nothing. It is live on the next request. |
-| `ADMIN_LOGINS`, `GITHUB_ORG`, `EVENT_URL`, a secret | Edit `.env`, then bring the stack back up with the same profiles the table above gives for your event — `--profile app` with no `SCORE_IMAGE`, `--profile secdev --profile app` with one — to recreate the containers with the new environment. No rebuild in any case. A new `EVENT_URL` also needs the GitHub OAuth app's callback changed to `<EVENT_URL>/api/auth/callback/github`, or sign-in fails. |
+| `ADMIN_CLAIM_CODE_HASH`, `GITHUB_ORG`, `EVENT_URL`, a secret | Edit `.env` (`ctf-setup.sh admin-code` edits the hash for you), then bring the stack back up with the same profiles the table above gives for your event — `--profile app` with no `SCORE_IMAGE`, `--profile secdev --profile app` with one — to recreate the containers with the new environment. No rebuild in any case. A new `EVENT_URL` also needs the GitHub OAuth app's callback changed to `<EVENT_URL>/api/auth/callback/github`, or sign-in fails. |
 | `SCORE_IMAGE` (adding or dropping Secure Development's containers) | Edit `.env`, then bring the stack up with the profiles that now match it: `--profile secdev --profile app` once it is set, `--profile app` alone once it is empty. |
 | The app's own code (a kit upgrade) | Without `SCORE_IMAGE`: `docker compose --profile app up -d --build`. With it, update the scorer image too: if you build your own, rebuild and push it (`docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t <SCORE_IMAGE> --push scorer/`); if `SCORE_IMAGE` points at an image someone else publishes, wait for their new build. Then re-run `./setup/ctf-setup.sh org` so the event org's mirror picks it up, then `docker compose --profile secdev pull scorer` (the scorer is an `image:` service, so `up --build` alone keeps the cached one) and `docker compose --profile secdev --profile app up -d --build`. Per-release upgrade notes are in the [CHANGELOG](https://github.com/OWASP/owasp-ctf-in-a-box/blob/main/CHANGELOG.md). |
 
@@ -1010,7 +1012,7 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | `lib/upstash.ts`; also `scorer/src/store.js`, `sync/src/redis.js` | *fixed*: `http://srh:80`, `SRH_TOKEN` | Redis-over-REST endpoint. Hints, teams, admin settings and module content live behind it. |
 | `TEAM_WRITES_ENABLED` | `lib/team-store.ts` | *fixed*: `"true"` | Enables team create/join writes; off in mock mode. |
 | `GITHUB_ORG` | `lib/bootstrap-env.ts` | empty | The GitHub org contestants fork the target repos under; drives fork links and policy-page prose. Empty renders plain repo-name text, never a broken link. |
-| `ADMIN_LOGINS` | `lib/bootstrap-env.ts`, `lib/admin-auth.ts` | empty | Comma-separated GitHub logins (case-insensitive) allowed into `/admin`. Empty means nobody — and so does a value that parses to nobody: unparseable entries are dropped, so separators-only, whitespace-only and invalid-only all mean the same 403 for everyone. Changing it needs an env edit and a restart. |
+| `ADMIN_CLAIM_CODE_HASH` | `lib/bootstrap-env.ts`, `app/api/me/admin/claim/route.ts` | empty | SHA-256 of the one-time admin claim code ([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)). Empty, or anything that is not 64 hex, means no bootstrap-code claim works (existing admins and the codes they issue are unaffected). Never the code itself. A new value needs a container recreate (`docker compose up -d --no-deps --force-recreate app`). `ADMIN_LOGINS` is not read. |
 | `APP_BUILD_REV`, `APP_BUILT_AT` | `lib/app-version.ts` (`GET /health`) | empty | *Build args*, not runtime: the commit and build time the image reports. Unset reports `unknown`/`null` rather than failing a plain `docker compose build`; `scripts/dev-stack`, `deploy/fly/deploy.sh` and `deploy/aws-terraform/deploy.sh` fill them in. |
 
 **Sync** (`sync/src/config.js`):

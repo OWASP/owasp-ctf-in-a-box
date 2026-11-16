@@ -1,6 +1,6 @@
 # apps/web — the contestant app
 
-The web app contestants and organizers use during an OWASP CTF in a Box event: GitHub sign-in, the challenge boards, leaderboard, profile, teams, paid hints and the `/admin` panel. Event name, dates, location, contact and Discord invite are runtime `/admin` → Event settings, not build-time config; `ADMIN_LOGINS` and `GITHUB_ORG` are `.env` keys read at container start (see [docs/hosting.md](../../docs/hosting.md#environment-variables)) — nothing event-specific is baked into the image.
+The web app contestants and organizers use during an OWASP CTF in a Box event: GitHub sign-in, the challenge boards, leaderboard, profile, teams, paid hints and the `/admin` panel. Event name, dates, location, contact and Discord invite are runtime `/admin` → Event settings, not build-time config; `ADMIN_CLAIM_CODE_HASH` and `GITHUB_ORG` are `.env` keys read at container start (see [docs/hosting.md](../../docs/hosting.md#environment-variables)) — nothing event-specific is baked into the image.
 
 It was vendored from `OWASP-CTF/ctf-owasp-org` on 2026-08-14; `VENDORED.md` records the delta (Vercel bits stripped, DynamoDB retired, the AWS Lambda replaced by the kit's local scorer). `AGENTS.md` next to this file points at the kit's operating manual, and `DESIGN_SYSTEM.md` is the palette and token authority.
 
@@ -50,7 +50,7 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm dev            # http://localhost:3000
 ```
 
-There is no `predev`/`prebuild`/`pretest` generator step — the app reads no build-time config at all. Copy `.env.example` to `.env.local` for what `pnpm dev` reads: `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL=http://localhost:3000`, and a `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` pair if you need sign-in (callback `<BETTER_AUTH_URL>/api/auth/callback/github`). Everything else is optional and falls back to mocks; `.env.example` documents each variable, and `docker-compose.yml`'s `app` service is the authority for what a real event sets. Every variable, including `ADMIN_LOGINS` and `GITHUB_ORG`, is read at start, so a change means only a container restart, never a rebuild.
+There is no `predev`/`prebuild`/`pretest` generator step — the app reads no build-time config at all. Copy `.env.example` to `.env.local` for what `pnpm dev` reads: `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL=http://localhost:3000`, and a `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` pair if you need sign-in (callback `<BETTER_AUTH_URL>/api/auth/callback/github`). Everything else is optional and falls back to mocks; `.env.example` documents each variable, and `docker-compose.yml`'s `app` service is the authority for what a real event sets. Every variable, including `ADMIN_CLAIM_CODE_HASH` and `GITHUB_ORG`, is read at start, so a change means only recreating the container (`docker compose up -d --no-deps --force-recreate app`), never a rebuild.
 
 ## Testing
 

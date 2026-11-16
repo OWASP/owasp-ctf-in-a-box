@@ -122,7 +122,6 @@ variables {
   scorer_image     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/owasp-ctf-scorer:mirror-0123456789ab"
   sync_image       = "123456789012.dkr.ecr.us-east-1.amazonaws.com/owasp-ctf-sync:0123456789ab"
   github_org       = "owasp-ctf-test"
-  admin_logins     = "octocat,defunkt"
 }
 
 // --- the input contracts, each one refused at PLAN time --------------------
@@ -183,8 +182,7 @@ run "secure_development_without_a_github_org_is_refused" {
 }
 
 // Not empty is not the same as set: `" "` reaches both task definitions
-// verbatim and names a fork path nothing resolves. Same shape as the
-// admin_logins blank-roster run.
+// verbatim and names a fork path nothing resolves.
 run "a_whitespace_only_github_org_is_refused" {
   command = plan
 
@@ -212,30 +210,21 @@ run "secure_development_with_a_github_org_is_accepted" {
   }
 }
 
-// admin_logins' rule is UNCONDITIONAL, which is what separates it from the
-// two above: no event shape wants an empty admin roster. The string is the
-// /admin allowlist itself, so an empty one is a stack nobody can administer —
-// a 403 discovered after a clean apply, fixable only by another apply.
-run "an_event_with_no_admin_logins_is_refused" {
+// The bootstrap apply docs/aws.md starts with: registries and the secrets key
+// only. deploy.sh runs between it and the full apply, so it must not need the
+// claim-hash parameter, the cluster or any output beyond the registries' and
+// the key's — which is why the parameter is created by the full apply alone.
+run "the_bootstrap_apply_creates_only_the_registries_and_the_key" {
   command = plan
 
-  variables {
-    admin_logins = ""
+  plan_options {
+    target = [aws_ecr_repository.main, aws_kms_alias.secrets]
   }
 
-  expect_failures = [var.admin_logins]
-}
-
-// The same lockout, spelled so that a `!= ""` rule would wave it through: a
-// roster of separators splits into nothing but blanks.
-run "an_admin_roster_of_blanks_is_refused" {
-  command = plan
-
-  variables {
-    admin_logins = " , "
+  assert {
+    condition     = length(aws_ecr_repository.main) >= 1 && aws_kms_alias.secrets.name == "alias/${var.name}-secrets"
+    error_message = "the bootstrap apply must create the registries and the secrets key."
   }
-
-  expect_failures = [var.admin_logins]
 }
 
 run "an_event_with_no_certificate_source_is_refused" {
@@ -279,10 +268,10 @@ run "secure_development_event_runs_scorer_and_sync" {
     error_message = "app container must receive SCORE_IMAGE so the default module set matches the deployment"
   }
 
-  // Config v2 (#386): no build-time bake. GITHUB_ORG and ADMIN_LOGINS are
-  // runtime environment reads, mirrored into the task definitions like
-  // SCORE_IMAGE above — this is the assertion `terraform validate` cannot
-  // make on its own, since it never inspects the rendered container JSON.
+  // Config v2 (#386): no build-time bake. GITHUB_ORG is a runtime
+  // environment read, mirrored into the task definitions like SCORE_IMAGE
+  // above — this is the assertion `terraform validate` cannot make on its
+  // own, since it never inspects the rendered container JSON.
   assert {
     condition = anytrue([
       for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
@@ -291,12 +280,50 @@ run "secure_development_event_runs_scorer_and_sync" {
     error_message = "app container must receive GITHUB_ORG, or forks resolve to bare repo names."
   }
 
+  // ADR 72: the admin claim-code hash is a SECRET, by reference from SSM
+  // under this stack's prefix, and never an environment value; ADMIN_LOGINS
+  // is read by nothing and must not come back.
   assert {
     condition = anytrue([
-      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
-      e.name == "ADMIN_LOGINS" && e.value == var.admin_logins
+      for sec in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets :
+      sec.name == "ADMIN_CLAIM_CODE_HASH" && endswith(sec.valueFrom, "${var.ssm_prefix}/ADMIN_CLAIM_CODE_HASH")
     ])
-    error_message = "app container must receive ADMIN_LOGINS, or /admin 403s for everyone."
+    error_message = "app must receive ADMIN_CLAIM_CODE_HASH by reference, or nobody can claim /admin with a bootstrap code."
+  }
+
+  assert {
+    condition = !anytrue([
+      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
+      contains(["ADMIN_LOGINS", "ADMIN_CLAIM_CODE_HASH"], e.name)
+    ])
+    error_message = "the claim hash is a secret (never environment), and ADMIN_LOGINS is gone."
+  }
+
+  assert {
+    condition     = output.ssm_prefix == var.ssm_prefix
+    error_message = "deploy.sh reads ssm_prefix from outputs to write the claim hash."
+  }
+
+  // Terraform owns the parameter the secret reference names, so the app task
+  // never starts against a missing parameter; deploy.sh writes its value.
+  assert {
+    condition = anytrue([
+      for sec in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets :
+      sec.name == "ADMIN_CLAIM_CODE_HASH" && endswith(sec.valueFrom, aws_ssm_parameter.admin_claim_code_hash.name)
+    ])
+    error_message = "the app's ADMIN_CLAIM_CODE_HASH secret must name the parameter this stack creates."
+  }
+
+  assert {
+    condition     = aws_ssm_parameter.admin_claim_code_hash.name == "${var.ssm_prefix}/ADMIN_CLAIM_CODE_HASH"
+    error_message = "the claim-hash parameter must live where deploy.sh writes it: <ssm_prefix>/ADMIN_CLAIM_CODE_HASH."
+  }
+
+  // Fail closed until deploy.sh writes a real hash: the app treats anything
+  // that is not 64 lowercase hex as unset (bootstrap-env.ts).
+  assert {
+    condition     = !can(regex("^[0-9a-f]{64}$", local.admin_claim_placeholder)) && aws_ssm_parameter.admin_claim_code_hash.value == local.admin_claim_placeholder
+    error_message = "the claim-hash placeholder must never look like a SHA-256, or the app would accept it."
   }
 
   assert {
@@ -537,6 +564,11 @@ run "no_secret_is_baked_into_a_task_definition" {
     // kms:Decrypt grant cannot read them and the tasks fail to start.
     condition     = aws_ssm_parameter.cache_auth.key_id == aws_kms_key.secrets.arn && aws_ssm_parameter.redis_url.key_id == aws_kms_key.secrets.arn
     error_message = "Both generated SecureStrings must be encrypted with this event's KMS key."
+  }
+
+  assert {
+    condition     = aws_ssm_parameter.admin_claim_code_hash.type == "SecureString" && aws_ssm_parameter.admin_claim_code_hash.key_id == aws_kms_key.secrets.arn
+    error_message = "the claim-hash parameter must be a SecureString under this event's KMS key, or the task cannot decrypt it."
   }
 }
 

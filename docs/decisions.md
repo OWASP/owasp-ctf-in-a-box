@@ -4380,7 +4380,7 @@ the mechanism for retiring a module; no module sets it today.
 
 ## ADR 72. Admins are claimed with a one-time code, not named in `.env`
 
-**Status.** Accepted (#738). Replaces the `ADMIN_LOGINS` bootstrap set of [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 55](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml).
+**Status.** Accepted (#738); amended 2026-11-16: when a rotated code stops working, under **Recovery** below. Replaces the `ADMIN_LOGINS` bootstrap set of [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 55](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml).
 
 **Context.** `ADMIN_LOGINS` named GitHub logins. v2 accounts are kit
 accounts keyed by a player id (#731), GitHub is optional unless Secure
@@ -4398,14 +4398,10 @@ event exists.
   `ADMIN_CLAIM_CODE_HASH`. A signed-in player enters the code at
   `/admin/claim`. Input is normalized (lowercase, hyphens and whitespace
   dropped) and must be exactly 32 hex. The hash is unsalted: the code has 128
-  bits of entropy, which a slow KDF would not add to. On a Docker
-  Compose box the organizer does it by hand, since setup does not write the
-  hash yet
-  ([troubleshooting](troubleshooting.md#admin-says-forbidden-for-everyone-including-you)):
-  `openssl rand -hex 16`, its SHA-256 into `.env`, a recreated app
-  container. The Fly and AWS deploys do not pass `ADMIN_CLAIM_CODE_HASH` to
-  the app yet (#738), so a box deployed there cannot claim its first admin
-  until they do.
+  bits of entropy, which a slow KDF would not add to. Provisioning
+  generates it: `ctf-setup.sh secrets` on a Compose box, `deploy.sh init`
+  on Fly, and `deploy.sh` on AWS, which keeps it as an SSM SecureString.
+  Each prints the code once.
 - **Admins issue more codes.** An issued code is stored as
   `ctf:admin:code:<sha256>` for 15 minutes and works once.
 - **Claim, issue and revoke are atomic Lua scripts**, each writing one audit
@@ -4441,12 +4437,21 @@ event exists.
   "nobody has claimed this box" notice reads the grant count best-effort and
   shows nothing when the read fails.
 
-**Recovery.** Rotating the hash (by hand in `.env` on a Docker Compose box;
-not yet possible on Fly or AWS, #738) makes a new bootstrap code, and the old one stops working at
+**Recovery.** Rotating the hash (`ctf-setup.sh admin-code` on a Compose box,
+`deploy.sh --new-admin-code` on Fly or AWS) makes a new bootstrap code, and the old one stops working at
 once because only the current env hash is compared. The bootstrap code works
 whether or not admins exist: the lock-out case includes an admin who still
 holds a grant but cannot sign in, and v2.0 has no email recovery. Rotating
 needs `.env` or deploy access, which already means full control of the box.
+
+*Amended 2026-11-16 by [#738](https://github.com/OWASP/owasp-ctf-in-a-box/issues/738): "at
+once" above is wrong. The app compares the hash in its own environment, so
+the old code stops working only when the running app has the new hash, and
+that depends on the deployment: on Compose when the app container is
+recreated (a plain restart keeps the old environment); on Fly when the
+deploy completes; on AWS once the rollout's old tasks have drained. Until
+then the old code still claims, and a failed deploy or rollout leaves it
+valid until that is recovered.*
 
 **Consequences.** `/admin` now needs Redis to decide who is an admin; every
 admin path already needed it for its data. No admin is beyond revocation,

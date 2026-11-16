@@ -3,9 +3,9 @@
 // The EC2 box built its images ON the instance from a git checkout. Fargate
 // pulls prebuilt ones, which moves the build off the box and into a deploy
 // step. deploy.sh owns that; Terraform cannot build an image. Config v2
-// (#386) removed the app's build-time config — GITHUB_ORG and ADMIN_LOGINS
-// are runtime environment reads (ecs.tf) now, so the image itself no longer
-// varies per event.
+// (#386) removed the app's build-time config — GITHUB_ORG and the admin
+// claim-code hash are runtime reads (ecs.tf) now, so the image itself no
+// longer varies per event.
 //
 // Scanning is on: this image carries the event, and a base-image CVE is worth
 // hearing about from the registry rather than from a contestant.

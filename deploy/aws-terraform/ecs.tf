@@ -113,6 +113,9 @@ locals {
     { name = "BETTER_AUTH_SECRET", valueFrom = "${local.secret_arn_prefix}/BETTER_AUTH_SECRET" },
     { name = "GITHUB_CLIENT_SECRET", valueFrom = "${local.secret_arn_prefix}/GITHUB_CLIENT_SECRET" },
     { name = "UPSTASH_REDIS_REST_TOKEN", valueFrom = "${local.secret_arn_prefix}/SRH_TOKEN" },
+    // The SHA-256 of the one-time admin claim code (ADR 72): the parameter
+    // below, whose real value deploy.sh writes. The code never reaches AWS.
+    { name = "ADMIN_CLAIM_CODE_HASH", valueFrom = "${local.secret_arn_prefix}/ADMIN_CLAIM_CODE_HASH" },
   ]
 
   // One SCORER_TOKEN, two readers: the scorer checks it on every POST /score
@@ -294,7 +297,38 @@ resource "aws_ecs_service" "srh" {
 
 // --- app -------------------------------------------------------------------
 
+// The admin claim-code hash (ADR 72). Terraform owns the parameter's
+// EXISTENCE, so the app task's secret reference always resolves and a fresh
+// stack and an upgraded one come up the same way; deploy.sh owns the VALUE.
+// The placeholder is not 64 hex, so the app reads it as unset and nobody can
+// claim until deploy.sh writes a real hash (fail closed). `ignore_changes`
+// stops a plan from showing that hash as drift or writing the placeholder over
+// it; a refresh still reads the hash back into state as a sensitive value,
+// like this module's other SSM secrets. The plaintext code never reaches
+// Terraform. deploy.sh tells the two apart by the parameter's version (1 =
+// this placeholder).
+resource "aws_ssm_parameter" "admin_claim_code_hash" {
+  name        = "${var.ssm_prefix}/ADMIN_CLAIM_CODE_HASH"
+  description = "SHA-256 of the one-time admin claim code for ${var.name}. Written by deploy.sh; this placeholder means not set."
+  type        = "SecureString"
+  value       = local.admin_claim_placeholder
+  key_id      = aws_kms_key.secrets.arn
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+locals {
+  admin_claim_placeholder = "unset: run deploy.sh --new-admin-code"
+}
+
 resource "aws_ecs_task_definition" "app" {
+  // The claim-hash secret is referenced by a built ARN string, which gives
+  // Terraform no edge to the parameter; without this a first apply could
+  // register (and start) the task before the parameter exists.
+  depends_on = [aws_ssm_parameter.admin_claim_code_hash]
+
   family                   = "${var.name}-app"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -340,11 +374,10 @@ resource "aws_ecs_task_definition" "app" {
       // and that is the ONLY module enabled before an organizer switches
       // others on in /admin (issue #386).
       { name = "SCORE_IMAGE", value = var.enable_secure_development ? var.scorer_image : "" },
-      // Config v2 (#386): no build-time bake. The app reads these from its
-      // own environment now, plain (non-secret) values, the same way
+      // Config v2 (#386): no build-time bake. The app reads this from its
+      // own environment, a plain (non-secret) value, the same way
       // SCORE_IMAGE travels above.
       { name = "GITHUB_ORG", value = var.github_org },
-      { name = "ADMIN_LOGINS", value = var.admin_logins },
       // The OAuth client id is public; its secret is in app_secrets.
       { name = "GITHUB_CLIENT_ID", value = var.github_client_id },
       // Unset, the board serves the mock fixture (leaderboard/source.ts);

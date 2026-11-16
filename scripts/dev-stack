@@ -14,8 +14,9 @@
 # real scorer's bearer-authed POST /score instead of writing Redis keys
 # directly — see the note above submit_solves() for why.
 #
-# Needs NO config file (config v2, #386): `ADMIN_LOGINS` and `GITHUB_ORG` are
-# runtime keys resolved from the environment or `.env`, nothing is baked into
+# Needs NO config file (config v2, #386): `GITHUB_ORG` and
+# `ADMIN_CLAIM_CODE_HASH` are runtime keys read from the env file (an exported
+# GITHUB_ORG wins, as it does for compose), nothing is baked into
 # the app image, and everything else — the event's name, which modules run,
 # which Secure Development targets — is an `/admin` setting.
 set -euo pipefail
@@ -23,6 +24,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # shellcheck source=scripts/lib/dotenv.sh
 . scripts/lib/dotenv.sh
+# shellcheck source=scripts/lib/claim-code.sh
+. scripts/lib/claim-code.sh
 
 SCORER_IMAGE_TAG="ctf-dev-stack/scorer:local"
 DEV_ENV_FILE=.env.dev-stack
@@ -56,41 +59,18 @@ file_value() {
   dotenv_get "$2" "$1"
 }
 
-# ADMIN_LOGINS and GITHUB_ORG are RUNTIME keys since config v2 (#386) — there
-# is no config file to derive them from any more, and nothing is baked into
-# the image. Resolve them the way the containers will actually see them:
-# docker compose lets the shell environment win over --env-file, so an
-# exported value is authoritative, then the env file, then a last resort.
-#
-# ADMIN_LOGINS falls back to the login `gh` is authenticated as — the same
-# default the setup wizard offers (setup/ctf-setup.sh's wiz_event_basics) —
-# and only when `gh` is both installed and logged in, so a box without it just
-# gets an empty allowlist. Empty is not fatal here: the stack still runs and
-# /admin forbids everyone, which the summary says, and how to fix it.
+# GITHUB_ORG is a RUNTIME key since config v2 (#386) — there is no config file
+# to derive it from, and nothing is baked into the image. Resolve it the way
+# the containers will actually see it: docker compose lets the shell
+# environment win over --env-file, so an exported value is authoritative, then
+# the env file.
 #
 # `${VAR+x}`, not `${VAR:-}`: compose gives the shell precedence over the env
-# file, so an EXPORTED empty value is exactly what the containers get and
-# must not be papered over with the file's (or gh's) value — only an unset
-# variable falls through. Otherwise the file this writes and the summary
-# below could name an allowlist the app is not using.
-resolve_admin_logins() {
-  local v
-  if [ "${ADMIN_LOGINS+x}" = x ]; then
-    v="$ADMIN_LOGINS"
-  else
-    v="$(file_value ADMIN_LOGINS .env)" || exit 1
-    if [ -z "$v" ]; then
-      if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        v="$(gh api user --jq .login 2>/dev/null || true)"
-      fi
-    fi
-  fi
-  printf '%s' "$v"
-}
-
+# file, so an EXPORTED empty value is exactly what the containers get and must
+# not be papered over with the file's value — only an unset variable falls
+# through.
 # No fallback for the org: an invented one would put wrong fork links on
-# /challenges. Empty means the app shows bare repo names. Same unset-vs-empty
-# rule as above.
+# /challenges. Empty means the app shows bare repo names.
 resolve_github_org() {
   local v
   if [ "${GITHUB_ORG+x}" = x ]; then
@@ -101,8 +81,37 @@ resolve_github_org() {
   printf '%s' "$v"
 }
 
+# Compose lets the shell environment win over --env-file, an exported EMPTY
+# value included (`${VAR+x}`), so an exported ADMIN_CLAIM_CODE_HASH is the
+# hash the app gets — and a code announced for the file's hash could not
+# claim. Refuse a mismatch before any code is generated or the stack starts.
+# With no env file yet, any exported value is a mismatch: the file is about
+# to get a fresh hash nothing exported can equal. The value is never printed.
+refuse_claim_hash_override() {
+  [ "${ADMIN_CLAIM_CODE_HASH+x}" = x ] || return 0
+  local file_hash=""
+  if [ -n "$ENV_FILE" ]; then
+    file_hash="$(file_value ADMIN_CLAIM_CODE_HASH "$ENV_FILE")" || exit 1
+    [ "$ADMIN_CLAIM_CODE_HASH" != "$file_hash" ] || return 0
+  fi
+  echo "FAIL: ADMIN_CLAIM_CODE_HASH is exported in this shell and differs from ${ENV_FILE:-the env file this run would write}." >&2
+  echo "      docker compose would hand the app the exported value, so the admin claim" >&2
+  echo "      code for the file would not work. Run: unset ADMIN_CLAIM_CODE_HASH" >&2
+  exit 1
+}
+
+# The claim hash the containers get: exported (even empty) wins, then the file.
+effective_claim_hash() {
+  if [ "${ADMIN_CLAIM_CODE_HASH+x}" = x ]; then
+    printf '%s' "$ADMIN_CLAIM_CODE_HASH"
+  else
+    env_value ADMIN_CLAIM_CODE_HASH
+  fi
+}
+
 ensure_env() {
   resolve_env_file
+  refuse_claim_hash_override
   if [ -n "$ENV_FILE" ]; then
     echo "== using existing $ENV_FILE"
     # An env file written before Redis grew a password is the common case on
@@ -123,12 +132,13 @@ ensure_env() {
     return
   fi
   echo "== no .env found; writing a throwaway $DEV_ENV_FILE (same fields as setup/ctf-setup.sh secrets)"
-  # ADMIN_LOGINS/GITHUB_ORG are runtime keys, so the throwaway file wants real
-  # values rather than blanks — resolved from the environment (or `gh`, for the
-  # admin login) by the helpers above.
-  local admin_logins github_org
-  admin_logins="$(resolve_admin_logins)" || exit 1
+  # GITHUB_ORG is a runtime key, so the throwaway file wants the real value
+  # rather than a blank. The admin seat is claimed with a fresh one-time code
+  # (ADR 72): only its hash goes in the file, and the code is printed once.
+  local github_org claim_code claim_hash
   github_org="$(resolve_github_org)" || exit 1
+  claim_code="$(claim_code_new)" || exit 1
+  claim_hash="$(claim_code_hash "$claim_code")" || exit 1
   {
     echo "# generated by scripts/dev-stack — throwaway local secrets, do not use for a real event"
     echo "BETTER_AUTH_SECRET=$(openssl rand -base64 32 | tr -d '\n')"
@@ -142,10 +152,11 @@ ensure_env() {
     echo "GITHUB_APP_INSTALLATION_ID="
     echo "EVENT_URL=http://localhost"
     echo "SCORE_IMAGE="
-    echo "ADMIN_LOGINS=$admin_logins"
+    echo "ADMIN_CLAIM_CODE_HASH=$claim_hash"
     echo "GITHUB_ORG=$github_org"
   } > "$DEV_ENV_FILE"
   ENV_FILE="$DEV_ENV_FILE"
+  claim_code_announce "$claim_code" http://localhost "./setup/ctf-setup.sh admin-code --out $DEV_ENV_FILE"
 }
 
 # Read one KEY=value out of the RESOLVED env file, with a default.
@@ -431,9 +442,9 @@ cmd_up() {
   docker build -q -t "$SCORER_IMAGE_TAG" ./scorer >/dev/null
   export SCORE_IMAGE="$SCORER_IMAGE_TAG"
 
-  # Nothing to bake: the app reads ADMIN_LOGINS and GITHUB_ORG from its
-  # environment at start-up (config v2, #386), so the image is config-free and
-  # a changed value needs a restart, not a rebuild.
+  # Nothing to bake: the app reads GITHUB_ORG and ADMIN_CLAIM_CODE_HASH from
+  # its environment at start-up (config v2, #386), so the image is config-free
+  # and a changed value needs a container recreate, not a rebuild.
 
   # Build stamp for GET /health, so a local stack reports the same fields
   # production does. The sha is deliberately left empty rather than faked: a
@@ -457,10 +468,15 @@ cmd_up() {
   seed_demo_data
 
   # What the CONTAINERS got, in their precedence order — an exported value
-  # (even an empty one) beats the env file for compose, so reading the file
-  # alone could print an allowlist the app is not using.
-  local admins org org_note profiles
-  if [ "${ADMIN_LOGINS+x}" = x ]; then admins="$ADMIN_LOGINS"; else admins="$(env_value ADMIN_LOGINS)" || exit 1; fi
+  # (even an empty one) beats the env file for compose. The claim hash is
+  # only ever reported as set or not, never printed.
+  local claim_note claim_hash org org_note profiles
+  claim_hash="$(effective_claim_hash)" || exit 1
+  if claim_code_is_hash "$claim_hash"; then
+    claim_note="set — claim the admin seat at $event_url/admin/claim"
+  else
+    claim_note="NOT SET — run ./setup/ctf-setup.sh admin-code --out $ENV_FILE, then ./scripts/dev-stack down && ./scripts/dev-stack up"
+  fi
   if [ "${GITHUB_ORG+x}" = x ]; then org="$GITHUB_ORG"; else org="$(env_value GITHUB_ORG)" || exit 1; fi
   if [ -n "$org" ]; then
     org_note="$org (fork links on /challenges point there)"
@@ -491,6 +507,7 @@ cmd_up() {
  Env file:        $ENV_FILE (no config file: every setting is .env or /admin)
  Profiles:        $profiles
  GITHUB_ORG:      $org_note
+ Admin claim:     $claim_note
 
  Seeded demo players (real accounts, scored by player id through the real
  scorer POST /score, the code path a scored PR uses): alice-dev, bob-dev,
@@ -504,19 +521,15 @@ cmd_up() {
    id or a linked GitHub login such as alice-dev; reload
    $event_url/leaderboard after ~30s)
 
- Admin panel / signed-in experience (NOT available out of the box):
-   /admin requires a signed-in session whose GitHub login is in
-   $ENV_FILE's ADMIN_LOGINS (currently: ${admins:-<none set>}), and
-   sign-in requires a real GitHub OAuth app. This script does not fake
-   or bypass that boundary. To exercise it:
-     1. Create a GitHub OAuth app, callback <EVENT_URL>/api/auth/callback/github.
-     2. Put its client id/secret into $ENV_FILE (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET).
-     3. Put your GitHub login into $ENV_FILE's ADMIN_LOGINS (comma-separated).
-        An EXPORTED ADMIN_LOGINS overrides the file (that is compose's
-        precedence, and the value shown above is what the app got), so unset
-        it or export the new list before the next step.
-     4. ./scripts/dev-stack down && ./scripts/dev-stack up   (restarts and picks
-        up the new .env; no rebuild needed — ADMIN_LOGINS is read at start)
+ Admin panel / signed-in experience:
+   /admin needs a signed-in kit account that claimed the admin claim code
+   (printed once when the env file was written) at $event_url/admin/claim.
+   Lost it? ./setup/ctf-setup.sh admin-code --out $ENV_FILE prints a new one;
+   then ./scripts/dev-stack down && ./scripts/dev-stack up so the app reads
+   the new hash (a plain restart keeps the old environment). Signing in with
+   GitHub needs a real OAuth app: callback
+   <EVENT_URL>/api/auth/callback/github, client id/secret in $ENV_FILE
+   (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET).
    Everything else — leaderboard, challenge browsing, seeded scores — works now.
 
  Tear down: ./scripts/dev-stack down            (keeps seeded state)

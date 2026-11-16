@@ -86,10 +86,12 @@ the event runs Secure Development:
 
 It asks only for what your event needs, writes `.env`, does every step it
 can automate, and walks you through the few that need the GitHub website.
-`--dry-run` previews the steps that change anything, once `.env` has the
-admin logins (and the org, if you run Secure Development). Everything
-else — the event's name, which modules run, which targets — is set at
-runtime in `/admin`, so there is no config file to edit.
+`--dry-run` previews the steps that change anything. Setup prints a one-time
+**admin claim code** once: when the box is up, sign in, open `/admin/claim`
+and enter it to become the first organizer (`./setup/ctf-setup.sh
+admin-code` prints a new one if it is lost). Everything else — the event's
+name, which modules run, which targets — is set at runtime in `/admin`, so
+there is no config file to edit.
 With Secure Development, the five containers idle at about 665 MB, so give
 the event box about 2 GB of memory; without it, scorer and sync do not run.
 

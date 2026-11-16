@@ -105,7 +105,8 @@ deploys. `-h`/`--help` prints the same list.
 | `--env-file <path>` | both | The Fly env file `init` writes and a deploy reads. Default `.env.fly` |
 | `--from <path>` | both | The compose `.env` copied (or `--refresh`ed) from; on a deploy, the file the credential-drift check compares against. Default `.env` |
 | `--region <code>` | `init` only | Write `FLY_REGION` without prompting; three lowercase letters, validated; ignored if the env file already has one |
-| `--refresh` | `init` only | Re-copy the external-system credentials from `--from` — including `GITHUB_ORG` and `ADMIN_LOGINS` — overwriting; leaves `EVENT_URL`, `FLY_REGION`, `SRH_TOKEN`, `REDIS_PASSWORD`, then falls through to the top-up prompts. An **explicitly blank** source value clears only `GITHUB_APP_INSTALLATION_ID`; for every other key, and for any key **absent** from `--from` altogether, it keeps the destination value and says so |
+| `--refresh` | `init` only | Re-copy the external-system credentials from `--from` — including `GITHUB_ORG` — overwriting; leaves `EVENT_URL`, `FLY_REGION`, `SRH_TOKEN`, `REDIS_PASSWORD` and `ADMIN_CLAIM_CODE_HASH`, then falls through to the top-up prompts. An **explicitly blank** source value clears only `GITHUB_APP_INSTALLATION_ID`; for every other key, and for any key **absent** from `--from` altogether, it keeps the destination value and says so |
+| `--new-admin-code` | deploy only | Write a new `ADMIN_CLAIM_CODE_HASH` to the env file, print its code once, and deploy so the app reads it — the lock-out recovery path. Refused with `init` (exit 2). Combine with `--skip-build` |
 | `--skip-build` | deploy only | Reuse the images already in Fly's registry; safe for a config change, since the app image bakes nothing but its health-check build stamp. NOT safe after changing `SCORE_IMAGE`: the skip path reuses the `SCORER_IMAGE` already in the registry and never mirrors the new one, so deploy once without the flag first |
 
 `--region` and `--refresh` are parsed on a deploy too, and ignored. `--from`
@@ -131,7 +132,7 @@ Each of these caught a real mistake:
 - a missing variable is named individually, not as a list
 - `--skip-build` is safe for a configuration change: since config v2 (#386)
   the app image bakes nothing but its health-check build stamp, and
-  `GITHUB_ORG`/`ADMIN_LOGINS` reach the machine as runtime environment — with
+  `GITHUB_ORG`/`ADMIN_CLAIM_CODE_HASH` reach the machine as runtime environment — with
   one exception, `SCORE_IMAGE`, whose mirror step is skipped along with the
   builds, so the machine keeps running the `SCORER_IMAGE` already in Fly's
   registry (or is handed a tag Fly has never seen). Change that key and deploy
@@ -153,7 +154,7 @@ Each of these caught a real mistake:
 - `init --refresh` obeys an **explicitly blank** source value for
   `GITHUB_APP_INSTALLATION_ID` only — that blank means "auto-discover the
   installation" — and keeps the deployed value for every other key, since
-  clearing `ADMIN_LOGINS`, `GITHUB_ORG` or `SCORE_IMAGE` would break a live
+  clearing `GITHUB_ORG` or `SCORE_IMAGE` would break a live
   event. A key **absent** from `--from` keeps the deployed value for every key
   including the installation id: only an explicit assignment clears, so
   refreshing from a partial `.env` cannot unpin an id nobody mentioned

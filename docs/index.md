@@ -170,8 +170,9 @@ in one place.</sup>
 
 ## Organizer admin panel
 
-Anyone named in `.env`'s `ADMIN_LOGINS` can sign in and reach `/admin` — and
-from there **grant admin to anyone else**, without a restart. The panel is
+An organizer claims `/admin` with the one-time **admin claim code** setup
+prints (sign in, open `/admin/claim`, enter it), and from the Admins tab
+**issues codes to make anyone else an admin**, without a restart. The panel is
 tabbed: **Overview**, **Event** (identity, freeze, registration, the
 scoring and registration schedules, players per team, demo seed, master
 reset), **Hints**, **Admins**, **Sponsors**, **Support**, **Activity**,

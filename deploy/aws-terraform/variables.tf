@@ -110,36 +110,12 @@ variable "github_org" {
   // contestant at a fork that has no org to live in. Left unset either way it
   // would be a plan-time silence; this turns it into the same plan-time
   // sentence scorer_image/sync_image already get.
-  // trimspace, for admin_logins' reason: a value that is not empty is not
-  // therefore a GitHub org. `" "` would pass `!= ""`, reach both task
-  // definitions as-is, and name a fork path nothing can resolve.
+  // trimspace: a value that is not empty is not therefore a GitHub org.
+  // `" "` would pass `!= ""`, reach both task definitions as-is, and name a
+  // fork path nothing can resolve.
   validation {
     condition     = !var.enable_secure_development || trimspace(var.github_org) != ""
     error_message = "github_org must name a GitHub org when Secure Development is enabled — blank or whitespace-only will not do: sync exits at startup without a usable GITHUB_ORG (see sync/src/config.js), and the app has no org to build fork links from."
-  }
-}
-
-variable "admin_logins" {
-  description = "Comma-separated GitHub logins allowed into /admin. REQUIRED — every event needs at least one admin. Read by the app at runtime (config v2, #386) — mirrored into the app task definition like scorer_image."
-  type        = string
-  default     = ""
-
-  // UNCONDITIONAL, unlike github_org's rule above: there is no event shape
-  // that wants an empty admin roster. This string IS the /admin allowlist, so
-  // an empty one locks every login out of the panel — including whoever ran
-  // the apply, and including the settings page that is the only way to open
-  // registration, unpause scoring or archive the event. The lockout shows up
-  // as a 403 long after a clean apply, and the only fix is another apply.
-  // docs/hosting.md lists ADMIN_LOGINS as required for the same reason.
-  //
-  // The `default = ""` stays so the refusal is THIS sentence rather than a
-  // bare interactive prompt for an unset variable in a non-interactive plan.
-  // A non-empty STRING is not a non-empty roster: " , " passes `!= ""` and
-  // then splits into nothing but blanks, which is the same lockout with a
-  // longer variable. The rule counts actual logins.
-  validation {
-    condition     = length(compact([for login in split(",", var.admin_logins) : trimspace(login)])) > 0
-    error_message = "admin_logins must name at least one GitHub login — a list of blanks (or an empty one) leaves /admin forbidding everyone, including whoever ran the apply."
   }
 }
 

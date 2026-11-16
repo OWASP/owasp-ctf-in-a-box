@@ -34,14 +34,44 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   **Breaking:** `ADMIN_LOGINS` is ignored; a GitHub login no longer makes
   anyone an admin, and grants made from the v1 panel (`ctf:admin:admins`)
   are not read. The Admins tab's add-by-login form and
-  `POST /api/admin/admins` are gone. **Upgrade note:** on a Docker Compose
-  box, set the hash by hand, since setup does not write it yet: run
-  `c=$(openssl rand -hex 16); echo "$c"; printf %s "$c" | openssl dgst -sha256`,
-  put the digest in `.env` as `ADMIN_CLAIM_CODE_HASH`, recreate the app
-  container (`docker compose up -d --no-deps --force-recreate app`; a plain restart does not reload `.env`), and
-  claim with the printed code. The Fly and AWS deploys do not pass
-  `ADMIN_CLAIM_CODE_HASH` to the app yet (#738), so a box deployed there
-  cannot claim its first admin until they do.
+  `POST /api/admin/admins` are gone. **Upgrade note:** run
+  `./setup/ctf-setup.sh admin-code` (or the Fly/AWS `--new-admin-code` flag
+  below), recreate the app container
+  (`docker compose up -d --no-deps --force-recreate app`; a plain restart does
+  not reload `.env`), and claim at `/admin/claim` with the printed code.
+- **Added: provisioning writes the admin claim code (#738).**
+  `ctf-setup.sh secrets` writes `ADMIN_CLAIM_CODE_HASH` and prints its code
+  once, and leaves `SCORE_IMAGE` as a comment so a wizard run stopped before
+  step 3 asks it again; `ctf-setup.sh admin-code` rotates it, names a
+  non-default `--out` file in its recovery command, and prints the app
+  recreate under `env -u ADMIN_CLAIM_CODE_HASH`; the wizard generates one when
+  `.env` has none and otherwise offers a default-No rotation, and `doctor`
+  checks the hash without printing it. `deploy/fly/deploy.sh init` gives
+  `.env.fly` its own code, and `deploy.sh --new-admin-code` rotates it on a
+  deploy; the render always takes the env file's hash over one exported in
+  the shell. On AWS, Terraform creates the SSM SecureString
+  `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` holding a placeholder the app reads as
+  unset (later plans ignore its value; the hash, never the code, may sit in
+  state as a sensitive value), and
+  `deploy/aws-terraform/deploy.sh` writes the hash into it once the stack
+  exists; `--new-admin-code` replaces it and rolls the app. The code is
+  printed as soon as the hash is stored, so a failed roll still leaves it in
+  hand, with the `update-service` command that activates it. `dev-stack`
+  writes a code into its throwaway env, and refuses to start when an exported
+  `ADMIN_CLAIM_CODE_HASH` differs from its env file's. The dry-run redactor hides `*_HASH`
+  values and the argument after `--value`.
+  **Breaking:** setup no longer asks for or writes `ADMIN_LOGINS`; `doctor`
+  and the Fly deploy warn on a leftover line. The Terraform variable
+  `admin_logins` is removed — delete it from `terraform.tfvars` (Terraform
+  warns about an undeclared variable there, and `-var admin_logins=…`
+  fails). Fly `init` no longer copies `.env`'s claim hash, and `--refresh`
+  and the drift check leave it alone. **Upgrade note (AWS):** remove
+  `admin_logins`, run `deploy.sh` (it builds and pushes this revision's
+  images; it does not apply), then `terraform apply` (bootstrap-code claims
+  are unavailable from here until the next step), then
+  `deploy.sh --skip-build --new-admin-code`, which prints the code. On a
+  Secure Development stack both `deploy.sh` runs need `--scorer-source` or
+  `SCORE_IMAGE`.
 - **Added: GitHub linking, and held Secure Development scores (#741).** With
   Secure Development on, a player links a GitHub account from their profile
   or by signing in with GitHub; one GitHub account links to one kit account,

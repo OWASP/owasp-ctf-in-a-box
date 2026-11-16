@@ -162,37 +162,10 @@ describe("outcome ordering (#126)", () => {
   });
 });
 
-// The transport split (spec §6.1's 2026-09-02 amendment). Classic POSTs to a
-// route; ai calls a Server Action, because `/api/ai/submit` authenticates a
-// launch token this component must never hold. `dispatchSubmit` is the whole
-// of that difference, and the pin that matters is the NEGATIVE one: with an
-// action in hand, nothing is fetched at all — a component that still fetched
-// would reach a route that reads `{token, flag}` and 400s on this body, which
-// is exactly the dead form this replaced.
+// `dispatchSubmit` POSTs to the page's `submitPath` and reads the response
+// status as `ok`.
 describe("dispatchSubmit", () => {
-  it("calls the server action with the flag, and never fetches", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const action = vi.fn().mockResolvedValue({ correct: true, points: 40, already: false });
-    try {
-      const out = await dispatchSubmit("a1", "CTF{x}", { submitAction: action });
-      expect(action).toHaveBeenCalledWith("CTF{x}");
-      expect(action).toHaveBeenCalledTimes(1);
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(out).toEqual({ ok: true, data: { correct: true, points: 40, already: false } });
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  it("reads an action's refusal as not-ok, so the refusal copy path runs", async () => {
-    const action = vi.fn().mockResolvedValue({ error: "cooldown", retryAt: "2026-09-02T00:00:00.000Z" });
-    const out = await dispatchSubmit("a1", "CTF{x}", { submitAction: action });
-    expect(out.ok).toBe(false);
-    expect(out.data).toEqual({ error: "cooldown", retryAt: "2026-09-02T00:00:00.000Z" });
-  });
-
-  // Classic's path, byte for byte what it always sent.
-  it("POSTs {challengeId, flag} to submitPath when there is no action", async () => {
+  it("POSTs {challengeId, flag} to submitPath", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
@@ -241,10 +214,8 @@ describe("dispatchSubmit", () => {
   });
 });
 
-// Every reason the in-box form can now put in front of a contestant gets its
-// own sentence rather than the generic fallback. The ai action passes the
-// store's own `AiSubmitResult` reasons straight through
-// (ai/[id]/actions.ts), so this list is that union plus classic's `no-team`.
+// Every reason the in-box form can put in front of a contestant gets its
+// own sentence rather than the generic fallback.
 describe("describeRefusal", () => {
   const generic = "That submission wasn't accepted.";
 
@@ -258,9 +229,6 @@ describe("describeRefusal", () => {
       "unauthorized",
       "not-launched",
       "locked",
-      "wrong-mode",
-      "invalid",
-      "error",
     ]) {
       expect(describeRefusal(reason)).not.toBe(generic);
     }
@@ -280,9 +248,9 @@ describe("describeRefusal", () => {
     expect(describeRefusal("ended")).not.toBe(describeRefusal("paused"));
   });
 
-  // Reachable, unlike `gate`: a session can expire while the page stays open,
-  // and the action's own session re-check (ai/[id]/actions.ts) then returns
-  // this slug for a submit made from an already-rendered form. Names the fix
+  // Reachable: a session can expire while the page stays open, and the
+  // route then returns this slug for a submit made from an already-rendered
+  // form. Names the fix
   // (sign in again), not just that something went wrong.
   it("tells an expired session to sign in again, by name", () => {
     expect(describeRefusal("unauthorized")).toBe("Your session expired — sign in and try again.");

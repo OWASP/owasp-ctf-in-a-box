@@ -4,7 +4,7 @@ import type { ChallengeCatalog, LeaderboardEntry, ModuleProgress } from "@/lib/l
 import AppBreakdown from "@/components/app-breakdown";
 
 /** Renders one module's detail block. Deliberately a switch over the known
- *  modules rather than a generic data-driven renderer: at four modules a
+ *  modules rather than a generic data-driven renderer: at three modules a
  *  generic one would be an invented abstraction, and the module contract only requires
  *  that each module define its OWN progress semantics. Narrows on
  *  `progress.detail.kind` rather than `moduleId` so the compiler proves each
@@ -56,18 +56,10 @@ export default function ModuleDetail({
       </p>
     );
   }
-  if (detail.kind === "ai") {
-    return (
-      <p className="font-mono text-sm tabular-nums text-white">
-        {detail.solved} / {detail.total}
-        <span className="ml-1 text-xs text-muted">challenges</span>
-      </p>
-    );
-  }
   // Exhaustiveness check. Naming every `kind` above is NOT on its own what
-  // makes a fourth module a compile error here — a returned last branch still
+  // makes a new module a compile error here — a returned last branch still
   // type-checks against whatever shape the new variant happens to have, and
-  // `{ solved, total, points }` is exactly the shape a second capture-style
+  // `{ solved, total, points }` is exactly the shape another capture-style
   // module would reuse, so it would have rendered silently as "flags". This
   // assignment is the real guard: once every known `kind` is narrowed away,
   // `detail` is `never`, and any new `ModuleDetail` variant fails to assign

@@ -1,10 +1,9 @@
 "use client";
 
 // The form fields the module admin panels' add/edit forms share. The classic
-// and ai challenge forms are the same form with two extra ai fields (solve
-// mode, launch URL) and one classic-only readout (position, since only classic
-// reorders by drag); the quiz form shares the points and position pair. Each
-// field here is one `<label>` with the input the three forms rendered by hand,
+// challenge form carries a position readout (classic reorders by drag); the
+// quiz form shares the points and position pair. Each field here is one
+// `<label>` with the input the forms rendered by hand,
 // same markup, same classes, same help copy where the copy was the same — the
 // one sentence that differed (case-sensitivity's explanation) is a prop.
 //
@@ -35,7 +34,7 @@ type ValueField = {
  *  `type="text"` is stated rather than left to the default. It renders
  *  identically either way, but `EditorFrame` finds the field to focus on open
  *  with an `input[type='text']` selector, and an attribute-less input does not
- *  match it — so the classic and ai forms opened with the cursor nowhere
+ *  match it — so the classic form opened with the cursor nowhere
  *  (#282). */
 export function TextField({ label, value, disabled, onChange }: ValueField & { label: string }) {
   return (
@@ -52,7 +51,7 @@ export function TextField({ label, value, disabled, onChange }: ValueField & { l
   );
 }
 
-/** A whole-number input in a `flex gap-3` row — points, or ai's position.
+/** A whole-number input in a `flex gap-3` row — points, or a position.
  *  `max` is rendered only when given (the quiz caps points nowhere). */
 export function NumberField({ label, value, max, disabled, onChange }: ValueField & { label: string; max?: number }) {
   return (
@@ -145,7 +144,7 @@ export function FlagField({
 /** Whether the flag compares with capitalisation intact (issue #193).
  *  Rendered directly under the flag because it changes what that flag MEANS.
  *  The explanation is the module's: classic tells the organizer contestants
- *  are warned on the card; ai has no card to warn on. */
+ *  are warned on the card. */
 export function CaseSensitiveField({
   checked,
   disabled,

@@ -14,10 +14,10 @@ describe("mockEnabledModules", () => {
   });
 
   it("follows a predicate a test flips, read at the moment of use", () => {
-    let aiLive = false;
-    const m = mockEnabledModules((id) => id === "secure-development" || (id === "ai" && aiLive));
+    let classicLive = false;
+    const m = mockEnabledModules((id) => id === "secure-development" || (id === "classic" && classicLive));
     expect(m.defaultModuleIds).toEqual(["secure-development"]);
-    aiLive = true;
-    expect(m.defaultModuleIds).toEqual(["secure-development", "ai"]);
+    classicLive = true;
+    expect(m.defaultModuleIds).toEqual(["secure-development", "classic"]);
   });
 });

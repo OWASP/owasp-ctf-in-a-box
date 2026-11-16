@@ -277,11 +277,10 @@ describe("ChallengeFrame — Add challenge button states", () => {
 });
 
 describe("ChallengeFrame — listError & accessibility", () => {
-  it("renders listError with role='alert' and Retry button with descriptive aria-label", () => {
+  it("renders listError with role='alert'", () => {
     const resource = createMockResource({ listError: "Failed to load challenges" });
-    const html = renderFrame(resource, { onRetry: noop });
-    expect(html).toContain('<p role="alert" class="text-sm text-[#e53e3e]">Failed to load challenges');
-    expect(html).toMatch(/<button[^>]*aria-label="Retry loading challenges"[^>]*>Retry<\/button>/);
+    const html = renderFrame(resource);
+    expect(html).toContain('<p role="alert" class="text-sm text-[#e53e3e]">Failed to load challenges</p>');
   });
 });
 

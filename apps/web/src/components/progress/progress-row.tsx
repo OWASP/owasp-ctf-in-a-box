@@ -22,7 +22,6 @@ export const MODULE_UNIT: Record<string, string> = {
   "secure-development": "patched",
   quiz: "answered",
   classic: "solved",
-  ai: "cleared",
 };
 
 /** The team card's VERB slot ("6 patched", "3 flags") — the same vocabulary
@@ -85,7 +84,7 @@ function Chevron() {
 }
 
 function RowBody({ label, accent, done, total, unit, earned, max, hints, totalLabel, level }: ProgressRowProps) {
-  // A team's quiz/classic/ai contribution arrives with points but no ceiling
+  // A team's quiz/classic contribution arrives with points but no ceiling
   // (the board carries per-module totals, not per-module maxima), so "no max"
   // has to mean "show what they scored", not "show nothing".
   const showPoints = max > 0 || earned > 0;

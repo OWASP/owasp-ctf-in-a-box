@@ -22,7 +22,7 @@ describe("remainingSummary", () => {
     expect(
       remainingSummary([
         { title: "Quiz", earned: 200, max: 375 },
-        { title: "AI", earned: 850, max: 850 },
+        { title: "Jeopardy", earned: 850, max: 850 },
       ]),
     ).toEqual({ remaining: 175, leader: null });
   });

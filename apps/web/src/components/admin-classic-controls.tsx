@@ -98,8 +98,7 @@
 //
 // The RENDERING frame this file used to carry — the settings-card slot, the
 // category editor wiring, the Challenges panel shell and list, the form and
-// both confirmations — is shared with admin-ai-controls.tsx in
-// components/admin/challenge-frame.tsx (issue #504). What is returned below
+// both confirmations — lives in components/admin/challenge-frame.tsx. What is returned below
 // is classic's own config for that frame.
 
 import { useEffect, useState } from "react";

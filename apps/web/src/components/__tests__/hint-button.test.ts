@@ -1,5 +1,5 @@
-// HintButton (hint-button.tsx), the in-row paid-hint chip on the Jeopardy and
-// AI boards. SOURCE-level, for the reason hint-reveal-button.test.ts gives:
+// HintButton (hint-button.tsx), the in-row paid-hint chip on the Jeopardy
+// board. SOURCE-level, for the reason hint-reveal-button.test.ts gives:
 // a "use client" control with no DOM environment in this suite.
 //
 // #557: the price on the confirm chip is the price charged, or nothing is.

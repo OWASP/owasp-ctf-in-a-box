@@ -1,14 +1,14 @@
 // A flag-graded module's board — a category-grouped TILE GRID (issue #208),
 // not a column of inline forms. Each tile is just title + points + solved
 // state; opening one navigates to the challenge's own page (`basePath` +
-// "/<id>": /flags/[id] for classic, /ai/[id] for ai), where the description
+// "/<id>": /flags/[id]), where the description
 // and the flag form live. Twelve challenges already made the inline layout a
 // long scroll — a real event's 30–50 would be unusable, and tiles are the
 // shape jeopardy-CTF players pick their next target with.
 //
-// Shared by BOTH flag-graded modules, parameterised only by `basePath` and
-// the categories/challenges handed in: a second module gets the same board
-// by construction rather than by a copy that drifts.
+// Parameterised only by `basePath` and the categories/challenges handed in,
+// so another flag-graded module would get the same board by construction
+// rather than by a copy that drifts.
 //
 // Server Component on purpose: nothing here is interactive any more — tiles
 // are links, and the viewer's solved state arrives as props. The interactive

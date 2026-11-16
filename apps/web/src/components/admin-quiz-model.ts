@@ -260,7 +260,7 @@ export function payloadFromRow({ question: q, correct }: AdminQuestion): Questio
 }
 
 /** Where a quiz row keeps its id and position — the one thing that
- *  distinguishes this panel's list arithmetic from classic's and ai's (see
+ *  distinguishes this panel's list arithmetic from classic's (see
  *  components/admin/ordered-rows.ts). */
 export const QUESTION_ROWS: RowAccessors<AdminQuestion> = {
   id: (row) => row.question.id,

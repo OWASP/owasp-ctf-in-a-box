@@ -1,6 +1,6 @@
 "use client";
 
-// The category manager the classic and ai admin panels render above their
+// The category manager the classic admin panel renders above its
 // challenge list: the current list as a row of inline chips, in the order
 // contestants see them, each with keyboard-operable move-left / move-right
 // and a remove control, plus a New-category input with its Add button

@@ -1,9 +1,8 @@
 "use client";
 
-// The category list's state and writes, shared by the classic and ai admin
-// panels (the two modules with organizer-managed categories). Both used to
-// carry the same five functions and three useStates; the ONLY inputs that
-// differed were the endpoint and the error mapper, so those are parameters.
+// The category list's state and writes for the classic admin panel (the
+// module with organizer-managed categories), held apart from the panel. The
+// endpoint and the error mapper are parameters.
 //
 // The category list itself is NOT owned here: it arrives in the same GET as
 // the challenge list and a bulk import refreshes both, so the panel's
@@ -19,7 +18,7 @@
 // can drive it straight into the real route.
 //
 // Removal is refused while anything still references the category. The
-// stores do not enforce this (`setCategories`/`setAiCategories` only
+// stores do not enforce this (`setCategories` only
 // validate and dedupe), so the refusal lives here, computed from the
 // challenge list the panel already holds via `usageCount`.
 //

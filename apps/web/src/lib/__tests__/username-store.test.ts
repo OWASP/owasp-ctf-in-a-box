@@ -7,11 +7,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const adapter = vi.hoisted(() => ({
   findUserById: vi.fn<(id: string) => Promise<Record<string, unknown> | null>>(),
   updateUser: vi.fn<(id: string, data: Record<string, unknown>) => Promise<unknown>>(),
+  findAccounts: vi.fn<(id: string) => Promise<Array<{ providerId: string }>>>(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { $context: Promise.resolve({ internalAdapter: adapter }) } }));
 
-import { setUsernameOnce } from "@/lib/username-store";
+import { hasPassword, setUsernameOnce } from "@/lib/username-store";
 
 const ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
 
@@ -54,5 +55,21 @@ describe("setUsernameOnce", () => {
   it("throws when the user row does not exist", async () => {
     adapter.findUserById.mockResolvedValue(null);
     await expect(setUsernameOnce(ID, "bob")).rejects.toThrow();
+  });
+});
+
+describe("hasPassword", () => {
+  it("is true only with a credential account", async () => {
+    adapter.findAccounts.mockResolvedValue([{ providerId: "github" }, { providerId: "credential" }]);
+    expect(await hasPassword(ID)).toBe(true);
+    adapter.findAccounts.mockResolvedValue([{ providerId: "github" }]);
+    expect(await hasPassword(ID)).toBe(false);
+    adapter.findAccounts.mockResolvedValue([]);
+    expect(await hasPassword(ID)).toBe(false);
+  });
+
+  it("throws on a read error rather than answering false", async () => {
+    adapter.findAccounts.mockRejectedValue(new Error("boom"));
+    await expect(hasPassword(ID)).rejects.toThrow("boom");
   });
 });

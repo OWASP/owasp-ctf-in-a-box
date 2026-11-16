@@ -476,7 +476,7 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
         const text = await res.text();
         return { res, body: (text ? JSON.parse(text) : null) as Record<string, unknown> | null };
       };
-      return { prefix, ctx, post };
+      return { prefix, ctx, post, instance };
     }
     const pw = (n: number) => "p".repeat(n);
     type Row = { id: string; email: string; name: string; username?: string; displayUsername?: string; login?: string };
@@ -552,6 +552,32 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       expect(await entriesFor(user.id)).toHaveLength(1);
       expect((await post("/sign-in/username", { username: name, password: pw(12) })).res.status).toBe(200);
       expect(await entriesFor(user.id)).toHaveLength(2);
+    });
+
+    it("adds a password to a GitHub account, then signs in by username with it, once", async () => {
+      const { ctx, post, instance } = await buildPasswordAuth();
+      const { user } = await ctx.internalAdapter.createOAuthUser(
+        { name: "ada", email: "ada@example.test", emailVerified: true, image: null, login: "ada" } as never,
+        { providerId: "github", accountId: `acct-${freshId("a")}` } as never,
+      );
+      await ctx.internalAdapter.updateUser(user.id, { username: "ada_gh", displayUsername: "ada_gh" });
+      const headers = await sessionHeaders(ctx as never, user.id);
+      const call = (newPassword: string) => instance.api.setPassword({ headers, body: { newPassword } });
+      const code = async (p: Promise<unknown>) => ((await p.then(() => null, (e) => e)) as { body?: { code?: string } } | null)?.body?.code;
+
+      expect(await code(call(pw(11)))).toBe("PASSWORD_TOO_SHORT");
+      expect(await code(call(pw(129)))).toBe("PASSWORD_TOO_LONG");
+      expect((await ctx.internalAdapter.findAccounts(user.id)).map((a) => a.providerId)).toEqual(["github"]);
+
+      await expect(call(pw(12))).resolves.toBeTruthy();
+      expect((await ctx.internalAdapter.findAccounts(user.id)).map((a) => a.providerId).sort()).toEqual(["credential", "github"]);
+      expect((await post("/sign-in/username", { username: "ada_gh", password: pw(12) })).res.status).toBe(200);
+
+      expect(await code(call("q".repeat(20)))).toBe("PASSWORD_ALREADY_SET");
+      expect((await post("/sign-in/username", { username: "ada_gh", password: pw(12) })).res.status).toBe(200);
+      expect((await post("/sign-in/username", { username: "ada_gh", password: "q".repeat(20) })).res.status).toBe(401);
+      // Server-only: no HTTP route reaches it.
+      expect((await post("/set-password", { newPassword: pw(12) })).res.status).toBe(404);
     });
 
     it("signs up and in while team registration is closed", async () => {

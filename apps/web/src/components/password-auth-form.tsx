@@ -11,8 +11,10 @@ import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin"
 import { usernameProblem } from "@/lib/username-rules";
 
 const USERNAME_COPY = "Usernames are 3 to 30 letters, digits, dots or underscores.";
-const PASSWORD_COPY = "Passwords are 12 to 128 characters.";
-const GENERIC_COPY = "Something went wrong. Try again.";
+export const PASSWORD_COPY = "Passwords are 12 to 128 characters.";
+export const GENERIC_COPY = "Something went wrong. Try again.";
+
+export const MISMATCH_COPY = "The passwords don't match.";
 
 type AuthError = { status?: number; code?: string; retryAfterSeconds?: number } | null | undefined;
 
@@ -70,7 +72,7 @@ export default function PasswordAuthForm({ next }: { next: string }) {
     setError(null);
     if (creating) {
       if (usernameProblem(username)) return setError(USERNAME_COPY);
-      if (password !== confirm) return setError("The passwords don't match.");
+      if (password !== confirm) return setError(MISMATCH_COPY);
     }
     setPending(true);
     try {

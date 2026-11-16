@@ -35,6 +35,7 @@ const API_EXEMPT: Record<string, string> = {
   "api/me/admin/route.ts": "is the viewer an admin — no module content",
   "api/me/admin/claim/route.ts": "organizers claim the panel before launch — no module content",
   "api/me/username/route.ts": "picking a display name precedes the event - no module content",
+  "api/me/password/route.ts": "adding a sign-in password precedes the event - no module content",
   "api/team/route.ts": "teams form before launch",
   "api/team/disband/route.ts": "teams form before launch",
   "api/team/join/route.ts": "teams form before launch",

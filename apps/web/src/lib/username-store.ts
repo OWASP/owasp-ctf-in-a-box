@@ -36,3 +36,11 @@ export async function setUsernameOnce(userId: string, raw: string): Promise<SetU
     throw err;
   }
 }
+
+/** True when the user has a username-and-password (`credential`) account.
+ *  A read error throws: callers decide their own fail direction. */
+export async function hasPassword(userId: string): Promise<boolean> {
+  const { internalAdapter } = await auth.$context;
+  const accounts = await internalAdapter.findAccounts(userId);
+  return accounts.some((a) => a.providerId === "credential");
+}

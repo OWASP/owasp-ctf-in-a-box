@@ -83,6 +83,18 @@ describe("PasswordAuthForm sign-in", () => {
     expect(await screen.findByText("Too many attempts. Try again in 42 seconds.")).toBeTruthy();
   });
 
+  it("says 1 second, not 1 seconds, when the wait rounds to one", async () => {
+    signInUsername.mockResolvedValue({
+      data: null,
+      error: { status: 429, code: "RATE_LIMITED", retryAfterSeconds: 0.4 },
+    });
+    render(<PasswordAuthForm next="/profile" />);
+    type("Username", "alice");
+    type("Password", PW);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText("Too many attempts. Try again in 1 second.")).toBeTruthy();
+  });
+
   it("falls back to the generic copy for anything else, including a thrown fetch", async () => {
     signInUsername.mockRejectedValue(new Error("network"));
     render(<PasswordAuthForm next="/profile" />);

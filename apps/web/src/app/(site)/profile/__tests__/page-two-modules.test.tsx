@@ -46,6 +46,7 @@ vi.mock("@/lib/admin-store", () => ({
   effectiveRegistrationOpen: () => true,
 }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
+vi.mock("@/lib/username-store", () => ({ hasPassword: async () => true }));
 vi.mock("@/lib/leaderboard/source", () => ({ getLeaderboardSource: async () => ({ getUser }) }));
 vi.mock("@/lib/team-store", () => ({
   getViewerTeam,

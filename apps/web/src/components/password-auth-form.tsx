@@ -25,8 +25,9 @@ function errorCopy(error: AuthError): string {
   if (!error) return GENERIC_COPY;
   if (error.status === 429 || error.code === "RATE_LIMITED") {
     const n = error.retryAfterSeconds;
-    return typeof n === "number" && Number.isFinite(n)
-      ? `Too many attempts. Try again in ${Math.max(1, Math.ceil(n))} seconds.`
+    const wait = typeof n === "number" && Number.isFinite(n) ? Math.max(1, Math.ceil(n)) : null;
+    return wait !== null
+      ? `Too many attempts. Try again in ${wait} ${wait === 1 ? "second" : "seconds"}.`
       : "Too many attempts. Try again shortly.";
   }
   switch (error.code) {

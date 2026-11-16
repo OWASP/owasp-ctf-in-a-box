@@ -235,6 +235,19 @@ describe("flush", () => {
     expect(mocks.outboxClaim.mock.calls.map((c) => c[0])).toEqual(["old", "new"]);
   });
 
+  it("breaks a same-instant lifecycle tie with the CAS ordinal, not hash order", async () => {
+    // A launch-before-pause CAS stamps both entries with one `at`; their
+    // ordinal must keep "launch" ahead of "pause" even when HGETALL returns
+    // the pause entry first.
+    const at = new Date().toISOString();
+    mocks.outboxPending.mockResolvedValue([
+      { id: "pause-id", entry: { ...entry("pause"), at, ord: 1 } },
+      { id: "launch-id", entry: { ...entry("launch"), at, ord: 0 } },
+    ]);
+    await flush();
+    expect(mocks.outboxClaim.mock.calls.map((c) => c[0])).toEqual(["launch-id", "pause-id"]);
+  });
+
   it("marks a failed POST failed and records the status", async () => {
     mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
     fetchMock.mockResolvedValue({ ok: false, status: 404 });

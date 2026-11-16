@@ -470,13 +470,13 @@ describe("getWebhookGeneration", () => {
 });
 
 describe("getWebhookDeliveryTarget", () => {
-  it("reads the URL and generation in one atomic EVAL, so a replacement cannot pair a retired URL with a new generation", async () => {
+  it("reads the URL and generation in one atomic EVAL, so a clear cannot pair the retired URL with a new generation", async () => {
     let calls = 0;
     mocks.upstashEval.mockImplementation(async () => {
       calls += 1;
-      // A replacement between two separate reads would let the second read
-      // observe the newer generation; the atomic read must return only the
-      // snapshot from its single call.
+      // A clear between two separate reads would let the second read observe
+      // the newer generation; the atomic read must return only the snapshot
+      // from its single call.
       return calls === 1
         ? ["https://discord.com/api/webhooks/1/retired", "0"]
         : ["https://discord.com/api/webhooks/2/current", "1"];

@@ -53,6 +53,7 @@ import {
   DISCORD_WEBHOOK_KEY,
 } from "./keys";
 import { decodeLifecycleState, encodeLifecycleState, lifecycleSnapshotFrom } from "./detect";
+import { compareOutboxOrder } from "./order";
 
 // --- config ------------------------------------------------------------------
 
@@ -344,11 +345,13 @@ export async function getWebhookGeneration(): Promise<number> {
 }
 
 /** Reads the webhook URL and its generation in one atomic snapshot. A Lua
- *  EVAL is required, not two GETs in a pipeline: another client can execute
- *  a clear between separate commands (and even between pipelined ones), which
- *  would pair a retired URL with the newer generation. `false` from a missing
- *  key is normalised to an empty string here so absence is unambiguous; a
- *  malformed stored counter still THROWS through parseWebhookGeneration. */
+ *  EVAL is required, not two GETs in a pipeline: a clear can run between
+ *  separate commands (and even between pipelined ones), deleting the URL and
+ *  advancing the generation, so both must come from one snapshot. Only a
+ *  clear or a master reset advances the generation; replacing a configured
+ *  URL is a plain SET and is not fenced here. `false` from a missing key is
+ *  normalised to an empty string here so absence is unambiguous; a malformed
+ *  stored counter still THROWS through parseWebhookGeneration. */
 export const WEBHOOK_TARGET_SCRIPT = `
 local url = redis.call('GET', KEYS[1])
 local generation = redis.call('GET', KEYS[2])
@@ -356,8 +359,9 @@ return {url or '', generation or ''}
 `;
 
 /** The webhook URL and the generation it belongs to, read atomically so a
- *  delivery sweep can never pair a retired URL with a generation advanced by
- *  a clear after it. A failed EVAL THROWS, a missing key is a genuine
+ *  delivery sweep cannot pair the pre-clear URL with the generation a clear
+ *  advanced it to. A plain URL replacement keeps the generation, so it is
+ *  deliberately not fenced. A failed EVAL THROWS, a missing key is a genuine
  *  "no webhook", and a malformed generation is rejected rather than read as
  *  0 — a sweep must not act on a partial or corrupt view. */
 export async function getWebhookDeliveryTarget(): Promise<{ url: string | null; generation: number }> {
@@ -677,11 +681,12 @@ export async function stateCompareSet(
     return parseCasReply(raw);
   }
   const at = new Date().toISOString();
-  const entryArgs = entries.flatMap((entry) => {
+  const entryArgs = entries.flatMap((entry, index) => {
     const value: OutboxEntry = {
       kind: entry.kind,
       payload: entry.payload,
       at,
+      ord: index,
       n: 0,
       status: "pending",
       webhookGeneration: entry.webhookGeneration,
@@ -795,6 +800,9 @@ export type OutboxEntry = {
   kind: AnnouncementKind;
   payload: unknown;
   at: string;
+  /** Position within a multi-entry lifecycle CAS, which stamps every entry
+   *  with one `at`. Absent (`0`) on standalone enqueues. */
+  ord?: number;
   n: number;
   status: OutboxStatus;
   webhookGeneration: number;
@@ -1112,7 +1120,7 @@ async function parseOutboxEntries(
     }
     if (keep(entry)) out.push({ id, entry });
   }
-  out.sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at));
+  out.sort(compareOutboxOrder);
   return out;
 }
 

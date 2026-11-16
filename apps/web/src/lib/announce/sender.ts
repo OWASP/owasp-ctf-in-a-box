@@ -27,6 +27,7 @@ import "server-only";
 import { errorLabel } from "@/lib/error-label";
 import { kindEnabled, type AnnouncementKind } from "@/lib/discord-config";
 import type { DiscordMessage } from "./messages";
+import { compareOutboxOrder } from "./order";
 import {
   announceCooldownMs,
   bumpStatus,
@@ -79,8 +80,10 @@ export function droppedEnqueues(): number {
  *  `captured` carries the generation and switch epoch a producer read BEFORE
  *  its asynchronous lookups. When given, those exact counters are stamped
  *  and the store rejects the write atomically if the stream was disabled,
- *  re-enabled or the webhook rotated meanwhile — a late notification never
- *  borrows a fresh counter it did not observe. */
+ *  re-enabled or the webhook was cleared meanwhile — a late notification
+ *  never borrows a fresh counter it did not observe. Replacing a configured
+ *  URL is a plain SET that keeps the generation, so it is deliberately not
+ *  fenced: pending entries follow the new URL instead of being dropped. */
 export async function enqueueAnnouncement(
   kind: AnnouncementKind,
   message: DiscordMessage,
@@ -163,7 +166,7 @@ async function deliveryCandidates(): Promise<{ id: string; entry: OutboxEntry }[
   for (const item of [...pending, ...retryable]) {
     if (!byId.has(item.id)) byId.set(item.id, item);
   }
-  return [...byId.values()].sort((a, b) => Date.parse(a.entry.at) - Date.parse(b.entry.at));
+  return [...byId.values()].sort(compareOutboxOrder);
 }
 
 /** One flush pass: lease every deliverable entry, pack it, post it.
@@ -207,10 +210,11 @@ export async function flush(): Promise<void> {
     }
     const pending = await deliveryCandidates();
     const candidates: { id: string; entry: OutboxEntry }[] = [];
-    // An entry is stale if the webhook changed after it was enqueued
+    // An entry is stale if the webhook was cleared after it was enqueued
     // (generation) or its switch was disabled and re-enabled (epoch). Both
     // counters were captured with this config read; a producer that raced the
-    // disabling write still carries the old one.
+    // disabling write still carries the old one. Replacing a configured URL
+    // does not advance the generation, so a replacement is not stale.
     for (const item of pending) {
       // A NEWER epoch or generation means this pass's snapshot predates a
       // re-enable or a fresh webhook. Leave it pending for a pass with fresh

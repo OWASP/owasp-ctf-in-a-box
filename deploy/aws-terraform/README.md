@@ -191,8 +191,16 @@ terraform apply \
 #   ... now run step 3's put-parameter commands, with --key-id ...
 docker login ghcr.io                            # Secure Development: the scorer package is private
 ./deploy.sh --scorer-source ghcr.io/<your-event-org>/score:latest   # build, mirror, push, write image.auto.tfvars
-terraform apply                                 # the rest of the stack
+terraform apply                                 # the rest of the stack, and the claim-code parameter
+./deploy.sh --skip-build --new-admin-code \
+  --scorer-source ghcr.io/<your-event-org>/score:latest   # writes the admin claim code and prints it ONCE
 ```
+
+The first `deploy.sh` runs before the full apply, so the claim-code parameter
+does not exist yet and it prints no code. The last line is the one that does:
+save the code it prints and claim `/admin` with it (see Locked out of /admin
+below). On an event without Secure Development, drop `--scorer-source` from
+both `deploy.sh` lines.
 
 Targeting the *alias* pulls in the key it points at, and targeting the
 repository resource creates every repository this event needs: `app` always,

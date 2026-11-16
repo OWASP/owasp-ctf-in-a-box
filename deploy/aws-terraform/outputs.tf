@@ -83,14 +83,17 @@ output "next_steps" {
 
        (REDIS_AUTH_TOKEN and SRH_CONNECTION_STRING are written there by
        Terraform, already under that key. ADMIN_CLAIM_CODE_HASH is written
-       there by deploy.sh in step 2.)
+       there by deploy.sh in step 3.)
     2. Build, mirror and push the images (app; sync and scorer on a Secure
-       Development event):  ./deploy.sh --scorer-source <SCORE_IMAGE>
-       The first run also creates the admin claim code and prints it ONCE:
-       open ${local.event_url}/admin/claim, sign in and enter it. Lost it, or
-       locked out?  ./deploy.sh --skip-build --new-admin-code
-    3. If you did not set route53_zone_id, point ${var.domain} at ${aws_lb.main.dns_name}
-    4. Set the OAuth app callback to ${local.event_url}/api/auth/callback/github
-    5. Tear the event down when it ends:  terraform destroy
+       Development event), if you have not already for this revision:
+         ./deploy.sh --scorer-source <SCORE_IMAGE>
+    3. Create the admin claim code. This apply made its parameter, so run,
+       after it (Secure Development: add --scorer-source <SCORE_IMAGE>):
+         ./deploy.sh --skip-build --new-admin-code
+       It prints the code ONCE: open ${local.event_url}/admin/claim, sign in
+       and enter it. Lost it, or locked out? Run the same command again.
+    4. If you did not set route53_zone_id, point ${var.domain} at ${aws_lb.main.dns_name}
+    5. Set the OAuth app callback to ${local.event_url}/api/auth/callback/github
+    6. Tear the event down when it ends:  terraform destroy
   EOT
 }

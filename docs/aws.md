@@ -100,7 +100,8 @@ terraform apply \
 docker login ghcr.io                            # Secure Development: the scorer package is private
 ./deploy.sh --scorer-source ghcr.io/<your-event-org>/score:latest   # build, mirror, push
 terraform apply                                 # the rest of the stack
-./deploy.sh --skip-build --new-admin-code       # set the admin claim code; prints it once
+./deploy.sh --skip-build --new-admin-code \
+  --scorer-source ghcr.io/<your-event-org>/score:latest   # set the admin claim code; prints it once
 ```
 
 The admin claim code comes last because it needs the stack. The full apply
@@ -108,13 +109,25 @@ creates the SSM parameter `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` holding a
 placeholder the app reads as unset, so `/admin` stays closed (fail closed)
 until `deploy.sh` writes a real hash into it. The first `deploy.sh` above, run
 before the full apply, publishes the images and says the code is not set yet.
+On an event without Secure Development, drop `--scorer-source` from both
+`deploy.sh` lines.
 
-**Upgrading an existing stack** to a version with claim codes: `terraform
-apply` first (it creates the placeholder parameter and points the app task at
-it; nobody can open `/admin` until the next step), then
-`./deploy.sh --skip-build --new-admin-code`, which writes the hash, prints the
-code once and rolls the app so it reads it. Remove `admin_logins` from
-`terraform.tfvars` before the apply.
+**Upgrading an existing stack** to a version with claim codes, in this order:
+
+1. Remove `admin_logins` from `terraform.tfvars`.
+2. `./deploy.sh` (no `--skip-build`, no `--apply`) builds and pushes this
+   revision's images and writes `image.auto.tfvars`. It does not apply.
+   `--skip-build` would refuse here, because this revision's app image is not
+   in ECR yet.
+3. `terraform apply` creates the placeholder parameter and points the app
+   task at it. Until the next step, bootstrap-code claims are unavailable;
+   admins who already hold a grant are unaffected.
+4. `./deploy.sh --skip-build --new-admin-code` writes the hash, prints the
+   code once and rolls the app so it reads it.
+
+On a Secure Development stack, both `deploy.sh` runs need the scorer image,
+`--scorer-source <image>` or `SCORE_IMAGE`; `--skip-build` does not lift
+that requirement.
 
 The image variables in `terraform.tfvars.example` are placeholders for that
 bootstrap apply only. A full `terraform apply` while one is still the

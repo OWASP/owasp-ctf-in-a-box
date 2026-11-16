@@ -90,8 +90,9 @@ docker compose up -d --no-deps --force-recreate app
 
 Then claim at `/admin/claim` with the 32-hex code the first line printed;
 hyphens and case do not matter. A code wrongly entered five times locks that
-account's claims for 15 minutes. On a cloud deploy, set the hash wherever that
-deploy keeps the app's environment.
+account's claims for 15 minutes. These are the Docker Compose steps. The Fly
+and AWS deploys do not pass `ADMIN_CLAIM_CODE_HASH` to the app yet (#738), so
+a box deployed there cannot claim its first admin until they do.
 
 ## Only the landing page loads (module pages redirect to `/`)
 

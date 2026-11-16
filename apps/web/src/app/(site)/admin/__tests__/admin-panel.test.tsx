@@ -8,7 +8,7 @@ const VECTOR_HASH = "3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b506
 const NO_ADMINS =
   "No organizer has claimed this box yet. Open /admin/claim and enter the admin claim code whose hash is in .env.";
 const NO_HASH =
-  "ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256 — generate a code with openssl rand -hex 16, put the SHA-256 of that code in .env as ADMIN_CLAIM_CODE_HASH, and recreate the app container (docker compose up -d --no-deps --force-recreate app).";
+  "ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256 — set it to the SHA-256 of a new code and start the app again with the new environment. The steps are in docs/troubleshooting.md (/admin says Forbidden).";
 
 const { requireAdmin, countAdminGrants } = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
